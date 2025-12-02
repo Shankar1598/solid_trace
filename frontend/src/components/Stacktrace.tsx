@@ -55,60 +55,56 @@ export function Stacktrace({ exception }: StacktraceProps) {
   const reversedFrames = [...frames].reverse();
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">
-          {mainException.type}: {mainException.value}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {reversedFrames.map((frame, index) => (
-            <div
-              key={index}
-              className="border-l-2 border-muted-foreground/20 pl-4 py-2 hover:border-primary/50 transition-colors"
-            >
-              <div className="flex items-baseline gap-2 mb-1">
-                <span className="font-mono text-sm text-muted-foreground">
-                  {frame.filename || frame.abs_path || 'unknown'}
-                </span>
-                {frame.lineno && (
-                  <span className="text-xs text-muted-foreground">
-                    line {frame.lineno}
-                    {frame.colno && `:${frame.colno}`}
-                  </span>
-                )}
+    <div className="bg-card border rounded-md overflow-hidden">
+      <div className="bg-muted/30 px-4 py-2 border-b text-sm font-medium flex justify-between items-center">
+        <span className="font-mono text-destructive">{mainException.type}</span>
+        <span className="text-muted-foreground">{mainException.value}</span>
+      </div>
+      <div className="divide-y">
+        {reversedFrames.map((frame, index) => (
+          <div
+            key={index}
+            className="p-3 hover:bg-muted/30 transition-colors text-sm"
+          >
+            <div className="flex justify-between items-start mb-1">
+              <div className="font-mono text-muted-foreground">
+                {frame.filename || frame.abs_path || 'unknown'}
               </div>
-
-              {frame.function && (
-                <div className="font-mono text-sm mb-2">
-                  <span className="text-primary">in</span>{' '}
-                  <span className="font-semibold">{frame.function}</span>
-                </div>
-              )}
-
-              {/* Code context */}
-              {frame.context_line && (
-                <div className="bg-muted/50 rounded p-2 font-mono text-xs space-y-0.5">
-                  {frame.pre_context?.slice(-2).map((line, i) => (
-                    <div key={`pre-${i}`} className="text-muted-foreground">
-                      {line}
-                    </div>
-                  ))}
-                  <div className="bg-destructive/20 px-1 -mx-1 font-semibold">
-                    → {frame.context_line}
-                  </div>
-                  {frame.post_context?.slice(0, 2).map((line, i) => (
-                    <div key={`post-${i}`} className="text-muted-foreground">
-                      {line}
-                    </div>
-                  ))}
+              {frame.lineno && (
+                <div className="font-mono text-xs text-muted-foreground">
+                  L{frame.lineno}{frame.colno ? `:${frame.colno}` : ''}
                 </div>
               )}
             </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+
+            {frame.function && (
+              <div className="font-mono text-sm mb-2">
+                <span className="text-muted-foreground">in</span>{' '}
+                <span className="font-semibold text-primary">{frame.function}</span>
+              </div>
+            )}
+
+            {/* Code context */}
+            {frame.context_line && (
+              <div className="bg-muted rounded p-2 font-mono text-xs space-y-0.5 overflow-x-auto">
+                {frame.pre_context?.slice(-2).map((line, i) => (
+                  <div key={`pre-${i}`} className="text-muted-foreground opacity-60">
+                    {line}
+                  </div>
+                ))}
+                <div className="bg-destructive/10 text-destructive font-semibold -mx-2 px-2 py-0.5">
+                  {frame.context_line}
+                </div>
+                {frame.post_context?.slice(0, 2).map((line, i) => (
+                  <div key={`post-${i}`} className="text-muted-foreground opacity-60">
+                    {line}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

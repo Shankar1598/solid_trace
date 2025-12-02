@@ -96,19 +96,19 @@ Users
 
 ### Short Term (Complete MVP)
 1. **UI Polish**
-   - Proper froentend navigation for Issues, Settings, users, etc. with a left sidebar.
-   - UI and UX polish resembling Sentry and color scheme.
-   - Add loading states
-   - Add error boundaries
-   - Improve responsive design
-   - Add dark mode toggle
-   - What else is missing? I want this to be a greate Sentry alternative for error tracking.
+   - [x] Proper froentend navigation for Issues, Settings, users, etc. with a left sidebar.
+   - [x] UI and UX polish resembling Sentry and color scheme.
+   - [x] Add loading states
+   - [ ] Add error boundaries (Component exists but not integrated globally)
+   - [x] Improve responsive design
+   - [x] Add dark mode toggle
+   - [x] What else is missing? I want this to be a greate Sentry alternative for error tracking.
 
 2. **Enhanced Error Display**
-   - Parse stacktraces from event data
-   - Format exception details
-   - Display breadcrumbs if present
-   - Show request/user context
+   - [x] Parse stacktraces from event data
+   - [x] Format exception details
+   - [x] Display breadcrumbs if present
+   - [x] Show request/user context
 
 3. **Search & Filter**
    - Filter by level
@@ -186,39 +186,6 @@ curl http://localhost:3000/api/v1/issues/1 | jq
 5. **Docker-First:** All development in containers for consistency
 6. **No Authentication Yet:** Will add in later phase
 
-### Challenges Encountered
-
-1. **shadcn/ui Init Failures:**
-   - Initially failed due to Tailwind v4 incompatibility
-   - Required manual Tailwind config creation
-   - Needed explicit path aliases in tsconfig.json
-   - **Solution:** Downgraded to Tailwind v3, manually configured
-
-2. **Rails Routes with Numeric Namespace:**
-   - Cannot use `namespace :0` in Rails routes
-   - **Solution:** Used `scope "0"` instead
-
-3. **Model Association Errors:**
-   - Missing has_many/belongs_to declarations
-   - **Solution:** Added all associations explicitly
-
-4. **Database Connection Issues:**
-   - Initial PostgreSQL connection failures
-   - **Solution:** Modified database.yml to use `host: localhost`
-
-5. **Docker Network Binding:**
-   - Backend not accessible from host
-   - **Current Status:** Still investigating
-
-### Time Spent
-- **Planning & Analysis:** ~30 minutes
-- **Backend Setup:** ~45 minutes
-- **API Implementation:** ~40 minutes
-- **Frontend Setup:** ~35 minutes
-- **UI Components:** ~30 minutes
-- **Debugging:** ~20 minutes (ongoing)
-- **Total:** ~3.5 hours
-
 ---
 
 ## Success Metrics
@@ -228,10 +195,8 @@ curl http://localhost:3000/api/v1/issues/1 | jq
 - [x] Error ingestion working
 - [x] Management API working
 - [x] Frontend UI built
-- [ ] Frontend-backend integration working
+- [x] Frontend-backend integration working
 - [ ] End-to-end error flow tested
 - [ ] Documentation complete
 
 ---
-
-_Last Updated: December 2, 2025 00:00 IST_

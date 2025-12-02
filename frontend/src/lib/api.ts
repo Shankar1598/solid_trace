@@ -8,6 +8,7 @@ export interface Issue {
   status: number;
   level: number;
   event_count: number;
+  culprit?: string;
   created_at: string;
   updated_at: string;
 }

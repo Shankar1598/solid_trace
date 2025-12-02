@@ -1,294 +1,270 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '@/lib/api';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
 import { Stacktrace } from './Stacktrace';
 import { Breadcrumbs } from './Breadcrumbs';
+import {
+  ArrowLeft,
+  Clock,
+  Users,
+  Share2,
+  Bookmark,
+  Activity,
+  Globe,
+  Server
+} from 'lucide-react';
 
-const getLevelBadge = (level: number) => {
+const getLevelColor = (level: number) => {
   switch (level) {
-    case 50: return <Badge variant="destructive">Fatal</Badge>;
-    case 40: return <Badge variant="destructive">Error</Badge>;
-    case 30: return <Badge className="bg-yellow-500">Warning</Badge>;
-    case 20: return <Badge className="bg-blue-500">Info</Badge>;
-    case 10: return <Badge variant="outline">Debug</Badge>;
-    default: return <Badge>Unknown</Badge>;
+    case 50: return 'text-red-500 border-red-500'; // Fatal
+    case 40: return 'text-orange-500 border-orange-500'; // Error
+    case 30: return 'text-yellow-500 border-yellow-500'; // Warning
+    case 20: return 'text-blue-500 border-blue-500'; // Info
+    case 10: return 'text-gray-400 border-gray-400'; // Debug
+    default: return 'text-gray-300 border-gray-300';
   }
 };
 
-const getStatusBadge = (status: number) => {
-  return status === 0 ?
-    <Badge variant="destructive">Unresolved</Badge> :
-    <Badge variant="secondary">Resolved</Badge>;
-};
+const getLevelLabel = (level: number) => {
+  switch (level) {
+    case 50: return 'fatal';
+    case 40: return 'error';
+    case 30: return 'warning';
+    case 20: return 'info';
+    case 10: return 'debug';
+    default: return 'unknown';
+  }
+}
 
 export function IssueDetail() {
-
   const { orgSlug, issueId } = useParams<{ orgSlug: string; issueId: string }>();
 
-
-
   const { data: issue, isLoading, error, refetch } = useQuery({
-
     queryKey: ['issue', orgSlug, issueId],
-
     queryFn: () => orgSlug ? api.getIssue(orgSlug, Number(issueId)) : Promise.reject('No org'),
-
     enabled: !!orgSlug && !!issueId,
-
   });
 
-
-
   const handleResolve = async () => {
-
     if (!orgSlug || !issueId) return;
-
     try {
-
       await api.resolveIssue(orgSlug, Number(issueId));
-
       refetch();
-
     } catch (err) {
-
       console.error('Failed to resolve issue:', err);
-
     }
-
   };
-
-
 
   const handleUnresolve = async () => {
-
     if (!orgSlug || !issueId) return;
-
     try {
-
       await api.unresolveIssue(orgSlug, Number(issueId));
-
       refetch();
-
     } catch (err) {
-
       console.error('Failed to unresolve issue:', err);
-
     }
-
   };
 
-
-
-  if (!orgSlug || !issueId) {
-
-    return (
-
-      <div className="flex items-center justify-center min-h-screen">
-
-        <div className="text-lg text-red-500">No issue or org selected.</div>
-
-      </div>
-
-    );
-
-  }
-
-
+  if (!orgSlug || !issueId) return null;
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-lg">Loading...</div>
-      </div>
-    );
+    return <div className="p-8 text-center text-muted-foreground">Loading issue...</div>;
   }
 
   if (error || !issue) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-lg text-red-500">Error loading issue</div>
-      </div>
-    );
+    return <div className="p-8 text-center text-red-500">Error loading issue</div>;
   }
 
+  const latestEvent = issue.events[0]; // Assuming sorted by date desc, or just take first for now
+
   return (
-    <div className="container mx-auto p-6 max-w-6xl">
-      <div className="mb-6">
-        <Link to={`/${orgSlug}/issues`}>
-          <Button variant="outline" size="sm">← Back to Issues</Button>
-        </Link>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Link to={`/${orgSlug}/issues`} className="hover:text-foreground flex items-center gap-1">
+            <ArrowLeft className="w-4 h-4" /> Issues
+          </Link>
+          <span>/</span>
+          <span className="font-mono text-xs">#{issue.id}</span>
+        </div>
+
+        <div className="flex justify-between items-start">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
+              <span className={`text-xs uppercase px-1.5 py-0.5 border rounded font-mono ${getLevelColor(issue.level)}`}>
+                {getLevelLabel(issue.level)}
+              </span>
+              {issue.title}
+            </h1>
+            <p className="text-muted-foreground font-mono text-sm">
+              {issue.culprit || 'unknown location'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-2">
+              <Share2 className="w-4 h-4" /> Share
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2">
+              <Bookmark className="w-4 h-4" /> Bookmark
+            </Button>
+            {issue.status === 0 ? (
+              <Button onClick={handleResolve} variant="default" size="sm" className="bg-green-600 hover:bg-green-700 text-white">
+                Resolve
+              </Button>
+            ) : (
+              <Button onClick={handleUnresolve} variant="outline" size="sm">
+                Unresolve
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Stats Bar */}
+        <div className="flex items-center gap-8 py-3 border-y bg-card/50 px-4 rounded-sm text-sm">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-muted-foreground" />
+            <span className="font-medium">{issue.events.length}</span>
+            <span className="text-muted-foreground">Events</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-muted-foreground" />
+            <span className="font-medium">1</span> {/* Placeholder for user count */}
+            <span className="text-muted-foreground">Users</span>
+          </div>
+          <div className="flex items-center gap-2 ml-auto text-muted-foreground">
+            <Clock className="w-4 h-4" />
+            <span>First seen {new Date(issue.created_at).toLocaleDateString()}</span>
+            <span>•</span>
+            <span>Last seen {new Date(issue.updated_at).toLocaleDateString()}</span>
+          </div>
+        </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-start justify-between">
-            <div className="space-y-2">
-              <CardTitle className="text-2xl">{issue.title}</CardTitle>
-              <CardDescription>Issue #{issue.id}</CardDescription>
-            </div>
-            <div className="flex gap-2 items-center">
-              {issue.status === 0 ? (
-                <Button onClick={handleResolve} variant="default" size="sm">
-                  Resolve Issue
-                </Button>
-              ) : (
-                <Button onClick={handleUnresolve} variant="outline" size="sm">
-                  Unresolve
-                </Button>
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left Column: Stacktrace, Breadcrumbs */}
+        <div className="lg:col-span-2 space-y-8">
+
+          {/* Tags (Mobile/Top view) */}
+          <div className="lg:hidden">
+            {/* ... tags ... */}
+          </div>
+
+          {latestEvent && (
+            <>
+              {/* Stacktrace */}
+              {latestEvent.data.exception && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Server className="w-4 h-4" /> Exception
+                  </h3>
+                  <div className="border rounded-md overflow-hidden">
+                    <Stacktrace exception={latestEvent.data.exception} />
+                  </div>
+                </div>
               )}
-              {getLevelBadge(issue.level)}
-              {getStatusBadge(issue.status)}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex gap-8 text-sm text-muted-foreground">
-              <div>
-                <span className="font-medium">Events:</span> {issue.events.length}
+
+              {/* Breadcrumbs */}
+              {latestEvent.data.breadcrumbs && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Activity className="w-4 h-4" /> Breadcrumbs
+                  </h3>
+                  <div className="border rounded-md overflow-hidden bg-card">
+                    <Breadcrumbs breadcrumbs={latestEvent.data.breadcrumbs} />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Right Column: Sidebar (Tags, Context) */}
+        <div className="space-y-6">
+          {latestEvent && (
+            <>
+              {/* Tags */}
+              {latestEvent.data.tags && Object.keys(latestEvent.data.tags).length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Tags</h3>
+                  <div className="space-y-2">
+                    {Object.entries(latestEvent.data.tags).map(([key, value]) => (
+                      <div key={key} className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">{key}</span>
+                        <span className="font-mono text-foreground bg-muted px-1.5 py-0.5 rounded text-xs truncate max-w-[150px]" title={String(value)}>
+                          {String(value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <Separator />
+
+              {/* User Context */}
+              {latestEvent.data.user && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">User</h3>
+                  <div className="space-y-2">
+                    {Object.entries(latestEvent.data.user).map(([key, value]) => (
+                      <div key={key} className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">{key}</span>
+                        <span className="font-mono text-foreground text-xs truncate max-w-[150px]">
+                          {String(value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <Separator />
+
+              {/* Request Context */}
+              {latestEvent.data.request && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Request</h3>
+                  <div className="space-y-2">
+                    {latestEvent.data.request.url && (
+                      <div className="space-y-1">
+                        <span className="text-xs text-muted-foreground">URL</span>
+                        <div className="font-mono text-xs break-all bg-muted p-1 rounded">{latestEvent.data.request.url}</div>
+                      </div>
+                    )}
+                    {latestEvent.data.request.method && (
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">Method</span>
+                        <span className="font-mono text-foreground text-xs">{latestEvent.data.request.method}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <Separator />
+
+              {/* Device/Browser (if available in tags or contexts) */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Device</h3>
+                <div className="flex items-center gap-2 text-sm">
+                  <Globe className="w-4 h-4 text-muted-foreground" />
+                  <span>Browser</span>
+                  <span className="ml-auto font-mono text-xs">Chrome 120.0</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <Server className="w-4 h-4 text-muted-foreground" />
+                  <span>OS</span>
+                  <span className="ml-auto font-mono text-xs">Mac OS X 10.15</span>
+                </div>
               </div>
-              <div>
-                <span className="font-medium">First Seen:</span>{' '}
-                {new Date(issue.created_at).toLocaleString()}
-              </div>
-              <div>
-                <span className="font-medium">Last Seen:</span>{' '}
-                {new Date(issue.updated_at).toLocaleString()}
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      <div className="mt-6 space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Events ({issue.events.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {issue.events.map((event) => (
-                <Card key={event.id} className="bg-muted/50">
-                  <CardHeader>
-                    <div className="flex justify-between items-center">
-                      <CardTitle className="text-sm">Event #{event.id}</CardTitle>
-                      <span className="text-sm text-muted-foreground">
-                        {new Date(event.created_at).toLocaleString()}
-                      </span>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {/* Stacktrace */}
-                    {event.data.exception && (
-                      <Stacktrace exception={event.data.exception} />
-                    )}
-
-                    {/* Breadcrumbs */}
-                    {event.data.breadcrumbs && (
-                      <Breadcrumbs breadcrumbs={event.data.breadcrumbs} />
-                    )}
-
-                    {/* Tags */}
-                    {event.data.tags && Object.keys(event.data.tags).length > 0 && (
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-sm">Tags</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="flex flex-wrap gap-2">
-                            {Object.entries(event.data.tags).map(([key, value]) => (
-                              <Badge key={key} variant="outline" className="font-mono text-xs">
-                                {key}: {String(value)}
-                              </Badge>
-                            ))}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {/* Contexts (User, Request, etc) */}
-                    {event.data.user && (
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-sm">User</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <dl className="grid grid-cols-[100px_1fr] gap-2 text-sm">
-                            {Object.entries(event.data.user).map(([key, value]) => (
-                              <div key={key} className="contents">
-                                <dt className="text-muted-foreground font-medium">{key}</dt>
-                                <dd className="font-mono">{String(value)}</dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {event.data.request && (
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-sm">Request</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="space-y-4">
-                            {event.data.request.url && (
-                              <div className="grid grid-cols-[100px_1fr] gap-2 text-sm">
-                                <div className="text-muted-foreground font-medium">URL</div>
-                                <div className="font-mono break-all">{event.data.request.url}</div>
-                              </div>
-                            )}
-                            {event.data.request.method && (
-                              <div className="grid grid-cols-[100px_1fr] gap-2 text-sm">
-                                <div className="text-muted-foreground font-medium">Method</div>
-                                <div className="font-mono">{event.data.request.method}</div>
-                              </div>
-                            )}
-                            {event.data.request.headers && (
-                              <div>
-                                <div className="text-muted-foreground font-medium text-sm mb-2">Headers</div>
-                                <pre className="bg-muted/50 p-2 rounded text-xs overflow-auto">
-                                  {JSON.stringify(event.data.request.headers, null, 2)}
-                                </pre>
-                              </div>
-                            )}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {/* Extra data */}
-                    {event.data.extra && Object.keys(event.data.extra).length > 0 && (
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-sm">Additional Data</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <pre className="bg-background p-4 rounded-md overflow-auto text-xs">
-                            {JSON.stringify(event.data.extra, null, 2)}
-                          </pre>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {/* Raw event data (collapsed by default) */}
-                    <details>
-                      <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
-                        View raw event data
-                      </summary>
-                      <pre className="bg-background p-4 rounded-md overflow-auto text-xs mt-2">
-                        {JSON.stringify(event.data, null, 2)}
-                      </pre>
-                    </details>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '@/lib/api';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -12,41 +11,37 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { useDebounce } from '@/lib/hooks';
-import { useAuth } from '@/context/AuthContext';
+import { Clock, BarChart2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
-const getLevelBadge = (level: number) => {
+const getLevelColor = (level: number) => {
   switch (level) {
-    case 50: return <Badge variant="destructive">Fatal</Badge>;
-    case 40: return <Badge variant="destructive">Error</Badge>;
-    case 30: return <Badge className="bg-yellow-500 hover:bg-yellow-600">Warning</Badge>;
-    case 20: return <Badge className="bg-blue-500 hover:bg-blue-600">Info</Badge>;
-    case 10: return <Badge variant="outline">Debug</Badge>;
-    default: return <Badge>Unknown</Badge>;
+    case 50: return 'bg-red-500'; // Fatal
+    case 40: return 'bg-orange-500'; // Error
+    case 30: return 'bg-yellow-500'; // Warning
+    case 20: return 'bg-blue-500'; // Info
+    case 10: return 'bg-gray-400'; // Debug
+    default: return 'bg-gray-300';
   }
 };
 
-const getStatusBadge = (status: number) => {
-  return status === 0 ?
-    <Badge variant="destructive">Unresolved</Badge> :
-    <Badge variant="secondary">Resolved</Badge>;
-};
+const getLevelLabel = (level: number) => {
+  switch (level) {
+    case 50: return 'fatal';
+    case 40: return 'error';
+    case 30: return 'warning';
+    case 20: return 'info';
+    case 10: return 'debug';
+    default: return 'unknown';
+  }
+}
 
 export function IssueList() {
   const { orgSlug } = useParams<{ orgSlug: string }>();
-  const { user } = useAuth();
-  const org = user?.organizations.find(o => o.slug === orgSlug);
 
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<string>('all');
+  const [status, setStatus] = useState<string>('0'); // Default to Unresolved
   const [level, setLevel] = useState<string>('all');
 
   const debouncedSearch = useDebounce(search, 300);
@@ -61,49 +56,27 @@ export function IssueList() {
     enabled: !!orgSlug,
   });
 
-  if (!orgSlug) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-lg text-red-500">No org selected.</div>
-      </div>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-lg">Loading issues...</div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-lg text-red-500">Error loading issues</div>
-      </div>
-    );
-  }
+  if (!orgSlug) return null;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-3xl font-bold">Issues</CardTitle>
-        <CardDescription>
-          Error tracking for Org: {org?.name} ({orgSlug})
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex gap-4 mb-6">
-          <div className="flex-1">
-            <Input
-              placeholder="Search issues..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-foreground">Issues</h1>
+      </div>
+
+      {/* Filters Bar */}
+      <div className="flex gap-2 p-2 bg-card border rounded-md shadow-sm">
+        <div className="flex-1">
+          <Input
+            placeholder="Search by title, message, or tags"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="border-none shadow-none focus-visible:ring-0 bg-transparent"
+          />
+        </div>
+        <div className="flex items-center gap-2 border-l pl-2">
           <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-[130px] border-none shadow-none focus:ring-0 h-8">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
@@ -113,7 +86,7 @@ export function IssueList() {
             </SelectContent>
           </Select>
           <Select value={level} onValueChange={setLevel}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-[110px] border-none shadow-none focus:ring-0 h-8">
               <SelectValue placeholder="Level" />
             </SelectTrigger>
             <SelectContent>
@@ -126,51 +99,93 @@ export function IssueList() {
             </SelectContent>
           </Select>
         </div>
+      </div>
 
-        {!issues || issues.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            <p className="text-lg">No issues found</p>
-            <p className="text-sm mt-2">Try adjusting your filters or send a new error</p>
+      {/* Issue List */}
+      <div className="bg-card border rounded-md shadow-sm overflow-hidden">
+        <div className="grid grid-cols-12 gap-4 p-3 border-b bg-muted/30 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <div className="col-span-6 pl-2">Issue</div>
+          <div className="col-span-2 text-center">Graph</div>
+          <div className="col-span-1 text-right">Events</div>
+          <div className="col-span-1 text-right">Users</div>
+          <div className="col-span-2 text-right pr-2">Last Seen</div>
+        </div>
+
+        {isLoading ? (
+          <div className="p-8 text-center text-muted-foreground">Loading...</div>
+        ) : error ? (
+          <div className="p-8 text-center text-red-500">Error loading issues</div>
+        ) : !issues || issues.length === 0 ? (
+          <div className="p-12 text-center text-muted-foreground">
+            <div className="flex justify-center mb-4">
+              <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                <CheckIcon className="w-6 h-6" />
+              </div>
+            </div>
+            <h3 className="text-lg font-medium text-foreground">No issues found</h3>
+            <p className="mt-1">You're doing great!</p>
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[60%]">Issue</TableHead>
-                <TableHead>Level</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Events</TableHead>
-                <TableHead>Last Seen</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {issues.map((issue) => (
-                <TableRow key={issue.id} className="hover:bg-muted/50">
-                  <TableCell>
-                    <Link
-                      to={`/${orgSlug}/issues/${issue.id}`}
-                      className="font-medium hover:underline"
-                    >
-                      {issue.title}
-                    </Link>
-                    <div className="text-sm text-muted-foreground">
-                      #{issue.id}
+          <div className="divide-y">
+            {issues.map((issue) => (
+              <div key={issue.id} className="group grid grid-cols-12 gap-4 p-3 items-center hover:bg-muted/30 transition-colors">
+                <div className="col-span-6 flex items-start gap-3 pl-2">
+                  <Checkbox className="mt-1" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className={cn("w-2 h-2 rounded-sm", getLevelColor(issue.level))} title={getLevelLabel(issue.level)} />
+                      <Link to={`/${orgSlug}/issues/${issue.id}`} className="font-medium text-primary hover:underline truncate block">
+                        {issue.title}
+                      </Link>
                     </div>
-                  </TableCell>
-                  <TableCell>{getLevelBadge(issue.level)}</TableCell>
-                  <TableCell>{getStatusBadge(issue.status)}</TableCell>
-                  <TableCell className="text-right font-mono">
-                    {issue.event_count}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {new Date(issue.updated_at).toLocaleString()}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    <div className="text-sm text-muted-foreground truncate font-mono">
+                      {/* Placeholder for culprit/file location */}
+                      {issue.culprit || 'unknown location'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="col-span-2 flex justify-center opacity-50">
+                  {/* Sparkline Placeholder */}
+                  <BarChart2 className="w-8 h-4 text-muted-foreground/50" />
+                </div>
+
+                <div className="col-span-1 text-right text-sm text-muted-foreground">
+                  {issue.event_count}
+                </div>
+
+                <div className="col-span-1 text-right text-sm text-muted-foreground">
+                  0
+                </div>
+
+                <div className="col-span-2 text-right text-sm text-muted-foreground pr-2 flex items-center justify-end gap-1">
+                  <Clock className="w-3 h-3" />
+                  {new Date(issue.updated_at).toLocaleDateString()}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
+}
+
+function CheckIcon(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
 }
