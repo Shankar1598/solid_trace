@@ -13,7 +13,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
-    command: "sh -c 'bundle && rm -f tmp/pids/server.pid && ./bin/dev -b 0.0.0.0'"
+    command: "sh -c 'rm -f tmp/pids/server.pid && bin/setup --skip-server && sleep infinity'"
     volumes:
       - ./backend:/rails
     ports:

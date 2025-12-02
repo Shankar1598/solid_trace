@@ -23,10 +23,15 @@ Rails.application.routes.draw do
         get 'issues/:id', to: 'issues#show'
         patch 'issues/:id/resolve', to: 'issues#resolve'
         patch 'issues/:id/unresolve', to: 'issues#unresolve'
-        get 'projects/:project_slug/keys', to: 'project_keys#index'
-        post 'projects/:project_slug/keys', to: 'project_keys#create'
-        put 'projects/:project_slug/keys/:id', to: 'project_keys#update'
-        delete 'projects/:project_slug/keys/:id', to: 'project_keys#destroy'
+
+        resources :projects, param: :project_slug, only: [:index, :show, :update] do
+          member do
+            get 'keys', to: 'project_keys#index'
+            post 'keys', to: 'project_keys#create'
+            put 'keys/:id', to: 'project_keys#update'
+            delete 'keys/:id', to: 'project_keys#destroy'
+          end
+        end
       end
 
       post "auth/login", to: "auth#login"

@@ -7,6 +7,10 @@ import { Register } from './components/Register';
 import { useAuth } from './context/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { DashboardLayout } from './layouts/DashboardLayout';
+import { SettingsLayout } from './layouts/SettingsLayout';
+import { OrganizationSettings } from './components/OrganizationSettings';
+import { UserSettings } from './components/UserSettings';
+import { ProjectList } from './components/ProjectList';
 
 function Home() {
   const { user } = useAuth();
@@ -36,9 +40,14 @@ export default function App() {
         <Route path="/:orgSlug/issues" element={<IssueList />} />
         <Route path="/:orgSlug/issues/:issueId" element={<IssueDetail />} />
 
-        {/* Placeholder routes for now */}
-        <Route path="/:orgSlug/projects" element={<div>Projects Page</div>} />
-        <Route path="/:orgSlug/settings" element={<div>Organization Settings</div>} />
+        {/* Projects Routes */}
+        <Route path="/:orgSlug/projects" element={<ProjectList />} />
+
+        <Route path="/:orgSlug/settings" element={<SettingsLayout />}>
+          <Route index element={<Navigate to="organization" replace />} />
+          <Route path="organization" element={<OrganizationSettings />} />
+          <Route path="user" element={<UserSettings />} />
+        </Route>
 
         <Route path="/:orgSlug/projects/:projectSlug/settings" element={<ProjectSettings />} />
       </Route>

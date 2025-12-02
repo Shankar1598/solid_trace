@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Stacktrace } from './Stacktrace';
 import { Breadcrumbs } from './Breadcrumbs';
 import {
@@ -144,128 +145,145 @@ export function IssueDetail() {
       </div>
 
       {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column: Stacktrace, Breadcrumbs */}
-        <div className="lg:col-span-2 space-y-8">
+      <Tabs defaultValue="overview" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 max-w-[400px]">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="json">JSON</TabsTrigger>
+        </TabsList>
 
-          {/* Tags (Mobile/Top view) */}
-          <div className="lg:hidden">
-            {/* ... tags ... */}
-          </div>
+        <TabsContent value="overview" className="mt-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Left Column: Stacktrace, Breadcrumbs */}
+            <div className="lg:col-span-2 space-y-8">
 
-          {latestEvent && (
-            <>
-              {/* Stacktrace */}
-              {latestEvent.data.exception && (
-                <div className="space-y-3">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <Server className="w-4 h-4" /> Exception
-                  </h3>
-                  <div className="border rounded-md overflow-hidden">
-                    <Stacktrace exception={latestEvent.data.exception} />
-                  </div>
-                </div>
-              )}
-
-              {/* Breadcrumbs */}
-              {latestEvent.data.breadcrumbs && (
-                <div className="space-y-3">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <Activity className="w-4 h-4" /> Breadcrumbs
-                  </h3>
-                  <div className="border rounded-md overflow-hidden bg-card">
-                    <Breadcrumbs breadcrumbs={latestEvent.data.breadcrumbs} />
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Right Column: Sidebar (Tags, Context) */}
-        <div className="space-y-6">
-          {latestEvent && (
-            <>
-              {/* Tags */}
-              {latestEvent.data.tags && Object.keys(latestEvent.data.tags).length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Tags</h3>
-                  <div className="space-y-2">
-                    {Object.entries(latestEvent.data.tags).map(([key, value]) => (
-                      <div key={key} className="flex justify-between items-center text-sm">
-                        <span className="text-muted-foreground">{key}</span>
-                        <span className="font-mono text-foreground bg-muted px-1.5 py-0.5 rounded text-xs truncate max-w-[150px]" title={String(value)}>
-                          {String(value)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <Separator />
-
-              {/* User Context */}
-              {latestEvent.data.user && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">User</h3>
-                  <div className="space-y-2">
-                    {Object.entries(latestEvent.data.user).map(([key, value]) => (
-                      <div key={key} className="flex justify-between items-center text-sm">
-                        <span className="text-muted-foreground">{key}</span>
-                        <span className="font-mono text-foreground text-xs truncate max-w-[150px]">
-                          {String(value)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <Separator />
-
-              {/* Request Context */}
-              {latestEvent.data.request && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Request</h3>
-                  <div className="space-y-2">
-                    {latestEvent.data.request.url && (
-                      <div className="space-y-1">
-                        <span className="text-xs text-muted-foreground">URL</span>
-                        <div className="font-mono text-xs break-all bg-muted p-1 rounded">{latestEvent.data.request.url}</div>
-                      </div>
-                    )}
-                    {latestEvent.data.request.method && (
-                      <div className="flex justify-between items-center text-sm">
-                        <span className="text-muted-foreground">Method</span>
-                        <span className="font-mono text-foreground text-xs">{latestEvent.data.request.method}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <Separator />
-
-              {/* Device/Browser (if available in tags or contexts) */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Device</h3>
-                <div className="flex items-center gap-2 text-sm">
-                  <Globe className="w-4 h-4 text-muted-foreground" />
-                  <span>Browser</span>
-                  <span className="ml-auto font-mono text-xs">Chrome 120.0</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Server className="w-4 h-4 text-muted-foreground" />
-                  <span>OS</span>
-                  <span className="ml-auto font-mono text-xs">Mac OS X 10.15</span>
-                </div>
+              {/* Tags (Mobile/Top view) */}
+              <div className="lg:hidden">
+                {/* ... tags ... */}
               </div>
 
-            </>
-          )}
-        </div>
-      </div>
+              {latestEvent && (
+                <>
+                  {/* Stacktrace */}
+                  {latestEvent.data.exception && (
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <Server className="w-4 h-4" /> Exception
+                      </h3>
+                      <div className="border rounded-md overflow-hidden">
+                        <Stacktrace exception={latestEvent.data.exception} />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Breadcrumbs */}
+                  {latestEvent.data.breadcrumbs && (
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <Activity className="w-4 h-4" /> Breadcrumbs
+                      </h3>
+                      <div className="border rounded-md overflow-hidden bg-card">
+                        <Breadcrumbs breadcrumbs={latestEvent.data.breadcrumbs} />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Right Column: Sidebar (Tags, Context) */}
+            <div className="space-y-6">
+              {latestEvent && (
+                <>
+                  {/* Tags */}
+                  {latestEvent.data.tags && Object.keys(latestEvent.data.tags).length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Tags</h3>
+                      <div className="space-y-2">
+                        {Object.entries(latestEvent.data.tags).map(([key, value]) => (
+                          <div key={key} className="flex justify-between items-center text-sm">
+                            <span className="text-muted-foreground">{key}</span>
+                            <span className="font-mono text-foreground bg-muted px-1.5 py-0.5 rounded text-xs truncate max-w-[150px]" title={String(value)}>
+                              {String(value)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <Separator />
+
+                  {/* User Context */}
+                  {latestEvent.data.user && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">User</h3>
+                      <div className="space-y-2">
+                        {Object.entries(latestEvent.data.user).map(([key, value]) => (
+                          <div key={key} className="flex justify-between items-center text-sm">
+                            <span className="text-muted-foreground">{key}</span>
+                            <span className="font-mono text-foreground text-xs truncate max-w-[150px]">
+                              {String(value)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <Separator />
+
+                  {/* Request Context */}
+                  {latestEvent.data.request && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Request</h3>
+                      <div className="space-y-2">
+                        {latestEvent.data.request.url && (
+                          <div className="space-y-1">
+                            <span className="text-xs text-muted-foreground">URL</span>
+                            <div className="font-mono text-xs break-all bg-muted p-1 rounded">{latestEvent.data.request.url}</div>
+                          </div>
+                        )}
+                        {latestEvent.data.request.method && (
+                          <div className="flex justify-between items-center text-sm">
+                            <span className="text-muted-foreground">Method</span>
+                            <span className="font-mono text-foreground text-xs">{latestEvent.data.request.method}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <Separator />
+
+                  {/* Device/Browser (if available in tags or contexts) */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Device</h3>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Globe className="w-4 h-4 text-muted-foreground" />
+                      <span>Browser</span>
+                      <span className="ml-auto font-mono text-xs">Chrome 120.0</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Server className="w-4 h-4 text-muted-foreground" />
+                      <span>OS</span>
+                      <span className="ml-auto font-mono text-xs">Mac OS X 10.15</span>
+                    </div>
+                  </div>
+
+                </>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="json" className="mt-6">
+          <div className="rounded-md border bg-muted/50 p-4 overflow-auto">
+            <pre className="text-sm font-mono whitespace-pre-wrap break-all">
+              {latestEvent ? JSON.stringify(latestEvent.data, null, 2) : 'No event data available'}
+            </pre>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '@/lib/api';
@@ -6,37 +6,63 @@ import type { ProjectKey } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export function ProjectSettings() {
-  const { projectId } = useParams<{ projectId: string }>();
-  const id = Number(projectId) || 1; // Default to 1 if not present
+  const { orgSlug, projectSlug } = useParams<{ orgSlug: string; projectSlug: string }>();
   const queryClient = useQueryClient();
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [projectName, setProjectName] = useState('');
 
-  const { data: keys, isLoading } = useQuery({
-    queryKey: ['projectKeys', id],
-    queryFn: () => api.getProjectKeys(id),
+  // Fetch Project Details
+  const { data: project, isLoading: isProjectLoading } = useQuery({
+    queryKey: ['project', orgSlug, projectSlug],
+    queryFn: () => api.getProject(orgSlug!, projectSlug!),
+    enabled: !!orgSlug && !!projectSlug,
+  });
+
+  // Fetch Project Keys
+  const { data: keys, isLoading: isKeysLoading } = useQuery({
+    queryKey: ['projectKeys', orgSlug, projectSlug],
+    queryFn: () => api.getProjectKeys(orgSlug!, projectSlug!),
+    enabled: !!orgSlug && !!projectSlug,
+  });
+
+  // Update local state when project data is loaded
+  useEffect(() => {
+    if (project) {
+      setProjectName(project.name);
+    }
+  }, [project]);
+
+  const updateProjectMutation = useMutation({
+    mutationFn: (name: string) => api.updateProject(orgSlug!, projectSlug!, { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', orgSlug, projectSlug] });
+      // toast({ title: "Project updated" });
+    },
   });
 
   const createKeyMutation = useMutation({
-    mutationFn: () => api.createProjectKey(id),
+    mutationFn: () => api.createProjectKey(orgSlug!, projectSlug!),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['projectKeys', id] });
+      queryClient.invalidateQueries({ queryKey: ['projectKeys', orgSlug, projectSlug] });
     },
   });
 
   const rotateKeyMutation = useMutation({
-    mutationFn: (keyId: number) => api.rotateProjectKey(keyId),
+    mutationFn: (keyId: number) => api.rotateProjectKey(orgSlug!, projectSlug!, keyId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['projectKeys', id] });
+      queryClient.invalidateQueries({ queryKey: ['projectKeys', orgSlug, projectSlug] });
     },
   });
 
   const deleteKeyMutation = useMutation({
-    mutationFn: (keyId: number) => api.deleteProjectKey(keyId),
+    mutationFn: (keyId: number) => api.deleteProjectKey(orgSlug!, projectSlug!, keyId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['projectKeys', id] });
+      queryClient.invalidateQueries({ queryKey: ['projectKeys', orgSlug, projectSlug] });
     },
   });
 
@@ -46,8 +72,12 @@ export function ProjectSettings() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  if (isLoading) {
+  if (isProjectLoading || isKeysLoading) {
     return <div className="p-6">Loading settings...</div>;
+  }
+
+  if (!project) {
+    return <div className="p-6">Project not found</div>;
   }
 
   return (
@@ -57,12 +87,46 @@ export function ProjectSettings() {
           <h1 className="text-3xl font-bold">Project Settings</h1>
           <p className="text-muted-foreground">Manage your project configuration and keys</p>
         </div>
-        <Link to="/">
-          <Button variant="outline">← Back to Issues</Button>
+        <Link to={`/${orgSlug}/projects`}>
+          <Button variant="outline">← Back to Projects</Button>
         </Link>
       </div>
 
       <div className="grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>General Settings</CardTitle>
+            <CardDescription>Basic project configuration</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="grid gap-2">
+                <Label htmlFor="projectName">Project Name</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="projectName"
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                  />
+                  <Button
+                    onClick={() => updateProjectMutation.mutate(projectName)}
+                    disabled={updateProjectMutation.isPending || projectName === project.name}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Platform</Label>
+                <div>
+                  <Badge variant="secondary">{project.platform || 'Unknown'}</Badge>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -141,46 +205,6 @@ export function ProjectSettings() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>General Settings</CardTitle>
-            <CardDescription>Basic project configuration</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">Project Name</label>
-                <div className="p-2 border rounded-md bg-muted/50 text-muted-foreground">
-                  Garnet Project
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Project name cannot be changed in this version.
-                </p>
-              </div>
-
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">Platform</label>
-                <div className="flex gap-2">
-                  <Badge variant="secondary">Ruby</Badge>
-                  <Badge variant="secondary">JavaScript</Badge>
-                  <Badge variant="secondary">Python</Badge>
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">Debug</label>
-                <div className="flex gap-2">
-                  <Button
-                    variant="destructive"
-                    onClick={() => { throw new Error("This is a test error from the Garnet Frontend!"); }}
-                  >
-                    Trigger Frontend Error
-                  </Button>
-                </div>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>

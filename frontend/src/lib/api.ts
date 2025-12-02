@@ -24,6 +24,14 @@ export interface IssueDetail extends Issue {
   events: IssueEvent[];
 }
 
+export interface Project {
+  id: number;
+  name: string;
+  slug: string;
+  platform?: string;
+  organization_id: number;
+  created_at: string;
+}
 
 export interface ProjectKey {
   id: number;
@@ -55,6 +63,21 @@ export interface AuthResponse {
 }
 
 export const api = {
+  getProjects: async (orgSlug: string): Promise<Project[]> => {
+    const response = await axios.get(`${API_BASE_URL}/${orgSlug}/projects`);
+    return response.data;
+  },
+
+  getProject: async (orgSlug: string, projectSlug: string): Promise<Project> => {
+    const response = await axios.get(`${API_BASE_URL}/${orgSlug}/projects/${projectSlug}`);
+    return response.data;
+  },
+
+  updateProject: async (orgSlug: string, projectSlug: string, data: Partial<Project>): Promise<Project> => {
+    const response = await axios.put(`${API_BASE_URL}/${orgSlug}/projects/${projectSlug}`, { project: data });
+    return response.data;
+  },
+
   getProjectKeys: async (orgSlug: string, projectSlug: string): Promise<ProjectKey[]> => {
     const response = await axios.get(`${API_BASE_URL}/${orgSlug}/projects/${projectSlug}/keys`);
     return response.data;

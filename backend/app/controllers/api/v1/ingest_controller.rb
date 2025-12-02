@@ -68,23 +68,46 @@ module Api
       end
 
       def process_event(data)
-        # Create Issue and IssueEvent
-        # This is a simplified version. Real version needs grouping logic.
+        # Extract grouping attributes
+        title = data["message"].presence ||
+                (data["exception"] && data["exception"]["values"]&.first&.fetch("type", nil)).presence ||
+                "Unknown Error"
 
-        title = data["message"] || (data["exception"] && data["exception"]["values"]&.first&.fetch("type")) || "Unknown Error"
-        level = data["level"] || "error"
+        # Extract culprit (location/transaction where error occurred)
+        culprit = data["culprit"].presence ||
+                  data["transaction"].presence ||
+                  (data["exception"] && data["exception"]["values"]&.first&.fetch("module", nil)).presence ||
+                  "unknown"
 
-        # Find or create issue
-        # Simple grouping by title for now
-        issue = @project.issues.find_or_create_by(title: title) do |i|
-          i.level = level_to_int(level)
-          i.status = 0 # unresolved
-        end
+        # Extract event type
+        event_type = data["level"] || "error"
 
-        IssueEvent.create!(
-          issue: issue,
-          data: data
+        # Extract custom fingerprint array if provided
+        custom_fingerprint = data["fingerprint"]
+
+        # Compute hash for grouping
+        hash = Issue.compute_hash(
+          title: title,
+          culprit: culprit,
+          event_type: event_type,
+          fingerprint: custom_fingerprint
         )
+
+        # Find or create issue using the hash
+        issue = Issue.find_or_create_by_hash(
+          project: @project,
+          hash: hash,
+          attributes: {
+            title: title,
+            culprit: culprit,
+            event_type: event_type,
+            level: level_to_int(event_type),
+            status: 0 # unresolved
+          }
+        )
+
+        # Create issue event
+        issue.issue_events.create!(data: data)
       end
 
       def level_to_int(level)

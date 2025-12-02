@@ -10,9 +10,18 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_01_205649) do
+ActiveRecord::Schema[8.1].define(version: 2025_12_02_160610) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+
+  create_table "environments", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "name"
+    t.bigint "project_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["project_id", "name"], name: "index_environments_on_project_id_and_name", unique: true
+    t.index ["project_id"], name: "index_environments_on_project_id"
+  end
 
   create_table "issue_events", force: :cascade do |t|
     t.datetime "created_at", null: false
@@ -22,13 +31,28 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_01_205649) do
     t.index ["issue_id"], name: "index_issue_events_on_issue_id"
   end
 
+  create_table "issue_hashes", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "fingerprint_hash"
+    t.bigint "issue_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["fingerprint_hash"], name: "index_issue_hashes_on_fingerprint_hash", unique: true
+    t.index ["issue_id"], name: "index_issue_hashes_on_issue_id"
+  end
+
   create_table "issues", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.string "culprit"
+    t.bigint "environment_id"
+    t.string "event_type"
+    t.string "fingerprint"
     t.integer "level"
     t.bigint "project_id", null: false
     t.integer "status"
     t.string "title"
     t.datetime "updated_at", null: false
+    t.index ["environment_id"], name: "index_issues_on_environment_id"
+    t.index ["fingerprint"], name: "index_issues_on_fingerprint"
     t.index ["project_id"], name: "index_issues_on_project_id"
   end
 
@@ -79,7 +103,10 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_01_205649) do
     t.index ["email"], name: "index_users_on_email", unique: true
   end
 
+  add_foreign_key "environments", "projects"
   add_foreign_key "issue_events", "issues"
+  add_foreign_key "issue_hashes", "issues"
+  add_foreign_key "issues", "environments"
   add_foreign_key "issues", "projects"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
