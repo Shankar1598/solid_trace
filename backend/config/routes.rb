@@ -1,0 +1,50 @@
+Rails.application.routes.draw do
+  # Define your application routes per the DSL in https://guides.rubyonrails.org/routing.html
+
+  namespace :api do
+    scope "0" do
+      # Sentry uses /api/0/ as the prefix usually, but we can map it
+      resources :projects do
+        member do
+          post "store", to: "v1/ingest#store"
+          post "envelope", to: "v1/ingest#envelope"
+        end
+      end
+    end
+
+    # Also support /api/:project_id/store directly if needed, but Sentry usually does /api/:id/store/
+    post "/:project_id/store", to: "v1/ingest#store"
+    post "/:project_id/envelope", to: "v1/ingest#envelope"
+
+    # Management API
+    namespace :v1 do
+      scope '/:org_slug' do
+        get 'issues', to: 'issues#index'
+        get 'issues/:id', to: 'issues#show'
+        patch 'issues/:id/resolve', to: 'issues#resolve'
+        patch 'issues/:id/unresolve', to: 'issues#unresolve'
+        get 'projects/:project_slug/keys', to: 'project_keys#index'
+        post 'projects/:project_slug/keys', to: 'project_keys#create'
+        put 'projects/:project_slug/keys/:id', to: 'project_keys#update'
+        delete 'projects/:project_slug/keys/:id', to: 'project_keys#destroy'
+      end
+
+      post "auth/login", to: "auth#login"
+      post "auth/register", to: "auth#register"
+      get "auth/me", to: "auth#me"
+
+      # get "debug/error", to: "debug#trigger_error"
+    end
+  end
+
+  # Reveal health status on /up that returns 200 if the app boots with no exceptions, otherwise 500.
+  # Can be used by load balancers and uptime monitors to verify that the app is live.
+  get "up" => "rails/health#show", as: :rails_health_check
+
+  # Render dynamic PWA files from app/views/pwa/* (remember to link manifest in application.html.erb)
+  # get "manifest" => "rails/pwa#manifest", as: :pwa_manifest
+  # get "service-worker" => "rails/pwa#service_worker", as: :pwa_service_worker
+
+  # Defines the root path route ("/")
+  # root "posts#index"
+end
