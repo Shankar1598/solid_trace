@@ -16,6 +16,7 @@ services:
     command: "sh -c 'rm -f tmp/pids/server.pid && bin/setup --skip-server && sleep infinity'"
     volumes:
       - ./backend:/rails
+      - backend_home:/root
     ports:
       - "3000:3000"
     environment:
@@ -38,3 +39,4 @@ services:
 volumes:
   postgres_data:
   node_modules:
+  backend_home:

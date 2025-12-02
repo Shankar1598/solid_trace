@@ -65,6 +65,11 @@ USER 1000:1000
 COPY --chown=rails:rails --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
 COPY --chown=rails:rails --from=build /rails /rails
 
+# Copied from: https://dev.37signals.com/yjit-is-fast/
+# Disabling YJIT during startup to reduce boot time, will be enabled via initializer
+# Adjust the memory size based on YJIT stats
+ENV RUBYOPT="--yjit-disable --yjit-exec-mem-size=192"
+
 # Entrypoint prepares the database.
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
 
