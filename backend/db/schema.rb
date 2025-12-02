@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_02_160610) do
+ActiveRecord::Schema[8.1].define(version: 2025_12_02_184740) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -31,13 +31,13 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_02_160610) do
     t.index ["issue_id"], name: "index_issue_events_on_issue_id"
   end
 
-  create_table "issue_hashes", force: :cascade do |t|
+  create_table "issue_fingerprints", force: :cascade do |t|
     t.datetime "created_at", null: false
-    t.string "fingerprint_hash"
+    t.string "fingerprint"
     t.bigint "issue_id", null: false
     t.datetime "updated_at", null: false
-    t.index ["fingerprint_hash"], name: "index_issue_hashes_on_fingerprint_hash", unique: true
-    t.index ["issue_id"], name: "index_issue_hashes_on_issue_id"
+    t.index ["issue_id", "fingerprint"], name: "index_issue_fingerprints_on_issue_id_and_fingerprint", unique: true
+    t.index ["issue_id"], name: "index_issue_fingerprints_on_issue_id"
   end
 
   create_table "issues", force: :cascade do |t|
@@ -105,7 +105,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_02_160610) do
 
   add_foreign_key "environments", "projects"
   add_foreign_key "issue_events", "issues"
-  add_foreign_key "issue_hashes", "issues"
+  add_foreign_key "issue_fingerprints", "issues"
   add_foreign_key "issues", "environments"
   add_foreign_key "issues", "projects"
   add_foreign_key "organizations_users", "organizations"

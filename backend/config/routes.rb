@@ -13,23 +13,23 @@ Rails.application.routes.draw do
     end
 
     # Also support /api/:project_id/store directly if needed, but Sentry usually does /api/:id/store/
-    post "/:project_id/store", to: "v1/ingest#store"
-    post "/:project_id/envelope", to: "v1/ingest#envelope"
+    post "/:project_id/store", to: "v1/ingest#store", as: :ingest_store
+    post "/:project_id/envelope", to: "v1/ingest#envelope", as: :ingest_envelope
 
     # Management API
     namespace :v1 do
-      scope '/:org_slug' do
-        get 'issues', to: 'issues#index'
-        get 'issues/:id', to: 'issues#show'
-        patch 'issues/:id/resolve', to: 'issues#resolve'
-        patch 'issues/:id/unresolve', to: 'issues#unresolve'
+      scope "/:org_slug" do
+        get "issues", to: "issues#index", as: :issues
+        get "issues/:id", to: "issues#show", as: :issue
+        patch "issues/:id/resolve", to: "issues#resolve", as: :resolve_issue
+        patch "issues/:id/unresolve", to: "issues#unresolve", as: :unresolve_issue
 
         resources :projects, param: :project_slug, only: [:index, :show, :update] do
           member do
-            get 'keys', to: 'project_keys#index'
-            post 'keys', to: 'project_keys#create'
-            put 'keys/:id', to: 'project_keys#update'
-            delete 'keys/:id', to: 'project_keys#destroy'
+            get "keys", to: "project_keys#index"
+            post "keys", to: "project_keys#create"
+            put "keys/:id", to: "project_keys#update"
+            delete "keys/:id", to: "project_keys#destroy"
           end
         end
       end
