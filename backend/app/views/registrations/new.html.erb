@@ -1,0 +1,42 @@
+<div class="flex items-center justify-center min-h-screen bg-background p-4">
+  <%= render Shadcn::CardComponent.new(class: "w-[350px]") do |card| %>
+    <% card.with_header do |header| %>
+      <% header.with_title { "Sign Up" } %>
+      <% header.with_description { "Create an account to get started" } %>
+    <% end %>
+    <% card.with_content do %>
+      <%= form_with model: @user, url: signup_path, class: "grid gap-4" do |f| %>
+        <% if @user.errors.any? %>
+          <div class="text-destructive text-sm">
+            <ul>
+              <% @user.errors.full_messages.each do |message| %>
+                <li><%= message %></li>
+              <% end %>
+            </ul>
+          </div>
+        <% end %>
+        <div class="grid gap-2">
+          <%= render Shadcn::LabelComponent.new(for: "user_name") { "Name" } %>
+          <%= render Shadcn::InputComponent.new(name: "user[name]", id: "user_name", placeholder: "John Doe", required: true) %>
+        </div>
+        <div class="grid gap-2">
+          <%= render Shadcn::LabelComponent.new(for: "user_email") { "Email" } %>
+          <%= render Shadcn::InputComponent.new(name: "user[email]", id: "user_email", type: "email", placeholder: "m@example.com", required: true) %>
+        </div>
+        <div class="grid gap-2">
+          <%= render Shadcn::LabelComponent.new(for: "user_password") { "Password" } %>
+          <%= render Shadcn::InputComponent.new(name: "user[password]", id: "user_password", type: "password", required: true) %>
+        </div>
+        <div class="grid gap-2">
+          <%= render Shadcn::LabelComponent.new(for: "user_password_confirmation") { "Confirm Password" } %>
+          <%= render Shadcn::InputComponent.new(name: "user[password_confirmation]", id: "user_password_confirmation", type: "password", required: true) %>
+        </div>
+        <%= render Shadcn::ButtonComponent.new(type: "submit", class: "w-full") { "Create account" } %>
+      <% end %>
+      <div class="mt-4 text-center text-sm">
+        Already have an account?
+        <%= link_to "Login", login_path, class: "underline" %>
+      </div>
+    <% end %>
+  <% end %>
+</div>

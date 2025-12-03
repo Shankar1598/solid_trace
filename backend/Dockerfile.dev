@@ -9,6 +9,15 @@ RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y curl libjemalloc2 libvips postgresql-client build-essential git libpq-dev libyaml-dev pkg-config && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+SHELL ["/bin/bash", "--login", "-c"]
+RUN /bin/bash -c 'source ~/.nvm/nvm.sh && nvm install 24 && nvm alias default 24 && nvm use default'
+RUN /bin/bash -c 'source ~/.nvm/nvm.sh && node -v' # Should print "v24.11.1".
+# Add nvm source to global bashrc for interactive shells
+RUN echo 'export NVM_DIR="$HOME/.nvm"' >> /etc/bash.bashrc && \
+    echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /etc/bash.bashrc && \
+    echo '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"' >> /etc/bash.bashrc
+
 # Set development environment
 ENV RAILS_ENV="development" \
     BUNDLE_PATH="/usr/local/bundle"

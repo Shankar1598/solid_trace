@@ -1,0 +1,33 @@
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <h2 class="text-3xl font-bold tracking-tight">Dashboard</h2>
+    <%= link_to "New Project", new_project_path(org_slug: current_organization.slug), class: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2" %>
+  </div>
+
+  <% if @projects.any? %>
+    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <% @projects.each do |project| %>
+        <%= render Shadcn::CardComponent.new do |card| %>
+          <% card.with_header do |header| %>
+            <% header.with_title { project.name } %>
+            <% header.with_description { "Key: #{project.project_keys.first&.public_key || 'No key'}" } %>
+          <% end %>
+          <% card.with_content do %>
+            <div class="text-2xl font-bold">0 Issues</div>
+            <p class="text-xs text-muted-foreground">
+              +0% from last month
+            </p>
+          <% end %>
+        <% end %>
+      <% end %>
+    </div>
+  <% else %>
+    <div class="flex flex-col items-center justify-center h-[400px] border border-dashed rounded-lg">
+      <h3 class="text-lg font-semibold">No projects found</h3>
+      <p class="text-muted-foreground">Get started by creating a new project.</p>
+      <div class="mt-4">
+        <%= link_to "Create Project", new_project_path(org_slug: current_organization.slug), class: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2" %>
+      </div>
+    </div>
+  <% end %>
+</div>

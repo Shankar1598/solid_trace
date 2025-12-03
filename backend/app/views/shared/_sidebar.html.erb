@@ -1,0 +1,26 @@
+<div class="hidden border-r bg-[#2b1c3d] text-white md:block w-[250px] min-h-screen">
+  <div class="flex h-full max-h-screen flex-col gap-2">
+    <div class="flex h-14 items-center border-b border-white/10 px-4 lg:h-[60px] lg:px-6">
+      <%= link_to root_path, class: "flex items-center gap-2 font-bold text-lg tracking-tight" do %>
+        <span class="">Garnet</span>
+      <% end %>
+    </div>
+    <div class="flex-1 py-4">
+      <nav class="grid items-start px-2 text-sm font-medium lg:px-4 gap-1">
+
+        <%= link_to issues_path(org_slug: current_organization&.slug), class: "flex items-center gap-3 rounded-md px-3 py-2 transition-all hover:bg-white/10 hover:text-white #{current_organization && current_page?(issues_path(org_slug: current_organization.slug)) ? 'bg-white/10 text-white' : 'text-white/70'}" do %>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-alert-circle"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+          Issues
+        <% end %>
+        <%= link_to projects_path(org_slug: current_organization&.slug), class: "flex items-center gap-3 rounded-md px-3 py-2 transition-all hover:bg-white/10 hover:text-white #{current_organization && current_page?(projects_path(org_slug: current_organization.slug)) ? 'bg-white/10 text-white' : 'text-white/70'}" do %>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folder"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+          Projects
+        <% end %>
+        <%= link_to edit_organization_path(org_slug: current_organization&.slug), class: "flex items-center gap-3 rounded-md px-3 py-2 transition-all hover:bg-white/10 hover:text-white #{current_organization && current_page?(edit_organization_path(org_slug: current_organization.slug)) ? 'bg-white/10 text-white' : 'text-white/70'}" do %>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.39a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          Settings
+        <% end %>
+      </nav>
+    </div>
+  </div>
+</div>

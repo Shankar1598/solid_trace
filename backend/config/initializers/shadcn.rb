@@ -1,0 +1,15 @@
+# frozen_string_literal: true
+
+# shadcn-rails configuration
+Shadcn::Rails.configure do |config|
+  # Base color theme
+  # Available themes: neutral, slate, stone, zinc, gray
+  config.base_color = "neutral"
+
+  # Dark mode strategy
+  # Available strategies: :class, :media, :both
+  # - :class - Uses .dark class on <html> for manual toggling
+  # - :media - Uses @media (prefers-color-scheme: dark) for system preference
+  # - :both - Includes both for maximum flexibility
+  config.dark_mode = :class
+end

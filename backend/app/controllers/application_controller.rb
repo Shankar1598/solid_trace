@@ -1,21 +1,23 @@
-require 'jwt'
-
-class ApplicationController < ActionController::API
-  before_action :authenticate_request
-
-  attr_reader :current_user
+class ApplicationController < ActionController::Base
+  helper_method :current_user
+  before_action :authenticate_user!
 
   private
 
-  def authenticate_request
-    header = request.headers['Authorization']
-    header = header.split(' ').last if header
+  def current_user
+    @current_user ||= User.first
+  end
 
-    begin
-      decoded = JWT.decode(header, Rails.application.secret_key_base)[0]
-      @current_user = User.find(decoded['user_id'])
-    rescue ActiveRecord::RecordNotFound, JWT::DecodeError
-      render json: { error: 'Unauthorized' }, status: :unauthorized
-    end
+  def current_organization
+    @current_organization ||= if params[:org_slug]
+                                Organization.find_by(slug: params[:org_slug])
+                              else
+                                current_user&.organizations&.first
+                              end
+  end
+  helper_method :current_organization
+
+  def authenticate_user!
+    current_user
   end
 end

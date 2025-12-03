@@ -121,6 +121,10 @@ export const api = {
     await axios.patch(`${API_BASE_URL}/${orgSlug}/issues/${issueId}/unresolve`);
   },
 
+  inviteUser: async (orgSlug: string, email: string): Promise<void> => {
+    await axios.post(`${API_BASE_URL}/${orgSlug}/invite`, { email });
+  },
+
   // Auth
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
     const response = await axios.post(`${API_BASE_URL}/auth/login`, credentials);
@@ -142,7 +146,7 @@ export const api = {
 
 // Add interceptor to inject token
 axios.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('token') || 'dummy_token';
   if (token && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${token}`;
   }

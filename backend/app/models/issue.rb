@@ -42,4 +42,16 @@ class Issue < ApplicationRecord
       issue
     end
   end
+  def last_seen_at
+    issue_events.maximum(:created_at) || created_at
+  end
+
+  def events_count
+    issue_events.count
+  end
+
+  def users_count
+    # Placeholder for now, as user data is in jsonb
+    0
+  end
 end

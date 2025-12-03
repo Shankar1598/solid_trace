@@ -7,18 +7,18 @@ import App from './App'
 import { AuthProvider } from './context/AuthContext'
 import * as Sentry from "@sentry/react";
 
-Sentry.init({
-  dsn: "http://testkey123@localhost:3000/1",
-  integrations: [
-    Sentry.browserTracingIntegration(),
-    Sentry.replayIntegration(),
-  ],
-  // Tracing
-  tracesSampleRate: 1.0,
-  // Session Replay
-  replaysSessionSampleRate: 0.1,
-  replaysOnErrorSampleRate: 1.0,
-});
+// Sentry.init({
+//   dsn: "http://testkey123@localhost:3000/1",
+//   integrations: [
+//     Sentry.browserTracingIntegration(),
+//     Sentry.replayIntegration(),
+//   ],
+//   // Tracing
+//   tracesSampleRate: 1.0,
+//   // Session Replay
+//   replaysSessionSampleRate: 0.1,
+//   replaysOnErrorSampleRate: 1.0,
+// });
 
 const queryClient = new QueryClient({
   defaultOptions: {

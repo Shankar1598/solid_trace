@@ -1,0 +1,80 @@
+<%= render "shared/settings_layout" do %>
+  <div class="space-y-6 max-w-2xl mx-auto">
+    <div>
+      <h3 class="text-lg font-medium">Organization Settings</h3>
+      <p class="text-sm text-muted-foreground">
+        Manage your organization details and preferences.
+      </p>
+    </div>
+
+    <%= render Shadcn::CardComponent.new do |card| %>
+      <% card.with_header do |header| %>
+        <% header.with_title { "General Information" } %>
+        <% header.with_description { "Basic details about your organization." } %>
+      <% end %>
+      <% card.with_content do %>
+        <%= form_with model: @organization, url: edit_organization_path(org_slug: @organization.slug), method: :patch, class: "space-y-4" do |f| %>
+          <div class="grid gap-2">
+            <%= render Shadcn::LabelComponent.new(for: "organization_name") { "Organization Name" } %>
+            <%= render Shadcn::InputComponent.new(
+              name: "organization[name]",
+              id: "organization_name",
+              value: @organization.name,
+              placeholder: "e.g. Acme Corp"
+            ) %>
+          </div>
+          <div class="grid gap-2">
+            <%= render Shadcn::LabelComponent.new(for: "organization_slug") { "Organization Slug" } %>
+            <%= render Shadcn::InputComponent.new(
+              name: "organization[slug]",
+              id: "organization_slug",
+              value: @organization.slug,
+              disabled: true,
+              class: "bg-muted"
+            ) %>
+            <p class="text-[0.8rem] text-muted-foreground">
+              The slug is used in URLs and cannot be changed.
+            </p>
+          </div>
+          <div class="flex justify-end">
+            <%= render Shadcn::ButtonComponent.new(type: :submit) { "Save Changes" } %>
+          </div>
+        <% end %>
+      <% end %>
+    <% end %>
+
+    <%= render Shadcn::CardComponent.new do |card| %>
+      <% card.with_header do |header| %>
+        <% header.with_title { "Members" } %>
+        <% header.with_description { "Invite new members to your organization." } %>
+      <% end %>
+      <% card.with_content do %>
+        <%= form_with url: invite_organization_user_path(org_slug: @organization.slug), method: :post, class: "space-y-4" do |f| %>
+          <div class="grid gap-2">
+            <%= render Shadcn::LabelComponent.new(for: "invite_email") { "Email Address" } %>
+            <div class="flex gap-2">
+              <%= render Shadcn::InputComponent.new(
+                name: "email",
+                id: "invite_email",
+                type: "email",
+                placeholder: "colleague@example.com",
+                required: true
+              ) %>
+              <%= render Shadcn::ButtonComponent.new(type: :submit) { "Invite" } %>
+            </div>
+          </div>
+          <% if flash[:notice] %>
+            <div class="text-sm text-green-600">
+              <%= flash[:notice] %>
+            </div>
+          <% end %>
+          <% if flash[:alert] %>
+            <div class="text-sm text-red-600">
+              <%= flash[:alert] %>
+            </div>
+          <% end %>
+        <% end %>
+      <% end %>
+    <% end %>
+  </div>
+<% end %>

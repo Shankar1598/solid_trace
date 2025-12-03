@@ -1,0 +1,26 @@
+<div class="flex items-center justify-center min-h-[60vh]">
+  <%= render Shadcn::CardComponent.new(class: "w-[450px]") do |card| %>
+    <% card.with_header do |header| %>
+      <% header.with_title { "Create New Project" } %>
+      <% header.with_description { "Add a new project to your organization" } %>
+    <% end %>
+    <% card.with_content do %>
+      <%= form_with model: @project, class: "grid gap-4" do |f| %>
+        <% if @project.errors.any? %>
+          <div class="text-destructive text-sm">
+            <ul>
+              <% @project.errors.full_messages.each do |message| %>
+                <li><%= message %></li>
+              <% end %>
+            </ul>
+          </div>
+        <% end %>
+        <div class="grid gap-2">
+          <%= render Shadcn::LabelComponent.new(for: "project_name") { "Project Name" } %>
+          <%= render Shadcn::InputComponent.new(name: "project[name]", id: "project_name", placeholder: "My Awesome App", required: true) %>
+        </div>
+        <%= render Shadcn::ButtonComponent.new(type: "submit", class: "w-full") { "Create Project" } %>
+      <% end %>
+    <% end %>
+  <% end %>
+</div>

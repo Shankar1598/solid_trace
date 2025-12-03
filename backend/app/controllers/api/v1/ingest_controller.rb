@@ -1,7 +1,7 @@
 module Api
   module V1
     class IngestController < ApplicationController
-      skip_before_action :authenticate_request
+      # skip_before_action :authenticate_request
 
       before_action :authenticate_project
 

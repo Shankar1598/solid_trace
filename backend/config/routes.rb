@@ -1,4 +1,26 @@
 Rails.application.routes.draw do
+  # Authentication
+  get "login", to: "sessions#new"
+  post "login", to: "sessions#create"
+  delete "logout", to: "sessions#destroy"
+  get "signup", to: "registrations#new"
+  post "signup", to: "registrations#create"
+
+  scope "/:org_slug" do
+    resources :issues, only: [:index, :show]
+    resources :projects, only: [:index, :new, :create, :show]
+
+    get "settings/organization", to: "organizations#edit", as: :edit_organization
+    patch "settings/organization", to: "organizations#update"
+    post "settings/organization/invite", to: "organizations#invite", as: :invite_organization_user
+
+    get "settings/user", to: "users#edit", as: :edit_user
+    patch "settings/user", to: "users#update"
+  end
+
+  # Keep root as dashboard for now, but maybe redirect to org dashboard later
+  root "dashboard#index"
+
   # Define your application routes per the DSL in https://guides.rubyonrails.org/routing.html
 
   namespace :api do
@@ -32,6 +54,8 @@ Rails.application.routes.draw do
             delete "keys/:id", to: "project_keys#destroy"
           end
         end
+
+        post "invite", to: "organization_users#create"
       end
 
       post "auth/login", to: "auth#login"

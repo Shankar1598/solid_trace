@@ -39,6 +39,14 @@ gem "rack-cors"
 gem "sentry-ruby"
 gem "sentry-rails"
 
+gem "propshaft"
+gem "importmap-rails"
+gem "hotwire-rails"
+gem "tailwindcss-rails"
+gem "view_component"
+
+# gem "rack-cors"
+
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
@@ -55,3 +63,11 @@ group :development, :test do
   gem "factory_bot_rails"
   gem "faker"
 end
+
+gem "letter_opener", "~> 1.10", group: :development
+
+gem "pundit", "~> 2.5"
+
+gem "shadcn-ui", "~> 0.0.5"
+
+gem "shadcn-rails", "~> 0.2.1"

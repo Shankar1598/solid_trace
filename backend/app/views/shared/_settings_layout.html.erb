@@ -1,0 +1,20 @@
+<div class="flex flex-col md:flex-row gap-8">
+  <aside class="w-full md:w-64 flex-shrink-0">
+    <div class="sticky top-6">
+      <h2 class="text-lg font-semibold mb-4 px-3">Settings</h2>
+      <nav class="space-y-1">
+        <%= link_to edit_organization_path(org_slug: current_organization.slug), class: "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors #{current_page?(edit_organization_path(org_slug: current_organization.slug)) ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}" do %>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 21h18"/><path d="M3 7v1a3 3 0 0 0 6 0V7m0 1a3 3 0 0 0 6 0V7m0 1a3 3 0 0 0 6 0V7"/><path d="M3 11 12 2l9 9"/></svg>
+          Organization
+        <% end %>
+        <%= link_to edit_user_path(org_slug: current_organization.slug), class: "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors #{current_page?(edit_user_path(org_slug: current_organization.slug)) ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}" do %>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          User
+        <% end %>
+      </nav>
+    </div>
+  </aside>
+  <main class="flex-1 min-w-0">
+    <%= yield %>
+  </main>
+</div>

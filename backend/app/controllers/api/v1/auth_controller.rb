@@ -3,7 +3,7 @@ require 'jwt'
 module Api
   module V1
     class AuthController < ApplicationController
-      skip_before_action :authenticate_request, only: [:login, :register]
+      # skip_before_action :authenticate_request, only: [:login, :register]
 
       def login
         user = User.find_by(email: params[:email])

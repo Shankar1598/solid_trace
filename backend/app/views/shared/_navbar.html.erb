@@ -1,0 +1,23 @@
+<header class="flex h-14 items-center gap-4 border-b bg-muted/40 px-4 lg:h-[60px] lg:px-6">
+  <div class="w-full flex-1">
+    <!-- Search or Breadcrumbs could go here -->
+  </div>
+  <%= render Shadcn::DropdownMenuComponent.new do |menu| %>
+    <% menu.with_trigger do %>
+      <%= render Shadcn::ButtonComponent.new(variant: :ghost, size: :icon, class: "rounded-full") do %>
+        <%= render Shadcn::AvatarComponent.new(src: "https://github.com/shadcn.png", alt: current_user.name) %>
+        <span class="sr-only">Toggle user menu</span>
+      <% end %>
+    <% end %>
+    <% menu.with_content(align: :end) do |content| %>
+      <% content.with_label { "My Account" } %>
+      <% content.with_separator %>
+      <% content.with_item { "Settings" } %>
+      <% content.with_item { "Support" } %>
+      <% content.with_separator %>
+      <% content.with_item do %>
+        <%= button_to "Logout", logout_path, method: :delete, class: "w-full text-left" %>
+      <% end %>
+    <% end %>
+  <% end %>
+</header>
