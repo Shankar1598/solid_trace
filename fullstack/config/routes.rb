@@ -10,5 +10,66 @@ Rails.application.routes.draw do
   # get "service-worker" => "rails/pwa#service_worker", as: :pwa_service_worker
 
   # Defines the root path route ("/")
-  # root "posts#index"
+  root "home#index"
+  resource :session
+  resource :registration, only: [:new, :create]
+  resource :user_settings, only: [:show, :update], controller: "user_settings"
+  resources :passwords, param: :token
+
+  scope "/:org_slug" do
+    resources :issues, only: [:index, :show] do
+      member do
+        patch :resolve
+        patch :unresolve
+      end
+    end
+    resources :projects, only: [:index, :new, :create, :show, :update] do
+      resources :keys, only: [:create, :destroy], controller: "project_keys" do
+        member do
+          patch :rotate
+        end
+      end
+    end
+    resource :settings, only: [:show, :update], controller: "organization_settings"
+  end
+
+  # API Routes (Migrated from Backend)
+  namespace :api do
+    scope "0" do
+      # Sentry uses /api/0/ as the prefix usually, but we can map it
+      resources :projects do
+        member do
+          post "store", to: "v1/ingest#store"
+          post "envelope", to: "v1/ingest#envelope"
+        end
+      end
+    end
+
+    # Also support /api/:project_id/store directly if needed, but Sentry usually does /api/:id/store/
+    post "/:project_id/store", to: "v1/ingest#store", as: :ingest_store
+    post "/:project_id/envelope", to: "v1/ingest#envelope", as: :ingest_envelope
+
+    # Management API
+    namespace :v1 do
+      scope "/:org_slug" do
+        get "issues", to: "issues#index", as: :issues
+        get "issues/:id", to: "issues#show", as: :issue
+        patch "issues/:id/resolve", to: "issues#resolve", as: :resolve_issue
+        patch "issues/:id/unresolve", to: "issues#unresolve", as: :unresolve_issue
+
+        resources :projects, param: :project_slug, only: [:index, :show, :update] do
+          member do
+            get "keys", to: "project_keys#index"
+            post "keys", to: "project_keys#create"
+            put "keys/:id", to: "project_keys#update"
+            delete "keys/:id", to: "project_keys#destroy"
+          end
+        end
+      end
+
+      post "auth/login", to: "auth#login"
+      post "auth/register", to: "auth#register"
+      get "auth/me", to: "auth#me"
+    end
+  end
 end

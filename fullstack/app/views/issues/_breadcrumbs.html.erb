@@ -1,0 +1,35 @@
+<%
+  crumbs = breadcrumbs.is_a?(Array) ? breadcrumbs : (breadcrumbs['values'] || [])
+%>
+
+<div class="bg-white dark:bg-gray-900">
+  <table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+    <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+      <tr>
+        <th scope="col" class="px-4 py-2 w-24">Category</th>
+        <th scope="col" class="px-4 py-2">Message</th>
+        <th scope="col" class="px-4 py-2 w-32 text-right">Time</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% crumbs.each do |crumb| %>
+        <tr class="bg-white border-b hover:bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-600">
+          <td class="px-4 py-2 font-mono text-xs font-medium text-gray-900 dark:text-white">
+            <%= crumb['category'] %>
+          </td>
+          <td class="px-4 py-2">
+            <%= crumb['message'] %>
+            <% if crumb['data'] %>
+              <div class="mt-1 text-xs font-mono text-gray-400">
+                <%= crumb['data'].to_json %>
+              </div>
+            <% end %>
+          </td>
+          <td class="px-4 py-2 text-right text-xs font-mono">
+            <%= Time.at(crumb['timestamp'].to_f).strftime("%H:%M:%S") if crumb['timestamp'] %>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

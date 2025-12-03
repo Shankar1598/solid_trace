@@ -7,3 +7,16 @@
 #   ["Action", "Comedy", "Drama", "Horror"].each do |genre_name|
 #     MovieGenre.find_or_create_by!(name: genre_name)
 #   end
+
+org = Organization.find_or_create_by!(slug: "garnet-org", name: "Garnet Org")
+project = org.projects.find_or_create_by!(slug: "garnet-project", name: "Garnet Project")
+project.project_keys.find_or_create_by!(public_key: "testkey123", secret_key: "secret123")
+
+user = User.find_or_create_by!(email: "admin@garnet.local") do |u|
+  u.name = "Admin User"
+  u.password = "password123"
+  u.password_confirmation = "password123"
+end
+user.organizations << org unless user.organizations.include?(org)
+
+project.issues.find_or_create_by!(title: "Test Issue")

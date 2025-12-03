@@ -1,0 +1,111 @@
+<div class="container mx-auto p-6 max-w-6xl">
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Project Settings</h1>
+      <p class="text-gray-500 dark:text-gray-400">Manage your project configuration and keys</p>
+    </div>
+    <%= link_to projects_path(org_slug: @current_org.slug), class: "text-gray-900 bg-white border border-gray-300 focus:outline-none hover:bg-gray-100 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-sm px-5 py-2.5 dark:bg-gray-800 dark:text-white dark:border-gray-600 dark:hover:bg-gray-700 dark:hover:border-gray-600 dark:focus:ring-gray-700" do %>
+      ← Back to Projects
+    <% end %>
+  </div>
+
+  <div class="grid gap-6">
+    <!-- General Settings -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow dark:bg-gray-800 dark:border-gray-700">
+      <div class="p-6 border-b border-gray-200 dark:border-gray-700">
+        <h5 class="text-xl font-bold text-gray-900 dark:text-white">General Settings</h5>
+        <p class="text-gray-500 dark:text-gray-400 text-sm">Basic project configuration</p>
+      </div>
+      <div class="p-6">
+        <%= form_with model: @project, url: project_path(@project, org_slug: @current_org.slug), method: :patch, class: "space-y-4" do |form| %>
+          <% if @project.errors.any? %>
+            <div class="p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400" role="alert">
+              <ul>
+                <% @project.errors.full_messages.each do |message| %>
+                  <li><%= message %></li>
+                <% end %>
+              </ul>
+            </div>
+          <% end %>
+
+          <div class="grid gap-2">
+            <%= form.label :name, "Project Name", class: "block text-sm font-medium text-gray-900 dark:text-white" %>
+            <div class="flex gap-2">
+              <%= form.text_field :name, class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
+              <%= form.submit "Save", class: "text-white bg-primary-600 hover:bg-primary-700 focus:ring-4 focus:outline-none focus:ring-primary-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center dark:bg-primary-600 dark:hover:bg-primary-700 dark:focus:ring-primary-800" %>
+            </div>
+          </div>
+
+          <div class="grid gap-2">
+            <label class="block text-sm font-medium text-gray-900 dark:text-white">Platform</label>
+            <div>
+              <span class="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-gray-700 dark:text-gray-300"><%= @project.platform || 'Unknown' %></span>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    </div>
+
+    <!-- Client Keys -->
+    <div class="bg-white border border-gray-200 rounded-lg shadow dark:bg-gray-800 dark:border-gray-700">
+      <div class="p-6 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <div>
+          <h5 class="text-xl font-bold text-gray-900 dark:text-white">Client Keys (DSN)</h5>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">These keys are used to send data to Garnet. Keep the secret key private.</p>
+        </div>
+        <%= button_to project_keys_path(@project, org_slug: @current_org.slug), method: :post, class: "text-white bg-primary-600 hover:bg-primary-700 focus:ring-4 focus:ring-primary-300 font-medium rounded-lg text-sm px-5 py-2.5 dark:bg-primary-600 dark:hover:bg-primary-700 focus:outline-none dark:focus:ring-primary-800" do %>
+          Create New Key
+        <% end %>
+      </div>
+      <div class="p-6">
+        <div class="relative overflow-x-auto">
+          <table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+            <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+              <tr>
+                <th scope="col" class="px-6 py-3">Public Key</th>
+                <th scope="col" class="px-6 py-3 w-[50%]">DSN (Client Key)</th>
+                <th scope="col" class="px-6 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% @project_keys.each do |key| %>
+                <tr class="bg-white border-b dark:bg-gray-800 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600">
+                  <td class="px-6 py-4 font-mono text-sm font-medium text-gray-900 dark:text-white">
+                    <%= key.public_key %>
+                  </td>
+                  <td class="px-6 py-4">
+                    <div class="flex items-center gap-2">
+                      <code class="bg-gray-100 px-2 py-1 rounded text-xs font-mono break-all dark:bg-gray-700 dark:text-gray-300">
+                        <%= key.dsn %>
+                      </code>
+                      <button onclick="navigator.clipboard.writeText('<%= key.dsn %>')" class="text-gray-900 hover:bg-gray-100 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-xs px-3 py-1.5 dark:bg-gray-800 dark:text-white dark:border-gray-600 dark:hover:bg-gray-700 dark:hover:border-gray-600 dark:focus:ring-gray-700">
+                        Copy
+                      </button>
+                    </div>
+                  </td>
+                  <td class="px-6 py-4 text-right">
+                    <div class="flex justify-end gap-2">
+                      <%= button_to rotate_project_key_path(@project, key, org_slug: @current_org.slug), method: :patch, data: { turbo_confirm: "Are you sure you want to rotate this key? The old DSN will stop working." }, class: "font-medium text-blue-600 dark:text-blue-500 hover:underline" do %>
+                        Rotate
+                      <% end %>
+                      <%= button_to project_key_path(@project, key, org_slug: @current_org.slug), method: :delete, data: { turbo_confirm: "Are you sure you want to delete this key? This action cannot be undone." }, class: "font-medium text-red-600 dark:text-red-500 hover:underline" do %>
+                        Delete
+                      <% end %>
+                    </div>
+                  </td>
+                </tr>
+              <% end %>
+              <% if @project_keys.empty? %>
+                <tr>
+                  <td colspan="3" class="px-6 py-4 text-center text-gray-500 dark:text-gray-400">
+                    No keys found. Create one to start sending events.
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
