@@ -31,6 +31,8 @@ Rails.application.routes.draw do
       end
     end
     resource :settings, only: [:show, :update], controller: "organization_settings"
+    get "settings/user", to: "user_settings#show", as: :org_user_settings
+    patch "settings/user", to: "user_settings#update"
   end
 
   # API Routes (Migrated from Backend)

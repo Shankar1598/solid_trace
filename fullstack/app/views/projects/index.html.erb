@@ -4,7 +4,7 @@
       <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Projects</h1>
       <p class="text-gray-500 dark:text-gray-400">Manage your projects and their settings</p>
     </div>
-    <%= link_to new_project_path(org_slug: @current_org.slug), class: "text-white bg-primary-600 hover:bg-primary-700 focus:ring-4 focus:ring-primary-300 font-medium rounded-lg text-sm px-5 py-2.5 dark:bg-primary-600 dark:hover:bg-primary-700 focus:outline-none dark:focus:ring-primary-800 flex items-center" do %>
+    <%= link_to new_project_path(org_slug: @current_org.slug), class: "btn-primary" do %>
       <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
       Create Project
     <% end %>

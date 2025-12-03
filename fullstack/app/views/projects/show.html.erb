@@ -4,7 +4,7 @@
       <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Project Settings</h1>
       <p class="text-gray-500 dark:text-gray-400">Manage your project configuration and keys</p>
     </div>
-    <%= link_to projects_path(org_slug: @current_org.slug), class: "text-gray-900 bg-white border border-gray-300 focus:outline-none hover:bg-gray-100 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-sm px-5 py-2.5 dark:bg-gray-800 dark:text-white dark:border-gray-600 dark:hover:bg-gray-700 dark:hover:border-gray-600 dark:focus:ring-gray-700" do %>
+    <%= link_to projects_path(org_slug: @current_org.slug), class: "btn-secondary" do %>
       ← Back to Projects
     <% end %>
   </div>
@@ -32,7 +32,7 @@
             <%= form.label :name, "Project Name", class: "block text-sm font-medium text-gray-900 dark:text-white" %>
             <div class="flex gap-2">
               <%= form.text_field :name, class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
-              <%= form.submit "Save", class: "text-white bg-primary-600 hover:bg-primary-700 focus:ring-4 focus:outline-none focus:ring-primary-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center dark:bg-primary-600 dark:hover:bg-primary-700 dark:focus:ring-primary-800" %>
+              <%= form.submit "Save", class: "btn-primary" %>
             </div>
           </div>
 
@@ -53,7 +53,7 @@
           <h5 class="text-xl font-bold text-gray-900 dark:text-white">Client Keys (DSN)</h5>
           <p class="text-gray-500 dark:text-gray-400 text-sm">These keys are used to send data to Garnet. Keep the secret key private.</p>
         </div>
-        <%= button_to project_keys_path(@project, org_slug: @current_org.slug), method: :post, class: "text-white bg-primary-600 hover:bg-primary-700 focus:ring-4 focus:ring-primary-300 font-medium rounded-lg text-sm px-5 py-2.5 dark:bg-primary-600 dark:hover:bg-primary-700 focus:outline-none dark:focus:ring-primary-800" do %>
+        <%= button_to project_keys_path(@project, org_slug: @current_org.slug), method: :post, class: "btn-primary" do %>
           Create New Key
         <% end %>
       </div>
@@ -78,17 +78,17 @@
                       <code class="bg-gray-100 px-2 py-1 rounded text-xs font-mono break-all dark:bg-gray-700 dark:text-gray-300">
                         <%= key.public_key %>
                       </code>
-                      <button onclick="navigator.clipboard.writeText('<%= key.public_key %>')" class="text-gray-900 hover:bg-gray-100 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-xs px-3 py-1.5 dark:bg-gray-800 dark:text-white dark:border-gray-600 dark:hover:bg-gray-700 dark:hover:border-gray-600 dark:focus:ring-gray-700">
+                      <button onclick="navigator.clipboard.writeText('<%= key.public_key %>')" class="btn-secondary btn-xs">
                         Copy
                       </button>
                     </div>
                   </td>
                   <td class="px-6 py-4 text-right">
                     <div class="flex justify-end gap-2">
-                      <%= button_to rotate_project_key_path(@project, key, org_slug: @current_org.slug), method: :patch, data: { turbo_confirm: "Are you sure you want to rotate this key? The old DSN will stop working." }, class: "font-medium text-blue-600 dark:text-blue-500 hover:underline" do %>
+                      <%= button_to rotate_project_key_path(@project, key, org_slug: @current_org.slug), method: :patch, data: { turbo_confirm: "Are you sure you want to rotate this key? The old DSN will stop working." }, class: "font-medium text-blue-600 dark:text-blue-500 hover:underline cursor-pointer" do %>
                         Rotate
                       <% end %>
-                      <%= button_to project_key_path(@project, key, org_slug: @current_org.slug), method: :delete, data: { turbo_confirm: "Are you sure you want to delete this key? This action cannot be undone." }, class: "font-medium text-red-600 dark:text-red-500 hover:underline" do %>
+                      <%= button_to project_key_path(@project, key, org_slug: @current_org.slug), method: :delete, data: { turbo_confirm: "Are you sure you want to delete this key? This action cannot be undone." }, class: "btn-danger" do %>
                         Delete
                       <% end %>
                     </div>

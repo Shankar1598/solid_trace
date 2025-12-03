@@ -1,43 +1,48 @@
-<div class="space-y-6 max-w-2xl">
-  <div>
-    <h3 class="text-lg font-medium text-gray-900 dark:text-white">Organization Settings</h3>
-    <p class="text-sm text-gray-500 dark:text-gray-400">
-      Manage your organization details and preferences.
-    </p>
-  </div>
+<div class="flex flex-col md:flex-row gap-8">
+  <%= render "shared/settings_sidebar" %>
+  <div class="flex-1 min-w-0">
+    <div class="space-y-6 max-w-2xl">
+      <div>
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white">Organization Settings</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          Manage your organization details and preferences.
+        </p>
+      </div>
 
-  <div class="bg-white border border-gray-200 rounded-lg shadow dark:bg-gray-800 dark:border-gray-700">
-    <div class="p-6 border-b border-gray-200 dark:border-gray-700">
-      <h5 class="text-xl font-bold text-gray-900 dark:text-white">General Information</h5>
-      <p class="text-gray-500 dark:text-gray-400 text-sm">Basic details about your organization.</p>
-    </div>
-    <div class="p-6">
-      <%= form_with model: @current_org, url: settings_path(org_slug: @current_org.slug), method: :patch, class: "space-y-4" do |form| %>
-        <% if @current_org.errors.any? %>
-          <div class="p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400" role="alert">
-            <ul>
-              <% @current_org.errors.full_messages.each do |message| %>
-                <li><%= message %></li>
-              <% end %>
-            </ul>
-          </div>
-        <% end %>
-
-        <div>
-          <%= form.label :name, "Organization Name", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
-          <%= form.text_field :name, class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
+      <div class="bg-white border border-gray-200 rounded-lg shadow dark:bg-gray-800 dark:border-gray-700">
+        <div class="p-6 border-b border-gray-200 dark:border-gray-700">
+          <h5 class="text-xl font-bold text-gray-900 dark:text-white">General Information</h5>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">Basic details about your organization.</p>
         </div>
+        <div class="p-6">
+          <%= form_with model: @current_org, url: settings_path(org_slug: @current_org.slug), method: :patch, class: "space-y-4" do |form| %>
+            <% if @current_org.errors.any? %>
+              <div class="p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400" role="alert">
+                <ul>
+                  <% @current_org.errors.full_messages.each do |message| %>
+                    <li><%= message %></li>
+                  <% end %>
+                </ul>
+              </div>
+            <% end %>
 
-        <div>
-          <%= form.label :slug, "Organization Slug", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
-          <%= form.text_field :slug, disabled: true, class: "bg-gray-100 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 cursor-not-allowed dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-gray-400 dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">The slug is used in URLs and cannot be changed.</p>
-        </div>
+            <div>
+              <%= form.label :name, "Organization Name", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+              <%= form.text_field :name, class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
+            </div>
 
-        <div class="flex justify-end">
-          <%= form.submit "Save Changes", class: "text-white bg-primary-600 hover:bg-primary-700 focus:ring-4 focus:outline-none focus:ring-primary-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center dark:bg-primary-600 dark:hover:bg-primary-700 dark:focus:ring-primary-800" %>
+            <div>
+              <%= form.label :slug, "Organization Slug", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+              <%= form.text_field :slug, disabled: true, class: "bg-gray-100 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 cursor-not-allowed dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-gray-400 dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">The slug is used in URLs and cannot be changed.</p>
+            </div>
+
+            <div class="flex justify-end">
+              <%= form.submit "Save Changes", class: "btn-primary" %>
+            </div>
+          <% end %>
         </div>
-      <% end %>
+      </div>
     </div>
   </div>
 </div>

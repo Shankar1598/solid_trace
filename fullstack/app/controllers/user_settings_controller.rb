@@ -1,5 +1,6 @@
 class UserSettingsController < ApplicationController
   layout "dashboard"
+  before_action :set_organization
 
   def show
   end
@@ -16,5 +17,11 @@ class UserSettingsController < ApplicationController
 
   def user_params
     params.require(:user).permit(:name)
+  end
+
+  def set_organization
+    if params[:org_slug]
+      @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
+    end
   end
 end
