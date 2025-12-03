@@ -39,7 +39,7 @@ class ProjectsController < ApplicationController
   end
 
   def set_project
-    @project = @current_org.projects.find_by!(slug: params[:id])
+    @project = @current_org.projects.find(params[:id])
   end
 
   def project_params

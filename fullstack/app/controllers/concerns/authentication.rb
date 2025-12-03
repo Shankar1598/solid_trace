@@ -2,28 +2,33 @@ module Authentication
   extend ActiveSupport::Concern
 
   included do
-    before_action :require_authentication
     helper_method :current_user
+  end
+
+  def current_user
+    @current_user
   end
 
   class_methods do
     def allow_unauthenticated_access(**options)
-      skip_before_action :require_authentication, **options
+      skip_before_action :authenticate_user!, **options
     end
   end
 
   private
     def authenticate_user!
-      require_authentication
-    end
-
-    def require_authentication
       resume_session || request_authentication
     end
 
     def resume_session
-      if session[:user_id]
-        @current_user = User.find_by(id: session[:user_id])
+      if session_record = find_session_by_cookie
+        @current_user = session_record.user
+      end
+    end
+
+    def find_session_by_cookie
+      if token = cookies.signed[:session_id]
+        Session.find_by(id: token)
       end
     end
 
@@ -44,7 +49,9 @@ module Authentication
     end
 
     def terminate_session
-      Current.session.destroy
-      cookies.delete(:session_id)
+      if Current.session
+        Current.session.destroy
+        cookies.delete(:session_id)
+      end
     end
 end
