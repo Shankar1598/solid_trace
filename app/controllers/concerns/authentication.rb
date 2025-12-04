@@ -22,6 +22,7 @@ module Authentication
 
     def resume_session
       if session_record = find_session_by_cookie
+        Current.session = session_record
         @current_user = session_record.user
       end
     end
