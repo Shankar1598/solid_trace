@@ -1,0 +1,49 @@
+<div class="flex flex-col md:flex-row gap-8">
+  <% if @current_org %>
+    <%= render "shared/settings_sidebar" %>
+  <% end %>
+  <div class="flex-1 min-w-0">
+    <div class="space-y-6 max-w-2xl">
+      <div>
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white">User Settings</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          Manage your personal account settings.
+        </p>
+      </div>
+
+      <div class="bg-white border border-gray-200 rounded-lg shadow dark:bg-gray-800 dark:border-gray-700">
+        <div class="p-6 border-b border-gray-200 dark:border-gray-700">
+          <h5 class="text-xl font-bold text-gray-900 dark:text-white">Profile</h5>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">Your personal information.</p>
+        </div>
+        <div class="p-6">
+          <%= form_with model: current_user, url: @current_org ? org_user_settings_path(org_slug: @current_org.slug) : user_settings_path, method: :patch, class: "space-y-4" do |form| %>
+            <% if current_user.errors.any? %>
+              <div class="p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400" role="alert">
+                <ul>
+                  <% current_user.errors.full_messages.each do |message| %>
+                    <li><%= message %></li>
+                  <% end %>
+                </ul>
+              </div>
+            <% end %>
+
+            <div>
+              <%= form.label :email, "Email Address", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+              <%= form.email_field :email, disabled: true, class: "bg-gray-100 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 cursor-not-allowed dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-gray-400 dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
+            </div>
+
+            <div>
+              <%= form.label :name, "Full Name", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+              <%= form.text_field :name, class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500", placeholder: "Your Name" %>
+            </div>
+
+            <div class="flex justify-end">
+              <%= form.submit "Save Changes", class: "btn-primary" %>
+            </div>
+          <% end %>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

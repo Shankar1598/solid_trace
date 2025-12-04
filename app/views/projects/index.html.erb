@@ -1,0 +1,39 @@
+<div class="container mx-auto p-6 max-w-6xl">
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Projects</h1>
+      <p class="text-gray-500 dark:text-gray-400">Manage your projects and their settings</p>
+    </div>
+    <%= link_to new_project_path(org_slug: @current_org.slug), class: "btn-primary" do %>
+      <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+      Create Project
+    <% end %>
+  </div>
+
+  <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+    <% @projects.each do |project| %>
+      <%= link_to project_path(project, org_slug: @current_org.slug), class: "block transition-transform hover:-translate-y-1" do %>
+        <div class="h-full bg-white border border-gray-200 rounded-lg shadow hover:border-primary-500 transition-colors dark:bg-gray-800 dark:border-gray-700 dark:hover:border-primary-500">
+          <div class="p-6">
+            <div class="flex justify-between items-start mb-2">
+              <h5 class="text-xl font-bold tracking-tight text-gray-900 dark:text-white"><%= project.name %></h5>
+              <span class="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-gray-700 dark:text-gray-300"><%= 'Unknown' %></span>
+            </div>
+            <p class="font-normal text-gray-700 dark:text-gray-400 mb-4">
+              <%= project.slug %>
+            </p>
+            <div class="text-sm text-gray-500 dark:text-gray-400">
+              Created <%= project.created_at.strftime("%b %d, %Y") %>
+            </div>
+          </div>
+        </div>
+      <% end %>
+    <% end %>
+
+    <% if @projects.empty? %>
+      <div class="col-span-full text-center py-12 text-gray-500 bg-gray-50 rounded-lg border border-dashed border-gray-300 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400">
+        No projects found. Create one to get started.
+      </div>
+    <% end %>
+  </div>
+</div>

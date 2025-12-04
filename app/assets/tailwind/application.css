@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@layer components {
+  .btn-primary {
+    @apply text-white bg-[#6C5FC7] hover:bg-[#5a4eb0] focus:ring-4 focus:outline-none focus:ring-purple-300 font-medium rounded-md text-sm px-5 py-2.5 text-center dark:bg-[#6C5FC7] dark:hover:bg-[#5a4eb0] dark:focus:ring-purple-900 transition-colors cursor-pointer inline-flex items-center justify-center;
+  }
+
+  .btn-secondary {
+    @apply text-gray-700 bg-white border border-gray-300 focus:outline-none hover:bg-gray-50 focus:ring-4 focus:ring-gray-200 font-medium rounded-md text-sm px-5 py-2.5 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700 dark:hover:border-gray-600 dark:focus:ring-gray-700 transition-colors cursor-pointer inline-flex items-center justify-center;
+  }
+
+  .btn-danger {
+    @apply font-medium text-red-600 dark:text-red-500 hover:underline cursor-pointer;
+  }
+
+  .btn-xs {
+    @apply text-xs px-3 py-1.5;
+  }
+}
