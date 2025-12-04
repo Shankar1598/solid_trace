@@ -1,0 +1,28 @@
+<%
+  values = exception['values'] || []
+  stacktrace = values.first&.fetch('stacktrace', nil)
+  frames = stacktrace&.fetch('frames', []) || []
+%>
+
+<div class="bg-white dark:bg-gray-900">
+  <% frames.reverse.each do |frame| %>
+    <div class="border-b border-gray-200 last:border-0 p-3 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">
+      <div class="flex justify-between items-start mb-1">
+        <div class="font-mono text-sm font-medium text-gray-900 dark:text-white">
+          <%= frame['filename'] %>
+        </div>
+        <div class="font-mono text-xs text-gray-500 dark:text-gray-400">
+          Line <%= frame['lineno'] %>
+        </div>
+      </div>
+      <div class="font-mono text-xs text-gray-600 dark:text-gray-300">
+        in <span class="text-blue-600 dark:text-blue-400"><%= frame['function'] %></span>
+      </div>
+      <% if frame['context_line'] %>
+        <div class="mt-2 bg-gray-100 p-2 rounded text-xs font-mono overflow-x-auto dark:bg-gray-800">
+          <code class="text-gray-800 dark:text-gray-200"><%= frame['context_line'].strip %></code>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+</div>
