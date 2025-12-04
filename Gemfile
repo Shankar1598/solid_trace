@@ -52,6 +52,8 @@ group :development, :test do
 
   # Omakase Ruby styling [https://github.com/rails/rubocop-rails-omakase/]
   gem "rubocop-rails-omakase", require: false
+
+  gem 'openssl', '>= 3.3.1' # To fix an issue with MacOS OpenSSL 3.6. Sentry API call was failing.
 end
 
 group :development do
