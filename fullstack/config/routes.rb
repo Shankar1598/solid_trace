@@ -11,6 +11,8 @@ Rails.application.routes.draw do
 
   # Defines the root path route ("/")
   root "home#index"
+  get "login", to: "sessions#new"
+  post "login", to: "sessions#create"
   resource :session
   resource :registration, only: [:new, :create]
   resource :user_settings, only: [:show, :update], controller: "user_settings"
