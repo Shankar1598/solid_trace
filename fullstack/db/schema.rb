@@ -22,7 +22,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_03_181541) do
 
   create_table "issue_events", force: :cascade do |t|
     t.datetime "created_at", null: false
-    t.json "data"
+    t.binary "event_data"
     t.integer "issue_id", null: false
     t.datetime "updated_at", null: false
     t.index ["issue_id"], name: "index_issue_events_on_issue_id"

@@ -413,6 +413,7 @@ DEPENDENCIES
   importmap-rails
   jbuilder
   kamal
+  msgpack (~> 1.8)
   propshaft
   puma (>= 5.0)
   rails (~> 8.1.1)
