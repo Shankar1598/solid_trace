@@ -26,10 +26,25 @@ class IssuesController < ApplicationController
   def show
     @issue = scoped_resources.find(params[:id])
     events = @issue.events.order(created_at: :desc)
+
     if params[:environment].present? && params[:environment] != 'all'
       events = events.where(environment: params[:environment])
     end
-    @latest_event = events.first
+
+    if params[:event_id].present?
+      @event = events.find_by(id: params[:event_id])
+    end
+
+    # Fallback to latest if not found
+    @event ||= events.last
+
+    if @event
+      # Newer event (Next) - need to reorder to ASC to get the closest newer event
+      @next_event = events.where("created_at > ?", @event.created_at).reorder(created_at: :asc).first
+      # Older event (Previous) - need to reorder to DESC to get the closest older event
+      @prev_event = events.where("created_at < ?", @event.created_at).reorder(created_at: :desc).first
+    end
+
     @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).sort
   end
 
