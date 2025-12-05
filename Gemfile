@@ -54,6 +54,8 @@ group :development, :test do
   gem "rubocop-rails-omakase", require: false
 
   gem 'openssl', '>= 3.3.1' # To fix an issue with MacOS OpenSSL 3.6. Sentry API call was failing.
+  gem "factory_bot_rails"
+  gem "faker"
 end
 
 group :development do

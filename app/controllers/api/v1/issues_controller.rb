@@ -1,7 +1,7 @@
 module Api
   module V1
     class IssuesController < OrganizationCrudController
-      layout "dashboard"
+
       def index
         issues = scoped_resources.order(created_at: :desc)
 

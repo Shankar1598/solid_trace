@@ -7,7 +7,7 @@ module Api
 
       def store
         # payload is in params for JSON requests
-        event_data = params.except(:project_id, :controller, :action, :sentry_key, :sentry_version, :sentry_client)
+        event_data = params.except(:project_id, :controller, :action, :sentry_key, :sentry_version, :sentry_client).to_unsafe_h
 
         process_event(event_data)
 
