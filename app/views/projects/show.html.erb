@@ -76,9 +76,9 @@
                   <td class="px-6 py-4">
                     <div class="flex items-center gap-2">
                       <code class="bg-gray-100 px-2 py-1 rounded text-xs font-mono break-all dark:bg-gray-700 dark:text-gray-300">
-                        <%= key.public_key %>
+                        <%= key.dsn %>
                       </code>
-                      <button onclick="navigator.clipboard.writeText('<%= key.public_key %>')" class="btn-secondary btn-xs">
+                      <button onclick="navigator.clipboard.writeText('<%= key.dsn %>')" class="btn-secondary btn-xs">
                         Copy
                       </button>
                     </div>
