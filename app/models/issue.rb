@@ -15,8 +15,6 @@ class Issue < ApplicationRecord
     CSP = :csp
   end
 
-
-
   enum :status, {
     STATUS::UNRESOLVED => 0,
     STATUS::RESOLVED => 1
@@ -27,8 +25,6 @@ class Issue < ApplicationRecord
     KIND::ERROR => 1,
     KIND::CSP => 2
   }, prefix: true
-
-
 
   private
 

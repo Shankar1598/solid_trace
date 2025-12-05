@@ -5,9 +5,7 @@ class IssuesController < ApplicationController
   def index
     @issues = scoped_resources.order(created_at: :desc)
 
-    if params[:level].present? && params[:level] != 'all'
-      @issues = @issues.where(level: params[:level])
-    end
+
 
     if params[:status].present? && params[:status] != 'all'
       @issues = @issues.where(status: params[:status])
