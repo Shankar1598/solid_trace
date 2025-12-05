@@ -2,6 +2,15 @@ class Issue < ApplicationRecord
   belongs_to :project
   has_many :events, dependent: :destroy
   has_many :issue_fingerprints, dependent: :destroy
+  before_create :assign_number
+
+  private
+
+  def assign_number
+    project.with_lock do
+      self.number = (project.issues.maximum(:number) || 0) + 1
+    end
+  end
 
   # Compute hash from event attributes
   def self.compute_hash(title:, culprit:, event_type:, fingerprint: nil)

@@ -24,7 +24,7 @@ class IssuesController < ApplicationController
   end
 
   def show
-    @issue = scoped_resources.find(params[:id])
+    @issue = scoped_resources.find_by!(number: params[:id])
     events = @issue.events.order(created_at: :desc)
 
     if params[:environment].present? && params[:environment] != 'all'
@@ -49,13 +49,13 @@ class IssuesController < ApplicationController
   end
 
   def resolve
-    @issue = scoped_resources.find(params[:id])
+    @issue = scoped_resources.find_by!(number: params[:id])
     @issue.update!(status: 1) # resolved
     redirect_to issue_path(@issue, org_slug: @current_org.slug), notice: "Issue resolved"
   end
 
   def unresolve
-    @issue = scoped_resources.find(params[:id])
+    @issue = scoped_resources.find_by!(number: params[:id])
     @issue.update!(status: 0) # unresolved
     redirect_to issue_path(@issue, org_slug: @current_org.slug), notice: "Issue unresolved"
   end
