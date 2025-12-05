@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_03_181541) do
+ActiveRecord::Schema[8.1].define(version: 2025_12_05_025948) do
   create_table "environments", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "name"
@@ -22,9 +22,11 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_03_181541) do
 
   create_table "issue_events", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.string "environment"
     t.binary "event_data"
     t.integer "issue_id", null: false
     t.datetime "updated_at", null: false
+    t.index ["environment"], name: "index_issue_events_on_environment"
     t.index ["issue_id"], name: "index_issue_events_on_issue_id"
   end
 

@@ -10,6 +10,7 @@
         <%= form.text_field :query, value: params[:query], placeholder: "Search by title, message, or tags", class: "w-full border-none shadow-none focus:ring-0 bg-transparent text-sm text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400" %>
       </div>
       <div class="flex items-center gap-2 border-l border-gray-200 pl-2 dark:border-gray-700">
+        <%= form.select :environment, options_for_select([['All Envs', 'all']] + @environments.map { |e| [e, e] }, params[:environment] || 'all'), {}, { onchange: "this.form.requestSubmit()", class: "w-[110px] border-none shadow-none focus:ring-0 h-8 text-sm bg-transparent text-gray-900 dark:text-white" } %>
         <%= form.select :status, options_for_select([['All Statuses', 'all'], ['Unresolved', '0'], ['Resolved', '1']], params[:status] || '0'), {}, { onchange: "this.form.requestSubmit()", class: "w-[130px] border-none shadow-none focus:ring-0 h-8 text-sm bg-transparent text-gray-900 dark:text-white" } %>
         <%= form.select :level, options_for_select([['All Levels', 'all'], ['Fatal', '50'], ['Error', '40'], ['Warning', '30'], ['Info', '20'], ['Debug', '10']], params[:level] || 'all'), {}, { onchange: "this.form.requestSubmit()", class: "w-[110px] border-none shadow-none focus:ring-0 h-8 text-sm bg-transparent text-gray-900 dark:text-white" } %>
       </div>
@@ -46,7 +47,7 @@
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 mb-0.5">
                     <span class="w-2 h-2 rounded-sm <%= level_color(issue.level) %>" title="<%= level_label(issue.level) %>"></span>
-                    <%= link_to issue.title, issue_path(issue, org_slug: @current_org.slug), class: "font-medium text-blue-600 hover:underline truncate block dark:text-blue-400", data: { turbo_frame: "_top" } %>
+                    <%= link_to issue.title, issue_path(issue, org_slug: @current_org.slug, environment: params[:environment]), class: "font-medium text-blue-600 hover:underline truncate block dark:text-blue-400", data: { turbo_frame: "_top" } %>
                   </div>
                   <div class="text-sm text-gray-500 truncate font-mono dark:text-gray-400">
                     <%= issue.culprit || 'unknown location' %>

@@ -106,8 +106,11 @@ module Api
           }
         )
 
+        # Extract environment
+        environment = data["environment"].presence || "unknown"
+
         # Create issue event
-        issue.issue_events.create!(data: data)
+        issue.issue_events.create!(event_data: data, environment: environment)
       end
 
       def level_to_int(level)

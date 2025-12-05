@@ -23,6 +23,9 @@
         </p>
       </div>
       <div class="flex items-center gap-2">
+        <%= form_with url: issue_path(@issue, org_slug: @current_org.slug), method: :get, class: "flex items-center", data: { turbo_action: "replace" } do |form| %>
+          <%= form.select :environment, options_for_select([['All Envs', 'all']] + @environments.map { |e| [e, e] }, params[:environment] || 'all'), {}, { onchange: "this.form.requestSubmit()", class: "w-[110px] border-gray-300 rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white py-1" } %>
+        <% end %>
         <button class="btn-secondary btn-xs flex items-center gap-2">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
           Share
@@ -78,26 +81,26 @@
         <!-- Left Column -->
         <div class="lg:col-span-2 space-y-8">
           <% if @latest_event %>
-            <% if @latest_event.data['exception'] %>
+            <% if @latest_event.event_data['exception'] %>
               <div class="space-y-3">
                 <h3 class="text-lg font-semibold flex items-center gap-2 text-gray-900 dark:text-white">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
                   Exception
                 </h3>
                 <div class="border border-gray-200 rounded-md overflow-hidden dark:border-gray-700">
-                  <%= render "stacktrace", exception: @latest_event.data['exception'] %>
+                  <%= render "stacktrace", exception: @latest_event.event_data['exception'] %>
                 </div>
               </div>
             <% end %>
 
-            <% if @latest_event.data['breadcrumbs'] %>
+            <% if @latest_event.event_data['breadcrumbs'] %>
               <div class="space-y-3">
                 <h3 class="text-lg font-semibold flex items-center gap-2 text-gray-900 dark:text-white">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                   Breadcrumbs
                 </h3>
                 <div class="border border-gray-200 rounded-md overflow-hidden bg-white dark:bg-gray-900 dark:border-gray-700">
-                  <%= render "breadcrumbs", breadcrumbs: @latest_event.data['breadcrumbs'] %>
+                  <%= render "breadcrumbs", breadcrumbs: @latest_event.event_data['breadcrumbs'] %>
                 </div>
               </div>
             <% end %>
@@ -109,12 +112,21 @@
         <!-- Right Column -->
         <div class="space-y-6">
           <% if @latest_event %>
+            <!-- Environment -->
+            <div class="space-y-3">
+              <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Environment</h3>
+              <div class="font-mono text-sm text-gray-900 dark:text-white">
+                <%= @latest_event.environment || 'unknown' %>
+              </div>
+            </div>
+            <hr class="border-gray-200 dark:border-gray-700">
+
             <!-- Tags -->
-            <% if @latest_event.data['tags'].present? %>
+            <% if @latest_event.event_data['tags'].present? %>
               <div class="space-y-3">
                 <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Tags</h3>
                 <div class="space-y-2">
-                  <% @latest_event.data['tags'].each do |key, value| %>
+                  <% @latest_event.event_data['tags'].each do |key, value| %>
                     <div class="flex justify-between items-center text-sm">
                       <span class="text-gray-500 dark:text-gray-400"><%= key %></span>
                       <span class="font-mono text-gray-900 bg-gray-100 px-1.5 py-0.5 rounded text-xs truncate max-w-[150px] dark:bg-gray-700 dark:text-white" title="<%= value %>">
@@ -129,11 +141,11 @@
             <hr class="border-gray-200 dark:border-gray-700">
 
             <!-- User Context -->
-            <% if @latest_event.data['user'].present? %>
+            <% if @latest_event.event_data['user'].present? %>
               <div class="space-y-3">
                 <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">User</h3>
                 <div class="space-y-2">
-                  <% @latest_event.data['user'].each do |key, value| %>
+                  <% @latest_event.event_data['user'].each do |key, value| %>
                     <div class="flex justify-between items-center text-sm">
                       <span class="text-gray-500 dark:text-gray-400"><%= key %></span>
                       <span class="font-mono text-gray-900 text-xs truncate max-w-[150px] dark:text-white">
@@ -148,20 +160,20 @@
             <hr class="border-gray-200 dark:border-gray-700">
 
             <!-- Request Context -->
-            <% if @latest_event.data['request'].present? %>
+            <% if @latest_event.event_data['request'].present? %>
               <div class="space-y-3">
                 <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Request</h3>
                 <div class="space-y-2">
-                  <% if @latest_event.data['request']['url'] %>
+                  <% if @latest_event.event_data['request']['url'] %>
                     <div class="space-y-1">
                       <span class="text-xs text-gray-500 dark:text-gray-400">URL</span>
-                      <div class="font-mono text-xs break-all bg-gray-100 p-1 rounded dark:bg-gray-700 dark:text-white"><%= @latest_event.data['request']['url'] %></div>
+                      <div class="font-mono text-xs break-all bg-gray-100 p-1 rounded dark:bg-gray-700 dark:text-white"><%= @latest_event.event_data['request']['url'] %></div>
                     </div>
                   <% end %>
-                  <% if @latest_event.data['request']['method'] %>
+                  <% if @latest_event.event_data['request']['method'] %>
                     <div class="flex justify-between items-center text-sm">
                       <span class="text-gray-500 dark:text-gray-400">Method</span>
-                      <span class="font-mono text-gray-900 text-xs dark:text-white"><%= @latest_event.data['request']['method'] %></span>
+                      <span class="font-mono text-gray-900 text-xs dark:text-white"><%= @latest_event.event_data['request']['method'] %></span>
                     </div>
                   <% end %>
                 </div>
@@ -173,7 +185,7 @@
     </div>
     <div class="hidden p-4 rounded-lg bg-gray-50 dark:bg-gray-800" id="json" role="tabpanel" aria-labelledby="json-tab">
       <div class="rounded-md border border-gray-200 bg-gray-100 p-4 overflow-auto dark:bg-gray-900 dark:border-gray-700">
-        <pre class="text-sm font-mono whitespace-pre-wrap break-all text-gray-900 dark:text-white"><%= @latest_event ? JSON.pretty_generate(@latest_event.data) : 'No event data available' %></pre>
+        <pre class="text-sm font-mono whitespace-pre-wrap break-all text-gray-900 dark:text-white"><%= @latest_event ? JSON.pretty_generate(@latest_event.event_data) : 'No event data available' %></pre>
       </div>
     </div>
   </div>
