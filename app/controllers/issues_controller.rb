@@ -17,20 +17,20 @@ class IssuesController < ApplicationController
       @issues = @issues.where("title ILIKE ?", "%#{params[:query]}%")
     end
     if params[:environment].present? && params[:environment] != 'all'
-      @issues = @issues.joins(:issue_events).where(issue_events: { environment: params[:environment] }).distinct
+      @issues = @issues.joins(:events).where(events: { environment: params[:environment] }).distinct
     end
 
-    @environments = IssueEvent.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).sort
+    @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).sort
   end
 
   def show
     @issue = scoped_resources.find(params[:id])
-    events = @issue.issue_events.order(created_at: :desc)
+    events = @issue.events.order(created_at: :desc)
     if params[:environment].present? && params[:environment] != 'all'
       events = events.where(environment: params[:environment])
     end
     @latest_event = events.first
-    @environments = IssueEvent.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).sort
+    @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).sort
   end
 
   def resolve

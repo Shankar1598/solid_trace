@@ -23,7 +23,7 @@ module Api
             title: issue.title,
             status: issue.status,
             level: issue.level,
-            event_count: issue.issue_events.count,
+            event_count: issue.events.count,
             created_at: issue.created_at,
             updated_at: issue.updated_at
           }
@@ -41,7 +41,7 @@ module Api
           project_id: issue.project_id,
           created_at: issue.created_at,
           updated_at: issue.updated_at,
-          events: issue.issue_events.order(created_at: :desc).map { |event|
+          events: issue.events.order(created_at: :desc).map { |event|
             {
               id: event.id,
               data: event.data,

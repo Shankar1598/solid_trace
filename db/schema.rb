@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_05_025948) do
+ActiveRecord::Schema[8.1].define(version: 2025_12_05_031821) do
   create_table "environments", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "name"
@@ -20,14 +20,14 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_05_025948) do
     t.index ["project_id"], name: "index_environments_on_project_id"
   end
 
-  create_table "issue_events", force: :cascade do |t|
+  create_table "events", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "environment"
     t.binary "event_data"
     t.integer "issue_id", null: false
     t.datetime "updated_at", null: false
-    t.index ["environment"], name: "index_issue_events_on_environment"
-    t.index ["issue_id"], name: "index_issue_events_on_issue_id"
+    t.index ["environment"], name: "index_events_on_environment"
+    t.index ["issue_id"], name: "index_events_on_issue_id"
   end
 
   create_table "issue_fingerprints", force: :cascade do |t|
@@ -108,7 +108,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_05_025948) do
   end
 
   add_foreign_key "environments", "projects"
-  add_foreign_key "issue_events", "issues"
+  add_foreign_key "events", "issues"
   add_foreign_key "issue_fingerprints", "issues"
   add_foreign_key "issues", "projects"
   add_foreign_key "organizations_users", "organizations"
