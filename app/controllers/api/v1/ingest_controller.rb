@@ -1,8 +1,6 @@
 module Api
   module V1
     class IngestController < Api::BaseController
-      skip_before_action :authenticate_request
-
       before_action :authenticate_project
 
       def store

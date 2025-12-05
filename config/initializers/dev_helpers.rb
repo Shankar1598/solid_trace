@@ -7,7 +7,7 @@ if Rails.env.development?
     IRB.conf[:USE_PAGER] = false
   end
 
-  def send_test_events!
+  def trigger_test_events!
     begin
       1 / 0
     rescue ZeroDivisionError => exception
