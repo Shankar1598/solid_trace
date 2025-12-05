@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_03_181541) do
+ActiveRecord::Schema[8.1].define(version: 2025_12_05_183315) do
   create_table "events", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "environment", default: "unknown", null: false
@@ -62,6 +62,11 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_03_181541) do
     t.index ["user_id"], name: "index_organizations_users_on_user_id"
   end
 
+  create_table "project_issue_counters", primary_key: "project_id", force: :cascade do |t|
+    t.bigint "value", default: 0, null: false
+    t.index ["project_id"], name: "index_project_issue_counters_on_project_id"
+  end
+
   create_table "project_keys", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "project_id", null: false
@@ -105,6 +110,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_03_181541) do
   add_foreign_key "issues", "projects"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
+  add_foreign_key "project_issue_counters", "projects"
   add_foreign_key "project_keys", "projects"
   add_foreign_key "projects", "organizations"
   add_foreign_key "sessions", "users"

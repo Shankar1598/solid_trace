@@ -1,6 +1,8 @@
 require "test_helper"
 
 class IssuesControllerTest < ActionDispatch::IntegrationTest
+  include IntegrationTestHelper
+
   setup do
     @organization = create(:organization)
     @user = create(:user)
@@ -17,15 +19,15 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "should resolve issue using number param" do
-    post resolve_issue_url(@issue, org_slug: @organization.slug)
+    patch resolve_issue_url(@issue, org_slug: @organization.slug)
     assert_redirected_to issue_url(@issue, org_slug: @organization.slug)
-    assert_equal 1, @issue.reload.status
+    assert_equal "resolved", @issue.reload.status
   end
 
   test "should unresolve issue using number param" do
-    @issue.update!(status: 1)
-    post unresolve_issue_url(@issue, org_slug: @organization.slug)
+    @issue.update!(status: :resolved)
+    patch unresolve_issue_url(@issue, org_slug: @organization.slug)
     assert_redirected_to issue_url(@issue, org_slug: @organization.slug)
-    assert_equal 0, @issue.reload.status
+    assert_equal "unresolved", @issue.reload.status
   end
 end

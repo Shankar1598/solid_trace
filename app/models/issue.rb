@@ -29,9 +29,7 @@ class Issue < ApplicationRecord
   private
 
   def assign_number
-    project.with_lock do
-      self.number = (project.issues.maximum(:number) || 0) + 1
-    end
+    self.number = ProjectIssueCounter.next_value_for(project)
   end
 
   # Compute hash from event attributes

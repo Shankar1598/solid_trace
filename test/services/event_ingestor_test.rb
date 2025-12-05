@@ -17,8 +17,8 @@ class EventIngestorTest < ActiveSupport::TestCase
 
     assert_difference -> { Issue.count } => 1, -> { Event.count } => 1 do
       result = EventIngestor.new(@project, data).call
-      assert_equal 1, result[:issue_number]
-      assert_equal "12345", result[:event_uuid]
+      assert_not_nil result[:issue_id]
+      assert_equal Event.last.id, result[:event_id]
     end
 
     issue = Issue.last

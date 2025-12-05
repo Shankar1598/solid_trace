@@ -16,3 +16,9 @@ module ActiveSupport
     include FactoryBot::Syntax::Methods
   end
 end
+
+module IntegrationTestHelper
+  def sign_in_as(user, password: "password")
+    post login_url, params: { email: user.email, password: password }
+  end
+end
