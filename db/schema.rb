@@ -33,17 +33,15 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_03_181541) do
   create_table "issues", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "culprit"
-    t.string "event_type", default: "error", null: false
-    t.integer "level", null: false
+    t.integer "kind", default: 0, null: false
     t.bigint "number", null: false
     t.integer "project_id", null: false
-    t.integer "status", null: false
+    t.integer "status", default: 0, null: false
     t.string "title", null: false
     t.datetime "updated_at", null: false
-    t.index ["level"], name: "index_issues_on_level"
     t.index ["project_id", "number"], name: "index_issues_on_project_id_and_number", unique: true
+    t.index ["project_id", "status"], name: "index_issues_on_project_id_and_status"
     t.index ["project_id"], name: "index_issues_on_project_id"
-    t.index ["status"], name: "index_issues_on_status"
   end
 
   create_table "organizations", force: :cascade do |t|

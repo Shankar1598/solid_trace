@@ -28,8 +28,6 @@ module Api
         end
 
         assert_response :success
-        json_response = JSON.parse(response.body)
-        assert_not_nil json_response["id"]
       end
 
       test "store should create issue and event with valid key in header" do

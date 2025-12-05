@@ -4,12 +4,13 @@ class CreateIssues < ActiveRecord::Migration[8.1]
       t.string :title, null: false
       t.references :project, null: false, foreign_key: true
       t.bigint :number, null: false
-      t.integer :status, null: false, default: "unresolved", index: true
-      t.integer :level, null: false, default: "error", index: true
-      t.string :event_type, default: "error", null: false
+
+      t.integer :status, null: false, default: 0
+      t.integer :kind, null: false, default: 0
       t.string :culprit
 
       t.index [:project_id, :number], unique: true
+      t.index [:project_id, :status]
       t.timestamps
     end
   end

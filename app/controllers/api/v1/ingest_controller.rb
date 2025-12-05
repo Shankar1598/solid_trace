@@ -7,9 +7,9 @@ module Api
         # payload is in params for JSON requests
         event_data = params.except(:project_id, :controller, :action, :sentry_key, :sentry_version, :sentry_client).to_unsafe_h
 
-        result = process_event(event_data)
+        EventIngestor.new(@project, event_data).call
 
-        render json: result, status: :ok
+        render plain: "", status: :ok
       end
 
       def envelope
@@ -22,12 +22,11 @@ module Api
         item_header = JSON.parse(lines[1])
         item_data = JSON.parse(lines[2])
 
-        result = {}
         if item_header["type"] == "event"
-          result = process_event(item_data)
+          EventIngestor.new(@project, item_data).call
         end
 
-        render json: result, status: :ok
+        render plain: "", status: :ok
       end
 
       private
@@ -66,67 +65,7 @@ module Api
         @project = @project_key.project
       end
 
-      def process_event(data)
-        # Extract grouping attributes
-        title = data["message"].presence ||
-                (data["exception"] && data["exception"]["values"]&.first&.fetch("type", nil)).presence ||
-                "Unknown Error"
 
-        # Extract culprit (location/transaction where error occurred)
-        culprit = data["culprit"].presence ||
-                  data["transaction"].presence ||
-                  (data["exception"] && data["exception"]["values"]&.first&.fetch("module", nil)).presence ||
-                  "unknown"
-
-        # Extract event type
-        event_type = data["level"] || "error"
-
-        # Extract custom fingerprint array if provided
-        custom_fingerprint = data["fingerprint"]
-
-        # Compute hash for grouping
-        hash = Issue.compute_hash(
-          title: title,
-          culprit: culprit,
-          event_type: event_type,
-          fingerprint: custom_fingerprint
-        )
-
-        # Find or create issue using the hash
-        issue = Issue.find_or_create_by_hash(
-          project: @project,
-          hash: hash,
-          attributes: {
-            title: title,
-            culprit: culprit,
-            event_type: event_type,
-            level: level_to_int(event_type),
-            status: 0 # unresolved
-          }
-        )
-
-        # Extract environment
-        environment = data["environment"].presence || "unknown"
-
-        # Create issue event
-        issue.events.create!(event_data: data, environment: environment)
-
-        {
-          issue_number: issue.number,
-          event_uuid: data["event_id"]
-        }
-      end
-
-      def level_to_int(level)
-        case level
-        when "fatal" then 50
-        when "error" then 40
-        when "warning" then 30
-        when "info" then 20
-        when "debug" then 10
-        else 40
-        end
-      end
     end
   end
 end

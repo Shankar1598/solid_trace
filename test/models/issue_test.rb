@@ -6,15 +6,15 @@ class IssueTest < ActiveSupport::TestCase
   end
 
   test "compute_hash should generate consistent hash" do
-    hash1 = Issue.compute_hash(title: "Error", culprit: "main.rb", event_type: "error")
-    hash2 = Issue.compute_hash(title: "Error", culprit: "main.rb", event_type: "error")
+    hash1 = Issue.compute_hash(title: "Error", culprit: "main.rb", kind: Issue::KIND::ERROR)
+    hash2 = Issue.compute_hash(title: "Error", culprit: "main.rb", kind: Issue::KIND::ERROR)
 
     assert_equal hash1, hash2
   end
 
   test "compute_hash should generate different hash for different inputs" do
-    hash1 = Issue.compute_hash(title: "Error 1", culprit: "main.rb", event_type: "error")
-    hash2 = Issue.compute_hash(title: "Error 2", culprit: "main.rb", event_type: "error")
+    hash1 = Issue.compute_hash(title: "Error 1", culprit: "main.rb", kind: Issue::KIND::ERROR)
+    hash2 = Issue.compute_hash(title: "Error 2", culprit: "main.rb", kind: Issue::KIND::ERROR)
 
     assert_not_equal hash1, hash2
   end
@@ -23,15 +23,15 @@ class IssueTest < ActiveSupport::TestCase
     # Fingerprint that ignores title
     fingerprint = ["{{ default }}", "custom-part"]
 
-    hash1 = Issue.compute_hash(title: "Error 1", culprit: "main.rb", event_type: "error", fingerprint: fingerprint)
-    hash2 = Issue.compute_hash(title: "Error 1", culprit: "main.rb", event_type: "error", fingerprint: fingerprint)
+    hash1 = Issue.compute_hash(title: "Error 1", culprit: "main.rb", kind: Issue::KIND::ERROR, fingerprint: fingerprint)
+    hash2 = Issue.compute_hash(title: "Error 1", culprit: "main.rb", kind: Issue::KIND::ERROR, fingerprint: fingerprint)
 
     assert_equal hash1, hash2
   end
 
   test "find_or_create_by_hash should create new issue if not exists" do
     hash = "unique_hash_1"
-    attributes = { title: "New Issue", culprit: "test", event_type: "error", status: 0, level: 1 }
+    attributes = { title: "New Issue", culprit: "test", kind: Issue::KIND::ERROR, status: 0 }
 
     assert_difference("Issue.count", 1) do
       issue = Issue.find_or_create_by_hash(project: @project, hash: hash, attributes: attributes)
@@ -42,7 +42,7 @@ class IssueTest < ActiveSupport::TestCase
 
   test "find_or_create_by_hash should return existing issue if exists" do
     hash = "unique_hash_2"
-    attributes = { title: "Existing Issue", culprit: "test", event_type: "error", status: 0, level: 1 }
+    attributes = { title: "Existing Issue", culprit: "test", kind: Issue::KIND::ERROR, status: 0 }
 
     # Create initial issue
     issue1 = Issue.find_or_create_by_hash(project: @project, hash: hash, attributes: attributes)
@@ -56,24 +56,24 @@ class IssueTest < ActiveSupport::TestCase
 
   test "find_or_create_by_hash should reopen resolved issue" do
     hash = "unique_hash_3"
-    attributes = { title: "Resolved Issue", culprit: "test", event_type: "error", status: 0, level: 1 }
+    attributes = { title: "Resolved Issue", culprit: "test", kind: Issue::KIND::ERROR, status: 0 }
 
     issue = Issue.find_or_create_by_hash(project: @project, hash: hash, attributes: attributes)
     issue.update!(status: 1) # Resolve it (assuming 1 is resolved)
 
-    assert_equal 1, issue.reload.status
+    assert_equal "resolved", issue.reload.status
 
     # Trigger again
     reopened_issue = Issue.find_or_create_by_hash(project: @project, hash: hash, attributes: attributes)
 
-    assert_equal 0, reopened_issue.status # Should be open (0)
+    assert_equal "unresolved", reopened_issue.status # Should be open (0)
     assert_equal issue.id, reopened_issue.id
   end
 
   test "find_or_create_by_hash should scope to project" do
     other_project = create(:project)
     hash = "shared_hash"
-    attributes = { title: "Scoped Issue", culprit: "test", event_type: "error", status: 0, level: 1 }
+    attributes = { title: "Scoped Issue", culprit: "test", kind: Issue::KIND::ERROR, status: 0 }
 
     # Create in project 1
     Issue.find_or_create_by_hash(project: @project, hash: hash, attributes: attributes)

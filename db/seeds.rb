@@ -20,7 +20,6 @@ end
 user.organizations << org unless user.organizations.include?(org)
 
 project.issues.find_or_create_by!(title: "Test Issue") do |issue|
-  issue.event_type = "error"
-  issue.level = "error"
+  issue.kind = "error"
   issue.status = "unresolved"
 end
