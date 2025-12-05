@@ -1,5 +1,5 @@
 FactoryBot.define do
-  factory :issue_event do
+  factory :event do
     data { { message: Faker::Lorem.sentence, extra: { key: "value" } } }
     issue
   end

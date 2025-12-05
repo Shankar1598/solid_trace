@@ -19,4 +19,8 @@ user = User.find_or_create_by!(email: "admin@garnet.local") do |u|
 end
 user.organizations << org unless user.organizations.include?(org)
 
-project.issues.find_or_create_by!(title: "Test Issue")
+project.issues.find_or_create_by!(title: "Test Issue") do |issue|
+  issue.event_type = "error"
+  issue.level = "error"
+  issue.status = "unresolved"
+end

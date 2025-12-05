@@ -7,9 +7,9 @@ module Api
         # payload is in params for JSON requests
         event_data = params.except(:project_id, :controller, :action, :sentry_key, :sentry_version, :sentry_client).to_unsafe_h
 
-        process_event(event_data)
+        result = process_event(event_data)
 
-        render json: { id: SecureRandom.uuid }, status: :ok
+        render json: result, status: :ok
       end
 
       def envelope
@@ -22,11 +22,12 @@ module Api
         item_header = JSON.parse(lines[1])
         item_data = JSON.parse(lines[2])
 
+        result = {}
         if item_header["type"] == "event"
-          process_event(item_data)
+          result = process_event(item_data)
         end
 
-        render json: { id: SecureRandom.uuid }, status: :ok
+        render json: result, status: :ok
       end
 
       private
@@ -109,6 +110,11 @@ module Api
 
         # Create issue event
         issue.events.create!(event_data: data, environment: environment)
+
+        {
+          issue_number: issue.number,
+          event_uuid: data["event_id"]
+        }
       end
 
       def level_to_int(level)
