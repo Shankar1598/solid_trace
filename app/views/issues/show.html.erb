@@ -255,4 +255,44 @@
       if (link) link.click();
     }
   });
+
+  // Handle URL hash to open specific tabs (e.g., #comments, #json, #overview)
+  function activateTabFromHash() {
+    const hash = window.location.hash.slice(1); // Remove the # symbol
+    if (hash) {
+      // Small delay to ensure Flowbite has initialized the tabs
+      setTimeout(function() {
+        const tabButton = document.getElementById(hash + '-tab');
+        if (tabButton) {
+          tabButton.click();
+        }
+      }, 100);
+    }
+  }
+
+  // Update URL hash when tabs are clicked
+  function setupTabHashUpdates() {
+    const tabButtons = document.querySelectorAll('#issueTab button[role="tab"]');
+    tabButtons.forEach(button => {
+      button.addEventListener('click', function() {
+        const tabId = this.getAttribute('aria-controls');
+        if (tabId) {
+          history.replaceState(null, null, '#' + tabId);
+        }
+      });
+    });
+  }
+
+  // Activate tab on page load
+  document.addEventListener('turbo:load', function() {
+    setupTabHashUpdates();
+    activateTabFromHash();
+  });
+  document.addEventListener('DOMContentLoaded', function() {
+    setupTabHashUpdates();
+    activateTabFromHash();
+  });
+
+  // Activate tab when hash changes
+  window.addEventListener('hashchange', activateTabFromHash);
 </script>
