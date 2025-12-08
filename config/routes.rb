@@ -24,7 +24,7 @@ Rails.application.routes.draw do
         patch :resolve
         patch :unresolve
       end
-      resources :comments, only: [:create]
+      resources :comments, only: [:create, :destroy]
     end
     resources :mentions, only: [:index]
     resources :projects, only: [:index, :new, :create, :show, :update] do
@@ -34,7 +34,9 @@ Rails.application.routes.draw do
         end
       end
     end
-    resource :settings, only: [:show, :update], controller: "organization_settings"
+    resource :settings, only: [:show, :update], controller: "organization_settings" do
+      resources :members, only: [:create, :destroy], controller: "organization_members"
+    end
     get "settings/user", to: "user_settings#show", as: :org_user_settings
     patch "settings/user", to: "user_settings#update"
   end

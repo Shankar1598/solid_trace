@@ -1,0 +1,18 @@
+Welcome to Garnet!
+
+Hi <%= @user.name %>,
+
+<%= @invited_by.name %> has added you to the <%= @organization.name %> organization on Garnet.
+
+Your Login Credentials
+======================
+Email: <%= @user.email %>
+Password: <%= @password %>
+
+Login here: <%= @login_url %>
+
+For security reasons, we recommend changing your password after your first login.
+
+---
+
+If you didn't expect this invitation, please ignore this email or contact support.

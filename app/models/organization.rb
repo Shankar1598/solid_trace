@@ -1,4 +1,5 @@
 class Organization < ApplicationRecord
   has_many :projects, dependent: :destroy
-  has_and_belongs_to_many :users
+  has_many :organization_users, dependent: :destroy
+  has_many :users, through: :organization_users
 end

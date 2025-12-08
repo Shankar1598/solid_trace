@@ -43,6 +43,38 @@
           <% end %>
         </div>
       </div>
+
+      <!-- Members Section -->
+      <div class="bg-white border border-gray-200 rounded-lg shadow dark:bg-gray-800 dark:border-gray-700">
+        <div class="p-6 border-b border-gray-200 dark:border-gray-700">
+          <h5 class="text-xl font-bold text-gray-900 dark:text-white">Members</h5>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">Manage who has access to this organization.</p>
+        </div>
+        <div class="p-6">
+          <%= render "organization_members/form_errors", error: nil %>
+          <%= render "organization_members/form", organization: @current_org %>
+
+          <div class="mt-6">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left">
+                <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                  <tr>
+                    <th class="px-4 py-3">User</th>
+                    <th class="px-4 py-3">Role</th>
+                    <th class="px-4 py-3">Joined</th>
+                    <th class="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="members-list">
+                  <% @current_org.organization_users.includes(:user).each do |member| %>
+                    <%= render "organization_members/member", member: member %>
+                  <% end %>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>

@@ -1,0 +1,18 @@
+<div id="member-form">
+  <%= form_with url: settings_members_path(org_slug: organization.slug), scope: :member, class: "flex gap-3 items-end", data: { turbo_frame: "_top" } do |form| %>
+    <div class="flex-1">
+      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email *</label>
+      <%= form.email_field :email,
+          placeholder: "Enter email address",
+          required: true,
+          class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
+    </div>
+    <div class="flex-1">
+      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name <span class="text-gray-400">(optional)</span></label>
+      <%= form.text_field :name,
+          placeholder: "Enter name (optional)",
+          class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500" %>
+    </div>
+    <%= form.submit "Add Member", class: "btn-primary" %>
+  <% end %>
+</div>

@@ -1,0 +1,29 @@
+<h1>Welcome to Garnet!</h1>
+
+<p>Hi <%= @user.name %>,</p>
+
+<p>
+  <strong><%= @invited_by.name %></strong> has added you to the
+  <strong><%= @organization.name %></strong> organization on Garnet.
+</p>
+
+<h2>Your Login Credentials</h2>
+
+<p>
+  <strong>Email:</strong> <%= @user.email %><br>
+  <strong>Password:</strong> <%= @password %>
+</p>
+
+<p>
+  <%= link_to "Login to Garnet", @login_url %>
+</p>
+
+<p>
+  For security reasons, we recommend changing your password after your first login.
+</p>
+
+<hr>
+
+<p>
+  <small>If you didn't expect this invitation, please ignore this email or contact support.</small>
+</p>
