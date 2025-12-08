@@ -1,0 +1,5 @@
+<%= turbo_stream.append "comments-list", @comment %>
+<%= turbo_stream.update "comments-count", @issue.comments.count %>
+<%= turbo_stream.remove "no-comments" %>
+<%= turbo_stream.update "comment-flash", "" %>
+<%= turbo_stream.replace "new_comment", partial: "comments/form" %>

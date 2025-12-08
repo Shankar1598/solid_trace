@@ -1,11 +1,13 @@
 require "test_helper"
 
 class MentionsControllerTest < ActionDispatch::IntegrationTest
+  include IntegrationTestHelper
+
   setup do
     @organization = create(:organization)
     @user = create(:user)
     @organization.users << @user
-    sign_in @user
+    sign_in_as @user
   end
 
   test "should get mentions list" do

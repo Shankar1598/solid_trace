@@ -6,9 +6,32 @@ class CommentsController < ApplicationController
     @comment.user = Current.user
 
     if @comment.save
-      redirect_to issue_path(@issue, org_slug: params[:org_slug]), notice: "Comment was successfully created."
+      respond_to do |format|
+        format.turbo_stream
+      end
     else
-      redirect_to issue_path(@issue, org_slug: params[:org_slug]), alert: "Error creating comment."
+      respond_to do |format|
+        format.turbo_stream do
+          render turbo_stream: turbo_stream.update("comment-flash", partial: "shared/error_alert", locals: { message: "Error creating comment." })
+        end
+      end
+    end
+  end
+
+  def destroy
+    @comment = @issue.comments.find(params[:id])
+
+    if @comment.user == Current.user
+      @comment.destroy
+      respond_to do |format|
+        format.turbo_stream
+      end
+    else
+      respond_to do |format|
+        format.turbo_stream do
+          render turbo_stream: turbo_stream.update("comment-flash", partial: "shared/error_alert", locals: { message: "You can only delete your own comments." })
+        end
+      end
     end
   end
 
