@@ -7,7 +7,7 @@
   <div class="flex gap-2 p-2 bg-white border border-gray-200 rounded-md shadow-sm dark:bg-gray-800 dark:border-gray-700">
     <%= form_with url: issues_path(org_slug: @current_org.slug), method: :get, class: "flex w-full gap-2", data: { turbo_frame: "issues_list", turbo_action: "advance" } do |form| %>
       <div class="flex-1">
-        <%= form.text_field :query, value: params[:query], placeholder: "Search by title, message, or tags", class: "w-full border-none shadow-none focus:ring-0 bg-transparent text-sm text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400" %>
+        <%= form.text_field :query, value: params[:query], placeholder: "Search by title, message, or tags", class: "w-full h-full border-none shadow-none focus:ring-0 bg-transparent text-sm text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400" %>
       </div>
       <div class="flex items-center gap-2 border-l border-gray-200 pl-2 dark:border-gray-700">
         <%= form.select :environment, options_for_select([['All Envs', 'all']] + @environments.map { |e| [e, e] }, params[:environment] || 'all'), {}, { onchange: "this.form.requestSubmit()", class: "w-[110px] border-none shadow-none focus:ring-0 h-8 text-sm bg-transparent text-gray-900 dark:text-white" } %>

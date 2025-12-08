@@ -5,14 +5,12 @@ class IssuesController < ApplicationController
   def index
     @issues = scoped_resources.order(created_at: :desc)
 
-
-
     if params[:status].present? && params[:status] != 'all'
       @issues = @issues.where(status: params[:status])
     end
 
     if params[:query].present?
-      @issues = @issues.where("title ILIKE ?", "%#{params[:query]}%")
+      @issues = @issues.where("title LIKE ?", "%#{params[:query]}%")
     end
     if params[:environment].present? && params[:environment] != 'all'
       @issues = @issues.joins(:events).where(events: { environment: params[:environment] }).distinct
@@ -34,7 +32,7 @@ class IssuesController < ApplicationController
     end
 
     # Fallback to latest if not found
-    @event ||= events.last
+    @event ||= events.first
 
     if @event
       # Newer event (Next) - need to reorder to ASC to get the closest newer event
