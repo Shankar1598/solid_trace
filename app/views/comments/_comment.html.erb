@@ -1,0 +1,16 @@
+<div class="flex gap-3 py-4 border-b border-gray-200 dark:border-gray-700" id="<%= dom_id(comment) %>">
+  <div class="flex-shrink-0">
+    <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-sm font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+      <%= comment.user&.name&.first&.upcase || "?" %>
+    </div>
+  </div>
+  <div class="flex-grow space-y-1">
+    <div class="flex items-center gap-2 text-sm">
+      <span class="font-medium text-gray-900 dark:text-white"><%= comment.user&.name || "Unknown User" %></span>
+      <span class="text-gray-500 dark:text-gray-400"><%= time_ago_in_words(comment.created_at) %> ago</span>
+    </div>
+    <div class="prose prose-sm dark:prose-invert max-w-none text-gray-700 dark:text-gray-300">
+      <%= comment.content %>
+    </div>
+  </div>
+</div>

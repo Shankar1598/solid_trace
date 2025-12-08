@@ -24,7 +24,9 @@ Rails.application.routes.draw do
         patch :resolve
         patch :unresolve
       end
+      resources :comments, only: [:create]
     end
+    resources :mentions, only: [:index]
     resources :projects, only: [:index, :new, :create, :show, :update] do
       resources :keys, only: [:create, :destroy], controller: "project_keys" do
         member do

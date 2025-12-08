@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+rm ./db/schema.rb
+./bin/rails db:reset
+./bin/rails db:migrate
+./bin/rails db:seed
+

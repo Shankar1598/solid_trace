@@ -99,6 +99,9 @@
       <li class="mr-2" role="presentation">
         <button class="inline-block p-4 border-b-2 border-transparent rounded-t-lg hover:text-gray-600 hover:border-gray-300 dark:hover:text-gray-300 text-gray-500 dark:text-gray-400" id="json-tab" data-tabs-target="#json" type="button" role="tab" aria-controls="json" aria-selected="false">JSON</button>
       </li>
+      <li class="mr-2" role="presentation">
+        <button class="inline-block p-4 border-b-2 border-transparent rounded-t-lg hover:text-gray-600 hover:border-gray-300 dark:hover:text-gray-300 text-gray-500 dark:text-gray-400" id="comments-tab" data-tabs-target="#comments" type="button" role="tab" aria-controls="comments" aria-selected="false">Comments</button>
+      </li>
     </ul>
   </div>
 
@@ -213,6 +216,28 @@
     <div class="hidden p-4 rounded-lg bg-gray-50 dark:bg-gray-800" id="json" role="tabpanel" aria-labelledby="json-tab">
       <div class="rounded-md border border-gray-200 bg-gray-100 p-4 overflow-auto dark:bg-gray-900 dark:border-gray-700">
         <pre class="text-sm font-mono whitespace-pre-wrap break-all text-gray-900 dark:text-white"><%= @event ? JSON.pretty_generate(@event.event_data) : 'No event data available' %></pre>
+      </div>
+    </div>
+
+    <div class="hidden p-4 rounded-lg bg-gray-50 dark:bg-gray-800" id="comments" role="tabpanel" aria-labelledby="comments-tab">
+      <div class="space-y-8 max-w-4xl">
+        <div class="space-y-6">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Comments (<%= @issue.comments.count %>)</h3>
+          <% if @issue.comments.any? %>
+            <div class="space-y-4">
+              <%= render @issue.comments.includes(:user).order(created_at: :asc) %>
+            </div>
+          <% else %>
+            <div class="text-center py-8 bg-gray-100 rounded-lg border border-dashed border-gray-300 dark:bg-gray-700 dark:border-gray-600">
+              <p class="text-gray-500 dark:text-gray-400">No comments yet.</p>
+            </div>
+          <% end %>
+        </div>
+
+        <div class="pt-6 border-t border-gray-200 dark:border-gray-700">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Add a comment</h3>
+          <%= render "comments/form" %>
+        </div>
       </div>
     </div>
   </div>
