@@ -3,10 +3,10 @@
     <%= form.label :content, "Add a comment", class: "sr-only" %>
     <div class="prose dark:prose-invert max-w-none">
       <%= form.rich_text_area :content,
-          class: "block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white min-h-[100px]",
-          data: {
-            mentions_url: mentions_path(org_slug: params[:org_slug], format: :json)
-          } %>
+          class: "block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white min-h-[100px]" do %>
+        <lexxy-prompt trigger="@" src="<%= mentions_path(org_slug: params[:org_slug]) %>" name="mention" supports-space-in-searches>
+        </lexxy-prompt>
+      <% end %>
     </div>
   </div>
 
@@ -14,3 +14,4 @@
     <%= form.submit "Comment", class: "btn-primary" %>
   </div>
 <% end %>
+

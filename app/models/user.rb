@@ -1,4 +1,6 @@
 class User < ApplicationRecord
+  include ActionText::Attachable
+
   has_secure_password
 
   has_many :organization_users, dependent: :destroy

@@ -1,0 +1,16 @@
+<lexxy-prompt-item search="<%= "#{user.name} #{user.email}" %>" sgid="<%= user.attachable_sgid %>">
+  <template type="menu">
+    <div class="flex items-center gap-2 px-3 py-2">
+      <div class="w-6 h-6 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
+        <span class="text-xs font-medium text-primary-600 dark:text-primary-400"><%= user.name.first.upcase %></span>
+      </div>
+      <div>
+        <div class="text-sm font-medium text-gray-900 dark:text-white"><%= user.name %></div>
+        <div class="text-xs text-gray-500 dark:text-gray-400"><%= user.email %></div>
+      </div>
+    </div>
+  </template>
+  <template type="editor">
+    <%= render "users/user", user: user %>
+  </template>
+</lexxy-prompt-item>

@@ -246,7 +246,10 @@
 
 <script>
   document.addEventListener('keydown', function(e) {
+    // Skip navigation shortcuts when in text inputs, textareas, contenteditable, or lexxy editor
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.target.isContentEditable || e.target.closest('lexxy-editor')) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return; // Don't capture modifier key combos
 
     if (e.key === 'ArrowLeft') {
       const link = document.querySelector('[data-key="ArrowLeft"]');
