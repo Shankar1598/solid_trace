@@ -37,6 +37,7 @@ Rails.application.routes.draw do
     resource :settings, only: [:show, :update], controller: "organization_settings" do
       resources :members, only: [:create, :destroy], controller: "organization_members"
     end
+    resources :integrations, only: [:index, :new, :create, :edit, :update, :destroy]
     get "settings/user", to: "user_settings#show", as: :org_user_settings
     patch "settings/user", to: "user_settings#update"
   end

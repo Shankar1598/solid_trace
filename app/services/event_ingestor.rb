@@ -57,6 +57,9 @@ class EventIngestor
     # Create issue event
     event = issue.events.create!(event_data: data, environment: environment)
 
+    # Check notification rules and notify integrations if conditions are met
+    IntegrationNotifier.notify(issue)
+
     {
       issue_id: issue.id,
       event_id: event.id

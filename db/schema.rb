@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_06_102036) do
+ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -66,6 +66,18 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_06_102036) do
     t.datetime "updated_at", null: false
     t.index ["environment"], name: "index_events_on_environment"
     t.index ["issue_id"], name: "index_events_on_issue_id"
+  end
+
+  create_table "integrations", force: :cascade do |t|
+    t.boolean "active", default: true
+    t.datetime "created_at", null: false
+    t.string "name"
+    t.integer "organization_id", null: false
+    t.string "provider", null: false
+    t.json "settings", default: {}
+    t.datetime "updated_at", null: false
+    t.index ["organization_id", "provider"], name: "index_integrations_on_organization_id_and_provider"
+    t.index ["organization_id"], name: "index_integrations_on_organization_id"
   end
 
   create_table "issue_fingerprints", force: :cascade do |t|
@@ -157,6 +169,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_06_102036) do
   add_foreign_key "comments", "issues"
   add_foreign_key "comments", "users"
   add_foreign_key "events", "issues"
+  add_foreign_key "integrations", "organizations"
   add_foreign_key "issue_fingerprints", "issues"
   add_foreign_key "issues", "projects"
   add_foreign_key "organizations_users", "organizations"

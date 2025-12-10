@@ -1,0 +1,7 @@
+New Issue Detected
+
+Project: <%= @project.name %>
+Kind: <%= @issue.kind %>
+Title: <%= @issue.title %>
+
+View Issue: <%= issue_url(org_slug: @project.organization.slug, id: @issue, host: Garnet::Application.config.action_mailer.default_url_options[:host] || "localhost:3000") %>

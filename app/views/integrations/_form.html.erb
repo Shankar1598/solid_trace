@@ -1,0 +1,107 @@
+<% integration_form_url = @integration.persisted? ? integration_path(org_slug: @current_org.slug, id: @integration.id) : integrations_path(org_slug: @current_org.slug) %>
+
+<%= form_with model: @integration, url: integration_form_url, class: "space-y-4", data: { controller: "integration-form" } do |form| %>
+  <% if @integration.errors.any? %>
+    <div class="p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400" role="alert">
+      <ul class="list-disc pl-4">
+        <% @integration.errors.full_messages.each do |message| %>
+          <li><%= message %></li>
+        <% end %>
+      </ul>
+    </div>
+  <% end %>
+
+  <div>
+    <%= form.label :name, "Integration Name", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+    <%= form.text_field :name, placeholder: "e.g., Production Slack, PagerDuty Alerts", class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" %>
+  </div>
+  <!-- Provider Selection -->
+  <div class="mb-6">
+    <%= form.label :provider, class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+    <%= form.select :provider,
+        Integration::PROVIDERS.map { |p| [p.humanize, p] },
+        {},
+        class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500",
+        data: { action: "change->integration-form#toggleFields", "integration-form-target": "providerSelect" }
+    %>
+  </div>
+
+  <!-- Settings Fields -->
+  <div data-integration-form-target="settingsFields" class="space-y-4 mb-6">
+    <!-- Slack Fields -->
+    <div data-provider="slack" class="<%= 'hidden' unless @integration.provider == 'slack' %>">
+      <div>
+        <%= form.label :webhook_url, "Webhook URL", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+        <%= form.text_field "settings[webhook_url]", value: @integration.webhook_url, class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" %>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Enter the Slack Incoming Webhook URL.</p>
+      </div>
+    </div>
+
+    <!-- PagerDuty Fields -->
+    <div data-provider="pagerduty" class="<%= 'hidden' unless @integration.provider == 'pagerduty' %>">
+      <div>
+        <%= form.label :routing_key, "Routing Key", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+        <%= form.text_field "settings[routing_key]", value: @integration.routing_key, class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" %>
+      </div>
+      <div class="mt-4">
+        <%= form.label :severity, "Severity", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+        <%= form.select "settings[severity]",
+            options_for_select(%w[info warning error critical], @integration.severity),
+            {},
+            class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
+        %>
+      </div>
+    </div>
+
+    <!-- Email Fields -->
+    <div data-provider="email" class="<%= 'hidden' unless @integration.provider == 'email' %>">
+      <div>
+        <%= form.label :recipients, "Recipients (comma separated)", class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+        <%= form.text_field "settings[recipients]", value: (@integration.settings["recipients"] if @integration.settings), class: "bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white", placeholder: "alice@example.com, bob@example.com" %>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Rules -->
+  <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4 mb-4">
+    <h4 class="text-md font-medium text-gray-900 dark:text-white mb-3">Notification Rules</h4>
+
+    <div class="space-y-4">
+      <div class="flex items-start">
+        <div class="flex items-center h-5">
+          <%= form.check_box "settings[notify_on_new_issue]", checked: @integration.notify_on_new_issue, id: "notify_new_issue", class: "w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" %>
+        </div>
+        <div class="ml-2 text-sm">
+          <label for="notify_new_issue" class="font-medium text-gray-900 dark:text-gray-300">New Issues</label>
+          <p class="text-gray-500 dark:text-gray-400 text-xs">Notify when a new issue is created.</p>
+        </div>
+      </div>
+
+      <div class="flex items-start">
+        <div class="flex items-center h-5">
+          <%= form.check_box "settings[notify_on_event_threshold]", checked: @integration.notify_on_event_threshold, id: "notify_threshold", class: "w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" %>
+        </div>
+        <div class="ml-2 w-full">
+          <label for="notify_threshold" class="block mb-1 text-sm font-medium text-gray-900 dark:text-white">Event Frequency Threshold</label>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-sm text-gray-600 dark:text-gray-400">Notify if</span>
+            <%= form.number_field "settings[event_threshold]", value: @integration.event_threshold, min: 1, class: "w-20 bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:text-white" %>
+            <span class="text-sm text-gray-600 dark:text-gray-400">events occur within</span>
+            <%= form.number_field "settings[time_window_minutes]", value: @integration.time_window_minutes, min: 1, class: "w-20 bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:text-white" %>
+            <span class="text-sm text-gray-600 dark:text-gray-400">minutes.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex items-center">
+    <%= form.check_box :active, class: "w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" %>
+    <%= form.label :active, "Active", class: "ml-2 text-sm font-medium text-gray-900 dark:text-gray-300" %>
+  </div>
+
+  <div class="flex justify-end gap-3">
+    <%= link_to "Cancel", integrations_path(org_slug: @current_org.slug), class: "btn-secondary" %>
+    <%= form.submit @integration.persisted? ? "Update Integration" : "Add Integration", class: "btn-primary" %>
+  </div>
+<% end %>
