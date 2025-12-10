@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class MentionsController < ApplicationController
   def index
     @current_org = Current.user.organizations.find_by!(slug: params[:org_slug])

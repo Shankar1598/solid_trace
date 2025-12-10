@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class Integration < ApplicationRecord
   PROVIDERS = %w[email slack pagerduty].freeze
 

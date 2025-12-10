@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Provides atomic, lock-free counter increments for issue numbering.
 # Supports PostgreSQL, SQLite (3.35+). Unoptimized for MySQL due to lack of `RETURNING` support.
 class ProjectIssueCounter < ApplicationRecord

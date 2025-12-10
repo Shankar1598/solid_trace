@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class IssuesController < ApplicationController
   layout "dashboard"
   before_action :set_organization

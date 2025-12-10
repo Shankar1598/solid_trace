@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Notifiers
   class EmailNotifier
     def initialize(integration, issue)

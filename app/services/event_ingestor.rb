@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class EventIngestor
   def initialize(project, data)
     @project = project

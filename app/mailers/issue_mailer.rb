@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class IssueMailer < ApplicationMailer
   def notify(issue, recipients)
     @issue = issue

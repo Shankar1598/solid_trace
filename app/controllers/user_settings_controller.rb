@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class UserSettingsController < ApplicationController
   layout "dashboard"
   before_action :set_organization

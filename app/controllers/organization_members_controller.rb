@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class OrganizationMembersController < ApplicationController
   layout "dashboard"
   before_action :set_organization

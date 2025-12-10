@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class ProjectKeysController < ApplicationController
   before_action :set_organization
   before_action :set_project

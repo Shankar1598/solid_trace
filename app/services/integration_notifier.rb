@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class IntegrationNotifier
   def self.notify(issue)
     new(issue).check_and_notify

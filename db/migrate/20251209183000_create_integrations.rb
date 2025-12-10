@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class CreateIntegrations < ActiveRecord::Migration[8.1]
   def change
     create_table :integrations do |t|

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class CreateProjectIssueCounters < ActiveRecord::Migration[8.1]
   def change
     create_table :project_issue_counters, id: false do |t|

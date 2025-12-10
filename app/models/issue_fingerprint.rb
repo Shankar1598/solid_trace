@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class IssueFingerprint < ApplicationRecord
   belongs_to :issue
 

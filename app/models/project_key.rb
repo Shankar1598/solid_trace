@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class ProjectKey < ApplicationRecord
   belongs_to :project
 

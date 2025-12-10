@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class OrganizationMailer < ApplicationMailer
   def invitation_email(user:, organization:, password:, invited_by:)
     @user = user
