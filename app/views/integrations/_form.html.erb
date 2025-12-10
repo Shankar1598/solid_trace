@@ -62,6 +62,11 @@
     </div>
   </div>
 
+  <div class="flex items-center">
+    <%= form.check_box :active, class: "w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" %>
+    <%= form.label :active, "Active", class: "ml-2 text-sm font-medium text-gray-900 dark:text-gray-300" %>
+  </div>
+
   <!-- Notification Rules -->
   <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4 mb-4">
     <h4 class="text-md font-medium text-gray-900 dark:text-white mb-3">Notification Rules</h4>
@@ -93,11 +98,6 @@
         </div>
       </div>
     </div>
-  </div>
-
-  <div class="flex items-center">
-    <%= form.check_box :active, class: "w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" %>
-    <%= form.label :active, "Active", class: "ml-2 text-sm font-medium text-gray-900 dark:text-gray-300" %>
   </div>
 
   <div class="flex justify-end gap-3">

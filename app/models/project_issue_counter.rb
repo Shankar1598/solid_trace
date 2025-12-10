@@ -1,5 +1,5 @@
 # Provides atomic, lock-free counter increments for issue numbering.
-# Supports PostgreSQL, SQLite (3.35+), and MySQL with DB-specific optimizations.
+# Supports PostgreSQL, SQLite (3.35+). Unoptimized for MySQL due to lack of `RETURNING` support.
 class ProjectIssueCounter < ApplicationRecord
   self.primary_key = :project_id
 
