@@ -1,12 +1,9 @@
 # frozen_string_literal: true
 
 class IntegrationNotifier
-  def self.notify(issue)
-    new(issue).check_and_notify
-  end
-
-  def initialize(issue)
+  def initialize(issue, newly_created)
     @issue = issue
+    @newly_created = newly_created
   end
 
   def check_and_notify
@@ -20,7 +17,7 @@ class IntegrationNotifier
 
   private
 
-  attr_reader :issue
+  attr_reader :issue, :newly_created
 
   def notify_if_conditions_met(integration)
     return unless should_notify?(integration)
@@ -33,7 +30,7 @@ class IntegrationNotifier
 
   def should_notify?(integration)
     # Rule 1: Always notify for new issues (if enabled)
-    if integration.notify_on_new_issue && issue.id_previously_changed?
+    if integration.notify_on_new_issue && @newly_created
       return true
     end
 

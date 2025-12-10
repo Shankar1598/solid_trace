@@ -60,7 +60,8 @@ class EventIngestor
     event = issue.events.create!(event_data: data, environment: environment)
 
     # Check notification rules and notify integrations if conditions are met
-    IntegrationNotifier.notify(issue)
+    newly_created = issue.id_previously_changed?
+    IntegrationNotificationJob.perform_later(issue, newly_created)
 
     {
       issue_id: issue.id,

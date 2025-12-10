@@ -57,6 +57,8 @@ class Issue < ApplicationRecord
 
   # Find or create issue by hash
   def self.find_or_create_by_hash(project:, hash:, attributes:)
+    retries ||= 0
+
     # Look for existing issue with this hash
     issue_fingerprint = IssueFingerprint.joins(:issue)
                           .where(fingerprint: hash, issues: { project_id: project.id })
@@ -69,9 +71,19 @@ class Issue < ApplicationRecord
       issue
     else
       # Create new issue
-      issue = project.issues.create!(attributes)
-      issue.issue_fingerprints.create!(fingerprint: hash)
-      issue
+      transaction do
+        issue = project.issues.create!(attributes)
+        issue.issue_fingerprints.create!(fingerprint: hash)
+        issue
+      end
+    end
+  rescue ActiveRecord::RecordNotUnique
+    # If we hit a unique constraint (on issue_fingerprints), it means another process created it.
+    # Retry to find it.
+    if (retries += 1) < 3
+      retry
+    else
+      raise
     end
   end
 end

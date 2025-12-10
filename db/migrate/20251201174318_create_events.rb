@@ -8,6 +8,8 @@ class CreateEvents < ActiveRecord::Migration[8.1]
       t.string :environment, default: "unknown", null: false, index: true
 
       t.timestamps
+
+      t.index [ :issue_id, :created_at ]
     end
   end
 end
