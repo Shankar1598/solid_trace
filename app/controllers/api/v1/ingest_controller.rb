@@ -64,8 +64,6 @@ module Api
 
         @project = @project_key.project
       end
-
-
     end
   end
 end

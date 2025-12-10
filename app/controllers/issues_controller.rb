@@ -5,14 +5,14 @@ class IssuesController < ApplicationController
   def index
     @issues = scoped_resources.order(created_at: :desc)
 
-    if params[:status].present? && params[:status] != 'all'
+    if params[:status].present? && params[:status] != "all"
       @issues = @issues.where(status: params[:status])
     end
 
     if params[:query].present?
       @issues = @issues.where("title LIKE ?", "%#{params[:query]}%")
     end
-    if params[:environment].present? && params[:environment] != 'all'
+    if params[:environment].present? && params[:environment] != "all"
       @issues = @issues.joins(:events).where(events: { environment: params[:environment] }).distinct
     end
 
@@ -23,7 +23,7 @@ class IssuesController < ApplicationController
     @issue = scoped_resources.find_by!(number: params[:id])
     events = @issue.events.order(created_at: :desc)
 
-    if params[:environment].present? && params[:environment] != 'all'
+    if params[:environment].present? && params[:environment] != "all"
       events = events.where(environment: params[:environment])
     end
 

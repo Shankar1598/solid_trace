@@ -14,30 +14,30 @@ Rails.application.routes.draw do
   get "login", to: "sessions#new"
   post "login", to: "sessions#create"
   resource :session
-  resource :registration, only: [:new, :create]
-  resource :user_settings, only: [:show, :update], controller: "user_settings"
+  resource :registration, only: [ :new, :create ]
+  resource :user_settings, only: [ :show, :update ], controller: "user_settings"
   resources :passwords, param: :token
 
   scope "/:org_slug" do
-    resources :issues, only: [:index, :show] do
+    resources :issues, only: [ :index, :show ] do
       member do
         patch :resolve
         patch :unresolve
       end
-      resources :comments, only: [:create, :destroy]
+      resources :comments, only: [ :create, :destroy ]
     end
-    resources :mentions, only: [:index]
-    resources :projects, only: [:index, :new, :create, :show, :update] do
-      resources :keys, only: [:create, :destroy], controller: "project_keys" do
+    resources :mentions, only: [ :index ]
+    resources :projects, only: [ :index, :new, :create, :show, :update ] do
+      resources :keys, only: [ :create, :destroy ], controller: "project_keys" do
         member do
           patch :rotate
         end
       end
     end
-    resource :settings, only: [:show, :update], controller: "organization_settings" do
-      resources :members, only: [:create, :destroy], controller: "organization_members"
+    resource :settings, only: [ :show, :update ], controller: "organization_settings" do
+      resources :members, only: [ :create, :destroy ], controller: "organization_members"
     end
-    resources :integrations, only: [:index, :new, :create, :edit, :update, :destroy]
+    resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
     get "settings/user", to: "user_settings#show", as: :org_user_settings
     patch "settings/user", to: "user_settings#update"
   end
@@ -66,7 +66,7 @@ Rails.application.routes.draw do
         patch "issues/:id/resolve", to: "issues#resolve", as: :resolve_issue
         patch "issues/:id/unresolve", to: "issues#unresolve", as: :unresolve_issue
 
-        resources :projects, param: :project_slug, only: [:index, :show, :update] do
+        resources :projects, param: :project_slug, only: [ :index, :show, :update ] do
           member do
             get "keys", to: "project_keys#index"
             post "keys", to: "project_keys#create"

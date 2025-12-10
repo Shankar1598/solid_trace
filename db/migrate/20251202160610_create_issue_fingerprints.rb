@@ -6,6 +6,6 @@ class CreateIssueFingerprints < ActiveRecord::Migration[8.1]
 
       t.timestamps
     end
-    add_index :issue_fingerprints, [:issue_id, :fingerprint], unique: true
+    add_index :issue_fingerprints, [ :issue_id, :fingerprint ], unique: true
   end
 end

@@ -1,7 +1,7 @@
 class IntegrationsController < ApplicationController
   layout "dashboard"
   before_action :set_organization
-  before_action :set_integration, only: [:edit, :update, :destroy]
+  before_action :set_integration, only: [ :edit, :update, :destroy ]
 
   def index
     @integrations = @current_org.integrations

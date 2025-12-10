@@ -21,7 +21,7 @@ class IssueTest < ActiveSupport::TestCase
 
   test "compute_hash should handle custom fingerprint" do
     # Fingerprint that ignores title
-    fingerprint = ["{{ default }}", "custom-part"]
+    fingerprint = [ "{{ default }}", "custom-part" ]
 
     hash1 = Issue.compute_hash(title: "Error 1", culprit: "main.rb", kind: Issue::KIND::ERROR, fingerprint: fingerprint)
     hash2 = Issue.compute_hash(title: "Error 1", culprit: "main.rb", kind: Issue::KIND::ERROR, fingerprint: fingerprint)

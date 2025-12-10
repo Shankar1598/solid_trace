@@ -5,7 +5,7 @@ class IssueMailerTest < ActionMailer::TestCase
     organization = Organization.create!(name: "Test Org", slug: "test-org")
     project = organization.projects.create!(name: "Test Project")
     issue = project.issues.create!(title: "Test Issue", kind: "error")
-    recipients = ["test@example.com"]
+    recipients = [ "test@example.com" ]
 
     mail = IssueMailer.notify(issue, recipients)
 

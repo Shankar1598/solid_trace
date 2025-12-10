@@ -9,8 +9,8 @@ class CreateIssues < ActiveRecord::Migration[8.1]
       t.integer :kind, null: false, default: 0
       t.string :culprit
 
-      t.index [:project_id, :number], unique: true
-      t.index [:project_id, :status]
+      t.index [ :project_id, :number ], unique: true
+      t.index [ :project_id, :status ]
       t.timestamps
     end
   end

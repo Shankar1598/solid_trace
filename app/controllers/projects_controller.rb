@@ -1,7 +1,7 @@
 class ProjectsController < ApplicationController
   layout "dashboard"
   before_action :set_organization
-  before_action :set_project, only: [:show]
+  before_action :set_project, only: [ :show ]
 
   def index
     @projects = @current_org.projects.order(created_at: :desc)

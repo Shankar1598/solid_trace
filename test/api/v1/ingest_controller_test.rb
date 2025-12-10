@@ -21,7 +21,7 @@ module Api
       end
 
       test "store should create issue and event with valid key in params" do
-        assert_difference(["Issue.count", "Event.count"], 1) do
+        assert_difference([ "Issue.count", "Event.count" ], 1) do
           post api_ingest_store_url(project_id: @project.id),
                params: @valid_payload.merge(sentry_key: @project_key.public_key),
                as: :json
@@ -33,7 +33,7 @@ module Api
       test "store should create issue and event with valid key in header" do
         headers = { "X-Sentry-Auth" => "Sentry sentry_key=#{@project_key.public_key}" }
 
-        assert_difference(["Issue.count", "Event.count"], 1) do
+        assert_difference([ "Issue.count", "Event.count" ], 1) do
           post api_ingest_store_url(project_id: @project.id),
                params: @valid_payload,
                headers: headers,
@@ -77,7 +77,7 @@ module Api
           "Content-Type" => "application/x-sentry-envelope"
         }
 
-        assert_difference(["Issue.count", "Event.count"], 1) do
+        assert_difference([ "Issue.count", "Event.count" ], 1) do
           post api_ingest_envelope_url(project_id: @project.id),
                params: envelope_body,
                headers: headers
