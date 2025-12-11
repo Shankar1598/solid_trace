@@ -6,6 +6,6 @@ class IntegrationNotificationJob < ApplicationJob
   retry_on Net::OpenTimeout, Net::ReadTimeout, wait: :exponentially_longer, attempts: 3
 
   def perform(issue, newly_created)
-    IntegrationNotifier.new(issue, newly_created).notify
+    IntegrationNotifier.new(issue, newly_created).check_and_notify
   end
 end
