@@ -80,4 +80,5 @@ export interface SharedProps {
     notice?: string
     alert?: string
   }
+  [key: string]: unknown
 }

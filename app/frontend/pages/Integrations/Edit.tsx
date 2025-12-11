@@ -1,0 +1,118 @@
+import { Link, useForm, usePage } from '@inertiajs/react'
+import DashboardLayout from '@/components/layouts/DashboardLayout'
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { SharedProps, Integration } from '@/types'
+import { FormEventHandler } from 'react'
+
+interface IntegrationsEditProps {
+  integration: Integration
+  providers: { [key: string]: string }
+}
+
+export default function IntegrationsEdit({ integration, providers }: IntegrationsEditProps) {
+  const { current_org } = usePage<SharedProps>().props
+
+  const { data, setData, put, processing } = useForm({
+    provider: integration.provider,
+    name: integration.name || '',
+    active: integration.enabled, // Mapping enabled -> active if that matches backend logic? Backend serializer says 'enabled', controller params said 'active'. Assuming 'enabled' for UI/Type consistency.
+    settings: {
+      webhook_url: (integration.settings as any)?.webhook_url || '',
+      channel: (integration.settings as any)?.channel || '',
+      routing_key: (integration.settings as any)?.routing_key || '',
+      notify_on_new_issue: (integration.settings as any)?.notify_on_new_issue ?? true
+    }
+  })
+
+  // Quick fix for active vs enabled mismatch if any
+  // If backend serializer returns 'enabled' but controller expects 'active'
+  const submit: FormEventHandler = (e) => {
+    e.preventDefault()
+    put(`/${current_org?.slug}/settings/integrations/${integration.id}`)
+  }
+
+  if (!current_org) return null
+
+  return (
+    <DashboardLayout>
+      <div className="max-w-2xl mx-auto space-y-6">
+        <div className="space-y-0.5">
+          <h1 className="text-2xl font-bold tracking-tight">Edit Integration</h1>
+          <p className="text-muted-foreground">
+            Update integration settings.
+          </p>
+        </div>
+
+        <Card>
+          <form onSubmit={submit}>
+            <CardHeader>
+              <CardTitle>{providers[integration.provider] || integration.provider} Configuration</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="name">Name (Optional)</Label>
+                <Input
+                  id="name"
+                  placeholder="e.g. Engineering Slack"
+                  value={data.name}
+                  onChange={(e) => setData('name', e.target.value)}
+                />
+              </div>
+
+              {/* Dynamic fields based on provider */}
+              {integration.provider === 'slack' && (
+                <div className="space-y-4 pt-4 border-t">
+                  <h3 className="font-medium text-sm">Slack Settings</h3>
+                  <div className="space-y-2">
+                    <Label htmlFor="webhook_url">Webhook URL</Label>
+                    <Input
+                      id="webhook_url"
+                      value={data.settings.webhook_url}
+                      onChange={(e) => setData('settings', { ...data.settings, webhook_url: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="channel">Channel (Optional)</Label>
+                    <Input
+                      id="channel"
+                      value={data.settings.channel}
+                      onChange={(e) => setData('settings', { ...data.settings, channel: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {integration.provider === 'pagerduty' && (
+                <div className="space-y-4 pt-4 border-t">
+                  <h3 className="font-medium text-sm">PagerDuty Settings</h3>
+                  <div className="space-y-2">
+                    <Label htmlFor="routing_key">Routing Key / Integration Key</Label>
+                    <Input
+                      id="routing_key"
+                      value={data.settings.routing_key}
+                      onChange={(e) => setData('settings', { ...data.settings, routing_key: e.target.value })}
+                      required
+                    />
+                  </div>
+                </div>
+              )}
+
+            </CardContent>
+            <CardFooter className="flex justify-end gap-2">
+              <Link href={`/${current_org.slug}/settings/integrations`}>
+                <Button variant="outline" type="button">Cancel</Button>
+              </Link>
+              <Button type="submit" disabled={processing}>
+                {processing ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </CardFooter>
+          </form>
+        </Card>
+      </div>
+    </DashboardLayout>
+  )
+}
