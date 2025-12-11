@@ -20,7 +20,7 @@ class OrganizationMembersController < ApplicationController
       )
 
       unless @user.save
-        render turbo_stream: turbo_stream.replace("member-form-errors", partial: "organization_members/form_errors", locals: { error: @user.errors.full_messages.first })
+        redirect_to settings_path(org_slug: @current_org.slug), alert: @user.errors.full_messages.first
         return
       end
 
@@ -37,21 +37,12 @@ class OrganizationMembersController < ApplicationController
           organization: @current_org,
           password: generated_password,
           invited_by: current_user
-        ).deliver_now
+        ).deliver_later
       end
 
-      respond_to do |format|
-        format.turbo_stream do
-          render turbo_stream: [
-            turbo_stream.append("members-list", partial: "organization_members/member", locals: { member: @organization_user }),
-            turbo_stream.replace("member-form", partial: "organization_members/form", locals: { organization: @current_org }),
-            turbo_stream.replace("member-form-errors", partial: "organization_members/form_errors", locals: { error: nil })
-          ]
-        end
-        format.html { redirect_to settings_path(org_slug: @current_org.slug), notice: "Member added successfully" }
-      end
+      redirect_to settings_path(org_slug: @current_org.slug), notice: "Member added successfully"
     else
-      render turbo_stream: turbo_stream.replace("member-form-errors", partial: "organization_members/form_errors", locals: { error: @organization_user.errors.full_messages.first })
+      redirect_to settings_path(org_slug: @current_org.slug), alert: @organization_user.errors.full_messages.first
     end
   end
 
@@ -60,17 +51,12 @@ class OrganizationMembersController < ApplicationController
 
     # Prevent removing the last member
     if @current_org.organization_users.count <= 1
-      flash[:alert] = "Cannot remove the last member of the organization"
-      redirect_to settings_path(org_slug: @current_org.slug)
+      redirect_to settings_path(org_slug: @current_org.slug), alert: "Cannot remove the last member of the organization"
       return
     end
 
     @organization_user.destroy
-
-    respond_to do |format|
-      format.turbo_stream { render turbo_stream: turbo_stream.remove("member-#{@organization_user.id}") }
-      format.html { redirect_to settings_path(org_slug: @current_org.slug), notice: "Member removed successfully" }
-    end
+    redirect_to settings_path(org_slug: @current_org.slug), notice: "Member removed successfully"
   end
 
   private

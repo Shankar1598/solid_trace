@@ -8,15 +8,9 @@ class CommentsController < ApplicationController
     @comment.user = Current.user
 
     if @comment.save
-      respond_to do |format|
-        format.turbo_stream
-      end
+      redirect_to issue_path(@issue.number, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment added"
     else
-      respond_to do |format|
-        format.turbo_stream do
-          render turbo_stream: turbo_stream.update("comment-flash", partial: "shared/error_alert", locals: { message: "Error creating comment." })
-        end
-      end
+      redirect_to issue_path(@issue.number, org_slug: @current_org.slug, anchor: "comments"), alert: "Error creating comment"
     end
   end
 
@@ -25,15 +19,9 @@ class CommentsController < ApplicationController
 
     if @comment.user == Current.user
       @comment.destroy
-      respond_to do |format|
-        format.turbo_stream
-      end
+      redirect_to issue_path(@issue.number, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment deleted"
     else
-      respond_to do |format|
-        format.turbo_stream do
-          render turbo_stream: turbo_stream.update("comment-flash", partial: "shared/error_alert", locals: { message: "You can only delete your own comments." })
-        end
-      end
+      redirect_to issue_path(@issue.number, org_slug: @current_org.slug, anchor: "comments"), alert: "You can only delete your own comments"
     end
   end
 

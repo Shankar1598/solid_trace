@@ -7,10 +7,16 @@ class IntegrationsController < ApplicationController
 
   def index
     @integrations = @current_org.integrations
+
+    render inertia: "Integrations/Index", props: {
+      integrations: @integrations.map { |i| IntegrationSerializer.new(i).as_json }
+    }
   end
 
   def new
-    @integration = @current_org.integrations.new
+    render inertia: "Integrations/New", props: {
+      providers: Integration::PROVIDERS
+    }
   end
 
   def create
@@ -19,18 +25,22 @@ class IntegrationsController < ApplicationController
     if @integration.save
       redirect_to integrations_path(org_slug: @current_org.slug), notice: "Integration created successfully."
     else
-      render :new, status: :unprocessable_entity
+      redirect_to new_integration_path(org_slug: @current_org.slug), inertia: { errors: @integration.errors.to_hash }
     end
   end
 
   def edit
+    render inertia: "Integrations/Edit", props: {
+      integration: IntegrationSerializer.new(@integration).as_json,
+      providers: Integration::PROVIDERS
+    }
   end
 
   def update
     if @integration.update(integration_params)
       redirect_to integrations_path(org_slug: @current_org.slug), notice: "Integration updated successfully."
     else
-      render :edit, status: :unprocessable_entity
+      redirect_to edit_integration_path(@integration, org_slug: @current_org.slug), inertia: { errors: @integration.errors.to_hash }
     end
   end
 

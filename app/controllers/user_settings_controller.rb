@@ -5,13 +5,16 @@ class UserSettingsController < ApplicationController
   before_action :set_organization
 
   def show
+    render inertia: "Settings/User", props: {
+      user: UserSerializer.new(current_user).as_json
+    }
   end
 
   def update
     if current_user.update(user_params)
-      redirect_to user_settings_path, notice: "User settings updated"
+      redirect_back_or_to user_settings_path, notice: "User settings updated"
     else
-      render :show, status: :unprocessable_entity
+      redirect_back_or_to user_settings_path, inertia: { errors: current_user.errors.to_hash }
     end
   end
 
