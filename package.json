@@ -1,5 +1,17 @@
 {
   "dependencies": {
-    "flowbite": "^4.0.1"
+    "@inertiajs/react": "^2.3.0",
+    "@types/node": "^25.0.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "flowbite": "^4.0.1",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21",
+    "vite-plugin-ruby": "^5.1.1"
   }
 }

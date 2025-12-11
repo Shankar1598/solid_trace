@@ -1,2 +1,4 @@
 web: bundle exec rdbg -O -n -c -- bin/rails server
 css: bin/rails tailwindcss:watch
+vite: bin/vite dev
+web: bin/rails s
