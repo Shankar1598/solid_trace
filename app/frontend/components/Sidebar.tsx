@@ -14,7 +14,7 @@ export function Sidebar({ className }: SidebarProps) {
   const navItems = [
     {
       label: 'Issues',
-      href: `/garnet-org/issues`, // We'll fix the routing dynamically later
+      href: `/${current_org.slug}/issues`, // We'll fix the routing dynamically later
       icon: Layout,
       active: url.startsWith(`/${current_org.slug}/issues`)
     },

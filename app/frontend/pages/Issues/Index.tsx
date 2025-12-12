@@ -1,9 +1,9 @@
-import { Link } from '@inertiajs/react'
+import { Link, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Issue } from '@/types'
+import { Issue, SharedProps } from '@/types'
 import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 
@@ -18,6 +18,8 @@ interface IssuesIndexProps {
 }
 
 export default function IssuesIndex({ issues, environments, filters }: IssuesIndexProps) {
+  const { current_org } = usePage<SharedProps>().props
+
   // Simple helper to construct filter URL
   const getFilterUrl = (newFilters: Partial<typeof filters>) => {
     const params = new URLSearchParams({ ...filters, ...newFilters })
@@ -89,7 +91,7 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
             issues.map((issue) => (
               <Link
                 key={issue.id}
-                href={`/${issue.project.slug}/issues/${issue.number}`}
+                href={`/${current_org?.slug}/issues/${issue.number}`}
                 className="block"
               >
                 <Card className="hover:bg-accent/50 transition-colors">
