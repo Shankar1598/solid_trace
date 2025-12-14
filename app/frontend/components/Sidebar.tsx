@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
-import { Layout, GitMerge, Settings, Users, LogOut } from 'lucide-react'
+import { List, GitMerge, Settings, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
@@ -16,108 +16,83 @@ export function Sidebar({ className }: SidebarProps) {
   const navItems = [
     {
       label: 'Issues',
-      href: `/${current_org.slug}/issues`, // We'll fix the routing dynamically later
-      icon: Layout,
-      active: url.startsWith(`/${current_org.slug}/issues`)
+      href: `/${current_org.slug}/issues`,
+      icon: List,
+      active: url.endsWith('/issues') || url.includes('/issues/')
     },
     {
       label: 'Projects',
       href: `/${current_org.slug}/projects`,
       icon: GitMerge,
-      active: url.startsWith(`/${current_org.slug}/projects`)
-    },
-    // Mentions would go here
-  ]
-
-  const settingsItems = [
-    {
-      label: 'Members',
-      href: `/${current_org.slug}/settings/members`,
-      icon: Users,
-      active: url.includes('/settings/members')
+      active: url.includes('/projects')
     },
     {
       label: 'Settings',
       href: `/${current_org.slug}/settings`,
       icon: Settings,
-      active: url.endsWith('/settings')
+      active: url.includes('/settings')
     }
   ]
 
   return (
-    <div className={cn("pb-4 min-h-screen border-r bg-zinc-900 text-zinc-300 md:flex hidden w-64 flex-shrink-0 flex-col justify-between", className)}>
-      <div className="space-y-4 py-4 flex-1">
-        <div className="px-3 py-2">
-          <div className="mb-6 px-4 flex items-center gap-2 font-semibold text-white">
-            <div className="h-6 w-6 rounded-full bg-purple-500" />
-            <span>Garnet</span>
-          </div>
-
-          <div className="space-y-1">
-            <h2 className="mb-2 px-4 text-xs font-semibold tracking-tight text-zinc-500 uppercase">
-              {current_org.name}
-            </h2>
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  item.active
-                    ? "bg-white/10 text-white"
-                    : "hover:bg-white/5 hover:text-white text-zinc-400"
-                )}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </Link>
-            ))}
+    <div className={cn("pb-4 min-h-screen border-r bg-card text-card-foreground md:flex hidden w-[240px] flex-shrink-0 flex-col justify-between z-20", className)}>
+      <div className="flex flex-col flex-1">
+        {/* Project Header */}
+        <div className="h-14 flex items-center px-4 border-b">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded bg-red-600 flex items-center justify-center text-white font-bold text-sm tracking-tight shadow-sm">
+              {current_org?.slug?.charAt(0).toUpperCase()}
+            </div>
+            <div className="font-semibold text-sm tracking-tight">
+              {current_org?.name}
+            </div>
           </div>
         </div>
 
-        <div className="px-3 py-2">
-          <h2 className="mb-2 px-4 text-xs font-semibold tracking-tight text-zinc-500 uppercase">
-            Settings
-          </h2>
-          <div className="space-y-1">
-            {settingsItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  item.active
-                    ? "bg-white/10 text-white"
-                    : "hover:bg-white/5 hover:text-white text-zinc-400"
-                )}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </Link>
-            ))}
-          </div>
+        {/* Navigation */}
+        <div className="px-3 py-4 space-y-0.5">
+          {navItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-[14px] font-medium transition-colors",
+                item.active
+                  ? "bg-secondary text-primary"
+                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              )}
+            >
+              <item.icon className="h-4 w-4" />
+              {item.label}
+            </Link>
+          ))}
         </div>
       </div>
 
-      <div className="flex border-t border-zinc-800">
-        <div className="flex items-center justify-between px-2">
-          <div className="flex items-center gap-2 overflow-hidden">
-            <div className="h-8 w-8 rounded-full bg-indigo-500 flex items-center justify-center text-white text-xs font-bold">
-              {current_user?.name?.charAt(0) || current_user?.email?.charAt(0).toUpperCase()}
+      {/* User Footer */}
+      <div className="p-3 border-t">
+        <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer group mb-1">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="h-8 w-8 rounded-full bg-violet-500/10 flex items-center justify-center text-violet-600 border border-violet-200 text-xs font-bold">
+              {current_user?.name?.charAt(0) || 'U'}
             </div>
             <div className="flex flex-col truncate">
-              <span className="text-sm font-medium text-white truncate max-w-[100px]">{current_user?.name}</span>
-              <span className="text-xs text-zinc-500 truncate max-w-[100px]">{current_user?.email}</span>
+              <span className="text-sm font-medium truncate">{current_user?.name}</span>
+              <span className="text-xs text-muted-foreground truncate">{current_user?.email}</span>
             </div>
           </div>
         </div>
-        <div className="mt-4 flex items-center justify-between px-2">
-          <ModeToggle />
-          <Link href="/session" method="delete" as="button">
-            <Button variant="ghost" size="icon" className="text-zinc-400 hover:text-white hover:bg-white/5">
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </Link>
+
+        <div className="flex items-center justify-between px-2">
+          <span className="text-xs text-muted-foreground font-medium">Theme</span>
+          <div className="flex items-center gap-1">
+            <ModeToggle />
+            <Link href="/session" method="delete" as="button">
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" title="Sign out">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
     </div>
