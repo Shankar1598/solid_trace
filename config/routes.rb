@@ -21,21 +21,24 @@ Rails.application.routes.draw do
   resources :passwords, param: :token
 
   scope "/:org_slug" do
-    resources :issues, only: [ :index, :show ] do
-      member do
-        patch :resolve
-        patch :unresolve
-      end
-      resources :comments, only: [ :create, :destroy ]
-    end
+    resources :issues, only: [ :index ]
     resources :mentions, only: [ :index ]
-    resources :projects, only: [ :index, :new, :create, :show, :update ] do
+    resources :projects, only: [ :index, :new, :create, :show, :update ], param: :slug do
+      resources :issues, only: [ :show ], param: :number do
+        member do
+          patch :resolve
+          patch :unresolve
+        end
+        resources :comments, only: [ :create, :destroy ]
+      end
+
       resources :keys, only: [ :create, :destroy ], controller: "project_keys" do
         member do
           patch :rotate
         end
       end
     end
+
     resource :settings, only: [ :show, :update ], controller: "organization_settings" do
       resources :members, only: [ :create, :destroy ], controller: "organization_members"
     end

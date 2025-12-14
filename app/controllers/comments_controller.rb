@@ -8,9 +8,9 @@ class CommentsController < ApplicationController
     @comment.user = Current.user
 
     if @comment.save
-      redirect_to issue_path(@issue.number, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment added"
+      redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment added"
     else
-      redirect_to issue_path(@issue.number, org_slug: @current_org.slug, anchor: "comments"), alert: "Error creating comment"
+      redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), alert: "Error creating comment"
     end
   end
 
@@ -19,9 +19,9 @@ class CommentsController < ApplicationController
 
     if @comment.user == Current.user
       @comment.destroy
-      redirect_to issue_path(@issue.number, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment deleted"
+      redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment deleted"
     else
-      redirect_to issue_path(@issue.number, org_slug: @current_org.slug, anchor: "comments"), alert: "You can only delete your own comments"
+      redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), alert: "You can only delete your own comments"
     end
   end
 
@@ -29,9 +29,8 @@ class CommentsController < ApplicationController
 
   def set_issue
     @current_org = Current.user.organizations.find_by!(slug: params[:org_slug])
-    @issue = Issue.joins(project: :organization)
-                  .where(organizations: { id: @current_org.id })
-                  .find_by!(number: params[:issue_id])
+    @project = @current_org.projects.find_by!(slug: params[:project_slug])
+    @issue = @project.issues.find_by!(number: params[:issue_number])
   end
 
   def comment_params

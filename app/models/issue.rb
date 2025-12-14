@@ -29,11 +29,17 @@ class Issue < ApplicationRecord
     KIND::CSP => 2
   }, prefix: true
 
+  def to_param
+    number.to_s
+  end
+
   private
 
   def assign_number
     self.number = ProjectIssueCounter.next_value_for(project)
   end
+
+
 
   # Compute hash from event attributes
   def self.compute_hash(title:, culprit:, kind:, fingerprint: nil)

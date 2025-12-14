@@ -29,10 +29,10 @@ export default function Stacktrace({ frames }: StacktraceProps) {
               Line {frame.lineno}
             </div>
           </div>
-          <div className="bg-slate-50 dark:bg-slate-950 overflow-x-auto p-4 font-mono text-xs leading-relaxed">
+          <div className="bg-slate-950 overflow-x-auto p-4 font-mono text-xs leading-relaxed text-slate-50">
             {frame.pre_context?.map((line, i) => (
               <div key={`pre-${i}`} className="flex">
-                <span className="w-8 text-muted-foreground select-none text-right pr-4 opacity-50">
+                <span className="w-8 text-slate-500 select-none text-right pr-4 opacity-50">
                   {frame.lineno - (frame.pre_context.length - i)}
                 </span>
                 <pre className="opacity-70 whitespace-pre">{line}</pre>
@@ -40,15 +40,15 @@ export default function Stacktrace({ frames }: StacktraceProps) {
             ))}
 
             <div className="flex bg-yellow-500/10 -mx-4 px-4 py-0.5 border-y border-yellow-500/20">
-              <span className="w-8 text-yellow-600 dark:text-yellow-500 select-none text-right pr-4 font-bold">
+              <span className="w-8 text-yellow-500 select-none text-right pr-4 font-bold">
                 {frame.lineno}
               </span>
-              <pre className="font-semibold text-foreground whitespace-pre">{frame.context_line}</pre>
+              <pre className="font-semibold text-white whitespace-pre">{frame.context_line}</pre>
             </div>
 
             {frame.post_context?.map((line, i) => (
               <div key={`post-${i}`} className="flex">
-                <span className="w-8 text-muted-foreground select-none text-right pr-4 opacity-50">
+                <span className="w-8 text-slate-500 select-none text-right pr-4 opacity-50">
                   {frame.lineno + i + 1}
                 </span>
                 <pre className="opacity-70 whitespace-pre">{line}</pre>

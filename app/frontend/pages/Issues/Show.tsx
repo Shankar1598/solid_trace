@@ -33,15 +33,15 @@ export default function IssuesShow({
   const { current_user, current_org } = usePage<SharedProps>().props
 
   const handleResolve = () => {
-    router.put(`/${current_org?.slug}/issues/${issue.number}/resolve`)
+    router.put(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}/resolve`)
   }
 
   const handleUnresolve = () => {
-    router.put(`/${current_org?.slug}/issues/${issue.number}/unresolve`)
+    router.put(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}/unresolve`)
   }
 
   const handleEnvironmentChange = (env: string) => {
-    router.visit(`/${current_org?.slug}/issues/${issue.number}?environment=${env}`, {
+    router.visit(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}?environment=${env}`, {
       preserveScroll: true
     })
   }
@@ -114,7 +114,7 @@ export default function IssuesShow({
                       size="sm"
                       disabled={!prev_event_id}
                       onClick={() => prev_event_id && router.visit(
-                        `/${current_org.slug}/issues/${issue.number}?event_id=${prev_event_id}&environment=${current_environment}`,
+                        `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${prev_event_id}&environment=${current_environment}`,
                         { preserveScroll: true }
                       )}
                     >
@@ -128,7 +128,7 @@ export default function IssuesShow({
                       size="sm"
                       disabled={!next_event_id}
                       onClick={() => next_event_id && router.visit(
-                        `/${current_org.slug}/issues/${issue.number}?event_id=${next_event_id}&environment=${current_environment}`,
+                        `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${next_event_id}&environment=${current_environment}`,
                         { preserveScroll: true }
                       )}
                     >
@@ -190,6 +190,7 @@ export default function IssuesShow({
                   comments={comments}
                   currentUser={current_user}
                   issueId={issue.number}
+                  projectId={issue.project.slug}
                   orgSlug={current_org.slug}
                 />
               </TabsContent>

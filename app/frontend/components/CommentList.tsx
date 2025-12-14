@@ -10,10 +10,11 @@ interface CommentListProps {
   comments: Comment[]
   currentUser: User | null
   issueId: number
+  projectId: string
   orgSlug: string
 }
 
-export default function CommentList({ comments, currentUser, issueId, orgSlug }: CommentListProps) {
+export default function CommentList({ comments, currentUser, issueId, projectId, orgSlug }: CommentListProps) {
   const { data, setData, post, processing, reset } = useForm({
     content: ''
   })
@@ -22,7 +23,7 @@ export default function CommentList({ comments, currentUser, issueId, orgSlug }:
   // Ideally Inertia props would include the issue URL or we'd use a route helper
   const submitComment = (e: React.FormEvent) => {
     e.preventDefault()
-    post(`/${orgSlug}/issues/${issueId}/comments`, {
+    post(`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments`, {
       onSuccess: () => reset()
     })
   }
@@ -42,7 +43,7 @@ export default function CommentList({ comments, currentUser, issueId, orgSlug }:
               </div>
               {currentUser && currentUser.id === comment.user.id && (
                 <Link
-                  href={`/${orgSlug}/issues/${issueId}/comments/${comment.id}`}
+                  href={`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments/${comment.id}`}
                   method="delete"
                   as="button"
                   preserveScroll

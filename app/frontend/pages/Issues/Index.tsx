@@ -146,7 +146,7 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
                   {/* Status Indicator Bar Removed */}
 
                   <Link
-                    href={`/${current_org?.slug}/${issue.project.slug}/issues/${issue.number}`}
+                    href={`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}`}
                     className="grid grid-cols-12 gap-4 px-4 py-3 items-center"
                   >
                     {/* Issue Info */}

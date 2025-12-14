@@ -35,7 +35,7 @@ export function Sidebar({ className }: SidebarProps) {
   ]
 
   return (
-    <div className={cn("pb-4 min-h-screen border-r bg-card text-card-foreground md:flex hidden w-[240px] flex-shrink-0 flex-col justify-between z-20", className)}>
+    <div className={cn("min-h-screen border-r bg-card text-card-foreground md:flex hidden w-[240px] flex-shrink-0 flex-col justify-between z-20", className)}>
       <div className="flex flex-col flex-1">
         {/* Project Header */}
         <div className="h-14 flex items-center px-4 border-b">

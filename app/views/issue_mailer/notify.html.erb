@@ -5,5 +5,5 @@
 <p><strong>Title:</strong> <%= @issue.title %></p>
 
 <p>
-  <%= link_to "View Issue", issue_url(org_slug: @project.organization.slug, id: @issue, host: Garnet::Application.config.action_mailer.default_url_options[:host] || "localhost:3000") %>
+  <%= link_to "View Issue", project_issue_url(@project, @issue, org_slug: @project.organization.slug, host: Garnet::Application.config.action_mailer.default_url_options[:host] || "localhost:3000") %>
 </p>
