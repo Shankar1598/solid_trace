@@ -11,6 +11,10 @@ class Project < ApplicationRecord
     slug
   end
 
+  def platform
+    "ruby"
+  end
+
   private
 
   def generate_slug

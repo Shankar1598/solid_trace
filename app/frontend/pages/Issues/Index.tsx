@@ -1,4 +1,5 @@
-import { Link, usePage } from '@inertiajs/react'
+import { Link, usePage, router } from '@inertiajs/react'
+import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -19,6 +20,22 @@ interface IssuesIndexProps {
 
 export default function IssuesIndex({ issues, environments, filters }: IssuesIndexProps) {
   const { current_org } = usePage<SharedProps>().props
+  const [searchTerm, setSearchTerm] = useState(filters.query || '')
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      // Only trigger if the search term has actually changed from what's currently filtered
+      if (searchTerm !== (filters.query || '')) {
+        router.get(
+          getFilterUrl({ query: searchTerm }),
+          {},
+          { preserveState: true, replace: true, preserveScroll: true }
+        )
+      }
+    }, 300)
+
+    return () => clearTimeout(handler)
+  }, [searchTerm])
 
   const getFilterUrl = (newFilters: Partial<typeof filters>) => {
     const params = new URLSearchParams({ ...filters, ...newFilters })
@@ -81,29 +98,17 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
           </div>
 
           <div className="flex-1 relative">
-            <div className="absolute inset-y-0 left-2 flex items-center pointer-events-none">
-              <span className="text-muted-foreground bg-muted px-1.5 py-0.5 rounded text-xs border">is:unresolved</span>
-            </div>
             <Input
-              className="pl-28 bg-background h-9 font-mono text-sm" // Adjusted padding for the 'tag' look
+              className="pl-2 bg-background h-9 font-mono text-sm"
               placeholder="Search for issues..."
-              defaultValue={filters.query}
-              onChange={(e) => {
-                // Debounce would be good here
-                if (e.target.value === filters.query) return
-                // window.location.href = getFilterUrl({ query: e.target.value })
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  window.location.href = getFilterUrl({ query: (e.target as HTMLInputElement).value })
-                }
-              }}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Select defaultValue="last_seen">
-              <SelectTrigger className="w-[110px] bg-background h-9">
+              <SelectTrigger className="bg-background h-9">
                 <span className="text-muted-foreground mr-1">Sort:</span>
                 <SelectValue placeholder="Last Seen" />
               </SelectTrigger>
@@ -113,7 +118,7 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
                 <SelectItem value="priority">Priority</SelectItem>
               </SelectContent>
             </Select>
-            <button className="bg-primary/90 text-primary-foreground hover:bg-primary px-3 py-1.5 rounded-md text-sm font-medium h-9 shadow-sm">
+            <button className="bg-primary/90 text-primary-foreground hover:bg-primary px-3 py-1.5 rounded-md text-sm font-medium h-9 shadow-sm shrink-0">
               Save As
             </button>
           </div>
