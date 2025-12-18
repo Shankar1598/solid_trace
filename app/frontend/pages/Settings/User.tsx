@@ -1,5 +1,5 @@
 import { useForm } from '@inertiajs/react'
-import DashboardLayout from '@/components/layouts/DashboardLayout'
+import SettingsLayout from '@/components/layouts/SettingsLayout'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,20 +13,23 @@ interface SettingsUserProps {
 export default function SettingsUser({ user }: SettingsUserProps) {
   const { data, setData, put, processing, errors } = useForm({
     name: user.name,
-    email: user.email // Read only typically, but kept in form state for display
+    email: user.email
   })
 
-  // We need to route this correctly. The controller for UserSettings is singular resource usually
-  // Assuming route helper /user/settings
   const submit: React.FormEventHandler = (e) => {
     e.preventDefault()
     put(`/user/settings`)
   }
 
   return (
-    <DashboardLayout>
-      <div className="max-w-2xl mx-auto space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">User Settings</h1>
+    <SettingsLayout>
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight mb-1">Account Settings</h1>
+          <p className="text-muted-foreground">
+            Manage your personal profile and account preferences.
+          </p>
+        </div>
 
         <Card>
           <form onSubmit={submit}>
@@ -62,7 +65,7 @@ export default function SettingsUser({ user }: SettingsUserProps) {
                 )}
               </div>
             </CardContent>
-            <CardFooter className="flex justify-end">
+            <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
               <Button type="submit" disabled={processing}>
                 {processing ? 'Saving...' : 'Save Changes'}
               </Button>
@@ -70,6 +73,6 @@ export default function SettingsUser({ user }: SettingsUserProps) {
           </form>
         </Card>
       </div>
-    </DashboardLayout>
+    </SettingsLayout>
   )
 }

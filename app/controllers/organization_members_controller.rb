@@ -4,6 +4,12 @@ class OrganizationMembersController < ApplicationController
   layout "dashboard"
   before_action :set_organization
 
+  def index
+    render inertia: "Settings/Members", props: {
+      organization: OrganizationSerializer.new(@current_org, include_members: true).as_json
+    }
+  end
+
   def create
     @user = User.find_by(email: member_params[:email])
     new_user_created = false
@@ -20,7 +26,7 @@ class OrganizationMembersController < ApplicationController
       )
 
       unless @user.save
-        redirect_to settings_path(org_slug: @current_org.slug), alert: @user.errors.full_messages.first
+        redirect_to members_path(org_slug: @current_org.slug), alert: @user.errors.full_messages.first
         return
       end
 
@@ -40,9 +46,9 @@ class OrganizationMembersController < ApplicationController
         ).deliver_later
       end
 
-      redirect_to settings_path(org_slug: @current_org.slug), notice: "Member added successfully"
+      redirect_to members_path(org_slug: @current_org.slug), notice: "Member added successfully"
     else
-      redirect_to settings_path(org_slug: @current_org.slug), alert: @organization_user.errors.full_messages.first
+      redirect_to members_path(org_slug: @current_org.slug), alert: @organization_user.errors.full_messages.first
     end
   end
 
@@ -51,12 +57,12 @@ class OrganizationMembersController < ApplicationController
 
     # Prevent removing the last member
     if @current_org.organization_users.count <= 1
-      redirect_to settings_path(org_slug: @current_org.slug), alert: "Cannot remove the last member of the organization"
+      redirect_to members_path(org_slug: @current_org.slug), alert: "Cannot remove the last member of the organization"
       return
     end
 
     @organization_user.destroy
-    redirect_to settings_path(org_slug: @current_org.slug), notice: "Member removed successfully"
+    redirect_to members_path(org_slug: @current_org.slug), notice: "Member removed successfully"
   end
 
   private

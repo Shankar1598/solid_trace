@@ -11,7 +11,7 @@ class OrganizationSerializer
       id: @organization.id,
       name: @organization.name,
       slug: @organization.slug,
-      created_at: @organization.created_at.iso8601
+      created_at: @organization.created_at.iso8601,
     }
 
     if @include_members
@@ -19,7 +19,7 @@ class OrganizationSerializer
         {
           id: ou.id,
           user: UserSerializer.new(ou.user).as_json,
-          role: ou.role
+          # role: ou.role
         }
       end
     end

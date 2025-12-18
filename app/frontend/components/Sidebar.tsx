@@ -28,7 +28,7 @@ export function Sidebar({ className }: SidebarProps) {
     },
     {
       label: 'Settings',
-      href: `/${current_org.slug}/settings`,
+      href: `/${current_org.slug}/settings/organization`,
       icon: Settings,
       active: url.includes('/settings')
     }

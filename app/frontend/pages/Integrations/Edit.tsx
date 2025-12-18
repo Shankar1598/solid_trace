@@ -1,5 +1,5 @@
 import { Link, useForm, usePage } from '@inertiajs/react'
-import DashboardLayout from '@/components/layouts/DashboardLayout'
+import SettingsLayout from '@/components/layouts/SettingsLayout'
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,7 +18,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
   const { data, setData, put, processing } = useForm({
     provider: integration.provider,
     name: integration.name || '',
-    active: integration.enabled, // Mapping enabled -> active if that matches backend logic? Backend serializer says 'enabled', controller params said 'active'. Assuming 'enabled' for UI/Type consistency.
+    active: integration.enabled,
     settings: {
       webhook_url: (integration.settings as any)?.webhook_url || '',
       channel: (integration.settings as any)?.channel || '',
@@ -27,8 +27,6 @@ export default function IntegrationsEdit({ integration, providers }: Integration
     }
   })
 
-  // Quick fix for active vs enabled mismatch if any
-  // If backend serializer returns 'enabled' but controller expects 'active'
   const submit: FormEventHandler = (e) => {
     e.preventDefault()
     put(`/${current_org?.slug}/settings/integrations/${integration.id}`)
@@ -37,12 +35,12 @@ export default function IntegrationsEdit({ integration, providers }: Integration
   if (!current_org) return null
 
   return (
-    <DashboardLayout>
-      <div className="max-w-2xl mx-auto space-y-6">
-        <div className="space-y-0.5">
-          <h1 className="text-2xl font-bold tracking-tight">Edit Integration</h1>
+    <SettingsLayout>
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight mb-1">Edit Integration</h1>
           <p className="text-muted-foreground">
-            Update integration settings.
+            Update settings for your {providers[integration.provider] || integration.provider} integration.
           </p>
         </div>
 
@@ -64,7 +62,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
 
               {/* Dynamic fields based on provider */}
               {integration.provider === 'slack' && (
-                <div className="space-y-4 pt-4 border-t">
+                <div className="space-y-4 pt-6 border-t">
                   <h3 className="font-medium text-sm">Slack Settings</h3>
                   <div className="space-y-2">
                     <Label htmlFor="webhook_url">Webhook URL</Label>
@@ -87,7 +85,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
               )}
 
               {integration.provider === 'pagerduty' && (
-                <div className="space-y-4 pt-4 border-t">
+                <div className="space-y-4 pt-6 border-t">
                   <h3 className="font-medium text-sm">PagerDuty Settings</h3>
                   <div className="space-y-2">
                     <Label htmlFor="routing_key">Routing Key / Integration Key</Label>
@@ -102,7 +100,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
               )}
 
             </CardContent>
-            <CardFooter className="flex justify-end gap-2">
+            <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 px-6 py-4">
               <Link href={`/${current_org.slug}/settings/integrations`}>
                 <Button variant="outline" type="button">Cancel</Button>
               </Link>
@@ -113,6 +111,6 @@ export default function IntegrationsEdit({ integration, providers }: Integration
           </form>
         </Card>
       </div>
-    </DashboardLayout>
+    </SettingsLayout>
   )
 }

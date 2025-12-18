@@ -1,5 +1,5 @@
 import { Link, useForm, usePage } from '@inertiajs/react'
-import DashboardLayout from '@/components/layouts/DashboardLayout'
+import SettingsLayout from '@/components/layouts/SettingsLayout'
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -7,9 +7,6 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SharedProps } from '@/types'
 import { FormEventHandler } from 'react'
-
-// Need to create Checkbox component first or use ShadCN one
-// For now I will mock checkbox with simple input type=checkbox
 
 interface IntegrationsNewProps {
   providers: { [key: string]: string }
@@ -37,12 +34,12 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
   if (!current_org) return null
 
   return (
-    <DashboardLayout>
-      <div className="max-w-2xl mx-auto space-y-6">
-        <div className="space-y-0.5">
-          <h1 className="text-2xl font-bold tracking-tight">Add Integration</h1>
+    <SettingsLayout>
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight mb-1">Add Integration</h1>
           <p className="text-muted-foreground">
-            Configure a new integration service.
+            Configure a new integration service for your organization.
           </p>
         </div>
 
@@ -83,9 +80,9 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                 />
               </div>
 
-              {/* Dynamic fields based on provider - minimal implementation for now */}
+              {/* Dynamic fields based on provider */}
               {data.provider === 'slack' && (
-                <div className="space-y-4 pt-4 border-t">
+                <div className="space-y-4 pt-6 border-t">
                   <h3 className="font-medium text-sm">Slack Configuration</h3>
                   <div className="space-y-2">
                     <Label htmlFor="webhook_url">Webhook URL</Label>
@@ -110,7 +107,7 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
               )}
 
               {data.provider === 'pagerduty' && (
-                <div className="space-y-4 pt-4 border-t">
+                <div className="space-y-4 pt-6 border-t">
                   <h3 className="font-medium text-sm">PagerDuty Configuration</h3>
                   <div className="space-y-2">
                     <Label htmlFor="routing_key">Routing Key / Integration Key</Label>
@@ -125,7 +122,7 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
               )}
 
             </CardContent>
-            <CardFooter className="flex justify-end gap-2">
+            <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 px-6 py-4">
               <Link href={`/${current_org.slug}/settings/integrations`}>
                 <Button variant="outline" type="button">Cancel</Button>
               </Link>
@@ -136,6 +133,6 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
           </form>
         </Card>
       </div>
-    </DashboardLayout>
+    </SettingsLayout>
   )
 }

@@ -39,12 +39,13 @@ Rails.application.routes.draw do
       end
     end
 
-    resource :settings, only: [ :show, :update ], controller: "organization_settings" do
-      resources :members, only: [ :create, :destroy ], controller: "organization_members"
+    scope "/settings" do
+      resource :organization, only: [ :show, :update ], controller: "organization_settings"
+      resources :members, only: [ :index, :create, :destroy ], controller: "organization_members"
+      resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
+      resource :user, only: [ :show, :update ], controller: "user_settings"
     end
-    resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
-    get "settings/user", to: "user_settings#show", as: :org_user_settings
-    patch "settings/user", to: "user_settings#update"
+    get "settings", to: redirect("/%{org_slug}/settings/organization")
   end
 
   # API Routes (Migrated from Backend)
