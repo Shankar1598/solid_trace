@@ -51,13 +51,7 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
     <DashboardLayout>
       <div className="flex flex-col h-full space-y-4">
         <div className="flex items-center justify-between px-1">
-          <h1 className="text-xl font-bold tracking-tight">Feed</h1>
-          <div className="flex items-center gap-2">
-            <button className="p-2 hover:bg-muted rounded-md border border-transparent hover:border-border">
-              <span className="sr-only">Play</span>
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-4 h-4"><path d="M3.24182 2.32181C3.3919 2.23132 3.5784 2.22601 3.73338 2.30781L12.7334 7.05781C12.8974 7.14436 13 7.31457 13 7.50002C13 7.68547 12.8974 7.85568 12.7334 7.94223L3.73338 12.6922C3.5784 12.774 3.3919 12.7687 3.24182 12.6782C3.09175 12.5877 3 12.4252 3 12.2502V2.75002C3 2.57502 3.09175 2.41248 3.24182 2.32181ZM4 3.44648V11.5536L11.6804 7.50002L4 3.44648Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"></path></svg>
-            </button>
-          </div>
+          <h1 className="text-xl font-bold tracking-tight">Issues</h1>
         </div>
 
         {/* Filter Bar */}

@@ -39,8 +39,6 @@ class Issue < ApplicationRecord
     self.number = ProjectIssueCounter.next_value_for(project)
   end
 
-
-
   # Compute hash from event attributes
   def self.compute_hash(title:, culprit:, kind:, fingerprint: nil)
     # Build hash input based on fingerprint template

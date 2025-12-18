@@ -64,6 +64,8 @@ group :development do
   gem "web-console"
   # Preview emails in browser instead of sending
   gem "letter_opener"
+
+  gem "rdbg"
 end
 
 group :test do
