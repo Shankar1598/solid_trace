@@ -13,8 +13,8 @@ class CommentSerializer
       user: {
         id: @comment.user.id,
         name: @comment.user.name,
-        email: @comment.user.email
-      }
+        email: @comment.user.email,
+      },
     }
   end
 

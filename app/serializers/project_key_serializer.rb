@@ -11,7 +11,7 @@ class ProjectKeySerializer
       public_key: @project_key.public_key,
       label: @project_key.label,
       dsn: @project_key.dsn,
-      created_at: @project_key.created_at.iso8601
+      created_at: @project_key.created_at.iso8601,
     }
   end
 

@@ -20,13 +20,13 @@ class Issue < ApplicationRecord
 
   enum :status, {
     STATUS::UNRESOLVED => 0,
-    STATUS::RESOLVED => 1
+    STATUS::RESOLVED => 1,
   }
 
   enum :kind, {
     KIND::DEFAULT => 0,
     KIND::ERROR => 1,
-    KIND::CSP => 2
+    KIND::CSP => 2,
   }, prefix: true
 
   def to_param

@@ -9,13 +9,13 @@ class ProjectsController < ApplicationController
     @projects = @current_org.projects.order(created_at: :desc)
 
     render inertia: "Projects/Index", props: {
-      projects: @projects.map { |p| ProjectSerializer.new(p).as_json }
+      projects: @projects.map { |p| ProjectSerializer.new(p).as_json },
     }
   end
 
   def show
     render inertia: "Projects/Show", props: {
-      project: ProjectSerializer.new(@project, include_keys: true).as_json
+      project: ProjectSerializer.new(@project, include_keys: true).as_json,
     }
   end
 

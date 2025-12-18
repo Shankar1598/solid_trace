@@ -7,7 +7,7 @@ class OrganizationSettingsController < ApplicationController
   def show
     render inertia: "Settings/Organization", props: {
       organization: OrganizationSerializer.new(@current_org, include_members: true).as_json,
-      tab: params[:tab] || "general"
+      tab: params[:tab] || "general",
     }
   end
 

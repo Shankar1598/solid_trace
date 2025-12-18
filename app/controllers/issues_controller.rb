@@ -26,8 +26,8 @@ class IssuesController < ApplicationController
       filters: {
         status: params[:status] || "all",
         query: params[:query] || "",
-        environment: params[:environment] || "all"
-      }
+        environment: params[:environment] || "all",
+      },
     }
   end
 
@@ -63,7 +63,7 @@ class IssuesController < ApplicationController
       next_event_id: @next_event&.id,
       environments: @environments,
       comments: @issue.comments.includes(:user).order(created_at: :asc).map { |c| CommentSerializer.new(c).as_json },
-      current_environment: params[:environment] || "all"
+      current_environment: params[:environment] || "all",
     }
   end
 

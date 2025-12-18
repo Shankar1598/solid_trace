@@ -9,13 +9,13 @@ class IntegrationsController < ApplicationController
     @integrations = @current_org.integrations
 
     render inertia: "Integrations/Index", props: {
-      integrations: @integrations.map { |i| IntegrationSerializer.new(i).as_json }
+      integrations: @integrations.map { |i| IntegrationSerializer.new(i).as_json },
     }
   end
 
   def new
     render inertia: "Integrations/New", props: {
-      providers: Integration::PROVIDERS
+      providers: Integration::PROVIDERS,
     }
   end
 
@@ -32,7 +32,7 @@ class IntegrationsController < ApplicationController
   def edit
     render inertia: "Integrations/Edit", props: {
       integration: IntegrationSerializer.new(@integration).as_json,
-      providers: Integration::PROVIDERS
+      providers: Integration::PROVIDERS,
     }
   end
 

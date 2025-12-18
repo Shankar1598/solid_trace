@@ -17,8 +17,8 @@ module Api
           exception: {
             values: [
               { type: "RuntimeError", value: "Something went wrong" }
-            ]
-          }
+            ],
+          },
         }
       end
 
@@ -76,7 +76,7 @@ module Api
 
         headers = {
           "X-Sentry-Auth" => "Sentry sentry_key=#{@project_key.public_key}",
-          "Content-Type" => "application/x-sentry-envelope"
+          "Content-Type" => "application/x-sentry-envelope",
         }
 
         assert_difference([ "Issue.count", "Event.count" ], 1) do

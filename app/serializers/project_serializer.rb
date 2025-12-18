@@ -13,7 +13,7 @@ class ProjectSerializer
       slug: @project.slug,
       platform: @project.platform,
       created_at: @project.created_at.iso8601,
-      issues_count: @project.issues.count
+      issues_count: @project.issues.count,
     }
 
     if @include_keys

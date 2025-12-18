@@ -19,8 +19,8 @@ class IssueSerializer
       project: {
         id: @issue.project.id,
         name: @issue.project.name,
-        slug: @issue.project.slug
-      }
+        slug: @issue.project.slug,
+      },
     }
   end
 

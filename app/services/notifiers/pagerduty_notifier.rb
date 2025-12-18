@@ -64,9 +64,9 @@ module Notifiers
             issue_number: issue.number,
             culprit: issue.culprit,
             project: issue.project.name,
-            organization: issue.project.organization.name
-          }
-        }
+            organization: issue.project.organization.name,
+          },
+        },
       }
     end
   end

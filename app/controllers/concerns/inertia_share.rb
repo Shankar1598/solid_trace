@@ -10,8 +10,8 @@ module InertiaShare
         current_org: @current_org&.as_json(only: [ :id, :name, :slug ]),
         flash: {
           notice: flash[:notice],
-          alert: flash[:alert]
-        }
+          alert: flash[:alert],
+        },
       }
     end
   end

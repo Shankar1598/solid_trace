@@ -6,7 +6,7 @@ class OrganizationMembersController < ApplicationController
 
   def index
     render inertia: "Settings/Members", props: {
-      organization: OrganizationSerializer.new(@current_org, include_members: true).as_json
+      organization: OrganizationSerializer.new(@current_org, include_members: true).as_json,
     }
   end
 

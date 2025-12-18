@@ -10,7 +10,7 @@ class UserSerializer
       id: @user.id,
       name: @user.name,
       email: @user.email,
-      created_at: @user.created_at.iso8601
+      created_at: @user.created_at.iso8601,
     }
   end
 

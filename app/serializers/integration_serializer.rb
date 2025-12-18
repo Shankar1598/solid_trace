@@ -12,7 +12,7 @@ class IntegrationSerializer
       provider: @integration.provider,
       enabled: @integration.enabled,
       settings: @integration.settings,
-      created_at: @integration.created_at.iso8601
+      created_at: @integration.created_at.iso8601,
     }
   end
 

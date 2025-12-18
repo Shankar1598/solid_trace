@@ -8,4 +8,3 @@ class ApplicationController < ActionController::Base
   include InertiaShare
   before_action :authenticate_user!
 end
-

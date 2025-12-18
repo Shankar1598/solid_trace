@@ -11,7 +11,7 @@ class EventSerializer
       issue_id: @event.issue_id,
       environment: @event.environment,
       event_data: @event.event_data,
-      created_at: @event.created_at.iso8601
+      created_at: @event.created_at.iso8601,
     }
   end
 

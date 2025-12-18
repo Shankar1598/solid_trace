@@ -6,7 +6,7 @@ class UserSettingsController < ApplicationController
 
   def show
     render inertia: "Settings/User", props: {
-      user: UserSerializer.new(current_user).as_json
+      user: UserSerializer.new(current_user).as_json,
     }
   end
 
