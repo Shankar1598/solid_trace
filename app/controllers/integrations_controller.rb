@@ -15,7 +15,7 @@ class IntegrationsController < ApplicationController
 
   def new
     render inertia: "Integrations/New", props: {
-      providers: Integration::PROVIDERS,
+      providers: Integration::PROVIDERS.index_with(&:titleize),
     }
   end
 
@@ -32,7 +32,7 @@ class IntegrationsController < ApplicationController
   def edit
     render inertia: "Integrations/Edit", props: {
       integration: IntegrationSerializer.new(@integration).as_json,
-      providers: Integration::PROVIDERS,
+      providers: Integration::PROVIDERS.index_with(&:titleize),
     }
   end
 

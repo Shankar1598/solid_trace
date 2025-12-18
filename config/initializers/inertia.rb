@@ -6,4 +6,5 @@ InertiaRails.configure do |config|
 
   # Default root view
   config.default_render = true
+  config.always_include_errors_hash = true
 end

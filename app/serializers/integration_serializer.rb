@@ -10,7 +10,7 @@ class IntegrationSerializer
       id: @integration.id,
       name: @integration.name,
       provider: @integration.provider,
-      enabled: @integration.enabled,
+      enabled: @integration.active,
       settings: @integration.settings,
       created_at: @integration.created_at.iso8601,
     }
