@@ -1,6 +1,7 @@
 import { Link, useForm } from '@inertiajs/react'
 import { Card, CardHeader, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 import { Comment, User } from '@/types'
 import RichTextEditor from '@/components/RichTextEditor'
@@ -47,10 +48,9 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
                   method="delete"
                   as="button"
                   preserveScroll
+                  className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-6 w-6 text-muted-foreground hover:text-destructive")}
                 >
-                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive">
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <Trash2 className="h-4 w-4" />
                 </Link>
               )}
             </CardHeader>

@@ -3,7 +3,7 @@ import { List, GitMerge, Settings, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
-import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
 
@@ -87,10 +87,14 @@ export function Sidebar({ className }: SidebarProps) {
           <span className="text-xs text-muted-foreground font-medium">Theme</span>
           <div className="flex items-center gap-1">
             <ModeToggle />
-            <Link href="/session" method="delete" as="button">
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" title="Sign out">
-                <LogOut className="h-4 w-4" />
-              </Button>
+            <Link
+              href="/session"
+              method="delete"
+              as="button"
+              className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 text-muted-foreground hover:text-foreground")}
+              title="Sign out"
+            >
+              <LogOut className="h-4 w-4" />
             </Link>
           </div>
         </div>
