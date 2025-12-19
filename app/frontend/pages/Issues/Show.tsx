@@ -8,8 +8,15 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Issue, Event, Comment, SharedProps } from '@/types'
-import { ArrowLeft, ArrowRight, CheckCircle2, XCircle } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { ArrowLeft, ArrowRight, CheckCircle2, XCircle, Code, Copy } from 'lucide-react'
+import { formatDistanceToNow, format } from 'date-fns'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 
 interface IssuesShowProps {
   issue: Issue
@@ -19,6 +26,12 @@ interface IssuesShowProps {
   environments: string[]
   comments: Comment[]
   current_environment: string
+  events_list: Event[]
+  events_pagination: {
+    current_page: number
+    total_pages: number
+    total_count: number
+  }
 }
 
 export default function IssuesShow({
@@ -28,7 +41,9 @@ export default function IssuesShow({
   next_event_id,
   environments,
   comments,
-  current_environment
+  current_environment,
+  events_list,
+  events_pagination
 }: IssuesShowProps) {
   const { current_user, current_org } = usePage<SharedProps>().props
 
@@ -43,6 +58,13 @@ export default function IssuesShow({
   const handleEnvironmentChange = (env: string) => {
     router.visit(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}?environment=${env}`, {
       preserveScroll: true
+    })
+  }
+
+  const handleEventsPageChange = (page: number) => {
+    router.visit(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}?events_page=${page}`, {
+      preserveScroll: true,
+      only: ['events_list', 'events_pagination'] // Optimize partial reload
     })
   }
 
@@ -80,10 +102,24 @@ export default function IssuesShow({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <Tabs defaultValue="overview">
-              <TabsList>
-                <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="json">JSON</TabsTrigger>
-                <TabsTrigger value="comments" id="comments">
+              <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent">
+                <TabsTrigger
+                  value="overview"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-2"
+                >
+                  Overview
+                </TabsTrigger>
+                <TabsTrigger
+                  value="events"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-2"
+                >
+                  Events
+                </TabsTrigger>
+                <TabsTrigger
+                  value="comments"
+                  id="comments"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-2"
+                >
                   Comments
                   <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs">
                     {comments.length}
@@ -134,6 +170,38 @@ export default function IssuesShow({
                     >
                       Newer <ArrowRight className="h-4 w-4 ml-1" />
                     </Button>
+
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-8 gap-2 ml-2">
+                          <Code className="h-3.5 w-3.5" />
+                          View JSON
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+                        <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                          <DialogTitle>Event JSON</DialogTitle>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => {
+                              if (event?.event_data) {
+                                navigator.clipboard.writeText(JSON.stringify(event.event_data, null, 2))
+                              }
+                            }}
+                          >
+                            <Copy className="h-4 w-4" />
+                            <span className="sr-only">Copy JSON</span>
+                          </Button>
+                        </DialogHeader>
+                        <div className="flex-1 overflow-auto rounded-md bg-muted p-4">
+                          <pre className="text-xs font-mono text-foreground">
+                            {JSON.stringify(event?.event_data, null, 2)}
+                          </pre>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                   </div>
                 </div>
 
@@ -173,14 +241,71 @@ export default function IssuesShow({
                     </div>
                   </div>
                 )}
+
               </TabsContent>
 
-              <TabsContent value="json">
+              <TabsContent value="events">
                 <Card>
+                  <CardHeader className="pb-3 border-b">
+                    <h3 className="font-semibold text-sm">Events</h3>
+                  </CardHeader>
                   <CardContent className="p-0">
-                    <pre className="p-4 text-xs font-mono overflow-x-auto bg-slate-950 text-slate-50 rounded-lg">
-                      {JSON.stringify(event?.event_data, null, 2)}
-                    </pre>
+                    <div className="relative w-full overflow-auto">
+                      <table className="w-full caption-bottom text-sm text-left">
+                        <thead className="[&_tr]:border-b">
+                          <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                            <th className="h-10 px-4 align-middle font-medium text-muted-foreground">ID</th>
+                            <th className="h-10 px-4 align-middle font-medium text-muted-foreground">Time</th>
+                            <th className="h-10 px-4 align-middle font-medium text-muted-foreground">Environment</th>
+                          </tr>
+                        </thead>
+                        <tbody className="[&_tr:last-child]:border-0">
+                          {events_list.map((evt) => (
+                            <tr
+                              key={evt.id}
+                              className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
+                              onClick={() => router.visit(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${evt.id}`, { preserveScroll: true })}
+                            >
+                              <td className="p-4 align-middle font-mono">{evt.id}</td>
+                              <td className="p-4 align-middle">
+                                {format(new Date(evt.created_at), 'MMM d, yyyy HH:mm:ss')}
+                              </td>
+                              <td className="p-4 align-middle">
+                                <span className="inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">
+                                  {evt.environment}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {events_pagination.total_pages > 1 && (
+                      <div className="flex items-center justify-between px-4 py-4 border-t">
+                        <div className="text-xs text-muted-foreground">
+                          Page {events_pagination.current_page} of {events_pagination.total_pages}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={events_pagination.current_page <= 1}
+                            onClick={() => handleEventsPageChange(events_pagination.current_page - 1)}
+                          >
+                            <ArrowLeft className="h-4 w-4 mr-1" /> Previous
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={events_pagination.current_page >= events_pagination.total_pages}
+                            onClick={() => handleEventsPageChange(events_pagination.current_page + 1)}
+                          >
+                            Next <ArrowRight className="h-4 w-4 ml-1" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -198,7 +323,7 @@ export default function IssuesShow({
           </div>
 
           <div className="space-y-6">
-            <Card>
+            <Card className="bg-muted/30 shadow-none">
               <CardHeader className="pb-3 border-b">
                 <h3 className="font-semibold text-sm">Details</h3>
               </CardHeader>
@@ -209,7 +334,7 @@ export default function IssuesShow({
                 </div>
                 <div>
                   <span className="text-muted-foreground block mb-1">Last Seen</span>
-                  <span>{formatDistanceToNow(new Date(issue.updated_at), { addSuffix: true })}</span>
+                  <span>{formatDistanceToNow(new Date(issue.last_seen_at), { addSuffix: true })}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground block mb-1">Total Events</span>
@@ -220,6 +345,6 @@ export default function IssuesShow({
           </div>
         </div>
       </div>
-    </DashboardLayout>
+    </DashboardLayout >
   )
 }

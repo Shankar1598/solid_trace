@@ -40,7 +40,7 @@ export interface Issue {
   kind: 'default' | 'error' | 'csp'
   events_count: number
   created_at: string
-  last_seen_at?: string
+  last_seen_at: string
   updated_at: string
   project: {
     id: number

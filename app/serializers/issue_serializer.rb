@@ -16,6 +16,7 @@ class IssueSerializer
       events_count: @issue.events.count,
       created_at: @issue.created_at.iso8601,
       updated_at: @issue.updated_at.iso8601,
+      last_seen_at: @issue.events.last&.created_at&.iso8601 || @issue.created_at.iso8601,
       project: {
         id: @issue.project.id,
         name: @issue.project.name,

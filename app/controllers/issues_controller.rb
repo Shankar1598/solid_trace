@@ -56,11 +56,23 @@ class IssuesController < ApplicationController
 
     @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).compact.sort
 
+    # Pagination for events list
+    page = (params[:events_page] || 1).to_i
+    per_page = 20
+    @events_list = events.offset((page - 1) * per_page).limit(per_page)
+    @events_count = events.count
+
     render inertia: "Issues/Show", props: {
       issue: IssueSerializer.new(@issue).as_json,
       event: @event ? EventSerializer.new(@event).as_json : nil,
       prev_event_id: @prev_event&.id,
       next_event_id: @next_event&.id,
+      events_list: @events_list.map { |e| EventSerializer.new(e).as_json },
+      events_pagination: {
+        current_page: page,
+        total_pages: (@events_count.to_f / per_page).ceil,
+        total_count: @events_count,
+      },
       environments: @environments,
       comments: @issue.comments.includes(:user).order(created_at: :asc).map { |c| CommentSerializer.new(c).as_json },
       current_environment: params[:environment] || "all",
