@@ -208,9 +208,28 @@ export default function IssuesShow({
                 {event && (
                   <div className="space-y-4">
                     {/* Assuming event.event_data has python exception structure for now based on context */}
-                    {/* We would render Stacktrace here if the event data matches */}
                     {event.event_data && (event.event_data as any).exception && (
-                      <Stacktrace frames={(event.event_data as any).exception.values[0].stacktrace.frames} />
+                      <Tabs defaultValue="relevant" className="w-full">
+                        <div className="flex items-center justify-end mb-2">
+                          <TabsList className="grid w-[300px] grid-cols-2">
+                            <TabsTrigger value="relevant">Most relevant</TabsTrigger>
+                            <TabsTrigger value="full">Full stack trace</TabsTrigger>
+                          </TabsList>
+                        </div>
+                        <TabsContent value="relevant">
+                          <Stacktrace
+                            frames={(event.event_data as any).exception.values[0].stacktrace.frames.filter((frame: any) => frame.in_app)}
+                          />
+                          {(event.event_data as any).exception.values[0].stacktrace.frames.filter((frame: any) => frame.in_app).length === 0 && (
+                            <div className="text-center p-8 text-muted-foreground bg-muted/30 rounded-md border border-dashed">
+                              No application frames found. Switch to full stack trace to see all frames.
+                            </div>
+                          )}
+                        </TabsContent>
+                        <TabsContent value="full">
+                          <Stacktrace frames={(event.event_data as any).exception.values[0].stacktrace.frames} />
+                        </TabsContent>
+                      </Tabs>
                     )}
 
                     {/* Render other parts of event data... Tags, User context etc */}

@@ -6,6 +6,7 @@ interface StacktraceFrame {
   context_line: string
   pre_context: string[]
   post_context: string[]
+  in_app?: boolean
 }
 
 interface StacktraceProps {
