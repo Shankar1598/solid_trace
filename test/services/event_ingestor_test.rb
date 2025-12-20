@@ -14,7 +14,7 @@ class EventIngestorTest < ActiveSupport::TestCase
       "event_id" => "12345",
       "culprit" => "test_culprit",
       "environment" => "production",
-      "exception" => { "values" => [ { "type" => "Error", "value" => "Something went wrong" } ] }
+      "exception" => { "values" => [ { "type" => "Error", "value" => "Something went wrong" } ] },
     }
 
     assert_difference -> { Issue.count } => 1, -> { Event.count } => 1 do
@@ -33,7 +33,7 @@ class EventIngestorTest < ActiveSupport::TestCase
     data = {
       "message" => "Test Error",
       "level" => "error",
-      "culprit" => "test_culprit"
+      "culprit" => "test_culprit",
     }
 
     # First event

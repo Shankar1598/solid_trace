@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 class RegistrationsController < ApplicationController
+  layout "auth"
   skip_before_action :authenticate_user!, only: [ :new, :create ]
 
   def new
-    @user = User.new
+    render inertia: "Registrations/New"
   end
 
   def create
@@ -13,7 +14,7 @@ class RegistrationsController < ApplicationController
       start_new_session_for @user
       redirect_to root_path, notice: "Welcome! You have signed up successfully."
     else
-      render :new, status: :unprocessable_entity
+      redirect_to new_registration_path, inertia: { errors: @user.errors.to_hash }
     end
   end
 

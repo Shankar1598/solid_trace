@@ -17,20 +17,20 @@ class CommentsControllerTest < ActionDispatch::IntegrationTest
 
   test "should create comment" do
     assert_difference("Comment.count") do
-      post issue_comments_url(@issue, org_slug: @organization.slug), params: { comment: { content: "Test comment" } }, as: :turbo_stream
+      post project_issue_comments_url(@project, @issue, org_slug: @organization.slug), params: { comment: { content: "Test comment" } }, as: :turbo_stream
     end
 
-    assert_response :success
+    assert_redirected_to project_issue_url(@project, @issue, org_slug: @organization.slug, anchor: "comments")
     assert_equal "Test comment", Comment.last.content.to_plain_text.strip
     assert_equal @user, Comment.last.user
   end
 
   test "should fail to create invalid comment" do
     assert_no_difference("Comment.count") do
-      post issue_comments_url(@issue, org_slug: @organization.slug), params: { comment: { content: "" } }, as: :turbo_stream
+      post project_issue_comments_url(@project, @issue, org_slug: @organization.slug), params: { comment: { content: "" } }, as: :turbo_stream
     end
 
-    assert_response :success
-    assert_match(/Error creating comment/, response.body)
+    assert_redirected_to project_issue_url(@project, @issue, org_slug: @organization.slug, anchor: "comments")
+    assert_equal "Error creating comment", flash[:alert]
   end
 end

@@ -19,18 +19,20 @@
 
     <%# Includes all stylesheet files in app/assets/stylesheets %>
     <%= stylesheet_link_tag :app, "data-turbo-track": "reload" %>
+    <%= vite_react_refresh_tag %>
+    <%= vite_client_tag %>
+    <%= vite_javascript_tag 'application.tsx' %>
     <%= stylesheet_link_tag "lexxy", "data-turbo-track": "reload" %>
-    <%= javascript_importmap_tags %>
+    <script>
+      if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark')
+      } else {
+        document.documentElement.classList.remove('dark')
+      }
+    </script>
   </head>
 
-  <body class="bg-white dark:bg-gray-900">
-    <div class="flex h-screen bg-background">
-      <%= render "shared/sidebar" %>
-      <main class="flex-1 overflow-auto">
-        <div class="container mx-auto p-6 max-w-7xl">
-          <%= yield %>
-        </div>
-      </main>
-    </div>
+  <body class="bg-background text-foreground antialiased">
+    <%= yield %>
   </body>
 </html>

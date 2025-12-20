@@ -11,6 +11,7 @@ class Integration < ApplicationRecord
 
   validates :provider, presence: true, inclusion: { in: PROVIDERS }
   validates :name, presence: true
+  before_validation :set_name
 
   scope :active, -> { where(active: true) }
   scope :by_provider, ->(provider) { where(provider: provider) }
@@ -52,5 +53,11 @@ class Integration < ApplicationRecord
   def time_window_minutes
     val = (settings || {})["time_window_minutes"].to_i
     val > 0 ? val : DEFAULT_TIME_WINDOW_MINUTES
+  end
+
+  private
+
+  def set_name
+    self.name = provider.titleize if name.blank?
   end
 end

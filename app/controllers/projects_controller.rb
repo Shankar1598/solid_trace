@@ -3,26 +3,24 @@
 class ProjectsController < ApplicationController
   layout "dashboard"
   before_action :set_organization
-  before_action :set_project, only: [ :show ]
+  before_action :set_project, only: [ :show, :update ]
 
   def index
     @projects = @current_org.projects.order(created_at: :desc)
+
+    render inertia: "Projects/Index", props: {
+      projects: @projects.map { |p| ProjectSerializer.new(p).as_json },
+    }
   end
 
   def show
-    @project_keys = @project.project_keys.order(created_at: :desc)
-  end
-
-  def update
-    if @project.update(project_params)
-      redirect_to project_path(@project, org_slug: @current_org.slug), notice: "Project updated successfully"
-    else
-      render :show, status: :unprocessable_entity
-    end
+    render inertia: "Projects/Show", props: {
+      project: ProjectSerializer.new(@project, include_keys: true).as_json,
+    }
   end
 
   def new
-    @project = @current_org.projects.new
+    render inertia: "Projects/New"
   end
 
   def create
@@ -30,7 +28,15 @@ class ProjectsController < ApplicationController
     if @project.save
       redirect_to projects_path(org_slug: @current_org.slug), notice: "Project created successfully"
     else
-      render :new, status: :unprocessable_entity
+      redirect_to new_project_path(org_slug: @current_org.slug), inertia: { errors: @project.errors.to_hash }
+    end
+  end
+
+  def update
+    if @project.update(project_params)
+      redirect_to project_path(@project, org_slug: @current_org.slug), notice: "Project updated successfully"
+    else
+      redirect_to project_path(@project, org_slug: @current_org.slug), inertia: { errors: @project.errors.to_hash }
     end
   end
 
@@ -41,7 +47,7 @@ class ProjectsController < ApplicationController
   end
 
   def set_project
-    @project = @current_org.projects.find(params[:id])
+    @project = @current_org.projects.find_by!(slug: params[:slug])
   end
 
   def project_params

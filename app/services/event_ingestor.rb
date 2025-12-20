@@ -49,7 +49,7 @@ class EventIngestor
         culprit: culprit,
         kind: kind,
 
-        status: 0 # unresolved
+        status: 0, # unresolved
       }
     )
 
@@ -65,7 +65,7 @@ class EventIngestor
 
     {
       issue_id: issue.id,
-      event_id: event.id
+      event_id: event.id,
     }
   end
 

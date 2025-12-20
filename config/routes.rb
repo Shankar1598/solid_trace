@@ -21,27 +21,31 @@ Rails.application.routes.draw do
   resources :passwords, param: :token
 
   scope "/:org_slug" do
-    resources :issues, only: [ :index, :show ] do
-      member do
-        patch :resolve
-        patch :unresolve
-      end
-      resources :comments, only: [ :create, :destroy ]
-    end
+    resources :issues, only: [ :index ]
     resources :mentions, only: [ :index ]
-    resources :projects, only: [ :index, :new, :create, :show, :update ] do
+    resources :projects, only: [ :index, :new, :create, :show, :update ], param: :slug do
+      resources :issues, only: [ :show ], param: :number do
+        member do
+          patch :resolve
+          patch :unresolve
+        end
+        resources :comments, only: [ :create, :destroy ]
+      end
+
       resources :keys, only: [ :create, :destroy ], controller: "project_keys" do
         member do
           patch :rotate
         end
       end
     end
-    resource :settings, only: [ :show, :update ], controller: "organization_settings" do
-      resources :members, only: [ :create, :destroy ], controller: "organization_members"
+
+    scope "/settings" do
+      resource :organization, only: [ :show, :update ], controller: "organization_settings"
+      resources :members, only: [ :index, :create, :destroy ], controller: "organization_members"
+      resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
+      resource :user, only: [ :show, :update ], controller: "user_settings"
     end
-    resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
-    get "settings/user", to: "user_settings#show", as: :org_user_settings
-    patch "settings/user", to: "user_settings#update"
+    get "settings", to: redirect("/%{org_slug}/settings/organization")
   end
 
   # API Routes (Migrated from Backend)

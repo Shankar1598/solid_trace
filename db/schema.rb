@@ -65,6 +65,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
     t.integer "issue_id", null: false
     t.datetime "updated_at", null: false
     t.index ["environment"], name: "index_events_on_environment"
+    t.index ["issue_id", "created_at"], name: "index_events_on_issue_id_and_created_at"
     t.index ["issue_id"], name: "index_events_on_issue_id"
   end
 

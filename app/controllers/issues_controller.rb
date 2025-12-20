@@ -18,11 +18,22 @@ class IssuesController < ApplicationController
       @issues = @issues.joins(:events).where(events: { environment: params[:environment] }).distinct
     end
 
-    @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).sort
+    @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).compact.sort
+
+    render inertia: "Issues/Index", props: {
+      issues: @issues.includes(:project).map { |i| IssueSerializer.new(i).as_json },
+      environments: @environments,
+      filters: {
+        status: params[:status] || "all",
+        query: params[:query] || "",
+        environment: params[:environment] || "all",
+      },
+    }
   end
 
   def show
-    @issue = scoped_resources.find_by!(number: params[:id])
+    @project = @current_org.projects.find_by!(slug: params[:project_slug])
+    @issue = @project.issues.find_by!(number: params[:number])
     events = @issue.events.order(created_at: :desc)
 
     if params[:environment].present? && params[:environment] != "all"
@@ -43,19 +54,43 @@ class IssuesController < ApplicationController
       @prev_event = events.where("created_at < ?", @event.created_at).reorder(created_at: :desc).first
     end
 
-    @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).sort
+    @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).compact.sort
+
+    # Pagination for events list
+    page = (params[:events_page] || 1).to_i
+    per_page = 20
+    @events_list = events.offset((page - 1) * per_page).limit(per_page)
+    @events_count = events.count
+
+    render inertia: "Issues/Show", props: {
+      issue: IssueSerializer.new(@issue).as_json,
+      event: @event ? EventSerializer.new(@event).as_json : nil,
+      prev_event_id: @prev_event&.id,
+      next_event_id: @next_event&.id,
+      events_list: @events_list.map { |e| EventSerializer.new(e).as_json },
+      events_pagination: {
+        current_page: page,
+        total_pages: (@events_count.to_f / per_page).ceil,
+        total_count: @events_count,
+      },
+      environments: @environments,
+      comments: @issue.comments.includes(:user).order(created_at: :asc).map { |c| CommentSerializer.new(c).as_json },
+      current_environment: params[:environment] || "all",
+    }
   end
 
   def resolve
-    @issue = scoped_resources.find_by!(number: params[:id])
+    @project = @current_org.projects.find_by!(slug: params[:project_slug])
+    @issue = @project.issues.find_by!(number: params[:number])
     @issue.update!(status: 1) # resolved
-    redirect_to issue_path(@issue, org_slug: @current_org.slug), notice: "Issue resolved"
+    redirect_to project_issue_path(@project, @issue, org_slug: @current_org.slug), notice: "Issue resolved"
   end
 
   def unresolve
-    @issue = scoped_resources.find_by!(number: params[:id])
+    @project = @current_org.projects.find_by!(slug: params[:project_slug])
+    @issue = @project.issues.find_by!(number: params[:number])
     @issue.update!(status: 0) # unresolved
-    redirect_to issue_path(@issue, org_slug: @current_org.slug), notice: "Issue unresolved"
+    redirect_to project_issue_path(@project, @issue, org_slug: @current_org.slug), notice: "Issue unresolved"
   end
 
   private

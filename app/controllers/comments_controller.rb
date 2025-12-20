@@ -4,19 +4,13 @@ class CommentsController < ApplicationController
   before_action :set_issue
 
   def create
-    @comment = @issue.comments.new(comment_params)
+    @comment = @issue.comments.new(content: params[:content])
     @comment.user = Current.user
 
     if @comment.save
-      respond_to do |format|
-        format.turbo_stream
-      end
+      redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment added"
     else
-      respond_to do |format|
-        format.turbo_stream do
-          render turbo_stream: turbo_stream.update("comment-flash", partial: "shared/error_alert", locals: { message: "Error creating comment." })
-        end
-      end
+      redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), alert: "Error creating comment"
     end
   end
 
@@ -25,15 +19,9 @@ class CommentsController < ApplicationController
 
     if @comment.user == Current.user
       @comment.destroy
-      respond_to do |format|
-        format.turbo_stream
-      end
+      redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment deleted"
     else
-      respond_to do |format|
-        format.turbo_stream do
-          render turbo_stream: turbo_stream.update("comment-flash", partial: "shared/error_alert", locals: { message: "You can only delete your own comments." })
-        end
-      end
+      redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), alert: "You can only delete your own comments"
     end
   end
 
@@ -41,12 +29,7 @@ class CommentsController < ApplicationController
 
   def set_issue
     @current_org = Current.user.organizations.find_by!(slug: params[:org_slug])
-    @issue = Issue.joins(project: :organization)
-                  .where(organizations: { id: @current_org.id })
-                  .find_by!(number: params[:issue_id])
-  end
-
-  def comment_params
-    params.require(:comment).permit(:content)
+    @project = @current_org.projects.find_by!(slug: params[:project_slug])
+    @issue = @project.issues.find_by!(number: params[:issue_number])
   end
 end

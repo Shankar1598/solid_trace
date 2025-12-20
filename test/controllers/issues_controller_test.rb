@@ -16,20 +16,20 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "should show issue using number param" do
-    get issue_url(@issue, org_slug: @organization.slug)
+    get project_issue_url(@project, @issue, org_slug: @organization.slug)
     assert_response :success
   end
 
   test "should resolve issue using number param" do
-    patch resolve_issue_url(@issue, org_slug: @organization.slug)
-    assert_redirected_to issue_url(@issue, org_slug: @organization.slug)
+    patch resolve_project_issue_url(@project, @issue, org_slug: @organization.slug)
+    assert_redirected_to project_issue_url(@project, @issue, org_slug: @organization.slug)
     assert_equal "resolved", @issue.reload.status
   end
 
   test "should unresolve issue using number param" do
     @issue.update!(status: :resolved)
-    patch unresolve_issue_url(@issue, org_slug: @organization.slug)
-    assert_redirected_to issue_url(@issue, org_slug: @organization.slug)
+    patch unresolve_project_issue_url(@project, @issue, org_slug: @organization.slug)
+    assert_redirected_to project_issue_url(@project, @issue, org_slug: @organization.slug)
     assert_equal "unresolved", @issue.reload.status
   end
 end

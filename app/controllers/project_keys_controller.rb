@@ -28,6 +28,6 @@ class ProjectKeysController < ApplicationController
   end
 
   def set_project
-    @project = @current_org.projects.find_by!(slug: params[:project_id])
+    @project = @current_org.projects.find_by!(slug: params[:project_slug])
   end
 end

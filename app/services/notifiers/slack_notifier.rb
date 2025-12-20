@@ -53,31 +53,31 @@ module Notifiers
             text: {
               type: "plain_text",
               text: "🚨 New Issue Created",
-              emoji: true
-            }
+              emoji: true,
+            },
           },
           {
             type: "section",
             fields: [
               {
                 type: "mrkdwn",
-                text: "*Title:*\n#{issue.title}"
+                text: "*Title:*\n#{issue.title}",
               },
               {
                 type: "mrkdwn",
-                text: "*Kind:*\n#{issue.kind}"
+                text: "*Kind:*\n#{issue.kind}",
               },
               {
                 type: "mrkdwn",
-                text: "*Culprit:*\n#{issue.culprit || 'N/A'}"
+                text: "*Culprit:*\n#{issue.culprit || 'N/A'}",
               },
               {
                 type: "mrkdwn",
-                text: "*Project:*\n#{issue.project.name}"
+                text: "*Project:*\n#{issue.project.name}",
               }
-            ]
+            ],
           }
-        ]
+        ],
       }
     end
   end
