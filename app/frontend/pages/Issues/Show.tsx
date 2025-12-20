@@ -146,6 +146,9 @@ export default function IssuesShow({
                     </div>
 
                     <div className="flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground text-xs font-medium bg-muted px-2 py-1 rounded">
+                        {event ? formatDistanceToNow(new Date(event.created_at), { addSuffix: true }) : 'N/A'}
+                      </span>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -156,11 +159,8 @@ export default function IssuesShow({
                           { preserveScroll: true }
                         )}
                       >
-                        <ArrowLeft className="h-4 w-4 mr-1" /> Older
+                        <ArrowLeft className="h-4 w-4 mr-1" />
                       </Button>
-                      <span className="text-muted-foreground text-xs font-medium bg-muted px-2 py-1 rounded">
-                        {event ? formatDistanceToNow(new Date(event.created_at), { addSuffix: true }) : 'N/A'}
-                      </span>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -171,19 +171,21 @@ export default function IssuesShow({
                           { preserveScroll: true }
                         )}
                       >
-                        Newer <ArrowRight className="h-4 w-4 ml-1" />
+                        <ArrowRight className="h-4 w-4 ml-1" />
                       </Button>
 
                       <Dialog>
                         <DialogTrigger asChild>
                           <Button variant="outline" size="sm" className="h-8 gap-2 ml-2">
                             <Code className="h-3.5 w-3.5" />
-                            View JSON
+                            JSON
                           </Button>
                         </DialogTrigger>
                         <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
-                          <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <DialogTitle>Event JSON</DialogTitle>
+                          <DialogHeader className="flex flex-row items-center space-y-0 pb-2">
+                            <DialogTitle className="flex flex-row items-center">
+                              Event JSON
+                            </DialogTitle>
                             <Button
                               variant="ghost"
                               size="icon"
