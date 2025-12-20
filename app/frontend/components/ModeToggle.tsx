@@ -1,5 +1,6 @@
 import * as React from "react"
 import { Moon, Sun } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/ui/button"
 
@@ -27,7 +28,7 @@ export function ModeToggle({ className }: { className?: string }) {
   }
 
   return (
-    <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme" className="h-8 w-8 text-muted-foreground hover:text-foreground">
+    <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme" className={cn("h-8 w-8 text-muted-foreground hover:text-foreground", className)}>
       {theme === "light" ? (
         <Sun className="h-4 w-4" />
       ) : (

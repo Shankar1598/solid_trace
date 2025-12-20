@@ -128,144 +128,145 @@ export default function IssuesShow({
               </TabsList>
 
               <TabsContent value="overview" className="space-y-6">
-                {/* Event Navigation */}
-                <div className="flex items-center justify-between bg-muted/30 p-2 rounded-md border">
-                  <div className="flex items-center gap-2">
-                    <Select value={current_environment} onValueChange={handleEnvironmentChange}>
-                      <SelectTrigger className="w-[180px] h-8 bg-background">
-                        <SelectValue placeholder="Environment" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Environments</SelectItem>
-                        {environments.map(env => (
-                          <SelectItem key={env} value={env}>{env}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                {/* Event Navigation & Header Info */}
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-center justify-between bg-card p-3 rounded-md border shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <Select value={current_environment} onValueChange={handleEnvironmentChange}>
+                        <SelectTrigger className="w-[180px] h-8 bg-background">
+                          <SelectValue placeholder="Environment" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Environments</SelectItem>
+                          {environments.map(env => (
+                            <SelectItem key={env} value={env}>{env}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                  <div className="flex items-center gap-2 text-sm">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={!prev_event_id}
-                      onClick={() => prev_event_id && router.visit(
-                        `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${prev_event_id}&environment=${current_environment}`,
-                        { preserveScroll: true }
-                      )}
-                    >
-                      <ArrowLeft className="h-4 w-4 mr-1" /> Older
-                    </Button>
-                    <span className="text-muted-foreground text-xs">
-                      {event ? formatDistanceToNow(new Date(event.created_at), { addSuffix: true }) : 'N/A'}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={!next_event_id}
-                      onClick={() => next_event_id && router.visit(
-                        `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${next_event_id}&environment=${current_environment}`,
-                        { preserveScroll: true }
-                      )}
-                    >
-                      Newer <ArrowRight className="h-4 w-4 ml-1" />
-                    </Button>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={!prev_event_id}
+                        className="h-8"
+                        onClick={() => prev_event_id && router.visit(
+                          `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${prev_event_id}&environment=${current_environment}`,
+                          { preserveScroll: true }
+                        )}
+                      >
+                        <ArrowLeft className="h-4 w-4 mr-1" /> Older
+                      </Button>
+                      <span className="text-muted-foreground text-xs font-medium bg-muted px-2 py-1 rounded">
+                        {event ? formatDistanceToNow(new Date(event.created_at), { addSuffix: true }) : 'N/A'}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={!next_event_id}
+                        className="h-8"
+                        onClick={() => next_event_id && router.visit(
+                          `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${next_event_id}&environment=${current_environment}`,
+                          { preserveScroll: true }
+                        )}
+                      >
+                        Newer <ArrowRight className="h-4 w-4 ml-1" />
+                      </Button>
 
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" size="sm" className="h-8 gap-2 ml-2">
-                          <Code className="h-3.5 w-3.5" />
-                          View JSON
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
-                        <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                          <DialogTitle>Event JSON</DialogTitle>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => {
-                              if (event?.event_data) {
-                                navigator.clipboard.writeText(JSON.stringify(event.event_data, null, 2))
-                              }
-                            }}
-                          >
-                            <Copy className="h-4 w-4" />
-                            <span className="sr-only">Copy JSON</span>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-8 gap-2 ml-2">
+                            <Code className="h-3.5 w-3.5" />
+                            View JSON
                           </Button>
-                        </DialogHeader>
-                        <div className="flex-1 overflow-auto rounded-md bg-muted p-4">
-                          <pre className="text-xs font-mono text-foreground">
-                            {JSON.stringify(event?.event_data, null, 2)}
-                          </pre>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                </div>
-
-                {event && (
-                  <div className="space-y-4">
-                    {/* Assuming event.event_data has python exception structure for now based on context */}
-                    {event.event_data && (event.event_data as any).exception && (
-                      <Tabs defaultValue="relevant" className="w-full">
-                        <div className="flex items-center justify-end mb-2">
-                          <TabsList className="grid w-[300px] grid-cols-2">
-                            <TabsTrigger value="relevant">Most relevant</TabsTrigger>
-                            <TabsTrigger value="full">Full stack trace</TabsTrigger>
-                          </TabsList>
-                        </div>
-                        <TabsContent value="relevant">
-                          <Stacktrace
-                            frames={(event.event_data as any).exception.values[0].stacktrace.frames.filter((frame: any) => frame.in_app)}
-                          />
-                          {(event.event_data as any).exception.values[0].stacktrace.frames.filter((frame: any) => frame.in_app).length === 0 && (
-                            <div className="text-center p-8 text-muted-foreground bg-muted/30 rounded-md border border-dashed">
-                              No application frames found. Switch to full stack trace to see all frames.
-                            </div>
-                          )}
-                        </TabsContent>
-                        <TabsContent value="full">
-                          <Stacktrace frames={(event.event_data as any).exception.values[0].stacktrace.frames} />
-                        </TabsContent>
-                      </Tabs>
-                    )}
-
-                    {/* Render other parts of event data... Tags, User context etc */}
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <span className="text-sm font-semibold">User</span>
-                        </CardHeader>
-                        <CardContent className="text-sm">
-                          {/* Placeholder for user data */}
-                          <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
-                            {JSON.stringify((event.event_data as any).user || {}, null, 2)}
-                          </pre>
-                        </CardContent>
-                      </Card>
-
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <span className="text-sm font-semibold">Tags</span>
-                        </CardHeader>
-                        <CardContent className="text-sm">
-                          {/* Placeholder for tags */}
-                          <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
-                            {JSON.stringify((event.event_data as any).tags || [], null, 2)}
-                          </pre>
-                        </CardContent>
-                      </Card>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+                          <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <DialogTitle>Event JSON</DialogTitle>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => {
+                                if (event?.event_data) {
+                                  navigator.clipboard.writeText(JSON.stringify(event.event_data, null, 2))
+                                }
+                              }}
+                            >
+                              <Copy className="h-4 w-4" />
+                              <span className="sr-only">Copy JSON</span>
+                            </Button>
+                          </DialogHeader>
+                          <div className="flex-1 overflow-auto rounded-md bg-muted p-4">
+                            <pre className="text-xs font-mono text-foreground">
+                              {JSON.stringify(event?.event_data, null, 2)}
+                            </pre>
+                          </div>
+                        </DialogContent>
+                      </Dialog>
                     </div>
                   </div>
-                )}
 
+                  {event && (
+                    <div className="space-y-4">
+                      {/* Assuming event.event_data has python exception structure for now based on context */}
+                      {event.event_data && (event.event_data as any).exception && (
+                        <Tabs defaultValue="relevant" className="w-full">
+                          <div className="flex items-center justify-end mb-2">
+                            <TabsList className="grid w-[300px] grid-cols-2">
+                              <TabsTrigger value="relevant">Most relevant</TabsTrigger>
+                              <TabsTrigger value="full">Full stack trace</TabsTrigger>
+                            </TabsList>
+                          </div>
+                          <TabsContent value="relevant">
+                            <Stacktrace
+                              frames={(event.event_data as any).exception.values[0].stacktrace.frames.filter((frame: any) => frame.in_app)}
+                            />
+                            {(event.event_data as any).exception.values[0].stacktrace.frames.filter((frame: any) => frame.in_app).length === 0 && (
+                              <div className="text-center p-8 text-muted-foreground bg-muted/30 rounded-md border border-dashed">
+                                No application frames found. Switch to full stack trace to see all frames.
+                              </div>
+                            )}
+                          </TabsContent>
+                          <TabsContent value="full">
+                            <Stacktrace frames={(event.event_data as any).exception.values[0].stacktrace.frames} />
+                          </TabsContent>
+                        </Tabs>
+                      )}
+
+                      {/* Render other parts of event data... Tags, User context etc */}
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Card className="shadow-sm border-muted">
+                          <CardHeader className="pb-2 border-b bg-muted/20">
+                            <span className="text-sm font-semibold">User</span>
+                          </CardHeader>
+                          <CardContent className="text-sm pt-4">
+                            <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-x-auto border">
+                              {JSON.stringify((event.event_data as any).user || {}, null, 2)}
+                            </pre>
+                          </CardContent>
+                        </Card>
+
+                        <Card className="shadow-sm border-muted">
+                          <CardHeader className="pb-2 border-b bg-muted/20">
+                            <span className="text-sm font-semibold">Tags</span>
+                          </CardHeader>
+                          <CardContent className="text-sm pt-4">
+                            <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-x-auto border">
+                              {JSON.stringify((event.event_data as any).tags || [], null, 2)}
+                            </pre>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </TabsContent>
 
-              <TabsContent value="events">
-                <Card>
-                  <CardHeader className="pb-3 border-b">
+              <TabsContent value="events" className="mt-4">
+                <Card className="shadow-sm">
+                  <CardHeader className="pb-3 border-b bg-muted/20 rounded-t-lg">
                     <h3 className="font-semibold text-sm">Events</h3>
                   </CardHeader>
                   <CardContent className="p-0">
@@ -342,8 +343,8 @@ export default function IssuesShow({
           </div>
 
           <div className="space-y-6">
-            <Card className="bg-muted/30 shadow-none">
-              <CardHeader className="pb-3 border-b">
+            <Card className="shadow-sm border-muted">
+              <CardHeader className="pb-3 border-b bg-muted/20 rounded-t-lg">
                 <h3 className="font-semibold text-sm">Details</h3>
               </CardHeader>
               <CardContent className="pt-4 space-y-4 text-sm">
