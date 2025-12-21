@@ -8,6 +8,6 @@ class OrganizationMailer < ApplicationMailer
     @invited_by = invited_by
     @login_url = login_url
 
-    mail(to: @user.email, subject: "You've been added to #{@organization.name} on Garnet")
+    mail(to: @user.email, subject: "You've been added to #{@organization.name} on SolidTrace")
   end
 end

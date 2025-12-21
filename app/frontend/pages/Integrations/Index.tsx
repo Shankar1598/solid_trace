@@ -30,7 +30,7 @@ export default function IntegrationsIndex({ integrations }: IntegrationsIndexPro
           <div>
             <h1 className="text-3xl font-bold tracking-tight mb-1">Integrations</h1>
             <p className="text-muted-foreground">
-              Connect Garnet with external services and alerts.
+              Connect SolidTrace with external services and alerts.
             </p>
           </div>
           <Link href={`/${current_org.slug}/settings/integrations/new`}>

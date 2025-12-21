@@ -7,7 +7,7 @@ class IssueMailer < ApplicationMailer
 
     mail(
       to: recipients,
-      subject: "[Garnet] New Issue in #{@project.name}: #{issue.title}"
+      subject: "[SolidTrace] New Issue in #{@project.name}: #{issue.title}"
     )
   end
 end

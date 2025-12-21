@@ -10,11 +10,11 @@
 #     MovieGenre.find_or_create_by!(name: genre_name)
 #   end
 
-org = Organization.find_or_create_by!(slug: "garnet-org", name: "Garnet Org")
-project = org.projects.find_or_create_by!(slug: "garnet-project", name: "Garnet Project")
+org = Organization.find_or_create_by!(slug: "solid-trace-org", name: "SolidTrace Org")
+project = org.projects.find_or_create_by!(slug: "solid-trace-project", name: "SolidTrace Project")
 project.project_keys.find_or_create_by!(public_key: "testkey123", secret_key: "secret123")
 
-user = User.find_or_create_by!(email: "admin@garnet.local") do |u|
+user = User.find_or_create_by!(email: "admin@solidtrace.local") do |u|
   u.name = "Admin User"
   u.password = "password123"
   u.password_confirmation = "password123"

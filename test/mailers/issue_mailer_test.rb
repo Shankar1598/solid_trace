@@ -11,7 +11,7 @@ class IssueMailerTest < ActionMailer::TestCase
 
     mail = IssueMailer.notify(issue, recipients)
 
-    assert_equal "[Garnet] New Issue in Test Project: Test Issue", mail.subject
+    assert_equal "[SolidTrace] New Issue in Test Project: Test Issue", mail.subject
     assert_equal recipients, mail.to
     assert_match "Test Issue", mail.body.encoded
   end
