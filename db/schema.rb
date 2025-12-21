@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_20_181145) do
+ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -69,22 +69,14 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_20_181145) do
     t.index ["project_id"], name: "index_event_fingerprints_on_project_id"
   end
 
-  create_table "event_payloads", force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.integer "event_id", null: false
-    t.binary "payload"
-    t.datetime "updated_at", null: false
-    t.index ["event_id"], name: "index_event_payloads_on_event_id"
-  end
-
-  create_table "events", force: :cascade do |t|
+  create_table "events", id: false, force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "environment", default: "unknown", null: false
-    t.integer "event_fingerprint_id", null: false
-    t.datetime "updated_at", null: false
-    t.index ["environment"], name: "index_events_on_environment"
-    t.index ["event_fingerprint_id", "created_at"], name: "index_events_on_event_fingerprint_id_and_created_at"
-    t.index ["event_fingerprint_id"], name: "index_events_on_event_fingerprint_id"
+    t.bigint "event_fingerprint_id", null: false
+    t.binary "payload"
+    t.bigint "project_id", null: false
+    t.string "uuid", null: false
+    t.index ["project_id", "environment"], name: "index_events_on_project_id_and_environment"
   end
 
   create_table "integrations", force: :cascade do |t|
@@ -180,8 +172,6 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_20_181145) do
   add_foreign_key "comments", "users"
   add_foreign_key "event_fingerprints", "issues"
   add_foreign_key "event_fingerprints", "projects"
-  add_foreign_key "event_payloads", "events"
-  add_foreign_key "events", "event_fingerprints"
   add_foreign_key "integrations", "organizations"
   add_foreign_key "issues", "projects"
   add_foreign_key "organizations_users", "organizations"
