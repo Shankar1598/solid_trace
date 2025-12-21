@@ -8,7 +8,7 @@ class EventSerializer
   def as_json(*)
     {
       id: @event.id,
-      issue_id: @event.issue_id,
+      issue_id: @event.issue.id,
       environment: @event.environment,
       event_data: @event.payload,
       created_at: @event.created_at.iso8601,

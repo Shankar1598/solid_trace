@@ -58,4 +58,57 @@ class EventIngestorTest < ActiveSupport::TestCase
     EventIngestor.new(@project, data_default).call
     assert_equal "default", Issue.last.kind
   end
+
+  test "call should reopen resolved issue when new event arrives" do
+    data = {
+      "message" => "Test Error",
+      "culprit" => "test_culprit",
+    }
+
+    # First event creates issue
+    result = EventIngestor.new(@project, data).call
+    issue = Issue.find(result[:issue_id])
+
+    # Resolve the issue
+    issue.update!(status: :resolved)
+    assert issue.reload.resolved?
+
+    # Second event should reopen the issue
+    EventIngestor.new(@project, data).call
+    assert issue.reload.unresolved?
+  end
+
+  test "call should scope issues to project" do
+    other_project = create(:project)
+    data = {
+      "message" => "Test Error",
+      "culprit" => "test_culprit",
+    }
+
+    # Create in first project
+    EventIngestor.new(@project, data).call
+
+    # Should create new issue in second project even with same data
+    assert_difference "Issue.count", 1 do
+      result = EventIngestor.new(other_project, data).call
+      issue = Issue.find(result[:issue_id])
+      assert_equal other_project, issue.project
+    end
+  end
+
+  test "call should create event_fingerprint linking event to issue" do
+    data = {
+      "message" => "Test Error",
+      "culprit" => "test_culprit",
+    }
+
+    result = EventIngestor.new(@project, data).call
+
+    event = Event.find(result[:event_id])
+    issue = Issue.find(result[:issue_id])
+
+    assert_not_nil event.event_fingerprint
+    assert_equal issue, event.event_fingerprint.issue
+    assert_equal issue, event.issue
+  end
 end
