@@ -128,7 +128,6 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
             </div>
             <div className="col-span-1 text-right">Last Seen</div>
             <div className="col-span-1 text-right">Age</div>
-            <div className="col-span-2 text-right">Trend</div>
             <div className="col-span-1 text-right">Events</div>
             <div className="col-span-1 text-right">Users</div>
           </div>
@@ -181,9 +180,6 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
                     <div className="col-span-1 text-right text-sm text-muted-foreground font-mono">
                       {/* Age */}
                       {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false }).replace('about ', '')}
-                    </div>
-                    <div className="col-span-2 flex justify-end pr-2 h-8">
-                      <Sparkline />
                     </div>
                     <div className="col-span-1 text-right text-sm font-medium text-foreground font-mono">
                       {new Intl.NumberFormat('en-US', { notation: "compact" }).format(issue.events_count)}
