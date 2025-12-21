@@ -57,7 +57,9 @@ class EventIngestor
     environment = data["environment"].presence || "unknown"
 
     # Create issue event
-    event = issue.events.create!(event_data: data, environment: environment)
+    event = issue.events.build(environment: environment)
+    event.build_event_payload(payload: data)
+    event.save!
 
     # Check notification rules and notify integrations if conditions are met
     newly_created = issue.id_previously_changed?
