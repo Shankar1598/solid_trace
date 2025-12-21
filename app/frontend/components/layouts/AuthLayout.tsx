@@ -7,7 +7,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="absolute inset-0 bg-primary" />
         <div className="relative z-20 flex items-center text-lg font-medium">
           <div className="mr-2 h-6 w-6 rounded-full bg-white" />
-          Garnet
+          SolidTrace
         </div>
         <div className="relative z-20 mt-auto">
           <blockquote className="space-y-2">

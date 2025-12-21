@@ -54,7 +54,7 @@ module Notifiers
       {
         routing_key: routing_key,
         event_action: "trigger",
-        dedup_key: "garnet-issue-#{issue.id}",
+        dedup_key: "solid-trace-issue-#{issue.id}",
         payload: {
           summary: "[#{issue.kind.upcase}] #{issue.title}",
           source: issue.project.name,

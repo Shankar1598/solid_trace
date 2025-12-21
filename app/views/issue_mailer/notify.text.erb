@@ -4,4 +4,4 @@ Project: <%= @project.name %>
 Kind: <%= @issue.kind %>
 Title: <%= @issue.title %>
 
-View Issue: <%= project_issue_url(@project, @issue, org_slug: @project.organization.slug, host: Garnet::Application.config.action_mailer.default_url_options[:host] || "localhost:3000") %>
+View Issue: <%= project_issue_url(@project, @issue, org_slug: @project.organization.slug, host: SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000") %>

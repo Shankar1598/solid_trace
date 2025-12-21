@@ -1,4 +1,4 @@
-// Type definitions for Garnet application
+// Type definitions for SolidTrace application
 
 export interface User {
   id: number
