@@ -58,21 +58,10 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
     t.index ["user_id"], name: "index_comments_on_user_id"
   end
 
-  create_table "event_fingerprints", force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.string "fingerprint"
-    t.integer "issue_id", null: false
-    t.integer "project_id", null: false
-    t.datetime "updated_at", null: false
-    t.index ["issue_id"], name: "index_event_fingerprints_on_issue_id"
-    t.index ["project_id", "fingerprint"], name: "index_event_fingerprints_on_project_id_and_fingerprint", unique: true
-    t.index ["project_id"], name: "index_event_fingerprints_on_project_id"
-  end
-
   create_table "events", id: false, force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "environment", default: "unknown", null: false
-    t.bigint "event_fingerprint_id", null: false
+    t.bigint "issue_fingerprint_id", null: false
     t.binary "payload"
     t.bigint "project_id", null: false
     t.string "uuid", null: false
@@ -89,6 +78,16 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
     t.datetime "updated_at", null: false
     t.index ["organization_id", "provider"], name: "index_integrations_on_organization_id_and_provider"
     t.index ["organization_id"], name: "index_integrations_on_organization_id"
+  end
+
+  create_table "issue_fingerprints", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "fingerprint"
+    t.integer "issue_id", null: false
+    t.integer "project_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["issue_id"], name: "index_issue_fingerprints_on_issue_id"
+    t.index ["project_id", "fingerprint"], name: "index_issue_fingerprints_on_project_id_and_fingerprint", unique: true
   end
 
   create_table "issues", force: :cascade do |t|
@@ -170,9 +169,9 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "comments", "issues"
   add_foreign_key "comments", "users"
-  add_foreign_key "event_fingerprints", "issues"
-  add_foreign_key "event_fingerprints", "projects"
   add_foreign_key "integrations", "organizations"
+  add_foreign_key "issue_fingerprints", "issues"
+  add_foreign_key "issue_fingerprints", "projects"
   add_foreign_key "issues", "projects"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"

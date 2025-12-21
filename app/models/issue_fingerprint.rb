@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class EventFingerprint < ApplicationRecord
+class IssueFingerprint < ApplicationRecord
   belongs_to :issue
   belongs_to :project
   has_many :events, dependent: :nullify

@@ -27,11 +27,11 @@ class EventTest < ActiveSupport::TestCase
     assert_equal hash1, hash2
   end
 
-  test "should delegate issue to event_fingerprint" do
+  test "should delegate issue to issue_fingerprint" do
     project = create(:project)
     issue = create(:issue, project: project)
-    event_fingerprint = issue.event_fingerprints.create!(fingerprint: "test-hash", project: project)
-    event = event_fingerprint.events.create!(environment: "production")
+    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-hash", project: project)
+    event = issue_fingerprint.events.create!(environment: "production")
     event.create_event_payload!(payload: {})
 
     assert_equal issue, event.issue

@@ -2,8 +2,8 @@
 
 class Issue < ApplicationRecord
   belongs_to :project
-  has_many :event_fingerprints, dependent: :destroy
-  has_many :events, through: :event_fingerprints
+  has_many :issue_fingerprints, dependent: :destroy
+  has_many :events, through: :issue_fingerprints
   has_many :comments, dependent: :destroy
   before_create :assign_number
 

@@ -96,7 +96,7 @@ class EventIngestorTest < ActiveSupport::TestCase
     end
   end
 
-  test "call should create event_fingerprint linking event to issue" do
+  test "call should create issue_fingerprint linking event to issue" do
     data = {
       "message" => "Test Error",
       "culprit" => "test_culprit",
@@ -107,8 +107,8 @@ class EventIngestorTest < ActiveSupport::TestCase
     event = Event.find(result[:event_id])
     issue = Issue.find(result[:issue_id])
 
-    assert_not_nil event.event_fingerprint
-    assert_equal issue, event.event_fingerprint.issue
+    assert_not_nil event.issue_fingerprint
+    assert_equal issue, event.issue_fingerprint.issue
     assert_equal issue, event.issue
   end
 end

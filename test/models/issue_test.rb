@@ -22,10 +22,10 @@ class IssueTest < ActiveSupport::TestCase
     assert_equal 2, issue2.number
   end
 
-  test "should have events through event_fingerprints" do
+  test "should have events through issue_fingerprints" do
     issue = create(:issue, project: @project)
-    event_fingerprint = issue.event_fingerprints.create!(fingerprint: "test-hash", project: @project)
-    event = event_fingerprint.events.create!(environment: "production")
+    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-hash", project: @project)
+    event = issue_fingerprint.events.create!(environment: "production")
     event.create_event_payload!(payload: {})
 
     assert_includes issue.events, event
