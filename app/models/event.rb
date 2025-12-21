@@ -3,17 +3,17 @@
 require "securerandom"
 
 class Event < ApplicationRecord
-  self.primary_key = [ :event_fingerprint_id, :created_at, :uuid ]
+  self.primary_key = [ :issue_fingerprint_id, :created_at, :uuid ]
 
   before_validation :generate_uuid_v7, on: :create
 
   serialize :payload, coder: MessagePackCoder::Compressed
 
-  belongs_to :event_fingerprint
+  belongs_to :issue_fingerprint
   belongs_to :project
-  has_one :issue, through: :event_fingerprint
+  has_one :issue, through: :issue_fingerprint
 
-  self.attributes_for_inspect = [ :uuid, :event_fingerprint_id, :environment ]
+  self.attributes_for_inspect = [ :uuid, :issue_fingerprint_id, :environment ]
 
   scope :lite, -> { select(column_names - [ :payload ]) }
 

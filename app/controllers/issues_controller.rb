@@ -18,7 +18,7 @@ class IssuesController < ApplicationController
       @issues = @issues.joins(:events).where(events: { environment: params[:environment] }).distinct
     end
 
-    @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).compact.sort
+    @environments = Event.where(project_id: @current_org.projects.ids).distinct.pluck(:environment).compact.sort
 
     render inertia: "Issues/Index", props: {
       issues: @issues.includes(:project).map { |i| IssueSerializer.new(i).as_json },
@@ -54,7 +54,7 @@ class IssuesController < ApplicationController
       @prev_event = events.where("created_at < ?", @event.created_at).reorder(created_at: :desc).first
     end
 
-    @environments = Event.where(issue_id: scoped_resources.select(:id)).distinct.pluck(:environment).compact.sort
+    @environments = @issue.events.distinct.pluck(:environment).compact.sort
 
     # Pagination for events list
     page = (params[:events_page] || 1).to_i

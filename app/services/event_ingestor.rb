@@ -78,11 +78,11 @@ class EventIngestor
     retries ||= 0
 
     # Look for existing event fingerprint with this hash
-    event_fingerprint = EventFingerprint.find_by(fingerprint: fingerprint_hash, project_id: project.id)
+    issue_fingerprint = IssueFingerprint.find_by(fingerprint: fingerprint_hash, project_id: project.id)
 
-    if event_fingerprint
+    if issue_fingerprint
       # Existing issue found
-      issue = event_fingerprint.issue
+      issue = issue_fingerprint.issue
       newly_created = false
 
       ActiveRecord::Base.transaction do
@@ -90,7 +90,7 @@ class EventIngestor
         issue.update!(status: 0) if issue.resolved?
 
         # Associate event with fingerprint and save
-        event.event_fingerprint = event_fingerprint
+        event.issue_fingerprint = issue_fingerprint
         event.save!
       end
 
@@ -101,15 +101,15 @@ class EventIngestor
 
       ActiveRecord::Base.transaction do
         issue = project.issues.create!(issue_attributes)
-        event_fingerprint = issue.event_fingerprints.create!(fingerprint: fingerprint_hash, project: project)
-        event.event_fingerprint = event_fingerprint
+        issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: fingerprint_hash, project: project)
+        event.issue_fingerprint = issue_fingerprint
         event.save!
       end
 
       [ issue, newly_created ]
     end
   rescue ActiveRecord::RecordNotUnique
-    # If we hit a unique constraint (on event_fingerprints), it means another process created it.
+    # If we hit a unique constraint (on issue_fingerprints), it means another process created it.
     # Retry to find it.
     if (retries += 1) < 3
       retry

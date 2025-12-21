@@ -44,10 +44,10 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
 
   test "notifies when event threshold is reached" do
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    event_fingerprint = issue.event_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
     # Create 10 events (default threshold is 10)
-    10.times { |i| e = event_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
+    10.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
 
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil
@@ -64,10 +64,10 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     @integration.save!
 
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    event_fingerprint = issue.event_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
     # Create 10 events
-    10.times { |i| e = event_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
+    10.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
 
     Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Should not be called" } do
       IntegrationNotifier.notify(issue)
@@ -77,10 +77,10 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
 
   test "does not notify below threshold" do
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    event_fingerprint = issue.event_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
     # Create 5 events
-    5.times { |i| e = event_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
+    5.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
 
     Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
       IntegrationNotifier.notify(issue)
@@ -90,10 +90,10 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
 
   test "does not notify above threshold" do
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    event_fingerprint = issue.event_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
     # Create 11 events
-    11.times { |i| e = event_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
+    11.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
 
     Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
       IntegrationNotifier.notify(issue)
@@ -106,10 +106,10 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     @integration.save!
 
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    event_fingerprint = issue.event_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
     # Create 5 events
-    5.times { |i| e = event_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
+    5.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
 
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil
