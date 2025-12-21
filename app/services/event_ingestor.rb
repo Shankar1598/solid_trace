@@ -31,8 +31,7 @@ class EventIngestor
     )
 
     # Build the event (fingerprint will be assigned in find_or_create_issue_with_event)
-    event = Event.new(environment: environment)
-    event.build_event_payload(payload: data)
+    event = Event.new(environment: environment, payload: data, project_id: project.id)
 
     # Find or create issue and save event together in a transaction
     issue, newly_created = find_or_create_issue_with_event(

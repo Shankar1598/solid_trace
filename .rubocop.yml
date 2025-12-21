@@ -5,6 +5,9 @@ Style/FrozenStringLiteralComment:
   Enabled: true
   Include:
     - "**/*.rb"
+    - "**/*.rake"
+  Exclude:
+    - "db/migrate/*"
 
 Style/TrailingCommaInHashLiteral:
   Enabled: true
