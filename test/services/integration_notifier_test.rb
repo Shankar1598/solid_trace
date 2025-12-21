@@ -46,7 +46,7 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
 
     # Create 10 events (default threshold is 10)
-    10.times { issue.events.create!(event_data: {}, environment: "production") }
+    10.times { |i| issue.events.create!(environment: "production", event_payload_attributes: { payload: {} }) }
 
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil
@@ -65,7 +65,7 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
 
     # Create 10 events
-    10.times { issue.events.create!(event_data: {}, environment: "production") }
+    10.times { |i| issue.events.create!(environment: "production", event_payload_attributes: { payload: {} }) }
 
     Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Should not be called" } do
       IntegrationNotifier.notify(issue)
@@ -77,7 +77,7 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
 
     # Create 5 events
-    5.times { issue.events.create!(event_data: {}, environment: "production") }
+    5.times { |i| e = issue.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
 
     Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
       IntegrationNotifier.notify(issue)
@@ -89,7 +89,7 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
 
     # Create 11 events
-    11.times { issue.events.create!(event_data: {}, environment: "production") }
+    11.times { |i| e = issue.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
 
     Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
       IntegrationNotifier.notify(issue)
@@ -104,7 +104,7 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
 
     # Create 5 events
-    5.times { issue.events.create!(event_data: {}, environment: "production") }
+    5.times { |i| e = issue.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
 
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil

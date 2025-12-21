@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
+ActiveRecord::Schema[8.1].define(version: 2025_12_20_181145) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -58,10 +58,17 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
     t.index ["user_id"], name: "index_comments_on_user_id"
   end
 
+  create_table "event_payloads", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "event_id", null: false
+    t.binary "payload"
+    t.datetime "updated_at", null: false
+    t.index ["event_id"], name: "index_event_payloads_on_event_id"
+  end
+
   create_table "events", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "environment", default: "unknown", null: false
-    t.binary "event_data"
     t.integer "issue_id", null: false
     t.datetime "updated_at", null: false
     t.index ["environment"], name: "index_events_on_environment"
@@ -169,6 +176,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "comments", "issues"
   add_foreign_key "comments", "users"
+  add_foreign_key "event_payloads", "events"
   add_foreign_key "events", "issues"
   add_foreign_key "integrations", "organizations"
   add_foreign_key "issue_fingerprints", "issues"

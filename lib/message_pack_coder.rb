@@ -19,4 +19,15 @@ module MessagePackCoder
       unpacker.full_unpack
     end
   end
+
+  module Compressed
+    def self.dump(object)
+      Zlib::Deflate.deflate(MessagePackCoder.dump(object))
+    end
+
+    def self.load(binary_data)
+      return nil if binary_data.nil?
+      MessagePackCoder.load(Zlib::Inflate.inflate(binary_data))
+    end
+  end
 end

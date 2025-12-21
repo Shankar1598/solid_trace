@@ -2,6 +2,8 @@
 
 class Event < ApplicationRecord
   belongs_to :issue
-  serialize :event_data, coder: MessagePackCoder
+  has_one :event_payload, dependent: :destroy
+  delegate :payload, to: :event_payload
+
   self.attributes_for_inspect = [ :id, :issue_id, :environment ]
 end
