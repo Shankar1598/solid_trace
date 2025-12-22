@@ -39,7 +39,7 @@ gem "thruster", require: false
 
 # Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
 gem "image_processing", "~> 1.2"
-gem "lexxy", "~> 0.1.23.beta" # Need to specify the version since it's a pre-release
+gem "lexxy", "~> 0.1.24.beta" # Need to specify the version since it's a pre-release
 
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
