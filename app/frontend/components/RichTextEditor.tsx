@@ -1,4 +1,5 @@
 import { useEditor, EditorContent } from '@tiptap/react'
+import { useEffect } from 'react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -9,11 +10,12 @@ import { Button } from '@/components/ui/button'
 interface RichTextEditorProps {
   value: string
   onChange: (value: string) => void
+  onKeyDown?: (e: React.KeyboardEvent) => void
   placeholder?: string
   className?: string
 }
 
-export default function RichTextEditor({ value, onChange, placeholder, className }: RichTextEditorProps) {
+export default function RichTextEditor({ value, onChange, onKeyDown, placeholder, className }: RichTextEditorProps) {
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -28,9 +30,15 @@ export default function RichTextEditor({ value, onChange, placeholder, className
     editorProps: {
       attributes: {
         class: cn(
-          "min-h-[150px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+          "min-h-[150px] w-full border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
           className
         ),
+      },
+      handleKeyDown: (_, event) => {
+        if (onKeyDown) {
+          onKeyDown(event as unknown as React.KeyboardEvent)
+        }
+        return false
       },
     },
     onUpdate: ({ editor }) => {
@@ -38,13 +46,27 @@ export default function RichTextEditor({ value, onChange, placeholder, className
     },
   })
 
+  useEffect(() => {
+    if (!editor) return
+
+    if (value === '') {
+      editor.commands.clearContent()
+      editor.commands.focus()
+      return
+    }
+
+    if (value !== editor.getHTML()) {
+      editor.commands.setContent(value)
+    }
+  }, [value, editor])
+
   if (!editor) {
     return null
   }
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1 border rounded-md p-1 bg-muted/40">
+      <div className="flex items-center gap-1 border p-1 bg-muted/40">
         <Button
           variant="ghost"
           size="icon"

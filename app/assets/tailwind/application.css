@@ -1,21 +1,2 @@
 @import "tailwindcss";
 @variant dark (&:where(.dark, .dark *));
-
-
-@layer components {
-  .btn-primary {
-    @apply text-primary-foreground bg-primary hover:bg-primary/90 focus:ring-4 focus:outline-none focus:ring-ring font-medium rounded-md text-sm px-5 py-2.5 text-center transition-colors cursor-pointer inline-flex items-center justify-center;
-  }
-
-  .btn-secondary {
-    @apply text-secondary-foreground bg-secondary border border-border focus:outline-none hover:bg-accent focus:ring-4 focus:ring-ring font-medium rounded-md text-sm px-5 py-2.5 transition-colors cursor-pointer inline-flex items-center justify-center;
-  }
-
-  .btn-danger {
-    @apply font-medium text-destructive hover:underline cursor-pointer;
-  }
-
-  .btn-xs {
-    @apply text-xs px-3 py-1.5;
-  }
-}
