@@ -451,6 +451,7 @@ DEPENDENCIES
   puma (>= 5.0)
   rails (~> 8.1.1)
   rdbg
+  rubocop-performance
   rubocop-rails-omakase
   selenium-webdriver
   sentry-rails (~> 6.2)
