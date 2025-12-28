@@ -13,7 +13,7 @@ class Event < ApplicationRecord
   belongs_to :project
   has_one :issue, through: :issue_fingerprint
 
-  self.attributes_for_inspect = [ :uuid, :issue_fingerprint_id, :environment ]
+  self.attributes_for_inspect = [ :uuid, :issue_fingerprint_id, :created_at, :environment ]
 
   scope :lite, -> { select(column_names - [ :payload ]) }
 

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
+ActiveRecord::Schema[8.2].define(version: 2025_12_09_183000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -58,14 +58,13 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
     t.index ["user_id"], name: "index_comments_on_user_id"
   end
 
-  create_table "events", id: false, force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.string "environment", default: "unknown", null: false
-    t.bigint "issue_fingerprint_id", null: false
+  create_table "events", primary_key: ["issue_fingerprint_id", "created_at", "uuid"], force: :cascade do |t|
+    t.datetime "created_at", precision: nil, null: false
+    t.text "environment", default: "unknown", null: false
+    t.integer "issue_fingerprint_id", null: false
     t.binary "payload"
-    t.bigint "project_id", null: false
-    t.string "uuid", null: false
-    t.index ["project_id", "environment"], name: "index_events_on_project_id_and_environment"
+    t.integer "project_id", null: false
+    t.binary "uuid", limit: 16, null: false
   end
 
   create_table "integrations", force: :cascade do |t|
