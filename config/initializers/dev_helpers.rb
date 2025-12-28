@@ -11,9 +11,14 @@ if Rails.env.development?
 
   def trigger_test_events!
     begin
-      1 / 0
-    rescue ZeroDivisionError => exception
-      Sentry.capture_exception(exception)
+      begin
+        1 / 0
+      rescue ZeroDivisionError => exception
+        # Sentry.capture_exception(exception)
+        raise "Error during division"
+      end
+    rescue => e
+      Sentry.capture_exception(e)
     end
 
     Sentry.capture_message("test message")
