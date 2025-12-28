@@ -55,16 +55,91 @@ class EventIngestor
   end
 
   def extract_title
-    data["message"].presence ||
-      (data["exception"] && data["exception"]["values"]&.first&.fetch("type", nil)).presence ||
-      "Unknown Error"
+    exception = data.dig("exception", "values")&.last || data["exception"]
+    if exception && (exception["type"] || exception["value"])
+      type = exception["type"]
+      value = exception["value"]&.to_s&.split("\n")&.first
+
+      if type && value.present?
+        "#{type}: #{value}".truncate(250)
+      else
+        type || value || "Unknown Error"
+      end
+    else
+      data["message"].presence || "Unknown Error"
+    end
   end
 
   def extract_culprit
-    data["culprit"].presence ||
-      data["transaction"].presence ||
-      (data["exception"] && data["exception"]["values"]&.first&.fetch("module", nil)).presence ||
-      "unknown"
+    culprit = data["culprit"].presence || data["transaction"].presence
+    return culprit if culprit
+
+    generate_culprit
+  end
+
+  def generate_culprit
+    platform = data["platform"]
+    exceptions = data.dig("exception", "values") || data["exception"]
+
+    # Handle both dict and list for exceptions (GlitchTip/Sentry compatibility)
+    exceptions = exceptions["values"] if exceptions.is_a?(Hash) && exceptions["values"]
+    exceptions = Array(exceptions)
+
+    if exceptions.any?
+      last_exception = exceptions.last
+      return "" if last_exception.dig("mechanism", "synthetic")
+
+      stacktraces = exceptions.map { |e| e["stacktrace"] }.compact.select { |st| st["frames"].present? }
+    else
+      stacktrace = data["stacktrace"]
+      stacktraces = stacktrace && stacktrace["frames"] ? [ stacktrace ] : nil
+    end
+
+    culprit = nil
+    if stacktraces&.any?
+      culprit = get_stacktrace_culprit(stacktraces.last, platform)
+    end
+
+    if culprit.blank? && data["request"]
+      culprit = data.dig("request", "url")
+    end
+
+    culprit&.truncate(250) || ""
+  end
+
+  def get_stacktrace_culprit(stacktrace, platform)
+    default = nil
+    frames = Array(stacktrace["frames"])
+
+    frames.reverse_each do |frame|
+      next unless frame
+
+      if frame["in_app"]
+        culprit = get_frame_culprit(frame, platform)
+        return culprit if culprit.present?
+      elsif default.nil?
+        default = get_frame_culprit(frame, platform)
+      end
+    end
+    default
+  end
+
+  def get_frame_culprit(frame, platform)
+    platform = frame["platform"] || platform
+
+    if %w[objc cocoa native].include?(platform)
+      return frame["function"] || "?"
+    end
+
+    fileloc = frame["filename"] ? "#{frame["filename"]}:#{frame["lineno"]}" : nil
+    fileloc ||= frame["module"]
+    return "" if fileloc.blank?
+
+    if %w[javascript node].include?(platform)
+      "#{frame["function"] || "?"}(#{fileloc})"
+    else
+      "#{frame["function"] || "?"} in #{fileloc}"
+    end
   end
 
   def determine_kind(data)
