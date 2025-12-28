@@ -6,11 +6,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Issue, SharedProps } from '@/types'
 import { formatDistanceToNow } from 'date-fns'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Sparkline } from '@/components/ui/sparkline'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+
 
 interface IssuesIndexProps {
   issues: Issue[]
-  environments: string[]
   filters: {
     status: string
     query: string
@@ -18,7 +25,7 @@ interface IssuesIndexProps {
   }
 }
 
-export default function IssuesIndex({ issues, environments, filters }: IssuesIndexProps) {
+export default function IssuesIndex({ issues, filters }: IssuesIndexProps) {
   const { current_org } = usePage<SharedProps>().props
   const [searchTerm, setSearchTerm] = useState(filters.query || '')
 
@@ -45,8 +52,6 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
     return `?${params.toString()}`
   }
 
-
-
   return (
     <DashboardLayout>
       <div className="flex flex-col h-full space-y-4">
@@ -56,33 +61,19 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
 
         {/* Filter Bar */}
         <div className="flex items-center gap-2 w-full">
-          <div className="flex items-center rounded-md border bg-background shadow-sm h-9">
+          <div className="flex items-center border">
             <Select defaultValue="all">
-              <SelectTrigger className="w-[130px] border-0 focus:ring-0 h-8 rounded-r-none border-r">
-                <SelectValue placeholder="All Projects" />
+              <SelectTrigger className="w-[130px] border-0 border-r">
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Projects</SelectItem>
                 {/* Dynamically populate projects if available, for now static */}
               </SelectContent>
             </Select>
-            <Select
-              defaultValue={filters.environment}
-              onValueChange={(val) => window.location.href = getFilterUrl({ environment: val })}
-            >
-              <SelectTrigger className="w-[110px] border-0 focus:ring-0 h-8 rounded-none border-r">
-                <SelectValue placeholder="All Envs" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Envs</SelectItem>
-                {environments.map(env => (
-                  <SelectItem key={env} value={env}>{env}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Select defaultValue="14d">
-              <SelectTrigger className="w-[80px] border-0 focus:ring-0 h-8 rounded-l-none">
-                <SelectValue placeholder="14D" />
+              <SelectTrigger className="w-[80px] border-0">
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="24h">24H</SelectItem>
@@ -93,7 +84,7 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
 
           <div className="flex-1 relative">
             <Input
-              className="pl-2 bg-background h-9 font-mono text-sm"
+              className="pl-2 text-sm"
               placeholder="Search for issues..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -102,9 +93,9 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
 
           <div className="flex items-center gap-2 shrink-0">
             <Select defaultValue="last_seen">
-              <SelectTrigger className="bg-background h-9">
+              <SelectTrigger>
                 <span className="text-muted-foreground mr-1">Sort:</span>
-                <SelectValue placeholder="Last Seen" />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="last_seen">Last Seen</SelectItem>
@@ -112,48 +103,46 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
                 <SelectItem value="priority">Priority</SelectItem>
               </SelectContent>
             </Select>
-            <button className="bg-primary/90 text-primary-foreground hover:bg-primary px-3 py-1.5 rounded-md text-sm font-medium h-9 shadow-sm shrink-0">
-              Save As
-            </button>
           </div>
         </div>
 
-
-        <div className="rounded-md border bg-card text-card-foreground shadow-sm overflow-hidden">
-          {/* List Header */}
-          <div className="grid grid-cols-12 gap-4 px-4 py-2 bg-muted/30 border-b text-xs font-semibold text-muted-foreground uppercase tracking-wider items-center">
-            <div className="col-span-6 flex items-center gap-3">
-              <Checkbox id="select-all" className="translate-y-[1px]" />
-              <span>Issue</span>
-            </div>
-            <div className="col-span-1 text-right">Last Seen</div>
-            <div className="col-span-1 text-right">Age</div>
-            <div className="col-span-1 text-right">Events</div>
-            <div className="col-span-1 text-right">Users</div>
-          </div>
-
-          {/* List Items */}
-          <div className="divide-y">
+        <Table className="border shadow-sm">
+          <TableHeader className="bg-muted/30">
+            <TableRow className="hover:bg-transparent border-b">
+              <TableHead className="w-[48px] px-4">
+                <div className="flex items-center justify-center">
+                  <Checkbox id="select-all" />
+                </div>
+              </TableHead>
+              <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Issue</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4">Last Seen</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4">Age</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4">Events</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4">Users</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {issues.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground">
-                <p>No issues found matching your criteria.</p>
-              </div>
+              <TableRow>
+                <TableCell colSpan={6} className="h-48 text-center text-muted-foreground">
+                  No issues found matching your criteria.
+                </TableCell>
+              </TableRow>
             ) : (
               issues.map((issue) => (
-                <div key={issue.id} className="group relative hover:bg-muted/40 transition-colors">
-                  {/* Status Indicator Bar Removed */}
-
-                  <Link
-                    href={`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}`}
-                    className="grid grid-cols-12 gap-4 px-4 py-3 items-center"
-                  >
-                    {/* Issue Info */}
-                    <div className="col-span-6 flex items-start gap-3 min-w-0">
-                      <div className="flex items-center h-full pt-1" onClick={(e) => e.stopPropagation()}>
-                        <Checkbox />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-2 mb-0.5">
+                <TableRow key={issue.id} className="group cursor-pointer hover:bg-muted/40 transition-colors">
+                  <TableCell className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-center">
+                      <Checkbox />
+                    </div>
+                  </TableCell>
+                  <TableCell className="p-0">
+                    <Link
+                      href={`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}`}
+                      className="block px-2 py-3"
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-baseline gap-2 mb-1">
                           <h3 className="font-semibold text-[15px] truncate text-foreground group-hover:text-primary transition-colors">
                             {issue.title}
                           </h3>
@@ -171,28 +160,25 @@ export default function IssuesIndex({ issues, environments, filters }: IssuesInd
                           <span className="text-muted-foreground/60">{issue.project.name}</span>
                         </div>
                       </div>
-                    </div>
-
-                    <div className="col-span-1 text-right text-sm text-foreground/80 font-mono">
-                      {/* Last Seen - Mocked or Real */}
-                      {formatDistanceToNow(new Date(issue.last_seen_at || issue.created_at), { addSuffix: false }).replace('about ', '')}
-                    </div>
-                    <div className="col-span-1 text-right text-sm text-muted-foreground font-mono">
-                      {/* Age */}
-                      {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false }).replace('about ', '')}
-                    </div>
-                    <div className="col-span-1 text-right text-sm font-medium text-foreground font-mono">
-                      {new Intl.NumberFormat('en-US', { notation: "compact" }).format(issue.events_count)}
-                    </div>
-                    <div className="col-span-1 text-right text-sm font-medium text-foreground font-mono">
-                      {new Intl.NumberFormat('en-US', { notation: "compact" }).format(0)}
-                    </div>
-                  </Link>
-                </div>
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-right px-4 py-3 text-sm text-foreground/80 font-mono">
+                    {formatDistanceToNow(new Date(issue.last_seen_at || issue.created_at), { addSuffix: false }).replace('about ', '')}
+                  </TableCell>
+                  <TableCell className="text-right px-4 py-3 text-sm text-muted-foreground font-mono">
+                    {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false }).replace('about ', '')}
+                  </TableCell>
+                  <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
+                    {new Intl.NumberFormat('en-US', { notation: "compact" }).format(issue.events_count)}
+                  </TableCell>
+                  <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
+                    {new Intl.NumberFormat('en-US', { notation: "compact" }).format(0)}
+                  </TableCell>
+                </TableRow>
               ))
             )}
-          </div>
-        </div>
+          </TableBody>
+        </Table>
       </div>
     </DashboardLayout>
   )

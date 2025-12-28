@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
 import { Comment, User } from '@/types'
 import RichTextEditor from '@/components/RichTextEditor'
-import { Trash2 } from 'lucide-react'
+import { Trash } from 'lucide-react'
 
 interface CommentListProps {
   comments: Comment[]
@@ -22,18 +22,26 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
 
   // We need to construct the URL manually or via a route helper if available
   // Ideally Inertia props would include the issue URL or we'd use a route helper
+  const handlePostComment = () => {
+    if (!data.content || data.content === '<p></p>' || processing) return
+
+    post(`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments`, {
+      onSuccess: () => reset('content'),
+      preserveScroll: true,
+      preserveState: true
+    })
+  }
+
   const submitComment = (e: React.FormEvent) => {
     e.preventDefault()
-    post(`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments`, {
-      onSuccess: () => reset()
-    })
+    handlePostComment()
   }
 
   return (
     <div className="space-y-6">
       <div className="space-y-4">
         {comments.map((comment) => (
-          <Card key={comment.id} id={`comment-${comment.id}`}>
+          <Card key={comment.id} id={`comment-${comment.id}`} className="py-0">
             <CardHeader className="py-3 bg-muted/30 flex flex-row items-center justify-between space-y-0">
               <div className="flex items-center gap-2 text-sm">
                 <span className="font-semibold">{comment.user.name}</span>
@@ -50,7 +58,7 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
                   preserveScroll
                   className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-6 w-6 text-muted-foreground hover:text-destructive")}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash className="h-4 w-4" />
                 </Link>
               )}
             </CardHeader>
@@ -66,6 +74,12 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
             value={data.content}
             onChange={(val) => setData('content', val)}
             placeholder="Leave a comment..."
+            onKeyDown={(e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' && e.shiftKey) {
+                e.preventDefault()
+                handlePostComment()
+              }
+            }}
           />
           <div className="flex justify-end">
             <Button type="submit" disabled={processing || !data.content || data.content === '<p></p>'}>

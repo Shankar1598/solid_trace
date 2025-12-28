@@ -67,7 +67,7 @@ export function SettingsSidebar() {
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "flex items-center gap-3 rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
+                      "flex items-center gap-3 px-3 py-2 text-[13px] font-medium transition-colors",
                       item.active
                         ? "bg-secondary text-primary"
                         : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"

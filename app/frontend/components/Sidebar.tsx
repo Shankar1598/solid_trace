@@ -24,7 +24,7 @@ export function Sidebar({ className }: SidebarProps) {
       label: 'Projects',
       href: `/${current_org.slug}/projects`,
       icon: GitMerge,
-      active: url.includes('/projects')
+      active: url.includes('/projects') && !url.includes('/issues')
     },
     {
       label: 'Settings',
