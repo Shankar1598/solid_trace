@@ -2,9 +2,9 @@
 
 class Issue < ApplicationRecord
   belongs_to :project
-  has_many :issue_fingerprints, dependent: :destroy
+  has_many :issue_fingerprints, dependent: :delete_all
   has_many :events, through: :issue_fingerprints
-  has_many :comments, dependent: :destroy
+  has_many :comments, dependent: :delete_all
   before_create :assign_number
 
   module STATUS

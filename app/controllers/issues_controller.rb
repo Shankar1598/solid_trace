@@ -18,11 +18,8 @@ class IssuesController < ApplicationController
       @issues = @issues.joins(:events).where(events: { environment: params[:environment] }).distinct
     end
 
-    @environments = Event.where(project_id: @current_org.projects.ids).distinct.pluck(:environment).compact.sort
-
     render inertia: "Issues/Index", props: {
       issues: @issues.includes(:project).map { |i| IssueSerializer.new(i).as_json },
-      environments: @environments,
       filters: {
         status: params[:status] || "all",
         query: params[:query] || "",
@@ -41,7 +38,7 @@ class IssuesController < ApplicationController
     end
 
     if params[:event_id].present?
-      @event = events.find_by(id: params[:event_id])
+      @event = events.find_by(uuid: params[:event_id])
     end
 
     # Fallback to latest if not found
@@ -49,12 +46,10 @@ class IssuesController < ApplicationController
 
     if @event
       # Newer event (Next) - need to reorder to ASC to get the closest newer event
-      @next_event = events.where("created_at > ?", @event.created_at).reorder(created_at: :asc).first
+      @next_event = events.where("events.created_at > ?", @event.created_at).reorder(created_at: :asc).first
       # Older event (Previous) - need to reorder to DESC to get the closest older event
-      @prev_event = events.where("created_at < ?", @event.created_at).reorder(created_at: :desc).first
+      @prev_event = events.where("events.created_at < ?", @event.created_at).reorder(created_at: :desc).first
     end
-
-    @environments = @issue.events.distinct.pluck(:environment).compact.sort
 
     # Pagination for events list
     page = (params[:events_page] || 1).to_i
@@ -65,15 +60,14 @@ class IssuesController < ApplicationController
     render inertia: "Issues/Show", props: {
       issue: IssueSerializer.new(@issue).as_json,
       event: @event ? EventSerializer.new(@event).as_json : nil,
-      prev_event_id: @prev_event&.id,
-      next_event_id: @next_event&.id,
+      prev_event_id: @prev_event&.uuid,
+      next_event_id: @next_event&.uuid,
       events_list: @events_list.map { |e| EventSerializer.new(e).as_json },
       events_pagination: {
         current_page: page,
         total_pages: (@events_count.to_f / per_page).ceil,
         total_count: @events_count,
       },
-      environments: @environments,
       comments: @issue.comments.includes(:user).order(created_at: :asc).map { |c| CommentSerializer.new(c).as_json },
       current_environment: params[:environment] || "all",
     }

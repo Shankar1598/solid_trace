@@ -1,3 +1,7 @@
+# This table is partitioned by created_at to improve performance while qerying and dropping older events
+# We are using a composite key instead of a single primary key as created_at needs to be part of the primary key for partitioning
+# We are using uuid as the primary key as the AUTO_INCREMENT key will reduce ingest throughput by requiring locks
+
 class CreateEvents < ActiveRecord::Migration[8.1]
   def up
     adapter_type = ActiveRecord::Base.connection.adapter_name.downcase
@@ -37,8 +41,6 @@ class CreateEvents < ActiveRecord::Migration[8.1]
     current_month = Time.current.strftime('%Y_%m')
     next_month_date = (Time.current + 1.month).beginning_of_month.strftime('%Y-%m-%d')
     execute "CREATE TABLE events_#{current_month} PARTITION OF events FOR VALUES FROM ('MINVALUE') TO ('#{next_month_date}');"
-
-    add_index :events, [ :project_id, :environment ]
   end
 
   def create_mysql_events
@@ -57,21 +59,21 @@ class CreateEvents < ActiveRecord::Migration[8.1]
         PARTITION p_initial VALUES LESS THAN ('#{ (Time.current + 1.month).beginning_of_month.strftime('%Y-%m-%d') }')
       );
     SQL
-
-    add_index :events, [ :project_id, :environment ]
   end
 
   def create_sqlite_events
-    create_table :events, id: false, primary_key: [ :issue_fingerprint_id, :created_at, :uuid ] do |t|
-      t.bigint :project_id, null: false
-      t.bigint :issue_fingerprint_id, null: false
-      t.string :uuid, null: false
-      t.datetime :created_at, null: false
-      t.string :environment, default: 'unknown', null: false
-
-      t.binary :payload
-    end
-
-    add_index :events, [ :project_id, :environment ]
+    # We use raw SQL to ensure the WITHOUT ROWID syntax is applied correctly
+    # WITHOUT ROWID helps with storing the data physically clustered
+    execute <<~SQL
+      CREATE TABLE events (
+        project_id BIGINT NOT NULL,
+        issue_fingerprint_id BIGINT NOT NULL,
+        uuid BLOB(16) NOT NULL,
+        created_at DATETIME NOT NULL,
+        environment TEXT DEFAULT 'unknown' NOT NULL,
+        payload BLOB,
+        PRIMARY KEY (issue_fingerprint_id, created_at, uuid)
+      ) WITHOUT ROWID;
+    SQL
   end
 end
