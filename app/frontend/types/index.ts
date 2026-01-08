@@ -57,6 +57,19 @@ export interface Event {
   created_at: string
 }
 
+export interface BreadcrumbValue {
+  category: string
+  data?: Record<string, unknown>
+  level: 'fatal' | 'error' | 'warning' | 'info' | 'debug' | null
+  message: string
+  timestamp: number
+  type: string | null
+}
+
+export interface Breadcrumbs {
+  values: BreadcrumbValue[]
+}
+
 export interface Comment {
   id: number
   body: string

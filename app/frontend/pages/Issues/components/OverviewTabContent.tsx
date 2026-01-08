@@ -7,6 +7,7 @@ import { Hash, ArrowLeft, ArrowRight, Code, Copy, User as UserIcon, Tag } from '
 import { format, formatDistanceToNow } from 'date-fns'
 import Stacktrace from '@/components/Stacktrace'
 import { Issue, Event } from '@/types'
+import { BreadcrumbsList } from './BreadcrumbsList'
 
 interface OverviewTabContentProps {
   issue: Issue
@@ -172,6 +173,11 @@ export function OverviewTabContent({
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* Breadcrumbs Section */}
+      {event && event.event_data && (event.event_data as any).breadcrumbs && (
+        <BreadcrumbsList breadcrumbs={(event.event_data as any).breadcrumbs} />
       )}
     </div>
   )
