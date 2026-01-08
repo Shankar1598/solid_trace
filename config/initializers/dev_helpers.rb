@@ -10,18 +10,14 @@ if Rails.env.development?
   end
 
   def trigger_test_events!
-    begin
-      begin
-        1 / 0
-      rescue ZeroDivisionError => exception
-        # Sentry.capture_exception(exception)
-        raise "Error during division"
-      end
-    rescue => e
-      Sentry.capture_exception(e)
-    end
-
+    (Event.last && Event.last.issue).to_s
     Sentry.capture_message("test message")
+    Sentry.capture_exception(StandardError.new("test exception"))
+    begin
+      1 / 0
+    rescue ZeroDivisionError => exception
+      Sentry.capture_exception(exception)
+    end
   end
 end
 
@@ -44,5 +40,13 @@ Object.class_eval do
 
   def djp
     to_json(pretty: true).ps
+  end
+end
+
+def rescue_dj(&block)
+  begin
+    yield
+  rescue Exception => e
+    e.dj
   end
 end
