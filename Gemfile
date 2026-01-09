@@ -58,6 +58,7 @@ group :development, :test do
   gem "openssl", ">= 3.3.1" # To fix an issue with MacOS OpenSSL 3.6. Sentry API call was failing.
   gem "factory_bot_rails"
   gem "faker"
+  gem "minitest", "< 6.0"
 end
 
 group :development do
