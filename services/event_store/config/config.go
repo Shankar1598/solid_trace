@@ -1,0 +1,43 @@
+package config
+
+import (
+	"os"
+	"time"
+)
+
+type Config struct {
+	Port        string
+	RocksDBPath string
+	DuckDBPath  string
+	SQLitePath  string // Rails SQLite for project key auth
+
+	RocksDBBatchSize    int
+	RocksDBFlushTimeout time.Duration
+	RocksDBChannelSize  int
+
+	DuckDBFlushTimeout time.Duration
+	DuckDBChannelSize  int
+}
+
+func Load() *Config {
+	return &Config{
+		Port:        getEnv("INGEST_PORT", "4000"),
+		RocksDBPath: getEnv("ROCKSDB_PATH", "../../storage/rocksdb/development/events"),
+		DuckDBPath:  getEnv("DUCKDB_PATH", "../../storage/duckdb/development/events.duckdb"),
+		SQLitePath:  getEnv("SQLITE_PATH", "../../storage/solid_trace_development.sqlite3"),
+
+		RocksDBBatchSize:    1000,
+		RocksDBFlushTimeout: 200 * time.Millisecond,
+		RocksDBChannelSize:  50000,
+
+		DuckDBFlushTimeout: 1 * time.Second,
+		DuckDBChannelSize:  100000,
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
