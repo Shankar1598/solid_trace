@@ -54,6 +54,7 @@ func (w *RocksDBIngester) Run() {
 			select {
 			case w.duckdbEvents <- event:
 			default:
+				// TODO: write the dropped event ids to Rocks
 				log.Println("DuckDB channel full, dropping event")
 			}
 		}

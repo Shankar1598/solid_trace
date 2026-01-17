@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.2].define(version: 2025_12_09_183000) do
+ActiveRecord::Schema[8.1].define(version: 2026_01_16_200803) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -58,13 +58,16 @@ ActiveRecord::Schema[8.2].define(version: 2025_12_09_183000) do
     t.index ["user_id"], name: "index_comments_on_user_id"
   end
 
-  create_table "events", primary_key: ["issue_fingerprint_id", "created_at", "uuid"], force: :cascade do |t|
-    t.datetime "created_at", precision: nil, null: false
-    t.text "environment", default: "unknown", null: false
-    t.integer "issue_fingerprint_id", null: false
-    t.binary "payload"
-    t.integer "project_id", null: false
-    t.binary "uuid", limit: 16, null: false
+  create_table "event_store_messages", force: :cascade do |t|
+    t.integer "attempts", default: 0
+    t.datetime "created_at", null: false
+    t.text "error_message"
+    t.string "message_type", null: false
+    t.text "payload", null: false
+    t.datetime "processed_at"
+    t.integer "status", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["status", "created_at"], name: "index_event_store_messages_on_status_and_created_at"
   end
 
   create_table "integrations", force: :cascade do |t|

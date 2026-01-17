@@ -2,9 +2,12 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
 	"github.com/solidtrace/event_store/models"
@@ -12,6 +15,17 @@ import (
 
 type DuckDBWriter struct {
 	db *sql.DB
+}
+
+type QueryParams struct {
+	ProjectID           uint32
+	IssueFingerprintIDs []int64
+	UUID                string
+	NewerThan           time.Time
+	OlderThan           time.Time
+	Limit               int
+	Offset              int
+	SortDesc            bool
 }
 
 func NewDuckDBWriter(path string) (*DuckDBWriter, error) {
@@ -26,11 +40,12 @@ func NewDuckDBWriter(path string) (*DuckDBWriter, error) {
 		return nil, err
 	}
 
-	// Create table if not exists
+	// Create table if not exists with correct schema
 	_, err = db.Exec(`
         CREATE TABLE IF NOT EXISTS events (
             uuid VARCHAR,
             project_id BIGINT,
+            issue_fingerprint_id BIGINT,
             timestamp TIMESTAMP,
             tags MAP(VARCHAR, VARCHAR)
         )
@@ -48,7 +63,7 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare("INSERT INTO events (uuid, project_id, timestamp, tags) VALUES (?, ?, ?, ?)")
+	stmt, err := tx.Prepare("INSERT INTO events (uuid, project_id, issue_fingerprint_id, timestamp, tags) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -56,19 +71,100 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 	defer stmt.Close()
 
 	for _, event := range events {
-		// Convert tags map to DuckDB map format (handled by driver usually, or cast)
-		// Check if driver supports map directly. The marcboeker/go-duckdb driver supports Map via structs or map[K]V?
-		// Docs say: "Maps are supported as map[K]V".
-		_, err = stmt.Exec(event.EventUUID, event.ProjectID, event.Timestamp, event.Tags)
+		_, err = stmt.Exec(event.EventUUID, event.ProjectID, event.IssueFingerprintID, event.Timestamp, event.Tags)
 		if err != nil {
 			log.Printf("DuckDB insert error: %v", err)
-			// Continue or abort? Ideally we want to potentially proceed with other events?
-			// But batch insert via Exec usually fails the batch.
-			// We'll log and continue. If we want atomic batch, we fail locally.
 		}
 	}
 
 	return tx.Commit()
+}
+
+func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
+	queryBuilder := strings.Builder{}
+	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, tags FROM events WHERE project_id = ?")
+	args := []interface{}{params.ProjectID}
+
+	if params.UUID != "" {
+		queryBuilder.WriteString(" AND uuid = ?")
+		args = append(args, params.UUID)
+	}
+
+	if len(params.IssueFingerprintIDs) > 0 {
+		placeholders := make([]string, len(params.IssueFingerprintIDs))
+		for i, id := range params.IssueFingerprintIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	if !params.NewerThan.IsZero() {
+		queryBuilder.WriteString(" AND timestamp > ?")
+		args = append(args, params.NewerThan)
+	}
+
+	if !params.OlderThan.IsZero() {
+		queryBuilder.WriteString(" AND timestamp < ?")
+		args = append(args, params.OlderThan)
+	}
+
+	if params.SortDesc {
+		queryBuilder.WriteString(" ORDER BY timestamp DESC")
+	} else {
+		queryBuilder.WriteString(" ORDER BY timestamp ASC")
+	}
+
+	if params.Limit > 0 {
+		queryBuilder.WriteString(" LIMIT ?")
+		args = append(args, params.Limit)
+	}
+
+	if params.Offset > 0 {
+		queryBuilder.WriteString(" OFFSET ?")
+		args = append(args, params.Offset)
+	}
+
+	rows, err := w.db.Query(queryBuilder.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []models.Event
+	for rows.Next() {
+		var e models.Event
+		// Note: We don't have IssueID (stored in SQLite) or RawJSON (stored in RocksDB)
+		// We only populate what we have in DuckDB
+		err := rows.Scan(&e.EventUUID, &e.ProjectID, &e.IssueFingerprintID, &e.Timestamp, &e.Tags)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, nil
+}
+
+func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
+	queryBuilder := strings.Builder{}
+	queryBuilder.WriteString("SELECT COUNT(*) FROM events WHERE project_id = ?")
+	args := []interface{}{params.ProjectID}
+
+	if len(params.IssueFingerprintIDs) > 0 {
+		placeholders := make([]string, len(params.IssueFingerprintIDs))
+		for i, id := range params.IssueFingerprintIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	var count int64
+	err := w.db.QueryRow(queryBuilder.String(), args...).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (w *DuckDBWriter) Close() {
