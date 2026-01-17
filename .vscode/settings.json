@@ -7,5 +7,11 @@
     "editor.insertSpaces": true, // Use spaces and not tabs for indentation
     "editor.semanticHighlighting.enabled": true, // Enable semantic highlighting
     "editor.formatOnType": true, // Enable formatting while typing
+  },
+  "go.goroot": "${workspaceFolder}/.vscode/mise-tools/goRoot",
+  "go.alternateTools": {
+    "go": "${workspaceFolder}/.vscode/mise-tools/go",
+    "dlv": "${workspaceFolder}/.vscode/mise-tools/dlv",
+    "gopls": "${workspaceFolder}/.vscode/mise-tools/gopls"
   }
 }
