@@ -31,6 +31,18 @@ func main() {
 	}
 	defer duckdbWriter.Close()
 
+	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
+	if err != nil {
+		log.Fatalf("Failed to open SQLite: %v", err)
+	}
+	defer sqliteWriter.Close()
+
+	messageQueueWriter, err := storage.NewMessageQueueWriter(cfg.MessageQueuePath)
+	if err != nil {
+		log.Fatalf("Failed to open Message Queue: %v", err)
+	}
+	defer messageQueueWriter.Close()
+
 	// Initialize auth
 	projectAuth, err := auth.NewProjectAuth(cfg.SQLitePath)
 	if err != nil {
@@ -49,20 +61,23 @@ func main() {
 	)
 	go rocksdbIngester.Run()
 
-	duckdbIngester := pipeline.NewDuckDBIngester(duckdbChan, duckdbWriter, cfg.DuckDBFlushTimeout)
+	duckdbIngester := pipeline.NewDuckDBIngester(duckdbChan, duckdbWriter, messageQueueWriter, cfg.DuckDBFlushTimeout)
 	go duckdbIngester.Run()
+
+	ingestHandler := handler.NewIngestHandler(projectAuth, sqliteWriter, rocksdbChan)
+	eventsHandler := handler.NewEventsHandler(rocksdbWriter, duckdbWriter)
 
 	// Setup Fiber
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-
-	ingestHandler := handler.NewIngestHandler(projectAuth, rocksdbChan)
-	eventsHandler := handler.NewEventsHandler(rocksdbWriter)
-
 	app.Post("/api/:project_id/store", ingestHandler.Store)
 	app.Post("/api/:project_id/envelope", ingestHandler.Envelope)
 	app.Get("/api/events/:project_id/:event_uuid/:timestamp_micro", eventsHandler.GetEvent)
+
+	// Query API
+	app.Get("/api/:project_id/events", eventsHandler.List)
+	app.Get("/api/:project_id/events/count", eventsHandler.Count)
 
 	// Graceful shutdown
 	go func() {

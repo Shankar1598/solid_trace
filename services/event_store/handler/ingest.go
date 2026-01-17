@@ -2,28 +2,35 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/solidtrace/event_store/auth"
+	"github.com/solidtrace/event_store/logic"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/storage"
 )
 
 type IngestHandler struct {
 	auth        *auth.ProjectAuth
+	sqlite      *storage.SQLiteWriter
 	rocksdbChan chan<- models.Event
 }
 
-func NewIngestHandler(auth *auth.ProjectAuth, rocksdbChan chan<- models.Event) *IngestHandler {
-	return &IngestHandler{auth: auth, rocksdbChan: rocksdbChan}
+func NewIngestHandler(auth *auth.ProjectAuth, sqlite *storage.SQLiteWriter, rocksdbChan chan<- models.Event) *IngestHandler {
+	return &IngestHandler{
+		auth:        auth,
+		sqlite:      sqlite,
+		rocksdbChan: rocksdbChan,
+	}
 }
 
 var sentryKeyRegex = regexp.MustCompile(`sentry_key=([^,\s]+)`)
 
 func (h *IngestHandler) extractSentryKey(c *fiber.Ctx) string {
-	// Check X-Sentry-Auth header
 	authHeader := c.Get("X-Sentry-Auth")
 	if authHeader == "" {
 		authHeader = c.Get("Authorization")
@@ -34,14 +41,10 @@ func (h *IngestHandler) extractSentryKey(c *fiber.Ctx) string {
 			return match[1]
 		}
 	}
-
-	// Fallback to query param
 	return c.Query("sentry_key")
 }
 
-// POST /api/:project_id/store (Legacy/JSON endpoint)
-// Note: While the request asks for /store support, standard Sentry SDKs use envelopes mostly now.
-// We'll treat the body as a single event JSON for now if used.
+// POST /api/:project_id/store
 func (h *IngestHandler) Store(c *fiber.Ctx) error {
 	publicKey := h.extractSentryKey(c)
 	if publicKey == "" {
@@ -54,63 +57,7 @@ func (h *IngestHandler) Store(c *fiber.Ctx) error {
 	}
 
 	rawEventJSON := c.Body()
-
-	// We need to parse fields to build the event model
-	var eventPayload struct {
-		EventID   string                 `json:"event_id"`
-		Dt        string                 `json:"dt"` // Could be "timestamp" or "dt" depending on format. Sentry uses "timestamp" usually as float/string
-		Timestamp interface{}            `json:"timestamp"`
-		Tags      map[string]interface{} `json:"tags"`
-	}
-
-	if err := json.Unmarshal(rawEventJSON, &eventPayload); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid event JSON"})
-	}
-
-	// Resolve timestamp
-	var timestamp time.Time
-	if eventPayload.Dt != "" {
-		// "dt" field logic from legacy Rails code implies it might be present
-		t, _ := time.Parse(time.RFC3339, eventPayload.Dt)
-		timestamp = t
-	} else if val, ok := eventPayload.Timestamp.(float64); ok {
-		timestamp = time.UnixMilli(int64(val * 1000))
-	}
-
-	if timestamp.IsZero() {
-		timestamp = time.Now()
-	}
-
-	// Resolve EventID
-	if eventPayload.EventID == "" {
-		// Generate if missing? Rails code implies it expects it.
-		// For now let's assume client sends it or we default (omitted for brevity)
-	}
-
-	// Convert tags
-	tags := make(map[string]string)
-	for k, v := range eventPayload.Tags {
-		if s, ok := v.(string); ok {
-			tags[k] = s
-		}
-	}
-
-	event := models.Event{
-		ProjectID: projectID,
-		EventUUID: eventPayload.EventID,
-		Timestamp: timestamp,
-		RawJSON:   rawEventJSON,
-		Tags:      tags,
-	}
-
-	// Send to RocksDB channel (non-blocking)
-	select {
-	case h.rocksdbChan <- event:
-	default:
-		return c.Status(503).JSON(fiber.Map{"error": "Server overloaded"})
-	}
-
-	return c.SendStatus(200)
+	return h.processEvent(c, projectID, rawEventJSON)
 }
 
 // POST /api/:project_id/envelope
@@ -125,7 +72,6 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid project key"})
 	}
 
-	// Parse envelope: header\nitem_header\nitem_payload\n...
 	body := c.Body()
 	lines := strings.SplitN(string(body), "\n", 3)
 	if len(lines) < 3 {
@@ -138,59 +84,79 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 	}
 
 	if itemHeader["type"] != "event" && itemHeader["type"] != "transaction" {
-		// We might only care about events/transactions.
-		// If it's an attachment/session/etc we might ignore or log.
-		// For now, accept "event" and treat others as success but ignore.
-		if itemHeader["type"] == "transaction" {
-			// treat transaction as event?
-		} else {
-			return c.SendStatus(200)
-		}
+		return c.SendStatus(200)
 	}
 
 	rawEventJSON := []byte(lines[2])
+	return h.processEvent(c, projectID, rawEventJSON)
+}
 
-	// Parse minimal fields for key generation
-	var eventPayload struct {
-		EventID   string                 `json:"event_id"`
-		Dt        string                 `json:"dt"`
-		Timestamp interface{}            `json:"timestamp"`
-		Tags      map[string]interface{} `json:"tags"`
-	}
-	if err := json.Unmarshal(rawEventJSON, &eventPayload); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid event payload"})
+func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []byte) error {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rawJSON, &payload); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid event JSON"})
 	}
 
-	var timestamp time.Time
-	// Logic to parse timestamp similarly to Store
-	if eventPayload.Dt != "" {
-		t, _ := time.Parse(time.RFC3339, eventPayload.Dt)
-		timestamp = t
-	} else if val, ok := eventPayload.Timestamp.(float64); ok {
-		timestamp = time.UnixMilli(int64(val * 1000))
-	}
+	// 1. Extract issue attributes
+	title := logic.ExtractTitle(payload)
+	culprit := logic.ExtractCulprit(payload)
+	kind := logic.DetermineKind(payload)
 
-	if timestamp.IsZero() {
-		timestamp = time.Now()
-	}
-
-	// Convert tags to string map
-	tags := make(map[string]string)
-	for k, v := range eventPayload.Tags {
-		if s, ok := v.(string); ok {
-			tags[k] = s
+	var customFingerprint []string
+	if fp, ok := payload["fingerprint"].([]interface{}); ok {
+		for _, v := range fp {
+			if s, ok := v.(string); ok {
+				customFingerprint = append(customFingerprint, s)
+			}
 		}
 	}
 
-	event := models.Event{
-		ProjectID: projectID,
-		EventUUID: eventPayload.EventID,
-		Timestamp: timestamp,
-		RawJSON:   rawEventJSON,
-		Tags:      tags,
+	fingerprint := logic.ComputeFingerprint(title, culprit, kind, customFingerprint)
+
+	// 2. Find or create issue & fingerprint
+	// Check existing logic
+	issueID, fingerprintID, found, err := h.sqlite.FindIssueByFingerprint(projectID, fingerprint)
+	if err != nil {
+		log.Printf("SQLite error finding issue: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 
-	// Send to RocksDB channel (non-blocking)
+	isNewIssue := false
+	if !found {
+		// Create new issue
+		issueID, fingerprintID, err = h.sqlite.CreateIssueWithFingerprint(projectID, fingerprint, title, culprit, kind)
+		if err != nil {
+			log.Printf("SQLite error creating issue: %v", err)
+			return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+		}
+		isNewIssue = true
+	}
+
+	// 3. Resolve basic event fields
+	eventID := extractEventID(payload)
+	if eventID == "" {
+		// If no eventID, generate one? Usually Sentry clients send it.
+		// For now we'll fail or generate. Let's process without valid event if needed, but storage needs key.
+		// Actually, we can generate a UUID if missing.
+		eventID = "generated-" + strings.ReplaceAll(time.Now().Format(time.RFC3339Nano), ":", "")
+	}
+
+	timestamp := extractTimestamp(payload)
+	tags := extractTags(payload)
+
+	// 4. Build event model
+	event := models.Event{
+		ProjectID:          projectID,
+		EventUUID:          eventID,
+		Timestamp:          timestamp,
+		RawJSON:            rawJSON,
+		Tags:               tags,
+		IssueFingerprintID: fingerprintID,
+		IssueID:            issueID,
+		IsNewIssue:         isNewIssue,
+	}
+
+	// 5. Send to RocksDB channel
 	select {
 	case h.rocksdbChan <- event:
 	default:
@@ -198,4 +164,34 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 	}
 
 	return c.SendStatus(200)
+}
+
+func extractEventID(payload map[string]interface{}) string {
+	if s, ok := payload["event_id"].(string); ok {
+		return s
+	}
+	return ""
+}
+
+func extractTimestamp(payload map[string]interface{}) time.Time {
+	if dt, ok := payload["dt"].(string); ok && dt != "" {
+		t, _ := time.Parse(time.RFC3339, dt)
+		return t
+	}
+	if ts, ok := payload["timestamp"].(float64); ok {
+		return time.UnixMilli(int64(ts * 1000))
+	}
+	return time.Now()
+}
+
+func extractTags(payload map[string]interface{}) map[string]string {
+	tags := make(map[string]string)
+	if t, ok := payload["tags"].(map[string]interface{}); ok {
+		for k, v := range t {
+			if s, ok := v.(string); ok {
+				tags[k] = s
+			}
+		}
+	}
+	return tags
 }

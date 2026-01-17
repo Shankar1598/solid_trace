@@ -15,8 +15,17 @@ default: &default
     cache_size: -25000
 
 development:
-  <<: *default
-  database: storage/solid_trace_development.sqlite3
+  primary:
+    <<: *default
+    database: storage/solid_trace_development.sqlite3
+  queue:
+    <<: *default
+    database: storage/solid_trace_development_queue.sqlite3
+    migrations_paths: db/queue_migrate
+  message_queue:
+    <<: *default
+    database: storage/solid_trace_development_message_queue.sqlite3
+    migrations_paths: db/message_queue_migrate
 
 # Warning: The database defined as "test" will be erased and
 # re-generated from your development database when you run "rake".
@@ -40,6 +49,10 @@ production:
     <<: *default
     database: storage/solid_trace_production_queue.sqlite3
     migrations_paths: db/queue_migrate
+  message_queue:
+    <<: *default
+    database: storage/solid_trace_production_message_queue.sqlite3
+    migrations_paths: db/message_queue_migrate
   cable:
     <<: *default
     database: storage/solid_trace_production_cable.sqlite3
