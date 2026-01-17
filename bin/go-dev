@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+cd services/event_store
+export CGO_CFLAGS="-I/opt/homebrew/include"
+export CGO_LDFLAGS="-L/opt/homebrew/lib -lrocksdb -lstdc++ -lm -lz -lsnappy -llz4 -lzstd"
+go build
+go run main.go
