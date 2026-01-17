@@ -90,3 +90,7 @@ gem "msgpack"
 gem "vite_rails", "~> 3.0"
 
 gem "inertia_rails", "~> 3.15"
+
+
+gem "connection_pool"
+gem "rest-client"

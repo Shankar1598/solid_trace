@@ -22,7 +22,6 @@
     <%= vite_react_refresh_tag %>
     <%= vite_client_tag %>
     <%= vite_javascript_tag 'application.tsx' %>
-    <%= stylesheet_link_tag "lexxy", "data-turbo-track": "reload" %>
     <script>
       if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
         document.documentElement.classList.add('dark')
