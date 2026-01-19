@@ -82,7 +82,7 @@ gem "tailwindcss-ruby", "~> 4.1"
 
 gem "tailwindcss-rails", "~> 4.4"
 
-gem "sentry-ruby", "~> 6.2"
+gem "sentry-ruby", "~> 6.3"
 gem "sentry-rails", "~> 6.2"
 
 gem "msgpack"
