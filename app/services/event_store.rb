@@ -13,9 +13,8 @@ class EventStore
   # ============================================================================
 
   class << self
-    def get_event(project_id:, event_uuid:, timestamp:)
-      timestamp_micro = (timestamp.to_f * 1_000_000).to_i
-      url = "#{base_url}/api/events/#{project_id}/#{event_uuid}/#{timestamp_micro}"
+    def get_event(event_uuid)
+      url = "#{base_url}/api/events/#{event_uuid}"
       make_request(url)
     end
 

@@ -10,7 +10,7 @@ if Rails.env.development?
   end
 
   def trigger_test_events!
-    (Event.last && Event.last.issue).to_s
+    (Issue.last.to_s && Project.last.to_s)
     Sentry.capture_message("test message")
     Sentry.capture_exception(StandardError.new("test exception"))
     begin

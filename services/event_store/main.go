@@ -73,7 +73,7 @@ func main() {
 	})
 	app.Post("/api/:project_id/store", ingestHandler.Store)
 	app.Post("/api/:project_id/envelope", ingestHandler.Envelope)
-	app.Get("/api/events/:project_id/:event_uuid/:timestamp_micro", eventsHandler.GetEvent)
+	app.Get("/api/events/:event_uuid", eventsHandler.GetEvent)
 
 	// Query API
 	app.Get("/api/:project_id/events", eventsHandler.List)

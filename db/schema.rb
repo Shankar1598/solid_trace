@@ -58,18 +58,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_01_16_200803) do
     t.index ["user_id"], name: "index_comments_on_user_id"
   end
 
-  create_table "event_store_messages", force: :cascade do |t|
-    t.integer "attempts", default: 0
-    t.datetime "created_at", null: false
-    t.text "error_message"
-    t.string "message_type", null: false
-    t.text "payload", null: false
-    t.datetime "processed_at"
-    t.integer "status", default: 0, null: false
-    t.datetime "updated_at", null: false
-    t.index ["status", "created_at"], name: "index_event_store_messages_on_status_and_created_at"
-  end
-
   create_table "integrations", force: :cascade do |t|
     t.boolean "active", default: true
     t.datetime "created_at", null: false

@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -9,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb"
+	"github.com/duckdb/duckdb-go/v2"
 	"github.com/solidtrace/event_store/models"
 )
 
@@ -21,6 +24,7 @@ type QueryParams struct {
 	ProjectID           uint32
 	IssueFingerprintIDs []int64
 	UUID                string
+	Tags                map[string]string
 	NewerThan           time.Time
 	OlderThan           time.Time
 	Limit               int
@@ -47,6 +51,10 @@ func NewDuckDBWriter(path string) (*DuckDBWriter, error) {
             project_id BIGINT,
             issue_fingerprint_id BIGINT,
             timestamp TIMESTAMP,
+            environment VARCHAR,
+            server_name VARCHAR,
+            release VARCHAR,
+            level VARCHAR,
             tags MAP(VARCHAR, VARCHAR)
         )
     `)
@@ -58,31 +66,59 @@ func NewDuckDBWriter(path string) (*DuckDBWriter, error) {
 }
 
 func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
-	tx, err := w.db.Begin()
+	conn, err := w.db.Conn(context.Background())
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 
-	stmt, err := tx.Prepare("INSERT INTO events (uuid, project_id, issue_fingerprint_id, timestamp, tags) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	defer stmt.Close()
-
-	for _, event := range events {
-		_, err = stmt.Exec(event.EventUUID, event.ProjectID, event.IssueFingerprintID, event.Timestamp, event.Tags)
-		if err != nil {
-			log.Printf("DuckDB insert error: %v", err)
+	return conn.Raw(func(c interface{}) error {
+		dConn, ok := c.(driver.Conn)
+		if !ok {
+			return fmt.Errorf("not a driver connection")
 		}
-	}
 
-	return tx.Commit()
+		appender, err := duckdb.NewAppenderFromConn(dConn, "", "events")
+		if err != nil {
+			return err
+		}
+		defer appender.Close()
+
+		for _, event := range events {
+			tags := make(duckdb.Map)
+			for k, v := range event.Tags {
+				tags[k] = v
+			}
+
+			// Log event (optional, keeping existing behavior of logging but maybe lighter)
+			// Keeping it simple as previous code logged the full JSON.
+			// Replicating logic without JSON marshal overhead for the insert itself.
+			eventJSON, _ := json.Marshal(event)
+			log.Printf("DuckDB insert event: %s", string(eventJSON))
+
+			err := appender.AppendRow(
+				event.EventUUID,
+				event.ProjectID,
+				event.IssueFingerprintID,
+				event.Timestamp,
+				event.Environment,
+				event.ServerName,
+				event.Release,
+				event.Level,
+				tags,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		return appender.Flush()
+	})
 }
 
 func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, tags FROM events WHERE project_id = ?")
+	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags FROM events WHERE project_id = ?")
 	args := []interface{}{params.ProjectID}
 
 	if params.UUID != "" {
@@ -97,6 +133,11 @@ func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 			args = append(args, id)
 		}
 		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	for k, v := range params.Tags {
+		queryBuilder.WriteString(" AND tags[?] = ?")
+		args = append(args, k, v)
 	}
 
 	if !params.NewerThan.IsZero() {
@@ -136,9 +177,29 @@ func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 		var e models.Event
 		// Note: We don't have IssueID (stored in SQLite) or RawJSON (stored in RocksDB)
 		// We only populate what we have in DuckDB
-		err := rows.Scan(&e.EventUUID, &e.ProjectID, &e.IssueFingerprintID, &e.Timestamp, &e.Tags)
+		var tagsMap duckdb.Map
+		err := rows.Scan(
+			&e.EventUUID,
+			&e.ProjectID,
+			&e.IssueFingerprintID,
+			&e.Timestamp,
+			&e.Environment,
+			&e.ServerName,
+			&e.Release,
+			&e.Level,
+			&tagsMap,
+		)
 		if err != nil {
 			return nil, err
+		}
+
+		e.Tags = make(map[string]string, len(tagsMap))
+		for k, v := range tagsMap {
+			if keyStr, ok := k.(string); ok {
+				if valStr, ok := v.(string); ok {
+					e.Tags[keyStr] = valStr
+				}
+			}
 		}
 		events = append(events, e)
 	}
@@ -157,6 +218,11 @@ func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
 			args = append(args, id)
 		}
 		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	for k, v := range params.Tags {
+		queryBuilder.WriteString(" AND tags[?] = ?")
+		args = append(args, k, v)
 	}
 
 	var count int64

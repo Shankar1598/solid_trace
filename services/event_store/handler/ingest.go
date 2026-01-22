@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/logic"
 	"github.com/solidtrace/event_store/models"
@@ -97,6 +98,7 @@ func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []b
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid event JSON"})
 	}
 
+	log.Println("Processing event:", string(rawJSON))
 	// 1. Extract issue attributes
 	title := logic.ExtractTitle(payload)
 	culprit := logic.ExtractCulprit(payload)
@@ -133,16 +135,24 @@ func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []b
 	}
 
 	// 3. Resolve basic event fields
-	eventID := extractEventID(payload)
-	if eventID == "" {
-		// If no eventID, generate one? Usually Sentry clients send it.
-		// For now we'll fail or generate. Let's process without valid event if needed, but storage needs key.
-		// Actually, we can generate a UUID if missing.
-		eventID = "generated-" + strings.ReplaceAll(time.Now().Format(time.RFC3339Nano), ":", "")
+	// Enforce System-Generated UUID v7 for ordering in RocksDB
+	u, err := uuid.NewV7()
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
+	eventID := u.String()
+
+	// (We ignore client-provided event_id for storage key to ensure ordering,
+	// but we might want to preserve it in Tags or similar if needed for debugging.
+	// For now, we replace it.)
 
 	timestamp := extractTimestamp(payload)
 	tags := extractTags(payload)
+
+	environment := extractString(payload, "environment")
+	serverName := extractString(payload, "server_name")
+	release := extractString(payload, "release")
+	level := extractString(payload, "level")
 
 	// 4. Build event model
 	event := models.Event{
@@ -151,6 +161,10 @@ func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []b
 		Timestamp:          timestamp,
 		RawJSON:            rawJSON,
 		Tags:               tags,
+		Environment:        environment,
+		ServerName:         serverName,
+		Release:            release,
+		Level:              level,
 		IssueFingerprintID: fingerprintID,
 		IssueID:            issueID,
 		IsNewIssue:         isNewIssue,
@@ -194,4 +208,13 @@ func extractTags(payload map[string]interface{}) map[string]string {
 		}
 	}
 	return tags
+}
+
+func extractString(payload map[string]interface{}, key string) string {
+	if v, ok := payload[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
