@@ -171,6 +171,7 @@ GEM
     loofah (2.25.0)
       crass (~> 1.0.2)
       nokogiri (>= 1.12.0)
+    lz4-ruby (0.3.3)
     mail (2.9.0)
       logger
       mini_mime (>= 0.1.1)
@@ -419,6 +420,7 @@ GEM
     xpath (3.2.0)
       nokogiri (~> 1.8)
     zeitwerk (2.7.4)
+    zstd-ruby (2.0.5)
 
 PLATFORMS
   aarch64-linux
@@ -448,6 +450,7 @@ DEPENDENCIES
   jbuilder
   kamal
   letter_opener
+  lz4-ruby
   minitest (< 6.0)
   msgpack
   openssl (>= 3.3.1)
@@ -471,6 +474,7 @@ DEPENDENCIES
   tzinfo-data
   vite_rails (~> 3.0)
   web-console
+  zstd-ruby
 
 BUNDLED WITH
    2.7.2

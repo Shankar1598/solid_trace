@@ -22,14 +22,10 @@ func NewEventsHandler(rocksdb *storage.RocksDBWriter, duckdb *storage.DuckDBWrit
 	}
 }
 
-// GET /api/events/:project_id/:event_uuid/:timestamp_micro
+// GET /api/events/:event_uuid
 func (h *EventsHandler) GetEvent(c *fiber.Ctx) error {
-	projectID, _ := c.ParamsInt("project_id")
 	eventUUID := c.Params("event_uuid")
-	timestampMicro, _ := c.ParamsInt("timestamp_micro")
-
-	timestamp := time.UnixMicro(int64(timestampMicro))
-	key := storage.KeyForEvent(uint32(projectID), eventUUID, timestamp)
+	key := storage.KeyForEvent(eventUUID)
 
 	data, err := h.rocksdb.GetEvent(key)
 	if err != nil {

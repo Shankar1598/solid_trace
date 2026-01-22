@@ -59,6 +59,7 @@ func (w *RocksDBIngester) Run() {
 			}
 		}
 
+		log.Printf("Flushed %d events to RocksDB", len(batch))
 		batch = batch[:0]
 	}
 
