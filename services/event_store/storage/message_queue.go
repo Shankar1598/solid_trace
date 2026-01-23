@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/solidtrace/event_store/pkg/msgpacker"
 )
 
 type MessageQueueWriter struct {
-	db *sql.DB
+	db     *sql.DB
+	packer *msgpacker.Packer
 }
 
 func NewMessageQueueWriter(path string) (*MessageQueueWriter, error) {
@@ -23,19 +26,32 @@ func NewMessageQueueWriter(path string) (*MessageQueueWriter, error) {
 		return nil, err
 	}
 
-	return &MessageQueueWriter{db: db}, nil
+	// Use Zstd level 3 (SpeedDefault) as requested (-3 or -5).
+	packer := msgpacker.New(msgpacker.ModeZstd, msgpacker.Options{
+		ZstdLevel: zstd.SpeedFastest,
+	})
+
+	return &MessageQueueWriter{
+		db:     db,
+		packer: packer,
+	}, nil
 }
 
 func (w *MessageQueueWriter) Close() error {
 	return w.db.Close()
 }
 
-func (w *MessageQueueWriter) EnqueueMessage(messageType string, payload []byte) error {
+func (w *MessageQueueWriter) EnqueueMessage(messageType string, payload interface{}) error {
+	encodedPayload, err := w.packer.Pack(payload)
+	if err != nil {
+		return fmt.Errorf("failed to pack message payload: %w", err)
+	}
+
 	query := `
 		INSERT INTO event_store_messages (message_type, payload, status, attempts, created_at, updated_at)
 		VALUES (?, ?, 0, 0, ?, ?)
 	`
 	now := time.Now()
-	_, err := w.db.Exec(query, messageType, payload, now, now)
+	_, err = w.db.Exec(query, messageType, encodedPayload, now, now)
 	return err
 }

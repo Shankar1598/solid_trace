@@ -16,8 +16,8 @@ module MessagePacker
 
     # Single byte markers to identify the payload type
     MARKER_RAW  = [ 0 ].pack("C")
-    MARKER_LZ4  = [ 1 ].pack("C")
-    MARKER_ZSTD = [ 2 ].pack("C")
+    MARKER_ZSTD = [ 1 ].pack("C")
+    MARKER_LZ4  = [ 2 ].pack("C")
 
     # LZ4 is best for read heavy workload. It is optimised for easy decompression
     # ZSTD level -3 is best ballance for short term storage (both compression and decompression is fast)

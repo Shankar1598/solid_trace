@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
 
 cd services/event_store
-go build -gcflags="all=-N -l" -o event_store main.go
-./event_store
+go build -gcflags="all=-N -l" -o bin/event_store main.go
+./bin/event_store

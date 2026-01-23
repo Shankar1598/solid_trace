@@ -1,9 +1,9 @@
 class CreateEventStoreMessages < ActiveRecord::Migration[8.1]
   def change
     create_table :event_store_messages do |t|
-      t.string :message_type, null: false   # "issue_created" | "issue_received_event"
-      t.text :payload, null: false          # JSON: { "issue_ids": [1, 2, 3] }
-      t.integer :status, default: 0, null: false # 0=pending
+      t.string :message_type, null: false
+      t.binary :payload, null: false
+      t.integer :status, default: 0, null: false
       t.integer :attempts, default: 0
       t.datetime :processed_at
       t.text :error_message

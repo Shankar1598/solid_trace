@@ -9,4 +9,6 @@ class EventStoreMessage < MessageQueueRecord
   }
 
   scope :processable, -> { where(status: [ :pending, :failed ]).where("attempts < 5") }
+
+  serialize :payload, MessagePacker::WithCompression
 end

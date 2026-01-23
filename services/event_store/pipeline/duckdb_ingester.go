@@ -1,7 +1,6 @@
 package pipeline
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/solidtrace/event_store/models"
@@ -84,9 +83,9 @@ func (w *DuckDBIngester) enqueueBatchMessages(batch []models.Event) {
 		for id := range newIssues {
 			ids = append(ids, id)
 		}
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload := map[string]interface{}{
 			"issue_ids": ids,
-		})
+		}
 		if err := w.messageQueue.EnqueueMessage("issue_created", payload); err != nil {
 			logger.L.Error("Failed to enqueue issue_created message", "error", err)
 		}
@@ -101,9 +100,9 @@ func (w *DuckDBIngester) enqueueBatchMessages(batch []models.Event) {
 		}
 	}
 	if len(existingOnly) > 0 {
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload := map[string]interface{}{
 			"issue_ids": existingOnly,
-		})
+		}
 		if err := w.messageQueue.EnqueueMessage("issue_received_event", payload); err != nil {
 			logger.L.Error("Failed to enqueue issue_received_event message", "error", err)
 		}
