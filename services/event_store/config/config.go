@@ -18,6 +18,8 @@ type Config struct {
 
 	DuckDBFlushTimeout time.Duration
 	DuckDBChannelSize  int
+
+	Debug bool
 }
 
 func Load() *Config {
@@ -34,6 +36,8 @@ func Load() *Config {
 
 		DuckDBFlushTimeout: 1 * time.Second,
 		DuckDBChannelSize:  100000,
+
+		Debug: getEnv("DEBUG", "false") == "true",
 	}
 }
 

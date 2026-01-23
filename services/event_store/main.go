@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,41 +11,43 @@ import (
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pipeline"
+	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
 
 func main() {
 	cfg := config.Load()
+	logger.Init(cfg.Debug)
 
 	// Initialize storage
 	rocksdbWriter, err := storage.NewRocksDBWriter(cfg.RocksDBPath)
 	if err != nil {
-		log.Fatalf("Failed to open RocksDB: %v", err)
+		logger.L.Fatal("Failed to open RocksDB", "error", err)
 	}
 	defer rocksdbWriter.Close()
 
 	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath)
 	if err != nil {
-		log.Fatalf("Failed to open DuckDB: %v", err)
+		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
 	defer duckdbWriter.Close()
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
 	if err != nil {
-		log.Fatalf("Failed to open SQLite: %v", err)
+		logger.L.Fatal("Failed to open SQLite", "error", err)
 	}
 	defer sqliteWriter.Close()
 
 	messageQueueWriter, err := storage.NewMessageQueueWriter(cfg.MessageQueuePath)
 	if err != nil {
-		log.Fatalf("Failed to open Message Queue: %v", err)
+		logger.L.Fatal("Failed to open Message Queue", "error", err)
 	}
 	defer messageQueueWriter.Close()
 
 	// Initialize auth
 	projectAuth, err := auth.NewProjectAuth(cfg.SQLitePath)
 	if err != nil {
-		log.Fatalf("Failed to connect to SQLite: %v", err)
+		logger.L.Fatal("Failed to connect to SQLite", "error", err)
 	}
 	defer projectAuth.Close()
 
@@ -84,12 +85,12 @@ func main() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
-		log.Println("Shutting down...")
+		logger.L.Info("Shutting down...")
 		app.Shutdown()
 	}()
 
-	log.Printf("Starting ingest server on :%s", cfg.Port)
+	logger.L.Info("Starting ingest server", "port", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {
-		log.Fatalf("Server error: %v", err)
+		logger.L.Fatal("Server error", "error", err)
 	}
 }
