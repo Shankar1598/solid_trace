@@ -50,4 +50,4 @@ node_modules
 .vscode/mise-tools/go
 .vscode/mise-tools/gopls
 .vscode/mise-tools/goRoot
-services/event_store/event_store
+services/event_store/bin/*
