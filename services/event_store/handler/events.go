@@ -1,12 +1,12 @@
 package handler
 
 import (
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -48,7 +48,7 @@ func (h *EventsHandler) List(c *fiber.Ctx) error {
 
 	events, err := h.duckdb.QueryEvents(params)
 	if err != nil {
-		log.Printf("Query error: %v", err)
+		logger.L.Error("Query error", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 
@@ -64,7 +64,7 @@ func (h *EventsHandler) Count(c *fiber.Ctx) error {
 
 	count, err := h.duckdb.CountEvents(params)
 	if err != nil {
-		log.Printf("Count error: %v", err)
+		logger.L.Error("Count error", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 

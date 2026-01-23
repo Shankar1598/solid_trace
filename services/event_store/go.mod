@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/linxGnu/grocksdb v1.10.4
 	github.com/mattn/go-sqlite3 v1.14.33
+	github.com/zerodha/logf v0.5.5
 )
 
 require (

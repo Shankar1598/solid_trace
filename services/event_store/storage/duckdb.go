@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 type DuckDBWriter struct {
@@ -94,7 +94,7 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 			// Keeping it simple as previous code logged the full JSON.
 			// Replicating logic without JSON marshal overhead for the insert itself.
 			eventJSON, _ := json.Marshal(event)
-			log.Printf("DuckDB insert event: %s", string(eventJSON))
+			logger.L.Debug("DuckDB insert event", "event", string(eventJSON))
 
 			err := appender.AppendRow(
 				event.EventUUID,

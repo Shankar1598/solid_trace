@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/logic"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -98,7 +98,7 @@ func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []b
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid event JSON"})
 	}
 
-	log.Println("Processing event:", string(rawJSON))
+	logger.L.Debug("Processing event", "raw_json", string(rawJSON))
 	// 1. Extract issue attributes
 	title := logic.ExtractTitle(payload)
 	culprit := logic.ExtractCulprit(payload)
@@ -119,7 +119,7 @@ func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []b
 	// Check existing logic
 	issueID, fingerprintID, found, err := h.sqlite.FindIssueByFingerprint(projectID, fingerprint)
 	if err != nil {
-		log.Printf("SQLite error finding issue: %v", err)
+		logger.L.Error("SQLite error finding issue", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 
@@ -128,7 +128,7 @@ func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []b
 		// Create new issue
 		issueID, fingerprintID, err = h.sqlite.CreateIssueWithFingerprint(projectID, fingerprint, title, culprit, kind)
 		if err != nil {
-			log.Printf("SQLite error creating issue: %v", err)
+			logger.L.Error("SQLite error creating issue", "error", err)
 			return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 		}
 		isNewIssue = true

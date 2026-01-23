@@ -2,10 +2,10 @@ package pipeline
 
 import (
 	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -41,12 +41,12 @@ func (w *DuckDBIngester) Run() {
 		}
 
 		if err := w.writer.WriteBatch(batch); err != nil {
-			log.Printf("DuckDB write error: %v", err)
+			logger.L.Error("DuckDB write error", "error", err)
 			batch = batch[:0]
 			return
 		}
 
-		log.Printf("DuckDB: flushed %d events", len(batch))
+		logger.L.Info("DuckDB: flushed events", "count", len(batch))
 
 		// AFTER successful DuckDB indexing, enqueue messages
 		w.enqueueBatchMessages(batch)
@@ -88,7 +88,7 @@ func (w *DuckDBIngester) enqueueBatchMessages(batch []models.Event) {
 			"issue_ids": ids,
 		})
 		if err := w.messageQueue.EnqueueMessage("issue_created", payload); err != nil {
-			log.Printf("Failed to enqueue issue_created message: %v", err)
+			logger.L.Error("Failed to enqueue issue_created message", "error", err)
 		}
 	}
 
@@ -105,7 +105,7 @@ func (w *DuckDBIngester) enqueueBatchMessages(batch []models.Event) {
 			"issue_ids": existingOnly,
 		})
 		if err := w.messageQueue.EnqueueMessage("issue_received_event", payload); err != nil {
-			log.Printf("Failed to enqueue issue_received_event message: %v", err)
+			logger.L.Error("Failed to enqueue issue_received_event message", "error", err)
 		}
 	}
 }

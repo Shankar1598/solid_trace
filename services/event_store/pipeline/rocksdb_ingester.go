@@ -1,10 +1,10 @@
 package pipeline
 
 import (
-	"log"
 	"time"
 
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -45,7 +45,7 @@ func (w *RocksDBIngester) Run() {
 		}
 
 		if err := w.writer.WriteBatch(batch); err != nil {
-			log.Printf("RocksDB write error: %v", err)
+			logger.L.Error("RocksDB write error", "error", err)
 			return
 		}
 
@@ -55,11 +55,11 @@ func (w *RocksDBIngester) Run() {
 			case w.duckdbEvents <- event:
 			default:
 				// TODO: write the dropped event ids to Rocks
-				log.Println("DuckDB channel full, dropping event")
+				logger.L.Warn("DuckDB channel full, dropping event")
 			}
 		}
 
-		log.Printf("Flushed %d events to RocksDB", len(batch))
+		logger.L.Info("Flushed events to RocksDB", "count", len(batch))
 		batch = batch[:0]
 	}
 
