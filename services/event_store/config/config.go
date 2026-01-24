@@ -27,8 +27,8 @@ func Load() *Config {
 		Port:             getEnv("INGEST_PORT", "4000"),
 		RocksDBPath:      getEnv("ROCKSDB_PATH", "../../storage/rocksdb/development/events"),
 		DuckDBPath:       getEnv("DUCKDB_PATH", "../../storage/duckdb/development/events.duckdb"),
-		SQLitePath:       getEnv("SQLITE_PATH", "../../storage/solid_trace_development.sqlite3"),
-		MessageQueuePath: getEnv("MESSAGE_QUEUE_PATH", "../../storage/solid_trace_development_message_queue.sqlite3"),
+		SQLitePath:       getEnv("SQLITE_PATH", "../../storage/sqlite/solid_trace_development.sqlite3"),
+		MessageQueuePath: getEnv("MESSAGE_QUEUE_PATH", "../../storage/sqlite/solid_trace_development_message_queue.sqlite3"),
 
 		RocksDBBatchSize:    1000,
 		RocksDBFlushTimeout: 200 * time.Millisecond,
