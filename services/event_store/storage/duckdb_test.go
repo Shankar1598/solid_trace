@@ -7,10 +7,12 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 func TestDuckDBWriter(t *testing.T) {
 	tmpDir := t.TempDir()
+	logger.Init()
 	dbPath := filepath.Join(tmpDir, "test_events.duckdb")
 
 	writer, err := NewDuckDBWriter(dbPath)

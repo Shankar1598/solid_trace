@@ -65,7 +65,11 @@ func (w *RocksDBIngester) Run() {
 
 	for {
 		select {
-		case event := <-w.events:
+		case event, ok := <-w.events:
+			if !ok {
+				flush()
+				return
+			}
 			batch = append(batch, event)
 			if len(batch) >= w.batchSize {
 				flush()
