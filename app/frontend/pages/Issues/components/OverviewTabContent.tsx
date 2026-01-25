@@ -15,7 +15,6 @@ interface OverviewTabContentProps {
   prev_event_id: number | null
   next_event_id: number | null
   current_org: { slug: string }
-  current_environment: string
 }
 
 export function OverviewTabContent({
@@ -24,7 +23,6 @@ export function OverviewTabContent({
   prev_event_id,
   next_event_id,
   current_org,
-  current_environment
 }: OverviewTabContentProps) {
   return (
     <div className="space-y-6">
@@ -49,7 +47,7 @@ export function OverviewTabContent({
               disabled={!prev_event_id}
               className="h-8 w-8 border"
               onClick={() => prev_event_id && router.visit(
-                `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${prev_event_id}&environment=${current_environment}`,
+                `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${prev_event_id}`,
                 { preserveScroll: true }
               )}
             >
@@ -61,7 +59,7 @@ export function OverviewTabContent({
               disabled={!next_event_id}
               className="h-8 w-8 border border-l-0"
               onClick={() => next_event_id && router.visit(
-                `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${next_event_id}&environment=${current_environment}`,
+                `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${next_event_id}`,
                 { preserveScroll: true }
               )}
             >

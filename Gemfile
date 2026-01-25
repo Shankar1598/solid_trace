@@ -79,7 +79,6 @@ group :test do
 end
 
 gem "tailwindcss-ruby", "~> 4.1"
-
 gem "tailwindcss-rails", "~> 4.4"
 
 gem "sentry-ruby", "~> 6.2"
@@ -90,9 +89,7 @@ gem "lz4-ruby"
 gem "zstd-ruby"
 
 gem "vite_rails", "~> 3.0"
-
 gem "inertia_rails", "~> 3.15"
-
 
 gem "connection_pool"
 gem "rest-client"
