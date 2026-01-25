@@ -11,7 +11,7 @@
 
 event_store_message_processor:
   class: EventStoreMessageProcessorJob
-  schedule: every 10 seconds
+  schedule: every second
 
 production:
   clear_solid_queue_finished_jobs:
