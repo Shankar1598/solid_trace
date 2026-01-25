@@ -55,7 +55,11 @@ func (w *DuckDBIngester) Run() {
 
 	for {
 		select {
-		case event := <-w.events:
+		case event, ok := <-w.events:
+			if !ok {
+				flush()
+				return
+			}
 			batch = append(batch, event)
 
 		case <-flushTicker.C:
