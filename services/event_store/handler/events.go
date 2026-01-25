@@ -55,6 +55,50 @@ func (h *EventsHandler) List(c *fiber.Ctx) error {
 	return c.JSON(events)
 }
 
+// GET /api/:project_id/events/context
+// Returns event with prev/next UUIDs.
+// If uuid query param is provided, returns that specific event with context.
+// If uuid is not provided, returns the latest event with context (limit=2 to get prev).
+func (h *EventsHandler) GetEventWithContext(c *fiber.Ctx) error {
+	params, err := h.parseParams(c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// If no UUID provided, we want the latest 2 events to determine prev
+	if params.UUID == "" {
+		params.Limit = 2
+		params.SortDesc = true
+	}
+
+	results, err := h.duckdb.QueryEventWithContext(params)
+	if err != nil {
+		logger.L.Error("QueryEventWithContext error", "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+
+	if len(results) == 0 {
+		return c.Status(404).JSON(fiber.Map{"error": "Event not found"})
+	}
+
+	// Return the first result (the target event)
+	result := results[0]
+
+	// If we queried for latest (no UUID), the first result is the latest event
+	// For "latest" scenario, prev is actually the second result if exists
+	// Note: When sorted DESC, the "prev" in time is actually the next row
+	if params.UUID == "" && len(results) > 1 {
+		result.PrevUUID = results[1].Event.EventUUID
+		result.NextUUID = "" // No newer event than the latest
+	}
+
+	return c.JSON(fiber.Map{
+		"event":     result.Event,
+		"prev_uuid": result.PrevUUID,
+		"next_uuid": result.NextUUID,
+	})
+}
+
 // GET /api/:project_id/events/count
 func (h *EventsHandler) Count(c *fiber.Ctx) error {
 	params, err := h.parseParams(c)

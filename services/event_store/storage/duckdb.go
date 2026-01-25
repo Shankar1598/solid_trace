@@ -172,7 +172,7 @@ func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 	}
 	defer rows.Close()
 
-	var events []models.Event
+	events := []models.Event{}
 	for rows.Next() {
 		var e models.Event
 		// Note: We don't have IssueID (stored in SQLite) or RawJSON (stored in RocksDB)
@@ -231,6 +231,122 @@ func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// EventWithContext holds an event with its previous and next UUIDs
+type EventWithContext struct {
+	Event    models.Event
+	PrevUUID string
+	NextUUID string
+}
+
+// QueryEventWithContext returns an event with its prev/next UUIDs using window functions.
+// If uuid is provided, returns that specific event with context.
+// If uuid is empty, returns the latest event(s) based on limit with context.
+func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithContext, error) {
+	// Build the base CTE with window functions
+	queryBuilder := strings.Builder{}
+	args := []interface{}{}
+
+	// CTE to get events with prev/next using window functions
+	queryBuilder.WriteString(`
+		WITH ordered_events AS (
+			SELECT
+				uuid,
+				project_id,
+				issue_fingerprint_id,
+				timestamp,
+				environment,
+				server_name,
+				release,
+				level,
+				tags,
+				LAG(uuid) OVER (ORDER BY timestamp ASC) as prev_uuid,
+				LEAD(uuid) OVER (ORDER BY timestamp ASC) as next_uuid
+			FROM events
+			WHERE project_id = ?
+	`)
+	args = append(args, params.ProjectID)
+
+	if len(params.IssueFingerprintIDs) > 0 {
+		placeholders := make([]string, len(params.IssueFingerprintIDs))
+		for i, id := range params.IssueFingerprintIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	queryBuilder.WriteString(")")
+
+	// Select from CTE
+	queryBuilder.WriteString(" SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags, prev_uuid, next_uuid FROM ordered_events")
+
+	if params.UUID != "" {
+		// Get specific event by UUID
+		queryBuilder.WriteString(" WHERE uuid = ?")
+		args = append(args, params.UUID)
+	} else {
+		// Get latest events
+		if params.SortDesc {
+			queryBuilder.WriteString(" ORDER BY timestamp DESC")
+		} else {
+			queryBuilder.WriteString(" ORDER BY timestamp ASC")
+		}
+		if params.Limit > 0 {
+			queryBuilder.WriteString(" LIMIT ?")
+			args = append(args, params.Limit)
+		}
+	}
+
+	rows, err := w.db.Query(queryBuilder.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := []EventWithContext{}
+	for rows.Next() {
+		var ctx EventWithContext
+		var tagsMap duckdb.Map
+		var prevUUID, nextUUID sql.NullString
+
+		err := rows.Scan(
+			&ctx.Event.EventUUID,
+			&ctx.Event.ProjectID,
+			&ctx.Event.IssueFingerprintID,
+			&ctx.Event.Timestamp,
+			&ctx.Event.Environment,
+			&ctx.Event.ServerName,
+			&ctx.Event.Release,
+			&ctx.Event.Level,
+			&tagsMap,
+			&prevUUID,
+			&nextUUID,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		ctx.Event.Tags = make(map[string]string, len(tagsMap))
+		for k, v := range tagsMap {
+			if keyStr, ok := k.(string); ok {
+				if valStr, ok := v.(string); ok {
+					ctx.Event.Tags[keyStr] = valStr
+				}
+			}
+		}
+
+		if prevUUID.Valid {
+			ctx.PrevUUID = prevUUID.String
+		}
+		if nextUUID.Valid {
+			ctx.NextUUID = nextUUID.String
+		}
+
+		results = append(results, ctx)
+	}
+	return results, nil
 }
 
 func (w *DuckDBWriter) Close() {

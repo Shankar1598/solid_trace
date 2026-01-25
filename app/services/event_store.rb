@@ -23,6 +23,11 @@ class EventStore
       make_request(url, params: params, default: [])
     end
 
+    def query_event_with_context(project_id:, params: {})
+      url = "#{base_url}/api/#{project_id}/events/context"
+      make_request(url, params: params)
+    end
+
     def count_events(project_id:, params: {})
       url = "#{base_url}/api/#{project_id}/events/count"
       response = make_request(url, params: params, default: { "count" => 0 })
@@ -139,6 +144,27 @@ class EventStore
 
   def first
     limit(1).all.first
+  end
+
+  # Returns { event:, prev_uuid:, next_uuid: } in a single API call
+  # If uuid_filter is set, fetches that event; otherwise fetches the latest event
+  def get_event_with_context
+    return nil if @fingerprint_ids.empty? && @uuid_filter.nil?
+
+    project_id = resolve_project_id
+    return nil unless project_id
+
+    params = { fingerprint_ids: @fingerprint_ids.join(",") }
+    params[:uuid] = @uuid_filter if @uuid_filter
+
+    response = self.class.query_event_with_context(project_id: project_id, params: params)
+    return nil unless response
+
+    {
+      event: build_event(response["event"]),
+      prev_uuid: response["prev_uuid"].presence,
+      next_uuid: response["next_uuid"].presence,
+    }
   end
 
   private

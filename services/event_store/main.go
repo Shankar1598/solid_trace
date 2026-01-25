@@ -77,8 +77,9 @@ func main() {
 	app.Get("/api/events/:event_uuid", eventsHandler.GetEvent)
 
 	// Query API
-	app.Get("/api/:project_id/events", eventsHandler.List)
+	app.Get("/api/:project_id/events/context", eventsHandler.GetEventWithContext)
 	app.Get("/api/:project_id/events/count", eventsHandler.Count)
+	app.Get("/api/:project_id/events", eventsHandler.List)
 
 	// Graceful shutdown
 	go func() {
