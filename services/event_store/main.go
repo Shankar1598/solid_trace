@@ -17,7 +17,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logger.Init(cfg.Debug)
+	logger.Init()
 
 	// Initialize storage
 	rocksdbWriter, err := storage.NewRocksDBWriter(cfg.RocksDBPath)
