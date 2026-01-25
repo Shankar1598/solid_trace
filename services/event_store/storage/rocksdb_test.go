@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/pkg/logger"
 
 	"github.com/solidtrace/event_store/models"
 )
 
 func TestRocksDBWriter(t *testing.T) {
 	tmpDir := t.TempDir()
+	logger.Init()
 	dbPath := filepath.Join(tmpDir, "test_rocksdb")
 
 	writer, err := NewRocksDBWriter(dbPath)
