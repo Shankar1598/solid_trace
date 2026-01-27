@@ -26,7 +26,7 @@ func main() {
 	}
 	defer rocksdbWriter.Close()
 
-	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath)
+	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath, cfg.ParquetStoragePath)
 	if err != nil {
 		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
@@ -38,9 +38,17 @@ func main() {
 	}
 	defer sqliteWriter.Close()
 
+	// Initialize Message Queue Reader (for Console -> Event Store)
+	messageQueueReader, err := storage.NewMessageQueueReader(cfg.MessageQueuePath)
+	if err != nil {
+		logger.L.Fatal("Failed to open Message Queue Reader", "error", err)
+	}
+	defer messageQueueReader.Close()
+
+	// Initialize Message Queue Writer (for Event Store -> Rails)
 	messageQueueWriter, err := storage.NewMessageQueueWriter(cfg.MessageQueuePath)
 	if err != nil {
-		logger.L.Fatal("Failed to open Message Queue", "error", err)
+		logger.L.Fatal("Failed to open Message Queue Writer", "error", err)
 	}
 	defer messageQueueWriter.Close()
 
@@ -65,6 +73,11 @@ func main() {
 	duckdbIngester := pipeline.NewDuckDBIngester(duckdbChan, duckdbWriter, messageQueueWriter, cfg.DuckDBFlushTimeout)
 	go duckdbIngester.Run()
 
+	// Start consumers
+	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter)
+	go archiveConsumer.Run()
+	defer archiveConsumer.Stop()
+
 	ingestHandler := handler.NewIngestHandler(projectAuth, sqliteWriter, rocksdbChan)
 	eventsHandler := handler.NewEventsHandler(rocksdbWriter, duckdbWriter)
 
@@ -80,6 +93,9 @@ func main() {
 	app.Get("/api/:project_id/events/context", eventsHandler.GetEventWithContext)
 	app.Get("/api/:project_id/events/count", eventsHandler.Count)
 	app.Get("/api/:project_id/events", eventsHandler.List)
+
+	// Maintenance API
+	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)
 
 	// Graceful shutdown
 	go func() {

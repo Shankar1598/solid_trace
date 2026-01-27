@@ -13,9 +13,7 @@ type SQLiteWriter struct {
 }
 
 func NewSQLiteWriter(path string) (*SQLiteWriter, error) {
-	// Open using standard driver, shared mode usually handled by Rails setting WAL
-	// We should ensure we use a busy_timeout
-	dsn := fmt.Sprintf("%s?_busy_timeout=5000&_journal_mode=WAL", path)
+	dsn := fmt.Sprintf("%s?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL", path)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
@@ -61,7 +59,7 @@ func (w *SQLiteWriter) FindIssueByFingerprint(projectID uint32, fingerprint stri
 	if err == nil {
 		// Found! Check if resolved (1). If so, reopen (0).
 		if issueStatus == 1 {
-			_, execErr := w.db.Exec("UPDATE issues SET status = 0, updated_at = ? WHERE id = ?", time.Now(), issueID)
+			_, execErr := w.db.Exec("UPDATE issues SET status = 0, updated_at = ? WHERE id = ?", time.Now().Format("2006-01-02 15:04:05.000000"), issueID)
 			if execErr != nil {
 				return 0, 0, true, execErr
 			}
@@ -99,7 +97,7 @@ func (w *SQLiteWriter) CreateIssueWithFingerprint(projectID uint32, fingerprint,
 	}
 
 	// 2. Create Issue
-	now := time.Now()
+	now := time.Now().Format("2006-01-02 15:04:05.000000")
 	// Map kind string to integer enum
 	kindInt := 0
 	switch kind {

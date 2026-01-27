@@ -53,7 +53,7 @@ func TestPackUnpack(t *testing.T) {
 }
 
 func TestPackAlwaysUsesRawMarker(t *testing.T) {
-	// Even large payloads should be uncompressed with Pack()
+	// Even large payloads should be uncompressed with ModeRaw
 	largeData := make(map[string]string)
 	for i := 0; i < 1000; i++ {
 		largeData[string(rune(i))] = "some data that would normally compress"
@@ -77,7 +77,7 @@ func TestPackAlwaysUsesRawMarker(t *testing.T) {
 	}
 }
 
-func TestPackAndCompressUsesZstdByDefault(t *testing.T) {
+func TestPackAndCompressUsesZstd(t *testing.T) {
 	// Create a large payload
 	largeData := make(map[string]string)
 	for i := 0; i < 1000; i++ {
@@ -115,7 +115,7 @@ func TestPackAndCompressUsesZstdByDefault(t *testing.T) {
 	}
 }
 
-func TestPackAndCompressRespectsThreshold(t *testing.T) {
+func TestPackRespectsThreshold(t *testing.T) {
 	// Small payload below default threshold (10KB)
 	small := TestStruct{
 		Message: "small",
@@ -134,7 +134,7 @@ func TestPackAndCompressRespectsThreshold(t *testing.T) {
 	}
 }
 
-func TestPackAndCompressWithCustomOptions(t *testing.T) {
+func TestPackWithCustomOptions(t *testing.T) {
 	data := TestStruct{
 		Message: "test",
 		Count:   1,
@@ -184,8 +184,8 @@ func TestUnknownMarker(t *testing.T) {
 
 	var result TestStruct
 	err := p.Unpack(invalidData, &result)
-	if err == nil {
-		t.Error("Expected error for unknown marker, got nil")
+	if err != ErrUnknown {
+		t.Errorf("Expected ErrUnknown, got %v", err)
 	}
 }
 
@@ -202,21 +202,21 @@ func TestCompressionActuallyReducesSize(t *testing.T) {
 		Metadata: repeatedData,
 	}
 
-	p := New(ModeZstd)
-	// Pack uncompressed to compare
-	rawPacked, _ := p.Pack(data)
+	// Pack uncompressed with ModeRaw
+	pRaw := New(ModeRaw)
+	rawPacked, _ := pRaw.Pack(data)
 
 	// Pack compressed with explicit low threshold to ensure compression happens
 	opts := Options{Threshold: 1024}
-	p = New(ModeZstd, opts)
-	compressedPacked, err := p.Pack(data)
+	pZstd := New(ModeZstd, opts)
+	compressedPacked, err := pZstd.Pack(data)
 	if err != nil {
 		t.Fatalf("Pack failed: %v", err)
 	}
 
 	// Unpack to verify it works
 	var unpacked TestStruct
-	err = p.Unpack(compressedPacked, &unpacked)
+	err = pZstd.Unpack(compressedPacked, &unpacked)
 	if err != nil {
 		t.Fatalf("Unpack failed: %v", err)
 	}
@@ -230,100 +230,6 @@ func TestCompressionActuallyReducesSize(t *testing.T) {
 	// Verify data integrity
 	if len(unpacked.Metadata) != len(data.Metadata) {
 		t.Error("Metadata was corrupted during compression")
-	}
-}
-
-func TestLZ4Compression(t *testing.T) {
-	largeData := make(map[string]string)
-	for i := 0; i < 100; i++ {
-		largeData[string(rune(i))] = "test data for lz4 compression"
-	}
-
-	data := TestStruct{
-		Message:  "lz4 test",
-		Count:    100,
-		Metadata: largeData,
-		Enabled:  true,
-	}
-
-	// Pack with LZ4 - use a low threshold to ensure compression
-	opts := Options{Threshold: 1024}
-	p := New(ModeLZ4, opts)
-	packed, err := p.Pack(data)
-	if err != nil {
-		t.Fatalf("Pack(LZ4) failed: %v", err)
-	}
-
-	// Verify LZ4 marker
-	if packed[0] != markerLZ4 {
-		t.Errorf("Expected LZ4 marker (%d), got %d", markerLZ4, packed[0])
-	}
-
-	// Unpack and verify
-	var unpacked TestStruct
-	err = p.Unpack(packed, &unpacked)
-	if err != nil {
-		t.Fatalf("Unpack failed: %v", err)
-	}
-
-	if unpacked.Message != data.Message {
-		t.Errorf("Message mismatch: got %s, want %s", unpacked.Message, data.Message)
-	}
-}
-
-// Benchmarks
-
-func BenchmarkPackUncompressed(b *testing.B) {
-	largeData := make(map[string]string)
-	for i := 0; i < 1000; i++ {
-		largeData[string(rune(i))] = "benchmark data"
-	}
-	data := TestStruct{
-		Message:  "benchmark large",
-		Count:    1000,
-		Metadata: largeData,
-	}
-
-	p := New(ModeZstd)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = p.Pack(data)
-	}
-}
-
-func BenchmarkPackZstdDefault(b *testing.B) {
-	largeData := make(map[string]string)
-	for i := 0; i < 1000; i++ {
-		largeData[string(rune(i))] = "benchmark data"
-	}
-	data := TestStruct{
-		Message:  "benchmark large",
-		Count:    1000,
-		Metadata: largeData,
-	}
-
-	p := New(ModeZstd)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = p.Pack(data)
-	}
-}
-
-func BenchmarkPackLZ4(b *testing.B) {
-	largeData := make(map[string]string)
-	for i := 0; i < 1000; i++ {
-		largeData[string(rune(i))] = "benchmark data"
-	}
-	data := TestStruct{
-		Message:  "benchmark large",
-		Count:    1000,
-		Metadata: largeData,
-	}
-
-	p := New(ModeLZ4)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = p.Pack(data)
 	}
 }
 
@@ -349,10 +255,48 @@ func TestUnpackHandlesCompressedData(t *testing.T) {
 		t.Fatalf("Expected compressed data")
 	}
 
-	// Unpack should NOT fail now because Unpack detects markers
+	// Unpack should work
 	var result TestStruct
 	err = p.Unpack(packed, &result)
 	if err != nil {
 		t.Errorf("Expected no error when unpacking compressed data, got %v", err)
+	}
+}
+
+// Benchmarks
+
+func BenchmarkPackRaw(b *testing.B) {
+	largeData := make(map[string]string)
+	for i := 0; i < 1000; i++ {
+		largeData[string(rune(i))] = "benchmark data"
+	}
+	data := TestStruct{
+		Message:  "benchmark large",
+		Count:    1000,
+		Metadata: largeData,
+	}
+
+	p := New(ModeRaw)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = p.Pack(data)
+	}
+}
+
+func BenchmarkPackZstd(b *testing.B) {
+	largeData := make(map[string]string)
+	for i := 0; i < 1000; i++ {
+		largeData[string(rune(i))] = "benchmark data"
+	}
+	data := TestStruct{
+		Message:  "benchmark large",
+		Count:    1000,
+		Metadata: largeData,
+	}
+
+	p := New(ModeZstd)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = p.Pack(data)
 	}
 }

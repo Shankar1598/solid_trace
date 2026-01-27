@@ -2,13 +2,10 @@ package msgpacker
 
 import (
 	"bytes"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/pierrec/lz4/v4"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -16,28 +13,24 @@ const (
 	// DefaultThreshold is the size (10KB) below which data is not compressed.
 	DefaultThreshold = 10 * 1024
 
-	// Payload markers.
+	// Payload markers (matching Ruby MessagePacker::WithCompression).
 	markerRaw  byte = 0
 	markerZstd byte = 1
-	markerLZ4  byte = 2
 )
 
 // CompressionMode defines the compression algorithm to use.
 type CompressionMode int
 
 const (
-	// ModeRaw (Default) disables compression.
+	// ModeRaw disables compression.
 	ModeRaw CompressionMode = iota
-	// ModeZstd provides better compression ratio but higher CPU usage.
+	// ModeZstd uses Zstd compression.
 	ModeZstd
-	// ModeLZ4 provides faster compression/decompression with lower ratio.
-	ModeLZ4
 )
 
 var (
-	ErrEmptyData   = errors.New("msgpacker: empty data")
-	ErrUnknown     = errors.New("msgpacker: unknown marker")
-	ErrCorruptData = errors.New("msgpacker: corrupt data header")
+	ErrEmptyData = fmt.Errorf("msgpacker: empty data")
+	ErrUnknown   = fmt.Errorf("msgpacker: unknown marker")
 )
 
 // Options defines custom configuration for the Packer.
@@ -51,6 +44,13 @@ type Options struct {
 
 // Packer handles efficient serialization and compression.
 // It is thread-safe and utilizes a sync.Pool for buffer reuse to minimize allocations.
+//
+// Format matches Ruby's MessagePacker::WithCompression:
+//   - [marker(1b)][data...]
+//
+// Where marker is:
+//   - 0: Raw (uncompressed msgpack data)
+//   - 1: Zstd compressed msgpack data
 type Packer struct {
 	mode      CompressionMode
 	threshold int
@@ -63,7 +63,7 @@ type Packer struct {
 //
 // Usage:
 //
-//	p := New(ModeLZ4)
+//	p := New(ModeRaw)
 //	p := New(ModeZstd, Options{ZstdLevel: zstd.SpeedBestCompression})
 func New(mode CompressionMode, opts ...Options) *Packer {
 	// 1. Set Defaults
@@ -75,12 +75,6 @@ func New(mode CompressionMode, opts ...Options) *Packer {
 	// 2. Apply User Options
 	if len(opts) > 0 {
 		userOpts := opts[0]
-		// Allow 0 threshold if user explicitly wants it?
-		// For backward compat with previous logic, we check > 0.
-		// But if they want to force compress everything, 0 is valid.
-		// Let's assume the user knows what they are doing if they set it.
-		// However, the struct defaults to 0 int value.
-		// Let's keep logic: if userOpts.Threshold != 0, use it.
 		if userOpts.Threshold != 0 {
 			config.Threshold = userOpts.Threshold
 		}
@@ -116,7 +110,9 @@ func New(mode CompressionMode, opts ...Options) *Packer {
 
 // Pack serializes the object.
 // If ModeRaw is set or data < threshold, it returns raw data.
-// Otherwise, it compresses using the configured mode.
+// Otherwise, it compresses using Zstd.
+//
+// Format: [marker(1b)][data...]
 func (p *Packer) Pack(v interface{}) ([]byte, error) {
 	// 1. Serialize to intermediate pooled buffer
 	buf := p.pool.Get().(*bytes.Buffer)
@@ -137,96 +133,40 @@ func (p *Packer) Pack(v interface{}) ([]byte, error) {
 
 	// 2. Check if we should skip compression
 	if p.mode == ModeRaw || len(rawBytes) < p.threshold {
-		// Return Raw: [MarkerRaw] [Data...]
+		// Return Raw: [MarkerRaw][Data...]
 		result := make([]byte, 1+len(rawBytes))
 		result[0] = markerRaw
 		copy(result[1:], rawBytes)
 		return result, nil
 	}
 
-	// 3. Compress
-	return p.compress(rawBytes)
+	// 3. Compress with Zstd
+	// Format: [MarkerZstd][CompressedData...]
+	result := make([]byte, 1, 1+len(rawBytes))
+	result[0] = markerZstd
+	return p.zstdEnc.EncodeAll(rawBytes, result), nil
 }
 
 // Unpack deserializes data, automatically handling compressed or raw formats.
+// Format: [marker(1b)][data...]
 func (p *Packer) Unpack(data []byte, v interface{}) error {
 	if len(data) == 0 {
 		return ErrEmptyData
 	}
 
 	marker := data[0]
+	payload := data[1:]
 
-	// Fast Path: Raw
-	if marker == markerRaw {
-		return msgpack.Unmarshal(data[1:], v)
-	}
-
-	// Slow Path: Decompress
-	return p.decompressAndUnmarshal(data, v)
-}
-
-func (p *Packer) compress(src []byte) ([]byte, error) {
-	// Format: [Marker (1b)] [OriginalSize (Varint)] [CompressedData]
-
-	headerBuf := [binary.MaxVarintLen64 + 1]byte{}
-	var marker byte
-	if p.mode == ModeLZ4 {
-		marker = markerLZ4
-	} else {
-		marker = markerZstd
-	}
-
-	headerBuf[0] = marker
-	headerLen := 1 + binary.PutUvarint(headerBuf[1:], uint64(len(src)))
-
-	switch p.mode {
-	case ModeLZ4:
-		maxSz := lz4.CompressBlockBound(len(src))
-		result := make([]byte, headerLen+maxSz)
-		copy(result, headerBuf[:headerLen])
-
-		n, err := lz4.CompressBlock(src, result[headerLen:], nil)
-		if err != nil {
-			return nil, fmt.Errorf("lz4 compress: %w", err)
-		}
-		return result[:headerLen+n], nil
-
-	case ModeZstd:
-		result := make([]byte, headerLen, headerLen+len(src))
-		copy(result, headerBuf[:headerLen])
-		return p.zstdEnc.EncodeAll(src, result), nil
-	}
-
-	return nil, nil
-}
-
-func (p *Packer) decompressAndUnmarshal(data []byte, v interface{}) error {
-	// Read original size from varint header.
-	originalSize, bytesRead := binary.Uvarint(data[1:])
-	if bytesRead <= 0 {
-		return ErrCorruptData
-	}
-
-	payload := data[1+bytesRead:]
-	uncompressed := make([]byte, originalSize)
-	var err error
-
-	switch data[0] {
-	case markerLZ4:
-		_, err = lz4.UncompressBlock(payload, uncompressed)
+	switch marker {
+	case markerRaw:
+		return msgpack.Unmarshal(payload, v)
 	case markerZstd:
-		uncompressed, err = p.zstdDec.DecodeAll(payload, uncompressed[:0])
+		uncompressed, err := p.zstdDec.DecodeAll(payload, nil)
+		if err != nil {
+			return fmt.Errorf("zstd decompress: %w", err)
+		}
+		return msgpack.Unmarshal(uncompressed, v)
 	default:
 		return ErrUnknown
 	}
-
-	if err != nil {
-		return fmt.Errorf("decompress: %w", err)
-	}
-
-	if err := msgpack.Unmarshal(uncompressed, v); err != nil {
-		return fmt.Errorf("msgpack unmarshal: %w", err)
-	}
-
-	return nil
 }

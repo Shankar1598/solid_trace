@@ -85,7 +85,6 @@ gem "sentry-ruby", "~> 6.2"
 gem "sentry-rails", "~> 6.2"
 
 gem "msgpack"
-gem "lz4-ruby"
 gem "zstd-ruby"
 
 gem "vite_rails", "~> 3.0"

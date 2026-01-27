@@ -13,5 +13,6 @@
     "go": "${workspaceFolder}/.vscode/mise-tools/go",
     "dlv": "${workspaceFolder}/.vscode/mise-tools/dlv",
     "gopls": "${workspaceFolder}/.vscode/mise-tools/gopls"
-  }
+  },
+  "bun.runtime": "${workspaceFolder}/.vscode/mise-tools/bun"
 }

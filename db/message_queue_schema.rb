@@ -10,7 +10,19 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_01_16_200733) do
+ActiveRecord::Schema[8.1].define(version: 2026_01_26_040000) do
+  create_table "console_messages", force: :cascade do |t|
+    t.integer "attempts", default: 0
+    t.datetime "created_at", null: false
+    t.text "error_message"
+    t.string "message_type", null: false
+    t.binary "payload", null: false
+    t.datetime "processed_at"
+    t.integer "status", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["status", "created_at"], name: "index_console_messages_on_status_and_created_at"
+  end
+
   create_table "event_store_messages", force: :cascade do |t|
     t.integer "attempts", default: 0
     t.datetime "created_at", null: false
