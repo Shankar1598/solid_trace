@@ -15,7 +15,7 @@ class EventStoreMessageProcessorJob < ApplicationJob
     message.update_columns(status: :processing, attempts: message.attempts + 1)
 
     begin
-      payload = JSON.parse(message.payload)
+      payload = message.payload
       case message.message_type
       when "issue_created"
         handle_issue_events(payload["issue_ids"], :issue_created)

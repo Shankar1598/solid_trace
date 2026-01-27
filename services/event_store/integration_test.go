@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/pkg/msgpacker"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -26,56 +29,37 @@ type TestEnv struct {
 	DuckDBWriter  *storage.DuckDBWriter
 	SQLiteWriter  *storage.SQLiteWriter
 	MQWriter      *storage.MessageQueueWriter
+	MQReader      *storage.MessageQueueReader
+	MQPath        string
 	Cleanup       func()
+}
+
+func resetTestDB(t *testing.T) {
+	cmd := exec.Command("bin/rails", "db:reset")
+	cmd.Dir = "../../"
+	cmd.Env = append(os.Environ(), "RAILS_ENV=test")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to reset test DB: %v\nOutput: %s", err, string(output))
+	}
 }
 
 func setupTestEnv(t *testing.T) *TestEnv {
 	logger.Init()
+	resetTestDB(t)
+
 	tmpDir := t.TempDir()
 
 	rocksDBPath := filepath.Join(tmpDir, "rocksdb")
 	duckDBPath := filepath.Join(tmpDir, "duckdb.db")
-	sqlitePath := filepath.Join(tmpDir, "sqlite.db")
-	mqPath := filepath.Join(tmpDir, "mq")
+	sqlitePath := "../../storage/sqlite/solid_trace_test.sqlite3"
+	mqPath := "../../storage/sqlite/solid_trace_test_message_queue.sqlite3"
 
-	// Seed SQLite Auth DB
+	// Seed SQLite Auth DB with test public key
 	db, err := sql.Open("sqlite3", sqlitePath)
 	if err != nil {
 		t.Fatalf("Failed to open sqlite for seeding: %v", err)
 	}
-	_, err = db.Exec(`
-		CREATE TABLE project_keys (
-			public_key TEXT PRIMARY KEY,
-			project_id INTEGER
-		);
-		INSERT INTO project_keys (public_key, project_id) VALUES ('test_public_key', 123);
-
-		CREATE TABLE IF NOT EXISTS project_issue_counters (
-			project_id INTEGER PRIMARY KEY,
-			value INTEGER
-		);
-
-		CREATE TABLE IF NOT EXISTS issues (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_id INTEGER,
-			number INTEGER,
-			title TEXT,
-			culprit TEXT,
-			kind INTEGER,
-			status INTEGER,
-			created_at DATETIME,
-			updated_at DATETIME
-		);
-
-		CREATE TABLE IF NOT EXISTS issue_fingerprints (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			issue_id INTEGER,
-			project_id INTEGER,
-			fingerprint TEXT,
-			created_at DATETIME,
-			updated_at DATETIME
-		);
-	`)
+	_, err = db.Exec("INSERT INTO project_keys (public_key, project_id, created_at, updated_at) VALUES (?, ?, ?, ?)", "test_public_key", 123, time.Now(), time.Now())
 	if err != nil {
 		t.Fatalf("Failed to seed sqlite: %v", err)
 	}
@@ -87,7 +71,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		t.Fatalf("Failed to create RocksDB: %v", err)
 	}
 
-	duckdbWriter, err := storage.NewDuckDBWriter(duckDBPath)
+	duckdbWriter, err := storage.NewDuckDBWriter(duckDBPath, filepath.Join(tmpDir, "parquet"))
 	if err != nil {
 		t.Fatalf("Failed to create DuckDB: %v", err)
 	}
@@ -99,29 +83,13 @@ func setupTestEnv(t *testing.T) *TestEnv {
 
 	mqWriter, err := storage.NewMessageQueueWriter(mqPath)
 	if err != nil {
-		t.Fatalf("Failed to create MQ: %v", err)
+		t.Fatalf("Failed to create MQ Writer: %v", err)
 	}
 
-	// Seed MQ Table
-	mqDB, err := sql.Open("sqlite3", mqPath)
+	mqReader, err := storage.NewMessageQueueReader(mqPath)
 	if err != nil {
-		t.Fatalf("Failed to open MQ DB for seeding: %v", err)
+		t.Fatalf("Failed to create MQ Reader: %v", err)
 	}
-	_, err = mqDB.Exec(`
-		CREATE TABLE IF NOT EXISTS event_store_messages (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			message_type TEXT,
-			payload BLOB,
-			status INTEGER,
-			attempts INTEGER,
-			created_at DATETIME,
-			updated_at DATETIME
-		);
-	`)
-	if err != nil {
-		t.Fatalf("Failed to seed MQ DB: %v", err)
-	}
-	mqDB.Close()
 
 	// Initialize Auth
 	projectAuth, err := auth.NewProjectAuth(sqlitePath)
@@ -164,6 +132,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		duckdbWriter.Close()
 		sqliteWriter.Close()
 		mqWriter.Close()
+		mqReader.Close()
 		projectAuth.Close()
 	}
 
@@ -173,6 +142,8 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		DuckDBWriter:  duckdbWriter,
 		SQLiteWriter:  sqliteWriter,
 		MQWriter:      mqWriter,
+		MQReader:      mqReader,
+		MQPath:        mqPath,
 		Cleanup:       cleanup,
 	}
 }
@@ -382,4 +353,106 @@ func getSampleEventJSON() []byte {
 	}
 	b, _ := json.Marshal(event)
 	return b
+}
+
+func TestArchiveEvents(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// 1. Seed events for "yesterday"
+	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
+	event := models.Event{
+		EventUUID:          "8a6c475493954601ab7f3b599b2578ca",
+		ProjectID:          123,
+		IssueFingerprintID: 1,
+		Timestamp:          yesterday.Add(1 * time.Hour), // Yesterday + 1h
+		Environment:        "production",
+		ServerName:         "web-1",
+		Release:            "v123",
+		Level:              "error",
+		Tags:               map[string]string{"foo": "bar"},
+	}
+
+	if err := env.DuckDBWriter.WriteBatch([]models.Event{event}); err != nil {
+		t.Fatalf("Failed to seed event: %v", err)
+	}
+
+	// 2. Insert Archive Message (mimic Rails)
+	// We need to pack the payload roughly how Rails would (msgpack)
+	// Using our packer to simulate it
+	archivePayload := map[string]string{
+		"date": yesterday.Format("2006-01-02"),
+	}
+	packer := msgpacker.New(msgpacker.ModeRaw)
+	packedPayload, err := packer.Pack(archivePayload)
+	if err != nil {
+		t.Fatalf("Failed to pack payload: %v", err)
+	}
+
+	// Direct sqlite insert
+	mqDB, err := sql.Open("sqlite3", env.MQPath)
+	if err != nil {
+		t.Fatalf("Failed to open MQ DB: %v", err)
+	}
+	defer mqDB.Close()
+
+	now := time.Now().Format("2006-01-02 15:04:05.000000")
+	_, err = mqDB.Exec(`
+		INSERT INTO console_messages (message_type, payload, status, attempts, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, "archive_events", packedPayload, storage.StatusPending, 0, now, now)
+	if err != nil {
+		t.Fatalf("Failed to insert console message: %v", err)
+	}
+
+	// 3. Start Consumer
+	consumer := pipeline.NewArchiveConsumer(env.MQReader, env.DuckDBWriter)
+	go consumer.Run()
+	defer consumer.Stop()
+
+	// 4. Wait for processing (poll status)
+	deadline := time.Now().Add(10 * time.Second)
+	var status int
+	for time.Now().Before(deadline) {
+		err := mqDB.QueryRow("SELECT status FROM console_messages WHERE message_type = ?", "archive_events").Scan(&status)
+		if err != nil {
+			t.Fatalf("Failed to query status: %v", err)
+		}
+
+		if status == storage.StatusProcessed {
+			break
+		}
+		if status == storage.StatusFailed {
+			var errMsg string
+			mqDB.QueryRow("SELECT error_message FROM console_messages WHERE message_type = ?", "archive_events").Scan(&errMsg)
+			t.Fatalf("Message processing failed: %s", errMsg)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if status != storage.StatusProcessed {
+		t.Fatalf("Timed out waiting for message processing, status: %d", status)
+	}
+
+	// 5. Verify Archival
+	// Events should be moved from hot table to parquet.
+	// Since we can't easily check parquet file content here without reading it back (which QueryEvents does),
+	// let's verify QueryEvents returns 1 event (it reads primarily from parquet if archived).
+	// Also check that event is NOT in hot table?
+	// But first, QueryEvents.
+
+	// Need to force view recreation or ensure it picks up changes?
+	// ArchiveEventsForDate calls recreateEventsView.
+
+	params := storage.QueryParams{
+		ProjectID: 123,
+	}
+	events, err := env.DuckDBWriter.QueryEvents(params)
+	if err != nil {
+		t.Fatalf("DuckDB Query failed: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 event after archive, got %d", len(events))
+	}
 }

@@ -17,7 +17,8 @@ import (
 )
 
 type DuckDBWriter struct {
-	db *sql.DB
+	db          *sql.DB
+	parquetPath string
 }
 
 type QueryParams struct {
@@ -32,21 +33,23 @@ type QueryParams struct {
 	SortDesc            bool
 }
 
-func NewDuckDBWriter(path string) (*DuckDBWriter, error) {
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+func NewDuckDBWriter(dbPath, parquetPath string) (*DuckDBWriter, error) {
+	// Ensure directories exist
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(parquetPath, 0755); err != nil {
 		return nil, err
 	}
 
-	db, err := sql.Open("duckdb", path)
+	db, err := sql.Open("duckdb", dbPath)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create table if not exists with correct schema
+	// Create hot table for recent events
 	_, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS events (
+        CREATE TABLE IF NOT EXISTS events_hot (
             uuid VARCHAR,
             project_id BIGINT,
             issue_fingerprint_id BIGINT,
@@ -62,7 +65,63 @@ func NewDuckDBWriter(path string) (*DuckDBWriter, error) {
 		return nil, err
 	}
 
-	return &DuckDBWriter{db: db}, nil
+	writer := &DuckDBWriter{db: db, parquetPath: parquetPath}
+
+	// Create the unified view
+	if err := writer.recreateEventsView(); err != nil {
+		return nil, err
+	}
+
+	return writer, nil
+}
+
+// recreateEventsView rebuilds the events view to include any new parquet files.
+// This must be called after archiving to pick up newly created parquet files.
+func (w *DuckDBWriter) recreateEventsView() error {
+	tx, err := w.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`DROP VIEW IF EXISTS events`)
+	if err != nil {
+		return err
+	}
+
+	parquetGlob := strings.ReplaceAll(filepath.Join(w.parquetPath, "*", "*.parquet"), "\\", "/")
+
+	// Check if any parquet files exist
+	var fileCount int
+	err = tx.QueryRow(fmt.Sprintf("SELECT count(*) FROM glob('%s')", parquetGlob)).Scan(&fileCount)
+	if err != nil {
+		fileCount = 0
+	}
+
+	if fileCount > 0 {
+		// Create view with hot + parquet union
+		_, err = tx.Exec(fmt.Sprintf(`
+            CREATE VIEW events AS
+            SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags
+            FROM events_hot
+            UNION ALL
+            SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags
+            FROM read_parquet('%s', hive_partitioning = true, union_by_name = true)
+        `, parquetGlob))
+	} else {
+		// No parquet files yet, just use hot table
+		_, err = tx.Exec(`
+            CREATE VIEW events AS
+            SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags
+            FROM events_hot
+        `)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
@@ -78,7 +137,7 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 			return fmt.Errorf("not a driver connection")
 		}
 
-		appender, err := duckdb.NewAppenderFromConn(dConn, "", "events")
+		appender, err := duckdb.NewAppenderFromConn(dConn, "", "events_hot")
 		if err != nil {
 			return err
 		}
@@ -351,4 +410,91 @@ func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithCon
 
 func (w *DuckDBWriter) Close() {
 	w.db.Close()
+}
+
+// ArchiveEventsForDate moves events for a specific date from events_hot to Parquet.
+// The date parameter specifies which day's events to archive.
+func (w *DuckDBWriter) ArchiveEventsForDate(date time.Time) error {
+	dateStr := date.Format("2006-01-02")
+	partitionPath := filepath.Join(w.parquetPath, fmt.Sprintf("event_date=%s", dateStr))
+
+	// Ensure partition directory exists
+	if err := os.MkdirAll(partitionPath, 0755); err != nil {
+		return fmt.Errorf("failed to create partition directory: %w", err)
+	}
+
+	parquetFile := filepath.Join(partitionPath, "data.parquet")
+
+	// Use a transaction for atomicity
+	tx, err := w.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Step 1: Create temp table with data for the specific date
+	_, err = tx.Exec(fmt.Sprintf(`
+		CREATE TEMP TABLE move_batch AS
+		SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags
+		FROM events_hot
+		WHERE CAST(timestamp AS DATE) = '%s'
+	`, dateStr))
+	if err != nil {
+		return fmt.Errorf("failed to create temp table: %w", err)
+	}
+
+	// Step 2: Check if there's any data to move
+	var count int
+	err = tx.QueryRow("SELECT COUNT(*) FROM move_batch").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to count batch: %w", err)
+	}
+
+	if count == 0 {
+		// Nothing to archive
+		_, _ = tx.Exec("DROP TABLE IF EXISTS move_batch")
+		return nil
+	}
+
+	// Step 3: Export to Parquet
+	_, err = tx.Exec(fmt.Sprintf(`
+		COPY move_batch
+		TO '%s'
+		(FORMAT PARQUET, COMPRESSION 'ZSTD')
+	`, parquetFile))
+	if err != nil {
+		return fmt.Errorf("failed to export to parquet: %w", err)
+	}
+
+	// Step 4: Delete from hot table
+	_, err = tx.Exec(fmt.Sprintf(`
+		DELETE FROM events_hot
+		WHERE CAST(timestamp AS DATE) = '%s'
+	`, dateStr))
+	if err != nil {
+		return fmt.Errorf("failed to delete from hot table: %w", err)
+	}
+
+	// Step 5: Drop temp table
+	_, err = tx.Exec("DROP TABLE IF EXISTS move_batch")
+	if err != nil {
+		return fmt.Errorf("failed to drop temp table: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Recreate view to include new parquet files
+	if err := w.recreateEventsView(); err != nil {
+		return fmt.Errorf("failed to recreate events view: %w", err)
+	}
+
+	return nil
+}
+
+// GetParquetPath returns the parquet storage path
+func (w *DuckDBWriter) GetParquetPath() string {
+	return w.parquetPath
 }

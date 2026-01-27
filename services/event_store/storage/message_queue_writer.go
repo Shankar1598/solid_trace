@@ -16,7 +16,7 @@ type MessageQueueWriter struct {
 }
 
 func NewMessageQueueWriter(path string) (*MessageQueueWriter, error) {
-	dsn := fmt.Sprintf("%s?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL&_cache_size=-25000", path)
+	dsn := fmt.Sprintf("%s?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL", path)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func (w *MessageQueueWriter) EnqueueMessage(messageType string, payload interfac
 		INSERT INTO event_store_messages (message_type, payload, status, attempts, created_at, updated_at)
 		VALUES (?, ?, 0, 0, ?, ?)
 	`
-	now := time.Now()
+	now := time.Now().Format("2006-01-02 15:04:05.000000")
 	_, err = w.db.Exec(query, messageType, encodedPayload, now, now)
 	return err
 }

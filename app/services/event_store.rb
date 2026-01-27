@@ -178,6 +178,7 @@ class EventStore
       uuid: attrs["uuid"],
       project_id: attrs["project_id"],
       issue_fingerprint_id: attrs["issue_fingerprint_id"],
+      environment: attrs["environment"],
       timestamp: Time.parse(attrs["timestamp"]),
       tags: attrs["tags"] || {}
     )

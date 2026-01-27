@@ -171,7 +171,6 @@ GEM
     loofah (2.25.0)
       crass (~> 1.0.2)
       nokogiri (>= 1.12.0)
-    lz4-ruby (0.3.3)
     mail (2.9.0)
       logger
       mini_mime (>= 0.1.1)
@@ -450,7 +449,6 @@ DEPENDENCIES
   jbuilder
   kamal
   letter_opener
-  lz4-ruby
   minitest (< 6.0)
   msgpack
   openssl (>= 3.3.1)
