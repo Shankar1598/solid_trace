@@ -1,45 +1,52 @@
 # frozen_string_literal: true
 
-require "securerandom"
+class Event
+  attr_reader :uuid, :project_id, :issue_fingerprint_id, :timestamp, :tags, :environment
 
-class Event < ApplicationRecord
-  self.primary_key = [ :issue_fingerprint_id, :created_at, :uuid ]
-
-  before_validation :generate_uuid_v7, on: :create
-
-  serialize :payload, coder: MessagePackCoder::Compressed
-
-  belongs_to :issue_fingerprint
-  belongs_to :project
-  has_one :issue, through: :issue_fingerprint
-
-  self.attributes_for_inspect = [ :uuid, :issue_fingerprint_id, :created_at, :environment ]
-
-  scope :lite, -> { select(column_names - [ :payload ]) }
-
-  # Compute hash from event attributes for grouping
-  def self.compute_hash(title:, culprit:, kind:, fingerprint: nil)
-    # Build hash input based on fingerprint template
-    if fingerprint.present?
-      hash_input = fingerprint.map do |part|
-        if part == "{{ default }}"
-          # Expand default template
-          "#{title}||#{culprit}||#{kind}"
-        else
-          part.to_s
-        end
-      end.join("||")
-    else
-      # No custom fingerprint, use default
-      hash_input = "#{title}||#{culprit}||#{kind}"
-    end
-
-    Digest::MD5.hexdigest(hash_input)
+  def initialize(attrs)
+    @uuid = attrs[:uuid]
+    @project_id = attrs[:project_id]
+    @issue_fingerprint_id = attrs[:issue_fingerprint_id]
+    @timestamp = attrs[:timestamp]
+    @environment = attrs[:environment]
+    @tags = attrs[:tags] || {}
+    @payload = attrs[:payload]  # Pre-loaded if available
   end
 
-  private
+  def as_json
+    {
+      uuid: uuid,
+      project_id: project_id,
+      issue_fingerprint_id: issue_fingerprint_id,
+      timestamp: timestamp,
+      tags: tags,
+      environment: environment,
+    }
+  end
 
-  def generate_uuid_v7
-    self.uuid ||= SecureRandom.uuid_v7
+  # Lazy-load payload from Go service
+  def payload
+    @payload ||= EventStore.get_event(uuid)
+  end
+
+  # Compatibility methods
+  def id
+    uuid
+  end
+
+  def created_at
+    timestamp
+  end
+
+  def issue_fingerprint
+    @issue_fingerprint ||= IssueFingerprint.find(issue_fingerprint_id)
+  end
+
+  def issue
+    issue_fingerprint&.issue
+  end
+
+  def project
+    @project ||= Project.find(project_id)
   end
 end

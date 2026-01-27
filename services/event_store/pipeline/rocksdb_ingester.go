@@ -1,0 +1,85 @@
+package pipeline
+
+import (
+	"time"
+
+	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/storage"
+)
+
+type RocksDBIngester struct {
+	events       <-chan models.Event
+	duckdbEvents chan<- models.Event // Forward to DuckDB after commit
+	writer       *storage.RocksDBWriter
+	batchSize    int
+	flushTimeout time.Duration
+}
+
+func NewRocksDBIngester(
+	events <-chan models.Event,
+	duckdbEvents chan<- models.Event,
+	writer *storage.RocksDBWriter,
+	batchSize int,
+	flushTimeout time.Duration,
+) *RocksDBIngester {
+	return &RocksDBIngester{
+		events:       events,
+		duckdbEvents: duckdbEvents,
+		writer:       writer,
+		batchSize:    batchSize,
+		flushTimeout: flushTimeout,
+	}
+}
+
+func (w *RocksDBIngester) Run() {
+	batch := make([]models.Event, 0, w.batchSize)
+	flushTicker := time.NewTicker(w.flushTimeout)
+	syncTicker := time.NewTicker(1 * time.Second)
+	defer flushTicker.Stop()
+	defer syncTicker.Stop()
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+
+		if err := w.writer.WriteBatch(batch); err != nil {
+			logger.L.Error("RocksDB write error", "error", err)
+			return
+		}
+
+		// Forward to DuckDB channel AFTER successful RocksDB commit
+		for _, event := range batch {
+			select {
+			case w.duckdbEvents <- event:
+			default:
+				// TODO: write the dropped event ids to Rocks
+				logger.L.Warn("DuckDB channel full, dropping event")
+			}
+		}
+
+		logger.L.Info("Flushed events to RocksDB", "count", len(batch))
+		batch = batch[:0]
+	}
+
+	for {
+		select {
+		case event, ok := <-w.events:
+			if !ok {
+				flush()
+				return
+			}
+			batch = append(batch, event)
+			if len(batch) >= w.batchSize {
+				flush()
+			}
+
+		case <-flushTicker.C:
+			flush()
+
+		case <-syncTicker.C:
+			w.writer.FlushWAL()
+		}
+	}
+}
