@@ -4,7 +4,7 @@ class CommentsController < ApplicationController
   before_action :set_issue
 
   def create
-    @comment = @issue.comments.new(content: params[:content])
+    @comment = @issue.comments.new(comment_params)
     @comment.user = Current.user
 
     if @comment.save
@@ -26,6 +26,10 @@ class CommentsController < ApplicationController
   end
 
   private
+
+  def comment_params
+    params.require(:comment).permit(:content)
+  end
 
   def set_issue
     @current_org = Current.user.organizations.find_by!(slug: params[:org_slug])

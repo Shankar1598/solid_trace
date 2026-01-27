@@ -12,7 +12,7 @@ class MentionsController < ApplicationController
 
     respond_to do |format|
       format.html { render layout: false }
-      format.json
+      format.json { render json: @users.as_json(only: [:id, :name, :email]) }
     end
   end
 end
