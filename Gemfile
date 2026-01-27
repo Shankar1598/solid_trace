@@ -58,7 +58,6 @@ group :development, :test do
   gem "openssl", ">= 3.3.1" # To fix an issue with MacOS OpenSSL 3.6. Sentry API call was failing.
   gem "factory_bot_rails"
   gem "faker"
-  gem "minitest", "< 7.0"
 end
 
 group :development do
@@ -76,6 +75,8 @@ group :test do
   # Use system testing [https://guides.rubyonrails.org/testing.html#system-testing]
   gem "capybara"
   gem "selenium-webdriver"
+  gem "minitest", "< 7.0"
+  gem "minitest-mock"
 end
 
 gem "tailwindcss-ruby", "~> 4.1"
@@ -92,4 +93,3 @@ gem "inertia_rails", "~> 3.16"
 
 gem "connection_pool"
 gem "rest-client"
-
