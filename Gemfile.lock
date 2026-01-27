@@ -440,7 +440,7 @@ DEPENDENCIES
   debug
   factory_bot_rails
   faker
-  inertia_rails (~> 3.15)
+  inertia_rails (~> 3.16)
   jbuilder
   kamal
   letter_opener
