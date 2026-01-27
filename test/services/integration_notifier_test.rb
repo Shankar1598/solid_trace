@@ -44,16 +44,15 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
 
   test "notifies when event threshold is reached" do
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
-
-    # Create 10 events (default threshold is 10)
-    10.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
+    issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil
 
-    Notifiers::SlackNotifier.stub :new, ->(integration, issue) { notifier_instance } do
-      IntegrationNotifier.notify(issue)
+    EventStore.stub :count_events, 10 do
+      Notifiers::SlackNotifier.stub :new, ->(integration, issue) { notifier_instance } do
+        IntegrationNotifier.notify(issue)
+      end
     end
 
     assert notifier_instance.verify
@@ -64,39 +63,36 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     @integration.save!
 
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
-    # Create 10 events
-    10.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
-
-    Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Should not be called" } do
-      IntegrationNotifier.notify(issue)
+    EventStore.stub :count_events, 10 do
+      Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Should not be called" } do
+        IntegrationNotifier.notify(issue)
+      end
     end
     assert true # Verify no exception was raised
   end
 
   test "does not notify below threshold" do
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
-    # Create 5 events
-    5.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
-
-    Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
-      IntegrationNotifier.notify(issue)
+    EventStore.stub :count_events, 5 do
+      Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
+        IntegrationNotifier.notify(issue)
+      end
     end
     assert true # Verify no exception was raised
   end
 
   test "does not notify above threshold" do
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
-    # Create 11 events
-    11.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
-
-    Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
-      IntegrationNotifier.notify(issue)
+    EventStore.stub :count_events, 11 do
+      Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
+        IntegrationNotifier.notify(issue)
+      end
     end
     assert true # Verify no exception was raised
   end
@@ -106,16 +102,15 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     @integration.save!
 
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
-    issue_fingerprint = issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
-
-    # Create 5 events
-    5.times { |i| e = issue_fingerprint.events.build(environment: "production"); e.build_event_payload(payload: {}); e.save! }
+    issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
 
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil
 
-    Notifiers::SlackNotifier.stub :new, ->(integration, issue) { notifier_instance } do
-      IntegrationNotifier.notify(issue)
+    EventStore.stub :count_events, 5 do
+      Notifiers::SlackNotifier.stub :new, ->(integration, issue) { notifier_instance } do
+        IntegrationNotifier.notify(issue)
+      end
     end
 
     assert notifier_instance.verify
