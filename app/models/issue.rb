@@ -3,7 +3,6 @@
 class Issue < ApplicationRecord
   belongs_to :project
   has_many :issue_fingerprints, dependent: :delete_all
-  has_many :events, through: :issue_fingerprints
   has_many :comments, dependent: :delete_all
   before_create :assign_number
 
@@ -31,6 +30,14 @@ class Issue < ApplicationRecord
 
   def to_param
     number.to_s
+  end
+
+  def events
+    EventStore.new(self)
+  end
+
+  def events_count
+    events.count
   end
 
   private

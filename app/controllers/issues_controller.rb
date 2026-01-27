@@ -14,16 +14,11 @@ class IssuesController < ApplicationController
     if params[:query].present?
       @issues = @issues.where("title LIKE ?", "%#{params[:query]}%")
     end
-    if params[:environment].present? && params[:environment] != "all"
-      @issues = @issues.joins(:events).where(events: { environment: params[:environment] }).distinct
-    end
-
     render inertia: "Issues/Index", props: {
       issues: @issues.includes(:project).map { |i| IssueSerializer.new(i).as_json },
       filters: {
         status: params[:status] || "all",
         query: params[:query] || "",
-        environment: params[:environment] || "all",
       },
     }
   end
@@ -31,45 +26,37 @@ class IssuesController < ApplicationController
   def show
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
     @issue = @project.issues.find_by!(number: params[:number])
-    events = @issue.events.order(created_at: :desc)
 
-    if params[:environment].present? && params[:environment] != "all"
-      events = events.where(environment: params[:environment])
+    query = @issue.events.order(:desc)
+
+    # Single API call to get event with prev/next context
+    event_query = @issue.events
+    event_query = event_query.where_uuid(params[:event_id]) if params[:event_id].present?
+    event_context = event_query.get_event_with_context
+
+    if event_context
+      @event = event_context[:event]
+      @prev_event_id = event_context[:prev_uuid]
+      @next_event_id = event_context[:next_uuid]
     end
 
-    if params[:event_id].present?
-      @event = events.find_by(uuid: params[:event_id])
-    end
-
-    # Fallback to latest if not found
-    @event ||= events.first
-
-    if @event
-      # Newer event (Next) - need to reorder to ASC to get the closest newer event
-      @next_event = events.where("events.created_at > ?", @event.created_at).reorder(created_at: :asc).first
-      # Older event (Previous) - need to reorder to DESC to get the closest older event
-      @prev_event = events.where("events.created_at < ?", @event.created_at).reorder(created_at: :desc).first
-    end
-
-    # Pagination for events list
     page = (params[:events_page] || 1).to_i
     per_page = 20
-    @events_list = events.offset((page - 1) * per_page).limit(per_page)
-    @events_count = events.count
+    @events_list = query.offset((page - 1) * per_page).limit(per_page).all
+    @events_count = query.count
 
     render inertia: "Issues/Show", props: {
       issue: IssueSerializer.new(@issue).as_json,
       event: @event ? EventSerializer.new(@event).as_json : nil,
-      prev_event_id: @prev_event&.uuid,
-      next_event_id: @next_event&.uuid,
-      events_list: @events_list.map { |e| EventSerializer.new(e).as_json },
+      prev_event_id: @prev_event_id,
+      next_event_id: @next_event_id,
+      events_list: @events_list.map { |e| EventListSerializer.new(e).as_json },
       events_pagination: {
         current_page: page,
         total_pages: (@events_count.to_f / per_page).ceil,
         total_count: @events_count,
       },
       comments: @issue.comments.includes(:user).order(created_at: :asc).map { |c| CommentSerializer.new(c).as_json },
-      current_environment: params[:environment] || "all",
     }
   end
 

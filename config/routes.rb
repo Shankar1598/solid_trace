@@ -49,22 +49,12 @@ Rails.application.routes.draw do
   end
 
   # API Routes (Migrated from Backend)
+
+
+
+
+  # API Routes
   namespace :api do
-    scope "0" do
-      # Sentry uses /api/0/ as the prefix usually, but we can map it
-      resources :projects do
-        member do
-          post "store", to: "v1/ingest#store"
-          post "envelope", to: "v1/ingest#envelope"
-        end
-      end
-    end
-
-    # Also support /api/:project_id/store directly if needed, but Sentry usually does /api/:id/store/
-    post "/:project_id/store", to: "v1/ingest#store", as: :ingest_store
-    post "/:project_id/envelope", to: "v1/ingest#envelope", as: :ingest_envelope
-
-    # Management API
     namespace :v1 do
       scope "/:org_slug" do
         get "issues", to: "issues#index", as: :issues

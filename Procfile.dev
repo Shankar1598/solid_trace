@@ -1,2 +1,4 @@
 web: bundle exec rdbg -O -n -c -- bin/rails server
 vite: bun --bun ./node_modules/vite/bin/vite.js --mode development
+event_store: ./bin/go-dev
+jobs: bin/jobs start

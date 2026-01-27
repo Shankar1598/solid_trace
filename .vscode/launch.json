@@ -5,20 +5,35 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Go: Attach to Process",
+      "type": "go",
+      "request": "attach",
+      "mode": "local",
+      "processId": "${command:pickProcess}"
+    },
+    {
+      "name": "Go: Launch Package",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/services/event_store",
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
       "type": "ruby_lsp",
-      "name": "Debug script",
+      "name": "Rb: Debug script",
       "request": "launch",
       "program": "ruby ${file}"
     },
     {
       "type": "ruby_lsp",
-      "name": "Debug test",
+      "name": "Rb: Debug test",
       "request": "launch",
       "program": "ruby -Itest ${relativeFile}"
     },
     {
       "type": "ruby_lsp",
-      "name": "Attach debugger",
+      "name": "Rb: Attach debugger",
       "request": "attach"
     }
   ]

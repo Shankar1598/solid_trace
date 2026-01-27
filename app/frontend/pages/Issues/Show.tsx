@@ -19,7 +19,6 @@ interface IssuesShowProps {
   prev_event_id: number | null
   next_event_id: number | null
   comments: Comment[]
-  current_environment: string
   events_list: Event[]
   events_pagination: {
     current_page: number
@@ -34,7 +33,6 @@ export default function IssuesShow({
   prev_event_id,
   next_event_id,
   comments,
-  current_environment,
   events_list,
   events_pagination
 }: IssuesShowProps) {
@@ -140,7 +138,6 @@ export default function IssuesShow({
                   prev_event_id={prev_event_id}
                   next_event_id={next_event_id}
                   current_org={current_org}
-                  current_environment={current_environment}
                 />
               </TabsContent>
 

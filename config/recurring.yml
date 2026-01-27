@@ -9,12 +9,17 @@
 #     priority: 2
 #     schedule: at 5am every day
 
+event_store_message_processor:
+  class: EventStoreMessageProcessorJob
+  schedule: every second
+
+event_store_archive:
+  class: Maintenance::EventStoreArchiveJob
+  schedule: at 2am every day
+
 production:
   clear_solid_queue_finished_jobs:
     command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
     schedule: every hour at minute 12
 
-  maintenance_daily_partition:
-    class: Maintenance::DailyPartitionJob
-    queue: default
-    schedule: "0 0 * * *" # Daily at midnight
+
