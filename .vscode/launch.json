@@ -16,7 +16,7 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${workspaceFolder}/services/event_store",
+      "program": "${workspaceFolder}/event_store",
       "envFile": "${workspaceFolder}/.env"
     },
     {
