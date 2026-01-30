@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+# Function to check and free a port
+check_and_free_port() {
+  local port=$1
+  local apps=$2
+
+  # Find PIDs using the port
+  local pids=$(lsof -ti :$port)
+
+  if [ -z "$pids" ]; then
+    echo "✅ Port $port ($apps) is free."
+  else
+    echo "⚠️  Port $port ($apps) is in use by the following process(es):"
+    lsof -i :$port
+    echo ""
+
+    read -p "Do you want to send SIGTERM to these processes? (y/N) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      echo "Killing PIDs: $pids"
+      kill $pids
+      echo "Done."
+    else
+      echo "Skipping..."
+    fi
+  fi
+  echo "---------------------------------------------------"
+}
+
+echo "Checking for processes on ports 3000 and 4000..."
+echo "---------------------------------------------------"
+
+check_and_free_port 3000 "Rails Console"
+check_and_free_port 4000 "EventStore"
