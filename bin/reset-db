@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 
 rm -rf ./storage/*
+cd console
 rm ./db/schema.rb
 ./bin/rails db:reset
 ./bin/rails db:migrate

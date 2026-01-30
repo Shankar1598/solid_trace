@@ -26,12 +26,10 @@ Two services:
 git clone https://github.com/solidtrace/solid_trace.git
 cd solid_trace
 
-bundle install
-bun install
+cd console && bundle install && bun install && cd ..
+cd event_store && go mod download && cd ..
 
-cd services/event_store && go mod download && cd ../..
-
-bin/rails db:prepare
+cd console && bin/rails db:prepare
 ```
 
 ## Run
@@ -44,9 +42,7 @@ Starts Rails, Vite, EventStore, and background jobs via `Procfile.dev`.
 
 ## Project Structure
 
-- `app/` — Rails code
-- `services/event_store/` — Go service
-- `config/` — Config files
-- `db/` — Migrations and schema
+- `console/` — Rails app (UI, API, user management)
+- `event_store/` — Go service (event ingestion and processing)
 
 
