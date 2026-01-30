@@ -51,8 +51,8 @@ func setupTestEnv(t *testing.T) *TestEnv {
 
 	rocksDBPath := filepath.Join(tmpDir, "rocksdb")
 	duckDBPath := filepath.Join(tmpDir, "duckdb.db")
-	sqlitePath := "../storage/sqlite/solid_trace_test.sqlite3"
-	mqPath := "../storage/sqlite/solid_trace_test_message_queue.sqlite3"
+	sqlitePath := "../storage/sqlite/test/solid_trace.sqlite3"
+	mqPath := "../storage/sqlite/test/message_queue.sqlite3"
 
 	// Seed SQLite Auth DB with test public key
 	db, err := sql.Open("sqlite3", sqlitePath)

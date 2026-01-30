@@ -29,8 +29,8 @@ func Load() *Config {
 		RocksDBPath:        getEnv("ROCKSDB_PATH", "../storage/rocksdb/development/events"),
 		DuckDBPath:         getEnv("DUCKDB_PATH", "../storage/duckdb/development/events.duckdb"),
 		ParquetStoragePath: getEnv("PARQUET_STORAGE_PATH", "../storage/duckdb/development/events_parquet"),
-		SQLitePath:         getEnv("SQLITE_PATH", "../storage/sqlite/solid_trace_development.sqlite3"),
-		MessageQueuePath:   getEnv("MESSAGE_QUEUE_PATH", "../storage/sqlite/solid_trace_development_message_queue.sqlite3"),
+		SQLitePath:         getEnv("SQLITE_PATH", "../storage/sqlite/development/solid_trace.sqlite3"),
+		MessageQueuePath:   getEnv("MESSAGE_QUEUE_PATH", "../storage/sqlite/development/message_queue.sqlite3"),
 
 		RocksDBBatchSize:    1000,
 		RocksDBFlushTimeout: 200 * time.Millisecond,

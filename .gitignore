@@ -29,3 +29,6 @@
 .vscode/mise-tools/go
 .vscode/mise-tools/gopls
 .vscode/mise-tools/goRoot
+
+local/*
+!local/.keep

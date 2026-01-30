@@ -17,18 +17,18 @@ default: &default
 development:
   primary:
     <<: *default
-    database: ../storage/sqlite/solid_trace_development.sqlite3
+    database: ../storage/sqlite/development/solid_trace.sqlite3
   queue:
     <<: *default
-    database: ../storage/sqlite/solid_trace_development_queue.sqlite3
+    database: ../storage/sqlite/development/queue.sqlite3
     migrations_paths: db/queue_migrate
   message_queue:
     <<: *default
-    database: ../storage/sqlite/solid_trace_development_message_queue.sqlite3
+    database: ../storage/sqlite/development/message_queue.sqlite3
     migrations_paths: db/message_queue_migrate
   cache:
     <<: *default
-    database: ../storage/sqlite/solid_trace_development_cache.sqlite3
+    database: ../storage/sqlite/development/cache.sqlite3
     migrations_paths: db/cache_migrate
 
 # Warning: The database defined as "test" will be erased and
@@ -37,30 +37,30 @@ development:
 test:
   primary:
     <<: *default
-    database: ../storage/sqlite/solid_trace_test.sqlite3
+    database: ../storage/sqlite/test/solid_trace.sqlite3
   message_queue:
     <<: *default
-    database: ../storage/sqlite/solid_trace_test_message_queue.sqlite3
+    database: ../storage/sqlite/test/message_queue.sqlite3
     migrations_paths: db/message_queue_migrate
 
 # Store production database in the storage/ directory.
 production:
   primary:
     <<: *default
-    database: ../storage/sqlite/solid_trace_production.sqlite3
+    database: ../storage/sqlite/production/solid_trace.sqlite3
   cache:
     <<: *default
-    database: ../storage/sqlite/solid_trace_production_cache.sqlite3
+    database: ../storage/sqlite/production/cache.sqlite3
     migrations_paths: db/cache_migrate
   queue:
     <<: *default
-    database: ../storage/sqlite/solid_trace_production_queue.sqlite3
+    database: ../storage/sqlite/production/queue.sqlite3
     migrations_paths: db/queue_migrate
   message_queue:
     <<: *default
-    database: ../storage/sqlite/solid_trace_production_message_queue.sqlite3
+    database: ../storage/sqlite/production/message_queue.sqlite3
     migrations_paths: db/message_queue_migrate
   cable:
     <<: *default
-    database: ../storage/sqlite/solid_trace_production_cable.sqlite3
+    database: ../storage/sqlite/production/cable.sqlite3
     migrations_paths: db/cable_migrate
