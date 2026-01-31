@@ -412,6 +412,12 @@ func (w *DuckDBWriter) Close() {
 	w.db.Close()
 }
 
+// Ping checks if DuckDB is healthy by running a simple query
+func (w *DuckDBWriter) Ping() error {
+	var result int
+	return w.db.QueryRow("SELECT 1").Scan(&result)
+}
+
 // ArchiveEventsForDate moves events for a specific date from events_hot to Parquet.
 // The date parameter specifies which day's events to archive.
 func (w *DuckDBWriter) ArchiveEventsForDate(date time.Time) error {
