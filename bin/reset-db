@@ -2,7 +2,7 @@
 
 rm -rf ./storage/*
 cd console
-rm ./db/*schema.rb
+rm ./db/schema.rb ./db/message_queue_schema.rb
 ./bin/rails db:reset
-./bin/rails db:migrate
+./bin/rails db:prepare
 ./bin/rails db:seed

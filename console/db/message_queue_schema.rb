@@ -28,7 +28,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_01_26_040000) do
     t.datetime "created_at", null: false
     t.text "error_message"
     t.string "message_type", null: false
-    t.text "payload", null: false
+    t.binary "payload", null: false
     t.datetime "processed_at"
     t.integer "status", default: 0, null: false
     t.datetime "updated_at", null: false

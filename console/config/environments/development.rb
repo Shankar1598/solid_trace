@@ -29,6 +29,7 @@ Rails.application.configure do
 
   config.active_job.queue_adapter = :solid_queue
   config.solid_queue.connects_to = { database: { writing: :queue } }
+  # config.solid_queue.logger = ActiveSupport::Logger.new(STDOUT)
 
   # Change to :null_store to avoid any caching.
   config.cache_store = :solid_cache_store

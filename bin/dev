@@ -17,4 +17,5 @@ export PORT="${PORT:-3000}"
 export RUBY_DEBUG_OPEN="true"
 export RUBY_DEBUG_LAZY="true"
 
+source "$(dirname "$0")/clear-ports"
 exec foreman start -f Procfile.dev "$@"
