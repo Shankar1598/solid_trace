@@ -82,6 +82,16 @@ func (w *RocksDBWriter) Close() {
 	w.db.Close()
 }
 
+// Ping checks if RocksDB is healthy by attempting a read operation
+func (w *RocksDBWriter) Ping() error {
+	ro := grocksdb.NewDefaultReadOptions()
+	defer ro.Destroy()
+
+	// Try to get a non-existent key - this exercises the read path
+	_, err := w.db.Get(ro, []byte("__health_check__"))
+	return err
+}
+
 // KeyForEvent generates a binary key for RocksDB.
 // Format: UUID (16 bytes)
 func KeyForEvent(eventUUID string) []byte {

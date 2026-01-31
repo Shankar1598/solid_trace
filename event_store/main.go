@@ -80,11 +80,16 @@ func main() {
 
 	ingestHandler := handler.NewIngestHandler(projectAuth, sqliteWriter, rocksdbChan)
 	eventsHandler := handler.NewEventsHandler(rocksdbWriter, duckdbWriter)
+	healthHandler := handler.NewHealthHandler(rocksdbWriter, duckdbWriter)
 
 	// Setup Fiber
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
+
+	// Health check
+	app.Get("/health", healthHandler.Health)
+
 	app.Post("/api/:project_id/store", ingestHandler.Store)
 	app.Post("/api/:project_id/envelope", ingestHandler.Envelope)
 	app.Get("/api/events/:event_uuid", eventsHandler.GetEvent)
