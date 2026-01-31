@@ -11,8 +11,6 @@ default: &default
   pragmas:
     journal_mode: wal
     synchronous: normal
-    # Use 25MB of cache per connection
-    cache_size: -25000
 
 development:
   primary:
@@ -60,7 +58,7 @@ production:
     <<: *default
     database: ../storage/sqlite/production/message_queue.sqlite3
     migrations_paths: db/message_queue_migrate
-  cable:
-    <<: *default
-    database: ../storage/sqlite/production/cable.sqlite3
-    migrations_paths: db/cable_migrate
+  # cable:
+  #   <<: *default
+  #   database: ../storage/sqlite/production/cable.sqlite3
+  #   migrations_paths: db/cable_migrate

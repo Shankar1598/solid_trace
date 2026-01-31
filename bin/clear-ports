@@ -28,8 +28,31 @@ check_and_free_port() {
   echo "---------------------------------------------------"
 }
 
+# Function to check and delete a file
+check_and_delete_file() {
+  local file_path=$1
+
+  if [ -f "$file_path" ]; then
+    echo "⚠️  File $file_path exists."
+    read -p "Do you want to delete it? (y/N) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      rm "$file_path"
+      echo "Deleted $file_path."
+    else
+      echo "Skipping..."
+    fi
+  else
+    echo "✅ File $file_path does not exist."
+  fi
+  echo "---------------------------------------------------"
+}
+
 echo "Checking for processes on ports 3000 and 4000..."
 echo "---------------------------------------------------"
 
 check_and_free_port 3000 "Rails Console"
 check_and_free_port 4000 "EventStore"
+if [[ "$1" == "--locks" ]]; then
+  check_and_delete_file "./storage/rocksdb/development/events/LOCK"
+fi
