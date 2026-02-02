@@ -72,7 +72,7 @@ export default function IssuesShow({
         <div className="space-y-4">
           <Breadcrumbs
             organization={current_org}
-            project={issue.project}
+            rootLabel="Issues"
             issue={{ number: issue.number, title: issue.title }}
           />
 

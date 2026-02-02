@@ -106,7 +106,7 @@ export default function IssuesIndex({ issues, filters }: IssuesIndexProps) {
           </div>
         </div>
 
-        <Table className="border shadow-sm">
+        <Table className="border shadow-sm table-fixed">
           <TableHeader className="bg-muted/30">
             <TableRow className="hover:bg-transparent border-b">
               <TableHead className="w-[48px] px-4">
@@ -115,10 +115,10 @@ export default function IssuesIndex({ issues, filters }: IssuesIndexProps) {
                 </div>
               </TableHead>
               <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Issue</TableHead>
-              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4">Last Seen</TableHead>
-              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4">Age</TableHead>
-              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4">Events</TableHead>
-              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4">Users</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4 w-32">Last Seen</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4 w-32">Age</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4 w-24">Events</TableHead>
+              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4 w-24">Users</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
