@@ -12,16 +12,17 @@ interface BreadcrumbsProps {
     number: number
     title: string
   }
+  rootLabel?: string
 }
 
-export default function Breadcrumbs({ organization, project, issue }: BreadcrumbsProps) {
+export default function Breadcrumbs({ organization, project, issue, rootLabel }: BreadcrumbsProps) {
   return (
     <nav className="flex items-center space-x-1 text-sm text-muted-foreground mb-4">
       <Link
         href={`/${organization.slug}/issues`}
         className="hover:text-foreground transition-colors"
       >
-        {organization.name}
+        {rootLabel || organization.name}
       </Link>
 
       {project && (
