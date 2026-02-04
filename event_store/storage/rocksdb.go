@@ -88,8 +88,12 @@ func (w *RocksDBWriter) Ping() error {
 	defer ro.Destroy()
 
 	// Try to get a non-existent key - this exercises the read path
-	_, err := w.db.Get(ro, []byte("__health_check__"))
-	return err
+	slice, err := w.db.Get(ro, []byte("__health_check__"))
+	if err != nil {
+		return err
+	}
+	defer slice.Free()
+	return nil
 }
 
 // KeyForEvent generates a binary key for RocksDB.
