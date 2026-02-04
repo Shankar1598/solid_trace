@@ -71,7 +71,7 @@ export default function ProjectsNew() {
                 <Label htmlFor="platform">Platform</Label>
                 <Select
                   value={data.platform}
-                  onValueChange={(val) => setData('platform', val)}
+                  onValueChange={(val) => setData('platform', val ?? 'ruby')}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a platform" />

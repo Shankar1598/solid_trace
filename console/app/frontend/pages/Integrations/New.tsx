@@ -59,7 +59,8 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                 <Label htmlFor="provider">Provider</Label>
                 <Select
                   value={data.provider}
-                  onValueChange={(val) => setData('provider', val)}
+                  onValueChange={(val) => setData('provider', val ?? '')}
+                  items={providers}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a provider" />
@@ -118,7 +119,7 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                     <Label htmlFor="severity">Severity</Label>
                     <Select
                       value={data.settings.severity}
-                      onValueChange={(val) => setData('settings', { ...data.settings, severity: val })}
+                      onValueChange={(val) => setData('settings', { ...data.settings, severity: val ?? 'error' })}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select severity" />
