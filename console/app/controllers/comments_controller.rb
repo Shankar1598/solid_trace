@@ -5,7 +5,7 @@ class CommentsController < ApplicationController
 
   def create
     @comment = @issue.comments.new(comment_params)
-    @comment.user = Current.user
+    @comment.organization_user = @current_org_user
 
     if @comment.save
       redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment added"
@@ -17,7 +17,7 @@ class CommentsController < ApplicationController
   def destroy
     @comment = @issue.comments.find(params[:id])
 
-    if @comment.user == Current.user
+    if @comment.organization_user_id == @current_org_user.id
       @comment.destroy
       redirect_to project_issue_path(@issue.project, @issue, org_slug: @current_org.slug, anchor: "comments"), notice: "Comment deleted"
     else
@@ -35,5 +35,6 @@ class CommentsController < ApplicationController
     @current_org = Current.user.organizations.find_by!(slug: params[:org_slug])
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
     @issue = @project.issues.find_by!(number: params[:issue_number])
+    @current_org_user = @current_org.organization_users.find_by!(user: Current.user)
   end
 end

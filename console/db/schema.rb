@@ -52,10 +52,10 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
   create_table "comments", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "issue_id", null: false
+    t.integer "organization_user_id", null: false
     t.datetime "updated_at", null: false
-    t.integer "user_id", null: false
     t.index ["issue_id"], name: "index_comments_on_issue_id"
-    t.index ["user_id"], name: "index_comments_on_user_id"
+    t.index ["organization_user_id"], name: "index_comments_on_organization_user_id"
   end
 
   create_table "integrations", force: :cascade do |t|
@@ -81,6 +81,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
   end
 
   create_table "issues", force: :cascade do |t|
+    t.integer "assignee_id"
     t.datetime "created_at", null: false
     t.string "culprit"
     t.integer "kind", default: 0, null: false
@@ -91,7 +92,6 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
     t.datetime "updated_at", null: false
     t.index ["project_id", "number"], name: "index_issues_on_project_id_and_number", unique: true
     t.index ["project_id", "status"], name: "index_issues_on_project_id_and_status"
-    t.index ["project_id"], name: "index_issues_on_project_id"
   end
 
   create_table "organizations", force: :cascade do |t|
@@ -104,11 +104,12 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
 
   create_table "organizations_users", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.datetime "discarded_at"
     t.integer "organization_id", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
+    t.index ["organization_id", "discarded_at"], name: "index_organizations_users_on_organization_id_and_discarded_at"
     t.index ["organization_id", "user_id"], name: "index_organizations_users_on_organization_id_and_user_id", unique: true
-    t.index ["organization_id"], name: "index_organizations_users_on_organization_id"
     t.index ["user_id"], name: "index_organizations_users_on_user_id"
   end
 
@@ -158,10 +159,11 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "comments", "issues"
-  add_foreign_key "comments", "users"
+  add_foreign_key "comments", "organizations_users", column: "organization_user_id"
   add_foreign_key "integrations", "organizations"
   add_foreign_key "issue_fingerprints", "issues"
   add_foreign_key "issue_fingerprints", "projects"
+  add_foreign_key "issues", "organizations_users", column: "assignee_id"
   add_foreign_key "issues", "projects"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"

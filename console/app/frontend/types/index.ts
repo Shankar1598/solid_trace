@@ -42,6 +42,11 @@ export interface Issue {
   created_at: string
   last_seen_at: string
   updated_at: string
+  assignee: {
+    id: number
+    discarded_at?: string | null
+    user: User
+  } | null
   project: {
     id: number
     name: string

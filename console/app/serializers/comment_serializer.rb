@@ -6,14 +6,16 @@ class CommentSerializer
   end
 
   def as_json(*)
+    user = @comment.user
+
     {
       id: @comment.id,
       body: @comment.content.to_s,
       created_at: @comment.created_at.iso8601,
       user: {
-        id: @comment.user.id,
-        name: @comment.user.name,
-        email: @comment.user.email,
+        id: user.id,
+        name: user.name,
+        email: user.email,
       },
     }
   end

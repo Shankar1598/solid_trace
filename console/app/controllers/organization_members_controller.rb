@@ -33,6 +33,18 @@ class OrganizationMembersController < ApplicationController
       new_user_created = true
     end
 
+    existing_membership = @current_org.all_organization_users.find_by(user: @user)
+
+    if existing_membership
+      if existing_membership.discarded?
+        existing_membership.undiscard
+        redirect_to members_path(org_slug: @current_org.slug), notice: "Member reactivated successfully"
+      else
+        redirect_to members_path(org_slug: @current_org.slug), alert: "User is already a member of this organization"
+      end
+      return
+    end
+
     @organization_user = @current_org.organization_users.build(user: @user)
 
     if @organization_user.save
@@ -61,8 +73,8 @@ class OrganizationMembersController < ApplicationController
       return
     end
 
-    @organization_user.destroy
-    redirect_to members_path(org_slug: @current_org.slug), notice: "Member removed successfully"
+    @organization_user.discard
+    redirect_to members_path(org_slug: @current_org.slug), notice: "Member archived successfully"
   end
 
   private

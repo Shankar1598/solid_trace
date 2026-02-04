@@ -2,9 +2,14 @@
 
 class Issue < ApplicationRecord
   belongs_to :project
+  belongs_to :assignee, class_name: "OrganizationUser", optional: true
   has_many :issue_fingerprints, dependent: :delete_all
   has_many :comments, dependent: :delete_all
+  has_one :organization, through: :project
+
   before_create :assign_number
+
+  validate :assignee_must_match_organization
 
   module STATUS
     UNRESOLVED = :unresolved
@@ -41,6 +46,14 @@ class Issue < ApplicationRecord
   end
 
   private
+
+  def assignee_must_match_organization
+    return if assignee.blank?
+
+    return if assignee.organization_id == organization.id
+
+    errors.add(:assignee, "must belong to the same organization as the issue")
+  end
 
   def assign_number
     self.number = ProjectIssueCounter.next_value_for(project)

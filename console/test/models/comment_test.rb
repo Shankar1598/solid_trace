@@ -14,10 +14,10 @@ class CommentTest < ActiveSupport::TestCase
     assert_includes comment.errors[:issue], "must exist"
   end
 
-  test "should belong to user" do
-    comment = build(:comment, user: nil)
+  test "should belong to organization_user" do
+    comment = build(:comment, organization_user: nil)
     assert_not comment.valid?
-    assert_includes comment.errors[:user], "must exist"
+    assert_includes comment.errors[:organization_user], "must exist"
   end
 
   test "should have rich text content" do

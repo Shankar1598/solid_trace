@@ -94,3 +94,6 @@ gem "inertia_rails", "~> 3.16"
 
 gem "connection_pool"
 gem "rest-client"
+
+# Soft delete (archive) records without breaking foreign keys
+gem "discard"
