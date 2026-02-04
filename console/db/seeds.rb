@@ -19,4 +19,4 @@ user = User.find_or_create_by!(email: "admin@solidtrace.local") do |u|
   u.password = "password123"
   u.password_confirmation = "password123"
 end
-user.organizations << org unless user.organizations.include?(org)
+OrganizationUser.find_or_create_by!(organization: org, user: user)

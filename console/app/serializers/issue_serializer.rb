@@ -6,6 +6,8 @@ class IssueSerializer
   end
 
   def as_json(*)
+    assignee = @issue.assignee
+
     {
       id: @issue.id,
       number: @issue.number,
@@ -17,6 +19,7 @@ class IssueSerializer
       created_at: @issue.created_at.iso8601,
       updated_at: @issue.updated_at.iso8601,
       last_seen_at: @issue.events.first&.created_at&.iso8601 || @issue.created_at.iso8601,
+      assignee: assignee ? { id: assignee.id, discarded_at: assignee.discarded_at&.iso8601, user: UserSerializer.new(assignee.user).as_json } : nil,
       project: {
         id: @issue.project.id,
         name: @issue.project.name,

@@ -31,6 +31,7 @@ Rails.application.routes.draw do
         member do
           patch :resolve
           patch :unresolve
+          patch :assign
         end
         resources :comments, only: [ :create, :destroy ]
       end

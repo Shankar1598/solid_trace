@@ -15,7 +15,7 @@ class IssuesController < ApplicationController
       @issues = @issues.where("title LIKE ?", "%#{params[:query]}%")
     end
     render inertia: "Issues/Index", props: {
-      issues: @issues.includes(:project).map { |i| IssueSerializer.new(i).as_json },
+      issues: @issues.includes(:project, assignee: :user).map { |i| IssueSerializer.new(i).as_json },
       filters: {
         status: params[:status] || "all",
         query: params[:query] || "",
@@ -25,7 +25,7 @@ class IssuesController < ApplicationController
 
   def show
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
-    @issue = @project.issues.find_by!(number: params[:number])
+    @issue = @project.issues.includes(assignee: :user).find_by!(number: params[:number])
 
     query = @issue.events.order(:desc)
 
@@ -56,8 +56,21 @@ class IssuesController < ApplicationController
         total_pages: (@events_count.to_f / per_page).ceil,
         total_count: @events_count,
       },
-      comments: @issue.comments.includes(:user).order(created_at: :asc).map { |c| CommentSerializer.new(c).as_json },
+      comments: @issue.comments.includes(organization_user: :user).order(created_at: :asc).map { |c| CommentSerializer.new(c).as_json },
+      assignees: @current_org.organization_users.includes(:user).map { |ou| { id: ou.id, user: UserSerializer.new(ou.user).as_json } },
     }
+  end
+
+  def assign
+    @project = @current_org.projects.find_by!(slug: params[:project_slug])
+    @issue = @project.issues.find_by!(number: params[:number])
+
+    assignee_id = params[:assignee_id].presence
+    assignee = assignee_id ? @current_org.organization_users.find(assignee_id) : nil
+
+    @issue.update!(assignee: assignee)
+
+    redirect_to project_issue_path(@project, @issue, org_slug: @current_org.slug), notice: "Assignee updated"
   end
 
   def resolve
