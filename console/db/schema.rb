@@ -106,6 +106,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
     t.datetime "created_at", null: false
     t.datetime "discarded_at"
     t.integer "organization_id", null: false
+    t.integer "role", default: 0, null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["organization_id", "discarded_at"], name: "index_organizations_users_on_organization_id_and_discarded_at"

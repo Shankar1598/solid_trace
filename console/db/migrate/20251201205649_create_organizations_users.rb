@@ -5,6 +5,7 @@ class CreateOrganizationsUsers < ActiveRecord::Migration[8.1]
     create_table :organizations_users do |t|
       t.references :organization, null: false, foreign_key: true, index: false
       t.references :user, null: false, foreign_key: true
+      t.integer :role, null: false, default: 0
 
       t.datetime :discarded_at
 

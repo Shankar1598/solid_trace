@@ -14,9 +14,15 @@ org = Organization.find_or_create_by!(slug: "solid-trace-org", name: "SolidTrace
 project = org.projects.find_or_create_by!(slug: "solid-trace-project", name: "SolidTrace Project")
 project.project_keys.find_or_create_by!(public_key: "testkey123", secret_key: "secret123")
 
-user = User.find_or_create_by!(email: "admin@solidtrace.local") do |u|
+admin = User.find_or_create_by!(email: "admin@solidtrace.local") do |u|
   u.name = "Admin User"
   u.password = "password123"
   u.password_confirmation = "password123"
 end
-OrganizationUser.find_or_create_by!(organization: org, user: user)
+member = User.find_or_create_by!(email: "member@solidtrace.local") do |u|
+  u.name = "Member User"
+  u.password = "password123"
+  u.password_confirmation = "password123"
+end
+OrganizationUser.find_or_create_by!(organization: org, user: admin, role: :admin)
+OrganizationUser.find_or_create_by!(organization: org, user: member, role: :member)
