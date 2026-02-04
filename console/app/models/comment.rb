@@ -16,7 +16,7 @@ class Comment < ApplicationRecord
   def organization_user_must_match_comment_organization
     return if organization_user.blank? || issue.blank?
 
-    return if organization_user.organization_id == organization_id
+    return if organization_user.organization_id == organization.id
 
     errors.add(:organization_user, "must belong to the same organization as the issue")
   end

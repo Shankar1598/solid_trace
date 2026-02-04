@@ -51,7 +51,7 @@ check_and_delete_file() {
 echo "Checking for processes on ports 3000 and 4000..."
 echo "---------------------------------------------------"
 
-check_and_free_port 3000 "Rails Console"
+check_and_free_port 4001 "Rails Console"
 check_and_free_port 4000 "EventStore"
 if [[ "$1" == "--locks" ]]; then
   check_and_delete_file "./storage/rocksdb/development/events/LOCK"
