@@ -45,6 +45,11 @@ class Integration < ApplicationRecord
     val.nil? ? true : (val.to_s == "1" || val == true)
   end
 
+  def notify_on_assignment
+    val = (settings || {})["notify_on_assignment"]
+    val.nil? ? false : (val.to_s == "1" || val == true)
+  end
+
   def event_threshold
     val = (settings || {})["event_threshold"].to_i
     val > 0 ? val : DEFAULT_EVENT_THRESHOLD

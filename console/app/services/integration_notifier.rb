@@ -15,6 +15,32 @@ class IntegrationNotifier
     end
   end
 
+  def self.notify_assignment(issue, previous_assignee_id:, new_assignee_id:)
+    organization = issue.project.organization
+    organization_users = organization.organization_users.includes(:user)
+    previous_assignee_name = previous_assignee_id ? organization_users.find_by(id: previous_assignee_id)&.user&.name : nil
+    new_assignee_name = new_assignee_id ? organization_users.find_by(id: new_assignee_id)&.user&.name : nil
+
+    notification = {
+      event: "issue_assignment_updated",
+      previous_assignee_id: previous_assignee_id,
+      new_assignee_id: new_assignee_id,
+      previous_assignee_name: previous_assignee_name,
+      new_assignee_name: new_assignee_name,
+    }
+
+    organization.integrations.active.find_each do |integration|
+      next unless integration.notify_on_assignment
+
+      notifier_class = notifier_for(integration.provider)
+      next unless notifier_class
+
+      notifier_class.new(integration, issue, notification: notification).call
+    rescue StandardError => e
+      Rails.logger.error("Integration assignment notification failed for #{integration.provider}: #{e.message}")
+    end
+  end
+
   def self.notify(issue)
     # Determine if newly created based on some logic or assume false if not passed?
     # Original usage in tests: IntegrationNotifier.notify(issue)
@@ -37,7 +63,7 @@ class IntegrationNotifier
     notifier_class = notifier_for(integration.provider)
     return unless notifier_class
 
-    notifier_class.new(integration, issue).call
+    notifier_class.new(integration, issue, notification: { event: event_name_for(integration) }).call
   end
 
   def should_notify?(integration)
@@ -58,16 +84,20 @@ class IntegrationNotifier
     threshold = integration.event_threshold
     time_window = integration.time_window_minutes
 
-    # Count events in the time window
-    recent_event_count = issue.events
-      .where("created_at >= ?", time_window.minutes.ago)
-      .count
+    recent_event_count = issue.events.newer_than(time_window.minutes.ago).count
 
     # Notify only when we hit exactly the threshold (not every event after)
     recent_event_count == threshold
   end
 
-  def notifier_for(provider)
+  def event_name_for(integration)
+    return "issue_created" if integration.notify_on_new_issue && newly_created
+    return "event_threshold_reached" if integration.notify_on_event_threshold
+
+    "issue_notification"
+  end
+
+  def self.notifier_for(provider)
     case provider
     when "slack"
       Notifiers::SlackNotifier
@@ -76,5 +106,9 @@ class IntegrationNotifier
     when "email"
       Notifiers::EmailNotifier
     end
+  end
+
+  def notifier_for(provider)
+    self.class.notifier_for(provider)
   end
 end

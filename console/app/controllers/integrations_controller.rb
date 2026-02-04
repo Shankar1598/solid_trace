@@ -70,6 +70,7 @@ class IntegrationsController < ApplicationController
         :severity,
         :recipients,
         :notify_on_new_issue,
+        :notify_on_assignment,
         :notify_on_event_threshold,
         :event_threshold,
         :time_window_minutes

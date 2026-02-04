@@ -1,0 +1,9 @@
+Issue Assignment Updated
+
+Project: <%= @project.name %>
+Issue: #<%= @issue.number %> <%= @issue.title %>
+From: <%= @previous_assignee_name %>
+To: <%= @new_assignee_name %>
+
+View Issue: <%= project_issue_url(@project, @issue, org_slug: @project.organization.slug, host: SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000") %>
+

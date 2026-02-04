@@ -139,6 +139,15 @@ class EventStore
     return 0 unless project_id
 
     params = { fingerprint_ids: @fingerprint_ids.join(",") }
+
+    if @timestamp_filter
+      if @timestamp_op == ">"
+        params[:newer_than] = @timestamp_filter.iso8601
+      elsif @timestamp_op == "<"
+        params[:older_than] = @timestamp_filter.iso8601
+      end
+    end
+
     self.class.count_events(project_id: project_id, params: params)
   end
 

@@ -6,9 +6,10 @@ require "json"
 
 module Notifiers
   class SlackNotifier
-    def initialize(integration, issue)
+    def initialize(integration, issue, notification: nil)
       @integration = integration
       @issue = issue
+      @notification = notification || {}
     end
 
     def call
@@ -39,12 +40,24 @@ module Notifiers
     private
 
     attr_reader :integration, :issue
+    attr_reader :notification
 
     def webhook_url
       integration.webhook_url
     end
 
     def payload
+      case notification[:event]
+      when "issue_assignment_updated"
+        assignment_payload
+      when "event_threshold_reached"
+        threshold_payload
+      else
+        issue_created_payload
+      end
+    end
+
+    def issue_created_payload
       {
         text: "🚨 New Issue: #{issue.title}",
         blocks: [
@@ -56,27 +69,64 @@ module Notifiers
               emoji: true,
             },
           },
+          issue_fields_block,
+        ],
+      }
+    end
+
+    def threshold_payload
+      {
+        text: "📈 Event threshold reached: #{issue.title}",
+        blocks: [
+          {
+            type: "header",
+            text: {
+              type: "plain_text",
+              text: "📈 Event Threshold Reached",
+              emoji: true,
+            },
+          },
+          issue_fields_block,
+        ],
+      }
+    end
+
+    def assignment_payload
+      previous = notification[:previous_assignee_name].presence || "Unassigned"
+      current = notification[:new_assignee_name].presence || "Unassigned"
+
+      {
+        text: "👤 Issue assignment updated: #{issue.title}",
+        blocks: [
+          {
+            type: "header",
+            text: {
+              type: "plain_text",
+              text: "👤 Issue Assignment Updated",
+              emoji: true,
+            },
+          },
           {
             type: "section",
             fields: [
-              {
-                type: "mrkdwn",
-                text: "*Title:*\n#{issue.title}",
-              },
-              {
-                type: "mrkdwn",
-                text: "*Kind:*\n#{issue.kind}",
-              },
-              {
-                type: "mrkdwn",
-                text: "*Culprit:*\n#{issue.culprit || 'N/A'}",
-              },
-              {
-                type: "mrkdwn",
-                text: "*Project:*\n#{issue.project.name}",
-              }
+              { type: "mrkdwn", text: "*Project:*\n#{issue.project.name}" },
+              { type: "mrkdwn", text: "*Issue:*\n##{issue.number} #{issue.title}" },
+              { type: "mrkdwn", text: "*From:*\n#{previous}" },
+              { type: "mrkdwn", text: "*To:*\n#{current}" },
             ],
-          }
+          },
+        ],
+      }
+    end
+
+    def issue_fields_block
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: "*Title:*\n#{issue.title}" },
+          { type: "mrkdwn", text: "*Kind:*\n#{issue.kind}" },
+          { type: "mrkdwn", text: "*Culprit:*\n#{issue.culprit || 'N/A'}" },
+          { type: "mrkdwn", text: "*Project:*\n#{issue.project.name}" },
         ],
       }
     end
