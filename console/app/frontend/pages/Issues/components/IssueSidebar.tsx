@@ -5,6 +5,7 @@ import { router } from '@inertiajs/react'
 import { Clock, Hash, MapPin } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { Issue, User } from '@/types'
+import { toast } from 'sonner'
 
 interface IssueSidebarProps {
   issue: Issue
@@ -25,11 +26,27 @@ export function IssueSidebar({ issue, assignees, orgSlug }: IssueSidebarProps) {
       ? 'Unassigned'
       : (assignees.find((m) => String(m.id) === assigneeValue)?.user.name ?? issue.assignee?.user.name ?? assigneeValue)
 
-  const updateAssignee = (value: string) => {
+  const updateAssignee = (value: string | null) => {
+    const nextValue = value ?? 'unassigned'
+    const assigneeName =
+      nextValue === 'unassigned'
+        ? 'Unassigned'
+        : (assignees.find((m) => String(m.id) === nextValue)?.user.name ?? 'assignee')
+
     router.patch(
       `/${orgSlug}/projects/${issue.project.slug}/issues/${issue.number}/assign`,
-      { assignee_id: value === 'unassigned' ? null : Number(value) },
-      { preserveScroll: true }
+      { assignee_id: nextValue === 'unassigned' ? null : Number(nextValue) },
+      {
+        preserveScroll: true,
+        onSuccess: () => {
+          toast.success(
+            nextValue === 'unassigned' ? 'Issue unassigned' : `Assigned to ${assigneeName}`
+          )
+        },
+        onError: () => {
+          toast.error('Failed to update assignee')
+        },
+      }
     )
   }
 

@@ -1,6 +1,7 @@
 import { createInertiaApp } from '@inertiajs/react'
 import { createRoot } from 'react-dom/client'
 import '../css/globals.css'
+import { Toaster } from '../components/ui/sonner'
 
 createInertiaApp({
   resolve: (name) => {
@@ -12,6 +13,11 @@ createInertiaApp({
     return page
   },
   setup({ el, App, props }) {
-    createRoot(el).render(<App {...props} />)
+    createRoot(el).render(
+      <>
+        <App {...props} />
+        <Toaster />
+      </>
+    )
   },
 })
