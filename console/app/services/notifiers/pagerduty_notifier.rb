@@ -8,9 +8,10 @@ module Notifiers
   class PagerdutyNotifier
     EVENTS_API_URL = "https://events.pagerduty.com/v2/enqueue".freeze
 
-    def initialize(integration, issue)
+    def initialize(integration, issue, notification: nil)
       @integration = integration
       @issue = issue
+      @notification = notification || {}
     end
 
     def call
@@ -40,7 +41,7 @@ module Notifiers
 
     private
 
-    attr_reader :integration, :issue
+    attr_reader :integration, :issue, :notification
 
     def routing_key
       integration.routing_key
@@ -51,12 +52,19 @@ module Notifiers
     end
 
     def payload
+      summary_prefix =
+        case notification[:event]
+        when "issue_assignment_updated" then "Issue assignment updated"
+        when "event_threshold_reached" then "Event threshold reached"
+        else "New issue"
+        end
+
       {
         routing_key: routing_key,
         event_action: "trigger",
         dedup_key: "solid-trace-issue-#{issue.id}",
         payload: {
-          summary: "[#{issue.kind.upcase}] #{issue.title}",
+          summary: "[#{issue.kind.upcase}] #{summary_prefix}: #{issue.title}",
           source: issue.project.name,
           severity: severity,
           custom_details: {
@@ -65,6 +73,8 @@ module Notifiers
             culprit: issue.culprit,
             project: issue.project.name,
             organization: issue.project.organization.name,
+            previous_assignee: notification[:previous_assignee_name],
+            new_assignee: notification[:new_assignee_name],
           },
         },
       }

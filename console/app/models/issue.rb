@@ -8,6 +8,7 @@ class Issue < ApplicationRecord
   has_one :organization, through: :project
 
   before_create :assign_number
+  after_update_commit :notify_integrations_on_assignment, if: :saved_change_to_assignee_id?
 
   validate :assignee_must_match_organization
 
@@ -57,5 +58,9 @@ class Issue < ApplicationRecord
 
   def assign_number
     self.number = ProjectIssueCounter.next_value_for(project)
+  end
+
+  def notify_integrations_on_assignment
+    IssueAssignmentNotificationJob.perform_later(self, assignee_id_before_last_save, assignee_id)
   end
 end

@@ -22,7 +22,7 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil
 
-    Notifiers::SlackNotifier.stub :new, ->(integration, issue) { notifier_instance } do
+    Notifiers::SlackNotifier.stub :new, ->(*args, **kwargs) { notifier_instance } do
       issue = @project.issues.create!(title: "New Issue", kind: "error", status: 0)
       IntegrationNotifier.notify(issue)
     end
@@ -50,7 +50,7 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     notifier_instance.expect :call, nil
 
     EventStore.stub :count_events, 10 do
-      Notifiers::SlackNotifier.stub :new, ->(integration, issue) { notifier_instance } do
+      Notifiers::SlackNotifier.stub :new, ->(*args, **kwargs) { notifier_instance } do
         IntegrationNotifier.notify(issue)
       end
     end
@@ -108,11 +108,43 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
     notifier_instance.expect :call, nil
 
     EventStore.stub :count_events, 5 do
-      Notifiers::SlackNotifier.stub :new, ->(integration, issue) { notifier_instance } do
+      Notifiers::SlackNotifier.stub :new, ->(*args, **kwargs) { notifier_instance } do
         IntegrationNotifier.notify(issue)
       end
     end
 
     assert notifier_instance.verify
+  end
+
+  test "notifies when issue assignment updated if enabled" do
+    @integration.settings["notify_on_assignment"] = "1"
+    @integration.save!
+
+    issue = @project.issues.create!(title: "Assignable", kind: "error")
+    previous_assignee = @organization.organization_users.find_by!(user: @user)
+    new_user = User.create!(email: "assignee@example.com", name: "Assignee", password: "password", password_confirmation: "password")
+    @organization.users << new_user
+    new_assignee = @organization.organization_users.find_by!(user: new_user)
+
+    notifier_instance = Minitest::Mock.new
+    notifier_instance.expect :call, nil
+
+    Notifiers::SlackNotifier.stub :new, ->(*args, **kwargs) { notifier_instance } do
+      IntegrationNotifier.notify_assignment(issue, previous_assignee_id: previous_assignee.id, new_assignee_id: new_assignee.id)
+    end
+
+    assert notifier_instance.verify
+  end
+
+  test "does not notify on assignment if disabled" do
+    @integration.settings["notify_on_assignment"] = "0"
+    @integration.save!
+
+    issue = @project.issues.create!(title: "Assignable", kind: "error")
+
+    Notifiers::SlackNotifier.stub :new, ->(*args, **kwargs) { raise "Notification triggered unexpectedly" } do
+      IntegrationNotifier.notify_assignment(issue, previous_assignee_id: nil, new_assignee_id: nil)
+    end
+    assert true
   end
 end

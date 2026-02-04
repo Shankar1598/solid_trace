@@ -25,6 +25,7 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
       severity: 'error',
       recipients: '',
       notify_on_new_issue: true,
+      notify_on_assignment: false,
       notify_on_event_threshold: false,
       event_threshold: 10,
       time_window_minutes: 5
@@ -162,6 +163,17 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                     />
                     <Label htmlFor="notify_on_new_issue" className="text-sm font-normal">
                       Notify when a new issue is created
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="notify_on_assignment"
+                      checked={data.settings.notify_on_assignment}
+                      onCheckedChange={(val) => setData('settings', { ...data.settings, notify_on_assignment: !!val })}
+                    />
+                    <Label htmlFor="notify_on_assignment" className="text-sm font-normal">
+                      Notify when an issue is assigned
                     </Label>
                   </div>
 
