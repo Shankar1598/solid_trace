@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -36,7 +37,12 @@ type TestEnv struct {
 
 func resetTestDB(t *testing.T) {
 	cmd := exec.Command("bin/rails", "db:reset")
-	cmd.Dir = "../../"
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("Failed to locate test file path for Rails db reset")
+	}
+	consoleDir := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "console"))
+	cmd.Dir = consoleDir
 	cmd.Env = append(os.Environ(), "RAILS_ENV=test")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to reset test DB: %v\nOutput: %s", err, string(output))
