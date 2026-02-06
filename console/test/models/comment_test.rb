@@ -4,7 +4,7 @@ require "test_helper"
 
 class CommentTest < ActiveSupport::TestCase
   test "should be valid with valid attributes" do
-    comment = build(:comment)
+    comment = create(:comment)
     assert comment.valid?
   end
 
