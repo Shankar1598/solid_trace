@@ -1,50 +1,44 @@
+import { Fragment } from 'react'
 import { Link } from '@inertiajs/react'
 import { ChevronRight } from 'lucide-react'
-import { Organization } from '@/types'
 
-interface BreadcrumbsProps {
-  organization: Organization
-  project?: {
-    name: string
-    slug: string
-  }
-  issue?: {
-    number: number
-    title: string
-  }
-  rootLabel?: string
+interface BreadcrumbItem {
+  label: string
+  href?: string
+  title?: string
 }
 
-export default function Breadcrumbs({ organization, project, issue, rootLabel }: BreadcrumbsProps) {
+interface BreadcrumbsProps {
+  items: BreadcrumbItem[]
+}
+
+export default function Breadcrumbs({ items }: BreadcrumbsProps) {
   return (
-    <nav className="flex items-center space-x-1 text-sm text-muted-foreground mb-4">
-      <Link
-        href={`/${organization.slug}/issues`}
-        className="hover:text-foreground transition-colors"
-      >
-        {rootLabel || organization.name}
-      </Link>
+    <nav className="flex items-center space-x-1 text-sm text-muted-foreground">
+      {items.map((item, index) => {
+        const isLast = index === items.length - 1
 
-      {project && (
-        <>
-          <ChevronRight className="h-4 w-4" />
-          <Link
-            href={`/${organization.slug}/projects/${project.slug}`}
-            className="hover:text-foreground transition-colors"
-          >
-            {project.name}
-          </Link>
-        </>
-      )}
-
-      {issue && (
-        <>
-          <ChevronRight className="h-4 w-4" />
-          <span className="text-foreground font-medium truncate max-w-[300px]" title={issue.title}>
-            #{issue.number}
-          </span>
-        </>
-      )}
+        return (
+          <Fragment key={`${item.label}-${item.href ?? index}`}>
+            {index > 0 && <ChevronRight className="h-4 w-4" />}
+            {item.href && !isLast ? (
+              <Link
+                href={item.href}
+                className="hover:text-foreground transition-colors"
+              >
+                {item.label}
+              </Link>
+            ) : (
+              <span
+                className="text-foreground font-medium truncate max-w-[300px]"
+                title={item.title ?? item.label}
+              >
+                {item.label}
+              </span>
+            )}
+          </Fragment>
+        )
+      })}
     </nav>
   )
 }

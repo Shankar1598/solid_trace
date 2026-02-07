@@ -1,5 +1,6 @@
 import { Link, useForm, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
+import Breadcrumbs from '@/components/Breadcrumbs'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,8 +38,13 @@ export default function ProjectsNew() {
 
   if (!current_org) return null
 
+  const breadcrumbItems = [
+    { label: 'Projects', href: `/${current_org.slug}/projects` },
+    { label: 'New Project' }
+  ]
+
   return (
-    <DashboardLayout>
+    <DashboardLayout breadcrumbs={<Breadcrumbs items={breadcrumbItems} />}>
       <div className="space-y-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight mb-1">Create New Project</h1>

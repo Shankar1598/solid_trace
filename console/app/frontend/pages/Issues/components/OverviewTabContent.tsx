@@ -115,16 +115,16 @@ export function OverviewTabContent({
               </div>
               <TabsContent value="relevant" className="mt-0">
                 <Stacktrace
-                  frames={(event.event_data as any).exception.values[0].stacktrace.frames.filter((frame: any) => frame.in_app)}
+                  frames={((event.event_data as any).exception?.values?.[0]?.stacktrace?.frames || []).filter((frame: any) => frame.in_app)}
                 />
-                {(event.event_data as any).exception.values[0].stacktrace.frames.filter((frame: any) => frame.in_app).length === 0 && (
+                {((event.event_data as any).exception?.values?.[0]?.stacktrace?.frames || []).filter((frame: any) => frame.in_app).length === 0 && (
                   <div className="text-center p-12 text-muted-foreground bg-muted/20 border border-dashed border-muted-foreground/30">
                     No application frames found.
                   </div>
                 )}
               </TabsContent>
               <TabsContent value="full" className="mt-0">
-                <Stacktrace frames={(event.event_data as any).exception.values[0].stacktrace.frames} />
+                <Stacktrace frames={(event.event_data as any).exception?.values?.[0]?.stacktrace?.frames || []} />
               </TabsContent>
             </Tabs>
           ) : (

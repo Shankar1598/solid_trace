@@ -19,6 +19,11 @@ export default function ProjectsShow({ project }: ProjectsShowProps) {
 
   if (!current_org) return null
 
+  const breadcrumbItems = [
+    { label: 'Projects', href: `/${current_org.slug}/projects` },
+    { label: project.name }
+  ]
+
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text)
     setCopiedKey(label)
@@ -30,10 +35,8 @@ export default function ProjectsShow({ project }: ProjectsShowProps) {
   const activeKey = project.keys && project.keys.length > 0 ? project.keys[0] : null
 
   return (
-    <DashboardLayout>
+    <DashboardLayout breadcrumbs={<Breadcrumbs items={breadcrumbItems} />}>
       <div className="space-y-6">
-        <Breadcrumbs organization={current_org} project={project} />
-
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
         </div>

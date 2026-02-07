@@ -71,7 +71,7 @@ export default function IssuesIndex({ issues, projects, filters }: IssuesIndexPr
     <DashboardLayout>
       <div className="flex flex-col h-full space-y-4">
         <div className="flex items-center justify-between px-1">
-          <h1 className="text-xl font-bold tracking-tight">Issues</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Issues</h1>
         </div>
 
         <div className="flex items-center gap-2 w-full">
