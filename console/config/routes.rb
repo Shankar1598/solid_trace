@@ -45,7 +45,7 @@ Rails.application.routes.draw do
 
     scope "/settings" do
       resource :organization, only: [ :show, :update ], controller: "organization_settings"
-      resources :members, only: [ :index, :create, :destroy ], controller: "organization_members"
+      resources :organization_users, only: [ :index, :create, :update, :destroy ]
       resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
       resource :user, only: [ :show, :update ], controller: "user_settings"
     end

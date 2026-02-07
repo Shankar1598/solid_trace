@@ -21,9 +21,9 @@ export function SettingsSidebar() {
         },
         {
           label: 'Members',
-          href: `/${current_org.slug}/settings/members`,
+          href: `/${current_org.slug}/settings/organization_users`,
           icon: Users,
-          active: url.includes('/settings/members')
+          active: url.includes('/settings/organization_users')
         },
         {
           label: 'Integrations',

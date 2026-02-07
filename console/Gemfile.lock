@@ -245,6 +245,8 @@ GEM
     public_suffix (7.0.2)
     puma (7.2.0)
       nio4r (~> 2.0)
+    pundit (2.5.2)
+      activesupport (>= 3.0.0)
     raabro (1.4.0)
     racc (1.8.1)
     rack (3.2.4)
@@ -463,9 +465,11 @@ DEPENDENCIES
   openssl (>= 3.3.1)
   propshaft
   puma (>= 5.0)
+  pundit (~> 2.5)
   rails (~> 8.1.2)
   rdbg
   rest-client
+  rubocop
   rubocop-performance
   rubocop-rails-omakase
   selenium-webdriver
