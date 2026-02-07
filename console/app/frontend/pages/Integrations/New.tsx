@@ -106,6 +106,9 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                     <p className="text-xs text-muted-foreground">
                       The Incoming Webhook URL from your Slack App configuration.
                     </p>
+                    {errors['settings.webhook_url'] && (
+                      <p className="text-sm font-medium text-destructive">{errors['settings.webhook_url'] as string}</p>
+                    )}
                   </div>
                 </div>
               )}
@@ -122,6 +125,9 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                       onChange={(e) => setData('settings', { ...data.settings, routing_key: e.target.value })}
                       required
                     />
+                    {errors['settings.routing_key'] && (
+                      <p className="text-sm font-medium text-destructive">{errors['settings.routing_key'] as string}</p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="severity">Incident Severity</Label>
@@ -158,6 +164,9 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                     <p className="text-xs text-muted-foreground">
                       Separate multiple email addresses with commas.
                     </p>
+                    {errors['settings.recipients'] && (
+                      <p className="text-sm font-medium text-destructive">{errors['settings.recipients'] as string}</p>
+                    )}
                   </div>
                 </div>
               )}
