@@ -11,9 +11,14 @@ interface SettingsOrganizationProps {
 }
 
 export default function SettingsOrganization({ organization }: SettingsOrganizationProps) {
-  const { data, setData, put, processing, errors } = useForm({
-    name: organization.name
+  const { data, setData, put, processing, errors, transform } = useForm({
+    name: organization.name,
+    slug: organization.slug
   })
+
+  transform((data) => ({
+    organization: data
+  }))
 
   const submitOrg: React.FormEventHandler = (e) => {
     e.preventDefault()
@@ -54,11 +59,16 @@ export default function SettingsOrganization({ organization }: SettingsOrganizat
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Slug</Label>
-                  <Input value={organization.slug} disabled className="font-mono bg-muted" />
-                  <p className="text-xs text-muted-foreground">
-                    The slug is used in URLs and cannot be changed.
-                  </p>
+                  <Label htmlFor="slug">Slug</Label>
+                  <Input
+                    id="slug"
+                    value={data.slug}
+                    onChange={(e) => setData('slug', e.target.value)}
+                    className="font-mono"
+                  />
+                  {errors.slug && (
+                    <p className="text-sm font-medium text-destructive">{errors.slug}</p>
+                  )}
                 </div>
               </CardContent>
               <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
