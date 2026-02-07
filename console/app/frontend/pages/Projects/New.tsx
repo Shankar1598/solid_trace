@@ -19,11 +19,11 @@ export default function ProjectsNew() {
 
   // Common platforms list
   const platforms = [
+    { value: 'ruby', label: 'Ruby / Rails' },
     { value: 'javascript', label: 'JavaScript (Browser)' },
     { value: 'node', label: 'Node.js' },
-    { value: 'python', label: 'Python' },
-    { value: 'ruby', label: 'Ruby / Rails' },
     { value: 'go', label: 'Go' },
+    { value: 'python', label: 'Python' },
     { value: 'java', label: 'Java' },
     { value: 'other', label: 'Other' },
   ]
@@ -39,9 +39,9 @@ export default function ProjectsNew() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-2xl mx-auto space-y-6">
-        <div className="space-y-0.5">
-          <h1 className="text-2xl font-bold tracking-tight">Create New Project</h1>
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight mb-1">Create New Project</h1>
           <p className="text-muted-foreground">
             Create a new project to start tracking errors for your application.
           </p>
@@ -55,7 +55,7 @@ export default function ProjectsNew() {
                 Provide a name and select the platform for your project.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6 pb-6">
               <div className="space-y-2">
                 <Label htmlFor="name">Project Name</Label>
                 <Input
@@ -75,6 +75,7 @@ export default function ProjectsNew() {
                 <Select
                   value={data.platform}
                   onValueChange={(val) => setData('platform', val ?? 'ruby')}
+                  items={platforms}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a platform" />
@@ -90,7 +91,7 @@ export default function ProjectsNew() {
                 )}
               </div>
             </CardContent>
-            <CardFooter className="flex justify-end gap-2">
+            <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 px-6 py-4">
               <Link href={`/${current_org.slug}/projects`}>
                 <Button variant="outline" type="button">Cancel</Button>
               </Link>

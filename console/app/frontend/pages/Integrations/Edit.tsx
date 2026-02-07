@@ -18,7 +18,7 @@ interface IntegrationsEditProps {
 export default function IntegrationsEdit({ integration, providers }: IntegrationsEditProps) {
   const { current_org } = usePage<SharedProps>().props
 
-  const { data, setData, put, processing } = useForm({
+  const { data, setData, put, processing, errors } = useForm({
     provider: integration.provider,
     name: integration.name || '',
     active: integration.enabled, // Mapping from serializer's 'enabled' key
@@ -59,47 +59,61 @@ export default function IntegrationsEdit({ integration, providers }: Integration
             <CardHeader>
               <CardTitle>{providers[integration.provider] || integration.provider} Configuration</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-6 pb-6">
               <div className="space-y-2">
-                <Label htmlFor="name">Name (Optional)</Label>
+                <Label htmlFor="name">Integration Name (Optional)</Label>
                 <Input
                   id="name"
                   placeholder="e.g. Engineering Slack"
                   value={data.name}
                   onChange={(e) => setData('name', e.target.value)}
                 />
+                {errors.name && (
+                  <p className="text-sm font-medium text-destructive">{errors.name}</p>
+                )}
               </div>
 
               {/* Dynamic fields based on provider */}
               {integration.provider === 'slack' && (
-                <div className="space-y-4 pt-6 border-t">
-                  <h3 className="font-medium text-sm">Slack Settings</h3>
+                <div className="space-y-6 pt-6 border-t">
+                  <h3 className="font-medium text-sm">Slack Configuration</h3>
                   <div className="space-y-2">
                     <Label htmlFor="webhook_url">Webhook URL</Label>
                     <Input
                       id="webhook_url"
+                      placeholder="https://hooks.slack.com/services/..."
                       value={data.settings.webhook_url}
                       onChange={(e) => setData('settings', { ...data.settings, webhook_url: e.target.value })}
                       required
                     />
+                    <p className="text-xs text-muted-foreground">
+                      The Incoming Webhook URL from your Slack App configuration.
+                    </p>
+                    {errors['settings.webhook_url'] && (
+                      <p className="text-sm font-medium text-destructive">{errors['settings.webhook_url'] as string}</p>
+                    )}
                   </div>
                 </div>
               )}
 
               {integration.provider === 'pagerduty' && (
-                <div className="space-y-4 pt-6 border-t">
-                  <h3 className="font-medium text-sm">PagerDuty Settings</h3>
+                <div className="space-y-6 pt-6 border-t">
+                  <h3 className="font-medium text-sm">PagerDuty Configuration</h3>
                   <div className="space-y-2">
-                    <Label htmlFor="routing_key">Routing Key / Integration Key</Label>
+                    <Label htmlFor="routing_key">Routing Key</Label>
                     <Input
                       id="routing_key"
+                      placeholder="Enter your PagerDuty Integration Key"
                       value={data.settings.routing_key}
                       onChange={(e) => setData('settings', { ...data.settings, routing_key: e.target.value })}
                       required
                     />
+                    {errors['settings.routing_key'] && (
+                      <p className="text-sm font-medium text-destructive">{errors['settings.routing_key'] as string}</p>
+                    )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="severity">Severity</Label>
+                    <Label htmlFor="severity">Incident Severity</Label>
                     <Select
                       value={data.settings.severity}
                       onValueChange={(val) => setData('settings', { ...data.settings, severity: val })}
@@ -119,10 +133,10 @@ export default function IntegrationsEdit({ integration, providers }: Integration
               )}
 
               {integration.provider === 'email' && (
-                <div className="space-y-4 pt-6 border-t">
+                <div className="space-y-6 pt-6 border-t">
                   <h3 className="font-medium text-sm">Email Configuration</h3>
                   <div className="space-y-2">
-                    <Label htmlFor="recipients">Recipients (comma separated)</Label>
+                    <Label htmlFor="recipients">Recipients</Label>
                     <Input
                       id="recipients"
                       placeholder="devs@company.com, ops@company.com"
@@ -130,11 +144,17 @@ export default function IntegrationsEdit({ integration, providers }: Integration
                       onChange={(e) => setData('settings', { ...data.settings, recipients: e.target.value })}
                       required
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Separate multiple email addresses with commas.
+                    </p>
+                    {errors['settings.recipients'] && (
+                      <p className="text-sm font-medium text-destructive">{errors['settings.recipients'] as string}</p>
+                    )}
                   </div>
                 </div>
               )}
 
-              <div className="space-y-4 pt-6 border-t">
+              <div className="space-y-6 pt-6 border-t">
                 <h3 className="font-medium text-sm">Common Notification Rules</h3>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -205,7 +225,6 @@ export default function IntegrationsEdit({ integration, providers }: Integration
                   Integration is active and enabled
                 </Label>
               </div>
-
             </CardContent>
             <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 px-6 py-4">
               <Link href={`/${current_org.slug}/settings/integrations`}>
