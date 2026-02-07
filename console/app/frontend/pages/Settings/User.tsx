@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { User } from '@/types'
+import { toast } from 'sonner'
 
 interface SettingsUserProps {
   user: User
@@ -18,7 +19,10 @@ export default function SettingsUser({ user }: SettingsUserProps) {
 
   const submit: React.FormEventHandler = (e) => {
     e.preventDefault()
-    put(`/user/settings`)
+    put(`/user/settings`, {
+      onSuccess: () => toast.success('Profile updated successfully'),
+      onError: () => toast.error('Failed to update profile')
+    })
   }
 
   return (

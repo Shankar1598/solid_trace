@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SharedProps } from '@/types'
 import { FormEventHandler } from 'react'
+import { toast } from 'sonner'
 
 export default function ProjectsNew() {
   const { current_org } = usePage<SharedProps>().props
@@ -29,7 +30,10 @@ export default function ProjectsNew() {
 
   const submit: FormEventHandler = (e) => {
     e.preventDefault()
-    post(`/${current_org?.slug}/projects`)
+    post(`/${current_org?.slug}/projects`, {
+      onSuccess: () => toast.success('Project created successfully'),
+      onError: () => toast.error('Failed to create project')
+    })
   }
 
   if (!current_org) return null

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { toast } from 'sonner'
 
 export default function Register() {
   const { data, setData, post, processing, errors } = useForm({
@@ -16,7 +17,9 @@ export default function Register() {
 
   const submit: FormEventHandler = (e) => {
     e.preventDefault()
-    post('/registration')
+    post('/registration', {
+      onSuccess: () => toast.success('Account created successfully')
+    })
   }
 
   return (

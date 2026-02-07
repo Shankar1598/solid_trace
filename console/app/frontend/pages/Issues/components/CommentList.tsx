@@ -1,11 +1,11 @@
-import { Link, useForm } from '@inertiajs/react'
+import { useForm, router } from '@inertiajs/react'
 import { Card, CardHeader, CardContent } from '@/components/ui/card'
-import { Button, buttonVariants } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 import { formatDistanceToNow } from 'date-fns'
 import { Comment, User } from '@/types'
 import RichTextEditor from '@/components/RichTextEditor'
 import { Trash } from 'lucide-react'
+import { toast } from 'sonner'
 
 interface CommentListProps {
   comments: Comment[]
@@ -26,7 +26,11 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
     if (!data.content || data.content === '<p></p>' || processing) return
 
     post(`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments`, {
-      onSuccess: () => reset('content'),
+      onSuccess: () => {
+        reset('content')
+        toast.success('Comment posted successfully')
+      },
+      onError: () => toast.error('Failed to post comment'),
       preserveScroll: true,
       preserveState: true
     })
@@ -35,6 +39,16 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
   const submitComment = (e: React.FormEvent) => {
     e.preventDefault()
     handlePostComment()
+  }
+
+  const deleteComment = (commentId: number) => {
+    if (confirm('Are you sure you want to delete this comment?')) {
+      router.delete(`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments/${commentId}`, {
+        onSuccess: () => toast.success('Comment deleted successfully'),
+        onError: () => toast.error('Failed to delete comment'),
+        preserveScroll: true
+      })
+    }
   }
 
   return (
@@ -51,15 +65,14 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
                 </span>
               </div>
               {currentUser && currentUser.id === comment.user.id && (
-                <Link
-                  href={`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments/${comment.id}`}
-                  method="delete"
-                  as="button"
-                  preserveScroll
-                  className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-6 w-6 text-muted-foreground hover:text-destructive")}
+                <Button
+                  onClick={() => deleteComment(comment.id)}
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
                 >
                   <Trash className="h-4 w-4" />
-                </Link>
+                </Button>
               )}
             </CardHeader>
             <CardContent className="py-3 prose dark:prose-invert max-w-none text-sm" dangerouslySetInnerHTML={{ __html: comment.body }} />
