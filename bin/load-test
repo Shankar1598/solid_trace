@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+
+# SolidTrace Load Test Runner
+# Automates k6 load testing with proper setup and configuration
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Default configuration
+SCENARIO="${SCENARIO:-single_issue}"
+MAX_VUS="${MAX_VUS:-100}"
+DURATION="${DURATION:-2m}"
+RAMP_UP="${RAMP_UP:-30s}"
+EVENT_STORE_URL="${EVENT_STORE_URL:-http://localhost:4000}"
+PROJECT_ID="${PROJECT_ID:-1}"
+PUBLIC_KEY="${PUBLIC_KEY:-testkey123}"
+SKIP_RESET="${SKIP_RESET:-false}"
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+K6_SCRIPT="$ROOT_DIR/test/load/k6/event_ingestion.js"
+
+usage() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+SolidTrace Event Ingestion Load Test Runner
+
+OPTIONS:
+  -s, --scenario SCENARIO   Test scenario (default: single_issue)
+                            Options: single_issue, per_1000, per_100, per_event
+  -v, --vus MAX_VUS         Maximum virtual users (default: 100)
+  -d, --duration DURATION   Test duration at max VUs (default: 2m)
+  -r, --ramp-up RAMP_UP     Ramp-up time per stage (default: 30s)
+  --skip-reset              Skip database reset (use existing data)
+  --url URL                 Event store URL (default: http://localhost:4000)
+  -h, --help                Show this help message
+
+SCENARIOS:
+  single_issue    All events grouped into one issue (same fingerprint)
+  per_1000        New issue created every 1000 events
+  per_100         New issue created every 100 events
+  per_event       Every event creates a new issue (unique fingerprints)
+
+EXAMPLES:
+  # Run with defaults (single_issue, 100 VUs, 2 minutes)
+  bin/load-test
+
+  # Test per-event scenario with 200 VUs for 5 minutes
+  bin/load-test -s per_event -v 200 -d 5m
+
+  # Quick test without database reset
+  bin/load-test -s per_100 --skip-reset
+
+  # Run all scenarios
+  for s in single_issue per_1000 per_100 per_event; do
+    bin/load-test -s \$s
+  done
+
+EOF
+  exit 0
+}
+
+log_info() {
+  echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_success() {
+  echo -e "${GREEN}[OK]${NC} $1"
+}
+
+log_warn() {
+  echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+  echo -e "${RED}[ERROR]${NC} $1"
+}
+
+check_prerequisites() {
+  log_info "Checking prerequisites..."
+
+  # Check k6
+  if ! command -v k6 &> /dev/null; then
+    log_error "k6 is not installed. Install with: brew install k6"
+    exit 1
+  fi
+  log_success "k6 is installed ($(k6 version | head -1))"
+
+  # Check Event Store service
+  if ! curl -s --connect-timeout 2 "$EVENT_STORE_URL/health" > /dev/null 2>&1; then
+    log_warn "Event Store at $EVENT_STORE_URL is not responding"
+    log_warn "Make sure services are running: bin/dev"
+    echo ""
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      exit 1
+    fi
+  else
+    log_success "Event Store is running at $EVENT_STORE_URL"
+  fi
+}
+
+reset_database() {
+  if [[ "$SKIP_RESET" == "true" ]]; then
+    log_info "Skipping database reset (--skip-reset)"
+    return
+  fi
+
+  log_info "Resetting database for clean benchmark..."
+  cd "$ROOT_DIR"
+
+  # Reset database
+  if [[ -f "bin/reset-db" ]]; then
+    bin/reset-db
+    log_success "Database reset complete"
+  else
+    log_warn "bin/reset-db not found, skipping database reset"
+  fi
+}
+
+set_ulimit() {
+  # Increase file descriptor limit for high concurrency
+  local current_limit=$(ulimit -n)
+  local desired_limit=65536
+
+  if [[ $current_limit -lt $desired_limit ]]; then
+    log_info "Increasing file descriptor limit from $current_limit to $desired_limit"
+    ulimit -n $desired_limit 2>/dev/null || {
+      log_warn "Could not increase ulimit. You may see 'too many open files' errors."
+      log_warn "To fix: ulimit -n 65536 (or add to ~/.zshrc)"
+    }
+  else
+    log_success "File descriptor limit is sufficient ($current_limit)"
+  fi
+}
+
+run_load_test() {
+  log_info "Starting load test..."
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo "  Scenario:     $SCENARIO"
+  echo "  Max VUs:      $MAX_VUS"
+  echo "  Duration:     $DURATION (at max VUs)"
+  echo "  Ramp Up:      $RAMP_UP (per stage, 4 stages)"
+  echo "  Event Store:  $EVENT_STORE_URL"
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+
+  cd "$ROOT_DIR"
+
+  # Run k6 with environment variables
+  k6 run \
+    -e SCENARIO="$SCENARIO" \
+    -e MAX_VUS="$MAX_VUS" \
+    -e DURATION="$DURATION" \
+    -e RAMP_UP="$RAMP_UP" \
+    -e EVENT_STORE_URL="$EVENT_STORE_URL" \
+    -e PROJECT_ID="$PROJECT_ID" \
+    -e PUBLIC_KEY="$PUBLIC_KEY" \
+    "$K6_SCRIPT"
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -s|--scenario)
+      SCENARIO="$2"
+      shift 2
+      ;;
+    -v|--vus)
+      MAX_VUS="$2"
+      shift 2
+      ;;
+    -d|--duration)
+      DURATION="$2"
+      shift 2
+      ;;
+    -r|--ramp-up)
+      RAMP_UP="$2"
+      shift 2
+      ;;
+    --skip-reset)
+      SKIP_RESET="true"
+      shift
+      ;;
+    --url)
+      EVENT_STORE_URL="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *)
+      log_error "Unknown option: $1"
+      usage
+      ;;
+  esac
+done
+
+# Validate scenario
+case $SCENARIO in
+  single_issue|per_1000|per_100|per_event)
+    ;;
+  *)
+    log_error "Invalid scenario: $SCENARIO"
+    log_error "Valid options: single_issue, per_1000, per_100, per_event"
+    exit 1
+    ;;
+esac
+
+# Main execution
+echo ""
+echo "╔══════════════════════════════════════════════════════════════════╗"
+echo "║           SolidTrace Load Test Runner                            ║"
+echo "╚══════════════════════════════════════════════════════════════════╝"
+echo ""
+
+check_prerequisites
+set_ulimit
+run_load_test
+
+log_success "Load test complete!"
