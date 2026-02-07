@@ -70,17 +70,16 @@ export default function IssuesShow({
 
   if (!current_org) return null
 
+  const breadcrumbItems = [
+    { label: 'Issues', href: `/${current_org.slug}/issues` },
+    { label: `#${issue.number}`, title: issue.title }
+  ]
+
   return (
-    <DashboardLayout>
+    <DashboardLayout breadcrumbs={<Breadcrumbs items={breadcrumbItems} />}>
       <div className="space-y-6">
         {/* Header Section */}
         <div className="space-y-4">
-          <Breadcrumbs
-            organization={current_org}
-            rootLabel="Issues"
-            issue={{ number: issue.number, title: issue.title }}
-          />
-
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1">
               <h1 className="text-2xl font-bold tracking-tight">{issue.title}</h1>

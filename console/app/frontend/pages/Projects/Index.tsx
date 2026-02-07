@@ -18,7 +18,7 @@ export default function ProjectsIndex({ projects }: ProjectsIndexProps) {
   if (!current_org) return null
 
   return (
-    <DashboardLayout>
+    <DashboardLayout reserveBreadcrumbSpace>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
