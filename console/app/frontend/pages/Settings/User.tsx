@@ -43,14 +43,15 @@ export default function SettingsUser({ user }: SettingsUserProps) {
                 Manage your personal information.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6 pb-6">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">Email Address</Label>
                 <Input
                   id="email"
                   value={data.email}
                   disabled
                   className="bg-muted"
+                  placeholder="your-email@example.com"
                 />
                 <p className="text-xs text-muted-foreground">
                   Email usage is managed by your organization administrator or via support.
@@ -63,6 +64,7 @@ export default function SettingsUser({ user }: SettingsUserProps) {
                   id="name"
                   value={data.name}
                   onChange={(e) => setData('name', e.target.value)}
+                  placeholder="Enter your full name"
                 />
                 {errors.name && (
                   <p className="text-sm font-medium text-destructive">{errors.name}</p>

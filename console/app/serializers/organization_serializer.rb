@@ -19,7 +19,7 @@ class OrganizationSerializer
         {
           id: ou.id,
           user: UserSerializer.new(ou.user).as_json,
-          # role: ou.role
+          role: ou.role
         }
       end
     end
