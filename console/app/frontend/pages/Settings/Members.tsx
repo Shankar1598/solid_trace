@@ -4,6 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SharedProps, Organization } from '@/types'
 import { UserPlus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -19,9 +20,10 @@ interface SettingsMembersProps {
       role: 'admin' | 'member'
     }>
   }
+  can_manage_members: boolean
 }
 
-export default function SettingsMembers({ organization }: SettingsMembersProps) {
+export default function SettingsMembers({ organization, can_manage_members }: SettingsMembersProps) {
   const { current_user } = usePage<SharedProps>().props
 
   const { data, setData, post, processing, errors, reset } = useForm({
@@ -31,7 +33,7 @@ export default function SettingsMembers({ organization }: SettingsMembersProps) 
 
   const submitMember: React.FormEventHandler = (e) => {
     e.preventDefault()
-    post(`/${organization.slug}/settings/members`, {
+    post(`/${organization.slug}/settings/organization_users`, {
       onSuccess: () => {
         reset()
         toast.success('Member invited successfully')
@@ -43,11 +45,21 @@ export default function SettingsMembers({ organization }: SettingsMembersProps) 
 
   const removeMember = (id: number) => {
     if (confirm('Are you sure you want to remove this member?')) {
-      router.delete(`/${organization.slug}/settings/members/${id}`, {
+      router.delete(`/${organization.slug}/settings/organization_users/${id}`, {
         onSuccess: () => toast.success('Member removed successfully'),
         onError: () => toast.error('Failed to remove member')
       })
     }
+  }
+
+  const updateRole = (id: number, role: string | null) => {
+    router.patch(`/${organization.slug}/settings/organization_users/${id}`, {
+      organization_user: { role }
+    }, {
+      onSuccess: () => toast.success('Member role updated successfully'),
+      onError: () => toast.error('Failed to update member role'),
+      preserveScroll: true
+    })
   }
 
   return (
@@ -70,38 +82,40 @@ export default function SettingsMembers({ organization }: SettingsMembersProps) 
             </CardHeader>
             <CardContent className="space-y-6 pb-6">
               {/* Add Member Form */}
-              <div className="p-6 border rounded-none bg-muted/20 space-y-4">
-                <h4 className="font-medium text-sm flex items-center gap-2">
-                  <UserPlus className="h-4 w-4" /> Invite New Member
-                </h4>
-                <form onSubmit={submitMember} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 items-end">
-                  <div className="space-y-2">
-                    <Label htmlFor="newMemberEmail">Email Address</Label>
-                    <Input
-                      id="newMemberEmail"
-                      placeholder="colleague@example.com"
-                      type="email"
-                      value={data.email}
-                      onChange={(e) => setData('email', e.target.value)}
-                      required
-                    />
-                    {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="newMemberName">Full Name (Optional)</Label>
-                    <Input
-                      id="newMemberName"
-                      placeholder="e.g. John Doe"
-                      value={data.name}
-                      onChange={(e) => setData('name', e.target.value)}
-                    />
-                    {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
-                  </div>
-                  <Button type="submit" disabled={processing} className="w-full sm:w-auto">
-                    {processing ? 'Inviting...' : 'Send Invitation'}
-                  </Button>
-                </form>
-              </div>
+              {can_manage_members && (
+                <div className="p-6 border rounded-none bg-muted/20 space-y-4">
+                  <h4 className="font-medium text-sm flex items-center gap-2">
+                    <UserPlus className="h-4 w-4" /> Invite New Member
+                  </h4>
+                  <form onSubmit={submitMember} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 items-end">
+                    <div className="space-y-2">
+                      <Label htmlFor="newMemberEmail">Email Address</Label>
+                      <Input
+                        id="newMemberEmail"
+                        placeholder="colleague@example.com"
+                        type="email"
+                        value={data.email}
+                        onChange={(e) => setData('email', e.target.value)}
+                        required
+                      />
+                      {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="newMemberName">Full Name (Optional)</Label>
+                      <Input
+                        id="newMemberName"
+                        placeholder="e.g. John Doe"
+                        value={data.name}
+                        onChange={(e) => setData('name', e.target.value)}
+                      />
+                      {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
+                    </div>
+                    <Button type="submit" disabled={processing} className="w-full sm:w-auto">
+                      {processing ? 'Inviting...' : 'Send Invitation'}
+                    </Button>
+                  </form>
+                </div>
+              )}
 
               {/* Members List */}
               <div className="divide-y border">
@@ -122,14 +136,32 @@ export default function SettingsMembers({ organization }: SettingsMembersProps) 
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
-                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded tracking-wider ring-1 ring-inset ${member.role === 'admin'
-                          ? 'bg-blue-400/10 text-blue-400 ring-blue-400/20'
-                          : 'bg-muted/50 text-muted-foreground ring-foreground/10'
-                          }`}>
-                          {member.role}
-                        </span>
+                        {can_manage_members ? (
+                          <Select
+                            value={member.role}
+                            onValueChange={(val) => updateRole(member.id, val)}
+                          >
+                            <SelectTrigger className={`h-7 w-24 text-[10px] font-bold uppercase rounded tracking-wider ring-1 ring-inset border-0 ${member.role === 'admin'
+                              ? 'bg-blue-400/10 text-blue-400 ring-blue-400/20'
+                              : 'bg-muted/50 text-muted-foreground ring-foreground/10'
+                              }`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="member" className="text-[10px] font-bold uppercase">Member</SelectItem>
+                              <SelectItem value="admin" className="text-[10px] font-bold uppercase">Admin</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded tracking-wider ring-1 ring-inset ${member.role === 'admin'
+                            ? 'bg-blue-400/10 text-blue-400 ring-blue-400/20'
+                            : 'bg-muted/50 text-muted-foreground ring-foreground/10'
+                            }`}>
+                            {member.role}
+                          </span>
+                        )}
 
-                        {current_user?.email !== member.user.email && (
+                        {can_manage_members && current_user?.email !== member.user.email && (
                           <Button
                             variant="ghost"
                             size="icon"

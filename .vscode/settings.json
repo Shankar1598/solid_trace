@@ -14,5 +14,7 @@
     "dlv": "${workspaceFolder}/.vscode/mise-tools/dlv",
     "gopls": "${workspaceFolder}/.vscode/mise-tools/gopls"
   },
-  "bun.runtime": "${workspaceFolder}/.vscode/mise-tools/bun"
+  "bun.runtime": "${workspaceFolder}/.vscode/mise-tools/bun",
+  "ruby.rubocop.useServer": true,
+  "ruby.rubocop.executePath": "console/bin/"
 }

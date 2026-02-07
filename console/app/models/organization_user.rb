@@ -16,6 +16,10 @@ class OrganizationUser < ApplicationRecord
   validates :role, presence: true
   validate :organization_must_have_at_least_one_admin
 
+  def admin?
+    role == "admin"
+  end
+
   private
 
   def organization_must_have_at_least_one_admin
