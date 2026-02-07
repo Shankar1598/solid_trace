@@ -14,11 +14,16 @@ class IssuesController < ApplicationController
     if params[:query].present?
       @issues = @issues.where("title LIKE ?", "%#{params[:query]}%")
     end
+    if params[:project_id].present? && params[:project_id] != "all"
+      @issues = @issues.where(project_id: params[:project_id])
+    end
     render inertia: "Issues/Index", props: {
       issues: @issues.includes(:project, assignee: :user).map { |i| IssueSerializer.new(i).as_json },
+      projects: @current_org.projects.map { |p| ProjectSerializer.new(p).as_json },
       filters: {
         status: params[:status] || "all",
         query: params[:query] || "",
+        project_id: params[:project_id] || "all",
       },
     }
   end

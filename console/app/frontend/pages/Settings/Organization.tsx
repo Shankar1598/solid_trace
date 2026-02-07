@@ -70,10 +70,12 @@ export default function SettingsOrganization({ organization }: SettingsOrganizat
                     value={data.slug}
                     onChange={(e) => setData('slug', e.target.value)}
                     className="font-mono"
-                    placeholder="organization-slug"
                   />
+                  {errors.slug && (
+                    <p className="text-sm font-medium text-destructive">{errors.slug}</p>
+                  )}
                   <p className="text-xs text-muted-foreground">
-                    The slug is used in your organization's URL and must be unique.
+                    The slug is used in URLs. Changing it will break existing links.
                   </p>
                   {errors.slug && (
                     <p className="text-sm font-medium text-destructive">{errors.slug}</p>
