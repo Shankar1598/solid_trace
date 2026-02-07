@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { SharedProps } from '@/types'
 import { FormEventHandler } from 'react'
+import { toast } from 'sonner'
 
 interface IntegrationsNewProps {
   providers: { [key: string]: string }
@@ -34,7 +35,10 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
 
   const submit: FormEventHandler = (e) => {
     e.preventDefault()
-    post(`/${current_org?.slug}/settings/integrations`)
+    post(`/${current_org?.slug}/settings/integrations`, {
+      onSuccess: () => toast.success('Integration added successfully'),
+      onError: () => toast.error('Failed to add integration')
+    })
   }
 
   if (!current_org) return null

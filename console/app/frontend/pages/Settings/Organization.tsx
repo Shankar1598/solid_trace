@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Organization } from '@/types'
+import { toast } from 'sonner'
 
 interface SettingsOrganizationProps {
   organization: Organization
@@ -23,7 +24,9 @@ export default function SettingsOrganization({ organization }: SettingsOrganizat
   const submitOrg: React.FormEventHandler = (e) => {
     e.preventDefault()
     put(`/${organization.slug}/settings/organization`, {
-      preserveScroll: true
+      preserveScroll: true,
+      onSuccess: () => toast.success('Organization settings updated successfully'),
+      onError: () => toast.error('Failed to update organization settings')
     })
   }
 

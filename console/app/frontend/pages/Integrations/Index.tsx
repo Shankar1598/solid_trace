@@ -7,6 +7,7 @@ import { Integration, SharedProps } from '@/types'
 import { Plus, Settings, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { router } from '@inertiajs/react'
+import { toast } from 'sonner'
 
 interface IntegrationsIndexProps {
   integrations: Integration[]
@@ -19,7 +20,10 @@ export default function IntegrationsIndex({ integrations }: IntegrationsIndexPro
 
   const handleDelete = (id: number) => {
     if (confirm('Are you sure you want to delete this integration?')) {
-      router.delete(`/${current_org.slug}/settings/integrations/${id}`)
+      router.delete(`/${current_org.slug}/settings/integrations/${id}`, {
+        onSuccess: () => toast.success('Integration deleted successfully'),
+        onError: () => toast.error('Failed to delete integration')
+      })
     }
   }
 

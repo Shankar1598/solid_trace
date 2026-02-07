@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SharedProps, Organization } from '@/types'
 import { UserPlus, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 
 interface SettingsMembersProps {
   organization: Organization & {
@@ -31,14 +32,21 @@ export default function SettingsMembers({ organization }: SettingsMembersProps) 
   const submitMember: React.FormEventHandler = (e) => {
     e.preventDefault()
     post(`/${organization.slug}/settings/members`, {
-      onSuccess: () => reset(),
+      onSuccess: () => {
+        reset()
+        toast.success('Member invited successfully')
+      },
+      onError: () => toast.error('Failed to invite member'),
       preserveScroll: true
     })
   }
 
   const removeMember = (id: number) => {
     if (confirm('Are you sure you want to remove this member?')) {
-      router.delete(`/${organization.slug}/settings/members/${id}`)
+      router.delete(`/${organization.slug}/settings/members/${id}`, {
+        onSuccess: () => toast.success('Member removed successfully'),
+        onError: () => toast.error('Failed to remove member')
+      })
     }
   }
 
