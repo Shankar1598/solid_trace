@@ -58,7 +58,7 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
             <CardHeader>
               <CardTitle>Integration Details</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-6 pb-6">
 
               <div className="space-y-2">
                 <Label htmlFor="provider">Provider</Label>
@@ -93,7 +93,7 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
 
               {/* Dynamic fields based on provider */}
               {data.provider === 'slack' && (
-                <div className="space-y-4 pt-6 border-t">
+                <div className="space-y-6 pt-6 border-t">
                   <h3 className="font-medium text-sm">Slack Configuration</h3>
                   <div className="space-y-2">
                     <Label htmlFor="webhook_url">Webhook URL</Label>
@@ -104,24 +104,28 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                       onChange={(e) => setData('settings', { ...data.settings, webhook_url: e.target.value })}
                       required
                     />
+                    <p className="text-xs text-muted-foreground">
+                      The Incoming Webhook URL from your Slack App configuration.
+                    </p>
                   </div>
                 </div>
               )}
 
               {data.provider === 'pagerduty' && (
-                <div className="space-y-4 pt-6 border-t">
+                <div className="space-y-6 pt-6 border-t">
                   <h3 className="font-medium text-sm">PagerDuty Configuration</h3>
                   <div className="space-y-2">
-                    <Label htmlFor="routing_key">Routing Key / Integration Key</Label>
+                    <Label htmlFor="routing_key">Routing Key</Label>
                     <Input
                       id="routing_key"
+                      placeholder="Enter your PagerDuty Integration Key"
                       value={data.settings.routing_key}
                       onChange={(e) => setData('settings', { ...data.settings, routing_key: e.target.value })}
                       required
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="severity">Severity</Label>
+                    <Label htmlFor="severity">Incident Severity</Label>
                     <Select
                       value={data.settings.severity}
                       onValueChange={(val) => setData('settings', { ...data.settings, severity: val ?? 'error' })}
@@ -141,10 +145,10 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
               )}
 
               {data.provider === 'email' && (
-                <div className="space-y-4 pt-6 border-t">
+                <div className="space-y-6 pt-6 border-t">
                   <h3 className="font-medium text-sm">Email Configuration</h3>
                   <div className="space-y-2">
-                    <Label htmlFor="recipients">Recipients (comma separated)</Label>
+                    <Label htmlFor="recipients">Recipients</Label>
                     <Input
                       id="recipients"
                       placeholder="devs@company.com, ops@company.com"
@@ -152,12 +156,15 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
                       onChange={(e) => setData('settings', { ...data.settings, recipients: e.target.value })}
                       required
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Separate multiple email addresses with commas.
+                    </p>
                   </div>
                 </div>
               )}
 
               {data.provider && (
-                <div className="space-y-4 pt-6 border-t">
+                <div className="space-y-6 pt-6 border-t">
                   <h3 className="font-medium text-sm">Common Notification Rules</h3>
                   <div className="flex items-center space-x-2">
                     <Checkbox
