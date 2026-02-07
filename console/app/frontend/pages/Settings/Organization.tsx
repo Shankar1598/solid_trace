@@ -49,26 +49,32 @@ export default function SettingsOrganization({ organization }: SettingsOrganizat
                   Manage your organization profile.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-6 pb-6">
                 <div className="space-y-2">
                   <Label htmlFor="orgName">Organization Name</Label>
                   <Input
                     id="orgName"
                     value={data.name}
                     onChange={(e) => setData('name', e.target.value)}
+                    placeholder="Enter organization name"
                   />
                   {errors.name && (
                     <p className="text-sm font-medium text-destructive">{errors.name}</p>
                   )}
                 </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="slug">Slug</Label>
+                  <Label htmlFor="slug">Organization Slug</Label>
                   <Input
                     id="slug"
                     value={data.slug}
                     onChange={(e) => setData('slug', e.target.value)}
                     className="font-mono"
+                    placeholder="organization-slug"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    The slug is used in your organization's URL and must be unique.
+                  </p>
                   {errors.slug && (
                     <p className="text-sm font-medium text-destructive">{errors.slug}</p>
                   )}
