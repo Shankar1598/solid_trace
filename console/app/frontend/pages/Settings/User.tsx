@@ -20,7 +20,6 @@ export default function SettingsUser({ user }: SettingsUserProps) {
   const submit: React.FormEventHandler = (e) => {
     e.preventDefault()
     put(`/user/settings`, {
-      onSuccess: () => toast.success('Profile updated successfully'),
       onError: () => toast.error('Failed to update profile')
     })
   }

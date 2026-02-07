@@ -38,7 +38,6 @@ export default function IntegrationsEdit({ integration, providers }: Integration
   const submit: FormEventHandler = (e) => {
     e.preventDefault()
     put(`/${current_org?.slug}/settings/integrations/${integration.id}`, {
-      onSuccess: () => toast.success('Integration updated successfully'),
       onError: () => toast.error('Failed to update integration')
     })
   }

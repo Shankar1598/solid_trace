@@ -25,7 +25,6 @@ export default function SettingsOrganization({ organization }: SettingsOrganizat
     e.preventDefault()
     put(`/${organization.slug}/settings/organization`, {
       preserveScroll: true,
-      onSuccess: () => toast.success('Organization settings updated successfully'),
       onError: () => toast.error('Failed to update organization settings')
     })
   }

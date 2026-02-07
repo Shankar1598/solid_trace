@@ -31,7 +31,6 @@ export default function ProjectsNew() {
   const submit: FormEventHandler = (e) => {
     e.preventDefault()
     post(`/${current_org?.slug}/projects`, {
-      onSuccess: () => toast.success('Project created successfully'),
       onError: () => toast.error('Failed to create project')
     })
   }

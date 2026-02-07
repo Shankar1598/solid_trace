@@ -36,9 +36,7 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
     post(`/${organization.slug}/settings/organization_users`, {
       onSuccess: () => {
         reset()
-        toast.success('Member invited successfully')
       },
-      onError: () => toast.error('Failed to invite member'),
       preserveScroll: true
     })
   }
@@ -46,7 +44,6 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
   const removeMember = (id: number) => {
     if (confirm('Are you sure you want to remove this member?')) {
       router.delete(`/${organization.slug}/settings/organization_users/${id}`, {
-        onSuccess: () => toast.success('Member removed successfully'),
         onError: () => toast.error('Failed to remove member')
       })
     }
@@ -56,8 +53,11 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
     router.patch(`/${organization.slug}/settings/organization_users/${id}`, {
       organization_user: { role }
     }, {
-      onSuccess: () => toast.success('Member role updated successfully'),
-      onError: () => toast.error('Failed to update member role'),
+      onError: (errors) => {
+        const firstError = Object.values(errors)[0]
+        const message = Array.isArray(firstError) ? firstError[0] : firstError
+        toast.error(message || 'Failed to update member role')
+      },
       preserveScroll: true
     })
   }

@@ -1,9 +1,11 @@
 import { Sidebar } from '../Sidebar'
+import FlashToasts from '../FlashToasts'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen max-h-screen flex-col md:flex-row">
+      <FlashToasts />
       <Sidebar className="hidden md:flex flex-shrink-0" />
 
       <div className="flex-1 flex flex-col min-w-0">
