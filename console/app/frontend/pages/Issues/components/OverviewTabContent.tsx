@@ -2,8 +2,8 @@ import { router } from '@inertiajs/react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Hash, ArrowLeft, ArrowRight, Code, Copy, User as UserIcon, Tag } from 'lucide-react'
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Hash, ArrowLeft, ArrowRight, Code, Copy, User as UserIcon, Tag, X } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import Stacktrace from '@/components/Stacktrace'
 import { Issue, Event } from '@/types'
@@ -24,6 +24,13 @@ export function OverviewTabContent({
   next_event_id,
   current_org,
 }: OverviewTabContentProps) {
+  const formattedEventJson = event?.event_data ? JSON.stringify(event.event_data, null, 2) : ''
+  const handleCopyEventJson = () => {
+    if (formattedEventJson) {
+      navigator.clipboard.writeText(formattedEventJson)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -73,26 +80,38 @@ export function OverviewTabContent({
                   JSON
                 </div>
               </DialogTrigger>
-              <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+              <DialogContent className="w-[80vw] max-w-[80vw] sm:max-w-[80vw] max-h-[80vh] flex flex-col" showCloseButton={false}>
                 <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-4 border-b">
                   <DialogTitle>Event JSON</DialogTitle>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => {
-                      if (event?.event_data) {
-                        navigator.clipboard.writeText(JSON.stringify(event.event_data, null, 2))
-                      }
-                    }}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-2"
+                      disabled={!formattedEventJson}
+                      onClick={handleCopyEventJson}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy
+                    </Button>
+                    <DialogClose
+                      render={<Button variant="ghost" size="icon-sm" className="h-8 w-8" />}
+                    >
+                      <X className="h-4 w-4" />
+                      <span className="sr-only">Close</span>
+                    </DialogClose>
+                  </div>
                 </DialogHeader>
-                <div className="flex-1 overflow-auto bg-muted p-4 mt-4 border border-muted-foreground/20">
-                  <pre className="text-xs font-mono">
-                    {JSON.stringify(event?.event_data, null, 2)}
-                  </pre>
+                <div className="flex-1 overflow-auto bg-muted/40 p-4 mt-4 border border-muted-foreground/20 rounded-md">
+                  {formattedEventJson ? (
+                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">
+                      {formattedEventJson}
+                    </pre>
+                  ) : (
+                    <div className="text-sm text-muted-foreground italic">
+                      No event data available.
+                    </div>
+                  )}
                 </div>
               </DialogContent>
             </Dialog>
