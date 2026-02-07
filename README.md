@@ -45,4 +45,40 @@ Starts Rails, Vite, EventStore, and background jobs via `Procfile.dev`.
 - `console/` — Rails app (UI, API, user management)
 - `event_store/` — Go service (event ingestion and processing)
 
+## Load Testing
+
+Run event ingestion load tests using k6:
+
+```bash
+# Install k6 (macOS)
+brew install k6
+
+# Run with defaults (single_issue scenario, 100 VUs, 2 minutes)
+bin/load-test
+
+# Test specific scenario with custom VUs
+bin/load-test --scenario per_event --vus 200 --duration 5m
+```
+
+Available scenarios:
+- `single_issue` — All events grouped into one issue
+- `per_1000` — New issue every 1000 events
+- `per_100` — New issue every 100 events
+- `per_event` — Every event creates a new issue
+
+See [test/load/k6/README.md](test/load/k6/README.md) for detailed documentation.
+
+## Performance Benchmarks
+
+Benchmarks run on MacBook Pro M3 (11-core, 18GB RAM) with ~8KB event payloads.
+
+| Scenario | VUs | Max RPS | P95 Latency | P99 Latency | Success Rate |
+|----------|-----|---------|-------------|-------------|--------------|
+| single_issue | - | - | - | - | - |
+| per_1000 | - | - | - | - | - |
+| per_100 | - | - | - | - | - |
+| per_event | - | - | - | - | - |
+
+*Run `bin/load-test` and update these results with your hardware's performance.*
+
 
