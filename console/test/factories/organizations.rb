@@ -3,6 +3,6 @@
 FactoryBot.define do
   factory :organization do
     name { Faker::Company.name }
-    slug { Faker::Internet.slug(words: name, glue: "-") }
+    slug { name.parameterize }
   end
 end

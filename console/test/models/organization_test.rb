@@ -18,4 +18,20 @@ class OrganizationTest < ActiveSupport::TestCase
 
     assert_includes organization.users, user
   end
+
+  test "validates name and slug" do
+    org = Organization.new(name: "", slug: "")
+    assert_not org.valid?
+    assert_includes org.errors[:name], "can't be blank"
+    assert_includes org.errors[:slug], "can't be blank"
+
+    org.slug = "invalid slug"
+    assert_not org.valid?
+    assert_includes org.errors[:slug], "only allows lowercase letters, numbers, and hyphens"
+
+    create(:organization, slug: "existing")
+    org.slug = "existing"
+    assert_not org.valid?
+    assert_includes org.errors[:slug], "has already been taken"
+  end
 end
