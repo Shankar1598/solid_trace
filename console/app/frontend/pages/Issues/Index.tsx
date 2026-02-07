@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Issue, SharedProps } from '@/types'
+import { Issue, Project, SharedProps } from '@/types'
 import { formatDistanceToNow } from 'date-fns'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -16,16 +16,25 @@ import {
 } from "@/components/ui/table"
 
 
+const TIME_RANGE_OPTIONS = { '24h': '24H', '14d': '14D', '30d': '30D' }
+const SORT_OPTIONS = {
+  last_seen: 'Last Seen',
+  created: 'First Seen',
+  priority: 'Priority'
+}
+
 interface IssuesIndexProps {
   issues: Issue[]
+  projects: Project[]
   filters: {
     status: string
     query: string
     environment: string
+    project_id: string
   }
 }
 
-export default function IssuesIndex({ issues, filters }: IssuesIndexProps) {
+export default function IssuesIndex({ issues, projects, filters }: IssuesIndexProps) {
   const { current_org } = usePage<SharedProps>().props
   const [searchTerm, setSearchTerm] = useState(filters.query || '')
 
@@ -48,8 +57,14 @@ export default function IssuesIndex({ issues, filters }: IssuesIndexProps) {
     const params = new URLSearchParams({ ...filters, ...newFilters })
     if (params.get('status') === 'all') params.delete('status')
     if (params.get('environment') === 'all') params.delete('environment')
+    if (params.get('project_id') === 'all') params.delete('project_id')
     if (!params.get('query')) params.delete('query')
     return `?${params.toString()}`
+  }
+
+  const projectOptions: Record<string, string> = {
+    all: 'All Projects',
+    ...Object.fromEntries(projects.map(p => [p.id.toString(), p.name]))
   }
 
   return (
@@ -59,25 +74,30 @@ export default function IssuesIndex({ issues, filters }: IssuesIndexProps) {
           <h1 className="text-xl font-bold tracking-tight">Issues</h1>
         </div>
 
-        {/* Filter Bar */}
         <div className="flex items-center gap-2 w-full">
           <div className="flex items-center border">
-            <Select defaultValue="all">
-              <SelectTrigger className="w-[130px] border-0 border-r">
+            <Select
+              value={filters.project_id}
+              onValueChange={(val) => router.get(getFilterUrl({ project_id: val || 'all' }), {}, { preserveState: true, replace: true, preserveScroll: true })}
+              items={projectOptions}
+            >
+              <SelectTrigger className="border-0 border-r">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Projects</SelectItem>
-                {/* Dynamically populate projects if available, for now static */}
+                {Object.entries(projectOptions).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            <Select defaultValue="14d">
-              <SelectTrigger className="w-[80px] border-0">
+            <Select defaultValue="14d" items={TIME_RANGE_OPTIONS}>
+              <SelectTrigger className="border-0">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="24h">24H</SelectItem>
-                <SelectItem value="14d">14D</SelectItem>
+                {Object.entries(TIME_RANGE_OPTIONS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -92,15 +112,15 @@ export default function IssuesIndex({ issues, filters }: IssuesIndexProps) {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <Select defaultValue="last_seen">
+            <Select defaultValue="last_seen" items={SORT_OPTIONS}>
               <SelectTrigger>
                 <span className="text-muted-foreground mr-1">Sort:</span>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="last_seen">Last Seen</SelectItem>
-                <SelectItem value="created">First Seen</SelectItem>
-                <SelectItem value="priority">Priority</SelectItem>
+                {Object.entries(SORT_OPTIONS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
