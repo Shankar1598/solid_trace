@@ -36,7 +36,6 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
   const submit: FormEventHandler = (e) => {
     e.preventDefault()
     post(`/${current_org?.slug}/settings/integrations`, {
-      onSuccess: () => toast.success('Integration added successfully'),
       onError: () => toast.error('Failed to add integration')
     })
   }

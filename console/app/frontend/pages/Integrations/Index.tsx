@@ -21,7 +21,6 @@ export default function IntegrationsIndex({ integrations }: IntegrationsIndexPro
   const handleDelete = (id: number) => {
     if (confirm('Are you sure you want to delete this integration?')) {
       router.delete(`/${current_org.slug}/settings/integrations/${id}`, {
-        onSuccess: () => toast.success('Integration deleted successfully'),
         onError: () => toast.error('Failed to delete integration')
       })
     }

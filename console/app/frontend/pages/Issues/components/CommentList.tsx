@@ -28,7 +28,6 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
     post(`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments`, {
       onSuccess: () => {
         reset('content')
-        toast.success('Comment posted successfully')
       },
       onError: () => toast.error('Failed to post comment'),
       preserveScroll: true,
@@ -44,7 +43,6 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
   const deleteComment = (commentId: number) => {
     if (confirm('Are you sure you want to delete this comment?')) {
       router.delete(`/${orgSlug}/projects/${projectId}/issues/${issueId}/comments/${commentId}`, {
-        onSuccess: () => toast.success('Comment deleted successfully'),
         onError: () => toast.error('Failed to delete comment'),
         preserveScroll: true
       })

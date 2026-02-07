@@ -28,21 +28,12 @@ export function IssueSidebar({ issue, assignees, orgSlug }: IssueSidebarProps) {
 
   const updateAssignee = (value: string | null) => {
     const nextValue = value ?? 'unassigned'
-    const assigneeName =
-      nextValue === 'unassigned'
-        ? 'Unassigned'
-        : (assignees.find((m) => String(m.id) === nextValue)?.user.name ?? 'assignee')
 
     router.patch(
       `/${orgSlug}/projects/${issue.project.slug}/issues/${issue.number}/assign`,
       { assignee_id: nextValue === 'unassigned' ? null : Number(nextValue) },
       {
         preserveScroll: true,
-        onSuccess: () => {
-          toast.success(
-            nextValue === 'unassigned' ? 'Issue unassigned' : `Assigned to ${assigneeName}`
-          )
-        },
         onError: () => {
           toast.error('Failed to update assignee')
         },
