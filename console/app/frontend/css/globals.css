@@ -128,4 +128,8 @@
   html {
     @apply font-sans;
   }
+
+  select {
+    @apply cursor-pointer;
+  }
 }
