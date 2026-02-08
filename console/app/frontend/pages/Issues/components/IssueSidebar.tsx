@@ -1,30 +1,56 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox'
 import { router } from '@inertiajs/react'
 import { Clock, Hash, MapPin } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { Issue, User } from '@/types'
 import { toast } from 'sonner'
+import { useEffect, useMemo, useState } from 'react'
+
+type OrganizationMember = {
+  id: number
+  user: User
+  discarded_at?: string | null
+}
 
 interface IssueSidebarProps {
   issue: Issue
-  assignees: Array<{
-    id: number
-    user: User
-  }>
   orgSlug: string
 }
 
-export function IssueSidebar({ issue, assignees, orgSlug }: IssueSidebarProps) {
+export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
   const assigneeValue = issue.assignee ? String(issue.assignee.id) : 'unassigned'
   const assigneeIsArchived = Boolean(issue.assignee?.discarded_at)
-  const assigneeInList = issue.assignee ? assignees.some((a) => a.id === issue.assignee!.id) : true
+  const [members, setMembers] = useState<OrganizationMember[]>([])
+  const [query, setQuery] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
-  const selectedLabel =
-    assigneeValue === 'unassigned'
-      ? 'Unassigned'
-      : (assignees.find((m) => String(m.id) === assigneeValue)?.user.name ?? issue.assignee?.user.name ?? assigneeValue)
+  const selectedLabel = useMemo(() => {
+    if (assigneeValue === 'unassigned') return 'Unassigned'
+    const selected = members.find((m) => String(m.id) === assigneeValue)
+    return selected?.user.name ?? issue.assignee?.user.name ?? issue.assignee?.user.email ?? assigneeValue
+  }, [assigneeValue, members, issue.assignee])
+
+  const assigneeInList = issue.assignee ? members.some((a) => a.id === issue.assignee!.id) : true
+
+  const mergedMembers = useMemo(() => {
+    if (!issue.assignee || assigneeInList) return members
+    return [
+      {
+        id: issue.assignee.id,
+        user: issue.assignee.user,
+        discarded_at: issue.assignee.discarded_at,
+      },
+      ...members,
+    ]
+  }, [assigneeInList, issue.assignee, members])
 
   const updateAssignee = (value: string | null) => {
     const nextValue = value ?? 'unassigned'
@@ -41,6 +67,41 @@ export function IssueSidebar({ issue, assignees, orgSlug }: IssueSidebarProps) {
     )
   }
 
+  useEffect(() => {
+    let isActive = true
+    const controller = new AbortController()
+    const trimmedQuery = query.trim()
+
+    const timeout = window.setTimeout(async () => {
+      setIsLoading(true)
+      try {
+        const response = await fetch(
+          `/${orgSlug}/organization_users/search?query=${encodeURIComponent(trimmedQuery)}`,
+          { signal: controller.signal }
+        )
+        if (!response.ok) throw new Error('Failed to fetch members')
+        const data = (await response.json()) as { members: OrganizationMember[] }
+        if (isActive) {
+          setMembers(data.members)
+        }
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') {
+          toast.error('Failed to load members')
+        }
+      } finally {
+        if (isActive) {
+          setIsLoading(false)
+        }
+      }
+    }, 250)
+
+    return () => {
+      isActive = false
+      controller.abort()
+      window.clearTimeout(timeout)
+    }
+  }, [orgSlug, query])
+
   return (
     <Card>
       <CardHeader className="border-b">
@@ -51,27 +112,56 @@ export function IssueSidebar({ issue, assignees, orgSlug }: IssueSidebarProps) {
           <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">
             Assigned to
           </span>
-          <Select value={assigneeValue} onValueChange={updateAssignee}>
-            <SelectTrigger>
-              <div className="flex items-center justify-between w-full">
-                <span className="truncate">{selectedLabel}</span>
-                <SelectValue className="sr-only" />
-              </div>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="unassigned">Unassigned</SelectItem>
-              {!assigneeInList && issue.assignee && (
-                <SelectItem value={String(issue.assignee.id)} disabled>
-                  {issue.assignee.user.name} (Archived)
-                </SelectItem>
+          <Combobox
+            value={assigneeValue}
+            inputValue={query}
+            onInputValueChange={setQuery}
+            onValueChange={(value) => {
+              updateAssignee(value)
+              if (!value || value === 'unassigned') {
+                setQuery('')
+                return
+              }
+              const selected = mergedMembers.find((member) => String(member.id) === value)
+              setQuery(selected?.user.name ?? selected?.user.email ?? selectedLabel)
+            }}
+          >
+            <ComboboxInput
+              placeholder={selectedLabel}
+              showClear
+              aria-label="Assign issue"
+              onFocus={() => {
+                if (!query) {
+                  setQuery(selectedLabel === 'Unassigned' ? '' : selectedLabel)
+                }
+              }}
+            />
+            <ComboboxContent>
+              <ComboboxList>
+                <ComboboxItem value="unassigned">Unassigned</ComboboxItem>
+                {mergedMembers.map((member) => (
+                  <ComboboxItem
+                    key={member.id}
+                    value={String(member.id)}
+                    disabled={Boolean(member.discarded_at)}
+                  >
+                    {member.user.name}
+                    {member.discarded_at ? ' (Archived)' : ''}
+                  </ComboboxItem>
+                ))}
+              </ComboboxList>
+              {isLoading && (
+                <div className="px-2 py-2 text-xs text-muted-foreground">
+                  Loading members...
+                </div>
               )}
-              {assignees.map((member) => (
-                <SelectItem key={member.id} value={String(member.id)}>
-                  {member.user.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              {!isLoading && query.trim().length > 0 && mergedMembers.length === 0 && (
+                <div className="px-2 py-2 text-xs text-muted-foreground">
+                  No members found.
+                </div>
+              )}
+            </ComboboxContent>
+          </Combobox>
           {assigneeIsArchived && issue.assignee && (
             <div className="text-[11px] text-muted-foreground">
               Currently assigned member is archived.

@@ -62,7 +62,6 @@ class IssuesController < ApplicationController
         total_count: @events_count,
       },
       comments: @issue.comments.includes(organization_user: :user).order(created_at: :asc).map { |c| CommentSerializer.new(c).as_json },
-      assignees: @current_org.organization_users.includes(:user).map { |ou| { id: ou.id, user: UserSerializer.new(ou.user).as_json } },
     }
   end
 
