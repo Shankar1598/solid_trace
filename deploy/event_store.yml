@@ -1,0 +1,24 @@
+# Event Store configuration.
+# Any key here overrides the defaults in config.go.
+
+ingest_socket: /var/run/solid-trace/event_store.sock
+rocksdb_path: /storage/rocksdb/production/events
+duckdb_path: /storage/duckdb/production/events.duckdb
+sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
+message_queue_path: /storage/sqlite/production/message_queue.sqlite3
+
+# Use rocksdb_db_paths to place higher RocksDB levels on slower disks.
+# RocksDB fills paths in order until target_size_gb, then uses the next path.
+# Set the first path target_size_gb to the amount you want to keep on fast disk.
+rocksdb_db_paths:
+  - path: /storage/rocksdb/production/events
+    target_size_gb: 10 # fast disk for lower levels
+  - path: /storage_cold/rocksdb/production/events
+    target_size_gb: 0 # 0 means no target limit for the cold path
+
+# Store DuckDB parquet archives on slower storage.
+parquet_storage_path: /storage_cold/duckdb/production/events_parquet
+
+# DuckDB memory and spill-to-disk settings
+# duckdb_temp_directory: /storage_local/duckdb/tmp
+# duckdb_memory_limit: 16GB

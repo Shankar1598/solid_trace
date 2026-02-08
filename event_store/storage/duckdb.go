@@ -33,7 +33,7 @@ type QueryParams struct {
 	SortDesc            bool
 }
 
-func NewDuckDBWriter(dbPath, parquetPath string) (*DuckDBWriter, error) {
+func NewDuckDBWriter(dbPath, parquetPath, tempDir, memoryLimit string) (*DuckDBWriter, error) {
 	// Ensure directories exist
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, err
@@ -41,10 +41,29 @@ func NewDuckDBWriter(dbPath, parquetPath string) (*DuckDBWriter, error) {
 	if err := os.MkdirAll(parquetPath, 0755); err != nil {
 		return nil, err
 	}
+	if tempDir != "" {
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			return nil, err
+		}
+	}
 
 	db, err := sql.Open("duckdb", dbPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if tempDir != "" {
+		_, err = db.Exec(fmt.Sprintf("SET temp_directory='%s'", tempDir))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if memoryLimit != "" {
+		_, err = db.Exec(fmt.Sprintf("SET memory_limit='%s'", memoryLimit))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Create hot table for recent events
@@ -418,6 +437,7 @@ func (w *DuckDBWriter) Ping() error {
 	return w.db.QueryRow("SELECT 1").Scan(&result)
 }
 
+// TODO: Need to refactor this completely. AI slop.
 // ArchiveEventsForDate moves events for a specific date from events_hot to Parquet.
 // The date parameter specifies which day's events to archive.
 func (w *DuckDBWriter) ArchiveEventsForDate(date time.Time) error {
