@@ -13,10 +13,23 @@ type RocksDBWriter struct {
 	wo *grocksdb.WriteOptions
 }
 
-func NewRocksDBWriter(path string) (*RocksDBWriter, error) {
+type RocksDBPathConfig struct {
+	Path            string
+	TargetSizeBytes uint64
+}
+
+func NewRocksDBWriter(path string, dbPaths []RocksDBPathConfig) (*RocksDBWriter, error) {
 	// Ensure directory exists
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return nil, err
+	}
+	for _, dbPath := range dbPaths {
+		if dbPath.Path == "" {
+			continue
+		}
+		if err := os.MkdirAll(dbPath.Path, 0755); err != nil {
+			return nil, err
+		}
 	}
 
 	opts := grocksdb.NewDefaultOptions()
@@ -29,6 +42,22 @@ func NewRocksDBWriter(path string) (*RocksDBWriter, error) {
 	opts.SetBlobCompressionType(grocksdb.ZSTDCompression)
 	opts.EnableBlobGC(true)
 	opts.SetLevelCompactionDynamicLevelBytes(true)
+	if len(dbPaths) > 0 {
+		paths := make([]*grocksdb.DBPath, 0, len(dbPaths))
+		for _, dbPath := range dbPaths {
+			if dbPath.Path == "" {
+				continue
+			}
+			rocksPath := grocksdb.NewDBPath(dbPath.Path, dbPath.TargetSizeBytes)
+			paths = append(paths, rocksPath)
+		}
+		opts.SetDBPaths(paths)
+		defer func() {
+			for _, rocksPath := range paths {
+				rocksPath.Destroy()
+			}
+		}()
+	}
 
 	db, err := grocksdb.OpenDb(opts, path)
 	if err != nil {

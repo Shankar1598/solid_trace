@@ -1,8 +1,10 @@
 package main
 
 import (
+	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
@@ -20,13 +22,21 @@ func main() {
 	logger.Init()
 
 	// Initialize storage
-	rocksdbWriter, err := storage.NewRocksDBWriter(cfg.RocksDBPath)
+	rocksdbPaths := make([]storage.RocksDBPathConfig, 0, len(cfg.RocksDBPaths))
+	for _, dbPath := range cfg.RocksDBPaths {
+		rocksdbPaths = append(rocksdbPaths, storage.RocksDBPathConfig{
+			Path:            dbPath.Path,
+			TargetSizeBytes: dbPath.TargetSizeGB * 1024 * 1024 * 1024,
+		})
+	}
+
+	rocksdbWriter, err := storage.NewRocksDBWriter(cfg.RocksDBPath, rocksdbPaths)
 	if err != nil {
 		logger.L.Fatal("Failed to open RocksDB", "error", err)
 	}
 	defer rocksdbWriter.Close()
 
-	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath, cfg.ParquetStoragePath)
+	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath, cfg.ParquetStoragePath, cfg.DuckDBTempDirectory, cfg.DuckDBMemoryLimit)
 	if err != nil {
 		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
@@ -112,6 +122,27 @@ func main() {
 	}()
 
 	logger.L.Info("Starting ingest server", "port", cfg.Port)
+	if cfg.SocketPath != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.SocketPath), 0o755); err != nil {
+			logger.L.Fatal("Failed to create socket directory", "error", err)
+		}
+		if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
+			logger.L.Fatal("Failed to remove existing socket", "error", err)
+		}
+		listener, err := net.Listen("unix", cfg.SocketPath)
+		if err != nil {
+			logger.L.Fatal("Failed to listen on socket", "error", err)
+		}
+		if err := os.Chmod(cfg.SocketPath, 0o660); err != nil {
+			logger.L.Fatal("Failed to chmod socket", "error", err)
+		}
+		logger.L.Info("Listening on unix socket", "socket", cfg.SocketPath)
+		if err := app.Listener(listener); err != nil {
+			logger.L.Fatal("Server error", "error", err)
+		}
+		return
+	}
+
 	if err := app.Listen(":" + cfg.Port); err != nil {
 		logger.L.Fatal("Server error", "error", err)
 	}

@@ -1,0 +1,63 @@
+version: "3.9"
+
+services:
+  # Community maintained version of Nginx
+  angie:
+    image: docker.angie.software/angie:latest
+    network_mode: host
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    volumes:
+      - /var/run/solid-trace:/var/run/solid-trace
+      - /etc/angie/angie.conf:/etc/angie/angie.conf:ro
+    depends_on:
+      - console
+      - event_store
+    restart: unless-stopped
+
+  # Dashboard
+  console: &console
+    image: solid-trace-console:latest
+    network_mode: host
+    environment:
+      RAILS_ENV: production
+      RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      EVENT_STORE_URL: http://localhost:4000
+    volumes:
+      - /var/lib/solid-trace/storage:/storage
+    restart: unless-stopped
+    depends_on:
+      - db_prepare
+
+  # Background jobs
+  jobs:
+    <<: *console
+    command: ["bin/jobs", "start"]
+    depends_on:
+      - console
+
+  # Event ingestion and storage
+  event_store:
+    image: solid-trace-event-store:latest
+    network_mode: host
+    environment:
+      EVENT_STORE_CONFIG: /etc/solid-trace/event_store.yml
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    volumes:
+      - /var/lib/solid-trace/storage:/storage
+      - /var/lib/solid-trace/storage_cold:/storage_cold
+      - /var/run/solid-trace:/var/run/solid-trace
+      - /etc/solid-trace/event_store.yml:/etc/solid-trace/event_store.yml:ro
+    restart: unless-stopped
+    depends_on:
+      - db_prepare
+
+  db_prepare:
+    <<: *console
+    command: ["bin/rails", "db:prepare"]

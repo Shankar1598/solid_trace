@@ -16,7 +16,7 @@ func TestRocksDBWriter(t *testing.T) {
 	logger.Init()
 	dbPath := filepath.Join(tmpDir, "test_rocksdb")
 
-	writer, err := NewRocksDBWriter(dbPath)
+	writer, err := NewRocksDBWriter(dbPath, nil)
 	if err != nil {
 		t.Fatalf("Failed to create RocksDBWriter: %v", err)
 	}

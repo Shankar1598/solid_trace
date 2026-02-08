@@ -11,6 +11,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zerodha/logf v0.5.5
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

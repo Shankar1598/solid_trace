@@ -17,7 +17,7 @@ func TestDuckDBWriter(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test_events.duckdb")
 	parquetPath := filepath.Join(tmpDir, "parquet")
 
-	writer, err := NewDuckDBWriter(dbPath, parquetPath)
+	writer, err := NewDuckDBWriter(dbPath, parquetPath, "", "")
 	if err != nil {
 		t.Fatalf("Failed to create DuckDBWriter: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestArchiveEventsForDate(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test_archive.duckdb")
 	parquetPath := filepath.Join(tmpDir, "parquet")
 
-	writer, err := NewDuckDBWriter(dbPath, parquetPath)
+	writer, err := NewDuckDBWriter(dbPath, parquetPath, "", "")
 	if err != nil {
 		t.Fatalf("Failed to create DuckDBWriter: %v", err)
 	}

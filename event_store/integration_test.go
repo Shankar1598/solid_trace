@@ -72,12 +72,12 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	db.Close()
 
 	// Initialize Storage
-	rocksdbWriter, err := storage.NewRocksDBWriter(rocksDBPath)
+	rocksdbWriter, err := storage.NewRocksDBWriter(rocksDBPath, nil)
 	if err != nil {
 		t.Fatalf("Failed to create RocksDB: %v", err)
 	}
 
-	duckdbWriter, err := storage.NewDuckDBWriter(duckDBPath, filepath.Join(tmpDir, "parquet"))
+	duckdbWriter, err := storage.NewDuckDBWriter(duckDBPath, filepath.Join(tmpDir, "parquet"), "", "")
 	if err != nil {
 		t.Fatalf("Failed to create DuckDB: %v", err)
 	}
