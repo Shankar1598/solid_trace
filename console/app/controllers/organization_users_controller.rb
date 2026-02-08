@@ -11,6 +11,30 @@ class OrganizationUsersController < ApplicationController
     }
   end
 
+  def search
+    query = params[:query].to_s.strip
+    members = @current_org.organization_users.includes(:user)
+
+    if query.present?
+      members = members.joins(:user).where(
+        "users.name ILIKE :query OR users.email ILIKE :query",
+        query: "%#{query}%"
+      )
+    end
+
+    members = members.order("users.name ASC").limit(20)
+
+    render json: {
+      members: members.map do |ou|
+        {
+          id: ou.id,
+          user: UserSerializer.new(ou.user).as_json,
+          discarded_at: ou.discarded_at&.iso8601,
+        }
+      end
+    }
+  end
+
   def create
     @user = User.find_by(email: create_params[:email])
     new_user_created = false
