@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Issue, Event, Comment, SharedProps, User } from '@/types'
+import { Issue, Event, Comment, SharedProps } from '@/types'
 import { CheckCircle2, XCircle } from 'lucide-react'
 
 interface IssuesShowProps {
@@ -19,10 +19,6 @@ interface IssuesShowProps {
   prev_event_id: number | null
   next_event_id: number | null
   comments: Comment[]
-  assignees: Array<{
-    id: number
-    user: User
-  }>
   events_list: Event[]
   events_pagination: {
     current_page: number
@@ -37,7 +33,6 @@ export default function IssuesShow({
   prev_event_id,
   next_event_id,
   comments,
-  assignees,
   events_list,
   events_pagination
 }: IssuesShowProps) {
@@ -169,7 +164,7 @@ export default function IssuesShow({
 
           {/* Sidebar */}
           <div className="lg:col-span-4 space-y-6">
-            <IssueSidebar issue={issue} assignees={assignees} orgSlug={current_org.slug} />
+            <IssueSidebar issue={issue} orgSlug={current_org.slug} />
           </div>
         </div>
       </div>
