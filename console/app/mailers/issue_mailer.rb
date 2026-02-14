@@ -11,6 +11,18 @@ class IssueMailer < ApplicationMailer
     )
   end
 
+  def batch_notify(issues, recipients)
+    @issues = issues
+    @project = issues.first.project
+    @organization = @project.organization
+    @count = issues.size
+
+    mail(
+      to: recipients,
+      subject: "[SolidTrace] #{@count} New Issues Detected"
+    )
+  end
+
   def assignment_updated(issue, recipients, previous_assignee_name:, new_assignee_name:)
     @issue = issue
     @project = issue.project

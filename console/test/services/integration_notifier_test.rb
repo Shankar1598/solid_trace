@@ -1,9 +1,13 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "active_job/test_helper"
 require "minitest/mock"
 
 class IntegrationNotifierTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
+  include ActiveSupport::Testing::TimeHelpers
+
   setup do
     @organization = Organization.create!(name: "Test Org", slug: "test-org")
     @user = User.create!(email: "test@example.com", name: "Test User", password: "password", password_confirmation: "password")
@@ -19,15 +23,15 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
   end
 
   test "notifies when a new issue is created" do
-    notifier_instance = Minitest::Mock.new
-    notifier_instance.expect :call, nil
-
-    Notifiers::SlackNotifier.stub :new, ->(*args, **kwargs) { notifier_instance } do
+    travel_to Time.zone.parse("2026-02-07 12:00:00") do
       issue = @project.issues.create!(title: "New Issue", kind: "error", status: 0)
-      IntegrationNotifier.notify(issue)
-    end
 
-    assert notifier_instance.verify
+      assert_difference -> { Notification.count }, 1 do
+        assert_enqueued_with(job: IntegrationNotificationProcessorJob, args: [ @integration.id ]) do
+          IntegrationNotifier.notify(issue)
+        end
+      end
+    end
   end
 
   test "does not notify new issue if rule checks unchecked" do
@@ -43,13 +47,17 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
   end
 
   test "notifies when event threshold is reached" do
+    @integration.settings["notify_on_new_issue"] = "0"
+    @integration.save!
+
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
     issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue.reload # Clear dirty tracking so id_previously_changed? returns false
 
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil
 
-    EventStore.stub :count_events, 10 do
+    issue.stub :events, (Class.new { def newer_than(_); self; end; def count; 10; end }.new) do
       Notifiers::SlackNotifier.stub :new, ->(*args, **kwargs) { notifier_instance } do
         IntegrationNotifier.notify(issue)
       end
@@ -59,25 +67,29 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
   end
 
   test "does not notify threshold if rule unchecked" do
+    @integration.settings["notify_on_new_issue"] = "0"
     @integration.settings["notify_on_event_threshold"] = "0"
     @integration.save!
 
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
     issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue.reload
 
-    EventStore.stub :count_events, 10 do
-      Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Should not be called" } do
-        IntegrationNotifier.notify(issue)
-      end
+    Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Should not be called" } do
+      IntegrationNotifier.notify(issue)
     end
     assert true # Verify no exception was raised
   end
 
   test "does not notify below threshold" do
+    @integration.settings["notify_on_new_issue"] = "0"
+    @integration.save!
+
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
     issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue.reload
 
-    EventStore.stub :count_events, 5 do
+    issue.stub :events, (Class.new { def newer_than(_); self; end; def count; 5; end }.new) do
       Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
         IntegrationNotifier.notify(issue)
       end
@@ -86,10 +98,14 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
   end
 
   test "does not notify above threshold" do
+    @integration.settings["notify_on_new_issue"] = "0"
+    @integration.save!
+
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
     issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue.reload
 
-    EventStore.stub :count_events, 11 do
+    issue.stub :events, (Class.new { def newer_than(_); self; end; def count; 11; end }.new) do
       Notifiers::SlackNotifier.stub :new, ->(*args) { raise "Notification triggered unexpectedly" } do
         IntegrationNotifier.notify(issue)
       end
@@ -98,16 +114,18 @@ class IntegrationNotifierTest < ActiveSupport::TestCase
   end
 
   test "respects configurable threshold" do
+    @integration.settings["notify_on_new_issue"] = "0"
     @integration.settings["event_threshold"] = "5"
     @integration.save!
 
     issue = @project.issues.create!(title: "Existing Issue", kind: "error")
     issue.issue_fingerprints.create!(fingerprint: "test-fingerprint", project: @project)
+    issue.reload
 
     notifier_instance = Minitest::Mock.new
     notifier_instance.expect :call, nil
 
-    EventStore.stub :count_events, 5 do
+    issue.stub :events, (Class.new { def newer_than(_); self; end; def count; 5; end }.new) do
       Notifiers::SlackNotifier.stub :new, ->(*args, **kwargs) { notifier_instance } do
         IntegrationNotifier.notify(issue)
       end

@@ -1,0 +1,22 @@
+<% host = SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000" %>
+
+<h1><%= @count %> New Issues Detected</h1>
+
+<p><strong>Organization:</strong> <%= @organization.name %></p>
+
+<ul>
+  <% @issues.first(10).each do |issue| %>
+    <li>
+      <strong><%= issue.project.name %></strong> - <%= issue.title %> (<%= issue.kind %>)
+      - <%= link_to "View", project_issue_url(issue.project, issue, org_slug: issue.project.organization.slug, host: host) %>
+    </li>
+  <% end %>
+</ul>
+
+<% if @count > 10 %>
+  <p>And <%= @count - 10 %> more issues.</p>
+<% end %>
+
+<p>
+  <%= link_to "View all issues", issues_url(org_slug: @organization.slug, host: host) %>
+</p>

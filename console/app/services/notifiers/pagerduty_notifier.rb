@@ -52,6 +52,8 @@ module Notifiers
     end
 
     def payload
+      return issue_created_batch_payload if notification[:event] == "issue_created_batch"
+
       summary_prefix =
         case notification[:event]
         when "issue_assignment_updated" then "Issue assignment updated"
@@ -78,6 +80,69 @@ module Notifiers
           },
         },
       }
+    end
+
+    def issue_created_batch_payload
+      issues = batch_issues
+      count = issues.count
+      display = issues.first(10)
+      more_count = count - display.count
+
+      {
+        routing_key: routing_key,
+        event_action: "trigger",
+        dedup_key: "solid-trace-issues-batch-#{integration.id}",
+        payload: {
+          summary: "#{count} new issues detected",
+          source: issues.first.project.organization.name,
+          severity: severity,
+          custom_details: {
+            organization: issues.first.project.organization.name,
+            count: count,
+            issues: display.map do |item|
+              {
+                id: item.id,
+                number: item.number,
+                title: item.title,
+                project: item.project.name,
+                url: issue_url(item),
+              }
+            end,
+            more_count: more_count.positive? ? more_count : 0,
+            issues_url: issues_url(issues.first),
+          },
+        },
+      }
+    end
+
+    def batch_issues
+      issues = Array(notification[:issues]).compact
+      issues = [ issue ] if issues.empty? && issue.present?
+      issues
+    end
+
+    def issue_url(target_issue)
+      url_helpers.project_issue_url(
+        target_issue.project,
+        target_issue,
+        org_slug: target_issue.project.organization.slug,
+        host: host
+      )
+    end
+
+    def issues_url(target_issue)
+      url_helpers.issues_url(
+        org_slug: target_issue.project.organization.slug,
+        host: host
+      )
+    end
+
+    def url_helpers
+      Rails.application.routes.url_helpers
+    end
+
+    def host
+      SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000"
     end
   end
 end

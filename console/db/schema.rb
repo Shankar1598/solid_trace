@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
+ActiveRecord::Schema[8.1].define(version: 2026_02_07_090000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -94,6 +94,21 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
     t.index ["project_id", "status"], name: "index_issues_on_project_id_and_status"
   end
 
+  create_table "notifications", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "error_message"
+    t.string "event_type", null: false
+    t.integer "integration_id", null: false
+    t.binary "payload"
+    t.datetime "processing_at"
+    t.datetime "sent_at"
+    t.integer "status", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["integration_id", "event_type", "status"], name: "idx_on_integration_id_event_type_status_780e944ffb"
+    t.index ["integration_id"], name: "index_notifications_on_integration_id"
+    t.index ["status", "created_at"], name: "index_notifications_on_status_and_created_at"
+  end
+
   create_table "organizations", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "name"
@@ -166,6 +181,7 @@ ActiveRecord::Schema[8.1].define(version: 2025_12_09_183000) do
   add_foreign_key "issue_fingerprints", "projects"
   add_foreign_key "issues", "organizations_users", column: "assignee_id"
   add_foreign_key "issues", "projects"
+  add_foreign_key "notifications", "integrations"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
   add_foreign_key "project_issue_counters", "projects"
