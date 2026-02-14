@@ -18,7 +18,7 @@ export function Sidebar({ className }: SidebarProps) {
       label: 'Issues',
       href: `/${current_org.slug}/issues`,
       icon: List,
-      active: url.endsWith('/issues') || url.includes('/issues/')
+      active: url.endsWith('/issues') || url.includes('/issues/') || url.includes('/issues?')
     },
     {
       label: 'Projects',

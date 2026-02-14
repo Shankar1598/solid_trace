@@ -20,6 +20,10 @@ module Notifiers
           previous_assignee_name: @notification[:previous_assignee_name],
           new_assignee_name: @notification[:new_assignee_name]
         ).deliver_later
+      when "issue_created_batch"
+        issues = Array(@notification[:issues]).compact
+        return if issues.empty?
+        IssueMailer.batch_notify(issues, recipients).deliver_later
       else
         IssueMailer.notify(@issue, recipients).deliver_later
       end

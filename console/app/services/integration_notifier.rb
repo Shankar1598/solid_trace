@@ -60,10 +60,20 @@ class IntegrationNotifier
   def notify_if_conditions_met(integration)
     return unless should_notify?(integration)
 
+    event = event_name_for(integration)
+    if event == "issue_created"
+      Notification.enqueue!(
+        integration: integration,
+        event_type: event,
+        payload: { "issue_id" => issue.id }
+      )
+      return
+    end
+
     notifier_class = notifier_for(integration.provider)
     return unless notifier_class
 
-    notifier_class.new(integration, issue, notification: { event: event_name_for(integration) }).call
+    notifier_class.new(integration, issue, notification: { event: event }).call
   end
 
   def should_notify?(integration)
