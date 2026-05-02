@@ -7,15 +7,15 @@ import (
 
 // HealthHandler handles health check endpoints
 type HealthHandler struct {
-	rocksdb *storage.RocksDBWriter
-	duckdb  *storage.DuckDBWriter
+	pebble *storage.PebbleWriter
+	duckdb *storage.DuckDBWriter
 }
 
 // NewHealthHandler creates a new health handler
-func NewHealthHandler(rocksdb *storage.RocksDBWriter, duckdb *storage.DuckDBWriter) *HealthHandler {
+func NewHealthHandler(pebble *storage.PebbleWriter, duckdb *storage.DuckDBWriter) *HealthHandler {
 	return &HealthHandler{
-		rocksdb: rocksdb,
-		duckdb:  duckdb,
+		pebble: pebble,
+		duckdb: duckdb,
 	}
 }
 
@@ -26,13 +26,13 @@ func (h *HealthHandler) Health(c *fiber.Ctx) error {
 	httpStatus := 200
 
 	checks := fiber.Map{
-		"rocksdb": "ok",
-		"duckdb":  "ok",
+		"pebble": "ok",
+		"duckdb": "ok",
 	}
 
-	// Check RocksDB
-	if err := h.rocksdb.Ping(); err != nil {
-		checks["rocksdb"] = err.Error()
+	// Check Pebble
+	if err := h.pebble.Ping(); err != nil {
+		checks["pebble"] = err.Error()
 		status = "unhealthy"
 		httpStatus = 503
 	}

@@ -8,22 +8,22 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-type RocksDBIngester struct {
+type PebbleIngester struct {
 	events       <-chan models.Event
 	duckdbEvents chan<- models.Event // Forward to DuckDB after commit
-	writer       *storage.RocksDBWriter
+	writer       *storage.PebbleWriter
 	batchSize    int
 	flushTimeout time.Duration
 }
 
-func NewRocksDBIngester(
+func NewPebbleIngester(
 	events <-chan models.Event,
 	duckdbEvents chan<- models.Event,
-	writer *storage.RocksDBWriter,
+	writer *storage.PebbleWriter,
 	batchSize int,
 	flushTimeout time.Duration,
-) *RocksDBIngester {
-	return &RocksDBIngester{
+) *PebbleIngester {
+	return &PebbleIngester{
 		events:       events,
 		duckdbEvents: duckdbEvents,
 		writer:       writer,
@@ -32,12 +32,10 @@ func NewRocksDBIngester(
 	}
 }
 
-func (w *RocksDBIngester) Run() {
+func (w *PebbleIngester) Run() {
 	batch := make([]models.Event, 0, w.batchSize)
 	flushTicker := time.NewTicker(w.flushTimeout)
-	syncTicker := time.NewTicker(1 * time.Second)
 	defer flushTicker.Stop()
-	defer syncTicker.Stop()
 
 	flush := func() {
 		if len(batch) == 0 {
@@ -45,21 +43,20 @@ func (w *RocksDBIngester) Run() {
 		}
 
 		if err := w.writer.WriteBatch(batch); err != nil {
-			logger.L.Error("RocksDB write error", "error", err)
+			logger.L.Error("Pebble write error", "error", err)
 			return
 		}
 
-		// Forward to DuckDB channel AFTER successful RocksDB commit
+		// Forward to DuckDB channel AFTER successful Pebble commit
 		for _, event := range batch {
 			select {
 			case w.duckdbEvents <- event:
 			default:
-				// TODO: write the dropped event ids to Rocks
 				logger.L.Warn("DuckDB channel full, dropping event")
 			}
 		}
 
-		logger.L.Info("Flushed events to RocksDB", "count", len(batch))
+		logger.L.Info("Flushed events to Pebble", "count", len(batch))
 		batch = batch[:0]
 	}
 
@@ -77,9 +74,6 @@ func (w *RocksDBIngester) Run() {
 
 		case <-flushTicker.C:
 			flush()
-
-		case <-syncTicker.C:
-			w.writer.FlushWAL()
 		}
 	}
 }

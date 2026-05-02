@@ -4,13 +4,6 @@ WORKDIR /app
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
-    libgflags-dev \
-    libsnappy-dev \
-    zlib1g-dev \
-    libbz2-dev \
-    liblz4-dev \
-    libzstd-dev \
-    librocksdb-dev \
     gcc \
     g++
 
@@ -19,7 +12,7 @@ RUN go mod download
 
 COPY . .
 
-# Build statically linked binary
+# Build binary
 RUN CGO_ENABLED=1 go build -o ingest .
 
 # Final stage
@@ -29,7 +22,6 @@ WORKDIR /app
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
-    librocksdb-dev \
     libsqlite3-0 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*

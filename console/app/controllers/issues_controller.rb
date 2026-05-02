@@ -69,12 +69,16 @@ class IssuesController < ApplicationController
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
     @issue = @project.issues.find_by!(number: params[:number])
 
-    assignee_id = params[:assignee_id].presence
-    assignee = assignee_id ? @current_org.organization_users.find(assignee_id) : nil
+    assignee_id = params[:assignee_id]
+    assignee = nil
+
+    if assignee_id.present? && assignee_id != "unassigned"
+      assignee = @current_org.organization_users.find(assignee_id)
+    end
 
     @issue.update!(assignee: assignee)
 
-    redirect_to project_issue_path(@project, @issue, org_slug: @current_org.slug), notice: "Assignee updated"
+    redirect_to project_issue_path(org_slug: @current_org.slug, project_slug: @project.slug, number: @issue.number), notice: "Assignee updated"
   end
 
   def resolve

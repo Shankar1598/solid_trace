@@ -253,7 +253,7 @@ func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 	events := []models.Event{}
 	for rows.Next() {
 		var e models.Event
-		// Note: We don't have IssueID (stored in SQLite) or RawJSON (stored in RocksDB)
+		// Note: We don't have IssueID (stored in SQLite) or RawJSON (stored in Pebble)
 		// We only populate what we have in DuckDB
 		var tagsMap duckdb.Map
 		err := rows.Scan(

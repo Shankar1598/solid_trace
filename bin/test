@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+cd console
+rails test
+
+cd ../event_store
+go test ./...

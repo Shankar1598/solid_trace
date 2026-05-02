@@ -22,19 +22,11 @@ func main() {
 	logger.Init()
 
 	// Initialize storage
-	rocksdbPaths := make([]storage.RocksDBPathConfig, 0, len(cfg.RocksDBPaths))
-	for _, dbPath := range cfg.RocksDBPaths {
-		rocksdbPaths = append(rocksdbPaths, storage.RocksDBPathConfig{
-			Path:            dbPath.Path,
-			TargetSizeBytes: dbPath.TargetSizeGB * 1024 * 1024 * 1024,
-		})
-	}
-
-	rocksdbWriter, err := storage.NewRocksDBWriter(cfg.RocksDBPath, rocksdbPaths)
+	pebbleWriter, err := storage.NewPebbleWriter(cfg.PebblePath)
 	if err != nil {
-		logger.L.Fatal("Failed to open RocksDB", "error", err)
+		logger.L.Fatal("Failed to open Pebble", "error", err)
 	}
-	defer rocksdbWriter.Close()
+	defer pebbleWriter.Close()
 
 	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath, cfg.ParquetStoragePath, cfg.DuckDBTempDirectory, cfg.DuckDBMemoryLimit)
 	if err != nil {
@@ -70,15 +62,15 @@ func main() {
 	defer projectAuth.Close()
 
 	// Create channels
-	rocksdbChan := make(chan models.Event, cfg.RocksDBChannelSize)
+	pebbleChan := make(chan models.Event, cfg.PebbleChannelSize)
 	duckdbChan := make(chan models.Event, cfg.DuckDBChannelSize)
 
 	// Start ingesters
-	rocksdbIngester := pipeline.NewRocksDBIngester(
-		rocksdbChan, duckdbChan, rocksdbWriter,
-		cfg.RocksDBBatchSize, cfg.RocksDBFlushTimeout,
+	pebbleIngester := pipeline.NewPebbleIngester(
+		pebbleChan, duckdbChan, pebbleWriter,
+		cfg.PebbleBatchSize, cfg.PebbleFlushTimeout,
 	)
-	go rocksdbIngester.Run()
+	go pebbleIngester.Run()
 
 	duckdbIngester := pipeline.NewDuckDBIngester(duckdbChan, duckdbWriter, messageQueueWriter, cfg.DuckDBFlushTimeout)
 	go duckdbIngester.Run()
@@ -88,9 +80,9 @@ func main() {
 	go archiveConsumer.Run()
 	defer archiveConsumer.Stop()
 
-	ingestHandler := handler.NewIngestHandler(projectAuth, sqliteWriter, rocksdbChan)
-	eventsHandler := handler.NewEventsHandler(rocksdbWriter, duckdbWriter)
-	healthHandler := handler.NewHealthHandler(rocksdbWriter, duckdbWriter)
+	ingestHandler := handler.NewIngestHandler(projectAuth, sqliteWriter, pebbleChan)
+	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	// Setup Fiber
 	app := fiber.New(fiber.Config{

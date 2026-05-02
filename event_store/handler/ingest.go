@@ -16,16 +16,16 @@ import (
 )
 
 type IngestHandler struct {
-	auth        *auth.ProjectAuth
-	sqlite      *storage.SQLiteWriter
-	rocksdbChan chan<- models.Event
+	auth       *auth.ProjectAuth
+	sqlite     *storage.SQLiteWriter
+	pebbleChan chan<- models.Event
 }
 
-func NewIngestHandler(auth *auth.ProjectAuth, sqlite *storage.SQLiteWriter, rocksdbChan chan<- models.Event) *IngestHandler {
+func NewIngestHandler(auth *auth.ProjectAuth, sqlite *storage.SQLiteWriter, pebbleChan chan<- models.Event) *IngestHandler {
 	return &IngestHandler{
-		auth:        auth,
-		sqlite:      sqlite,
-		rocksdbChan: rocksdbChan,
+		auth:       auth,
+		sqlite:     sqlite,
+		pebbleChan: pebbleChan,
 	}
 }
 
@@ -135,7 +135,7 @@ func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []b
 	}
 
 	// 3. Resolve basic event fields
-	// Enforce System-Generated UUID v7 for ordering in RocksDB
+	// Enforce System-Generated UUID v7 for ordering in Pebble
 	u, err := uuid.NewV7()
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
@@ -170,9 +170,9 @@ func (h *IngestHandler) processEvent(c *fiber.Ctx, projectID uint32, rawJSON []b
 		IsNewIssue:         isNewIssue,
 	}
 
-	// 5. Send to RocksDB channel
+	// 5. Send to Pebble channel
 	select {
-	case h.rocksdbChan <- event:
+	case h.pebbleChan <- event:
 	default:
 		return c.Status(503).JSON(fiber.Map{"error": "Server overloaded"})
 	}

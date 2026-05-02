@@ -52,8 +52,16 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
     ]
   }, [assigneeInList, issue.assignee, members])
 
+  const [localAssigneeValue, setLocalAssigneeValue] = useState(assigneeValue)
+
+  // Sync local state with prop
+  useEffect(() => {
+    setLocalAssigneeValue(assigneeValue)
+  }, [assigneeValue])
+
   const updateAssignee = (value: string | null) => {
     const nextValue = value ?? 'unassigned'
+    setLocalAssigneeValue(nextValue)
 
     router.patch(
       `/${orgSlug}/projects/${issue.project.slug}/issues/${issue.number}/assign`,
@@ -61,6 +69,7 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
       {
         preserveScroll: true,
         onError: () => {
+          setLocalAssigneeValue(assigneeValue) // Revert on error
           toast.error('Failed to update assignee')
         },
       }
@@ -113,7 +122,7 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
             Assigned to
           </span>
           <Combobox
-            value={assigneeValue}
+            value={localAssigneeValue}
             inputValue={query}
             onInputValueChange={setQuery}
             onValueChange={(value) => {
@@ -123,18 +132,15 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
                 return
               }
               const selected = mergedMembers.find((member) => String(member.id) === value)
-              setQuery(selected?.user.name ?? selected?.user.email ?? selectedLabel)
+              if (selected) {
+                setQuery(selected.user.name)
+              }
             }}
           >
             <ComboboxInput
               placeholder={selectedLabel}
               showClear
               aria-label="Assign issue"
-              onFocus={() => {
-                if (!query) {
-                  setQuery(selectedLabel === 'Unassigned' ? '' : selectedLabel)
-                }
-              }}
             />
             <ComboboxContent>
               <ComboboxList>
