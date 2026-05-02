@@ -11,16 +11,15 @@ import (
 type Config struct {
 	Port               string
 	SocketPath         string
-	RocksDBPath        string
-	RocksDBPaths       []DBPath
+	PebblePath         string
 	DuckDBPath         string
 	ParquetStoragePath string // Path for archived Parquet files
 	SQLitePath         string // Rails SQLite for project key auth and issues
 	MessageQueuePath   string // Separate SQLite for event_store_messages
 
-	RocksDBBatchSize    int
-	RocksDBFlushTimeout time.Duration
-	RocksDBChannelSize  int
+	PebbleBatchSize    int
+	PebbleFlushTimeout time.Duration
+	PebbleChannelSize  int
 
 	DuckDBFlushTimeout time.Duration
 	DuckDBChannelSize  int
@@ -31,43 +30,37 @@ type Config struct {
 	Debug bool
 }
 
-type DBPath struct {
-	Path         string `yaml:"path"`
-	TargetSizeGB uint64 `yaml:"target_size_gb"`
-}
-
 type fileConfig struct {
-	IngestPort          *string  `yaml:"ingest_port"`
-	IngestSocket        *string  `yaml:"ingest_socket"`
-	RocksDBPath         *string  `yaml:"rocksdb_path"`
-	RocksDBPaths        []DBPath `yaml:"rocksdb_db_paths"`
-	DuckDBPath          *string  `yaml:"duckdb_path"`
-	ParquetStoragePath  *string  `yaml:"parquet_storage_path"`
-	SQLitePath          *string  `yaml:"sqlite_path"`
-	MessageQueuePath    *string  `yaml:"message_queue_path"`
-	RocksDBBatchSize    *int     `yaml:"rocksdb_batch_size"`
-	RocksDBFlushTimeout *string  `yaml:"rocksdb_flush_timeout"`
-	RocksDBChannelSize  *int     `yaml:"rocksdb_channel_size"`
-	DuckDBFlushTimeout  *string  `yaml:"duckdb_flush_timeout"`
-	DuckDBChannelSize   *int     `yaml:"duckdb_channel_size"`
-	DuckDBTempDirectory *string  `yaml:"duckdb_temp_directory"`
-	DuckDBMemoryLimit   *string  `yaml:"duckdb_memory_limit"`
-	Debug               *bool    `yaml:"debug"`
+	IngestPort          *string `yaml:"ingest_port"`
+	IngestSocket        *string `yaml:"ingest_socket"`
+	PebblePath          *string `yaml:"pebble_path"`
+	DuckDBPath          *string `yaml:"duckdb_path"`
+	ParquetStoragePath  *string `yaml:"parquet_storage_path"`
+	SQLitePath          *string `yaml:"sqlite_path"`
+	MessageQueuePath    *string `yaml:"message_queue_path"`
+	PebbleBatchSize     *int    `yaml:"pebble_batch_size"`
+	PebbleFlushTimeout  *string `yaml:"pebble_flush_timeout"`
+	PebbleChannelSize   *int    `yaml:"pebble_channel_size"`
+	DuckDBFlushTimeout  *string `yaml:"duckdb_flush_timeout"`
+	DuckDBChannelSize   *int    `yaml:"duckdb_channel_size"`
+	DuckDBTempDirectory *string `yaml:"duckdb_temp_directory"`
+	DuckDBMemoryLimit   *string `yaml:"duckdb_memory_limit"`
+	Debug               *bool   `yaml:"debug"`
 }
 
 func Load() *Config {
 	cfg := &Config{
 		Port:               "4000",
 		SocketPath:         "",
-		RocksDBPath:        "../storage/rocksdb/development/events",
+		PebblePath:         "../storage/pebble/development/events",
 		DuckDBPath:         "../storage/duckdb/development/events.duckdb",
 		ParquetStoragePath: "../storage/duckdb/development/events_parquet",
 		SQLitePath:         "../storage/sqlite/development/solid_trace.sqlite3",
 		MessageQueuePath:   "../storage/sqlite/development/message_queue.sqlite3",
 
-		RocksDBBatchSize:    1000,
-		RocksDBFlushTimeout: 200 * time.Millisecond,
-		RocksDBChannelSize:  50000,
+		PebbleBatchSize:    1000,
+		PebbleFlushTimeout: 200 * time.Millisecond,
+		PebbleChannelSize:  50000,
 
 		DuckDBFlushTimeout: 1 * time.Second,
 		DuckDBChannelSize:  100000,
@@ -110,11 +103,8 @@ func applyFileConfig(cfg *Config, path string) error {
 	if config.IngestSocket != nil {
 		cfg.SocketPath = *config.IngestSocket
 	}
-	if config.RocksDBPath != nil && *config.RocksDBPath != "" {
-		cfg.RocksDBPath = *config.RocksDBPath
-	}
-	if len(config.RocksDBPaths) > 0 {
-		cfg.RocksDBPaths = config.RocksDBPaths
+	if config.PebblePath != nil && *config.PebblePath != "" {
+		cfg.PebblePath = *config.PebblePath
 	}
 	if config.DuckDBPath != nil && *config.DuckDBPath != "" {
 		cfg.DuckDBPath = *config.DuckDBPath
@@ -128,18 +118,18 @@ func applyFileConfig(cfg *Config, path string) error {
 	if config.MessageQueuePath != nil && *config.MessageQueuePath != "" {
 		cfg.MessageQueuePath = *config.MessageQueuePath
 	}
-	if config.RocksDBBatchSize != nil {
-		cfg.RocksDBBatchSize = *config.RocksDBBatchSize
+	if config.PebbleBatchSize != nil {
+		cfg.PebbleBatchSize = *config.PebbleBatchSize
 	}
-	if config.RocksDBFlushTimeout != nil && *config.RocksDBFlushTimeout != "" {
-		d, err := time.ParseDuration(*config.RocksDBFlushTimeout)
+	if config.PebbleFlushTimeout != nil && *config.PebbleFlushTimeout != "" {
+		d, err := time.ParseDuration(*config.PebbleFlushTimeout)
 		if err != nil {
 			return err
 		}
-		cfg.RocksDBFlushTimeout = d
+		cfg.PebbleFlushTimeout = d
 	}
-	if config.RocksDBChannelSize != nil {
-		cfg.RocksDBChannelSize = *config.RocksDBChannelSize
+	if config.PebbleChannelSize != nil {
+		cfg.PebbleChannelSize = *config.PebbleChannelSize
 	}
 	if config.DuckDBFlushTimeout != nil && *config.DuckDBFlushTimeout != "" {
 		d, err := time.ParseDuration(*config.DuckDBFlushTimeout)

@@ -11,14 +11,14 @@ import (
 	"github.com/solidtrace/event_store/models"
 )
 
-func TestRocksDBWriter(t *testing.T) {
+func TestPebbleWriter(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger.Init()
-	dbPath := filepath.Join(tmpDir, "test_rocksdb")
+	dbPath := filepath.Join(tmpDir, "test_pebble")
 
-	writer, err := NewRocksDBWriter(dbPath, nil)
+	writer, err := NewPebbleWriter(dbPath)
 	if err != nil {
-		t.Fatalf("Failed to create RocksDBWriter: %v", err)
+		t.Fatalf("Failed to create PebbleWriter: %v", err)
 	}
 	defer writer.Close()
 

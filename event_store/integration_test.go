@@ -25,14 +25,14 @@ import (
 )
 
 type TestEnv struct {
-	App           *fiber.App
-	RocksDBWriter *storage.RocksDBWriter
-	DuckDBWriter  *storage.DuckDBWriter
-	SQLiteWriter  *storage.SQLiteWriter
-	MQWriter      *storage.MessageQueueWriter
-	MQReader      *storage.MessageQueueReader
-	MQPath        string
-	Cleanup       func()
+	App          *fiber.App
+	PebbleWriter *storage.PebbleWriter
+	DuckDBWriter *storage.DuckDBWriter
+	SQLiteWriter *storage.SQLiteWriter
+	MQWriter     *storage.MessageQueueWriter
+	MQReader     *storage.MessageQueueReader
+	MQPath       string
+	Cleanup      func()
 }
 
 func resetTestDB(t *testing.T) {
@@ -55,7 +55,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 
 	tmpDir := t.TempDir()
 
-	rocksDBPath := filepath.Join(tmpDir, "rocksdb")
+	pebblePath := filepath.Join(tmpDir, "pebble")
 	duckDBPath := filepath.Join(tmpDir, "duckdb.db")
 	sqlitePath := "../storage/sqlite/test/solid_trace.sqlite3"
 	mqPath := "../storage/sqlite/test/message_queue.sqlite3"
@@ -72,9 +72,9 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	db.Close()
 
 	// Initialize Storage
-	rocksdbWriter, err := storage.NewRocksDBWriter(rocksDBPath, nil)
+	pebbleWriter, err := storage.NewPebbleWriter(pebblePath)
 	if err != nil {
-		t.Fatalf("Failed to create RocksDB: %v", err)
+		t.Fatalf("Failed to create Pebble: %v", err)
 	}
 
 	duckdbWriter, err := storage.NewDuckDBWriter(duckDBPath, filepath.Join(tmpDir, "parquet"), "", "")
@@ -104,22 +104,22 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	}
 
 	// Create channels
-	rocksdbChan := make(chan models.Event, 100)
+	pebbleChan := make(chan models.Event, 100)
 	duckdbChan := make(chan models.Event, 100)
 
 	// Start ingesters with short flush timeout
-	rocksdbIngester := pipeline.NewRocksDBIngester(
-		rocksdbChan, duckdbChan, rocksdbWriter,
+	pebbleIngester := pipeline.NewPebbleIngester(
+		pebbleChan, duckdbChan, pebbleWriter,
 		10, 100*time.Millisecond,
 	)
-	go rocksdbIngester.Run()
+	go pebbleIngester.Run()
 
 	duckdbIngester := pipeline.NewDuckDBIngester(duckdbChan, duckdbWriter, mqWriter, 100*time.Millisecond)
 	go duckdbIngester.Run()
 
 	// Setup Handler
-	ingestHandler := handler.NewIngestHandler(projectAuth, sqliteWriter, rocksdbChan)
-	eventsHandler := handler.NewEventsHandler(rocksdbWriter, duckdbWriter)
+	ingestHandler := handler.NewIngestHandler(projectAuth, sqliteWriter, pebbleChan)
+	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 
 	app := fiber.New()
 	app.Post("/api/:project_id/store", ingestHandler.Store)
@@ -129,12 +129,12 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	app.Get("/api/:project_id/events/count", eventsHandler.Count)
 
 	cleanup := func() {
-		close(rocksdbChan)
+		close(pebbleChan)
 		close(duckdbChan)
 		// Give some time for ingesters to flush and exit
 		time.Sleep(50 * time.Millisecond)
 
-		rocksdbWriter.Close()
+		pebbleWriter.Close()
 		duckdbWriter.Close()
 		sqliteWriter.Close()
 		mqWriter.Close()
@@ -143,14 +143,14 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	}
 
 	return &TestEnv{
-		App:           app,
-		RocksDBWriter: rocksdbWriter,
-		DuckDBWriter:  duckdbWriter,
-		SQLiteWriter:  sqliteWriter,
-		MQWriter:      mqWriter,
-		MQReader:      mqReader,
-		MQPath:        mqPath,
-		Cleanup:       cleanup,
+		App:          app,
+		PebbleWriter: pebbleWriter,
+		DuckDBWriter: duckdbWriter,
+		SQLiteWriter: sqliteWriter,
+		MQWriter:     mqWriter,
+		MQReader:     mqReader,
+		MQPath:       mqPath,
+		Cleanup:      cleanup,
 	}
 }
 
@@ -205,11 +205,11 @@ func TestStoreIngestion(t *testing.T) {
 		t.Errorf("Unexpected release: %s", persistedEvent.Release)
 	}
 
-	// Verify RocksDB
+	// Verify Pebble
 	key := storage.KeyForEvent(persistedEvent.EventUUID)
-	rawJSON, err := env.RocksDBWriter.GetEvent(key)
+	rawJSON, err := env.PebbleWriter.GetEvent(key)
 	if err != nil {
-		t.Fatalf("RocksDB GetEvent failed: %v", err)
+		t.Fatalf("Pebble GetEvent failed: %v", err)
 	}
 
 	var savedPayload map[string]interface{}

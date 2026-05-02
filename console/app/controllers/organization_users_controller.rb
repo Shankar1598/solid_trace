@@ -17,7 +17,7 @@ class OrganizationUsersController < ApplicationController
 
     if query.present?
       members = members.joins(:user).where(
-        "users.name ILIKE :query OR users.email ILIKE :query",
+        "users.name LIKE :query OR users.email LIKE :query",
         query: "%#{query}%"
       )
     end
@@ -31,7 +31,7 @@ class OrganizationUsersController < ApplicationController
           user: UserSerializer.new(ou.user).as_json,
           discarded_at: ou.discarded_at&.iso8601,
         }
-      end
+      end,
     }
   end
 

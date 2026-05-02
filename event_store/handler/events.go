@@ -11,14 +11,14 @@ import (
 )
 
 type EventsHandler struct {
-	rocksdb *storage.RocksDBWriter
-	duckdb  *storage.DuckDBWriter
+	pebble *storage.PebbleWriter
+	duckdb *storage.DuckDBWriter
 }
 
-func NewEventsHandler(rocksdb *storage.RocksDBWriter, duckdb *storage.DuckDBWriter) *EventsHandler {
+func NewEventsHandler(pebble *storage.PebbleWriter, duckdb *storage.DuckDBWriter) *EventsHandler {
 	return &EventsHandler{
-		rocksdb: rocksdb,
-		duckdb:  duckdb,
+		pebble: pebble,
+		duckdb: duckdb,
 	}
 }
 
@@ -27,7 +27,7 @@ func (h *EventsHandler) GetEvent(c *fiber.Ctx) error {
 	eventUUID := c.Params("event_uuid")
 	key := storage.KeyForEvent(eventUUID)
 
-	data, err := h.rocksdb.GetEvent(key)
+	data, err := h.pebble.GetEvent(key)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
