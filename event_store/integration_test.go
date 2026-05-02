@@ -17,6 +17,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/handler"
+	"github.com/solidtrace/event_store/intake"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -118,7 +119,8 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	go duckdbIngester.Run()
 
 	// Setup Handler
-	ingestHandler := handler.NewIngestHandler(projectAuth, sqliteWriter, pebbleChan)
+	intakeService := intake.NewService(sqliteWriter, pebbleChan)
+	ingestHandler := handler.NewIngestHandler(projectAuth, intakeService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 
 	app := fiber.New()
