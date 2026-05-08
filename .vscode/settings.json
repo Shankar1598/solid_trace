@@ -8,11 +8,14 @@
     "editor.semanticHighlighting.enabled": true, // Enable semantic highlighting
     "editor.formatOnType": true, // Enable formatting while typing
   },
-  "go.goroot": "/Users/shankar/.local/share/mise/installs/go/1.25.6",
+  "go.goroot": "${workspaceFolder}/.vscode/mise-tools/goRoot",
   "go.alternateTools": {
-    "go": "/Users/shankar/.local/share/mise/shims/go",
-    "dlv": "/Users/shankar/.local/share/mise/shims/dlv",
-    "gopls": "/Users/shankar/.local/share/mise/shims/gopls"
+    "go": "${workspaceFolder}/.vscode/mise-tools/go",
+    "dlv": "${workspaceFolder}/.vscode/mise-tools/dlv",
+    "gopls": "${workspaceFolder}/.vscode/mise-tools/gopls"
+  },
+  "chat.tools.terminal.autoApprove": {
+    "/^go test/": true
   },
   "bun.runtime": "${workspaceFolder}/.vscode/mise-tools/bun",
   "ruby.rubocop.useServer": true,
