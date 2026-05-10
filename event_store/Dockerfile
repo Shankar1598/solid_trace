@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 # Build binary
-RUN CGO_ENABLED=1 go build -o ingest .
+RUN CGO_ENABLED=0 go build -o event_store .
 
 # Final stage
 FROM debian:bookworm-slim
@@ -26,8 +26,8 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/ingest .
+COPY --from=builder /app/event_store .
 
 EXPOSE 4000
 
-CMD ["./ingest"]
+CMD ["./event_store"]
