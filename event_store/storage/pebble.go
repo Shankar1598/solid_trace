@@ -1,10 +1,15 @@
 package storage
 
 import (
+	"context"
+	"fmt"
 	"os"
 
 	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/objstorage/remote"
+	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/models"
 )
 
@@ -12,8 +17,8 @@ type PebbleWriter struct {
 	db *pebble.DB
 }
 
-func NewPebbleWriter(path string) (*PebbleWriter, error) {
-	if err := os.MkdirAll(path, 0755); err != nil {
+func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
+	if err := os.MkdirAll(cfg.PebblePath, 0755); err != nil {
 		return nil, err
 	}
 
@@ -24,9 +29,61 @@ func NewPebbleWriter(path string) (*PebbleWriter, error) {
 	}
 	opts.ApplyCompressionSettings(func() pebble.DBCompressionSettings { return pebble.DBCompressionBalanced })
 
-	db, err := pebble.Open(path, opts)
+	if len(cfg.StorageTiers) > 0 {
+		factoryMap := make(map[remote.Locator]remote.Storage)
+		var mainLocator remote.Locator
+		var strategy remote.CreateOnSharedStrategy
+
+		for _, tier := range cfg.StorageTiers {
+			var remoteStore remote.Storage
+			var err error
+
+			switch tier.Kind {
+			case "s3":
+				remoteStore, err = NewS3Storage(context.Background(), tier.Bucket, tier.Prefix, tier.Endpoint)
+			case "gcs":
+				remoteStore, err = NewGCSStorage(context.Background(), tier.Bucket, tier.Prefix)
+			case "local":
+				remoteStore = remote.NewLocalFS(tier.Bucket, vfs.Default)
+			default:
+				return nil, fmt.Errorf("unknown storage tier kind: %s", tier.Kind)
+			}
+
+			if err != nil {
+				return nil, err
+			}
+
+			loc := remote.Locator(tier.Locator)
+			factoryMap[loc] = remoteStore
+
+			if mainLocator == "" {
+				mainLocator = loc
+				if tier.Level > 0 {
+					strategy = remote.CreateOnSharedLower // For L5 and L6
+				} else {
+					strategy = remote.CreateOnSharedAll
+				}
+			}
+		}
+
+		opts.Experimental.RemoteStorage = remote.MakeSimpleFactory(factoryMap)
+		opts.Experimental.CreateOnShared = strategy
+		opts.Experimental.CreateOnSharedLocator = mainLocator
+	}
+
+	db, err := pebble.Open(cfg.PebblePath, opts)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(cfg.StorageTiers) > 0 {
+		// Set a creator ID to enable remote storage.
+		// In a real cluster, this would be a unique node ID.
+		// For SolidTrace, 1 is sufficient as it's a singleton.
+		if err := db.SetCreatorID(1); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 
 	return &PebbleWriter{db: db}, nil

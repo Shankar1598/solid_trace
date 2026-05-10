@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/pkg/logger"
 
+	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/models"
 )
 
@@ -16,7 +17,7 @@ func TestPebbleWriter(t *testing.T) {
 	logger.Init()
 	dbPath := filepath.Join(tmpDir, "test_pebble")
 
-	writer, err := NewPebbleWriter(dbPath)
+	writer, err := NewPebbleWriter(&config.Config{PebblePath: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to create PebbleWriter: %v", err)
 	}
