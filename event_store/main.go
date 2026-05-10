@@ -23,7 +23,7 @@ func main() {
 	logger.Init()
 
 	// Initialize storage
-	pebbleWriter, err := storage.NewPebbleWriter(cfg.PebblePath)
+	pebbleWriter, err := storage.NewPebbleWriter(cfg)
 	if err != nil {
 		logger.L.Fatal("Failed to open Pebble", "error", err)
 	}

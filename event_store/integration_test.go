@@ -16,9 +16,11 @@ import (
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/solidtrace/event_store/auth"
+	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/intake"
 	"github.com/solidtrace/event_store/models"
+
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/pkg/msgpacker"
@@ -73,7 +75,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	db.Close()
 
 	// Initialize Storage
-	pebbleWriter, err := storage.NewPebbleWriter(pebblePath)
+	pebbleWriter, err := storage.NewPebbleWriter(&config.Config{PebblePath: pebblePath})
 	if err != nil {
 		t.Fatalf("Failed to create Pebble: %v", err)
 	}

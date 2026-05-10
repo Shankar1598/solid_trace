@@ -27,25 +27,28 @@ type Config struct {
 	DuckDBTempDirectory string
 	DuckDBMemoryLimit   string
 
+	StorageTiers []StorageTier
+
 	Debug bool
 }
 
 type fileConfig struct {
-	IngestPort          *string `yaml:"ingest_port"`
-	IngestSocket        *string `yaml:"ingest_socket"`
-	PebblePath          *string `yaml:"pebble_path"`
-	DuckDBPath          *string `yaml:"duckdb_path"`
-	ParquetStoragePath  *string `yaml:"parquet_storage_path"`
-	SQLitePath          *string `yaml:"sqlite_path"`
-	MessageQueuePath    *string `yaml:"message_queue_path"`
-	PebbleBatchSize     *int    `yaml:"pebble_batch_size"`
-	PebbleFlushTimeout  *string `yaml:"pebble_flush_timeout"`
-	PebbleChannelSize   *int    `yaml:"pebble_channel_size"`
-	DuckDBFlushTimeout  *string `yaml:"duckdb_flush_timeout"`
-	DuckDBChannelSize   *int    `yaml:"duckdb_channel_size"`
-	DuckDBTempDirectory *string `yaml:"duckdb_temp_directory"`
-	DuckDBMemoryLimit   *string `yaml:"duckdb_memory_limit"`
-	Debug               *bool   `yaml:"debug"`
+	IngestPort          *string        `yaml:"ingest_port"`
+	IngestSocket        *string        `yaml:"ingest_socket"`
+	PebblePath          *string        `yaml:"pebble_path"`
+	DuckDBPath          *string        `yaml:"duckdb_path"`
+	ParquetStoragePath  *string        `yaml:"parquet_storage_path"`
+	SQLitePath          *string        `yaml:"sqlite_path"`
+	MessageQueuePath    *string        `yaml:"message_queue_path"`
+	PebbleBatchSize     *int           `yaml:"pebble_batch_size"`
+	PebbleFlushTimeout  *string        `yaml:"pebble_flush_timeout"`
+	PebbleChannelSize   *int           `yaml:"pebble_channel_size"`
+	DuckDBFlushTimeout  *string        `yaml:"duckdb_flush_timeout"`
+	DuckDBChannelSize   *int           `yaml:"duckdb_channel_size"`
+	DuckDBTempDirectory *string        `yaml:"duckdb_temp_directory"`
+	DuckDBMemoryLimit   *string        `yaml:"duckdb_memory_limit"`
+	StorageTiers        *[]StorageTier `yaml:"storage_tiers"`
+	Debug               *bool          `yaml:"debug"`
 }
 
 func Load() *Config {
@@ -146,6 +149,9 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 	if config.DuckDBMemoryLimit != nil {
 		cfg.DuckDBMemoryLimit = *config.DuckDBMemoryLimit
+	}
+	if config.StorageTiers != nil {
+		cfg.StorageTiers = *config.StorageTiers
 	}
 	if config.Debug != nil {
 		cfg.Debug = *config.Debug

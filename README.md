@@ -4,7 +4,7 @@ A self-hosted error tracking tool with lightweight architecture and strong UX.
 
 ## Why?
 
-Self-hosting Sentry means managing multiple databases and services. SolidTrace does the same job with two services and embedded databases (SQLite, DuckDB, RocksDB).
+Self-hosting Sentry means managing multiple databases and services. SolidTrace does the same job with two services and embedded databases (SQLite, DuckDB, Pebble).
 
 For low to medium scale application, Vertical scaling is often a better solution than scaling horizontally with multiple services. Less moving parts, less maintenance.
 
@@ -18,7 +18,48 @@ Two services:
   - Built with Rails, React, Inertia.js, Tailwind CSS.
   - Uses SQLite for relational data
 - **EventStore** — Go service. Ingests and processes events.
-  - Uses RocksDB for event ingest and DuckDB for analytical queries.
+  - Uses Pebble for event ingest and DuckDB for analytical queries.
+
+## Tiered Storage (S3 / GCS)
+
+SolidTrace's EventStore uses Pebble, which supports tiered storage out of the box. You can configure Pebble to automatically move older, colder data (lower LSM levels) to an S3 or GCS bucket, freeing up local SSD space.
+
+By default, the system runs with local storage only and requires zero configuration.
+
+To enable tiered storage, create an `event_store.yml` file (or set the `EVENT_STORE_CONFIG` environment variable to point to your config file). 
+
+### Simple Remote Tiering (SSD -> S3/GCS)
+
+This configuration keeps hot data on the local SSD and offloads the coldest level (Level 6) to object storage.
+
+```yaml
+storage_tiers:
+  - kind: s3                     # or 'gcs'
+    locator: s3-cold-tier        # unique identifier for this remote tier
+    bucket: my-cold-data-bucket  # the name of your S3/GCS bucket
+    prefix: event-store/events   # optional: subfolder path in the bucket
+    level: 6                     # lower LSM level to start offloading data
+```
+
+### Advanced Local & Remote Tiering (SSD -> HDD -> S3/GCS)
+
+Pebble can also utilize local HDD mounts via the `local` kind. In this example, Levels 1-2 stay on SSD, Levels 3-5 move to a local HDD, and Level 6 is archived to GCS.
+
+```yaml
+pebble_path: /mnt/ssd/pebble     # Hot data (Levels 0-2)
+
+storage_tiers:
+  - kind: local
+    locator: hdd-warm-tier
+    bucket: /mnt/hdd/pebble      # Path to your HDD mount
+    level: 3                     # Offload Levels 3-5 to HDD
+  - kind: gcs
+    locator: gcs-cold-tier
+    bucket: my-archive-bucket
+    level: 6                     # Offload Level 6 to GCS
+```
+
+When configured, EventStore will seamlessly push and pull SSTables between these tiers based on compaction levels.
 
 ## Dev Setup
 
