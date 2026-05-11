@@ -1,4 +1,4 @@
-package intake
+package ingest
 
 import (
 	"crypto/md5"

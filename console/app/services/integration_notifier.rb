@@ -41,15 +41,9 @@ class IntegrationNotifier
     end
   end
 
+  # Convenience alias for callers that only have an Issue. Infers
+  # +newly_created+ from ActiveRecord's dirty tracking.
   def self.notify(issue)
-    # Determine if newly created based on some logic or assume false if not passed?
-    # Original usage in tests: IntegrationNotifier.notify(issue)
-    # The listener likely calls this.
-    # We should match what EventIngestor does or what tests expect.
-    # Tests pass just issue.
-    # Let's assume newly created is true for now or check issue status?
-    # Actually, the listener `IntegrationNotificationJob` likely calls `new(issue, newly_created).check_and_notify`.
-    # Tests are calling static method. Let's redirect static to instance with default.
     new(issue, issue.id_previously_changed?).check_and_notify
   end
 

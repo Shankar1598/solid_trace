@@ -11,7 +11,7 @@ import (
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
-	"github.com/solidtrace/event_store/intake"
+	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -81,8 +81,8 @@ func main() {
 	go archiveConsumer.Run()
 	defer archiveConsumer.Stop()
 
-	intakeService := intake.NewService(sqliteWriter, pebbleChan)
-	ingestHandler := handler.NewIngestHandler(projectAuth, intakeService)
+	ingestService := ingest.NewService(sqliteWriter, pebbleChan)
+	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 

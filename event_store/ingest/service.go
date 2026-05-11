@@ -1,4 +1,4 @@
-package intake
+package ingest
 
 import (
 	"encoding/json"
@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/logger"
-	"github.com/solidtrace/event_store/storage"
 )
 
 var (
@@ -20,16 +19,21 @@ var (
 	ErrOverloaded        = errors.New("server overloaded")
 )
 
-// Service owns Event intake after authentication succeeds.
+// Service owns Event ingest after authentication succeeds.
+// It depends on an IssueRepository (defined in repository.go) for
+// Issue persistence, keeping the domain logic — classification,
+// find-or-create, reopen-on-resolved — concentrated here.
 type Service struct {
-	sqlite     *storage.SQLiteWriter
+	issues     IssueRepository
 	pebbleChan chan<- models.Event
 }
 
-// NewService constructs the Event intake module.
-func NewService(sqlite *storage.SQLiteWriter, pebbleChan chan<- models.Event) *Service {
+// NewService constructs the Event ingest module.
+// The IssueRepository is the seam to Issue persistence; storage.SQLiteWriter
+// is the production adapter.
+func NewService(issues IssueRepository, pebbleChan chan<- models.Event) *Service {
 	return &Service{
-		sqlite:     sqlite,
+		issues:     issues,
 		pebbleChan: pebbleChan,
 	}
 }
@@ -68,18 +72,23 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 	logger.L.Debug("Processing event", "raw_json", string(rawJSON))
 	issue := classifyIssue(payload)
 
-	issueID, fingerprintID, found, err := s.sqlite.FindIssueByFingerprint(projectID, issue.fingerprint)
+	issueID, fingerprintID, issueStatus, found, err := s.issues.FindIssueByFingerprint(projectID, issue.fingerprint)
 	if err != nil {
 		return fmt.Errorf("find issue by fingerprint: %w", err)
 	}
 
 	isNewIssue := false
 	if !found {
-		issueID, fingerprintID, err = s.sqlite.CreateIssueWithFingerprint(projectID, issue.fingerprint, issue.title, issue.culprit, issue.kind)
+		issueID, fingerprintID, err = s.issues.CreateIssueWithFingerprint(projectID, issue.fingerprint, issue.title, issue.culprit, issue.kind)
 		if err != nil {
 			return fmt.Errorf("create issue with fingerprint: %w", err)
 		}
 		isNewIssue = true
+	} else if issueStatus == IssueStatusResolved {
+		// Domain rule: new Events reopen resolved Issues.
+		if err := s.issues.ReopenIssue(issueID); err != nil {
+			return fmt.Errorf("reopen issue: %w", err)
+		}
 	}
 
 	eventUUID, err := uuid.NewV7()
