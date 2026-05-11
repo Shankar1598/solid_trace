@@ -6,19 +6,19 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/solidtrace/event_store/auth"
-	"github.com/solidtrace/event_store/intake"
+	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 type IngestHandler struct {
 	auth   *auth.ProjectAuth
-	intake *intake.Service
+	ingest *ingest.Service
 }
 
-func NewIngestHandler(auth *auth.ProjectAuth, intakeService *intake.Service) *IngestHandler {
+func NewIngestHandler(auth *auth.ProjectAuth, ingestService *ingest.Service) *IngestHandler {
 	return &IngestHandler{
 		auth:   auth,
-		intake: intakeService,
+		ingest: ingestService,
 	}
 }
 
@@ -50,7 +50,7 @@ func (h *IngestHandler) Store(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid project key"})
 	}
 
-	if err := h.intake.IngestStore(projectID, c.Body()); err != nil {
+	if err := h.ingest.IngestStore(projectID, c.Body()); err != nil {
 		return h.renderIngestError(c, err)
 	}
 
@@ -69,7 +69,7 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid project key"})
 	}
 
-	if err := h.intake.IngestEnvelope(projectID, c.Body()); err != nil {
+	if err := h.ingest.IngestEnvelope(projectID, c.Body()); err != nil {
 		return h.renderIngestError(c, err)
 	}
 
@@ -78,16 +78,16 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 
 func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 	switch {
-	case errors.Is(err, intake.ErrInvalidEnvelope):
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid envelope format"})
-	case errors.Is(err, intake.ErrInvalidItemHeader):
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid item header"})
-	case errors.Is(err, intake.ErrInvalidEventJSON):
-		return c.Status(400).JSON(fiber.Map{"error": "Invalid event JSON"})
-	case errors.Is(err, intake.ErrOverloaded):
-		return c.Status(503).JSON(fiber.Map{"error": "Server overloaded"})
+	case errors.Is(err, ingest.ErrInvalidEnvelope):
+		return c.Status(400).SendString(err.Error())
+	case errors.Is(err, ingest.ErrInvalidItemHeader):
+		return c.Status(400).SendString(err.Error())
+	case errors.Is(err, ingest.ErrInvalidEventJSON):
+		return c.Status(400).SendString(err.Error())
+	case errors.Is(err, ingest.ErrOverloaded):
+		return c.Status(429).SendString(err.Error())
 	default:
-		logger.L.Error("Event intake failed", "error", err)
+		logger.L.Error("Event ingest failed", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 }

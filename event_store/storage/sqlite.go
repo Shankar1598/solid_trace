@@ -42,9 +42,13 @@ func (w *SQLiteWriter) FindOrCreateIssueFingerprint(projectID uint32, fingerprin
 	return 0, sql.ErrNoRows
 }
 
-// FindIssueByFingerprint checks if a fingerprint exists and returns the associated issue ID.
-// Returns (issueID, fingerprintID, found, error)
-func (w *SQLiteWriter) FindIssueByFingerprint(projectID uint32, fingerprint string) (int64, int64, bool, error) {
+// FindIssueByFingerprint checks if a fingerprint exists and returns the
+// associated issue ID plus the current issue status. This is a pure read —
+// it does not mutate Issue state. Callers (Event ingest) decide whether to
+// reopen a resolved Issue.
+//
+// Returns (issueID, fingerprintID, issueStatus, found, error).
+func (w *SQLiteWriter) FindIssueByFingerprint(projectID uint32, fingerprint string) (int64, int64, int, bool, error) {
 	var fingerprintID, issueID int64
 	var issueStatus int
 
@@ -57,21 +61,23 @@ func (w *SQLiteWriter) FindIssueByFingerprint(projectID uint32, fingerprint stri
 	err := w.db.QueryRow(query, projectID, fingerprint).Scan(&fingerprintID, &issueID, &issueStatus)
 
 	if err == nil {
-		// Found! Check if resolved (1). If so, reopen (0).
-		if issueStatus == 1 {
-			_, execErr := w.db.Exec("UPDATE issues SET status = 0, updated_at = ? WHERE id = ?", time.Now().Format("2006-01-02 15:04:05.000000"), issueID)
-			if execErr != nil {
-				return 0, 0, true, execErr
-			}
-		}
-		return issueID, fingerprintID, true, nil
+		return issueID, fingerprintID, issueStatus, true, nil
 	}
 
 	if err != sql.ErrNoRows {
-		return 0, 0, false, err
+		return 0, 0, 0, false, err
 	}
 
-	return 0, 0, false, nil
+	return 0, 0, 0, false, nil
+}
+
+// ReopenIssue transitions a resolved Issue back to open.
+func (w *SQLiteWriter) ReopenIssue(issueID int64) error {
+	_, err := w.db.Exec(
+		"UPDATE issues SET status = 0, updated_at = ? WHERE id = ?",
+		time.Now().Format("2006-01-02 15:04:05.000000"), issueID,
+	)
+	return err
 }
 
 // CreateIssueWithFingerprint creates a new issue and its first fingerprint
