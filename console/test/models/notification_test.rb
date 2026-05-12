@@ -19,10 +19,10 @@ class NotificationTest < ActiveSupport::TestCase
     )
   end
 
-  test "enqueue creates queue row and schedules processor job" do
+  test "enqueue creates queue row without scheduling a job" do
     travel_to Time.zone.parse("2026-02-07 12:00:00") do
       assert_difference -> { Notification.count }, 1 do
-        assert_enqueued_with(job: IntegrationNotificationProcessorJob, args: [ @integration.id ]) do
+        assert_no_enqueued_jobs do
           Notification.enqueue!(
             integration: @integration,
             event_type: "issue_created",

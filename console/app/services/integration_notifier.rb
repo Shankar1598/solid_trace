@@ -47,6 +47,34 @@ class IntegrationNotifier
     new(issue, issue.id_previously_changed?).check_and_notify
   end
 
+  # Delivers a batch of pending Notification rows for the given integration.
+  # Resolves Issues from notification payloads and calls the appropriate
+  # provider notifier with an +issue_created_batch+ event.
+  def self.deliver_batch(integration, row_ids)
+    Notification.mark_rows(row_ids, :processing)
+
+    notifications = Notification.where(id: row_ids).order(:created_at)
+    issue_ids = notifications.map { |n| n.payload["issue_id"] }.compact.uniq
+    issues = Issue.where(id: issue_ids).includes(:project).index_by(&:id)
+    ordered_issues = notifications.map { |n| issues[n.payload["issue_id"]] }.compact
+
+    if ordered_issues.any?
+      notifier_class = notifier_for(integration.provider)
+      if notifier_class
+        notification_payload = { event: "issue_created_batch", issues: ordered_issues }
+        notifier_class.new(integration, ordered_issues.first, notification: notification_payload).call
+        Notification.mark_rows(row_ids, :sent)
+      else
+        Notification.mark_rows(row_ids, :sent, "Notifier unavailable")
+      end
+    else
+      Notification.mark_rows(row_ids, :sent, "Issues missing")
+    end
+  rescue StandardError => e
+    Notification.mark_rows(row_ids, :failed, e.message)
+    raise e
+  end
+
   private
 
   attr_reader :issue, :newly_created
@@ -61,6 +89,7 @@ class IntegrationNotifier
         event_type: event,
         payload: { "issue_id" => issue.id }
       )
+      IntegrationNotificationProcessorJob.set(wait: Notification::GROUPING::INITIAL_DELAY).perform_later(integration.id)
       return
     end
 
