@@ -18,21 +18,31 @@ class Notification < ApplicationRecord
   }, prefix: true
 
   def self.enqueue!(integration:, event_type:, payload: {})
-    record = create!(
+    create!(
       integration: integration,
       event_type: event_type,
       payload: payload,
       status: :pending
     )
-
-    IntegrationNotificationProcessorJob.set(wait: GROUPING::INITIAL_DELAY).perform_later(integration.id)
-
-    record
   end
 
   def self.pending_for(integration_id, cutoff_at = Time.current)
     where(integration_id: integration_id, status: [ :pending, :failed ])
       .where("created_at <= ?", cutoff_at)
       .order(:created_at)
+  end
+
+  # Bulk-update status for a set of Notification rows.
+  # Automatically timestamps +sent_at+ and +processing_at+ when appropriate.
+  def self.mark_rows(row_ids, status, error_message = nil)
+    attrs = {
+      status: statuses.fetch(status.to_s),
+      updated_at: Time.current,
+    }
+    attrs[:sent_at] = Time.current if status.to_s == "sent"
+    attrs[:processing_at] = Time.current if status.to_s == "processing"
+    attrs[:error_message] = error_message if error_message
+
+    where(id: row_ids).update_all(attrs)
   end
 end
