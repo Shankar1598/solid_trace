@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -29,8 +31,14 @@ type Config struct {
 
 	StorageTiers []StorageTier
 
+	// InternalToken is the shared secret the console sends on query API requests.
+	// It is read from EVENT_STORE_INTERNAL_TOKEN only, so it never lands in the YAML file.
+	InternalToken string
+
 	Debug bool
 }
+
+const minInternalTokenLength = 32
 
 type fileConfig struct {
 	IngestPort          *string        `yaml:"ingest_port"`
@@ -83,7 +91,24 @@ func Load() *Config {
 		log.Fatalf("Failed to load %s: %v", configPath, err)
 	}
 
+	cfg.InternalToken = os.Getenv("EVENT_STORE_INTERNAL_TOKEN")
+	if err := validateInternalToken(cfg.InternalToken); err != nil {
+		log.Fatalf("Invalid EVENT_STORE_INTERNAL_TOKEN: %v", err)
+	}
+
 	return cfg
+}
+
+// validateInternalToken rejects an unset or short token. The query API serves raw
+// event payloads, so the service must not start without one.
+func validateInternalToken(token string) error {
+	if token == "" {
+		return errors.New("not set")
+	}
+	if len(token) < minInternalTokenLength {
+		return fmt.Errorf("must be at least %d bytes, got %d", minInternalTokenLength, len(token))
+	}
+	return nil
 }
 
 func applyFileConfig(cfg *Config, path string) error {

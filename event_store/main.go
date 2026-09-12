@@ -91,17 +91,7 @@ func main() {
 		DisableStartupMessage: true,
 	})
 
-	// Health check
-	app.Get("/health", healthHandler.Health)
-
-	app.Post("/api/:project_id/store", ingestHandler.Store)
-	app.Post("/api/:project_id/envelope", ingestHandler.Envelope)
-	app.Get("/api/events/:event_uuid", eventsHandler.GetEvent)
-
-	// Query API
-	app.Get("/api/:project_id/events/context", eventsHandler.GetEventWithContext)
-	app.Get("/api/:project_id/events/count", eventsHandler.Count)
-	app.Get("/api/:project_id/events", eventsHandler.List)
+	handler.RegisterRoutes(app, ingestHandler, eventsHandler, healthHandler, cfg.InternalToken)
 
 	// Maintenance API
 	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)
