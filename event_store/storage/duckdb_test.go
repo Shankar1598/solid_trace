@@ -231,3 +231,47 @@ func TestArchiveEventsForDate(t *testing.T) {
 		t.Errorf("Expected 1 event in hot table after archive, got %d", hotCount)
 	}
 }
+
+func TestHasEvent(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger.Init()
+
+	writer, err := NewDuckDBWriter(filepath.Join(tmpDir, "events.duckdb"), filepath.Join(tmpDir, "parquet"), "", "")
+	if err != nil {
+		t.Fatalf("Failed to create DuckDBWriter: %v", err)
+	}
+	defer writer.Close()
+
+	err = writer.WriteBatch([]models.Event{{
+		EventUUID: "uuid-a",
+		ProjectID: 1,
+		Timestamp: time.Now().UTC(),
+		Tags:      map[string]string{},
+	}})
+	if err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+
+	cases := []struct {
+		name      string
+		projectID uint32
+		uuid      string
+		want      bool
+	}{
+		{"event in project", 1, "uuid-a", true},
+		{"event in another project", 2, "uuid-a", false},
+		{"unknown event", 1, "uuid-b", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := writer.HasEvent(tc.projectID, tc.uuid)
+			if err != nil {
+				t.Fatalf("HasEvent failed: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("HasEvent(%d, %q) = %v, want %v", tc.projectID, tc.uuid, got, tc.want)
+			}
+		})
+	}
+}

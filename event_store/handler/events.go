@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -22,12 +23,30 @@ func NewEventsHandler(pebble *storage.PebbleWriter, duckdb *storage.DuckDBWriter
 	}
 }
 
-// GET /api/events/:event_uuid
+// GET /api/:project_id/events/:event_uuid
+// Returns the raw payload only when the event belongs to the project in the path.
 func (h *EventsHandler) GetEvent(c *fiber.Ctx) error {
-	eventUUID := c.Params("event_uuid")
-	key := storage.KeyForEvent(eventUUID)
+	projectID, err := parseProjectID(c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
 
-	data, err := h.pebble.GetEvent(key)
+	eventUUID, err := uuid.Parse(c.Params("event_uuid"))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid event UUID"})
+	}
+
+	// Pebble keys carry no project, so ownership is checked against DuckDB.
+	found, err := h.duckdb.HasEvent(projectID, eventUUID.String())
+	if err != nil {
+		logger.L.Error("HasEvent error", "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	if !found {
+		return c.Status(404).JSON(fiber.Map{"error": "Event not found"})
+	}
+
+	data, err := h.pebble.GetEvent(storage.KeyForEvent(eventUUID.String()))
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -115,15 +134,22 @@ func (h *EventsHandler) Count(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"count": count})
 }
 
+func parseProjectID(c *fiber.Ctx) (uint32, error) {
+	projectID, err := strconv.ParseUint(c.Params("project_id"), 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint32(projectID), nil
+}
+
 func (h *EventsHandler) parseParams(c *fiber.Ctx) (storage.QueryParams, error) {
-	projectIDStr := c.Params("project_id")
-	projectID, err := strconv.ParseUint(projectIDStr, 10, 32)
+	projectID, err := parseProjectID(c)
 	if err != nil {
 		return storage.QueryParams{}, err
 	}
 
 	params := storage.QueryParams{
-		ProjectID: uint32(projectID),
+		ProjectID: projectID,
 		SortDesc:  c.Query("sort") == "desc",
 		Limit:     20,
 		Offset:    0,
