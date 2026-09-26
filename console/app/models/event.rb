@@ -26,7 +26,7 @@ class Event
 
   # Lazy-load payload from Go service
   def payload
-    @payload ||= EventStore.get_event(uuid)
+    @payload ||= EventStore.get_event(project_id: project_id, event_uuid: uuid)
   end
 
   # Compatibility methods
