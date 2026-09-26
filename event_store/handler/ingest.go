@@ -45,9 +45,9 @@ func (h *IngestHandler) Store(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Missing authentication"})
 	}
 
-	projectID, err := h.auth.ValidateKey(publicKey)
-	if err != nil || projectID == 0 {
-		return c.Status(401).JSON(fiber.Map{"error": "Invalid project key"})
+	projectID, err := h.validateKey(publicKey)
+	if err != nil {
+		return h.renderKeyError(c, err)
 	}
 
 	if err := h.ingest.IngestStore(projectID, c.Body()); err != nil {
@@ -64,9 +64,9 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Missing authentication"})
 	}
 
-	projectID, err := h.auth.ValidateKey(publicKey)
-	if err != nil || projectID == 0 {
-		return c.Status(401).JSON(fiber.Map{"error": "Invalid project key"})
+	projectID, err := h.validateKey(publicKey)
+	if err != nil {
+		return h.renderKeyError(c, err)
 	}
 
 	if err := h.ingest.IngestEnvelope(projectID, c.Body()); err != nil {
@@ -74,6 +74,29 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 	}
 
 	return c.SendStatus(200)
+}
+
+var errInvalidProjectKey = errors.New("invalid project key")
+
+func (h *IngestHandler) validateKey(publicKey string) (uint32, error) {
+	projectID, err := h.auth.ValidateKey(publicKey)
+	if err != nil {
+		return 0, err
+	}
+	if projectID == 0 {
+		return 0, errInvalidProjectKey
+	}
+	return projectID, nil
+}
+
+// renderKeyError returns 401 only for an unknown key. A failed lookup is 500:
+// Sentry SDKs drop events on 401 but retry on 5xx.
+func (h *IngestHandler) renderKeyError(c *fiber.Ctx, err error) error {
+	if errors.Is(err, errInvalidProjectKey) {
+		return c.Status(401).JSON(fiber.Map{"error": "Invalid project key"})
+	}
+	logger.L.Error("Project key lookup failed", "error", err)
+	return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 }
 
 func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {

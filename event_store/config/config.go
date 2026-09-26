@@ -1,8 +1,6 @@
 package config
 
 import (
-	"errors"
-	"fmt"
 	"log"
 	"os"
 	"time"
@@ -13,6 +11,7 @@ import (
 type Config struct {
 	Port               string
 	SocketPath         string
+	QueryPort          string // Query API port, always bound to 127.0.0.1
 	PebblePath         string
 	DuckDBPath         string
 	ParquetStoragePath string // Path for archived Parquet files
@@ -31,18 +30,13 @@ type Config struct {
 
 	StorageTiers []StorageTier
 
-	// InternalToken is the shared secret the console sends on query API requests.
-	// It is read from EVENT_STORE_INTERNAL_TOKEN only, so it never lands in the YAML file.
-	InternalToken string
-
 	Debug bool
 }
-
-const minInternalTokenLength = 32
 
 type fileConfig struct {
 	IngestPort          *string        `yaml:"ingest_port"`
 	IngestSocket        *string        `yaml:"ingest_socket"`
+	QueryPort           *string        `yaml:"query_port"`
 	PebblePath          *string        `yaml:"pebble_path"`
 	DuckDBPath          *string        `yaml:"duckdb_path"`
 	ParquetStoragePath  *string        `yaml:"parquet_storage_path"`
@@ -63,6 +57,7 @@ func Load() *Config {
 	cfg := &Config{
 		Port:               "4000",
 		SocketPath:         "",
+		QueryPort:          "4100",
 		PebblePath:         "../storage/pebble/development/events",
 		DuckDBPath:         "../storage/duckdb/development/events.duckdb",
 		ParquetStoragePath: "../storage/duckdb/development/events_parquet",
@@ -91,24 +86,7 @@ func Load() *Config {
 		log.Fatalf("Failed to load %s: %v", configPath, err)
 	}
 
-	cfg.InternalToken = os.Getenv("EVENT_STORE_INTERNAL_TOKEN")
-	if err := validateInternalToken(cfg.InternalToken); err != nil {
-		log.Fatalf("Invalid EVENT_STORE_INTERNAL_TOKEN: %v", err)
-	}
-
 	return cfg
-}
-
-// validateInternalToken rejects an unset or short token. The query API serves raw
-// event payloads, so the service must not start without one.
-func validateInternalToken(token string) error {
-	if token == "" {
-		return errors.New("not set")
-	}
-	if len(token) < minInternalTokenLength {
-		return fmt.Errorf("must be at least %d bytes, got %d", minInternalTokenLength, len(token))
-	}
-	return nil
 }
 
 func applyFileConfig(cfg *Config, path string) error {
@@ -130,6 +108,9 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 	if config.IngestSocket != nil {
 		cfg.SocketPath = *config.IngestSocket
+	}
+	if config.QueryPort != nil && *config.QueryPort != "" {
+		cfg.QueryPort = *config.QueryPort
 	}
 	if config.PebblePath != nil && *config.PebblePath != "" {
 		cfg.PebblePath = *config.PebblePath
