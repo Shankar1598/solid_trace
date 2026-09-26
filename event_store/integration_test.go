@@ -27,10 +27,9 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-const testInternalToken = "integration-test-internal-token-0123456789"
-
 type TestEnv struct {
 	App          *fiber.App
+	QueryApp     *fiber.App
 	PebbleWriter *storage.PebbleWriter
 	DuckDBWriter *storage.DuckDBWriter
 	SQLiteWriter *storage.SQLiteWriter
@@ -129,7 +128,9 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	app := fiber.New()
-	handler.RegisterRoutes(app, ingestHandler, eventsHandler, healthHandler, testInternalToken)
+	handler.RegisterIngestRoutes(app, ingestHandler, healthHandler)
+	queryApp := fiber.New()
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, healthHandler)
 
 	cleanup := func() {
 		close(pebbleChan)
@@ -147,6 +148,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 
 	return &TestEnv{
 		App:          app,
+		QueryApp:     queryApp,
 		PebbleWriter: pebbleWriter,
 		DuckDBWriter: duckdbWriter,
 		SQLiteWriter: sqliteWriter,
@@ -297,8 +299,7 @@ func TestQueryEndpoints(t *testing.T) {
 
 	// 2. Test GET /api/:project_id/events
 	listReq, _ := http.NewRequest("GET", "/api/123/events?limit=10", nil)
-	listReq.Header.Set(handler.InternalTokenHeader, testInternalToken)
-	listResp, err := env.App.Test(listReq, 2000)
+	listResp, err := env.QueryApp.Test(listReq, 2000)
 	if err != nil {
 		t.Fatalf("List request failed: %v", err)
 	}
@@ -313,8 +314,7 @@ func TestQueryEndpoints(t *testing.T) {
 
 	// 3. Test GET /api/:project_id/events/count
 	countReq, _ := http.NewRequest("GET", "/api/123/events/count", nil)
-	countReq.Header.Set(handler.InternalTokenHeader, testInternalToken)
-	countResp, err := env.App.Test(countReq, 2000)
+	countResp, err := env.QueryApp.Test(countReq, 2000)
 	if err != nil {
 		t.Fatalf("Count request failed: %v", err)
 	}
@@ -326,8 +326,7 @@ func TestQueryEndpoints(t *testing.T) {
 
 	// 4. Test GET /api/:project_id/events/:event_uuid
 	getReq, _ := http.NewRequest("GET", "/api/123/events/"+eventUUID, nil)
-	getReq.Header.Set(handler.InternalTokenHeader, testInternalToken)
-	getResp, err := env.App.Test(getReq, 2000)
+	getResp, err := env.QueryApp.Test(getReq, 2000)
 	if err != nil {
 		t.Fatalf("GetEvent request failed: %v", err)
 	}

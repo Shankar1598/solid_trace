@@ -12,9 +12,6 @@ fi
 # Default to port 3000 if not specified
 export PORT="${PORT:-3000}"
 
-# Shared secret the console sends to the event store query API
-export EVENT_STORE_INTERNAL_TOKEN="${EVENT_STORE_INTERNAL_TOKEN:-development-internal-token-not-for-production}"
-
 # Let the debug gem allow remote connections,
 # but avoid loading until `debugger` is called
 export RUBY_DEBUG_OPEN="true"

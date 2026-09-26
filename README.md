@@ -81,11 +81,7 @@ bin/dev
 
 Starts Rails, Vite, EventStore, and background jobs via `Procfile.dev`.
 
-The console authenticates to the EventStore query API with `EVENT_STORE_INTERNAL_TOKEN`. `bin/dev` sets a development value. In production, set the same value on both services; the EventStore refuses to start without a token of at least 32 bytes.
-
-```bash
-export EVENT_STORE_INTERNAL_TOKEN=$(openssl rand -hex 32)
-```
+The EventStore listens on two ports. Ingest (`4000`) is public: SDKs send events there. The query API (`query_port`, default `4100`) serves stored events to the console without authentication, so it binds to `127.0.0.1` only. Never expose it.
 
 ## Project Structure
 

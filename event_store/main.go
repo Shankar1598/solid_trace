@@ -86,12 +86,16 @@ func main() {
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
-	// Setup Fiber
+	// Setup Fiber: public ingest and loopback-only query API on separate listeners
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
+	handler.RegisterIngestRoutes(app, ingestHandler, healthHandler)
 
-	handler.RegisterRoutes(app, ingestHandler, eventsHandler, healthHandler, cfg.InternalToken)
+	queryApp := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, healthHandler)
 
 	// Maintenance API
 	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)
@@ -102,7 +106,17 @@ func main() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		logger.L.Info("Shutting down...")
+		queryApp.Shutdown()
 		app.Shutdown()
+	}()
+
+	// The query API has no authentication, so it is only reachable from this machine.
+	queryAddr := "127.0.0.1:" + cfg.QueryPort
+	go func() {
+		logger.L.Info("Starting query server", "addr", queryAddr)
+		if err := queryApp.Listen(queryAddr); err != nil {
+			logger.L.Fatal("Query server error", "error", err)
+		}
 	}()
 
 	logger.L.Info("Starting ingest server", "port", cfg.Port)

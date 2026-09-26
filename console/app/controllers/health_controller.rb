@@ -26,8 +26,7 @@ class HealthController < ApplicationController
   end
 
   def check_event_store
-    event_store_url = ENV.fetch("EVENT_STORE_URL", "http://localhost:4000")
-    response = RestClient.get("#{event_store_url}/health", timeout: 5)
+    response = RestClient.get("#{EventStore.base_url}/health", timeout: 5)
     result = JSON.parse(response.body)
     { status: result["status"] == "healthy" ? "ok" : "error" }
   rescue StandardError => e

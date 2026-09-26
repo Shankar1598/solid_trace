@@ -2,6 +2,8 @@
 # Any key here overrides the defaults in config.go.
 
 ingest_socket: /var/run/solid-trace/event_store.sock
+# Query API for the console. Always bound to 127.0.0.1; never expose it.
+query_port: "4100"
 pebble_path: /storage/pebble/production/events
 duckdb_path: /storage/duckdb/production/events.duckdb
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3

@@ -4,10 +4,9 @@ require "rest-client"
 require "json"
 
 class EventStore
-  INTERNAL_TOKEN_HEADER = "X-SolidTrace-Internal-Token"
-
+  # The event store's query API, which listens on loopback only.
   def self.base_url
-    ENV.fetch("EVENT_STORE_URL", "http://localhost:4000")
+    ENV.fetch("EVENT_STORE_URL", "http://127.0.0.1:4100")
   end
 
   # ============================================================================
@@ -38,17 +37,9 @@ class EventStore
 
     private
 
-    # Read outside make_request's rescue so a missing token raises instead of
-    # rendering every issue as having no events.
-    def internal_token
-      ENV.fetch("EVENT_STORE_INTERNAL_TOKEN")
-    end
-
     def make_request(url, params: {}, default: nil)
-      headers = { params: params, INTERNAL_TOKEN_HEADER => internal_token }
-
       begin
-        response = RestClient.get(url, headers)
+        response = RestClient.get(url, params: params)
         JSON.parse(response.body)
       rescue RestClient::NotFound
         default
