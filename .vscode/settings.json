@@ -19,5 +19,7 @@
   },
   "bun.runtime": "${workspaceFolder}/.vscode/mise-tools/bun",
   "ruby.rubocop.useServer": true,
-  "ruby.rubocop.executePath": "console/bin/"
+  "ruby.rubocop.executePath": "console/bin/",
+  "git.detectWorktrees": true,
+  "git.showCursorWorktrees": true
 }
