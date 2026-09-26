@@ -27,6 +27,8 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
+const testInternalToken = "integration-test-internal-token-0123456789"
+
 type TestEnv struct {
 	App          *fiber.App
 	PebbleWriter *storage.PebbleWriter
@@ -124,13 +126,10 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	ingestService := ingest.NewService(sqliteWriter, pebbleChan)
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	app := fiber.New()
-	app.Post("/api/:project_id/store", ingestHandler.Store)
-	app.Post("/api/:project_id/envelope", ingestHandler.Envelope)
-	app.Get("/api/events/:event_uuid", eventsHandler.GetEvent)
-	app.Get("/api/:project_id/events", eventsHandler.List)
-	app.Get("/api/:project_id/events/count", eventsHandler.Count)
+	handler.RegisterRoutes(app, ingestHandler, eventsHandler, healthHandler, testInternalToken)
 
 	cleanup := func() {
 		close(pebbleChan)
@@ -210,7 +209,7 @@ func TestStoreIngestion(t *testing.T) {
 	}
 
 	// Verify Pebble
-	key := storage.KeyForEvent(persistedEvent.EventUUID)
+	key := storage.KeyForEvent(persistedEvent.ProjectID, persistedEvent.EventUUID)
 	rawJSON, err := env.PebbleWriter.GetEvent(key)
 	if err != nil {
 		t.Fatalf("Pebble GetEvent failed: %v", err)
@@ -298,6 +297,7 @@ func TestQueryEndpoints(t *testing.T) {
 
 	// 2. Test GET /api/:project_id/events
 	listReq, _ := http.NewRequest("GET", "/api/123/events?limit=10", nil)
+	listReq.Header.Set(handler.InternalTokenHeader, testInternalToken)
 	listResp, err := env.App.Test(listReq, 2000)
 	if err != nil {
 		t.Fatalf("List request failed: %v", err)
@@ -313,6 +313,7 @@ func TestQueryEndpoints(t *testing.T) {
 
 	// 3. Test GET /api/:project_id/events/count
 	countReq, _ := http.NewRequest("GET", "/api/123/events/count", nil)
+	countReq.Header.Set(handler.InternalTokenHeader, testInternalToken)
 	countResp, err := env.App.Test(countReq, 2000)
 	if err != nil {
 		t.Fatalf("Count request failed: %v", err)
@@ -323,8 +324,9 @@ func TestQueryEndpoints(t *testing.T) {
 		t.Errorf("Count expected 1, got %d", countRes["count"])
 	}
 
-	// 4. Test GET /api/events/:event_uuid
-	getReq, _ := http.NewRequest("GET", "/api/events/"+eventUUID, nil)
+	// 4. Test GET /api/:project_id/events/:event_uuid
+	getReq, _ := http.NewRequest("GET", "/api/123/events/"+eventUUID, nil)
+	getReq.Header.Set(handler.InternalTokenHeader, testInternalToken)
 	getResp, err := env.App.Test(getReq, 2000)
 	if err != nil {
 		t.Fatalf("GetEvent request failed: %v", err)

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"os"
 
@@ -94,7 +95,7 @@ func (w *PebbleWriter) WriteBatch(events []models.Event) error {
 	defer batch.Close()
 
 	for _, event := range events {
-		key := KeyForEvent(event.EventUUID)
+		key := KeyForEvent(event.ProjectID, event.EventUUID)
 		if err := batch.Set(key, event.RawJSON, nil); err != nil {
 			return err
 		}
@@ -140,11 +141,14 @@ func (w *PebbleWriter) Ping() error {
 }
 
 // KeyForEvent generates a binary key for Pebble.
-// Format: UUID (16 bytes)
-func KeyForEvent(eventUUID string) []byte {
+// Format: project ID (4 bytes, big-endian) + UUID (16 bytes)
+// The project prefix makes a lookup under the wrong project miss, and keeps each
+// project's events together in time order.
+func KeyForEvent(projectID uint32, eventUUID string) []byte {
+	key := binary.BigEndian.AppendUint32(make([]byte, 0, 20), projectID)
 	u, err := uuid.Parse(eventUUID)
 	if err != nil {
-		return []byte(eventUUID)
+		return append(key, eventUUID...)
 	}
-	return u[:]
+	return append(key, u[:]...)
 }

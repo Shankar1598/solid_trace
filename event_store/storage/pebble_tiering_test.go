@@ -69,7 +69,7 @@ func TestPebbleTieringLocal(t *testing.T) {
 	}
 
 	// 5. Verify Public Interface: Data must be transparently readable
-	data, err := writer.GetEvent(KeyForEvent(eventID))
+	data, err := writer.GetEvent(KeyForEvent(event.ProjectID, eventID))
 	if err != nil {
 		t.Fatalf("failed to get event: %v", err)
 	}
