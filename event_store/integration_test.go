@@ -209,7 +209,7 @@ func TestStoreIngestion(t *testing.T) {
 	}
 
 	// Verify Pebble
-	key := storage.KeyForEvent(persistedEvent.EventUUID)
+	key := storage.KeyForEvent(persistedEvent.ProjectID, persistedEvent.EventUUID)
 	rawJSON, err := env.PebbleWriter.GetEvent(key)
 	if err != nil {
 		t.Fatalf("Pebble GetEvent failed: %v", err)

@@ -311,16 +311,6 @@ func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
 	return count, nil
 }
 
-// HasEvent reports whether the project has an event with this UUID.
-func (w *DuckDBWriter) HasEvent(projectID uint32, eventUUID string) (bool, error) {
-	var exists bool
-	err := w.db.QueryRow(
-		"SELECT EXISTS (SELECT 1 FROM events WHERE project_id = ? AND uuid = ?)",
-		projectID, eventUUID,
-	).Scan(&exists)
-	return exists, err
-}
-
 // EventWithContext holds an event with its previous and next UUIDs
 type EventWithContext struct {
 	Event    models.Event
