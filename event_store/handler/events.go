@@ -36,17 +36,8 @@ func (h *EventsHandler) GetEvent(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid event UUID"})
 	}
 
-	// Pebble keys carry no project, so ownership is checked against DuckDB.
-	found, err := h.duckdb.HasEvent(projectID, eventUUID.String())
-	if err != nil {
-		logger.L.Error("HasEvent error", "error", err)
-		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
-	}
-	if !found {
-		return c.Status(404).JSON(fiber.Map{"error": "Event not found"})
-	}
-
-	data, err := h.pebble.GetEvent(storage.KeyForEvent(eventUUID.String()))
+	// The key carries the project, so an event from another project is not found.
+	data, err := h.pebble.GetEvent(storage.KeyForEvent(projectID, eventUUID.String()))
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}

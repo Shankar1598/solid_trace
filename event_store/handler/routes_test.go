@@ -20,6 +20,13 @@ const testToken = "test-internal-token-0123456789abcdef"
 
 func newTestApp(t *testing.T, events ...models.Event) *fiber.App {
 	t.Helper()
+	return newTestAppWithStores(t, events, events)
+}
+
+// newTestAppWithStores writes different events to each store, to model events
+// that Pebble has committed but DuckDB has not yet ingested.
+func newTestAppWithStores(t *testing.T, pebbleEvents, duckdbEvents []models.Event) *fiber.App {
+	t.Helper()
 	logger.Init()
 	tmpDir := t.TempDir()
 
@@ -35,10 +42,10 @@ func newTestApp(t *testing.T, events ...models.Event) *fiber.App {
 	}
 	t.Cleanup(duckdbWriter.Close)
 
-	if err := pebbleWriter.WriteBatch(events); err != nil {
+	if err := pebbleWriter.WriteBatch(pebbleEvents); err != nil {
 		t.Fatalf("Pebble WriteBatch failed: %v", err)
 	}
-	if err := duckdbWriter.WriteBatch(events); err != nil {
+	if err := duckdbWriter.WriteBatch(duckdbEvents); err != nil {
 		t.Fatalf("DuckDB WriteBatch failed: %v", err)
 	}
 
@@ -158,4 +165,13 @@ func TestGetEventIsScopedToProject(t *testing.T) {
 			t.Errorf("expected 400, got %d", resp.StatusCode)
 		}
 	})
+}
+
+func TestGetEventDoesNotWaitForDuckDB(t *testing.T) {
+	event := newEvent(1)
+	app := newTestAppWithStores(t, []models.Event{event}, nil)
+
+	if resp := get(t, app, "/api/1/events/"+event.EventUUID, testToken); resp.StatusCode != fiber.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
 }

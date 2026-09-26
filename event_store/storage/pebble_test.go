@@ -41,7 +41,7 @@ func TestPebbleWriter(t *testing.T) {
 	}
 
 	// Test GetEvent
-	key := KeyForEvent(event.EventUUID)
+	key := KeyForEvent(event.ProjectID, event.EventUUID)
 	data, err := writer.GetEvent(key)
 	if err != nil {
 		t.Fatalf("GetEvent failed: %v", err)
@@ -53,29 +53,28 @@ func TestPebbleWriter(t *testing.T) {
 }
 
 func TestKeyForEvent(t *testing.T) {
-	// Generate a v7 UUID
 	u, _ := uuid.NewV7()
-	uuidStr := u.String()
 
-	key := KeyForEvent(uuidStr)
+	key := KeyForEvent(7, u.String())
 
-	// Format: UUID (16 bytes)
-	// Total: 16 bytes
-
-	if len(key) != 16 {
-		t.Errorf("Expected key length 16, got %d", len(key))
+	// Format: project ID (4 bytes, big-endian) + UUID (16 bytes)
+	if len(key) != 20 {
+		t.Fatalf("Expected key length 20, got %d", len(key))
 	}
-
-	// Verify exact match
-	if string(key) != string(u[:]) {
+	if string(key[:4]) != "\x00\x00\x00\x07" {
+		t.Errorf("Expected project prefix 00000007, got %x", key[:4])
+	}
+	if string(key[4:]) != string(u[:]) {
 		t.Errorf("UUID mismatch in key")
 	}
 
-	// Test with hex string (no dashes) - should also work if Parse handles it
-	// uuid.Parse supports 32-char hex.
-	hexStr := "8e06f9c623114e978329e37700b5f261"
-	keyHex := KeyForEvent(hexStr)
-	if len(keyHex) != 16 {
-		t.Errorf("Expected key length 16 for hex string, got %d", len(keyHex))
+	// uuid.Parse also accepts 32-char hex without dashes.
+	keyHex := KeyForEvent(7, "8e06f9c623114e978329e37700b5f261")
+	if len(keyHex) != 20 {
+		t.Errorf("Expected key length 20 for hex string, got %d", len(keyHex))
+	}
+
+	if string(KeyForEvent(8, u.String())) == string(key) {
+		t.Errorf("Expected different projects to produce different keys")
 	}
 }
