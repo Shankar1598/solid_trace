@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/pebble/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/pkg/logger"
 
@@ -22,6 +23,10 @@ func TestPebbleWriter(t *testing.T) {
 		t.Fatalf("Failed to create PebbleWriter: %v", err)
 	}
 	defer writer.Close()
+
+	if got := writer.db.FormatMajorVersion(); got != pebble.FormatValueSeparation {
+		t.Errorf("Expected format major version %s, got %s", pebble.FormatValueSeparation, got)
+	}
 
 	timestamp := time.Now().UTC()
 	uuidHex := "8e06f9c623114e978329e37700b5f261"
