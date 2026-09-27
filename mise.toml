@@ -2,3 +2,8 @@
 ruby = '4'
 bun = '1.3'
 go = '1.25'
+
+[env]
+# EventStore links the DuckDB 2.0 alpha fetched by event_store/scripts/fetch-duckdb.
+GOFLAGS = "-tags=duckdb_use_lib"
+CGO_LDFLAGS = "-L{{config_root}}/event_store/lib/duckdb -Wl,-rpath,{{config_root}}/event_store/lib/duckdb"

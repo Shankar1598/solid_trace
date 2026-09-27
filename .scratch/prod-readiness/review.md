@@ -92,6 +92,11 @@ errors at `sql.Open`). The `Getting rid of cgo dependencies` commit landed for P
 (replacing RocksDB), but DuckDB and SQLite still need cgo. Needs `CGO_ENABLED=1`, a builder
 with a C toolchain, and a glibc runtime base or a static musl build.
 
+**Resolution (2026-09-27):** fixed in [upgrade-pebble-duckdb 01](../upgrade-pebble-duckdb/issues/01-upgrade-pebble-and-duckdb.md).
+The builder is `golang:1.25-bookworm` with `CGO_ENABLED=1`. The runtime stays on `bookworm-slim` (glibc).
+It also links the DuckDB 2.0 alpha `libduckdb.so`, installed in `/usr/local/lib`.
+The image builds, starts healthy and ingests.
+
 ## 4. Events acknowledged with 200 can vanish silently
 
 Four paths, none documented as a tradeoff:
