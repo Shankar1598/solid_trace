@@ -24,7 +24,7 @@ Decided with the user on 2026-09-27, against the MVP scope. Each gap has one buc
 | §1 Tiered storage | Future | the map's Future list |
 | §2 Query API auth | fixed | before this ticket |
 | §3 Docker build, plus the DuckDB 2.0 driver | fixed | merged to `main` (`91f0f8f`); EventStore links the 2.0 alpha |
-| §4 Acknowledged Events that vanish | **prerequisite** | The user's change: Event ingest writes each Event to Pebble before replying `200`. It lands before MVP code starts, because log ingest shares the process, the shutdown sequence and probably the write path. The benchmark does not wait for it. Durability for logs waits for it on [How are logs stored and retained?](10-storage-architecture-and-retention.md). |
+| §4 Acknowledged Events that vanish | **prerequisite** | [Write the spec for the ingest write-path change](../../ingest-write-path/issues/01-write-the-spec.md). The user's change: Event ingest writes each Event to Pebble before replying `200`. It lands before MVP code starts, because log ingest shares the process, the shutdown sequence and probably the write path. The benchmark does not wait for it. Durability for logs waits for it on [How are logs stored and retained?](10-storage-architecture-and-retention.md). |
 | §5 Concurrent first Events | fixed | `7de90dd` |
 | §6 Sentry protocol correctness | fixed | `3ec0486`; envelope log items are Future |
 | §7 Issues list N+1 | independent | |

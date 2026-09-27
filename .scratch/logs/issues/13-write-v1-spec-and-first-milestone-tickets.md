@@ -9,4 +9,4 @@ Map: [SolidTrace Logs](../map.md)
 
 Assemble the MVP spec from the resolved tickets and write its implementation tickets. Choose the explorer's table and SQL editor components (shadcn is fixed). Resolved when the spec and tickets exist and every decision in them points to a resolved ticket on this map.
 
-The spec states its prerequisites: Event ingest's Pebble-first write path (review §4) lands before MVP code starts. See [Which production-readiness gaps must be fixed before or alongside logs?](05-prod-readiness-gaps-for-logs.md).
+The spec states its prerequisites: Event ingest's Pebble-first write path (review §4, [Write the spec for the ingest write-path change](../../ingest-write-path/issues/01-write-the-spec.md)) lands before MVP code starts. See [Which production-readiness gaps must be fixed before or alongside logs?](05-prod-readiness-gaps-for-logs.md).

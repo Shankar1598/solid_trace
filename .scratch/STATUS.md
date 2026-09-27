@@ -14,7 +14,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 ## Next
 
 1. [Logs 07: What is a Log?](logs/issues/07-log-domain-model.md) (grilling; the only unblocked logs ticket; it unblocks 08, 09 and 11)
-2. Event ingest's Pebble-first write path (review §4): must land before logs MVP code starts
+2. [Ingest write path 01: write the spec](ingest-write-path/issues/01-write-the-spec.md) (review §4; must land before logs MVP code starts)
 3. [Prod-readiness 011: Pebble memtable size](prod-readiness/issues/011-pebble-memtable-size.md) (benchmark task)
 4. [Prod-readiness 012: Sentry compatibility tests](prod-readiness/issues/012-sentry-compatibility-tests.md) (task)
 5. [Integration notification spec](integration-notification/spec.md): split it into tickets
