@@ -22,13 +22,15 @@ Nothing is deployed, so we take the newest versions and keep no data. This is al
 
 ## Done when
 
-- [ ] `go test ./...` passes in `event_store`, including the integration tests
-- [ ] `bin/go-dev` boots, and one event goes in and comes back out through a query
-- [ ] The Docker image builds and starts
-- [ ] Logs map and logs 09 note that the "duckdb-go has a 2.0 build" risk is retired
+- [x] `go test ./...` passes in `event_store`, including the integration tests
+- [x] `bin/go-dev` boots, and one event goes in and comes back out through a query
+- [x] The Docker image builds and starts
+- [x] Logs map and logs 09 note that the "duckdb-go has a 2.0 build" risk is retired
 
 ## Out of scope
 
 A Go CI job, memtable tuning ([prod-readiness 011](../../prod-readiness/issues/011-pebble-memtable-size.md)), tiering beyond the first tier.
 
 ## Comments
+
+**2026-09-27:** all done-when checks pass on the branch. `go test ./...` passes, including the integration tests, and the storage tests also pass under `TZ=Asia/Kolkata`. `bin/go-dev` ingested one event: it came back from Pebble by UUID, and from DuckDB with its tags. The Docker image builds, starts healthy and ingests. The ticket stays `claimed` until the branch merges to `main`.

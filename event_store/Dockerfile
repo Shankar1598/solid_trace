@@ -1,4 +1,4 @@
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 
 WORKDIR /app
 
@@ -12,8 +12,8 @@ RUN go mod download
 
 COPY . .
 
-# Build binary
-RUN CGO_ENABLED=0 go build -o event_store .
+# Build binary. DuckDB and SQLite are cgo libraries.
+RUN CGO_ENABLED=1 go build -o event_store .
 
 # Final stage
 FROM debian:bookworm-slim
