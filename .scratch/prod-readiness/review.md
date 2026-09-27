@@ -133,6 +133,18 @@ Needs `ON CONFLICT DO NOTHING` + re-select, or a retry loop.
 - **`truncate` splits UTF-8.** `ingest/issue_classifier.go:267` slices bytes, corrupting any
   non-ASCII error message at the 250-byte boundary.
 
+**Resolution (2026-09-27):** all four fixed in `event_store/ingest`.
+`IngestEnvelope` now walks every item: it honours `length`, falls back to newline
+delimiting, and ingests the first `event` item. `transaction` items are dropped with every
+other non-event type. A bad envelope header, an item header with no `type`, or a
+`length` that overruns or disagrees with the payload returns 400. `extractTimestamp` reads
+`timestamp` as a number or an RFC 3339 string; a string with no offset is read as UTC,
+and an unparseable one falls back to now. The non-Sentry `dt` branch is gone.
+`truncate` backs off to a rune boundary. Found along the way: `RawJSON` aliased
+`c.Body()`, which fasthttp reuses once the handler returns, so events queued for Pebble
+could be overwritten. It is now copied. The integration test's hardcoded `length: 50` was
+wrong, and only passed because the old parser ignored `length`.
+
 Worth noting: `classifyIssue` itself is good. The culprit-extraction port is careful and the
 888-line test file is the best-tested part of the repo.
 
@@ -236,4 +248,4 @@ and is the thing tiered storage is currently standing in for.
 4. Denormalise `times_seen` / `first_seen_at` / `last_seen_at`, paginate the index.
 5. Retention policy.
 6. ~~Rewrite the tiered-storage README section.~~ Done: moved to "Future".
-7. Protocol correctness (envelopes, transactions, timestamps) and the `ON CONFLICT` fix.
+7. ~~Protocol correctness (envelopes, transactions, timestamps)~~ Done (§6). The `ON CONFLICT` fix is still open.

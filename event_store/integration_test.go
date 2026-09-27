@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -236,11 +237,8 @@ func TestEnvelopeIngestion(t *testing.T) {
 	// Line 2: Item Header
 	// Line 3: Payload
 	envelopeHeader := `{"event_id": "9b7d475493954601ab7f3b599b2578cb", "sent_at": "2026-01-24T15:00:00Z"}`
-	itemHeader := `{"type": "event", "length": 50}` // Length is ignored by our simple parser currently or must be valid?
-	// The code: lines := strings.SplitN(string(body), "\n", 3)
-	// rawEventJSON := lines[2]
-	// It doesn't strictly validate length header vs content length.
 	eventPayload := `{"event_id": "9b7d475493954601ab7f3b599b2578cb", "message": "Envelope Test", "environment": "production"}`
+	itemHeader := fmt.Sprintf(`{"type": "event", "length": %d}`, len(eventPayload))
 
 	body := envelopeHeader + "\n" + itemHeader + "\n" + eventPayload
 
