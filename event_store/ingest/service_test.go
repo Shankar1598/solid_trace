@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -30,6 +31,9 @@ type fakeIssueRepository struct {
 	createErr    error // inject errors
 	findErr      error
 	reopenErr    error
+	// staleFind makes FindIssueByFingerprint miss existing Issues, as when a
+	// concurrent Event creates the Issue just after the lock-free lookup.
+	staleFind bool
 }
 
 type fakeIssue struct {
@@ -69,16 +73,20 @@ func (f *fakeIssueRepository) FindIssueByFingerprint(projectID uint32, fingerpri
 	}
 
 	issue, ok := f.issues[f.key(projectID, fingerprint)]
-	if !ok {
+	if !ok || f.staleFind {
 		return 0, 0, 0, false, nil
 	}
 	return issue.issueID, issue.fingerprintID, issue.status, true, nil
 }
 
-func (f *fakeIssueRepository) CreateIssueWithFingerprint(projectID uint32, fingerprint, title, culprit, kind string) (int64, int64, error) {
+func (f *fakeIssueRepository) FindOrCreateIssue(projectID uint32, fingerprint, title, culprit, kind string) (int64, int64, int, bool, error) {
 	f.createCalls = append(f.createCalls, fakeCreateCall{projectID, fingerprint, title, culprit, kind})
 	if f.createErr != nil {
-		return 0, 0, f.createErr
+		return 0, 0, 0, false, f.createErr
+	}
+
+	if issue, ok := f.issues[f.key(projectID, fingerprint)]; ok {
+		return issue.issueID, issue.fingerprintID, issue.status, false, nil
 	}
 
 	issueID := f.nextID
@@ -91,7 +99,7 @@ func (f *fakeIssueRepository) CreateIssueWithFingerprint(projectID uint32, finge
 		status:        IssueStatusOpen,
 	}
 
-	return issueID, fingerprintID, nil
+	return issueID, fingerprintID, IssueStatusOpen, true, nil
 }
 
 func (f *fakeIssueRepository) ReopenIssue(issueID int64) error {
@@ -128,10 +136,37 @@ func (f *fakeIssueRepository) seedIssue(projectID uint32, fingerprint string, st
 // Existing validation tests (updated to use new constructor signature)
 // ---------------------------------------------------------------------------
 
-func TestServiceIngestEnvelopeRejectsShortEnvelope(t *testing.T) {
+func TestServiceIngestEnvelopeRejectsInvalidEnvelopeHeader(t *testing.T) {
+	service := NewService(nil, nil)
+
+	err := service.IngestEnvelope(123, []byte("not-json\n{\"type\":\"event\"}\n{}"))
+	if !errors.Is(err, ErrInvalidEnvelope) {
+		t.Fatalf("expected ErrInvalidEnvelope, got %v", err)
+	}
+}
+
+func TestServiceIngestEnvelopeRejectsItemHeaderWithoutType(t *testing.T) {
 	service := NewService(nil, nil)
 
 	err := service.IngestEnvelope(123, []byte("{}\n{}"))
+	if !errors.Is(err, ErrInvalidItemHeader) {
+		t.Fatalf("expected ErrInvalidItemHeader, got %v", err)
+	}
+}
+
+func TestServiceIngestEnvelopeRejectsLengthPastEnd(t *testing.T) {
+	service := NewService(nil, nil)
+
+	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\",\"length\":100}\n{}"))
+	if !errors.Is(err, ErrInvalidEnvelope) {
+		t.Fatalf("expected ErrInvalidEnvelope, got %v", err)
+	}
+}
+
+func TestServiceIngestEnvelopeRejectsPayloadLongerThanLength(t *testing.T) {
+	service := NewService(nil, nil)
+
+	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\",\"length\":1}\n{}"))
 	if !errors.Is(err, ErrInvalidEnvelope) {
 		t.Fatalf("expected ErrInvalidEnvelope, got %v", err)
 	}
@@ -373,7 +408,7 @@ func TestServiceIngestStore_FindError_Propagates(t *testing.T) {
 
 func TestServiceIngestStore_CreateError_Propagates(t *testing.T) {
 	repo := newFakeIssueRepository()
-	repo.createErr = errors.New("unique constraint violated")
+	repo.createErr = errors.New("disk I/O error")
 	pebbleChan := make(chan models.Event, 10)
 	service := NewService(repo, pebbleChan)
 
@@ -383,6 +418,62 @@ func TestServiceIngestStore_CreateError_Propagates(t *testing.T) {
 	}
 	if !errors.Is(err, repo.createErr) {
 		t.Errorf("expected wrapped create error, got: %v", err)
+	}
+}
+
+func TestServiceIngestStore_LostCreateRace_UsesExistingIssue(t *testing.T) {
+	repo := newFakeIssueRepository()
+	pebbleChan := make(chan models.Event, 10)
+	service := NewService(repo, pebbleChan)
+
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("first ingest failed: %v", err)
+	}
+	firstEvent := <-pebbleChan
+
+	// The lookup misses, as if the first Event's Issue was committed just after it.
+	repo.staleFind = true
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("second ingest failed: %v", err)
+	}
+
+	event := <-pebbleChan
+	if event.IsNewIssue {
+		t.Error("expected IsNewIssue=false for the losing Event, or issue_created is sent twice")
+	}
+	if event.IssueID != firstEvent.IssueID {
+		t.Errorf("expected issue %d, got %d", firstEvent.IssueID, event.IssueID)
+	}
+	if len(repo.issues) != 1 {
+		t.Errorf("expected 1 issue, got %d", len(repo.issues))
+	}
+	if len(repo.reopenCalls) != 0 {
+		t.Errorf("expected no reopen for an open issue, got %d", len(repo.reopenCalls))
+	}
+}
+
+func TestServiceIngestStore_LostCreateRace_ReopensResolvedIssue(t *testing.T) {
+	repo := newFakeIssueRepository()
+	pebbleChan := make(chan models.Event, 10)
+	service := NewService(repo, pebbleChan)
+
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("first ingest failed: %v", err)
+	}
+	firstEvent := <-pebbleChan
+	for k, issue := range repo.issues {
+		issue.status = IssueStatusResolved
+		repo.issues[k] = issue
+	}
+
+	repo.staleFind = true
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("second ingest failed: %v", err)
+	}
+	<-pebbleChan
+
+	if len(repo.reopenCalls) != 1 || repo.reopenCalls[0] != firstEvent.IssueID {
+		t.Errorf("expected reopen of issue %d, got %v", firstEvent.IssueID, repo.reopenCalls)
 	}
 }
 
@@ -443,12 +534,12 @@ func TestServiceIngestEnvelope_HappyPath(t *testing.T) {
 	}
 }
 
-func TestServiceIngestEnvelope_TransactionType(t *testing.T) {
+func TestServiceIngestEnvelope_DropsTransactions(t *testing.T) {
 	repo := newFakeIssueRepository()
 	pebbleChan := make(chan models.Event, 10)
 	service := NewService(repo, pebbleChan)
 
-	eventPayload := `{"message": "Transaction event"}`
+	eventPayload := `{"type": "transaction", "transaction": "GET /"}`
 	envelope := []byte("{}\n{\"type\":\"transaction\"}\n" + eventPayload)
 
 	err := service.IngestEnvelope(99, envelope)
@@ -456,7 +547,117 @@ func TestServiceIngestEnvelope_TransactionType(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(pebbleChan) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(pebbleChan))
+	if len(pebbleChan) != 0 {
+		t.Fatalf("expected no events, got %d", len(pebbleChan))
+	}
+	if len(repo.createCalls) != 0 {
+		t.Fatalf("expected no issues created, got %d", len(repo.createCalls))
+	}
+}
+
+func TestServiceIngestEnvelope_MultipleItems(t *testing.T) {
+	eventPayload := `{"message": "multi item", "environment": "production"}`
+	attachment := "line one\n{\"type\":\"event\"}\nline three"
+
+	tests := []struct {
+		name     string
+		envelope string
+	}{
+		{
+			name: "event then attachment, with lengths",
+			envelope: "{\"event_id\":\"9ec79c33ec9942ab8353589fcb2e04dc\"}\n" +
+				fmt.Sprintf("{\"type\":\"event\",\"length\":%d}\n", len(eventPayload)) + eventPayload + "\n" +
+				fmt.Sprintf("{\"type\":\"attachment\",\"length\":%d}\n", len(attachment)) + attachment + "\n",
+		},
+		{
+			name: "attachment before event, event without length",
+			envelope: "{}\n" +
+				fmt.Sprintf("{\"type\":\"attachment\",\"length\":%d}\n", len(attachment)) + attachment + "\n" +
+				"{\"type\":\"event\"}\n" + eventPayload,
+		},
+		{
+			name: "event then client report, no trailing newline",
+			envelope: "{}\n" +
+				"{\"type\":\"event\"}\n" + eventPayload + "\n" +
+				"{\"type\":\"client_report\"}\n{\"discarded_events\":[]}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeIssueRepository()
+			pebbleChan := make(chan models.Event, 10)
+			service := NewService(repo, pebbleChan)
+
+			if err := service.IngestEnvelope(99, []byte(tt.envelope)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(pebbleChan) != 1 {
+				t.Fatalf("expected 1 event, got %d", len(pebbleChan))
+			}
+
+			event := <-pebbleChan
+			if string(event.RawJSON) != eventPayload {
+				t.Errorf("expected RawJSON %q, got %q", eventPayload, event.RawJSON)
+			}
+			if event.Environment != "production" {
+				t.Errorf("expected environment 'production', got %q", event.Environment)
+			}
+		})
+	}
+}
+
+func TestServiceIngestStore_CopiesRequestBody(t *testing.T) {
+	repo := newFakeIssueRepository()
+	pebbleChan := make(chan models.Event, 10)
+	service := NewService(repo, pebbleChan)
+
+	body := sampleEventJSON()
+	if err := service.IngestStore(42, body); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := string(body)
+	for i := range body {
+		body[i] = 'x' // fasthttp reuses the request buffer after the handler returns
+	}
+
+	event := <-pebbleChan
+	if string(event.RawJSON) != want {
+		t.Errorf("RawJSON aliases the request body: got %q", event.RawJSON)
+	}
+}
+
+func TestExtractTimestamp(t *testing.T) {
+	tests := []struct {
+		name      string
+		timestamp interface{}
+		want      time.Time
+	}{
+		{"unix seconds", 1700000000.5, time.UnixMilli(1700000000500)},
+		{"RFC 3339 with Z", "2023-11-14T22:13:20.123456Z", time.Date(2023, 11, 14, 22, 13, 20, 123456000, time.UTC)},
+		{"RFC 3339 with offset", "2023-11-14T22:13:20+05:30", time.Date(2023, 11, 14, 16, 43, 20, 0, time.UTC)},
+		{"no offset means UTC", "2023-11-14T22:13:20.5", time.Date(2023, 11, 14, 22, 13, 20, 500000000, time.UTC)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractTimestamp(map[string]interface{}{"timestamp": tt.timestamp})
+			if !got.Equal(tt.want) {
+				t.Errorf("expected %v, got %v", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestExtractTimestamp_FallsBackToNow(t *testing.T) {
+	for _, payload := range []map[string]interface{}{
+		{},
+		{"timestamp": "not a time"},
+	} {
+		before := time.Now()
+		got := extractTimestamp(payload)
+		if got.Before(before) || got.After(time.Now()) {
+			t.Errorf("payload %v: expected now, got %v", payload, got)
+		}
 	}
 }

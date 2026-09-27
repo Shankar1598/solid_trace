@@ -830,6 +830,12 @@ func TestTruncate_LongString(t *testing.T) {
 	assertEqual(t, "truncate", "hello", got)
 }
 
+func TestTruncate_DoesNotSplitMultibyteCharacter(t *testing.T) {
+	// "é" is two bytes; a 2-byte cut would land inside it.
+	got := truncate("aéb", 2)
+	assertEqual(t, "truncate", "a", got)
+}
+
 // ---------------------------------------------------------------------------
 // Multiple exceptions — culprit uses last exception's stacktrace
 // ---------------------------------------------------------------------------
