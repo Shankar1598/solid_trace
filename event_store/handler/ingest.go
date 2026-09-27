@@ -89,8 +89,9 @@ func (h *IngestHandler) validateKey(publicKey string) (uint32, error) {
 	return projectID, nil
 }
 
-// renderKeyError returns 401 only for an unknown key. A failed lookup is 500:
-// Sentry SDKs drop events on 401 but retry on 5xx.
+// renderKeyError returns 401 only for an unknown key. A failed lookup is our
+// fault, so it is a 500 and is logged here. Sentry SDKs do not retry on either
+// status: an event that gets any non-2xx response is lost.
 func (h *IngestHandler) renderKeyError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, errInvalidProjectKey) {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid project key"})
@@ -108,7 +109,9 @@ func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 	case errors.Is(err, ingest.ErrInvalidEventJSON):
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrOverloaded):
-		return c.Status(429).SendString(err.Error())
+		// Not 429: on a 429 without Retry-After, Sentry SDKs stop sending
+		// everything for 60s. A 503 drops only this event.
+		return c.Status(503).SendString(err.Error())
 	default:
 		logger.L.Error("Event ingest failed", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
