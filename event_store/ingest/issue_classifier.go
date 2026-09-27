@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 type issueDetails struct {
@@ -264,9 +265,13 @@ func computeFingerprint(title, culprit, kind string, customFingerprint []string)
 	return hex.EncodeToString(hash[:])
 }
 
+// truncate cuts value to at most max bytes without splitting a UTF-8 character.
 func truncate(value string, max int) string {
-	if len(value) > max {
-		return value[:max]
+	if len(value) <= max {
+		return value
 	}
-	return value
+	for max > 0 && !utf8.RuneStart(value[max]) {
+		max--
+	}
+	return value[:max]
 }

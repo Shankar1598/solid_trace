@@ -1,6 +1,6 @@
 # Upgrade Pebble to v2.1.7 and DuckDB to the 2.0 preview
 
-Status: claimed
+Status: resolved
 
 **Source:** grilling session, 2026-09-27
 **Branch:** `upgrade-pebble-duckdb` (worktree `worktree/upgrade-pebble-duckdb`)
@@ -33,7 +33,7 @@ A Go CI job, memtable tuning ([prod-readiness 011](../../prod-readiness/issues/0
 
 ## Comments
 
-**2026-09-27:** all done-when checks pass on the branch. `go test ./...` passes, including the integration tests, and the storage tests also pass under `TZ=Asia/Kolkata`. `bin/go-dev` ingested one event: it came back from Pebble by UUID, and from DuckDB with its tags. The Docker image builds, starts healthy and ingests. The ticket stays `claimed` until the branch merges to `main`.
+**2026-09-27:** all done-when checks pass on the branch. `go test ./...` passes, including the integration tests, and the storage tests also pass under `TZ=Asia/Kolkata`. `bin/go-dev` ingested one event: it came back from Pebble by UUID, and from DuckDB with its tags. The Docker image builds, starts healthy and ingests. The ticket stayed `claimed` until the branch merged to `main`.
 
 **2026-09-27, later: moved to the real 2.0 alpha engine.**
 - The `-6.preview` tag reports `version()` = v1.5.4, so it gives none of the 2.0 features (async I/O, storage v2.0, VARIANT shredding).

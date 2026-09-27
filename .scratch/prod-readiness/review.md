@@ -45,9 +45,14 @@ is no per-level routing. Consequences:
 - Undocumented cost: a read that misses local cache becomes an S3 range GET. "Open an old
   issue" is a normal action, so this is a user-visible latency change.
 
-**Resolution:** rewrite the docs to describe one optional cold locator for the bottom LSM
-levels. Do not build per-level routing — Pebble cannot do it, and the Parquet archive
-already covers the real need.
+**Resolution (2026-09-27):** tiered storage was a planned feature that was never built, and
+the README section described that plan. The section now lives under "Future" in the README.
+It states the goal, warns that `storage_tiers` honours only the first tier, and names the
+Pebble limit: one remote store for L5/L6 (`SharedLevelsStart = 5` is hardcoded in
+pebble v2.1.4), with no per-level routing and no age-based tiering. When the feature is
+picked up, design it within that limit. Also weigh it against retention (§9) and the
+Parquet archive, and set `Experimental.SecondaryCacheSizeBytes` so that cold reads do not
+become S3 range GETs.
 
 ## 2. Query API has no authentication, and the deploy exposes it
 
@@ -66,6 +71,12 @@ Related: `event_store/handler/ingest.go` collapses `err != nil || projectID == 0
 `401`. A transient SQLite error becomes "Invalid project key", and Sentry SDKs treat 401 as
 fatal — they drop the event rather than retry. Should be 500.
 
+**Correction (2026-09-27):** SDKs do not retry on 5xx either. Python, Ruby, Go and Node
+drop the event on any non-2xx response and resend only after network errors. 500 is still
+right for a failed lookup, because the fault is ours, but it does not save the event. On
+a 429 with no `Retry-After`, all four SDKs also stop sending for 60 s, so a full channel
+now returns 503 instead of 429.
+
 ## 3. Production Docker image does not build
 
 `event_store/Dockerfile:1` is `golang:1.24-bookworm`; `go.mod` requires `go 1.25.5`.
@@ -80,6 +91,11 @@ DuckDB's bindings are cgo-only; `mattn/go-sqlite3` is too (it would compile to a
 errors at `sql.Open`). The `Getting rid of cgo dependencies` commit landed for Pebble
 (replacing RocksDB), but DuckDB and SQLite still need cgo. Needs `CGO_ENABLED=1`, a builder
 with a C toolchain, and a glibc runtime base or a static musl build.
+
+**Resolution (2026-09-27):** fixed in [upgrade-pebble-duckdb 01](../upgrade-pebble-duckdb/issues/01-upgrade-pebble-and-duckdb.md).
+The builder is `golang:1.25-bookworm` with `CGO_ENABLED=1`. The runtime stays on `bookworm-slim` (glibc).
+It also links the DuckDB 2.0 alpha `libduckdb.so`, installed in `/usr/local/lib`.
+The image builds, starts healthy and ingests.
 
 ## 4. Events acknowledged with 200 can vanish silently
 
@@ -110,6 +126,21 @@ The `single_issue` load scenario at 100 VUs triggers this at t=0.
 
 Needs `ON CONFLICT DO NOTHING` + re-select, or a retry loop.
 
+**Resolution (2026-09-27):** `CreateIssueWithFingerprint` is now
+`FindOrCreateIssue`, which returns a `created` flag. It looks up the fingerprint again
+inside its transaction, and the pool uses `_txlock=immediate`. The transaction therefore
+holds SQLite's single write lock from `BEGIN`, so no writer can create the fingerprint
+between that lookup and the inserts. The loser gets the existing Issue with
+`IsNewIssue=false`, so `issue_created` is sent once, and it reopens the Issue if resolved.
+This adds no lock waits: the old transaction already took the write lock at its first
+statement, the counter upsert. The common path is unchanged.
+`storage/sqlite_test.go` runs 50 concurrent creates for one fingerprint. It fails with
+the UNIQUE error without the in-transaction lookup. With the lookup but DEFERRED
+transactions, it fails with `database is locked`, because a read-then-write transaction
+gets `SQLITE_BUSY` without waiting on the busy timeout.
+The review was wrong about impact: SDKs do not retry a 500 (see the §2 correction), so
+each lost race was a lost event.
+
 ## 6. Sentry protocol correctness
 
 - **Multi-item envelopes break.** `ingest/service.go:48`:
@@ -127,6 +158,20 @@ Needs `ON CONFLICT DO NOTHING` + re-select, or a retry loop.
   Neither branch matches, so offline/batched events are timestamped wrong.
 - **`truncate` splits UTF-8.** `ingest/issue_classifier.go:267` slices bytes, corrupting any
   non-ASCII error message at the 250-byte boundary.
+
+**Resolution (2026-09-27):** all four fixed in `event_store/ingest`.
+`IngestEnvelope` now walks every item: it honours `length`, falls back to newline
+delimiting, and ingests the first `event` item. `transaction` items are dropped with every
+other non-event type. A bad envelope header, an item header with no `type`, or a
+`length` that overruns or disagrees with the payload returns 400. `extractTimestamp` reads
+`timestamp` as a number or an RFC 3339 string; a string with no offset is read as UTC,
+and an unparseable one falls back to now. The non-Sentry `dt` branch is gone.
+`truncate` backs off to a rune boundary. Found along the way: `RawJSON` aliased
+`c.Body()`, which fasthttp reuses once the handler returns, so events queued for Pebble
+could be overwritten. It is now copied. The integration test's hardcoded `length: 50` was
+wrong, and only passed because the old parser ignored `length`.
+Nothing yet tests against real SDK traffic. That is
+[012-sentry-compatibility-tests](issues/012-sentry-compatibility-tests.md).
 
 Worth noting: `classifyIssue` itself is good. The culprit-extraction port is careful and the
 888-line test file is the best-tested part of the repo.
@@ -230,5 +275,5 @@ and is the thing tiered storage is currently standing in for.
 3. Auth (or de-expose) the query API — this is a data breach on a public deploy.
 4. Denormalise `times_seen` / `first_seen_at` / `last_seen_at`, paginate the index.
 5. Retention policy.
-6. Rewrite the tiered-storage README section.
-7. Protocol correctness (envelopes, transactions, timestamps) and the `ON CONFLICT` fix.
+6. ~~Rewrite the tiered-storage README section.~~ Done: moved to "Future".
+7. ~~Protocol correctness (envelopes, transactions, timestamps) and the `ON CONFLICT` fix.~~ Done (§6, §5).
