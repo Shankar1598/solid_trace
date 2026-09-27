@@ -71,6 +71,12 @@ Related: `event_store/handler/ingest.go` collapses `err != nil || projectID == 0
 `401`. A transient SQLite error becomes "Invalid project key", and Sentry SDKs treat 401 as
 fatal — they drop the event rather than retry. Should be 500.
 
+**Correction (2026-09-27):** SDKs do not retry on 5xx either. Python, Ruby, Go and Node
+drop the event on any non-2xx response and resend only after network errors. 500 is still
+right for a failed lookup, because the fault is ours, but it does not save the event. On
+a 429 with no `Retry-After`, all four SDKs also stop sending for 60 s, so a full channel
+now returns 503 instead of 429.
+
 ## 3. Production Docker image does not build
 
 `event_store/Dockerfile:1` is `golang:1.24-bookworm`; `go.mod` requires `go 1.25.5`.

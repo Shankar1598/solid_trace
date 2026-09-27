@@ -33,7 +33,7 @@ The planned one-Event-per-write path removes this problem. But it shows that the
 ## Task
 
 1. Benchmark the mutex write path at 5k/s and 20k/s with 16 MB, 32 MB and 64 MB memory tables.
-   Use the setup above. Cap waiting requests at 50k, and count requests over the cap as 429.
+   Use the setup above. Cap waiting requests at 50k, and count requests over the cap as rejected (ingest answers 503, not 429: SDKs pause for 60 s on a 429).
 2. Log Pebble `FlushBegin`/`FlushEnd` and `WriteStallBegin`/`WriteStallEnd` with timestamps.
    Find out if the latency pauses align with memory table switches.
 3. If the pauses align, find what makes the switch slow (for example, allocation of the new memory table, or WAL rotation). Find out if a Pebble option can reduce it.
