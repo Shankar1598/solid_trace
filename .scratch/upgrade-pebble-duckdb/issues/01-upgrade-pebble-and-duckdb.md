@@ -34,3 +34,26 @@ A Go CI job, memtable tuning ([prod-readiness 011](../../prod-readiness/issues/0
 ## Comments
 
 **2026-09-27:** all done-when checks pass on the branch. `go test ./...` passes, including the integration tests, and the storage tests also pass under `TZ=Asia/Kolkata`. `bin/go-dev` ingested one event: it came back from Pebble by UUID, and from DuckDB with its tags. The Docker image builds, starts healthy and ingests. The ticket stays `claimed` until the branch merges to `main`.
+
+**2026-09-27, later: moved to the real 2.0 alpha engine.**
+- The `-6.preview` tag reports `version()` = v1.5.4, so it gives none of the 2.0 features (async I/O, storage v2.0, VARIANT shredding).
+- We first looked at running 2.0 as a separate Quack server and connecting from the embedded preview driver. It does not work:
+  - The Quack protocol changed incompatibly at 2.0. Every 1.5.x client, including GizmoData's pure-Go one, fails against the 2.0 server with `Failed to deserialize`.
+  - The preview driver crashes on `LOAD quack`.
+  - The 2.0 alpha does not accept bound parameters over Quack.
+- **Decision:** EventStore links the alpha in-process.
+  - The driver stays at `v2.20000.0-6.preview`, built with `-tags=duckdb_use_lib`.
+  - `event_store/scripts/fetch-duckdb` downloads one pinned build, `ca15f79c32/v2.0.0-alpha43385`, from duckdb-staging. It checks a SHA-256 per platform (linux amd64/arm64, macOS universal) and writes to `event_store/lib/duckdb/`, which is gitignored.
+  - `mise.toml` `[env]` sets `GOFLAGS` and `CGO_LDFLAGS` with an rpath, so no `LD_LIBRARY_PATH` is needed.
+  - `bin/go-dev` runs the fetch.
+  - The Dockerfile fetches the library, links it, and copies it into `/usr/local/lib` on the runtime image.
+  - `TestDuckDBEngineVersion` fails unless the engine is v2.0, so a shell without the mise env fails loudly.
+- **Risks:**
+  - The staging URLs may not be kept forever. If they disappear, re-pin to a newer alpha.
+  - New `.duckdb` files use the dev storage header, which neither 1.x nor the final 2.0 may open. That is fine, because the data is dev-only.
+  - macOS is wired up but untested, because there is no Mac.
+- **Verified on the alpha:**
+  - `go test ./...` passes, including integration and with `TZ=Asia/Kolkata`. The engine guard also passes through `mise exec`.
+  - `bin/go-dev` links `lib/duckdb/libduckdb.so` and ingests and queries correctly. It also opened the dev `.duckdb` file written earlier by the 1.5.4 preview.
+  - The Docker image links `/usr/local/lib/libduckdb.so`, starts healthy and ingests.
+  - The worktree's `mise.toml` needed a one-time `mise trust` before its `[env]` applied.

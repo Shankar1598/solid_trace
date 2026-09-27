@@ -9,7 +9,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 - **Logs**: planning only, no code yet. 4 research tickets are done. The decision tickets start now. The goal is a v1 spec plus first-milestone tickets.
 - **Prod-readiness**: [review.md](prod-readiness/review.md) lists about 9 gaps. 2 are filed as tickets; query API auth is fixed.
 - **Integration notification**: the spec is ready for an agent. It has no tickets yet.
-- **Upgrade Pebble and DuckDB**: on branch `upgrade-pebble-duckdb`, not yet merged. EventStore now uses Pebble v2.1.7 and DuckDB `v2.20000.0-6.preview` (engine 1.5.4 plus 2.0 backports). Two follow-ups wait on it.
+- **Upgrade Pebble and DuckDB**: on branch `upgrade-pebble-duckdb`, not yet merged. EventStore now uses Pebble v2.1.7 and the DuckDB 2.0 alpha engine (`v2.0.0-alpha43385`), linked as a shared library. Two follow-ups wait on it.
 
 ## Next
 
@@ -34,7 +34,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 Upgraded EventStore on the `upgrade-pebble-duckdb` branch, recorded in [ticket 01](upgrade-pebble-duckdb/issues/01-upgrade-pebble-and-duckdb.md):
 - Pebble v2.1.7, with the format pinned to `FormatValueSeparation` and value separation off.
-- DuckDB `v2.20000.0-6.preview`, with `OrderedMap` and a test for the time filters.
+- DuckDB 2.0 alpha: the `v2.20000.0-6.preview` driver built with `-tags=duckdb_use_lib`, linked to a pinned `libduckdb` from `event_store/scripts/fetch-duckdb` through the `mise.toml` env. Also `OrderedMap` and tests for the time filters and the engine version.
 - The Dockerfile now builds with Go 1.25 and cgo.
 
 Follow-ups:
