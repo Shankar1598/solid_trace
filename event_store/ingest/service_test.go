@@ -31,6 +31,9 @@ type fakeIssueRepository struct {
 	createErr    error // inject errors
 	findErr      error
 	reopenErr    error
+	// staleFind makes FindIssueByFingerprint miss existing Issues, as when a
+	// concurrent Event creates the Issue just after the lock-free lookup.
+	staleFind bool
 }
 
 type fakeIssue struct {
@@ -70,16 +73,20 @@ func (f *fakeIssueRepository) FindIssueByFingerprint(projectID uint32, fingerpri
 	}
 
 	issue, ok := f.issues[f.key(projectID, fingerprint)]
-	if !ok {
+	if !ok || f.staleFind {
 		return 0, 0, 0, false, nil
 	}
 	return issue.issueID, issue.fingerprintID, issue.status, true, nil
 }
 
-func (f *fakeIssueRepository) CreateIssueWithFingerprint(projectID uint32, fingerprint, title, culprit, kind string) (int64, int64, error) {
+func (f *fakeIssueRepository) FindOrCreateIssue(projectID uint32, fingerprint, title, culprit, kind string) (int64, int64, int, bool, error) {
 	f.createCalls = append(f.createCalls, fakeCreateCall{projectID, fingerprint, title, culprit, kind})
 	if f.createErr != nil {
-		return 0, 0, f.createErr
+		return 0, 0, 0, false, f.createErr
+	}
+
+	if issue, ok := f.issues[f.key(projectID, fingerprint)]; ok {
+		return issue.issueID, issue.fingerprintID, issue.status, false, nil
 	}
 
 	issueID := f.nextID
@@ -92,7 +99,7 @@ func (f *fakeIssueRepository) CreateIssueWithFingerprint(projectID uint32, finge
 		status:        IssueStatusOpen,
 	}
 
-	return issueID, fingerprintID, nil
+	return issueID, fingerprintID, IssueStatusOpen, true, nil
 }
 
 func (f *fakeIssueRepository) ReopenIssue(issueID int64) error {
@@ -401,7 +408,7 @@ func TestServiceIngestStore_FindError_Propagates(t *testing.T) {
 
 func TestServiceIngestStore_CreateError_Propagates(t *testing.T) {
 	repo := newFakeIssueRepository()
-	repo.createErr = errors.New("unique constraint violated")
+	repo.createErr = errors.New("disk I/O error")
 	pebbleChan := make(chan models.Event, 10)
 	service := NewService(repo, pebbleChan)
 
@@ -411,6 +418,62 @@ func TestServiceIngestStore_CreateError_Propagates(t *testing.T) {
 	}
 	if !errors.Is(err, repo.createErr) {
 		t.Errorf("expected wrapped create error, got: %v", err)
+	}
+}
+
+func TestServiceIngestStore_LostCreateRace_UsesExistingIssue(t *testing.T) {
+	repo := newFakeIssueRepository()
+	pebbleChan := make(chan models.Event, 10)
+	service := NewService(repo, pebbleChan)
+
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("first ingest failed: %v", err)
+	}
+	firstEvent := <-pebbleChan
+
+	// The lookup misses, as if the first Event's Issue was committed just after it.
+	repo.staleFind = true
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("second ingest failed: %v", err)
+	}
+
+	event := <-pebbleChan
+	if event.IsNewIssue {
+		t.Error("expected IsNewIssue=false for the losing Event, or issue_created is sent twice")
+	}
+	if event.IssueID != firstEvent.IssueID {
+		t.Errorf("expected issue %d, got %d", firstEvent.IssueID, event.IssueID)
+	}
+	if len(repo.issues) != 1 {
+		t.Errorf("expected 1 issue, got %d", len(repo.issues))
+	}
+	if len(repo.reopenCalls) != 0 {
+		t.Errorf("expected no reopen for an open issue, got %d", len(repo.reopenCalls))
+	}
+}
+
+func TestServiceIngestStore_LostCreateRace_ReopensResolvedIssue(t *testing.T) {
+	repo := newFakeIssueRepository()
+	pebbleChan := make(chan models.Event, 10)
+	service := NewService(repo, pebbleChan)
+
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("first ingest failed: %v", err)
+	}
+	firstEvent := <-pebbleChan
+	for k, issue := range repo.issues {
+		issue.status = IssueStatusResolved
+		repo.issues[k] = issue
+	}
+
+	repo.staleFind = true
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("second ingest failed: %v", err)
+	}
+	<-pebbleChan
+
+	if len(repo.reopenCalls) != 1 || repo.reopenCalls[0] != firstEvent.IssueID {
+		t.Errorf("expected reopen of issue %d, got %v", firstEvent.IssueID, repo.reopenCalls)
 	}
 }
 

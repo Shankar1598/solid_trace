@@ -13,7 +13,10 @@ type SQLiteWriter struct {
 }
 
 func NewSQLiteWriter(path string) (*SQLiteWriter, error) {
-	dsn := fmt.Sprintf("%s?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL", path)
+	// _txlock=immediate makes every transaction on this pool take SQLite's write
+	// lock at BEGIN. FindOrCreateIssue relies on it. A read-only transaction here
+	// would needlessly block writers, so use a separate pool for one.
+	dsn := fmt.Sprintf("%s?_busy_timeout=5000&_journal_mode=WAL&_synchronous=NORMAL&_txlock=immediate", path)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
@@ -52,13 +55,7 @@ func (w *SQLiteWriter) FindIssueByFingerprint(projectID uint32, fingerprint stri
 	var fingerprintID, issueID int64
 	var issueStatus int
 
-	query := `
-		SELECT ifp.id, ifp.issue_id, i.status
-		FROM issue_fingerprints ifp
-		JOIN issues i ON ifp.issue_id = i.id
-		WHERE ifp.project_id = ? AND ifp.fingerprint = ?
-	`
-	err := w.db.QueryRow(query, projectID, fingerprint).Scan(&fingerprintID, &issueID, &issueStatus)
+	err := w.db.QueryRow(findIssueByFingerprintQuery, projectID, fingerprint).Scan(&fingerprintID, &issueID, &issueStatus)
 
 	if err == nil {
 		return issueID, fingerprintID, issueStatus, true, nil
@@ -71,6 +68,13 @@ func (w *SQLiteWriter) FindIssueByFingerprint(projectID uint32, fingerprint stri
 	return 0, 0, 0, false, nil
 }
 
+const findIssueByFingerprintQuery = `
+	SELECT ifp.id, ifp.issue_id, i.status
+	FROM issue_fingerprints ifp
+	JOIN issues i ON ifp.issue_id = i.id
+	WHERE ifp.project_id = ? AND ifp.fingerprint = ?
+`
+
 // ReopenIssue transitions a resolved Issue back to open.
 func (w *SQLiteWriter) ReopenIssue(issueID int64) error {
 	_, err := w.db.Exec(
@@ -80,13 +84,32 @@ func (w *SQLiteWriter) ReopenIssue(issueID int64) error {
 	return err
 }
 
-// CreateIssueWithFingerprint creates a new issue and its first fingerprint
-func (w *SQLiteWriter) CreateIssueWithFingerprint(projectID uint32, fingerprint, title, culprit, kind string) (int64, int64, error) {
+// FindOrCreateIssue returns the Issue for a fingerprint, creating the Issue
+// and its first fingerprint if none exists. created reports which happened.
+//
+// Event ingest calls this only after FindIssueByFingerprint misses. Two Events
+// for a new fingerprint can both miss, so the lookup runs again inside the
+// transaction. The transaction is BEGIN IMMEDIATE (see the DSN), so it holds
+// SQLite's single write lock from the start: no other writer can create the
+// fingerprint between this lookup and the inserts.
+//
+// Returns (issueID, fingerprintID, issueStatus, created, error).
+func (w *SQLiteWriter) FindOrCreateIssue(projectID uint32, fingerprint, title, culprit, kind string) (int64, int64, int, bool, error) {
 	tx, err := w.db.Begin()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, false, err
 	}
 	defer tx.Rollback()
+
+	var fingerprintID, issueID int64
+	var issueStatus int
+	err = tx.QueryRow(findIssueByFingerprintQuery, projectID, fingerprint).Scan(&fingerprintID, &issueID, &issueStatus)
+	if err == nil {
+		return issueID, fingerprintID, issueStatus, false, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, 0, 0, false, err
+	}
 
 	// 1. Get next issue number using atomic upsert
 	var issueNumber int
@@ -99,7 +122,7 @@ func (w *SQLiteWriter) CreateIssueWithFingerprint(projectID uint32, fingerprint,
 	`
 	err = tx.QueryRow(query, projectID).Scan(&issueNumber)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to generate issue number: %w", err)
+		return 0, 0, 0, false, fmt.Errorf("failed to generate issue number: %w", err)
 	}
 
 	// 2. Create Issue
@@ -118,12 +141,12 @@ func (w *SQLiteWriter) CreateIssueWithFingerprint(projectID uint32, fingerprint,
 		VALUES (?, ?, ?, ?, ?, 0, ?, ?)
 	`, projectID, issueNumber, title, culprit, kindInt, now, now)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to create issue: %w", err)
+		return 0, 0, 0, false, fmt.Errorf("failed to create issue: %w", err)
 	}
 
-	issueID, err := res.LastInsertId()
+	issueID, err = res.LastInsertId()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, false, err
 	}
 
 	// 3. Create Fingerprint
@@ -132,17 +155,17 @@ func (w *SQLiteWriter) CreateIssueWithFingerprint(projectID uint32, fingerprint,
 		VALUES (?, ?, ?, ?, ?)
 	`, issueID, projectID, fingerprint, now, now)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to create fingerprint: %w", err)
+		return 0, 0, 0, false, fmt.Errorf("failed to create fingerprint: %w", err)
 	}
 
-	fingerprintID, err := res.LastInsertId()
+	fingerprintID, err = res.LastInsertId()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, false, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, false, err
 	}
 
-	return issueID, fingerprintID, nil
+	return issueID, fingerprintID, 0, true, nil
 }

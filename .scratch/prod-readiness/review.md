@@ -121,6 +121,21 @@ The `single_issue` load scenario at 100 VUs triggers this at t=0.
 
 Needs `ON CONFLICT DO NOTHING` + re-select, or a retry loop.
 
+**Resolution (2026-09-27):** `CreateIssueWithFingerprint` is now
+`FindOrCreateIssue`, which returns a `created` flag. It looks up the fingerprint again
+inside its transaction, and the pool uses `_txlock=immediate`. The transaction therefore
+holds SQLite's single write lock from `BEGIN`, so no writer can create the fingerprint
+between that lookup and the inserts. The loser gets the existing Issue with
+`IsNewIssue=false`, so `issue_created` is sent once, and it reopens the Issue if resolved.
+This adds no lock waits: the old transaction already took the write lock at its first
+statement, the counter upsert. The common path is unchanged.
+`storage/sqlite_test.go` runs 50 concurrent creates for one fingerprint. It fails with
+the UNIQUE error without the in-transaction lookup. With the lookup but DEFERRED
+transactions, it fails with `database is locked`, because a read-then-write transaction
+gets `SQLITE_BUSY` without waiting on the busy timeout.
+The review was wrong about impact: SDKs do not retry a 500 (see the §2 correction), so
+each lost race was a lost event.
+
 ## 6. Sentry protocol correctness
 
 - **Multi-item envelopes break.** `ingest/service.go:48`:
@@ -256,4 +271,4 @@ and is the thing tiered storage is currently standing in for.
 4. Denormalise `times_seen` / `first_seen_at` / `last_seen_at`, paginate the index.
 5. Retention policy.
 6. ~~Rewrite the tiered-storage README section.~~ Done: moved to "Future".
-7. ~~Protocol correctness (envelopes, transactions, timestamps)~~ Done (§6). The `ON CONFLICT` fix is still open.
+7. ~~Protocol correctness (envelopes, transactions, timestamps) and the `ON CONFLICT` fix.~~ Done (§6, §5).

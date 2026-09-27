@@ -7,7 +7,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 ## Where things stand
 
 - **Logs**: planning only, no code yet. 4 research tickets are done. The decision tickets start now. The goal is a v1 spec plus first-milestone tickets.
-- **Prod-readiness**: [review.md](prod-readiness/review.md) lists about 9 gaps. 3 are filed as tickets. Query API auth (§2) and Sentry protocol correctness (§6) are fixed.
+- **Prod-readiness**: [review.md](prod-readiness/review.md) lists about 9 gaps. 3 are filed as tickets. Query API auth (§2), the concurrent first-event 500 (§5) and Sentry protocol correctness (§6) are fixed.
 - **Integration notification**: the spec is ready for an agent. It has no tickets yet.
 
 ## Next
@@ -31,4 +31,4 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Last session (2026-09-27)
 
-Mostly housekeeping. Tickets stay as local Markdown, and this file is the status page. Closed logging-old: its spec and all 17 tickets are now `wontfix`, and each one points to the logs map. No logs ticket was claimed or resolved. Then fixed review §6 (Sentry protocol correctness) in `event_store/ingest`. Filed 012 for Sentry compatibility tests.
+Mostly housekeeping. Tickets stay as local Markdown, and this file is the status page. Closed logging-old: its spec and all 17 tickets are now `wontfix`, and each one points to the logs map. No logs ticket was claimed or resolved. Then fixed review §6 (Sentry protocol correctness) in `event_store/ingest`. Filed 012 for Sentry compatibility tests. Found that SDKs retry no HTTP status and pause 60 s on a 429, so a full ingest channel now returns 503. Fixed §5, the concurrent first-event race.
