@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 
 cd event_store
+scripts/fetch-duckdb || exit 1
 go build -gcflags="all=-N -l" -o bin/event_store main.go
 ./bin/event_store

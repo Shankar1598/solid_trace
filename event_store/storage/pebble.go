@@ -24,6 +24,9 @@ func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
 	}
 
 	opts := &pebble.Options{
+		// Pinned, not FormatNewest: ratcheting is one-way, so it moves only on purpose.
+		// Value separation stays off (Experimental.ValueSeparationPolicy is unset).
+		FormatMajorVersion:    pebble.FormatValueSeparation,
 		LBaseMaxBytes:         64 << 20, // 64 MB
 		L0CompactionThreshold: 4,
 		L0StopWritesThreshold: 12,

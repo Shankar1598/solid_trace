@@ -124,6 +124,24 @@ func TestDuckDBWriter(t *testing.T) {
 		t.Fatalf("Expected 0 events for tag browser=firefox, got %d", len(noneEvents))
 	}
 
+	// Test time filters. Run with a non-UTC TZ to catch the session time zone
+	// shifting the comparison against the TIMESTAMP column.
+	between := timestamp.Add(30 * time.Second)
+	newerEvents, err := writer.QueryEvents(QueryParams{ProjectID: 123, NewerThan: between})
+	if err != nil {
+		t.Fatalf("QueryEvents (newer than) failed: %v", err)
+	}
+	if len(newerEvents) != 1 || newerEvents[0].EventUUID != "test-uuid-2" {
+		t.Errorf("Expected only test-uuid-2 newer than %v, got %v", between, newerEvents)
+	}
+	olderEvents, err := writer.QueryEvents(QueryParams{ProjectID: 123, OlderThan: between})
+	if err != nil {
+		t.Fatalf("QueryEvents (older than) failed: %v", err)
+	}
+	if len(olderEvents) != 1 || olderEvents[0].EventUUID != "test-uuid-1" {
+		t.Errorf("Expected only test-uuid-1 older than %v, got %v", between, olderEvents)
+	}
+
 	// Test CountEvents with tags
 	count, err := writer.CountEvents(tagParams)
 	if err != nil {
