@@ -163,9 +163,9 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 		defer appender.Close()
 
 		for _, event := range events {
-			tags := make(duckdb.Map)
+			var tags duckdb.OrderedMap
 			for k, v := range event.Tags {
-				tags[k] = v
+				tags.Set(k, v)
 			}
 
 			// Log event (optional, keeping existing behavior of logging but maybe lighter)
@@ -255,7 +255,7 @@ func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 		var e models.Event
 		// Note: We don't have IssueID (stored in SQLite) or RawJSON (stored in Pebble)
 		// We only populate what we have in DuckDB
-		var tagsMap duckdb.Map
+		var tagsMap duckdb.OrderedMap
 		err := rows.Scan(
 			&e.EventUUID,
 			&e.ProjectID,
@@ -271,17 +271,24 @@ func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 			return nil, err
 		}
 
-		e.Tags = make(map[string]string, len(tagsMap))
-		for k, v := range tagsMap {
-			if keyStr, ok := k.(string); ok {
-				if valStr, ok := v.(string); ok {
-					e.Tags[keyStr] = valStr
-				}
-			}
-		}
+		e.Tags = tagsFromMap(tagsMap)
 		events = append(events, e)
 	}
 	return events, nil
+}
+
+// tagsFromMap converts a scanned MAP(VARCHAR, VARCHAR) into Go tags.
+func tagsFromMap(m duckdb.OrderedMap) map[string]string {
+	tags := make(map[string]string, m.Len())
+	vals := m.Values()
+	for i, k := range m.Keys() {
+		if keyStr, ok := k.(string); ok {
+			if valStr, ok := vals[i].(string); ok {
+				tags[keyStr] = valStr
+			}
+		}
+	}
+	return tags
 }
 
 func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
@@ -386,7 +393,7 @@ func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithCon
 	results := []EventWithContext{}
 	for rows.Next() {
 		var ctx EventWithContext
-		var tagsMap duckdb.Map
+		var tagsMap duckdb.OrderedMap
 		var prevUUID, nextUUID sql.NullString
 
 		err := rows.Scan(
@@ -406,14 +413,7 @@ func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithCon
 			return nil, err
 		}
 
-		ctx.Event.Tags = make(map[string]string, len(tagsMap))
-		for k, v := range tagsMap {
-			if keyStr, ok := k.(string); ok {
-				if valStr, ok := v.(string); ok {
-					ctx.Event.Tags[keyStr] = valStr
-				}
-			}
-		}
+		ctx.Event.Tags = tagsFromMap(tagsMap)
 
 		if prevUUID.Valid {
 			ctx.PrevUUID = prevUUID.String

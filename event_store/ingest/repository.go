@@ -12,9 +12,12 @@ type IssueRepository interface {
 	// This is a pure read — it must not mutate Issue state.
 	FindIssueByFingerprint(projectID uint32, fingerprint string) (issueID int64, fingerprintID int64, issueStatus int, found bool, err error)
 
-	// CreateIssueWithFingerprint creates a new Issue and its first
-	// fingerprint record atomically, including Issue number generation.
-	CreateIssueWithFingerprint(projectID uint32, fingerprint, title, culprit, kind string) (issueID int64, fingerprintID int64, err error)
+	// FindOrCreateIssue returns the Issue for a fingerprint, creating the
+	// Issue and its first fingerprint atomically (with its Issue number) if
+	// none exists. It must be safe against concurrent calls for the same new
+	// fingerprint: exactly one reports created=true, and the rest get that
+	// Issue back.
+	FindOrCreateIssue(projectID uint32, fingerprint, title, culprit, kind string) (issueID int64, fingerprintID int64, issueStatus int, created bool, err error)
 
 	// ReopenIssue transitions a resolved Issue back to open.
 	ReopenIssue(issueID int64) error

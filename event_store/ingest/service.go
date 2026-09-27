@@ -129,12 +129,14 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 
 	isNewIssue := false
 	if !found {
-		issueID, fingerprintID, err = s.issues.CreateIssueWithFingerprint(projectID, issue.fingerprint, issue.title, issue.culprit, issue.kind)
+		// A concurrent Event may create this fingerprint's Issue after the
+		// lookup above; FindOrCreateIssue then returns that Issue instead.
+		issueID, fingerprintID, issueStatus, isNewIssue, err = s.issues.FindOrCreateIssue(projectID, issue.fingerprint, issue.title, issue.culprit, issue.kind)
 		if err != nil {
-			return fmt.Errorf("create issue with fingerprint: %w", err)
+			return fmt.Errorf("find or create issue: %w", err)
 		}
-		isNewIssue = true
-	} else if issueStatus == IssueStatusResolved {
+	}
+	if !isNewIssue && issueStatus == IssueStatusResolved {
 		// Domain rule: new Events reopen resolved Issues.
 		if err := s.issues.ReopenIssue(issueID); err != nil {
 			return fmt.Errorf("reopen issue: %w", err)

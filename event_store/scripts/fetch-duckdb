@@ -1,0 +1,45 @@
+#!/usr/bin/env sh
+# Fetches the pinned DuckDB 2.0 alpha shared library into event_store/lib/duckdb.
+# EventStore builds with -tags=duckdb_use_lib and links it dynamically, because
+# duckdb-go has no build with the 2.0 engine bundled yet.
+#
+# To move to a newer alpha, update DUCKDB_BUILD from
+# https://duckdb-staging.duckdb.org/latest_alpha_version.txt and the checksums below.
+set -eu
+
+DUCKDB_BUILD="ca15f79c32/v2.0.0-alpha43385"
+BASE_URL="https://duckdb-staging.duckdb.org/${DUCKDB_BUILD}/duckdb/duckdb/github_release"
+
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64)                 PLATFORM=linux-amd64;   LIB=libduckdb.so;    SHA256=be49239b0409955f938bf71045c02eb9d797d7e3baa4f3bf4ca0f1987956fd43 ;;
+  Linux-aarch64 | Linux-arm64)  PLATFORM=linux-arm64;   LIB=libduckdb.so;    SHA256=8a297f014ce030ae49d8c0cf38a74c6e4d0f896b9c90b5dc7fb1573372e4467d ;;
+  Darwin-x86_64 | Darwin-arm64) PLATFORM=osx-universal; LIB=libduckdb.dylib; SHA256=1230e8fd8c16ae1b87c79ff738782a6a24a03a4791839b274be8cf7c3405e950 ;;
+  *) echo "fetch-duckdb: unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+esac
+
+LIB_DIR="$(cd "$(dirname "$0")/.." && pwd)/lib/duckdb"
+STAMP="${LIB_DIR}/BUILD"
+
+if [ -f "${LIB_DIR}/${LIB}" ] && [ "$(cat "${STAMP}" 2>/dev/null)" = "${DUCKDB_BUILD} ${PLATFORM}" ]; then
+  exit 0
+fi
+
+mkdir -p "${LIB_DIR}"
+ARCHIVE="${LIB_DIR}/duckdb-shared-libs-${PLATFORM}.tar.gz"
+echo "fetch-duckdb: downloading ${DUCKDB_BUILD} for ${PLATFORM}"
+curl -fsSL -o "${ARCHIVE}" "${BASE_URL}/duckdb-shared-libs-${PLATFORM}.tar.gz"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL=$(sha256sum "${ARCHIVE}" | cut -d' ' -f1)
+else
+  ACTUAL=$(shasum -a 256 "${ARCHIVE}" | cut -d' ' -f1)
+fi
+if [ "${ACTUAL}" != "${SHA256}" ]; then
+  rm -f "${ARCHIVE}"
+  echo "fetch-duckdb: checksum mismatch for ${PLATFORM}: got ${ACTUAL}, want ${SHA256}" >&2
+  exit 1
+fi
+
+tar -xzf "${ARCHIVE}" -C "${LIB_DIR}" "${LIB}"
+rm -f "${ARCHIVE}"
+echo "${DUCKDB_BUILD} ${PLATFORM}" > "${STAMP}"
