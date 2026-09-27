@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues live as markdown files under `.scratch/<feature-slug>/` in this repo. See `docs/agents/issue-tracker.md`.
+Issues live as markdown files under `.scratch/<feature-slug>/` in this repo. Project status: `.scratch/STATUS.md`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

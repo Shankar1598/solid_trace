@@ -9,6 +9,11 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 - Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- Project status is `.scratch/STATUS.md`: per-effort counts, the next ticket, and a last-session note. It links out; it does not duplicate ticket bodies.
+
+## Project status
+
+Update `.scratch/STATUS.md` when a ticket's `Status:` line changes, and again at the end of a session (Last session + Next). Done means `resolved` or `wontfix`. Open means every other `Status:` value (`open`, `claimed`, `ready-for-agent`, `ready-for-human`, `needs-triage`, `needs-info`).
 
 ## When a skill says "publish to the issue tracker"
 
