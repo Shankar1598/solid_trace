@@ -1,10 +1,10 @@
 package ingest
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,25 +43,75 @@ func (s *Service) IngestStore(projectID uint32, rawEventJSON []byte) error {
 	return s.ingestEvent(projectID, rawEventJSON)
 }
 
-// IngestEnvelope ingests the first supported Event item from an envelope.
+// IngestEnvelope ingests the event item of an envelope and ignores every
+// other item type, transactions included.
 func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
-	lines := strings.SplitN(string(envelope), "\n", 3)
-	if len(lines) < 3 {
-		return ErrInvalidEnvelope
+	payload, found, err := eventItem(envelope)
+	if err != nil || !found {
+		return err
 	}
-
-	var itemHeader map[string]interface{}
-	if err := json.Unmarshal([]byte(lines[1]), &itemHeader); err != nil {
-		return ErrInvalidItemHeader
-	}
-
-	itemType, _ := itemHeader["type"].(string)
-	if itemType != "event" && itemType != "transaction" {
-		return nil
-	}
-
-	return s.ingestEvent(projectID, []byte(lines[2]))
+	return s.ingestEvent(projectID, payload)
 }
+
+// eventItem walks the items of a Sentry envelope and returns the payload of
+// the first "event" item. See https://develop.sentry.dev/sdk/data-model/envelopes/
+//
+//	Envelope = Headers { "\n" Item } [ "\n" ]
+//	Item     = Headers "\n" Payload
+//
+// An item header with a "length" field owns exactly that many payload bytes,
+// newlines included; without one, the payload runs to the next newline.
+func eventItem(envelope []byte) ([]byte, bool, error) {
+	envelopeHeader, rest, _ := bytes.Cut(envelope, newline)
+	var headers map[string]interface{}
+	if err := json.Unmarshal(envelopeHeader, &headers); err != nil {
+		return nil, false, ErrInvalidEnvelope
+	}
+
+	var event []byte
+	found := false
+	for len(rest) > 0 {
+		if rest[0] == '\n' {
+			rest = rest[1:]
+			continue
+		}
+
+		line, after, _ := bytes.Cut(rest, newline)
+		var itemHeader struct {
+			Type   string `json:"type"`
+			Length *int   `json:"length"`
+		}
+		if err := json.Unmarshal(line, &itemHeader); err != nil || itemHeader.Type == "" {
+			return nil, false, ErrInvalidItemHeader
+		}
+
+		var payload []byte
+		if itemHeader.Length != nil {
+			length := *itemHeader.Length
+			if length < 0 || length > len(after) {
+				return nil, false, ErrInvalidEnvelope
+			}
+			payload, after = after[:length], after[length:]
+			if len(after) > 0 {
+				if after[0] != '\n' {
+					return nil, false, ErrInvalidEnvelope
+				}
+				after = after[1:]
+			}
+		} else {
+			payload, after, _ = bytes.Cut(after, newline)
+		}
+		rest = after
+
+		if itemHeader.Type == "event" && !found {
+			event, found = payload, true
+		}
+	}
+
+	return event, found, nil
+}
+
+var newline = []byte("\n")
 
 func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 	var payload map[string]interface{}
@@ -100,7 +150,7 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 		ProjectID:          projectID,
 		EventUUID:          eventUUID.String(),
 		Timestamp:          extractTimestamp(payload),
-		RawJSON:            rawJSON,
+		RawJSON:            bytes.Clone(rawJSON), // rawJSON is fasthttp's request buffer, reused after the handler returns
 		Tags:               extractTags(payload),
 		Environment:        extractString(payload, "environment"),
 		ServerName:         extractString(payload, "server_name"),
@@ -119,13 +169,19 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 	}
 }
 
+// extractTimestamp reads the event's "timestamp", which Sentry allows as
+// either Unix seconds or an RFC 3339 string (UTC when it has no offset).
 func extractTimestamp(payload map[string]interface{}) time.Time {
-	if datetime, ok := payload["dt"].(string); ok && datetime != "" {
-		timestamp, _ := time.Parse(time.RFC3339, datetime)
-		return timestamp
-	}
-	if timestamp, ok := payload["timestamp"].(float64); ok {
+	switch timestamp := payload["timestamp"].(type) {
+	case float64:
 		return time.UnixMilli(int64(timestamp * 1000))
+	case string:
+		if parsed, err := time.Parse(time.RFC3339Nano, timestamp); err == nil {
+			return parsed
+		}
+		if parsed, err := time.Parse("2006-01-02T15:04:05.999999999", timestamp); err == nil {
+			return parsed
+		}
 	}
 	return time.Now()
 }
