@@ -144,6 +144,8 @@ and an unparseable one falls back to now. The non-Sentry `dt` branch is gone.
 `c.Body()`, which fasthttp reuses once the handler returns, so events queued for Pebble
 could be overwritten. It is now copied. The integration test's hardcoded `length: 50` was
 wrong, and only passed because the old parser ignored `length`.
+Nothing yet tests against real SDK traffic. That is
+[012-sentry-compatibility-tests](issues/012-sentry-compatibility-tests.md).
 
 Worth noting: `classifyIssue` itself is good. The culprit-extraction port is careful and the
 888-line test file is the best-tested part of the repo.
