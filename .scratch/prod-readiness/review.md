@@ -45,9 +45,14 @@ is no per-level routing. Consequences:
 - Undocumented cost: a read that misses local cache becomes an S3 range GET. "Open an old
   issue" is a normal action, so this is a user-visible latency change.
 
-**Resolution:** rewrite the docs to describe one optional cold locator for the bottom LSM
-levels. Do not build per-level routing — Pebble cannot do it, and the Parquet archive
-already covers the real need.
+**Resolution (2026-09-27):** tiered storage was a planned feature that was never built, and
+the README section described that plan. The section now lives under "Future" in the README.
+It states the goal, warns that `storage_tiers` honours only the first tier, and names the
+Pebble limit: one remote store for L5/L6 (`SharedLevelsStart = 5` is hardcoded in
+pebble v2.1.4), with no per-level routing and no age-based tiering. When the feature is
+picked up, design it within that limit. Also weigh it against retention (§9) and the
+Parquet archive, and set `Experimental.SecondaryCacheSizeBytes` so that cold reads do not
+become S3 range GETs.
 
 ## 2. Query API has no authentication, and the deploy exposes it
 
@@ -230,5 +235,5 @@ and is the thing tiered storage is currently standing in for.
 3. Auth (or de-expose) the query API — this is a data breach on a public deploy.
 4. Denormalise `times_seen` / `first_seen_at` / `last_seen_at`, paginate the index.
 5. Retention policy.
-6. Rewrite the tiered-storage README section.
+6. ~~Rewrite the tiered-storage README section.~~ Done: moved to "Future".
 7. Protocol correctness (envelopes, transactions, timestamps) and the `ON CONFLICT` fix.
