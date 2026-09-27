@@ -28,6 +28,7 @@ A spec for the SolidTrace Logs **MVP** and an ordered set of tickets to build it
 - [Which ingest protocols and shippers should logs support?](issues/02-ingest-protocols-and-shippers.md): Sentry SDKs already send logs by default and SolidTrace drops them; the envelope parser also loses events followed by another item. OTLP/HTTP protobuf is the universal shipper format (cheap in Go); Vector's easy path is a plain JSON `http` sink. Mirroring Sentry's OTLP path would make Sentry's published shipper recipes work unchanged.
 - [What APL/KQL surface is worth supporting, and can DuckDB SQL mode be sandboxed?](issues/04-apl-kql-surface-and-sql-sandboxing.md): the common core (where, project/extend, summarize by bin, sort, take, search) maps to DuckDB. No mature Go KQL parser exists; the best prior art is C# and TS. DuckDB calls untrusted SQL "unsafe by design": settings are instance-wide, several escape routes were observed on 1.4.3, and only AST validation, context cancel and separate instances or processes help.
 - [How should the Logs explorer be laid out?](issues/06-logs-explorer-layout.md): one page: filter bar (Project, time range, free-text search), results table newest first, click a row for its full JSON, and a SQL tab into the same table. No histogram or field sidebar.
+- [Which production-readiness gaps must be fixed before or alongside logs?](issues/05-prod-readiness-gaps-for-logs.md): only Event ingest's Pebble-first write path (§4) must land before MVP code. §8 becomes a constraint (log ingest never writes Console's SQLite) and the hot-path gaps go to ingest; rate limits and metrics are Future; the rest stays prod-readiness work.
 
 ## Not yet specified
 
@@ -41,7 +42,7 @@ A spec for the SolidTrace Logs **MVP** and an ordered set of tickets to build it
 - Ingest: Sentry SDK logs (SDKs already send them; envelope log items are dropped today), OTLP/HTTP, Vector- and Axiom-compatible endpoints.
 - Storage: per-Project retention and disk budgets; S3/GCS tiered storage (DuckDB 2.0's async I/O makes an object-storage cold tier more realistic).
 - Durable acknowledgements for logs beyond what the MVP layout gives.
-- Operations: metrics endpoint, health reporting, disk alarms.
+- Operations: metrics endpoint, health reporting, disk alarms, ingest rate limits and per-Project quotas.
 - SQL-mode hardening: resource limits and host-file confinement (the deferred items on [How do the filter bar and SQL mode query logs?](issues/11-query-language.md)).
 - Explorer: histogram, field sidebar, value-to-filter pivot.
 - Live tail; saved and shared queries; dashboards; monitors (reusing the Integrations and notification pipeline).
