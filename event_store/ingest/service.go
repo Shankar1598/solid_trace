@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/logger"
 )
@@ -25,16 +25,25 @@ var (
 // find-or-create, reopen-on-resolved — concentrated here.
 type Service struct {
 	issues     IssueRepository
-	pebbleChan chan<- models.Event
+	events     EventWriter
+	duckdbChan chan<- models.Event
+
+	// waiting counts requests from before their Issue work until their
+	// Event is written. Past maxWaiting a request is rejected as overloaded.
+	waiting    atomic.Int64
+	maxWaiting int64
 }
 
 // NewService constructs the Event ingest module.
 // The IssueRepository is the seam to Issue persistence; storage.SQLiteWriter
-// is the production adapter.
-func NewService(issues IssueRepository, pebbleChan chan<- models.Event) *Service {
+// is the production adapter. The EventWriter is the seam to Event storage;
+// storage.PebbleWriter is the production adapter.
+func NewService(issues IssueRepository, events EventWriter, duckdbChan chan<- models.Event, maxWaiting int) *Service {
 	return &Service{
 		issues:     issues,
-		pebbleChan: pebbleChan,
+		events:     events,
+		duckdbChan: duckdbChan,
+		maxWaiting: int64(maxWaiting),
 	}
 }
 
@@ -119,6 +128,14 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 		return ErrInvalidEventJSON
 	}
 
+	// Counted before the Issue work, so a rejected request leaves no Issue
+	// without an Event.
+	if s.waiting.Add(1) > s.maxWaiting {
+		s.waiting.Add(-1)
+		return ErrOverloaded
+	}
+	defer s.waiting.Add(-1)
+
 	logger.L.Debug("Processing event", "raw_json", string(rawJSON))
 	issue := classifyIssue(payload)
 
@@ -143,14 +160,8 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 		}
 	}
 
-	eventUUID, err := uuid.NewV7()
-	if err != nil {
-		return fmt.Errorf("generate event uuid: %w", err)
-	}
-
 	event := models.Event{
 		ProjectID:          projectID,
-		EventUUID:          eventUUID.String(),
 		Timestamp:          extractTimestamp(payload),
 		RawJSON:            bytes.Clone(rawJSON), // rawJSON is fasthttp's request buffer, reused after the handler returns
 		Tags:               extractTags(payload),
@@ -163,12 +174,17 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 		IsNewIssue:         isNewIssue,
 	}
 
-	select {
-	case s.pebbleChan <- event:
-		return nil
-	default:
-		return ErrOverloaded
+	// A Pebble write is never retried: the SDK gets an error instead.
+	if err := s.events.WriteEvent(&event); err != nil {
+		return fmt.Errorf("write event: %w", err)
 	}
+
+	select {
+	case s.duckdbChan <- event:
+	default:
+		logger.L.Warn("DuckDB channel full, dropping event")
+	}
+	return nil
 }
 
 // extractTimestamp reads the event's "timestamp", which Sentry allows as
