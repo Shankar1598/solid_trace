@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 	"time"
@@ -143,6 +145,11 @@ func (w *PebbleWriter) StopWrites() {
 
 // GetEvent retrieves an event by its key (called by Rails via HTTP)
 func (w *PebbleWriter) GetEvent(key []byte) ([]byte, error) {
+	return w.get(key)
+}
+
+// get returns a copy of the value at key, or nil if there is none.
+func (w *PebbleWriter) get(key []byte) ([]byte, error) {
 	val, closer, err := w.db.Get(key)
 	if err == pebble.ErrNotFound {
 		return nil, nil
@@ -173,6 +180,107 @@ func (w *PebbleWriter) Ping() error {
 	}
 	closer.Close()
 	return nil
+}
+
+// eventKeyPrefix is the first 4 bytes of every Event key of a Project.
+func eventKeyPrefix(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(make([]byte, 0, 4), projectID)
+}
+
+// eventKeyUpperBound is the first key past every Event key of a Project, or nil
+// for the last possible Project.
+func eventKeyUpperBound(projectID uint32) []byte {
+	if projectID == math.MaxUint32 {
+		return nil
+	}
+	return eventKeyPrefix(projectID + 1)
+}
+
+// EventsAfter returns up to limit of a Project's Events whose UUID comes after
+// afterUUID, in UUID order. An empty afterUUID starts at the Project's first
+// Event. Each Event has only ProjectID, EventUUID and RawJSON set.
+func (w *PebbleWriter) EventsAfter(projectID uint32, afterUUID string, limit int) ([]models.Event, error) {
+	lower := eventKeyPrefix(projectID)
+	if afterUUID != "" {
+		// The zero byte makes the bound exclusive of afterUUID's own key.
+		lower = append(KeyForEvent(projectID, afterUUID), 0)
+	}
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: eventKeyUpperBound(projectID)})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	var events []models.Event
+	for valid := iter.First(); valid && len(events) < limit; valid = iter.Next() {
+		key := iter.Key()
+		eventUUID, err := uuid.FromBytes(key[4:])
+		if err != nil {
+			return nil, fmt.Errorf("event key %x: %w", key, err)
+		}
+		events = append(events, models.Event{
+			ProjectID: projectID,
+			EventUUID: eventUUID.String(),
+			RawJSON:   bytes.Clone(iter.Value()),
+		})
+	}
+	return events, iter.Error()
+}
+
+// ProjectsWithEvents returns every Project that has at least one Event key.
+// It seeks from one Project's key prefix to the next, so it reads one key per
+// Project.
+func (w *PebbleWriter) ProjectsWithEvents() ([]uint32, error) {
+	// Project id 0 is reserved for processing cursors.
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: eventKeyPrefix(1)})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	var projects []uint32
+	for valid := iter.First(); valid; {
+		projectID := binary.BigEndian.Uint32(iter.Key()[:4])
+		projects = append(projects, projectID)
+		upper := eventKeyUpperBound(projectID)
+		if upper == nil {
+			break
+		}
+		valid = iter.SeekGE(upper)
+	}
+	return projects, iter.Error()
+}
+
+// processingCursorKey is the reserved Project id 0, "cursor/", then the Project
+// id. Rails never assigns Project id 0, so it can't collide with an Event key.
+func processingCursorKey(projectID uint32) []byte {
+	key := append(eventKeyPrefix(0), "cursor/"...)
+	return binary.BigEndian.AppendUint32(key, projectID)
+}
+
+// ProcessingCursor returns the UUID of the last Event that Event processing
+// handled for a Project, or "" if it has handled none.
+func (w *PebbleWriter) ProcessingCursor(projectID uint32) (string, error) {
+	value, err := w.get(processingCursorKey(projectID))
+	if err != nil || value == nil {
+		return "", err
+	}
+	cursor, err := uuid.FromBytes(value)
+	if err != nil {
+		return "", fmt.Errorf("processing cursor of project %d: %w", projectID, err)
+	}
+	return cursor.String(), nil
+}
+
+// SetProcessingCursor records the UUID of the last Event that Event processing
+// handled for a Project. It is written with NoSync: a power loss can roll it
+// back, which only makes Event processing handle some Events again.
+func (w *PebbleWriter) SetProcessingCursor(projectID uint32, eventUUID string) error {
+	cursor, err := uuid.Parse(eventUUID)
+	if err != nil {
+		return err
+	}
+	return w.db.Set(processingCursorKey(projectID), cursor[:], pebble.NoSync)
 }
 
 // KeyForEvent generates a binary key for Pebble.

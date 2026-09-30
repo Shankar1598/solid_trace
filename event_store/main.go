@@ -15,9 +15,9 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
-	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/processing"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -65,20 +65,19 @@ func main() {
 	}
 	defer projectAuth.Close()
 
-	duckdbChan := make(chan models.Event, cfg.DuckDBChannelSize)
-	duckdbIngester := pipeline.NewDuckDBIngester(duckdbChan, duckdbWriter, messageQueueWriter, cfg.DuckDBFlushTimeout)
-	duckdbIngesterDone := make(chan struct{})
-	go func() {
-		duckdbIngester.Run()
-		close(duckdbIngesterDone)
-	}()
+	// Prepare must run before the worker and the archive job start. The
+	// archive never runs inside a batch: they share batchLock.
+	var batchLock sync.Mutex
+	processor := processing.New(pebbleWriter, duckdbWriter, messageQueueWriter, sqliteWriter, &batchLock)
+	if err := processor.Prepare(); err != nil {
+		logger.L.Fatal("Failed to prepare Event processing", "error", err)
+	}
+	processor.Start()
 
-	// Start consumers
-	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter)
+	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter, &batchLock)
 	go archiveConsumer.Run()
-	defer archiveConsumer.Stop()
 
-	ingestService := ingest.NewService(sqliteWriter, pebbleWriter, duckdbChan, cfg.IngestMaxWaiting)
+	ingestService := ingest.NewService(pebbleWriter, processor.Notify, cfg.IngestMaxWaiting)
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
@@ -133,13 +132,9 @@ func main() {
 	// after the deferred Close.
 	pebbleWriter.StopWrites()
 
-	// A request still in flight after a timed-out shutdown may yet send to
-	// duckdbChan, so it is only closed once ingest has fully stopped. After a
-	// timeout the DuckDB buffer is not flushed; its Events are in Pebble.
-	if ingestErr == nil {
-		close(duckdbChan)
-		<-duckdbIngesterDone
-	}
+	// Then the stores close through the defers above.
+	processor.Stop()
+	archiveConsumer.Stop()
 }
 
 func listenIngest(app *fiber.App, cfg *config.Config) error {

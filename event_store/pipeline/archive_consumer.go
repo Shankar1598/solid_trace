@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -27,23 +28,31 @@ type ArchivePayload struct {
 type ArchiveConsumer struct {
 	mqReader *storage.MessageQueueReader
 	duckdb   *storage.DuckDBWriter
-	ctx      context.Context
-	cancel   context.CancelFunc
+	// batchLock is shared with Event processing: the archive moves rows by
+	// their timestamp, so it must never run between a batch's DuckDB commit
+	// and its cursor move.
+	batchLock sync.Locker
+	ctx       context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
 }
 
 // NewArchiveConsumer creates a new archive consumer
-func NewArchiveConsumer(mqReader *storage.MessageQueueReader, duckdb *storage.DuckDBWriter) *ArchiveConsumer {
+func NewArchiveConsumer(mqReader *storage.MessageQueueReader, duckdb *storage.DuckDBWriter, batchLock sync.Locker) *ArchiveConsumer {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ArchiveConsumer{
-		mqReader: mqReader,
-		duckdb:   duckdb,
-		ctx:      ctx,
-		cancel:   cancel,
+		mqReader:  mqReader,
+		duckdb:    duckdb,
+		batchLock: batchLock,
+		ctx:       ctx,
+		cancel:    cancel,
+		done:      make(chan struct{}),
 	}
 }
 
 // Run starts the consumer loop
 func (c *ArchiveConsumer) Run() {
+	defer close(c.done)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -60,9 +69,10 @@ func (c *ArchiveConsumer) Run() {
 	}
 }
 
-// Stop stops the consumer
+// Stop stops the consumer and waits for Run to return.
 func (c *ArchiveConsumer) Stop() {
 	c.cancel()
+	<-c.done
 }
 
 func (c *ArchiveConsumer) processBatch() {
@@ -116,7 +126,10 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 	switch msg.MessageType {
 	case "archive_events":
 		logger.L.Info("Starting archive", "cutoff", payload.Date)
-		if err := c.duckdb.ArchiveEventsUpTo(date); err != nil {
+		c.batchLock.Lock()
+		err := c.duckdb.ArchiveEventsUpTo(date)
+		c.batchLock.Unlock()
+		if err != nil {
 			errMsg := "Archive failed: " + err.Error()
 			logger.L.Error(errMsg, "id", msg.ID, "cutoff", payload.Date)
 			c.mqReader.MarkFailed(msg.ID, errMsg)
