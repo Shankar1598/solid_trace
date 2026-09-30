@@ -79,3 +79,5 @@ Designed the ingest write path, picking up the unfinished 2026-09-26 grilling se
 ## Implementation (2026-09-30)
 
 [Prod-readiness 013](prod-readiness/issues/013-archive-overwrites-parquet.md) is resolved. `ArchiveEventsUpTo(cutoff)` writes new `data-<run id>.parquet` files through `.tmp` staging, and recovery runs at startup and at the start of each run. The ticket's comments list what was added beyond the brief and the one edge case that was accepted.
+
+[Prod-readiness 014](prod-readiness/issues/014-stuck-processing-messages.md) is resolved (`a7c06b2`). The processor job no longer sets `processing`, so a crash leaves the message processable. `processable` also picks up rows already stuck in `processing`. `limits_concurrency to: 1` with `on_conflict: :discard` stops overlapping runs. The concurrency lock expires after Solid Queue's default of 3 minutes, which is accepted under at-least-once delivery.
