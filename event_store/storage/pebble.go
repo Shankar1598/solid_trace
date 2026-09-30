@@ -3,8 +3,11 @@ package storage
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/objstorage/remote"
@@ -14,8 +17,15 @@ import (
 	"github.com/solidtrace/event_store/models"
 )
 
+// ErrShuttingDown is returned by WriteEvent after StopWrites or Close.
+var ErrShuttingDown = errors.New("event writer is shutting down")
+
 type PebbleWriter struct {
 	db *pebble.DB
+
+	// mu serialises Event writes, so Event keys commit in UUID order.
+	mu      sync.Mutex
+	stopped bool
 }
 
 func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
@@ -95,21 +105,40 @@ func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
 	return &PebbleWriter{db: db}, nil
 }
 
-func (w *PebbleWriter) WriteBatch(events []models.Event) error {
-	batch := w.db.NewBatch()
-	defer batch.Close()
+// WriteEvent stores one Event's raw payload and sets its EventUUID.
+// The UUIDv7 is generated under the lock, so within a Project, Event keys are
+// committed in UUID order and a reader never sees a key before a lower one.
+func (w *PebbleWriter) WriteEvent(event *models.Event) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-	for _, event := range events {
-		key := KeyForEvent(event.ProjectID, event.EventUUID)
-		if err := batch.Set(key, event.RawJSON, nil); err != nil {
-			return err
-		}
+	if w.stopped {
+		return ErrShuttingDown
 	}
 
-	// NoSync: throughput-oriented, matches prior RocksDB posture.
-	// Pebble still writes to the WAL; data is durable after the next
-	// OS-level fsync or when the WAL is rotated by compaction.
+	eventUUID, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("generate event uuid: %w", err)
+	}
+	event.EventUUID = eventUUID.String()
+
+	batch := w.db.NewBatch()
+	defer batch.Close()
+	if err := batch.Set(KeyForEvent(event.ProjectID, event.EventUUID), event.RawJSON, nil); err != nil {
+		return err
+	}
+
+	// NoSync: a process crash loses nothing, because the write is in the
+	// page cache. A power loss or kernel crash can lose the last few ms.
 	return batch.Commit(pebble.NoSync)
+}
+
+// StopWrites makes every later WriteEvent return ErrShuttingDown. It waits
+// for a write in progress to finish.
+func (w *PebbleWriter) StopWrites() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stopped = true
 }
 
 // GetEvent retrieves an event by its key (called by Rails via HTTP)
@@ -129,6 +158,7 @@ func (w *PebbleWriter) GetEvent(key []byte) ([]byte, error) {
 }
 
 func (w *PebbleWriter) Close() {
+	w.StopWrites()
 	w.db.Close()
 }
 
@@ -156,4 +186,13 @@ func KeyForEvent(projectID uint32, eventUUID string) []byte {
 		return append(key, eventUUID...)
 	}
 	return append(key, u[:]...)
+}
+
+// ReceiveTimeForEventKey returns the time EventStore received an Event.
+// Event keys hold UUIDv7s generated when the Event is written, so the
+// millisecond Unix timestamp in the UUID's first 48 bits is the receive time.
+func ReceiveTimeForEventKey(key []byte) time.Time {
+	var ms [8]byte
+	copy(ms[2:], key[4:10])
+	return time.UnixMilli(int64(binary.BigEndian.Uint64(ms[:])))
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/storage"
 )
 
 // Sentry SDKs retry no status, so these codes only decide what the SDK logs
@@ -23,6 +24,8 @@ func TestRenderIngestErrorStatus(t *testing.T) {
 		{ingest.ErrInvalidItemHeader, fiber.StatusBadRequest},
 		{ingest.ErrInvalidEventJSON, fiber.StatusBadRequest},
 		{ingest.ErrOverloaded, fiber.StatusServiceUnavailable},
+		{fmt.Errorf("write event: %w", storage.ErrShuttingDown), fiber.StatusServiceUnavailable},
+		{fmt.Errorf("write event: %w", fmt.Errorf("pebble: disk full")), fiber.StatusInternalServerError},
 		{fmt.Errorf("create issue: %w", fmt.Errorf("disk I/O error")), fiber.StatusInternalServerError},
 	}
 
