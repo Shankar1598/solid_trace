@@ -7,7 +7,8 @@ Status: ready-for-agent
 
 ## Problem
 
-`storage/pebble.go` opens Pebble without `MemTableSize`, so Pebble uses its 4 MB default.
+`storage/pebble.go` opened Pebble without `MemTableSize`, so Pebble used its 4 MB default.
+As an interim step, `storage/pebble.go` now sets `MemTableSize` to 64 MB, hardcoded. This issue still decides the final size and makes it a setting.
 That default limits write throughput. A larger memory table raises throughput but adds long write pauses.
 We need data to pick the size.
 
