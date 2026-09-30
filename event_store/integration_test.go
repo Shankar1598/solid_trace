@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +34,7 @@ type TestEnv struct {
 	App          *fiber.App
 	QueryApp     *fiber.App
 	PebbleWriter *storage.PebbleWriter
+	EventWriter  *recordingEventWriter
 	DuckDBWriter *storage.DuckDBWriter
 	SQLiteWriter *storage.SQLiteWriter
 	MQWriter     *storage.MessageQueueWriter
@@ -52,6 +55,30 @@ func resetTestDB(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to reset test DB: %v\nOutput: %s", err, string(output))
 	}
+}
+
+// recordingEventWriter records the UUID of each Event written, because an
+// ingest response doesn't carry it.
+type recordingEventWriter struct {
+	ingest.EventWriter
+	mu    sync.Mutex
+	uuids []string
+}
+
+func (w *recordingEventWriter) WriteEvent(event *models.Event) error {
+	if err := w.EventWriter.WriteEvent(event); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.uuids = append(w.uuids, event.EventUUID)
+	return nil
+}
+
+func (w *recordingEventWriter) UUIDs() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.uuids)
 }
 
 func setupTestEnv(t *testing.T) *TestEnv {
@@ -108,22 +135,15 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		t.Fatalf("Failed to create auth: %v", err)
 	}
 
-	// Create channels
-	pebbleChan := make(chan models.Event, 100)
 	duckdbChan := make(chan models.Event, 100)
 
-	// Start ingesters with short flush timeout
-	pebbleIngester := pipeline.NewPebbleIngester(
-		pebbleChan, duckdbChan, pebbleWriter,
-		10, 100*time.Millisecond,
-	)
-	go pebbleIngester.Run()
-
+	// Start the DuckDB ingester with a short flush timeout
 	duckdbIngester := pipeline.NewDuckDBIngester(duckdbChan, duckdbWriter, mqWriter, 100*time.Millisecond)
 	go duckdbIngester.Run()
 
 	// Setup Handler
-	ingestService := ingest.NewService(sqliteWriter, pebbleChan)
+	eventWriter := &recordingEventWriter{EventWriter: pebbleWriter}
+	ingestService := ingest.NewService(sqliteWriter, eventWriter, duckdbChan, 100)
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
@@ -134,7 +154,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	handler.RegisterQueryRoutes(queryApp, eventsHandler, healthHandler)
 
 	cleanup := func() {
-		close(pebbleChan)
+		pebbleWriter.StopWrites()
 		close(duckdbChan)
 		// Give some time for ingesters to flush and exit
 		time.Sleep(50 * time.Millisecond)
@@ -151,6 +171,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		App:          app,
 		QueryApp:     queryApp,
 		PebbleWriter: pebbleWriter,
+		EventWriter:  eventWriter,
 		DuckDBWriter: duckdbWriter,
 		SQLiteWriter: sqliteWriter,
 		MQWriter:     mqWriter,
@@ -337,6 +358,61 @@ func TestQueryEndpoints(t *testing.T) {
 	json.NewDecoder(getResp.Body).Decode(&payload)
 	if payload["event_id"] != "8a6c475493954601ab7f3b599b2578ca" {
 		t.Errorf("GetEvent payload mismatch")
+	}
+}
+
+func postStore(t *testing.T, env *TestEnv) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest("POST", "/api/123/store?sentry_key=test_public_key", bytes.NewReader(getSampleEventJSON()))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := env.App.Test(req, 2000)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	return resp
+}
+
+func TestEventIsReadableByUUIDAsSoonAsItIsAcknowledged(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	if resp := postStore(t, env); resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	uuids := env.EventWriter.UUIDs()
+	if len(uuids) != 1 {
+		t.Fatalf("Expected 1 Event written, got %d", len(uuids))
+	}
+
+	getReq, _ := http.NewRequest("GET", "/api/123/events/"+uuids[0], nil)
+	getResp, err := env.QueryApp.Test(getReq, 2000)
+	if err != nil {
+		t.Fatalf("GetEvent request failed: %v", err)
+	}
+	if getResp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", getResp.StatusCode)
+	}
+	var payload map[string]interface{}
+	json.NewDecoder(getResp.Body).Decode(&payload)
+	if payload["event_id"] != "8a6c475493954601ab7f3b599b2578ca" {
+		t.Errorf("GetEvent payload mismatch: %v", payload)
+	}
+}
+
+func TestIngestAfterWriterStopsIsServiceUnavailable(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	env.PebbleWriter.StopWrites()
+
+	if resp := postStore(t, env); resp.StatusCode != 503 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 503, got %d: %s", resp.StatusCode, string(body))
+	}
+	if uuids := env.EventWriter.UUIDs(); len(uuids) != 0 {
+		t.Errorf("Expected no Event written after the writer stopped, got %d", len(uuids))
 	}
 }
 

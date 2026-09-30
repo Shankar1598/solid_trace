@@ -24,14 +24,16 @@ type testApps struct {
 	query  *fiber.App
 }
 
-func newTestApps(t *testing.T, events ...models.Event) testApps {
+// newTestApps writes each event to both stores. Pebble assigns each event
+// its UUID.
+func newTestApps(t *testing.T, events ...*models.Event) testApps {
 	t.Helper()
-	return newTestAppsWithStores(t, events, events)
+	return newTestAppsWithStores(t, events, true)
 }
 
-// newTestAppsWithStores writes different events to each store, to model events
-// that Pebble has committed but DuckDB has not yet ingested.
-func newTestAppsWithStores(t *testing.T, pebbleEvents, duckdbEvents []models.Event) testApps {
+// newTestAppsWithStores writes the events to Pebble, and to DuckDB only with
+// indexed set, to model events that DuckDB has not yet ingested.
+func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) testApps {
 	t.Helper()
 	logger.Init()
 	tmpDir := t.TempDir()
@@ -48,8 +50,14 @@ func newTestAppsWithStores(t *testing.T, pebbleEvents, duckdbEvents []models.Eve
 	}
 	t.Cleanup(duckdbWriter.Close)
 
-	if err := pebbleWriter.WriteBatch(pebbleEvents); err != nil {
-		t.Fatalf("Pebble WriteBatch failed: %v", err)
+	var duckdbEvents []models.Event
+	for _, event := range events {
+		if err := pebbleWriter.WriteEvent(event); err != nil {
+			t.Fatalf("Pebble WriteEvent failed: %v", err)
+		}
+		if indexed {
+			duckdbEvents = append(duckdbEvents, *event)
+		}
 	}
 	if err := duckdbWriter.WriteBatch(duckdbEvents); err != nil {
 		t.Fatalf("DuckDB WriteBatch failed: %v", err)
@@ -66,10 +74,9 @@ func newTestAppsWithStores(t *testing.T, pebbleEvents, duckdbEvents []models.Eve
 	return testApps{ingest: ingestApp, query: queryApp}
 }
 
-func newEvent(projectID uint32) models.Event {
-	return models.Event{
+func newEvent(projectID uint32) *models.Event {
+	return &models.Event{
 		ProjectID:          projectID,
-		EventUUID:          uuid.Must(uuid.NewV7()).String(),
 		IssueFingerprintID: 10,
 		Timestamp:          time.Now().UTC(),
 		RawJSON:            []byte(`{"message":"boom"}`),
@@ -163,7 +170,7 @@ func TestGetEventIsScopedToProject(t *testing.T) {
 
 func TestGetEventDoesNotWaitForDuckDB(t *testing.T) {
 	event := newEvent(1)
-	app := newTestAppsWithStores(t, []models.Event{event}, nil).query
+	app := newTestAppsWithStores(t, []*models.Event{event}, false).query
 
 	if resp := get(t, app, "/api/1/events/"+event.EventUUID); resp.StatusCode != fiber.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
