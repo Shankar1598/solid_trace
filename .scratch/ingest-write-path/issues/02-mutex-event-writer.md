@@ -1,6 +1,6 @@
 # 02: Mutex Event writer: store the Event in Pebble before the 200
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01
 
 **Spec:** [spec.md](../spec.md), sections "Event ingest" and "The Pebble Event writer"
@@ -55,3 +55,17 @@ After this ticket, a `200` means the Event is in Pebble. The Issue work stays in
 - `go test ./...` passes.
 
 ## Comments
+
+**2026-09-30, resolved** in merge `88f14f3` (branch `ingest-mutex-writer`).
+
+- **Naming:**
+  - The "close the writer" step is `PebbleWriter.StopWrites()`. `Close()` also stops writes before it closes the DB.
+  - `ErrShuttingDown` is `storage.ErrShuttingDown`, so `storage` doesn't import `ingest`. The handler maps it to `503` alongside `ErrOverloaded`.
+- **Beyond the brief:**
+  - The two HTTP shutdowns run concurrently, so the worst case stays within Docker's 10 s stop grace period.
+  - `main` waits for the DuckDB ingester to flush before the deferred store closes.
+- **Accepted edge cases, until 03:**
+  - If the ingest app's shutdown times out, `duckdbChan` is not closed, because a request still in flight could send on it and panic. That DuckDB buffer is then not flushed. Its Events are in Pebble.
+  - A request that arrives during shutdown still does its Issue work before its write is refused, so it can leave an Issue with no Event. 03 removes the Issue work from the request.
+- **Not validated:** an `ingest_max_waiting` of 0 or below rejects every request.
+- **Tests:** the integration test learns the assigned UUID by wrapping the writer in a recording `EventWriter`, because the ingest response doesn't carry it.

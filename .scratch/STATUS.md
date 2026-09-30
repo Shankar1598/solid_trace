@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-09-27
+Updated: 2026-09-30
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
 
@@ -9,12 +9,12 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 - **Logs**: planning only, no code yet. 4 research tickets are done. The decision tickets start now. The goal is a v1 spec plus first-milestone tickets.
 - **Prod-readiness**: [review.md](prod-readiness/review.md) lists about 9 gaps. 5 are filed as tickets (013 and 014 were added from the ingest design). 013, re-archiving overwrites Parquet, is resolved (2026-09-30). 014, Console messages stuck in `processing`, is resolved (2026-09-30). Query API auth (§2), the concurrent first-event 500 (§5) and Sentry protocol correctness (§6) are fixed.
 - **Integration notification**: the spec is ready for an agent. It has no tickets yet.
-- **Ingest write path**: the [spec](ingest-write-path/spec.md) is ready for an agent. Event ingest stores the Event in Pebble before the `200`. Event processing then catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. This fixes review §4. Accepted gap: a crash can lose an `issue_created`.
+- **Ingest write path**: 02 is resolved (2026-09-30): Event ingest now stores the Event in Pebble before the `200`. Next is 03: Event processing catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. With 03, review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
 - **Upgrade Pebble and DuckDB**: merged. EventStore now uses Pebble v2.1.7 and the DuckDB 2.0 alpha engine (`v2.0.0-alpha43385`), linked as a shared library. Two follow-ups wait on it.
 
 ## Next
 
-1. [Ingest write path 02: mutex Event writer](ingest-write-path/issues/02-mutex-event-writer.md) (task), then [03: Event processing](ingest-write-path/issues/03-event-processing.md)
+1. [Ingest write path 03: Event processing](ingest-write-path/issues/03-event-processing.md) (task)
 2. [Logs 05: prod-readiness gaps for logs](logs/issues/05-prod-readiness-gaps-for-logs.md) (grilling)
 3. [Prod-readiness 011: Pebble memtable size](prod-readiness/issues/011-pebble-memtable-size.md) (benchmark task)
 4. [Prod-readiness 012: Sentry compatibility tests](prod-readiness/issues/012-sentry-compatibility-tests.md) (task)
@@ -27,7 +27,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logs | 4 / 9 | [map.md](logs/map.md) |
 | Prod-readiness | 3 / 3 filed | [review.md](prod-readiness/review.md) |
 | Integration notification | spec only | [spec.md](integration-notification/spec.md) |
-| Ingest write path | 1 / 2 | [spec.md](ingest-write-path/spec.md) |
+| Ingest write path | 2 / 1 | [spec.md](ingest-write-path/spec.md) |
 | Upgrade Pebble and DuckDB | 1 / 2 | [02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
@@ -81,3 +81,5 @@ Designed the ingest write path, picking up the unfinished 2026-09-26 grilling se
 [Prod-readiness 013](prod-readiness/issues/013-archive-overwrites-parquet.md) is resolved. `ArchiveEventsUpTo(cutoff)` writes new `data-<run id>.parquet` files through `.tmp` staging, and recovery runs at startup and at the start of each run. The ticket's comments list what was added beyond the brief and the one edge case that was accepted.
 
 [Prod-readiness 014](prod-readiness/issues/014-stuck-processing-messages.md) is resolved (`a7c06b2`). The processor job no longer sets `processing`, so a crash leaves the message processable. `processable` also picks up rows already stuck in `processing`. `limits_concurrency to: 1` with `on_conflict: :discard` stops overlapping runs. The concurrency lock expires after Solid Queue's default of 3 minutes, which is accepted under at-least-once delivery.
+
+[Ingest write path 02](ingest-write-path/issues/02-mutex-event-writer.md) is resolved. `PebbleWriter.WriteEvent` stores each Event under one lock before the `200`. `ingest_max_waiting` caps waiting requests with a `503`. The Pebble channel, the Pebble ingester and their settings are gone. The ticket's comments list the accepted shutdown edge cases.
