@@ -8,7 +8,8 @@ class EventStoreMessage < MessageQueueRecord
     failed: 3,
   }, prefix: true
 
-  scope :processable, -> { where(status: [ :pending, :failed ]).where("attempts < 5") }
+  # Nothing sets `processing` now; older rows stuck in it are retried too.
+  scope :processable, -> { where(status: [ :pending, :processing, :failed ]).where("attempts < 5") }
 
   serialize :payload, coder: MessagePacker::WithCompression
 end
