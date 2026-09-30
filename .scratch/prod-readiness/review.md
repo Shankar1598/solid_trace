@@ -114,6 +114,11 @@ Four paths, none documented as a tradeoff:
 - **`DuckDBIngester.flush()`** discards the whole batch on write error
   (`batch = batch[:0]; return`) with no retry.
 
+**Plan (2026-09-27):** all four paths are addressed by the [ingest write path](../ingest-write-path/spec.md) effort.
+- Ticket 02 stores each Event in Pebble before the `200`.
+- Ticket 03 replaces both channels with Event processing, which catches DuckDB up from Pebble using per-Project processing cursors.
+- `NoSync` stays: a process crash is safe, and a power loss can lose the last few milliseconds.
+
 ## 5. Concurrent first-events for a new fingerprint return 500
 
 `event_store/ingest/service.go:75-87` is find-then-create with no uniqueness handling,
