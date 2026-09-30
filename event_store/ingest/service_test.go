@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,15 +24,17 @@ func TestMain(m *testing.M) {
 // ---------------------------------------------------------------------------
 
 type fakeIssueRepository struct {
+	mu sync.Mutex
+
 	// State
-	issues       map[string]fakeIssue // keyed by "projectID:fingerprint"
-	nextID       int64
-	reopenCalls  []int64 // records which issueIDs were reopened
-	createCalls  []fakeCreateCall
-	findCalls    []fakeFindCall
-	createErr    error // inject errors
-	findErr      error
-	reopenErr    error
+	issues      map[string]fakeIssue // keyed by "projectID:fingerprint"
+	nextID      int64
+	reopenCalls []int64 // records which issueIDs were reopened
+	createCalls []fakeCreateCall
+	findCalls   []fakeFindCall
+	createErr   error // inject errors
+	findErr     error
+	reopenErr   error
 	// staleFind makes FindIssueByFingerprint miss existing Issues, as when a
 	// concurrent Event creates the Issue just after the lock-free lookup.
 	staleFind bool
@@ -67,6 +71,8 @@ func (f *fakeIssueRepository) key(projectID uint32, fingerprint string) string {
 }
 
 func (f *fakeIssueRepository) FindIssueByFingerprint(projectID uint32, fingerprint string) (int64, int64, int, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.findCalls = append(f.findCalls, fakeFindCall{projectID, fingerprint})
 	if f.findErr != nil {
 		return 0, 0, 0, false, f.findErr
@@ -80,6 +86,8 @@ func (f *fakeIssueRepository) FindIssueByFingerprint(projectID uint32, fingerpri
 }
 
 func (f *fakeIssueRepository) FindOrCreateIssue(projectID uint32, fingerprint, title, culprit, kind string) (int64, int64, int, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createCalls = append(f.createCalls, fakeCreateCall{projectID, fingerprint, title, culprit, kind})
 	if f.createErr != nil {
 		return 0, 0, 0, false, f.createErr
@@ -103,6 +111,8 @@ func (f *fakeIssueRepository) FindOrCreateIssue(projectID uint32, fingerprint, t
 }
 
 func (f *fakeIssueRepository) ReopenIssue(issueID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.reopenCalls = append(f.reopenCalls, issueID)
 	if f.reopenErr != nil {
 		return f.reopenErr
@@ -132,12 +142,47 @@ func (f *fakeIssueRepository) seedIssue(projectID uint32, fingerprint string, st
 	return issueID, fingerprintID
 }
 
+// fakeEventWriter records written Events on a channel and assigns each a
+// UUID, as storage.PebbleWriter does. With block set, each write signals
+// entered and waits for block to close.
+type fakeEventWriter struct {
+	written chan models.Event
+	err     error
+	block   chan struct{}
+	entered chan struct{}
+	nextID  atomic.Int64
+}
+
+func newFakeEventWriter() *fakeEventWriter {
+	return &fakeEventWriter{
+		written: make(chan models.Event, 10),
+		entered: make(chan struct{}, 10),
+	}
+}
+
+func (f *fakeEventWriter) WriteEvent(event *models.Event) error {
+	if f.block != nil {
+		f.entered <- struct{}{}
+		<-f.block
+	}
+	if f.err != nil {
+		return f.err
+	}
+	event.EventUUID = fmt.Sprintf("event-%d", f.nextID.Add(1))
+	f.written <- *event
+	return nil
+}
+
+func newTestService(issues IssueRepository, events EventWriter) *Service {
+	return NewService(issues, events, make(chan models.Event, 10), 10)
+}
+
 // ---------------------------------------------------------------------------
 // Existing validation tests (updated to use new constructor signature)
 // ---------------------------------------------------------------------------
 
 func TestServiceIngestEnvelopeRejectsInvalidEnvelopeHeader(t *testing.T) {
-	service := NewService(nil, nil)
+	service := newTestService(nil, nil)
 
 	err := service.IngestEnvelope(123, []byte("not-json\n{\"type\":\"event\"}\n{}"))
 	if !errors.Is(err, ErrInvalidEnvelope) {
@@ -146,7 +191,7 @@ func TestServiceIngestEnvelopeRejectsInvalidEnvelopeHeader(t *testing.T) {
 }
 
 func TestServiceIngestEnvelopeRejectsItemHeaderWithoutType(t *testing.T) {
-	service := NewService(nil, nil)
+	service := newTestService(nil, nil)
 
 	err := service.IngestEnvelope(123, []byte("{}\n{}"))
 	if !errors.Is(err, ErrInvalidItemHeader) {
@@ -155,7 +200,7 @@ func TestServiceIngestEnvelopeRejectsItemHeaderWithoutType(t *testing.T) {
 }
 
 func TestServiceIngestEnvelopeRejectsLengthPastEnd(t *testing.T) {
-	service := NewService(nil, nil)
+	service := newTestService(nil, nil)
 
 	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\",\"length\":100}\n{}"))
 	if !errors.Is(err, ErrInvalidEnvelope) {
@@ -164,7 +209,7 @@ func TestServiceIngestEnvelopeRejectsLengthPastEnd(t *testing.T) {
 }
 
 func TestServiceIngestEnvelopeRejectsPayloadLongerThanLength(t *testing.T) {
-	service := NewService(nil, nil)
+	service := newTestService(nil, nil)
 
 	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\",\"length\":1}\n{}"))
 	if !errors.Is(err, ErrInvalidEnvelope) {
@@ -173,7 +218,7 @@ func TestServiceIngestEnvelopeRejectsPayloadLongerThanLength(t *testing.T) {
 }
 
 func TestServiceIngestEnvelopeRejectsInvalidItemHeader(t *testing.T) {
-	service := NewService(nil, nil)
+	service := newTestService(nil, nil)
 	envelope := []byte("{}\nnot-json\n{}")
 
 	err := service.IngestEnvelope(123, envelope)
@@ -183,7 +228,7 @@ func TestServiceIngestEnvelopeRejectsInvalidItemHeader(t *testing.T) {
 }
 
 func TestServiceIngestEnvelopeIgnoresUnsupportedItems(t *testing.T) {
-	service := NewService(nil, nil)
+	service := newTestService(nil, nil)
 	envelope := []byte("{}\n{\"type\":\"attachment\"}\nignored")
 
 	if err := service.IngestEnvelope(123, envelope); err != nil {
@@ -192,7 +237,7 @@ func TestServiceIngestEnvelopeIgnoresUnsupportedItems(t *testing.T) {
 }
 
 func TestServiceIngestStoreRejectsInvalidJSON(t *testing.T) {
-	service := NewService(nil, nil)
+	service := newTestService(nil, nil)
 
 	err := service.IngestStore(123, []byte("not-json"))
 	if !errors.Is(err, ErrInvalidEventJSON) {
@@ -230,8 +275,8 @@ func sampleEventJSON() []byte {
 
 func TestServiceIngestStore_NewIssue(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	err := service.IngestStore(42, sampleEventJSON())
 	if err != nil {
@@ -239,11 +284,11 @@ func TestServiceIngestStore_NewIssue(t *testing.T) {
 	}
 
 	// Verify an event was sent to the channel
-	if len(pebbleChan) != 1 {
-		t.Fatalf("expected 1 event in channel, got %d", len(pebbleChan))
+	if len(writer.written) != 1 {
+		t.Fatalf("expected 1 event written, got %d", len(writer.written))
 	}
 
-	event := <-pebbleChan
+	event := <-writer.written
 
 	// Verify event fields
 	if event.ProjectID != 42 {
@@ -300,8 +345,8 @@ func TestServiceIngestStore_NewIssue(t *testing.T) {
 
 func TestServiceIngestStore_ExistingOpenIssue(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	// Pre-seed an open issue. We need the fingerprint to match what
 	// classifyIssue will compute for sampleEventJSON().
@@ -310,7 +355,7 @@ func TestServiceIngestStore_ExistingOpenIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first ingest failed: %v", err)
 	}
-	<-pebbleChan // drain
+	<-writer.written // drain
 
 	// Reset call tracking
 	repo.findCalls = nil
@@ -322,7 +367,7 @@ func TestServiceIngestStore_ExistingOpenIssue(t *testing.T) {
 		t.Fatalf("second ingest failed: %v", err)
 	}
 
-	event := <-pebbleChan
+	event := <-writer.written
 	if event.IsNewIssue {
 		t.Error("expected IsNewIssue=false for existing issue")
 	}
@@ -336,15 +381,15 @@ func TestServiceIngestStore_ExistingOpenIssue(t *testing.T) {
 
 func TestServiceIngestStore_ReopensResolvedIssue(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	// First, ingest to create the issue
 	err := service.IngestStore(42, sampleEventJSON())
 	if err != nil {
 		t.Fatalf("first ingest failed: %v", err)
 	}
-	firstEvent := <-pebbleChan
+	firstEvent := <-writer.written
 
 	// Simulate resolving the issue by updating its status in the fake repo
 	for k, issue := range repo.issues {
@@ -365,7 +410,7 @@ func TestServiceIngestStore_ReopensResolvedIssue(t *testing.T) {
 		t.Fatalf("second ingest failed: %v", err)
 	}
 
-	event := <-pebbleChan
+	event := <-writer.written
 	if event.IsNewIssue {
 		t.Error("expected IsNewIssue=false for reopened issue")
 	}
@@ -380,22 +425,85 @@ func TestServiceIngestStore_ReopensResolvedIssue(t *testing.T) {
 	}
 }
 
-func TestServiceIngestStore_ChannelFull_ReturnsOverloaded(t *testing.T) {
+func TestServiceIngestStore_TooManyWaiting_ReturnsOverloaded(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event) // unbuffered = always full when non-blocking
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	writer.block = make(chan struct{})
+	service := NewService(repo, writer, make(chan models.Event, 10), 2)
+
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { results <- service.IngestStore(42, sampleEventJSON()) }()
+	}
+	for range 2 {
+		<-writer.entered
+	}
+
+	if err := service.IngestStore(42, sampleEventJSON()); !errors.Is(err, ErrOverloaded) {
+		t.Fatalf("expected ErrOverloaded, got %v", err)
+	}
+
+	close(writer.block)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("waiting request failed: %v", err)
+		}
+	}
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("expected success once the waiting requests finished, got %v", err)
+	}
+}
+
+func TestServiceIngestStore_OverloadedCreatesNoIssue(t *testing.T) {
+	repo := newFakeIssueRepository()
+	service := NewService(repo, newFakeEventWriter(), make(chan models.Event, 10), 0)
+
+	if err := service.IngestStore(42, sampleEventJSON()); !errors.Is(err, ErrOverloaded) {
+		t.Fatalf("expected ErrOverloaded, got %v", err)
+	}
+	if len(repo.createCalls) != 0 {
+		t.Errorf("expected no Issue work for a rejected request, got %d create calls", len(repo.createCalls))
+	}
+}
+
+func TestServiceIngestStore_WriteError_Propagates(t *testing.T) {
+	writer := newFakeEventWriter()
+	writer.err = errors.New("pebble: disk full")
+	duckdbChan := make(chan models.Event, 10)
+	service := NewService(newFakeIssueRepository(), writer, duckdbChan, 10)
 
 	err := service.IngestStore(42, sampleEventJSON())
-	if !errors.Is(err, ErrOverloaded) {
-		t.Fatalf("expected ErrOverloaded, got %v", err)
+	if !errors.Is(err, writer.err) {
+		t.Fatalf("expected wrapped write error, got %v", err)
+	}
+	if len(duckdbChan) != 0 {
+		t.Errorf("expected nothing forwarded to DuckDB after a failed write, got %d", len(duckdbChan))
+	}
+}
+
+func TestServiceIngestStore_ForwardsWrittenEventToDuckDB(t *testing.T) {
+	writer := newFakeEventWriter()
+	duckdbChan := make(chan models.Event, 10)
+	service := NewService(newFakeIssueRepository(), writer, duckdbChan, 10)
+
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	written := <-writer.written
+	if len(duckdbChan) != 1 {
+		t.Fatalf("expected 1 event forwarded to DuckDB, got %d", len(duckdbChan))
+	}
+	if forwarded := <-duckdbChan; forwarded.EventUUID != written.EventUUID {
+		t.Errorf("expected the forwarded event to carry the written UUID %q, got %q", written.EventUUID, forwarded.EventUUID)
 	}
 }
 
 func TestServiceIngestStore_FindError_Propagates(t *testing.T) {
 	repo := newFakeIssueRepository()
 	repo.findErr = errors.New("db connection lost")
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	err := service.IngestStore(42, sampleEventJSON())
 	if err == nil {
@@ -409,8 +517,8 @@ func TestServiceIngestStore_FindError_Propagates(t *testing.T) {
 func TestServiceIngestStore_CreateError_Propagates(t *testing.T) {
 	repo := newFakeIssueRepository()
 	repo.createErr = errors.New("disk I/O error")
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	err := service.IngestStore(42, sampleEventJSON())
 	if err == nil {
@@ -423,13 +531,13 @@ func TestServiceIngestStore_CreateError_Propagates(t *testing.T) {
 
 func TestServiceIngestStore_LostCreateRace_UsesExistingIssue(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
 		t.Fatalf("first ingest failed: %v", err)
 	}
-	firstEvent := <-pebbleChan
+	firstEvent := <-writer.written
 
 	// The lookup misses, as if the first Event's Issue was committed just after it.
 	repo.staleFind = true
@@ -437,7 +545,7 @@ func TestServiceIngestStore_LostCreateRace_UsesExistingIssue(t *testing.T) {
 		t.Fatalf("second ingest failed: %v", err)
 	}
 
-	event := <-pebbleChan
+	event := <-writer.written
 	if event.IsNewIssue {
 		t.Error("expected IsNewIssue=false for the losing Event, or issue_created is sent twice")
 	}
@@ -454,13 +562,13 @@ func TestServiceIngestStore_LostCreateRace_UsesExistingIssue(t *testing.T) {
 
 func TestServiceIngestStore_LostCreateRace_ReopensResolvedIssue(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
 		t.Fatalf("first ingest failed: %v", err)
 	}
-	firstEvent := <-pebbleChan
+	firstEvent := <-writer.written
 	for k, issue := range repo.issues {
 		issue.status = IssueStatusResolved
 		repo.issues[k] = issue
@@ -470,7 +578,7 @@ func TestServiceIngestStore_LostCreateRace_ReopensResolvedIssue(t *testing.T) {
 	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
 		t.Fatalf("second ingest failed: %v", err)
 	}
-	<-pebbleChan
+	<-writer.written
 
 	if len(repo.reopenCalls) != 1 || repo.reopenCalls[0] != firstEvent.IssueID {
 		t.Errorf("expected reopen of issue %d, got %v", firstEvent.IssueID, repo.reopenCalls)
@@ -479,12 +587,12 @@ func TestServiceIngestStore_LostCreateRace_ReopensResolvedIssue(t *testing.T) {
 
 func TestServiceIngestStore_ReopenError_Propagates(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	// Create then resolve
 	_ = service.IngestStore(42, sampleEventJSON())
-	firstEvent := <-pebbleChan
+	firstEvent := <-writer.written
 	for k, issue := range repo.issues {
 		if issue.issueID == firstEvent.IssueID {
 			issue.status = IssueStatusResolved
@@ -507,8 +615,8 @@ func TestServiceIngestStore_ReopenError_Propagates(t *testing.T) {
 
 func TestServiceIngestEnvelope_HappyPath(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	eventPayload := `{"message": "Envelope Test", "environment": "staging"}`
 	envelope := []byte("{}\n{\"type\":\"event\"}\n" + eventPayload)
@@ -518,11 +626,11 @@ func TestServiceIngestEnvelope_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(pebbleChan) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(pebbleChan))
+	if len(writer.written) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(writer.written))
 	}
 
-	event := <-pebbleChan
+	event := <-writer.written
 	if event.ProjectID != 99 {
 		t.Errorf("expected ProjectID 99, got %d", event.ProjectID)
 	}
@@ -536,8 +644,8 @@ func TestServiceIngestEnvelope_HappyPath(t *testing.T) {
 
 func TestServiceIngestEnvelope_DropsTransactions(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	eventPayload := `{"type": "transaction", "transaction": "GET /"}`
 	envelope := []byte("{}\n{\"type\":\"transaction\"}\n" + eventPayload)
@@ -547,8 +655,8 @@ func TestServiceIngestEnvelope_DropsTransactions(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(pebbleChan) != 0 {
-		t.Fatalf("expected no events, got %d", len(pebbleChan))
+	if len(writer.written) != 0 {
+		t.Fatalf("expected no events, got %d", len(writer.written))
 	}
 	if len(repo.createCalls) != 0 {
 		t.Fatalf("expected no issues created, got %d", len(repo.createCalls))
@@ -586,17 +694,17 @@ func TestServiceIngestEnvelope_MultipleItems(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeIssueRepository()
-			pebbleChan := make(chan models.Event, 10)
-			service := NewService(repo, pebbleChan)
+			writer := newFakeEventWriter()
+			service := newTestService(repo, writer)
 
 			if err := service.IngestEnvelope(99, []byte(tt.envelope)); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if len(pebbleChan) != 1 {
-				t.Fatalf("expected 1 event, got %d", len(pebbleChan))
+			if len(writer.written) != 1 {
+				t.Fatalf("expected 1 event, got %d", len(writer.written))
 			}
 
-			event := <-pebbleChan
+			event := <-writer.written
 			if string(event.RawJSON) != eventPayload {
 				t.Errorf("expected RawJSON %q, got %q", eventPayload, event.RawJSON)
 			}
@@ -609,8 +717,8 @@ func TestServiceIngestEnvelope_MultipleItems(t *testing.T) {
 
 func TestServiceIngestStore_CopiesRequestBody(t *testing.T) {
 	repo := newFakeIssueRepository()
-	pebbleChan := make(chan models.Event, 10)
-	service := NewService(repo, pebbleChan)
+	writer := newFakeEventWriter()
+	service := newTestService(repo, writer)
 
 	body := sampleEventJSON()
 	if err := service.IngestStore(42, body); err != nil {
@@ -621,7 +729,7 @@ func TestServiceIngestStore_CopiesRequestBody(t *testing.T) {
 		body[i] = 'x' // fasthttp reuses the request buffer after the handler returns
 	}
 
-	event := <-pebbleChan
+	event := <-writer.written
 	if string(event.RawJSON) != want {
 		t.Errorf("RawJSON aliases the request body: got %q", event.RawJSON)
 	}
