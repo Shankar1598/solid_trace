@@ -147,13 +147,41 @@ func (w *DuckDBWriter) recreateEventsView() error {
 	return tx.Commit()
 }
 
+// WriteBatch appends the events to events_hot in one transaction: either
+// every row commits or none does.
 func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
-	conn, err := w.db.Conn(context.Background())
+	ctx := context.Background()
+	conn, err := w.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
+		return err
+	}
+	if err := appendEvents(conn, events); err != nil {
+		if _, rollbackErr := conn.ExecContext(ctx, "ROLLBACK"); rollbackErr != nil {
+			logger.L.Error("DuckDB rollback failed", "error", rollbackErr)
+			discardConn(conn)
+		}
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		discardConn(conn)
+		return err
+	}
+	return nil
+}
+
+// discardConn keeps a connection whose transaction may still be open out of
+// the pool: returning driver.ErrBadConn from Raw makes database/sql close it.
+func discardConn(conn *sql.Conn) {
+	_ = conn.Raw(func(interface{}) error { return driver.ErrBadConn })
+}
+
+// appendEvents appends the events inside the connection's open transaction.
+func appendEvents(conn *sql.Conn, events []models.Event) error {
 	return conn.Raw(func(c interface{}) error {
 		dConn, ok := c.(driver.Conn)
 		if !ok {
@@ -164,7 +192,6 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 		if err != nil {
 			return err
 		}
-		defer appender.Close()
 
 		for _, event := range events {
 			var tags duckdb.OrderedMap
@@ -172,9 +199,6 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 				tags.Set(k, v)
 			}
 
-			// Log event (optional, keeping existing behavior of logging but maybe lighter)
-			// Keeping it simple as previous code logged the full JSON.
-			// Replicating logic without JSON marshal overhead for the insert itself.
 			eventJSON, _ := json.Marshal(event)
 			logger.L.Debug("DuckDB insert event", "event", string(eventJSON))
 
@@ -190,12 +214,22 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 				tags,
 			)
 			if err != nil {
+				appender.Close()
 				return err
 			}
 		}
 
-		return appender.Flush()
+		return appender.Close()
 	})
+}
+
+// NewestHotUUIDAfter returns the newest UUID in events_hot for a Project that
+// comes after afterUUID, or "" if there is none. Rows are appended a batch per
+// transaction in UUID order, so it shows how far a Project's appends got.
+func (w *DuckDBWriter) NewestHotUUIDAfter(projectID uint32, afterUUID string) (string, error) {
+	var newest sql.NullString
+	err := w.db.QueryRow("SELECT max(uuid) FROM events_hot WHERE project_id = ? AND uuid > ?", projectID, afterUUID).Scan(&newest)
+	return newest.String, err
 }
 
 func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {

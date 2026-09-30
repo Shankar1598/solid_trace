@@ -3,7 +3,6 @@ package config
 import (
 	"log"
 	"os"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,9 +20,6 @@ type Config struct {
 	// IngestMaxWaiting caps the requests waiting to store their Event.
 	// Past it, ingest answers 503.
 	IngestMaxWaiting int
-
-	DuckDBFlushTimeout time.Duration
-	DuckDBChannelSize  int
 
 	DuckDBTempDirectory string
 	DuckDBMemoryLimit   string
@@ -43,8 +39,6 @@ type fileConfig struct {
 	SQLitePath          *string        `yaml:"sqlite_path"`
 	MessageQueuePath    *string        `yaml:"message_queue_path"`
 	IngestMaxWaiting    *int           `yaml:"ingest_max_waiting"`
-	DuckDBFlushTimeout  *string        `yaml:"duckdb_flush_timeout"`
-	DuckDBChannelSize   *int           `yaml:"duckdb_channel_size"`
 	DuckDBTempDirectory *string        `yaml:"duckdb_temp_directory"`
 	DuckDBMemoryLimit   *string        `yaml:"duckdb_memory_limit"`
 	StorageTiers        *[]StorageTier `yaml:"storage_tiers"`
@@ -63,9 +57,6 @@ func Load() *Config {
 		MessageQueuePath:   "../storage/sqlite/development/message_queue.sqlite3",
 
 		IngestMaxWaiting: 10000,
-
-		DuckDBFlushTimeout: 1 * time.Second,
-		DuckDBChannelSize:  100000,
 
 		DuckDBTempDirectory: "",
 		DuckDBMemoryLimit:   "",
@@ -125,16 +116,6 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 	if config.IngestMaxWaiting != nil {
 		cfg.IngestMaxWaiting = *config.IngestMaxWaiting
-	}
-	if config.DuckDBFlushTimeout != nil && *config.DuckDBFlushTimeout != "" {
-		d, err := time.ParseDuration(*config.DuckDBFlushTimeout)
-		if err != nil {
-			return err
-		}
-		cfg.DuckDBFlushTimeout = d
-	}
-	if config.DuckDBChannelSize != nil {
-		cfg.DuckDBChannelSize = *config.DuckDBChannelSize
 	}
 	if config.DuckDBTempDirectory != nil {
 		cfg.DuckDBTempDirectory = *config.DuckDBTempDirectory

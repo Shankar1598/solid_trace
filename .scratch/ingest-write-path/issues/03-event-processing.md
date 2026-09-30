@@ -1,6 +1,6 @@
 # 03: Event processing: bring Issues, DuckDB and the Console up to date from Pebble
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 
 **Spec:** [spec.md](../spec.md), sections "Event ingest", "Event processing", "Removed", "Glossary" and "Testing Decisions"
@@ -85,3 +85,19 @@ Move the Issue-work cases from `ingest/service_test.go` to this seam. Keep the e
 - `CONTEXT.md` is updated.
 
 ## Comments
+
+**2026-09-30, resolved.**
+
+- **Changed from the brief (user's decision): no cursor move at startup.** Step 4 moved each cursor to `max(uuid)` in `events_hot`. That skips the replay, so a crash between the DuckDB commit and the enqueue would lose the batch's Console messages, against story 27. `Processor.Prepare` records that UUID as an in-memory "indexed up to" mark instead. The replay redoes the Issue lookup and enqueues, but skips the DuckDB append at or below the mark. The spec's "Startup fast-forward" is updated.
+- **Where it lives:** a new `event_store/processing` package, `processing.Processor`. The classifier, the field extraction and `IssueRepository` moved there from `ingest/`. `ingest/` keeps `EventWriter`, and `NewService` takes a `notify func(projectID)` that `main` wires to `Processor.Notify`.
+- **Retries run in place.** Each step retries its own store errors with backoff (100 ms doubling to 30 s), so an Issue's "created" flag is never lost to a retry. `Stop` abandons a batch only while a step is retrying. Otherwise the batch finishes with the Events whose Issue work is done, so a graceful stop never loses an `issue_created`.
+- **DuckDB isolation:** after a failed append, the rows go one at a time. A row that fails while others succeed is a content error: it is retried 3 times, then skipped. If every row fails, it's a store error and nothing is skipped. So a lone bad row with no later Events in its Project blocks that Project, with repeated error logs, until another Event arrives.
+- **Skipped Events still count for Console messages** when their Issue work succeeded: the Issue exists even if the row isn't queryable.
+- **Backlog:** checked at most once a minute from the processing loop and the retry loop, so it also reports while the worker is busy or failing. The threshold is 1 minute. Both are constants.
+- **Beyond the brief:**
+  - `WriteBatch` now wraps the Appender in an explicit transaction, and discards the connection if `COMMIT` or `ROLLBACK` fails.
+  - `ArchiveConsumer.Stop` waits for `Run` to return.
+  - Console message Issue ids are sorted.
+- **Tests:** `processing_test.go` covers every case listed, plus a DuckDB-rejected row (a timestamp past DuckDB's range). `TestArchiveEvents` still polls the archive consumer with a sleep. It isn't an Event processing test.
+- **Not covered:** DuckDB more than one batch ahead of the cursor, as after a power loss rolls the cursor back. The mark logic doesn't depend on batch count.
+

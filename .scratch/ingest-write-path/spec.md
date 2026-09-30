@@ -73,7 +73,7 @@ For an SDK, a `200` now means the Event is stored.
 32. As a SolidTrace maintainer, I want Event processing to derive everything from the stored raw payload, so that a replay gives the same result as the first run.
 33. As a SolidTrace maintainer, I want Events stored in UUID order under one lock, so that a processing cursor can never skip an Event.
 34. As a SolidTrace maintainer, I want the processing cursor stored in Pebble, not DuckDB, so that DuckDB is only used for analytical queries.
-35. As a SolidTrace maintainer, I want startup to fast-forward each processing cursor to the newest Event DuckDB already holds, so that a crash never causes a batch to be appended twice.
+35. As a SolidTrace maintainer, I want startup to note the newest Event DuckDB already holds past each processing cursor, so that a crash never causes a batch to be appended twice.
 36. As a SolidTrace maintainer, I want the integration tests to drive Event processing step by step instead of sleeping, so that they are deterministic.
 37. As a SolidTrace maintainer, I want `CONTEXT.md` to describe Event ingest and Event processing as they are, so that the glossary matches the code.
 38. As a SolidTrace maintainer, I want the accepted gap in new-Issue notification written down, so that it can be fixed deliberately later.
@@ -137,7 +137,9 @@ For an SDK, a `200` now means the Event is stored.
   4. **Pebble.** Move the Project's processing cursor to the batch's last Event.
 
   Messages are sent before the cursor moves, so each is sent at least once. A crash between steps 3 and 4 resends them.
-- **Startup fast-forward.** A crash between the DuckDB commit and the cursor update leaves DuckDB ahead of the cursor. A DuckDB transaction commits all of its rows or none, so the newest UUID in DuckDB's hot table for a Project shows exactly how far that Project's DuckDB writes got. At startup, before the processing loop and the archive job start, each Project's cursor moves to the newest UUID in the hot table that is past it, if there is one. This uses no deletes and creates no duplicates.
+- **Startup fast-forward.** A crash between the DuckDB commit and the cursor update leaves DuckDB ahead of the cursor. A DuckDB transaction commits all of its rows or none, so the newest UUID in DuckDB's hot table for a Project shows exactly how far that Project's DuckDB writes got. At startup, before the processing loop and the archive job start, Event processing records each Project's newest UUID in the hot table that is past its cursor, if there is one, as an in-memory "indexed up to" mark. The cursor stays where it is. The replay redoes the Issue lookup and sends the Console messages, but skips the DuckDB append for Events at or below the mark. This uses no deletes and creates no duplicates.
+
+  *Changed 2026-09-30, while implementing ticket 03.* The first design moved the cursor to that UUID. That skips the replay, so a crash between the DuckDB commit and the enqueue lost the batch's Console messages, against story 27. Enqueueing before the DuckDB commit isn't an option: the Console counts Events in DuckDB for threshold rules when it gets `issue_received_event`.
 - **The archive never runs inside a batch.** The archive job runs whenever the Console sends `archive_events`. It moves rows out of the hot table by the Event's own `timestamp` date, not by UUID, so it can move rows from a batch that has just committed. If it did that between a batch's DuckDB commit and its cursor update, and EventStore then crashed, the fast-forward wouldn't see those rows and the batch would be appended twice.
 
   So the archive and Event processing share a lock, and the archive only runs between batches, after the cursor has moved.

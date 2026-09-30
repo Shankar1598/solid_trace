@@ -47,7 +47,7 @@ func (w *SQLiteWriter) FindOrCreateIssueFingerprint(projectID uint32, fingerprin
 
 // FindIssueByFingerprint checks if a fingerprint exists and returns the
 // associated issue ID plus the current issue status. This is a pure read —
-// it does not mutate Issue state. Callers (Event ingest) decide whether to
+// it does not mutate Issue state. Callers (Event processing) decide whether to
 // reopen a resolved Issue.
 //
 // Returns (issueID, fingerprintID, issueStatus, found, error).
@@ -87,7 +87,7 @@ func (w *SQLiteWriter) ReopenIssue(issueID int64) error {
 // FindOrCreateIssue returns the Issue for a fingerprint, creating the Issue
 // and its first fingerprint if none exists. created reports which happened.
 //
-// Event ingest calls this only after FindIssueByFingerprint misses. Two Events
+// Event processing calls this only after FindIssueByFingerprint misses. Two Events
 // for a new fingerprint can both miss, so the lookup runs again inside the
 // transaction. The transaction is BEGIN IMMEDIATE (see the DSN), so it holds
 // SQLite's single write lock from the start: no other writer can create the
