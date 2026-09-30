@@ -17,7 +17,8 @@ const (
 	batchSize = 10
 )
 
-// ArchivePayload represents the payload of an archive_events message
+// ArchivePayload represents the payload of an archive_events message.
+// Date is a cutoff: every Event dated on or before it is archived.
 type ArchivePayload struct {
 	Date string `msgpack:"date"`
 }
@@ -103,10 +104,10 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 		return
 	}
 
-	// Don't allow archiving today or future dates
+	// Don't allow a cutoff of today or a future date
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	if !date.Before(today) {
-		errMsg := "Cannot archive today's or future dates"
+		errMsg := "Archive cutoff must be before today"
 		logger.L.Error(errMsg, "id", msg.ID, "date", payload.Date)
 		c.mqReader.MarkFailed(msg.ID, errMsg)
 		return
@@ -114,11 +115,10 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 
 	switch msg.MessageType {
 	case "archive_events":
-		// Perform the archive
-		logger.L.Info("Starting archive", "date", payload.Date)
-		if err := c.duckdb.ArchiveEventsForDate(date); err != nil {
+		logger.L.Info("Starting archive", "cutoff", payload.Date)
+		if err := c.duckdb.ArchiveEventsUpTo(date); err != nil {
 			errMsg := "Archive failed: " + err.Error()
-			logger.L.Error(errMsg, "id", msg.ID, "date", payload.Date)
+			logger.L.Error(errMsg, "id", msg.ID, "cutoff", payload.Date)
 			c.mqReader.MarkFailed(msg.ID, errMsg)
 			return
 		}
@@ -135,5 +135,5 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 		return
 	}
 
-	logger.L.Info("Archive completed", "id", msg.ID, "date", payload.Date)
+	logger.L.Info("Archive completed", "id", msg.ID, "cutoff", payload.Date)
 }

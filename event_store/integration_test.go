@@ -451,7 +451,7 @@ func TestArchiveEvents(t *testing.T) {
 	// But first, QueryEvents.
 
 	// Need to force view recreation or ensure it picks up changes?
-	// ArchiveEventsForDate calls recreateEventsView.
+	// ArchiveEventsUpTo calls recreateEventsView.
 
 	params := storage.QueryParams{
 		ProjectID: 123,
