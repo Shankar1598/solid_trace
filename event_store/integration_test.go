@@ -122,6 +122,19 @@ func (w *recordingEventWriter) UUIDs() []string {
 	return slices.Clone(w.uuids)
 }
 
+// seedProjectKey adds a Project's public key to the Console database.
+func seedProjectKey(t *testing.T, sqlitePath string, projectID uint32, publicKey string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", sqlitePath)
+	if err != nil {
+		t.Fatalf("Failed to open sqlite for seeding: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO project_keys (public_key, project_id, created_at, updated_at) VALUES (?, ?, ?, ?)", publicKey, projectID, time.Now(), time.Now()); err != nil {
+		t.Fatalf("Failed to seed sqlite: %v", err)
+	}
+}
+
 func setupTestEnv(t *testing.T) *TestEnv {
 	logger.Init()
 	resetTestDB(t)
@@ -133,16 +146,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	sqlitePath := "../storage/sqlite/test/solid_trace.sqlite3"
 	mqPath := "../storage/sqlite/test/message_queue.sqlite3"
 
-	// Seed SQLite Auth DB with test public key
-	db, err := sql.Open("sqlite3", sqlitePath)
-	if err != nil {
-		t.Fatalf("Failed to open sqlite for seeding: %v", err)
-	}
-	_, err = db.Exec("INSERT INTO project_keys (public_key, project_id, created_at, updated_at) VALUES (?, ?, ?, ?)", "test_public_key", 123, time.Now(), time.Now())
-	if err != nil {
-		t.Fatalf("Failed to seed sqlite: %v", err)
-	}
-	db.Close()
+	seedProjectKey(t, sqlitePath, 123, "test_public_key")
 
 	// Initialize Storage
 	pebbleWriter, err := storage.NewPebbleWriter(&config.Config{PebblePath: pebblePath})
