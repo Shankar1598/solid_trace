@@ -33,6 +33,11 @@ const (
 // ErrStopped is returned when Stop abandons the batch in progress.
 var ErrStopped = errors.New("event processing stopped")
 
+// errStoppedBeforeRetry is ErrStopped from attempt, when Stop came while it
+// waited to retry an Event's content error. Unlike a store error, nothing
+// else is failing, so the batch can still finish without that Event.
+var errStoppedBeforeRetry = fmt.Errorf("%w before retrying an event", ErrStopped)
+
 // contentError marks an Event that can't be handled because of what it
 // contains. Every other error is a store error.
 type contentError struct{ err error }
@@ -203,9 +208,9 @@ func (p *Processor) takePending() (uint32, bool) {
 // processBatch handles up to batchSize of a Project's Events after its
 // cursor. full reports whether the batch was full, so more may be waiting.
 //
-// Stop abandons a batch only while a step is retrying a store error. Otherwise
-// the batch finishes with the Events whose Issue work is done, so a graceful
-// stop never loses an issue_created.
+// Stop abandons a batch only while a step is retrying a store error, or while
+// DuckDB rows are retried. Otherwise the batch finishes with the Events whose
+// Issue work is done, so a graceful stop never loses an issue_created.
 func (p *Processor) processBatch(projectID uint32) (full bool, err error) {
 	if p.stopped() {
 		return false, ErrStopped
@@ -240,6 +245,10 @@ func (p *Processor) processBatch(projectID uint32) (full bool, err error) {
 			row, err = p.issueWork(event)
 			return err
 		})
+		if errors.Is(err, errStoppedBeforeRetry) {
+			events, full = events[:i], false
+			break
+		}
 		if err != nil {
 			return false, err
 		}
@@ -323,53 +332,41 @@ func (p *Processor) issueWork(event models.Event) (models.Event, error) {
 
 // indexRows appends the rows DuckDB doesn't already hold, in one transaction.
 //
-// If the append fails, the rows are appended one at a time. A row that fails
-// while others succeed is bad: it is retried, then skipped. If every row fails,
-// DuckDB itself is failing, which is a store error: the rows still missing are
-// retried with backoff, and none is skipped.
+// If DuckDB rejects a row, the rows are appended one at a time, each in its
+// own transaction and in UUID order. A row DuckDB rejects is retried, then
+// skipped. While DuckDB itself is failing, every append is retried with
+// backoff and no row is skipped.
 func (p *Processor) indexRows(projectID uint32, rows []models.Event) error {
 	if mark, ok := p.indexedUpTo[projectID]; ok {
 		rows = slices.DeleteFunc(slices.Clone(rows), func(row models.Event) bool { return row.EventUUID <= mark })
 	}
-
-	var bad []models.Event
-	err := p.retry("index events", func() error {
-		if len(rows) == 0 {
-			return nil
-		}
-		err := p.index.WriteBatch(rows)
-		if err == nil {
-			rows = nil
-			return nil
-		}
-		var failed []models.Event
-		for _, row := range rows {
-			if p.index.WriteBatch([]models.Event{row}) != nil {
-				failed = append(failed, row)
-			}
-		}
-		if len(failed) == len(rows) {
-			return err
-		}
-		rows, bad = nil, failed
+	if len(rows) == 0 {
 		return nil
-	})
-	if err != nil {
-		return err
 	}
 
-	for _, row := range bad {
-		if _, err := p.attempt("index event", row, func() error {
-			err := p.index.WriteBatch([]models.Event{row})
-			if err != nil && p.index.Ping() == nil {
-				return contentError{err}
-			}
-			return err
-		}); err != nil {
+	err := p.retry("index events", func() error { return p.writeRows(rows) })
+	if !isContentError(err) {
+		return err
+	}
+	for _, row := range rows {
+		if _, err := p.attempt("index event", row, func() error { return p.writeRows([]models.Event{row}) }); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// writeRows appends rows in one transaction. A failed append is a content
+// error if DuckDB still answers a query, and a store error if it doesn't.
+//
+// The appender's errors aren't typed, so a failure that hits only appends,
+// such as DuckDB reaching its memory limit, also counts as a content error.
+func (p *Processor) writeRows(rows []models.Event) error {
+	err := p.index.WriteBatch(rows)
+	if err != nil && p.index.Ping() == nil {
+		return contentError{err}
+	}
+	return err
 }
 
 // enqueueMessages sends issue_created for the Issues created in this batch and
@@ -408,9 +405,12 @@ func (p *Processor) enqueueMessages(rows []models.Event) error {
 }
 
 // attempt runs a step for one Event, retrying store errors until they clear.
-// A content error is retried contentRetries times, then the Event is skipped
-// and logged with its key. The raw payload stays in Pebble.
+// A content error is retried contentRetries times with backoff, then the Event
+// is skipped and logged with its key. The raw payload stays in Pebble. It
+// returns ErrStopped if Stop is called meanwhile, as errStoppedBeforeRetry
+// while waiting to retry a content error.
 func (p *Processor) attempt(step string, event models.Event, fn func() error) (skipped bool, err error) {
+	backoff := minBackoff
 	for try := 0; ; try++ {
 		err := p.retry(step, fn)
 		if !isContentError(err) {
@@ -424,6 +424,9 @@ func (p *Processor) attempt(step string, event models.Event, fn func() error) (s
 				"key", hex.EncodeToString(storage.KeyForEvent(event.ProjectID, event.EventUUID)),
 				"error", err)
 			return true, nil
+		}
+		if !p.wait(&backoff) {
+			return false, errStoppedBeforeRetry
 		}
 	}
 }
@@ -439,13 +442,22 @@ func (p *Processor) retry(step string, fn func() error) error {
 		}
 		logger.L.Error("Event processing store error, retrying", "step", step, "error", err, "retry_in", backoff)
 		p.checkBacklog()
-		select {
-		case <-p.stop:
+		if !p.wait(&backoff) {
 			return ErrStopped
-		case <-time.After(backoff):
 		}
-		backoff = min(2*backoff, maxBackoff)
 	}
+}
+
+// wait sleeps for backoff, then doubles it up to maxBackoff. It returns false
+// if Stop is called meanwhile.
+func (p *Processor) wait(backoff *time.Duration) bool {
+	select {
+	case <-p.stop:
+		return false
+	case <-time.After(*backoff):
+	}
+	*backoff = min(2**backoff, maxBackoff)
+	return true
 }
 
 func (p *Processor) stopped() bool {

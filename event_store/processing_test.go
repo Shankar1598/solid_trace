@@ -4,20 +4,29 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/pkg/msgpacker"
 	"github.com/solidtrace/event_store/storage"
+	"github.com/zerodha/logf"
 )
 
 // storeStatus sends a payload to the ingest app's store endpoint.
 func storeStatus(env *TestEnv, payload string) (int, error) {
-	req, _ := http.NewRequest("POST", "/api/123/store?sentry_key=test_public_key", bytes.NewBufferString(payload))
+	return storeStatusTo(env, 123, "test_public_key", payload)
+}
+
+// storeStatusTo sends a payload to a Project's store endpoint.
+func storeStatusTo(env *TestEnv, projectID uint32, publicKey, payload string) (int, error) {
+	req, _ := http.NewRequest("POST", fmt.Sprintf("/api/%d/store?sentry_key=%s", projectID, publicKey), bytes.NewBufferString(payload))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := env.App.Test(req, 2000)
 	if err != nil {
@@ -29,7 +38,13 @@ func storeStatus(env *TestEnv, payload string) (int, error) {
 // postEvent stores a payload through the ingest app and returns its UUID.
 func postEvent(t *testing.T, env *TestEnv, payload string) string {
 	t.Helper()
-	if status, err := storeStatus(env, payload); err != nil || status != 200 {
+	return postEventTo(t, env, 123, "test_public_key", payload)
+}
+
+// postEventTo stores a payload for a Project and returns its UUID.
+func postEventTo(t *testing.T, env *TestEnv, projectID uint32, publicKey, payload string) string {
+	t.Helper()
+	if status, err := storeStatusTo(env, projectID, publicKey, payload); err != nil || status != 200 {
 		t.Fatalf("Expected 200, got %d %v", status, err)
 	}
 	uuids := env.EventWriter.UUIDs()
@@ -393,12 +408,83 @@ func TestEventWhoseRowDuckDBRejectsIsSkippedAndTheRestIndexed(t *testing.T) {
 	defer env.Cleanup()
 
 	before := postEvent(t, env, divideByZero)
-	// A timestamp far past DuckDB's TIMESTAMP range: the row can't be appended.
-	postEvent(t, env, `{"message":"far future","timestamp":9000000000000000}`)
+	postEvent(t, env, farFuture)
 	after := postEvent(t, env, nilError)
 	env.Process(t)
 
 	if got, want := eventUUIDs(listEvents(t, env)), []string{before, after}; !slices.Equal(got, want) {
 		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+// farFuture is an Event whose timestamp is far past DuckDB's TIMESTAMP range,
+// so its row can't be appended.
+const farFuture = `{"message":"far future","timestamp":9000000000000000}`
+
+// processWithin is Process with a timeout, for processing that may hang.
+func processWithin(t *testing.T, env *TestEnv, timeout time.Duration) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- env.Processor.ProcessUntilCaughtUp() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Event processing failed: %v", err)
+		}
+	case <-time.After(timeout):
+		env.Processor.Stop()
+		<-done
+		t.Fatalf("Event processing didn't return within %v", timeout)
+	}
+}
+
+// captureLogs sends the logger's output to a buffer until the test ends.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	logger.L = logf.New(logf.Opts{Writer: &logs})
+	t.Cleanup(logger.Init)
+	return &logs
+}
+
+func TestLoneEventWhoseRowDuckDBRejectsIsSkippedAndLaterEventsIndexed(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	logs := captureLogs(t)
+
+	bad := postEvent(t, env, farFuture)
+	processWithin(t, env, 10*time.Second)
+
+	if got := listEvents(t, env); len(got) != 0 {
+		t.Errorf("Expected no Events indexed, got %v", eventUUIDs(got))
+	}
+	if !strings.Contains(logs.String(), "skipped an event") || !strings.Contains(logs.String(), bad) {
+		t.Errorf("Expected the skipped Event %s logged, got %q", bad, logs.String())
+	}
+
+	later := postEvent(t, env, divideByZero)
+	processWithin(t, env, 10*time.Second)
+
+	if got := eventUUIDs(listEvents(t, env)); !slices.Equal(got, []string{later}) {
+		t.Errorf("Expected only [%s] indexed, got %v", later, got)
+	}
+}
+
+func TestLoneEventWhoseRowDuckDBRejectsDoesNotHoldUpOtherProjects(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	postEvent(t, env, farFuture)
+	other := postEventTo(t, env, 456, "other_public_key", divideByZero)
+	processWithin(t, env, 10*time.Second)
+
+	events, err := env.DuckDBWriter.QueryEvents(storage.QueryParams{ProjectID: 456})
+	if err != nil {
+		t.Fatalf("Query Project 456: %v", err)
+	}
+	if got := eventUUIDs(events); !slices.Equal(got, []string{other}) {
+		t.Errorf("Expected Project 456's [%s] indexed, got %v", other, got)
 	}
 }

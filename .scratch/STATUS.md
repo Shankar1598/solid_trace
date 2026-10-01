@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-09-30
+Updated: 2026-10-01
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
 
@@ -9,15 +9,16 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 - **Logs**: planning only, no code yet. 4 research tickets are done. The decision tickets start now. The goal is a v1 spec plus first-milestone tickets.
 - **Prod-readiness**: [review.md](prod-readiness/review.md) lists about 9 gaps. 5 are filed as tickets (013 and 014 were added from the ingest design). 013, re-archiving overwrites Parquet, is resolved (2026-09-30). 014, Console messages stuck in `processing`, is resolved (2026-09-30). Query API auth (§2), acknowledged Events vanishing (§4), the concurrent first-event 500 (§5) and Sentry protocol correctness (§6) are fixed.
 - **Integration notification**: the spec is ready for an agent. It has no tickets yet.
-- **Ingest write path**: done. 02 and 03 are resolved (2026-09-30). Event ingest stores the Event in Pebble before the `200`. Event processing, a single worker, catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. Review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
+- **Ingest write path**: reopened. 02 and 03 are resolved (2026-09-30). A code review on 2026-10-01 filed 04–06. 04, a lone bad DuckDB row stalling Event processing, is resolved (2026-10-01). 05 and 06 are open. Event ingest stores the Event in Pebble before the `200`. Event processing, a single worker, catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. Review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
 - **Upgrade Pebble and DuckDB**: merged. EventStore now uses Pebble v2.1.7 and the DuckDB 2.0 alpha engine (`v2.0.0-alpha43385`), linked as a shared library. Two follow-ups wait on it.
 
 ## Next
 
-1. [Logs 05: prod-readiness gaps for logs](logs/issues/05-prod-readiness-gaps-for-logs.md) (grilling)
-2. [Prod-readiness 011: Pebble memtable size](prod-readiness/issues/011-pebble-memtable-size.md) (benchmark task)
-3. [Prod-readiness 012: Sentry compatibility tests](prod-readiness/issues/012-sentry-compatibility-tests.md) (task)
-4. [Integration notification spec](integration-notification/spec.md): split it into tickets
+1. [Ingest write path 05: backlog log for every Project](ingest-write-path/issues/05-backlog-log-every-project.md), then 06
+2. [Logs 05: prod-readiness gaps for logs](logs/issues/05-prod-readiness-gaps-for-logs.md) (grilling)
+3. [Prod-readiness 011: Pebble memtable size](prod-readiness/issues/011-pebble-memtable-size.md) (benchmark task)
+4. [Prod-readiness 012: Sentry compatibility tests](prod-readiness/issues/012-sentry-compatibility-tests.md) (task)
+5. [Integration notification spec](integration-notification/spec.md): split it into tickets
 
 ## Efforts
 
@@ -26,14 +27,18 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logs | 4 / 9 | [map.md](logs/map.md) |
 | Prod-readiness | 3 / 3 filed | [review.md](prod-readiness/review.md) |
 | Integration notification | spec only | [spec.md](integration-notification/spec.md) |
-| Ingest write path | 3 / 0 | [spec.md](ingest-write-path/spec.md) |
+| Ingest write path | 4 / 2 | [05](ingest-write-path/issues/05-backlog-log-every-project.md) |
 | Upgrade Pebble and DuckDB | 1 / 2 | [02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
 05, 06, 07 (open now) → 08, 09, 11 → 10, 12 → 13 (write the v1 spec)
 
-## Last session (2026-09-30)
+## Last session (2026-10-01)
+
+A code review of ingest write path 03 filed 04–06. Implemented [04](ingest-write-path/issues/04-duckdb-row-isolation.md): a failed DuckDB append is now classified by asking DuckDB (`Ping()`), not by comparing rows, so a lone bad row is skipped instead of stalling every Project. Content retries back off. duckdb-go returns no typed error for a rejected value, so an append-only failure such as the memory limit still counts as a content error. The ticket's Comments list the details.
+
+## Earlier session (2026-09-30)
 
 Implemented [ingest write path 03](ingest-write-path/issues/03-event-processing.md): Event processing in the new `event_store/processing` package, replacing the DuckDB ingester. One change to the spec: startup no longer moves the processing cursor to DuckDB's newest row. It records that row as an in-memory mark, so a crash after the DuckDB commit still resends the batch's Console messages (story 27). The ticket's Comments list the details.
 
