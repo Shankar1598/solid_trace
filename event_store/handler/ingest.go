@@ -52,7 +52,12 @@ func (h *IngestHandler) Store(c *fiber.Ctx) error {
 		return h.renderKeyError(c, err)
 	}
 
-	if err := h.ingest.IngestStore(projectID, c.Body()); err != nil {
+	body, err := requestBody(c, eventBodyLimit)
+	if err != nil {
+		return renderBodyError(c, err)
+	}
+
+	if err := h.ingest.IngestStore(projectID, body); err != nil {
 		return h.renderIngestError(c, err)
 	}
 
@@ -71,7 +76,12 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 		return h.renderKeyError(c, err)
 	}
 
-	if err := h.ingest.IngestEnvelope(projectID, c.Body()); err != nil {
+	body, err := requestBody(c, eventBodyLimit)
+	if err != nil {
+		return renderBodyError(c, err)
+	}
+
+	if err := h.ingest.IngestEnvelope(projectID, body); err != nil {
 		return h.renderIngestError(c, err)
 	}
 
@@ -79,7 +89,7 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 }
 
 // POST /api/:project_id/logs
-// The key must belong to the Project in the path. The body is identity only.
+// The key must belong to the Project in the path.
 func (h *IngestHandler) Logs(c *fiber.Ctx) error {
 	publicKey := h.extractSentryKey(c)
 	if publicKey == "" {
@@ -97,13 +107,12 @@ func (h *IngestHandler) Logs(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Project key is not for this project"})
 	}
 
-	// c.Body() would inflate gzip with no size cap; compressed bodies are
-	// for later.
-	if encoding := c.Get(fiber.HeaderContentEncoding); encoding != "" && !strings.EqualFold(encoding, "identity") {
-		return c.Status(415).JSON(fiber.Map{"error": "Unsupported Content-Encoding"})
+	body, err := requestBody(c, logBodyLimit)
+	if err != nil {
+		return renderBodyError(c, err)
 	}
 
-	counts, err := h.ingest.IngestLogs(projectID, c.Request().Body(), isNDJSON(c))
+	counts, err := h.ingest.IngestLogs(projectID, body, isNDJSON(c))
 	if err != nil {
 		return h.renderIngestError(c, err)
 	}
@@ -149,6 +158,10 @@ func (h *IngestHandler) renderKeyError(c *fiber.Ctx, err error) error {
 	return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 }
 
+// retryAfterSeconds is how long an overloaded or stopping ingest asks the
+// sender to wait before retrying.
+const retryAfterSeconds = "5"
+
 func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 	switch {
 	case errors.Is(err, ingest.ErrInvalidEnvelope):
@@ -159,7 +172,10 @@ func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrOverloaded), errors.Is(err, storage.ErrShuttingDown):
 		// Not 429: on a 429 without Retry-After, Sentry SDKs stop sending
-		// everything for 60s. A 503 drops only this event.
+		// everything for 60s. A 503 drops only this request; sentry-javascript
+		// and shippers that read Retry-After wait that long before sending
+		// again.
+		c.Set(fiber.HeaderRetryAfter, retryAfterSeconds)
 		return c.Status(503).SendString(err.Error())
 	default:
 		logger.L.Error("Ingest failed", "error", err)
