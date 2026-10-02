@@ -62,7 +62,7 @@ Resolved again 2026-10-02 (grilling, after [ticket 14](14-benchmark-storage-desi
 **Query speed** (target VM: 4 vCPU, 16 GB)
 - "Latest N" for any filter and range shows first results within 2 s: the compiler scans newest first, hour by hour, and stops early.
 - A filter or group-by on a promoted key over a day finishes within 5 s. Ticket 14 projects 4–7 s for a Project with the instance's whole volume once the hot table promotes too.
-- A day-long search on a rare key streams matches newest first and can take a minute or more; a per-query timeout stops it. A search index is v2 fog.
+- A day-long search on a rare key streams matches newest first and can take a minute or more; the user can cancel it. There are no per-query timeouts in v1 ([ticket 15](15-how-log-queries-run.md)). A search index is v2 fog.
 
 **Events** (asked by [ticket 05](05-prod-readiness-gaps-for-logs.md))
 - The mechanism is reusable: the timer, folder deletion, and Pebble range deletes. Doing it for Events stays a prod-readiness gap (§9).

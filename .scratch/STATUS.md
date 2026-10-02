@@ -30,7 +30,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 | Effort | Done / open | Start here |
 |---|---|---|
-| Logs | 13 / 1 | [map.md](logs/map.md) |
+| Logs | 15 / 1 | [map.md](logs/map.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
@@ -38,14 +38,15 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
-01–12, 14 (done) → 13 (write the v1 spec)
+01–12, 14–16 (done) → 13 (write the v1 spec)
 
-## Last session (2026-10-02, logs 10 second pass)
+## Last session (2026-10-02, logs 10 second pass, 15, 16)
 
 [Logs 10](logs/issues/10-storage-architecture-and-retention.md) resolved again (grilling); [ADR 0005](../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md) supersedes ADR 0004, and ADR 0003 gains a note.
 - **Decided:** one hot table per Project with key-named promoted columns (up to 100 (type, key) pairs, at ingest); popularity counted by the Log processor per Project per UTC day of `time`; lazy daily re-rank on the first Log of a day; demoted columns dropped at the 01:00 export; a shared MAP-only `logs_late` for out-of-window Logs; the compiler learns columns only from the promoted-set table.
 - **SQL mode's `logs` view** now covers the bar's Project and time range (a convenience, not a boundary). **SQL query** in `CONTEXT.md` is amended; tickets 11 and 12 carry pointer comments.
 - Reasoned, not benchmarked. The first-milestone load test covers per-Project tables, the daily switch and checkpoints at full scale.
+- The map's last two v1 fog patches became tickets and were resolved the same session: [15](logs/issues/15-how-log-queries-run.md) (no per-query timeouts; routing, cancel and caps left to the implementer) and [16](logs/issues/16-explorer-building-blocks.md) (non-Log results as a table only, URL state with SQL never run on load, stream paging, summary line, local time, libraries left to the implementer). Ticket 13 is now the only open logs ticket.
 
 ## Earlier session (2026-10-02, DuckDB 1.5.6 and logs 14)
 
