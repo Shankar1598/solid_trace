@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"regexp"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/solidtrace/event_store/auth"
@@ -77,6 +78,53 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 	return c.SendStatus(200)
 }
 
+// POST /api/:project_id/logs
+// The key must belong to the Project in the path. The body is identity only.
+func (h *IngestHandler) Logs(c *fiber.Ctx) error {
+	publicKey := h.extractSentryKey(c)
+	if publicKey == "" {
+		publicKey = bearerToken(c)
+	}
+	if publicKey == "" {
+		return c.Status(401).JSON(fiber.Map{"error": "Missing authentication"})
+	}
+
+	projectID, err := h.validateKey(publicKey)
+	if err != nil {
+		return h.renderKeyError(c, err)
+	}
+	if pathProjectID, err := parseProjectID(c); err != nil || pathProjectID != projectID {
+		return c.Status(401).JSON(fiber.Map{"error": "Project key is not for this project"})
+	}
+
+	// c.Body() would inflate gzip with no size cap; compressed bodies are
+	// for later.
+	if encoding := c.Get(fiber.HeaderContentEncoding); encoding != "" && !strings.EqualFold(encoding, "identity") {
+		return c.Status(415).JSON(fiber.Map{"error": "Unsupported Content-Encoding"})
+	}
+
+	counts, err := h.ingest.IngestLogs(projectID, c.Request().Body(), isNDJSON(c))
+	if err != nil {
+		return h.renderIngestError(c, err)
+	}
+	return c.JSON(counts)
+}
+
+// bearerToken returns the token of an "Authorization: Bearer <token>" header,
+// or "".
+func bearerToken(c *fiber.Ctx) string {
+	scheme, token, ok := strings.Cut(c.Get(fiber.HeaderAuthorization), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+func isNDJSON(c *fiber.Ctx) bool {
+	mediaType, _, _ := strings.Cut(c.Get(fiber.HeaderContentType), ";")
+	return strings.EqualFold(strings.TrimSpace(mediaType), "application/x-ndjson")
+}
+
 var errInvalidProjectKey = errors.New("invalid project key")
 
 func (h *IngestHandler) validateKey(publicKey string) (uint32, error) {
@@ -114,7 +162,7 @@ func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 		// everything for 60s. A 503 drops only this event.
 		return c.Status(503).SendString(err.Error())
 	default:
-		logger.L.Error("Event ingest failed", "error", err)
+		logger.L.Error("Ingest failed", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 }

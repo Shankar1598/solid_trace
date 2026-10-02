@@ -59,3 +59,19 @@ func TestConfigWithTheOldIngestSocketIngestsOnTCPPort4000(t *testing.T) {
 		t.Errorf("ingest port = %q, want 4000", cfg.Port)
 	}
 }
+
+func TestLogsDuckDBIsNextToEventsDuckDBByDefault(t *testing.T) {
+	cfg := loadFrom(t, "../../deploy/event_store.yml")
+
+	if want := "/storage/duckdb/production/logs.duckdb"; cfg.LogsDuckDBPath != want {
+		t.Errorf("logs DuckDB path = %q, want %q", cfg.LogsDuckDBPath, want)
+	}
+}
+
+func TestLogsDuckDBPathComesFromTheConfigFile(t *testing.T) {
+	cfg := loadFrom(t, writeConfig(t, "duckdb_path: /data/events.duckdb\nlogs_duckdb_path: /fast/logs.duckdb\n"))
+
+	if want := "/fast/logs.duckdb"; cfg.LogsDuckDBPath != want {
+		t.Errorf("logs DuckDB path = %q, want %q", cfg.LogsDuckDBPath, want)
+	}
+}

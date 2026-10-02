@@ -24,8 +24,10 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
+	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pipeline"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/pkg/msgpacker"
 	"github.com/solidtrace/event_store/processing"
@@ -42,11 +44,19 @@ type TestEnv struct {
 	Issues       *flakyIssueRepository
 	Processor    *processing.Processor
 	BatchLock    *sync.Mutex
+	LogStore     *storage.LogStore
+	LogProcessor *logprocessing.Processor
 	MQWriter     *storage.MessageQueueWriter
 	MQReader     *storage.MessageQueueReader
 	MQPath       string
 	SQLitePath   string
-	Cleanup      func()
+
+	// Clock is what Log ingest and Log processing take as now. It starts at
+	// testNow and moves only when a test moves it.
+	Clock *clock.Manual
+
+	dir   string // holds Pebble and DuckDB
+	close func()
 }
 
 // Process runs Event processing until every stored Event is handled.
@@ -57,8 +67,16 @@ func (env *TestEnv) Process(t *testing.T) {
 	}
 }
 
-// Restart starts a new Event processing on the same stores, as after an
-// EventStore restart or crash.
+// ProcessLogs runs Log processing until every stored Log batch is handled.
+func (env *TestEnv) ProcessLogs(t *testing.T) {
+	t.Helper()
+	if err := env.LogProcessor.ProcessUntilCaughtUp(); err != nil {
+		t.Fatalf("Log processing failed: %v", err)
+	}
+}
+
+// Restart starts a new Event processing and Log processing on the same
+// stores, as after an EventStore restart or crash.
 func (env *TestEnv) Restart(t *testing.T) {
 	t.Helper()
 	env.Processor.Stop()
@@ -66,7 +84,15 @@ func (env *TestEnv) Restart(t *testing.T) {
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
+	env.LogProcessor.Stop()
+	env.LogProcessor = logprocessing.New(env.PebbleWriter, env.LogStore)
+	if err := env.LogProcessor.Prepare(); err != nil {
+		t.Fatalf("Log processing Prepare failed: %v", err)
+	}
 }
+
+// testNow is where the test environment's clock starts.
+var testNow = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
 // flakyIssueRepository is the real SQLite IssueRepository, except that its
 // next failFinds lookups fail, as when SQLite is busy.
@@ -101,13 +127,23 @@ func resetTestDB(t *testing.T) {
 // recordingEventWriter records the UUID of each Event written, because an
 // ingest response doesn't carry it.
 type recordingEventWriter struct {
-	ingest.EventWriter
-	mu    sync.Mutex
-	uuids []string
+	mu     sync.Mutex
+	writer ingest.EventWriter
+	uuids  []string
+}
+
+// setWriter makes w write through writer, keeping the UUIDs recorded so far.
+func (w *recordingEventWriter) setWriter(writer ingest.EventWriter) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.writer = writer
 }
 
 func (w *recordingEventWriter) WriteEvent(event *models.Event) error {
-	if err := w.EventWriter.WriteEvent(event); err != nil {
+	w.mu.Lock()
+	writer := w.writer
+	w.mu.Unlock()
+	if err := writer.WriteEvent(event); err != nil {
 		return err
 	}
 	w.mu.Lock()
@@ -139,78 +175,101 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	logger.Init()
 	resetTestDB(t)
 
-	tmpDir := t.TempDir()
+	env := &TestEnv{
+		dir:         t.TempDir(),
+		SQLitePath:  "../storage/sqlite/test/solid_trace.sqlite3",
+		MQPath:      "../storage/sqlite/test/message_queue.sqlite3",
+		BatchLock:   &sync.Mutex{},
+		EventWriter: &recordingEventWriter{},
+		Clock:       clock.NewManual(testNow),
+	}
+	seedProjectKey(t, env.SQLitePath, 123, "test_public_key")
+	env.open(t)
+	return env
+}
 
-	pebblePath := filepath.Join(tmpDir, "pebble")
-	duckDBPath := filepath.Join(tmpDir, "duckdb.db")
-	sqlitePath := "../storage/sqlite/test/solid_trace.sqlite3"
-	mqPath := "../storage/sqlite/test/message_queue.sqlite3"
+// open opens every store on the environment's files, and builds Event
+// processing, Log processing and both apps on them.
+func (env *TestEnv) open(t *testing.T) {
+	t.Helper()
 
-	seedProjectKey(t, sqlitePath, 123, "test_public_key")
-
-	// Initialize Storage
-	pebbleWriter, err := storage.NewPebbleWriter(&config.Config{PebblePath: pebblePath})
+	pebbleWriter, err := storage.NewPebbleWriter(&config.Config{PebblePath: filepath.Join(env.dir, "pebble")})
 	if err != nil {
 		t.Fatalf("Failed to create Pebble: %v", err)
 	}
 
-	duckdbWriter, err := storage.NewDuckDBWriter(duckDBPath, filepath.Join(tmpDir, "parquet"), "", "")
+	duckdbWriter, err := storage.NewDuckDBWriter(filepath.Join(env.dir, "duckdb.db"), filepath.Join(env.dir, "parquet"), "", "")
 	if err != nil {
 		t.Fatalf("Failed to create DuckDB: %v", err)
 	}
 
-	sqliteWriter, err := storage.NewSQLiteWriter(sqlitePath)
+	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"))
+	if err != nil {
+		t.Fatalf("Failed to attach logs DuckDB: %v", err)
+	}
+
+	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)
 	if err != nil {
 		t.Fatalf("Failed to create SQLite writer: %v", err)
 	}
 
-	mqWriter, err := storage.NewMessageQueueWriter(mqPath)
+	mqWriter, err := storage.NewMessageQueueWriter(env.MQPath)
 	if err != nil {
 		t.Fatalf("Failed to create MQ Writer: %v", err)
 	}
 
-	mqReader, err := storage.NewMessageQueueReader(mqPath)
+	mqReader, err := storage.NewMessageQueueReader(env.MQPath)
 	if err != nil {
 		t.Fatalf("Failed to create MQ Reader: %v", err)
 	}
 
 	// Initialize Auth
-	projectAuth, err := auth.NewProjectAuth(sqlitePath)
+	projectAuth, err := auth.NewProjectAuth(env.SQLitePath)
 	if err != nil {
 		t.Fatalf("Failed to create auth: %v", err)
 	}
 
-	env := &TestEnv{
-		PebbleWriter: pebbleWriter,
-		DuckDBWriter: duckdbWriter,
-		SQLiteWriter: sqliteWriter,
-		Issues:       &flakyIssueRepository{SQLiteWriter: sqliteWriter},
-		BatchLock:    &sync.Mutex{},
-		MQWriter:     mqWriter,
-		MQReader:     mqReader,
-		MQPath:       mqPath,
-		SQLitePath:   sqlitePath,
-	}
+	env.PebbleWriter = pebbleWriter
+	env.DuckDBWriter = duckdbWriter
+	env.LogStore = logStore
+	env.SQLiteWriter = sqliteWriter
+	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
+	env.MQWriter = mqWriter
+	env.MQReader = mqReader
+
 	env.Processor = processing.New(pebbleWriter, duckdbWriter, mqWriter, env.Issues, env.BatchLock)
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
+	env.LogProcessor = logprocessing.New(pebbleWriter, logStore)
+	if err := env.LogProcessor.Prepare(); err != nil {
+		t.Fatalf("Log processing Prepare failed: %v", err)
+	}
 
 	// Setup Handler
-	env.EventWriter = &recordingEventWriter{EventWriter: pebbleWriter}
-	ingestService := ingest.NewService(env.EventWriter, func(projectID uint32) { env.Processor.Notify(projectID) }, 100)
+	env.EventWriter.setWriter(pebbleWriter)
+	ingestService := ingest.NewService(ingest.Config{
+		Events:       env.EventWriter,
+		NotifyEvents: func(projectID uint32) { env.Processor.Notify(projectID) },
+		Logs:         pebbleWriter,
+		NotifyLogs:   func(projectID uint32) { env.LogProcessor.Notify(projectID) },
+		Clock:        env.Clock,
+		MaxWaiting:   100,
+	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
+	logsHandler := handler.NewLogsHandler(logStore)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	env.App = fiber.New()
 	handler.RegisterIngestRoutes(env.App, ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
-	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, healthHandler)
+	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, healthHandler)
 
-	env.Cleanup = func() {
+	env.close = func() {
 		pebbleWriter.StopWrites()
 		env.Processor.Stop()
+		env.LogProcessor.Stop()
 
 		pebbleWriter.Close()
 		duckdbWriter.Close()
@@ -219,8 +278,20 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		mqReader.Close()
 		projectAuth.Close()
 	}
+}
 
-	return env
+// Cleanup closes every store.
+func (env *TestEnv) Cleanup() {
+	env.close()
+}
+
+// Reopen closes every store and opens them again on the same files, with new
+// processing and apps, as when EventStore exits and starts again. Unlike
+// Restart, nothing held in memory survives.
+func (env *TestEnv) Reopen(t *testing.T) {
+	t.Helper()
+	env.close()
+	env.open(t)
 }
 
 func TestStoreIngestion(t *testing.T) {
