@@ -271,3 +271,40 @@ func TestEventRouteBodiesOver50MBDecodedGet413AndNothingIsStored(t *testing.T) {
 		t.Errorf("Expected no Event stored, got %d", len(uuids))
 	}
 }
+
+func TestBodiesInAnUnknownOrBrokenEncodingAreRefusedAndNothingIsStored(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	logs := []byte(`{"message":"refused"}`)
+	cases := []struct {
+		name     string
+		encoding string
+		body     []byte
+		want     int
+	}{
+		{"an encoding EventStore doesn't decode", "snappy", logs, 415},
+		{"two encodings", "gzip, zstd", zstdCompressed(t, gzipped(t, logs)), 415},
+		{"gzip that isn't", "gzip", logs, 400},
+		{"zstd cut short", "zstd", zstdCompressed(t, logs)[:10], 400},
+	}
+	for _, c := range cases {
+		for _, path := range []string{"/api/123/logs", "/api/123/envelope", "/api/123/store"} {
+			t.Run(c.name+" "+path, func(t *testing.T) {
+				resp := sendEncoded(t, env, path, "application/json", c.encoding, c.body)
+				if resp.StatusCode != c.want {
+					raw, _ := io.ReadAll(resp.Body)
+					t.Errorf("Expected %d, got %d: %s", c.want, resp.StatusCode, raw)
+				}
+			})
+		}
+	}
+
+	env.ProcessLogs(t)
+	if logs := latestLogs(t, env, 123, 10); len(logs) != 0 {
+		t.Errorf("Expected no Logs stored, got %d", len(logs))
+	}
+	if uuids := env.EventWriter.UUIDs(); len(uuids) != 0 {
+		t.Errorf("Expected no Event stored, got %d", len(uuids))
+	}
+}
