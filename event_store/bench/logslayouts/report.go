@@ -167,12 +167,16 @@ func Markdown(reports []*Report) string {
 			default:
 				w(" **differs** |")
 			}
+			if len(r.Parquet) == 0 {
+				w(" – |")
+				continue
+			}
 			pqOK := ok
 			for _, p := range r.Parquet {
 				pq, has := p.Verify[q.Name]
 				pqOK = pqOK && has && reflect.DeepEqual(pq, got)
 			}
-			w(" %s |", map[bool]string{true: "✓", false: "**differs or missing**"}[pqOK && len(r.Parquet) > 0])
+			w(" %s |", map[bool]string{true: "✓", false: "**differs or missing**"}[pqOK])
 		}
 		w("\n")
 	}

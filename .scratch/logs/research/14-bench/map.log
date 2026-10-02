@@ -1,0 +1,119 @@
+2026/10/02 14:48:55 generator alone: 189950 Logs/s
+2026/10/02 14:49:25 unthrottled: 520000 Logs, 17326 Logs/s, 9.86 MB/s, flush p99 2179 ms, max backlog 0, kept up false, peak RSS 616 MB, CPU 136%
+2026/10/02 14:49:40 target: 50174 Logs, 3322 Logs/s, 1.89 MB/s, flush p99 3736 ms, max backlog 9375, kept up false, peak RSS 620 MB, CPU 65%
+2026/10/02 14:49:55 target_with_queries: 50292 Logs, 3281 Logs/s, 1.86 MB/s, flush p99 615 ms, max backlog 336, kept up true, peak RSS 287 MB, CPU 168%
+2026/10/02 14:50:11 burst_5x: 250460 Logs, 16221 Logs/s, 9.23 MB/s, flush p99 2866 ms, max backlog 33662, kept up false, peak RSS 887 MB, CPU 85%
+2026/10/02 14:50:14 checkpoint 2965 ms; 870926 rows, 157.0 MB on disk (180 B/Log)
+2026/10/02 14:50:14   errors_last_15m              cold     45.0 ms  warm     20.1 ms  rows 100
+2026/10/02 14:50:14   count_by_service_per_minute  cold     42.2 ms  warm     26.3 ms  rows 30
+2026/10/02 14:50:15   common_attr_eq               cold    112.5 ms  warm     66.5 ms  rows 100
+2026/10/02 14:50:16   common_attr_per_minute       cold    336.6 ms  warm    299.3 ms  rows 5
+2026/10/02 14:50:17   rare_attr_eq                 cold    467.5 ms  warm    267.3 ms  rows 81
+2026/10/02 14:50:17   mixed_numeric_range          cold     56.5 ms  warm     24.3 ms  rows 100
+2026/10/02 14:50:17   message_substring            cold     49.9 ms  warm     27.9 ms  rows 100
+2026/10/02 14:50:19   group_by_attr_top10          cold    376.1 ms  warm    277.7 ms  rows 10
+2026/10/02 14:50:19   fetch_by_id                  cold     23.2 ms  warm      4.7 ms  rows 1
+2026/10/02 14:50:19   errors_last_15m              cold     42.2 ms  warm      0.0 ms  rows 100
+2026/10/02 14:50:19   count_by_service_per_minute  cold     61.4 ms  warm      0.0 ms  rows 30
+2026/10/02 14:50:19   common_attr_eq               cold    158.6 ms  warm      0.0 ms  rows 100
+2026/10/02 14:50:20   common_attr_per_minute       cold    364.1 ms  warm      0.0 ms  rows 5
+2026/10/02 14:50:20   rare_attr_eq                 cold    502.3 ms  warm      0.0 ms  rows 81
+2026/10/02 14:50:20   mixed_numeric_range          cold     52.6 ms  warm      0.0 ms  rows 100
+2026/10/02 14:50:20   message_substring            cold     45.9 ms  warm      0.0 ms  rows 100
+2026/10/02 14:50:21   group_by_attr_top10          cold    377.9 ms  warm      0.0 ms  rows 10
+2026/10/02 14:50:21   fetch_by_id                  cold     53.7 ms  warm      0.0 ms  rows 1
+2026/10/02 14:50:29 promote N=0: top keys 0 ms, copy 7243 ms, 3 files, 89.0 MB
+2026/10/02 14:50:29  map:
+2026/10/02 14:50:30   errors_last_15m              cold    245.6 ms  warm    235.4 ms  rows 100
+2026/10/02 14:50:30   count_by_service_per_minute  cold     55.6 ms  warm     74.0 ms  rows 30
+2026/10/02 14:50:33   common_attr_eq               cold    597.3 ms  warm    538.5 ms  rows 100
+2026/10/02 14:50:34   common_attr_per_minute       cold    431.1 ms  warm    435.4 ms  rows 5
+2026/10/02 14:50:37   rare_attr_eq                 cold    607.7 ms  warm    511.1 ms  rows 81
+2026/10/02 14:50:38   mixed_numeric_range          cold    482.7 ms  warm    401.6 ms  rows 100
+2026/10/02 14:50:39   message_substring            cold    285.1 ms  warm    241.8 ms  rows 100
+2026/10/02 14:50:41   group_by_attr_top10          cold    425.9 ms  warm    455.2 ms  rows 10
+2026/10/02 14:50:41   fetch_by_id                  cold     73.9 ms  warm     56.5 ms  rows 1
+2026/10/02 14:50:41  map, threads = 1:
+2026/10/02 14:50:43   errors_last_15m              cold    357.0 ms  warm    247.8 ms  rows 100
+2026/10/02 14:50:43   count_by_service_per_minute  cold     77.4 ms  warm     44.1 ms  rows 30
+2026/10/02 14:50:46   common_attr_eq               cold    853.0 ms  warm    713.2 ms  rows 100
+2026/10/02 14:50:48   common_attr_per_minute       cold    522.9 ms  warm    507.5 ms  rows 5
+2026/10/02 14:50:51   rare_attr_eq                 cold    871.7 ms  warm    741.6 ms  rows 81
+2026/10/02 14:50:53   mixed_numeric_range          cold    577.3 ms  warm    422.7 ms  rows 100
+2026/10/02 14:50:54   message_substring            cold    417.5 ms  warm    305.5 ms  rows 100
+2026/10/02 14:50:56   group_by_attr_top10          cold    606.6 ms  warm    458.0 ms  rows 10
+2026/10/02 14:50:57   fetch_by_id                  cold     59.9 ms  warm     42.8 ms  rows 1
+2026/10/02 14:51:07 promote N=10: top keys 1349 ms, copy 8798 ms, 3 files, 78.3 MB
+2026/10/02 14:51:07  coalesce:
+2026/10/02 14:51:09   errors_last_15m              cold    324.8 ms  warm    210.4 ms  rows 100
+2026/10/02 14:51:09   count_by_service_per_minute  cold     75.7 ms  warm     34.8 ms  rows 30
+2026/10/02 14:51:10   common_attr_eq               cold    393.1 ms  warm    340.0 ms  rows 100
+2026/10/02 14:51:11   common_attr_per_minute       cold    187.7 ms  warm    155.7 ms  rows 5
+2026/10/02 14:51:13   rare_attr_eq                 cold    461.1 ms  warm    420.5 ms  rows 81
+2026/10/02 14:51:14   mixed_numeric_range          cold    316.1 ms  warm    252.2 ms  rows 100
+2026/10/02 14:51:15   message_substring            cold    290.2 ms  warm    219.1 ms  rows 100
+2026/10/02 14:51:16   group_by_attr_top10          cold    193.7 ms  warm    255.0 ms  rows 10
+2026/10/02 14:51:16   fetch_by_id                  cold     60.6 ms  warm     54.0 ms  rows 1
+2026/10/02 14:51:16  per_file:
+2026/10/02 14:51:17   errors_last_15m              cold    260.5 ms  warm    210.9 ms  rows 100
+2026/10/02 14:51:18   count_by_service_per_minute  cold     53.3 ms  warm     37.8 ms  rows 30
+2026/10/02 14:51:19   common_attr_eq               cold    259.0 ms  warm    212.3 ms  rows 100
+2026/10/02 14:51:19   common_attr_per_minute       cold     43.2 ms  warm     26.1 ms  rows 5
+2026/10/02 14:51:20   rare_attr_eq                 cold    645.8 ms  warm    340.4 ms  rows 81
+2026/10/02 14:51:22   mixed_numeric_range          cold    339.6 ms  warm    328.0 ms  rows 100
+2026/10/02 14:51:23   message_substring            cold    295.8 ms  warm    326.7 ms  rows 100
+2026/10/02 14:51:23   group_by_attr_top10          cold     41.4 ms  warm     25.6 ms  rows 10
+2026/10/02 14:51:23   fetch_by_id                  cold     55.2 ms  warm     55.2 ms  rows 1
+2026/10/02 14:51:36 promote N=20: top keys 1172 ms, copy 10312 ms, 3 files, 75.5 MB
+2026/10/02 14:51:36  coalesce:
+2026/10/02 14:51:37   errors_last_15m              cold    275.1 ms  warm    215.2 ms  rows 100
+2026/10/02 14:51:37   count_by_service_per_minute  cold     54.3 ms  warm     68.5 ms  rows 30
+2026/10/02 14:51:38   common_attr_eq               cold    346.3 ms  warm    275.5 ms  rows 100
+2026/10/02 14:51:39   common_attr_per_minute       cold    129.5 ms  warm     98.6 ms  rows 5
+2026/10/02 14:51:40   rare_attr_eq                 cold    327.1 ms  warm    253.8 ms  rows 81
+2026/10/02 14:51:41   mixed_numeric_range          cold    414.3 ms  warm    247.0 ms  rows 100
+2026/10/02 14:51:42   message_substring            cold    280.4 ms  warm    220.6 ms  rows 100
+2026/10/02 14:51:43   group_by_attr_top10          cold    157.8 ms  warm    100.3 ms  rows 10
+2026/10/02 14:51:43   fetch_by_id                  cold     45.5 ms  warm     50.0 ms  rows 1
+2026/10/02 14:51:43  per_file:
+2026/10/02 14:51:44   errors_last_15m              cold    249.9 ms  warm    253.2 ms  rows 100
+2026/10/02 14:51:44   count_by_service_per_minute  cold     52.6 ms  warm     36.2 ms  rows 30
+2026/10/02 14:51:45   common_attr_eq               cold    256.9 ms  warm    197.1 ms  rows 100
+2026/10/02 14:51:45   common_attr_per_minute       cold     42.9 ms  warm     24.0 ms  rows 5
+2026/10/02 14:51:47   rare_attr_eq                 cold    320.6 ms  warm    253.2 ms  rows 81
+2026/10/02 14:51:48   mixed_numeric_range          cold    312.7 ms  warm    355.9 ms  rows 100
+2026/10/02 14:51:49   message_substring            cold    282.0 ms  warm    233.2 ms  rows 100
+2026/10/02 14:51:49   group_by_attr_top10          cold     42.8 ms  warm     26.6 ms  rows 10
+2026/10/02 14:51:49   fetch_by_id                  cold    165.6 ms  warm     62.2 ms  rows 1
+2026/10/02 14:52:04 promote N=40: top keys 1288 ms, copy 12688 ms, 3 files, 74.2 MB
+2026/10/02 14:52:04  coalesce:
+2026/10/02 14:52:05   errors_last_15m              cold    371.5 ms  warm    240.6 ms  rows 100
+2026/10/02 14:52:06   count_by_service_per_minute  cold     55.9 ms  warm     36.5 ms  rows 30
+2026/10/02 14:52:07   common_attr_eq               cold    307.5 ms  warm    255.0 ms  rows 100
+2026/10/02 14:52:07   common_attr_per_minute       cold     88.9 ms  warm     62.3 ms  rows 5
+2026/10/02 14:52:08   rare_attr_eq                 cold    275.9 ms  warm    339.4 ms  rows 81
+2026/10/02 14:52:10   mixed_numeric_range          cold    306.2 ms  warm    314.0 ms  rows 100
+2026/10/02 14:52:11   message_substring            cold    297.5 ms  warm    221.0 ms  rows 100
+2026/10/02 14:52:11   group_by_attr_top10          cold    100.1 ms  warm     68.1 ms  rows 10
+2026/10/02 14:52:11   fetch_by_id                  cold     78.2 ms  warm     65.4 ms  rows 1
+2026/10/02 14:52:12  per_file:
+2026/10/02 14:52:13   errors_last_15m              cold    309.9 ms  warm    237.6 ms  rows 100
+2026/10/02 14:52:13   count_by_service_per_minute  cold     60.6 ms  warm     40.3 ms  rows 30
+2026/10/02 14:52:14   common_attr_eq               cold    272.8 ms  warm    211.5 ms  rows 100
+2026/10/02 14:52:14   common_attr_per_minute       cold     49.6 ms  warm     28.8 ms  rows 5
+2026/10/02 14:52:15   rare_attr_eq                 cold    317.6 ms  warm    234.3 ms  rows 81
+2026/10/02 14:52:16   mixed_numeric_range          cold    338.9 ms  warm    268.3 ms  rows 100
+2026/10/02 14:52:17   message_substring            cold    284.1 ms  warm    235.2 ms  rows 100
+2026/10/02 14:52:17   group_by_attr_top10          cold     44.9 ms  warm     25.9 ms  rows 10
+2026/10/02 14:52:18   fetch_by_id                  cold     71.0 ms  warm     54.1 ms  rows 1
+2026/10/02 14:52:18  per_file, threads = 1:
+2026/10/02 14:52:19   errors_last_15m              cold    380.4 ms  warm    305.6 ms  rows 100
+2026/10/02 14:52:19   count_by_service_per_minute  cold     92.9 ms  warm     52.2 ms  rows 30
+2026/10/02 14:52:21   common_attr_eq               cold    450.7 ms  warm    271.4 ms  rows 100
+2026/10/02 14:52:21   common_attr_per_minute       cold     74.0 ms  warm     36.6 ms  rows 5
+2026/10/02 14:52:22   rare_attr_eq                 cold    454.9 ms  warm    330.2 ms  rows 81
+2026/10/02 14:52:23   mixed_numeric_range          cold    333.4 ms  warm    258.9 ms  rows 100
+2026/10/02 14:52:25   message_substring            cold    386.0 ms  warm    314.7 ms  rows 100
+2026/10/02 14:52:25   group_by_attr_top10          cold     71.5 ms  warm     31.9 ms  rows 10
+2026/10/02 14:52:25   fetch_by_id                  cold     56.6 ms  warm     46.3 ms  rows 1
+2026/10/02 14:52:26 wrote map.json

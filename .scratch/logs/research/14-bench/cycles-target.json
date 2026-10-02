@@ -1,0 +1,106 @@
+{
+  "Engine": "v1.5.6",
+  "Machine": "remote-dev-shankar-v7, 2 CPU, 12246192 kB RAM, linux/amd64",
+  "Started": "2026-10-02T13:55:38.423392295Z",
+  "Settings": {
+    "MemoryLimit": "2GB",
+    "Threads": 2
+  },
+  "HourLogs": 100000,
+  "HourMB": 56.898559000000645,
+  "Factor": 1,
+  "Promote": 20,
+  "Checkpoint": true,
+  "Cycles": [
+    {
+      "Hour": 0,
+      "ExportedRows": 100000,
+      "Files": 3,
+      "TopKeysMs": 213.579,
+      "CopyMs": 1885.286,
+      "DeleteMs": 30.205,
+      "CheckpointMs": 431.944,
+      "TableRows": 104800,
+      "DBBytes": 33566720,
+      "WALBytes": 0,
+      "TotalBlocks": 128,
+      "FreeBlocks": 73,
+      "During": {
+        "Flushes": 1,
+        "Logs": 3198,
+        "P50Ms": 171.532,
+        "P99Ms": 171.532,
+        "MaxMs": 171.532,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 63,
+        "Logs": 201602,
+        "P50Ms": 100.705,
+        "P99Ms": 1177.761,
+        "MaxMs": 1177.761,
+        "MaxBacklogLogs": 630
+      }
+    },
+    {
+      "Hour": 1,
+      "ExportedRows": 100000,
+      "Files": 3,
+      "TopKeysMs": 150.249,
+      "CopyMs": 1388.523,
+      "DeleteMs": 13.584,
+      "CheckpointMs": 1216.352,
+      "TableRows": 104003,
+      "DBBytes": 39596032,
+      "WALBytes": 0,
+      "TotalBlocks": 151,
+      "FreeBlocks": 100,
+      "During": {
+        "Flushes": 1,
+        "Logs": 3200,
+        "P50Ms": 254.489,
+        "P99Ms": 254.489,
+        "MaxMs": 254.489,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 29,
+        "Logs": 96003,
+        "P50Ms": 143.542,
+        "P99Ms": 2719.353,
+        "MaxMs": 2719.353,
+        "MaxBacklogLogs": 5586
+      }
+    },
+    {
+      "Hour": 2,
+      "ExportedRows": 100000,
+      "Files": 3,
+      "TopKeysMs": 159.30599999999998,
+      "CopyMs": 1754.411,
+      "DeleteMs": 10.701,
+      "CheckpointMs": 1479.016,
+      "TableRows": 106403,
+      "DBBytes": 26226688,
+      "WALBytes": 0,
+      "TotalBlocks": 100,
+      "FreeBlocks": 48,
+      "During": {
+        "Flushes": 2,
+        "Logs": 6401,
+        "P50Ms": 288.626,
+        "P99Ms": 288.626,
+        "MaxMs": 288.626,
+        "MaxBacklogLogs": 4
+      },
+      "Between": {
+        "Flushes": 30,
+        "Logs": 95999,
+        "P50Ms": 100.466,
+        "P99Ms": 963.704,
+        "MaxMs": 963.704,
+        "MaxBacklogLogs": 340
+      }
+    }
+  ]
+}
