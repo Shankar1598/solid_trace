@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] A store error (DuckDB unavailable, disk full) retries with backoff and skips nothing; the cursor doesn't move.
 - [x] A batch that fails for its content is retried, then isolated Log by Log; a Log that can never be appended is skipped and logged, and the rest of the batch is stored. Classify errors the way Event processing does (ingest-write-path 04).
