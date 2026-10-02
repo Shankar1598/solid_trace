@@ -18,6 +18,7 @@ export interface Project {
   name: string
   slug: string
   platform?: string
+  log_retention_days?: number | null
   created_at: string
   issues_count?: number
   keys?: ProjectKey[]
