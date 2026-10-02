@@ -312,18 +312,29 @@ func promote(ctx context.Context, conn *sql.Conn, projectID uint32, logs []model
 		p.existing[column] = true
 	}
 
-	days := make(map[time.Time]bool)
+	byDay := make(map[time.Time][]models.Log)
 	for _, log := range logs {
-		days[LogDay(log.Time)] = true
+		day := LogDay(log.Time)
+		byDay[day] = append(byDay[day], log)
 	}
-	if err := p.loadDays(ctx, conn, slices.SortedFunc(maps.Keys(days), time.Time.Compare)); err != nil {
+	days := slices.SortedFunc(maps.Keys(byDay), time.Time.Compare)
+	stored, err := p.storedSets(ctx, conn, days[0], days[len(days)-1])
+	if err != nil {
 		return nil, err
 	}
 
-	for _, log := range logs {
-		day := p.days[LogDay(log.Time)]
-		for _, key := range logKeys(log) {
-			p.add(day, key, !day.isNew)
+	// Oldest day first, each day's keys promoted before the next day's set
+	// is made, as a later day's set can start from an earlier one's.
+	for _, day := range days {
+		d, err := p.daySet(ctx, conn, day, stored[day])
+		if err != nil {
+			return nil, err
+		}
+		p.days[day] = d
+		for _, log := range byDay[day] {
+			for _, key := range logKeys(log) {
+				p.add(d, key, !d.isNew)
+			}
 		}
 	}
 
@@ -333,30 +344,18 @@ func promote(ctx context.Context, conn *sql.Conn, projectID uint32, logs []model
 	return p, p.record(ctx, conn)
 }
 
-// loadDays reads the promoted sets of days, oldest first, and makes the set
-// of each day that has none.
-func (p *promotion) loadDays(ctx context.Context, conn *sql.Conn, days []time.Time) error {
-	stored, err := p.storedSets(ctx, conn, days[0], days[len(days)-1])
-	if err != nil {
-		return err
+// daySet returns a day's promoted set from its stored keys, or makes it if it
+// has none.
+func (p *promotion) daySet(ctx context.Context, conn *sql.Conn, day time.Time, stored []PromotedKey) (*dayPromotion, error) {
+	if len(stored) == 0 {
+		return p.newDay(ctx, conn, day)
 	}
-	for _, day := range days {
-		if keys, ok := stored[day]; ok {
-			d := &dayPromotion{day: day, keys: make(map[typedKey]PromotedKey)}
-			for _, key := range keys {
-				d.keys[typedKey{key.Type, key.Key}] = key
-				p.claimColumn(typedKey{key.Type, key.Key})
-			}
-			p.days[day] = d
-			continue
-		}
-		d, err := p.newDay(ctx, conn, day)
-		if err != nil {
-			return err
-		}
-		p.days[day] = d
+	d := &dayPromotion{day: day, keys: make(map[typedKey]PromotedKey)}
+	for _, key := range stored {
+		d.keys[typedKey{key.Type, key.Key}] = key
+		p.claimColumn(typedKey{key.Type, key.Key})
 	}
-	return nil
+	return d, nil
 }
 
 // newDay makes the promoted set of a day that has none: the set of the most
