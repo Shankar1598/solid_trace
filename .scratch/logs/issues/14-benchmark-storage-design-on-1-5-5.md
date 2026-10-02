@@ -42,3 +42,18 @@ Decided with the user:
 
 - **The 5 s target is missed**, mainly because of the hot table: its 2 hours of MAPs cost more than the 22 hours of promoted Parquet. Parquet alone is at or just over 5 s, and under it if 4 vCPU scale better than this shared 2-CPU box did.
 - The ticket says to reopen [How are logs stored and retained?](10-storage-architecture-and-retention.md) when promoted columns miss 5 s. Levers: export more often (a hot table of minutes, not hours), promote columns in the hot table too, or relax the target for day-long scans. Waiting on the user.
+
+### 2026-10-02 promotion redesigned (replaces the per-file rules above)
+
+Probes, each under a minute: [hot-promotion.log](../research/14-bench/hot-promotion.log), [wide-columns.log](../research/14-bench/wide-columns.log), [wide-column-limits.log](../research/14-bench/wide-column-limits.log).
+
+- Promoted columns help the hot table as much as Parquet: common-key scans 12–15× faster with 45 keys promoted. `ADD COLUMN` takes ~3 ms but invalidates open appenders.
+- Promoting every key (1000 columns) makes scans 6–15× faster but ingest 11× slower (2.6k Logs/s with the appender, below the 3.2k target) and the hourly export 15× slower. 100 keys cost almost nothing: appender 28k vs 31k Logs/s, export 1.9× MAP-only, files 20% smaller. 250 keys: appender 12.8k Logs/s, export 3.9×.
+
+Decided with the user:
+- **Promotion at ingest, 100 keys per Project.** Keys are promoted as they first appear, in the hot table and in Parquet, until the Project has 100. Past that, new keys stay in the maps.
+- **Nightly re-ranking once the limit is hit:** the next day's promoted set is the Project's 100 most popular keys (Logs carrying them that day); the rest go back to the maps. One promoted set per Project per day, so a day's files share a schema.
+- **The promoted set is a table in `logs.duckdb`** (Project, day, map, key), changed in the same DuckDB transaction as the hot table's `ALTER TABLE`, and cached in memory by EventStore. Not SQLite: SQLite is faster per lookup and per commit, but neither is on the hot path, and a second database cannot commit together with the hot table.
+- Plain Parquet files, no DuckLake (unchanged).
+
+Proposed, not yet decided: popularity counted by the Log processor at ingest; one hot table per Project; demoted columns dropped from the hot table once the day's last hour is exported. These replace parts of ADR 0004, so [How are logs stored and retained?](10-storage-architecture-and-retention.md) needs reopening and a new ADR.
