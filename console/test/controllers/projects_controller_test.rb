@@ -31,7 +31,7 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
   test "create project" do
     assert_difference -> { @organization.projects.count }, 1 do
       post projects_url(org_slug: @organization.slug), params: {
-        project: { name: "New Project" }
+        project: { name: "New Project" },
       }
     end
 
@@ -42,7 +42,7 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     sign_in_as(@admin)
 
     patch project_url(@project, org_slug: @organization.slug), params: {
-      project: { name: "Updated Project" }
+      project: { name: "Updated Project" },
     }
 
     assert_redirected_to project_url(@project, org_slug: @organization.slug)
@@ -53,7 +53,7 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     sign_in_as(@admin)
 
     patch project_url(@project, org_slug: @organization.slug), params: {
-      project: { log_retention_days: "14" }
+      project: { log_retention_days: "14" },
     }
 
     assert_redirected_to project_url(@project, org_slug: @organization.slug)
@@ -66,7 +66,7 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
 
     [ "0", "-3", "1.5", "two" ].each do |days|
       patch project_url(@project, org_slug: @organization.slug), params: {
-        project: { log_retention_days: days }
+        project: { log_retention_days: days },
       }
 
       assert_redirected_to project_url(@project, org_slug: @organization.slug)
@@ -81,7 +81,7 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     @project.update!(log_retention_days: 7)
 
     patch project_url(@project, org_slug: @organization.slug), params: {
-      project: { log_retention_days: "" }
+      project: { log_retention_days: "" },
     }
 
     page = project_page
@@ -93,7 +93,7 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     @project.update!(log_retention_days: 7)
 
     patch project_url(@project, org_slug: @organization.slug), params: {
-      project: { log_retention_days: "90" }
+      project: { log_retention_days: "90" },
     }
 
     assert_response :redirect
