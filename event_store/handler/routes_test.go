@@ -113,6 +113,7 @@ func TestQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 		"/api/1/events/count",
 		"/api/1/events/context?fingerprint_ids=10",
 		"/api/1/events/" + event.EventUUID,
+		"/api/1/logs/latest",
 	}
 
 	for _, path := range paths {
@@ -212,7 +213,7 @@ func newIngestApp(t *testing.T, withKeysTable bool) *fiber.App {
 }
 
 func TestIngestKeyLookupStatus(t *testing.T) {
-	for _, path := range []string{"/api/1/store?sentry_key=unknown", "/api/1/envelope?sentry_key=unknown"} {
+	for _, path := range []string{"/api/1/store?sentry_key=unknown", "/api/1/envelope?sentry_key=unknown", "/api/1/logs?sentry_key=unknown"} {
 		t.Run("unknown key is 401 "+path, func(t *testing.T) {
 			if resp := send(t, newIngestApp(t, true), http.MethodPost, path); resp.StatusCode != fiber.StatusUnauthorized {
 				t.Errorf("expected 401, got %d", resp.StatusCode)
