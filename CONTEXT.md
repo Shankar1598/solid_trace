@@ -40,6 +40,14 @@ _Avoid_: alert, ticket
 An outbound notification target owned by an organization.
 _Avoid_: webhook config, notifier job
 
+**Notification**:
+A message owed to one **Integration** about one or more **Issues**, recorded in the outbox until it is delivered or closed. Each has a notification kind (issue created, threshold reached, assignment changed) that decides the message.
+_Avoid_: notification event, alert, event type
+
+**Integration notification**:
+The Console module that decides which **Notifications** an **Issue** change produces, and delivers them to each **Integration** in batches under a per-Integration rate limit.
+_Avoid_: notifier, integration notifier
+
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant
@@ -50,6 +58,7 @@ _Avoid_: app, tenant
 - **Event processing** derives one **Issue** for each stored **Event**, reading each **Project**'s Events from its **Processing cursor**
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
+- **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 
 ## Example dialogue
 

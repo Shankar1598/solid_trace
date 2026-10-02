@@ -1,11 +1,12 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "minitest/mock"
 
 module Notifiers
   class EmailNotifierTest < ActiveSupport::TestCase
     include ActionMailer::TestHelper
+
+    RECIPIENTS = [ "test@example.com", "other@example.com" ].freeze
 
     setup do
       @organization = Organization.create!(name: "Test Org", slug: "test-org")
@@ -15,15 +16,35 @@ module Notifiers
       @integration = @organization.integrations.create!(
         provider: "email",
         name: "Email Alerts",
-        settings: { "recipients" => "test@example.com, other@example.com" },
+        settings: { "recipients" => RECIPIENTS.join(", ") },
         active: true
       )
     end
 
-    test "delivers email to configured recipients" do
-      # assert_enqueued_email_with matches on method and args
-      assert_enqueued_with(job: ActionMailer::MailDeliveryJob) do
-        Notifiers::EmailNotifier.new(@integration, @issue).call
+    test "issue_created hands the batch mail to the mailer" do
+      other = @project.issues.create!(title: "Other Issue", kind: "error")
+
+      assert_enqueued_email_with IssueMailer, :batch_notify, args: [ [ @issue, other ], RECIPIENTS ] do
+        EmailNotifier.new(@integration, kind: "issue_created", issues: [ @issue, other ]).call
+      end
+    end
+
+    test "threshold_reached hands the single-Issue mail to the mailer" do
+      assert_enqueued_email_with IssueMailer, :notify, args: [ @issue, RECIPIENTS ] do
+        EmailNotifier.new(@integration, kind: "threshold_reached", issues: [ @issue ]).call
+      end
+    end
+
+    test "assignment_changed hands the assignment mail to the mailer" do
+      assert_enqueued_email_with IssueMailer, :assignment_updated,
+        args: [ @issue, RECIPIENTS, { previous_assignee_name: "Alice", new_assignee_name: "Bob" } ] do
+        EmailNotifier.new(
+          @integration,
+          kind: "assignment_changed",
+          issues: [ @issue ],
+          previous_assignee_name: "Alice",
+          new_assignee_name: "Bob"
+        ).call
       end
     end
 
@@ -32,7 +53,7 @@ module Notifiers
       @integration.save!
 
       assert_no_enqueued_emails do
-        Notifiers::EmailNotifier.new(@integration, @issue).call
+        EmailNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
       end
     end
   end
