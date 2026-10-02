@@ -20,6 +20,8 @@ DuckDB 2.0's asynchronous I/O ([highlights §5](https://duckdb.org/2026/08/17/du
 6. How much memory do read-ahead and the async thread pool (`async_threads`) use while ingest runs at target rate, and which settings keep a query from starving ingest?
 7. Are Parquet writes (archive and compaction) and native `.duckdb` reads asynchronous on the build tested? The July post says no; the August highlights say both landed.
 
+Input (2026-10-02, from [What is a Log?](07-log-domain-model.md)): the Log shape is seven fixed columns (`time`, `level`, `message`, `service`, `environment`, `trace_id`, `span_id`) plus an id, and one flat set of dotted Attributes whose values keep their own type (one Attribute may be a number in some Logs and a string in others). There is no received-time column.
+
 ## Comments
 
 **2026-09-27, from [upgrade-pebble-duckdb 01](../../upgrade-pebble-duckdb/issues/01-upgrade-pebble-and-duckdb.md):** the "does duckdb-go have a 2.0 build?" check is done. It does not: the `v2.20000.0-N.preview` tags report `version()` = v1.5.4 (with 2.0 backports), not 2.0. To benchmark the real 2.0 alpha from Go, build with `-tags=duckdb_use_lib` against the alpha's `libduckdb.so` from https://duckdb.org/install/preview.html. In a scratch test, EventStore's storage and handler tests passed that way against v2.0.0-alpha43546. Once 2.0.0 ships, `duckdb-go/v2@v2.20000.0` should be the plain Go option. **Update:** EventStore itself now links the alpha this way. The benchmark can reuse `event_store/scripts/fetch-duckdb` and the `mise.toml` env, and `TestDuckDBEngineVersion` shows how to confirm the engine.
