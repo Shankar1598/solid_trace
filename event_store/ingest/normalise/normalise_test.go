@@ -328,3 +328,53 @@ func TestNestingPastTenLevelsIsKeptAsJSONFromThatDepth(t *testing.T) {
 		t.Errorf("Expected the Log kept whole, got %v", outcome)
 	}
 }
+
+func TestEachValueKeepsItsTypeAndBigWholeNumbersStayExact(t *testing.T) {
+	log, _ := normaliseJSON(t, `{
+		"text": "200",
+		"number": 200,
+		"fraction": -12.5,
+		"exponent": 1.5e3,
+		"bool": false,
+		"list": [1, "1", true],
+		"max_exact": 9007199254740992,
+		"past_exact": 9007199254740993,
+		"big_but_exact": 18014398509481984,
+		"huge": 123456789012345678901234567890,
+		"out_of_range": 1e400
+	}`, receipt)
+
+	want := models.Attributes{
+		String: map[string]string{
+			"text":         "200",
+			"past_exact":   "9007199254740993",
+			"huge":         "123456789012345678901234567890",
+			"out_of_range": "1e400",
+		},
+		Number: map[string]float64{
+			"number":        200,
+			"fraction":      -12.5,
+			"exponent":      1500,
+			"max_exact":     9007199254740992,
+			"big_but_exact": 18014398509481984,
+		},
+		Bool: map[string]bool{"bool": false},
+		JSON: map[string]string{"list": `[1,"1",true]`},
+	}
+	if !reflect.DeepEqual(log.Attributes, want) {
+		t.Errorf("Expected\n%+v\ngot\n%+v", want, log.Attributes)
+	}
+}
+
+func TestASendersSolidTraceKeysAreKeptAsOriginal(t *testing.T) {
+	log, _ := normaliseJSON(t, `{"solidtrace.truncated": false, "solidtrace": {"source": "me"}, "solidtracer": 1}`, receipt)
+
+	want := map[string]any{
+		"original.solidtrace.truncated": false,
+		"original.solidtrace.source":    "me",
+		"solidtracer":                   1.0,
+	}
+	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got)
+	}
+}
