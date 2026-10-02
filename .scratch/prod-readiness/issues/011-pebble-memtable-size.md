@@ -1,6 +1,6 @@
 # Pebble memory table size: throughput against write pauses
 
-Status: ready-for-agent
+Status: wontfix
 
 **Source:** benchmarks run on 2026-09-26 while redesigning the §4 write path (not a `review.md` item)
 **Area:** `event_store/storage/pebble.go`, `event_store/config/config.go`, `deploy/event_store.yml`
@@ -45,3 +45,9 @@ The planned one-Event-per-write path removes this problem. But it shows that the
 - A table of throughput and p50/p99/p99.9 latency for each size and each rate.
 - A confirmed cause for the pauses, or a statement that the cause is not known.
 - A recommended default, and a sentence about its memory cost. Pebble can keep more than one memory table in RAM at the same time.
+
+## Comments
+
+### 2026-10-01 closed for 0.1
+
+Closed as `wontfix` for now. SolidTrace is at the 0.1 prototype stage, and tuning the memory table size (hardcoded at 64 MB) does not change the direction of development. Reopen after the prototype, when hardening starts.
