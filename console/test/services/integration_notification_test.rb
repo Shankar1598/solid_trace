@@ -417,6 +417,20 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     assert_equal [ first.id, second.id ], Notification.order(:id).map { |row| row.payload["issue_id"] }
   end
 
+  test "an Integration with no saved threshold settings uses the default rule: on, 10 Events in 5 minutes" do
+    @slack.update!(settings: { "webhook_url" => SLACK_URL })
+    issue = create(:issue, project: @project)
+    create(:issue_fingerprint, issue: issue)
+    count_request = stub_request(:get, %r{/api/#{@project.id}/events/count})
+      .with(query: hash_including("newer_than" => 5.minutes.ago.iso8601))
+      .to_return(status: 200, body: { count: 10 }.to_json)
+
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
+
+    assert_equal [ "threshold_reached" ], Notification.pluck(:kind)
+    assert_requested(count_request, times: 1)
+  end
+
   test "with the threshold rule off no row is written and EventStore is not asked" do
     issue = threshold_issue
     @slack.update!(settings: @slack.settings.merge("notify_on_event_threshold" => "0"))
