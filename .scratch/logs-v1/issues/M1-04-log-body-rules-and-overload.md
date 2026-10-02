@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Log routes accept `gzip`, `zstd` or identity bodies and decompress in EventStore, not through Fiber's pass-through.
 - [x] Over 10 MB compressed or 50 MB decompressed, the route answers `413` and stores nothing; decompression stops at the cap instead of inflating the whole body.
