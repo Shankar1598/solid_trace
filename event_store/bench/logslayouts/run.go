@@ -336,7 +336,7 @@ func (r *runner) promotion(ctx context.Context, n int, scaling bool, lastID int6
 	if err != nil {
 		return pr, err
 	}
-	files, st, err := ExportProjectHours(ctx, db, r.cfg.Layout, dir, Base, r.g.Log(lastID).Time.Add(time.Microsecond), n, "data")
+	files, st, err := ExportProjectHours(ctx, db, r.cfg.Layout, dir, Base, r.g.Log(lastID).Time.Add(time.Microsecond), n, 0, "data")
 	db.Close()
 	if err != nil {
 		return pr, err

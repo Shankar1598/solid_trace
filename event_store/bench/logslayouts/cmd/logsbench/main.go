@@ -134,7 +134,8 @@ func cycles(args []string) {
 	n := fs.Int("cycles", 10, "hours to export")
 	factor := fs.Int("factor", 0, "ingest rate as a multiple of the target; 0 is unthrottled")
 	flush := fs.Int("flush", 5000, "Logs per flush when unthrottled")
-	promote := fs.Int("promote", 20, "keys promoted per file")
+	promote := fs.Int("promote", logslayouts.PromotedPerFile, "most keys promoted per file")
+	minShare := fs.Float64("min-share", logslayouts.PromotedMinShare, "a promoted key's minimum share of a file's Logs")
 	checkpoint := fs.Bool("checkpoint", true, "CHECKPOINT after each delete")
 	fs.Parse(args)
 
@@ -147,6 +148,7 @@ func cycles(args []string) {
 		Factor:     *factor,
 		FlushLogs:  *flush,
 		Promote:    *promote,
+		MinShare:   *minShare,
 		Checkpoint: *checkpoint,
 		Logf:       log.Printf,
 	})

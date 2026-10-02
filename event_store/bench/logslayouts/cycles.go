@@ -26,6 +26,7 @@ type CyclesConfig struct {
 	Factor    int
 	FlushLogs int // Logs per flush when unthrottled
 	Promote   int
+	MinShare  float64 // a promoted key's minimum share of a file's Logs
 	// Checkpoint runs CHECKPOINT after each delete, so freed blocks can be
 	// reused at once; otherwise only automatic checkpoints run.
 	Checkpoint bool
@@ -145,7 +146,7 @@ func RunCycles(ctx context.Context, cfg CyclesConfig) (*CyclesReport, error) {
 		}
 		c := Cycle{Hour: h - 2}
 		t0 := time.Now()
-		files, st, err := ExportProjectHours(ctx, db, l, parquetDir, hourStart(h-2), hourStart(h-1), cfg.Promote, fmt.Sprintf("data-%d", h-2))
+		files, st, err := ExportProjectHours(ctx, db, l, parquetDir, hourStart(h-2), hourStart(h-1), cfg.Promote, cfg.MinShare, fmt.Sprintf("data-%d", h-2))
 		if err != nil {
 			return rep, fmt.Errorf("export hour %d: %w", h-2, err)
 		}
