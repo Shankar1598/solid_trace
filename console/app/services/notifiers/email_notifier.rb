@@ -12,9 +12,11 @@ module Notifiers
       @new_assignee_name = new_assignee_name
     end
 
+    # Raises NotConfigured without recipients. Handing the mail to the mailer
+    # queue is success; mail delivery retries are ActionMailer's concern.
     def call
       recipients = @integration.recipients
-      return if recipients.blank?
+      raise NotConfigured, "No recipients" if recipients.blank?
 
       mail(recipients).deliver_later
     end

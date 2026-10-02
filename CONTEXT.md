@@ -41,7 +41,7 @@ An outbound notification target owned by an organization.
 _Avoid_: webhook config, notifier job
 
 **Notification**:
-A message owed to one **Integration** about one or more **Issues**, recorded in the outbox until it is delivered or closed. Each has a notification kind (issue created, threshold reached, assignment changed) that decides the message.
+A message owed to one **Integration** about one or more **Issues**, recorded in the outbox until it ends as sent, failed after the last retry, or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed) that decides the message.
 _Avoid_: notification event, alert, event type
 
 **Integration notification**:
