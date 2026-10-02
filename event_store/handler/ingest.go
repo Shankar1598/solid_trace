@@ -52,7 +52,12 @@ func (h *IngestHandler) Store(c *fiber.Ctx) error {
 		return h.renderKeyError(c, err)
 	}
 
-	if err := h.ingest.IngestStore(projectID, c.Body()); err != nil {
+	body, err := requestBody(c, eventBodyLimit)
+	if err != nil {
+		return renderBodyError(c, err)
+	}
+
+	if err := h.ingest.IngestStore(projectID, body); err != nil {
 		return h.renderIngestError(c, err)
 	}
 
@@ -71,7 +76,12 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 		return h.renderKeyError(c, err)
 	}
 
-	if err := h.ingest.IngestEnvelope(projectID, c.Body()); err != nil {
+	body, err := requestBody(c, eventBodyLimit)
+	if err != nil {
+		return renderBodyError(c, err)
+	}
+
+	if err := h.ingest.IngestEnvelope(projectID, body); err != nil {
 		return h.renderIngestError(c, err)
 	}
 

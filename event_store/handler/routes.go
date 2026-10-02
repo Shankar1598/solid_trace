@@ -1,6 +1,27 @@
 package handler
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+// NewIngestApp returns the public ingest app, serving the ingest routes.
+func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler) *fiber.App {
+	app := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+		// The server reads no larger body, as sent, for any route. The Event
+		// routes refuse more than their own, smaller cap themselves.
+		BodyLimit: logBodyLimit,
+		// Ingest faces clients directly, with no proxy to buffer slow ones, so
+		// it bounds a request and an idle connection. Fiber's default is to
+		// wait forever.
+		ReadTimeout: 30 * time.Second, // headers and body of one request
+		IdleTimeout: 10 * time.Second, // between keep-alive requests
+	})
+	RegisterIngestRoutes(app, ingestHandler, healthHandler)
+	return app
+}
 
 // RegisterIngestRoutes mounts the public routes. They authenticate with the
 // project's Sentry key and must stay reachable by SDKs from anywhere.
