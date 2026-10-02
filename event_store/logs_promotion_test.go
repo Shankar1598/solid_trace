@@ -260,3 +260,111 @@ func TestANewDayAfterAFullSetPromotesYesterdaysMostCommonKeys(t *testing.T) {
 		t.Errorf("Expected the junk Log's 500 Attributes back, got %d", got)
 	}
 }
+
+func TestAKeyFirstSeenPartwayThroughADayIsPromotedFromThen(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	early := testNow.Add(-time.Hour)
+	env.Clock.Set(early)
+	postAndProcess(t, env, logJSON(t, "early", early, map[string]any{"user": "ada"}))
+
+	env.Clock.Set(testNow)
+	postAndProcess(t, env, logJSON(t, "later", testNow, map[string]any{"user": "bob", "cart": 3}))
+
+	set := env.LogStore.PromotedSet(123, testNow)
+	user, _ := set.Lookup(storage.StringAttribute, "user")
+	if user.Partway || !user.AddedAt.Equal(early) {
+		t.Errorf("Expected user promoted from the start of the day, at %v, got %+v", early, user)
+	}
+	cart, ok := set.Lookup(storage.NumberAttribute, "cart")
+	if !ok || !cart.Partway || !cart.AddedAt.Equal(testNow) {
+		t.Errorf("Expected cart promoted partway through the day, at %v, got %+v %v", testNow, cart, ok)
+	}
+
+	env.Reopen(t)
+	if got, _ := env.LogStore.PromotedSet(123, testNow).Lookup(storage.NumberAttribute, "cart"); got != cart {
+		t.Errorf("Expected %+v after a restart, got %+v", cart, got)
+	}
+	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+	if got, want := attributes["early"], map[string]any{"user": "ada"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+	if got, want := attributes["later"], map[string]any{"user": "bob", "cart": 3.0}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+func TestKeysThatCannotHaveAColumnOfTheirOwnStayAttributes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// DuckDB column names ignore case, so only one of User and user can be
+	// promoted. One key name can carry two types, each promoted on its own.
+	postAndProcess(t, env,
+		`{"message": "one", "time": "2026-10-02T11:59:00Z", "User": "a", "user": "b", "code": 5, "say \"hi\"": "q", "nul\u0000key": "n"}`,
+		`{"message": "two", "time": "2026-10-02T11:59:01Z", "code": "E5"}`)
+
+	set := env.LogStore.PromotedSet(123, testNow)
+	if got, want := promotedNames(set), []string{"number code", "string User", "string code", "string say \"hi\""}; !slices.Equal(got, want) {
+		t.Errorf("Expected promoted %v, got %v", want, got)
+	}
+
+	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+	if got, want := attributes["one"], map[string]any{"User": "a", "user": "b", "code": 5.0, "say \"hi\"": "q", "nul\u0000key": "n"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+	if got, want := attributes["two"], map[string]any{"code": "E5"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+func TestLogsEitherSideOfMidnightFollowTheirOwnDaysSet(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	midnight := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	env.Clock.Set(midnight.Add(30 * time.Second))
+
+	// One batch with the first Logs of two days: today's set starts from
+	// yesterday's, made in the same transaction.
+	postAndProcess(t, env,
+		logJSON(t, "before midnight", midnight.Add(-10*time.Second), map[string]any{"a": 1, "b": "x"}),
+		logJSON(t, "after midnight", midnight.Add(10*time.Second), map[string]any{"c": true}))
+
+	if got, want := promotedNames(env.LogStore.PromotedSet(123, midnight.Add(-time.Second))), []string{"number a", "string b"}; !slices.Equal(got, want) {
+		t.Errorf("Expected yesterday's set %v, got %v", want, got)
+	}
+	if got, want := promotedNames(env.LogStore.PromotedSet(123, midnight)), []string{"bool c", "number a", "string b"}; !slices.Equal(got, want) {
+		t.Errorf("Expected today's set %v, got %v", want, got)
+	}
+	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+	if got, want := attributes["before midnight"], map[string]any{"a": 1.0, "b": "x"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+	if got, want := attributes["after midnight"], map[string]any{"c": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+
+	// Another Project's first Log of yesterday arrives after its first Log
+	// of today: yesterday gets a set of its own, and today's is unchanged.
+	for _, log := range []string{
+		logJSON(t, "today first", midnight.Add(20*time.Second), map[string]any{"t": "1"}),
+		logJSON(t, "yesterday after", midnight.Add(-20*time.Second), map[string]any{"y": "2"}),
+	} {
+		resp := sendLogs(t, env, "/api/456/logs", "application/json", log, map[string]string{"Authorization": "Bearer other_public_key"})
+		decodeLogCounts(t, resp)
+		env.ProcessLogs(t)
+	}
+	if got, want := promotedNames(env.LogStore.PromotedSet(456, midnight)), []string{"string t"}; !slices.Equal(got, want) {
+		t.Errorf("Expected Project 456's set today %v, got %v", want, got)
+	}
+	if got, want := promotedNames(env.LogStore.PromotedSet(456, midnight.Add(-time.Second))), []string{"string y"}; !slices.Equal(got, want) {
+		t.Errorf("Expected Project 456's set yesterday %v, got %v", want, got)
+	}
+	attributes = attributesByMessage(latestLogs(t, env, 456, 10))
+	if got, want := attributes["yesterday after"], map[string]any{"y": "2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
