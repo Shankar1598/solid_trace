@@ -21,14 +21,18 @@ import (
 // logsCatalog is the name logs.duckdb is attached under.
 const logsCatalog = "logs"
 
-// LogStore is logs.duckdb: a hot table per Project, and each Project's Log
-// processing cursor. It is attached to the DuckDB instance of events.duckdb,
-// so the two share one memory limit, but it has its own WAL and checkpoints.
+// LogStore is logs.duckdb: a hot table per Project, each Project's Log
+// processing cursor, its promoted sets and its key popularity counts. It is
+// attached to the DuckDB instance of events.duckdb, so the two share one
+// memory limit, but it has its own WAL and checkpoints.
 //
 // A DuckDB transaction can write only one attached database, so everything
 // Log processing commits together lives here.
+//
+// The promoted-set table is also held in memory, and read from there.
 type LogStore struct {
-	db *sql.DB
+	db       *sql.DB
+	promoted *promotedSetCache
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
@@ -41,15 +45,40 @@ func NewLogStore(events *DuckDBWriter, path string) (*LogStore, error) {
 	if _, err := events.db.Exec(fmt.Sprintf("ATTACH IF NOT EXISTS %s AS %s", sqlString(path), logsCatalog)); err != nil {
 		return nil, fmt.Errorf("attach %s: %w", path, err)
 	}
-	if _, err := events.db.Exec(`
-		CREATE TABLE IF NOT EXISTS logs.log_processing_cursors (
+	for _, ddl := range []string{
+		`CREATE TABLE IF NOT EXISTS logs.log_processing_cursors (
 			project_id UINTEGER,
 			batch_id UUID
-		)
-	`); err != nil {
-		return nil, err
+		)`,
+		// One row per (type, key) pair of a Project's promoted set for a
+		// UTC day.
+		`CREATE TABLE IF NOT EXISTS logs.log_promoted_sets (
+			project_id UINTEGER,
+			day DATE,
+			type VARCHAR,
+			key VARCHAR,
+			added_at TIMESTAMP,
+			partway BOOLEAN
+		)`,
+		// How many Logs of a Project's UTC day carried each (type, key)
+		// pair: a top-K per Project and day.
+		`CREATE TABLE IF NOT EXISTS logs.log_key_counts (
+			project_id UINTEGER,
+			day DATE,
+			type VARCHAR,
+			key VARCHAR,
+			logs BIGINT
+		)`,
+	} {
+		if _, err := events.db.Exec(ddl); err != nil {
+			return nil, err
+		}
 	}
-	return &LogStore{db: events.db}, nil
+	promoted, err := loadPromotedSets(events.db)
+	if err != nil {
+		return nil, fmt.Errorf("load promoted sets: %w", err)
+	}
+	return &LogStore{db: events.db, promoted: promoted}, nil
 }
 
 // hotTable is the name of a Project's hot table in logs.duckdb.
@@ -57,8 +86,9 @@ func hotTable(projectID uint32) string {
 	return fmt.Sprintf("logs_hot_%d", projectID)
 }
 
-// hotTableColumns are a hot table's columns: the id, the seven built-in fields
-// and one map per Attribute type. attrs_json holds JSON text.
+// hotTableColumns are a hot table's fixed columns: the id, the seven built-in
+// fields and one map per Attribute type. attrs_json holds JSON text. Promoted
+// columns follow them.
 const hotTableColumns = `
 	id UUID,
 	time TIMESTAMP,
@@ -74,6 +104,12 @@ const hotTableColumns = `
 	attrs_json MAP(VARCHAR, VARCHAR)
 `
 
+// hotTableFixedColumns are the names of hotTableColumns, in order.
+var hotTableFixedColumns = []string{
+	"id", "time", "level", "message", "service", "environment", "trace_id", "span_id",
+	"attrs_string", "attrs_number", "attrs_bool", "attrs_json",
+}
+
 // LogProcessingCursor returns the id of the last Log batch that Log processing
 // stored for a Project, or uuid.Nil if it has stored none.
 func (s *LogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
@@ -88,12 +124,19 @@ func (s *LogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
 	return uuid.FromBytes(batchID)
 }
 
-// AppendLogBatches appends the Logs of a Project's Log batches to its hot
-// table, creating the table with its first Log, and moves the Project's Log
-// processing cursor to the last batch, all in one transaction. Either the
-// Logs and the cursor both commit or neither does, so a batch at or below the
-// cursor is never appended twice.
-func (s *LogStore) AppendLogBatches(projectID uint32, batches []LogBatch) error {
+// AppendLogBatches stores the Logs of a Project's Log batches, all in one
+// transaction:
+//  1. it makes the promoted set of each of the Logs' days that has none;
+//  2. it promotes the Logs' new keys while their day's set has room, adding
+//     their columns to the Project's hot table;
+//  3. it appends the Logs to the hot table, created with its first Log, each
+//     promoted value in its column and not in its map;
+//  4. it adds the Logs' keys to the popularity counts;
+//  5. it moves the Project's Log processing cursor to the last batch.
+//
+// Either all of it commits or none does, so a batch at or below the cursor is
+// never appended twice. now is when promoted keys are recorded as added.
+func (s *LogStore) AppendLogBatches(projectID uint32, batches []LogBatch, now time.Time) error {
 	if len(batches) == 0 {
 		return nil
 	}
@@ -107,7 +150,8 @@ func (s *LogStore) AppendLogBatches(projectID uint32, batches []LogBatch) error 
 	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
 		return err
 	}
-	if err := appendLogBatches(ctx, conn, projectID, batches); err != nil {
+	promoted, err := appendLogBatches(ctx, conn, projectID, batches, now.UTC())
+	if err != nil {
 		// After a failed statement DuckDB's COMMIT returns nil but commits
 		// nothing, so roll back rather than try it.
 		if _, rollbackErr := conn.ExecContext(ctx, "ROLLBACK"); rollbackErr != nil {
@@ -120,56 +164,87 @@ func (s *LogStore) AppendLogBatches(projectID uint32, batches []LogBatch) error 
 		discardConn(conn)
 		return err
 	}
+	s.promoted.put(projectID, promoted)
 	return nil
 }
 
 // appendLogBatches does AppendLogBatches' work inside the connection's open
-// transaction.
-func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, batches []LogBatch) error {
+// transaction, and returns the promoted sets of the Logs' days as it leaves
+// them.
+func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, batches []LogBatch, now time.Time) ([]PromotedSet, error) {
 	table := hotTable(projectID)
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (%s)", logsCatalog, table, hotTableColumns)); err != nil {
-		return fmt.Errorf("create hot table: %w", err)
+		return nil, fmt.Errorf("create hot table: %w", err)
 	}
 
-	err := conn.Raw(func(c any) error {
-		dConn, ok := c.(driver.Conn)
-		if !ok {
-			return fmt.Errorf("not a driver connection")
-		}
-		appender, err := duckdb.NewAppender(dConn, logsCatalog, "main", table)
-		if err != nil {
-			return err
-		}
-		for _, batch := range batches {
-			for _, log := range batch.Logs {
-				if err := appender.AppendRow(hotTableRow(log)...); err != nil {
-					appender.Close()
-					return err
-				}
-			}
-		}
-		return appender.Close()
-	})
+	var logs []models.Log
+	for _, batch := range batches {
+		logs = append(logs, batch.Logs...)
+	}
+	promotion, err := promote(ctx, conn, projectID, logs, now)
 	if err != nil {
-		return fmt.Errorf("append logs: %w", err)
+		return nil, err
+	}
+	if err := appendHotRows(conn, table, logs, promotion); err != nil {
+		return nil, fmt.Errorf("append logs: %w", err)
+	}
+	if err := countKeys(ctx, conn, projectID, logs); err != nil {
+		return nil, err
 	}
 
 	cursor := batches[len(batches)-1].ID
 	result, err := conn.ExecContext(ctx, "UPDATE logs.log_processing_cursors SET batch_id = ? WHERE project_id = ?", cursor.String(), projectID)
 	if err != nil {
-		return fmt.Errorf("move log processing cursor: %w", err)
+		return nil, fmt.Errorf("move log processing cursor: %w", err)
 	}
 	if moved, err := result.RowsAffected(); err != nil || moved > 0 {
-		return err
+		return promotion.sets(), err
 	}
 	if _, err := conn.ExecContext(ctx, "INSERT INTO logs.log_processing_cursors VALUES (?, ?)", projectID, cursor.String()); err != nil {
-		return fmt.Errorf("create log processing cursor: %w", err)
+		return nil, fmt.Errorf("create log processing cursor: %w", err)
 	}
-	return nil
+	return promotion.sets(), nil
 }
 
-func hotTableRow(log models.Log) []driver.Value {
-	return []driver.Value{
+// appendHotRows appends Logs to a hot table through an appender opened after
+// the promotion's ALTER TABLEs, as an appender opened before one fails.
+func appendHotRows(conn *sql.Conn, table string, logs []models.Log, promotion *promotion) error {
+	promoted := promotion.promotedColumns()
+	columns := slices.Clone(hotTableFixedColumns)
+	for _, key := range promoted {
+		columns = append(columns, key.column())
+	}
+	return conn.Raw(func(c any) error {
+		dConn, ok := c.(driver.Conn)
+		if !ok {
+			return fmt.Errorf("not a driver connection")
+		}
+		appender, err := duckdb.NewAppenderWithColumns(dConn, logsCatalog, "main", table, columns)
+		if err != nil {
+			return err
+		}
+		for _, log := range logs {
+			set := promotion.days[LogDay(log.Time)].keys
+			if err := appender.AppendRow(hotTableRow(log, set, promoted)...); err != nil {
+				appender.Close()
+				return err
+			}
+		}
+		return appender.Close()
+	})
+}
+
+// hotTableRow is a Log's row: the fixed columns, then the promoted columns.
+// A value whose key is in the Log's day's set goes to its column and not its
+// map; the columns of other keys are NULL.
+func hotTableRow(log models.Log, set map[typedKey]PromotedKey, promoted []typedKey) []driver.Value {
+	inMap := func(t AttributeType) func(string) bool {
+		return func(key string) bool {
+			_, ok := set[typedKey{t, key}]
+			return !ok
+		}
+	}
+	row := []driver.Value{
 		duckdb.UUID(log.ID),
 		log.Time,
 		nullIfEmpty(log.Level),
@@ -178,11 +253,21 @@ func hotTableRow(log models.Log) []driver.Value {
 		nullIfEmpty(log.Environment),
 		nullIfEmpty(log.TraceID),
 		nullIfEmpty(log.SpanID),
-		orderedMap(log.Attributes.String),
-		orderedMap(log.Attributes.Number),
-		orderedMap(log.Attributes.Bool),
-		orderedMap(log.Attributes.JSON),
+		orderedMap(log.Attributes.String, inMap(StringAttribute)),
+		orderedMap(log.Attributes.Number, inMap(NumberAttribute)),
+		orderedMap(log.Attributes.Bool, inMap(BoolAttribute)),
+		orderedMap(log.Attributes.JSON, inMap(JSONAttribute)),
 	}
+	for _, key := range promoted {
+		var value driver.Value
+		if _, ok := set[key]; ok {
+			if v, ok := attributeValue(log.Attributes, key); ok {
+				value = v
+			}
+		}
+		row = append(row, value)
+	}
+	return row
 }
 
 func nullIfEmpty(s string) driver.Value {
@@ -192,17 +277,21 @@ func nullIfEmpty(s string) driver.Value {
 	return s
 }
 
-// orderedMap converts a Go map to a DuckDB MAP value, keys sorted.
-func orderedMap[V any](m map[string]V) duckdb.OrderedMap {
+// orderedMap converts the entries of a Go map whose keys keep accepts to a
+// DuckDB MAP value, keys sorted.
+func orderedMap[V any](m map[string]V, keep func(string) bool) duckdb.OrderedMap {
 	var om duckdb.OrderedMap
 	for _, k := range slices.Sorted(maps.Keys(m)) {
-		om.Set(k, m[k])
+		if keep(k) {
+			om.Set(k, m[k])
+		}
 	}
 	return om
 }
 
 // LatestLogs returns up to limit of a Project's newest Logs, by time, newest
-// first.
+// first. Promoted values are merged back into the Attributes, so a reader
+// can't tell which keys are promoted.
 func (s *LogStore) LatestLogs(projectID uint32, limit int) ([]models.Log, error) {
 	table := hotTable(projectID)
 	var exists bool
@@ -215,51 +304,92 @@ func (s *LogStore) LatestLogs(projectID uint32, limit int) ([]models.Log, error)
 	}
 
 	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT id, time, level, message, service, environment, trace_id, span_id,
-			attrs_string, attrs_number, attrs_bool, attrs_json
-		FROM %s.%s
+		SELECT * FROM %s.%s
 		ORDER BY time DESC, id DESC
 		LIMIT ?`, logsCatalog, table), limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
 
 	logs := []models.Log{}
 	for rows.Next() {
-		var (
-			id                                           []byte
-			ts                                           time.Time
-			level, service, environment, traceID, spanID sql.NullString
-			message                                      string
-			attrsString, attrsNumber, attrsBool, attrsJS any
-		)
-		if err := rows.Scan(&id, &ts, &level, &message, &service, &environment, &traceID, &spanID,
-			&attrsString, &attrsNumber, &attrsBool, &attrsJS); err != nil {
+		log, err := scanHotRow(rows, columns)
+		if err != nil {
 			return nil, err
 		}
-		logID, err := uuid.FromBytes(id)
-		if err != nil {
-			return nil, fmt.Errorf("log id %x: %w", id, err)
-		}
-		logs = append(logs, models.Log{
-			ID:          logID,
-			Time:        ts.UTC(),
-			Level:       level.String,
-			Message:     message,
-			Service:     service.String,
-			Environment: environment.String,
-			TraceID:     traceID.String,
-			SpanID:      spanID.String,
-			Attributes: models.Attributes{
-				String: goMap[string](attrsString),
-				Number: goMap[float64](attrsNumber),
-				Bool:   goMap[bool](attrsBool),
-				JSON:   goMap[string](attrsJS),
-			},
-		})
+		logs = append(logs, log)
 	}
 	return logs, rows.Err()
+}
+
+// scanHotRow scans a hot-table row of every column into a Log, merging each
+// non-NULL promoted column into its map.
+func scanHotRow(rows *sql.Rows, columns []string) (models.Log, error) {
+	var (
+		id                                           []byte
+		ts                                           time.Time
+		level, service, environment, traceID, spanID sql.NullString
+		message                                      string
+		attrsString, attrsNumber, attrsBool, attrsJS any
+	)
+	fixed := map[string]any{
+		"id": &id, "time": &ts, "level": &level, "message": &message, "service": &service,
+		"environment": &environment, "trace_id": &traceID, "span_id": &spanID,
+		"attrs_string": &attrsString, "attrs_number": &attrsNumber, "attrs_bool": &attrsBool, "attrs_json": &attrsJS,
+	}
+	values := make([]any, len(columns))
+	dest := make([]any, len(columns))
+	for i, column := range columns {
+		if d, ok := fixed[column]; ok {
+			dest[i] = d
+		} else {
+			dest[i] = &values[i]
+		}
+	}
+	if err := rows.Scan(dest...); err != nil {
+		return models.Log{}, err
+	}
+
+	logID, err := uuid.FromBytes(id)
+	if err != nil {
+		return models.Log{}, fmt.Errorf("log id %x: %w", id, err)
+	}
+	log := models.Log{
+		ID:          logID,
+		Time:        ts.UTC(),
+		Level:       level.String,
+		Message:     message,
+		Service:     service.String,
+		Environment: environment.String,
+		TraceID:     traceID.String,
+		SpanID:      spanID.String,
+		Attributes: models.Attributes{
+			String: goMap[string](attrsString),
+			Number: goMap[float64](attrsNumber),
+			Bool:   goMap[bool](attrsBool),
+			JSON:   goMap[string](attrsJS),
+		},
+	}
+	for i, column := range columns {
+		key, ok := promotedColumnKey(column)
+		if !ok || values[i] == nil {
+			continue
+		}
+		switch v := values[i].(type) {
+		case string:
+			log.Attributes.String[key.Key] = v
+		case float64:
+			log.Attributes.Number[key.Key] = v
+		case bool:
+			log.Attributes.Bool[key.Key] = v
+		}
+	}
+	return log, nil
 }
 
 // goMap converts a scanned DuckDB MAP(VARCHAR, V), or NULL, to a Go map.

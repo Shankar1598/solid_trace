@@ -85,7 +85,7 @@ func (env *TestEnv) Restart(t *testing.T) {
 		t.Fatalf("Prepare failed: %v", err)
 	}
 	env.LogProcessor.Stop()
-	env.LogProcessor = logprocessing.New(env.PebbleWriter, env.LogStore)
+	env.LogProcessor = logprocessing.New(env.PebbleWriter, env.LogStore, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
@@ -241,7 +241,7 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	env.LogProcessor = logprocessing.New(pebbleWriter, logStore)
+	env.LogProcessor = logprocessing.New(pebbleWriter, logStore, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
