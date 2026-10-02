@@ -102,14 +102,7 @@ func main() {
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
-	// Ingest faces clients directly, with no proxy to buffer slow ones, so it
-	// bounds a request and an idle connection. Fiber's default is to wait forever.
-	app := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
-		ReadTimeout:           30 * time.Second, // headers and body of one request
-		IdleTimeout:           10 * time.Second, // between keep-alive requests
-	})
-	handler.RegisterIngestRoutes(app, ingestHandler, healthHandler)
+	app := handler.NewIngestApp(ingestHandler, healthHandler)
 
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
