@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/config"
@@ -46,6 +47,9 @@ type TestEnv struct {
 	Processor    *processing.Processor
 	BatchLock    *sync.Mutex
 	LogStore     *storage.LogStore
+	// FlakyLogs is LogStore as Log processing sees it, which a test can
+	// break.
+	FlakyLogs    *flakyLogStore
 	LogProcessor *logprocessing.Processor
 	MQWriter     *storage.MessageQueueWriter
 	MQReader     *storage.MessageQueueReader
@@ -86,7 +90,7 @@ func (env *TestEnv) Restart(t *testing.T) {
 		t.Fatalf("Prepare failed: %v", err)
 	}
 	env.LogProcessor.Stop()
-	env.LogProcessor = logprocessing.New(env.PebbleWriter, env.LogStore, env.Clock)
+	env.LogProcessor = logprocessing.New(env.PebbleWriter, env.FlakyLogs, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
@@ -109,6 +113,87 @@ func (r *flakyIssueRepository) FindIssueByFingerprint(projectID uint32, fingerpr
 		return 0, 0, 0, false, errors.New("database is locked")
 	}
 	return r.SQLiteWriter.FindIssueByFingerprint(projectID, fingerprint)
+}
+
+// flakyLogStore is the real logs.duckdb as Log processing uses it, except
+// while a test breaks it: then committing Logs fails with the test's error,
+// for every Project or only some, and while it is down, every call fails.
+type flakyLogStore struct {
+	*storage.LogStore
+	// attempts counts cursor reads: each try at a Project's Logs starts
+	// with one, failed or not.
+	attempts atomic.Int32
+
+	mu       sync.Mutex
+	storeErr error
+	projects []uint32 // the Projects whose Logs fail; all if empty
+	down     bool
+}
+
+// fail makes committing the Logs of projects, or of every Project, fail with
+// err. Trying Logs without storing them still works, as on a full disk.
+func (s *flakyLogStore) fail(err error, projects ...uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.storeErr, s.projects = err, projects
+}
+
+// goDown makes every call fail, as when DuckDB doesn't answer at all.
+func (s *flakyLogStore) goDown() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.storeErr, s.projects, s.down = errors.New("database connection lost"), nil, true
+}
+
+// recover ends every failure.
+func (s *flakyLogStore) recover() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.storeErr, s.projects, s.down = nil, nil, false
+}
+
+func (s *flakyLogStore) failure(projectID uint32) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.projects) == 0 || slices.Contains(s.projects, projectID) {
+		return s.storeErr
+	}
+	return nil
+}
+
+func (s *flakyLogStore) isDown() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.down
+}
+
+func (s *flakyLogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
+	s.attempts.Add(1)
+	if s.isDown() {
+		return uuid.Nil, errors.New("database connection lost")
+	}
+	return s.LogStore.LogProcessingCursor(projectID)
+}
+
+func (s *flakyLogStore) AppendLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error {
+	if err := s.failure(projectID); err != nil {
+		return err
+	}
+	return s.LogStore.AppendLogBatches(projectID, batches, now)
+}
+
+func (s *flakyLogStore) TryLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error {
+	if s.isDown() {
+		return errors.New("database connection lost")
+	}
+	return s.LogStore.TryLogBatches(projectID, batches, now)
+}
+
+func (s *flakyLogStore) Ping() error {
+	if s.isDown() {
+		return errors.New("database connection lost")
+	}
+	return s.LogStore.Ping()
 }
 
 func resetTestDB(t *testing.T) {
@@ -233,6 +318,7 @@ func (env *TestEnv) open(t *testing.T) {
 	env.PebbleWriter = pebbleWriter
 	env.DuckDBWriter = duckdbWriter
 	env.LogStore = logStore
+	env.FlakyLogs = &flakyLogStore{LogStore: logStore}
 	env.SQLiteWriter = sqliteWriter
 	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
 	env.MQWriter = mqWriter
@@ -242,7 +328,7 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	env.LogProcessor = logprocessing.New(pebbleWriter, logStore, env.Clock)
+	env.LogProcessor = logprocessing.New(pebbleWriter, env.FlakyLogs, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}

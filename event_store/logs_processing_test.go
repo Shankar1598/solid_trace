@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/duckdb/duckdb-go/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
 )
@@ -111,5 +112,85 @@ func TestALoneLogDuckDBRejectsIsSkippedAndLaterLogsAreStored(t *testing.T) {
 
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"later"}) {
 		t.Errorf("Expected only [later], got %v", got)
+	}
+}
+
+// startLogProcessing runs Log processing until it is caught up, in the
+// background. Wait for it with its result.
+func startLogProcessing(env *TestEnv) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- env.LogProcessor.ProcessUntilCaughtUp() }()
+	return done
+}
+
+// caughtUpWithin waits for background Log processing to return.
+func caughtUpWithin(t *testing.T, env *TestEnv, done <-chan error, timeout time.Duration) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Log processing failed: %v", err)
+		}
+	case <-time.After(timeout):
+		env.LogProcessor.Stop()
+		<-done
+		t.Fatalf("Log processing didn't catch up within %v", timeout)
+	}
+}
+
+// waitFor polls until ok holds, failing the test after timeout.
+func waitFor(t *testing.T, timeout time.Duration, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("Timed out after %v waiting for %s", timeout, what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestLogsWaitOutAStoreFailureAndNoneIsLost(t *testing.T) {
+	failures := map[string]func(*flakyLogStore){
+		"DuckDB unavailable": func(s *flakyLogStore) { s.goDown() },
+		"disk full": func(s *flakyLogStore) {
+			s.fail(&duckdb.Error{Type: duckdb.ErrorTypeIO, Msg: `IO Error: Could not write file "logs.duckdb.wal": No space left on device`})
+		},
+	}
+	for name, breakStore := range failures {
+		t.Run(name, func(t *testing.T) {
+			env := setupTestEnv(t)
+			defer env.Cleanup()
+			output := captureLogs(t)
+
+			postLogs(t, env, "application/json", `{"message": "before", "time": "2026-10-02T11:00:01Z"}`)
+			env.ProcessLogs(t)
+
+			breakStore(env.FlakyLogs)
+			postLogs(t, env, "application/json", `[{"message": "one", "time": "2026-10-02T11:00:02Z"}, {"message": "two", "time": "2026-10-02T11:00:03Z"}]`)
+			postLogs(t, env, "application/json", `{"message": "three", "time": "2026-10-02T11:00:04Z"}`)
+			tries := env.FlakyLogs.attempts.Load()
+			done := startLogProcessing(env)
+
+			// Retried with backoff, and nothing is stored meanwhile.
+			waitFor(t, 5*time.Second, "Log processing to retry", func() bool { return env.FlakyLogs.attempts.Load() >= tries+4 })
+			if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"before"}) {
+				t.Errorf("Expected only [before] while the store fails, got %v", got)
+			}
+
+			env.FlakyLogs.recover()
+			caughtUpWithin(t, env, done, 10*time.Second)
+
+			want := []string{"three", "two", "one", "before"}
+			if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, want) {
+				t.Errorf("Expected each Log once, %v, got %v", want, got)
+			}
+			if !strings.Contains(output.String(), "store error") || strings.Contains(output.String(), "content error") {
+				t.Errorf("Expected the failure reported as a store error, got %q", output.String())
+			}
+			if strings.Contains(output.String(), "skipped a Log") {
+				t.Errorf("Expected no Log skipped, got %q", output.String())
+			}
+		})
 	}
 }

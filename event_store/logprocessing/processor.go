@@ -45,6 +45,15 @@ func isContentError(err error) bool {
 	return errors.As(err, &content)
 }
 
+// Store is logs.duckdb as Log processing uses it. *storage.LogStore is the
+// production adapter.
+type Store interface {
+	LogProcessingCursor(projectID uint32) (uuid.UUID, error)
+	AppendLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error
+	TryLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error
+	Ping() error
+}
+
 // Processor is Log processing: one worker, separate from Event processing,
 // that reads each Project's Log batches from Pebble after its Log processing
 // cursor and appends their Logs to the Project's hot table, moving the cursor
@@ -58,7 +67,7 @@ func isContentError(err error) bool {
 // tried apart, and a Log that fails on its own is skipped and logged.
 type Processor struct {
 	batches *storage.PebbleWriter
-	store   *storage.LogStore
+	store   Store
 	clock   clock.Clock
 
 	mu      sync.Mutex
@@ -82,7 +91,7 @@ type failure struct {
 }
 
 // New constructs Log processing. It reads the time from clock.
-func New(batches *storage.PebbleWriter, store *storage.LogStore, clock clock.Clock) *Processor {
+func New(batches *storage.PebbleWriter, store Store, clock clock.Clock) *Processor {
 	return &Processor{
 		batches: batches,
 		store:   store,
