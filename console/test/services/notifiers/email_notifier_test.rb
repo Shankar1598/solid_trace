@@ -48,12 +48,15 @@ module Notifiers
       end
     end
 
-    test "does nothing if recipients are empty" do
+    test "raises NotConfigured and hands nothing to the mailer when recipients are empty" do
       @integration.settings["recipients"] = ""
       @integration.save!
 
       assert_no_enqueued_emails do
-        EmailNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+        error = assert_raises(NotConfigured) do
+          EmailNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+        end
+        assert_equal "No recipients", error.message
       end
     end
   end

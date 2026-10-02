@@ -27,13 +27,13 @@ module Notifiers
     end
 
     # -----------------------------------------------------------------------
-    # call — HTTP delivery
+    # call — HTTP delivery and its reported outcome
     # -----------------------------------------------------------------------
 
-    test "posts JSON to the PagerDuty Events API" do
-      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
-      response = notifier.call
+    test "posts JSON to the PagerDuty Events API and reports success on a 2xx response" do
+      response = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
 
+      assert_equal "202", response.code
       assert_requested(:post, EVENTS_API_URL) do |req|
         body = JSON.parse(req.body)
         assert_equal "test-routing-key-123", body["routing_key"]
@@ -42,34 +42,46 @@ module Notifiers
       end
     end
 
-    test "returns nil and does not post when routing_key is blank" do
+    test "raises NotConfigured and does not post when routing_key is blank" do
       @integration.settings["routing_key"] = ""
       @integration.save!
 
-      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
-      result = notifier.call
+      error = assert_raises(NotConfigured) do
+        PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_nil result
+      assert_equal "No routing key", error.message
       assert_not_requested(:post, EVENTS_API_URL)
     end
 
-    test "returns nil on network error without raising" do
-      stub_request(:post, EVENTS_API_URL).to_raise(Errno::ECONNREFUSED)
+    test "reports a non-2xx response as a failure with the provider's error" do
+      stub_request(:post, EVENTS_API_URL).to_return(status: 500, body: "internal error")
 
-      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
-      result = notifier.call
+      error = assert_raises(DeliveryFailed) do
+        PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_nil result
+      assert_equal "HTTP 500: internal error", error.message
     end
 
-    test "logs warning on non-success HTTP response" do
-      stub_request(:post, EVENTS_API_URL)
-        .to_return(status: 429, body: "rate limited")
+    test "reports a connection error as a failure" do
+      stub_request(:post, EVENTS_API_URL).to_raise(Errno::ECONNREFUSED)
 
-      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
-      response = notifier.call
+      error = assert_raises(DeliveryFailed) do
+        PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_equal "429", response.code
+      assert_match "Connection refused", error.message
+    end
+
+    test "reports a timeout as a failure" do
+      stub_request(:post, EVENTS_API_URL).to_timeout
+
+      error = assert_raises(DeliveryFailed) do
+        PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
+
+      assert_match "Timeout", error.message
     end
 
     # -----------------------------------------------------------------------
@@ -189,8 +201,10 @@ module Notifiers
       end
     end
 
-    test "an unknown kind posts nothing" do
-      assert_nil PagerdutyNotifier.new(@integration, kind: "issue_notification", issues: [ @issue ]).call
+    test "an unknown kind raises and posts nothing" do
+      assert_raises(ArgumentError) do
+        PagerdutyNotifier.new(@integration, kind: "issue_notification", issues: [ @issue ]).call
+      end
       assert_not_requested(:post, EVENTS_API_URL)
     end
 

@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-require "net/http"
-require "uri"
-require "json"
-
 module Notifiers
   class PagerdutyNotifier
+    include HttpDelivery
+
     EVENTS_API_URL = "https://events.pagerduty.com/v2/enqueue".freeze
 
     # +kind+ is the Notification kind and selects the message. A batched kind
@@ -18,29 +16,12 @@ module Notifiers
       @new_assignee_name = new_assignee_name
     end
 
+    # Raises NotConfigured without a routing key, and DeliveryFailed when
+    # the provider does not accept the message.
     def call
-      return unless routing_key.present?
+      raise NotConfigured, "No routing key" if routing_key.blank?
 
-      uri = URI.parse(EVENTS_API_URL)
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
-      http.open_timeout = 5
-      http.read_timeout = 5
-
-      request = Net::HTTP::Post.new(uri.path)
-      request["Content-Type"] = "application/json"
-      request.body = payload.to_json
-
-      response = http.request(request)
-
-      unless response.is_a?(Net::HTTPSuccess)
-        Rails.logger.warn("PagerDuty notification failed: #{response.code} #{response.body}")
-      end
-
-      response
-    rescue StandardError => e
-      Rails.logger.error("PagerDuty notification error: #{e.message}")
-      nil
+      post_json(EVENTS_API_URL, payload)
     end
 
     private
@@ -120,30 +101,6 @@ module Notifiers
           },
         },
       }
-    end
-
-    def issue_url(target_issue)
-      url_helpers.project_issue_url(
-        target_issue.project,
-        target_issue,
-        org_slug: target_issue.project.organization.slug,
-        host: host
-      )
-    end
-
-    def issues_url(target_issue)
-      url_helpers.issues_url(
-        org_slug: target_issue.project.organization.slug,
-        host: host
-      )
-    end
-
-    def url_helpers
-      Rails.application.routes.url_helpers
-    end
-
-    def host
-      SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000"
     end
   end
 end

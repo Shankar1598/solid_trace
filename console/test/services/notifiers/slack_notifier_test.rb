@@ -22,13 +22,13 @@ module Notifiers
     end
 
     # -----------------------------------------------------------------------
-    # call — HTTP delivery
+    # call — HTTP delivery and its reported outcome
     # -----------------------------------------------------------------------
 
-    test "posts JSON to the configured webhook URL" do
-      notifier = SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
-      response = notifier.call
+    test "posts JSON to the configured webhook URL and reports success on a 2xx response" do
+      response = SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
 
+      assert_equal "200", response.code
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
         body = JSON.parse(req.body)
         assert_includes body["text"], "New Issue"
@@ -36,35 +36,46 @@ module Notifiers
       end
     end
 
-    test "returns nil and does not post when webhook_url is blank" do
+    test "raises NotConfigured and does not post when webhook_url is blank" do
       @integration.settings["webhook_url"] = ""
       @integration.save!
 
-      notifier = SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
-      result = notifier.call
+      error = assert_raises(NotConfigured) do
+        SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_nil result
+      assert_equal "No webhook URL", error.message
       assert_not_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX")
     end
 
-    test "returns nil on network error without raising" do
-      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX")
-        .to_raise(Errno::ECONNREFUSED)
+    test "reports a non-2xx response as a failure with the provider's error" do
+      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX").to_return(status: 500, body: "internal error")
 
-      notifier = SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
-      result = notifier.call
+      error = assert_raises(DeliveryFailed) do
+        SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_nil result
+      assert_equal "HTTP 500: internal error", error.message
     end
 
-    test "logs warning on non-success HTTP response" do
-      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX")
-        .to_return(status: 500, body: "internal error")
+    test "reports a connection error as a failure" do
+      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX").to_raise(Errno::ECONNREFUSED)
 
-      notifier = SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
-      response = notifier.call
+      error = assert_raises(DeliveryFailed) do
+        SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_equal "500", response.code
+      assert_match "Connection refused", error.message
+    end
+
+    test "reports a timeout as a failure" do
+      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX").to_timeout
+
+      error = assert_raises(DeliveryFailed) do
+        SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
+
+      assert_match "Timeout", error.message
     end
 
     # -----------------------------------------------------------------------
@@ -206,8 +217,10 @@ module Notifiers
     # Unknown kind
     # -----------------------------------------------------------------------
 
-    test "an unknown kind posts nothing" do
-      assert_nil SlackNotifier.new(@integration, kind: "issue_notification", issues: [ @issue ]).call
+    test "an unknown kind raises and posts nothing" do
+      assert_raises(ArgumentError) do
+        SlackNotifier.new(@integration, kind: "issue_notification", issues: [ @issue ]).call
+      end
       assert_not_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX")
     end
   end

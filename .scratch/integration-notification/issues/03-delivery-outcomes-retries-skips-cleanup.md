@@ -14,13 +14,13 @@ See spec: "Delivery outcome", "Outcome states on the outbox row", "Bounded retri
 
 **Blocked by:** 02: Integration notification module owns the new-Issue path
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Slack 500, connection refused and timeout are each recorded as `failed` with the error, then retried by later ticks until `attempts` reaches 5
-- [ ] At the attempt cap a row stays `failed` and is not picked up again
-- [ ] A failed batch message marks every row in the batch `failed`
-- [ ] A missing Integration, an inactive Integration, a missing Issue and an unconfigured provider are each recorded as `skipped` with a reason and never retried
-- [ ] Provider adapter tests gain success and failure cases for 2xx, non-2xx, connection error and timeout, per provider
-- [ ] Slack and PagerDuty share one internal HTTP/URL helper
-- [ ] Cleanup removes `sent`/`skipped` rows older than 1 day and capped `failed` rows older than 7 days, and keeps everything else
-- [ ] Tests go through the module's interface and the cleanup job; external systems are faked only with WebMock and ActionMailer test deliveries
+- [x] Slack 500, connection refused and timeout are each recorded as `failed` with the error, then retried by later ticks until `attempts` reaches 5
+- [x] At the attempt cap a row stays `failed` and is not picked up again
+- [x] A failed batch message marks every row in the batch `failed`
+- [x] A missing Integration, an inactive Integration, a missing Issue and an unconfigured provider are each recorded as `skipped` with a reason and never retried
+- [x] Provider adapter tests gain success and failure cases for 2xx, non-2xx, connection error and timeout, per provider
+- [x] Slack and PagerDuty share one internal HTTP/URL helper
+- [x] Cleanup removes `sent`/`skipped` rows older than 1 day and capped `failed` rows older than 7 days, and keeps everything else
+- [x] Tests go through the module's interface and the cleanup job; external systems are faked only with WebMock and ActionMailer test deliveries

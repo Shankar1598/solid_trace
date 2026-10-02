@@ -194,19 +194,149 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
-  # Deliver pending notifications: Integration gone or paused (today's outcome)
+  # Deliver pending notifications: failed deliveries and bounded retries
   # ---------------------------------------------------------------------------
 
-  test "rows for an inactive Integration are closed without delivery" do
+  {
+    "a Slack 500" => -> { stub_request(:post, SLACK_URL).to_return(status: 500, body: "internal error") },
+    "a refused connection" => -> { stub_request(:post, SLACK_URL).to_raise(Errno::ECONNREFUSED) },
+    "a timeout" => -> { stub_request(:post, SLACK_URL).to_timeout },
+  }.each do |failure, stub_failure|
+    test "#{failure} is recorded as failed and retried by later ticks until the attempt cap" do
+      instance_exec(&stub_failure)
+      IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
+
+      IntegrationNotification.deliver_pending(@slack.id)
+
+      row = Notification.sole
+      assert row.status_failed?
+      assert row.error_message.present?
+      assert_equal 1, row.attempts
+      assert_enqueued_with(
+        job: IntegrationNotificationProcessorJob,
+        args: [ @slack.id ],
+        at: Time.current + IntegrationNotification::RATE_LIMIT_WINDOW
+      )
+
+      4.times do
+        travel IntegrationNotification::RATE_LIMIT_WINDOW
+        IntegrationNotification.deliver_pending(@slack.id)
+      end
+
+      assert_requested(:post, SLACK_URL, times: Notification::MAX_ATTEMPTS)
+      assert_equal Notification::MAX_ATTEMPTS, row.reload.attempts
+      assert row.status_failed?
+    end
+  end
+
+  test "a failed row at the attempt cap is not picked up again" do
+    stub_request(:post, SLACK_URL).to_return(status: 500, body: "internal error")
     IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
-    @slack.update!(active: false)
+    Notification.update_all(status: Notification.statuses[:failed], attempts: Notification::MAX_ATTEMPTS)
+    clear_enqueued_jobs
+
+    assert_no_enqueued_jobs do
+      IntegrationNotification.deliver_pending(@slack.id)
+    end
+
+    assert_not_requested(:post, SLACK_URL)
+    assert Notification.sole.status_failed?
+    assert_equal Notification::MAX_ATTEMPTS, Notification.sole.attempts
+  end
+
+  test "a failed batch message marks every row in the batch failed" do
+    stub_request(:post, SLACK_URL).to_return(status: 500, body: "internal error")
+    2.times do
+      IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
+    end
 
     IntegrationNotification.deliver_pending(@slack.id)
 
-    assert_not_requested(:post, SLACK_URL)
+    assert_requested(:post, SLACK_URL, times: 1)
+    assert Notification.all.all?(&:status_failed?)
+    assert_equal [ 1, 1 ], Notification.pluck(:attempts)
+  end
+
+  test "a successful retry records the row as sent" do
+    stub_request(:post, SLACK_URL).to_return({ status: 500, body: "internal error" }, { status: 200, body: "ok" })
+    IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
+
+    IntegrationNotification.deliver_pending(@slack.id)
+    travel IntegrationNotification::RATE_LIMIT_WINDOW
+    IntegrationNotification.deliver_pending(@slack.id)
+
     row = Notification.sole
     assert row.status_sent?
-    assert_equal "Integration inactive", row.error_message
+    assert_equal 2, row.attempts
+  end
+
+  # ---------------------------------------------------------------------------
+  # Deliver pending notifications: rows that cannot be delivered are skipped
+  # ---------------------------------------------------------------------------
+
+  test "rows for an inactive Integration are skipped without delivery and not retried" do
+    IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
+    @slack.update!(active: false)
+    clear_enqueued_jobs
+
+    assert_no_enqueued_jobs do
+      IntegrationNotification.deliver_pending(@slack.id)
+    end
+
+    assert_not_requested(:post, SLACK_URL)
+    assert_skipped Notification.sole, "Integration inactive"
+  end
+
+  test "rows for a missing Integration are skipped" do
+    IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
+    ActiveRecord::Base.connection.disable_referential_integrity { @slack.delete }
+
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert_skipped Notification.sole, "Integration missing"
+  end
+
+  test "a row whose Issue is missing is skipped while the rest of the batch is sent" do
+    kept = create(:issue, project: @project, title: "Kept")
+    removed = create(:issue, project: @project, title: "Removed")
+    [ kept, removed ].each { |issue| IntegrationNotification.issue_received_event(issue, newly_created: true) }
+    removed.destroy!
+
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert_requested(:post, SLACK_URL, times: 1) do |request|
+      JSON.parse(request.body)["text"] == "🚨 1 New Issues Detected"
+    end
+    rows = Notification.all.index_by { |row| row.payload["issue_id"] }
+    assert rows[kept.id].status_sent?
+    assert_skipped rows[removed.id], "Issue missing"
+  end
+
+  {
+    "slack" => { "webhook_url" => "" },
+    "pagerduty" => { "routing_key" => "" },
+    "email" => { "recipients" => "" },
+  }.each do |provider, settings|
+    test "rows for a #{provider} Integration that is not configured are skipped and not retried" do
+      integration = @organization.integrations.create!(
+        provider: provider,
+        settings: settings.merge("notify_on_event_threshold" => "0"),
+        active: true
+      )
+      IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
+      clear_enqueued_jobs
+
+      assert_no_enqueued_jobs do
+        assert_no_enqueued_emails do
+          IntegrationNotification.deliver_pending(integration.id)
+        end
+      end
+
+      row = Notification.find_by!(integration: integration)
+      assert row.status_skipped?
+      assert row.error_message.present?
+      assert_not_requested(:post, "https://events.pagerduty.com/v2/enqueue")
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -266,5 +396,14 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
 
     assert_not_requested(:post, SLACK_URL)
     assert_equal 0, Notification.count
+  end
+
+  private
+
+  def assert_skipped(row, reason)
+    row.reload
+    assert row.status_skipped?, "expected skipped, was #{row.status}"
+    assert_equal reason, row.error_message
+    assert_nil row.sent_at
   end
 end

@@ -12,6 +12,10 @@
 # applies and schedule a tick. The tick applies the per-Integration rate limit
 # and delivers what is due through the provider adapter. The stored kind
 # decides the message the adapter formats.
+#
+# Every row ends in a recorded outcome: sent; failed with the provider's error
+# and retried by later ticks up to Notification::MAX_ATTEMPTS; or skipped with
+# a reason when it can never be delivered.
 module IntegrationNotification
   ISSUE_CREATED = "issue_created"
   THRESHOLD_REACHED = "threshold_reached"
@@ -79,8 +83,8 @@ module IntegrationNotification
       return if row_ids.empty?
 
       integration = Integration.find_by(id: integration_id)
-      return Notification.mark_rows(row_ids, :sent, "Integration missing") if integration.nil?
-      return Notification.mark_rows(row_ids, :sent, "Integration inactive") unless integration.active
+      return Notification.mark_rows(row_ids, :skipped, "Integration missing") if integration.nil?
+      return Notification.mark_rows(row_ids, :skipped, "Integration inactive") unless integration.active
 
       window_opens_at = rate_limit_window_opens_at(integration)
       if window_opens_at
@@ -90,7 +94,7 @@ module IntegrationNotification
 
       deliver_rows(integration, row_ids)
 
-      if Notification.where(integration: integration, status: [ :pending, :failed ]).exists?
+      if Notification.deliverable.where(integration: integration).exists?
         schedule_tick(integration, wait: RATE_LIMIT_WINDOW)
       end
     end
@@ -136,35 +140,39 @@ module IntegrationNotification
     end
 
     def deliver_rows(integration, row_ids)
-      Notification.mark_rows(row_ids, :processing)
-
       rows = Notification.where(id: row_ids).order(:created_at).to_a
       issues = Issue.where(id: rows.map { |row| row.payload["issue_id"] }).includes(project: :organization).index_by(&:id)
+      issue_for = ->(row) { issues[row.payload["issue_id"]] }
+
+      rows_without_issue, rows = rows.partition { |row| issue_for.(row).nil? }
+      Notification.mark_rows(rows_without_issue.map(&:id), :skipped, "Issue missing") if rows_without_issue.any?
+      Notification.mark_rows(rows.map(&:id), :processing)
 
       rows.group_by(&:kind).each do |kind, kind_rows|
         if BATCHED_KINDS.include?(kind)
-          deliver_message(integration, kind, kind_rows, kind_rows.filter_map { |row| issues[row.payload["issue_id"]] })
+          deliver_message(integration, kind, kind_rows, kind_rows.map(&issue_for))
         else
-          kind_rows.each do |row|
-            deliver_message(integration, kind, [ row ], Array(issues[row.payload["issue_id"]]), row.payload)
-          end
+          kind_rows.each { |row| deliver_message(integration, kind, [ row ], [ issue_for.(row) ], row.payload) }
         end
       end
     end
 
+    # Delivers one message and records its outcome on every row it carries.
     def deliver_message(integration, kind, rows, issues, payload = {})
       row_ids = rows.map(&:id)
-      return Notification.mark_rows(row_ids, :sent, "Issues missing") if issues.empty?
-
       adapter_for(integration).new(integration, kind: kind, issues: issues, **assignee_names(issues.first, payload)).call
       Notification.mark_rows(row_ids, :sent)
+    rescue Notifiers::NotConfigured => e
+      Notification.mark_rows(row_ids, :skipped, e.message)
     rescue StandardError => e
+      Rails.logger.warn("Integration notification to #{integration.provider} failed: #{e.message}")
       Notification.mark_rows(row_ids, :failed, e.message)
-      raise
     end
 
     def send_from_trigger(integration, kind, issue, context)
       adapter_for(integration).new(integration, kind: kind, issues: [ issue ], **assignee_names(issue, context)).call
+    rescue Notifiers::NotConfigured
+      nil
     end
 
     def adapter_for(integration)
