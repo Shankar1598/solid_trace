@@ -36,17 +36,30 @@ func (s *Service) IngestLogs(projectID uint32, body []byte, ndjson bool) (LogCou
 	}
 	defer s.leaveGate()
 
+	objects, dropped := logObjects(body, ndjson)
+	return s.storeLogs(projectID, objects, dropped, normalise.JSON)
+}
+
+// storeLogs normalises one request's Logs with normaliseLog, against the
+// receipt time and the Project's Retention, stores the ones kept as one Log
+// batch, and wakes Log processing. dropped counts what the request held that
+// wasn't a Log at all. The caller is in the gate.
+func (s *Service) storeLogs(
+	projectID uint32,
+	objects []map[string]json.RawMessage,
+	dropped int,
+	normaliseLog func(map[string]json.RawMessage, normalise.Receipt) (models.Log, normalise.Outcome),
+) (LogCounts, error) {
 	retentionDays, err := s.retention.LogRetentionDays(projectID)
 	if err != nil {
 		return LogCounts{}, fmt.Errorf("read retention: %w", err)
 	}
 	receipt := normalise.Receipt{At: s.clock.Now().UTC(), RetentionDays: retentionDays}
 
-	objects, dropped := logObjects(body, ndjson)
 	counts := LogCounts{Dropped: dropped}
 	logs := make([]models.Log, 0, len(objects))
 	for _, object := range objects {
-		log, outcome := normalise.JSON(object, receipt)
+		log, outcome := normaliseLog(object, receipt)
 		switch outcome {
 		case normalise.Dropped:
 			counts.Dropped++
@@ -72,6 +85,30 @@ func (s *Service) IngestLogs(projectID uint32, body []byte, ndjson bool) (LogCou
 	}
 	s.notifyLogs(projectID)
 	return counts, nil
+}
+
+// sentryLogRecords returns the log records held by the payloads of an
+// envelope's log items, and counts the records that aren't JSON objects. A
+// payload must be a JSON object with an "items" array of records; one that
+// isn't holds no records that can be read.
+// See https://develop.sentry.dev/sdk/telemetry/logs/#log-envelope-item-payload
+func sentryLogRecords(payloads [][]byte) (records []map[string]json.RawMessage, dropped int) {
+	for _, payload := range payloads {
+		var container struct {
+			Items []json.RawMessage `json:"items"`
+		}
+		if json.Unmarshal(payload, &container) != nil {
+			continue
+		}
+		for _, item := range container.Items {
+			if record, ok := jsonObject(item); ok {
+				records = append(records, record)
+			} else {
+				dropped++
+			}
+		}
+	}
+	return records, dropped
 }
 
 // logObjects splits a body into the JSON objects it holds, and counts the

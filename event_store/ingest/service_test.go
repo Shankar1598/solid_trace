@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -434,5 +436,68 @@ func TestLogsAreNotStoredWhenTheProjectsRetentionCantBeRead(t *testing.T) {
 	}
 	if len(logs.written) != 0 {
 		t.Errorf("Expected nothing stored, got %d batches", len(logs.written))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sentry envelope Logs
+// ---------------------------------------------------------------------------
+
+// pythonLogItem is a log item as sentry-python 2.71 sends it: LogBatcher's
+// payload, serialised by envelope.Item with its length and a newline.
+func pythonLogItem(records ...string) string {
+	payload := `{"version": 2, "items": [` + strings.Join(records, ", ") + `]}`
+	return fmt.Sprintf(`{"type": "log", "content_type": "application/vnd.sentry.items.log+json", "item_count": %d, "length": %d}`, len(records), len(payload)) +
+		"\n" + payload + "\n"
+}
+
+// pythonRecord is one record as sentry-python 2.71 serialises a
+// sentry_sdk.logger.info call (LogBatcher._to_transport_format).
+func pythonRecord(body string) string {
+	return `{"timestamp": 1790942340.25, "level": "info", "body": "` + body + `", ` +
+		`"attributes": {` +
+		`"sentry.environment": {"value": "production", "type": "string"}, ` +
+		`"sentry.sdk.name": {"value": "sentry.python", "type": "string"}, ` +
+		`"sentry.severity_number": {"value": 9, "type": "integer"}, ` +
+		`"sentry.severity_text": {"value": "info", "type": "string"}}, ` +
+		`"trace_id": "5b8efff798038103d269b633813fc60c"}`
+}
+
+const pythonEnvelopeHeader = `{"sent_at": "2026-10-02T12:00:00.000000Z"}` + "\n"
+
+func messages(logs []models.Log) []string {
+	var out []string
+	for _, log := range logs {
+		out = append(out, log.Message)
+	}
+	return out
+}
+
+func TestAnEnvelopesLogItemIsStoredAsOneLogBatch(t *testing.T) {
+	logs := newFakeLogWriter()
+	notified := make(chan uint32, 1)
+	service := newTestLogService(nil, logs, 10)
+	service.notifyLogs = func(projectID uint32) { notified <- projectID }
+
+	envelope := pythonEnvelopeHeader + pythonLogItem(pythonRecord("first"), pythonRecord("second"))
+	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+
+	if len(logs.written) != 1 {
+		t.Fatalf("Expected one Log batch, got %d", len(logs.written))
+	}
+	batch := <-logs.written
+	if got := messages(batch); !reflect.DeepEqual(got, []string{"first", "second"}) {
+		t.Errorf("Expected the Logs first and second, got %v", got)
+	}
+	if got := batch[0].Environment; got != "production" {
+		t.Errorf("Expected the environment from sentry.environment, got %q", got)
+	}
+	if batch[0].ID == batch[1].ID {
+		t.Errorf("Expected each Log its own id")
+	}
+	if got := <-notified; got != 42 {
+		t.Errorf("Expected Log processing woken for Project 42, got %d", got)
 	}
 }
