@@ -65,7 +65,7 @@ A request for Logs written in SolidTrace's KQL-style query language. It always r
 _Avoid_: APL, KQL, search
 
 **SQL query**:
-Raw DuckDB SQL a user runs directly, unscoped by Project, only on installs that have turned it on.
+Raw DuckDB SQL a user runs directly, only on installs that have turned it on. Its `logs` view shows the Project and time range chosen outside the text; this is a convenience, not a limit on what the SQL can read.
 _Avoid_: raw query, advanced query
 
 **Builder**:

@@ -5,6 +5,7 @@ SQL queries run raw DuckDB SQL exactly as written, with no validation, sandbox o
 ## Consequences
 
 - Users query a stable `logs` view, not the storage tables, so storage layout changes don't break their SQL.
+- Since [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) the `logs` view shows only the explorer's Project and time range. That is a convenience, not Project scoping: the SQL still runs unvalidated and can read the raw tables.
 - If SQL must later be offered on installs with untrusted members, the fix is the structural sandbox, and existing cross-Project SQL will break.
 
 Source: [What query language(s) do users write?](../../.scratch/logs/issues/11-query-language.md).
