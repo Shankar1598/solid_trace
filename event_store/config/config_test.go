@@ -50,8 +50,8 @@ func TestIngestPortComesFromTheConfigFile(t *testing.T) {
 	}
 }
 
-// A config written for the old deploy, where Angie forwarded port 4000 to a
-// unix socket, still loads. Ingest then listens on the default port.
+// A config written for the old deploy, whose ingest listened on a unix
+// socket behind a proxy, still loads. Ingest then listens on the default port.
 func TestConfigWithTheOldIngestSocketIngestsOnTCPPort4000(t *testing.T) {
 	cfg := loadFrom(t, writeConfig(t, "ingest_socket: /var/run/solid-trace/event_store.sock\n"))
 
