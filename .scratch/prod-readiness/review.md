@@ -114,6 +114,11 @@ Four paths, none documented as a tradeoff:
 - **`DuckDBIngester.flush()`** discards the whole batch on write error
   (`batch = batch[:0]; return`) with no retry.
 
+**Plan (2026-09-27):** all four paths are addressed by the [ingest write path](../ingest-write-path/spec.md) effort.
+- Ticket 02 stores each Event in Pebble before the `200`.
+- Ticket 03 replaces both channels with Event processing, which catches DuckDB up from Pebble using per-Project processing cursors.
+- `NoSync` stays: a process crash is safe, and a power loss can lose the last few milliseconds.
+
 ## 5. Concurrent first-events for a new fingerprint return 500
 
 `event_store/ingest/service.go:75-87` is find-then-create with no uniqueness handling,
@@ -178,6 +183,8 @@ Worth noting: `classifyIssue` itself is good. The culprit-extraction port is car
 
 ## 7. The UX claim is where the architecture hurts
 
+**Ticket (2026-10-01):** filed as [015](issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02, `8b2af22`). FTS5 search and the dead controls are deferred.
+
 `console/app/serializers/issue_serializer.rb:18,21`:
 
 ```ruby
@@ -223,11 +230,17 @@ Options: (a) make the outbox bidirectional so Go never writes Rails tables, or (
 coupling and encode it explicitly — generate the Go constants from the Rails enums, add a
 schema-version check at startup. Currently it is implicit, which is the worst of both.
 
+**Decision (2026-10-01):** option (b), accepted as-is for the 0.1 prototype. The generated
+constants and the startup schema-version check are not done. Recorded in
+[ADR 0001](../../docs/adr/0001-eventstore-writes-console-tables.md).
+
 Smaller version of the same problem: `event_store/integration_test.go` shells out to
 `bin/rails db:reset`, so the Go suite cannot run without a working Ruby toolchain. It fails
 on a clean checkout. (Unit tests pass: `ingest`, `storage`, `msgpacker` are green.)
 
 ## 9. No retention policy anywhere (decision needed, not a ticket)
+
+**Deferred (2026-10-01):** closed for 0.1. [Logs 10](../logs/issues/10-storage-architecture-and-retention.md) covers storage architecture and retention; decide it there.
 
 Grepped: no delete, prune, TTL, or `DeleteRange` in the Go service. Pebble grows forever with
 ~8KB raw payloads per event. DuckDB's hot table archives to Parquet, but Parquet also grows
@@ -239,6 +252,8 @@ way an install dies. A per-project retention window matters more than tiered sto
 and is the thing tiered storage is currently standing in for.
 
 ## 10. Smaller items
+
+**Deferred (2026-10-01):** all closed for 0.1, to revisit when hardening starts after the prototype. None changes the direction of development.
 
 - `deploy/docker-compose.yml` uses `network_mode: host` on every service, but `angie.conf`
   does `proxy_pass http://console:80`. Docker DNS does not resolve service names under host
@@ -266,6 +281,15 @@ and is the thing tiered storage is currently standing in for.
   table is empty placeholders.
 - CI has `scan_js` commented out and no Go job at all.
 
+**Logs triage (2026-10-01):** [logs 05](../logs/issues/05-prod-readiness-gaps-for-logs.md) kept these
+items out of logs v1 and noted them for later:
+- **Ingest limits.** No `BodyLimit` (Fiber's 4 MB default applies), no cap on a zstd body's
+  decompressed size, no rate limiting, no per-Project quota. Log shippers send large batches,
+  so revisit these together before log ingest goes public.
+- **Metrics.** Still no `/metrics` endpoint; deferred with health reporting and disk alarms.
+- **CI.** Tests run in dev only; the Rails-only `ci.yml` is not in use. No Go CI job is planned.
+- **`mode=ro`, the `ValidateKey` cache, compose host networking and the DSN** are still open.
+
 ---
 
 ## Recommended order
@@ -277,3 +301,5 @@ and is the thing tiered storage is currently standing in for.
 5. Retention policy.
 6. ~~Rewrite the tiered-storage README section.~~ Done: moved to "Future".
 7. ~~Protocol correctness (envelopes, transactions, timestamps) and the `ON CONFLICT` fix.~~ Done (§6, §5).
+
+**Scope note (2026-10-01):** SolidTrace is a 0.1 prototype, not a production release. Open items here are deferred, except §7 (ticket 015). §8 is decided in ADR 0001.

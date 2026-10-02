@@ -1,38 +1,76 @@
 # Project status
 
-Updated: 2026-09-27
+Updated: 2026-10-02
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
 
+**Stage:** 0.1 prototype, not a production release. The goal is to build it and see the end result. Production hardening is deferred until after the prototype.
+
+**Rules for agents:**
+- Don't pick up deferred hardening unprompted: the open items in [prod-readiness review.md](prod-readiness/review.md) (§1, §9, §10: tiered storage, retention, `mode=ro`, the `ValidateKey` cache, compose host networking, DSN, ingest limits, metrics, CI), 011 and 012. Each is marked deferred or `wontfix` there. A change that would make one of them worse is still worth a flag.
+- Don't bring up [upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) (DuckDB 2.0.0 driver swap) until the due date, 2026-10-21, has passed. Leave it out of status summaries and "Next" suggestions before then. After that date, check whether duckdb-go has tagged `v2.20000.0` and raise it.
+- Read [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md) before touching `event_store/storage/sqlite.go` or a Console enum or table that EventStore writes. A change to one must change the other in the same commit.
+- The user is editing [logs/map.md](logs/map.md) and the logs tickets in parallel. Don't edit them unless asked. The Logs counts and path below can be stale, so trust the map.
+
 ## Where things stand
 
-- **Logs**: planning only, no code yet. Scoped down to an MVP on 2026-09-27: JSON-over-HTTP ingest, one global retention window, SQL mode plus a filter bar, a one-page explorer. The rest is on the map's Future list. SQL mode's safety rules are decided. The goal is an MVP spec plus its tickets.
-- **Prod-readiness**: [review.md](prod-readiness/review.md) lists about 9 gaps. 3 are filed as tickets. Query API auth (§2), the concurrent first-event 500 (§5) and Sentry protocol correctness (§6) are fixed.
-- **Integration notification**: the spec is ready for an agent. It has no tickets yet.
+- **Logs**: planning only, no code yet. The map is the source of truth and is being edited in parallel. 4 research tickets and 05 (prod-readiness gaps) are done. The goal is a v1 spec plus first-milestone tickets.
+- **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
+- **Integration notification**: resolved and merged (2026-10-02, `9a488c6`). One Console module sends new-Issue, threshold and assignment notifications through the outbox, with recorded outcomes, bounded retries and cleanup. EventStore's Event count honours the time window. Review findings left open are listed in the [spec](integration-notification/spec.md)'s Comments.
+- **Ingest write path**: reopened. 02 and 03 are resolved (2026-09-30). A code review on 2026-10-01 filed 04–06. 04, a lone bad DuckDB row stalling Event processing, is resolved (2026-10-01). 05 is `wontfix` (2026-10-02). 06 is resolved (2026-10-02). Event ingest stores the Event in Pebble before the `200`. Event processing, a single worker, catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. Review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
 - **Upgrade Pebble and DuckDB**: merged. EventStore now uses Pebble v2.1.7 and the DuckDB 2.0 alpha engine (`v2.0.0-alpha43385`), linked as a shared library. Two follow-ups wait on it.
 
 ## Next
 
-1. [Logs 07: What is a Log?](logs/issues/07-log-domain-model.md) (grilling; the only unblocked logs ticket; it unblocks 08, 09 and 11)
-2. [Ingest write path 01: write the spec](ingest-write-path/issues/01-write-the-spec.md) (review §4; must land before logs MVP code starts)
-3. [Prod-readiness 011: Pebble memtable size](prod-readiness/issues/011-pebble-memtable-size.md) (benchmark task)
-4. [Prod-readiness 012: Sentry compatibility tests](prod-readiness/issues/012-sentry-compatibility-tests.md) (task)
-5. [Integration notification spec](integration-notification/spec.md): split it into tickets
+1. [Logs 06: Logs explorer layout](logs/issues/06-logs-explorer-layout.md) (prototype) or [Logs 07: What is a Log?](logs/issues/07-log-domain-model.md) (grilling)
 
 ## Efforts
 
 | Effort | Done / open | Start here |
 |---|---|---|
-| Logs | 6 done, 1 closed / 6 open | [map.md](logs/map.md) |
-| Prod-readiness | 1 / 2 filed | [review.md](prod-readiness/review.md) |
-| Integration notification | spec only | [spec.md](integration-notification/spec.md) |
+| Logs | 10 / 3 | [map.md](logs/map.md) |
+| Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
+| Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
+| Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
 | Upgrade Pebble and DuckDB | 1 / 2 | [02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
-07 (open now) → 08, 09, 11 → 10 → 13 (write the MVP spec)
+01–09, 11 (done) → 10 (open), 12 (claimed) → 13 (write the v1 spec)
 
-## Last session (2026-09-27)
+## Last session (2026-10-02, logs 09 benchmark)
+
+[Logs 09](logs/issues/09-benchmark-storage-layouts.md) is resolved. A throwaway harness, `event_store/bench/logslayouts`, and the findings ([research/09](logs/research/09-storage-bench-reduced.md)) are on branch `feature/logging` in the logs worktree, not on `main`.
+- **Results:**
+  - Typed MAPs rank first, then JSON text, then VARIANT without shredding.
+  - Shredded VARIANT is unusable on the 2.0 alpha: slow checkpoints and queries, one heap-corruption crash, and a database-invalidating filter error on default-shredded Parquet.
+  - Local Parquet gains nothing from async read-ahead.
+- **Run:** cut to about 2 minutes per layout at the user's request, about 10 minutes for the whole benchmark.
+- **Next for logs:** [10](logs/issues/10-storage-architecture-and-retention.md) (storage and retention grilling) or [12](logs/issues/12-query-builder-ux.md).
+- `main` was merged into `feature/logging` on 2026-10-02. The logs tracker conflicts were resolved in favour of `main`, whose map is the live one. The branch's 2026-09-27 MVP scoping stays in its history only.
+
+## Earlier session (2026-10-02, prod-readiness 015)
+
+[Prod-readiness 015](prod-readiness/issues/015-issue-list-counts-and-pagination.md) is resolved (`8b2af22`). Event processing keeps `times_seen`, `first_seen_at` and `last_seen_at` on `issues`, with a replay guard in `project_seen_cursors`. The Issues list is paginated 25 per page, sorts by last or first seen in SQL, and makes no per-Issue EventStore call. The ticket's comment lists what was added beyond the brief.
+- Toolchain: run Ruby and Go through `mise exec --`. Run the Go and Rails suites one after the other with `RAILS_ENV=test bin/rails db:reset` in between, because the Go tests leave messages in the shared test message queue.
+
+## Earlier session (2026-10-01, prod-readiness close)
+
+Decided to treat the project as a 0.1 prototype and closed the rest of prod-readiness, keeping only what would change the direction of development.
+- **§8:** accepted EventStore writing Console's issue tables. Recorded in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md), the first ADR in `docs/adr/`. The generated enum constants and the startup schema-version check are not done.
+- **§7:** filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), `ready-for-agent` (2026-10-02). EventStore writes the counts directly, with a replay guard in SQLite; no backfill, the test data is wiped. FTS5 and the dead filter controls are out of scope.
+- **Closed for now:** 011 and 012 are `wontfix` with a "reopen after the prototype" comment. Review §1, §9 and §10 are marked deferred, and §9 points at logs 10. The `log` envelope fixtures note stays in 012.
+- No code changed.
+
+## Earlier session (2026-10-01, ingest write path 04)
+
+A code review of ingest write path 03 filed 04–06. Implemented [04](ingest-write-path/issues/04-duckdb-row-isolation.md): a failed DuckDB append is now classified by asking DuckDB (`Ping()`), not by comparing rows, so a lone bad row is skipped instead of stalling every Project. Content retries back off. duckdb-go returns no typed error for a rejected value, so an append-only failure such as the memory limit still counts as a content error. The ticket's Comments list the details.
+
+## Earlier session (2026-09-30)
+
+Implemented [ingest write path 03](ingest-write-path/issues/03-event-processing.md): Event processing in the new `event_store/processing` package, replacing the DuckDB ingester. One change to the spec: startup no longer moves the processing cursor to DuckDB's newest row. It records that row as an in-memory mark, so a crash after the DuckDB commit still resends the batch's Console messages (story 27). The ticket's Comments list the details.
+
+## Earlier session (2026-09-27)
 
 Mostly housekeeping. Tickets stay as local Markdown, and this file is the status page. Closed logging-old: its spec and all 17 tickets are now `wontfix`, and each one points to the logs map. No logs ticket was claimed or resolved. Then fixed review §6 (Sentry protocol correctness) in `event_store/ingest`. Filed 012 for Sentry compatibility tests. Found that SDKs retry no HTTP status and pause 60 s on a 429, so a full ingest channel now returns 503. Fixed §5, the concurrent first-event race.
 
@@ -47,4 +85,37 @@ Follow-ups:
 
 The logs map now records that duckdb-go has no real 2.0 build yet.
 
-Then, on the `feature/logging` worktree: logs map scoped down to an MVP. Resolved 06 (explorer layout) by decision, closed 12 (query builder) as Future, and narrowed 05, 08, 09, 10, 11 and 13 to the MVP. Decided SQL mode's safety rules on 11: read-only, one SELECT, its own DuckDB instance; a large query may take down EventStore, and host-file reads are allowed, both accepted for the MVP. Logs durability waits for the Event ingest change to write each Event to Pebble first. Resolved 05: only the §4 Pebble-first write path must land before MVP code; §8 is a constraint on log ingest.
+Designed the ingest write path, picking up the unfinished 2026-09-26 grilling session.
+- **Spec:** [spec.md](ingest-write-path/spec.md), `ready-for-agent`. It fixes review §4.
+- **Tickets:** 02 and 03 in that effort, plus prod-readiness 013 and 014 (`needs-triage`). 013 was triaged on 2026-09-30, see below.
+- **Decisions:**
+  - Event ingest only stores the raw Event in Pebble.
+  - Event processing owns the Issue lifecycle.
+  - Processing cursors live in Pebble. Startup notes how far DuckDB got past each one (changed in 03 from moving the cursor).
+  - Console messages are sent at least once.
+- **Accepted gap:** a crash can lose an `issue_created`. The spec lists the fixes considered.
+
+## Triage (2026-09-30)
+
+[Prod-readiness 013](prod-readiness/issues/013-archive-overwrites-parquet.md) is now `ready-for-agent`, with an agent brief.
+- The overwrite is reproduced. The first draft's trigger was wrong: today, Late Events are stranded in `events_hot`, not lost.
+- **Decisions:**
+  - `archive_events` carries a cutoff date. Each run moves every Event dated on or before it.
+  - Each run writes new `data-<run id>.parquet` files and never overwrites a file.
+  - Files are staged as `.tmp`, then the delete commits, then the files are renamed. A check at startup and at the start of each run resolves leftover `.tmp` files.
+  - It ships before ingest ticket 03. No glossary change.
+
+[Prod-readiness 014](prod-readiness/issues/014-stuck-processing-messages.md) is now `ready-for-agent`, with an agent brief.
+- Confirmed from the code. Also found that the every-second job has no concurrency limit, so overlapping runs can send a message twice.
+- **Decisions:**
+  - Drop the `processing` claim. A crash leaves the message `pending`, so it is retried.
+  - Add `limits_concurrency to: 1` with `on_conflict: :discard` to `EventStoreMessageProcessorJob`.
+  - Making the status change and the handling one transaction is ruled out: the message and Solid Queue use separate SQLite files.
+
+## Implementation (2026-09-30)
+
+[Prod-readiness 013](prod-readiness/issues/013-archive-overwrites-parquet.md) is resolved. `ArchiveEventsUpTo(cutoff)` writes new `data-<run id>.parquet` files through `.tmp` staging, and recovery runs at startup and at the start of each run. The ticket's comments list what was added beyond the brief and the one edge case that was accepted.
+
+[Prod-readiness 014](prod-readiness/issues/014-stuck-processing-messages.md) is resolved (`a7c06b2`). The processor job no longer sets `processing`, so a crash leaves the message processable. `processable` also picks up rows already stuck in `processing`. `limits_concurrency to: 1` with `on_conflict: :discard` stops overlapping runs. The concurrency lock expires after Solid Queue's default of 3 minutes, which is accepted under at-least-once delivery.
+
+[Ingest write path 02](ingest-write-path/issues/02-mutex-event-writer.md) is resolved. `PebbleWriter.WriteEvent` stores each Event under one lock before the `200`. `ingest_max_waiting` caps waiting requests with a `503`. The Pebble channel, the Pebble ingester and their settings are gone. The ticket's comments list the accepted shutdown edge cases.

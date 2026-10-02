@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,7 +161,7 @@ func TestDuckDBWriter(t *testing.T) {
 	}
 }
 
-func TestArchiveEventsForDate(t *testing.T) {
+func TestArchiveEventsUpTo(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger.Init()
 	dbPath := filepath.Join(tmpDir, "test_archive.duckdb")
@@ -218,14 +219,13 @@ func TestArchiveEventsForDate(t *testing.T) {
 	}
 
 	// Archive yesterday's events
-	if err := writer.ArchiveEventsForDate(yesterday); err != nil {
-		t.Fatalf("ArchiveEventsForDate failed: %v", err)
+	if err := writer.ArchiveEventsUpTo(yesterday); err != nil {
+		t.Fatalf("ArchiveEventsUpTo failed: %v", err)
 	}
 
 	// Verify parquet file was created
-	parquetFile := filepath.Join(parquetPath, "event_date="+yesterday.Format("2006-01-02"), "data.parquet")
-	if _, err := os.Stat(parquetFile); os.IsNotExist(err) {
-		t.Fatalf("Expected parquet file at %s", parquetFile)
+	if files := partitionFiles(t, parquetPath, yesterday, "data-*.parquet"); len(files) != 1 {
+		t.Fatalf("Expected 1 parquet file for yesterday, got %v", files)
 	}
 
 	// View is automatically recreated after archive, so we can query immediately
@@ -247,5 +247,295 @@ func TestArchiveEventsForDate(t *testing.T) {
 	}
 	if hotCount != 1 {
 		t.Errorf("Expected 1 event in hot table after archive, got %d", hotCount)
+	}
+}
+
+func newArchiveTestWriter(t *testing.T) (*DuckDBWriter, string, string) {
+	t.Helper()
+	logger.Init()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "archive.duckdb")
+	parquetPath := filepath.Join(tmpDir, "parquet")
+	writer, err := NewDuckDBWriter(dbPath, parquetPath, "", "")
+	if err != nil {
+		t.Fatalf("Failed to create DuckDBWriter: %v", err)
+	}
+	t.Cleanup(func() { writer.Close() })
+	return writer, dbPath, parquetPath
+}
+
+func archiveTestEvent(uuid string, ts time.Time) models.Event {
+	return models.Event{EventUUID: uuid, ProjectID: 123, IssueFingerprintID: 1, Timestamp: ts, Environment: "production"}
+}
+
+func countEvents(t *testing.T, writer *DuckDBWriter) int {
+	t.Helper()
+	events, err := writer.QueryEvents(QueryParams{ProjectID: 123})
+	if err != nil {
+		t.Fatalf("QueryEvents failed: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, e := range events {
+		if seen[e.EventUUID] {
+			t.Fatalf("Event %s returned twice", e.EventUUID)
+		}
+		seen[e.EventUUID] = true
+	}
+	return len(events)
+}
+
+func partitionFiles(t *testing.T, parquetPath string, date time.Time, pattern string) []string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(parquetPath, "event_date="+date.Format("2006-01-02"), pattern))
+	if err != nil {
+		t.Fatalf("Glob failed: %v", err)
+	}
+	return files
+}
+
+func daysAgo(n int) time.Time {
+	return time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -n)
+}
+
+func TestArchiveAgainKeepsEarlierArchive(t *testing.T) {
+	writer, _, parquetPath := newArchiveTestWriter(t)
+	d := daysAgo(1)
+
+	if err := writer.WriteBatch([]models.Event{
+		archiveTestEvent("d-1", d.Add(time.Hour)),
+		archiveTestEvent("d-2", d.Add(2*time.Hour)),
+	}); err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	if err := writer.ArchiveEventsUpTo(d); err != nil {
+		t.Fatalf("First archive failed: %v", err)
+	}
+
+	if err := writer.WriteBatch([]models.Event{archiveTestEvent("d-late", d.Add(3*time.Hour))}); err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	if err := writer.ArchiveEventsUpTo(d); err != nil {
+		t.Fatalf("Second archive failed: %v", err)
+	}
+
+	if got := countEvents(t, writer); got != 3 {
+		t.Errorf("Expected 3 events after re-archive, got %d", got)
+	}
+	if files := partitionFiles(t, parquetPath, d, "*.parquet"); len(files) != 2 {
+		t.Errorf("Expected 2 parquet files for %s, got %v", d.Format("2006-01-02"), files)
+	}
+}
+
+func TestArchiveMovesEveryDateUpToCutoff(t *testing.T) {
+	writer, _, parquetPath := newArchiveTestWriter(t)
+
+	if err := writer.WriteBatch([]models.Event{
+		archiveTestEvent("d3", daysAgo(3).Add(time.Hour)),
+		archiveTestEvent("d1", daysAgo(1).Add(time.Hour)),
+		archiveTestEvent("today", time.Now().UTC()),
+	}); err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	if err := writer.ArchiveEventsUpTo(daysAgo(1)); err != nil {
+		t.Fatalf("Archive failed: %v", err)
+	}
+
+	for _, d := range []time.Time{daysAgo(3), daysAgo(1)} {
+		if files := partitionFiles(t, parquetPath, d, "*.parquet"); len(files) != 1 {
+			t.Errorf("Expected 1 parquet file for %s, got %v", d.Format("2006-01-02"), files)
+		}
+	}
+	var hotUUIDs []string
+	rows, err := writer.db.Query("SELECT uuid FROM events_hot")
+	if err != nil {
+		t.Fatalf("Query events_hot failed: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+		hotUUIDs = append(hotUUIDs, u)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Rows failed: %v", err)
+	}
+	if len(hotUUIDs) != 1 || hotUUIDs[0] != "today" {
+		t.Errorf("Expected only 'today' in events_hot, got %v", hotUUIDs)
+	}
+	if got := countEvents(t, writer); got != 3 {
+		t.Errorf("Expected 3 events, got %d", got)
+	}
+}
+
+func TestArchiveWithNothingToMoveWritesNothing(t *testing.T) {
+	writer, _, parquetPath := newArchiveTestWriter(t)
+
+	if err := writer.WriteBatch([]models.Event{archiveTestEvent("today", time.Now().UTC())}); err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	if err := writer.ArchiveEventsUpTo(daysAgo(1)); err != nil {
+		t.Fatalf("Archive failed: %v", err)
+	}
+
+	entries, err := os.ReadDir(parquetPath)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("Expected empty parquet root, got %d entries", len(entries))
+	}
+	if got := countEvents(t, writer); got != 1 {
+		t.Errorf("Expected 1 event, got %d", got)
+	}
+}
+
+// stageArchiveFile writes the given hot Events for date to a .tmp archive file,
+// as a run does before its commit.
+func stageArchiveFile(t *testing.T, writer *DuckDBWriter, parquetPath string, date time.Time, uuids ...string) string {
+	t.Helper()
+	dir := filepath.Join(parquetPath, "event_date="+date.Format("2006-01-02"))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	file := filepath.Join(dir, "data-20000101T000000.000000000Z.parquet.tmp")
+	quoted := make([]string, len(uuids))
+	for i, u := range uuids {
+		quoted[i] = "'" + u + "'"
+	}
+	_, err := writer.db.Exec("COPY (SELECT * FROM events_hot WHERE uuid IN (" + strings.Join(quoted, ",") + ")) TO '" + file + "' (FORMAT PARQUET)")
+	if err != nil {
+		t.Fatalf("Staging archive file failed: %v", err)
+	}
+	return file
+}
+
+func reopenWriter(t *testing.T, writer *DuckDBWriter, dbPath, parquetPath string) *DuckDBWriter {
+	t.Helper()
+	writer.Close()
+	reopened, err := NewDuckDBWriter(dbPath, parquetPath, "", "")
+	if err != nil {
+		t.Fatalf("Reopening DuckDBWriter failed: %v", err)
+	}
+	t.Cleanup(func() { reopened.Close() })
+	return reopened
+}
+
+func TestStartupDeletesStagedFileOfUncommittedRun(t *testing.T) {
+	writer, dbPath, parquetPath := newArchiveTestWriter(t)
+	d := daysAgo(2)
+	if err := writer.WriteBatch([]models.Event{
+		archiveTestEvent("a", d.Add(time.Hour)),
+		archiveTestEvent("b", d.Add(2*time.Hour)),
+	}); err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	staged := stageArchiveFile(t, writer, parquetPath, d, "a", "b")
+
+	writer = reopenWriter(t, writer, dbPath, parquetPath)
+
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Errorf("Expected staged file to be deleted, stat err: %v", err)
+	}
+	if files := partitionFiles(t, parquetPath, d, "*.parquet"); len(files) != 0 {
+		t.Errorf("Expected no parquet files, got %v", files)
+	}
+	if got := countEvents(t, writer); got != 2 {
+		t.Errorf("Expected 2 events, got %d", got)
+	}
+}
+
+func TestStartupPublishesStagedFileOfCommittedRun(t *testing.T) {
+	writer, dbPath, parquetPath := newArchiveTestWriter(t)
+	d := daysAgo(2)
+	if err := writer.WriteBatch([]models.Event{
+		archiveTestEvent("a", d.Add(time.Hour)),
+		archiveTestEvent("b", d.Add(2*time.Hour)),
+	}); err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	staged := stageArchiveFile(t, writer, parquetPath, d, "a", "b")
+	if _, err := writer.db.Exec("DELETE FROM events_hot WHERE uuid IN ('a', 'b')"); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	writer = reopenWriter(t, writer, dbPath, parquetPath)
+
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Errorf("Expected staged file to be renamed, stat err: %v", err)
+	}
+	if files := partitionFiles(t, parquetPath, d, "*.parquet"); len(files) != 1 {
+		t.Errorf("Expected 1 parquet file, got %v", files)
+	}
+	if got := countEvents(t, writer); got != 2 {
+		t.Errorf("Expected 2 events, got %d", got)
+	}
+}
+
+func TestArchiveRunDeletesStagedFileOfFailedRun(t *testing.T) {
+	writer, _, parquetPath := newArchiveTestWriter(t)
+	d := daysAgo(2)
+	if err := writer.WriteBatch([]models.Event{
+		archiveTestEvent("a", d.Add(time.Hour)),
+		archiveTestEvent("b", d.Add(2*time.Hour)),
+	}); err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	staged := stageArchiveFile(t, writer, parquetPath, d, "a", "b")
+
+	if err := writer.ArchiveEventsUpTo(d); err != nil {
+		t.Fatalf("Archive failed: %v", err)
+	}
+
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Errorf("Expected staged file to be deleted, stat err: %v", err)
+	}
+	if files := partitionFiles(t, parquetPath, d, "*"); len(files) != 1 {
+		t.Errorf("Expected only this run's parquet file, got %v", files)
+	}
+	if got := countEvents(t, writer); got != 2 {
+		t.Errorf("Expected 2 events, got %d", got)
+	}
+}
+
+func TestArchiveRunWithNothingToMoveStillPublishesRecoveredFile(t *testing.T) {
+	writer, _, parquetPath := newArchiveTestWriter(t)
+	d := daysAgo(2)
+	if err := writer.WriteBatch([]models.Event{archiveTestEvent("a", d.Add(time.Hour))}); err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	stageArchiveFile(t, writer, parquetPath, d, "a")
+	if _, err := writer.db.Exec("DELETE FROM events_hot WHERE uuid = 'a'"); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	if err := writer.ArchiveEventsUpTo(d); err != nil {
+		t.Fatalf("Archive failed: %v", err)
+	}
+
+	if got := countEvents(t, writer); got != 1 {
+		t.Errorf("Expected recovered event to be queryable, got %d events", got)
+	}
+}
+
+func TestStartupLeavesUnreadableStagedFileInPlace(t *testing.T) {
+	writer, dbPath, parquetPath := newArchiveTestWriter(t)
+	dir := filepath.Join(parquetPath, "event_date="+daysAgo(2).Format("2006-01-02"))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	staged := filepath.Join(dir, "data-20000101T000000.000000000Z.parquet.tmp")
+	if err := os.WriteFile(staged, []byte("not parquet"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	writer = reopenWriter(t, writer, dbPath, parquetPath)
+
+	if _, err := os.Stat(staged); err != nil {
+		t.Errorf("Expected unreadable staged file to stay, stat err: %v", err)
+	}
+	if got := countEvents(t, writer); got != 0 {
+		t.Errorf("Expected 0 events, got %d", got)
 	}
 }

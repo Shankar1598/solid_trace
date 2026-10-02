@@ -47,15 +47,13 @@ func TestPebbleTieringLocal(t *testing.T) {
 	defer writer.Close()
 
 	// 2. Write an event
-	eventID := "00000000-0000-0000-0000-000000000001"
 	event := models.Event{
-		EventUUID: eventID,
-		RawJSON:   []byte(`{"message": "hello local tiering"}`),
+		RawJSON: []byte(`{"message": "hello local tiering"}`),
 	}
 
-	err = writer.WriteBatch([]models.Event{event})
+	err = writer.WriteEvent(&event)
 	if err != nil {
-		t.Fatalf("failed to write batch: %v", err)
+		t.Fatalf("failed to write event: %v", err)
 	}
 
 	// 3. Force Flush to L0
@@ -69,7 +67,7 @@ func TestPebbleTieringLocal(t *testing.T) {
 	}
 
 	// 5. Verify Public Interface: Data must be transparently readable
-	data, err := writer.GetEvent(KeyForEvent(event.ProjectID, eventID))
+	data, err := writer.GetEvent(KeyForEvent(event.ProjectID, event.EventUUID))
 	if err != nil {
 		t.Fatalf("failed to get event: %v", err)
 	}

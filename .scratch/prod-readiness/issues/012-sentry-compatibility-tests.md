@@ -1,6 +1,6 @@
 # Sentry compatibility tests: real SDK traffic and a corpus of real events
 
-Status: ready-for-agent
+Status: wontfix
 
 **Source:** follow-up to `review.md` §6 (fixed in 3ec0486)
 **Area:** `event_store/integration_test.go`, `event_store/ingest/`, `event_store/go.mod`
@@ -87,3 +87,13 @@ drop them too. It probably should, for the same reason as §6.
 
 - Both tests exist and pass in `go test ./...`.
 - Every sample failure is fixed or listed as a known gap under Comments.
+
+## Note (2026-10-01)
+
+From [logs 05](../../logs/issues/05-prod-readiness-gaps-for-logs.md): Sentry SDKs send `log` envelope items by default. While capturing real SDK traffic, include envelopes with `log` items in the fixtures, so log ingest can test against them later.
+
+## Comments
+
+### 2026-10-01 closed for 0.1
+
+Closed as `wontfix` for now. SolidTrace is at the 0.1 prototype stage, and the compatibility test suite does not change the direction of development. Reopen after the prototype, when hardening starts.

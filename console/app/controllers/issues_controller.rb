@@ -4,8 +4,16 @@ class IssuesController < ApplicationController
   layout "dashboard"
   before_action :set_organization
 
+  ISSUES_PER_PAGE = 25
+
+  # An Issue with no counted Event yet is seen when it was created.
+  SORTS = {
+    "last_seen" => Arel.sql("COALESCE(issues.last_seen_at, issues.created_at) DESC, issues.id DESC"),
+    "first_seen" => Arel.sql("COALESCE(issues.first_seen_at, issues.created_at) DESC, issues.id DESC"),
+  }.freeze
+
   def index
-    @issues = scoped_resources.order(created_at: :desc)
+    @issues = scoped_resources
 
     if params[:status].present? && params[:status] != "all"
       @issues = @issues.where(status: params[:status])
@@ -17,13 +25,26 @@ class IssuesController < ApplicationController
     if params[:project_id].present? && params[:project_id] != "all"
       @issues = @issues.where(project_id: params[:project_id])
     end
+
+    sort = SORTS.key?(params[:sort]) ? params[:sort] : "last_seen"
+    total_count = @issues.count
+    total_pages = [ (total_count.to_f / ISSUES_PER_PAGE).ceil, 1 ].max
+    page = params[:page].to_i.clamp(1, total_pages)
+    page_issues = @issues.order(SORTS[sort]).offset((page - 1) * ISSUES_PER_PAGE).limit(ISSUES_PER_PAGE)
+
     render inertia: "Issues/Index", props: {
-      issues: @issues.includes(:project, assignee: :user).map { |i| IssueSerializer.new(i).as_json },
+      issues: page_issues.includes(:project, assignee: :user).map { |i| IssueSerializer.new(i).as_json },
+      pagination: {
+        current_page: page,
+        total_pages: total_pages,
+        total_count: total_count,
+      },
       projects: @current_org.projects.map { |p| ProjectSerializer.new(p).as_json },
       filters: {
         status: params[:status] || "all",
         query: params[:query] || "",
         project_id: params[:project_id] || "all",
+        sort: sort,
       },
     }
   end
@@ -48,7 +69,7 @@ class IssuesController < ApplicationController
     page = (params[:events_page] || 1).to_i
     per_page = 20
     @events_list = query.offset((page - 1) * per_page).limit(per_page).all
-    @events_count = query.count
+    @events_count = @issue.times_seen
 
     render inertia: "Issues/Show", props: {
       issue: IssueSerializer.new(@issue).as_json,

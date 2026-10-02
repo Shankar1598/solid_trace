@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -17,7 +18,8 @@ const (
 	batchSize = 10
 )
 
-// ArchivePayload represents the payload of an archive_events message
+// ArchivePayload represents the payload of an archive_events message.
+// Date is a cutoff: every Event dated on or before it is archived.
 type ArchivePayload struct {
 	Date string `msgpack:"date"`
 }
@@ -26,23 +28,31 @@ type ArchivePayload struct {
 type ArchiveConsumer struct {
 	mqReader *storage.MessageQueueReader
 	duckdb   *storage.DuckDBWriter
-	ctx      context.Context
-	cancel   context.CancelFunc
+	// batchLock is shared with Event processing: the archive moves rows by
+	// their timestamp, so it must never run between a batch's DuckDB commit
+	// and its cursor move.
+	batchLock sync.Locker
+	ctx       context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
 }
 
 // NewArchiveConsumer creates a new archive consumer
-func NewArchiveConsumer(mqReader *storage.MessageQueueReader, duckdb *storage.DuckDBWriter) *ArchiveConsumer {
+func NewArchiveConsumer(mqReader *storage.MessageQueueReader, duckdb *storage.DuckDBWriter, batchLock sync.Locker) *ArchiveConsumer {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ArchiveConsumer{
-		mqReader: mqReader,
-		duckdb:   duckdb,
-		ctx:      ctx,
-		cancel:   cancel,
+		mqReader:  mqReader,
+		duckdb:    duckdb,
+		batchLock: batchLock,
+		ctx:       ctx,
+		cancel:    cancel,
+		done:      make(chan struct{}),
 	}
 }
 
 // Run starts the consumer loop
 func (c *ArchiveConsumer) Run() {
+	defer close(c.done)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -59,9 +69,10 @@ func (c *ArchiveConsumer) Run() {
 	}
 }
 
-// Stop stops the consumer
+// Stop stops the consumer and waits for Run to return.
 func (c *ArchiveConsumer) Stop() {
 	c.cancel()
+	<-c.done
 }
 
 func (c *ArchiveConsumer) processBatch() {
@@ -103,10 +114,10 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 		return
 	}
 
-	// Don't allow archiving today or future dates
+	// Don't allow a cutoff of today or a future date
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	if !date.Before(today) {
-		errMsg := "Cannot archive today's or future dates"
+		errMsg := "Archive cutoff must be before today"
 		logger.L.Error(errMsg, "id", msg.ID, "date", payload.Date)
 		c.mqReader.MarkFailed(msg.ID, errMsg)
 		return
@@ -114,11 +125,13 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 
 	switch msg.MessageType {
 	case "archive_events":
-		// Perform the archive
-		logger.L.Info("Starting archive", "date", payload.Date)
-		if err := c.duckdb.ArchiveEventsForDate(date); err != nil {
+		logger.L.Info("Starting archive", "cutoff", payload.Date)
+		c.batchLock.Lock()
+		err := c.duckdb.ArchiveEventsUpTo(date)
+		c.batchLock.Unlock()
+		if err != nil {
 			errMsg := "Archive failed: " + err.Error()
-			logger.L.Error(errMsg, "id", msg.ID, "date", payload.Date)
+			logger.L.Error(errMsg, "id", msg.ID, "cutoff", payload.Date)
 			c.mqReader.MarkFailed(msg.ID, errMsg)
 			return
 		}
@@ -135,5 +148,5 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 		return
 	}
 
-	logger.L.Info("Archive completed", "id", msg.ID, "date", payload.Date)
+	logger.L.Info("Archive completed", "id", msg.ID, "cutoff", payload.Date)
 }

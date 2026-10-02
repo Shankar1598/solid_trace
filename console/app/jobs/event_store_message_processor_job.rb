@@ -3,6 +3,13 @@
 class EventStoreMessageProcessorJob < ApplicationJob
   queue_as :default
 
+  # Runs every second. A run that overlaps one still going is dropped, so no
+  # two runs handle the same message. The lock expires after Solid Queue's
+  # default duration, which also bounds the pause after a crashed run.
+  limits_concurrency to: 1,
+    key: "event_store_message_processor",
+    on_conflict: :discard
+
   def perform
     EventStoreMessage.processable.find_each(batch_size: 100) do |message|
       process_message(message)
@@ -12,7 +19,9 @@ class EventStoreMessageProcessorJob < ApplicationJob
   private
 
   def process_message(message)
-    message.update_columns(status: :processing, attempts: message.attempts + 1)
+    # The status stays as it is while the message is handled, so a crash
+    # leaves it processable for the next run.
+    message.update_columns(attempts: message.attempts + 1)
 
     begin
       payload = message.payload

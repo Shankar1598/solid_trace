@@ -15,3 +15,6 @@ parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 # DuckDB memory and spill-to-disk settings
 # duckdb_temp_directory: /storage_local/duckdb/tmp
 # duckdb_memory_limit: 16GB
+
+# Requests waiting to store their Event before ingest answers 503.
+# ingest_max_waiting: 10000

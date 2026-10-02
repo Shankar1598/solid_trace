@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,10 +25,10 @@ import (
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/models"
-
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/pkg/msgpacker"
+	"github.com/solidtrace/event_store/processing"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -32,12 +36,52 @@ type TestEnv struct {
 	App          *fiber.App
 	QueryApp     *fiber.App
 	PebbleWriter *storage.PebbleWriter
+	EventWriter  *recordingEventWriter
 	DuckDBWriter *storage.DuckDBWriter
 	SQLiteWriter *storage.SQLiteWriter
+	Issues       *flakyIssueRepository
+	Processor    *processing.Processor
+	BatchLock    *sync.Mutex
 	MQWriter     *storage.MessageQueueWriter
 	MQReader     *storage.MessageQueueReader
 	MQPath       string
+	SQLitePath   string
 	Cleanup      func()
+}
+
+// Process runs Event processing until every stored Event is handled.
+func (env *TestEnv) Process(t *testing.T) {
+	t.Helper()
+	if err := env.Processor.ProcessUntilCaughtUp(); err != nil {
+		t.Fatalf("Event processing failed: %v", err)
+	}
+}
+
+// Restart starts a new Event processing on the same stores, as after an
+// EventStore restart or crash.
+func (env *TestEnv) Restart(t *testing.T) {
+	t.Helper()
+	env.Processor.Stop()
+	env.Processor = processing.New(env.PebbleWriter, env.DuckDBWriter, env.MQWriter, env.Issues, env.BatchLock)
+	if err := env.Processor.Prepare(); err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+}
+
+// flakyIssueRepository is the real SQLite IssueRepository, except that its
+// next failFinds lookups fail, as when SQLite is busy.
+type flakyIssueRepository struct {
+	*storage.SQLiteWriter
+	failFinds atomic.Int32
+	finds     atomic.Int32
+}
+
+func (r *flakyIssueRepository) FindIssueByFingerprint(projectID uint32, fingerprint string) (int64, int64, int, bool, error) {
+	r.finds.Add(1)
+	if r.failFinds.Add(-1) >= 0 {
+		return 0, 0, 0, false, errors.New("database is locked")
+	}
+	return r.SQLiteWriter.FindIssueByFingerprint(projectID, fingerprint)
 }
 
 func resetTestDB(t *testing.T) {
@@ -54,6 +98,43 @@ func resetTestDB(t *testing.T) {
 	}
 }
 
+// recordingEventWriter records the UUID of each Event written, because an
+// ingest response doesn't carry it.
+type recordingEventWriter struct {
+	ingest.EventWriter
+	mu    sync.Mutex
+	uuids []string
+}
+
+func (w *recordingEventWriter) WriteEvent(event *models.Event) error {
+	if err := w.EventWriter.WriteEvent(event); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.uuids = append(w.uuids, event.EventUUID)
+	return nil
+}
+
+func (w *recordingEventWriter) UUIDs() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.uuids)
+}
+
+// seedProjectKey adds a Project's public key to the Console database.
+func seedProjectKey(t *testing.T, sqlitePath string, projectID uint32, publicKey string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", sqlitePath)
+	if err != nil {
+		t.Fatalf("Failed to open sqlite for seeding: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO project_keys (public_key, project_id, created_at, updated_at) VALUES (?, ?, ?, ?)", publicKey, projectID, time.Now(), time.Now()); err != nil {
+		t.Fatalf("Failed to seed sqlite: %v", err)
+	}
+}
+
 func setupTestEnv(t *testing.T) *TestEnv {
 	logger.Init()
 	resetTestDB(t)
@@ -65,16 +146,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 	sqlitePath := "../storage/sqlite/test/solid_trace.sqlite3"
 	mqPath := "../storage/sqlite/test/message_queue.sqlite3"
 
-	// Seed SQLite Auth DB with test public key
-	db, err := sql.Open("sqlite3", sqlitePath)
-	if err != nil {
-		t.Fatalf("Failed to open sqlite for seeding: %v", err)
-	}
-	_, err = db.Exec("INSERT INTO project_keys (public_key, project_id, created_at, updated_at) VALUES (?, ?, ?, ?)", "test_public_key", 123, time.Now(), time.Now())
-	if err != nil {
-		t.Fatalf("Failed to seed sqlite: %v", err)
-	}
-	db.Close()
+	seedProjectKey(t, sqlitePath, 123, "test_public_key")
 
 	// Initialize Storage
 	pebbleWriter, err := storage.NewPebbleWriter(&config.Config{PebblePath: pebblePath})
@@ -108,36 +180,37 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		t.Fatalf("Failed to create auth: %v", err)
 	}
 
-	// Create channels
-	pebbleChan := make(chan models.Event, 100)
-	duckdbChan := make(chan models.Event, 100)
-
-	// Start ingesters with short flush timeout
-	pebbleIngester := pipeline.NewPebbleIngester(
-		pebbleChan, duckdbChan, pebbleWriter,
-		10, 100*time.Millisecond,
-	)
-	go pebbleIngester.Run()
-
-	duckdbIngester := pipeline.NewDuckDBIngester(duckdbChan, duckdbWriter, mqWriter, 100*time.Millisecond)
-	go duckdbIngester.Run()
+	env := &TestEnv{
+		PebbleWriter: pebbleWriter,
+		DuckDBWriter: duckdbWriter,
+		SQLiteWriter: sqliteWriter,
+		Issues:       &flakyIssueRepository{SQLiteWriter: sqliteWriter},
+		BatchLock:    &sync.Mutex{},
+		MQWriter:     mqWriter,
+		MQReader:     mqReader,
+		MQPath:       mqPath,
+		SQLitePath:   sqlitePath,
+	}
+	env.Processor = processing.New(pebbleWriter, duckdbWriter, mqWriter, env.Issues, env.BatchLock)
+	if err := env.Processor.Prepare(); err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
 
 	// Setup Handler
-	ingestService := ingest.NewService(sqliteWriter, pebbleChan)
+	env.EventWriter = &recordingEventWriter{EventWriter: pebbleWriter}
+	ingestService := ingest.NewService(env.EventWriter, func(projectID uint32) { env.Processor.Notify(projectID) }, 100)
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
-	app := fiber.New()
-	handler.RegisterIngestRoutes(app, ingestHandler, healthHandler)
-	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, healthHandler)
+	env.App = fiber.New()
+	handler.RegisterIngestRoutes(env.App, ingestHandler, healthHandler)
+	env.QueryApp = fiber.New()
+	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, healthHandler)
 
-	cleanup := func() {
-		close(pebbleChan)
-		close(duckdbChan)
-		// Give some time for ingesters to flush and exit
-		time.Sleep(50 * time.Millisecond)
+	env.Cleanup = func() {
+		pebbleWriter.StopWrites()
+		env.Processor.Stop()
 
 		pebbleWriter.Close()
 		duckdbWriter.Close()
@@ -147,17 +220,7 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		projectAuth.Close()
 	}
 
-	return &TestEnv{
-		App:          app,
-		QueryApp:     queryApp,
-		PebbleWriter: pebbleWriter,
-		DuckDBWriter: duckdbWriter,
-		SQLiteWriter: sqliteWriter,
-		MQWriter:     mqWriter,
-		MQReader:     mqReader,
-		MQPath:       mqPath,
-		Cleanup:      cleanup,
-	}
+	return env
 }
 
 func TestStoreIngestion(t *testing.T) {
@@ -182,8 +245,7 @@ func TestStoreIngestion(t *testing.T) {
 	}
 
 	// 4. Verification
-	// Wait for pipelines to flush
-	time.Sleep(500 * time.Millisecond)
+	env.Process(t)
 
 	params := storage.QueryParams{
 		ProjectID: 123,
@@ -256,7 +318,7 @@ func TestEnvelopeIngestion(t *testing.T) {
 	}
 
 	// Verification
-	time.Sleep(500 * time.Millisecond)
+	env.Process(t)
 
 	params := storage.QueryParams{
 		ProjectID: 123,
@@ -286,7 +348,7 @@ func TestQueryEndpoints(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/api/123/store?sentry_key=test_public_key", bytes.NewReader(sampleEventBytes))
 	req.Header.Set("Content-Type", "application/json")
 	env.App.Test(req, 2000)
-	time.Sleep(500 * time.Millisecond)
+	env.Process(t)
 
 	// Get the generated event UUID from DuckDB
 	events, _ := env.DuckDBWriter.QueryEvents(storage.QueryParams{ProjectID: 123})
@@ -337,6 +399,61 @@ func TestQueryEndpoints(t *testing.T) {
 	json.NewDecoder(getResp.Body).Decode(&payload)
 	if payload["event_id"] != "8a6c475493954601ab7f3b599b2578ca" {
 		t.Errorf("GetEvent payload mismatch")
+	}
+}
+
+func postStore(t *testing.T, env *TestEnv) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest("POST", "/api/123/store?sentry_key=test_public_key", bytes.NewReader(getSampleEventJSON()))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := env.App.Test(req, 2000)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	return resp
+}
+
+func TestEventIsReadableByUUIDAsSoonAsItIsAcknowledged(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	if resp := postStore(t, env); resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	uuids := env.EventWriter.UUIDs()
+	if len(uuids) != 1 {
+		t.Fatalf("Expected 1 Event written, got %d", len(uuids))
+	}
+
+	getReq, _ := http.NewRequest("GET", "/api/123/events/"+uuids[0], nil)
+	getResp, err := env.QueryApp.Test(getReq, 2000)
+	if err != nil {
+		t.Fatalf("GetEvent request failed: %v", err)
+	}
+	if getResp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", getResp.StatusCode)
+	}
+	var payload map[string]interface{}
+	json.NewDecoder(getResp.Body).Decode(&payload)
+	if payload["event_id"] != "8a6c475493954601ab7f3b599b2578ca" {
+		t.Errorf("GetEvent payload mismatch: %v", payload)
+	}
+}
+
+func TestIngestAfterWriterStopsIsServiceUnavailable(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	env.PebbleWriter.StopWrites()
+
+	if resp := postStore(t, env); resp.StatusCode != 503 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 503, got %d: %s", resp.StatusCode, string(body))
+	}
+	if uuids := env.EventWriter.UUIDs(); len(uuids) != 0 {
+		t.Errorf("Expected no Event written after the writer stopped, got %d", len(uuids))
 	}
 }
 
@@ -415,7 +532,7 @@ func TestArchiveEvents(t *testing.T) {
 	}
 
 	// 3. Start Consumer
-	consumer := pipeline.NewArchiveConsumer(env.MQReader, env.DuckDBWriter)
+	consumer := pipeline.NewArchiveConsumer(env.MQReader, env.DuckDBWriter, env.BatchLock)
 	go consumer.Run()
 	defer consumer.Stop()
 
@@ -451,7 +568,7 @@ func TestArchiveEvents(t *testing.T) {
 	// But first, QueryEvents.
 
 	// Need to force view recreation or ensure it picks up changes?
-	// ArchiveEventsForDate calls recreateEventsView.
+	// ArchiveEventsUpTo calls recreateEventsView.
 
 	params := storage.QueryParams{
 		ProjectID: 123,

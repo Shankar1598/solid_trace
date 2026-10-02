@@ -42,10 +42,6 @@ class Issue < ApplicationRecord
     EventStore.new(self)
   end
 
-  def events_count
-    events.count
-  end
-
   private
 
   def assignee_must_match_organization
@@ -61,6 +57,10 @@ class Issue < ApplicationRecord
   end
 
   def notify_integrations_on_assignment
-    IssueAssignmentNotificationJob.perform_later(self, assignee_id_before_last_save, assignee_id)
+    IntegrationNotification.issue_assignment_changed(
+      self,
+      previous_assignee_id: assignee_id_before_last_save,
+      new_assignee_id: assignee_id
+    )
   end
 end

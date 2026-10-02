@@ -74,10 +74,32 @@ class IntegrationsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "is not included in the list", flash[:inertia_errors][:provider].first if flash[:inertia_errors]
   end
 
-  test "should get new with providers hash" do
+  test "the New page starts from the model's rule defaults" do
     get new_integration_url(org_slug: @organization.slug)
+
     assert_response :success
-    # We can check the inertia props if we have access to them,
-    # but at least this confirms the action doesn't crash.
+    assert_equal Integration.new.rule_settings, inertia_props["defaults"]
+  end
+
+  test "the Edit page shows the rule settings the model applies when none were saved" do
+    integration = @organization.integrations.create!(provider: "slack", settings: { "webhook_url" => "https://hooks.slack.com/x" })
+
+    get edit_integration_url(integration, org_slug: @organization.slug)
+
+    settings = inertia_props.dig("integration", "settings")
+    assert_equal "https://hooks.slack.com/x", settings["webhook_url"]
+    assert_equal true, settings["notify_on_event_threshold"]
+    assert_equal true, settings["notify_on_new_issue"]
+    assert_equal false, settings["notify_on_assignment"]
+    assert_equal 10, settings["event_threshold"]
+    assert_equal 5, settings["time_window_minutes"]
+  end
+
+  private
+
+  def inertia_props
+    page = Nokogiri::HTML(response.body).at_css("[data-page]")
+    json = page["data-page"].start_with?("{") ? page["data-page"] : page.text
+    JSON.parse(json)["props"]
   end
 end

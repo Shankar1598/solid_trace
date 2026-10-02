@@ -1,12 +1,10 @@
-# 13: Write the MVP spec and its tickets
+# 13: Write the v1 spec and first-milestone tickets
 
 Type: task
 Status: open
-Blocked by: 05, 07, 08, 10, 11
+Blocked by: 08, 10, 11, 12
 Map: [SolidTrace Logs](../map.md)
 
 ## Question
 
-Assemble the MVP spec from the resolved tickets and write its implementation tickets. Choose the explorer's table and SQL editor components (shadcn is fixed). Resolved when the spec and tickets exist and every decision in them points to a resolved ticket on this map.
-
-The spec states its prerequisites: Event ingest's Pebble-first write path (review §4, [Write the spec for the ingest write-path change](../../ingest-write-path/issues/01-write-the-spec.md)) lands before MVP code starts. See [Which production-readiness gaps must be fixed before or alongside logs?](05-prod-readiness-gaps-for-logs.md).
+Assemble the v1 spec from the resolved tickets, slice v1 into milestones, and write implementation tickets for the first milestone. Resolved when the spec and tickets exist and every decision in them points to a resolved ticket on this map.

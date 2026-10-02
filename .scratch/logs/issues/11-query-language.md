@@ -1,35 +1,36 @@
-# 11: How do the filter bar and SQL mode query logs?
+# 11: What query language(s) do users write?
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: 04, 07
 Map: [SolidTrace Logs](../map.md)
 
 ## Question
 
-The MVP query surface is a filter bar (Project, time range, free-text search) plus SQL mode (decided 2026-09-27; APL and the query builder are on the map's Future list). What does free-text search match (message only, or every field) and how, given no term index? How does a filter-bar query become SQL, and where is it built (Console or EventStore)? What does SQL mode expose to the user: table and column names for logs, and how the JSON fields are reached?
+How much of APL/KQL does SolidTrace support and with what semantics, whether raw DuckDB SQL mode ships in v1 and under what safety rules, whether there is one query engine or two, and where parsing and translation happen?
 
-## Input: SQL mode (decided 2026-09-27)
+Input (2026-10-02, from [What is a Log?](07-log-domain-model.md)): Fields are seven reserved built-ins plus Attributes with flat dotted names (`http.method`, no path syntax). An Attribute's values can have different types in different Logs, and a numeric comparison matches only numeric values; arrays are single values tested with "contains". `level` can be absent, so the language needs an "is empty" test.
 
-Decided with the user while working [Which production-readiness gaps must be fixed before or alongside logs?](05-prod-readiness-gaps-for-logs.md). This settles whether SQL mode ships and under what safety rules.
+## Answer
 
-- **SQL mode ships in the MVP.** The threat model is one self-hosted Organization. Any member may read every Project's logs, so the Project-scoping escape routes in [What APL/KQL surface is worth supporting, and can DuckDB SQL mode be sandboxed?](04-apl-kql-surface-and-sql-sandboxing.md) do not apply.
-- **Queries are read-only.** EventStore accepts one SELECT statement only (checked with `json_serialize_sql`) and runs it on a separate DuckDB instance from the one log ingest writes through.
-- **Accepted risks for the MVP** (the user accepted both explicitly):
-  - A large query can exhaust memory and take down EventStore. That stops log ingest and Event ingest, so error tracking is down too, and Sentry SDKs drop Events until EventStore restarts. No resource limits in the MVP.
-  - A read-only query can read any file EventStore can see, including Console's SQLite. No host-file confinement in the MVP.
+Resolved 2026-10-02 (grilling). Glossary: **Query** and **SQL query** added to `CONTEXT.md`. The unrestricted, opt-in SQL decision is [ADR 0003](../../../docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
 
-### Open items, deferred until SQL mode is built
+**Two ways to query in v1**
+- **The query language:** KQL-style and unbranded (never called APL or KQL). Where KQL and APL differ, KQL's published semantics win. Pasted Axiom queries often work, but that is not promised.
+- **SQL queries:** raw DuckDB SQL run exactly as written, with no validation or sandbox. Off by default behind one instance-level setting; once on, every member of every organization can run them. The setting's description lists what that allows: reading every organization's Logs and Events and files on the server, writing files, dropping tables (including the Event index), and starving ingest.
+- **What SQL sees:** a stable, documented `logs` view (`project_id`, the seven built-in fields, the Attributes) regardless of storage layout. Raw tables stay reachable but undocumented. The explorer's Project selector does not apply; users filter `project_id` themselves.
 
-Not part of the MVP spec. Revisit once the feature exists.
+**Language surface (v1)**
+- `where` with `and`/`or`/`not`, comparisons, `contains` (case-insensitive), `contains_cs`, `startswith`, `matches regex`, `in`/`!in`, `isempty`/`isnotempty`.
+- `project`, `extend`; `summarize` with `count`, `dcount`, `sum`, `avg`, `min`, `max`, `percentile`, by fields and `bin(time, …)`; `sort`, `take`, `top`, `count`, `distinct`, `search`.
+- `dcount` and `percentile` are documented as estimates.
+- Not in v1: `has`, `join`, `mv-expand`, `parse`, `evaluate`, series and geo functions.
 
-- **Host file reads:** a read-only SELECT can still read any file the process can see (`FROM '/path'`, `read_csv`), including Console's SQLite. Candidate fix: `enable_external_access=false` with `allowed_directories` set to the log data.
-- **Resource limits on the query instance:**
-  - Row cap as SQL: wrap as `SELECT * FROM (<query>) LIMIT 10001`. The Go driver materialises the whole result outside `memory_limit` before the first row is read, so a cap in the Go row loop is too late.
-  - `memory_limit` (for example 25% of RAM) and `max_temp_directory_size`, so a spill cannot fill the log disk.
-  - `threads` below the core count, so log ingest keeps CPU.
-  - Timeout by Go context cancel (for example 30 s) and at most 2 concurrent user queries.
-- **Checks before relying on those limits:**
-  - Does the outer `LIMIT` bound materialised memory? Re-run the research's 8M-row SELECT with the wrapper.
-  - Does the DuckDB 2.0 driver cancel during preparation (the duckdb-go v2.5.5 fix)?
-  - Do these settings behave the same on DuckDB 2.0 as on 1.4.3?
+**Semantics**
+- The explorer bar sets the Project and time range. Query text starts with operators; a leading `logs |` is optional. A Query can narrow the time range but never widen it or leave the Project.
+- The search box is a case-insensitive `contains` over `message` and every string Attribute value. Whether that is fast enough is for the benchmark.
+- `!=` and `!in` include Logs where the Field is missing, so "Hide this" never hides unrelated Logs. `==` never coerces types (`200` does not match `"200"`). A filter built from a tag uses that value's own type.
+
+**Engine**
+- One query path: filter chips, search, histogram, per-level counts and field top-values all become query text, compiled once into DuckDB SQL. The hidden query text is always the real query.
+- A hand-written Go parser and compiler in EventStore, borrowing `runreveal/pql`'s structure, rejecting unknown functions. The browser only highlights, and gets errors from a validate endpoint.

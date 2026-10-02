@@ -7,32 +7,36 @@ Map: [SolidTrace Logs](../map.md)
 
 ## Question
 
-`.scratch/prod-readiness/review.md` lists gaps in today's SolidTrace (for example read-API authentication, ingest key lookup cost, shutdown drain, retention). Which of them does the logs MVP depend on or make worse, which come into this effort's scope, and which must land before MVP code starts? (Narrowed to the MVP on 2026-09-27.)
+`.scratch/prod-readiness/review.md` lists gaps in today's SolidTrace (for example read-API authentication, ingest key lookup cost, shutdown drain, retention). Which of them does the logs work depend on or make worse, which come into this effort's scope, and in what order relative to logs v1?
 
-Input from research (ingest protocols): the envelope-parser bug it found is fixed (review §6, commit `3ec0486`). Research also found the pinned Fiber mishandles zstd bodies and has no decompressed-size cap. See [Which ingest protocols and shippers should logs support?](02-ingest-protocols-and-shippers.md).
+Input from research (ingest protocols): the envelope parser loses whole Events today when an Event is followed by another item (for example sentry-ruby's `client_report`), returning 400. That is an existing error-tracking bug, not only a logs gap. Research also found the pinned Fiber mishandles zstd bodies and has no decompressed-size cap. See [Which ingest protocols and shippers should logs support?](02-ingest-protocols-and-shippers.md).
 
 Already fixed outside this map (2026-09-26, on `main`): review §2, read-API authentication. The query routes moved to a loopback-only listener (`query_port`, default 4100) with no token, Pebble event keys are prefixed with the project id, and a failed ingest key lookup now returns 500 instead of 401. Detail: [Query API has no authentication](../../prod-readiness/issues/002-query-api-authentication.md). Leave §2 out of this triage.
 
-Also fixed or in progress outside this map (2026-09-27): §3, the Docker build, is fixed on the unmerged `upgrade-pebble-duckdb` branch, which also moves to the DuckDB 2.0 preview driver. §5, concurrent first Events, has an uncommitted fix on `main`. §4, acknowledged Events that vanish, is being redesigned: Event ingest will write each Event to Pebble before replying `200`.
-
 ## Answer
 
-Decided with the user on 2026-09-27, against the MVP scope. Each gap has one bucket: **prerequisite** (lands before MVP code starts; stays prod-readiness work; the MVP spec states it), **input** (a named logs ticket decides it for logs), or **independent** (prod-readiness work this map drops).
+Resolved 2026-10-01 (grilling). Gaps were checked against the code on that date. §2, §3, §5, §6 and prod-readiness 013 are already fixed.
 
-| Gap (`review.md`) | Bucket | Where |
-|---|---|---|
-| §1 Tiered storage | Future | the map's Future list |
-| §2 Query API auth | fixed | before this ticket |
-| §3 Docker build, plus the DuckDB 2.0 driver | fixed | merged to `main` (`91f0f8f`); EventStore links the 2.0 alpha |
-| §4 Acknowledged Events that vanish | **prerequisite** | [Write the spec for the ingest write-path change](../../ingest-write-path/issues/01-write-the-spec.md). The user's change: Event ingest writes each Event to Pebble before replying `200`. It lands before MVP code starts, because log ingest shares the process, the shutdown sequence and probably the write path. The benchmark does not wait for it. Durability for logs waits for it on [How are logs stored and retained?](10-storage-architecture-and-retention.md). |
-| §5 Concurrent first Events | fixed | `7de90dd` |
-| §6 Sentry protocol correctness | fixed | `3ec0486`; envelope log items are Future |
-| §7 Issues list N+1 | independent | |
-| §8 EventStore writes Console's SQLite | **input** (logs), independent (Events) | Constraint: log ingest never writes Console's SQLite and reads it only through a cached Project key lookup. Input to [How does JSON-over-HTTP log ingest work?](08-v1-ingest-sources-auth-limits.md) and [How are logs stored and retained?](10-storage-architecture-and-retention.md). |
-| §9 No retention | decided for logs; independent for Events | one global window for logs (MVP scope); Event retention stays prod-readiness work |
-| §10 `ValidateKey` has no cache; no `BodyLimit` override; no decompressed-size cap (and Fiber mishandles zstd) | **input** | [How does JSON-over-HTTP log ingest work?](08-v1-ingest-sources-auth-limits.md) |
-| §10 No rate limit or per-Project quota | Future | the map's Future list |
-| §10 No metrics endpoint | Future | the map's Future list |
-| §10 `mode=ro` DSN, compose host networking, hardcoded DSN, `ArchiveEventsForDate` | independent | `ArchiveEventsForDate` is also a failure mode noted on ticket 10 |
-| §10 CI has no Go job; integration test needs Rails | independent | The user runs tests locally; no CI before MVP code. |
-| Prod-readiness 011, Pebble memtable size | independent | |
+**Before any logs v1 code**
+- Ingest write path 04–06, which finish the §4 durability fixes. The log storage design may reuse the Event pattern (store in Pebble before the `200`, then catch up from a processing cursor).
+
+**In this effort**
+- Log retention (§9) is designed in [How are logs stored and retained?](10-storage-architecture-and-retention.md). That ticket must say whether Events can reuse the mechanism. Event retention (Pebble, Parquet) stays a prod-readiness gap.
+
+**Noted for later, not in logs v1**
+- Logs must not starve Events: a log flood or a full disk making Event ingest fail. Moved to the map's v2 fog.
+- Observability: the `/metrics` endpoint, health reporting and disk alarms. Health reporting and disk alarms moved to the map's v2 fog. Ingest backpressure and a log ingest load test stay in v1.
+- Ingest limits: a body-size cap, a zstd decompressed-size cap, rate limits and per-Project quotas. Noted in the prod-readiness review for later, with no ticket.
+
+**Stays in prod-readiness, outside this effort**
+- §7, the Issues list N+1 and pagination.
+- §8, Go writing Rails tables. Constraint for logs: **logs add no new Go writes to Rails tables**; they only read Project keys.
+- The `ValidateKey` cache. Shippers batch, so 1–6k logs/s is about 10–60 requests/s.
+- `mode=ro`, compose host networking, the DSN.
+- §1 tiering. The logs map's S3/GCS fog covers the log side.
+- 011 Pebble memtable size (relevant only if logs go into Pebble).
+- Outbox table cleanup.
+- Go CI. Tests run in dev; the Rails-only `ci.yml` is not in use, so CI is no prerequisite.
+- 012 Sentry compatibility tests, with a note to capture Sentry `log` envelope items in its fixtures.
+
+**Map correction:** the envelope parser already walks every item (§6 fix). What remains is that `log` items are dropped as non-Event items; routing them moves to [Which ingest sources ship in v1, with what auth and limits?](08-v1-ingest-sources-auth-limits.md).
