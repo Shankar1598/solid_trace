@@ -11,7 +11,6 @@ import (
 
 type Config struct {
 	Port               string
-	SocketPath         string
 	QueryPort          string // Query API port, always bound to 127.0.0.1
 	PebblePath         string
 	DuckDBPath         string
@@ -34,7 +33,6 @@ type Config struct {
 
 type fileConfig struct {
 	IngestPort          *string        `yaml:"ingest_port"`
-	IngestSocket        *string        `yaml:"ingest_socket"`
 	QueryPort           *string        `yaml:"query_port"`
 	PebblePath          *string        `yaml:"pebble_path"`
 	DuckDBPath          *string        `yaml:"duckdb_path"`
@@ -52,7 +50,6 @@ type fileConfig struct {
 func Load() *Config {
 	cfg := &Config{
 		Port:               "4000",
-		SocketPath:         "",
 		QueryPort:          "4100",
 		PebblePath:         "../storage/pebble/development/events",
 		DuckDBPath:         "../storage/duckdb/development/events.duckdb",
@@ -99,9 +96,6 @@ func applyFileConfig(cfg *Config, path string) error {
 
 	if config.IngestPort != nil && *config.IngestPort != "" {
 		cfg.Port = *config.IngestPort
-	}
-	if config.IngestSocket != nil {
-		cfg.SocketPath = *config.IngestSocket
 	}
 	if config.QueryPort != nil && *config.QueryPort != "" {
 		cfg.QueryPort = *config.QueryPort
