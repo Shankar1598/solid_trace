@@ -15,6 +15,8 @@ import (
 type Settings struct {
 	MemoryLimit string
 	Threads     int
+	// Extra statements run on open, such as a layout's shredding setting.
+	Extra []string `json:",omitempty"`
 }
 
 func OpenDB(path string, s Settings) (*sql.DB, error) {
@@ -26,6 +28,12 @@ func OpenDB(path string, s Settings) (*sql.DB, error) {
 		fmt.Sprintf("SET GLOBAL memory_limit = '%s'", s.MemoryLimit),
 		fmt.Sprintf("SET GLOBAL threads = %d", s.Threads),
 	} {
+		if _, err := db.Exec(q); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("%s: %w", q, err)
+		}
+	}
+	for _, q := range s.Extra {
 		if _, err := db.Exec(q); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("%s: %w", q, err)
@@ -56,6 +64,8 @@ type Layout interface {
 	AttrsJSON() []string
 	// ParquetOptions are extra COPY options for the layout's Parquet files.
 	ParquetOptions() string
+	// Setup are statements to run whenever the database is opened.
+	Setup() []string
 	NewWriter(ctx context.Context, db *sql.DB) (Writer, error)
 }
 
@@ -65,7 +75,9 @@ type Writer interface {
 	Close() error
 }
 
-func Layouts() []Layout { return []Layout{jsonLayout{}, variantLayout{}, mapLayout{}} }
+func Layouts() []Layout {
+	return []Layout{jsonLayout{}, variantLayout{}, variantLayout{noShred: true}, mapLayout{}}
+}
 
 func LayoutByName(name string) (Layout, error) {
 	for _, l := range Layouts() {
@@ -176,6 +188,7 @@ func (jsonLayout) NumAttr(k string) string {
 }
 func (jsonLayout) AttrsJSON() []string    { return []string{"attrs"} }
 func (jsonLayout) ParquetOptions() string { return "" }
+func (jsonLayout) Setup() []string        { return nil }
 func (jsonLayout) NewWriter(ctx context.Context, db *sql.DB) (Writer, error) {
 	return newAppenderWriter(ctx, db, nil, "", "logs", func(l Log) []driver.Value {
 		return append(fixedValues(l), string(l.AttrsJSON))
@@ -184,10 +197,22 @@ func (jsonLayout) NewWriter(ctx context.Context, db *sql.DB) (Writer, error) {
 
 // variantLayout stores Attributes as VARIANT. The Go appender cannot write
 // VARIANT, so each batch is appended as JSON text to a temporary staging
-// table and converted with text::JSON::VARIANT in one INSERT.
-type variantLayout struct{}
+// table and converted with text::JSON::VARIANT in one INSERT. With noShred,
+// the hot table never shreds (variant_minimum_shredding_size = -1).
+type variantLayout struct{ noShred bool }
 
-func (variantLayout) Name() string        { return "variant" }
+func (l variantLayout) Name() string {
+	if l.noShred {
+		return "variant_noshred"
+	}
+	return "variant"
+}
+func (l variantLayout) Setup() []string {
+	if l.noShred {
+		return []string{"SET GLOBAL variant_minimum_shredding_size = -1"}
+	}
+	return nil
+}
 func (variantLayout) attrColumns() string { return "attrs VARIANT" }
 
 // StrAttr uses variant_extract_string: on Parquet shredded by default (one
@@ -268,6 +293,7 @@ func (mapLayout) attrColumns() string {
 func (mapLayout) StrAttr(k string) string { return fmt.Sprintf("attrs_str[%s]", sqlString(k)) }
 func (mapLayout) NumAttr(k string) string { return fmt.Sprintf("attrs_num[%s]", sqlString(k)) }
 func (mapLayout) ParquetOptions() string  { return "" }
+func (mapLayout) Setup() []string         { return nil }
 func (mapLayout) AttrsJSON() []string {
 	return []string{"to_json(attrs_str)", "to_json(attrs_num)", "to_json(attrs_bool)"}
 }

@@ -27,7 +27,7 @@ func TestDefaultVariantParquet(t *testing.T) {
 		_, err := db.ExecContext(ctx, fmt.Sprintf("COPY logs TO %s (FORMAT parquet, ROW_GROUP_SIZE %d)", sqlString(path), rg))
 		var cols int
 		db.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM parquet_schema(%s)", sqlString(path))).Scan(&cols)
-		t.Logf("COPY %d logs, ROW_GROUP_SIZE %d: %v, %d schema columns, err=%v", testLogs, rg, time.Since(start).Round(time.Millisecond), cols, firstLine(err))
+		t.Logf("COPY %d logs, ROW_GROUP_SIZE %d: %v, %d schema columns, err=%q", testLogs, rg, time.Since(start).Round(time.Millisecond), cols, firstLine(err))
 	}
 	path := filepath.Join(dir, "rg4096.parquet")
 	for _, q := range []string{
@@ -41,20 +41,7 @@ func TestDefaultVariantParquet(t *testing.T) {
 		var n int
 		start := time.Now()
 		err = fresh.QueryRowContext(ctx, fmt.Sprintf(q, sqlString(path))).Scan(&n)
-		t.Logf("%s: %d rows in %v, err=%v", q[45:], n, time.Since(start).Round(time.Millisecond), firstLine(err))
+		t.Logf("%s: %d rows in %v, err=%q", q[45:], n, time.Since(start).Round(time.Millisecond), firstLine(err))
 		fresh.Close()
 	}
-}
-
-func firstLine(err error) string {
-	if err == nil {
-		return "none"
-	}
-	s := err.Error()
-	for i := range s {
-		if s[i] == '\n' {
-			return s[:i]
-		}
-	}
-	return s
 }
