@@ -32,6 +32,7 @@ func smokeConfig(t *testing.T, l Layout) Config {
 
 func TestRunMeasuresEveryStageAndCleansUp(t *testing.T) {
 	cfg := smokeConfig(t, mapLayout{})
+	cfg.Promote = []int{0, 5}
 	r, err := Run(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +75,22 @@ func TestRunMeasuresEveryStageAndCleansUp(t *testing.T) {
 	if len(r.Verify) != len(Queries()) || !reflect.DeepEqual(r.Verify, r.Parquet[0].Verify) {
 		t.Errorf("hot and Parquet verification differ:\n hot %v\n pq  %v", r.Verify, r.Parquet[0].Verify)
 	}
+	if len(r.Promotion) != 2 || r.ProjectRows == 0 {
+		t.Fatalf("promotion %d runs, project rows %d", len(r.Promotion), r.ProjectRows)
+	}
+	for _, pr := range r.Promotion {
+		for _, fr := range pr.Forms {
+			if !reflect.DeepEqual(fr.Verify, r.Verify) {
+				t.Errorf("N=%d %s differs from the hot table:\n got  %v\n want %v", pr.N, fr.Form, fr.Verify, r.Verify)
+			}
+			if wantOne := pr.N == 0 || fr.Form == FormPerFile; wantOne != (len(fr.Threads1) > 0) {
+				t.Errorf("N=%d %s: %d threads = 1 timings", pr.N, fr.Form, len(fr.Threads1))
+			}
+		}
+	}
+	if md := Markdown([]*Report{r}); !strings.Contains(md, "Projection to 4 vCPU") || strings.Contains(md, "differs") {
+		t.Errorf("promotion report:\n%s", md)
+	}
 	if _, err := os.Stat(cfg.Dir); !os.IsNotExist(err) {
 		t.Errorf("layout dir %s still exists (err %v)", cfg.Dir, err)
 	}
@@ -109,5 +126,41 @@ func TestRunSkipsQueriesPastTheSetBudget(t *testing.T) {
 	}
 	if !r.HotQueries[len(r.HotQueries)-1].Skipped {
 		t.Errorf("last query ran despite the spent budget: %+v", r.HotQueries[len(r.HotQueries)-1])
+	}
+}
+
+func TestCyclesExportAndDeleteTheOldestHour(t *testing.T) {
+	const hour = 3000
+	r, err := RunCycles(context.Background(), CyclesConfig{
+		Dir:        filepath.Join(t.TempDir(), "cycles"),
+		Seed:       1,
+		Settings:   Settings{MemoryLimit: "1GB", Threads: 2},
+		HourLogs:   hour,
+		Cycles:     3,
+		FlushLogs:  500,
+		Promote:    5,
+		Checkpoint: true,
+		Logf:       t.Logf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Cycles) != 3 || len(r.Errors) > 0 {
+		t.Fatalf("cycles %+v, errors %v", r.Cycles, r.Errors)
+	}
+	for _, c := range r.Cycles {
+		if c.ExportedRows != hour || c.Files == 0 {
+			t.Errorf("hour %d: exported %d rows in %d files, want %d", c.Hour, c.ExportedRows, c.Files, hour)
+		}
+		// The previous hour and some of the current one remain.
+		if c.TableRows < hour || c.DBBytes == 0 {
+			t.Errorf("hour %d: %d rows left, file %d bytes", c.Hour, c.TableRows, c.DBBytes)
+		}
+		if c.Between.Flushes == 0 {
+			t.Errorf("hour %d: no flushes recorded between exports", c.Hour)
+		}
+	}
+	if md := CyclesMarkdown(r); !strings.Contains(md, "| 2 | 3000 |") {
+		t.Errorf("report is missing hour 2:\n%s", md)
 	}
 }

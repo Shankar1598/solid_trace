@@ -1,7 +1,8 @@
-// Command logsbench runs the logs storage-layout benchmark (logs ticket 09).
+// Command logsbench runs the logs storage benchmark (logs tickets 09 and 14).
 //
 //	logsbench run -layout json -work /tmp/bench -out results/json.json
 //	logsbench report results/json.json results/map.json ... > report.md
+//	logsbench cycles -hour 200000 -cycles 10 -out results/cycles.json > cycles.md
 //
 // The defaults take about two minutes per layout; slow query sets are cut
 // short by -set-budget. Run one layout per process, under the dev-box limits
@@ -27,7 +28,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: logsbench run|report ...")
+		fmt.Fprintln(os.Stderr, "usage: logsbench run|report|cycles ...")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -35,6 +36,8 @@ func main() {
 		run(os.Args[2:])
 	case "report":
 		report(os.Args[2:])
+	case "cycles":
+		cycles(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
 		os.Exit(2)
@@ -54,7 +57,8 @@ func run(args []string) {
 	burst := fs.Duration("burst", 15*time.Second, "burst phase")
 	burstFactor := fs.Int("burst-factor", 5, "burst rate as a multiple of the target")
 	flush := fs.Int("flush", 5000, "Logs per flush when unthrottled")
-	rowGroups := fs.String("rowgroups", "122880", "Parquet row group sizes, comma-separated")
+	rowGroups := fs.String("rowgroups", "", "row group sizes for ticket 09's all-Project hourly Parquet, comma-separated (none by default)")
+	promote := fs.String("promote", "0,10,20,40", "N to try for per-Project hourly Parquet with the top N keys promoted, comma-separated")
 	verify := fs.Int64("verify", 50_000, "Logs covered by the cross-layout result check")
 	queryTimeout := fs.Duration("query-timeout", 20*time.Second, "per query run")
 	setBudget := fs.Duration("set-budget", 30*time.Second, "per query set; the rest of a slow set is skipped")
@@ -66,14 +70,7 @@ func run(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	var sizes []int
-	for _, s := range strings.Split(*rowGroups, ",") {
-		n, err := strconv.Atoi(strings.TrimSpace(s))
-		if err != nil {
-			log.Fatalf("row group size %q: %v", s, err)
-		}
-		sizes = append(sizes, n)
-	}
+	sizes, promoted := ints(*rowGroups), ints(*promote)
 	if *out == "" {
 		*out = l.Name() + ".json"
 	}
@@ -88,6 +85,7 @@ func run(args []string) {
 		BurstFactor:       *burstFactor,
 		FlushLogs:         *flush,
 		RowGroupSizes:     sizes,
+		Promote:           promoted,
 		VerifyMaxID:       *verify,
 		QueryTimeout:      *queryTimeout,
 		SetBudget:         *setBudget,
@@ -102,6 +100,62 @@ func run(args []string) {
 			log.Fatal(err)
 		}
 		log.Printf("wrote %s", *out)
+	}
+	if runErr != nil {
+		log.Fatal(runErr)
+	}
+}
+
+func ints(list string) []int {
+	var out []int
+	for _, s := range strings.Split(list, ",") {
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			log.Fatalf("%q: %v", s, err)
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// cycles runs the hot-table export cycles (logs ticket 14) and prints a
+// Markdown table; the JSON report goes to -out.
+func cycles(args []string) {
+	fs := flag.NewFlagSet("cycles", flag.ExitOnError)
+	work := fs.String("work", filepath.Join(os.TempDir(), "logsbench"), "working directory; deleted afterwards")
+	out := fs.String("out", "cycles.json", "report JSON path")
+	seed := fs.Uint64("seed", 1, "generator seed")
+	memory := fs.String("memory", "2GB", "DuckDB memory_limit")
+	threads := fs.Int("threads", 2, "DuckDB threads")
+	hour := fs.Int64("hour", 200_000, "Logs per logical hour")
+	n := fs.Int("cycles", 10, "hours to export")
+	factor := fs.Int("factor", 0, "ingest rate as a multiple of the target; 0 is unthrottled")
+	flush := fs.Int("flush", 5000, "Logs per flush when unthrottled")
+	promote := fs.Int("promote", 20, "keys promoted per file")
+	checkpoint := fs.Bool("checkpoint", true, "CHECKPOINT after each delete")
+	fs.Parse(args)
+
+	r, runErr := logslayouts.RunCycles(context.Background(), logslayouts.CyclesConfig{
+		Dir:        filepath.Join(*work, "cycles"),
+		Seed:       *seed,
+		Settings:   logslayouts.Settings{MemoryLimit: *memory, Threads: *threads},
+		HourLogs:   *hour,
+		Cycles:     *n,
+		Factor:     *factor,
+		FlushLogs:  *flush,
+		Promote:    *promote,
+		Checkpoint: *checkpoint,
+		Logf:       log.Printf,
+	})
+	if r != nil {
+		b, _ := json.MarshalIndent(r, "", "  ")
+		if err := os.WriteFile(*out, b, 0o644); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(logslayouts.CyclesMarkdown(r))
 	}
 	if runErr != nil {
 		log.Fatal(runErr)

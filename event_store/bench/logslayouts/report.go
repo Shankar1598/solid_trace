@@ -201,6 +201,8 @@ func Markdown(reports []*Report) string {
 		w("\n")
 	}
 
+	promotionTables(w, reports)
+
 	var errs []string
 	for _, r := range reports {
 		for _, e := range r.Errors {
@@ -218,4 +220,145 @@ func msStr(v float64) string {
 		return fmt.Sprintf("%.0f", v)
 	}
 	return fmt.Sprintf("%.1f", v)
+}
+
+// HourLogs is an hour at the target rate: the newest hour file of a Project
+// that receives the instance's whole volume.
+const HourLogs = LogsPerSecond * 3600
+
+type formColumn struct {
+	r    *Report
+	pr   PromotionRun
+	fr   FormRun
+	name string
+}
+
+func promotionTables(w func(string, ...any), reports []*Report) {
+	var cols []formColumn
+	for _, r := range reports {
+		for _, pr := range r.Promotion {
+			for _, fr := range pr.Forms {
+				cols = append(cols, formColumn{r, pr, fr, fmt.Sprintf("%s N=%d %s", r.Layout, pr.N, fr.Form)})
+			}
+		}
+	}
+	if len(cols) == 0 {
+		return
+	}
+
+	w("\n### Per-Project hourly Parquet, top N keys promoted\n\nOne zstd file per Project per hour, %d-row row groups, sorted by time. Queries read Project 1's files (%d Logs).\n\n| Layout | N | Files | MB | B/Log | Top keys ms | Copy ms |\n|---|---|---|---|---|---|---|\n",
+		PromotionRowGroupSize, reports[0].ProjectRows)
+	for _, r := range reports {
+		for _, pr := range r.Promotion {
+			w("| %s | %d | %d | %.1f | %.0f | %.0f | %.0f |\n", r.Layout, pr.N, pr.Files, float64(pr.Bytes)/1e6,
+				float64(pr.Bytes)/float64(max(r.Rows, 1)), pr.TopKeysMs, pr.CopyMs)
+		}
+	}
+
+	w("\n#### Queries (ms, cold / warm)\n\n| Query |")
+	for _, c := range cols {
+		w(" %s |", c.name)
+	}
+	w("\n|---|%s\n", strings.Repeat("---|", len(cols)))
+	for i, q := range Queries() {
+		w("| %s |", q.Name)
+		for _, c := range cols {
+			w(" %s |", timingCell(c.fr.Queries, i))
+		}
+		w("\n")
+	}
+
+	w("\n#### Same, threads = 1 (ms, cold / warm)\n\n| Query |")
+	var one []formColumn
+	for _, c := range cols {
+		if len(c.fr.Threads1) > 0 {
+			one = append(one, c)
+			w(" %s |", c.name)
+		}
+	}
+	w("\n|---|%s\n", strings.Repeat("---|", len(one)))
+	for i, q := range Queries() {
+		w("| %s |", q.Name)
+		for _, c := range one {
+			w(" %s |", timingCell(c.fr.Threads1, i))
+		}
+		w("\n")
+	}
+
+	w("\n#### Results match the same layout's hot table\n\n| Query |")
+	for _, c := range cols {
+		w(" %s |", c.name)
+	}
+	w("\n|---|%s\n", strings.Repeat("---|", len(cols)))
+	for _, q := range Queries() {
+		w("| %s |", q.Name)
+		for _, c := range cols {
+			got, ok := c.fr.Verify[q.Name]
+			w(" %s |", map[bool]string{true: "✓", false: "**differs or missing**"}[ok && reflect.DeepEqual(got, c.r.Verify[q.Name])])
+		}
+		w("\n")
+	}
+
+	w("\n#### Projection to 4 vCPU, not measured\n\nWarm 2-thread latency scaled linearly by rows, then divided by the 1→2-thread speedup measured for the same query (from the column's own threads = 1 run, else the same layout's N=0 run), assuming 2→4 threads scales as 1→2 did. **Full scans** are scaled to a day of a Project that receives the instance's whole volume (%d Logs); **latest 100** queries to its newest hour file (%d Logs), an upper bound that assumes the whole hour is scanned.\n\n| Query | Scaled to |", FullDayLogs, HourLogs)
+	for _, c := range cols {
+		w(" %s s |", c.name)
+	}
+	w("\n|---|---|%s\n", strings.Repeat("---|", len(cols)))
+	for i, q := range Queries() {
+		if !q.Scan {
+			continue
+		}
+		scaleTo, label := float64(FullDayLogs), "day"
+		if q.Check != nil {
+			scaleTo, label = HourLogs, "hour"
+		}
+		w("| %s | %s |", q.Name, label)
+		for _, c := range cols {
+			t, ok := warm(c.fr.Queries, i)
+			s := speedup(c, i)
+			if !ok || s == 0 || c.r.ProjectRows == 0 {
+				w(" – |")
+				continue
+			}
+			w(" %.1f |", t*scaleTo/float64(c.r.ProjectRows)/s/1000)
+		}
+		w("\n")
+	}
+}
+
+func warm(ts []QueryTiming, i int) (float64, bool) {
+	if i >= len(ts) || ts[i].Error != "" || ts[i].Skipped || ts[i].WarmMs == 0 {
+		return 0, false
+	}
+	return ts[i].WarmMs, true
+}
+
+// speedup is the 1→2-thread speedup of query i for this column.
+func speedup(c formColumn, i int) float64 {
+	sources := [][]QueryTiming{c.fr.Queries, c.fr.Threads1}
+	if len(c.fr.Threads1) == 0 {
+		for _, pr := range c.r.Promotion {
+			if pr.N == 0 && len(pr.Forms) > 0 {
+				sources = [][]QueryTiming{pr.Forms[0].Queries, pr.Forms[0].Threads1}
+			}
+		}
+	}
+	two, ok2 := warm(sources[0], i)
+	one, ok1 := warm(sources[1], i)
+	if !ok1 || !ok2 {
+		return 0
+	}
+	return one / two
+}
+
+func timingCell(ts []QueryTiming, i int) string {
+	switch {
+	case i >= len(ts):
+		return "–"
+	case ts[i].Skipped:
+		return "skipped"
+	case ts[i].Error != "":
+		return "error"
+	}
+	return msStr(ts[i].ColdMs) + " / " + msStr(ts[i].WarmMs)
 }

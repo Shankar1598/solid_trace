@@ -207,3 +207,46 @@ func nullOr(s string) string {
 	}
 	return s
 }
+
+func TestMapLayoutKeepsArraysAsJSON(t *testing.T) {
+	g := NewGenerator(1)
+	db := writeTestLogs(t, mapLayout{}, g)
+	var id int64
+	for ; g.Log(id).AttrsMap()["tags"] == nil; id++ {
+	}
+	var got string
+	if err := db.QueryRow(fmt.Sprintf("SELECT to_json(attrs_json)::VARCHAR FROM logs WHERE id = %d", id)).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := json.Marshal(map[string]any{"tags": g.Log(id).AttrsMap()["tags"]})
+	if got != string(want) {
+		t.Errorf("attrs_json of Log %d: %s, want %s", id, got, want)
+	}
+}
+
+func TestPromotedParquetAgreesWithTheHotTable(t *testing.T) {
+	g := NewGenerator(1)
+	p := VerifyParams(g, testLogs/2)
+	l := mapLayout{}
+	db := writeTestLogs(t, l, g)
+	hot := runAll(t, db, l, "logs", p)
+	for _, n := range []int{0, 5, 40} {
+		dir := t.TempDir()
+		files, _, err := ExportProjectHours(context.Background(), db, l, dir, Base, Base.Add(24*time.Hour), n, "data")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if len(f.Promoted) != n {
+				t.Errorf("N=%d: %s promoted %d keys", n, f.Path, len(f.Promoted))
+			}
+		}
+		for _, form := range []string{FormMap, FormCoalesce, FormPerFile} {
+			pl := newPromotedLayout(form, files, p.Project)
+			got := runAll(t, db, pl, PromotedSource(form, files, p.Project), p)
+			if !reflect.DeepEqual(got, hot) {
+				t.Errorf("N=%d %s differs from the hot table:\n got  %v\n want %v", n, form, got, hot)
+			}
+		}
+	}
+}

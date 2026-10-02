@@ -46,6 +46,8 @@ const (
 	KindInt
 	KindFloat
 	KindBool
+	// KindArray is a list of strings; the MAP layout keeps it as JSON text.
+	KindArray
 )
 
 type Value struct {
@@ -54,9 +56,11 @@ type Value struct {
 	I    int64
 	F    float64
 	B    bool
+	A    []string
 }
 
-// JSON returns the value as encoding/json decodes it: string, float64 or bool.
+// JSON returns the value as encoding/json decodes it: string, float64, bool
+// or []any.
 func (v Value) JSON() any {
 	switch v.Kind {
 	case KindInt:
@@ -65,6 +69,12 @@ func (v Value) JSON() any {
 		return v.F
 	case KindBool:
 		return v.B
+	case KindArray:
+		a := make([]any, len(v.A))
+		for i, s := range v.A {
+			a[i] = s
+		}
+		return a
 	}
 	return v.S
 }
@@ -222,8 +232,8 @@ func mixedValue(n int) func(*rand.Rand) Value {
 	}
 }
 
-// commonKeys are the 40 common Attribute keys, two of them (5%) mixed-type.
-// Their probabilities give about 10 common Attributes per Log.
+// commonKeys are the 41 common Attribute keys, two of them (5%) mixed-type and
+// one an array. Their probabilities give about 10 common Attributes per Log.
 var commonKeys = []commonKey{
 	{"http.method", 0.6, func(r *rand.Rand) Value {
 		return str(pick(r, []weighted[string]{{"GET", 0.6}, {"POST", 0.25}, {"PUT", 0.07}, {"DELETE", 0.05}, {"PATCH", 0.03}}))
@@ -275,6 +285,13 @@ var commonKeys = []commonKey{
 	{"sampled", 0.1, boolean(0.1)},
 	{MixedKey, 0.3, mixedValue(1000)},
 	{"mixed.status", 0.1, mixedValue(10)},
+	{"tags", 0.05, func(r *rand.Rand) Value {
+		a := make([]string, 1+r.IntN(3))
+		for i := range a {
+			a[i] = "tag-" + strconv.Itoa(r.IntN(20))
+		}
+		return Value{Kind: KindArray, A: a}
+	}},
 }
 
 // tailCounts is how many long-tail Attributes a Log carries (mean 1.4).
@@ -353,9 +370,22 @@ func encodeAttrs(as []Attr) []byte {
 			b = strconv.AppendFloat(b, a.Value.F, 'f', -1, 64)
 		case KindBool:
 			b = strconv.AppendBool(b, a.Value.B)
+		case KindArray:
+			b = appendJSONArray(b, a.Value.A)
 		}
 	}
 	return append(b, '}')
+}
+
+func appendJSONArray(b []byte, a []string) []byte {
+	b = append(b, '[')
+	for i, s := range a {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = appendJSONString(b, s)
+	}
+	return append(b, ']')
 }
 
 // appendJSONString quotes s; the generator only produces printable ASCII.
