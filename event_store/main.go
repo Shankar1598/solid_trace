@@ -81,7 +81,7 @@ func main() {
 	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter, &batchLock)
 	go archiveConsumer.Run()
 
-	logProcessor := logprocessing.New(pebbleWriter, logStore)
+	logProcessor := logprocessing.New(pebbleWriter, logStore, clock.System{})
 	if err := logProcessor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Log processing", "error", err)
 	}
