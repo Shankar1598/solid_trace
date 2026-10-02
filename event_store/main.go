@@ -15,7 +15,9 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
+	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/pipeline"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/processing"
 	"github.com/solidtrace/event_store/storage"
@@ -37,6 +39,11 @@ func main() {
 		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
 	defer duckdbWriter.Close()
+
+	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath)
+	if err != nil {
+		logger.L.Fatal("Failed to open logs DuckDB", "error", err)
+	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
 	if err != nil {
@@ -77,9 +84,23 @@ func main() {
 	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter, &batchLock)
 	go archiveConsumer.Run()
 
-	ingestService := ingest.NewService(pebbleWriter, processor.Notify, cfg.IngestMaxWaiting)
+	logProcessor := logprocessing.New(pebbleWriter, logStore)
+	if err := logProcessor.Prepare(); err != nil {
+		logger.L.Fatal("Failed to prepare Log processing", "error", err)
+	}
+	logProcessor.Start()
+
+	ingestService := ingest.NewService(ingest.Config{
+		Events:       pebbleWriter,
+		NotifyEvents: processor.Notify,
+		Logs:         pebbleWriter,
+		NotifyLogs:   logProcessor.Notify,
+		Clock:        clock.System{},
+		MaxWaiting:   cfg.IngestMaxWaiting,
+	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
+	logsHandler := handler.NewLogsHandler(logStore)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
@@ -91,7 +112,7 @@ func main() {
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, healthHandler)
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, healthHandler)
 
 	// Maintenance API
 	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)
@@ -134,6 +155,7 @@ func main() {
 
 	// Then the stores close through the defers above.
 	processor.Stop()
+	logProcessor.Stop()
 	archiveConsumer.Stop()
 }
 

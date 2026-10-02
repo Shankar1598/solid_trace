@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -14,6 +15,7 @@ type Config struct {
 	QueryPort          string // Query API port, always bound to 127.0.0.1
 	PebblePath         string
 	DuckDBPath         string
+	LogsDuckDBPath     string // logs.duckdb, attached to the DuckDB of DuckDBPath
 	ParquetStoragePath string // Path for archived Parquet files
 	SQLitePath         string // Rails SQLite for project key auth and issues
 	MessageQueuePath   string // Separate SQLite for event_store_messages
@@ -36,6 +38,7 @@ type fileConfig struct {
 	QueryPort           *string        `yaml:"query_port"`
 	PebblePath          *string        `yaml:"pebble_path"`
 	DuckDBPath          *string        `yaml:"duckdb_path"`
+	LogsDuckDBPath      *string        `yaml:"logs_duckdb_path"`
 	ParquetStoragePath  *string        `yaml:"parquet_storage_path"`
 	SQLitePath          *string        `yaml:"sqlite_path"`
 	MessageQueuePath    *string        `yaml:"message_queue_path"`
@@ -73,6 +76,9 @@ func Load() *Config {
 	if err := applyFileConfig(cfg, configPath); err != nil {
 		log.Fatalf("Failed to load %s: %v", configPath, err)
 	}
+	if cfg.LogsDuckDBPath == "" {
+		cfg.LogsDuckDBPath = filepath.Join(filepath.Dir(cfg.DuckDBPath), "logs.duckdb")
+	}
 
 	return cfg
 }
@@ -105,6 +111,9 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 	if config.DuckDBPath != nil && *config.DuckDBPath != "" {
 		cfg.DuckDBPath = *config.DuckDBPath
+	}
+	if config.LogsDuckDBPath != nil && *config.LogsDuckDBPath != "" {
+		cfg.LogsDuckDBPath = *config.LogsDuckDBPath
 	}
 	if config.ParquetStoragePath != nil && *config.ParquetStoragePath != "" {
 		cfg.ParquetStoragePath = *config.ParquetStoragePath
