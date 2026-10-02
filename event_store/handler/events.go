@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -168,17 +169,26 @@ func (h *EventsHandler) parseParams(c *fiber.Ctx) (storage.QueryParams, error) {
 		}
 	}
 
-	if newerThan := c.Query("newer_than"); newerThan != "" {
-		if t, err := time.Parse(time.RFC3339, newerThan); err == nil {
-			params.NewerThan = t
-		}
+	if params.NewerThan, err = parseTimeBound(c, "newer_than"); err != nil {
+		return storage.QueryParams{}, err
 	}
-
-	if olderThan := c.Query("older_than"); olderThan != "" {
-		if t, err := time.Parse(time.RFC3339, olderThan); err == nil {
-			params.OlderThan = t
-		}
+	if params.OlderThan, err = parseTimeBound(c, "older_than"); err != nil {
+		return storage.QueryParams{}, err
 	}
 
 	return params, nil
+}
+
+// parseTimeBound reads an RFC 3339 time bound, or the zero time when it is
+// absent. A malformed bound is an error: ignoring it would widen the window.
+func parseTimeBound(c *fiber.Ctx, name string) (time.Time, error) {
+	value := c.Query(name)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid %s %q: expected an RFC 3339 time", name, value)
+	}
+	return t, nil
 }
