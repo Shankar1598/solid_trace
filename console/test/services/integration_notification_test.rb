@@ -484,32 +484,120 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
-  # Assignment: still sent straight from the trigger
+  # Issue assignment changed: the assignment rule
   # ---------------------------------------------------------------------------
 
-  test "an assignment change is still sent immediately when the assignment rule is on" do
-    @slack.update!(settings: @slack.settings.merge("notify_on_assignment" => "1"))
-    issue = create(:issue, project: @project, title: "Assignable")
-    previous = create(:organization_user, organization: @organization, user: create(:user, name: "Ada"))
-    current = create(:organization_user, organization: @organization, user: create(:user, name: "Grace"))
+  test "an assignment change writes one assignment changed row per active Integration and schedules the tick" do
+    enable_assignment_rule
+    email = @organization.integrations.create!(
+      provider: "email",
+      settings: { "recipients" => "ops@example.com", "notify_on_assignment" => "1" },
+      active: true
+    )
+    @organization.integrations.create!(
+      provider: "slack", settings: { "webhook_url" => SLACK_URL, "notify_on_assignment" => "1" }, active: false
+    )
+    issue = create(:issue, project: @project)
+    previous = member("Ada")
+    current = member("Grace")
 
-    assert_no_difference -> { Notification.count } do
-      IntegrationNotification.issue_assignment_changed(issue, previous_assignee_id: previous.id, new_assignee_id: current.id)
-    end
+    IntegrationNotification.issue_assignment_changed(issue, previous_assignee_id: previous.id, new_assignee_id: current.id)
 
-    assert_requested(:post, SLACK_URL, times: 1) do |request|
-      fields = JSON.parse(request.body)["blocks"].last["fields"].map { |field| field["text"] }
-      fields.include?("*From:*\nAda") && fields.include?("*To:*\nGrace")
+    rows = Notification.order(:integration_id)
+    assert_equal [ @slack.id, email.id ].sort, rows.map(&:integration_id)
+    assert rows.all? { |row| row.kind == "assignment_changed" && row.status_pending? }
+    assert_equal(
+      { "issue_id" => issue.id, "previous_assignee_id" => previous.id, "new_assignee_id" => current.id },
+      rows.first.payload
+    )
+    [ @slack, email ].each do |integration|
+      assert_enqueued_with(
+        job: IntegrationNotificationProcessorJob,
+        args: [ integration.id ],
+        at: Time.current + IntegrationNotification::INITIAL_DELAY
+      )
     end
+    assert_not_requested(:post, SLACK_URL)
   end
 
-  test "an assignment change sends nothing when the assignment rule is off" do
+  test "with the assignment rule off no row is written" do
     issue = create(:issue, project: @project)
 
-    IntegrationNotification.issue_assignment_changed(issue, previous_assignee_id: nil, new_assignee_id: nil)
+    IntegrationNotification.issue_assignment_changed(issue, previous_assignee_id: nil, new_assignee_id: member("Grace").id)
 
-    assert_not_requested(:post, SLACK_URL)
     assert_equal 0, Notification.count
+    assert_no_enqueued_jobs(only: IntegrationNotificationProcessorJob)
+  end
+
+  test "changing the assignee on the Issue writes the row through the module" do
+    enable_assignment_rule
+    issue = create(:issue, project: @project)
+    current = member("Grace")
+
+    issue.update!(assignee: current)
+
+    assert_equal(
+      [ [ "assignment_changed", { "issue_id" => issue.id, "previous_assignee_id" => nil, "new_assignee_id" => current.id } ] ],
+      Notification.pluck(:kind, :payload)
+    )
+  end
+
+  test "an assignment change is delivered with both assignee names" do
+    enable_assignment_rule
+    issue = create(:issue, project: @project, title: "Assignable")
+    IntegrationNotification.issue_assignment_changed(issue, previous_assignee_id: member("Ada").id, new_assignee_id: member("Grace").id)
+
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert_assignment_message "Ada", "Grace"
+    assert Notification.sole.status_sent?
+  end
+
+  test "an archived previous assignee is named in the delivered message" do
+    enable_assignment_rule
+    issue = create(:issue, project: @project)
+    previous = member("Ada")
+    IntegrationNotification.issue_assignment_changed(issue, previous_assignee_id: previous.id, new_assignee_id: member("Grace").id)
+    previous.discard!
+
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert_assignment_message "Ada", "Grace"
+  end
+
+  test "unassigning an Issue is delivered as To: Unassigned" do
+    enable_assignment_rule
+    issue = create(:issue, project: @project)
+    IntegrationNotification.issue_assignment_changed(issue, previous_assignee_id: member("Ada").id, new_assignee_id: nil)
+
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert_assignment_message "Ada", "Unassigned"
+  end
+
+  test "assignment rows are delivered one message per row and count towards the shared rate limit" do
+    enable_assignment_rule
+    first = create(:issue, project: @project, title: "First")
+    second = create(:issue, project: @project, title: "Second")
+    IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
+    [ first, second ].each do |issue|
+      IntegrationNotification.issue_assignment_changed(issue, previous_assignee_id: nil, new_assignee_id: member("Grace #{issue.id}").id)
+    end
+
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    texts = []
+    assert_requested(:post, SLACK_URL, times: 3) { |request| texts << JSON.parse(request.body)["text"] }
+    assert_equal 2, texts.count { |text| text.start_with?("👤 Issue assignment updated") }
+
+    travel 30.seconds
+    IntegrationNotification.issue_assignment_changed(first, previous_assignee_id: nil, new_assignee_id: nil)
+    clear_enqueued_jobs
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert_requested(:post, SLACK_URL, times: 3)
+    assert_equal 1, Notification.status_pending.count
+    assert_enqueued_with(job: IntegrationNotificationProcessorJob, args: [ @slack.id ], at: Time.current + 30.seconds)
   end
 
   private
@@ -525,6 +613,21 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
 
   def stub_event_count(count)
     stub_request(:get, %r{/api/#{@project.id}/events/count}).to_return(status: 200, body: { count: count }.to_json)
+  end
+
+  def enable_assignment_rule
+    @slack.update!(settings: @slack.settings.merge("notify_on_assignment" => "1"))
+  end
+
+  def member(name)
+    create(:organization_user, organization: @organization, user: create(:user, name: name))
+  end
+
+  def assert_assignment_message(from, to)
+    assert_requested(:post, SLACK_URL, times: 1) do |request|
+      fields = JSON.parse(request.body)["blocks"].last["fields"].map { |field| field["text"] }
+      fields.include?("*From:*\n#{from}") && fields.include?("*To:*\n#{to}")
+    end
   end
 
   def assert_skipped(row, reason)

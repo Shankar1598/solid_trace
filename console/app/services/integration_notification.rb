@@ -50,10 +50,6 @@ module IntegrationNotification
   # delivered as one message per row.
   BATCHED_KINDS = [ ISSUE_CREATED ].freeze
 
-  # Kinds still sent synchronously from the trigger instead of through the
-  # outbox, as before this module existed.
-  SENT_FROM_TRIGGER = [ ASSIGNMENT_CHANGED ].freeze
-
   ADAPTERS = {
     "slack" => "Notifiers::SlackNotifier",
     "pagerduty" => "Notifiers::PagerdutyNotifier",
@@ -115,11 +111,7 @@ module IntegrationNotification
       end
 
       due.each do |integration, kind|
-        if SENT_FROM_TRIGGER.include?(kind)
-          send_from_trigger(integration, kind, issue, context)
-        else
-          record(integration, kind, issue, context)
-        end
+        record(integration, kind, issue, context)
       rescue StandardError => e
         Rails.logger.error("Integration notification failed for #{integration.provider}: #{e.message}")
       end
@@ -177,12 +169,6 @@ module IntegrationNotification
       Notification.mark_rows(row_ids, :failed, e.message)
     end
 
-    def send_from_trigger(integration, kind, issue, context)
-      adapter_for(integration).new(integration, kind: kind, issues: [ issue ], **assignee_names(issue, context)).call
-    rescue Notifiers::NotConfigured
-      nil
-    end
-
     def adapter_for(integration)
       ADAPTERS.fetch(integration.provider).constantize
     end
@@ -191,7 +177,8 @@ module IntegrationNotification
       context = context.symbolize_keys
       return {} unless context.key?(:previous_assignee_id) || context.key?(:new_assignee_id)
 
-      members = issue.project.organization.organization_users.includes(:user)
+      # Includes archived (discarded) members, so a former assignee is named.
+      members = issue.project.organization.all_organization_users
       {
         previous_assignee_name: member_name(members, context[:previous_assignee_id]),
         new_assignee_name: member_name(members, context[:new_assignee_id]),
