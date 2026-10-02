@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Up to 100 (type, key) pairs per Project are promoted at ingest (never `attrs_json` keys; built-in fields don't count): `ALTER TABLE ADD COLUMN` named `"<map>.<key>"` plus a promoted-set row (Project, day, type, key, time added), in the batch's transaction. A promoted value is stored in its column and not its map. Past 100, keys stay in the maps.
 - [x] A Log's day is the UTC day of its `time`; each (Project, day) has one promoted set.
