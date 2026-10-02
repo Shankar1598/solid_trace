@@ -7,6 +7,8 @@ ingest_port: "4000"
 query_port: "4100"
 pebble_path: /storage/pebble/production/events
 duckdb_path: /storage/duckdb/production/events.duckdb
+# Logs' hot tables, attached to the same DuckDB. Default: logs.duckdb next to duckdb_path.
+# logs_duckdb_path: /storage/duckdb/production/logs.duckdb
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 
@@ -17,5 +19,5 @@ parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 # duckdb_temp_directory: /storage_local/duckdb/tmp
 # duckdb_memory_limit: 16GB
 
-# Requests waiting to store their Event before ingest answers 503.
+# Requests waiting to store their Event or Logs before ingest answers 503.
 # ingest_max_waiting: 10000

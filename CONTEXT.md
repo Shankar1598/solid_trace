@@ -25,7 +25,7 @@ The EventStore module that turns stored Events into Issues, indexes them in Duck
 _Avoid_: pipeline, ingester
 
 **Processing cursor**:
-A Project's position in Pebble, up to which Event processing has handled Events.
+A Project's position in its stored Events or Log batches, up to which Event processing or Log processing has handled them. Event processing keeps its cursor in Pebble; Log processing keeps its cursor in `logs.duckdb`, committed together with the Logs it covers.
 _Avoid_: offset, checkpoint
 
 **IssueRepository**:
@@ -55,6 +55,18 @@ _Avoid_: severity, priority
 **Service**:
 The part of a system that emitted a Log, such as an application, a worker or a proxy. How Logs from one Project are told apart.
 _Avoid_: source, app, dataset
+
+**Log ingest**:
+The EventStore module that authenticates incoming Logs, normalises them, stores each request's Logs in Pebble as one Log batch and acknowledges them. A `200` means the Logs are stored.
+_Avoid_: shipper endpoint, collector
+
+**Log batch**:
+The normalised Logs of one ingest request, stored in Pebble as one entry until Log processing has moved them to DuckDB.
+_Avoid_: chunk, payload
+
+**Log processing**:
+The EventStore module that moves stored Log batches into each Project's hot table in DuckDB, reading each Project's Log batches from its Processing cursor. Separate from Event processing; Logs are never grouped into Issues.
+_Avoid_: pipeline, indexer
 
 **Retention**:
 How many whole days a Project's Logs are kept before they are deleted: an instance default that a Project can override.
@@ -92,6 +104,8 @@ _Avoid_: app, tenant
 
 - An **EventStore** accepts an **Event** through **Event ingest**
 - **Event processing** derives one **Issue** for each stored **Event**, reading each **Project**'s Events from its **Processing cursor**
+- An **EventStore** accepts **Logs** through **Log ingest**, one **Log batch** per request
+- **Log processing** moves each **Project**'s **Log batches** into DuckDB, reading them from its **Processing cursor**
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
 - A **Project**'s **Retention** decides when its **Logs** are deleted
