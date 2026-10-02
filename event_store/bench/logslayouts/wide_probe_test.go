@@ -28,11 +28,15 @@ type wideLayout struct {
 const projectColumnLimit = 1000
 
 func newWideLayout(g *Generator, logs int64) wideLayout {
+	return newWideLayoutLimit(g, logs, projectColumnLimit)
+}
+
+func newWideLayoutLimit(g *Generator, logs int64, limit int) wideLayout {
 	l := wideLayout{index: map[PromotedKey]int{}}
 	for id := range logs {
 		for _, a := range g.Log(id).Attrs {
 			p := PromotedKey{mapFor(a.Value.Kind), a.Key}
-			if p.Map == "attrs_json" || len(l.cols) == projectColumnLimit {
+			if p.Map == "attrs_json" || len(l.cols) == limit {
 				continue
 			}
 			if _, ok := l.index[p]; !ok {
@@ -74,36 +78,38 @@ func (l wideLayout) attr(m, k string) string {
 func (l wideLayout) StrAttr(k string) string { return l.attr("attrs_string", k) }
 func (l wideLayout) NumAttr(k string) string { return l.attr("attrs_number", k) }
 func (l wideLayout) NewWriter(ctx context.Context, db *sql.DB) (Writer, error) {
-	return newAppenderWriter(ctx, db, nil, "", "logs", func(lg Log) []driver.Value {
-		row := fixedValues(lg)
-		maps := []duckdb.Map{{}, {}, {}, {}}
-		vals := make([]driver.Value, len(l.cols))
-		for _, a := range lg.Attrs {
-			m := mapFor(a.Value.Kind)
-			var v any
-			switch a.Value.Kind {
-			case KindString:
-				v = a.Value.S
-			case KindInt:
-				v = float64(a.Value.I)
-			case KindFloat:
-				v = a.Value.F
-			case KindBool:
-				v = a.Value.B
-			case KindArray:
-				v = a.Value.A
-			}
-			if i, ok := l.index[PromotedKey{m, a.Key}]; ok {
-				vals[i] = v
-				continue
-			}
-			maps[slices.IndexFunc(mapColumns, func(c struct{ name, valueType string }) bool { return c.name == m })][a.Key] = v
+	return newAppenderWriter(ctx, db, nil, "", "logs", func(lg Log) []driver.Value { return wideRow(l, lg) })
+}
+
+func wideRow(l wideLayout, lg Log) []driver.Value {
+	row := fixedValues(lg)
+	maps := []duckdb.Map{{}, {}, {}, {}}
+	vals := make([]driver.Value, len(l.cols))
+	for _, a := range lg.Attrs {
+		m := mapFor(a.Value.Kind)
+		var v any
+		switch a.Value.Kind {
+		case KindString:
+			v = a.Value.S
+		case KindInt:
+			v = float64(a.Value.I)
+		case KindFloat:
+			v = a.Value.F
+		case KindBool:
+			v = a.Value.B
+		case KindArray:
+			v = a.Value.A
 		}
-		for _, m := range maps {
-			row = append(row, m)
+		if i, ok := l.index[PromotedKey{m, a.Key}]; ok {
+			vals[i] = v
+			continue
 		}
-		return append(row, vals...)
-	})
+		maps[slices.IndexFunc(mapColumns, func(c struct{ name, valueType string }) bool { return c.name == m })][a.Key] = v
+	}
+	for _, m := range maps {
+		row = append(row, m)
+	}
+	return append(row, vals...)
 }
 
 // TestWideColumns measures promoting every key at ingest (up to 1000 per
@@ -303,4 +309,78 @@ func queryNamed(name string) Query {
 		}
 	}
 	panic("no query " + name)
+}
+
+// TestWideColumnLimits times ingest and the hourly export with the first
+// 100 and 250 keys promoted, against MAP-only. Under a minute.
+func TestWideColumnLimits(t *testing.T) {
+	if os.Getenv("LOGSBENCH_PROBE") == "" {
+		t.Skip("set LOGSBENCH_PROBE=1 to run")
+	}
+	const logs = 20_000
+	ctx := context.Background()
+	start := time.Now()
+	g := NewGenerator(1)
+	db, err := OpenDB(filepath.Join(t.TempDir(), "logs.duckdb"), Settings{MemoryLimit: "2GB", Threads: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	run := func(q string) time.Duration {
+		t0 := time.Now()
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%v\n%.300s", err, q)
+		}
+		return time.Since(t0)
+	}
+	if err := CreateTable(ctx, db, mapLayout{}); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := mapLayout{}.NewWriter(ctx, db)
+	t0 := time.Now()
+	for id := int64(0); id < logs; id += 5000 {
+		if err := w.Write(ctx, Batch(g, id, 5000)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Close()
+	t.Logf("map:  appender %.0f Logs/s", logs/time.Since(t0).Seconds())
+	for range 2 {
+		run("INSERT INTO logs SELECT * FROM logs")
+	}
+	export := func(table string) (time.Duration, int64) {
+		f := filepath.Join(t.TempDir(), table+".parquet")
+		d := run(fmt.Sprintf("COPY (SELECT * FROM %s WHERE project_id = 1 ORDER BY time, id) TO %s (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE %d)", table, sqlString(f), PromotionRowGroupSize))
+		return d, fileSize(f)
+	}
+	d, size := export("logs")
+	t.Logf("map:  export of Project 1 (%d rows) %.0f ms, %.2f MB", 4*logs*7/10, ms(d), float64(size)/1e6)
+	for _, limit := range []int{100, 250} {
+		wide := newWideLayoutLimit(g, logs, limit)
+		table := fmt.Sprintf("logs_%d", limit)
+		run(fmt.Sprintf("CREATE TABLE %s (%s, %s)", table, fixedColumns, wide.attrColumns()))
+		ww := wideOn(ctx, t, db, wide, table)
+		t0 := time.Now()
+		for id := int64(0); id < logs/2; id += 5000 {
+			if err := ww.Write(ctx, Batch(g, id, 5000)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ww.Close()
+		appender := float64(logs/2) / time.Since(t0).Seconds()
+		run(fmt.Sprintf("DELETE FROM %s", table))
+		d := run(fmt.Sprintf("INSERT INTO %s BY NAME SELECT %s FROM logs", table, exportColumns(mapLayout{}, wide.cols)))
+		ed, size := export(table)
+		t.Logf("%d keys: appender %.0f Logs/s, SQL promotion %.0f Logs/s, export %.0f ms, %.2f MB", limit, appender, float64(4*logs)/d.Seconds(), ms(ed), float64(size)/1e6)
+	}
+	t.Logf("done in %v", time.Since(start).Round(time.Millisecond))
+}
+
+// wideOn is the wide layout's writer appending to table.
+func wideOn(ctx context.Context, t *testing.T, db *sql.DB, l wideLayout, table string) Writer {
+	w, err := newAppenderWriter(ctx, db, nil, "", table, func(lg Log) []driver.Value { return wideRow(l, lg) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
 }

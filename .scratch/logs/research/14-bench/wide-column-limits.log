@@ -1,0 +1,7 @@
+=== RUN   TestWideColumnLimits (DuckDB v1.5.6, 2 CPU dev box, load average 8.5 falling, memory_limit 2GB, threads 2)
+map:  appender 30961 Logs/s
+map:  export of Project 1 (56000 rows) 329 ms, 2.03 MB
+100 keys: appender 27967 Logs/s, SQL promotion 35008 Logs/s, export 612 ms, 1.63 MB
+250 keys: appender 12828 Logs/s, SQL promotion 21145 Logs/s, export 1280 ms, 1.68 MB
+done in 11.219s
+--- PASS: TestWideColumnLimits (11.30s)
