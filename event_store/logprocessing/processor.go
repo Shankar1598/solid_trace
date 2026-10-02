@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -32,6 +33,7 @@ var ErrStopped = errors.New("log processing stopped")
 type Processor struct {
 	batches *storage.PebbleWriter
 	store   *storage.LogStore
+	clock   clock.Clock
 
 	mu      sync.Mutex
 	pending map[uint32]struct{} // Projects that may have new Log batches
@@ -43,11 +45,12 @@ type Processor struct {
 	done     chan struct{}
 }
 
-// New constructs Log processing.
-func New(batches *storage.PebbleWriter, store *storage.LogStore) *Processor {
+// New constructs Log processing. It reads the time from clock.
+func New(batches *storage.PebbleWriter, store *storage.LogStore, clock clock.Clock) *Processor {
 	return &Processor{
 		batches: batches,
 		store:   store,
+		clock:   clock,
 		pending: make(map[uint32]struct{}),
 		wake:    make(chan struct{}, 1),
 		stop:    make(chan struct{}),
@@ -188,7 +191,7 @@ func (p *Processor) processProject(projectID uint32) (more bool, err error) {
 		return false, nil
 	}
 
-	if err := p.store.AppendLogBatches(projectID, batches); err != nil {
+	if err := p.store.AppendLogBatches(projectID, batches, p.clock.Now()); err != nil {
 		return false, fmt.Errorf("store logs: %w", err)
 	}
 
