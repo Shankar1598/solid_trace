@@ -41,7 +41,7 @@ One timestamped record an application or shipper sends to a Project, made of bui
 _Avoid_: event, log line, entry
 
 **Attribute**:
-A named value on a Log that is not a built-in field. Nested names are flattened to dotted names (`http.method`), an array is one value, and each value keeps its own type.
+A named value on a Log that is not a built-in field. Nested names are flattened to dotted names (`http.method`), an array is one value, and each value keeps its own type, except a whole number too large to hold exactly, which is kept as a string.
 _Avoid_: tag, label, column
 
 **Field**:
@@ -56,6 +56,10 @@ _Avoid_: severity, priority
 The part of a system that emitted a Log, such as an application, a worker or a proxy. How Logs from one Project are told apart.
 _Avoid_: source, app, dataset
 
+**Retention**:
+How many whole days a Project's Logs are kept before they are deleted: an instance default that a Project can override.
+_Avoid_: TTL, expiry, archive period
+
 **Query**:
 A request for Logs written in SolidTrace's KQL-style query language. It always runs against one Project and time range chosen outside the text.
 _Avoid_: APL, KQL, search
@@ -63,6 +67,10 @@ _Avoid_: APL, KQL, search
 **SQL query**:
 Raw DuckDB SQL a user runs directly, unscoped by Project, only on installs that have turned it on.
 _Avoid_: raw query, advanced query
+
+**Builder**:
+The Logs explorer's default way to make a Query without typing it: filter chips plus a search box. It can show only Queries made of equality filters and one search.
+_Avoid_: query builder, visual mode, simple mode
 
 **Integration**:
 An outbound notification target owned by an organization.
@@ -86,6 +94,7 @@ _Avoid_: app, tenant
 - **Event processing** derives one **Issue** for each stored **Event**, reading each **Project**'s Events from its **Processing cursor**
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
+- A **Project**'s **Retention** decides when its **Logs** are deleted
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 
