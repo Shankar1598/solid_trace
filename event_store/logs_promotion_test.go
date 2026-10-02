@@ -1,8 +1,11 @@
 package main_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,5 +73,190 @@ func TestALogsKeysArePromotedForItsDayAndReadBackUnchanged(t *testing.T) {
 	// Another day has a set of its own.
 	if got := env.LogStore.PromotedSet(123, testNow.AddDate(0, 0, -1)); len(got.Keys) != 0 {
 		t.Errorf("Expected no promoted keys the day before, got %v", promotedNames(got))
+	}
+}
+
+// logJSON is one Log as a sender would send it: a message, a time and
+// Attributes.
+func logJSON(t *testing.T, message string, at time.Time, attributes map[string]any) string {
+	t.Helper()
+	object := map[string]any{"message": message, "time": at.Format(time.RFC3339Nano)}
+	for name, value := range attributes {
+		object[name] = value
+	}
+	raw, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("Encode Log: %v", err)
+	}
+	return string(raw)
+}
+
+// numberedKeys returns Attributes named <prefix>000, <prefix>001 … each with
+// value.
+func numberedKeys(prefix string, n int, value any) map[string]any {
+	attributes := make(map[string]any, n)
+	for i := range n {
+		attributes[fmt.Sprintf("%s%03d", prefix, i)] = value
+	}
+	return attributes
+}
+
+func TestPromotionStopsAt100KeysAndTheRestStayAttributes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Every built-in field, and 150 keys: built-in fields don't count.
+	wide := numberedKeys("k", 150, "v")
+	wide["level"] = "info"
+	wide["service"] = "web"
+	wide["environment"] = "production"
+	wide["trace_id"] = "4bf92f3577b34da6a3ce929d0e0e4736"
+	wide["span_id"] = "00f067aa0ba902b7"
+	postLogs(t, env, "application/json", logJSON(t, "wide", testNow.Add(-time.Minute), wide))
+	env.ProcessLogs(t)
+
+	env.Clock.Advance(time.Minute)
+	postLogs(t, env, "application/json", logJSON(t, "after", testNow, map[string]any{"late": 1, "k000": "w"}))
+	env.ProcessLogs(t)
+
+	set := env.LogStore.PromotedSet(123, testNow)
+	if len(set.Keys) != storage.MaxPromotedKeys {
+		t.Fatalf("Expected %d promoted keys, got %d", storage.MaxPromotedKeys, len(set.Keys))
+	}
+	if got, want := promotedNames(set)[99], "string k099"; got != want {
+		t.Errorf("Expected the first 100 keys promoted, ending %q, got %q", want, got)
+	}
+	if _, ok := set.Lookup(storage.NumberAttribute, "late"); ok {
+		t.Errorf("Expected a key arriving after the set filled to stay unpromoted")
+	}
+
+	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+	wantWide := numberedKeys("k", 150, "v")
+	if got := attributes["wide"]; !reflect.DeepEqual(got, wantWide) {
+		t.Errorf("Expected all 150 Attributes back, got %d: %v", len(got), got)
+	}
+	if got, want := attributes["after"], map[string]any{"late": 1.0, "k000": "w"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+func TestANewDayKeepsYesterdaysSetWhenItWasNotFull(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	yesterday := testNow.AddDate(0, 0, -1)
+	env.Clock.Set(yesterday)
+	postLogs(t, env, "application/json", logJSON(t, "yesterday", yesterday, map[string]any{"user": "ada", "status": 200}))
+	env.ProcessLogs(t)
+
+	env.Clock.Set(testNow)
+	postLogs(t, env, "application/json", logJSON(t, "today", testNow, map[string]any{"region": "eu"}))
+	env.ProcessLogs(t)
+
+	today := env.LogStore.PromotedSet(123, testNow)
+	if got, want := promotedNames(today), []string{"number status", "string region", "string user"}; !slices.Equal(got, want) {
+		t.Errorf("Expected today's set %v, got %v", want, got)
+	}
+	for _, key := range today.Keys {
+		if !key.AddedAt.Equal(testNow) || key.Partway {
+			t.Errorf("Expected %s in today's set from its start, at %v, got %+v", key.Key, testNow, key)
+		}
+	}
+	if got, want := promotedNames(env.LogStore.PromotedSet(123, yesterday)), []string{"number status", "string user"}; !slices.Equal(got, want) {
+		t.Errorf("Expected yesterday's set unchanged, %v, got %v", want, got)
+	}
+
+	// The sets outlive a restart.
+	env.Reopen(t)
+	if got := env.LogStore.PromotedSet(123, testNow); !reflect.DeepEqual(got, today) {
+		t.Errorf("Expected today's set after a restart\n%+v\ngot\n%+v", today, got)
+	}
+	if got := env.LogStore.PromotedSets(123, yesterday, testNow); len(got) != 2 || !got[0].Day.Before(got[1].Day) {
+		t.Errorf("Expected yesterday's and today's sets, oldest first, got %+v", got)
+	}
+
+	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+	if got, want := attributes["yesterday"], map[string]any{"user": "ada", "status": 200.0}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+	if got, want := attributes["today"], map[string]any{"region": "eu"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+// postAndProcess sends one request of Logs and processes it before the next,
+// so each is its own Log processing transaction.
+func postAndProcess(t *testing.T, env *TestEnv, logs ...string) {
+	t.Helper()
+	body := "[" + strings.Join(logs, ",") + "]"
+	if counts := postLogs(t, env, "application/json", body); counts.Accepted != len(logs) {
+		t.Fatalf("Expected %d Logs accepted, got %+v", len(logs), counts)
+	}
+	env.ProcessLogs(t)
+}
+
+func TestANewDayAfterAFullSetPromotesYesterdaysMostCommonKeys(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	yesterday := testNow.AddDate(0, 0, -1)
+	env.Clock.Set(yesterday)
+
+	// The first Log fills the set with k000…k099.
+	postAndProcess(t, env, logJSON(t, "first", yesterday, numberedKeys("k", 100, "v")))
+
+	// A burst of 1,000 keys seen once each.
+	postAndProcess(t, env,
+		logJSON(t, "junk 1", yesterday, numberedKeys("j0", 500, "x")),
+		logJSON(t, "junk 2", yesterday, numberedKeys("j1", 500, "x")))
+
+	// Then five Logs, one at a time, carrying k000…k089 and ten keys that
+	// came too late to be promoted.
+	common := numberedKeys("k", 90, "v")
+	for name, value := range numberedKeys("x", 10, 1) {
+		common[name] = value
+	}
+	for i := range 5 {
+		postAndProcess(t, env, logJSON(t, fmt.Sprintf("common %d", i), yesterday.Add(time.Duration(i)*time.Second), common))
+	}
+	if got := env.LogStore.PromotedSet(123, yesterday); len(got.Keys) != 100 {
+		t.Fatalf("Expected yesterday's set full, got %d keys", len(got.Keys))
+	}
+	if _, ok := env.LogStore.PromotedSet(123, yesterday).Lookup(storage.NumberAttribute, "x000"); ok {
+		t.Fatalf("Expected x000 not promoted yesterday")
+	}
+
+	// Today's first Log re-ranks: the 100 keys most Logs carried yesterday.
+	env.Clock.Set(testNow)
+	postAndProcess(t, env, logJSON(t, "today", testNow, map[string]any{"x000": 7, "k095": "v"}))
+
+	var want []string
+	for i := range 10 {
+		want = append(want, fmt.Sprintf("number x%03d", i))
+	}
+	for i := range 90 {
+		want = append(want, fmt.Sprintf("string k%03d", i))
+	}
+	if got := promotedNames(env.LogStore.PromotedSet(123, testNow)); !slices.Equal(got, want) {
+		t.Errorf("Expected today's set to be yesterday's top 100\n%v\ngot\n%v", want, got)
+	}
+
+	// Every Log reads back as it was sent, whichever day's set it follows.
+	attributes := attributesByMessage(latestLogs(t, env, 123, 100))
+	if got, want := attributes["today"], map[string]any{"x000": 7.0, "k095": "v"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+	if got, want := attributes["first"], numberedKeys("k", 100, "v"); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected the first Log's 100 Attributes back, got %v", got)
+	}
+	wantCommon := numberedKeys("k", 90, "v")
+	for name := range numberedKeys("x", 10, 1) {
+		wantCommon[name] = 1.0
+	}
+	if got := attributes["common 4"]; !reflect.DeepEqual(got, wantCommon) {
+		t.Errorf("Expected\n%v\ngot\n%v", wantCommon, got)
+	}
+	if got := len(attributes["junk 2"]); got != 500 {
+		t.Errorf("Expected the junk Log's 500 Attributes back, got %d", got)
 	}
 }
