@@ -8,7 +8,8 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 **Rules for agents:**
 - Don't pick up deferred hardening unprompted: the open items in [prod-readiness review.md](prod-readiness/review.md) (§1, §9, §10: tiered storage, retention, `mode=ro`, the `ValidateKey` cache, compose host networking, DSN, ingest limits, metrics, CI), 011 and 012. Each is marked deferred or `wontfix` there. A change that would make one of them worse is still worth a flag.
-- [Upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) was re-scoped on 2026-10-02 (logs 10) to move EventStore back to the released DuckDB 1.5.5. The old hold until 2026-10-21 no longer applies.
+- EventStore runs DuckDB 1.5.6, bundled with the driver (upgrade-pebble-duckdb 02, 2026-10-02). There is no alpha library or `duckdb_use_lib` tag any more. A shell opened before that change may still export `GOFLAGS=-tags=duckdb_use_lib`; open a new one.
+- Work happens in the main checkout on `feature/logging`. There are no worktrees; prototype branches stay as branches.
 - Read [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md) before touching `event_store/storage/sqlite.go` or a Console enum or table that EventStore writes. A change to one must change the other in the same commit.
 - The user is editing [logs/map.md](logs/map.md) and the logs tickets in parallel. Don't edit them unless asked. The Logs counts and path below can be stale, so trust the map.
 
@@ -18,12 +19,11 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
 - **Integration notification**: resolved and merged (2026-10-02, `9a488c6`). One Console module sends new-Issue, threshold and assignment notifications through the outbox, with recorded outcomes, bounded retries and cleanup. EventStore's Event count honours the time window. Review findings left open are listed in the [spec](integration-notification/spec.md)'s Comments.
 - **Ingest write path**: reopened. 02 and 03 are resolved (2026-09-30). A code review on 2026-10-01 filed 04–06. 04, a lone bad DuckDB row stalling Event processing, is resolved (2026-10-01). 05 is `wontfix` (2026-10-02). 06 is resolved (2026-10-02). Event ingest stores the Event in Pebble before the `200`. Event processing, a single worker, catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. Review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
-- **Upgrade Pebble and DuckDB**: merged. EventStore now uses Pebble v2.1.7 and the DuckDB 2.0 alpha engine (`v2.0.0-alpha43385`), linked as a shared library. Two follow-ups wait on it.
+- **Upgrade Pebble and DuckDB**: EventStore uses Pebble v2.1.7 and DuckDB 1.5.6 (`v2.10506.0`, bundled). [02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) moved it back from the 2.0 alpha on 2026-10-02, on `feature/logging`, not yet on `main`. [03](upgrade-pebble-duckdb/issues/03-pebble-value-separation.md) (Pebble value separation) is open.
 
 ## Next
 
-1. [Upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md): move EventStore back to DuckDB 1.5.5 (needs triage)
-2. [Logs 14](logs/issues/14-benchmark-storage-design-on-1-5-5.md): benchmark the chosen storage design on 1.5.5 (task, AFK), the last ticket before 13 (write the v1 spec)
+1. [Logs 14](logs/issues/14-benchmark-storage-design-on-1-5-5.md): benchmark the chosen storage design on 1.5 (task, AFK, claimed), the last ticket before 13 (write the v1 spec)
 
 ## Efforts
 
@@ -33,11 +33,11 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
-| Upgrade Pebble and DuckDB | 1 / 2 | [02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) |
+| Upgrade Pebble and DuckDB | 2 / 1 | [03](upgrade-pebble-duckdb/issues/03-pebble-value-separation.md) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
-01–12 (done) → 14 (benchmark on 1.5.5, waits on upgrade 02) → 13 (write the v1 spec)
+01–12 (done) → 14 (benchmark on 1.5, claimed) → 13 (write the v1 spec)
 
 ## Last session (2026-10-02, logs 12 query modes)
 

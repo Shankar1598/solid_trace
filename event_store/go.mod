@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/cockroachdb/pebble/v2 v2.1.7
-	github.com/duckdb/duckdb-go/v2 v2.20000.0-6.preview
+	github.com/duckdb/duckdb-go/v2 v2.10506.0
 	github.com/gofiber/fiber/v2 v2.52.10
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.5
@@ -59,12 +59,12 @@ require (
 	github.com/cockroachdb/redact v1.1.5 // indirect
 	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
-	github.com/duckdb/duckdb-go-bindings v0.20000.0-3.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.20000.0-3.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.20000.0-3.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/linux-amd64 v0.20000.0-3.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/linux-arm64 v0.20000.0-3.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/windows-amd64 v0.20000.0-3.preview // indirect
+	github.com/duckdb/duckdb-go-bindings v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/linux-amd64 v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/linux-arm64 v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/windows-amd64 v0.10506.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect

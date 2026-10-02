@@ -1,7 +1,7 @@
 # 14: Benchmark the chosen storage design on DuckDB 1.5.5
 
 Type: task
-Status: open
+Status: claimed
 Blocked by: 10
 Waits on (outside this map): [Move EventStore back to DuckDB 1.5.5](../../upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md)
 Map: [SolidTrace Logs](../map.md)

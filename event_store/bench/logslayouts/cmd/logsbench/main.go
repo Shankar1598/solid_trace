@@ -1,7 +1,7 @@
 // Command logsbench runs the logs storage-layout benchmark (logs ticket 09).
 //
 //	logsbench run -layout json -work /tmp/bench -out results/json.json
-//	logsbench report results/json.json results/variant.json ... > report.md
+//	logsbench report results/json.json results/map.json ... > report.md
 //
 // The defaults take about two minutes per layout; slow query sets are cut
 // short by -set-budget. Run one layout per process, under the dev-box limits
@@ -43,7 +43,7 @@ func main() {
 
 func run(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	layout := fs.String("layout", "json", "json, variant, variant_noshred or map")
+	layout := fs.String("layout", "json", "json or map")
 	work := fs.String("work", filepath.Join(os.TempDir(), "logsbench"), "working directory; the layout's files are deleted afterwards")
 	out := fs.String("out", "", "report JSON path (default <layout>.json)")
 	seed := fs.Uint64("seed", 1, "generator seed")
