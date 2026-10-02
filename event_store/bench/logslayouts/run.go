@@ -26,6 +26,9 @@ type Config struct {
 	BurstFactor                int
 	FlushLogs                  int // Logs per flush when unthrottled
 	RowGroupSizes              []int
+	// Promote lists the N to try for per-Project hourly Parquet with each
+	// file's top N keys promoted to columns (N > 0 for the MAP layout only).
+	Promote []int
 	// VerifyMaxID caps the Logs the cross-layout check covers, so layouts that
 	// wrote different amounts are compared on the same Logs.
 	VerifyMaxID  int64
@@ -62,7 +65,28 @@ type Report struct {
 	VerifyMaxID        int64
 	Verify             map[string]Result
 	Parquet            []ParquetRun
-	Errors             []string `json:",omitempty"`
+	// ProjectRows is how many Logs the queried Project (1) has.
+	ProjectRows int64
+	Promotion   []PromotionRun `json:",omitempty"`
+	Errors      []string       `json:",omitempty"`
+}
+
+// PromotionRun is per-Project hourly Parquet with each file's top N keys
+// promoted to columns.
+type PromotionRun struct {
+	N                 int
+	TopKeysMs, CopyMs float64
+	Files             int
+	Bytes             int64
+	Forms             []FormRun
+}
+
+type FormRun struct {
+	Form    string
+	Queries []QueryTiming
+	// Threads1 repeats Queries with threads = 1, to estimate scaling.
+	Threads1 []QueryTiming `json:",omitempty"`
+	Verify   map[string]Result
 }
 
 type Phase struct {
@@ -266,15 +290,15 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 
 	timed := TimedParams(r.g, lastID)
 	hot := func() (*sql.DB, error) { return OpenDB(r.dbPath(), cfg.Settings) }
-	rep.HotQueries = r.timeQueries(ctx, hot, "logs", timed, cfg.Dir, "", 3)
+	rep.HotQueries = r.timeQueries(ctx, hot, cfg.Layout, "logs", timed, cfg.Dir, "", 3)
 	if setting := prefetchSetting(ctx, hot); setting != "" {
 		rep.HotPrefetchSetting = setting
-		rep.HotQueriesPrefetch = r.timeQueries(ctx, hot, "logs", timed, cfg.Dir, "SET GLOBAL storage_block_prefetch = '"+setting+"'", 0)
+		rep.HotQueriesPrefetch = r.timeQueries(ctx, hot, cfg.Layout, "logs", timed, cfg.Dir, "SET GLOBAL storage_block_prefetch = '"+setting+"'", 0)
 	}
 
 	rep.VerifyMaxID = min(cfg.VerifyMaxID, lastID)
 	verify := VerifyParams(r.g, rep.VerifyMaxID)
-	if rep.Verify, err = r.verify(ctx, hot, "logs", verify); err != nil {
+	if rep.Verify, err = r.verify(ctx, hot, cfg.Layout, "logs", verify); err != nil {
 		r.errorf("verify hot table: %v", err)
 	}
 
@@ -285,7 +309,78 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 		}
 		rep.Parquet = append(rep.Parquet, pr)
 	}
+
+	maxN := slices.Max(append([]int{0}, cfg.Promote...))
+	for _, n := range cfg.Promote {
+		if _, isMap := cfg.Layout.(mapLayout); n > 0 && !isMap {
+			continue
+		}
+		pr, err := r.promotion(ctx, n, n == maxN, lastID, timed, verify)
+		if err != nil {
+			r.errorf("promotion N=%d: %v", n, err)
+		}
+		rep.Promotion = append(rep.Promotion, pr)
+	}
 	return rep, nil
+}
+
+// promotion exports per-Project hourly Parquet with n keys promoted and times
+// the query set on Project 1's files in each query form. Threads = 1 is timed
+// too for N = 0 and, when scaling is set, for the per-file form.
+func (r *runner) promotion(ctx context.Context, n int, scaling bool, lastID int64, timed, verify Params) (PromotionRun, error) {
+	pr := PromotionRun{N: n}
+	dir := filepath.Join(r.cfg.Dir, fmt.Sprintf("promote-%d", n))
+	defer os.RemoveAll(dir)
+
+	db, err := OpenDB(r.dbPath(), r.cfg.Settings)
+	if err != nil {
+		return pr, err
+	}
+	files, st, err := ExportProjectHours(ctx, db, r.cfg.Layout, dir, Base, r.g.Log(lastID).Time.Add(time.Microsecond), n, "data")
+	db.Close()
+	if err != nil {
+		return pr, err
+	}
+	pr.TopKeysMs, pr.CopyMs = st.TopKeysMs, st.CopyMs
+	pr.Files = len(files)
+	pr.Bytes = dirBytes(dir)
+	r.report.ProjectRows = 0
+	for _, f := range files {
+		if f.Project == timed.Project {
+			r.report.ProjectRows += f.Rows
+		}
+	}
+	r.logf("promote N=%d: top keys %.0f ms, copy %.0f ms, %d files, %.1f MB", n, pr.TopKeysMs, pr.CopyMs, pr.Files, float64(pr.Bytes)/1e6)
+
+	forms := []string{FormMap}
+	if n > 0 {
+		forms = []string{FormCoalesce, FormPerFile}
+	}
+	inMemory := func(s Settings) func() (*sql.DB, error) {
+		return func() (*sql.DB, error) { return OpenDB("", s) }
+	}
+	one := r.cfg.Settings
+	one.Threads = 1
+	var errs []error
+	for _, form := range forms {
+		fr := FormRun{Form: form}
+		var l Layout = r.cfg.Layout
+		if _, isMap := l.(mapLayout); isMap {
+			l = newPromotedLayout(form, files, timed.Project)
+		}
+		src := PromotedSource(form, files, timed.Project)
+		r.logf(" %s:", form)
+		fr.Queries = r.timeQueries(ctx, inMemory(r.cfg.Settings), l, src, timed, dir, "", 3)
+		if n == 0 || scaling && form == FormPerFile {
+			r.logf(" %s, threads = 1:", form)
+			fr.Threads1 = r.timeQueries(ctx, inMemory(one), l, src, timed, dir, "", 3)
+		}
+		if fr.Verify, err = r.verify(ctx, inMemory(r.cfg.Settings), l, src, verify); err != nil {
+			errs = append(errs, fmt.Errorf("verify %s: %w", form, err))
+		}
+		pr.Forms = append(pr.Forms, fr)
+	}
+	return pr, errors.Join(errs...)
 }
 
 func (r *runner) dbPath() string { return filepath.Join(r.cfg.Dir, r.cfg.Layout.Name()+".duckdb") }
@@ -528,7 +623,7 @@ const slowQuery = 2 * time.Second
 
 // timeQueries runs each query cold (fresh DuckDB, files evicted from the page
 // cache) and then warm: the median of warmRuns, or one run if cold was slow.
-func (r *runner) timeQueries(ctx context.Context, open func() (*sql.DB, error), src string, p Params, cacheDir, setup string, warmRuns int) []QueryTiming {
+func (r *runner) timeQueries(ctx context.Context, open func() (*sql.DB, error), l Layout, src string, p Params, cacheDir, setup string, warmRuns int) []QueryTiming {
 	var out []QueryTiming
 	setStart := time.Now()
 	for _, q := range Queries() {
@@ -557,7 +652,7 @@ func (r *runner) timeQueries(ctx context.Context, open func() (*sql.DB, error), 
 			for i := 0; i <= runs; i++ {
 				qctx, cancel := context.WithTimeout(ctx, r.cfg.QueryTimeout)
 				t0 := time.Now()
-				rows, err := queryStrings(qctx, db, q.SQL(r.cfg.Layout, src, p), 0)
+				rows, err := queryStrings(qctx, db, q.SQL(l, src, p), 0)
 				d := time.Since(t0)
 				cancel()
 				if err != nil {
@@ -589,7 +684,7 @@ func (r *runner) timeQueries(ctx context.Context, open func() (*sql.DB, error), 
 	return out
 }
 
-func (r *runner) verify(ctx context.Context, open func() (*sql.DB, error), src string, p Params) (map[string]Result, error) {
+func (r *runner) verify(ctx context.Context, open func() (*sql.DB, error), l Layout, src string, p Params) (map[string]Result, error) {
 	db, err := open()
 	if err != nil {
 		return nil, err
@@ -604,7 +699,7 @@ func (r *runner) verify(ctx context.Context, open func() (*sql.DB, error), src s
 			continue
 		}
 		qctx, cancel := context.WithTimeout(ctx, r.cfg.QueryTimeout)
-		res, err := RunQuery(qctx, db, r.cfg.Layout, q, src, p)
+		res, err := RunQuery(qctx, db, l, q, src, p)
 		cancel()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %s", q.Name, firstLine(err)))
@@ -645,12 +740,12 @@ func (r *runner) parquet(ctx context.Context, rowGroupSize int, timed, verify Pa
 
 	r.logf(" async on (read_ahead_depth default):")
 	r.s.reset()
-	pr.AsyncOn = r.timeQueries(ctx, inMemory, src, timed, dir, "", 3)
+	pr.AsyncOn = r.timeQueries(ctx, inMemory, r.cfg.Layout, src, timed, dir, "", 3)
 	pr.AsyncOnRSSMB = r.s.reset()
 	r.logf(" async off (read_ahead_depth = 0):")
-	pr.AsyncOff = r.timeQueries(ctx, inMemory, src, timed, dir, "SET GLOBAL read_ahead_depth = 0", 3)
+	pr.AsyncOff = r.timeQueries(ctx, inMemory, r.cfg.Layout, src, timed, dir, "SET GLOBAL read_ahead_depth = 0", 3)
 	pr.AsyncOffRSSMB = r.s.reset()
-	pr.Verify, err = r.verify(ctx, inMemory, src, verify)
+	pr.Verify, err = r.verify(ctx, inMemory, r.cfg.Layout, src, verify)
 	return pr, err
 }
 

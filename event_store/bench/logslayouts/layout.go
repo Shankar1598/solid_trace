@@ -257,6 +257,8 @@ func commonKeySQLType(k commonKey) string {
 		return "DOUBLE"
 	case KindBool:
 		return "BOOLEAN"
+	case KindArray:
+		return "VARCHAR[]"
 	}
 	return "VARCHAR"
 }
@@ -285,24 +287,34 @@ func (variantLayout) NewWriter(ctx context.Context, db *sql.DB) (Writer, error) 
 	return w, nil
 }
 
-// mapLayout stores Attributes in one MAP per value type. Integers go in the
-// DOUBLE map, which is exact below 2^53.
+// mapLayout stores Attributes in four typed MAPs, as ADR 0004 decides: string,
+// number (DOUBLE; integers are exact below 2^53), bool, and JSON text for
+// arrays.
 type mapLayout struct{}
+
+// mapColumns are the layout's Attribute maps and their value types.
+var mapColumns = []struct{ name, valueType string }{
+	{"attrs_string", "VARCHAR"}, {"attrs_number", "DOUBLE"}, {"attrs_bool", "BOOLEAN"}, {"attrs_json", "JSON"},
+}
 
 func (mapLayout) Name() string { return "map" }
 func (mapLayout) attrColumns() string {
-	return "attrs_str MAP(VARCHAR, VARCHAR), attrs_num MAP(VARCHAR, DOUBLE), attrs_bool MAP(VARCHAR, BOOLEAN)"
+	cols := make([]string, len(mapColumns))
+	for i, c := range mapColumns {
+		cols[i] = fmt.Sprintf("%s MAP(VARCHAR, %s)", c.name, c.valueType)
+	}
+	return strings.Join(cols, ", ")
 }
-func (mapLayout) StrAttr(k string) string { return fmt.Sprintf("attrs_str[%s]", sqlString(k)) }
-func (mapLayout) NumAttr(k string) string { return fmt.Sprintf("attrs_num[%s]", sqlString(k)) }
+func (mapLayout) StrAttr(k string) string { return fmt.Sprintf("attrs_string[%s]", sqlString(k)) }
+func (mapLayout) NumAttr(k string) string { return fmt.Sprintf("attrs_number[%s]", sqlString(k)) }
 func (mapLayout) ParquetOptions() string  { return "" }
 func (mapLayout) Setup() []string         { return nil }
 func (mapLayout) AttrsJSON() []string {
-	return []string{"to_json(attrs_str)", "to_json(attrs_num)", "to_json(attrs_bool)"}
+	return []string{"to_json(attrs_string)", "to_json(attrs_number)", "to_json(attrs_bool)", "to_json(attrs_json)"}
 }
 func (mapLayout) NewWriter(ctx context.Context, db *sql.DB) (Writer, error) {
 	return newAppenderWriter(ctx, db, nil, "", "logs", func(l Log) []driver.Value {
-		s, n, b := duckdb.Map{}, duckdb.Map{}, duckdb.Map{}
+		s, n, b, j := duckdb.Map{}, duckdb.Map{}, duckdb.Map{}, duckdb.Map{}
 		for _, a := range l.Attrs {
 			switch a.Value.Kind {
 			case KindString:
@@ -313,8 +325,11 @@ func (mapLayout) NewWriter(ctx context.Context, db *sql.DB) (Writer, error) {
 				n[a.Key] = a.Value.F
 			case KindBool:
 				b[a.Key] = a.Value.B
+			case KindArray:
+				// The appender JSON-encodes a value bound to a JSON column.
+				j[a.Key] = a.Value.A
 			}
 		}
-		return append(fixedValues(l), s, n, b)
+		return append(fixedValues(l), s, n, b, j)
 	})
 }

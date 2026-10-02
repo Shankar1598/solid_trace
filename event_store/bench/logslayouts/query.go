@@ -91,6 +91,15 @@ func Queries() []Query {
 		filterQuery("common_attr_eq", true, func(l Layout, _ Params) string {
 			return fmt.Sprintf("%s = %s", l.StrAttr(CommonKey), sqlString(CommonValue))
 		}),
+		{
+			// The explorer's histogram under a common-key filter.
+			Name: "common_attr_per_minute",
+			Scan: true,
+			SQL: func(l Layout, src string, p Params) string {
+				return fmt.Sprintf("SELECT time_bucket(INTERVAL 1 MINUTE, time) AS minute, count(*) AS n FROM %s WHERE %s AND %s = %s GROUP BY ALL ORDER BY minute",
+					src, p.where(), l.StrAttr(CommonKey), sqlString(CommonValue))
+			},
+		},
 		filterQuery("rare_attr_eq", true, func(l Layout, _ Params) string {
 			return fmt.Sprintf("%s = %s", l.StrAttr(RareKey), sqlString(RareValue))
 		}),
