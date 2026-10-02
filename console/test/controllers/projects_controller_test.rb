@@ -60,6 +60,18 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 14, project_page["project"]["log_retention_days"]
   end
 
+  test "a member can't change a Project's Log Retention" do
+    @project.update!(log_retention_days: 7)
+
+    patch project_url(@project, org_slug: @organization.slug), params: {
+      project: { log_retention_days: "90" }
+    }
+
+    assert_response :redirect
+    assert_equal "You are not authorized to perform this action.", flash[:alert]
+    assert_equal 7, project_page["project"]["log_retention_days"]
+  end
+
   test "denies access to other org" do
     other_org = create(:organization)
 
