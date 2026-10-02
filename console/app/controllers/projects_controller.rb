@@ -16,6 +16,7 @@ class ProjectsController < ApplicationController
   def show
     render inertia: "Projects/Show", props: {
       project: ProjectSerializer.new(@project, include_keys: true).as_json,
+      default_log_retention_days: InstanceSetting.current.default_log_retention_days,
     }
   end
 

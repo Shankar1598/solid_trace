@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_02_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_02_130000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -56,6 +56,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_120000) do
     t.datetime "updated_at", null: false
     t.index ["issue_id"], name: "index_comments_on_issue_id"
     t.index ["organization_user_id"], name: "index_comments_on_organization_user_id"
+  end
+
+  create_table "instance_settings", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "default_log_retention_days", default: 30, null: false
+    t.boolean "sql_queries_enabled", default: false, null: false
+    t.datetime "updated_at", null: false
   end
 
   create_table "integrations", force: :cascade do |t|
