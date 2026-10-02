@@ -33,6 +33,8 @@ class ProjectsController < ApplicationController
   end
 
   def update
+    authorize @project
+
     if @project.update(project_params)
       redirect_to project_path(@project, org_slug: @current_org.slug), notice: "Project updated successfully"
     else
