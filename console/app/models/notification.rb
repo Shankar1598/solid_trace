@@ -1,26 +1,25 @@
 # frozen_string_literal: true
 
+# A Notification is one row in the Integration notification outbox: a message
+# of a given +kind+ owed to an Integration. The IntegrationNotification module
+# writes, delivers and closes these rows.
 class Notification < ApplicationRecord
   belongs_to :integration
 
   serialize :payload, coder: MessagePackCoder
-
-  module GROUPING
-    INITIAL_DELAY = 10.seconds
-    DEBOUNCE_WINDOW = 1.minute
-  end
 
   enum :status, {
     pending: 0,
     processing: 1,
     sent: 2,
     failed: 3,
+    skipped: 4,
   }, prefix: true
 
-  def self.enqueue!(integration:, event_type:, payload: {})
+  def self.enqueue!(integration:, kind:, payload: {})
     create!(
       integration: integration,
-      event_type: event_type,
+      kind: kind,
       payload: payload,
       status: :pending
     )
