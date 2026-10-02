@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -142,5 +143,170 @@ func TestJSONLogIsListedWithEveryFieldAfterProcessing(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected\n%+v\ngot\n%+v", want, got)
+	}
+}
+
+// messages lists the messages of Logs in the order given.
+func messages(logs []listedLog) []string {
+	out := make([]string, len(logs))
+	for i, log := range logs {
+		out[i] = log.Message
+	}
+	return out
+}
+
+func TestJSONArrayLogsAreListedNewestFirstAndNonObjectsDropped(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	counts := postLogs(t, env, "application/json", `[
+		{"message": "second", "time": "2026-10-02T11:00:02Z"},
+		42,
+		{"message": "third", "time": "2026-10-02T11:00:03Z"},
+		"not a log",
+		null,
+		{"message": "first", "time": "2026-10-02T11:00:01Z"}
+	]`)
+	if want := (logCounts{Accepted: 3, Dropped: 3}); counts != want {
+		t.Fatalf("Expected %+v, got %+v", want, counts)
+	}
+	env.ProcessLogs(t)
+
+	if got, want := messages(latestLogs(t, env, 123, 10)), []string{"third", "second", "first"}; !slices.Equal(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+	if got, want := messages(latestLogs(t, env, 123, 2)), []string{"third", "second"}; !slices.Equal(got, want) {
+		t.Errorf("Expected the latest 2 to be %v, got %v", want, got)
+	}
+}
+
+func TestNDJSONLinesAreLogsAndBadLinesDropped(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	body := "{\"message\":\"one\",\"time\":\"2026-10-02T11:00:01Z\"}\r\n" +
+		"{\"message\":\"broken\"\n" +
+		"\n" +
+		"[\"an array\"]\n" +
+		"{\"message\":\"two\",\"time\":\"2026-10-02T11:00:02Z\"}"
+	counts := postLogs(t, env, "application/x-ndjson; charset=utf-8", body)
+	if want := (logCounts{Accepted: 2, Dropped: 2}); counts != want {
+		t.Fatalf("Expected %+v, got %+v", want, counts)
+	}
+
+	// NDJSON sent as JSON is read as NDJSON too.
+	counts = postLogs(t, env, "application/json", "{\"message\":\"three\",\"time\":\"2026-10-02T11:00:03Z\"}\n{\"message\":\"four\",\"time\":\"2026-10-02T11:00:04Z\"}\n")
+	if want := (logCounts{Accepted: 2}); counts != want {
+		t.Fatalf("Expected %+v for NDJSON labelled JSON, got %+v", want, counts)
+	}
+	env.ProcessLogs(t)
+
+	if got, want := messages(latestLogs(t, env, 123, 10)), []string{"four", "three", "two", "one"}; !slices.Equal(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+func TestLogWithoutAUsableTimeGetsItsReceiptTime(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	receivedAt := time.Date(2026, 10, 2, 9, 30, 15, 0, time.UTC)
+	env.Clock.Set(receivedAt)
+	postLogs(t, env, "application/json", `[{"message": "no time"}, {"message": "bad time", "time": "yesterday"}]`)
+	env.ProcessLogs(t)
+
+	logs := latestLogs(t, env, 123, 10)
+	if len(logs) != 2 {
+		t.Fatalf("Expected 2 Logs, got %d", len(logs))
+	}
+	for _, log := range logs {
+		if !log.Time.Equal(receivedAt) {
+			t.Errorf("Expected %q at the receipt time %v, got %v", log.Message, receivedAt, log.Time)
+		}
+	}
+	// The time it couldn't use is kept.
+	for _, log := range logs {
+		if log.Message == "bad time" && log.Attributes["original.time"] != "yesterday" {
+			t.Errorf("Expected original.time kept, got %v", log.Attributes)
+		}
+	}
+}
+
+func TestLogRouteAcceptsTheProjectKeyInEverySentryFormAndAsBearer(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	forms := map[string]struct {
+		path    string
+		headers map[string]string
+	}{
+		"sentry_key query":     {"/api/123/logs?sentry_key=test_public_key", nil},
+		"X-Sentry-Auth":        {"/api/123/logs", map[string]string{"X-Sentry-Auth": "Sentry sentry_version=7, sentry_key=test_public_key"}},
+		"Authorization Sentry": {"/api/123/logs", map[string]string{"Authorization": "Sentry sentry_key=test_public_key, sentry_version=7"}},
+		"Authorization Bearer": {"/api/123/logs", map[string]string{"Authorization": "Bearer test_public_key"}},
+	}
+	for name, form := range forms {
+		t.Run(name, func(t *testing.T) {
+			resp := sendLogs(t, env, form.path, "application/json", fmt.Sprintf(`{"message": %q}`, name), form.headers)
+			if counts := decodeLogCounts(t, resp); counts != (logCounts{Accepted: 1}) {
+				t.Errorf("Expected 1 accepted, got %+v", counts)
+			}
+		})
+	}
+
+	env.ProcessLogs(t)
+	if got := len(latestLogs(t, env, 123, 10)); got != len(forms) {
+		t.Errorf("Expected %d Logs stored, got %d", len(forms), got)
+	}
+}
+
+func TestLogRouteRejectsAMissingUnknownOrOtherProjectsKey(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	cases := map[string]struct {
+		path    string
+		headers map[string]string
+	}{
+		"missing key":            {"/api/123/logs", nil},
+		"unknown key":            {"/api/123/logs", map[string]string{"Authorization": "Bearer no_such_key"}},
+		"other Project's Bearer": {"/api/123/logs", map[string]string{"Authorization": "Bearer other_public_key"}},
+		"other Project's sentry": {"/api/123/logs?sentry_key=other_public_key", nil},
+		"non-numeric Project":    {"/api/abc/logs?sentry_key=test_public_key", nil},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := sendLogs(t, env, c.path, "application/json", `{"message": "rejected"}`, c.headers)
+			if resp.StatusCode != 401 {
+				body, _ := io.ReadAll(resp.Body)
+				t.Errorf("Expected 401, got %d: %s", resp.StatusCode, body)
+			}
+		})
+	}
+
+	env.ProcessLogs(t)
+	for _, projectID := range []uint32{123, 456} {
+		if got := latestLogs(t, env, projectID, 10); len(got) != 0 {
+			t.Errorf("Expected no Logs stored for Project %d, got %v", projectID, messages(got))
+		}
+	}
+}
+
+func TestEachProjectListsOnlyItsOwnLogs(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	postLogs(t, env, "application/json", `{"message": "for 123"}`)
+	resp := sendLogs(t, env, "/api/456/logs", "application/json", `{"message": "for 456"}`, map[string]string{"Authorization": "Bearer other_public_key"})
+	decodeLogCounts(t, resp)
+	env.ProcessLogs(t)
+
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"for 123"}) {
+		t.Errorf("Expected Project 123's Log only, got %v", got)
+	}
+	if got := messages(latestLogs(t, env, 456, 10)); !slices.Equal(got, []string{"for 456"}) {
+		t.Errorf("Expected Project 456's Log only, got %v", got)
 	}
 }
