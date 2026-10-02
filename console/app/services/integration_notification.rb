@@ -120,8 +120,9 @@ module IntegrationNotification
     def record(integration, kind, issue, context)
       Notification.enqueue!(
         integration: integration,
+        issue: issue,
         kind: kind,
-        payload: { "issue_id" => issue.id }.merge(context.except(:newly_created).stringify_keys)
+        payload: context.except(:newly_created).stringify_keys
       )
       schedule_tick(integration, wait: INITIAL_DELAY)
     end
@@ -140,19 +141,17 @@ module IntegrationNotification
     end
 
     def deliver_rows(integration, row_ids)
-      rows = Notification.where(id: row_ids).order(:created_at).to_a
-      issues = Issue.where(id: rows.map { |row| row.payload["issue_id"] }).includes(project: :organization).index_by(&:id)
-      issue_for = ->(row) { issues[row.payload["issue_id"]] }
+      rows = Notification.where(id: row_ids).includes(issue: { project: :organization }).order(:created_at).to_a
 
-      rows_without_issue, rows = rows.partition { |row| issue_for.(row).nil? }
+      rows_without_issue, rows = rows.partition { |row| row.issue.nil? }
       Notification.mark_rows(rows_without_issue.map(&:id), :skipped, "Issue missing") if rows_without_issue.any?
       Notification.mark_rows(rows.map(&:id), :processing)
 
       rows.group_by(&:kind).each do |kind, kind_rows|
         if BATCHED_KINDS.include?(kind)
-          deliver_message(integration, kind, kind_rows, kind_rows.map(&issue_for))
+          deliver_message(integration, kind, kind_rows, kind_rows.map(&:issue))
         else
-          kind_rows.each { |row| deliver_message(integration, kind, [ row ], [ issue_for.(row) ], row.payload) }
+          kind_rows.each { |row| deliver_message(integration, kind, [ row ], [ row.issue ], row.payload) }
         end
       end
     end
@@ -202,8 +201,7 @@ module IntegrationNotification
     end
 
     def threshold_reached_since?(integration, issue, window_start)
-      Notification.where(integration: integration, kind: THRESHOLD_REACHED, created_at: window_start..)
-        .any? { |row| row.payload["issue_id"] == issue.id }
+      Notification.exists?(integration: integration, issue: issue, kind: THRESHOLD_REACHED, created_at: window_start..)
     end
   end
 end

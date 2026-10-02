@@ -50,7 +50,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     rows = Notification.order(:integration_id)
     assert_equal [ @slack.id, email.id ].sort, rows.map(&:integration_id)
     assert rows.all? { |row| row.kind == "issue_created" && row.status_pending? }
-    assert rows.all? { |row| row.payload == { "issue_id" => issue.id } }
+    assert rows.all? { |row| row.issue_id == issue.id && row.payload == {} }
 
     [ @slack, email ].each do |integration|
       assert_enqueued_with(
@@ -154,7 +154,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
 
     IntegrationNotification.deliver_pending(@slack.id)
 
-    late_row = Notification.all.find { |row| row.payload["issue_id"] == late_issue.id }
+    late_row = Notification.find_by!(issue_id: late_issue.id)
     assert late_row.status_pending?
     assert_enqueued_with(
       job: IntegrationNotificationProcessorJob,
@@ -307,7 +307,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     assert_requested(:post, SLACK_URL, times: 1) do |request|
       JSON.parse(request.body)["text"] == "🚨 1 New Issues Detected"
     end
-    rows = Notification.all.index_by { |row| row.payload["issue_id"] }
+    rows = Notification.all.index_by(&:issue_id)
     assert rows[kept.id].status_sent?
     assert_skipped rows[removed.id], "Issue missing"
   end
@@ -349,7 +349,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
 
     IntegrationNotification.issue_received_event(issue, newly_created: false)
 
-    assert_equal [ [ "threshold_reached", { "issue_id" => issue.id } ] ], Notification.pluck(:kind, :payload)
+    assert_equal [ [ "threshold_reached", issue.id, {} ] ], Notification.pluck(:kind, :issue_id, :payload)
     assert_requested(count_request, times: 1)
     assert_enqueued_with(
       job: IntegrationNotificationProcessorJob,
@@ -414,7 +414,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     IntegrationNotification.issue_received_event(first, newly_created: false)
     IntegrationNotification.issue_received_event(second, newly_created: false)
 
-    assert_equal [ first.id, second.id ], Notification.order(:id).map { |row| row.payload["issue_id"] }
+    assert_equal [ first.id, second.id ], Notification.order(:id).pluck(:issue_id)
   end
 
   test "an Integration with no saved threshold settings uses the default rule: on, 10 Events in 5 minutes" do
@@ -520,8 +520,9 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     rows = Notification.order(:integration_id)
     assert_equal [ @slack.id, email.id ].sort, rows.map(&:integration_id)
     assert rows.all? { |row| row.kind == "assignment_changed" && row.status_pending? }
+    assert rows.all? { |row| row.issue_id == issue.id }
     assert_equal(
-      { "issue_id" => issue.id, "previous_assignee_id" => previous.id, "new_assignee_id" => current.id },
+      { "previous_assignee_id" => previous.id, "new_assignee_id" => current.id },
       rows.first.payload
     )
     [ @slack, email ].each do |integration|
@@ -551,8 +552,8 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     issue.update!(assignee: current)
 
     assert_equal(
-      [ [ "assignment_changed", { "issue_id" => issue.id, "previous_assignee_id" => nil, "new_assignee_id" => current.id } ] ],
-      Notification.pluck(:kind, :payload)
+      [ [ "assignment_changed", issue.id, { "previous_assignee_id" => nil, "new_assignee_id" => current.id } ] ],
+      Notification.pluck(:kind, :issue_id, :payload)
     )
   end
 

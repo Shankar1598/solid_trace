@@ -25,15 +25,15 @@ class NotificationTest < ActiveSupport::TestCase
         assert_no_enqueued_jobs do
           Notification.enqueue!(
             integration: @integration,
-            kind: "issue_created",
-            payload: { "issue_id" => @issue.id }
+            issue: @issue,
+            kind: "issue_created"
           )
         end
       end
 
       queue_record = Notification.last
       assert_equal "issue_created", queue_record.kind
-      assert_equal({ "issue_id" => @issue.id }, queue_record.payload)
+      assert_equal @issue.id, queue_record.issue_id
       assert_equal "pending", queue_record.status
     end
   end
@@ -42,22 +42,22 @@ class NotificationTest < ActiveSupport::TestCase
     travel_to Time.zone.parse("2026-02-07 12:00:00") do
       record1 = Notification.create!(
         integration: @integration,
+        issue: @issue,
         kind: "issue_created",
-        payload: { "issue_id" => @issue.id },
         status: :pending,
         created_at: Time.current
       )
       record2 = Notification.create!(
         integration: @integration,
+        issue: @issue,
         kind: "issue_created",
-        payload: { "issue_id" => @issue.id },
         status: :failed,
         created_at: Time.current + 30.seconds
       )
       _record3 = Notification.create!(
         integration: @integration,
+        issue: @issue,
         kind: "issue_created",
-        payload: { "issue_id" => @issue.id },
         status: :pending,
         created_at: Time.current + 90.seconds
       )

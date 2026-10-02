@@ -25,7 +25,7 @@ class IntegrationNotificationJobsTest < ActiveJob::TestCase
 
     IntegrationNotificationJob.perform_now(issue, true)
 
-    assert_equal [ [ "issue_created", { "issue_id" => issue.id } ] ], Notification.pluck(:kind, :payload)
+    assert_equal [ [ "issue_created", issue.id ] ], Notification.pluck(:kind, :issue_id)
   end
 
   test "the per-Issue trigger job retries with backoff while EventStore is unavailable, then gives up with a logged error" do
@@ -52,7 +52,7 @@ class IntegrationNotificationJobsTest < ActiveJob::TestCase
 
   test "the processor job delivers pending notifications through the module" do
     issue = create(:issue, project: @project)
-    Notification.enqueue!(integration: @slack, kind: "issue_created", payload: { "issue_id" => issue.id })
+    Notification.enqueue!(integration: @slack, issue: issue, kind: "issue_created")
 
     IntegrationNotificationProcessorJob.perform_now(@slack.id)
 
