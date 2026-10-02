@@ -7,8 +7,10 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 )
 
@@ -293,5 +295,93 @@ func TestServiceIngestStore_CopiesRequestBody(t *testing.T) {
 	event := <-writer.written
 	if string(event.RawJSON) != want {
 		t.Errorf("RawJSON aliases the request body: got %q", event.RawJSON)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Logs
+// ---------------------------------------------------------------------------
+
+// fakeLogWriter records written Log batches. With block set, each write
+// signals entered and waits for block to close.
+type fakeLogWriter struct {
+	written chan []models.Log
+	block   chan struct{}
+	entered chan struct{}
+}
+
+func newFakeLogWriter() *fakeLogWriter {
+	return &fakeLogWriter{
+		written: make(chan []models.Log, 10),
+		entered: make(chan struct{}, 10),
+	}
+}
+
+func (f *fakeLogWriter) WriteLogBatch(projectID uint32, logs []models.Log) error {
+	if f.block != nil {
+		f.entered <- struct{}{}
+		<-f.block
+	}
+	f.written <- logs
+	return nil
+}
+
+func newTestLogService(events EventWriter, logs LogWriter, maxWaiting int) *Service {
+	return NewService(Config{
+		Events:       events,
+		NotifyEvents: func(uint32) {},
+		Logs:         logs,
+		NotifyLogs:   func(uint32) {},
+		Clock:        clock.NewManual(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)),
+		MaxWaiting:   maxWaiting,
+	})
+}
+
+func TestLogsAreTurnedAwayWhileEventsFillTheWaitingLimit(t *testing.T) {
+	events := newFakeEventWriter()
+	events.block = make(chan struct{})
+	logs := newFakeLogWriter()
+	service := newTestLogService(events, logs, 1)
+
+	result := make(chan error, 1)
+	go func() { result <- service.IngestStore(42, sampleEventJSON()) }()
+	<-events.entered
+
+	if _, err := service.IngestLogs(42, []byte(`{"message":"hi"}`), false); !errors.Is(err, ErrOverloaded) {
+		t.Fatalf("expected ErrOverloaded, got %v", err)
+	}
+
+	close(events.block)
+	if err := <-result; err != nil {
+		t.Fatalf("waiting Event failed: %v", err)
+	}
+	if counts, err := service.IngestLogs(42, []byte(`{"message":"hi"}`), false); err != nil || counts.Accepted != 1 {
+		t.Fatalf("expected the Log accepted once the Event was written, got %+v %v", counts, err)
+	}
+}
+
+func TestEventsAreTurnedAwayWhileLogsFillTheWaitingLimit(t *testing.T) {
+	events := newFakeEventWriter()
+	logs := newFakeLogWriter()
+	logs.block = make(chan struct{})
+	service := newTestLogService(events, logs, 1)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := service.IngestLogs(42, []byte(`{"message":"hi"}`), false)
+		result <- err
+	}()
+	<-logs.entered
+
+	if err := service.IngestStore(42, sampleEventJSON()); !errors.Is(err, ErrOverloaded) {
+		t.Fatalf("expected ErrOverloaded, got %v", err)
+	}
+
+	close(logs.block)
+	if err := <-result; err != nil {
+		t.Fatalf("waiting Logs failed: %v", err)
+	}
+	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+		t.Fatalf("expected the Event stored once the Logs were written, got %v", err)
 	}
 }
