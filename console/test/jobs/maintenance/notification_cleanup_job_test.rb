@@ -8,6 +8,7 @@ module Maintenance
 
     setup do
       organization = create(:organization)
+      @issue = create(:issue, project: create(:project, organization: organization))
       @integration = organization.integrations.create!(
         provider: "slack",
         settings: { "webhook_url" => "https://hooks.slack.com/services/T00/B00/XXX" },
@@ -51,8 +52,8 @@ module Maintenance
       at = Time.current - age
       Notification.create!(
         integration: @integration,
+        issue: @issue,
         kind: "issue_created",
-        payload: { "issue_id" => 1 },
         status: status,
         attempts: attempts,
         sent_at: (at if status == :sent),

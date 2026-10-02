@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 # A Notification is one row in the Integration notification outbox: a message
-# of a given +kind+ owed to an Integration. The IntegrationNotification module
-# writes, delivers and closes these rows.
+# of a given +kind+ about an Issue, owed to an Integration. The
+# IntegrationNotification module writes, delivers and closes these rows.
 class Notification < ApplicationRecord
   belongs_to :integration
+  belongs_to :issue
 
   serialize :payload, coder: MessagePackCoder
 
@@ -27,9 +28,10 @@ class Notification < ApplicationRecord
   # Failed rows at the attempt cap: their outcome is final.
   scope :exhausted, -> { where(status: :failed, attempts: MAX_ATTEMPTS..) }
 
-  def self.enqueue!(integration:, kind:, payload: {})
+  def self.enqueue!(integration:, issue:, kind:, payload: {})
     create!(
       integration: integration,
+      issue: issue,
       kind: kind,
       payload: payload,
       status: :pending
