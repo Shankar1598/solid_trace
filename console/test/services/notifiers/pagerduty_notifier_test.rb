@@ -31,7 +31,7 @@ module Notifiers
     # -----------------------------------------------------------------------
 
     test "posts JSON to the PagerDuty Events API" do
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: { event: "issue_created" })
+      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
       response = notifier.call
 
       assert_requested(:post, EVENTS_API_URL) do |req|
@@ -46,7 +46,7 @@ module Notifiers
       @integration.settings["routing_key"] = ""
       @integration.save!
 
-      notifier = PagerdutyNotifier.new(@integration, @issue)
+      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
       result = notifier.call
 
       assert_nil result
@@ -56,7 +56,7 @@ module Notifiers
     test "returns nil on network error without raising" do
       stub_request(:post, EVENTS_API_URL).to_raise(Errno::ECONNREFUSED)
 
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: { event: "issue_created" })
+      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
       result = notifier.call
 
       assert_nil result
@@ -66,25 +66,25 @@ module Notifiers
       stub_request(:post, EVENTS_API_URL)
         .to_return(status: 429, body: "rate limited")
 
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: { event: "issue_created" })
+      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
       response = notifier.call
 
       assert_equal "429", response.code
     end
 
     # -----------------------------------------------------------------------
-    # Payload: issue_created (default)
+    # Payload: one Issue (threshold_reached)
     # -----------------------------------------------------------------------
 
-    test "issue_created payload includes correct summary and dedup_key" do
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: { event: "issue_created" })
+    test "threshold_reached payload includes the Issue summary, dedup_key and details" do
+      notifier = PagerdutyNotifier.new(@integration, kind: "threshold_reached", issues: [ @issue ])
       notifier.call
 
       assert_requested(:post, EVENTS_API_URL) do |req|
         body = JSON.parse(req.body)
         payload = body["payload"]
 
-        assert_includes payload["summary"], "New issue"
+        assert_includes payload["summary"], "Event threshold reached"
         assert_includes payload["summary"], @issue.title
         assert_includes payload["summary"], @issue.kind.upcase
         assert_equal @project.name, payload["source"]
@@ -106,7 +106,7 @@ module Notifiers
     # -----------------------------------------------------------------------
 
     test "threshold_reached payload has correct summary prefix" do
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: { event: "event_threshold_reached" })
+      notifier = PagerdutyNotifier.new(@integration, kind: "threshold_reached", issues: [ @issue ])
       notifier.call
 
       assert_requested(:post, EVENTS_API_URL) do |req|
@@ -121,13 +121,13 @@ module Notifiers
     # -----------------------------------------------------------------------
 
     test "assignment payload includes assignee names in custom_details" do
-      notification = {
-        event: "issue_assignment_updated",
+      notifier = PagerdutyNotifier.new(
+        @integration,
+        kind: "assignment_changed",
+        issues: [ @issue ],
         previous_assignee_name: "Alice",
-        new_assignee_name: "Bob",
-      }
-
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: notification)
+        new_assignee_name: "Bob"
+      )
       notifier.call
 
       assert_requested(:post, EVENTS_API_URL) do |req|
@@ -149,12 +149,7 @@ module Notifiers
       issue2 = create(:issue, project: @project, title: "Second Error")
       issue3 = create(:issue, project: @project, title: "Third Error")
 
-      notification = {
-        event: "issue_created_batch",
-        issues: [@issue, issue2, issue3],
-      }
-
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: notification)
+      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue, issue2, issue3 ])
       notifier.call
 
       assert_requested(:post, EVENTS_API_URL) do |req|
@@ -180,12 +175,7 @@ module Notifiers
     test "batch payload truncates to 10 issues and shows more_count" do
       issues = 12.times.map { |i| create(:issue, project: @project, title: "Issue #{i}") }
 
-      notification = {
-        event: "issue_created_batch",
-        issues: issues,
-      }
-
-      notifier = PagerdutyNotifier.new(@integration, issues.first, notification: notification)
+      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: issues)
       notifier.call
 
       assert_requested(:post, EVENTS_API_URL) do |req|
@@ -199,23 +189,9 @@ module Notifiers
       end
     end
 
-    test "batch payload falls back to single issue when issues array is empty" do
-      notification = {
-        event: "issue_created_batch",
-        issues: [],
-      }
-
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: notification)
-      notifier.call
-
-      assert_requested(:post, EVENTS_API_URL) do |req|
-        body = JSON.parse(req.body)
-        details = body["payload"]["custom_details"]
-
-        assert_equal 1, details["count"]
-        assert_equal 1, details["issues"].length
-        true
-      end
+    test "an unknown kind posts nothing" do
+      assert_nil PagerdutyNotifier.new(@integration, kind: "issue_notification", issues: [ @issue ]).call
+      assert_not_requested(:post, EVENTS_API_URL)
     end
 
     # -----------------------------------------------------------------------
@@ -226,7 +202,7 @@ module Notifiers
       @integration.settings["severity"] = "warning"
       @integration.save!
 
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: { event: "issue_created" })
+      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
       notifier.call
 
       assert_requested(:post, EVENTS_API_URL) do |req|
@@ -240,7 +216,7 @@ module Notifiers
       @integration.settings.delete("severity")
       @integration.save!
 
-      notifier = PagerdutyNotifier.new(@integration, @issue, notification: { event: "issue_created" })
+      notifier = PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ])
       notifier.call
 
       assert_requested(:post, EVENTS_API_URL) do |req|
