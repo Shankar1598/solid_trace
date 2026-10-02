@@ -3,11 +3,16 @@ package main_test
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/valyala/fasthttp"
 )
 
 // gzipped compresses body as a shipper's gzip encoder does.
@@ -15,6 +20,21 @@ func gzipped(t *testing.T, body []byte) []byte {
 	t.Helper()
 	var out bytes.Buffer
 	w := gzip.NewWriter(&out)
+	if _, err := w.Write(body); err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	return out.Bytes()
+}
+
+// storedGzip wraps body in gzip without compressing it, so the gzip body is
+// a little larger than body.
+func storedGzip(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	w, _ := gzip.NewWriterLevel(&out, gzip.NoCompression)
 	if _, err := w.Write(body); err != nil {
 		t.Fatalf("gzip: %v", err)
 	}
@@ -45,6 +65,12 @@ func sendEncoded(t *testing.T, env *TestEnv, path, contentType, encoding string,
 		req.Header.Set("Content-Encoding", encoding)
 	}
 	resp, err := env.App.Test(req, 10000)
+	if errors.Is(err, fasthttp.ErrBodyTooLarge) {
+		// The server refused a body over the ingest app's limit before its
+		// handler ran. It answered 413 and closed the connection, which
+		// app.Test reports as this error instead of the response.
+		return &http.Response{StatusCode: http.StatusRequestEntityTooLarge, Body: http.NoBody}
+	}
 	if err != nil {
 		t.Fatalf("POST %s failed: %v", path, err)
 	}
@@ -74,5 +100,69 @@ func TestGzipZstdAndIdentityLogBodiesAreStored(t *testing.T) {
 
 	if got, want := messages(latestLogs(t, env, 123, 10)), []string{"identity", "zstd", "gzip two", "gzip one"}; !slices.Equal(got, want) {
 		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+// ndjsonOfSize is NDJSON Logs with the given message, at least n bytes long.
+func ndjsonOfSize(message string, n int) []byte {
+	line := []byte(fmt.Sprintf(`{"message":%q}`+"\n", message))
+	return bytes.Repeat(line, n/len(line)+1)
+}
+
+func TestLogBodiesOverEitherCapGet413AndNothingIsStored(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	const sentCap, decodedCap = 10 << 20, 50 << 20
+	overDecodedCap := ndjsonOfSize("over the decoded cap", decodedCap+1)
+	bodies := []struct {
+		name     string
+		encoding string
+		body     []byte
+	}{
+		{"identity over 10 MB", "", ndjsonOfSize("identity over 10 MB", sentCap+1)},
+		{"gzip over 10 MB as sent", "gzip", storedGzip(t, ndjsonOfSize("gzip over 10 MB", sentCap))},
+		{"gzip over 50 MB decoded", "gzip", gzipped(t, overDecodedCap)},
+		{"zstd over 50 MB decoded", "zstd", zstdCompressed(t, overDecodedCap)},
+	}
+	for _, b := range bodies {
+		t.Run(b.name, func(t *testing.T) {
+			resp := sendEncoded(t, env, "/api/123/logs", "application/x-ndjson", b.encoding, b.body)
+			if resp.StatusCode != 413 {
+				raw, _ := io.ReadAll(resp.Body)
+				t.Errorf("Expected 413, got %d: %.200s", resp.StatusCode, raw)
+			}
+		})
+	}
+
+	env.ProcessLogs(t)
+	if logs := latestLogs(t, env, 123, 10); len(logs) != 0 {
+		t.Errorf("Expected no Logs stored, got %d", len(logs))
+	}
+}
+
+func TestOnlyTheLogRouteTakesABodyOver4MB(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// 6 MB as sent: over the Event routes' cap of 4 MB, under the Log route's
+	// 10 MB.
+	payload := []byte(`{"message":"` + strings.Repeat("x", 6<<20) + `"}`)
+
+	resp := sendEncoded(t, env, "/api/123/logs", "application/json", "", payload)
+	if counts := decodeLogCounts(t, resp); counts != (logCounts{Accepted: 1, Truncated: 1}) {
+		t.Errorf("Expected the Log accepted and truncated, got %+v", counts)
+	}
+
+	envelope := append([]byte(`{}`+"\n"+`{"type":"event"}`+"\n"), payload...)
+	for path, body := range map[string][]byte{"/api/123/store": payload, "/api/123/envelope": envelope} {
+		resp := sendEncoded(t, env, path, "application/json", "", body)
+		if resp.StatusCode != 413 {
+			raw, _ := io.ReadAll(resp.Body)
+			t.Errorf("%s: expected 413, got %d: %.200s", path, resp.StatusCode, raw)
+		}
+	}
+	if uuids := env.EventWriter.UUIDs(); len(uuids) != 0 {
+		t.Errorf("Expected no Event stored, got %d", len(uuids))
 	}
 }

@@ -262,8 +262,7 @@ func (env *TestEnv) open(t *testing.T) {
 	logsHandler := handler.NewLogsHandler(logStore)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
-	env.App = fiber.New()
-	handler.RegisterIngestRoutes(env.App, ingestHandler, healthHandler)
+	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, healthHandler)
 
