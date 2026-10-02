@@ -16,7 +16,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Where things stand
 
-- **Logs**: planning only; the only code is the throwaway `logsbench` harness and probes on `feature/logging`. The map is the source of truth. The goal is a v1 spec plus first-milestone tickets. [10](logs/issues/10-storage-architecture-and-retention.md) was reopened by 14 to fold in the promotion redesign.
+- **Logs**: planning only; the only code is the throwaway `logsbench` harness and probes on `feature/logging`. The map is the source of truth. The goal is a v1 spec plus first-milestone tickets. [10](logs/issues/10-storage-architecture-and-retention.md) is resolved again with the promotion redesign ([ADR 0005](../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md)); 13 (write the v1 spec) is next.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
 - **Integration notification**: resolved and merged (2026-10-02, `9a488c6`). One Console module sends new-Issue, threshold and assignment notifications through the outbox, with recorded outcomes, bounded retries and cleanup. EventStore's Event count honours the time window. Review findings left open are listed in the [spec](integration-notification/spec.md)'s Comments.
 - **Ingest write path**: reopened. 02 and 03 are resolved (2026-09-30). A code review on 2026-10-01 filed 04–06. 04, a lone bad DuckDB row stalling Event processing, is resolved (2026-10-01). 05 is `wontfix` (2026-10-02). 06 is resolved (2026-10-02). Event ingest stores the Event in Pebble before the `200`. Event processing, a single worker, catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. Review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
@@ -24,13 +24,13 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-1. [Logs 10](logs/issues/10-storage-architecture-and-retention.md) (reopened, grilling): settle the open promotion questions in its last comment and write an ADR that supersedes 0004; then 13 (write the v1 spec)
+1. [Logs 13](logs/issues/13-write-v1-spec-and-first-milestone-tickets.md): write the v1 spec and first-milestone tickets
 
 ## Efforts
 
 | Effort | Done / open | Start here |
 |---|---|---|
-| Logs | 12 / 2 | [map.md](logs/map.md) |
+| Logs | 13 / 1 | [map.md](logs/map.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
@@ -38,9 +38,16 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
-01–09, 11, 12, 14 (done) → 10 (reopened 2026-10-02) → 13 (write the v1 spec)
+01–12, 14 (done) → 13 (write the v1 spec)
 
-## Last session (2026-10-02, DuckDB 1.5.6 and logs 14)
+## Last session (2026-10-02, logs 10 second pass)
+
+[Logs 10](logs/issues/10-storage-architecture-and-retention.md) resolved again (grilling); [ADR 0005](../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md) supersedes ADR 0004, and ADR 0003 gains a note.
+- **Decided:** one hot table per Project with key-named promoted columns (up to 100 (type, key) pairs, at ingest); popularity counted by the Log processor per Project per UTC day of `time`; lazy daily re-rank on the first Log of a day; demoted columns dropped at the 01:00 export; a shared MAP-only `logs_late` for out-of-window Logs; the compiler learns columns only from the promoted-set table.
+- **SQL mode's `logs` view** now covers the bar's Project and time range (a convenience, not a boundary). **SQL query** in `CONTEXT.md` is amended; tickets 11 and 12 carry pointer comments.
+- Reasoned, not benchmarked. The first-milestone load test covers per-Project tables, the daily switch and checkpoints at full scale.
+
+## Earlier session (2026-10-02, DuckDB 1.5.6 and logs 14)
 
 Worked in the main checkout, now on `feature/logging`; all worktrees were removed (prototype branches remain as branches). `main` was merged into `feature/logging`.
 - **[Upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) resolved** (`9168867`): EventStore runs DuckDB 1.5.6; the alpha wiring is gone; VARIANT layouts in `logsbench` are parked for 2.0. Dev DuckDB data written by the alpha was moved to the session scratchpad, not deleted.

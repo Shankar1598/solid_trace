@@ -34,3 +34,9 @@ Resolved 2026-10-02 (grilling). Glossary: **Query** and **SQL query** added to `
 **Engine**
 - One query path: filter chips, search, histogram, per-level counts and field top-values all become query text, compiled once into DuckDB SQL. The hidden query text is always the real query.
 - A hand-written Go parser and compiler in EventStore, borrowing `runreveal/pql`'s structure, rejecting unknown functions. The browser only highlights, and gets errors from a validate endpoint.
+
+## Comments
+
+### 2026-10-02 from ticket 10 (second pass)
+
+[How are logs stored and retained?](10-storage-architecture-and-retention.md) changed what SQL mode sees: the `logs` view is built per query for the explorer's Project and time range, so in SQL mode the Project and time range now apply and users no longer filter `project_id` themselves. It is a convenience, not a boundary: the SQL still runs unvalidated and can read the raw tables ([ADR 0003](../../../docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md), [ADR 0005](../../../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md)).
