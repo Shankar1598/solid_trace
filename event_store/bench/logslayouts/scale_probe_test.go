@@ -173,3 +173,101 @@ func TestPromotedKeyCount(t *testing.T) {
 	}
 	t.Logf("top keys %.0f ms, copy %.0f ms, total %v", st.TopKeysMs, st.CopyMs, time.Since(start).Round(time.Millisecond))
 }
+
+// TestHotTablePromotion times full scans on a hot table with the 5% keys as
+// columns against the MAP-only table, and adds a column to a filled table
+// while an appender is open. Under a minute; LOGSBENCH_PROBE=1 -v.
+func TestHotTablePromotion(t *testing.T) {
+	if os.Getenv("LOGSBENCH_PROBE") == "" {
+		t.Skip("set LOGSBENCH_PROBE=1 to run")
+	}
+	const logs = 50_000
+	ctx := context.Background()
+	start := time.Now()
+	g := NewGenerator(1)
+	l := mapLayout{}
+	db, err := OpenDB(filepath.Join(t.TempDir(), "logs.duckdb"), Settings{MemoryLimit: "2GB", Threads: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	exec := func(q string) time.Duration {
+		t0 := time.Now()
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%v\n%s", err, q)
+		}
+		return time.Since(t0)
+	}
+	if err := CreateTable(ctx, db, l); err != nil {
+		t.Fatal(err)
+	}
+	w, err := l.NewWriter(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := int64(0); id < logs; id += 5000 {
+		if err := w.Write(ctx, Batch(g, id, 5000)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := TimedParams(g, logs-1)
+
+	// Adding a column to a filled table while the appender is open.
+	d := exec(`ALTER TABLE logs ADD COLUMN "attrs_string.probe" VARCHAR`)
+	t.Logf("ADD COLUMN on %d rows: %v", logs, d.Round(time.Microsecond))
+	if err := w.Write(ctx, Batch(g, logs, 5000)); err != nil {
+		t.Logf("append with the old appender after ADD COLUMN: %s", firstLine(err))
+	} else {
+		t.Logf("append with the old appender after ADD COLUMN: ok")
+	}
+	w.Close()
+	if w, err = l.NewWriter(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(ctx, Batch(g, logs+5000, 10)); err != nil {
+		t.Logf("append with a new appender (one column short): %s", firstLine(err))
+	}
+	w.Close()
+	exec(`ALTER TABLE logs DROP COLUMN "attrs_string.probe"`)
+	exec(fmt.Sprintf("DELETE FROM logs WHERE id >= %d", logs))
+
+	// Grow to 1.6M rows, then build a promoted copy with the 5% keys.
+	for rows := int64(logs); rows < 16*logs; rows *= 2 {
+		exec("INSERT INTO logs SELECT * FROM logs")
+	}
+	t.Logf("grown to %d rows at %v", 16*logs, time.Since(start).Round(time.Millisecond))
+	keys, err := topKeys(ctx, db, "true", PromotedPerFile, int64(PromotedMinShare*16*logs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d = exec("CREATE TABLE logs_promoted AS SELECT " + exportColumns(l, keys) + " FROM logs")
+	exec("CHECKPOINT")
+	t.Logf("%d rows, %d promoted keys; building the promoted copy took %v (setup %v)", 16*logs, len(keys), d.Round(time.Millisecond), time.Since(start).Round(time.Millisecond))
+
+	pl := newPromotedLayout(FormPerFile, []ExportedFile{{Project: p.Project, Promoted: keys}}, p.Project)
+	src := PromotedSource(FormPerFile, []ExportedFile{{Path: "x", Project: p.Project, Promoted: keys}}, p.Project)
+	// PromotedSource reads Parquet; point its branch at the promoted table.
+	src = strings.Replace(src, "read_parquet('x')", "logs_promoted", 1)
+	for _, q := range Queries() {
+		if !slices.Contains([]string{"count_by_service_per_minute", "common_attr_per_minute", "group_by_attr_top10", "common_attr_eq", "rare_attr_eq"}, q.Name) {
+			continue
+		}
+		var out []string
+		for _, c := range []struct {
+			l   Layout
+			src string
+		}{{l, "logs"}, {pl, src}} {
+			var d time.Duration
+			for range 2 {
+				t0 := time.Now()
+				if _, err := queryStrings(ctx, db, q.SQL(c.l, c.src, p), 0); err != nil {
+					t.Fatalf("%s: %v", q.Name, err)
+				}
+				d = time.Since(t0)
+			}
+			out = append(out, fmt.Sprintf("%8.1f", ms(d)))
+		}
+		t.Logf("%-28s map %s ms, promoted %s ms", q.Name, out[0], out[1])
+	}
+	t.Logf("done in %v", time.Since(start).Round(time.Millisecond))
+}
