@@ -3,9 +3,13 @@ package normalise_test
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
@@ -376,5 +380,111 @@ func TestASendersSolidTraceKeysAreKeptAsOriginal(t *testing.T) {
 	}
 	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected Attributes %v, got %v", want, got)
+	}
+}
+
+const kb = 1024
+
+// truncatedFlag tells whether a Log carries solidtrace.truncated = true.
+func truncatedFlag(log models.Log) bool {
+	return log.Attributes.Bool["solidtrace.truncated"]
+}
+
+func TestStringsAreTruncatedAt64KBAndTheLogMarked(t *testing.T) {
+	long := strings.Repeat("a", 70*kb)
+	// Cutting at 64 KB exactly would split a two-byte character.
+	accented := "a" + strings.Repeat("é", 40*kb)
+	log, outcome := normaliseJSON(t, `{"msg": "`+long+`", "accented": "`+accented+`", "service": "`+long+`", "fits": "`+long[:64*kb]+`"}`, receipt)
+
+	if outcome != normalise.Truncated || !truncatedFlag(log) {
+		t.Errorf("Expected the Log truncated and marked, got %v and %v", outcome, log.Attributes.Bool)
+	}
+	if log.Message != long[:64*kb] || log.Service != long[:64*kb] {
+		t.Errorf("Expected the message and Service cut to 64 KB, got %d and %d bytes", len(log.Message), len(log.Service))
+	}
+	if got := log.Attributes.String["accented"]; got != accented[:64*kb-1] || !utf8.ValidString(got) {
+		t.Errorf("Expected the accented string cut before the character at 64 KB, got %d bytes", len(got))
+	}
+	if got := log.Attributes.String["fits"]; got != long[:64*kb] {
+		t.Errorf("Expected a 64 KB string kept whole, got %d bytes", len(got))
+	}
+}
+
+func TestALogWithin64KBStringsIsNotMarked(t *testing.T) {
+	log, outcome := normaliseJSON(t, `{"msg": "`+strings.Repeat("a", 64*kb)+`"}`, receipt)
+	if outcome != normalise.Kept || truncatedFlag(log) {
+		t.Errorf("Expected the Log kept unmarked, got %v and %v", outcome, log.Attributes.Bool)
+	}
+}
+
+func TestAttributeNamesOver256BytesAreDropped(t *testing.T) {
+	name := strings.Repeat("n", 256)
+	log, outcome := normaliseJSON(t, `{"`+name+`": 1, "`+name+`x": 2, "a": {"`+name[:255]+`": 3}}`, receipt)
+
+	if outcome != normalise.Truncated {
+		t.Errorf("Expected the Log truncated, got %v", outcome)
+	}
+	want := map[string]any{name: 1.0, "solidtrace.truncated": true}
+	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected only the 256-byte name kept, got %v", slices.Collect(maps.Keys(got)))
+	}
+}
+
+// numbered returns a JSON object of n Attributes, k0000 = 0 and so on,
+// written in reverse order.
+func numbered(n int) string {
+	pairs := make([]string, n)
+	for i := range n {
+		pairs[n-1-i] = fmt.Sprintf(`"k%04d": %d`, i, i)
+	}
+	return "{" + strings.Join(pairs, ", ") + "}"
+}
+
+func TestPast1000AttributesTheExcessIsDroppedInNameOrder(t *testing.T) {
+	log, outcome := normaliseJSON(t, numbered(1005), receipt)
+
+	if outcome != normalise.Truncated || !truncatedFlag(log) {
+		t.Errorf("Expected the Log truncated and marked, got %v", outcome)
+	}
+	got := attributes(t, log)
+	if len(got) != 1001 {
+		t.Errorf("Expected 1,000 Attributes and the mark, got %d", len(got))
+	}
+	for _, name := range []string{"k0000", "k0999"} {
+		if _, ok := got[name]; !ok {
+			t.Errorf("Expected %s kept", name)
+		}
+	}
+	for _, name := range []string{"k1000", "k1004"} {
+		if _, ok := got[name]; ok {
+			t.Errorf("Expected %s dropped", name)
+		}
+	}
+
+	log, outcome = normaliseJSON(t, numbered(1000), receipt)
+	if outcome != normalise.Kept || len(attributes(t, log)) != 1000 {
+		t.Errorf("Expected 1,000 Attributes kept whole, got %v with %d", outcome, len(attributes(t, log)))
+	}
+}
+
+// sized returns a JSON object of n string Attributes of size bytes each.
+func sized(n, size int) string {
+	pairs := make([]string, n)
+	for i := range n {
+		pairs[i] = fmt.Sprintf(`"s%02d": "%s"`, i, strings.Repeat("v", size))
+	}
+	return "{" + strings.Join(pairs, ", ") + "}"
+}
+
+func TestALogStillOver1MBIsDropped(t *testing.T) {
+	if _, outcome := normaliseJSON(t, sized(16, 64*kb), receipt); outcome != normalise.Dropped {
+		t.Errorf("Expected a Log of 16 64 KB strings dropped, got %v", outcome)
+	}
+	if _, outcome := normaliseJSON(t, `{"list": ["`+strings.Repeat("v", 1024*kb)+`"]}`, receipt); outcome != normalise.Dropped {
+		t.Errorf("Expected a Log holding a 1 MB list dropped, got %v", outcome)
+	}
+	// Strings are cut before the Log is measured.
+	if _, outcome := normaliseJSON(t, sized(15, 100*kb), receipt); outcome != normalise.Truncated {
+		t.Errorf("Expected a Log of 15 strings cut to 64 KB kept, got %v", outcome)
 	}
 }
