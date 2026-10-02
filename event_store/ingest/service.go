@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
 )
@@ -74,33 +75,69 @@ func (s *Service) IngestStore(projectID uint32, rawEventJSON []byte) error {
 	return s.ingestEvent(projectID, rawEventJSON)
 }
 
-// IngestEnvelope ingests the event item of an envelope and ignores every
-// other item type, transactions included.
+// IngestEnvelope ingests the first event item of an envelope, as the store
+// endpoint does, and the Logs of its log items, as one Log batch. It ignores
+// every other item type, transactions included.
+//
+// A log item or log record that can't be read is dropped and the envelope
+// still succeeds, as it does on Sentry. Only a malformed envelope or event
+// fails it.
 func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
-	payload, found, err := eventItem(envelope)
-	if err != nil || !found {
+	items, err := readEnvelope(envelope)
+	if err != nil {
 		return err
 	}
-	return s.ingestEvent(projectID, payload)
+	if items.hasEvent && !json.Valid(items.event) {
+		return ErrInvalidEventJSON
+	}
+	if !items.hasEvent && len(items.logs) == 0 {
+		return nil
+	}
+
+	if !s.enterGate() {
+		return ErrOverloaded
+	}
+	defer s.leaveGate()
+
+	if items.hasEvent {
+		if err := s.writeEvent(projectID, items.event); err != nil {
+			return err
+		}
+	}
+	if len(items.logs) > 0 {
+		records, dropped := sentryLogRecords(items.logs)
+		if _, err := s.storeLogs(projectID, records, dropped, normalise.Sentry); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// eventItem walks the items of a Sentry envelope and returns the payload of
-// the first "event" item. See https://develop.sentry.dev/sdk/data-model/envelopes/
+// envelopeItems are the payloads of the items of an envelope that ingest
+// reads: its first event item, and every log item.
+type envelopeItems struct {
+	hasEvent bool
+	event    []byte
+	logs     [][]byte
+}
+
+// readEnvelope walks the items of a Sentry envelope and returns the payloads
+// of its first "event" item and of its "log" items. See
+// https://develop.sentry.dev/sdk/data-model/envelopes/
 //
 //	Envelope = Headers { "\n" Item } [ "\n" ]
 //	Item     = Headers "\n" Payload
 //
 // An item header with a "length" field owns exactly that many payload bytes,
 // newlines included; without one, the payload runs to the next newline.
-func eventItem(envelope []byte) ([]byte, bool, error) {
+func readEnvelope(envelope []byte) (envelopeItems, error) {
+	var items envelopeItems
 	envelopeHeader, rest, _ := bytes.Cut(envelope, newline)
 	var headers map[string]interface{}
 	if err := json.Unmarshal(envelopeHeader, &headers); err != nil {
-		return nil, false, ErrInvalidEnvelope
+		return items, ErrInvalidEnvelope
 	}
 
-	var event []byte
-	found := false
 	for len(rest) > 0 {
 		if rest[0] == '\n' {
 			rest = rest[1:]
@@ -113,19 +150,19 @@ func eventItem(envelope []byte) ([]byte, bool, error) {
 			Length *int   `json:"length"`
 		}
 		if err := json.Unmarshal(line, &itemHeader); err != nil || itemHeader.Type == "" {
-			return nil, false, ErrInvalidItemHeader
+			return items, ErrInvalidItemHeader
 		}
 
 		var payload []byte
 		if itemHeader.Length != nil {
 			length := *itemHeader.Length
 			if length < 0 || length > len(after) {
-				return nil, false, ErrInvalidEnvelope
+				return items, ErrInvalidEnvelope
 			}
 			payload, after = after[:length], after[length:]
 			if len(after) > 0 {
 				if after[0] != '\n' {
-					return nil, false, ErrInvalidEnvelope
+					return items, ErrInvalidEnvelope
 				}
 				after = after[1:]
 			}
@@ -134,12 +171,15 @@ func eventItem(envelope []byte) ([]byte, bool, error) {
 		}
 		rest = after
 
-		if itemHeader.Type == "event" && !found {
-			event, found = payload, true
+		switch {
+		case itemHeader.Type == "event" && !items.hasEvent:
+			items.hasEvent, items.event = true, payload
+		case itemHeader.Type == "log":
+			items.logs = append(items.logs, payload)
 		}
 	}
 
-	return event, found, nil
+	return items, nil
 }
 
 var newline = []byte("\n")
@@ -154,6 +194,12 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 	}
 	defer s.leaveGate()
 
+	return s.writeEvent(projectID, rawJSON)
+}
+
+// writeEvent stores a valid Event payload and wakes Event processing. The
+// caller is in the gate.
+func (s *Service) writeEvent(projectID uint32, rawJSON []byte) error {
 	event := models.Event{
 		ProjectID: projectID,
 		RawJSON:   bytes.Clone(rawJSON), // rawJSON is fasthttp's request buffer, reused after the handler returns

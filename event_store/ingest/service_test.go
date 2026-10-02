@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,6 +103,15 @@ func TestServiceIngestEnvelopeRejectsInvalidItemHeader(t *testing.T) {
 	err := service.IngestEnvelope(123, envelope)
 	if !errors.Is(err, ErrInvalidItemHeader) {
 		t.Fatalf("expected ErrInvalidItemHeader, got %v", err)
+	}
+}
+
+func TestServiceIngestEnvelopeRejectsAnEventItemWithoutAPayload(t *testing.T) {
+	service := newTestService(nil)
+
+	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\"}"))
+	if !errors.Is(err, ErrInvalidEventJSON) {
+		t.Fatalf("expected ErrInvalidEventJSON, got %v", err)
 	}
 }
 
@@ -434,5 +445,168 @@ func TestLogsAreNotStoredWhenTheProjectsRetentionCantBeRead(t *testing.T) {
 	}
 	if len(logs.written) != 0 {
 		t.Errorf("Expected nothing stored, got %d batches", len(logs.written))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sentry envelope Logs
+// ---------------------------------------------------------------------------
+
+// pythonLogItem is a log item as sentry-python 2.71 sends it: LogBatcher's
+// payload, serialised by envelope.Item with its length and a newline.
+func pythonLogItem(records ...string) string {
+	payload := `{"version": 2, "items": [` + strings.Join(records, ", ") + `]}`
+	return fmt.Sprintf(`{"type": "log", "content_type": "application/vnd.sentry.items.log+json", "item_count": %d, "length": %d}`, len(records), len(payload)) +
+		"\n" + payload + "\n"
+}
+
+// pythonRecord is one record as sentry-python 2.71 serialises a
+// sentry_sdk.logger.info call (LogBatcher._to_transport_format).
+func pythonRecord(body string) string {
+	return `{"timestamp": 1790942340.25, "level": "info", "body": "` + body + `", ` +
+		`"attributes": {` +
+		`"sentry.environment": {"value": "production", "type": "string"}, ` +
+		`"sentry.sdk.name": {"value": "sentry.python", "type": "string"}, ` +
+		`"sentry.severity_number": {"value": 9, "type": "integer"}, ` +
+		`"sentry.severity_text": {"value": "info", "type": "string"}}, ` +
+		`"trace_id": "5b8efff798038103d269b633813fc60c"}`
+}
+
+const pythonEnvelopeHeader = `{"sent_at": "2026-10-02T12:00:00.000000Z"}` + "\n"
+
+func messages(logs []models.Log) []string {
+	var out []string
+	for _, log := range logs {
+		out = append(out, log.Message)
+	}
+	return out
+}
+
+func TestAnEnvelopesLogItemIsStoredAsOneLogBatch(t *testing.T) {
+	logs := newFakeLogWriter()
+	notified := make(chan uint32, 1)
+	service := newTestLogService(nil, logs, 10)
+	service.notifyLogs = func(projectID uint32) { notified <- projectID }
+
+	envelope := pythonEnvelopeHeader + pythonLogItem(pythonRecord("first"), pythonRecord("second"))
+	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+
+	if len(logs.written) != 1 {
+		t.Fatalf("Expected one Log batch, got %d", len(logs.written))
+	}
+	batch := <-logs.written
+	if got := messages(batch); !reflect.DeepEqual(got, []string{"first", "second"}) {
+		t.Errorf("Expected the Logs first and second, got %v", got)
+	}
+	if got := batch[0].Environment; got != "production" {
+		t.Errorf("Expected the environment from sentry.environment, got %q", got)
+	}
+	if batch[0].ID == batch[1].ID {
+		t.Errorf("Expected each Log its own id")
+	}
+	if got := <-notified; got != 42 {
+		t.Errorf("Expected Log processing woken for Project 42, got %d", got)
+	}
+}
+
+func TestAnEnvelopesEventAndLogItemAreBothStored(t *testing.T) {
+	events := newFakeEventWriter()
+	logs := newFakeLogWriter()
+	service := newTestLogService(events, logs, 1)
+
+	eventPayload := `{"message": "Envelope Test", "environment": "production"}`
+	envelope := pythonEnvelopeHeader +
+		fmt.Sprintf(`{"type": "event", "length": %d}`, len(eventPayload)) + "\n" + eventPayload + "\n" +
+		pythonLogItem(pythonRecord("alongside"))
+	// A waiting limit of one is enough for one envelope's Event and Logs.
+	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+
+	if len(events.written) != 1 {
+		t.Fatalf("Expected one Event, got %d", len(events.written))
+	}
+	if event := <-events.written; string(event.RawJSON) != eventPayload {
+		t.Errorf("Expected the Event's payload stored, got %q", event.RawJSON)
+	}
+	if len(logs.written) != 1 {
+		t.Fatalf("Expected one Log batch, got %d", len(logs.written))
+	}
+	if got := messages(<-logs.written); !reflect.DeepEqual(got, []string{"alongside"}) {
+		t.Errorf("Expected the Log alongside, got %v", got)
+	}
+}
+
+func TestLogRecordsThatCannotBeReadAreDroppedAndTheEnvelopeSucceeds(t *testing.T) {
+	logs := newFakeLogWriter()
+	service := newTestLogService(nil, logs, 10)
+
+	unreadable := `{"type": "log", "item_count": 1}` + "\n" + `{"items": [{"body": "cut off` + "\n"
+	notAContainer := `{"type": "log", "item_count": 1}` + "\n" + `[{"body": "not in items"}]` + "\n"
+	envelope := pythonEnvelopeHeader +
+		pythonLogItem(`"just a string"`, pythonRecord("kept"), `null`, `[1, 2]`) +
+		unreadable + notAContainer
+	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+		t.Fatalf("Expected the envelope to succeed, got %v", err)
+	}
+
+	if len(logs.written) != 1 {
+		t.Fatalf("Expected one Log batch, got %d", len(logs.written))
+	}
+	if got := messages(<-logs.written); !reflect.DeepEqual(got, []string{"kept"}) {
+		t.Errorf("Expected only the readable record kept, got %v", got)
+	}
+}
+
+func TestAnEnvelopeWithNoReadableLogsStoresNothing(t *testing.T) {
+	logs := newFakeLogWriter()
+	service := newTestLogService(nil, logs, 10)
+
+	envelope := pythonEnvelopeHeader + pythonLogItem(`"just a string"`)
+	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+		t.Fatalf("Expected the envelope to succeed, got %v", err)
+	}
+	if len(logs.written) != 0 {
+		t.Errorf("Expected no Log batch, got %d", len(logs.written))
+	}
+}
+
+func TestEnvelopeLogsAreTurnedAwayWhileEventsFillTheWaitingLimit(t *testing.T) {
+	events := newFakeEventWriter()
+	events.block = make(chan struct{})
+	logs := newFakeLogWriter()
+	service := newTestLogService(events, logs, 1)
+
+	result := make(chan error, 1)
+	go func() { result <- service.IngestStore(42, sampleEventJSON()) }()
+	<-events.entered
+
+	envelope := []byte(pythonEnvelopeHeader + pythonLogItem(pythonRecord("hi")))
+	if err := service.IngestEnvelope(42, envelope); !errors.Is(err, ErrOverloaded) {
+		t.Fatalf("Expected ErrOverloaded, got %v", err)
+	}
+
+	close(events.block)
+	if err := <-result; err != nil {
+		t.Fatalf("Waiting Event failed: %v", err)
+	}
+	if len(logs.written) != 0 {
+		t.Errorf("Expected nothing stored, got %d batches", len(logs.written))
+	}
+}
+
+func TestAnEnvelopeWithAnInvalidEventStoresNothing(t *testing.T) {
+	events := newFakeEventWriter()
+	logs := newFakeLogWriter()
+	service := newTestLogService(events, logs, 10)
+
+	envelope := pythonEnvelopeHeader + `{"type": "event"}` + "\n" + `{not json` + "\n" + pythonLogItem(pythonRecord("hi"))
+	if err := service.IngestEnvelope(42, []byte(envelope)); !errors.Is(err, ErrInvalidEventJSON) {
+		t.Fatalf("Expected ErrInvalidEventJSON, got %v", err)
+	}
+	if len(events.written) != 0 || len(logs.written) != 0 {
+		t.Errorf("Expected nothing stored, got %d Events and %d Log batches", len(events.written), len(logs.written))
 	}
 }
