@@ -160,7 +160,7 @@ func moreLiteral(a, b []int) bool {
 func normaliseSent(s sent, r Receipt) (models.Log, Outcome) {
 	var log models.Log
 	for _, name := range slices.Sorted(maps.Keys(s.attributes)) {
-		setAttribute(&log.Attributes, name, s.attributes[name])
+		setAttribute(&log.Attributes, unreserved(name), s.attributes[name])
 	}
 
 	// After the sender's own Attributes, so an original.<field> SolidTrace
@@ -193,6 +193,17 @@ func normaliseSent(s sent, r Receipt) (models.Log, Outcome) {
 		}
 	}
 	return log, Kept
+}
+
+// reservedPrefix starts the names of Attributes SolidTrace sets.
+const reservedPrefix = "solidtrace."
+
+// unreserved renames a sender's Attribute out of SolidTrace's reserved names.
+func unreserved(name string) string {
+	if strings.HasPrefix(name, reservedPrefix) {
+		return "original." + name
+	}
+	return name
 }
 
 func parseString(raw json.RawMessage) (string, bool) {
@@ -350,12 +361,28 @@ func setAttribute(attrs *models.Attributes, name string, raw json.RawMessage) {
 			setIn(&attrs.JSON, name, compact.String())
 		}
 	default:
-		if n, err := strconv.ParseFloat(string(raw), 64); err == nil {
+		if n, ok := double(string(raw)); ok {
 			setIn(&attrs.Number, name, n)
 		} else {
 			setIn(&attrs.String, name, string(raw))
 		}
 	}
+}
+
+// double returns a JSON number as a DOUBLE, unless a DOUBLE can't hold it: a
+// whole number it can't hold exactly, or a number out of its range.
+func double(number string) (float64, bool) {
+	// A DOUBLE holds every whole number of up to 15 digits exactly.
+	if len(strings.TrimPrefix(number, "-")) > 15 && !strings.ContainsAny(number, ".eE") {
+		whole, ok := new(big.Int).SetString(number, 10)
+		if !ok {
+			return 0, false
+		}
+		f, accuracy := new(big.Float).SetInt(whole).Float64()
+		return f, accuracy == big.Exact
+	}
+	f, err := strconv.ParseFloat(number, 64)
+	return f, err == nil
 }
 
 func setIn[V any](m *map[string]V, name string, value V) {
