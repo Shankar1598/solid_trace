@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-03.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Each `log` item's log records are normalised and stored as one Log batch; an `event` item in the same envelope is handled exactly as today.
 - [x] Sentry mapping: `body` → `message`; `timestamp` (float seconds) → `time`; `level` and `trace_id` fill their fields; typed `{value, type}` attributes unwrapped to plain values; `sentry.environment` fills `environment` and is consumed; other `sentry.*` keys stay Attributes; `service` from a `service.name` attribute. The rest of normalisation (limits, Levels, time rules) applies as for JSON Logs.
