@@ -340,38 +340,152 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
-  # Threshold and assignment: still sent straight from the trigger
+  # Issue received an Event: the threshold rule
   # ---------------------------------------------------------------------------
 
-  test "an Issue reaching the Event threshold is still sent immediately" do
-    @slack.update!(settings: @slack.settings.merge("notify_on_event_threshold" => "1", "event_threshold" => "3"))
-    issue = create(:issue, project: @project, title: "Spiking")
-    create(:issue_fingerprint, issue: issue)
-    stub_request(:get, %r{/api/#{@project.id}/events/count})
-      .to_return(status: 200, body: { count: 3 }.to_json)
+  test "the threshold fires when the windowed count lands exactly on the threshold" do
+    issue = threshold_issue
+    count_request = stub_event_count(3)
 
-    assert_no_difference -> { Notification.count } do
-      IntegrationNotification.issue_received_event(issue, newly_created: false)
-    end
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
 
-    assert_requested(:post, SLACK_URL, times: 1) do |request|
-      JSON.parse(request.body)["text"] == "📈 Event threshold reached: Spiking"
-    end
+    assert_equal [ [ "threshold_reached", { "issue_id" => issue.id } ] ], Notification.pluck(:kind, :payload)
+    assert_requested(count_request, times: 1)
+    assert_enqueued_with(
+      job: IntegrationNotificationProcessorJob,
+      args: [ @slack.id ],
+      at: Time.current + IntegrationNotification::INITIAL_DELAY
+    )
+    assert_not_requested(:post, SLACK_URL)
   end
 
-  test "a new Issue that also reaches the Event threshold gets only the issue created notification" do
-    @slack.update!(settings: @slack.settings.merge("notify_on_event_threshold" => "1", "event_threshold" => "1"))
-    issue = create(:issue, project: @project, title: "Brand new")
-    create(:issue_fingerprint, issue: issue)
+  test "the threshold fires when a burst overshoots it" do
+    issue = threshold_issue
+    stub_event_count(7)
+
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
+
+    assert_equal [ "threshold_reached" ], Notification.pluck(:kind)
+  end
+
+  test "below the threshold no row is written" do
+    issue = threshold_issue
+    stub_event_count(2)
+
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
+
+    assert_equal 0, Notification.count
+  end
+
+  test "the count request carries the window as newer_than and the Issue's fingerprints" do
+    issue = threshold_issue
+    fingerprint = issue.issue_fingerprints.sole
     count_request = stub_request(:get, %r{/api/#{@project.id}/events/count})
-      .to_return(status: 200, body: { count: 1 }.to_json)
+      .with(query: { "newer_than" => 5.minutes.ago.iso8601, "fingerprint_ids" => fingerprint.id.to_s })
+      .to_return(status: 200, body: { count: 3 }.to_json)
+
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
+
+    assert_requested(count_request, times: 1)
+  end
+
+  test "a second crossing within the window writes no new row and it fires again after the window" do
+    issue = threshold_issue
+    stub_event_count(4)
+
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    travel 4.minutes
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
+
+    assert_equal 1, Notification.count
+
+    travel 1.minute + 1.second
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
+
+    assert_equal [ "threshold_reached", "threshold_reached" ], Notification.pluck(:kind)
+  end
+
+  test "a threshold row for another Issue does not hold back this one" do
+    first = threshold_issue
+    second = create(:issue, project: @project)
+    create(:issue_fingerprint, issue: second)
+    stub_event_count(3)
+
+    IntegrationNotification.issue_received_event(first, newly_created: false)
+    IntegrationNotification.issue_received_event(second, newly_created: false)
+
+    assert_equal [ first.id, second.id ], Notification.order(:id).map { |row| row.payload["issue_id"] }
+  end
+
+  test "with the threshold rule off no row is written and EventStore is not asked" do
+    issue = threshold_issue
+    @slack.update!(settings: @slack.settings.merge("notify_on_event_threshold" => "0"))
+    count_request = stub_event_count(3)
+
+    IntegrationNotification.issue_received_event(issue, newly_created: false)
+
+    assert_equal 0, Notification.count
+    assert_not_requested(count_request)
+  end
+
+  test "a new Issue crossing the threshold with both rules on yields both rows" do
+    issue = threshold_issue
+    stub_event_count(3)
 
     IntegrationNotification.issue_received_event(issue, newly_created: true)
 
-    assert_equal [ "issue_created" ], Notification.pluck(:kind)
-    assert_not_requested(count_request)
-    assert_not_requested(:post, SLACK_URL)
+    assert_equal [ "issue_created", "threshold_reached" ], Notification.order(:id).pluck(:kind)
   end
+
+  test "with EventStore unavailable the check raises and writes nothing, not even the issue created row" do
+    issue = threshold_issue
+    stub_request(:get, %r{/api/#{@project.id}/events/count}).to_return(status: 503, body: "down")
+
+    assert_raises(EventStore::Unavailable) do
+      IntegrationNotification.issue_received_event(issue, newly_created: true)
+    end
+
+    assert_equal 0, Notification.count
+    assert_no_enqueued_jobs(only: IntegrationNotificationProcessorJob)
+  end
+
+  test "with EventStore unreachable the check raises" do
+    issue = threshold_issue
+    stub_request(:get, %r{/api/#{@project.id}/events/count}).to_raise(Errno::ECONNREFUSED)
+
+    assert_raises(EventStore::Unavailable) do
+      IntegrationNotification.issue_received_event(issue, newly_created: false)
+    end
+  end
+
+  test "threshold rows are delivered one message per row in the same tick as the batch" do
+    spiking = threshold_issue(title: "Spiking")
+    also_spiking = create(:issue, project: @project, title: "Also spiking")
+    create(:issue_fingerprint, issue: also_spiking)
+    stub_event_count(3)
+    IntegrationNotification.issue_received_event(spiking, newly_created: true)
+    IntegrationNotification.issue_received_event(also_spiking, newly_created: false)
+
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    texts = []
+    assert_requested(:post, SLACK_URL, times: 3) { |request| texts << JSON.parse(request.body)["text"] }
+    assert_equal(
+      [ "🚨 1 New Issues Detected", "📈 Event threshold reached: Spiking", "📈 Event threshold reached: Also spiking" ].sort,
+      texts.sort
+    )
+    assert Notification.all.all?(&:status_sent?)
+
+    travel 30.seconds
+    IntegrationNotification.issue_received_event(create(:issue, project: @project), newly_created: true)
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert_requested(:post, SLACK_URL, times: 3)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Assignment: still sent straight from the trigger
+  # ---------------------------------------------------------------------------
 
   test "an assignment change is still sent immediately when the assignment rule is on" do
     @slack.update!(settings: @slack.settings.merge("notify_on_assignment" => "1"))
@@ -399,6 +513,19 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
   end
 
   private
+
+  # An existing Issue with a fingerprint, and the Slack threshold rule on at
+  # three Events in five minutes.
+  def threshold_issue(title: "Spiking")
+    @slack.update!(settings: @slack.settings.merge(
+      "notify_on_event_threshold" => "1", "event_threshold" => "3", "time_window_minutes" => "5"
+    ))
+    create(:issue, project: @project, title: title).tap { |issue| create(:issue_fingerprint, issue: issue) }
+  end
+
+  def stub_event_count(count)
+    stub_request(:get, %r{/api/#{@project.id}/events/count}).to_return(status: 200, body: { count: count }.to_json)
+  end
 
   def assert_skipped(row, reason)
     row.reload

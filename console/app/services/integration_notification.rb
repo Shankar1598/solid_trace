@@ -37,11 +37,7 @@ module IntegrationNotification
       ISSUE_CREATED => ->(integration, _issue, context) {
         context[:newly_created] && integration.notify_on_new_issue
       },
-      # Until threshold moves to the outbox, a new Issue that gets an issue
-      # created Notification is not also checked for the threshold, as before.
-      THRESHOLD_REACHED => ->(integration, issue, context) {
-        next false if context[:newly_created] && integration.notify_on_new_issue
-
+      THRESHOLD_REACHED => ->(integration, issue, _context) {
         integration.notify_on_event_threshold && event_threshold_reached?(integration, issue)
       },
     },
@@ -56,7 +52,7 @@ module IntegrationNotification
 
   # Kinds still sent synchronously from the trigger instead of through the
   # outbox, as before this module existed.
-  SENT_FROM_TRIGGER = [ THRESHOLD_REACHED, ASSIGNMENT_CHANGED ].freeze
+  SENT_FROM_TRIGGER = [ ASSIGNMENT_CHANGED ].freeze
 
   ADAPTERS = {
     "slack" => "Notifiers::SlackNotifier",
@@ -65,6 +61,8 @@ module IntegrationNotification
   }.freeze
 
   class << self
+    # Raises EventStore::Unavailable, before writing anything, when the
+    # threshold rule cannot get the windowed Event count; the caller retries.
     def issue_received_event(issue, newly_created:)
       apply_rules(:issue_received_event, issue, newly_created: newly_created)
     end
@@ -101,16 +99,26 @@ module IntegrationNotification
 
     private
 
+    # Every rule is evaluated before anything is written, so EventStore being
+    # unavailable leaves nothing behind and a retried trigger does not write
+    # rows twice. Any other error skips only that Integration.
     def apply_rules(trigger, issue, **context)
+      due = []
       issue.project.organization.integrations.active.find_each do |integration|
         RULES.fetch(trigger).each do |kind, applies|
-          next unless applies.call(integration, issue, context)
+          due << [ integration, kind ] if applies.call(integration, issue, context)
+        end
+      rescue EventStore::Unavailable
+        raise
+      rescue StandardError => e
+        Rails.logger.error("Integration notification rules failed for #{integration.provider}: #{e.message}")
+      end
 
-          if SENT_FROM_TRIGGER.include?(kind)
-            send_from_trigger(integration, kind, issue, context)
-          else
-            record(integration, kind, issue, context)
-          end
+      due.each do |integration, kind|
+        if SENT_FROM_TRIGGER.include?(kind)
+          send_from_trigger(integration, kind, issue, context)
+        else
+          record(integration, kind, issue, context)
         end
       rescue StandardError => e
         Rails.logger.error("Integration notification failed for #{integration.provider}: #{e.message}")
@@ -196,8 +204,19 @@ module IntegrationNotification
       members.find_by(id: organization_user_id)&.user&.name
     end
 
+    # At least event_threshold Events within the window, and no threshold
+    # reached row for this Issue and Integration in that window: the outbox is
+    # the dedup record.
     def event_threshold_reached?(integration, issue)
-      issue.events.newer_than(integration.time_window_minutes.minutes.ago).count == integration.event_threshold
+      window_start = integration.time_window_minutes.minutes.ago
+      return false if threshold_reached_since?(integration, issue, window_start)
+
+      issue.events.newer_than(window_start).count! >= integration.event_threshold
+    end
+
+    def threshold_reached_since?(integration, issue, window_start)
+      Notification.where(integration: integration, kind: THRESHOLD_REACHED, created_at: window_start..)
+        .any? { |row| row.payload["issue_id"] == issue.id }
     end
   end
 end
