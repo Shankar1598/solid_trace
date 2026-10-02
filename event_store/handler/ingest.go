@@ -134,10 +134,6 @@ func isNDJSON(c *fiber.Ctx) bool {
 	return strings.EqualFold(strings.TrimSpace(mediaType), "application/x-ndjson")
 }
 
-// retryAfterSeconds is how long an overloaded or stopping ingest asks the
-// sender to wait before retrying.
-const retryAfterSeconds = "5"
-
 var errInvalidProjectKey = errors.New("invalid project key")
 
 func (h *IngestHandler) validateKey(publicKey string) (uint32, error) {
@@ -161,6 +157,10 @@ func (h *IngestHandler) renderKeyError(c *fiber.Ctx, err error) error {
 	logger.L.Error("Project key lookup failed", "error", err)
 	return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 }
+
+// retryAfterSeconds is how long an overloaded or stopping ingest asks the
+// sender to wait before retrying.
+const retryAfterSeconds = "5"
 
 func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 	switch {
