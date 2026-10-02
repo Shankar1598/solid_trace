@@ -327,12 +327,19 @@ func (f *fakeLogWriter) WriteLogBatch(projectID uint32, logs []models.Log) error
 }
 
 func newTestLogService(events EventWriter, logs LogWriter, maxWaiting int) *Service {
+	return newRetentionTestService(events, logs, maxWaiting, FixedRetention(30))
+}
+
+// newRetentionTestService is a Service whose clock reads 2026-10-02 12:00 UTC
+// and whose Projects keep Logs as retention says.
+func newRetentionTestService(events EventWriter, logs LogWriter, maxWaiting int, retention Retention) *Service {
 	return NewService(Config{
 		Events:       events,
 		NotifyEvents: func(uint32) {},
 		Logs:         logs,
 		NotifyLogs:   func(uint32) {},
 		Clock:        clock.NewManual(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)),
+		Retention:    retention,
 		MaxWaiting:   maxWaiting,
 	})
 }
@@ -383,5 +390,49 @@ func TestEventsAreTurnedAwayWhileLogsFillTheWaitingLimit(t *testing.T) {
 	}
 	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
 		t.Fatalf("expected the Event stored once the Logs were written, got %v", err)
+	}
+}
+
+// projectRetention gives each Project its own Retention, as Console's
+// settings do, or fails.
+type projectRetention struct {
+	days map[uint32]int
+	err  error
+}
+
+func (r projectRetention) LogRetentionDays(projectID uint32) (int, error) {
+	return r.days[projectID], r.err
+}
+
+func TestEachProjectsRetentionDecidesWhichLogTimesAreTooOld(t *testing.T) {
+	logs := newFakeLogWriter()
+	service := newRetentionTestService(nil, logs, 10, projectRetention{days: map[uint32]int{42: 7, 43: 14}})
+
+	// Ten days before the service's clock.
+	body := []byte(`{"message": "ten days old", "time": "2026-09-22T12:00:00Z"}`)
+	for _, projectID := range []uint32{42, 43} {
+		if _, err := service.IngestLogs(projectID, body, false); err != nil {
+			t.Fatalf("IngestLogs for %d: %v", projectID, err)
+		}
+	}
+
+	receivedAt := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	if got := (<-logs.written)[0].Time; !got.Equal(receivedAt) {
+		t.Errorf("Expected the receipt time in a Project keeping 7 days, got %v", got)
+	}
+	if got := (<-logs.written)[0].Time; !got.Equal(time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)) {
+		t.Errorf("Expected the Log's own time in a Project keeping 14 days, got %v", got)
+	}
+}
+
+func TestLogsAreNotStoredWhenTheProjectsRetentionCantBeRead(t *testing.T) {
+	logs := newFakeLogWriter()
+	service := newRetentionTestService(nil, logs, 10, projectRetention{err: errors.New("database is locked")})
+
+	if _, err := service.IngestLogs(42, []byte(`{"message": "hi"}`), false); err == nil {
+		t.Fatalf("Expected an error")
+	}
+	if len(logs.written) != 0 {
+		t.Errorf("Expected nothing stored, got %d batches", len(logs.written))
 	}
 }

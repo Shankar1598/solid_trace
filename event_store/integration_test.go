@@ -254,6 +254,7 @@ func (env *TestEnv) open(t *testing.T) {
 		Logs:         pebbleWriter,
 		NotifyLogs:   func(projectID uint32) { env.LogProcessor.Notify(projectID) },
 		Clock:        env.Clock,
+		Retention:    ingest.FixedRetention(30),
 		MaxWaiting:   100,
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
