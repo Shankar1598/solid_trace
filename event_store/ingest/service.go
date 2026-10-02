@@ -87,10 +87,10 @@ func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
 	if err != nil {
 		return err
 	}
-	if items.event != nil && !json.Valid(items.event) {
+	if items.hasEvent && !json.Valid(items.event) {
 		return ErrInvalidEventJSON
 	}
-	if items.event == nil && len(items.logs) == 0 {
+	if !items.hasEvent && len(items.logs) == 0 {
 		return nil
 	}
 
@@ -99,7 +99,7 @@ func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
 	}
 	defer s.leaveGate()
 
-	if items.event != nil {
+	if items.hasEvent {
 		if err := s.writeEvent(projectID, items.event); err != nil {
 			return err
 		}
@@ -116,8 +116,9 @@ func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
 // envelopeItems are the payloads of the items of an envelope that ingest
 // reads: its first event item, and every log item.
 type envelopeItems struct {
-	event []byte
-	logs  [][]byte
+	hasEvent bool
+	event    []byte
+	logs     [][]byte
 }
 
 // readEnvelope walks the items of a Sentry envelope and returns the payloads
@@ -171,8 +172,8 @@ func readEnvelope(envelope []byte) (envelopeItems, error) {
 		rest = after
 
 		switch {
-		case itemHeader.Type == "event" && items.event == nil:
-			items.event = payload
+		case itemHeader.Type == "event" && !items.hasEvent:
+			items.hasEvent, items.event = true, payload
 		case itemHeader.Type == "log":
 			items.logs = append(items.logs, payload)
 		}

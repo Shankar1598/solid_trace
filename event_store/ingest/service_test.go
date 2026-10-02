@@ -106,6 +106,15 @@ func TestServiceIngestEnvelopeRejectsInvalidItemHeader(t *testing.T) {
 	}
 }
 
+func TestServiceIngestEnvelopeRejectsAnEventItemWithoutAPayload(t *testing.T) {
+	service := newTestService(nil)
+
+	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\"}"))
+	if !errors.Is(err, ErrInvalidEventJSON) {
+		t.Fatalf("expected ErrInvalidEventJSON, got %v", err)
+	}
+}
+
 func TestServiceIngestEnvelopeIgnoresUnsupportedItems(t *testing.T) {
 	service := newTestService(nil)
 	envelope := []byte("{}\n{\"type\":\"attachment\"}\nignored")

@@ -27,7 +27,12 @@ var sentryAttributeFields = map[string]field{
 // Sentry normalises one log record of a Sentry envelope's log item. Its
 // fields map to the built-in fields by name, with no aliases, so an attribute
 // such as msg or env stays an Attribute. Its typed attributes, {"value": …,
-// "type": …}, are unwrapped to their values.
+// "type": …}, are unwrapped to their values, dropping the type and any unit.
+// Its other fields, such as severity_number, are Attributes too; an attribute
+// of the same name wins.
+//
+// The timestamp is read as any Log time is: epoch seconds as the protocol
+// says, or RFC 3339, which sentry-go sends.
 func Sentry(record map[string]json.RawMessage, r Receipt) (models.Log, Outcome) {
 	var s sent
 	values := make(map[string]json.RawMessage, len(record))
