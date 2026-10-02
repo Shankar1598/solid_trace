@@ -75,6 +75,11 @@ func (h *EventsHandler) GetEventWithContext(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
+	// prev/next run over the Issue's whole Event sequence, so a time window
+	// can't apply; refuse it rather than ignore it.
+	if !params.NewerThan.IsZero() || !params.OlderThan.IsZero() {
+		return c.Status(400).JSON(fiber.Map{"error": "newer_than and older_than are not supported on events/context"})
+	}
 
 	// If no UUID provided, we want the latest 2 events to determine prev
 	if params.UUID == "" {

@@ -140,3 +140,23 @@ func TestMalformedTimeBoundIsRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestEventContextRejectsATimeWindow(t *testing.T) {
+	now := time.Now().UTC()
+	app := newTestApps(t, eventAt(10, now.Add(-time.Hour))).query
+
+	for _, bound := range []string{"newer_than", "older_than"} {
+		query := url.Values{"fingerprint_ids": {"10"}, bound: {now.Format(time.RFC3339)}}
+		t.Run(bound, func(t *testing.T) {
+			resp := get(t, app, "/api/1/events/context?"+query.Encode())
+			if resp.StatusCode != fiber.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", resp.StatusCode)
+			}
+		})
+	}
+
+	resp := get(t, app, "/api/1/events/context?fingerprint_ids=10")
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("expected 200 without a time window, got %d", resp.StatusCode)
+	}
+}
