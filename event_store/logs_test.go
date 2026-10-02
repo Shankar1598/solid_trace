@@ -16,8 +16,9 @@ import (
 
 // logCounts is the JSON route's answer.
 type logCounts struct {
-	Accepted int `json:"accepted"`
-	Dropped  int `json:"dropped"`
+	Accepted  int `json:"accepted"`
+	Dropped   int `json:"dropped"`
+	Truncated int `json:"truncated"`
 }
 
 // listedLog is one Log as the query app lists it.
@@ -140,7 +141,7 @@ func TestJSONLogIsListedWithEveryFieldAfterProcessing(t *testing.T) {
 			"duration_ms": 12.5,
 			"cached":      true,
 			"roles":       []any{"admin", "dev"},
-			"http":        map[string]any{"method": "GET"},
+			"http.method": "GET",
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
