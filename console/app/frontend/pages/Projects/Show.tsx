@@ -1,21 +1,31 @@
-import { usePage } from '@inertiajs/react'
+import { useForm, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import Breadcrumbs from '@/components/Breadcrumbs'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Project, SharedProps } from '@/types'
 import { Copy, RefreshCw, AlertTriangle } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 interface ProjectsShowProps {
   project: Project
+  default_log_retention_days: number
+  can_manage_project: boolean
 }
 
-export default function ProjectsShow({ project }: ProjectsShowProps) {
+export default function ProjectsShow({ project, default_log_retention_days, can_manage_project }: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const { data, setData, patch, processing, errors, transform } = useForm({
+    log_retention_days: project.log_retention_days?.toString() ?? ''
+  })
+
+  transform((data) => ({
+    project: data
+  }))
 
   if (!current_org) return null
 
@@ -28,6 +38,14 @@ export default function ProjectsShow({ project }: ProjectsShowProps) {
     navigator.clipboard.writeText(text)
     setCopiedKey(label)
     setTimeout(() => setCopiedKey(null), 2000)
+  }
+
+  const submitRetention: React.FormEventHandler = (e) => {
+    e.preventDefault()
+    patch(`/${current_org.slug}/projects/${project.slug}`, {
+      preserveScroll: true,
+      onError: () => toast.error('Failed to update Log Retention')
+    })
   }
 
   // Find the active DSN (usually the first one created usually, or we'd have a flag)
@@ -60,6 +78,45 @@ export default function ProjectsShow({ project }: ProjectsShowProps) {
                   <Input value={project.id} disabled className="font-mono" />
                 </div>
               </CardContent>
+            </Card>
+
+            <Card>
+              <form onSubmit={submitRetention}>
+                <CardHeader>
+                  <CardTitle>Log Retention</CardTitle>
+                  <CardDescription>
+                    How many whole days this project's logs are kept before they are deleted.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2 pb-6">
+                  <Label htmlFor="logRetentionDays">Days</Label>
+                  <Input
+                    id="logRetentionDays"
+                    type="number"
+                    min={1}
+                    step={1}
+                    inputMode="numeric"
+                    value={data.log_retention_days}
+                    onChange={(e) => setData('log_retention_days', e.target.value)}
+                    placeholder={`Instance default (${default_log_retention_days})`}
+                    disabled={!can_manage_project}
+                  />
+                  {errors.log_retention_days && (
+                    <p className="text-sm font-medium text-destructive">{errors.log_retention_days}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Leave empty to use the instance default of {default_log_retention_days} days.
+                    {!can_manage_project && ' Only organization admins can change this.'}
+                  </p>
+                </CardContent>
+                {can_manage_project && (
+                  <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
+                    <Button type="submit" disabled={processing}>
+                      {processing ? 'Saving...' : 'Save'}
+                    </Button>
+                  </CardFooter>
+                )}
+              </form>
             </Card>
 
             <Card className="border-destructive/50">

@@ -16,6 +16,8 @@ class ProjectsController < ApplicationController
   def show
     render inertia: "Projects/Show", props: {
       project: ProjectSerializer.new(@project, include_keys: true).as_json,
+      default_log_retention_days: InstanceSetting.current.default_log_retention_days,
+      can_manage_project: policy(@project).update?,
     }
   end
 
@@ -33,6 +35,8 @@ class ProjectsController < ApplicationController
   end
 
   def update
+    authorize @project
+
     if @project.update(project_params)
       redirect_to project_path(@project, org_slug: @current_org.slug), notice: "Project updated successfully"
     else
@@ -51,6 +55,6 @@ class ProjectsController < ApplicationController
   end
 
   def project_params
-    params.require(:project).permit(:name, :platform)
+    params.require(:project).permit(:name, :platform, :log_retention_days)
   end
 end
