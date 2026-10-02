@@ -89,6 +89,13 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 30, page["default_log_retention_days"]
   end
 
+  test "the Project page lets only admins edit Project settings" do
+    assert_equal false, project_page["can_manage_project"]
+
+    sign_in_as(@admin)
+    assert_equal true, project_page["can_manage_project"]
+  end
+
   test "a member can't change a Project's Log Retention" do
     @project.update!(log_retention_days: 7)
 
