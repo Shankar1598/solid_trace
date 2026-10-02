@@ -1,0 +1,61 @@
+2026/10/02 11:02:39 generator alone: 210135 Logs/s
+2026/10/02 11:04:40 unthrottled: 3440000 Logs, 28518 Logs/s, 16.18 MB/s, flush p99 2440 ms, max backlog 0, kept up false, peak RSS 1264 MB, CPU 115%
+2026/10/02 11:05:40 target: 200828 Logs, 3344 Logs/s, 1.90 MB/s, flush p99 2675 ms, max backlog 5892, kept up false, peak RSS 1228 MB, CPU 16%
+2026/10/02 11:06:40 target_with_queries: 200684 Logs, 3339 Logs/s, 1.90 MB/s, flush p99 482 ms, max backlog 232, kept up true, peak RSS 1047 MB, CPU 171%
+2026/10/02 11:07:40 burst_5x: 970871 Logs, 16159 Logs/s, 9.17 MB/s, flush p99 5450 ms, max backlog 78819, kept up false, peak RSS 1604 MB, CPU 57%
+2026/10/02 11:07:40 checkpoint 1 ms; 4812383 rows, 921.2 MB on disk (191 B/Log)
+2026/10/02 11:07:40   errors_last_15m              cold     53.9 ms  warm     11.6 ms  rows 100
+2026/10/02 11:07:41   count_by_service_per_minute  cold    261.4 ms  warm    121.6 ms  rows 156
+2026/10/02 11:07:42   common_attr_eq               cold    186.0 ms  warm     86.2 ms  rows 100
+2026/10/02 11:07:46   rare_attr_eq                 cold   1963.7 ms  warm    916.6 ms  rows 100
+2026/10/02 11:07:47   mixed_numeric_range          cold    174.8 ms  warm    104.5 ms  rows 100
+2026/10/02 11:07:47   message_substring            cold     51.5 ms  warm     30.6 ms  rows 100
+2026/10/02 11:07:58   group_by_attr_top10          cold   3756.7 ms  warm   2379.2 ms  rows 10
+2026/10/02 11:07:58   fetch_by_id                  cold     16.9 ms  warm      3.4 ms  rows 1
+2026/10/02 11:07:59   errors_last_15m              cold     26.8 ms  warm      0.0 ms  rows 100
+2026/10/02 11:07:59   count_by_service_per_minute  cold    148.8 ms  warm      0.0 ms  rows 156
+2026/10/02 11:08:00   common_attr_eq               cold    880.9 ms  warm      0.0 ms  rows 100
+2026/10/02 11:08:03   rare_attr_eq                 cold   2710.5 ms  warm      0.0 ms  rows 100
+2026/10/02 11:08:03   mixed_numeric_range          cold    844.7 ms  warm      0.0 ms  rows 100
+2026/10/02 11:08:04   message_substring            cold     52.3 ms  warm      0.0 ms  rows 100
+2026/10/02 11:08:07   group_by_attr_top10          cold   3614.2 ms  warm      0.0 ms  rows 10
+2026/10/02 11:08:08   fetch_by_id                  cold     63.7 ms  warm      0.0 ms  rows 1
+2026/10/02 11:08:46 parquet rg 122880: export 37250 ms, 1 files, 514.7 MB, 40 row groups, 10 columns
+2026/10/02 11:08:46  async on (read_ahead_depth default):
+2026/10/02 11:08:50   errors_last_15m              cold   1236.6 ms  warm   1079.0 ms  rows 100
+2026/10/02 11:08:51   count_by_service_per_minute  cold    315.6 ms  warm    195.2 ms  rows 156
+2026/10/02 11:09:01   common_attr_eq               cold   5242.8 ms  warm   4238.3 ms  rows 100
+2026/10/02 11:09:10   rare_attr_eq                 cold   4567.6 ms  warm   4122.5 ms  rows 100
+2026/10/02 11:09:20   mixed_numeric_range          cold   4896.4 ms  warm   4829.3 ms  rows 100
+2026/10/02 11:09:24   message_substring            cold   1856.4 ms  warm   2260.9 ms  rows 100
+2026/10/02 11:09:32   group_by_attr_top10          cold   3686.3 ms  warm   3606.2 ms  rows 10
+2026/10/02 11:09:32   fetch_by_id                  cold    255.0 ms  warm    195.3 ms  rows 1
+2026/10/02 11:09:32  async off (read_ahead_depth = 0):
+2026/10/02 11:09:36   errors_last_15m              cold   1070.1 ms  warm    949.9 ms  rows 100
+2026/10/02 11:09:37   count_by_service_per_minute  cold    224.4 ms  warm    206.3 ms  rows 156
+2026/10/02 11:09:55   common_attr_eq               cold   4413.2 ms  warm   4446.3 ms  rows 100
+2026/10/02 11:10:13   rare_attr_eq                 cold   4802.6 ms  warm   4319.6 ms  rows 100
+2026/10/02 11:10:24   mixed_numeric_range          cold   5641.5 ms  warm   5357.2 ms  rows 100
+2026/10/02 11:10:28   message_substring            cold   2120.2 ms  warm   1784.5 ms  rows 100
+2026/10/02 11:10:36   group_by_attr_top10          cold   4084.7 ms  warm   3238.3 ms  rows 10
+2026/10/02 11:10:36   fetch_by_id                  cold    169.8 ms  warm     98.4 ms  rows 1
+2026/10/02 11:11:16 parquet rg 30720: export 38495 ms, 1 files, 515.5 MB, 157 row groups, 10 columns
+2026/10/02 11:11:16  async on (read_ahead_depth default):
+2026/10/02 11:11:21   errors_last_15m              cold   1022.9 ms  warm    938.9 ms  rows 100
+2026/10/02 11:11:22   count_by_service_per_minute  cold    306.8 ms  warm    235.4 ms  rows 156
+2026/10/02 11:11:38   common_attr_eq               cold   4176.9 ms  warm   4027.3 ms  rows 100
+2026/10/02 11:11:54   rare_attr_eq                 cold   4781.1 ms  warm   3441.2 ms  rows 100
+2026/10/02 11:12:08   mixed_numeric_range          cold   3780.9 ms  warm   3618.6 ms  rows 100
+2026/10/02 11:12:15   message_substring            cold   1586.2 ms  warm   1508.2 ms  rows 100
+2026/10/02 11:12:26   group_by_attr_top10          cold   2751.4 ms  warm   2884.2 ms  rows 10
+2026/10/02 11:12:26   fetch_by_id                  cold     80.2 ms  warm     48.4 ms  rows 1
+2026/10/02 11:12:26  async off (read_ahead_depth = 0):
+2026/10/02 11:12:31   errors_last_15m              cold   1131.9 ms  warm   1054.4 ms  rows 100
+2026/10/02 11:12:32   count_by_service_per_minute  cold    281.6 ms  warm    426.5 ms  rows 156
+2026/10/02 11:12:49   common_attr_eq               cold   4467.2 ms  warm   4002.9 ms  rows 100
+2026/10/02 11:13:05   rare_attr_eq                 cold   4983.6 ms  warm   3906.2 ms  rows 100
+2026/10/02 11:13:25   mixed_numeric_range          cold   4937.6 ms  warm   4638.8 ms  rows 100
+2026/10/02 11:13:33   message_substring            cold   2068.4 ms  warm   1871.5 ms  rows 100
+2026/10/02 11:13:47   group_by_attr_top10          cold   3535.6 ms  warm   3408.1 ms  rows 10
+2026/10/02 11:13:47   fetch_by_id                  cold     68.9 ms  warm     42.0 ms  rows 1
+2026/10/02 11:13:48 wrote /home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/.scratch/logs/research/09-bench/json.json

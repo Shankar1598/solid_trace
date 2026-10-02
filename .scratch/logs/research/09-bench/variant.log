@@ -1,0 +1,220 @@
+2026/10/02 12:37:29 generator alone: 255974 Logs/s
+2026/10/02 12:38:30 unthrottled: 60000 Logs, 985 Logs/s, 0.56 MB/s, flush p99 40582 ms, max backlog 0, kept up false, peak RSS 1816 MB, CPU 101%
+2026/10/02 12:38:45 target: 50161 Logs, 3323 Logs/s, 1.89 MB/s, flush p99 271 ms, max backlog 184, kept up true, peak RSS 1668 MB, CPU 17%
+2026/10/02 12:39:01 target_with_queries: 50161 Logs, 3285 Logs/s, 1.87 MB/s, flush p99 515 ms, max backlog 169, kept up true, peak RSS 550 MB, CPU 147%
+corrupted double-linked list
+SIGABRT: abort
+PC=0x709a9349eb2c m=6 sigcode=18446744073709551610
+signal arrived during cgo execution
+
+goroutine 1 gp=0xc000002380 m=6 mp=0xc000106808 [syscall]:
+runtime.cgocall(0x5ac200, 0xc00003a660)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/cgocall.go:167 +0x4b fp=0xc00003a638 sp=0xc00003a600 pc=0x47ce0b
+github.com/duckdb/duckdb-go-bindings._Cfunc_duckdb_execute_pending(0x709a2c1a10c0, 0xc00011e750)
+	_cgo_gotypes.go:2875 +0x46 fp=0xc00003a660 sp=0xc00003a638 pc=0x5208a6
+github.com/duckdb/duckdb-go-bindings.ExecutePending.func1(...)
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go-bindings@v0.20000.0-3.preview/bindings.go:1805
+github.com/duckdb/duckdb-go-bindings.ExecutePending({0x709a2c1a10c0}, 0xc00011e750)
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go-bindings@v0.20000.0-3.preview/bindings.go:1805 +0x6a fp=0xc00003a698 sp=0xc00003a660 pc=0x527bca
+github.com/duckdb/duckdb-go/v2.(*Stmt).executeBound(0xc003762048, {0x653750, 0xc00011e6f0})
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/statement.go:795 +0x136 fp=0xc00003a7b8 sp=0xc00003a698 pc=0x55c0f6
+github.com/duckdb/duckdb-go/v2.(*Stmt).execute(0xc003762048, {0x653750, 0xc00011e6f0}, {0x7cac20?, 0xc00011e720?, 0xc000002380?})
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/statement.go:758 +0x85 fp=0xc00003a7f8 sp=0xc00003a7b8 pc=0x55be25
+github.com/duckdb/duckdb-go/v2.(*Stmt).ExecContext.func1({0x653750?, 0xc00011e6f0?})
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/statement.go:579 +0x3f fp=0xc00003a840 sp=0xc00003a7f8 pc=0x55b89f
+github.com/duckdb/duckdb-go/v2.runWithCtxInterrupt({0x653718, 0x7cac20}, {0x653718?}, 0xc00003a930)
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/context.go:97 +0x156 fp=0xc00003a8b8 sp=0xc00003a840 pc=0x5528b6
+github.com/duckdb/duckdb-go/v2.(*Stmt).ExecContext(0xc003762048, {0x653718, 0x7cac20}, {0x7cac20, 0x0, 0x0})
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/statement.go:577 +0x126 fp=0xc00003a980 sp=0xc00003a8b8 pc=0x55b686
+github.com/duckdb/duckdb-go/v2.(*Conn).ExecContext(0xc000410560, {0x653718, 0x7cac20}, {0x6049d8, 0x6}, {0x7cac20, 0x0, 0x0})
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/connection.go:64 +0x145 fp=0xc00003aa18 sp=0xc00003a980 pc=0x550e05
+database/sql.ctxDriverExec({0x653718?, 0x7cac20?}, {0x652ee0?, 0xc000410560?}, {0x0?, 0x0?}, {0x6049d8?, 0x2000?}, {0x7cac20, 0x0, ...})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/database/sql/ctxutil.go:31 +0xd7 fp=0xc00003aaa0 sp=0xc00003aa18 pc=0x5119d7
+database/sql.(*DB).execDC.func2()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/database/sql/sql.go:1713 +0x15c fp=0xc00003ab60 sp=0xc00003aaa0 pc=0x516e9c
+database/sql.withLock({0x6534a8, 0xc000016080}, 0xc00003ad20)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/database/sql/sql.go:3572 +0x71 fp=0xc00003aba0 sp=0xc00003ab60 pc=0x51a6d1
+database/sql.(*DB).execDC(0x8b?, {0x653718, 0x7cac20}, 0xc000016080, 0x8b?, {0x6049d8, 0x6}, {0x0, 0x0, 0x0})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/database/sql/sql.go:1708 +0x216 fp=0xc00003adc0 sp=0xc00003aba0 pc=0x516756
+database/sql.(*Conn).ExecContext(0xc0002dc040, {0x653718, 0x7cac20}, {0x6049d8, 0x6}, {0x0, 0x0, 0x0})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/database/sql/sql.go:2027 +0xad fp=0xc00003ae20 sp=0xc00003adc0 pc=0x5180cd
+github.com/solidtrace/event_store/bench/logslayouts.variantLayout.NewWriter.func2({0x653718, 0x7cac20}, 0xc0002dc040)
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/layout.go:275 +0x155 fp=0xc00003af10 sp=0xc00003ae20 pc=0x594b55
+github.com/solidtrace/event_store/bench/logslayouts.(*appenderWriter).Write(0xc000410680, {0x653718, 0x7cac20}, {0xc002680000?, 0x417e, 0x6045f9?})
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/layout.go:163 +0x14e fp=0xc00003b0b0 sp=0xc00003af10 pc=0x583d6e
+github.com/solidtrace/event_store/bench/logslayouts.(*runner).phase.func2(...)
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/run.go:393
+github.com/solidtrace/event_store/bench/logslayouts.(*runner).phase(0xc000134100, {0x653718, 0x7cac20}, {0xc0002b54c8, 0x8}, 0x37e11d600, 0x5, 0x0)
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/run.go:426 +0xa44 fp=0xc00003b530 sp=0xc00003b0b0 pc=0x58f064
+github.com/solidtrace/event_store/bench/logslayouts.Run({0x653718, 0x7cac20}, {{0x654630, 0x65a4c0}, {0xc0001040e0, 0x70}, 0x1, {{0x60447a, 0x3}, 0x2, ...}, ...})
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/run.go:229 +0xb13 fp=0xc00003bb90 sp=0xc00003b530 pc=0x58c5d3
+main.run({0xc000128020, 0x6, 0x6})
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/cmd/logsbench/main.go:98 +0x9c6 fp=0xc00003bef8 sp=0xc00003bb90 pc=0x5982e6
+main.main()
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/cmd/logsbench/main.go:35 +0xb9 fp=0xc00003bf50 sp=0xc00003bef8 pc=0x597839
+runtime.main()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:285 +0x29d fp=0xc00003bfe0 sp=0xc00003bf50 pc=0x44c6fd
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc00003bfe8 sp=0xc00003bfe0 pc=0x486601
+
+goroutine 2 gp=0xc000002e00 m=nil [force gc (idle), 2 minutes]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc000050fa8 sp=0xc000050f88 pc=0x47f52e
+runtime.goparkunlock(...)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:466
+runtime.forcegchelper()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:373 +0xb3 fp=0xc000050fe0 sp=0xc000050fa8 pc=0x44ca33
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc000050fe8 sp=0xc000050fe0 pc=0x486601
+created by runtime.init.7 in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:361 +0x1a
+
+goroutine 3 gp=0xc000003340 m=nil [GC sweep wait]:
+runtime.gopark(0x1?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc000051780 sp=0xc000051760 pc=0x47f52e
+runtime.goparkunlock(...)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:466
+runtime.bgsweep(0xc00007c000)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgcsweep.go:323 +0xdf fp=0xc0000517c8 sp=0xc000051780 pc=0x43725f
+runtime.gcenable.gowrap1()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:212 +0x25 fp=0xc0000517e0 sp=0xc0000517c8 pc=0x42b445
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc0000517e8 sp=0xc0000517e0 pc=0x486601
+created by runtime.gcenable in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:212 +0x66
+
+goroutine 4 gp=0xc000003500 m=nil [GC scavenge wait]:
+runtime.gopark(0x65d7ae?, 0x3b9aca00?, 0x0?, 0x0?, 0x0?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc000051f78 sp=0xc000051f58 pc=0x47f52e
+runtime.goparkunlock(...)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:466
+runtime.(*scavengerState).park(0x7aa560)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgcscavenge.go:425 +0x49 fp=0xc000051fa8 sp=0xc000051f78 pc=0x434ce9
+runtime.bgscavenge(0xc00007c000)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgcscavenge.go:658 +0x59 fp=0xc000051fc8 sp=0xc000051fa8 pc=0x435299
+runtime.gcenable.gowrap2()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:213 +0x25 fp=0xc000051fe0 sp=0xc000051fc8 pc=0x42b3e5
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc000051fe8 sp=0xc000051fe0 pc=0x486601
+created by runtime.gcenable in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:213 +0xa5
+
+goroutine 18 gp=0xc000102000 m=nil [GOMAXPROCS updater (idle), 2 minutes]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc00004c788 sp=0xc00004c768 pc=0x47f52e
+runtime.goparkunlock(...)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:466
+runtime.updateMaxProcsGoroutine()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:6720 +0xe7 fp=0xc00004c7e0 sp=0xc00004c788 pc=0x45a927
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc00004c7e8 sp=0xc00004c7e0 pc=0x486601
+created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:6708 +0x37
+
+goroutine 19 gp=0xc000102540 m=nil [finalizer wait, 2 minutes]:
+runtime.gopark(0x45b8f5?, 0x422f85?, 0xb8?, 0x1?, 0xc000002380?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc000050620 sp=0xc000050600 pc=0x47f52e
+runtime.runFinalizers()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mfinal.go:210 +0x107 fp=0xc0000507e0 sp=0xc000050620 pc=0x42a347
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc0000507e8 sp=0xc0000507e0 pc=0x486601
+created by runtime.createfing in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mfinal.go:172 +0x3d
+
+goroutine 20 gp=0xc000102700 m=nil [cleanup wait, 2 minutes]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc00004cf68 sp=0xc00004cf48 pc=0x47f52e
+runtime.goparkunlock(...)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:466
+runtime.(*cleanupQueue).dequeue(0x7aa6a0)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mcleanup.go:439 +0xc5 fp=0xc00004cfa0 sp=0xc00004cf68 pc=0x427465
+runtime.runCleanups()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mcleanup.go:635 +0x45 fp=0xc00004cfe0 sp=0xc00004cfa0 pc=0x427b25
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc00004cfe8 sp=0xc00004cfe0 pc=0x486601
+created by runtime.(*cleanupQueue).createGs in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mcleanup.go:589 +0xa5
+
+goroutine 21 gp=0xc0001028c0 m=nil [runnable]:
+github.com/solidtrace/event_store/bench/logslayouts.(*sampler).observe(0xc000124090)
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/run.go:146 +0x45 fp=0xc000065f30 sp=0xc000065f28 pc=0x58b825
+github.com/solidtrace/event_store/bench/logslayouts.startSampler.func1()
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/run.go:135 +0x9d fp=0xc000065fe0 sp=0xc000065f30 pc=0x58b67d
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc000065fe8 sp=0xc000065fe0 pc=0x486601
+created by github.com/solidtrace/event_store/bench/logslayouts.startSampler in goroutine 1
+	/home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/event_store/bench/logslayouts/run.go:130 +0xbf
+
+goroutine 5 gp=0xc000003a40 m=nil [GC worker (idle)]:
+runtime.gopark(0xf6aa3756ceb?, 0x2?, 0xe0?, 0x16?, 0x0?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc000062f38 sp=0xc000062f18 pc=0x47f52e
+runtime.gcBgMarkWorker(0xc0000260e0)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:1463 +0xeb fp=0xc000062fc8 sp=0xc000062f38 pc=0x42d94b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:1373 +0x25 fp=0xc000062fe0 sp=0xc000062fc8 pc=0x42d825
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc000062fe8 sp=0xc000062fe0 pc=0x486601
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:1373 +0x105
+
+goroutine 6 gp=0xc000003c00 m=nil [GC worker (idle)]:
+runtime.gopark(0xf6aa34065cd?, 0x3?, 0x6d?, 0x15?, 0x0?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc00318e738 sp=0xc00318e718 pc=0x47f52e
+runtime.gcBgMarkWorker(0xc0000260e0)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:1463 +0xeb fp=0xc00318e7c8 sp=0xc00318e738 pc=0x42d94b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:1373 +0x25 fp=0xc00318e7e0 sp=0xc00318e7c8 pc=0x42d825
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc00318e7e8 sp=0xc00318e7e0 pc=0x486601
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/mgc.go:1373 +0x105
+
+goroutine 7 gp=0xc000102a80 m=nil [select, 2 minutes]:
+runtime.gopark(0xc00004f788?, 0x2?, 0xe0?, 0xbb?, 0xc00004f784?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc00004f610 sp=0xc00004f5f0 pc=0x47f52e
+runtime.selectgo(0xc00004f788, 0xc00004f780, 0x100000000000000?, 0x0, 0xf55189f1c0c?, 0x1)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/select.go:351 +0x8b7 fp=0xc00004f750 sp=0xc00004f610 pc=0x45f237
+database/sql.(*DB).connectionOpener(0xc0000960d0, {0x653788, 0xc0002ce6e0})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/database/sql/sql.go:1261 +0x87 fp=0xc00004f7b8 sp=0xc00004f750 pc=0x514987
+database/sql.OpenDB.gowrap1()
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/database/sql/sql.go:841 +0x28 fp=0xc00004f7e0 sp=0xc00004f7b8 pc=0x5137e8
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc00004f7e8 sp=0xc00004f7e0 pc=0x486601
+created by database/sql.OpenDB in goroutine 1
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/database/sql/sql.go:841 +0x130
+
+goroutine 258 gp=0xc000103880 m=nil [select]:
+runtime.gopark(0xc00318ff58?, 0x2?, 0x0?, 0x0?, 0xc00318ff14?)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/proc.go:460 +0xce fp=0xc00318fd90 sp=0xc00318fd70 pc=0x47f52e
+runtime.selectgo(0xc00318ff58, 0xc00318ff10, 0xc00318ff18?, 0x0, 0x0?, 0x1)
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/select.go:351 +0x8b7 fp=0xc00318fed0 sp=0xc00318fd90 pc=0x45f237
+github.com/duckdb/duckdb-go/v2.interrupterRoutine({0x653750?, 0xc00011e6f0?}, {0x653718?}, 0xc003764150, 0xc000410560?)
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/context.go:112 +0xc5 fp=0xc00318ffa8 sp=0xc00318fed0 pc=0x552a85
+github.com/duckdb/duckdb-go/v2.runWithCtxInterrupt.gowrap1()
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/context.go:94 +0x30 fp=0xc00318ffe0 sp=0xc00318ffa8 pc=0x552990
+runtime.goexit({})
+	/home/shankar/.local/share/mise/installs/go/1.25.14/src/runtime/asm_amd64.s:1693 +0x1 fp=0xc00318ffe8 sp=0xc00318ffe0 pc=0x486601
+created by github.com/duckdb/duckdb-go/v2.runWithCtxInterrupt in goroutine 1
+	/home/shankar/go/pkg/mod/github.com/duckdb/duckdb-go/v2@v2.20000.0-6.preview/context.go:94 +0x13f
+
+rax    0x0
+rbx    0x328ea
+rcx    0x709a9349eb2c
+rdx    0x6
+rdi    0x328e5
+rsi    0x328ea
+rbp    0x709a4a512ff0
+rsp    0x709a4a512fb0
+r8     0xffffffff
+r9     0x0
+r10    0x8
+r11    0x246
+r12    0x6
+r13    0x709a4a513130
+r14    0x16
+r15    0x709a4a513130
+rip    0x709a9349eb2c
+rflags 0x246
+cs     0x33
+fs     0x0
+gs     0x0
