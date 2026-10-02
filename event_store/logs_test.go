@@ -10,6 +10,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // logCounts is the JSON route's answer.
@@ -308,5 +310,98 @@ func TestEachProjectListsOnlyItsOwnLogs(t *testing.T) {
 	}
 	if got := messages(latestLogs(t, env, 456, 10)); !slices.Equal(got, []string{"for 456"}) {
 		t.Errorf("Expected Project 456's Log only, got %v", got)
+	}
+}
+
+func TestLogsAcknowledgedBeforeARestartAreListedAfterIt(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postLogs(t, env, "application/json", `{"message": "before", "time": "2026-10-02T11:00:01Z"}`)
+	env.ProcessLogs(t)
+	postLogs(t, env, "application/json", `{"message": "unprocessed", "time": "2026-10-02T11:00:02Z"}`)
+
+	env.Reopen(t)
+	env.ProcessLogs(t)
+
+	if got, want := messages(latestLogs(t, env, 123, 10)), []string{"unprocessed", "before"}; !slices.Equal(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+func TestCrashAfterLogsCommitBeforeTheirBatchesAreDeletedStoresThemOnce(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postLogs(t, env, "application/json", `{"message": "one", "time": "2026-10-02T11:00:01Z"}`)
+	postLogs(t, env, "application/json", `[{"message": "two", "time": "2026-10-02T11:00:02Z"}, {"message": "three", "time": "2026-10-02T11:00:03Z"}]`)
+
+	// Log processing commits the batches to DuckDB, then crashes before
+	// deleting them from Pebble.
+	batches, err := env.PebbleWriter.LogBatchesAfter(123, uuid.Nil, 100)
+	if err != nil || len(batches) != 2 {
+		t.Fatalf("Expected 2 Log batches, got %d %v", len(batches), err)
+	}
+	if err := env.LogStore.AppendLogBatches(123, batches); err != nil {
+		t.Fatalf("Commit Log batches: %v", err)
+	}
+	postLogs(t, env, "application/json", `{"message": "four", "time": "2026-10-02T11:00:04Z"}`)
+
+	env.Reopen(t)
+	env.ProcessLogs(t)
+
+	if got, want := messages(latestLogs(t, env, 123, 10)), []string{"four", "three", "two", "one"}; !slices.Equal(got, want) {
+		t.Errorf("Expected each Log once, %v, got %v", want, got)
+	}
+}
+
+func TestLogsAndEventsOfOneProjectDoNotMeet(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postLogs(t, env, "application/json", `{"message": "a Log"}`)
+	eventUUID := postEvent(t, env, divideByZero)
+
+	// Event processing and Log processing each find their own work in
+	// Pebble at startup.
+	env.Restart(t)
+	env.Process(t)
+	env.ProcessLogs(t)
+
+	if got := eventUUIDs(listEvents(t, env)); !slices.Equal(got, []string{eventUUID}) {
+		t.Errorf("Expected only the Event [%s], got %v", eventUUID, got)
+	}
+	if got := issueCount(t, env); got != 1 {
+		t.Errorf("Expected 1 Issue, got %d", got)
+	}
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"a Log"}) {
+		t.Errorf("Expected only the Log, got %v", got)
+	}
+
+	// With both processing cursors in place, more of each still go through.
+	secondEvent := postEvent(t, env, nilError)
+	postLogs(t, env, "application/json", `{"message": "another Log"}`)
+	env.Restart(t)
+	env.Process(t)
+	env.ProcessLogs(t)
+
+	if got, want := eventUUIDs(listEvents(t, env)), []string{eventUUID, secondEvent}; !slices.Equal(got, want) {
+		t.Errorf("Expected Events %v, got %v", want, got)
+	}
+	if got := len(latestLogs(t, env, 123, 10)); got != 2 {
+		t.Errorf("Expected 2 Logs, got %d", got)
+	}
+}
+
+func TestLogIngestAfterTheWriterStopsIsServiceUnavailable(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	env.PebbleWriter.StopWrites()
+
+	resp := sendLogs(t, env, "/api/123/logs?sentry_key=test_public_key", "application/json", `{"message": "too late"}`, nil)
+	if resp.StatusCode != 503 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 503, got %d: %s", resp.StatusCode, body)
 	}
 }
