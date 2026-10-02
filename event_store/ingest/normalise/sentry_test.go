@@ -188,3 +188,15 @@ func TestSentryRecordsFollowTheSameRulesAsJSONLogs(t *testing.T) {
 		t.Errorf("Expected Attributes\n%v\ngot\n%v", want, got)
 	}
 }
+
+func TestAnAttributeWinsOverARecordFieldOfTheSameName(t *testing.T) {
+	log, _ := normaliseSentry(t, `{
+		"body": "m",
+		"severity_number": 13,
+		"attributes": {"severity_number": {"value": 9, "type": "integer"}}
+	}`, receipt)
+
+	if got, want := attributes(t, log), map[string]any{"severity_number": 9.0}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got)
+	}
+}
