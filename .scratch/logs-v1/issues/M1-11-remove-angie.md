@@ -13,7 +13,7 @@ Why the deploy can't work as written anyway:
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] `deploy/docker-compose.yml` has no Angie service, and `deploy/angie/` is gone. The `/var/run/solid-trace` mount goes if nothing else uses it.
 - [x] The deploy config has EventStore's ingest app listen on TCP port 4000. The unix-socket listener and the `ingest_socket` setting are removed, because nothing else uses them.
