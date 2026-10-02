@@ -343,7 +343,7 @@ func TestCrashAfterLogsCommitBeforeTheirBatchesAreDeletedStoresThemOnce(t *testi
 	if err != nil || len(batches) != 2 {
 		t.Fatalf("Expected 2 Log batches, got %d %v", len(batches), err)
 	}
-	if err := env.LogStore.AppendLogBatches(123, batches); err != nil {
+	if err := env.LogStore.AppendLogBatches(123, batches, env.Clock.Now()); err != nil {
 		t.Fatalf("Commit Log batches: %v", err)
 	}
 	postLogs(t, env, "application/json", `{"message": "four", "time": "2026-10-02T11:00:04Z"}`)
