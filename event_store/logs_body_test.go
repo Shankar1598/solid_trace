@@ -3,6 +3,7 @@ package main_test
 import (
 	"bytes"
 	"compress/gzip"
+	"compress/zlib"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 	"github.com/valyala/fasthttp"
 )
@@ -161,6 +163,109 @@ func TestOnlyTheLogRouteTakesABodyOver4MB(t *testing.T) {
 			raw, _ := io.ReadAll(resp.Body)
 			t.Errorf("%s: expected 413, got %d: %.200s", path, resp.StatusCode, raw)
 		}
+	}
+	if uuids := env.EventWriter.UUIDs(); len(uuids) != 0 {
+		t.Errorf("Expected no Event stored, got %d", len(uuids))
+	}
+}
+
+// brotliCompressed compresses body as sentry-python does when the brotli
+// module is installed.
+func brotliCompressed(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	w := brotli.NewWriterLevel(&out, 4)
+	if _, err := w.Write(body); err != nil {
+		t.Fatalf("brotli: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("brotli: %v", err)
+	}
+	return out.Bytes()
+}
+
+// deflated compresses body in HTTP's deflate coding, the zlib format.
+func deflated(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	w := zlib.NewWriter(&out)
+	if _, err := w.Write(body); err != nil {
+		t.Fatalf("deflate: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("deflate: %v", err)
+	}
+	return out.Bytes()
+}
+
+// logEnvelope is an envelope holding one log item with one record.
+func logEnvelope(body string) []byte {
+	record := fmt.Sprintf(`{"timestamp":1790942340.25,"level":"info","body":%q,"attributes":{}}`, body)
+	return []byte(`{"sent_at":"2026-10-02T12:00:00Z"}` + sentryItem(logItemHeader(1), `{"items":[`+record+`]}`))
+}
+
+func TestEnvelopesInEachEncodingSentrySDKsUseAreStored(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	encode := map[string]func(*testing.T, []byte) []byte{
+		"gzip":    gzipped,          // sentry-ruby, sentry-javascript on Node, and most others
+		"br":      brotliCompressed, // sentry-python with brotli installed
+		"deflate": deflated,
+		"zstd":    zstdCompressed,
+	}
+	for encoding, compress := range encode {
+		resp := sendEncoded(t, env, "/api/123/envelope", "application/x-sentry-envelope", encoding, compress(t, logEnvelope(encoding)))
+		if resp.StatusCode != 200 {
+			raw, _ := io.ReadAll(resp.Body)
+			t.Errorf("%s: expected 200, got %d: %s", encoding, resp.StatusCode, raw)
+		}
+	}
+	// sentry-ruby sends an empty Content-Encoding when it doesn't compress.
+	req, _ := http.NewRequest("POST", "/api/123/envelope?sentry_key=test_public_key", bytes.NewReader(logEnvelope("uncompressed")))
+	req.Header["Content-Encoding"] = []string{""}
+	if resp, err := env.App.Test(req, 2000); err != nil || resp.StatusCode != 200 {
+		t.Errorf("uncompressed: expected 200, got %v %v", resp, err)
+	}
+	env.ProcessLogs(t)
+
+	got := messages(latestLogs(t, env, 123, 10))
+	slices.Sort(got)
+	if want := []string{"br", "deflate", "gzip", "uncompressed", "zstd"}; !slices.Equal(got, want) {
+		t.Errorf("Expected Logs %v, got %v", want, got)
+	}
+
+	// An Event sent to the store route compressed, as before.
+	if resp := sendEncoded(t, env, "/api/123/store", "application/json", "gzip", gzipped(t, []byte(divideByZero))); resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Errorf("store: expected 200, got %d: %s", resp.StatusCode, raw)
+	}
+	if uuids := env.EventWriter.UUIDs(); len(uuids) != 1 {
+		t.Errorf("Expected the Event stored, got %d", len(uuids))
+	}
+}
+
+func TestEventRouteBodiesOver50MBDecodedGet413AndNothingIsStored(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Log records past 50 MB in one log item.
+	record := `{"timestamp":1790942340.25,"level":"info","body":"over the decoded cap","attributes":{}}`
+	records := strings.Repeat(record+",", (50<<20)/len(record)+1)
+	envelope := []byte(`{}` + sentryItem(logItemHeader(1), `{"items":[`+records+record+`]}`))
+	event := []byte(`{"message":"` + strings.Repeat("x", 50<<20) + `"}`)
+
+	for path, body := range map[string][]byte{"/api/123/envelope": envelope, "/api/123/store": event} {
+		resp := sendEncoded(t, env, path, "application/json", "gzip", gzipped(t, body))
+		if resp.StatusCode != 413 {
+			raw, _ := io.ReadAll(resp.Body)
+			t.Errorf("%s: expected 413, got %d: %.200s", path, resp.StatusCode, raw)
+		}
+	}
+
+	env.ProcessLogs(t)
+	if logs := latestLogs(t, env, 123, 10); len(logs) != 0 {
+		t.Errorf("Expected no Logs stored, got %d", len(logs))
 	}
 	if uuids := env.EventWriter.UUIDs(); len(uuids) != 0 {
 		t.Errorf("Expected no Event stored, got %d", len(uuids))
