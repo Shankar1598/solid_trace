@@ -139,7 +139,7 @@ From [Which ingest sources ship in v1, with what auth and limits?](../logs/issue
   - **JSON:** a new ingest route `POST /api/{project_id}/logs`. The body is a JSON array of objects, one object, or NDJSON (`application/x-ndjson`). Each object is one Log. An element or line that fails to parse is dropped and counted.
   - **Not in v1:** OTLP, Axiom-compatible paths.
 - **Auth.** The Project's existing public key, in every `sentry_key=` form EventStore accepts today, on every route. The JSON route also accepts `Authorization: Bearer <public key>` and rejects a key whose Project differs from the path's `project_id` (`401`). Event routes keep today's behaviour.
-- **Body.** Log routes accept `gzip`, `zstd` or identity and decompress in EventStore, not through Fiber's pass-through. Compressed body cap 10 MB, decompressed 50 MB; over either, `413` and nothing stored. Body limits (EventStore's server and Angie) are raised for Log routes only.
+- **Body.** Log routes accept `gzip`, `zstd` or identity and decompress in EventStore, not through Fiber's pass-through. Compressed body cap 10 MB, decompressed 50 MB; over either, `413` and nothing stored. Body limits (EventStore's server) are raised for Log routes only; Angie is removed from the deploy (amended 2026-10-02, [M1-11](issues/M1-11-remove-angie.md)).
 - **Response.** The JSON route returns `200` with counts of Logs accepted, dropped and truncated.
 - **Overload.** Logs share the existing `ingest_max_waiting` gate with Events. Every ingest `503`, Events included, gains a `Retry-After` of a few seconds. No `429`.
 - **Normalisation** happens in the request, before the write, so Pebble holds normalised Logs:
@@ -294,3 +294,7 @@ From [How should the Logs explorer be laid out?](../logs/issues/06-logs-explorer
 ### 2026-10-02 tickets written
 
 Tickets for all three milestones are in [issues/](issues/), named by milestone (`M1-01` … `M3-04`), written with `/to-tickets`. Project deletion is now detected by the `projects` row, not the keys (Further Notes amended). M1-10 (load test) is `ready-for-human`: it needs the target VM.
+
+### 2026-10-02 Angie removed
+
+At the user's request, during implementation: [M1-11](issues/M1-11-remove-angie.md) removes Angie (nginx) from the deploy. EventStore's ingest app listens on TCP itself and Console serves through Thruster, so the Log routes' body limits live only in EventStore. M1-04 and the Body bullet are amended.
