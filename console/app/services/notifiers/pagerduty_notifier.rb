@@ -1,47 +1,36 @@
 # frozen_string_literal: true
 
-require "net/http"
-require "uri"
-require "json"
-
 module Notifiers
   class PagerdutyNotifier
+    include HttpDelivery
+
     EVENTS_API_URL = "https://events.pagerduty.com/v2/enqueue".freeze
 
-    def initialize(integration, issue, notification: nil)
+    # +kind+ is the Notification kind and selects the message. A batched kind
+    # lists every Issue in +issues+; the others describe +issues.first+.
+    def initialize(integration, kind:, issues:, previous_assignee_name: nil, new_assignee_name: nil)
       @integration = integration
-      @issue = issue
-      @notification = notification || {}
+      @kind = kind
+      @issues = issues
+      @previous_assignee_name = previous_assignee_name
+      @new_assignee_name = new_assignee_name
     end
 
+    # Raises NotConfigured without a routing key, and DeliveryFailed when
+    # the provider does not accept the message.
     def call
-      return unless routing_key.present?
+      raise NotConfigured, "No routing key" if routing_key.blank?
 
-      uri = URI.parse(EVENTS_API_URL)
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
-      http.open_timeout = 5
-      http.read_timeout = 5
-
-      request = Net::HTTP::Post.new(uri.path)
-      request["Content-Type"] = "application/json"
-      request.body = payload.to_json
-
-      response = http.request(request)
-
-      unless response.is_a?(Net::HTTPSuccess)
-        Rails.logger.warn("PagerDuty notification failed: #{response.code} #{response.body}")
-      end
-
-      response
-    rescue StandardError => e
-      Rails.logger.error("PagerDuty notification error: #{e.message}")
-      nil
+      post_json(EVENTS_API_URL, payload)
     end
 
     private
 
-    attr_reader :integration, :issue, :notification
+    attr_reader :integration, :kind, :issues, :previous_assignee_name, :new_assignee_name
+
+    def issue
+      issues.first
+    end
 
     def routing_key
       integration.routing_key
@@ -52,15 +41,15 @@ module Notifiers
     end
 
     def payload
-      return issue_created_batch_payload if notification[:event] == "issue_created_batch"
+      case kind
+      when IntegrationNotification::ISSUE_CREATED then issue_created_payload
+      when IntegrationNotification::THRESHOLD_REACHED then issue_payload("Event threshold reached")
+      when IntegrationNotification::ASSIGNMENT_CHANGED then issue_payload("Issue assignment updated")
+      else raise ArgumentError, "Unknown notification kind: #{kind.inspect}"
+      end
+    end
 
-      summary_prefix =
-        case notification[:event]
-        when "issue_assignment_updated" then "Issue assignment updated"
-        when "event_threshold_reached" then "Event threshold reached"
-        else "New issue"
-        end
-
+    def issue_payload(summary_prefix)
       {
         routing_key: routing_key,
         event_action: "trigger",
@@ -75,15 +64,14 @@ module Notifiers
             culprit: issue.culprit,
             project: issue.project.name,
             organization: issue.project.organization.name,
-            previous_assignee: notification[:previous_assignee_name],
-            new_assignee: notification[:new_assignee_name],
+            previous_assignee: previous_assignee_name,
+            new_assignee: new_assignee_name,
           },
         },
       }
     end
 
-    def issue_created_batch_payload
-      issues = batch_issues
+    def issue_created_payload
       count = issues.count
       display = issues.first(10)
       more_count = count - display.count
@@ -113,36 +101,6 @@ module Notifiers
           },
         },
       }
-    end
-
-    def batch_issues
-      issues = Array(notification[:issues]).compact
-      issues = [ issue ] if issues.empty? && issue.present?
-      issues
-    end
-
-    def issue_url(target_issue)
-      url_helpers.project_issue_url(
-        target_issue.project,
-        target_issue,
-        org_slug: target_issue.project.organization.slug,
-        host: host
-      )
-    end
-
-    def issues_url(target_issue)
-      url_helpers.issues_url(
-        org_slug: target_issue.project.organization.slug,
-        host: host
-      )
-    end
-
-    def url_helpers
-      Rails.application.routes.url_helpers
-    end
-
-    def host
-      SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000"
     end
   end
 end

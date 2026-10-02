@@ -22,13 +22,13 @@ module Notifiers
     end
 
     # -----------------------------------------------------------------------
-    # call — HTTP delivery
+    # call — HTTP delivery and its reported outcome
     # -----------------------------------------------------------------------
 
-    test "posts JSON to the configured webhook URL" do
-      notifier = SlackNotifier.new(@integration, @issue, notification: { event: "issue_created" })
-      response = notifier.call
+    test "posts JSON to the configured webhook URL and reports success on a 2xx response" do
+      response = SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
 
+      assert_equal "200", response.code
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
         body = JSON.parse(req.body)
         assert_includes body["text"], "New Issue"
@@ -36,55 +36,59 @@ module Notifiers
       end
     end
 
-    test "returns nil and does not post when webhook_url is blank" do
+    test "raises NotConfigured and does not post when webhook_url is blank" do
       @integration.settings["webhook_url"] = ""
       @integration.save!
 
-      notifier = SlackNotifier.new(@integration, @issue)
-      result = notifier.call
+      error = assert_raises(NotConfigured) do
+        SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_nil result
+      assert_equal "No webhook URL", error.message
       assert_not_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX")
     end
 
-    test "returns nil on network error without raising" do
-      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX")
-        .to_raise(Errno::ECONNREFUSED)
+    test "reports a non-2xx response as a failure with the provider's error" do
+      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX").to_return(status: 500, body: "internal error")
 
-      notifier = SlackNotifier.new(@integration, @issue, notification: { event: "issue_created" })
-      result = notifier.call
+      error = assert_raises(DeliveryFailed) do
+        SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_nil result
+      assert_equal "HTTP 500: internal error", error.message
     end
 
-    test "logs warning on non-success HTTP response" do
-      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX")
-        .to_return(status: 500, body: "internal error")
+    test "reports a connection error as a failure" do
+      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX").to_raise(Errno::ECONNREFUSED)
 
-      notifier = SlackNotifier.new(@integration, @issue, notification: { event: "issue_created" })
-      response = notifier.call
+      error = assert_raises(DeliveryFailed) do
+        SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
 
-      assert_equal "500", response.code
+      assert_match "Connection refused", error.message
+    end
+
+    test "reports a timeout as a failure" do
+      stub_request(:post, "https://hooks.slack.com/services/T00/B00/XXX").to_timeout
+
+      error = assert_raises(DeliveryFailed) do
+        SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
+
+      assert_match "Timeout", error.message
     end
 
     # -----------------------------------------------------------------------
     # Payload: issue_created
     # -----------------------------------------------------------------------
 
-    test "issue_created payload includes title and kind" do
-      notifier = SlackNotifier.new(@integration, @issue, notification: { event: "issue_created" })
+    test "threshold_reached payload lists the Issue fields" do
+      notifier = SlackNotifier.new(@integration, kind: "threshold_reached", issues: [ @issue ])
       notifier.call
 
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
         body = JSON.parse(req.body)
-        blocks = body["blocks"]
-
-        # Header block
-        header = blocks.find { |b| b["type"] == "header" }
-        assert_includes header["text"]["text"], "New Issue Created"
-
-        # Fields block
-        fields_block = blocks.find { |b| b["type"] == "section" && b["fields"] }
+        fields_block = body["blocks"].find { |b| b["type"] == "section" && b["fields"] }
         field_texts = fields_block["fields"].map { |f| f["text"] }
 
         assert field_texts.any? { |t| t.include?(@issue.title) }, "Expected title in fields"
@@ -100,7 +104,7 @@ module Notifiers
     # -----------------------------------------------------------------------
 
     test "threshold_reached payload has correct header" do
-      notifier = SlackNotifier.new(@integration, @issue, notification: { event: "event_threshold_reached" })
+      notifier = SlackNotifier.new(@integration, kind: "threshold_reached", issues: [ @issue ])
       notifier.call
 
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
@@ -117,13 +121,13 @@ module Notifiers
     # -----------------------------------------------------------------------
 
     test "assignment payload includes previous and new assignee names" do
-      notification = {
-        event: "issue_assignment_updated",
+      notifier = SlackNotifier.new(
+        @integration,
+        kind: "assignment_changed",
+        issues: [ @issue ],
         previous_assignee_name: "Alice",
-        new_assignee_name: "Bob",
-      }
-
-      notifier = SlackNotifier.new(@integration, @issue, notification: notification)
+        new_assignee_name: "Bob"
+      )
       notifier.call
 
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
@@ -138,13 +142,13 @@ module Notifiers
     end
 
     test "assignment payload shows Unassigned when names are nil" do
-      notification = {
-        event: "issue_assignment_updated",
+      notifier = SlackNotifier.new(
+        @integration,
+        kind: "assignment_changed",
+        issues: [ @issue ],
         previous_assignee_name: nil,
-        new_assignee_name: nil,
-      }
-
-      notifier = SlackNotifier.new(@integration, @issue, notification: notification)
+        new_assignee_name: nil
+      )
       notifier.call
 
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
@@ -159,19 +163,14 @@ module Notifiers
     end
 
     # -----------------------------------------------------------------------
-    # Payload: issue_created_batch
+    # Payload: issue_created (batched)
     # -----------------------------------------------------------------------
 
     test "batch payload lists multiple issues" do
       issue2 = create(:issue, project: @project, title: "Second Error")
       issue3 = create(:issue, project: @project, title: "Third Error")
 
-      notification = {
-        event: "issue_created_batch",
-        issues: [@issue, issue2, issue3],
-      }
-
-      notifier = SlackNotifier.new(@integration, @issue, notification: notification)
+      notifier = SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue, issue2, issue3 ])
       notifier.call
 
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
@@ -190,12 +189,7 @@ module Notifiers
     test "batch payload truncates to 10 issues and shows remainder" do
       issues = 12.times.map { |i| create(:issue, project: @project, title: "Issue #{i}") }
 
-      notification = {
-        event: "issue_created_batch",
-        issues: issues,
-      }
-
-      notifier = SlackNotifier.new(@integration, issues.first, notification: notification)
+      notifier = SlackNotifier.new(@integration, kind: "issue_created", issues: issues)
       notifier.call
 
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
@@ -207,35 +201,27 @@ module Notifiers
       end
     end
 
-    test "batch payload falls back to single issue when issues array is empty" do
-      notification = {
-        event: "issue_created_batch",
-        issues: [],
-      }
-
-      notifier = SlackNotifier.new(@integration, @issue, notification: notification)
-      notifier.call
+    test "a single new Issue is sent as a batch of one with a link to it" do
+      SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
 
       assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
         body = JSON.parse(req.body)
         assert_includes body["text"], "1 New Issues"
+        section = body["blocks"].find { |b| b["type"] == "section" && b.dig("text", "type") == "mrkdwn" }
+        assert_includes section["text"]["text"], "/issues/#{@issue.to_param}|##{@issue.number} Test Error>"
         true
       end
     end
 
     # -----------------------------------------------------------------------
-    # Default event (no notification hash)
+    # Unknown kind
     # -----------------------------------------------------------------------
 
-    test "default notification uses issue_created payload" do
-      notifier = SlackNotifier.new(@integration, @issue)
-      notifier.call
-
-      assert_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX") do |req|
-        body = JSON.parse(req.body)
-        assert_includes body["text"], "New Issue"
-        true
+    test "an unknown kind raises and posts nothing" do
+      assert_raises(ArgumentError) do
+        SlackNotifier.new(@integration, kind: "issue_notification", issues: [ @issue ]).call
       end
+      assert_not_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX")
     end
   end
 end

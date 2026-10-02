@@ -1,9 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,12 +18,9 @@ type Config struct {
 	SQLitePath         string // Rails SQLite for project key auth and issues
 	MessageQueuePath   string // Separate SQLite for event_store_messages
 
-	PebbleBatchSize    int
-	PebbleFlushTimeout time.Duration
-	PebbleChannelSize  int
-
-	DuckDBFlushTimeout time.Duration
-	DuckDBChannelSize  int
+	// IngestMaxWaiting caps the requests waiting to store their Event.
+	// Past it, ingest answers 503.
+	IngestMaxWaiting int
 
 	DuckDBTempDirectory string
 	DuckDBMemoryLimit   string
@@ -42,11 +39,7 @@ type fileConfig struct {
 	ParquetStoragePath  *string        `yaml:"parquet_storage_path"`
 	SQLitePath          *string        `yaml:"sqlite_path"`
 	MessageQueuePath    *string        `yaml:"message_queue_path"`
-	PebbleBatchSize     *int           `yaml:"pebble_batch_size"`
-	PebbleFlushTimeout  *string        `yaml:"pebble_flush_timeout"`
-	PebbleChannelSize   *int           `yaml:"pebble_channel_size"`
-	DuckDBFlushTimeout  *string        `yaml:"duckdb_flush_timeout"`
-	DuckDBChannelSize   *int           `yaml:"duckdb_channel_size"`
+	IngestMaxWaiting    *int           `yaml:"ingest_max_waiting"`
 	DuckDBTempDirectory *string        `yaml:"duckdb_temp_directory"`
 	DuckDBMemoryLimit   *string        `yaml:"duckdb_memory_limit"`
 	StorageTiers        *[]StorageTier `yaml:"storage_tiers"`
@@ -64,12 +57,7 @@ func Load() *Config {
 		SQLitePath:         "../storage/sqlite/development/solid_trace.sqlite3",
 		MessageQueuePath:   "../storage/sqlite/development/message_queue.sqlite3",
 
-		PebbleBatchSize:    1000,
-		PebbleFlushTimeout: 200 * time.Millisecond,
-		PebbleChannelSize:  50000,
-
-		DuckDBFlushTimeout: 1 * time.Second,
-		DuckDBChannelSize:  100000,
+		IngestMaxWaiting: 10000,
 
 		DuckDBTempDirectory: "",
 		DuckDBMemoryLimit:   "",
@@ -127,28 +115,11 @@ func applyFileConfig(cfg *Config, path string) error {
 	if config.MessageQueuePath != nil && *config.MessageQueuePath != "" {
 		cfg.MessageQueuePath = *config.MessageQueuePath
 	}
-	if config.PebbleBatchSize != nil {
-		cfg.PebbleBatchSize = *config.PebbleBatchSize
-	}
-	if config.PebbleFlushTimeout != nil && *config.PebbleFlushTimeout != "" {
-		d, err := time.ParseDuration(*config.PebbleFlushTimeout)
-		if err != nil {
-			return err
+	if config.IngestMaxWaiting != nil {
+		if *config.IngestMaxWaiting <= 0 {
+			return fmt.Errorf("ingest_max_waiting must be positive, got %d", *config.IngestMaxWaiting)
 		}
-		cfg.PebbleFlushTimeout = d
-	}
-	if config.PebbleChannelSize != nil {
-		cfg.PebbleChannelSize = *config.PebbleChannelSize
-	}
-	if config.DuckDBFlushTimeout != nil && *config.DuckDBFlushTimeout != "" {
-		d, err := time.ParseDuration(*config.DuckDBFlushTimeout)
-		if err != nil {
-			return err
-		}
-		cfg.DuckDBFlushTimeout = d
-	}
-	if config.DuckDBChannelSize != nil {
-		cfg.DuckDBChannelSize = *config.DuckDBChannelSize
+		cfg.IngestMaxWaiting = *config.IngestMaxWaiting
 	}
 	if config.DuckDBTempDirectory != nil {
 		cfg.DuckDBTempDirectory = *config.DuckDBTempDirectory

@@ -2,30 +2,42 @@
 
 module Notifiers
   class EmailNotifier
-    def initialize(integration, issue, notification: nil)
+    # +kind+ is the Notification kind and selects the mail. A batched kind
+    # lists every Issue in +issues+; the others describe +issues.first+.
+    def initialize(integration, kind:, issues:, previous_assignee_name: nil, new_assignee_name: nil)
       @integration = integration
-      @issue = issue
-      @notification = notification || {}
+      @kind = kind
+      @issues = issues
+      @previous_assignee_name = previous_assignee_name
+      @new_assignee_name = new_assignee_name
     end
 
+    # Raises NotConfigured without recipients. Handing the mail to the mailer
+    # queue is success; mail delivery retries are ActionMailer's concern.
     def call
       recipients = @integration.recipients
-      return if recipients.blank?
+      raise NotConfigured, "No recipients" if recipients.blank?
 
-      case @notification[:event]
-      when "issue_assignment_updated"
+      mail(recipients).deliver_later
+    end
+
+    private
+
+    def mail(recipients)
+      case @kind
+      when IntegrationNotification::ISSUE_CREATED
+        IssueMailer.batch_notify(@issues, recipients)
+      when IntegrationNotification::THRESHOLD_REACHED
+        IssueMailer.notify(@issues.first, recipients)
+      when IntegrationNotification::ASSIGNMENT_CHANGED
         IssueMailer.assignment_updated(
-          @issue,
+          @issues.first,
           recipients,
-          previous_assignee_name: @notification[:previous_assignee_name],
-          new_assignee_name: @notification[:new_assignee_name]
-        ).deliver_later
-      when "issue_created_batch"
-        issues = Array(@notification[:issues]).compact
-        return if issues.empty?
-        IssueMailer.batch_notify(issues, recipients).deliver_later
+          previous_assignee_name: @previous_assignee_name,
+          new_assignee_name: @new_assignee_name
+        )
       else
-        IssueMailer.notify(@issue, recipients).deliver_later
+        raise ArgumentError, "Unknown notification kind: #{@kind.inspect}"
       end
     end
   end

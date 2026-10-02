@@ -6,6 +6,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/solidtrace/event_store/models"
 )
 
 type SQLiteWriter struct {
@@ -47,7 +48,7 @@ func (w *SQLiteWriter) FindOrCreateIssueFingerprint(projectID uint32, fingerprin
 
 // FindIssueByFingerprint checks if a fingerprint exists and returns the
 // associated issue ID plus the current issue status. This is a pure read —
-// it does not mutate Issue state. Callers (Event ingest) decide whether to
+// it does not mutate Issue state. Callers (Event processing) decide whether to
 // reopen a resolved Issue.
 //
 // Returns (issueID, fingerprintID, issueStatus, found, error).
@@ -87,7 +88,7 @@ func (w *SQLiteWriter) ReopenIssue(issueID int64) error {
 // FindOrCreateIssue returns the Issue for a fingerprint, creating the Issue
 // and its first fingerprint if none exists. created reports which happened.
 //
-// Event ingest calls this only after FindIssueByFingerprint misses. Two Events
+// Event processing calls this only after FindIssueByFingerprint misses. Two Events
 // for a new fingerprint can both miss, so the lookup runs again inside the
 // transaction. The transaction is BEGIN IMMEDIATE (see the DSN), so it holds
 // SQLite's single write lock from the start: no other writer can create the
@@ -168,4 +169,78 @@ func (w *SQLiteWriter) FindOrCreateIssue(projectID uint32, fingerprint, title, c
 	}
 
 	return issueID, fingerprintID, 0, true, nil
+}
+
+// RecordSeenEvents adds events to their Issues' times_seen, first_seen_at and
+// last_seen_at, and moves the Project's row in project_seen_cursors to
+// throughUUID, in one transaction.
+//
+// project_seen_cursors is the replay guard. Event processing moves its
+// processing cursor in Pebble after this commits, so a crash in between
+// replays the batch, and the Events at or before the guard are skipped.
+func (w *SQLiteWriter) RecordSeenEvents(projectID uint32, events []models.Event, throughUUID string) error {
+	tx, err := w.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var countedThrough string
+	err = tx.QueryRow("SELECT event_uuid FROM project_seen_cursors WHERE project_id = ?", projectID).Scan(&countedThrough)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if throughUUID <= countedThrough {
+		return nil
+	}
+
+	type seen struct {
+		count       int64
+		first, last time.Time
+	}
+	tallies := make(map[int64]*seen)
+	for _, event := range events {
+		if event.EventUUID <= countedThrough {
+			continue
+		}
+		s, ok := tallies[event.IssueID]
+		if !ok {
+			tallies[event.IssueID] = &seen{1, event.Timestamp, event.Timestamp}
+			continue
+		}
+		s.count++
+		if event.Timestamp.Before(s.first) {
+			s.first = event.Timestamp
+		}
+		if event.Timestamp.After(s.last) {
+			s.last = event.Timestamp
+		}
+	}
+
+	for issueID, s := range tallies {
+		// Rails' datetime format, so the strings compare in time order.
+		first := s.first.UTC().Format("2006-01-02 15:04:05.000000")
+		last := s.last.UTC().Format("2006-01-02 15:04:05.000000")
+		_, err := tx.Exec(`
+			UPDATE issues SET
+				times_seen = times_seen + ?1,
+				first_seen_at = MIN(COALESCE(first_seen_at, ?2), ?2),
+				last_seen_at = MAX(COALESCE(last_seen_at, ?3), ?3)
+			WHERE id = ?4
+		`, s.count, first, last, issueID)
+		if err != nil {
+			return fmt.Errorf("record seen events of issue %d: %w", issueID, err)
+		}
+	}
+
+	_, err = tx.Exec(`
+		INSERT INTO project_seen_cursors (project_id, event_uuid)
+		VALUES (?, ?)
+		ON CONFLICT (project_id) DO UPDATE SET event_uuid = excluded.event_uuid
+	`, projectID, throughUUID)
+	if err != nil {
+		return fmt.Errorf("move seen cursor: %w", err)
+	}
+
+	return tx.Commit()
 }

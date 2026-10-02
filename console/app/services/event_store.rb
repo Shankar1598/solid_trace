@@ -4,6 +4,10 @@ require "rest-client"
 require "json"
 
 class EventStore
+  # EventStore could not answer: an error response, a connection error, a
+  # timeout or an unreadable body.
+  class Unavailable < StandardError; end
+
   # The event store's query API, which listens on loopback only.
   def self.base_url
     ENV.fetch("EVENT_STORE_URL", "http://127.0.0.1:4100")
@@ -30,26 +34,37 @@ class EventStore
     end
 
     def count_events(project_id:, params: {})
+      count_events!(project_id: project_id, params: params)
+    rescue Unavailable => e
+      Rails.logger.error(e.message)
+      0
+    end
+
+    # Like count_events, but raises Unavailable instead of counting 0 when
+    # EventStore cannot answer.
+    def count_events!(project_id:, params: {})
       url = "#{base_url}/api/#{project_id}/events/count"
-      response = make_request(url, params: params, default: { "count" => 0 })
-      response["count"]
+      request!(url, params: params, not_found: { "count" => 0 })["count"]
     end
 
     private
 
     def make_request(url, params: {}, default: nil)
-      begin
-        response = RestClient.get(url, params: params)
-        JSON.parse(response.body)
-      rescue RestClient::NotFound
-        default
-      rescue RestClient::ExceptionWithResponse => e
-        Rails.logger.error("EventStore error: #{e.response.code} - #{e.response.body}")
-        default
-      rescue StandardError => e
-        Rails.logger.error("EventStore connection error: #{e.message}")
-        default
-      end
+      request!(url, params: params, not_found: default)
+    rescue Unavailable => e
+      Rails.logger.error(e.message)
+      default
+    end
+
+    def request!(url, params: {}, not_found: nil)
+      response = RestClient.get(url, params: params)
+      JSON.parse(response.body)
+    rescue RestClient::NotFound
+      not_found
+    rescue RestClient::ExceptionWithResponse => e
+      raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
+    rescue StandardError => e
+      raise Unavailable, "EventStore connection error: #{e.message}"
     end
   end
 
@@ -121,35 +136,29 @@ class EventStore
       params[:fingerprint_ids] = @fingerprint_ids.join(",")
     end
 
-    if @timestamp_filter
-      if @timestamp_op == ">"
-        params[:newer_than] = @timestamp_filter.iso8601
-      elsif @timestamp_op == "<"
-        params[:older_than] = @timestamp_filter.iso8601
-      end
-    end
+    params.merge!(timestamp_params)
 
     events_data = self.class.query_events(project_id: project_id, params: params)
     events_data.map { |attrs| build_event(attrs) }
   end
 
   def count
+    count!
+  rescue Unavailable => e
+    Rails.logger.error(e.message)
+    0
+  end
+
+  # Like count, but raises Unavailable instead of counting 0 when EventStore
+  # cannot answer.
+  def count!
     return 0 if @fingerprint_ids.empty?
 
     project_id = resolve_project_id
     return 0 unless project_id
 
-    params = { fingerprint_ids: @fingerprint_ids.join(",") }
-
-    if @timestamp_filter
-      if @timestamp_op == ">"
-        params[:newer_than] = @timestamp_filter.iso8601
-      elsif @timestamp_op == "<"
-        params[:older_than] = @timestamp_filter.iso8601
-      end
-    end
-
-    self.class.count_events(project_id: project_id, params: params)
+    params = { fingerprint_ids: @fingerprint_ids.join(",") }.merge(timestamp_params)
+    self.class.count_events!(project_id: project_id, params: params)
   end
 
   def first
@@ -178,6 +187,16 @@ class EventStore
   end
 
   private
+
+  def timestamp_params
+    return {} unless @timestamp_filter
+
+    case @timestamp_op
+    when ">" then { newer_than: @timestamp_filter.iso8601 }
+    when "<" then { older_than: @timestamp_filter.iso8601 }
+    else {}
+    end
+  end
 
   def resolve_project_id
     @project_id

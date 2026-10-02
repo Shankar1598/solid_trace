@@ -8,6 +8,7 @@ import (
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/storage"
 )
 
 type IngestHandler struct {
@@ -108,7 +109,7 @@ func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrInvalidEventJSON):
 		return c.Status(400).SendString(err.Error())
-	case errors.Is(err, ingest.ErrOverloaded):
+	case errors.Is(err, ingest.ErrOverloaded), errors.Is(err, storage.ErrShuttingDown):
 		// Not 429: on a 429 without Retry-After, Sentry SDKs stop sending
 		// everything for 60s. A 503 drops only this event.
 		return c.Status(503).SendString(err.Error())

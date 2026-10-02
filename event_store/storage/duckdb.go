@@ -86,6 +86,10 @@ func NewDuckDBWriter(dbPath, parquetPath, tempDir, memoryLimit string) (*DuckDBW
 
 	writer := &DuckDBWriter{db: db, parquetPath: parquetPath}
 
+	if err := writer.recoverStagedFiles(); err != nil {
+		return nil, fmt.Errorf("failed to recover staged archive files: %w", err)
+	}
+
 	// Create the unified view
 	if err := writer.recreateEventsView(); err != nil {
 		return nil, err
@@ -143,13 +147,41 @@ func (w *DuckDBWriter) recreateEventsView() error {
 	return tx.Commit()
 }
 
+// WriteBatch appends the events to events_hot in one transaction: either
+// every row commits or none does.
 func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
-	conn, err := w.db.Conn(context.Background())
+	ctx := context.Background()
+	conn, err := w.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
+		return err
+	}
+	if err := appendEvents(conn, events); err != nil {
+		if _, rollbackErr := conn.ExecContext(ctx, "ROLLBACK"); rollbackErr != nil {
+			logger.L.Error("DuckDB rollback failed", "error", rollbackErr)
+			discardConn(conn)
+		}
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		discardConn(conn)
+		return err
+	}
+	return nil
+}
+
+// discardConn keeps a connection whose transaction may still be open out of
+// the pool: returning driver.ErrBadConn from Raw makes database/sql close it.
+func discardConn(conn *sql.Conn) {
+	_ = conn.Raw(func(interface{}) error { return driver.ErrBadConn })
+}
+
+// appendEvents appends the events inside the connection's open transaction.
+func appendEvents(conn *sql.Conn, events []models.Event) error {
 	return conn.Raw(func(c interface{}) error {
 		dConn, ok := c.(driver.Conn)
 		if !ok {
@@ -160,7 +192,6 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 		if err != nil {
 			return err
 		}
-		defer appender.Close()
 
 		for _, event := range events {
 			var tags duckdb.OrderedMap
@@ -168,9 +199,6 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 				tags.Set(k, v)
 			}
 
-			// Log event (optional, keeping existing behavior of logging but maybe lighter)
-			// Keeping it simple as previous code logged the full JSON.
-			// Replicating logic without JSON marshal overhead for the insert itself.
 			eventJSON, _ := json.Marshal(event)
 			logger.L.Debug("DuckDB insert event", "event", string(eventJSON))
 
@@ -186,46 +214,53 @@ func (w *DuckDBWriter) WriteBatch(events []models.Event) error {
 				tags,
 			)
 			if err != nil {
+				appender.Close()
 				return err
 			}
 		}
 
-		return appender.Flush()
+		return appender.Close()
 	})
 }
 
+// NewestHotUUIDAfter returns the newest UUID in events_hot for a Project that
+// comes after afterUUID, or "" if there is none. Rows are appended a batch per
+// transaction in UUID order, so it shows how far a Project's appends got.
+func (w *DuckDBWriter) NewestHotUUIDAfter(projectID uint32, afterUUID string) (string, error) {
+	var newest sql.NullString
+	err := w.db.QueryRow("SELECT max(uuid) FROM events_hot WHERE project_id = ? AND uuid > ?", projectID, afterUUID).Scan(&newest)
+	return newest.String, err
+}
+
+// HotUUIDsBetween returns the UUIDs in events_hot for a Project from first to
+// last, inclusive.
+func (w *DuckDBWriter) HotUUIDsBetween(projectID uint32, first, last string) (map[string]bool, error) {
+	rows, err := w.db.Query("SELECT uuid FROM events_hot WHERE project_id = ? AND uuid BETWEEN ? AND ?", projectID, first, last)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	uuids := make(map[string]bool)
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return nil, err
+		}
+		uuids[uuid] = true
+	}
+	return uuids, rows.Err()
+}
+
 func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
+	where, args := eventPredicate(params)
 	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags FROM events WHERE project_id = ?")
-	args := []interface{}{params.ProjectID}
+	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags FROM events WHERE ")
+	queryBuilder.WriteString(where)
 
 	if params.UUID != "" {
 		queryBuilder.WriteString(" AND uuid = ?")
 		args = append(args, params.UUID)
-	}
-
-	if len(params.IssueFingerprintIDs) > 0 {
-		placeholders := make([]string, len(params.IssueFingerprintIDs))
-		for i, id := range params.IssueFingerprintIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
-	}
-
-	for k, v := range params.Tags {
-		queryBuilder.WriteString(" AND tags[?] = ?")
-		args = append(args, k, v)
-	}
-
-	if !params.NewerThan.IsZero() {
-		queryBuilder.WriteString(" AND timestamp > ?")
-		args = append(args, params.NewerThan)
-	}
-
-	if !params.OlderThan.IsZero() {
-		queryBuilder.WriteString(" AND timestamp < ?")
-		args = append(args, params.OlderThan)
 	}
 
 	if params.SortDesc {
@@ -291,9 +326,12 @@ func tagsFromMap(m duckdb.OrderedMap) map[string]string {
 	return tags
 }
 
-func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
-	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString("SELECT COUNT(*) FROM events WHERE project_id = ?")
+// eventPredicate builds the WHERE clause, without the keyword, that selects
+// the Events matching the params' filters: Project, Issue fingerprints, tags
+// and the time window. The listing, the count and the Event-with-context query
+// all use it, so they can't disagree on which Events a filter selects.
+func eventPredicate(params QueryParams) (string, []interface{}) {
+	clauses := []string{"project_id = ?"}
 	args := []interface{}{params.ProjectID}
 
 	if len(params.IssueFingerprintIDs) > 0 {
@@ -302,16 +340,35 @@ func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
+		clauses = append(clauses, fmt.Sprintf("issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	for k, v := range params.Tags {
-		queryBuilder.WriteString(" AND tags[?] = ?")
+		clauses = append(clauses, "tags[?] = ?")
 		args = append(args, k, v)
 	}
 
+	if !params.NewerThan.IsZero() {
+		clauses = append(clauses, "timestamp > ?")
+		args = append(args, params.NewerThan)
+	}
+
+	if !params.OlderThan.IsZero() {
+		clauses = append(clauses, "timestamp < ?")
+		args = append(args, params.OlderThan)
+	}
+
+	return strings.Join(clauses, " AND "), args
+}
+
+// CountEvents counts the Events matching the same filters as QueryEvents,
+// including the time window. Paging, sort and UUID don't apply.
+func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
+	where, args := eventPredicate(params)
+	query := "SELECT COUNT(*) FROM events WHERE " + where
+
 	var count int64
-	err := w.db.QueryRow(queryBuilder.String(), args...).Scan(&count)
+	err := w.db.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -329,9 +386,14 @@ type EventWithContext struct {
 // If uuid is provided, returns that specific event with context.
 // If uuid is empty, returns the latest event(s) based on limit with context.
 func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithContext, error) {
-	// Build the base CTE with window functions
+	// prev/next run over the Issue's whole Event sequence, so only the Project
+	// and fingerprint filters apply; a time window or tags would cut it short.
+	// The events/context route rejects a time window rather than drop it here.
+	where, args := eventPredicate(QueryParams{
+		ProjectID:           params.ProjectID,
+		IssueFingerprintIDs: params.IssueFingerprintIDs,
+	})
 	queryBuilder := strings.Builder{}
-	args := []interface{}{}
 
 	// CTE to get events with prev/next using window functions
 	queryBuilder.WriteString(`
@@ -349,19 +411,8 @@ func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithCon
 				LAG(uuid) OVER (ORDER BY timestamp ASC) as prev_uuid,
 				LEAD(uuid) OVER (ORDER BY timestamp ASC) as next_uuid
 			FROM events
-			WHERE project_id = ?
-	`)
-	args = append(args, params.ProjectID)
-
-	if len(params.IssueFingerprintIDs) > 0 {
-		placeholders := make([]string, len(params.IssueFingerprintIDs))
-		for i, id := range params.IssueFingerprintIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
-	}
-
+			WHERE `)
+	queryBuilder.WriteString(where)
 	queryBuilder.WriteString(")")
 
 	// Select from CTE
@@ -437,86 +488,174 @@ func (w *DuckDBWriter) Ping() error {
 	return w.db.QueryRow("SELECT 1").Scan(&result)
 }
 
-// TODO: Need to refactor this completely. AI slop.
-// ArchiveEventsForDate moves events for a specific date from events_hot to Parquet.
-// The date parameter specifies which day's events to archive.
-func (w *DuckDBWriter) ArchiveEventsForDate(date time.Time) error {
-	dateStr := date.Format("2006-01-02")
-	partitionPath := filepath.Join(w.parquetPath, fmt.Sprintf("event_date=%s", dateStr))
+// archiveRunIDFormat names archive files so they sort by run: fixed width, UTC.
+const archiveRunIDFormat = "20060102T150405.000000000Z"
 
-	// Ensure partition directory exists
-	if err := os.MkdirAll(partitionPath, 0755); err != nil {
-		return fmt.Errorf("failed to create partition directory: %w", err)
+// stagingSuffix marks an archive file whose run may not have committed yet.
+// The events view reads only *.parquet, so staged files are never queried.
+const stagingSuffix = ".tmp"
+
+// ArchiveEventsUpTo moves every row in events_hot dated on or before cutoff
+// into Parquet. Each date gets a new file event_date=<date>/data-<run id>.parquet,
+// so a date archived again keeps its earlier files.
+//
+// Files are written under a .tmp name, the rows are deleted in one transaction,
+// and only then are the files renamed. recoverStagedFiles settles any .tmp file
+// a failed run leaves behind.
+func (w *DuckDBWriter) ArchiveEventsUpTo(cutoff time.Time) error {
+	if err := w.recoverStagedFiles(); err != nil {
+		return fmt.Errorf("failed to recover staged archive files: %w", err)
 	}
 
-	parquetFile := filepath.Join(partitionPath, "data.parquet")
+	runID := time.Now().UTC().Format(archiveRunIDFormat)
+	cutoffStr := cutoff.Format("2006-01-02")
 
-	// Use a transaction for atomicity
 	tx, err := w.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Step 1: Create temp table with data for the specific date
 	_, err = tx.Exec(fmt.Sprintf(`
 		CREATE TEMP TABLE move_batch AS
 		SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags
 		FROM events_hot
-		WHERE CAST(timestamp AS DATE) = '%s'
-	`, dateStr))
+		WHERE CAST(timestamp AS DATE) <= '%s'
+	`, cutoffStr))
 	if err != nil {
 		return fmt.Errorf("failed to create temp table: %w", err)
 	}
 
-	// Step 2: Check if there's any data to move
-	var count int
-	err = tx.QueryRow("SELECT COUNT(*) FROM move_batch").Scan(&count)
+	dates, err := moveBatchDates(tx)
 	if err != nil {
-		return fmt.Errorf("failed to count batch: %w", err)
+		return err
 	}
-
-	if count == 0 {
-		// Nothing to archive
-		_, _ = tx.Exec("DROP TABLE IF EXISTS move_batch")
+	if len(dates) == 0 {
+		// Recovery may have published files, so the view still needs rebuilding.
+		if err := w.recreateEventsView(); err != nil {
+			return fmt.Errorf("failed to recreate events view: %w", err)
+		}
 		return nil
 	}
 
-	// Step 3: Export to Parquet
-	_, err = tx.Exec(fmt.Sprintf(`
-		COPY move_batch
-		TO '%s'
-		(FORMAT PARQUET, COMPRESSION 'ZSTD')
-	`, parquetFile))
-	if err != nil {
-		return fmt.Errorf("failed to export to parquet: %w", err)
+	var staged []string
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		for _, f := range staged {
+			if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+				logger.L.Warn("Failed to remove staged archive file", "file", f, "error", err)
+			}
+		}
+	}()
+
+	for _, date := range dates {
+		partitionPath := filepath.Join(w.parquetPath, "event_date="+date)
+		if err := os.MkdirAll(partitionPath, 0755); err != nil {
+			return fmt.Errorf("failed to create partition directory: %w", err)
+		}
+		stagedFile := filepath.Join(partitionPath, "data-"+runID+".parquet"+stagingSuffix)
+		staged = append(staged, stagedFile)
+		_, err = tx.Exec(fmt.Sprintf(`
+			COPY (SELECT * FROM move_batch WHERE CAST(timestamp AS DATE) = '%s')
+			TO '%s'
+			(FORMAT PARQUET, COMPRESSION 'ZSTD')
+		`, date, stagedFile))
+		if err != nil {
+			return fmt.Errorf("failed to export %s to parquet: %w", date, err)
+		}
 	}
 
-	// Step 4: Delete from hot table
+	// Same predicate as move_batch: the transaction's snapshot sees the same rows.
 	_, err = tx.Exec(fmt.Sprintf(`
 		DELETE FROM events_hot
-		WHERE CAST(timestamp AS DATE) = '%s'
-	`, dateStr))
+		WHERE CAST(timestamp AS DATE) <= '%s'
+	`, cutoffStr))
 	if err != nil {
 		return fmt.Errorf("failed to delete from hot table: %w", err)
 	}
-
-	// Step 5: Drop temp table
-	_, err = tx.Exec("DROP TABLE IF EXISTS move_batch")
-	if err != nil {
+	if _, err := tx.Exec("DROP TABLE move_batch"); err != nil {
 		return fmt.Errorf("failed to drop temp table: %w", err)
 	}
-
-	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	committed = true
 
-	// Recreate view to include new parquet files
+	for _, f := range staged {
+		if err := publishStagedFile(f); err != nil {
+			return fmt.Errorf("failed to publish archive file: %w", err)
+		}
+	}
+
 	if err := w.recreateEventsView(); err != nil {
 		return fmt.Errorf("failed to recreate events view: %w", err)
 	}
+	return nil
+}
 
+// publishStagedFile renames a staged archive file to its final .parquet name.
+func publishStagedFile(f string) error {
+	return os.Rename(f, strings.TrimSuffix(f, stagingSuffix))
+}
+
+// moveBatchDates lists the distinct dates in move_batch, oldest first.
+func moveBatchDates(tx *sql.Tx) ([]string, error) {
+	rows, err := tx.Query(`SELECT DISTINCT strftime(CAST(timestamp AS DATE), '%Y-%m-%d') AS d FROM move_batch ORDER BY d`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list archive dates: %w", err)
+	}
+	defer rows.Close()
+
+	var dates []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		dates = append(dates, d)
+	}
+	return dates, rows.Err()
+}
+
+// recoverStagedFiles settles every .tmp archive file left by a run that has
+// ended. A run's commit removes all of its rows from events_hot or none, so one
+// uuid decides: still in events_hot means the commit didn't happen and the file
+// is deleted; gone means it did and the file is renamed to its final name.
+// Runs never overlap, so this must only be called when no run is in progress.
+func (w *DuckDBWriter) recoverStagedFiles() error {
+	staged, err := filepath.Glob(filepath.Join(w.parquetPath, "*", "*.parquet"+stagingSuffix))
+	if err != nil {
+		return err
+	}
+
+	for _, f := range staged {
+		var uuid string
+		err := w.db.QueryRow(fmt.Sprintf("SELECT uuid FROM read_parquet('%s') LIMIT 1", f)).Scan(&uuid)
+		if err != nil {
+			// Can't tell whether its run committed. Leave it for an operator: the
+			// view never reads .tmp files, so it can't cause duplicates meanwhile.
+			logger.L.Error("Skipping unreadable staged archive file", "file", f, "error", err)
+			continue
+		}
+
+		var stillHot bool
+		if err := w.db.QueryRow("SELECT EXISTS (SELECT 1 FROM events_hot WHERE uuid = ?)", uuid).Scan(&stillHot); err != nil {
+			return err
+		}
+		if stillHot {
+			logger.L.Info("Deleting staged archive file from uncommitted run", "file", f)
+			err = os.Remove(f)
+		} else {
+			logger.L.Info("Publishing staged archive file from committed run", "file", f)
+			err = publishStagedFile(f)
+		}
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
