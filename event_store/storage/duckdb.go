@@ -368,6 +368,7 @@ type EventWithContext struct {
 func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithContext, error) {
 	// prev/next run over the Issue's whole Event sequence, so only the Project
 	// and fingerprint filters apply; a time window or tags would cut it short.
+	// The events/context route rejects a time window rather than drop it here.
 	where, args := eventPredicate(QueryParams{
 		ProjectID:           params.ProjectID,
 		IssueFingerprintIDs: params.IssueFingerprintIDs,
