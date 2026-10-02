@@ -1,7 +1,7 @@
 # 13: Write the v1 spec and first-milestone tickets
 
 Type: task
-Status: claimed
+Status: resolved
 Blocked by: 08, 10, 11, 12, 14, 15, 16
 Map: [SolidTrace Logs](../map.md)
 
@@ -10,6 +10,10 @@ Map: [SolidTrace Logs](../map.md)
 Assemble the v1 spec from the resolved tickets, slice v1 into milestones, and write implementation tickets for the first milestone. Resolved when the spec and tickets exist and every decision in them points to a resolved ticket on this map.
 
 Input (2026-10-02, from [How are logs stored and retained?](10-storage-architecture-and-retention.md)): the full-scale benchmark is not a prerequisite. Include a first-milestone ticket that load-tests the chosen storage design on the target VM (4 vCPU, 16 GB) at 3–5 TB/month with 5× bursts; it can merge with the log ingest load-test scenario in the map's fog.
+
+## Answer
+
+The v1 spec is [logs-v1/spec.md](../../logs-v1/spec.md). Tickets for all three milestones (not only the first) are in [logs-v1/issues/](../../logs-v1/issues/), named by milestone: M1 (Logs are stored, 10 tickets, M1-10 the load test, `ready-for-human`), M2 (Logs explorer with the Builder, 5), M3 (Query and SQL modes, 4). One spec choice changed at ticketing: Project deletion is detected when the `projects` row vanishes, not the keys.
 
 ## Comments
 

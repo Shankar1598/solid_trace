@@ -195,7 +195,7 @@ From [How are logs stored and retained?](../logs/issues/10-storage-architecture-
   - Files are written under a temporary name and renamed after the delete commits; startup recovers or removes staged files, as the Event archive does.
 - **Retention:** whole days, an instance default (30) and an optional per-Project override, read from Console's SQLite. A daily pass deletes each Project's `day=` folders past its Retention, with those days' promoted-set and count rows.
 - **Disk limit:** one instance-wide limit for Log files; when exceeded, the oldest hour files are deleted first, from any Project.
-- **Project deletion:** when a Project's keys disappear from Console's SQLite, EventStore drops its hot table, its `logs_late` rows, its folders and its promoted-set and count rows (see Further Notes).
+- **Project deletion:** when a Project's row disappears from Console's `projects` table, EventStore drops its hot table, its `logs_late` rows, its folders and its promoted-set and count rows (see Further Notes).
 - **Expected disk** at 1.9 MB/s: Parquet about 28–30 GB/day (about 0.9 TB for 30 days); hot tables a few GB; Pebble seconds of Logs, up to about 6 GB after a 10-minute 5× burst.
 
 ### Query compiler and query endpoints (EventStore)
@@ -279,7 +279,7 @@ From [How should the Logs explorer be laid out?](../logs/issues/06-logs-explorer
   - **Instance settings are edited by the operator, not in the UI.** Console has no instance-admin role (roles are per Organization), so the SQL setting and default Retention are set with a Rails task or console command. A UI waits for an instance-admin role.
   - **The disk limit** is a setting beside them (or EventStore config); the implementer picks, with a sensible default such as a share of free disk.
   - **The future-time window** is fixed at 1 hour (ticket 07 left configurability to the spec).
-  - **Project deletion** is detected by EventStore when a Project's keys vanish, since Console doesn't tell EventStore today.
+  - **Project deletion** is detected by EventStore when a Project's row vanishes from `projects`, since Console doesn't tell EventStore today. Not when its keys vanish (amended 2026-10-02 at ticketing): keys are hard-deleted, so deleting a Project's last key would have wiped its Logs. Console has no Project destroy route yet.
   - **Validate returns chips**, so the Builder never needs a second parser in the browser.
   - **A Project-mismatch key** on the JSON route answers `401`.
 - **Known risks, for the load test:** the checkpoint after each hourly delete may grow with rows deleted (Log processing stalls; Pebble buffers); 3–4 s checkpoint stalls were seen at 1.5.6; the 5 s day target was projected (4–7 s), not measured.
@@ -288,3 +288,9 @@ From [How should the Logs explorer be laid out?](../logs/issues/06-logs-explorer
   2. **Logs explorer with the Builder.** The compiler (filters and search first), run/histogram/summary/validate/fetch endpoints, the Console page with stream, chips, search, histogram, summary line, inspector and URL state; vitest.
   3. **Query and SQL modes.** The full language surface, non-Log tables, pivots, readable SQL, the SQL setting and the `logs` view.
 - **Benchmark harness:** `event_store/bench/logslayouts` is throwaway and imported by nothing in production.
+
+## Comments
+
+### 2026-10-02 tickets written
+
+Tickets for all three milestones are in [issues/](issues/), named by milestone (`M1-01` … `M3-04`), written with `/to-tickets`. Project deletion is now detected by the `projects` row, not the keys (Further Notes amended). M1-10 (load test) is `ready-for-human`: it needs the target VM.
