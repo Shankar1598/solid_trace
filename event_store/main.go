@@ -93,6 +93,7 @@ func main() {
 		Logs:         pebbleWriter,
 		NotifyLogs:   logProcessor.Notify,
 		Clock:        clock.System{},
+		Retention:    ingest.FixedRetention(30), // the instance default; Projects' own Retention isn't read yet
 		MaxWaiting:   cfg.IngestMaxWaiting,
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)

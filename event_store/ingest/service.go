@@ -28,6 +28,7 @@ type Service struct {
 	logs         LogWriter
 	notifyLogs   func(projectID uint32)
 	clock        clock.Clock
+	retention    Retention
 
 	// waiting counts requests waiting for their Event or Logs to be written.
 	// Past maxWaiting a request is rejected as overloaded.
@@ -47,6 +48,9 @@ type Config struct {
 	NotifyLogs   func(projectID uint32)
 	// Clock gives the receipt time of Logs.
 	Clock clock.Clock
+	// Retention gives each Project's Retention, which decides how old a
+	// Log's own time may be.
+	Retention Retention
 	// MaxWaiting caps the requests, Events and Logs together, waiting for
 	// their write. Past it, ingest answers 503.
 	MaxWaiting int
@@ -60,6 +64,7 @@ func NewService(cfg Config) *Service {
 		logs:         cfg.Logs,
 		notifyLogs:   cfg.NotifyLogs,
 		clock:        cfg.Clock,
+		retention:    cfg.Retention,
 		maxWaiting:   int64(cfg.MaxWaiting),
 	}
 }
