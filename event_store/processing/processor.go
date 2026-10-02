@@ -261,17 +261,25 @@ func (p *Processor) processBatch(projectID uint32) (full bool, err error) {
 	}
 
 	// 2. DuckDB: index the rows it doesn't already hold.
-	if err := p.indexRows(projectID, rows); err != nil {
+	indexed, err := p.indexRows(projectID, rows)
+	if err != nil {
 		return false, err
 	}
 
-	// 3. Console messages, only after the rows can be queried.
+	// 3. SQLite: count the Events that reached DuckDB on their Issues.
+	last := events[len(events)-1].EventUUID
+	if len(indexed) > 0 {
+		if err := p.retry("record seen events", func() error { return p.issues.RecordSeenEvents(projectID, indexed, last) }); err != nil {
+			return false, err
+		}
+	}
+
+	// 4. Console messages, only after the rows can be queried.
 	if err := p.retry("enqueue console messages", func() error { return p.enqueueMessages(rows) }); err != nil {
 		return false, err
 	}
 
-	// 4. Pebble: move the cursor.
-	last := events[len(events)-1].EventUUID
+	// 5. Pebble: move the cursor.
 	if err := p.retry("move processing cursor", func() error { return p.events.SetProcessingCursor(projectID, last) }); err != nil {
 		return false, err
 	}
@@ -330,30 +338,65 @@ func (p *Processor) issueWork(event models.Event) (models.Event, error) {
 	}, nil
 }
 
-// indexRows appends the rows DuckDB doesn't already hold, in one transaction.
+// indexRows appends the rows DuckDB doesn't already hold, in one transaction,
+// and returns the rows DuckDB holds after it.
 //
 // If DuckDB rejects a row, the rows are appended one at a time, each in its
 // own transaction and in UUID order. A row DuckDB rejects is retried, then
 // skipped. While DuckDB itself is failing, every append is retried with
 // backoff and no row is skipped.
-func (p *Processor) indexRows(projectID uint32, rows []models.Event) error {
+func (p *Processor) indexRows(projectID uint32, rows []models.Event) ([]models.Event, error) {
+	// rows are in UUID order, so the rows DuckDB may already hold come first.
+	held := 0
 	if mark, ok := p.indexedUpTo[projectID]; ok {
-		rows = slices.DeleteFunc(slices.Clone(rows), func(row models.Event) bool { return row.EventUUID <= mark })
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-
-	err := p.retry("index events", func() error { return p.writeRows(rows) })
-	if !isContentError(err) {
-		return err
-	}
-	for _, row := range rows {
-		if _, err := p.attempt("index event", row, func() error { return p.writeRows([]models.Event{row}) }); err != nil {
-			return err
+		for held < len(rows) && rows[held].EventUUID <= mark {
+			held++
 		}
 	}
-	return nil
+	indexed, err := p.heldRows(projectID, rows[:held])
+	if err != nil {
+		return nil, err
+	}
+	toAppend := rows[held:]
+	if len(toAppend) == 0 {
+		return indexed, nil
+	}
+
+	err = p.retry("index events", func() error { return p.writeRows(toAppend) })
+	if err == nil {
+		return append(indexed, toAppend...), nil
+	}
+	if !isContentError(err) {
+		return nil, err
+	}
+	for _, row := range toAppend {
+		skipped, err := p.attempt("index event", row, func() error { return p.writeRows([]models.Event{row}) })
+		if err != nil {
+			return nil, err
+		}
+		if !skipped {
+			indexed = append(indexed, row)
+		}
+	}
+	return indexed, nil
+}
+
+// heldRows returns the rows DuckDB holds out of rows it held past the cursor
+// at startup. The run before a crash may have skipped some of them.
+func (p *Processor) heldRows(projectID uint32, rows []models.Event) ([]models.Event, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	var held map[string]bool
+	err := p.retry("find indexed events", func() error {
+		var err error
+		held, err = p.index.HotUUIDsBetween(projectID, rows[0].EventUUID, rows[len(rows)-1].EventUUID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(slices.Clone(rows), func(row models.Event) bool { return !held[row.EventUUID] }), nil
 }
 
 // writeRows appends rows in one transaction. A failed append is a content

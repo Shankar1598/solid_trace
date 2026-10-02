@@ -232,6 +232,26 @@ func (w *DuckDBWriter) NewestHotUUIDAfter(projectID uint32, afterUUID string) (s
 	return newest.String, err
 }
 
+// HotUUIDsBetween returns the UUIDs in events_hot for a Project from first to
+// last, inclusive.
+func (w *DuckDBWriter) HotUUIDsBetween(projectID uint32, first, last string) (map[string]bool, error) {
+	rows, err := w.db.Query("SELECT uuid FROM events_hot WHERE project_id = ? AND uuid BETWEEN ? AND ?", projectID, first, last)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	uuids := make(map[string]bool)
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return nil, err
+		}
+		uuids[uuid] = true
+	}
+	return uuids, rows.Err()
+}
+
 func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 	queryBuilder := strings.Builder{}
 	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags FROM events WHERE project_id = ?")
