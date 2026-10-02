@@ -150,12 +150,13 @@ func waitFor(t *testing.T, timeout time.Duration, what string, ok func() bool) {
 	}
 }
 
+// diskFull is how DuckDB fails a commit when the disk is full.
+var diskFull = &duckdb.Error{Type: duckdb.ErrorTypeIO, Msg: `IO Error: Could not write file "logs.duckdb.wal": No space left on device`}
+
 func TestLogsWaitOutAStoreFailureAndNoneIsLost(t *testing.T) {
 	failures := map[string]func(*flakyLogStore){
 		"DuckDB unavailable": func(s *flakyLogStore) { s.goDown() },
-		"disk full": func(s *flakyLogStore) {
-			s.fail(&duckdb.Error{Type: duckdb.ErrorTypeIO, Msg: `IO Error: Could not write file "logs.duckdb.wal": No space left on device`})
-		},
+		"disk full":          func(s *flakyLogStore) { s.fail(diskFull) },
 	}
 	for name, breakStore := range failures {
 		t.Run(name, func(t *testing.T) {
@@ -192,5 +193,39 @@ func TestLogsWaitOutAStoreFailureAndNoneIsLost(t *testing.T) {
 				t.Errorf("Expected no Log skipped, got %q", output.String())
 			}
 		})
+	}
+}
+
+func TestAFailingLogProjectDoesNotHoldUpOtherProjectsOrEvents(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	env.FlakyLogs.fail(diskFull, 123)
+	postLogs(t, env, "application/json", `{"message": "for 123"}`)
+	tries := env.FlakyLogs.attempts.Load()
+	done := startLogProcessing(env)
+	waitFor(t, 5*time.Second, "Project 123 to be retried", func() bool { return env.FlakyLogs.attempts.Load() >= tries+3 })
+
+	// While Project 123 keeps failing, another Project's Logs are stored...
+	resp := sendLogs(t, env, "/api/456/logs", "application/json", `{"message": "for 456"}`, map[string]string{"Authorization": "Bearer other_public_key"})
+	decodeLogCounts(t, resp)
+	waitFor(t, 5*time.Second, "Project 456's Log to be stored", func() bool {
+		return slices.Equal(messages(latestLogs(t, env, 456, 10)), []string{"for 456"})
+	})
+	// ...and Events are processed.
+	eventUUID := postEvent(t, env, divideByZero)
+	env.Process(t)
+	if got := eventUUIDs(listEvents(t, env)); !slices.Equal(got, []string{eventUUID}) {
+		t.Errorf("Expected the Event [%s] processed, got %v", eventUUID, got)
+	}
+	if got := latestLogs(t, env, 123, 10); len(got) != 0 {
+		t.Errorf("Expected no Logs stored for Project 123 yet, got %v", messages(got))
+	}
+
+	env.FlakyLogs.recover()
+	caughtUpWithin(t, env, done, 10*time.Second)
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"for 123"}) {
+		t.Errorf("Expected Project 123's Log stored once it recovers, got %v", got)
 	}
 }
