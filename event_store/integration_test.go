@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -519,12 +520,24 @@ func TestIngestAfterWriterStopsIsServiceUnavailable(t *testing.T) {
 
 	env.PebbleWriter.StopWrites()
 
-	if resp := postStore(t, env); resp.StatusCode != 503 {
+	resp := postStore(t, env)
+	if resp.StatusCode != 503 {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("Expected 503, got %d: %s", resp.StatusCode, string(body))
 	}
+	assertRetryAfterAFewSeconds(t, resp)
 	if uuids := env.EventWriter.UUIDs(); len(uuids) != 0 {
 		t.Errorf("Expected no Event written after the writer stopped, got %d", len(uuids))
+	}
+}
+
+// assertRetryAfterAFewSeconds checks that a response tells the sender to
+// retry in a few seconds.
+func assertRetryAfterAFewSeconds(t *testing.T, resp *http.Response) {
+	t.Helper()
+	header := resp.Header.Get("Retry-After")
+	if seconds, err := strconv.Atoi(header); err != nil || seconds < 1 || seconds > 10 {
+		t.Errorf("Expected Retry-After of a few seconds, got %q", header)
 	}
 }
 

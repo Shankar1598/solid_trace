@@ -405,4 +405,13 @@ func TestLogIngestAfterTheWriterStopsIsServiceUnavailable(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("Expected 503, got %d: %s", resp.StatusCode, body)
 	}
+	assertRetryAfterAFewSeconds(t, resp)
+
+	// Logs in an envelope too.
+	resp = sendEncoded(t, env, "/api/123/envelope", "application/x-sentry-envelope", "", logEnvelope("too late"))
+	if resp.StatusCode != 503 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 503 for an envelope, got %d: %s", resp.StatusCode, body)
+	}
+	assertRetryAfterAFewSeconds(t, resp)
 }

@@ -134,6 +134,10 @@ func isNDJSON(c *fiber.Ctx) bool {
 	return strings.EqualFold(strings.TrimSpace(mediaType), "application/x-ndjson")
 }
 
+// retryAfterSeconds is how long an overloaded or stopping ingest asks the
+// sender to wait before retrying.
+const retryAfterSeconds = "5"
+
 var errInvalidProjectKey = errors.New("invalid project key")
 
 func (h *IngestHandler) validateKey(publicKey string) (uint32, error) {
@@ -168,7 +172,10 @@ func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrOverloaded), errors.Is(err, storage.ErrShuttingDown):
 		// Not 429: on a 429 without Retry-After, Sentry SDKs stop sending
-		// everything for 60s. A 503 drops only this event.
+		// everything for 60s. A 503 drops only this request; sentry-javascript
+		// and shippers that read Retry-After wait that long before sending
+		// again.
+		c.Set(fiber.HeaderRetryAfter, retryAfterSeconds)
 		return c.Status(503).SendString(err.Error())
 	default:
 		logger.L.Error("Ingest failed", "error", err)
