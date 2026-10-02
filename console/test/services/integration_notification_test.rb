@@ -229,6 +229,20 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     end
   end
 
+  test "a new Issue that also reaches the Event threshold gets only the issue created notification" do
+    @slack.update!(settings: @slack.settings.merge("notify_on_event_threshold" => "1", "event_threshold" => "1"))
+    issue = create(:issue, project: @project, title: "Brand new")
+    create(:issue_fingerprint, issue: issue)
+    count_request = stub_request(:get, %r{/api/#{@project.id}/events/count})
+      .to_return(status: 200, body: { count: 1 }.to_json)
+
+    IntegrationNotification.issue_received_event(issue, newly_created: true)
+
+    assert_equal [ "issue_created" ], Notification.pluck(:kind)
+    assert_not_requested(count_request)
+    assert_not_requested(:post, SLACK_URL)
+  end
+
   test "an assignment change is still sent immediately when the assignment rule is on" do
     @slack.update!(settings: @slack.settings.merge("notify_on_assignment" => "1"))
     issue = create(:issue, project: @project, title: "Assignable")

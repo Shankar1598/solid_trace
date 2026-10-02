@@ -21,18 +21,18 @@ See spec: "Console: the Integration notification module" and "Testing Decisions"
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The migration renames `event_type` to `kind`, adds `attempts` and the `skipped` status, and keeps both indexes
-- [ ] A new Issue with the new-Issue rule on produces one *issue created* row per active Integration and schedules the tick after the initial delay
-- [ ] With the new-Issue rule off, no *issue created* row is written
-- [ ] Pending *issue created* rows for an Integration are delivered as one batch message, capped at ten Issues plus a remainder count and a link
-- [ ] A tick inside the rate-limit window reschedules itself for when the window opens
-- [ ] The rate-limit and debounce windows are the same constant
-- [ ] The stored `kind` selects the formatted message
-- [ ] The processor job and the per-Issue trigger job only call the module
-- [ ] `notify(issue)` is removed
-- [ ] Assignment and threshold notifications still go out as they do today
-- [ ] Tests drive the module's three entry points and observe outbox rows, WebMock requests, ActionMailer deliveries and enqueued jobs (`travel_to` for timing). No constructor stubs, no stubbing the Issue's Event collection.
-- [ ] The current notifier and processor job tests are superseded by these tests
-- [ ] `CONTEXT.md` defines Notification and Integration notification
+- [x] The migration renames `event_type` to `kind`, adds `attempts` and the `skipped` status, and keeps both indexes
+- [x] A new Issue with the new-Issue rule on produces one *issue created* row per active Integration and schedules the tick after the initial delay
+- [x] With the new-Issue rule off, no *issue created* row is written
+- [x] Pending *issue created* rows for an Integration are delivered as one batch message, capped at ten Issues plus a remainder count and a link
+- [x] A tick inside the rate-limit window reschedules itself for when the window opens
+- [x] The rate-limit and debounce windows are the same constant
+- [x] The stored `kind` selects the formatted message
+- [x] The processor job and the per-Issue trigger job only call the module
+- [x] `notify(issue)` is removed
+- [x] Assignment and threshold notifications still go out as they do today
+- [x] Tests drive the module's three entry points and observe outbox rows, WebMock requests, ActionMailer deliveries and enqueued jobs (`travel_to` for timing). No constructor stubs, no stubbing the Issue's Event collection.
+- [x] The current notifier and processor job tests are superseded by these tests
+- [x] `CONTEXT.md` defines Notification and Integration notification
