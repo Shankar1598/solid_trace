@@ -24,13 +24,14 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-1. [Logs 13](logs/issues/13-write-v1-spec-and-first-milestone-tickets.md): write the v1 spec and first-milestone tickets
+1. [Logs 13](logs/issues/13-write-v1-spec-and-first-milestone-tickets.md) (claimed): the [v1 spec](logs-v1/spec.md) is written; review its Further Notes (choices no ticket made), then write the first-milestone tickets with `/to-tickets`
 
 ## Efforts
 
 | Effort | Done / open | Start here |
 |---|---|---|
 | Logs | 15 / 1 | [map.md](logs/map.md) |
+| Logs v1 | spec ready, no tickets yet | [spec.md](logs-v1/spec.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
