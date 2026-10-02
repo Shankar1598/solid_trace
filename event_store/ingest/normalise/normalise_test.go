@@ -167,3 +167,80 @@ func TestTraceAndSpanIDsAreStoredInLowerCase(t *testing.T) {
 		t.Errorf("Expected lower-case ids, got %q and %q", log.TraceID, log.SpanID)
 	}
 }
+
+func TestTimeIsReadFromISO8601OrAnEpochInAnyUnit(t *testing.T) {
+	at := time.Date(2026, 10, 2, 11, 59, 30, 0, time.UTC)
+	cases := map[string]time.Time{
+		`"2026-10-02T11:59:30Z"`:           at,
+		`"2026-10-02T11:59:30.123456789Z"`: at.Add(123456789),
+		`"2026-10-02T12:59:30+01:00"`:      at,
+		`"2026-10-02T12:59:30.5+0100"`:     at.Add(500 * time.Millisecond),
+		`"2026-10-02 11:59:30Z"`:           at,
+		`"2026-10-02t11:59:30z"`:           at,
+		`"2026-10-02T11:59:30"`:            at, // no zone is UTC
+		`"2026-10-02 11:59:30.25"`:         at.Add(250 * time.Millisecond),
+		`1790942370`:                       at,
+		`1790942370.25`:                    at.Add(250 * time.Millisecond),
+		`1790942370250`:                    at.Add(250 * time.Millisecond),
+		`1790942370250000`:                 at.Add(250 * time.Millisecond),
+		`1790942370250000123`:              at.Add(250*time.Millisecond + 123),
+		`1.79094237e9`:                     at,
+		`1790942370123.456`:                at.Add(123456 * time.Microsecond),
+	}
+	for sent, want := range cases {
+		t.Run(sent, func(t *testing.T) {
+			log, _ := normaliseJSON(t, `{"time": `+sent+`}`, receipt)
+			if !log.Time.Equal(want) || log.Time.Location() != time.UTC {
+				t.Errorf("Expected %v, got %v", want, log.Time)
+			}
+			if got := attributes(t, log); len(got) != 0 {
+				t.Errorf("Expected no Attributes, got %v", got)
+			}
+		})
+	}
+}
+
+func TestATimeOutsideRetentionOrAnHourAheadBecomesTheReceiptTime(t *testing.T) {
+	cases := []struct {
+		time     string
+		days     int
+		replaced bool
+	}{
+		{`"2026-09-02T12:00:00Z"`, 30, false}, // 30 days back, exactly
+		{`"2026-09-02T11:59:59Z"`, 30, true},
+		{`"2026-09-02T11:59:59Z"`, 31, false},
+		{`"2026-09-25T11:59:59Z"`, 7, true},
+		{`"2026-10-02T13:00:00Z"`, 30, false}, // 1 hour ahead, exactly
+		{`"2026-10-02T13:00:01Z"`, 30, true},
+		{`0`, 30, true},
+		{`-1790942370`, 30, true},
+		{`"9999-12-31T23:59:59Z"`, 30, true},
+		{`"yesterday"`, 30, true},
+		{`true`, 30, true},
+		{`{"seconds": 1}`, 30, true},
+	}
+	for _, c := range cases {
+		t.Run(c.time, func(t *testing.T) {
+			r := normalise.Receipt{At: receivedAt, RetentionDays: c.days}
+			log, _ := normaliseJSON(t, `{"ts": `+c.time+`}`, r)
+			var original any
+			json.Unmarshal([]byte(c.time), &original)
+			got := attributes(t, log)
+			if c.replaced {
+				if !log.Time.Equal(receivedAt) {
+					t.Errorf("Expected the receipt time, got %v", log.Time)
+				}
+				if want := map[string]any{"original.time": original}; !reflect.DeepEqual(got, want) {
+					t.Errorf("Expected Attributes %v, got %v", want, got)
+				}
+			} else {
+				if log.Time.Equal(receivedAt) {
+					t.Errorf("Expected the Log's own time kept, got the receipt time")
+				}
+				if len(got) != 0 {
+					t.Errorf("Expected no Attributes, got %v", got)
+				}
+			}
+		})
+	}
+}
