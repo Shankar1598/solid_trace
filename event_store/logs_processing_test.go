@@ -89,3 +89,27 @@ func TestALogDuckDBRejectsIsSkippedAndTheRestOfItsBatchIsStored(t *testing.T) {
 		t.Errorf("Expected %v after a restart, got %v", want, got)
 	}
 }
+
+func TestALoneLogDuckDBRejectsIsSkippedAndLaterLogsAreStored(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	output := captureLogs(t)
+
+	bad := unstorableLog("unstorable")
+	storeLogBatch(t, env, 123, bad)
+	processLogsWithin(t, env, 10*time.Second)
+
+	if got := latestLogs(t, env, 123, 10); len(got) != 0 {
+		t.Errorf("Expected no Logs stored, got %v", messages(got))
+	}
+	if !strings.Contains(output.String(), "skipped a Log") || !strings.Contains(output.String(), bad.ID.String()) {
+		t.Errorf("Expected the skipped Log %s logged, got %q", bad.ID, output.String())
+	}
+
+	postLogs(t, env, "application/json", `{"message": "later", "time": "2026-10-02T11:00:01Z"}`)
+	processLogsWithin(t, env, 10*time.Second)
+
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"later"}) {
+		t.Errorf("Expected only [later], got %v", got)
+	}
+}
