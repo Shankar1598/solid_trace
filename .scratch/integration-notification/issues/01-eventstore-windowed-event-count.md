@@ -6,11 +6,11 @@ See spec: "EventStore: windowed Event count" (user stories 26, 27).
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The count route honours `newer_than` and `older_than`, each alone and together
-- [ ] The time window combined with fingerprint filtering returns the intersection
-- [ ] Regression: a windowed count request no longer returns the lifetime count
-- [ ] A malformed `newer_than` or `older_than` returns 400 with an error on the count route and the listing route
-- [ ] The listing, the count and the Event-with-context query (for the filters it supports) build their WHERE clauses from one shared predicate builder
-- [ ] Tests drive the HTTP route through an in-process Fiber app with a real DuckDB in a temporary directory, not the storage function beneath it
+- [x] The count route honours `newer_than` and `older_than`, each alone and together
+- [x] The time window combined with fingerprint filtering returns the intersection
+- [x] Regression: a windowed count request no longer returns the lifetime count
+- [x] A malformed `newer_than` or `older_than` returns 400 with an error on the count route and the listing route
+- [x] The listing, the count and the Event-with-context query (for the filters it supports) build their WHERE clauses from one shared predicate builder
+- [x] Tests drive the HTTP route through an in-process Fiber app with a real DuckDB in a temporary directory, not the storage function beneath it
