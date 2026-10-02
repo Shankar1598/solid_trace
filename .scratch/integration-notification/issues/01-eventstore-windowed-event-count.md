@@ -1,5 +1,7 @@
 # 01: EventStore Event count honours the time window
 
+Status: resolved
+
 **What to build:** A Console caller asking EventStore for an Issue's Event count within a time window gets the number of Events inside that window, not the lifetime count. The Event count applies the same filters as the Event listing (Project, Issue fingerprints, `newer_than`, `older_than`, tags) through one predicate builder that the listing, the count and the Event-with-context query all use, so the filters can't drift apart again. A malformed `newer_than` or `older_than` on the Event query routes is rejected with HTTP 400 and an error, instead of being silently ignored. Otherwise the HTTP contract of `/api/:project_id/events/count` is unchanged: same parameters, same `{"count": n}` response.
 
 See spec: "EventStore: windowed Event count" (user stories 26, 27).

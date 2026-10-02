@@ -1,5 +1,7 @@
 # 05: Assignment notifications via the outbox
 
+Status: resolved
+
 **What to build:** When an Issue's assignee changes and an Integration has the assignment rule on, the change is recorded as an *assignment changed* outbox row and delivered under the same per-Integration rate limit as everything else.
 
 - **Trigger:** the Issue model's assignment callback calls the module's *Issue assignment changed* entry point directly, since it only writes outbox rows. The dedicated assignment job and its dead retry declaration are deleted.

@@ -1,5 +1,7 @@
 # 03: Delivery outcomes: failed, retried, skipped, cleaned up
 
+Status: resolved
+
 **What to build:** Every outbox row ends in a recorded outcome that reflects what happened, never a false `sent`.
 
 - **Adapters report outcomes:** the Slack, PagerDuty and email adapters report success or failure instead of rescuing errors to nil.

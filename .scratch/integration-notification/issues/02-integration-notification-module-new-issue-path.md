@@ -1,5 +1,7 @@
 # 02: Integration notification module owns the new-Issue path
 
+Status: resolved
+
 **What to build:** A single Console module, **Integration notification**, becomes the only way to tell Integrations about Issues. It has three entry points:
 
 - *Issue received an Event*: takes the Issue and whether it was newly created

@@ -1,5 +1,7 @@
 # 04: Threshold notifications fire correctly, via the outbox
 
+Status: resolved
+
 **What to build:** An Organization admin with the threshold rule on is told once when an Issue receives at least `event_threshold` Events within the last `time_window_minutes`.
 
 - **The rule:** the *Issue received an Event* entry point asks EventStore for the windowed count. If it is greater than or equal to the threshold, and no *threshold reached* row exists for the same Issue and Integration within that window, it writes a *threshold reached* outbox row. The outbox is the dedup record. The rule fires again once the window has passed if the Issue is still spiking.
