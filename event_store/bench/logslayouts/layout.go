@@ -75,8 +75,11 @@ type Writer interface {
 	Close() error
 }
 
+// Layouts are the layouts this engine can run. The VARIANT layouts need
+// DuckDB 2.0 (variant_extract_string, VARIANT storage); they come back with
+// the 2.0 upgrade.
 func Layouts() []Layout {
-	return []Layout{jsonLayout{}, variantLayout{}, variantLayout{noShred: true}, mapLayout{}}
+	return []Layout{jsonLayout{}, mapLayout{}}
 }
 
 func LayoutByName(name string) (Layout, error) {
