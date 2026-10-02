@@ -72,6 +72,9 @@ func TestALogDuckDBRejectsIsSkippedAndTheRestOfItsBatchIsStored(t *testing.T) {
 		bad,
 		logAt(t, "same batch, after", "2026-10-02T11:00:03Z"),
 	)
+	// A batch of nothing but a bad Log, among the same Logs to store.
+	alsoBad := unstorableLog("also unstorable")
+	storeLogBatch(t, env, 123, alsoBad)
 	postLogs(t, env, "application/json", `{"message": "after", "time": "2026-10-02T11:00:04Z"}`)
 	processLogsWithin(t, env, 10*time.Second)
 
@@ -79,8 +82,10 @@ func TestALogDuckDBRejectsIsSkippedAndTheRestOfItsBatchIsStored(t *testing.T) {
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, want) {
 		t.Errorf("Expected %v, got %v", want, got)
 	}
-	if !strings.Contains(output.String(), "skipped a Log") || !strings.Contains(output.String(), bad.ID.String()) {
-		t.Errorf("Expected the skipped Log %s logged, got %q", bad.ID, output.String())
+	for _, skipped := range []models.Log{bad, alsoBad} {
+		if !strings.Contains(output.String(), "skipped a Log") || !strings.Contains(output.String(), skipped.ID.String()) {
+			t.Errorf("Expected the skipped Log %s logged, got %q", skipped.ID, output.String())
+		}
 	}
 
 	// Skipped for good: after a restart nothing is stored again.

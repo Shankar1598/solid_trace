@@ -359,7 +359,7 @@ type rejectedLog struct {
 
 // storeApart stores a Project's Log batches, which fail on their content
 // together, without the Logs that fail on their own. It finds those by trying
-// the Logs in halves, without storing them, and skips and logs each. The
+// the Logs in halves without storing them, and skips and logs each. The
 // batches the skipped Logs leave empty still move the cursor.
 func (p *Processor) storeApart(projectID uint32, batches []storage.LogBatch, now time.Time) error {
 	var logs []batchedLog
@@ -400,41 +400,33 @@ func (p *Processor) storeApart(projectID uint32, batches []storage.LogBatch, now
 	return nil
 }
 
-// rejectedLogs returns the Logs that fail on their own out of logs, which
-// fail together on their content. It tries each half of logs without storing
-// it, and looks inside each half that fails, down to single Logs. A store
-// error, or Stop, ends the search.
+// rejectedLogs returns the Logs out of logs that fail on their own. It tries
+// logs without storing them, and if they fail on their content, it looks in
+// each half, down to single Logs. A store error, or Stop, ends the search.
 func (p *Processor) rejectedLogs(projectID uint32, logs []batchedLog, now time.Time) ([]rejectedLog, error) {
+	if len(logs) == 0 {
+		return nil, nil
+	}
+	if p.stopped() {
+		return nil, ErrStopped
+	}
+	err := p.classify(p.store.TryLogBatches(projectID, batchesOf(logs), now))
+	if err == nil || !isContentError(err) {
+		return nil, err
+	}
 	if len(logs) == 1 {
-		err := p.classify(p.store.TryLogBatches(projectID, batchesOf(logs), now))
-		if err == nil || !isContentError(err) {
-			return nil, err
-		}
 		return []rejectedLog{{logs[0], err}}, nil
 	}
-
-	var rejected []rejectedLog
 	half := len(logs) / 2
-	for _, part := range [][]batchedLog{logs[:half], logs[half:]} {
-		if p.stopped() {
-			return nil, ErrStopped
-		}
-		if len(part) > 1 {
-			err := p.classify(p.store.TryLogBatches(projectID, batchesOf(part), now))
-			if err == nil {
-				continue
-			}
-			if !isContentError(err) {
-				return nil, err
-			}
-		}
-		partRejected, err := p.rejectedLogs(projectID, part, now)
-		if err != nil {
-			return nil, err
-		}
-		rejected = append(rejected, partRejected...)
+	first, err := p.rejectedLogs(projectID, logs[:half], now)
+	if err != nil {
+		return nil, err
 	}
-	return rejected, nil
+	second, err := p.rejectedLogs(projectID, logs[half:], now)
+	if err != nil {
+		return nil, err
+	}
+	return append(first, second...), nil
 }
 
 // batchesOf groups Logs back into their Log batches, in order.
