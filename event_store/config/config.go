@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 
@@ -115,6 +116,9 @@ func applyFileConfig(cfg *Config, path string) error {
 		cfg.MessageQueuePath = *config.MessageQueuePath
 	}
 	if config.IngestMaxWaiting != nil {
+		if *config.IngestMaxWaiting <= 0 {
+			return fmt.Errorf("ingest_max_waiting must be positive, got %d", *config.IngestMaxWaiting)
+		}
 		cfg.IngestMaxWaiting = *config.IngestMaxWaiting
 	}
 	if config.DuckDBTempDirectory != nil {
