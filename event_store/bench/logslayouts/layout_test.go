@@ -20,7 +20,7 @@ const testLogs = 30_000
 func writeTestLogs(t *testing.T, l Layout, g *Generator) *sql.DB {
 	t.Helper()
 	ctx := context.Background()
-	db, err := OpenDB(filepath.Join(t.TempDir(), l.Name()+".duckdb"), Settings{MemoryLimit: "1GB", Threads: 2})
+	db, err := OpenDB(filepath.Join(t.TempDir(), l.Name()+".duckdb"), Settings{MemoryLimit: "2GB", Threads: 2, Extra: l.Setup()})
 	if err != nil {
 		t.Fatal(err)
 	}
