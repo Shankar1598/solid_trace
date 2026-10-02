@@ -3,7 +3,9 @@
 //	logsbench run -layout json -work /tmp/bench -out results/json.json
 //	logsbench report results/json.json results/variant.json ... > report.md
 //
-// Run one layout per process, under the dev-box limits in the ticket:
+// The defaults take about two minutes per layout; slow query sets are cut
+// short by -set-budget. Run one layout per process, under the dev-box limits
+// in the ticket:
 //
 //	systemd-run --user --scope -p MemoryMax=3G mise exec -- go run ./bench/logslayouts/cmd/logsbench run ...
 package main
@@ -47,14 +49,16 @@ func run(args []string) {
 	seed := fs.Uint64("seed", 1, "generator seed")
 	memory := fs.String("memory", "2GB", "DuckDB memory_limit")
 	threads := fs.Int("threads", 2, "DuckDB threads")
-	unthrottled := fs.Duration("unthrottled", 2*time.Minute, "unthrottled phase")
-	target := fs.Duration("target", 2*time.Minute, "target-rate phase; queries run during its second half")
-	burst := fs.Duration("burst", time.Minute, "burst phase")
+	unthrottled := fs.Duration("unthrottled", 30*time.Second, "unthrottled phase")
+	target := fs.Duration("target", 30*time.Second, "target-rate phase; queries run during its second half")
+	burst := fs.Duration("burst", 15*time.Second, "burst phase")
 	burstFactor := fs.Int("burst-factor", 5, "burst rate as a multiple of the target")
 	flush := fs.Int("flush", 5000, "Logs per flush when unthrottled")
-	rowGroups := fs.String("rowgroups", "122880,30720", "Parquet row group sizes")
-	verify := fs.Int64("verify", 100_000, "Logs covered by the cross-layout result check")
-	queryTimeout := fs.Duration("query-timeout", 2*time.Minute, "per query run")
+	rowGroups := fs.String("rowgroups", "122880", "Parquet row group sizes, comma-separated")
+	verify := fs.Int64("verify", 50_000, "Logs covered by the cross-layout result check")
+	queryTimeout := fs.Duration("query-timeout", 20*time.Second, "per query run")
+	setBudget := fs.Duration("set-budget", 30*time.Second, "per query set; the rest of a slow set is skipped")
+	checkpointTimeout := fs.Duration("checkpoint-timeout", time.Minute, "final checkpoint; past it the layout stops")
 	keep := fs.Bool("keep", false, "keep the layout's files")
 	fs.Parse(args)
 
@@ -74,20 +78,22 @@ func run(args []string) {
 		*out = l.Name() + ".json"
 	}
 	cfg := logslayouts.Config{
-		Layout:        l,
-		Dir:           filepath.Join(*work, l.Name()),
-		Seed:          *seed,
-		Settings:      logslayouts.Settings{MemoryLimit: *memory, Threads: *threads},
-		Unthrottled:   *unthrottled,
-		Target:        *target,
-		Burst:         *burst,
-		BurstFactor:   *burstFactor,
-		FlushLogs:     *flush,
-		RowGroupSizes: sizes,
-		VerifyMaxID:   *verify,
-		QueryTimeout:  *queryTimeout,
-		Keep:          *keep,
-		Logf:          log.Printf,
+		Layout:            l,
+		Dir:               filepath.Join(*work, l.Name()),
+		Seed:              *seed,
+		Settings:          logslayouts.Settings{MemoryLimit: *memory, Threads: *threads},
+		Unthrottled:       *unthrottled,
+		Target:            *target,
+		Burst:             *burst,
+		BurstFactor:       *burstFactor,
+		FlushLogs:         *flush,
+		RowGroupSizes:     sizes,
+		VerifyMaxID:       *verify,
+		QueryTimeout:      *queryTimeout,
+		SetBudget:         *setBudget,
+		CheckpointTimeout: *checkpointTimeout,
+		Keep:              *keep,
+		Logf:              log.Printf,
 	}
 	r, runErr := logslayouts.Run(context.Background(), cfg)
 	if r != nil {

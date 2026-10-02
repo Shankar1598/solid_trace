@@ -31,7 +31,10 @@ func Markdown(reports []*Report) string {
 			target, kept, queries := "max", "", ""
 			if p.TargetBytesPerS > 0 {
 				target = fmt.Sprintf("%.1f", p.TargetBytesPerS/1e6)
-				kept = map[bool]string{true: "yes", false: "**no**"}[p.KeptUp]
+				// Recomputed from the stored fields so older reports read the
+				// same way: at most a second behind, flush p99 under 1 s.
+				perSecond := float64(LogsPerSecond) * p.TargetBytesPerS / TargetBytesPerSec
+				kept = map[bool]string{true: "yes", false: "**no**"}[float64(p.MaxBacklogLogs) <= perSecond && p.FlushP99Ms < 1000]
 			}
 			if p.QueriesRun > 0 {
 				queries = fmt.Sprintf("%d (%.0f / %.0f, %d)", p.QueriesRun, p.QueryP50Ms, p.QueryMaxMs, p.QueryErrors)
@@ -105,6 +108,8 @@ func Markdown(reports []*Report) string {
 				switch {
 				case i >= len(ts):
 					w(" – |")
+				case ts[i].Skipped:
+					w(" skipped |")
 				case ts[i].Error != "":
 					w(" error |")
 				case coldOnly:
@@ -185,10 +190,10 @@ func Markdown(reports []*Report) string {
 		for _, r := range reports {
 			scale := float64(FullDayLogs) / float64(max(r.Rows, 1))
 			hot, pq := "–", "–"
-			if i < len(r.HotQueries) && r.HotQueries[i].Error == "" {
+			if i < len(r.HotQueries) && r.HotQueries[i].Error == "" && !r.HotQueries[i].Skipped {
 				hot = fmt.Sprintf("%.1f", r.HotQueries[i].WarmMs*scale/1000)
 			}
-			if len(r.Parquet) > 0 && i < len(r.Parquet[0].AsyncOn) && r.Parquet[0].AsyncOn[i].Error == "" {
+			if len(r.Parquet) > 0 && i < len(r.Parquet[0].AsyncOn) && r.Parquet[0].AsyncOn[i].Error == "" && !r.Parquet[0].AsyncOn[i].Skipped {
 				pq = fmt.Sprintf("%.1f", r.Parquet[0].AsyncOn[i].WarmMs*scale/1000)
 			}
 			w(" %s | %s |", hot, pq)

@@ -12,19 +12,21 @@ import (
 
 func smokeConfig(t *testing.T, l Layout) Config {
 	return Config{
-		Layout:        l,
-		Dir:           filepath.Join(t.TempDir(), l.Name()),
-		Seed:          1,
-		Settings:      Settings{MemoryLimit: "1GB", Threads: 2},
-		Unthrottled:   2 * time.Second,
-		Target:        2 * time.Second,
-		Burst:         time.Second,
-		BurstFactor:   5,
-		FlushLogs:     2000,
-		RowGroupSizes: []int{4096},
-		VerifyMaxID:   1500,
-		QueryTimeout:  time.Minute,
-		Logf:          t.Logf,
+		Layout:            l,
+		Dir:               filepath.Join(t.TempDir(), l.Name()),
+		Seed:              1,
+		Settings:          Settings{MemoryLimit: "1GB", Threads: 2},
+		Unthrottled:       2 * time.Second,
+		Target:            2 * time.Second,
+		Burst:             time.Second,
+		BurstFactor:       5,
+		FlushLogs:         2000,
+		RowGroupSizes:     []int{4096},
+		VerifyMaxID:       1500,
+		QueryTimeout:      time.Minute,
+		SetBudget:         time.Minute,
+		CheckpointTimeout: time.Minute,
+		Logf:              t.Logf,
 	}
 }
 
@@ -90,5 +92,21 @@ func TestRunReportsVariantShredding(t *testing.T) {
 	}
 	if md := Markdown([]*Report{r}); !strings.Contains(md, "VARIANT shredding") || !strings.Contains(md, "fetch_by_id") {
 		t.Errorf("report is missing sections:\n%s", md)
+	}
+}
+
+func TestRunSkipsQueriesPastTheSetBudget(t *testing.T) {
+	cfg := smokeConfig(t, jsonLayout{})
+	cfg.Unthrottled, cfg.Target, cfg.Burst = time.Second, time.Second, time.Second
+	cfg.SetBudget = time.Nanosecond
+	r, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.HotQueries[0].Skipped {
+		t.Errorf("first query skipped: %+v", r.HotQueries[0])
+	}
+	if !r.HotQueries[len(r.HotQueries)-1].Skipped {
+		t.Errorf("last query ran despite the spent budget: %+v", r.HotQueries[len(r.HotQueries)-1])
 	}
 }
