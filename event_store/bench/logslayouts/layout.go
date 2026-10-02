@@ -184,7 +184,7 @@ func (jsonLayout) StrAttr(k string) string {
 	return fmt.Sprintf("json_extract_string(attrs, %s)", jsonPath(k))
 }
 func (jsonLayout) NumAttr(k string) string {
-	return fmt.Sprintf("CASE WHEN json_type(attrs, %[1]s) IN ('BIGINT', 'UBIGINT', 'DOUBLE') THEN json_extract(attrs, %[1]s)::DOUBLE END", jsonPath(k))
+	return fmt.Sprintf("CASE WHEN json_type(attrs, %[1]s) IN ('BIGINT', 'UBIGINT', 'DOUBLE') THEN TRY_CAST(json_extract(attrs, %[1]s) AS DOUBLE) END", jsonPath(k))
 }
 func (jsonLayout) AttrsJSON() []string    { return []string{"attrs"} }
 func (jsonLayout) ParquetOptions() string { return "" }

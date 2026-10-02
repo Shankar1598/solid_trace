@@ -30,8 +30,14 @@ type Config struct {
 	// wrote different amounts are compared on the same Logs.
 	VerifyMaxID  int64
 	QueryTimeout time.Duration
-	Keep         bool
-	Logf         func(format string, args ...any)
+	// SetBudget bounds each query set (hot, prefetch, Parquet async on/off,
+	// verify): queries left when it runs out are skipped, so an obviously
+	// slow layout does not run for long.
+	SetBudget time.Duration
+	// CheckpointTimeout bounds the final checkpoint; past it the layout stops.
+	CheckpointTimeout time.Duration
+	Keep              bool
+	Logf              func(format string, args ...any)
 }
 
 type Report struct {
@@ -93,6 +99,8 @@ type QueryTiming struct {
 	WarmMs float64 // median of three
 	Rows   int
 	Error  string `json:",omitempty"`
+	// Skipped is set when the query set ran out of its time budget first.
+	Skipped bool `json:",omitempty"`
 }
 
 type ParquetRun struct {
@@ -233,10 +241,16 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 	lastID := r.nextID - 1
 
 	start := time.Now()
-	if _, err := r.db.ExecContext(ctx, "CHECKPOINT"); err != nil {
-		r.errorf("checkpoint after %v: %s", time.Since(start).Round(time.Millisecond), firstLine(err))
+	cctx, cancel := context.WithTimeout(ctx, cfg.CheckpointTimeout)
+	_, err = r.db.ExecContext(cctx, "CHECKPOINT")
+	cancel()
+	if err != nil {
+		// Too slow (or failed) to measure further: stop this layout, without
+		// a second checkpoint on close.
+		r.errorf("final checkpoint stopped after %v: %s; layout not measured further", time.Since(start).Round(time.Millisecond), firstLine(err))
+		r.db.Exec("PRAGMA disable_checkpoint_on_shutdown")
 		r.db.Close()
-		return rep, err
+		return rep, nil
 	}
 	rep.CheckpointMs = ms(time.Since(start))
 	if strings.HasPrefix(cfg.Layout.Name(), "variant") {
@@ -358,7 +372,7 @@ func (r *runner) phase(ctx context.Context, name string, d time.Duration, factor
 				for _, q := range Queries() {
 					params := TimedParams(r.g, max(0, r.nextIDAtomic()-1))
 					t0 := time.Now()
-					_, err := RunQuery(qctx, r.db, r.cfg.Layout, q, "logs", params)
+					_, err := queryStrings(qctx, r.db, q.SQL(r.cfg.Layout, "logs", params), 0)
 					if qctx.Err() != nil {
 						return
 					}
@@ -393,6 +407,7 @@ func (r *runner) phase(ctx context.Context, name string, d time.Duration, factor
 		err = r.unthrottled(ctx, deadline, write)
 	} else {
 		rate := float64(TargetBytesPerSec * factor)
+		perSecond := int64(LogsPerSecond * factor)
 		tick := time.NewTicker(time.Second)
 		for err == nil && time.Now().Before(deadline) {
 			<-tick.C
@@ -404,7 +419,9 @@ func (r *runner) phase(ctx context.Context, name string, d time.Duration, factor
 				batch = append(batch, l)
 				size += int64(l.Size)
 			}
-			p.MaxBacklogLogs = max(p.MaxBacklogLogs, int64(len(batch))-int64(rate/600))
+			// Each tick writes everything due, so a batch beyond one
+			// second's worth is backlog left by slow earlier flushes.
+			p.MaxBacklogLogs = max(p.MaxBacklogLogs, int64(len(batch))-perSecond)
 			if len(batch) > 0 {
 				err = write(batch)
 			}
@@ -424,8 +441,8 @@ func (r *runner) phase(ctx context.Context, name string, d time.Duration, factor
 	p.Flushes = len(flushes)
 	p.FlushP50Ms, p.FlushP99Ms, p.FlushMaxMs = percentiles(flushes)
 	if factor != 0 {
-		owed := p.TargetBytesPerS*p.Seconds - float64(p.Bytes)
-		p.KeptUp = owed < 2*p.TargetBytesPerS && p.FlushP99Ms < 1000
+		// Kept up: never more than a second behind, and flushes fit the tick.
+		p.KeptUp = p.MaxBacklogLogs <= int64(LogsPerSecond*factor) && p.FlushP99Ms < 1000
 	}
 	if len(qlat) > 0 {
 		p.QueryP50Ms, _, p.QueryMaxMs = percentiles(qlat)
@@ -445,8 +462,11 @@ func (r *runner) nextIDAtomic() int64 { return atomic.LoadInt64(&r.nextID) }
 func (r *runner) unthrottled(ctx context.Context, deadline time.Time, write func([]Log) error) error {
 	batches := make(chan []Log, 2)
 	gctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	done := make(chan struct{})
+	// Wait for the generator so its CPU does not count against the next phase.
+	defer func() { cancel(); <-done }()
 	go func() {
+		defer close(done)
 		defer close(batches)
 		next := r.nextIDAtomic()
 		for gctx.Err() == nil {
@@ -504,14 +524,22 @@ func variantShredding(ctx context.Context, db *sql.DB) ([]RowGroupShred, error) 
 }
 
 // slowQuery is a cold time past which only one warm run is timed.
-const slowQuery = 5 * time.Second
+const slowQuery = 2 * time.Second
 
 // timeQueries runs each query cold (fresh DuckDB, files evicted from the page
 // cache) and then warm: the median of warmRuns, or one run if cold was slow.
 func (r *runner) timeQueries(ctx context.Context, open func() (*sql.DB, error), src string, p Params, cacheDir, setup string, warmRuns int) []QueryTiming {
 	var out []QueryTiming
+	setStart := time.Now()
 	for _, q := range Queries() {
 		qt := QueryTiming{Name: q.Name}
+		// The first query always runs, so every set has at least one timing.
+		if len(out) > 0 && time.Since(setStart) > r.cfg.SetBudget {
+			qt.Skipped = true
+			r.logf("  %-28s skipped: query set over its %v budget", q.Name, r.cfg.SetBudget)
+			out = append(out, qt)
+			continue
+		}
 		err := func() error {
 			dropPageCache(cacheDir)
 			db, err := open()
@@ -525,7 +553,8 @@ func (r *runner) timeQueries(ctx context.Context, open func() (*sql.DB, error), 
 				}
 			}
 			var warm []time.Duration
-			for i := 0; i <= warmRuns; i++ {
+			runs := warmRuns
+			for i := 0; i <= runs; i++ {
 				qctx, cancel := context.WithTimeout(ctx, r.cfg.QueryTimeout)
 				t0 := time.Now()
 				rows, err := queryStrings(qctx, db, q.SQL(r.cfg.Layout, src, p), 0)
@@ -538,7 +567,7 @@ func (r *runner) timeQueries(ctx context.Context, open func() (*sql.DB, error), 
 				if i == 0 {
 					qt.ColdMs = ms(d)
 					if d > slowQuery {
-						warmRuns = min(warmRuns, 1)
+						runs = min(runs, 1)
 					}
 				} else {
 					warm = append(warm, d)
@@ -568,8 +597,15 @@ func (r *runner) verify(ctx context.Context, open func() (*sql.DB, error), src s
 	defer db.Close()
 	out := map[string]Result{}
 	var errs []error
+	setStart := time.Now()
 	for _, q := range Queries() {
-		res, err := RunQuery(ctx, db, r.cfg.Layout, q, src, p)
+		if len(out) > 0 && time.Since(setStart) > r.cfg.SetBudget {
+			errs = append(errs, fmt.Errorf("%s: skipped, verify over its %v budget", q.Name, r.cfg.SetBudget))
+			continue
+		}
+		qctx, cancel := context.WithTimeout(ctx, r.cfg.QueryTimeout)
+		res, err := RunQuery(qctx, db, r.cfg.Layout, q, src, p)
+		cancel()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %s", q.Name, firstLine(err)))
 			continue
@@ -623,11 +659,6 @@ func firstLine(err error) string {
 	if err == nil {
 		return ""
 	}
-	s := err.Error()
-	for i := range s {
-		if s[i] == '\n' {
-			return s[:i]
-		}
-	}
-	return s
+	line, _, _ := strings.Cut(err.Error(), "\n")
+	return line
 }
