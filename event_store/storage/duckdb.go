@@ -253,37 +253,14 @@ func (w *DuckDBWriter) HotUUIDsBetween(projectID uint32, first, last string) (ma
 }
 
 func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
+	where, args := eventPredicate(params)
 	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags FROM events WHERE project_id = ?")
-	args := []interface{}{params.ProjectID}
+	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags FROM events WHERE ")
+	queryBuilder.WriteString(where)
 
 	if params.UUID != "" {
 		queryBuilder.WriteString(" AND uuid = ?")
 		args = append(args, params.UUID)
-	}
-
-	if len(params.IssueFingerprintIDs) > 0 {
-		placeholders := make([]string, len(params.IssueFingerprintIDs))
-		for i, id := range params.IssueFingerprintIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
-	}
-
-	for k, v := range params.Tags {
-		queryBuilder.WriteString(" AND tags[?] = ?")
-		args = append(args, k, v)
-	}
-
-	if !params.NewerThan.IsZero() {
-		queryBuilder.WriteString(" AND timestamp > ?")
-		args = append(args, params.NewerThan)
-	}
-
-	if !params.OlderThan.IsZero() {
-		queryBuilder.WriteString(" AND timestamp < ?")
-		args = append(args, params.OlderThan)
 	}
 
 	if params.SortDesc {
@@ -349,9 +326,12 @@ func tagsFromMap(m duckdb.OrderedMap) map[string]string {
 	return tags
 }
 
-func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
-	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString("SELECT COUNT(*) FROM events WHERE project_id = ?")
+// eventPredicate builds the WHERE clause, without the keyword, that selects
+// the Events matching the params' filters: Project, Issue fingerprints, tags
+// and the time window. The listing, the count and the Event-with-context query
+// all use it, so they can't disagree on which Events a filter selects.
+func eventPredicate(params QueryParams) (string, []interface{}) {
+	clauses := []string{"project_id = ?"}
 	args := []interface{}{params.ProjectID}
 
 	if len(params.IssueFingerprintIDs) > 0 {
@@ -360,16 +340,35 @@ func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
+		clauses = append(clauses, fmt.Sprintf("issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	for k, v := range params.Tags {
-		queryBuilder.WriteString(" AND tags[?] = ?")
+		clauses = append(clauses, "tags[?] = ?")
 		args = append(args, k, v)
 	}
 
+	if !params.NewerThan.IsZero() {
+		clauses = append(clauses, "timestamp > ?")
+		args = append(args, params.NewerThan)
+	}
+
+	if !params.OlderThan.IsZero() {
+		clauses = append(clauses, "timestamp < ?")
+		args = append(args, params.OlderThan)
+	}
+
+	return strings.Join(clauses, " AND "), args
+}
+
+// CountEvents counts the Events matching the same filters as QueryEvents,
+// including the time window. Paging, sort and UUID don't apply.
+func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
+	where, args := eventPredicate(params)
+	query := "SELECT COUNT(*) FROM events WHERE " + where
+
 	var count int64
-	err := w.db.QueryRow(queryBuilder.String(), args...).Scan(&count)
+	err := w.db.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -387,9 +386,14 @@ type EventWithContext struct {
 // If uuid is provided, returns that specific event with context.
 // If uuid is empty, returns the latest event(s) based on limit with context.
 func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithContext, error) {
-	// Build the base CTE with window functions
+	// prev/next run over the Issue's whole Event sequence, so only the Project
+	// and fingerprint filters apply; a time window or tags would cut it short.
+	// The events/context route rejects a time window rather than drop it here.
+	where, args := eventPredicate(QueryParams{
+		ProjectID:           params.ProjectID,
+		IssueFingerprintIDs: params.IssueFingerprintIDs,
+	})
 	queryBuilder := strings.Builder{}
-	args := []interface{}{}
 
 	// CTE to get events with prev/next using window functions
 	queryBuilder.WriteString(`
@@ -407,19 +411,8 @@ func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithCon
 				LAG(uuid) OVER (ORDER BY timestamp ASC) as prev_uuid,
 				LEAD(uuid) OVER (ORDER BY timestamp ASC) as next_uuid
 			FROM events
-			WHERE project_id = ?
-	`)
-	args = append(args, params.ProjectID)
-
-	if len(params.IssueFingerprintIDs) > 0 {
-		placeholders := make([]string, len(params.IssueFingerprintIDs))
-		for i, id := range params.IssueFingerprintIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		queryBuilder.WriteString(fmt.Sprintf(" AND issue_fingerprint_id IN (%s)", strings.Join(placeholders, ",")))
-	}
-
+			WHERE `)
+	queryBuilder.WriteString(where)
 	queryBuilder.WriteString(")")
 
 	// Select from CTE
