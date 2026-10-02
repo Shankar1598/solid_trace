@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] JSON aliases, first present wins and is consumed, lower-ranked ones stay Attributes: `message`, `time`, `level`, `service`, `environment`, `trace_id`, `span_id` as listed in the spec.
 - [x] Time: RFC 3339 / ISO 8601 or a numeric epoch in s, ms, µs or ns (unit from magnitude). A missing timestamp, one older than the Project's Retention (the instance default of 30 days until M1-09 reads per-Project Retention), or one more than 1 hour in the future becomes the receipt time, the given value kept as `original.time`. Use the controllable clock.
