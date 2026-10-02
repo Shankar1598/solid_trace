@@ -136,7 +136,27 @@ func (s *LogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
 //
 // Either all of it commits or none does, so a batch at or below the cursor is
 // never appended twice. now is when promoted keys are recorded as added.
+//
+// A batch may hold no Logs, so that the cursor still moves past it.
 func (s *LogStore) AppendLogBatches(projectID uint32, batches []LogBatch, now time.Time) error {
+	return s.appendLogBatchesTx(projectID, batches, now, true)
+}
+
+// TryLogBatches does all that AppendLogBatches does, then rolls it back. It
+// fails as AppendLogBatches would, but stores nothing.
+func (s *LogStore) TryLogBatches(projectID uint32, batches []LogBatch, now time.Time) error {
+	return s.appendLogBatchesTx(projectID, batches, now, false)
+}
+
+// Ping reports whether logs.duckdb answers a query.
+func (s *LogStore) Ping() error {
+	var n int
+	return s.db.QueryRow("SELECT count(*) FROM (SELECT 1 FROM logs.log_processing_cursors LIMIT 1)").Scan(&n)
+}
+
+// appendLogBatchesTx runs appendLogBatches in a transaction, and commits it
+// only if commit is set.
+func (s *LogStore) appendLogBatchesTx(projectID uint32, batches []LogBatch, now time.Time, commit bool) error {
 	if len(batches) == 0 {
 		return nil
 	}
@@ -151,7 +171,7 @@ func (s *LogStore) AppendLogBatches(projectID uint32, batches []LogBatch, now ti
 		return err
 	}
 	promoted, err := appendLogBatches(ctx, conn, projectID, batches, now.UTC())
-	if err != nil {
+	if err != nil || !commit {
 		// After a failed statement DuckDB's COMMIT returns nil but commits
 		// nothing, so roll back rather than try it.
 		if _, rollbackErr := conn.ExecContext(ctx, "ROLLBACK"); rollbackErr != nil {
