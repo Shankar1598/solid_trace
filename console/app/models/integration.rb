@@ -34,20 +34,25 @@ class Integration < ApplicationRecord
     val.to_s.split(",").map(&:strip).reject(&:empty?)
   end
 
+  # Notification rules that apply when an Integration has no saved setting.
+  # The New and Edit pages start from these through rule_settings.
+  RULE_DEFAULTS = {
+    "notify_on_new_issue" => true,
+    "notify_on_assignment" => false,
+    "notify_on_event_threshold" => true,
+  }.freeze
+
   # Notification rule settings
   def notify_on_new_issue
-    val = (settings || {})["notify_on_new_issue"]
-    val.nil? ? true : (val.to_s == "1" || val == true)
+    rule_enabled?("notify_on_new_issue")
   end
 
   def notify_on_event_threshold
-    val = (settings || {})["notify_on_event_threshold"]
-    val.nil? ? true : (val.to_s == "1" || val == true)
+    rule_enabled?("notify_on_event_threshold")
   end
 
   def notify_on_assignment
-    val = (settings || {})["notify_on_assignment"]
-    val.nil? ? false : (val.to_s == "1" || val == true)
+    rule_enabled?("notify_on_assignment")
   end
 
   def event_threshold
@@ -60,7 +65,24 @@ class Integration < ApplicationRecord
     val > 0 ? val : DEFAULT_TIME_WINDOW_MINUTES
   end
 
+  # Every notification rule setting as the rules apply it, saved or default.
+  def rule_settings
+    {
+      "notify_on_new_issue" => notify_on_new_issue,
+      "notify_on_assignment" => notify_on_assignment,
+      "notify_on_event_threshold" => notify_on_event_threshold,
+      "event_threshold" => event_threshold,
+      "time_window_minutes" => time_window_minutes,
+    }
+  end
+
   private
+
+  # Accepts the form's "1"/"0" and JSON true/false alike.
+  def rule_enabled?(key)
+    val = (settings || {})[key]
+    val.nil? ? RULE_DEFAULTS.fetch(key) : ActiveModel::Type::Boolean.new.cast(val)
+  end
 
   def set_name
     self.name = provider.titleize if name.blank?

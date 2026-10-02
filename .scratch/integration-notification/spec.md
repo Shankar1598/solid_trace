@@ -1,6 +1,6 @@
 # Integration notification
 
-Status: ready-for-agent
+Status: resolved
 
 Origin: architecture review of 2026-09-18, candidate #3 ("One Integration notification module for all three triggers"), paired with the windowed-count fix from candidate #2 ("One Event query module"). Test seams were confirmed with the maintainer on 2026-09-19.
 
@@ -228,3 +228,14 @@ In EventStore, the Event count honours the same filters as the Event listing, in
 - **Glossary gap:** `CONTEXT.md` defines **Integration** but not the outbox row (**Notification**) or the module (**Integration notification**). Add both via `domain-modeling` when implementation settles the names. Note that "notification kind" deliberately avoids the word "event".
 - **Settings default mismatch:** the model treats a missing threshold setting as *on*, while the New and Edit pages treat it as *off*. This means the fixed threshold rule will start firing for Integrations whose admins believe it is off. That default belongs to candidate #5, but consider fixing it first, or at least checking stored settings before deploying this change.
 - **Delivery timing:** threshold and assignment notifications move from immediate to outbox delivery. They gain the initial delay (10 seconds) and share the per-Integration rate limit. This is intended (stories 6–7).
+
+## Comments
+
+**2026-10-02, resolved.** Implemented in tickets 01–05 and merged to main. A two-axis code review afterwards led to two fixes: Notification gained an indexed `issue_id` column, so the threshold dedup check runs in SQL, and `/events/context` now rejects `newer_than`/`older_than` with 400 instead of ignoring them.
+
+Review findings left open (file a ticket to act on one):
+- A tick where every row fails or is skipped doesn't count against the rate limit (only `sent_at` does), so with a broken webhook each new trigger retries straight away and a row can use up its 5 attempts in seconds. The spec asked that "the whole tick counts once against the rate limit".
+- Rows are marked `processing` before delivery; if the job dies mid-delivery they stay `processing`, are never picked up again and aren't cleaned up.
+- A hard-deleted (not archived) assignee still renders as "Unassigned".
+- Commit `aa7553e` went beyond aligning the threshold default (candidate #5): settings accessors now cast with `ActiveModel::Type::Boolean` (`"true"` reads as on), and `IntegrationSerializer` merges defaults into `settings`. `Edit.tsx` still hard-codes fallback defaults.
+- Standards smells: the same `case kind` switch in all three provider adapters, and the adapters' shared constructor parameters wanting a message object.

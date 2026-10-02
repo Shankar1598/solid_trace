@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_02_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_02_110000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -98,16 +98,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_090000) do
   end
 
   create_table "notifications", force: :cascade do |t|
+    t.integer "attempts", default: 0, null: false
     t.datetime "created_at", null: false
     t.text "error_message"
-    t.string "event_type", null: false
     t.integer "integration_id", null: false
+    t.integer "issue_id", null: false
+    t.string "kind", null: false
     t.binary "payload"
     t.datetime "processing_at"
     t.datetime "sent_at"
     t.integer "status", default: 0, null: false
     t.datetime "updated_at", null: false
-    t.index ["integration_id", "event_type", "status"], name: "idx_on_integration_id_event_type_status_780e944ffb"
+    t.index ["integration_id", "issue_id", "kind", "created_at"], name: "index_notifications_on_integration_issue_kind_created_at"
+    t.index ["integration_id", "kind", "status"], name: "index_notifications_on_integration_id_and_kind_and_status"
     t.index ["integration_id"], name: "index_notifications_on_integration_id"
     t.index ["status", "created_at"], name: "index_notifications_on_status_and_created_at"
   end
