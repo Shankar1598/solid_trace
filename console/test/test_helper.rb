@@ -4,6 +4,12 @@ ENV["RAILS_ENV"] ||= "test"
 require_relative "../config/environment"
 require "rails/test_help"
 
+# Without node_modules, Vite's test auto-build runs `bun x vite`, which finds the
+# vite_ruby binstub on PATH and calls itself until memory runs out.
+unless Rails.root.join("node_modules/.bin/vite").exist?
+  abort "node_modules is missing: run `bun install` in console/ before running tests."
+end
+
 module ActiveSupport
   class TestCase
     # Run tests in parallel with specified workers
