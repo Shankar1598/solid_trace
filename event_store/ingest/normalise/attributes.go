@@ -118,7 +118,7 @@ func (n *normaliser) setAttribute(name string, raw json.RawMessage) {
 		if d, ok := double(string(raw)); ok {
 			setIn(&attrs.Number, name, d)
 		} else {
-			setIn(&attrs.String, name, string(raw))
+			setIn(&attrs.String, name, n.cut(string(raw)))
 		}
 	}
 }
@@ -140,8 +140,12 @@ func setIn[V any](m *map[string]V, name string, value V) {
 // double returns a JSON number as a DOUBLE, unless a DOUBLE can't hold it: a
 // whole number it can't hold exactly, or a number out of its range.
 func double(number string) (float64, bool) {
-	// A DOUBLE holds every whole number of up to 15 digits exactly.
-	if len(strings.TrimPrefix(number, "-")) > 15 && !strings.ContainsAny(number, ".eE") {
+	// A DOUBLE holds every whole number of up to 15 digits exactly, and none
+	// of over 309.
+	if digits := len(strings.TrimPrefix(number, "-")); digits > 15 && !strings.ContainsAny(number, ".eE") {
+		if digits > 309 {
+			return 0, false
+		}
 		whole, ok := new(big.Int).SetString(number, 10)
 		if !ok {
 			return 0, false

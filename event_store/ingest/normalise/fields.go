@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
-	"math/big"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -96,37 +96,56 @@ func parseISO8601(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// Epoch units, in nanoseconds, by the magnitude that marks them: below 1e11 an
-// epoch is in seconds (up to the year 5138), below 1e14 in milliseconds, below
-// 1e17 in microseconds, and above that in nanoseconds.
+// epochUnits infer an epoch's unit from its magnitude: below 1e11 it is in
+// seconds (up to the year 5138), below 1e14 in milliseconds, below 1e17 in
+// microseconds, and above that in nanoseconds. digits is how many decimal
+// places of the unit are whole nanoseconds.
 var epochUnits = []struct {
-	below float64
-	unit  *big.Rat
+	below  float64
+	unit   time.Duration
+	digits int
 }{
-	{1e11, big.NewRat(int64(time.Second), 1)},
-	{1e14, big.NewRat(int64(time.Millisecond), 1)},
-	{1e17, big.NewRat(int64(time.Microsecond), 1)},
-	{math.Inf(1), big.NewRat(1, 1)},
+	{1e11, time.Second, 9},
+	{1e14, time.Millisecond, 6},
+	{1e17, time.Microsecond, 3},
+	{math.Inf(1), time.Nanosecond, 0},
 }
 
 // parseEpoch parses a JSON number as a Unix epoch, its unit inferred from its
-// magnitude. It reads the number exactly, so a fraction of a second or a
-// nanosecond epoch past a DOUBLE's precision isn't rounded.
+// magnitude. A plain decimal is read exactly, to the nanosecond, so a
+// nanosecond epoch past a DOUBLE's precision isn't rounded; one with an
+// exponent is read as a DOUBLE.
 func parseEpoch(number string) (time.Time, bool) {
-	exact, ok := new(big.Rat).SetString(number)
-	if !ok {
+	f, err := strconv.ParseFloat(number, 64)
+	if err != nil {
 		return time.Time{}, false
 	}
-	magnitude, _ := new(big.Rat).Abs(exact).Float64()
-	for _, e := range epochUnits {
-		if magnitude < e.below {
-			exact.Mul(exact, e.unit)
-			break
+	i := 0
+	for math.Abs(f) >= epochUnits[i].below {
+		i++
+	}
+	e := epochUnits[i]
+
+	if strings.ContainsAny(number, "eE") {
+		nanos := f * float64(e.unit)
+		if math.Abs(nanos) >= math.MaxInt64 {
+			return time.Time{}, false
 		}
+		return time.Unix(0, int64(nanos)).UTC(), true
 	}
-	nanos := new(big.Int).Quo(exact.Num(), exact.Denom())
-	if !nanos.IsInt64() {
+
+	whole, fraction, _ := strings.Cut(number, ".")
+	w, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil || w > math.MaxInt64/int64(e.unit)-1 || w < math.MinInt64/int64(e.unit)+1 {
 		return time.Time{}, false
 	}
-	return time.Unix(0, nanos.Int64()).UTC(), true
+	nanos := w * int64(e.unit)
+	if fraction = (fraction + "000000000")[:e.digits]; fraction != "" {
+		part, _ := strconv.ParseInt(fraction, 10, 64)
+		if strings.HasPrefix(whole, "-") {
+			part = -part
+		}
+		nanos += part
+	}
+	return time.Unix(0, nanos).UTC(), true
 }
