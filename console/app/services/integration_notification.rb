@@ -33,7 +33,11 @@ module IntegrationNotification
       ISSUE_CREATED => ->(integration, _issue, context) {
         context[:newly_created] && integration.notify_on_new_issue
       },
-      THRESHOLD_REACHED => ->(integration, issue, _context) {
+      # Until threshold moves to the outbox, a new Issue that gets an issue
+      # created Notification is not also checked for the threshold, as before.
+      THRESHOLD_REACHED => ->(integration, issue, context) {
+        next false if context[:newly_created] && integration.notify_on_new_issue
+
         integration.notify_on_event_threshold && event_threshold_reached?(integration, issue)
       },
     },

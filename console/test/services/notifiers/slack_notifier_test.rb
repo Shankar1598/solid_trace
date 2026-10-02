@@ -152,7 +152,7 @@ module Notifiers
     end
 
     # -----------------------------------------------------------------------
-    # Payload: issue_created_batch
+    # Payload: issue_created (batched)
     # -----------------------------------------------------------------------
 
     test "batch payload lists multiple issues" do
