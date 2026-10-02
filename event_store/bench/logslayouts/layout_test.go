@@ -232,7 +232,7 @@ func TestPromotedParquetAgreesWithTheHotTable(t *testing.T) {
 	hot := runAll(t, db, l, "logs", p)
 	for _, n := range []int{0, 5, 40} {
 		dir := t.TempDir()
-		files, _, err := ExportProjectHours(context.Background(), db, l, dir, Base, Base.Add(24*time.Hour), n, "data")
+		files, _, err := ExportProjectHours(context.Background(), db, l, dir, Base, Base.Add(24*time.Hour), n, 0, "data")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -38,16 +38,26 @@ type ExportStats struct {
 
 func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
+// PromotedPerFile and PromotedMinShare are the per-file promotion rule
+// decided in logs ticket 14: a file promotes every key present in at least 5%
+// of its Logs, with no per-file cap (0). A Project promotes at most 1000
+// distinct keys across its files; the benchmark never reaches that.
+const (
+	PromotedPerFile  = 0
+	PromotedMinShare = 0.05
+)
+
 // ExportProjectHours writes the Logs with from <= time < until to
 // dir/project=<id>/day=<d>/hour=<h>/<name>.parquet, one zstd file per Project
-// per hour, sorted by time. For the MAP layout each file's top `promote`
-// (map, key) pairs by count become typed columns and leave the maps; other
-// layouts are written as they are.
-func ExportProjectHours(ctx context.Context, db *sql.DB, l Layout, dir string, from, until time.Time, promote int, name string) ([]ExportedFile, ExportStats, error) {
+// per hour, sorted by time. For the MAP layout each file's most common
+// (map, key) pairs, each in at least minShare of the file's Logs and at most
+// `promote` of them (0: no limit), become typed columns and leave the maps;
+// other layouts are written as they are.
+func ExportProjectHours(ctx context.Context, db *sql.DB, l Layout, dir string, from, until time.Time, promote int, minShare float64, name string) ([]ExportedFile, ExportStats, error) {
 	var st ExportStats
-	if _, ok := l.(mapLayout); !ok {
-		promote = 0
-	}
+	// promote 0 with minShare 0 promotes nothing; other layouts never do.
+	_, isMap := l.(mapLayout)
+	promoting := isMap && (promote > 0 || minShare > 0)
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT project_id, date_trunc('hour', time) AS h, count(*) FROM logs
 		WHERE time >= %s AND time < %s GROUP BY ALL ORDER BY h, project_id`, timestamp(from), timestamp(until)))
 	if err != nil {
@@ -71,9 +81,9 @@ func ExportProjectHours(ctx context.Context, db *sql.DB, l Layout, dir string, f
 		f := &files[i]
 		where := fmt.Sprintf("project_id = %d AND time >= %s AND time < %s AND time >= %s AND time < %s",
 			f.Project, timestamp(f.Hour), timestamp(f.Hour.Add(time.Hour)), timestamp(from), timestamp(until))
-		if promote > 0 {
+		if promoting {
 			t0 := time.Now()
-			if f.Promoted, err = topKeys(ctx, db, where, promote); err != nil {
+			if f.Promoted, err = topKeys(ctx, db, where, promote, int64(minShare*float64(f.Rows))); err != nil {
 				return files, st, err
 			}
 			st.TopKeysMs += ms(time.Since(t0))
@@ -102,14 +112,19 @@ func optsSuffix(l Layout) string {
 }
 
 // topKeys ranks the (map, key) pairs of the string, number and bool maps by
-// how many Logs carry them. Arrays (attrs_json) are never promoted.
-func topKeys(ctx context.Context, db *sql.DB, where string, n int) ([]PromotedKey, error) {
+// how many Logs carry them, keeping those carried by at least minLogs, at
+// most n of them (0: no limit). Arrays (attrs_json) are never promoted.
+func topKeys(ctx context.Context, db *sql.DB, where string, n int, minLogs int64) ([]PromotedKey, error) {
 	var parts []string
 	for _, c := range mapColumns[:3] {
 		parts = append(parts, fmt.Sprintf("SELECT %s AS m, unnest(map_keys(%s)) AS k FROM logs WHERE %s", sqlString(c.name), c.name, where))
 	}
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT m, k FROM (%s) GROUP BY m, k ORDER BY count(*) DESC, m, k LIMIT %d",
-		strings.Join(parts, " UNION ALL "), n))
+	limit := ""
+	if n > 0 {
+		limit = fmt.Sprintf(" LIMIT %d", n)
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT m, k FROM (%s) GROUP BY m, k HAVING count(*) >= %d ORDER BY count(*) DESC, m, k%s",
+		strings.Join(parts, " UNION ALL "), minLogs, limit))
 	if err != nil {
 		return nil, err
 	}
