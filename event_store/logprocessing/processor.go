@@ -28,6 +28,11 @@ const (
 
 	minBackoff = 100 * time.Millisecond
 	maxBackoff = 30 * time.Second
+
+	// Every backlogInterval by the clock, Log processing names each Project
+	// whose oldest Log batch has waited longer than backlogThreshold.
+	backlogInterval  = time.Minute
+	backlogThreshold = time.Minute
 )
 
 // ErrStopped is returned when Stop ends processing.
@@ -65,6 +70,8 @@ type Store interface {
 // the other Projects carry on meanwhile. A store error is retried until it
 // clears and skips nothing. Logs that fail on their content are retried, then
 // tried apart, and a Log that fails on its own is skipped and logged.
+//
+// Every minute it logs each Project whose Logs have waited too long.
 type Processor struct {
 	batches *storage.PebbleWriter
 	store   Store
@@ -75,7 +82,8 @@ type Processor struct {
 	wake    chan struct{}
 
 	// Used only by the worker.
-	failing map[uint32]*failure // Projects whose Logs failed to store
+	failing          map[uint32]*failure // Projects whose Logs failed to store
+	lastBacklogCheck time.Time
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -202,6 +210,7 @@ func (p *Processor) run() {
 // they clear, so it only returns ErrStopped.
 func (p *Processor) ProcessUntilCaughtUp() error {
 	for {
+		p.checkBacklog()
 		if p.stopped() {
 			return ErrStopped
 		}
@@ -439,6 +448,35 @@ func batchesOf(logs []batchedLog) []storage.LogBatch {
 		last.Logs = append(last.Logs, l.log)
 	}
 	return batches
+}
+
+// checkBacklog runs logBacklog at most once per backlogInterval by the
+// clock. It is called from the processing loop, which also runs while
+// Projects wait to be retried, so a failing worker still reports.
+func (p *Processor) checkBacklog() {
+	now := p.clock.Now()
+	if now.Sub(p.lastBacklogCheck) < backlogInterval {
+		return
+	}
+	p.lastBacklogCheck = now
+	p.logBacklog(now)
+}
+
+// logBacklog logs each Project whose oldest Log batch was written more than
+// backlogThreshold before now, with how far behind it is. Batches leave
+// Pebble once they are stored, so it reads Pebble alone, and reports even
+// while DuckDB is down.
+func (p *Processor) logBacklog(now time.Time) {
+	oldest, err := p.batches.OldestLogBatches()
+	if err != nil {
+		logger.L.Error("Log backlog check failed", "error", err)
+		return
+	}
+	for _, batch := range oldest {
+		if behind := now.Sub(storage.LogBatchWrittenAt(batch.BatchID)); behind > backlogThreshold {
+			logger.L.Warn("Log processing is behind", "project_id", batch.ProjectID, "behind", behind.Round(time.Second).String())
+		}
+	}
 }
 
 func (p *Processor) stopped() bool {
