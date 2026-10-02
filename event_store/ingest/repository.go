@@ -19,3 +19,17 @@ type LogWriter interface {
 	// must not retry.
 	WriteLogBatch(projectID uint32, logs []models.Log) error
 }
+
+// Retention tells how many whole days a Project keeps its Logs. Log ingest
+// reads it once per request: a Log's own time older than that is replaced
+// with the receipt time.
+type Retention interface {
+	LogRetentionDays(projectID uint32) (int, error)
+}
+
+// FixedRetention is the same Retention, in whole days, for every Project.
+type FixedRetention int
+
+func (days FixedRetention) LogRetentionDays(uint32) (int, error) {
+	return int(days), nil
+}

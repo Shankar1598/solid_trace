@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
 )
 
@@ -14,14 +15,18 @@ type LogCounts struct {
 	// Accepted Logs are stored.
 	Accepted int `json:"accepted"`
 	// Dropped Logs are not, and never will be: an element or line that isn't
-	// a JSON object.
+	// a JSON object, or a Log over 1 MB even after the per-Log limits.
 	Dropped int `json:"dropped"`
+	// Truncated Logs are accepted ones that a per-Log limit cut. Each carries
+	// solidtrace.truncated = true.
+	Truncated int `json:"truncated"`
 }
 
 // IngestLogs ingests the body of the JSON Log route: a JSON array of objects,
 // one object, or NDJSON. Each object is one Log. An element or line that isn't
-// a JSON object is dropped and counted. The rest are normalised and stored as
-// one Log batch, and Log processing is woken.
+// a JSON object is dropped and counted. The rest are normalised, against the
+// receipt time and the Project's Retention, and stored as one Log batch, and
+// Log processing is woken.
 //
 // A body that isn't one JSON value is read as NDJSON whatever its content
 // type, so a sender that labels NDJSON as JSON still gets its Logs stored.
@@ -31,11 +36,24 @@ func (s *Service) IngestLogs(projectID uint32, body []byte, ndjson bool) (LogCou
 	}
 	defer s.leaveGate()
 
+	retentionDays, err := s.retention.LogRetentionDays(projectID)
+	if err != nil {
+		return LogCounts{}, fmt.Errorf("read retention: %w", err)
+	}
+	receipt := normalise.Receipt{At: s.clock.Now().UTC(), RetentionDays: retentionDays}
+
 	objects, dropped := logObjects(body, ndjson)
-	receivedAt := s.clock.Now().UTC()
+	counts := LogCounts{Dropped: dropped}
 	logs := make([]models.Log, 0, len(objects))
 	for _, object := range objects {
-		log := normaliseLog(object, receivedAt)
+		log, outcome := normalise.JSON(object, receipt)
+		switch outcome {
+		case normalise.Dropped:
+			counts.Dropped++
+			continue
+		case normalise.Truncated:
+			counts.Truncated++
+		}
 		id, err := uuid.NewV7()
 		if err != nil {
 			return LogCounts{}, fmt.Errorf("generate log id: %w", err)
@@ -44,7 +62,7 @@ func (s *Service) IngestLogs(projectID uint32, body []byte, ndjson bool) (LogCou
 		logs = append(logs, log)
 	}
 
-	counts := LogCounts{Accepted: len(logs), Dropped: dropped}
+	counts.Accepted = len(logs)
 	if len(logs) == 0 {
 		return counts, nil
 	}
