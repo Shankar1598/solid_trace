@@ -16,7 +16,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Where things stand
 
-- **Logs**: planning done; every map ticket is resolved. The [v1 spec](logs-v1/spec.md) has 19 tickets in [logs-v1/issues](logs-v1/issues/), named by milestone (M1 Logs are stored, M2 Logs explorer with the Builder, M3 Query and SQL modes). No Logs code yet beyond the throwaway `logsbench` harness on `feature/logging`.
+- **Logs**: planning done; every map ticket is resolved. The [v1 spec](logs-v1/spec.md) has 20 tickets in [logs-v1/issues](logs-v1/issues/), named by milestone (M1 Logs are stored, M2 Logs explorer with the Builder, M3 Query and SQL modes). No Logs code yet beyond the throwaway `logsbench` harness on `feature/logging`.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
 - **Integration notification**: resolved and merged (2026-10-02, `9a488c6`). One Console module sends new-Issue, threshold and assignment notifications through the outbox, with recorded outcomes, bounded retries and cleanup. EventStore's Event count honours the time window. Review findings left open are listed in the [spec](integration-notification/spec.md)'s Comments.
 - **Ingest write path**: reopened. 02 and 03 are resolved (2026-09-30). A code review on 2026-10-01 filed 04–06. 04, a lone bad DuckDB row stalling Event processing, is resolved (2026-10-01). 05 is `wontfix` (2026-10-02). 06 is resolved (2026-10-02). Event ingest stores the Event in Pebble before the `200`. Event processing, a single worker, catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. Review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
@@ -24,14 +24,14 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-1. Implement the [logs v1 spec](logs-v1/spec.md) with `/implement-spec`, one sub-agent at a time. Frontier: [M1-01](logs-v1/issues/M1-01-json-logs-stored-and-listed.md) and [M1-02](logs-v1/issues/M1-02-console-instance-settings-and-project-retention.md). [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) is `ready-for-human`.
+1. Implement the [logs v1 spec](logs-v1/spec.md) with `/implement-spec`, at most two sub-agents at a time, on integration branch `feature/logs-v1`. Frontier: [M1-01](logs-v1/issues/M1-01-json-logs-stored-and-listed.md), [M1-02](logs-v1/issues/M1-02-console-instance-settings-and-project-retention.md) (both in progress) and [M1-11](logs-v1/issues/M1-11-remove-angie.md) (remove Angie). [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) is `ready-for-human`.
 
 ## Efforts
 
 | Effort | Done / open | Start here |
 |---|---|---|
 | Logs | 16 / 0 | [map.md](logs/map.md) |
-| Logs v1 | 0 / 19 | [spec.md](logs-v1/spec.md) |
+| Logs v1 | 0 / 20 | [spec.md](logs-v1/spec.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
