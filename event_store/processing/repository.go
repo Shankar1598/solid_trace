@@ -1,5 +1,7 @@
 package processing
 
+import "github.com/solidtrace/event_store/models"
+
 // IssueRepository is the seam between Event processing and Issue persistence.
 // Event processing owns this interface; storage adapters satisfy it.
 //
@@ -22,6 +24,17 @@ type IssueRepository interface {
 
 	// ReopenIssue transitions a resolved Issue back to open.
 	ReopenIssue(issueID int64) error
+
+	// RecordSeenEvents adds a batch's counted Events to their Issues'
+	// times_seen, first_seen_at and last_seen_at, from each Event's IssueID
+	// and Timestamp. events are in UUID order, and throughUUID is the last
+	// Event of the batch, counted or not.
+	//
+	// It must be idempotent against a replayed batch, which can hold more
+	// Events than before: an Event at or before the throughUUID of an earlier
+	// call for the Project is not counted again. The guard is committed with
+	// the counts.
+	RecordSeenEvents(projectID uint32, events []models.Event, throughUUID string) error
 }
 
 // Issue status constants — these match the enum values stored by Console.

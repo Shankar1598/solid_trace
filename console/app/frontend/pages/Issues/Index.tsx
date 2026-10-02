@@ -6,6 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Issue, Project, SharedProps } from '@/types'
 import { formatDistanceToNow } from 'date-fns'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Button } from '@/components/ui/button'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import {
   Table,
   TableBody,
@@ -19,22 +21,27 @@ import {
 const TIME_RANGE_OPTIONS = { '24h': '24H', '14d': '14D', '30d': '30D' }
 const SORT_OPTIONS = {
   last_seen: 'Last Seen',
-  created: 'First Seen',
-  priority: 'Priority'
+  first_seen: 'First Seen',
 }
 
 interface IssuesIndexProps {
   issues: Issue[]
+  pagination: {
+    current_page: number
+    total_pages: number
+    total_count: number
+  }
   projects: Project[]
   filters: {
     status: string
     query: string
     environment: string
     project_id: string
+    sort: string
   }
 }
 
-export default function IssuesIndex({ issues, projects, filters }: IssuesIndexProps) {
+export default function IssuesIndex({ issues, pagination, projects, filters }: IssuesIndexProps) {
   const { current_org } = usePage<SharedProps>().props
   const [searchTerm, setSearchTerm] = useState(filters.query || '')
 
@@ -59,8 +66,15 @@ export default function IssuesIndex({ issues, projects, filters }: IssuesIndexPr
     if (params.get('environment') === 'all') params.delete('environment')
     if (params.get('project_id') === 'all') params.delete('project_id')
     if (!params.get('query')) params.delete('query')
+    if (params.get('sort') === 'last_seen') params.delete('sort')
     return `?${params.toString()}`
   }
+
+  const visitFilters = (newFilters: Partial<typeof filters>) =>
+    router.get(getFilterUrl(newFilters), {}, { preserveState: true, replace: true, preserveScroll: true })
+
+  const visitPage = (page: number) =>
+    router.get(getFilterUrl({}), page > 1 ? { page } : {}, { preserveState: true })
 
   const projectOptions: Record<string, string> = {
     all: 'All Projects',
@@ -78,7 +92,7 @@ export default function IssuesIndex({ issues, projects, filters }: IssuesIndexPr
           <div className="flex items-center border">
             <Select
               value={filters.project_id}
-              onValueChange={(val) => router.get(getFilterUrl({ project_id: val || 'all' }), {}, { preserveState: true, replace: true, preserveScroll: true })}
+              onValueChange={(val) => visitFilters({ project_id: val || 'all' })}
               items={projectOptions}
             >
               <SelectTrigger className="border-0 border-r">
@@ -112,7 +126,11 @@ export default function IssuesIndex({ issues, projects, filters }: IssuesIndexPr
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <Select defaultValue="last_seen" items={SORT_OPTIONS}>
+            <Select
+              value={filters.sort}
+              onValueChange={(val) => visitFilters({ sort: val || 'last_seen' })}
+              items={SORT_OPTIONS}
+            >
               <SelectTrigger>
                 <span className="text-muted-foreground mr-1">Sort:</span>
                 <SelectValue />
@@ -199,6 +217,34 @@ export default function IssuesIndex({ issues, projects, filters }: IssuesIndexPr
             )}
           </TableBody>
         </Table>
+
+        {pagination.total_pages > 1 && (
+          <div className="flex items-center justify-between px-1">
+            <div className="text-[11px] text-muted-foreground font-medium">
+              Page {pagination.current_page} of {pagination.total_pages} · {pagination.total_count} issues
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-[11px]"
+                disabled={pagination.current_page <= 1}
+                onClick={() => visitPage(pagination.current_page - 1)}
+              >
+                <ArrowLeft className="h-3 w-3 mr-1" /> Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-[11px]"
+                disabled={pagination.current_page >= pagination.total_pages}
+                onClick={() => visitPage(pagination.current_page + 1)}
+              >
+                Next <ArrowRight className="h-3 w-3 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   )

@@ -42,10 +42,6 @@ class Issue < ApplicationRecord
     EventStore.new(self)
   end
 
-  def events_count
-    events.count
-  end
-
   private
 
   def assignee_must_match_organization

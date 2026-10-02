@@ -488,3 +488,189 @@ func TestLoneEventWhoseRowDuckDBRejectsDoesNotHoldUpOtherProjects(t *testing.T) 
 		t.Errorf("Expected Project 456's [%s] indexed, got %v", other, got)
 	}
 }
+
+type seenCounts struct {
+	timesSeen               int64
+	firstSeenAt, lastSeenAt string
+}
+
+// issueSeenCounts reads the seen counts Event processing keeps on an Issue.
+func issueSeenCounts(t *testing.T, env *TestEnv, issueID int64) seenCounts {
+	t.Helper()
+	db, err := sql.Open("sqlite3", env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Open SQLite: %v", err)
+	}
+	defer db.Close()
+	var counts seenCounts
+	var first, last sql.NullString
+	if err := db.QueryRow("SELECT times_seen, first_seen_at, last_seen_at FROM issues WHERE id = ?", issueID).Scan(&counts.timesSeen, &first, &last); err != nil {
+		t.Fatalf("Read seen counts of Issue %d: %v", issueID, err)
+	}
+	counts.firstSeenAt, counts.lastSeenAt = first.String, last.String
+	return counts
+}
+
+// indexedSeenCounts works the seen counts of each Issue out of what DuckDB
+// holds for the Project.
+func indexedSeenCounts(t *testing.T, env *TestEnv) map[int64]seenCounts {
+	t.Helper()
+	events, err := env.DuckDBWriter.QueryEvents(storage.QueryParams{ProjectID: 123, Limit: 1000})
+	if err != nil {
+		t.Fatalf("Query DuckDB: %v", err)
+	}
+	counts := make(map[int64]seenCounts)
+	for _, event := range events {
+		var issueID int64
+		sqliteQuery(t, env, &issueID, "SELECT issue_id FROM issue_fingerprints WHERE id = ?", event.IssueFingerprintID)
+		ts := event.Timestamp.UTC().Format("2006-01-02 15:04:05.000000")
+		c := counts[issueID]
+		if c.timesSeen == 0 || ts < c.firstSeenAt {
+			c.firstSeenAt = ts
+		}
+		if ts > c.lastSeenAt {
+			c.lastSeenAt = ts
+		}
+		c.timesSeen++
+		counts[issueID] = c
+	}
+	return counts
+}
+
+// assertSeenCountsMatchDuckDB checks every Issue of the Project against
+// DuckDB, and that there are wantIssues of them.
+func assertSeenCountsMatchDuckDB(t *testing.T, env *TestEnv, wantIssues int) {
+	t.Helper()
+	want := indexedSeenCounts(t, env)
+	if len(want) != wantIssues {
+		t.Fatalf("Expected Events of %d Issues in DuckDB, got %d", wantIssues, len(want))
+	}
+	for issueID, counts := range want {
+		if got := issueSeenCounts(t, env, issueID); got != counts {
+			t.Errorf("Issue %d: expected %+v as in DuckDB, got %+v", issueID, counts, got)
+		}
+	}
+}
+
+func eventAt(title, timestamp string) string {
+	return fmt.Sprintf(`{"message":%q,"timestamp":%q}`, title, timestamp)
+}
+
+func TestIssueSeenCountsMatchDuckDBAfterABurstOfEvents(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Out of timestamp order, so first and last seen aren't just the first
+	// and last Events processed.
+	postEvent(t, env, eventAt("a", "2026-01-24T14:29:31Z"))
+	postEvent(t, env, eventAt("b", "2026-01-24T10:00:00Z"))
+	postEvent(t, env, eventAt("a", "2026-01-24T09:15:00Z"))
+	postEvent(t, env, eventAt("c", "2026-01-25T00:00:00Z"))
+	env.Process(t)
+	postEvent(t, env, eventAt("a", "2026-01-24T12:00:00Z"))
+	postEvent(t, env, eventAt("b", "2026-01-26T08:30:00Z"))
+	env.Process(t)
+
+	assertSeenCountsMatchDuckDB(t, env, 3)
+}
+
+func TestReplayedBatchDoesNotCountEventsAgain(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	first := postEvent(t, env, eventAt("a", "2026-01-24T09:00:00Z"))
+	env.Process(t)
+	postEvent(t, env, eventAt("a", "2026-01-24T10:00:00Z"))
+	postEvent(t, env, eventAt("b", "2026-01-24T11:00:00Z"))
+	env.Process(t)
+
+	// A crash after the second batch's Issue work, before its cursor moved.
+	if err := env.PebbleWriter.SetProcessingCursor(123, first); err != nil {
+		t.Fatalf("Roll back processing cursor: %v", err)
+	}
+	// The replay's batch holds one more Event than the batch it replays.
+	postEvent(t, env, eventAt("b", "2026-01-24T08:00:00Z"))
+
+	env.Restart(t)
+	env.Process(t)
+
+	if got := len(listEvents(t, env)); got != 4 {
+		t.Fatalf("Expected 4 Events in DuckDB, got %d", got)
+	}
+	assertSeenCountsMatchDuckDB(t, env, 2)
+}
+
+func TestReplayAfterDuckDBCommitCountsHeldRowsOnce(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postEvent(t, env, divideByZero)
+	env.Process(t)
+	issueID := consoleMessages(t, env)[0].IssueIDs[0]
+	second := postEvent(t, env, divideByZero)
+	postEvent(t, env, divideByZero)
+
+	// A crash after the batch's DuckDB commit, before its counts were
+	// recorded: DuckDB holds the second Event, and the cursor is before it.
+	var fingerprintID int64
+	sqliteQuery(t, env, &fingerprintID, "SELECT id FROM issue_fingerprints WHERE issue_id = ?", issueID)
+	row := models.Event{ProjectID: 123, EventUUID: second, Timestamp: time.Date(2026, 1, 24, 14, 29, 30, 0, time.UTC), Tags: map[string]string{}, IssueFingerprintID: fingerprintID}
+	if err := env.DuckDBWriter.WriteBatch([]models.Event{row}); err != nil {
+		t.Fatalf("Seed DuckDB: %v", err)
+	}
+
+	env.Restart(t)
+	env.Process(t)
+
+	if got := issueSeenCounts(t, env, issueID).timesSeen; got != 3 {
+		t.Errorf("Expected the Issue seen 3 times, got %d", got)
+	}
+	assertSeenCountsMatchDuckDB(t, env, 1)
+}
+
+func TestEventSkippedForBadContentIsNotCounted(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postEvent(t, env, `[]`)
+	postEvent(t, env, farFuture)
+	postEvent(t, env, divideByZero)
+	processWithin(t, env, 10*time.Second)
+
+	// The far-future Event got an Issue, but its row never reached DuckDB.
+	var farFutureIssue int64
+	sqliteQuery(t, env, &farFutureIssue, "SELECT id FROM issues WHERE project_id = 123 AND title = 'far future'")
+	if got := issueSeenCounts(t, env, farFutureIssue); got != (seenCounts{}) {
+		t.Errorf("Expected the far-future Issue unseen, got %+v", got)
+	}
+	assertSeenCountsMatchDuckDB(t, env, 1)
+}
+
+func TestReplayDoesNotCountARowDuckDBSkippedBeforeTheCrash(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postEvent(t, env, divideByZero)
+	env.Process(t)
+	issueID := consoleMessages(t, env)[0].IssueIDs[0]
+	postEvent(t, env, divideByZero)
+	held := postEvent(t, env, divideByZero)
+	postEvent(t, env, divideByZero)
+
+	// A crash after the batch's DuckDB work, before its counts were recorded.
+	// DuckDB skipped the first Event of the batch and appended the second.
+	var fingerprintID int64
+	sqliteQuery(t, env, &fingerprintID, "SELECT id FROM issue_fingerprints WHERE issue_id = ?", issueID)
+	row := models.Event{ProjectID: 123, EventUUID: held, Timestamp: time.Date(2026, 1, 24, 14, 29, 30, 0, time.UTC), Tags: map[string]string{}, IssueFingerprintID: fingerprintID}
+	if err := env.DuckDBWriter.WriteBatch([]models.Event{row}); err != nil {
+		t.Fatalf("Seed DuckDB: %v", err)
+	}
+
+	env.Restart(t)
+	env.Process(t)
+
+	if got := issueSeenCounts(t, env, issueID).timesSeen; got != 3 {
+		t.Errorf("Expected the Issue seen 3 times, as DuckDB holds 3 of its Events, got %d", got)
+	}
+	assertSeenCountsMatchDuckDB(t, env, 1)
+}

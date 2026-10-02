@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// issueTablesDDL copies the three tables SQLiteWriter writes from
+// issueTablesDDL copies the tables SQLiteWriter writes from
 // console/db/schema.rb, which owns them. Keep the unique indexes in step: the
 // concurrency test depends on them.
 const issueTablesDDL = `
@@ -15,10 +15,13 @@ CREATE TABLE issues (
 	assignee_id INTEGER,
 	created_at DATETIME NOT NULL,
 	culprit VARCHAR,
+	first_seen_at DATETIME,
 	kind INTEGER DEFAULT 0 NOT NULL,
+	last_seen_at DATETIME,
 	number BIGINT NOT NULL,
 	project_id INTEGER NOT NULL,
 	status INTEGER DEFAULT 0 NOT NULL,
+	times_seen BIGINT DEFAULT 0 NOT NULL,
 	title VARCHAR NOT NULL,
 	updated_at DATETIME NOT NULL
 );
@@ -37,6 +40,11 @@ CREATE UNIQUE INDEX index_issue_fingerprints_on_project_id_and_fingerprint ON is
 CREATE TABLE project_issue_counters (
 	project_id INTEGER PRIMARY KEY,
 	value BIGINT DEFAULT 0 NOT NULL
+);
+
+CREATE TABLE project_seen_cursors (
+	project_id INTEGER PRIMARY KEY,
+	event_uuid VARCHAR NOT NULL
 );
 `
 
