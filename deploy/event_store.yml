@@ -1,7 +1,8 @@
 # Event Store configuration.
 # Any key here overrides the defaults in config.go.
 
-ingest_socket: /var/run/solid-trace/event_store.sock
+# Public ingest. EventStore listens on it directly, with no proxy in front.
+ingest_port: "4000"
 # Query API for the console. Always bound to 127.0.0.1; never expose it.
 query_port: "4100"
 pebble_path: /storage/pebble/production/events

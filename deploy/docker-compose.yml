@@ -1,28 +1,17 @@
 version: "3.9"
 
 services:
-  # Community maintained version of Nginx
-  angie:
-    image: docker.angie.software/angie:latest
-    network_mode: host
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-    volumes:
-      - /var/run/solid-trace:/var/run/solid-trace
-      - /etc/angie/angie.conf:/etc/angie/angie.conf:ro
-    depends_on:
-      - console
-      - event_store
-    restart: unless-stopped
-
-  # Dashboard
+  # Dashboard. Thruster serves it on port 80 and proxies to Puma.
+  # The image runs as a non-root user, which can't bind port 80 on the host
+  # network (cap_add doesn't help a non-root user). Allow it on the host:
+  #   sysctl net.ipv4.ip_unprivileged_port_start=80   (persist in /etc/sysctl.d/)
   console: &console
     image: solid-trace-console:latest
     network_mode: host
     environment:
       RAILS_ENV: production
+      # Thruster faces clients directly, so it ignores X-Forwarded-* headers they send.
+      FORWARD_HEADERS: "false"
       RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
       SECRET_KEY_BASE: ${SECRET_KEY_BASE}
       EVENT_STORE_URL: http://127.0.0.1:4100
@@ -39,7 +28,7 @@ services:
     depends_on:
       - console
 
-  # Event ingestion and storage
+  # Event ingestion and storage. Ingest listens on port 4000 directly.
   event_store:
     image: solid-trace-event-store:latest
     network_mode: host
@@ -52,7 +41,6 @@ services:
     volumes:
       - /var/lib/solid-trace/storage:/storage
       - /var/lib/solid-trace/storage_cold:/storage_cold
-      - /var/run/solid-trace:/var/run/solid-trace
       - /etc/solid-trace/event_store.yml:/etc/solid-trace/event_store.yml:ro
     restart: unless-stopped
     depends_on:
