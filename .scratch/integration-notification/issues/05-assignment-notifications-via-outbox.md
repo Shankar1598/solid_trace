@@ -10,12 +10,12 @@ See spec: "Assignment payload", "Triggers become thin" (user stories 7, 18–20,
 
 **Blocked by:** 02: Integration notification module owns the new-Issue path
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Changing the assignee with the assignment rule on writes one *assignment changed* row per active Integration and schedules the tick
-- [ ] With the assignment rule off, no row is written
-- [ ] An archived previous assignee is named correctly in the delivered message
-- [ ] Unassigning produces a message reading "To: Unassigned"
-- [ ] *Assignment changed* rows are delivered one message per row and count towards the shared rate limit
-- [ ] The assignment job and its tests are deleted; the callback calls the module
-- [ ] Tests drive *Issue assignment changed* and the delivery tick, observing outbox rows and WebMock requests
+- [x] Changing the assignee with the assignment rule on writes one *assignment changed* row per active Integration and schedules the tick
+- [x] With the assignment rule off, no row is written
+- [x] An archived previous assignee is named correctly in the delivered message
+- [x] Unassigning produces a message reading "To: Unassigned"
+- [x] *Assignment changed* rows are delivered one message per row and count towards the shared rate limit
+- [x] The assignment job and its tests are deleted; the callback calls the module
+- [x] Tests drive *Issue assignment changed* and the delivery tick, observing outbox rows and WebMock requests
