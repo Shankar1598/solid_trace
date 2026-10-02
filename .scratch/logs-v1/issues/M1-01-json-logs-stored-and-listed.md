@@ -9,7 +9,7 @@ Scope limits, so later tickets have room:
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] The JSON route accepts a JSON array of objects, a single object, and NDJSON (`application/x-ndjson`); each object is one Log, and an element or line that fails to parse is dropped and counted.
 - [x] Auth accepts the Project's public key in every `sentry_key=` form EventStore accepts today, and as `Authorization: Bearer <key>`; a key whose Project differs from the path's `project_id` gets `401`.
