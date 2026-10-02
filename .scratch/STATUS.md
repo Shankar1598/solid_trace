@@ -8,7 +8,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 **Rules for agents:**
 - Don't pick up deferred hardening unprompted: the open items in [prod-readiness review.md](prod-readiness/review.md) (§1, §9, §10: tiered storage, retention, `mode=ro`, the `ValidateKey` cache, compose host networking, DSN, ingest limits, metrics, CI), 011 and 012. Each is marked deferred or `wontfix` there. A change that would make one of them worse is still worth a flag.
-- Don't bring up [upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) (DuckDB 2.0.0 driver swap) until the due date, 2026-10-21, has passed. Leave it out of status summaries and "Next" suggestions before then. After that date, check whether duckdb-go has tagged `v2.20000.0` and raise it.
+- [Upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) was re-scoped on 2026-10-02 (logs 10) to move EventStore back to the released DuckDB 1.5.5. The old hold until 2026-10-21 no longer applies.
 - Read [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md) before touching `event_store/storage/sqlite.go` or a Console enum or table that EventStore writes. A change to one must change the other in the same commit.
 - The user is editing [logs/map.md](logs/map.md) and the logs tickets in parallel. Don't edit them unless asked. The Logs counts and path below can be stale, so trust the map.
 
@@ -22,13 +22,14 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-1. [Logs 06: Logs explorer layout](logs/issues/06-logs-explorer-layout.md) (prototype) or [Logs 07: What is a Log?](logs/issues/07-log-domain-model.md) (grilling)
+1. [Upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md): move EventStore back to DuckDB 1.5.5 (needs triage)
+2. [Logs 14](logs/issues/14-benchmark-storage-design-on-1-5-5.md): benchmark the chosen storage design on 1.5.5 (task, AFK), the last ticket before 13 (write the v1 spec)
 
 ## Efforts
 
 | Effort | Done / open | Start here |
 |---|---|---|
-| Logs | 10 / 3 | [map.md](logs/map.md) |
+| Logs | 12 / 2 | [map.md](logs/map.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
@@ -36,9 +37,14 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
-01–09, 11 (done) → 10 (open), 12 (claimed) → 13 (write the v1 spec)
+01–12 (done) → 14 (benchmark on 1.5.5, waits on upgrade 02) → 13 (write the v1 spec)
 
-## Last session (2026-10-02, logs 09 benchmark)
+## Last session (2026-10-02, logs 12 query modes)
+
+[Logs 12](logs/issues/12-query-builder-ux.md) is resolved (prototype). The user chose a `Builder | Query | SQL` switch. The Builder is filter chips + search only. Query → Builder works only when the Builder can show the Query, otherwise it offers to discard. SQL starts from the compiled SQL and is one-way. **Builder** added to `CONTEXT.md`.
+- Prototype: branch `prototype/logs-query-modes` (`7d19a45`), worktree `.claude/worktrees/logs-query-modes`. Its `storage/sqlite/development` is a symlink to the main checkout's dev databases, which now hold the `db:seed` data (`admin@solidtrace.local` / `password123`).
+
+## Earlier session (2026-10-02, logs 09 benchmark)
 
 [Logs 09](logs/issues/09-benchmark-storage-layouts.md) is resolved. A throwaway harness, `event_store/bench/logslayouts`, and the findings ([research/09](logs/research/09-storage-bench-reduced.md)) are on branch `feature/logging` in the logs worktree, not on `main`.
 - **Results:**
