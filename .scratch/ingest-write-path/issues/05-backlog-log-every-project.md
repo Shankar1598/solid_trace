@@ -1,6 +1,6 @@
 # 05: Backlog log must cover every Project with unprocessed Events
 
-Status: ready-for-agent
+Status: wontfix
 
 **Spec:** [spec.md](../spec.md), "Backlog" ("logs each Project whose oldest unprocessed Event is older than a threshold") and user story 13
 **Found in:** code review of `960127e...a04a685` (2026-10-01)
@@ -28,3 +28,9 @@ Export a hook to run the backlog check directly, or move `backlogThreshold` into
 
 - The tests pass under `go test ./...`.
 - `known` is gone.
+
+## Comments
+
+### 2026-10-02 closed as wontfix
+
+Closed as `wontfix`. The gap is real but not important: it only affects the backlog log, and only while the worker is stuck on its first Project. Reopen if the backlog log proves too quiet in real use.
