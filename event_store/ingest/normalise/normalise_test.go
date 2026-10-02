@@ -112,3 +112,58 @@ func TestEachBuiltInFieldIsFilledFromAnyOfItsAliases(t *testing.T) {
 		})
 	}
 }
+
+func TestLevelsAreMatchedInAnyCaseWithCommonSpellingsMapped(t *testing.T) {
+	cases := map[string]string{
+		"trace": "trace", "DEBUG": "debug", "Info": "info", "warn": "warn", "error": "error", "FATAL": "fatal",
+		"warning": "warn", "WARNING": "warn", "err": "error", "critical": "fatal", "crit": "fatal",
+		"panic": "fatal", "Emergency": "fatal", "notice": "info",
+	}
+	for sent, want := range cases {
+		t.Run(sent, func(t *testing.T) {
+			log, _ := normaliseJSON(t, `{"level": "`+sent+`"}`, receipt)
+			if log.Level != want {
+				t.Errorf("Expected Level %q, got %q", want, log.Level)
+			}
+			if got := attributes(t, log); len(got) != 0 {
+				t.Errorf("Expected no Attributes, got %v", got)
+			}
+		})
+	}
+}
+
+func TestAValueThatCannotFillItsFieldIsKeptAsOriginal(t *testing.T) {
+	cases := []struct {
+		object string
+		want   map[string]any
+	}{
+		{`{"level": "verbose"}`, map[string]any{"original.level": "verbose"}},
+		{`{"severity": 30}`, map[string]any{"original.level": 30.0}},
+		{`{"trace_id": "not-a-trace-id"}`, map[string]any{"original.trace_id": "not-a-trace-id"}},
+		{`{"traceId": "4bf92f3577b34da6a3ce929d0e0e47"}`, map[string]any{"original.trace_id": "4bf92f3577b34da6a3ce929d0e0e47"}},
+		{`{"span_id": "00f067aa0ba902bz"}`, map[string]any{"original.span_id": "00f067aa0ba902bz"}},
+		{`{"msg": 42}`, map[string]any{"original.message": 42.0}},
+		{`{"service": ["a", "b"]}`, map[string]any{"original.service": []any{"a", "b"}}},
+		{`{"env": true}`, map[string]any{"original.environment": true}},
+		// SolidTrace's original.<field> wins over a sender's own.
+		{`{"level": "loud", "original.level": "mine"}`, map[string]any{"original.level": "loud"}},
+	}
+	for _, c := range cases {
+		t.Run(c.object, func(t *testing.T) {
+			log, _ := normaliseJSON(t, c.object, receipt)
+			if got := builtInsOf(log); got != (builtIns{Time: receivedAt}) {
+				t.Errorf("Expected no built-in field but the receipt time, got %+v", got)
+			}
+			if got := attributes(t, log); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("Expected Attributes %v, got %v", c.want, got)
+			}
+		})
+	}
+}
+
+func TestTraceAndSpanIDsAreStoredInLowerCase(t *testing.T) {
+	log, _ := normaliseJSON(t, `{"trace_id": "4BF92F3577B34DA6A3CE929D0E0E4736", "span_id": "00F067AA0BA902B7"}`, receipt)
+	if log.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" || log.SpanID != "00f067aa0ba902b7" {
+		t.Errorf("Expected lower-case ids, got %q and %q", log.TraceID, log.SpanID)
+	}
+}

@@ -152,6 +152,14 @@ var levels = map[string]string{
 	"warn":  "warn",
 	"error": "error",
 	"fatal": "fatal",
+
+	"warning":   "warn",
+	"err":       "error",
+	"critical":  "fatal",
+	"crit":      "fatal",
+	"panic":     "fatal",
+	"emergency": "fatal",
+	"notice":    "info",
 }
 
 func parseLevel(raw json.RawMessage) (string, bool) {
