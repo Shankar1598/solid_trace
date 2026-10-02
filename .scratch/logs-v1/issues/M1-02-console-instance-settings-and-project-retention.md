@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] One instance settings record holds **SQL queries enabled** (default off) and **default Log Retention** in days (default 30). Its SQL setting's description lists what turning it on allows, as [ADR 0003](../../../docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md) requires.
 - [x] The operator changes both with a Rails task or console command; there is no UI for them.
