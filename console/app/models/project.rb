@@ -8,6 +8,9 @@ class Project < ApplicationRecord
 
   before_validation :generate_slug, on: :create
 
+  # Whole days; nil means the instance default (InstanceSetting).
+  validates :log_retention_days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
+
   def to_param
     slug
   end
