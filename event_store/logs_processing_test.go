@@ -229,3 +229,51 @@ func TestAFailingLogProjectDoesNotHoldUpOtherProjectsOrEvents(t *testing.T) {
 		t.Errorf("Expected Project 123's Log stored once it recovers, got %v", got)
 	}
 }
+
+// backlogLines returns the lines of output that say Log processing is behind.
+func backlogLines(output string) []string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Log processing is behind") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func TestTheBacklogLineNamesAProjectWhoseLogsWaitTooLong(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+	output := captureLogs(t)
+
+	// Project 123's Logs can't be stored; Project 456's can.
+	env.FlakyLogs.fail(diskFull, 123)
+	postLogs(t, env, "application/json", `{"message": "waiting"}`)
+	resp := sendLogs(t, env, "/api/456/logs", "application/json", `{"message": "stored"}`, map[string]string{"Authorization": "Bearer other_public_key"})
+	decodeLogCounts(t, resp)
+	// A Log batch is as old as the real time it was written at.
+	written := time.Now()
+
+	env.Clock.Set(written.Add(30 * time.Second))
+	done := startLogProcessing(env)
+	waitFor(t, 5*time.Second, "Project 456's Log to be stored", func() bool { return len(latestLogs(t, env, 456, 10)) == 1 })
+	if lines := backlogLines(output.String()); len(lines) != 0 {
+		t.Errorf("Expected no backlog line for Logs 30 s old, got %q", lines)
+	}
+
+	env.Clock.Set(written.Add(2 * time.Minute))
+	waitFor(t, 10*time.Second, "the backlog line", func() bool { return len(backlogLines(output.String())) > 0 })
+	lines := backlogLines(output.String())
+	if !strings.Contains(lines[0], "project_id=123") {
+		t.Errorf("Expected the backlog line to name Project 123, got %q", lines)
+	}
+	for _, line := range lines {
+		if strings.Contains(line, "project_id=456") {
+			t.Errorf("Expected caught-up Project 456 not named, got %q", line)
+		}
+	}
+
+	env.FlakyLogs.recover()
+	caughtUpWithin(t, env, done, 10*time.Second)
+}

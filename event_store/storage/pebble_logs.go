@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/google/uuid"
@@ -117,19 +118,47 @@ func (w *PebbleWriter) DeleteLogBatchesUpTo(projectID uint32, upTo uuid.UUID) er
 // ProjectsWithLogBatches returns every Project that has at least one Log
 // batch, reading one key per Project.
 func (w *PebbleWriter) ProjectsWithLogBatches() ([]uint32, error) {
+	oldest, err := w.OldestLogBatches()
+	projects := make([]uint32, len(oldest))
+	for i, batch := range oldest {
+		projects[i] = batch.ProjectID
+	}
+	return projects, err
+}
+
+// OldestLogBatch is the id of a Project's oldest Log batch.
+type OldestLogBatch struct {
+	ProjectID uint32
+	BatchID   uuid.UUID
+}
+
+// OldestLogBatches returns the oldest Log batch of every Project that has
+// one, in Project order, reading one key per Project.
+func (w *PebbleWriter) OldestLogBatches() ([]OldestLogBatch, error) {
 	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: logBatchKeyspace, UpperBound: logBatchKeyspaceEnd})
 	if err != nil {
 		return nil, err
 	}
 	defer iter.Close()
 
-	var projects []uint32
+	var oldest []OldestLogBatch
 	for valid := iter.First(); valid; {
-		projectID := binary.BigEndian.Uint32(iter.Key()[len(logBatchKeyspace):])
-		projects = append(projects, projectID)
+		key := iter.Key()
+		projectID := binary.BigEndian.Uint32(key[len(logBatchKeyspace):])
+		batchID, err := uuid.FromBytes(key[len(key)-16:])
+		if err != nil {
+			return nil, fmt.Errorf("log batch key %x: %w", key, err)
+		}
+		oldest = append(oldest, OldestLogBatch{projectID, batchID})
 		valid = iter.SeekGE(logBatchUpperBound(projectID))
 	}
-	return projects, iter.Error()
+	return oldest, iter.Error()
+}
+
+// LogBatchWrittenAt is when the Log batch with id batchID was written, to the
+// millisecond: the time in its UUIDv7.
+func LogBatchWrittenAt(batchID uuid.UUID) time.Time {
+	return time.Unix(batchID.Time().UnixTime())
 }
 
 // logBatchFormat is the first byte of every Log batch value, so a format
