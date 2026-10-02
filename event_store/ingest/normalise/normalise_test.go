@@ -2,6 +2,7 @@ package normalise_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -217,7 +218,7 @@ func TestATimeOutsideRetentionOrAnHourAheadBecomesTheReceiptTime(t *testing.T) {
 		{`"9999-12-31T23:59:59Z"`, 30, true},
 		{`"yesterday"`, 30, true},
 		{`true`, 30, true},
-		{`{"seconds": 1}`, 30, true},
+		{`[1790942370]`, 30, true},
 	}
 	for _, c := range cases {
 		t.Run(c.time, func(t *testing.T) {
@@ -242,5 +243,88 @@ func TestATimeOutsideRetentionOrAnHourAheadBecomesTheReceiptTime(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNestedObjectsAreFlattenedToDottedNames(t *testing.T) {
+	log, _ := normaliseJSON(t, `{
+		"http": {"method": "GET", "response": {"status": 200}},
+		"tags": ["a", {"b": 1}],
+		"empty": {},
+		"user": {"id": null}
+	}`, receipt)
+
+	want := map[string]any{
+		"http.method":          "GET",
+		"http.response.status": 200.0,
+		// An array is one value; objects inside it aren't flattened.
+		"tags": []any{"a", map[string]any{"b": 1.0}},
+	}
+	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got)
+	}
+}
+
+func TestALiteralDottedKeyWinsOverTheNestedForm(t *testing.T) {
+	cases := map[string]any{
+		`{"a.b": "literal", "a": {"b": "nested"}}`:                     "literal",
+		`{"a": {"b": "nested"}, "a.b": "literal"}`:                     "literal",
+		`{"a.b.c": "literal", "a": {"b": {"c": "nested"}}}`:            "literal",
+		`{"a": {"b.c": "less nested"}, "a.b": {"c": "less nested 2"}}`: "less nested 2",
+		`{"a": {"b": {"c": "nested"}}, "a.b": {"c": "less nested"}}`:   "less nested",
+	}
+	for object, want := range cases {
+		t.Run(object, func(t *testing.T) {
+			log, _ := normaliseJSON(t, object, receipt)
+			got := attributes(t, log)
+			if got["a.b"] != want && got["a.b.c"] != want {
+				t.Errorf("Expected %v to win, got %v", want, got)
+			}
+			if len(got) != 1 {
+				t.Errorf("Expected one Attribute, got %v", got)
+			}
+		})
+	}
+}
+
+func TestBuiltInAliasesAreFoundInTheirNestedForm(t *testing.T) {
+	log, _ := normaliseJSON(t, `{
+		"log": {"level": "warning", "file": "app.go"},
+		"service": {"name": "web", "version": "1.2"},
+		"deployment": {"environment": "staging"}
+	}`, receipt)
+
+	want := builtIns{Time: receivedAt, Level: "warn", Service: "web", Environment: "staging"}
+	if got := builtInsOf(log); got != want {
+		t.Errorf("Expected %+v, got %+v", want, got)
+	}
+	wantAttributes := map[string]any{"log.file": "app.go", "service.version": "1.2"}
+	if got := attributes(t, log); !reflect.DeepEqual(got, wantAttributes) {
+		t.Errorf("Expected Attributes %v, got %v", wantAttributes, got)
+	}
+}
+
+// nested returns levels objects, one inside the next, around value.
+func nested(levels int, value string) string {
+	object := value
+	for i := levels; i >= 1; i-- {
+		object = fmt.Sprintf(`{"l%d": %s}`, i, object)
+	}
+	return object
+}
+
+func TestNestingPastTenLevelsIsKeptAsJSONFromThatDepth(t *testing.T) {
+	log, outcome := normaliseJSON(t, `{"ten": `+nested(9, `"v"`)+`, "eleven": `+nested(10, `"v"`)+`}`, receipt)
+
+	want := map[string]any{
+		"ten.l1.l2.l3.l4.l5.l6.l7.l8.l9":    "v",
+		"eleven.l1.l2.l3.l4.l5.l6.l7.l8.l9": map[string]any{"l10": "v"},
+	}
+	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got)
+	}
+	// Nothing was cut.
+	if outcome != normalise.Kept {
+		t.Errorf("Expected the Log kept whole, got %v", outcome)
 	}
 }

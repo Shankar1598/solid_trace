@@ -85,12 +85,7 @@ var jsonAliases = [fieldCount][]string{
 
 // JSON normalises one JSON object a sender sent as a Log.
 func JSON(object map[string]json.RawMessage, r Receipt) (models.Log, Outcome) {
-	s := sent{attributes: make(map[string]json.RawMessage, len(object))}
-	for name, raw := range object {
-		if !isNull(raw) {
-			s.attributes[name] = raw
-		}
-	}
+	s := sent{attributes: flatten(object)}
 	for f, aliases := range jsonAliases {
 		for _, alias := range aliases {
 			if raw, ok := s.attributes[alias]; ok {
@@ -101,6 +96,65 @@ func JSON(object map[string]json.RawMessage, r Receipt) (models.Log, Outcome) {
 		}
 	}
 	return normaliseSent(s, r)
+}
+
+// maxDepth is how many levels of nested objects are flattened. An object
+// deeper than that is kept whole, as JSON, under the name of its level.
+const maxDepth = 10
+
+// flatten turns nested objects into dotted names: {"a": {"b": 1}} becomes
+// {"a.b": 1}. Arrays are values, not flattened, and a null is no value.
+//
+// When two forms name the same Attribute, the more literal one wins: the one
+// nested fewer levels deep, and between equals, the one whose outermost keys
+// are longer. So {"a.b": 1} beats {"a": {"b": 2}} (ADR 0002).
+func flatten(object map[string]json.RawMessage) map[string]json.RawMessage {
+	f := flattener{values: make(map[string]json.RawMessage, len(object)), paths: make(map[string][]int)}
+	f.add("", nil, object)
+	return f.values
+}
+
+type flattener struct {
+	values map[string]json.RawMessage
+	// paths holds, for each name, the lengths of the keys it was made of.
+	paths map[string][]int
+}
+
+func (f *flattener) add(prefix string, path []int, object map[string]json.RawMessage) {
+	for key, raw := range object {
+		raw = bytes.TrimSpace(raw)
+		if len(raw) == 0 || isNull(raw) {
+			continue
+		}
+		name := prefix + key
+		keyPath := append(slices.Clip(path), len(key))
+		if raw[0] == '{' && len(keyPath) < maxDepth {
+			var inner map[string]json.RawMessage
+			if json.Unmarshal(raw, &inner) == nil {
+				f.add(name+".", keyPath, inner)
+				continue
+			}
+		}
+		if existing, ok := f.paths[name]; ok && !moreLiteral(keyPath, existing) {
+			continue
+		}
+		f.values[name] = raw
+		f.paths[name] = keyPath
+	}
+}
+
+// moreLiteral tells whether a name made of keys of lengths a is a more literal
+// form than one made of keys of lengths b.
+func moreLiteral(a, b []int) bool {
+	if len(a) != len(b) {
+		return len(a) < len(b)
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return false
 }
 
 func normaliseSent(s sent, r Receipt) (models.Log, Outcome) {
