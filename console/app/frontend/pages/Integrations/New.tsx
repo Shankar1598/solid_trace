@@ -10,11 +10,20 @@ import { SharedProps } from '@/types'
 import { FormEventHandler } from 'react'
 import { toast } from 'sonner'
 
-interface IntegrationsNewProps {
-  providers: { [key: string]: string }
+interface RuleSettings {
+  notify_on_new_issue: boolean
+  notify_on_assignment: boolean
+  notify_on_event_threshold: boolean
+  event_threshold: number
+  time_window_minutes: number
 }
 
-export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
+interface IntegrationsNewProps {
+  providers: { [key: string]: string }
+  defaults: RuleSettings
+}
+
+export default function IntegrationsNew({ providers, defaults }: IntegrationsNewProps) {
   const { current_org } = usePage<SharedProps>().props
 
   const { data, setData, post, processing, errors } = useForm({
@@ -25,11 +34,7 @@ export default function IntegrationsNew({ providers }: IntegrationsNewProps) {
       routing_key: '',
       severity: 'error',
       recipients: '',
-      notify_on_new_issue: true,
-      notify_on_assignment: false,
-      notify_on_event_threshold: false,
-      event_threshold: 10,
-      time_window_minutes: 5
+      ...defaults
     }
   })
 

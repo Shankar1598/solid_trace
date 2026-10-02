@@ -29,7 +29,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
       recipients: (integration.settings as any)?.recipients || '',
       notify_on_new_issue: (integration.settings as any)?.notify_on_new_issue ?? true,
       notify_on_assignment: (integration.settings as any)?.notify_on_assignment ?? false,
-      notify_on_event_threshold: (integration.settings as any)?.notify_on_event_threshold ?? false,
+      notify_on_event_threshold: (integration.settings as any)?.notify_on_event_threshold ?? true,
       event_threshold: (integration.settings as any)?.event_threshold ?? 10,
       time_window_minutes: (integration.settings as any)?.time_window_minutes ?? 5
     }

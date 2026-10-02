@@ -16,6 +16,7 @@ class IntegrationsController < ApplicationController
   def new
     render inertia: "Integrations/New", props: {
       providers: Integration::PROVIDERS.index_with(&:titleize),
+      defaults: Integration.new.rule_settings,
     }
   end
 
