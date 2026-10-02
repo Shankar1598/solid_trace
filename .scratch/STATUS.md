@@ -28,7 +28,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 | Effort | Done / open | Start here |
 |---|---|---|
-| Logs | 5 / 8 | [map.md](logs/map.md) |
+| Logs | 10 / 3 | [map.md](logs/map.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
@@ -36,9 +36,20 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
-05 (done), 06, 07 (open now) → 08, 09, 11 → 10, 12 → 13 (write the v1 spec)
+01–09, 11 (done) → 10 (open), 12 (claimed) → 13 (write the v1 spec)
 
-## Last session (2026-10-02, prod-readiness 015)
+## Last session (2026-10-02, logs 09 benchmark)
+
+[Logs 09](logs/issues/09-benchmark-storage-layouts.md) is resolved. A throwaway harness, `event_store/bench/logslayouts`, and the findings ([research/09](logs/research/09-storage-bench-reduced.md)) are on branch `feature/logging` in the logs worktree, not on `main`.
+- **Results:**
+  - Typed MAPs rank first, then JSON text, then VARIANT without shredding.
+  - Shredded VARIANT is unusable on the 2.0 alpha: slow checkpoints and queries, one heap-corruption crash, and a database-invalidating filter error on default-shredded Parquet.
+  - Local Parquet gains nothing from async read-ahead.
+- **Run:** cut to about 2 minutes per layout at the user's request, about 10 minutes for the whole benchmark.
+- **Next for logs:** [10](logs/issues/10-storage-architecture-and-retention.md) (storage and retention grilling) or [12](logs/issues/12-query-builder-ux.md).
+- `main` was merged into `feature/logging` on 2026-10-02. The logs tracker conflicts were resolved in favour of `main`, whose map is the live one. The branch's 2026-09-27 MVP scoping stays in its history only.
+
+## Earlier session (2026-10-02, prod-readiness 015)
 
 [Prod-readiness 015](prod-readiness/issues/015-issue-list-counts-and-pagination.md) is resolved (`8b2af22`). Event processing keeps `times_seen`, `first_seen_at` and `last_seen_at` on `issues`, with a replay guard in `project_seen_cursors`. The Issues list is paginated 25 per page, sorts by last or first seen in SQL, and makes no per-Issue EventStore call. The ticket's comment lists what was added beyond the brief.
 - Toolchain: run Ruby and Go through `mise exec --`. Run the Go and Rails suites one after the other with `RAILS_ENV=test bin/rails db:reset` in between, because the Go tests leave messages in the shared test message queue.
