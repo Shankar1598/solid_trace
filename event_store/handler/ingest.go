@@ -79,7 +79,7 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 }
 
 // POST /api/:project_id/logs
-// The key must belong to the Project in the path. The body is identity only.
+// The key must belong to the Project in the path.
 func (h *IngestHandler) Logs(c *fiber.Ctx) error {
 	publicKey := h.extractSentryKey(c)
 	if publicKey == "" {
@@ -97,13 +97,12 @@ func (h *IngestHandler) Logs(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Project key is not for this project"})
 	}
 
-	// c.Body() would inflate gzip with no size cap; compressed bodies are
-	// for later.
-	if encoding := c.Get(fiber.HeaderContentEncoding); encoding != "" && !strings.EqualFold(encoding, "identity") {
-		return c.Status(415).JSON(fiber.Map{"error": "Unsupported Content-Encoding"})
+	body, err := requestBody(c, logBodyLimit)
+	if err != nil {
+		return renderBodyError(c, err)
 	}
 
-	counts, err := h.ingest.IngestLogs(projectID, c.Request().Body(), isNDJSON(c))
+	counts, err := h.ingest.IngestLogs(projectID, body, isNDJSON(c))
 	if err != nil {
 		return h.renderIngestError(c, err)
 	}
