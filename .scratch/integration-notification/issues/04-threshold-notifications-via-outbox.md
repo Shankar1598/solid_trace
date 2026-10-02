@@ -13,15 +13,15 @@ See spec: "The threshold rule", "Windowed count failures are errors, not zero", 
 
 **Blocked by:** 01: EventStore Event count honours the time window; 02: Integration notification module owns the new-Issue path
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The threshold fires when the windowed count lands exactly on the threshold
-- [ ] The threshold fires when a burst overshoots it
-- [ ] A second crossing within the window writes no new row; after the window passes it fires again
-- [ ] With the threshold rule off, no *threshold reached* row is written
-- [ ] The EventStore count request carries the window as `newer_than`
-- [ ] With EventStore unavailable, the trigger job raises and is retried with bounded backoff, and no zero-count decision is made
-- [ ] A new Issue crossing the threshold with both rules on yields both rows
-- [ ] *Threshold reached* rows are delivered one message per row in the same tick as the batch
-- [ ] The dead timeout retry declaration on the trigger job is gone
-- [ ] Tests drive *Issue received an Event* with WebMock stubbing the EventStore count call and use `travel_to` for the window
+- [x] The threshold fires when the windowed count lands exactly on the threshold
+- [x] The threshold fires when a burst overshoots it
+- [x] A second crossing within the window writes no new row; after the window passes it fires again
+- [x] With the threshold rule off, no *threshold reached* row is written
+- [x] The EventStore count request carries the window as `newer_than`
+- [x] With EventStore unavailable, the trigger job raises and is retried with bounded backoff, and no zero-count decision is made
+- [x] A new Issue crossing the threshold with both rules on yields both rows
+- [x] *Threshold reached* rows are delivered one message per row in the same tick as the batch
+- [x] The dead timeout retry declaration on the trigger job is gone
+- [x] Tests drive *Issue received an Event* with WebMock stubbing the EventStore count call and use `travel_to` for the window
