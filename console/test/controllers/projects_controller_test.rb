@@ -60,6 +60,35 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 14, project_page["project"]["log_retention_days"]
   end
 
+  test "a Project's Log Retention must be a positive whole number of days" do
+    sign_in_as(@admin)
+    @project.update!(log_retention_days: 7)
+
+    [ "0", "-3", "1.5", "two" ].each do |days|
+      patch project_url(@project, org_slug: @organization.slug), params: {
+        project: { log_retention_days: days }
+      }
+
+      assert_redirected_to project_url(@project, org_slug: @organization.slug)
+      page = project_page
+      assert page["errors"]["log_retention_days"].present?, "#{days.inspect} should be rejected"
+      assert_equal 7, page["project"]["log_retention_days"]
+    end
+  end
+
+  test "clearing a Project's Log Retention falls back to the instance default" do
+    sign_in_as(@admin)
+    @project.update!(log_retention_days: 7)
+
+    patch project_url(@project, org_slug: @organization.slug), params: {
+      project: { log_retention_days: "" }
+    }
+
+    page = project_page
+    assert_nil page["project"]["log_retention_days"]
+    assert_equal 30, page["default_log_retention_days"]
+  end
+
   test "a member can't change a Project's Log Retention" do
     @project.update!(log_retention_days: 7)
 
