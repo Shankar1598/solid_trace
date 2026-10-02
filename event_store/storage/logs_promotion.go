@@ -120,6 +120,9 @@ func (s *LogStore) PromotedSet(projectID uint32, t time.Time) PromotedSet {
 // PromotedSets returns a Project's promoted sets for the UTC days from that of
 // from to that of to, inclusive, oldest first, from memory. Days without a set
 // are left out. The keys are shared; don't modify them.
+//
+// The promoted sets are how a reader learns which columns a day's Logs have,
+// with no need to read a table's or a file's schema.
 func (s *LogStore) PromotedSets(projectID uint32, from, to time.Time) []PromotedSet {
 	first, last := LogDay(from), LogDay(to)
 	s.promoted.mu.RLock()
@@ -268,8 +271,9 @@ func attributeValue(a models.Attributes, k typedKey) (any, bool) {
 type dayPromotion struct {
 	day  time.Time
 	keys map[typedKey]PromotedKey
-	// isNew is true when the day had no set before this transaction, so none
-	// of its Logs were stored before it.
+	// isNew is true when the day had no promoted keys before this
+	// transaction. Any of its Logs stored earlier had no key that could be
+	// promoted, so none holds a key this transaction adds in its map.
 	isNew bool
 	added []PromotedKey // keys this transaction adds, to record
 }
@@ -312,6 +316,9 @@ func promote(ctx context.Context, conn *sql.Conn, projectID uint32, logs []model
 		p.existing[column] = true
 	}
 
+	if len(logs) == 0 {
+		return p, nil
+	}
 	byDay := make(map[time.Time][]models.Log)
 	for _, log := range logs {
 		day := LogDay(log.Time)
@@ -341,7 +348,7 @@ func promote(ctx context.Context, conn *sql.Conn, projectID uint32, logs []model
 	if err := p.addColumns(ctx, conn); err != nil {
 		return nil, err
 	}
-	return p, p.record(ctx, conn)
+	return p, p.record(conn)
 }
 
 // daySet returns a day's promoted set from its stored keys, or makes it if it
@@ -380,27 +387,23 @@ func (p *promotion) newDay(ctx context.Context, conn *sql.Conn, day time.Time) (
 		return nil, err
 	}
 	for _, key := range ranked {
-		if len(d.keys) == MaxPromotedKeys {
-			break
-		}
 		p.add(d, key, false)
 	}
 	return d, nil
 }
 
-// add puts key in a day's set if the set has room and the key can have a
-// column, and reports whether it is in the set.
-func (p *promotion) add(d *dayPromotion, key typedKey, partway bool) bool {
+// add puts key in a day's set if it isn't in it, the set has room and the
+// key can have a column of its own.
+func (p *promotion) add(d *dayPromotion, key typedKey, partway bool) {
 	if _, ok := d.keys[key]; ok {
-		return true
+		return
 	}
 	if len(d.keys) >= MaxPromotedKeys || key.Type == JSONAttribute || !promotable(key.Key) || !p.claimColumn(key) {
-		return false
+		return
 	}
 	promoted := PromotedKey{Type: key.Type, Key: key.Key, AddedAt: p.now, Partway: partway}
 	d.keys[key] = promoted
 	d.added = append(d.added, promoted)
-	return true
 }
 
 // claimColumn reserves key's column name, and reports false if another
@@ -446,15 +449,28 @@ func (p *promotion) addColumns(ctx context.Context, conn *sql.Conn) error {
 
 // record adds the keys this transaction put in each day's set to the
 // promoted-set table.
-func (p *promotion) record(ctx context.Context, conn *sql.Conn) error {
-	for _, d := range p.days {
-		for _, key := range d.added {
-			_, err := conn.ExecContext(ctx, "INSERT INTO logs.log_promoted_sets VALUES (?, CAST(? AS DATE), ?, ?, ?, ?)",
-				p.projectID, dayString(d.day), string(key.Type), key.Key, key.AddedAt, key.Partway)
-			if err != nil {
-				return fmt.Errorf("record promoted key: %w", err)
+func (p *promotion) record(conn *sql.Conn) error {
+	err := conn.Raw(func(c any) error {
+		dConn, ok := c.(driver.Conn)
+		if !ok {
+			return fmt.Errorf("not a driver connection")
+		}
+		appender, err := duckdb.NewAppender(dConn, logsCatalog, "main", "log_promoted_sets")
+		if err != nil {
+			return err
+		}
+		for _, d := range p.days {
+			for _, key := range d.added {
+				if err := appender.AppendRow(p.projectID, d.day, string(key.Type), key.Key, key.AddedAt, key.Partway); err != nil {
+					appender.Close()
+					return err
+				}
 			}
 		}
+		return appender.Close()
+	})
+	if err != nil {
+		return fmt.Errorf("record promoted keys: %w", err)
 	}
 	return nil
 }
