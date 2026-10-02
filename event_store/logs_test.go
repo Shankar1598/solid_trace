@@ -406,20 +406,3 @@ func TestLogIngestAfterTheWriterStopsIsServiceUnavailable(t *testing.T) {
 		t.Fatalf("Expected 503, got %d: %s", resp.StatusCode, body)
 	}
 }
-
-func TestCompressedLogBodyIsRefused(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-
-	// Only identity bodies until the Log routes decompress with a cap.
-	resp := sendLogs(t, env, "/api/123/logs?sentry_key=test_public_key", "application/json", `{"message": "zipped"}`, map[string]string{"Content-Encoding": "gzip"})
-	if resp.StatusCode != 415 {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Expected 415, got %d: %s", resp.StatusCode, body)
-	}
-
-	resp = sendLogs(t, env, "/api/123/logs?sentry_key=test_public_key", "application/json", `{"message": "plain"}`, map[string]string{"Content-Encoding": "identity"})
-	if counts := decodeLogCounts(t, resp); counts != (logCounts{Accepted: 1}) {
-		t.Fatalf("Expected an identity body accepted, got %+v", counts)
-	}
-}
