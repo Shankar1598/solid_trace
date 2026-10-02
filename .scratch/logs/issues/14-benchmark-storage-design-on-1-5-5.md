@@ -1,7 +1,7 @@
 # 14: Benchmark the chosen storage design on DuckDB 1.5.5
 
 Type: task
-Status: claimed
+Status: resolved
 Blocked by: 10
 Waits on (outside this map): [Move EventStore back to DuckDB 1.5.5](../../upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md)
 Map: [SolidTrace Logs](../map.md)
@@ -16,6 +16,17 @@ Does the storage design from [How are logs stored and retained?](10-storage-arch
 4. **Hourly export time** for an hour of Logs, and its effect on ingest running at the same time.
 
 Resolved when each point has a measured answer. If promoted columns miss the 5 s target, reopen ticket 10.
+
+## Answer
+
+Resolved 2026-10-02 (task, run with the user). Findings: [research/14](../research/14-storage-design-bench.md); raw results in [14-bench/](../research/14-bench/). Run on DuckDB 1.5.6, at reduced scale, each probe under a minute.
+
+1. **MAP vs JSON on 1.5:** MAP still ranks first (2–3× faster Attribute queries, 180 vs 221 B/Log in the hot table). Checkpoint stalls of 3–4 s happen on 1.5 too, once at the plain target rate; Pebble-first already absorbs them. No crash; VARIANT does not run on 1.5.
+2. **Promoted columns:** the day target of 5 s is **missed** (about 10–16 s on 4 vCPU), mainly because the hot table has no promoted columns. Promoting in the hot table makes its scans 12–15× faster and brings the day near 5 s. 100 promoted keys cost almost nothing at ingest; 1000 cannot ingest the target rate. **N: 100 keys per Project, promoted at ingest, re-ranked nightly by popularity** (decided with the user, see Comments). Latest N is served from the hot table in 20–85 ms.
+3. **Plateau:** yes. Over 10 export cycles the table and file level off; a checkpoint after the delete takes 2–3 s at this scale.
+4. **Hourly export:** about 3–4 minutes for a full hour on 2 threads; no visible effect on ingest at the target rate. Checkpoint time after the delete at full scale is the open risk, for the load test.
+
+Promoted columns missed 5 s, so [How are logs stored and retained?](10-storage-architecture-and-retention.md) is reopened to fold in the promotion redesign and supersede ADR 0004.
 
 ## Comments
 

@@ -1,7 +1,7 @@
 # 10: How are logs stored and retained?
 
 Type: grilling
-Status: resolved
+Status: open
 Blocked by: 05, 09
 Map: [SolidTrace Logs](../map.md)
 
@@ -64,3 +64,21 @@ Resolved 2026-10-02 (grilling). [ADR 0004](../../../docs/adr/0004-logs-hot-table
 **Verification**
 - [Benchmark the chosen storage design on DuckDB 1.5.5](14-benchmark-storage-design-on-1-5-5.md) (task, AFK) checks these targets and blocks the v1 spec. If promoted columns miss the 5 s target, this ticket reopens.
 - The full-scale benchmark is not a prerequisite for the spec. It becomes a first-milestone load test of this design on the target VM.
+
+## Comments
+
+### 2026-10-02 reopened by ticket 14
+
+[Benchmark the chosen storage design on DuckDB 1.5.5](14-benchmark-storage-design-on-1-5-5.md) found that promoted columns miss the 5 s day target, because the hot table has none ([research/14](../research/14-storage-design-bench.md)). Decided with the user while working ticket 14:
+- Keys are promoted at ingest, in the hot table and in Parquet, up to **100 per Project**; past that, new keys stay in the maps.
+- Once the limit is hit, a nightly job re-ranks: the next day's promoted set is the Project's 100 most popular keys, the rest go back to the maps. One promoted set per Project per day.
+- The promoted set is a table in `logs.duckdb`, changed in the same transaction as the hot table's `ALTER TABLE` and cached in memory by EventStore.
+- Plain Parquet files, no DuckLake.
+- EventStore runs DuckDB 1.5.6, not 1.5.5.
+
+To settle here, then write an ADR that supersedes [ADR 0004](../../../docs/adr/0004-logs-hot-table-and-hourly-parquet.md):
+- How popularity is counted (proposed: the Log processor counts keys at ingest).
+- One hot table per Project, or one shared table (whose columns would be every Project's keys).
+- The midnight switch: when demoted columns leave the hot table, and how the compiler reads the hour that still holds newly promoted keys in the maps.
+- How the query compiler learns each day's columns (proposed: from the promoted-set table, without reading footers).
+- Whether the hourly export, which now writes a day's fixed schema, still needs anything per file.
