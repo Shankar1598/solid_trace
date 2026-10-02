@@ -49,7 +49,7 @@ func (f *fakeEventWriter) WriteEvent(event *models.Event) error {
 }
 
 func newTestService(events EventWriter) *Service {
-	return NewService(events, func(uint32) {}, 10)
+	return NewService(Config{Events: events, NotifyEvents: func(uint32) {}, MaxWaiting: 10})
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ func sampleEventJSON() []byte {
 func TestServiceIngestStore_TooManyWaiting_ReturnsOverloaded(t *testing.T) {
 	writer := newFakeEventWriter()
 	writer.block = make(chan struct{})
-	service := NewService(writer, func(uint32) {}, 2)
+	service := NewService(Config{Events: writer, NotifyEvents: func(uint32) {}, MaxWaiting: 2})
 
 	results := make(chan error, 2)
 	for range 2 {

@@ -50,6 +50,11 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	}
 	t.Cleanup(duckdbWriter.Close)
 
+	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(tmpDir, "logs.duckdb"))
+	if err != nil {
+		t.Fatalf("Failed to attach logs DuckDB: %v", err)
+	}
+
 	var duckdbEvents []models.Event
 	for _, event := range events {
 		if err := pebbleWriter.WriteEvent(event); err != nil {
@@ -69,7 +74,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
 }

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clock"
 )
 
 var (
@@ -17,27 +18,49 @@ var (
 	ErrOverloaded        = errors.New("server overloaded")
 )
 
-// Service owns Event ingest after authentication succeeds: it stores each
-// Event in Pebble and nothing more. Event processing does the Issue work.
+// Service owns Event ingest and Log ingest after authentication succeeds: it
+// stores each Event, and each request's normalised Logs, in Pebble and nothing
+// more. Event processing does the Issue work; Log processing moves Logs to
+// DuckDB.
 type Service struct {
-	events EventWriter
-	notify func(projectID uint32)
+	events       EventWriter
+	notifyEvents func(projectID uint32)
+	logs         LogWriter
+	notifyLogs   func(projectID uint32)
+	clock        clock.Clock
 
-	// waiting counts requests waiting for their Event to be written. Past
-	// maxWaiting a request is rejected as overloaded.
+	// waiting counts requests waiting for their Event or Logs to be written.
+	// Past maxWaiting a request is rejected as overloaded.
 	waiting    atomic.Int64
 	maxWaiting int64
 }
 
-// NewService constructs the Event ingest module. The EventWriter is the seam
-// to Event storage; storage.PebbleWriter is the production adapter. notify is
-// called with the Project of each Event once it is written, to wake Event
-// processing.
-func NewService(events EventWriter, notify func(projectID uint32), maxWaiting int) *Service {
+// Config is what the Service writes to and whom it tells.
+type Config struct {
+	// Events and Logs are the seams to storage; storage.PebbleWriter is the
+	// production adapter of both.
+	Events EventWriter
+	Logs   LogWriter
+	// NotifyEvents and NotifyLogs are called with the Project of each write,
+	// once it is stored, to wake Event processing and Log processing.
+	NotifyEvents func(projectID uint32)
+	NotifyLogs   func(projectID uint32)
+	// Clock gives the receipt time of Logs.
+	Clock clock.Clock
+	// MaxWaiting caps the requests, Events and Logs together, waiting for
+	// their write. Past it, ingest answers 503.
+	MaxWaiting int
+}
+
+// NewService constructs Event ingest and Log ingest.
+func NewService(cfg Config) *Service {
 	return &Service{
-		events:     events,
-		notify:     notify,
-		maxWaiting: int64(maxWaiting),
+		events:       cfg.Events,
+		notifyEvents: cfg.NotifyEvents,
+		logs:         cfg.Logs,
+		notifyLogs:   cfg.NotifyLogs,
+		clock:        cfg.Clock,
+		maxWaiting:   int64(cfg.MaxWaiting),
 	}
 }
 
@@ -121,11 +144,10 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 		return ErrInvalidEventJSON
 	}
 
-	if s.waiting.Add(1) > s.maxWaiting {
-		s.waiting.Add(-1)
+	if !s.enterGate() {
 		return ErrOverloaded
 	}
-	defer s.waiting.Add(-1)
+	defer s.leaveGate()
 
 	event := models.Event{
 		ProjectID: projectID,
@@ -136,6 +158,20 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 	if err := s.events.WriteEvent(&event); err != nil {
 		return fmt.Errorf("write event: %w", err)
 	}
-	s.notify(projectID)
+	s.notifyEvents(projectID)
 	return nil
+}
+
+// enterGate counts a request as waiting for its write, unless maxWaiting are
+// already waiting. A request that enters must call leaveGate.
+func (s *Service) enterGate() bool {
+	if s.waiting.Add(1) > s.maxWaiting {
+		s.waiting.Add(-1)
+		return false
+	}
+	return true
+}
+
+func (s *Service) leaveGate() {
+	s.waiting.Add(-1)
 }

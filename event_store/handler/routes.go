@@ -9,12 +9,13 @@ func RegisterIngestRoutes(app *fiber.App, ingestHandler *IngestHandler, healthHa
 
 	app.Post("/api/:project_id/store", ingestHandler.Store)
 	app.Post("/api/:project_id/envelope", ingestHandler.Envelope)
+	app.Post("/api/:project_id/logs", ingestHandler.Logs)
 }
 
-// RegisterQueryRoutes mounts the routes that serve stored events. They have no
-// authentication, so they must only be served on the loopback query listener,
-// where the console is the only client.
-func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, healthHandler *HealthHandler) {
+// RegisterQueryRoutes mounts the routes that serve stored Events and Logs.
+// They have no authentication, so they must only be served on the loopback
+// query listener, where the console is the only client.
+func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandler *LogsHandler, healthHandler *HealthHandler) {
 	app.Get("/health", healthHandler.Health)
 
 	app.Get("/api/:project_id/events", eventsHandler.List)
@@ -23,4 +24,6 @@ func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, healthHan
 	// Fiber matches in registration order: this must follow context and count,
 	// or those paths are captured as an event UUID.
 	app.Get("/api/:project_id/events/:event_uuid", eventsHandler.GetEvent)
+
+	app.Get("/api/:project_id/logs/latest", logsHandler.Latest)
 }
