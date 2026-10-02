@@ -36,6 +36,34 @@ _Avoid_: issue store, issue service
 The grouped failure record derived from one or more Events that share a fingerprint inside a Project.
 _Avoid_: alert, ticket
 
+**Log**:
+One timestamped record an application or shipper sends to a Project, made of built-in fields (time, level, message, service, environment, trace id, span id) and any number of Attributes. Never grouped into Issues.
+_Avoid_: event, log line, entry
+
+**Attribute**:
+A named value on a Log that is not a built-in field. Nested names are flattened to dotted names (`http.method`), an array is one value, and each value keeps its own type.
+_Avoid_: tag, label, column
+
+**Field**:
+Either a built-in field of a Log or an Attribute; what filters, chips and the field list refer to. Built-in field names are reserved: a value that cannot fill one is kept as an Attribute named `original.<field>`. Names beginning `solidtrace.` are reserved for Attributes SolidTrace sets, and a sender's such key is kept as `original.solidtrace.<rest>`.
+_Avoid_: key, column, property
+
+**Level**:
+A Log's severity, one of `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or absent when the sender gave none or gave one that is not recognised.
+_Avoid_: severity, priority
+
+**Service**:
+The part of a system that emitted a Log, such as an application, a worker or a proxy. How Logs from one Project are told apart.
+_Avoid_: source, app, dataset
+
+**Query**:
+A request for Logs written in SolidTrace's KQL-style query language. It always runs against one Project and time range chosen outside the text.
+_Avoid_: APL, KQL, search
+
+**SQL query**:
+Raw DuckDB SQL a user runs directly, unscoped by Project, only on installs that have turned it on.
+_Avoid_: raw query, advanced query
+
 **Integration**:
 An outbound notification target owned by an organization.
 _Avoid_: webhook config, notifier job
@@ -49,6 +77,7 @@ _Avoid_: app, tenant
 - An **EventStore** accepts an **Event** through **Event ingest**
 - **Event processing** derives one **Issue** for each stored **Event**, reading each **Project**'s Events from its **Processing cursor**
 - A **Project** owns many **Issues** and the keys used to submit **Events**
+- A **Project** owns many **Logs**, submitted with the same keys as its **Events**
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 
 ## Example dialogue
