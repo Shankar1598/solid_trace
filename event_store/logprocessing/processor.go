@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/duckdb/duckdb-go/v2"
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
@@ -19,10 +21,29 @@ const (
 	// a Project: whole Log batches, at least one, until they reach it.
 	maxLogsPerCommit = 10000
 	tickInterval     = time.Second
+
+	// contentRetries is how often a Project's Logs that fail on their
+	// content are retried before they are tried apart.
+	contentRetries = 3
+
+	minBackoff = 100 * time.Millisecond
+	maxBackoff = 30 * time.Second
 )
 
 // ErrStopped is returned when Stop ends processing.
 var ErrStopped = errors.New("log processing stopped")
+
+// contentError marks Logs that can't be stored because of what they contain.
+// Every other error is a store error.
+type contentError struct{ err error }
+
+func (e contentError) Error() string { return e.err.Error() }
+func (e contentError) Unwrap() error { return e.err }
+
+func isContentError(err error) bool {
+	var content contentError
+	return errors.As(err, &content)
+}
 
 // Processor is Log processing: one worker, separate from Event processing,
 // that reads each Project's Log batches from Pebble after its Log processing
@@ -30,6 +51,11 @@ var ErrStopped = errors.New("log processing stopped")
 // in the same DuckDB transaction. Only then does it delete the batches from
 // Pebble. A crash between the commit and the delete leaves batches at or
 // below the cursor, which are never read again.
+//
+// A Project whose Logs fail to store waits to be retried, with backoff, and
+// the other Projects carry on meanwhile. A store error is retried until it
+// clears and skips nothing. Logs that fail on their content are retried, then
+// tried apart, and a Log that fails on its own is skipped and logged.
 type Processor struct {
 	batches *storage.PebbleWriter
 	store   *storage.LogStore
@@ -39,10 +65,20 @@ type Processor struct {
 	pending map[uint32]struct{} // Projects that may have new Log batches
 	wake    chan struct{}
 
+	// Used only by the worker.
+	failing map[uint32]*failure // Projects whose Logs failed to store
+
 	stop     chan struct{}
 	stopOnce sync.Once
 	started  bool
 	done     chan struct{}
+}
+
+// failure is how a Project's Logs have failed to store since they last did.
+type failure struct {
+	retryAt time.Time     // when to try the Project again
+	backoff time.Duration // the wait after the next failure
+	content int           // how many of the failures were content errors
 }
 
 // New constructs Log processing. It reads the time from clock.
@@ -53,6 +89,7 @@ func New(batches *storage.PebbleWriter, store *storage.LogStore, clock clock.Clo
 		clock:   clock,
 		pending: make(map[uint32]struct{}),
 		wake:    make(chan struct{}, 1),
+		failing: make(map[uint32]*failure),
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
@@ -96,14 +133,24 @@ func (p *Processor) markPending(projectID uint32) {
 	p.pending[projectID] = struct{}{}
 }
 
-func (p *Processor) takePending() (uint32, bool) {
+// takeDue takes a pending Project that isn't waiting to be retried. If every
+// pending Project is waiting, it returns the earliest retry time instead, or
+// the zero time if none is pending.
+func (p *Processor) takeDue() (projectID uint32, ok bool, retryAt time.Time) {
+	now := time.Now()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for projectID := range p.pending {
-		delete(p.pending, projectID)
-		return projectID, true
+		failed := p.failing[projectID]
+		if failed == nil || !failed.retryAt.After(now) {
+			delete(p.pending, projectID)
+			return projectID, true, time.Time{}
+		}
+		if retryAt.IsZero() || failed.retryAt.Before(retryAt) {
+			retryAt = failed.retryAt
+		}
 	}
-	return 0, false
+	return 0, false, retryAt
 }
 
 // Start runs the worker in its own goroutine.
@@ -140,45 +187,84 @@ func (p *Processor) run() {
 	}
 }
 
-// ProcessUntilCaughtUp processes Log batches until no Project has new ones. A
-// Project whose Logs fail to store stays pending until the next wake or tick,
-// with its cursor unmoved, and the other Projects carry on. It returns the
-// first such failure, or ErrStopped.
+// ProcessUntilCaughtUp processes Log batches until no Project has new ones.
+// A Project whose Logs fail to store is retried after a backoff, and the
+// other Projects are processed while it waits. Store errors are retried until
+// they clear, so it only returns ErrStopped.
 func (p *Processor) ProcessUntilCaughtUp() error {
-	var failed []uint32
-	var firstErr error
-	defer func() {
-		for _, projectID := range failed {
-			p.markPending(projectID)
-		}
-	}()
-
 	for {
 		if p.stopped() {
 			return ErrStopped
 		}
-		projectID, ok := p.takePending()
-		if !ok {
-			return firstErr
-		}
-		more, err := p.processProject(projectID)
-		if err != nil {
-			logger.L.Error("Log processing failed, retrying later", "project_id", projectID, "error", err)
-			failed = append(failed, projectID)
-			if firstErr == nil {
-				firstErr = fmt.Errorf("project %d: %w", projectID, err)
-			}
+		projectID, ok, retryAt := p.takeDue()
+		if ok {
+			p.processProject(projectID)
 			continue
 		}
+		if retryAt.IsZero() {
+			return nil
+		}
+		if !p.waitUntil(retryAt) {
+			return ErrStopped
+		}
+	}
+}
+
+// waitUntil waits until t, or until a Project has new Log batches. It returns
+// false if Stop is called meanwhile.
+func (p *Processor) waitUntil(t time.Time) bool {
+	timer := time.NewTimer(time.Until(t))
+	defer timer.Stop()
+	select {
+	case <-p.stop:
+		return false
+	case <-p.wake:
+	case <-timer.C:
+	}
+	return true
+}
+
+// processProject stores a Project's next Logs. If they fail to store, the
+// Project waits to be retried.
+func (p *Processor) processProject(projectID uint32) {
+	more, err := p.storeLogs(projectID)
+	switch {
+	case errors.Is(err, ErrStopped):
+		p.markPending(projectID)
+	case err != nil:
+		p.retryLater(projectID, err)
+	default:
+		delete(p.failing, projectID)
 		if more {
 			p.markPending(projectID)
 		}
 	}
 }
 
-// processProject stores a Project's Log batches after its cursor, up to about
-// maxLogsPerCommit Logs. more reports whether more may be waiting.
-func (p *Processor) processProject(projectID uint32) (more bool, err error) {
+// retryLater logs a Project's failure and keeps it pending until its
+// backoff has passed. The backoff doubles with each failure.
+func (p *Processor) retryLater(projectID uint32, err error) {
+	failed := p.failing[projectID]
+	if failed == nil {
+		failed = &failure{backoff: minBackoff}
+		p.failing[projectID] = failed
+	}
+	if isContentError(err) {
+		failed.content++
+		logger.L.Error("Log processing content error, retrying", "project_id", projectID, "error", err, "retry_in", failed.backoff)
+	} else {
+		logger.L.Error("Log processing store error, retrying", "project_id", projectID, "error", err, "retry_in", failed.backoff)
+	}
+	failed.retryAt = time.Now().Add(failed.backoff)
+	failed.backoff = min(2*failed.backoff, maxBackoff)
+	p.markPending(projectID)
+}
+
+// storeLogs stores a Project's Log batches after its cursor, up to about
+// maxLogsPerCommit Logs. Once they have failed on their content
+// contentRetries times, it stores them without the Logs that fail on their
+// own. more reports whether more may be waiting.
+func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 	cursor, err := p.store.LogProcessingCursor(projectID)
 	if err != nil {
 		return false, fmt.Errorf("read log processing cursor: %w", err)
@@ -191,7 +277,12 @@ func (p *Processor) processProject(projectID uint32) (more bool, err error) {
 		return false, nil
 	}
 
-	if err := p.store.AppendLogBatches(projectID, batches, p.clock.Now()); err != nil {
+	now := p.clock.Now()
+	err = p.classify(p.store.AppendLogBatches(projectID, batches, now))
+	if failed := p.failing[projectID]; isContentError(err) && failed != nil && failed.content >= contentRetries {
+		err = p.storeApart(projectID, batches, now)
+	}
+	if err != nil {
 		return false, fmt.Errorf("store logs: %w", err)
 	}
 
@@ -207,6 +298,138 @@ func (p *Processor) processProject(projectID uint32) (more bool, err error) {
 		logs += len(batch.Logs)
 	}
 	return logs >= maxLogsPerCommit, nil
+}
+
+// classify marks a failure to store Logs as a content error if DuckDB still
+// answers a query and the failure isn't one DuckDB reports for the store
+// itself, such as a full disk. A content error is then the Logs' fault.
+//
+// The appender's errors aren't typed, so a failure that hits only appends
+// and isn't reported as one of those also counts as a content error.
+func (p *Processor) classify(err error) error {
+	if err == nil || storeFailure(err) || p.store.Ping() != nil {
+		return err
+	}
+	return contentError{err}
+}
+
+// storeFailure reports whether DuckDB says err is a failure of the store,
+// not of what was stored.
+func storeFailure(err error) bool {
+	var duckErr *duckdb.Error
+	if !errors.As(err, &duckErr) {
+		return false
+	}
+	switch duckErr.Type {
+	case duckdb.ErrorTypeIO, duckdb.ErrorTypeOutOfMemory, duckdb.ErrorTypeFatal, duckdb.ErrorTypeTransaction:
+		return true
+	}
+	return false
+}
+
+// batchedLog is a Log with the id of its Log batch.
+type batchedLog struct {
+	batchID uuid.UUID
+	log     models.Log
+}
+
+// rejectedLog is a Log that fails on its own, with how it failed.
+type rejectedLog struct {
+	batchedLog
+	err error
+}
+
+// storeApart stores a Project's Log batches, which fail on their content
+// together, without the Logs that fail on their own. It finds those by trying
+// the Logs in halves, without storing them, and skips and logs each. The
+// batches the skipped Logs leave empty still move the cursor.
+func (p *Processor) storeApart(projectID uint32, batches []storage.LogBatch, now time.Time) error {
+	var logs []batchedLog
+	for _, batch := range batches {
+		for _, log := range batch.Logs {
+			logs = append(logs, batchedLog{batch.ID, log})
+		}
+	}
+	rejected, err := p.rejectedLogs(projectID, logs, now)
+	if err != nil {
+		return err
+	}
+
+	skip := make(map[uuid.UUID]bool, len(rejected))
+	for _, r := range rejected {
+		skip[r.log.ID] = true
+	}
+	kept := make([]storage.LogBatch, len(batches))
+	for i, batch := range batches {
+		kept[i] = storage.LogBatch{ID: batch.ID}
+		for _, log := range batch.Logs {
+			if !skip[log.ID] {
+				kept[i].Logs = append(kept[i].Logs, log)
+			}
+		}
+	}
+	if err := p.classify(p.store.AppendLogBatches(projectID, kept, now)); err != nil {
+		return err
+	}
+
+	for _, r := range rejected {
+		logger.L.Error("Log processing skipped a Log",
+			"project_id", projectID,
+			"batch_id", r.batchID.String(),
+			"log_id", r.log.ID.String(),
+			"error", r.err)
+	}
+	return nil
+}
+
+// rejectedLogs returns the Logs that fail on their own out of logs, which
+// fail together on their content. It tries each half of logs without storing
+// it, and looks inside each half that fails, down to single Logs. A store
+// error, or Stop, ends the search.
+func (p *Processor) rejectedLogs(projectID uint32, logs []batchedLog, now time.Time) ([]rejectedLog, error) {
+	if len(logs) == 1 {
+		err := p.classify(p.store.TryLogBatches(projectID, batchesOf(logs), now))
+		if err == nil || !isContentError(err) {
+			return nil, err
+		}
+		return []rejectedLog{{logs[0], err}}, nil
+	}
+
+	var rejected []rejectedLog
+	half := len(logs) / 2
+	for _, part := range [][]batchedLog{logs[:half], logs[half:]} {
+		if p.stopped() {
+			return nil, ErrStopped
+		}
+		if len(part) > 1 {
+			err := p.classify(p.store.TryLogBatches(projectID, batchesOf(part), now))
+			if err == nil {
+				continue
+			}
+			if !isContentError(err) {
+				return nil, err
+			}
+		}
+		partRejected, err := p.rejectedLogs(projectID, part, now)
+		if err != nil {
+			return nil, err
+		}
+		rejected = append(rejected, partRejected...)
+	}
+	return rejected, nil
+}
+
+// batchesOf groups Logs back into their Log batches, in order.
+func batchesOf(logs []batchedLog) []storage.LogBatch {
+	var batches []storage.LogBatch
+	for _, l := range logs {
+		if n := len(batches); n == 0 || batches[n-1].ID != l.batchID {
+			batches = append(batches, storage.LogBatch{ID: l.batchID})
+		}
+		last := &batches[len(batches)-1]
+		last.Logs = append(last.Logs, l.log)
+	}
+	return batches
 }
 
 func (p *Processor) stopped() bool {
