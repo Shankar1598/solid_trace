@@ -488,3 +488,22 @@ func TestALogStillOver1MBIsDropped(t *testing.T) {
 		t.Errorf("Expected a Log of 15 strings cut to 64 KB kept, got %v", outcome)
 	}
 }
+
+func TestEpochsAndNumbersPastADoublesRangeAreReadQuickly(t *testing.T) {
+	start := time.Now()
+	log, _ := normaliseJSON(t, `{"time": 1e-999999, "a": 1e999999, "b": 1`+strings.Repeat("0", 100*kb)+`}`, receipt)
+
+	if !log.Time.Equal(receivedAt) {
+		t.Errorf("Expected the receipt time, got %v", log.Time)
+	}
+	if got := log.Attributes.String["a"]; got != "1e999999" {
+		t.Errorf("Expected a number past a DOUBLE's range kept as written, got %q", got)
+	}
+	// Kept as a string, so cut as one.
+	if got := log.Attributes.String["b"]; got != "1"+strings.Repeat("0", 64*kb-1) {
+		t.Errorf("Expected a whole number past a DOUBLE's range kept as a string, got %d digits", len(got))
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Expected huge numbers read quickly, took %v", elapsed)
+	}
+}
