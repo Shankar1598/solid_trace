@@ -74,7 +74,7 @@ class EventStore
       body = { query: query, from: utc(from), to: utc(to) }
       body[:cursor] = cursor if cursor.present?
       body[:limit] = limit if limit
-      post!("#{base_url}/api/#{project_id}/logs/query", body)
+      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: nil)
     end
 
     # Counts the Logs in [from, to) that pass a Query's filters, per bucket
@@ -84,7 +84,7 @@ class EventStore
     def logs_histogram(project_id:, query:, from:, to:, bucket_seconds: nil)
       body = { query: query, from: utc(from), to: utc(to) }
       body[:bucket_seconds] = bucket_seconds if bucket_seconds
-      post!("#{base_url}/api/#{project_id}/logs/histogram", body)
+      post!("#{base_url}/api/#{project_id}/logs/histogram", body, read_timeout: nil)
     end
 
     # Checks a Query without running it: {"errors" => [...], "chips" => Hash | nil,
@@ -114,7 +114,7 @@ class EventStore
     # Query's run. Raises SQLQueriesOff while SQL queries are off.
     def run_logs_sql(project_id:, sql:, from:, to:)
       refuse_sql_unless_enabled!
-      post!("#{base_url}/api/#{project_id}/logs/sql", { sql: sql, from: utc(from), to: utc(to) })
+      post!("#{base_url}/api/#{project_id}/logs/sql", { sql: sql, from: utc(from), to: utc(to) }, read_timeout: nil)
     end
 
     private
@@ -127,8 +127,13 @@ class EventStore
       time.utc.iso8601(3)
     end
 
-    def post!(url, body)
-      response = RestClient.post(url, body.to_json, content_type: :json, accept: :json)
+    # Pass read_timeout: nil for a run, which waits as long as its Query takes:
+    # v1 has no per-query timeouts. Opening the connection still times out.
+    def post!(url, body, **timeouts)
+      response = RestClient::Request.execute(
+        method: :post, url: url, payload: body.to_json,
+        headers: { content_type: :json, accept: :json }, **timeouts
+      )
       JSON.parse(response.body)
     rescue RestClient::BadRequest => e
       raise Rejected, parse_body(e.response&.body)
