@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"maps"
 	"path/filepath"
 	"testing"
 )
@@ -149,4 +150,43 @@ func TestConsoleSettings_ProjectWithoutRowGetsTheInstanceDefault(t *testing.T) {
 	settings := openConsoleSettings(t, path)
 
 	assertLogRetentionDays(t, settings, 123, 21)
+}
+
+func TestConsoleSettings_ListsEveryProjectsRetentionAndNoDeletedOnes(t *testing.T) {
+	path, console := newConsoleDB(t)
+	setInstanceSettings(t, console, false, 21)
+	addProject(t, console, 1, nil)
+	addProject(t, console, 2, 7)
+	addProject(t, console, 3, nil)
+	consoleExec(t, console, `DELETE FROM projects WHERE id = 3`)
+
+	settings := openConsoleSettings(t, path)
+
+	got, err := settings.ProjectLogRetention()
+	if err != nil {
+		t.Fatalf("ProjectLogRetention: %v", err)
+	}
+	if want := map[uint32]int{1: 21, 2: 7}; !maps.Equal(got, want) {
+		t.Errorf("ProjectLogRetention() = %v, want %v", got, want)
+	}
+}
+
+func TestConsoleSettings_ARetentionBelowOneDayIsAnError(t *testing.T) {
+	path, console := newConsoleDB(t)
+	addProject(t, console, 1, 0)
+	addProject(t, console, 2, nil)
+	setInstanceSettings(t, console, false, -1)
+
+	settings := openConsoleSettings(t, path)
+
+	for _, projectID := range []uint32{1, 2} {
+		if days, err := settings.LogRetentionDays(projectID); err == nil {
+			t.Errorf("LogRetentionDays(%d) = %d, want an error", projectID, days)
+		}
+	}
+	// Both Projects still exist, so neither may look deleted.
+	got, err := settings.ProjectLogRetention()
+	if want := map[uint32]int{1: 0, 2: 0}; err != nil || !maps.Equal(got, want) {
+		t.Errorf("ProjectLogRetention() = %v, %v; want %v", got, err, want)
+	}
 }

@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -74,7 +75,9 @@ func (s *ConsoleSettings) Instance() (InstanceSettings, error) {
 
 // LogRetentionDays returns a Project's effective Retention in whole days: its
 // own, else the instance default. A Project with no row in projects gets the
-// instance default; telling a deleted Project apart is the caller's job.
+// instance default; telling a deleted Project apart is the caller's job. A
+// Retention below one day, which only Console's validations prevent, is an
+// error.
 func (s *ConsoleSettings) LogRetentionDays(projectID uint32) (int, error) {
 	var days int
 	err := s.db.QueryRow(`
@@ -85,5 +88,42 @@ func (s *ConsoleSettings) LogRetentionDays(projectID uint32) (int, error) {
 		)`,
 		projectID, instanceSettingsID, defaultLogRetentionDays,
 	).Scan(&days)
-	return days, err
+	if err != nil {
+		return 0, err
+	}
+	if days < 1 {
+		return 0, fmt.Errorf("project %d has a Retention of %d days", projectID, days)
+	}
+	return days, nil
+}
+
+// ProjectLogRetention returns the effective Retention, in whole days, of every
+// Project in Console's projects table, by id. A Project missing from it has
+// been deleted. A Project whose Retention is below one day, which only
+// Console's validations prevent, has 0.
+func (s *ConsoleSettings) ProjectLogRetention() (map[uint32]int, error) {
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(
+			log_retention_days,
+			(SELECT default_log_retention_days FROM instance_settings WHERE id = ?),
+			?
+		)
+		FROM projects`,
+		instanceSettingsID, defaultLogRetentionDays)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	retention := make(map[uint32]int)
+	for rows.Next() {
+		var (
+			projectID uint32
+			days      int
+		)
+		if err := rows.Scan(&projectID, &days); err != nil {
+			return nil, err
+		}
+		retention[projectID] = max(days, 0)
+	}
+	return retention, rows.Err()
 }
