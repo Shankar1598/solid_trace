@@ -94,6 +94,11 @@ type fieldRef struct {
 	t       valueType
 }
 
+// attributeText is an Attribute read as text by contains: its string, or
+// else the JSON text of an array or deep nesting, so that an array is one
+// value contains can search.
+type attributeText struct{ name string }
+
 // columnRef is a column of a table, or one extend added to Logs.
 type columnRef struct {
 	name string
@@ -223,20 +228,21 @@ type aggregate struct {
 	t       valueType
 }
 
-func (e fieldRef) typ() valueType  { return e.t }
-func (e columnRef) typ() valueType { return e.t }
-func (e partOf) typ() valueType    { return e.t }
-func (e literal) typ() valueType   { return e.valueType() }
-func (compare) typ() valueType     { return boolType }
-func (textMatch) typ() valueType   { return boolType }
-func (isEmpty) typ() valueType     { return boolType }
-func (and) typ() valueType         { return boolType }
-func (or) typ() valueType          { return boolType }
-func (not) typ() valueType         { return boolType }
-func (e arith) typ() valueType     { return e.t }
-func (e negative) typ() valueType  { return e.x.typ() }
-func (e call) typ() valueType      { return e.t }
-func (e aggregate) typ() valueType { return e.t }
+func (e fieldRef) typ() valueType    { return e.t }
+func (e columnRef) typ() valueType   { return e.t }
+func (attributeText) typ() valueType { return stringType }
+func (e partOf) typ() valueType      { return e.t }
+func (e literal) typ() valueType     { return e.valueType() }
+func (compare) typ() valueType       { return boolType }
+func (textMatch) typ() valueType     { return boolType }
+func (isEmpty) typ() valueType       { return boolType }
+func (and) typ() valueType           { return boolType }
+func (or) typ() valueType            { return boolType }
+func (not) typ() valueType           { return boolType }
+func (e arith) typ() valueType       { return e.t }
+func (e negative) typ() valueType    { return e.x.typ() }
+func (e call) typ() valueType        { return e.t }
+func (e aggregate) typ() valueType   { return e.t }
 
 // condition compiles an expression that must be a condition.
 func (c *compiler) condition(e parser.Expr) (expr, error) {
@@ -456,6 +462,10 @@ func (c *compiler) binary(e *parser.BinaryExpr, aggregates bool) (expr, error) {
 		lit, ok := e.Y.(*parser.BasicLit)
 		if !ok || lit.Kind != parser.StringLiteral {
 			return nil, errorAt(e.Y, "expected a quoted string after %s", c.source(e.OpSpan))
+		}
+		if ref, ok := x.(fieldRef); ok && !ref.builtIn && text.op == matchContains {
+			c.read(storage.JSONAttribute, ref.name)
+			x = attributeText{name: ref.name}
 		}
 		if text.op == matchRegex {
 			if _, err := regexp.Compile(lit.Value); err != nil {

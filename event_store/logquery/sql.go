@@ -142,6 +142,8 @@ func writeValue(x expr, f fields) string {
 		return dynamicValue(parts)
 	case columnRef:
 		return sqlIdentifier(x.name)
+	case attributeText:
+		return "coalesce(" + f.Attribute(storage.StringAttribute, x.name) + ", " + f.Attribute(storage.JSONAttribute, x.name) + ")"
 	case partOf:
 		t, _ := x.t.attributeType()
 		return "struct_extract(" + writeValue(x.x, f) + ", " + quoteString(dynamicField(t)) + ")"
