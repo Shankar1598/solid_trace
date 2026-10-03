@@ -155,7 +155,10 @@ func precedence(kind TokenKind) int {
 		return 4
 	case TokenPlus, TokenMinus:
 		return 3
-	case TokenEq, TokenNE, TokenLT, TokenLE, TokenGT, TokenGE:
+	case TokenEq, TokenNE, TokenLT, TokenLE, TokenGT, TokenGE, TokenEqCI, TokenNECI,
+		TokenContains, TokenNotContains, TokenContainsCS, TokenNotContainsCS,
+		TokenStartsWith, TokenNotStartsWith, TokenStartsWithCS, TokenNotStartsWithCS,
+		TokenMatchesRegex, TokenIn, TokenNotIn:
 		return 2
 	case TokenAnd:
 		return 1
@@ -166,6 +169,47 @@ func precedence(kind TokenKind) int {
 	}
 }
 
+// wordOperators are the operators written as words, and their negations
+// written with a leading !.
+var wordOperators = map[string][2]TokenKind{
+	"contains":      {TokenContains, TokenNotContains},
+	"contains_cs":   {TokenContainsCS, TokenNotContainsCS},
+	"startswith":    {TokenStartsWith, TokenNotStartsWith},
+	"startswith_cs": {TokenStartsWithCS, TokenNotStartsWithCS},
+	"in":            {TokenIn, TokenNotIn},
+}
+
+// binaryOperator reads the binary operator at the parser's position, if
+// there is one, without moving: its kind, its span and how many tokens it
+// takes.
+func (p *parser) binaryOperator() (TokenKind, Span, int) {
+	tok, ok := p.peek()
+	if !ok {
+		return 0, tok.Span, 0
+	}
+	switch tok.Kind {
+	case TokenIdentifier:
+		if kinds, ok := wordOperators[tok.Value]; ok {
+			return kinds[0], tok.Span, 1
+		}
+		if tok.Value == "matches" && p.pos+1 < len(p.tokens) {
+			if next := p.tokens[p.pos+1]; next.Kind == TokenIdentifier && next.Value == "regex" {
+				return TokenMatchesRegex, unionSpans(tok.Span, next.Span), 2
+			}
+		}
+		return 0, tok.Span, 0
+	case TokenBang:
+		if p.pos+1 < len(p.tokens) {
+			next := p.tokens[p.pos+1]
+			if kinds, ok := wordOperators[next.Value]; ok && next.Kind == TokenIdentifier && next.Span.Start == tok.Span.End {
+				return kinds[1], unionSpans(tok.Span, next.Span), 2
+			}
+		}
+		return 0, tok.Span, 0
+	}
+	return tok.Kind, tok.Span, 1
+}
+
 // expr parses an expression whose binary operators bind at least as tightly
 // as minPrecedence.
 func (p *parser) expr(minPrecedence int) (Expr, error) {
@@ -174,20 +218,51 @@ func (p *parser) expr(minPrecedence int) (Expr, error) {
 		return nil, err
 	}
 	for {
-		op, ok := p.peek()
-		prec := precedence(op.Kind)
-		if !ok || prec < 0 || prec < minPrecedence {
+		kind, span, width := p.binaryOperator()
+		prec := precedence(kind)
+		if width == 0 || prec < 0 || prec < minPrecedence {
 			return x, nil
 		}
-		p.pos++
+		p.pos += width
+		opText := fmt.Sprintf("%q", p.source[span.Start:span.End])
 		if _, ok := p.peek(); !ok {
-			return nil, p.errorf(op.Span, "expected an expression after %s", p.describe(op, true))
+			return nil, p.errorf(span, "expected an expression after %s", opText)
 		}
-		y, err := p.expr(prec + 1)
+		var y Expr
+		if kind == TokenIn || kind == TokenNotIn {
+			y, err = p.list(opText)
+		} else {
+			y, err = p.expr(prec + 1)
+		}
 		if err != nil {
 			return nil, err
 		}
-		x = &BinaryExpr{X: x, OpSpan: op.Span, Op: op.Kind, Y: y}
+		x = &BinaryExpr{X: x, OpSpan: span, Op: kind, Y: y}
+	}
+}
+
+// list parses (value, …), after in or !in.
+func (p *parser) list(op string) (*ListExpr, error) {
+	lparen, ok := p.next()
+	if !ok || lparen.Kind != TokenLParen {
+		return nil, p.errorf(lparen.Span, "expected a list in parentheses after %s, such as (\"a\", \"b\")", op)
+	}
+	list := &ListExpr{Lparen: lparen.Span}
+	for {
+		elem, err := p.expr(0)
+		if err != nil {
+			return nil, err
+		}
+		list.Elems = append(list.Elems, elem)
+		tok, ok := p.next()
+		switch {
+		case ok && tok.Kind == TokenComma:
+		case ok && tok.Kind == TokenRParen:
+			list.Rparen = tok.Span
+			return list, nil
+		default:
+			return nil, p.errorf(tok.Span, "expected , or ), got %s", p.describe(tok, ok))
+		}
 	}
 }
 
@@ -214,6 +289,10 @@ func (p *parser) primaryExpr() (Expr, error) {
 		return &BasicLit{ValueSpan: tok.Span, Kind: NumberLiteral, Value: tok.Value}, nil
 	case TokenString:
 		return &BasicLit{ValueSpan: tok.Span, Kind: StringLiteral, Value: tok.Value}, nil
+	case TokenTimespan:
+		return &BasicLit{ValueSpan: tok.Span, Kind: TimespanLiteral, Value: tok.Value}, nil
+	case TokenDateTime:
+		return &BasicLit{ValueSpan: tok.Span, Kind: DateTimeLiteral, Value: tok.Value}, nil
 	case TokenQuotedIdentifier:
 		return &Ident{Name: tok.Value, NameSpan: tok.Span, Quoted: true}, nil
 	case TokenIdentifier:

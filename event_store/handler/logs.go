@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/logquery"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -23,11 +24,13 @@ const (
 // LogsHandler serves stored Logs on the query app: it runs and validates
 // Queries and fetches single Logs.
 type LogsHandler struct {
-	logs *storage.LogStore
+	logs  *storage.LogStore
+	clock clock.Clock
 }
 
-func NewLogsHandler(logs *storage.LogStore) *LogsHandler {
-	return &LogsHandler{logs: logs}
+// NewLogsHandler serves logs; clock is the time ago() and now() read.
+func NewLogsHandler(logs *storage.LogStore, clock clock.Clock) *LogsHandler {
+	return &LogsHandler{logs: logs, clock: clock}
 }
 
 // queryRequest is the body of a run.
@@ -73,15 +76,16 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid cursor"})
 		}
 	}
-	query, err := logquery.Compile(req.Query)
+	query, err := logquery.Compile(req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
 
+	from, to := query.Range()
 	logs, err := h.logs.ScanLogs(c.UserContext(), storage.LogScan{
 		ProjectID: projectID,
-		From:      req.From,
-		To:        req.To,
+		From:      from,
+		To:        to,
 		After:     after,
 		Where:     query.Where,
 		Limit:     limit,
@@ -111,7 +115,7 @@ func (h *LogsHandler) Validate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query"})
 	}
-	query, err := logquery.Compile(req.Query)
+	query, err := logquery.Compile(req.Query, logquery.Bounds{Now: h.clock.Now()})
 	if err != nil {
 		return c.JSON(fiber.Map{"errors": queryErrors(req.Query, err), "chips": nil})
 	}

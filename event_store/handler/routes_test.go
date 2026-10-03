@@ -15,6 +15,7 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -74,7 +75,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore, clock.System{}), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
 }

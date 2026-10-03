@@ -81,9 +81,15 @@ const (
 	StringLiteral LiteralKind = iota + 1
 	NumberLiteral
 	BoolLiteral
+	// TimespanLiteral is a length of time, such as 1h. Its Value is as
+	// written; ParseTimespan reads it.
+	TimespanLiteral
+	// DateTimeLiteral is datetime(…). Its Value is the time as written.
+	DateTimeLiteral
 )
 
-// BasicLit is a literal: a string, a number or true or false.
+// BasicLit is a literal: a string, a number, true or false, a timespan or a
+// datetime.
 type BasicLit struct {
 	ValueSpan Span
 	Kind      LiteralKind
@@ -97,7 +103,8 @@ func (l *BasicLit) Span() Span {
 	return l.ValueSpan
 }
 
-// BinaryExpr is X <op> Y, such as status == 200 or a and b.
+// BinaryExpr is X <op> Y, such as status == 200, a and b, or path contains
+// "api". For in and !in, Y is a *ListExpr.
 type BinaryExpr struct {
 	X      Expr
 	OpSpan Span
@@ -149,4 +156,18 @@ func (e *CallExpr) expr() {}
 
 func (e *CallExpr) Span() Span {
 	return unionSpans(e.Func.Span(), e.Lparen, e.Rparen)
+}
+
+// ListExpr is a parenthesised list of values, (a, b, …), the right side of
+// in and !in.
+type ListExpr struct {
+	Lparen Span
+	Elems  []Expr
+	Rparen Span
+}
+
+func (e *ListExpr) expr() {}
+
+func (e *ListExpr) Span() Span {
+	return unionSpans(e.Lparen, e.Rparen)
 }
