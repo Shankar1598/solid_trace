@@ -75,3 +75,19 @@ func TestLogsDuckDBPathComesFromTheConfigFile(t *testing.T) {
 		t.Errorf("logs DuckDB path = %q, want %q", cfg.LogsDuckDBPath, want)
 	}
 }
+
+func TestLogFilesAreNextToEventsDuckDBByDefault(t *testing.T) {
+	cfg := loadFrom(t, "../../deploy/event_store.yml")
+
+	if want := "/storage/duckdb/production/logs_parquet"; cfg.LogsParquetPath != want {
+		t.Errorf("Log files path = %q, want %q", cfg.LogsParquetPath, want)
+	}
+}
+
+func TestLogFilesPathComesFromTheConfigFile(t *testing.T) {
+	cfg := loadFrom(t, writeConfig(t, "duckdb_path: /data/events.duckdb\nlogs_parquet_path: /fast/logs_parquet\n"))
+
+	if want := "/fast/logs_parquet"; cfg.LogsParquetPath != want {
+		t.Errorf("Log files path = %q, want %q", cfg.LogsParquetPath, want)
+	}
+}

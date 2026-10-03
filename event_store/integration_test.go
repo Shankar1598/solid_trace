@@ -80,6 +80,15 @@ func (env *TestEnv) ProcessLogs(t *testing.T) {
 	}
 }
 
+// ExportLogs runs the hourly export as it runs at the start of the clock's
+// hour: every Log of hour h-2 and earlier moves to files.
+func (env *TestEnv) ExportLogs(t *testing.T) {
+	t.Helper()
+	if err := env.LogStore.ExportLogs(env.Clock.Now()); err != nil {
+		t.Fatalf("Hourly Log export failed: %v", err)
+	}
+}
+
 // Restart starts a new Event processing and Log processing on the same
 // stores, as after an EventStore restart or crash.
 func (env *TestEnv) Restart(t *testing.T) {
@@ -289,7 +298,7 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create DuckDB: %v", err)
 	}
 
-	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"))
+	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"), filepath.Join(env.dir, "logs_parquet"))
 	if err != nil {
 		t.Fatalf("Failed to attach logs DuckDB: %v", err)
 	}

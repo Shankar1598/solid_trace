@@ -37,7 +37,7 @@ func main() {
 	}
 	defer duckdbWriter.Close()
 
-	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath)
+	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath, cfg.LogsParquetPath)
 	if err != nil {
 		logger.L.Fatal("Failed to open logs DuckDB", "error", err)
 	}
@@ -86,6 +86,9 @@ func main() {
 		logger.L.Fatal("Failed to prepare Log processing", "error", err)
 	}
 	logProcessor.Start()
+
+	logExport := logprocessing.NewHourlyExport(logStore, clock.System{})
+	logExport.Start()
 
 	ingestService := ingest.NewService(ingest.Config{
 		Events:       pebbleWriter,
@@ -151,5 +154,6 @@ func main() {
 	// Then the stores close through the defers above.
 	processor.Stop()
 	logProcessor.Stop()
+	logExport.Stop()
 	archiveConsumer.Stop()
 }

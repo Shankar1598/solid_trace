@@ -9,6 +9,8 @@ pebble_path: /storage/pebble/production/events
 duckdb_path: /storage/duckdb/production/events.duckdb
 # Logs' hot tables, attached to the same DuckDB. Default: logs.duckdb next to duckdb_path.
 # logs_duckdb_path: /storage/duckdb/production/logs.duckdb
+# Logs' hourly Parquet files, on local disk. Default: logs_parquet next to duckdb_path.
+# logs_parquet_path: /storage/duckdb/production/logs_parquet
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 

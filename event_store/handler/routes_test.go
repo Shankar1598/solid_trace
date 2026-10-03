@@ -50,7 +50,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	}
 	t.Cleanup(duckdbWriter.Close)
 
-	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(tmpDir, "logs.duckdb"))
+	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(tmpDir, "logs.duckdb"), filepath.Join(tmpDir, "logs_parquet"))
 	if err != nil {
 		t.Fatalf("Failed to attach logs DuckDB: %v", err)
 	}
