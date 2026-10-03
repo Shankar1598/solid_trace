@@ -1,15 +1,16 @@
 version: "3.9"
 
 services:
-  # Dashboard. Thruster serves it on port 80 and proxies to Puma.
-  # The image runs as a non-root user, which can't bind port 80 on the host
-  # network (cap_add doesn't help a non-root user). Allow it on the host:
-  #   sysctl net.ipv4.ip_unprivileged_port_start=80   (persist in /etc/sysctl.d/)
+  # Dashboard. Thruster serves it on port 3000 and proxies to Puma on 3001.
+  # The image runs as a non-root user, which can't bind a port below 1024 on
+  # the host network, so Console isn't on port 80.
   console: &console
     image: solid-trace-console:latest
     network_mode: host
     environment:
       RAILS_ENV: production
+      HTTP_PORT: "3000"
+      TARGET_PORT: "3001"
       # Thruster faces clients directly, so it ignores X-Forwarded-* headers they send.
       FORWARD_HEADERS: "false"
       RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
