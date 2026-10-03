@@ -391,15 +391,15 @@ func TestValidateGivesChipsForBuilderQueriesAndPlacesMistakes(t *testing.T) {
 	}
 
 	mistakes := map[string]queryProblem{
-		"where status == 200\n| summarize count()": {Message: `unknown stage "summarize"`, Line: 2, Column: 3, EndLine: 2, EndColumn: 12},
-		`where startswith(message, "x")`:           {Message: `unknown function "startswith"`, Line: 1, Column: 7, EndLine: 1, EndColumn: 17},
-		`where status = 200`:                       {Message: `expected | or the end of the Query, got "="`, Line: 1, Column: 14, EndLine: 1, EndColumn: 15},
-		`where message == "unterminated`:           {Message: "unterminated string", Line: 1, Column: 18, EndLine: 1, EndColumn: 31},
-		`where user == "é" | bogus`:                {Message: `unknown stage "bogus"`, Line: 1, Column: 21, EndLine: 1, EndColumn: 26},
-		`where level == "x" |`:                     {Message: "expected a stage, such as where, got the end of the Query", Line: 1, Column: 21, EndLine: 1, EndColumn: 21},
-		`where status == other`:                    {Message: "expected a value: a string, a number, true or false", Line: 1, Column: 17, EndLine: 1, EndColumn: 22},
-		`where status`:                             {Message: `expected a condition, such as level == "error"`, Line: 1, Column: 7, EndLine: 1, EndColumn: 13},
-		`search timeout`:                           {Message: `search needs a quoted string, such as search "timeout"`, Line: 1, Column: 8, EndLine: 1, EndColumn: 15},
+		"where status == 200\n| mv-expand tags": {Message: `unknown stage "mv"`, Line: 2, Column: 3, EndLine: 2, EndColumn: 5},
+		`where startswith(message, "x")`:        {Message: `unknown function "startswith"`, Line: 1, Column: 7, EndLine: 1, EndColumn: 17},
+		`where status = 200`:                    {Message: `expected | or the end of the Query, got "="`, Line: 1, Column: 14, EndLine: 1, EndColumn: 15},
+		`where message == "unterminated`:        {Message: "unterminated string", Line: 1, Column: 18, EndLine: 1, EndColumn: 31},
+		`where user == "é" | bogus`:             {Message: `unknown stage "bogus"`, Line: 1, Column: 21, EndLine: 1, EndColumn: 26},
+		`where level == "x" |`:                  {Message: "expected a stage, such as where, got the end of the Query", Line: 1, Column: 21, EndLine: 1, EndColumn: 21},
+		`where status == other`:                 {Message: "expected a value: a string, a number, true or false", Line: 1, Column: 17, EndLine: 1, EndColumn: 22},
+		`where status`:                          {Message: `expected a condition, such as level == "error"`, Line: 1, Column: 7, EndLine: 1, EndColumn: 13},
+		`search timeout`:                        {Message: `search needs a quoted string, such as search "timeout"`, Line: 1, Column: 8, EndLine: 1, EndColumn: 15},
 	}
 	for query, want := range mistakes {
 		v := validateQuery(t, env, query)

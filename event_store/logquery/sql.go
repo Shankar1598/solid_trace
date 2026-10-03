@@ -267,6 +267,8 @@ func writeAggregate(a aggregate, f fields) string {
 	switch a.fn {
 	case "count":
 		return "count(*)"
+	case "countif":
+		return "count_if(" + writeValue(a.x, f) + ")"
 	case "dcount":
 		return "approx_count_distinct(" + writeValue(a.x, f) + ")"
 	case "percentile":
