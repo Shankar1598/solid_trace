@@ -23,6 +23,9 @@ import (
 type LogColumns struct {
 	set  PromotedSet
 	late bool
+	// view is set for the logs view, read by people: maps only, written
+	// map['key'].
+	view bool
 }
 
 // BuiltIn is a built-in field's column, such as level.
@@ -39,6 +42,9 @@ func (c LogColumns) Map(t AttributeType) string {
 // without one: the key's column if it is promoted, coalesced with its map
 // if it was promoted partway through the day, else its map.
 func (c LogColumns) Attribute(t AttributeType, key string) string {
+	if c.view {
+		return fmt.Sprintf("%s[%s]", t.Map(), sqlString(key))
+	}
 	inMap := fmt.Sprintf("map_extract_value(%s, %s)", t.Map(), sqlString(key))
 	if c.late {
 		return inMap

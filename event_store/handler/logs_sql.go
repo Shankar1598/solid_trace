@@ -89,3 +89,25 @@ func columnType(duckdbType string) string {
 	}
 	return "dynamic"
 }
+
+// POST /api/:project_id/logs/readable-sql
+//
+// Writes a Query, {"query", "from", "to"} as for a run, as readable SQL
+// against the logs view, to seed SQL mode: {"sql"}. Run through
+// /logs/sql with the same range, it returns the Query's rows. A Query with
+// mistakes answers 400 with {"errors": […]}, as validate lists them. It runs
+// nothing, so it answers whatever the SQL queries setting.
+func (h *LogsHandler) ReadableSQL(c *fiber.Ctx) error {
+	var req queryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
+	}
+	if req.From.IsZero() || req.To.IsZero() || req.To.Before(req.From) {
+		return c.Status(400).JSON(fiber.Map{"error": "from and to must be RFC 3339 times, from no later than to"})
+	}
+	query, err := logquery.Compile(req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
+	}
+	return c.JSON(fiber.Map{"sql": query.ReadableSQL()})
+}
