@@ -96,7 +96,12 @@ func main() {
 	logExport := logprocessing.NewHourlyExport(logStore, clock.System{})
 	logExport.Start()
 
-	logCleanup := logprocessing.NewCleanup(logStore, consoleSettings, storage.LogDiskLimit{Bytes: cfg.LogsDiskLimitBytes}, clock.System{})
+	diskLimit, err := storage.NewLogDiskLimit(cfg.LogsDiskLimitBytes, cfg.LogsParquetPath)
+	if err != nil {
+		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
+	}
+	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
+	logCleanup := logprocessing.NewCleanup(logStore, consoleSettings, diskLimit, clock.System{})
 	logCleanup.Start()
 
 	ingestService := ingest.NewService(ingest.Config{

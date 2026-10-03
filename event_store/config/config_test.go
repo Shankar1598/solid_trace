@@ -96,7 +96,7 @@ func TestLogsDiskLimitIsUnsetByDefault(t *testing.T) {
 	cfg := loadFrom(t, "../../deploy/event_store.yml")
 
 	if cfg.LogsDiskLimitBytes != 0 {
-		t.Errorf("Logs disk limit = %d bytes, want 0 (keep 10%% of the disk free)", cfg.LogsDiskLimitBytes)
+		t.Errorf("Logs disk limit = %d bytes, want 0 (half the disk)", cfg.LogsDiskLimitBytes)
 	}
 }
 
