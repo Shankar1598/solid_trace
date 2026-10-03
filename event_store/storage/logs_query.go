@@ -72,7 +72,8 @@ func (c LogColumns) Promoted(t AttributeType) []string {
 	return columns
 }
 
-// LogPosition is a Log's place in newest-first order: by time, then id.
+// LogPosition is a Log's place in newest-first order: by time, then id. With
+// the nil id, it is the place after every Log at its time.
 type LogPosition struct {
 	Time time.Time
 	ID   uuid.UUID
@@ -91,34 +92,53 @@ type LogScan struct {
 	Where func(LogColumns) string
 	// Limit is how many Logs to return at most.
 	Limit int
+	// Budget, if set, is how long the scan may go on reading hours once it
+	// has read one: past it, it returns what it has found.
+	Budget time.Duration
+}
+
+// LogScanPage is what a scan found: Logs, newest first, and where the scan of
+// older Logs goes on, or nil once there are none in the range.
+type LogScanPage struct {
+	Logs []models.Log
+	Next *LogPosition
 }
 
 // ScanLogs returns up to scan.Limit of a Project's Logs that meet the
 // condition, newest first, from its hot table, its late Logs and its files.
 // Promoted values are merged back into the Attributes.
 //
-// It reads hour by hour, newest first, and stops once it has scan.Limit Logs.
+// It reads hour by hour, newest first, and stops once it has scan.Limit Logs,
+// or once it has spent scan.Budget, so that a search for rare Logs answers
+// with what it has found so far: then Next is the start of the last hour it
+// read, and the scan goes on from there.
+//
 // It reads the Logs as they were when it began (logRead), so it sees each
 // exactly once, and holds up no export. Between hours it checks ctx, and
 // cancelling ctx stops a query.
-func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) ([]models.Log, error) {
+func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, error) {
+	started := time.Now()
 	from, to := scan.From.UTC(), scan.To.UTC()
 	if scan.After != nil && scan.After.Time.Before(to) {
-		// Logs at the same time as After, with a lower id, follow it.
-		to = scan.After.Time.UTC().Add(time.Microsecond)
+		to = scan.After.Time.UTC()
+		if scan.After.ID != uuid.Nil {
+			// Logs at the same time as After, with a lower id, follow it.
+			to = to.Add(time.Microsecond)
+		}
 	}
-	logs := []models.Log{}
+	page := LogScanPage{Logs: []models.Log{}}
 	if !from.Before(to) || scan.Limit <= 0 {
-		return logs, nil
+		return page, nil
 	}
 	read, err := s.beginRead(ctx, scan.ProjectID, from, to)
 	if err != nil {
-		return nil, err
+		return LogScanPage{}, err
 	}
 	defer read.end()
-	for _, hour := range read.hours {
+	logs := page.Logs
+	for i, hour := range read.hours {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return LogScanPage{}, err
 		}
 		hourFrom, hourTo := hour, hour.Add(time.Hour)
 		if from.After(hourFrom) {
@@ -129,14 +149,18 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) ([]models.Log, er
 		}
 		found, err := read.scanHour(scan, hour, hourFrom, hourTo, scan.Limit-len(logs))
 		if err != nil {
-			return nil, err
+			return LogScanPage{}, err
 		}
 		logs = append(logs, found...)
 		if len(logs) >= scan.Limit {
-			break
+			last := logs[len(logs)-1]
+			return LogScanPage{Logs: logs, Next: &LogPosition{Time: last.Time, ID: last.ID}}, nil
+		}
+		if scan.Budget > 0 && time.Since(started) > scan.Budget && i < len(read.hours)-1 {
+			return LogScanPage{Logs: logs, Next: &LogPosition{Time: hourFrom}}, nil
 		}
 	}
-	return logs, nil
+	return LogScanPage{Logs: logs}, nil
 }
 
 // scanHour returns up to limit of the Project's Logs of [from, to), within
