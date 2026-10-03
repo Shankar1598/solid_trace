@@ -11,6 +11,7 @@ import (
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zlib"
 	"github.com/klauspost/compress/zstd"
+	"github.com/solidtrace/event_store/ingest"
 )
 
 // The caps on an ingest request's body. A body over its route's cap as sent,
@@ -34,23 +35,29 @@ var (
 	errUndecodableBody     = errors.New("request body does not decode as its Content-Encoding")
 )
 
-// requestBody returns the request's body decoded from its Content-Encoding:
-// identity, gzip, deflate, br or zstd. A body over limit as sent, or over
-// decodedBodyLimit once decoded, is errBodyTooLarge.
+// requestBody returns the request's body, to be decoded from its
+// Content-Encoding (identity, gzip, deflate, br or zstd) only once the request
+// holds a waiting place: an overloaded ingest turns it away before spending
+// memory on decoding. A body over limit as sent is errBodyTooLarge, and an
+// unknown coding errUnsupportedEncoding, at once; one over decodedBodyLimit
+// once decoded is errBodyTooLarge from the decode.
 //
 // Fiber's c.Body() is not used: it inflates gzip, deflate and br with no cap
 // and passes zstd through undecoded.
-func requestBody(c *fiber.Ctx, limit int) ([]byte, error) {
+func requestBody(c *fiber.Ctx, limit int) (ingest.Body, error) {
 	raw := c.Request().Body()
 	if len(raw) > limit {
 		return nil, errBodyTooLarge
 	}
-
 	coding, err := contentCoding(c.Get(fiber.HeaderContentEncoding))
 	if err != nil {
 		return nil, err
 	}
+	return func() ([]byte, error) { return decodeBody(raw, coding) }, nil
+}
 
+// decodeBody decodes a body sent in one content coding, "" for identity.
+func decodeBody(raw []byte, coding string) ([]byte, error) {
 	var decoder io.Reader
 	switch coding {
 	case "":
@@ -118,7 +125,13 @@ func readDecoded(decoder io.Reader) ([]byte, error) {
 	return body, nil
 }
 
-// renderBodyError answers a body that requestBody refused.
+// isBodyError reports whether err is a request body's own: too large, in an
+// unsupported encoding, or not decoding as its encoding.
+func isBodyError(err error) bool {
+	return errors.Is(err, errBodyTooLarge) || errors.Is(err, errUnsupportedEncoding) || errors.Is(err, errUndecodableBody)
+}
+
+// renderBodyError answers a body that requestBody or its decode refused.
 func renderBodyError(c *fiber.Ctx, err error) error {
 	switch {
 	case errors.Is(err, errBodyTooLarge):

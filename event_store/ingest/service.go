@@ -71,9 +71,31 @@ func NewService(cfg Config) *Service {
 	}
 }
 
+// Body is a request's body, read only once the request holds a waiting
+// place, so that an overloaded ingest turns a request away before decoding
+// its body. An error it returns is returned as it is.
+type Body func() ([]byte, error)
+
+// RawBody is a Body that needs no decoding.
+func RawBody(body []byte) Body {
+	return func() ([]byte, error) { return body, nil }
+}
+
 // IngestStore ingests a raw Event payload from the store endpoint.
-func (s *Service) IngestStore(projectID uint32, rawEventJSON []byte) error {
-	return s.ingestEvent(projectID, rawEventJSON)
+func (s *Service) IngestStore(projectID uint32, body Body) error {
+	if !s.enterGate() {
+		return ErrOverloaded
+	}
+	defer s.leaveGate()
+
+	rawJSON, err := body()
+	if err != nil {
+		return err
+	}
+	if !json.Valid(rawJSON) {
+		return ErrInvalidEventJSON
+	}
+	return s.writeEvent(projectID, rawJSON)
 }
 
 // IngestEnvelope ingests the first event item of an envelope, as the store
@@ -85,7 +107,16 @@ func (s *Service) IngestStore(projectID uint32, rawEventJSON []byte) error {
 // fail to store are dropped and logged, and the envelope succeeds too. Only a
 // malformed envelope or event, overload, or a failure before anything is
 // stored fails it.
-func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
+func (s *Service) IngestEnvelope(projectID uint32, body Body) error {
+	if !s.enterGate() {
+		return ErrOverloaded
+	}
+	defer s.leaveGate()
+
+	envelope, err := body()
+	if err != nil {
+		return err
+	}
 	items, err := readEnvelope(envelope)
 	if err != nil {
 		return err
@@ -93,14 +124,6 @@ func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
 	if items.hasEvent && !json.Valid(items.event) {
 		return ErrInvalidEventJSON
 	}
-	if !items.hasEvent && len(items.logs) == 0 {
-		return nil
-	}
-
-	if !s.enterGate() {
-		return ErrOverloaded
-	}
-	defer s.leaveGate()
 
 	if items.hasEvent {
 		if err := s.writeEvent(projectID, items.event); err != nil {
@@ -190,19 +213,6 @@ func readEnvelope(envelope []byte) (envelopeItems, error) {
 }
 
 var newline = []byte("\n")
-
-func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
-	if !json.Valid(rawJSON) {
-		return ErrInvalidEventJSON
-	}
-
-	if !s.enterGate() {
-		return ErrOverloaded
-	}
-	defer s.leaveGate()
-
-	return s.writeEvent(projectID, rawJSON)
-}
 
 // writeEvent stores a valid Event payload and wakes Event processing. The
 // caller is in the gate.

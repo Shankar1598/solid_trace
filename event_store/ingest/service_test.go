@@ -63,7 +63,7 @@ func newTestService(events EventWriter) *Service {
 func TestServiceIngestEnvelopeRejectsInvalidEnvelopeHeader(t *testing.T) {
 	service := newTestService(nil)
 
-	err := service.IngestEnvelope(123, []byte("not-json\n{\"type\":\"event\"}\n{}"))
+	err := service.IngestEnvelope(123, RawBody([]byte("not-json\n{\"type\":\"event\"}\n{}")))
 	if !errors.Is(err, ErrInvalidEnvelope) {
 		t.Fatalf("expected ErrInvalidEnvelope, got %v", err)
 	}
@@ -72,7 +72,7 @@ func TestServiceIngestEnvelopeRejectsInvalidEnvelopeHeader(t *testing.T) {
 func TestServiceIngestEnvelopeRejectsItemHeaderWithoutType(t *testing.T) {
 	service := newTestService(nil)
 
-	err := service.IngestEnvelope(123, []byte("{}\n{}"))
+	err := service.IngestEnvelope(123, RawBody([]byte("{}\n{}")))
 	if !errors.Is(err, ErrInvalidItemHeader) {
 		t.Fatalf("expected ErrInvalidItemHeader, got %v", err)
 	}
@@ -81,7 +81,7 @@ func TestServiceIngestEnvelopeRejectsItemHeaderWithoutType(t *testing.T) {
 func TestServiceIngestEnvelopeRejectsLengthPastEnd(t *testing.T) {
 	service := newTestService(nil)
 
-	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\",\"length\":100}\n{}"))
+	err := service.IngestEnvelope(123, RawBody([]byte("{}\n{\"type\":\"event\",\"length\":100}\n{}")))
 	if !errors.Is(err, ErrInvalidEnvelope) {
 		t.Fatalf("expected ErrInvalidEnvelope, got %v", err)
 	}
@@ -90,7 +90,7 @@ func TestServiceIngestEnvelopeRejectsLengthPastEnd(t *testing.T) {
 func TestServiceIngestEnvelopeRejectsPayloadLongerThanLength(t *testing.T) {
 	service := newTestService(nil)
 
-	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\",\"length\":1}\n{}"))
+	err := service.IngestEnvelope(123, RawBody([]byte("{}\n{\"type\":\"event\",\"length\":1}\n{}")))
 	if !errors.Is(err, ErrInvalidEnvelope) {
 		t.Fatalf("expected ErrInvalidEnvelope, got %v", err)
 	}
@@ -100,7 +100,7 @@ func TestServiceIngestEnvelopeRejectsInvalidItemHeader(t *testing.T) {
 	service := newTestService(nil)
 	envelope := []byte("{}\nnot-json\n{}")
 
-	err := service.IngestEnvelope(123, envelope)
+	err := service.IngestEnvelope(123, RawBody(envelope))
 	if !errors.Is(err, ErrInvalidItemHeader) {
 		t.Fatalf("expected ErrInvalidItemHeader, got %v", err)
 	}
@@ -109,7 +109,7 @@ func TestServiceIngestEnvelopeRejectsInvalidItemHeader(t *testing.T) {
 func TestServiceIngestEnvelopeRejectsAnEventItemWithoutAPayload(t *testing.T) {
 	service := newTestService(nil)
 
-	err := service.IngestEnvelope(123, []byte("{}\n{\"type\":\"event\"}"))
+	err := service.IngestEnvelope(123, RawBody([]byte("{}\n{\"type\":\"event\"}")))
 	if !errors.Is(err, ErrInvalidEventJSON) {
 		t.Fatalf("expected ErrInvalidEventJSON, got %v", err)
 	}
@@ -119,7 +119,7 @@ func TestServiceIngestEnvelopeIgnoresUnsupportedItems(t *testing.T) {
 	service := newTestService(nil)
 	envelope := []byte("{}\n{\"type\":\"attachment\"}\nignored")
 
-	if err := service.IngestEnvelope(123, envelope); err != nil {
+	if err := service.IngestEnvelope(123, RawBody(envelope)); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 }
@@ -127,7 +127,7 @@ func TestServiceIngestEnvelopeIgnoresUnsupportedItems(t *testing.T) {
 func TestServiceIngestStoreRejectsInvalidJSON(t *testing.T) {
 	service := newTestService(nil)
 
-	err := service.IngestStore(123, []byte("not-json"))
+	err := service.IngestStore(123, RawBody([]byte("not-json")))
 	if !errors.Is(err, ErrInvalidEventJSON) {
 		t.Fatalf("expected ErrInvalidEventJSON, got %v", err)
 	}
@@ -168,13 +168,13 @@ func TestServiceIngestStore_TooManyWaiting_ReturnsOverloaded(t *testing.T) {
 
 	results := make(chan error, 2)
 	for range 2 {
-		go func() { results <- service.IngestStore(42, sampleEventJSON()) }()
+		go func() { results <- service.IngestStore(42, RawBody(sampleEventJSON())) }()
 	}
 	for range 2 {
 		<-writer.entered
 	}
 
-	if err := service.IngestStore(42, sampleEventJSON()); !errors.Is(err, ErrOverloaded) {
+	if err := service.IngestStore(42, RawBody(sampleEventJSON())); !errors.Is(err, ErrOverloaded) {
 		t.Fatalf("expected ErrOverloaded, got %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestServiceIngestStore_TooManyWaiting_ReturnsOverloaded(t *testing.T) {
 			t.Fatalf("waiting request failed: %v", err)
 		}
 	}
-	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+	if err := service.IngestStore(42, RawBody(sampleEventJSON())); err != nil {
 		t.Fatalf("expected success once the waiting requests finished, got %v", err)
 	}
 }
@@ -194,7 +194,7 @@ func TestServiceIngestStore_WriteError_Propagates(t *testing.T) {
 	writer.err = errors.New("pebble: disk full")
 	service := newTestService(writer)
 
-	err := service.IngestStore(42, sampleEventJSON())
+	err := service.IngestStore(42, RawBody(sampleEventJSON()))
 	if !errors.Is(err, writer.err) {
 		t.Fatalf("expected wrapped write error, got %v", err)
 	}
@@ -207,7 +207,7 @@ func TestServiceIngestEnvelope_HappyPath(t *testing.T) {
 	eventPayload := `{"message": "Envelope Test", "environment": "staging"}`
 	envelope := []byte("{}\n{\"type\":\"event\"}\n" + eventPayload)
 
-	err := service.IngestEnvelope(99, envelope)
+	err := service.IngestEnvelope(99, RawBody(envelope))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestServiceIngestEnvelope_DropsTransactions(t *testing.T) {
 	eventPayload := `{"type": "transaction", "transaction": "GET /"}`
 	envelope := []byte("{}\n{\"type\":\"transaction\"}\n" + eventPayload)
 
-	err := service.IngestEnvelope(99, envelope)
+	err := service.IngestEnvelope(99, RawBody(envelope))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestServiceIngestEnvelope_MultipleItems(t *testing.T) {
 			writer := newFakeEventWriter()
 			service := newTestService(writer)
 
-			if err := service.IngestEnvelope(99, []byte(tt.envelope)); err != nil {
+			if err := service.IngestEnvelope(99, RawBody([]byte(tt.envelope))); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if len(writer.written) != 1 {
@@ -295,7 +295,7 @@ func TestServiceIngestStore_CopiesRequestBody(t *testing.T) {
 	service := newTestService(writer)
 
 	body := sampleEventJSON()
-	if err := service.IngestStore(42, body); err != nil {
+	if err := service.IngestStore(42, RawBody(body)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	want := string(body)
@@ -367,10 +367,10 @@ func TestLogsAreTurnedAwayWhileEventsFillTheWaitingLimit(t *testing.T) {
 	service := newTestLogService(events, logs, 1)
 
 	result := make(chan error, 1)
-	go func() { result <- service.IngestStore(42, sampleEventJSON()) }()
+	go func() { result <- service.IngestStore(42, RawBody(sampleEventJSON())) }()
 	<-events.entered
 
-	if _, err := service.IngestLogs(42, []byte(`{"message":"hi"}`), false); !errors.Is(err, ErrOverloaded) {
+	if _, err := service.IngestLogs(42, RawBody([]byte(`{"message":"hi"}`)), false); !errors.Is(err, ErrOverloaded) {
 		t.Fatalf("expected ErrOverloaded, got %v", err)
 	}
 
@@ -378,7 +378,7 @@ func TestLogsAreTurnedAwayWhileEventsFillTheWaitingLimit(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatalf("waiting Event failed: %v", err)
 	}
-	if counts, err := service.IngestLogs(42, []byte(`{"message":"hi"}`), false); err != nil || counts.Accepted != 1 {
+	if counts, err := service.IngestLogs(42, RawBody([]byte(`{"message":"hi"}`)), false); err != nil || counts.Accepted != 1 {
 		t.Fatalf("expected the Log accepted once the Event was written, got %+v %v", counts, err)
 	}
 }
@@ -391,12 +391,12 @@ func TestEventsAreTurnedAwayWhileLogsFillTheWaitingLimit(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := service.IngestLogs(42, []byte(`{"message":"hi"}`), false)
+		_, err := service.IngestLogs(42, RawBody([]byte(`{"message":"hi"}`)), false)
 		result <- err
 	}()
 	<-logs.entered
 
-	if err := service.IngestStore(42, sampleEventJSON()); !errors.Is(err, ErrOverloaded) {
+	if err := service.IngestStore(42, RawBody(sampleEventJSON())); !errors.Is(err, ErrOverloaded) {
 		t.Fatalf("expected ErrOverloaded, got %v", err)
 	}
 
@@ -404,7 +404,7 @@ func TestEventsAreTurnedAwayWhileLogsFillTheWaitingLimit(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatalf("waiting Logs failed: %v", err)
 	}
-	if err := service.IngestStore(42, sampleEventJSON()); err != nil {
+	if err := service.IngestStore(42, RawBody(sampleEventJSON())); err != nil {
 		t.Fatalf("expected the Event stored once the Logs were written, got %v", err)
 	}
 }
@@ -427,7 +427,7 @@ func TestEachProjectsRetentionDecidesWhichLogTimesAreTooOld(t *testing.T) {
 	// Ten days before the service's clock.
 	body := []byte(`{"message": "ten days old", "time": "2026-09-22T12:00:00Z"}`)
 	for _, projectID := range []uint32{42, 43} {
-		if _, err := service.IngestLogs(projectID, body, false); err != nil {
+		if _, err := service.IngestLogs(projectID, RawBody(body), false); err != nil {
 			t.Fatalf("IngestLogs for %d: %v", projectID, err)
 		}
 	}
@@ -445,7 +445,7 @@ func TestLogsAreNotStoredWhenTheProjectsRetentionCantBeRead(t *testing.T) {
 	logs := newFakeLogWriter()
 	service := newRetentionTestService(nil, logs, 10, projectRetention{err: errors.New("database is locked")})
 
-	if _, err := service.IngestLogs(42, []byte(`{"message": "hi"}`), false); err == nil {
+	if _, err := service.IngestLogs(42, RawBody([]byte(`{"message": "hi"}`)), false); err == nil {
 		t.Fatalf("Expected an error")
 	}
 	if len(logs.written) != 0 {
@@ -494,7 +494,7 @@ func TestAnEnvelopesLogItemIsStoredAsOneLogBatch(t *testing.T) {
 	service.notifyLogs = func(projectID uint32) { notified <- projectID }
 
 	envelope := pythonEnvelopeHeader + pythonLogItem(pythonRecord("first"), pythonRecord("second"))
-	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+	if err := service.IngestEnvelope(42, RawBody([]byte(envelope))); err != nil {
 		t.Fatalf("IngestEnvelope: %v", err)
 	}
 
@@ -526,7 +526,7 @@ func TestAnEnvelopesEventAndLogItemAreBothStored(t *testing.T) {
 		fmt.Sprintf(`{"type": "event", "length": %d}`, len(eventPayload)) + "\n" + eventPayload + "\n" +
 		pythonLogItem(pythonRecord("alongside"))
 	// A waiting limit of one is enough for one envelope's Event and Logs.
-	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+	if err := service.IngestEnvelope(42, RawBody([]byte(envelope))); err != nil {
 		t.Fatalf("IngestEnvelope: %v", err)
 	}
 
@@ -561,7 +561,7 @@ func TestAnEnvelopeSucceedsOnceItsEventIsStoredWhateverBecomesOfItsLogs(t *testi
 	} {
 		events := newFakeEventWriter()
 		logs := newFakeLogWriter()
-		if err := service(events, logs).IngestEnvelope(42, []byte(envelope)); err != nil {
+		if err := service(events, logs).IngestEnvelope(42, RawBody([]byte(envelope))); err != nil {
 			t.Errorf("When %s, expected the envelope to succeed, got %v", name, err)
 		}
 		if len(events.written) != 1 {
@@ -572,7 +572,7 @@ func TestAnEnvelopeSucceedsOnceItsEventIsStoredWhateverBecomesOfItsLogs(t *testi
 	// With no Event stored, a failed Log write still fails the envelope.
 	logs := newFakeLogWriter()
 	logs.err = errors.New("pebble: closed")
-	if err := newTestLogService(nil, logs, 10).IngestEnvelope(42, []byte(pythonEnvelopeHeader+pythonLogItem(pythonRecord("lost")))); err == nil {
+	if err := newTestLogService(nil, logs, 10).IngestEnvelope(42, RawBody([]byte(pythonEnvelopeHeader+pythonLogItem(pythonRecord("lost"))))); err == nil {
 		t.Errorf("Expected a Logs-only envelope whose write fails to fail")
 	}
 }
@@ -586,7 +586,7 @@ func TestLogRecordsThatCannotBeReadAreDroppedAndTheEnvelopeSucceeds(t *testing.T
 	envelope := pythonEnvelopeHeader +
 		pythonLogItem(`"just a string"`, pythonRecord("kept"), `null`, `[1, 2]`) +
 		unreadable + notAContainer
-	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+	if err := service.IngestEnvelope(42, RawBody([]byte(envelope))); err != nil {
 		t.Fatalf("Expected the envelope to succeed, got %v", err)
 	}
 
@@ -603,7 +603,7 @@ func TestAnEnvelopeWithNoReadableLogsStoresNothing(t *testing.T) {
 	service := newTestLogService(nil, logs, 10)
 
 	envelope := pythonEnvelopeHeader + pythonLogItem(`"just a string"`)
-	if err := service.IngestEnvelope(42, []byte(envelope)); err != nil {
+	if err := service.IngestEnvelope(42, RawBody([]byte(envelope))); err != nil {
 		t.Fatalf("Expected the envelope to succeed, got %v", err)
 	}
 	if len(logs.written) != 0 {
@@ -618,11 +618,11 @@ func TestEnvelopeLogsAreTurnedAwayWhileEventsFillTheWaitingLimit(t *testing.T) {
 	service := newTestLogService(events, logs, 1)
 
 	result := make(chan error, 1)
-	go func() { result <- service.IngestStore(42, sampleEventJSON()) }()
+	go func() { result <- service.IngestStore(42, RawBody(sampleEventJSON())) }()
 	<-events.entered
 
 	envelope := []byte(pythonEnvelopeHeader + pythonLogItem(pythonRecord("hi")))
-	if err := service.IngestEnvelope(42, envelope); !errors.Is(err, ErrOverloaded) {
+	if err := service.IngestEnvelope(42, RawBody(envelope)); !errors.Is(err, ErrOverloaded) {
 		t.Fatalf("Expected ErrOverloaded, got %v", err)
 	}
 
@@ -641,7 +641,7 @@ func TestAnEnvelopeWithAnInvalidEventStoresNothing(t *testing.T) {
 	service := newTestLogService(events, logs, 10)
 
 	envelope := pythonEnvelopeHeader + `{"type": "event"}` + "\n" + `{not json` + "\n" + pythonLogItem(pythonRecord("hi"))
-	if err := service.IngestEnvelope(42, []byte(envelope)); !errors.Is(err, ErrInvalidEventJSON) {
+	if err := service.IngestEnvelope(42, RawBody([]byte(envelope))); !errors.Is(err, ErrInvalidEventJSON) {
 		t.Fatalf("Expected ErrInvalidEventJSON, got %v", err)
 	}
 	if len(events.written) != 0 || len(logs.written) != 0 {
