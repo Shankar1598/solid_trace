@@ -25,6 +25,7 @@ class LogsController < ApplicationController
     render inertia: "Logs/Index", props: {
       project: project_props(@project),
       projects: @current_org.projects.order(:name).map { |p| project_props(p) },
+      sql_queries_enabled: InstanceSetting.current.sql_queries_enabled?,
     }
   end
 
@@ -77,6 +78,38 @@ class LogsController < ApplicationController
   # browser never parses Queries.
   def validate
     render json: EventStore.validate_logs_query(project_id: @project.id, query: params[:query].to_s)
+  rescue EventStore::Rejected => e
+    render json: e.body, status: :bad_request
+  rescue EventStore::Unavailable => e
+    eventstore_unavailable(e)
+  end
+
+  # GET with query, from and to (ISO 8601): the Query as readable SQL against
+  # the logs view, to seed SQL mode. Refused while SQL queries are off.
+  def readable_sql
+    from, to = time_range
+    return render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless from && to
+
+    render json: EventStore.readable_logs_sql(project_id: @project.id, query: params[:query].to_s, from: from, to: to)
+  rescue EventStore::SQLQueriesOff => e
+    render json: { error: e.message }, status: :forbidden
+  rescue EventStore::Rejected => e
+    render json: e.body, status: :bad_request
+  rescue EventStore::Unavailable => e
+    eventstore_unavailable(e)
+  end
+
+  # POST with sql, from and to (ISO 8601): runs the SQL as written against
+  # the logs view of the Project and range, answering a table. Only a POST,
+  # so a link can't run SQL as whoever opens it, and refused while SQL
+  # queries are off.
+  def sql
+    from, to = time_range
+    return render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless from && to
+
+    render json: EventStore.run_logs_sql(project_id: @project.id, sql: params[:sql].to_s, from: from, to: to)
+  rescue EventStore::SQLQueriesOff => e
+    render json: { error: e.message }, status: :forbidden
   rescue EventStore::Rejected => e
     render json: e.body, status: :bad_request
   rescue EventStore::Unavailable => e

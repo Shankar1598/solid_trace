@@ -304,6 +304,128 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_not_requested fetch
   end
 
+  test "SQL mode is hidden while SQL queries are off" do
+    assert_equal false, explorer_page["sql_queries_enabled"]
+  end
+
+  test "SQL mode is offered once the operator turns SQL queries on" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+
+    assert_equal true, explorer_page["sql_queries_enabled"]
+  end
+
+  test "the readable SQL of a Query is refused while SQL queries are off" do
+    readable = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/readable-sql")
+
+    get readable_sql_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+
+    assert_response :forbidden
+    assert response.parsed_body["error"].present?
+    assert_not_requested readable
+  end
+
+  test "SQL is refused while SQL queries are off" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+    sql = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+
+    post sql_project_logs_url(@project, org_slug: @organization.slug),
+      params: { sql: "SELECT 1", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }, as: :json
+
+    assert_response :forbidden
+    assert response.parsed_body["error"].present?
+    assert_not_requested sql
+  end
+
+  test "the readable SQL of a Query covers the Project and time range it was given" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/readable-sql")
+      .with(body: { query: "search \"boom\"", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z" }.to_json)
+      .to_return(status: 200, body: { sql: "WITH stage1 AS (...)\nSELECT * FROM stage1" }.to_json)
+
+    get readable_sql_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "search \"boom\"", from: "2026-10-03T11:00:00+02:00", to: "2026-10-03T10:00:00Z" }
+
+    assert_response :success
+    assert_equal "WITH stage1 AS (...)\nSELECT * FROM stage1", response.parsed_body["sql"]
+  end
+
+  test "the readable SQL of a Query with mistakes answers with EventStore's errors" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    errors = [ { message: "unknown stage \"nope\"", line: 1, column: 1, end_line: 1, end_column: 5 } ]
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/readable-sql")
+      .to_return(status: 400, body: { errors: errors }.to_json)
+
+    get readable_sql_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "nope", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+
+    assert_response :bad_request
+    assert_equal "unknown stage \"nope\"", response.parsed_body["errors"].first["message"]
+  end
+
+  test "SQL runs over the Project and time range it was given, answering a table" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    table = { columns: [ { name: "n", type: "number" } ], rows: [ [ 3 ] ], truncated: false }
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+      .with(body: { sql: "SELECT count(*) AS n FROM logs", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z" }.to_json)
+      .to_return(status: 200, body: { table: table }.to_json)
+
+    post sql_project_logs_url(@project, org_slug: @organization.slug), params: {
+      sql: "SELECT count(*) AS n FROM logs", from: "2026-10-03T11:00:00+02:00", to: "2026-10-03T10:00:00Z",
+    }, as: :json
+
+    assert_response :success
+    assert_equal [ [ 3 ] ], response.parsed_body["table"]["rows"]
+    assert_equal [ "n" ], response.parsed_body["table"]["columns"].map { |c| c["name"] }
+  end
+
+  test "failing SQL answers with DuckDB's message" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+      .to_return(status: 400, body: { error: "Binder Error: column \"nope\" not found" }.to_json)
+
+    post sql_project_logs_url(@project, org_slug: @organization.slug),
+      params: { sql: "SELECT nope FROM logs", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }, as: :json
+
+    assert_response :bad_request
+    assert_equal "Binder Error: column \"nope\" not found", response.parsed_body["error"]
+  end
+
+  test "SQL can't be run from a link" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    sql = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+
+    get "#{project_logs_url(@project, org_slug: @organization.slug)}/sql",
+      params: { sql: "SELECT 1", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+
+    assert_response :not_found
+    assert_not_requested sql
+  end
+
+  test "someone outside the Organization can't run SQL on its Logs" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    sign_in_as(@outsider)
+    sql = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+
+    post sql_project_logs_url(@project, org_slug: @organization.slug),
+      params: { sql: "SELECT 1", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }, as: :json
+
+    assert_response :not_found
+    assert_not_requested sql
+  end
+
+  test "SQL answers 502 when EventStore can't" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql").to_timeout
+
+    post sql_project_logs_url(@project, org_slug: @organization.slug),
+      params: { sql: "SELECT 1", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }, as: :json
+
+    assert_response :bad_gateway
+    assert response.parsed_body["error"].present?
+  end
+
   test "the Logs entry opens the newest Project's Logs" do
     newest = create(:project, organization: @organization, created_at: 1.minute.from_now)
 
