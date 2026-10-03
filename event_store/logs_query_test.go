@@ -341,6 +341,17 @@ type validation struct {
 		} `json:"filters"`
 		Search *string `json:"search"`
 	} `json:"chips"`
+	Stages []validatedStage `json:"stages"`
+}
+
+// validatedStage is where validate places one stage, and what it says of it.
+type validatedStage struct {
+	Line      int  `json:"line"`
+	Column    int  `json:"column"`
+	EndLine   int  `json:"end_line"`
+	EndColumn int  `json:"end_column"`
+	Filter    bool `json:"filter"`
+	Builder   bool `json:"builder"`
 }
 
 func validateQuery(t *testing.T, env *TestEnv, query string) validation {
@@ -408,6 +419,11 @@ func TestValidateGivesChipsForBuilderQueriesAndPlacesMistakes(t *testing.T) {
 		}
 	}
 
+	// A mistake leaves no stages to place.
+	if v := validateQuery(t, env, `where status = 200`); v.Stages == nil || len(v.Stages) != 0 {
+		t.Errorf("Expected no stages for a Query with mistakes, got %+v", v.Stages)
+	}
+
 	// A run refuses a Query with mistakes the same way.
 	status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: `where startswith(message, "x")`, From: allTime.from, To: allTime.to})
 	var refused struct {
@@ -427,6 +443,35 @@ func TestValidateGivesChipsForBuilderQueriesAndPlacesMistakes(t *testing.T) {
 	} {
 		if status, raw := postQueryApp(t, env, "/api/123/logs/query", req); status != 400 {
 			t.Errorf("Expected a run with %s to be 400, got %d: %s", name, status, raw)
+		}
+	}
+}
+
+func TestValidatePlacesEachStageAndSaysWhichTheBuilderCanShow(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	cases := map[string][]validatedStage{
+		"": {},
+		"logs\n| where service == \"api\"\n| where duration > 500\n| summarize count() by service": {
+			{Line: 2, Column: 3, EndLine: 2, EndColumn: 25, Filter: true, Builder: true},
+			{Line: 3, Column: 3, EndLine: 3, EndColumn: 23, Filter: true, Builder: false},
+			{Line: 4, Column: 3, EndLine: 4, EndColumn: 31, Filter: false, Builder: false},
+		},
+		`search "é" | search "b" | where a == 1`: {
+			{Line: 1, Column: 1, EndLine: 1, EndColumn: 11, Filter: true, Builder: true},
+			{Line: 1, Column: 14, EndLine: 1, EndColumn: 24, Filter: true, Builder: false},
+			{Line: 1, Column: 27, EndLine: 1, EndColumn: 39, Filter: true, Builder: true},
+		},
+		"take 5 | where a == 1": {
+			{Line: 1, Column: 1, EndLine: 1, EndColumn: 7, Filter: false, Builder: false},
+			{Line: 1, Column: 10, EndLine: 1, EndColumn: 22, Filter: false, Builder: false},
+		},
+	}
+	for query, want := range cases {
+		v := validateQuery(t, env, query)
+		if len(v.Errors) != 0 || !slices.Equal(v.Stages, want) {
+			t.Errorf("%q: expected stages %+v, got %+v and errors %+v", query, want, v.Stages, v.Errors)
 		}
 	}
 }

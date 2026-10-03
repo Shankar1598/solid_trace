@@ -43,6 +43,10 @@ type Bounds struct {
 type Query struct {
 	head []stage
 	tail []stage
+	// text is the Query's text, and spans each stage's place in it, head
+	// then tail.
+	text  string
+	spans []parser.Span
 
 	from, to time.Time
 	// table is set when the Query returns a table rather than Log rows.
@@ -65,7 +69,7 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 		return nil, err
 	}
 	c := &compiler{text: source, bounds: bounds, scope: logScope(), reads: map[attrKey]bool{}}
-	q := &Query{from: bounds.From.UTC(), to: bounds.To.UTC()}
+	q := &Query{from: bounds.From.UTC(), to: bounds.To.UTC(), text: source}
 	inHead := true
 	for _, s := range tree.Stages {
 		if inHead {
@@ -85,6 +89,7 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 		} else {
 			q.tail = append(q.tail, compiled)
 		}
+		q.spans = append(q.spans, s.Span())
 	}
 	q.narrow()
 	q.finish(c)

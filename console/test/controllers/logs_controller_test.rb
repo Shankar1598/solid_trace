@@ -85,6 +85,25 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "older-still", response.parsed_body["next_cursor"]
   end
 
+  test "a tabular Query answers EventStore's table" do
+    table = {
+      columns: [ { name: "service", type: "dynamic" }, { name: "count_", type: "number" } ],
+      rows: [ [ "api", 12 ], [ "web", 3 ] ],
+      truncated: false,
+    }
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+      .with(body: hash_including(query: "summarize count() by service"))
+      .to_return(status: 200, body: { table: table }.to_json)
+
+    get query_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "summarize count() by service", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+
+    assert_response :success
+    assert_equal [ [ "api", 12 ], [ "web", 3 ] ], response.parsed_body["table"]["rows"]
+    assert_equal [ "service", "count_" ], response.parsed_body["table"]["columns"].map { |c| c["name"] }
+    assert_equal false, response.parsed_body["table"]["truncated"]
+  end
+
   test "a Query with mistakes answers with EventStore's errors" do
     errors = [ { message: "unknown stage \"nope\"", line: 1, column: 1, end_line: 1, end_column: 5 } ]
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
@@ -131,6 +150,21 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [], response.parsed_body["errors"]
     assert_equal({ "field" => "http.status", "op" => "!=", "value" => 500 }, response.parsed_body["chips"]["filters"].first)
     assert_equal "boom", response.parsed_body["chips"]["search"]
+  end
+
+  test "validate answers where each stage is and whether the Builder can show it" do
+    stages = [
+      { line: 1, column: 1, end_line: 1, end_column: 21, filter: true, builder: false },
+      { line: 1, column: 24, end_line: 1, end_column: 31, filter: false, builder: false },
+    ]
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/validate")
+      .to_return(status: 200, body: { errors: [], chips: nil, stages: stages }.to_json)
+
+    get validate_project_logs_url(@project, org_slug: @organization.slug), params: { query: "where duration > 500 | count" }
+
+    assert_response :success
+    assert_nil response.parsed_body["chips"]
+    assert_equal [ true, false ], response.parsed_body["stages"].map { |s| s["filter"] }
   end
 
   test "someone outside the Organization can't validate a Query on its Logs" do

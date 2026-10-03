@@ -3,11 +3,13 @@ import type { Builder, Chip } from '@/lib/logs/builder'
 import { cn } from '@/lib/utils'
 import { valueText } from './TagMenu'
 
-/** What the Builder shows: its chips, or why it can't. */
+/**
+ * What the Builder shows: its chips once validate has read them. A Query the
+ * Builder can't show opens in Query mode instead.
+ */
 export type BuilderView =
   | { status: 'reading' }
   | { status: 'ready'; builder: Builder }
-  | { status: 'unshowable'; query: string }
 
 interface BuilderBarProps {
   view: BuilderView
@@ -15,22 +17,11 @@ interface BuilderBarProps {
   onRemove: (index: number) => void
   onSearch: (text: string) => void
   onRun: () => void
-  onClear: () => void
 }
 
 /** Filter chips and the search box: the Builder's controls in the bar. */
-export function BuilderBar({ view, onFlip, onRemove, onSearch, onRun, onClear }: BuilderBarProps) {
+export function BuilderBar({ view, onFlip, onRemove, onSearch, onRun }: BuilderBarProps) {
   if (view.status === 'reading') return <span className="flex-1 text-xs text-muted-foreground">Reading the filters…</span>
-
-  if (view.status === 'unshowable') {
-    return (
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <code className="truncate rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground" title={view.query}>{view.query}</code>
-        <span className="shrink-0 text-[11px] text-muted-foreground">The Builder can't show this Query.</span>
-        <button className="shrink-0 text-[11px] underline" onClick={onClear}>Clear it</button>
-      </div>
-    )
-  }
 
   const { builder } = view
   return (
