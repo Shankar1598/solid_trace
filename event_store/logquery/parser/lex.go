@@ -101,6 +101,10 @@ var symbols = []struct {
 func Scan(source string) []Token {
 	s := &scanner{source: source}
 	var tokens []Token
+	s.skipSpaceAndComments()
+	if tok, ok := s.slug(); ok {
+		tokens = append(tokens, tok)
+	}
 	for {
 		s.skipSpaceAndComments()
 		if s.pos >= len(source) {
@@ -170,6 +174,28 @@ func (s *scanner) token() Token {
 
 func errorToken(span Span, format string, args ...any) Token {
 	return Token{Kind: TokenError, Span: span, Value: fmt.Sprintf(format, args...)}
+}
+
+// slug scans a Project's slug at the start of a Query, such as my-api or
+// 2fa, as one identifier: letters, digits, _ and -, then | or the end.
+// Anywhere else - is minus. It reports false, moving nothing, when the Query
+// doesn't start with one.
+func (s *scanner) slug() (Token, bool) {
+	start := s.pos
+	end := start
+	for end < len(s.source) && isSlugPart(s.source[end]) {
+		end++
+	}
+	if end == start || s.source[start] == '-' {
+		return Token{}, false
+	}
+	after := &scanner{source: s.source, pos: end}
+	after.skipSpaceAndComments()
+	if after.pos < len(s.source) && s.source[after.pos] != '|' {
+		return Token{}, false
+	}
+	s.pos = end
+	return Token{Kind: TokenIdentifier, Span: newSpan(start, end), Value: s.source[start:end]}, true
 }
 
 func (s *scanner) identifier() Token {
@@ -358,6 +384,12 @@ func isIdentStart(r rune) bool {
 
 func isIdentPart(r rune) bool {
 	return isIdentStart(r) || unicode.IsDigit(r)
+}
+
+// isSlugPart reports whether b can be part of a Project's slug, as Console
+// writes them (Rails' parameterize): ASCII letters, digits, _ and -.
+func isSlugPart(b byte) bool {
+	return b == '_' || b == '-' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 }
 
 func isDigit(r rune) bool {
