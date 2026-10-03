@@ -91,3 +91,19 @@ func TestLogFilesPathComesFromTheConfigFile(t *testing.T) {
 		t.Errorf("Log files path = %q, want %q", cfg.LogsParquetPath, want)
 	}
 }
+
+func TestLogsDiskLimitIsUnsetByDefault(t *testing.T) {
+	cfg := loadFrom(t, "../../deploy/event_store.yml")
+
+	if cfg.LogsDiskLimitBytes != 0 {
+		t.Errorf("Logs disk limit = %d bytes, want 0 (keep 10%% of the disk free)", cfg.LogsDiskLimitBytes)
+	}
+}
+
+func TestLogsDiskLimitComesFromTheConfigFileInGB(t *testing.T) {
+	cfg := loadFrom(t, writeConfig(t, "logs_disk_limit_gb: 800\n"))
+
+	if want := int64(800_000_000_000); cfg.LogsDiskLimitBytes != want {
+		t.Errorf("Logs disk limit = %d bytes, want %d", cfg.LogsDiskLimitBytes, want)
+	}
+}

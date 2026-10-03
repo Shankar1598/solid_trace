@@ -356,7 +356,7 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
-	env.LogCleanup = logprocessing.NewCleanup(logStore, consoleSettings, env.Clock)
+	env.LogCleanup = logprocessing.NewCleanup(logStore, consoleSettings, storage.LogDiskLimit{}, env.Clock)
 
 	// Setup Handler
 	env.EventWriter.setWriter(pebbleWriter)

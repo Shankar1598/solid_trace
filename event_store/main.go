@@ -96,6 +96,9 @@ func main() {
 	logExport := logprocessing.NewHourlyExport(logStore, clock.System{})
 	logExport.Start()
 
+	logCleanup := logprocessing.NewCleanup(logStore, consoleSettings, storage.LogDiskLimit{Bytes: cfg.LogsDiskLimitBytes}, clock.System{})
+	logCleanup.Start()
+
 	ingestService := ingest.NewService(ingest.Config{
 		Events:       pebbleWriter,
 		NotifyEvents: processor.Notify,
@@ -161,5 +164,6 @@ func main() {
 	processor.Stop()
 	logProcessor.Stop()
 	logExport.Stop()
+	logCleanup.Stop()
 	archiveConsumer.Stop()
 }
