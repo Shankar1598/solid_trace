@@ -9,8 +9,13 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// maxHistogramBuckets is how many buckets a histogram has at most.
-const maxHistogramBuckets = 10000
+const (
+	// maxHistogramBuckets is how many buckets a histogram has at most.
+	maxHistogramBuckets = 10000
+	// maxBucketSeconds is the largest bucket, a year, well short of
+	// overflowing a time.Duration.
+	maxBucketSeconds = 366 * 24 * 60 * 60
+)
 
 // histogramLevels are the Levels a histogram counts by, and "none" for Logs
 // with no Level.
@@ -66,8 +71,8 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "from and to must be RFC 3339 times, from no later than to"})
 	}
 	bucket := time.Duration(req.BucketSeconds) * time.Second
-	if req.BucketSeconds < 0 {
-		return c.Status(400).JSON(fiber.Map{"error": "bucket_seconds must be a positive whole number"})
+	if req.BucketSeconds < 0 || req.BucketSeconds > maxBucketSeconds {
+		return c.Status(400).JSON(fiber.Map{"error": "bucket_seconds must be a positive whole number, at most a year"})
 	} else if req.BucketSeconds == 0 {
 		bucket = logquery.AutoBucket(req.To.Sub(req.From))
 	}
