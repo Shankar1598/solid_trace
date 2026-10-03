@@ -276,7 +276,11 @@ func (c *compiler) expr(e parser.Expr, want valueType, aggregates bool) (expr, e
 
 // name compiles a name: a column, a built-in field or an Attribute.
 func (c *compiler) name(id *parser.Ident, want valueType) (expr, error) {
-	if col, ok := c.scope.lookup(id.Name); ok {
+	name := id.Name
+	if alias, ok := fieldAliases[name]; ok && !id.Quoted {
+		name = alias
+	}
+	if col, ok := c.scope.lookup(name); ok {
 		ref := columnRef{name: col.name, t: col.t}
 		if col.t == dynamicType {
 			if _, ok := want.attributeType(); ok {
@@ -287,10 +291,6 @@ func (c *compiler) name(id *parser.Ident, want valueType) (expr, error) {
 	}
 	if !c.scope.logs {
 		return nil, errorAt(id, "unknown column %q; the columns here are %s", id.Name, strings.Join(c.scope.names(), ", "))
-	}
-	name := id.Name
-	if alias, ok := fieldAliases[name]; ok && !id.Quoted {
-		name = alias
 	}
 	if t, ok := builtInFields[name]; ok {
 		return fieldRef{name: name, builtIn: true, t: t}, nil
@@ -609,7 +609,7 @@ var scalarFunctions = map[string]function{
 }
 
 var aggregateFunctions = map[string]bool{
-	"count": true, "dcount": true, "sum": true, "avg": true, "min": true, "max": true, "percentile": true,
+	"count": true, "countif": true, "dcount": true, "sum": true, "avg": true, "min": true, "max": true, "percentile": true,
 }
 
 func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates bool) (expr, error) {
@@ -769,6 +769,15 @@ func (c *compiler) aggregate(e *parser.CallExpr) (expr, error) {
 			return nil, errorAt(e, "count takes no arguments; use dcount(x) for distinct values")
 		}
 		return aggregate{fn: name, t: numberType}, nil
+	case "countif":
+		if len(e.Args) != 1 {
+			return nil, errorAt(e, "countif takes one condition")
+		}
+		x, err := c.condition(e.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		return aggregate{fn: name, x: x, t: numberType}, nil
 	case "percentile":
 		if len(e.Args) != 2 {
 			return nil, errorAt(e, "percentile takes a value and a percentage, as in percentile(duration, 95)")

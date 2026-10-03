@@ -262,3 +262,98 @@ func TestTakeAndANewestFirstSortKeepLogRows(t *testing.T) {
 		t.Errorf("Expected take 4 in pages of 2 to give %v, got %v", want, pages)
 	}
 }
+
+func TestPastedAxiomStyleQueriesWork(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env) // the clock reads 11:30
+
+	run := func(query string, from, to time.Time) string {
+		t.Helper()
+		status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: query, From: from, To: to})
+		if status != 200 {
+			t.Fatalf("Query %q expected 200, got %d: %s", query, status, raw)
+		}
+		var answer struct {
+			Table struct {
+				Columns []struct {
+					Name string `json:"name"`
+				} `json:"columns"`
+				Rows json.RawMessage `json:"rows"`
+			} `json:"table"`
+		}
+		json.Unmarshal(raw, &answer)
+		var names []string
+		for _, col := range answer.Table.Columns {
+			names = append(names, col.Name)
+		}
+		return strings.Join(names, ",") + " " + string(answer.Table.Rows)
+	}
+	day := []time.Time{languageAt(0, 0), languageAt(0, 0).AddDate(0, 0, 1)}
+	cases := []struct {
+		query    string
+		from, to time.Time
+		want     string
+	}{
+		{"['my-dataset']\n| where _time > ago(1h)\n| summarize count() by bin_auto(_time)", languageAt(10, 0), languageAt(12, 0),
+			`time,count_ [["2026-10-02T11:10:00Z",1]]`},
+		{"['my-dataset'] | summarize count() by bin_auto(_time)", languageAt(10, 0), languageAt(12, 0),
+			`time,count_ [["2026-10-02T10:10:00Z",1],["2026-10-02T10:20:00Z",1],["2026-10-02T10:30:00Z",1],["2026-10-02T11:10:00Z",1]]`},
+		{`['logs'] | where level == "error" | summarize count() by service`, day[0], day[1], `service,count_ [["api",2]]`},
+		{`['logs'] | where ['duration'] > 100 | project _time, message, duration | sort by _time desc | take 2`, day[0], day[1],
+			`time,message,duration [["2026-10-02T11:10:00Z","ed",900],["2026-10-02T10:30:00Z","cy",300]]`},
+		{`where isnotnull(status) | summarize count() by toint(status) | sort by count_ desc, status asc`, allTime.from, allTime.to,
+			`status,count_ [[200,2],[404,1],[500,1]]`},
+		{`where message contains "e" or duration >= 100 | summarize users = dcount(user), slowest = max(duration) by service`, allTime.from, allTime.to,
+			`service,users,slowest [["api",3,900]]`},
+		{`summarize errors = countif(level == "error"), total = count() by service | extend rate = errors * 100 / total | where total > 1`, allTime.from, allTime.to,
+			`service,errors,total,rate [["api",2,3,66.66666666666667]]`},
+		{`project service, level | summarize by service`, allTime.from, allTime.to, `service [["api"],["web"],["worker"]]`},
+	}
+	for _, c := range cases {
+		if got := run(c.query, c.from, c.to); got != c.want {
+			t.Errorf("%s\n want %s\n got  %s", c.query, c.want, got)
+		}
+	}
+}
+
+func TestValidatePlacesTheRestOfTheLanguagesMistakes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	mistakes := map[string]queryProblem{
+		`summarize count() by hash(user)`:          {Message: `unknown function "hash"`, Line: 1, Column: 22, EndLine: 1, EndColumn: 26},
+		`where count() > 1`:                        {Message: `count() only works in summarize`, Line: 1, Column: 7, EndLine: 1, EndColumn: 12},
+		`summarize count(), count()`:               {Message: `two columns are named "count_"; name one, as in count_2 = …`, Line: 1, Column: 20, EndLine: 1, EndColumn: 27},
+		`project message | where user == "ada"`:    {Message: `unknown column "user"; the columns here are message`, Line: 1, Column: 25, EndLine: 1, EndColumn: 29},
+		`where level > 5`:                          {Message: `can't compare a string with a number`, Line: 1, Column: 7, EndLine: 1, EndColumn: 16},
+		`where user matches regex "("`:             {Message: "invalid regular expression: missing closing ): `(`", Line: 1, Column: 26, EndLine: 1, EndColumn: 29},
+		`take ten`:                                 {Message: `take needs a number of rows, as in take 10`, Line: 1, Column: 1, EndLine: 1, EndColumn: 5},
+		`summarize count() | search "x"`:           {Message: `search only comes before other stages; after them, use where … contains`, Line: 1, Column: 19, EndLine: 1, EndColumn: 31},
+		`where time > ago(5)`:                      {Message: `expected a timespan, such as 1h or 30m`, Line: 1, Column: 18, EndLine: 1, EndColumn: 19},
+		`where time > 5x`:                          {Message: `"5x" isn't a number`, Line: 1, Column: 14, EndLine: 1, EndColumn: 16},
+		`summarize avg(level)`:                     {Message: `avg takes a number, not a string`, Line: 1, Column: 15, EndLine: 1, EndColumn: 20},
+		`summarize percentile(duration, 150)`:      {Message: `expected a percentage from 0 to 100`, Line: 1, Column: 32, EndLine: 1, EndColumn: 35},
+		`where user in ("a", other)`:               {Message: `expected a value: a string, a number, true or false`, Line: 1, Column: 21, EndLine: 1, EndColumn: 26},
+		"where status == 200\n| join kind=inner x": {Message: `unknown stage "join"`, Line: 2, Column: 3, EndLine: 2, EndColumn: 7},
+	}
+	for query, want := range mistakes {
+		v := validateQuery(t, env, query)
+		if len(v.Errors) != 1 || v.Errors[0] != want || v.Chips != nil {
+			t.Errorf("%q: expected %+v and no chips, got %+v", query, want, v)
+		}
+	}
+
+	// Valid Queries the Builder can't show.
+	for _, query := range []string{
+		`where a == 1 | summarize count() by b`,
+		`where a == 1 | take 10`,
+		`where a > 1`,
+		`where a contains "x"`,
+		`where time > ago(1h)`,
+	} {
+		if v := validateQuery(t, env, query); len(v.Errors) != 0 || v.Chips != nil {
+			t.Errorf("%q: expected no chips and no errors, got %+v", query, v)
+		}
+	}
+}

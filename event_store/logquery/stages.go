@@ -29,6 +29,7 @@ type searchStage struct {
 type namedValue struct {
 	name string
 	x    expr
+	span parser.Span
 }
 
 // projectStage makes a table of its columns.
@@ -127,7 +128,7 @@ func (c *compiler) stage(s parser.Stage) (stage, error) {
 			return nil, errorAt(s, "summarize needs a function such as count(), or by and columns")
 		}
 		all := append(slices.Clone(by), aggregates...)
-		if err := uniqueNames(all, s); err != nil {
+		if err := uniqueNames(all); err != nil {
 			return nil, err
 		}
 		c.scope = scope{columns: columnsOf(all)}
@@ -194,9 +195,9 @@ func (c *compiler) columns(exprs []*parser.NamedExpr, aggregates bool) ([]namedV
 		if name == "" {
 			name = fmt.Sprintf("Column%d", i+1)
 		}
-		columns = append(columns, namedValue{name: name, x: x})
+		columns = append(columns, namedValue{name: name, x: x, span: e.Span()})
 	}
-	if err := uniqueNames(columns, nil); err != nil {
+	if err := uniqueNames(columns); err != nil {
 		return nil, err
 	}
 	return columns, nil
@@ -230,23 +231,16 @@ func hasAggregate(x expr) bool {
 	return false
 }
 
-// uniqueNames refuses columns of the same name.
-func uniqueNames(columns []namedValue, at parser.Node) error {
+// uniqueNames refuses columns of the same name, at the second.
+func uniqueNames(columns []namedValue) error {
 	seen := map[string]bool{}
 	for _, col := range columns {
 		if seen[col.name] {
-			return &Error{Span: spanOf(at), Message: fmt.Sprintf("two columns are named %q; name one, as in %s2 = …", col.name, col.name)}
+			return &Error{Span: col.span, Message: fmt.Sprintf("two columns are named %q; name one, as in %s2 = …", col.name, col.name)}
 		}
 		seen[col.name] = true
 	}
 	return nil
-}
-
-func spanOf(n parser.Node) parser.Span {
-	if n == nil {
-		return parser.Span{Start: 0, End: 0}
-	}
-	return n.Span()
 }
 
 func columnsOf(values []namedValue) []column {

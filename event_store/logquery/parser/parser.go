@@ -74,7 +74,9 @@ func (p *parser) query() (*Query, error) {
 		}
 	}
 	q := &Query{}
-	if tok, ok := p.peek(); ok && tok.Kind == TokenIdentifier && tok.Value == "logs" {
+	// The source is logs, or a dataset's name in brackets as pasted from
+	// Axiom: either way, the Project's Logs.
+	if tok, ok := p.peek(); ok && (tok.Kind == TokenIdentifier && tok.Value == "logs" || tok.Kind == TokenQuotedIdentifier) {
 		p.pos++
 		q.Source = &Ident{Name: tok.Value, NameSpan: tok.Span}
 		next, ok := p.next()
