@@ -374,20 +374,20 @@ func TestValidatePlacesTheRestOfTheLanguagesMistakes(t *testing.T) {
 	}
 	for query, want := range mistakes {
 		v := validateQuery(t, env, query)
-		if len(v.Errors) != 1 || v.Errors[0] != want || v.Chips != nil {
+		if len(v.Errors) != 1 || v.Errors[0] != want || builderChips(v) != "null" {
 			t.Errorf("%q: expected %+v and no chips, got %+v", query, want, v)
 		}
 	}
 
 	// Valid Queries the Builder can't show.
 	for _, query := range []string{
-		`where a == 1 | summarize count() by b`,
-		`where a == 1 | take 10`,
-		`where a > 1`,
-		`where a contains "x"`,
+		`where a == 1 | summarize n = count() by b`,
+		`where a == 1 | take 10 | where b == 2`,
+		`where a > 1 or a < 0`,
+		`where a contains_cs "x"`,
 		`where time > ago(1h)`,
 	} {
-		if v := validateQuery(t, env, query); len(v.Errors) != 0 || v.Chips != nil {
+		if v := validateQuery(t, env, query); len(v.Errors) != 0 || builderChips(v) != "null" {
 			t.Errorf("%q: expected no chips and no errors, got %+v", query, v)
 		}
 	}

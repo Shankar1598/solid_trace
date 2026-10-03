@@ -7,9 +7,18 @@ import {
   hide,
   queryOf,
   removeFilter,
+  parseValue,
+  editableText,
   search,
+  setFilter,
+  setSort,
+  setSummarize,
+  setTake,
   showOnly,
+  summarizeColumns,
   type Builder,
+  type Chip,
+  type Summarize,
 } from './builder'
 
 describe('the Query text of a Builder', () => {
@@ -203,5 +212,92 @@ describe('filtering from a tag', () => {
     expect(canFilter(undefined)).toBe(false)
     expect(canFilter([1, 2])).toBe(false)
     expect(canFilter({ a: 1 })).toBe(false)
+  })
+})
+
+describe('the Where operators', () => {
+  const where = (chip: Chip) => queryOf({ filters: [chip], search: '' })
+
+  it('writes comparisons, text tests, lists and presence', () => {
+    expect(where({ field: 'duration_ms', op: '>=', value: 500 })).toBe('where duration_ms >= 500')
+    expect(where({ field: 'path', op: 'startswith', value: '/api' })).toBe('where path startswith "/api"')
+    expect(where({ field: 'tags', op: '!contains', value: 'beta' })).toBe('where tags !contains "beta"')
+    expect(where({ field: 'status', op: 'in', value: [500, '502'] })).toBe('where status in (500, "502")')
+    expect(where({ field: 'user.id', op: 'exists', value: null })).toBe('where isnotnull(user.id)')
+    expect(where({ field: 'user-id', op: 'missing', value: null })).toBe("where isnull(['user-id'])")
+  })
+
+  it('flips each operator to its opposite', () => {
+    const flip = (op: Chip['op']) => flipFilter({ filters: [{ field: 'a', op, value: 1 }], search: '' }, 0).filters[0].op
+    expect([flip('>'), flip('>='), flip('contains'), flip('in'), flip('exists')]).toEqual(['<=', '<', '!contains', '!in', 'missing'])
+  })
+
+  it('adds and replaces filters', () => {
+    const added = setFilter(EMPTY_BUILDER, 0, { field: 'a', op: '==', value: 1 })
+    expect(setFilter(added, 0, { field: 'b', op: '<', value: 2 }).filters).toEqual([{ field: 'b', op: '<', value: 2 }])
+  })
+})
+
+describe('Summarize, sort and limit', () => {
+  const summarize: Summarize = {
+    aggregates: [{ fn: 'count' }, { fn: 'avg', field: 'duration_ms' }, { fn: 'percentile', field: 'duration_ms', percent: 99 }],
+    by: [{ field: 'service' }, { field: 'time', bin: '5m' }],
+  }
+
+  it('writes them after the filters and search, in order', () => {
+    const builder: Builder = {
+      filters: [{ field: 'level', op: '==', value: 'error' }], search: 'boom',
+      summarize, sort: [{ column: 'count_', asc: false }], take: 20,
+    }
+    expect(queryOf(builder).split('\n| ')).toEqual([
+      'where level == "error"',
+      'search "boom"',
+      'summarize count(), avg(duration_ms), percentile(duration_ms, 99) by service, bin(time, 5m)',
+      'sort by count_ desc',
+      'take 20',
+    ])
+  })
+
+  it('writes a Summarize of only by columns, and automatic time bins', () => {
+    expect(queryOf({ filters: [], search: '', summarize: { aggregates: [], by: [{ field: 'time', bin: 'auto' }] } }))
+      .toBe('summarize by bin_auto(time)')
+  })
+
+  it('names the columns a Summarize makes, as the language does', () => {
+    expect(summarizeColumns(summarize)).toEqual(['service', 'time', 'count_', 'avg_duration_ms', 'percentile_duration_ms_99'])
+  })
+
+  it('drops a sort on columns a changed Summarize no longer makes', () => {
+    const builder = setSort(setSummarize(EMPTY_BUILDER, summarize), [{ column: 'avg_duration_ms', asc: true }, { column: 'service', asc: true }])
+    const changed = setSummarize(builder, { aggregates: [{ fn: 'count' }], by: [{ field: 'service' }] })
+    expect(changed.sort).toEqual([{ column: 'service', asc: true }])
+    expect(setSummarize(builder, { aggregates: [], by: [] })).toEqual(EMPTY_BUILDER)
+  })
+
+  it('keeps a sort on Log Fields when a Summarize is removed it never had', () => {
+    const sorted = setSort(EMPTY_BUILDER, [{ column: 'duration_ms', asc: false }])
+    expect(setSummarize(sorted, { aggregates: [], by: [] }).sort).toEqual([{ column: 'duration_ms', asc: false }])
+  })
+
+  it('sets and clears the limit', () => {
+    expect(queryOf(setTake(EMPTY_BUILDER, 100))).toBe('take 100')
+    expect(setTake(setTake(EMPTY_BUILDER, 100), null)).toEqual(EMPTY_BUILDER)
+  })
+
+  it('reads them back from validate, leaving out what is absent', () => {
+    expect(builderOf({ filters: [], search: null, summarize: null, sort: [], take: null })).toEqual(EMPTY_BUILDER)
+    expect(builderOf({ filters: [], search: null, summarize, sort: [{ column: 'count_', asc: false }], take: 5 }))
+      .toEqual({ filters: [], search: '', summarize, sort: [{ column: 'count_', asc: false }], take: 5 })
+  })
+})
+
+describe('values typed in an editor', () => {
+  it('reads numbers, bools and quoted strings', () => {
+    expect([parseValue('500'), parseValue('-1.5'), parseValue('true'), parseValue('"500"'), parseValue('api'), parseValue('')])
+      .toEqual([500, -1.5, true, '500', 'api', ''])
+  })
+
+  it('shows a value so that it reads back the same', () => {
+    for (const value of [500, '500', true, 'true', 'api']) expect(parseValue(editableText(value))).toEqual(value)
   })
 })

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { router, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { Play, Square } from 'lucide-react'
@@ -10,10 +10,8 @@ import { RunError, fetchHistogram, fetchLogPage, fetchReadableSql, fetchRun, run
 import {
   EMPTY_BUILDER,
   builderOf,
-  flipFilter,
   hide,
   queryOf,
-  removeFilter,
   search,
   showOnly,
   type Builder,
@@ -37,6 +35,7 @@ import {
   typeQuery,
   typeSql,
 } from '@/lib/logs/explorerState'
+import { columnsFromSearch, commonValues, fieldInfos, toggleColumn, withColumns } from '@/lib/logs/columns'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
 import { pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
@@ -44,6 +43,7 @@ import { fillStream, keepsFetching, startStream, streamEnd, wantOlder, type Log,
 import type { LogTable } from '@/lib/logs/table'
 import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
+import { BuilderPanel } from './components/BuilderPanel'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
 import { LogStream } from './components/LogStream'
@@ -106,6 +106,11 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   const [sqlSeed, setSqlSeed] = useState<string | null>(null)
   const [leavingSql, setLeavingSql] = useState<Mode | null>(null)
   const currentRun = useRef<Run | null>(null)
+  // The stream's columns: in the URL beside the explorer's state, but not part
+  // of a run, so changing them replaces the history entry.
+  const [columns, setColumns] = useState<string[]>(() => columnsFromSearch(window.location.search))
+  const shownColumns = useRef(columns)
+  shownColumns.current = columns
 
   // Shows a run's stream, and fetches older pages into it while EventStore
   // answers short of a page: a search for rare Logs answers after a few
@@ -201,12 +206,19 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     // Once per mount, like the first run.
   }, [])
 
-  const replaceUrl = (search: string) => router.replace({ url: basePath + search, preserveState: true, preserveScroll: true })
+  const urlOf = (search: string) => basePath + withColumns(search, shownColumns.current)
+  const replaceUrl = (search: string) => router.replace({ url: urlOf(search), preserveState: true, preserveScroll: true })
+
+  const changeColumns = useCallback((next: string[]) => {
+    shownColumns.current = next
+    setColumns(next)
+    router.replace({ url: basePath + withColumns(searchOf(latest.current.current), next), preserveState: true, preserveScroll: true })
+  }, [basePath])
 
   const run = (next: Explorer) => {
     const { explorer: ran, push } = runExplorer(next)
     setExplorer(ran)
-    if (push) router.push({ url: basePath + push, preserveState: true, preserveScroll: true })
+    if (push) router.push({ url: urlOf(push), preserveState: true, preserveScroll: true })
     start(ran.current)
   }
 
@@ -395,8 +407,14 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   }, [fill, result])
 
   const openProject = (slug: string) => {
-    if (slug !== project.slug) router.get(`/${orgSlug}/projects/${slug}/logs${searchOf(explorer.current)}`)
+    if (slug !== project.slug) router.get(`/${orgSlug}/projects/${slug}/logs${withColumns(searchOf(explorer.current), columns)}`)
   }
+
+  // The Fields the Builder suggests: those of the last Logs shown, kept while a table shows.
+  const lastLogs = useRef<Log[]>([])
+  if (result.status === 'done' && result.stream.logs.length > 0) lastLogs.current = result.stream.logs
+  const fields = useMemo(() => fieldInfos(lastLogs.current), [lastLogs.current])
+  const valuesOf = useCallback((field: string) => commonValues(lastLogs.current, field), [lastLogs.current])
 
   const running = result.status === 'running' || (result.status === 'done' && result.loadingOlder)
 
@@ -411,8 +429,6 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
           {mode === 'builder' ? (
             <BuilderBar
               view={builderView}
-              onFlip={i => builder && changeBuilder(flipFilter(builder, i), true)}
-              onRemove={i => builder && changeBuilder(removeFilter(builder, i), true)}
               onSearch={text => builder && changeBuilder(search(builder, text), false)}
               onRun={() => commit(explorer)}
             />
@@ -425,6 +441,8 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
             <Button variant="outline" size="sm" onClick={() => commit(explorer)}><Play className="h-3.5 w-3.5" /> Run</Button>
           )}
         </div>
+
+        {builder && <BuilderPanel builder={builder} fields={fields} valuesOf={valuesOf} onChange={b => changeBuilder(b, true)} />}
 
         {mode === 'query' && (
           <QueryBox
@@ -460,8 +478,15 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
         )}
 
         <div className="relative flex-1 min-h-0">
-          <TagMenuProvider onFilter={onFilter}>
-            <ResultArea result={result} onLoadOlder={loadOlder} selectedId={inspected?.id ?? null} onSelect={setInspected} />
+          <TagMenuProvider onFilter={onFilter} columns={{ shown: columns, toggle: field => changeColumns(toggleColumn(columns, field)) }}>
+            <ResultArea
+              result={result}
+              onLoadOlder={loadOlder}
+              selectedId={inspected?.id ?? null}
+              onSelect={setInspected}
+              columns={columns}
+              onColumns={changeColumns}
+            />
             {inspected && (
               <LogInspector key={inspected.id} log={inspected} orgSlug={orgSlug} projectSlug={project.slug} onClose={closeInspector} />
             )}
@@ -472,8 +497,9 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   )
 }
 
-function ResultArea({ result, onLoadOlder, selectedId, onSelect }: {
+function ResultArea({ result, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
   result: Result; onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void
+  columns: string[]; onColumns: (columns: string[]) => void
 }) {
   switch (result.status) {
     case 'waiting':
@@ -501,6 +527,8 @@ function ResultArea({ result, onLoadOlder, selectedId, onSelect }: {
           onLoadOlder={onLoadOlder}
           selectedId={selectedId}
           onSelect={onSelect}
+          columns={columns}
+          onColumns={onColumns}
         />
       )
   }

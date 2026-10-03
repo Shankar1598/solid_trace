@@ -348,6 +348,30 @@ Decisions made during implementation that depart from this spec, or from what it
      - Gating the action is simpler and harder to get wrong than gating individual fields.
      - Editing a Project is an admin task in practice.
    - **Where it landed:** M1-02.
+3. **The stream is a table with columns the reader picks, and its values aren't tags.**
+   - **What the spec says:** the Stream bullet asks for "dense terminal-style lines … time, `[service]`, Level, message, a few `key=value` Fields", and "Every value is a tag". Story 44 asks to "click any value in a line … and choose Show only this, Hide this or Copy value".
+   - **Decision:** the stream is a virtualised table.
+     - It opens with time, service, Level and message.
+     - A column picker adds and removes built-in fields, the Attributes in view, or any Field typed by name. "Add as column" in the inspector's tag menu does the same.
+     - Columns move by dragging their headers, resize by dragging their edges, and are kept in the URL as one `col` per column, so a shared link shows them. Changing them replaces the history entry, because it's a view setting, not a run. Dragged widths are kept in the browser.
+     - Columns keep their width, with lines between them; the space past the last column stays empty.
+     - Each row starts with a small square in its Level's colour, in place of the coloured left edge.
+     - Hovering a cell offers Copy. Clicking anywhere else on a row opens the inspector. The inspector's values are still tags with Show only this, Hide this and Copy value, and so are a tabular Query's cells.
+   - **Reasoning:** the user asked for both changes on 2026-10-03, after using the explorer, and shared a screenshot of the table they wanted.
+     - Tags covered almost the whole line, so there was little space that opened the inspector. Filtering from a row now takes one more click, through the inspector.
+     - Columns let the reader line up the Attributes that matter to them, which inline `key=value` Fields couldn't.
+   - **Where it landed:** `LogStream.tsx`, `lib/logs/columns.ts` (with vitest tests), and the tag menu's "Add as column".
+
+4. **The Builder is a panel of clauses: Where, Summarize and More.**
+   - **What the spec says:** the Builder bullet says "filter chips (`field = value` / `field ≠ value`; click the operator to flip, × to remove) and a search box. No level toggles, no summarize controls." Story 56 calls the Builder the place to "start by clicking".
+   - **Decision:** in Builder mode a panel under the bar holds three rows, after the user's screenshot of Axiom's query builder. The search box stays in the bar.
+     - **Where:** filters with `==`, `!=`, `>`, `>=`, `<`, `<=`, `contains`, `!contains`, `startswith`, `!startswith`, `in`, `!in`, exists (`isnotnull`) and missing (`isnull`), one `where` stage each. Values keep their type, and quoting a value makes it a string.
+     - **Summarize:** `count`, `dcount`, `sum`, `avg`, `min`, `max` and `percentile` of one Field, by Fields and `bin(time, …)` or `bin_auto(time)`. A Summarize shows a table, as in Query mode, and the histogram still counts the filtered Logs.
+     - **More:** `sort by` columns (a Summarize's own columns when there is one) and a `take` limit.
+     - Each clause is edited in a small popover and runs at once; × removes it. Show only this and Hide this still add `==` / `!=` filters.
+   - **How it round-trips:** the Builder is still read back only from validate. Its `chips` now carry `summarize`, `sort` and `take` beside `filters` and `search`, read from the Query's syntax tree, so `in` and `isnull` come back as written. A stage counts as showable (`builder: true`) where it stands: filters first, then at most one each of `summarize`, `sort` and `take`, in that order. Anything else (named columns, `countif`, `project`, `top`, `or`, regexes, `where` after the tail) still sends the Query to Query mode.
+   - **Reasoning:** the user asked for it on 2026-10-03, so that most questions can be built by clicking rather than writing a Query.
+   - **Where it landed:** `logquery/chips.go` and the validate tests, `lib/logs/builder.ts` (with vitest tests), `BuilderPanel.tsx`.
 
 Two of the user's 2026-10-03 decisions don't change this spec's behaviour, and are noted here for completeness:
 - **Fixing the compose dependency cycle** (`8929ba3`). It was a deploy bug that predated this spec.

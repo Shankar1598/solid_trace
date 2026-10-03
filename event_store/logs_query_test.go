@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/solidtrace/event_store/logquery"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -364,14 +365,8 @@ func TestQueriesAgreeAcrossPromotionTheDailySetAndDemotion(t *testing.T) {
 // validation is validate's answer.
 type validation struct {
 	Errors []queryProblem `json:"errors"`
-	Chips  *struct {
-		Filters []struct {
-			Field string `json:"field"`
-			Op    string `json:"op"`
-			Value any    `json:"value"`
-		} `json:"filters"`
-		Search *string `json:"search"`
-	} `json:"chips"`
+	// Chips is the Builder's chips as JSON, or null.
+	Chips  json.RawMessage  `json:"chips"`
 	Stages []validatedStage `json:"stages"`
 }
 
@@ -383,6 +378,27 @@ type validatedStage struct {
 	EndColumn int  `json:"end_column"`
 	Filter    bool `json:"filter"`
 	Builder   bool `json:"builder"`
+}
+
+// builderChips is validate's chips as compact JSON, leaving out the
+// summarize, sort and take of a Query without them, or "null".
+func builderChips(v validation) string {
+	var chips *logquery.Chips
+	if err := json.Unmarshal(v.Chips, &chips); err != nil || chips == nil {
+		return "null"
+	}
+	shown := struct {
+		Filters   []logquery.Chip     `json:"filters"`
+		Search    *string             `json:"search"`
+		Summarize *logquery.Summarize `json:"summarize,omitempty"`
+		Sort      []logquery.SortChip `json:"sort,omitempty"`
+		Take      *int                `json:"take,omitempty"`
+	}{chips.Filters, chips.Search, chips.Summarize, chips.Sort, chips.Take}
+	var out strings.Builder
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	encoder.Encode(shown)
+	return strings.TrimSpace(out.String())
 }
 
 func validateQuery(t *testing.T, env *TestEnv, query string) validation {
@@ -411,11 +427,28 @@ func TestValidateGivesChipsForBuilderQueriesAndPlacesMistakes(t *testing.T) {
 			`{"field":"cached","op":"==","value":true},` +
 			`{"field":"http.status","op":"==","value":-1.5}],"search":null}`,
 		`search "" | where http.method == 'GET'`: `{"filters":[{"field":"http.method","op":"==","value":"GET"}],"search":""}`,
+		// Every operator the Builder offers.
+		`where duration >= 500 | where path startswith "/api" | where tags !contains "beta" | where status in (500, "502") | where user !in ("a") | where isnotnull(trace_id) | where isnull(['user.id'])`: `{"filters":[` +
+			`{"field":"duration","op":">=","value":500},` +
+			`{"field":"path","op":"startswith","value":"/api"},` +
+			`{"field":"tags","op":"!contains","value":"beta"},` +
+			`{"field":"status","op":"in","value":[500,"502"]},` +
+			`{"field":"user","op":"!in","value":["a"]},` +
+			`{"field":"trace_id","op":"exists","value":null},` +
+			`{"field":"user.id","op":"missing","value":null}],"search":null}`,
+		// Summarize, sort and take after the filters.
+		`where level == "error" | summarize count(), avg(duration_ms), percentile(duration_ms, 95), dcount(user.id) by service, bin(_time, 5m) | sort by count_ desc, service asc | take 20`: `{"filters":[{"field":"level","op":"==","value":"error"}],"search":null,` +
+			`"summarize":{"aggregates":[{"fn":"count"},{"fn":"avg","field":"duration_ms"},{"fn":"percentile","field":"duration_ms","percent":95},{"fn":"dcount","field":"user.id"}],` +
+			`"by":[{"field":"service"},{"field":"time","bin":"5m"}]},` +
+			`"sort":[{"column":"count_","asc":false},{"column":"service","asc":true}],"take":20}`,
+		`summarize count() by bin_auto(time) | limit 5`: `{"filters":[],"search":null,"summarize":{"aggregates":[{"fn":"count"}],"by":[{"field":"time","bin":"auto"}]},"take":5}`,
+		`summarize by service`:                          `{"filters":[],"search":null,"summarize":{"aggregates":[],"by":[{"field":"service"}]}}`,
+		`sort by duration asc`:                          `{"filters":[],"search":null,"sort":[{"column":"duration","asc":true}]}`,
 	}
 	for query, want := range chips {
 		v := validateQuery(t, env, query)
-		got, _ := json.Marshal(v.Chips)
-		if len(v.Errors) != 0 || string(got) != want {
+		got := builderChips(v)
+		if len(v.Errors) != 0 || got != want {
 			t.Errorf("%q: expected chips %s, got %s and errors %+v", query, want, got, v.Errors)
 		}
 	}
@@ -426,8 +459,26 @@ func TestValidateGivesChipsForBuilderQueriesAndPlacesMistakes(t *testing.T) {
 		`where a == 1 and b == 2`,
 		`where not(a == 1)`,
 		`search "a" | search "b"`,
+		`where time > ago(1h)`,
+		`where a == b + 1`,
+		`where a matches regex "x"`,
+		`where a contains_cs "x"`,
+		`where isempty(a)`,
+		`take 5 | where a == 1`,
+		`summarize count() | where count_ > 1`,
+		`take 5 | sort by a`,
+		`summarize n = count()`,
+		`summarize countif(a == 1)`,
+		`summarize count() by bin(duration, 10)`,
+		`summarize count() by s = service`,
+		`summarize count() | summarize count()`,
+		`sort by a nulls first`,
+		`sort by tolower(a)`,
+		`project a`,
+		`top 5 by a`,
+		`count`,
 	} {
-		if v := validateQuery(t, env, query); len(v.Errors) != 0 || v.Chips != nil {
+		if v := validateQuery(t, env, query); len(v.Errors) != 0 || builderChips(v) != "null" {
 			t.Errorf("%q: expected no chips and no errors, got %+v", query, v)
 		}
 	}
@@ -445,7 +496,7 @@ func TestValidateGivesChipsForBuilderQueriesAndPlacesMistakes(t *testing.T) {
 	}
 	for query, want := range mistakes {
 		v := validateQuery(t, env, query)
-		if len(v.Errors) != 1 || v.Errors[0] != want || v.Chips != nil {
+		if len(v.Errors) != 1 || v.Errors[0] != want || builderChips(v) != "null" {
 			t.Errorf("%q: expected %+v and no chips, got %+v", query, want, v)
 		}
 	}
@@ -486,8 +537,8 @@ func TestValidatePlacesEachStageAndSaysWhichTheBuilderCanShow(t *testing.T) {
 		"": {},
 		"logs\n| where service == \"api\"\n| where duration > 500\n| summarize count() by service": {
 			{Line: 2, Column: 3, EndLine: 2, EndColumn: 25, Filter: true, Builder: true},
-			{Line: 3, Column: 3, EndLine: 3, EndColumn: 23, Filter: true, Builder: false},
-			{Line: 4, Column: 3, EndLine: 4, EndColumn: 31, Filter: false, Builder: false},
+			{Line: 3, Column: 3, EndLine: 3, EndColumn: 23, Filter: true, Builder: true},
+			{Line: 4, Column: 3, EndLine: 4, EndColumn: 31, Filter: false, Builder: true},
 		},
 		`search "é" | search "b" | where a == 1`: {
 			{Line: 1, Column: 1, EndLine: 1, EndColumn: 11, Filter: true, Builder: true},
@@ -495,7 +546,7 @@ func TestValidatePlacesEachStageAndSaysWhichTheBuilderCanShow(t *testing.T) {
 			{Line: 1, Column: 27, EndLine: 1, EndColumn: 39, Filter: true, Builder: true},
 		},
 		"take 5 | where a == 1": {
-			{Line: 1, Column: 1, EndLine: 1, EndColumn: 7, Filter: false, Builder: false},
+			{Line: 1, Column: 1, EndLine: 1, EndColumn: 7, Filter: false, Builder: true},
 			{Line: 1, Column: 10, EndLine: 1, EndColumn: 22, Filter: false, Builder: false},
 		},
 	}
