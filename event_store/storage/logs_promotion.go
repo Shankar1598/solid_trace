@@ -156,6 +156,24 @@ func (c *promotedSetCache) put(projectID uint32, sets []PromotedSet) {
 	}
 }
 
+// deleteBefore forgets a Project's sets of the days before day.
+func (c *promotedSetCache) deleteBefore(projectID uint32, day time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for setDay := range c.sets[projectID] {
+		if setDay.Before(day) {
+			delete(c.sets[projectID], setDay)
+		}
+	}
+}
+
+// deleteProject forgets every set of a Project.
+func (c *promotedSetCache) deleteProject(projectID uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.sets, projectID)
+}
+
 // loadPromotedSets reads the whole promoted-set table.
 func loadPromotedSets(db *sql.DB) (*promotedSetCache, error) {
 	rows, err := db.Query("SELECT project_id, day, type, key, added_at, partway FROM logs.log_promoted_sets")
