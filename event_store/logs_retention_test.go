@@ -76,7 +76,9 @@ func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
 	seedProject(t, env.SQLitePath, 456, 7)
 	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
 
-	day := func(month, day, hour int) time.Time { return time.Date(2026, time.Month(month), day, hour, 30, 0, 0, time.UTC) }
+	day := func(month, day, hour int) time.Time {
+		return time.Date(2026, time.Month(month), day, hour, 30, 0, 0, time.UTC)
+	}
 	postAt(t, env, 123, "test_public_key", "last day past 30", day(9, 1, 23))
 	postAt(t, env, 123, "test_public_key", "first day within 30", day(9, 2, 0))
 	postAt(t, env, 123, "test_public_key", "yesterday", day(10, 1, 12))
@@ -119,4 +121,70 @@ func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
 	env.Reopen(t)
 	assertMessages(123, "yesterday", "first day within 30")
 	assertSets("after a restart")
+}
+
+// consoleExec changes the Console database as Console would.
+func consoleExec(t *testing.T, env *TestEnv, query string, args ...any) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Failed to open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatalf("Console write failed: %v", err)
+	}
+}
+
+func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedProject(t, env.SQLitePath, 456, 0)
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	// Each Project gets a Log in a file, one in its hot table and a late
+	// one.
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	for _, p := range []struct {
+		id  uint32
+		key string
+	}{{123, "test_public_key"}, {456, "other_public_key"}} {
+		env.Clock.Set(at(10, 30))
+		postAndProcessTo(t, env, p.id, p.key, logJSON(t, "exported", at(10, 10), map[string]any{"user": "ada"}))
+		env.Clock.Set(at(12, 30))
+		postAndProcessTo(t, env, p.id, p.key,
+			logJSON(t, "hot", at(12, 10), map[string]any{"user": "bob"}),
+			logJSON(t, "late", at(9, 0), map[string]any{"user": "cy"}))
+	}
+	env.ExportLogs(t)
+	want := latestLogs(t, env, 123, 10)
+	if got := messages(want); !slices.Equal(got, []string{"hot", "exported", "late"}) {
+		t.Fatalf("Unexpected Logs of Project 123: %v", got)
+	}
+
+	// Project 123 loses its last key, and Project 456 is deleted.
+	consoleExec(t, env, "DELETE FROM project_keys WHERE project_id = 123")
+	consoleExec(t, env, "DELETE FROM projects WHERE id = 456")
+	env.DeleteExpiredLogs(t)
+
+	assertDeleted := func(when string) {
+		t.Helper()
+		if got := latestLogs(t, env, 456, 10); len(got) != 0 {
+			t.Errorf("Expected the deleted Project to have no Logs %s, got %v", when, messages(got))
+		}
+		if got := env.LogStore.PromotedSet(456, at(12, 0)); len(got.Keys) != 0 {
+			t.Errorf("Expected the deleted Project to have no promoted set %s, got %v", when, promotedNames(got))
+		}
+		assertListsUnchanged(t, env, 123, want, when)
+		if got := promotedNames(env.LogStore.PromotedSet(123, at(12, 0))); !slices.Equal(got, []string{"string user"}) {
+			t.Errorf("Expected Project 123 to keep its promoted set %s, got %v", when, got)
+		}
+	}
+	assertDeleted("after the pass")
+	env.Reopen(t)
+	assertDeleted("after a restart")
+	env.DeleteExpiredLogs(t)
+	assertDeleted("after another pass")
 }
