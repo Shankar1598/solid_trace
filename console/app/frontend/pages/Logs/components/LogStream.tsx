@@ -3,13 +3,14 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import type { AttributeValue, Log } from '@/lib/logs/stream'
+import { Tag, valueText } from './TagMenu'
 
 const LINE_HEIGHT = 22
 /** Start loading older Logs this many lines before the end. */
 const LOAD_AHEAD = 100
 const INLINE_ATTRIBUTES = 4
 
-const LEVEL_TEXT: Record<string, string> = {
+export const LEVEL_TEXT: Record<string, string> = {
   trace: 'text-muted-foreground',
   debug: 'text-muted-foreground',
   info: 'text-sky-600 dark:text-sky-400',
@@ -30,10 +31,13 @@ interface LogStreamProps {
   loadingOlder: boolean
   olderError: string | null
   onLoadOlder: () => void
+  /** The Log open in the inspector. */
+  selectedId: string | null
+  onSelect: (log: Log) => void
 }
 
 /** The Logs of a run as dense terminal-style lines, newest first, virtualised. */
-export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder }: LogStreamProps) {
+export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, selectedId, onSelect }: LogStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
     count: logs.length + 1, // the last line says what comes after the Logs
@@ -59,7 +63,7 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder }: 
             style={{ height: LINE_HEIGHT, transform: `translateY(${item.start}px)` }}
           >
             {item.index < logs.length
-              ? <LogLine log={logs[item.index]} />
+              ? <LogLine log={logs[item.index]} selected={logs[item.index].id === selectedId} onSelect={onSelect} />
               : <StreamEnd end={end} loading={loadingOlder} error={olderError} count={logs.length} onRetry={onLoadOlder} />}
           </div>
         ))}
@@ -68,17 +72,28 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder }: 
   )
 }
 
-function LogLine({ log }: { log: Log }) {
+/** One Log as a line; every value in it is a tag, and clicking elsewhere inspects it. */
+function LogLine({ log, selected, onSelect }: { log: Log; selected: boolean; onSelect: (log: Log) => void }) {
   const level = log.level ?? ''
   const attributes = Object.entries(log.attributes ?? {}).slice(0, INLINE_ATTRIBUTES)
 
   return (
-    <div className={cn('flex items-center gap-2 pr-3 whitespace-nowrap border-l-[3px] hover:bg-muted/50', LEVEL_EDGE[level] ?? 'border-l-transparent')}>
-      <span className="pl-2 text-muted-foreground tabular-nums" title={log.time}>{format(new Date(log.time), 'MMM dd HH:mm:ss.SSS')}</span>
-      {log.service && <span className="text-fuchsia-600 dark:text-fuchsia-400">[{log.service}]</span>}
-      <span className={cn('w-10 shrink-0 uppercase text-[11px]', LEVEL_TEXT[level])}>{level}</span>
-      <span className="truncate">{log.message}</span>
-      <span className="flex gap-2 text-muted-foreground">
+    <div
+      // Selecting text to copy it doesn't open the inspector.
+      onClick={() => { if (!window.getSelection()?.toString()) onSelect(log) }}
+      className={cn(
+        'flex items-center gap-2 pr-3 whitespace-nowrap border-l-[3px] cursor-pointer hover:bg-muted/50',
+        LEVEL_EDGE[level] ?? 'border-l-transparent',
+        selected && 'bg-primary/10',
+      )}
+    >
+      <Tag field="time" value={log.time} className="ml-1.5 text-muted-foreground tabular-nums">
+        <span title={log.time}>{format(new Date(log.time), 'MMM dd HH:mm:ss.SSS')}</span>
+      </Tag>
+      {log.service && <Tag field="service" value={log.service} className="text-fuchsia-600 dark:text-fuchsia-400">[{log.service}]</Tag>}
+      {level && <Tag field="level" value={level} className={cn('w-12 shrink-0 uppercase text-[11px]', LEVEL_TEXT[level])}>{level}</Tag>}
+      <Tag field="message" value={log.message} className="min-w-0 truncate">{log.message}</Tag>
+      <span className="flex gap-1 text-muted-foreground">
         {log.environment && <Field name="environment" value={log.environment} />}
         {attributes.map(([name, value]) => <Field key={name} name={name} value={value} />)}
       </span>
@@ -87,12 +102,11 @@ function LogLine({ log }: { log: Log }) {
 }
 
 function Field({ name, value }: { name: string; value: AttributeValue }) {
-  const text = typeof value === 'string' ? value : JSON.stringify(value)
   return (
-    <span>
+    <Tag field={name} value={value}>
       <span className="opacity-60">{name}=</span>
-      <span className="text-foreground/80">{text.length > 60 ? `${text.slice(0, 60)}…` : text}</span>
-    </span>
+      <span className="text-foreground/80">{valueText(value, 60)}</span>
+    </Tag>
   )
 }
 
