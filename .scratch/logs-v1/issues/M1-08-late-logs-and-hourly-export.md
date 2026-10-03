@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-07.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] A Log whose `time` is outside the hot window (start of the previous hour to start of the next, by the controllable clock) goes to the shared `logs_late` table (same fixed columns, maps only, never promoted).
 - [x] A timer inside EventStore runs at each hour start for hour h-2: per Project, one zstd Parquet file under `project=<id>/day=<d>/hour=<h>/data.parquet`, 30,720-row row groups, sorted by time, with that day's promoted columns; `logs_late` rows for that hour and Project join it.

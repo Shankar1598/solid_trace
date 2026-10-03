@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-10-02
+Updated: 2026-10-03
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
 
@@ -24,14 +24,14 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-1. Implement the [logs v1 spec](logs-v1/spec.md) with `/implement-spec`, at most two sub-agents at a time, on integration branch `feature/logs-v1`. Frontier: [M1-08](logs-v1/issues/M1-08-late-logs-and-hourly-export.md) (late Logs and the hourly export). [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) is `ready-for-human`.
+1. Implement the [logs v1 spec](logs-v1/spec.md) with `/implement-spec`, at most two sub-agents at a time, on integration branch `feature/logs-v1`. Frontier: [M1-09](logs-v1/issues/M1-09-retention-disk-limit-and-project-deletion.md) (retention, disk limit and Project deletion) and [M2-01](logs-v1/issues/M2-01-query-compiler-filters-and-search.md) (query compiler with filters and search). [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) is `ready-for-human`.
 
 ## Efforts
 
 | Effort | Done / open | Start here |
 |---|---|---|
 | Logs | 16 / 0 | [map.md](logs/map.md) |
-| Logs v1 | 8 / 12 | [spec.md](logs-v1/spec.md) |
+| Logs v1 | 9 / 11 | [spec.md](logs-v1/spec.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
