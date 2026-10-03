@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { barAt, bucketSeconds, zoomRange } from './histogram'
+import { EMPTY_BUILDER, queryOf } from './builder'
+import { barAt, bucketSeconds, errorRate, filterByLevel, zoomRange, type LevelCounts } from './histogram'
 
 const MINUTE = 60
 const HOUR = 60 * MINUTE
@@ -80,5 +81,39 @@ describe('zooming from the strip', () => {
     expect(barAt(600, 600, 60)).toBe(59)
     expect(barAt(-40, 600, 60)).toBe(0)
     expect(barAt(900, 600, 60)).toBe(59)
+  })
+})
+
+function levels(counts: Partial<LevelCounts>): LevelCounts {
+  return { trace: 0, debug: 0, info: 0, warn: 0, error: 0, fatal: 0, none: 0, ...counts }
+}
+
+describe('the summary line', () => {
+  it('rates errors and fatals over every Log', () => {
+    expect(errorRate({ count: 200, levels: levels({ info: 150, warn: 40, error: 6, fatal: 4 }) })).toBe(0.05)
+  })
+
+  it('counts Logs with no Level in the whole but never as errors', () => {
+    expect(errorRate({ count: 4, levels: levels({ error: 1, none: 3 }) })).toBe(0.25)
+  })
+
+  it('has no error rate without Logs', () => {
+    expect(errorRate({ count: 0, levels: levels({}) })).toBeNull()
+  })
+
+  it('filters on a clicked Level with a Level chip', () => {
+    const builder = filterByLevel({ filters: [{ field: 'service', op: '==', value: 'api' }], search: 'boom' }, 'error')
+
+    expect(builder && queryOf(builder)).toBe('where service == "api"\n| where level == "error"\n| search "boom"')
+  })
+
+  it('switches from one clicked Level to another', () => {
+    const builder = filterByLevel(filterByLevel(EMPTY_BUILDER, 'warn')!, 'fatal')
+
+    expect(builder && queryOf(builder)).toBe('where level == "fatal"')
+  })
+
+  it("can't filter on Logs with no Level", () => {
+    expect(filterByLevel(EMPTY_BUILDER, 'none')).toBeNull()
   })
 })
