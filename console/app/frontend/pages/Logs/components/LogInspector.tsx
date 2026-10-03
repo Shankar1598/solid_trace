@@ -52,7 +52,7 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, onClose }: Log
       className="absolute inset-y-0 right-0 z-20 flex w-[460px] max-w-full flex-col border-l bg-background shadow-2xl"
     >
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <Tag field="time" value={time} className="font-mono text-xs text-muted-foreground tabular-nums">{time}</Tag>
+        <Tag field="time" value={time} columnable className="font-mono text-xs text-muted-foreground tabular-nums">{time}</Tag>
         <div className="flex-1" />
         <button onClick={onClose} className="rounded p-1 hover:bg-muted" aria-label="Close the inspector">
           <X className="h-4 w-4" />
@@ -77,7 +77,7 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, onClose }: Log
                 <tr key={name} className="border-b last:border-0">
                   <td className="py-1.5 pr-3 align-top whitespace-nowrap text-muted-foreground">{name}</td>
                   <td className="py-1.5 break-all">
-                    <Tag field={name} value={value} className="whitespace-pre-wrap">{valueText(value)}</Tag>
+                    <Tag field={name} value={value} columnable className="whitespace-pre-wrap">{valueText(value)}</Tag>
                   </td>
                 </tr>
               ))}
