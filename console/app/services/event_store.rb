@@ -8,6 +8,17 @@ class EventStore
   # timeout or an unreadable body.
   class Unavailable < StandardError; end
 
+  # EventStore refused a request it could read, such as a Query with
+  # mistakes: a 400 whose JSON body says why.
+  class Rejected < StandardError
+    attr_reader :body
+
+    def initialize(body)
+      @body = body
+      super("EventStore rejected the request: #{body}")
+    end
+  end
+
   # The event store's query API, which listens on loopback only.
   def self.base_url
     ENV.fetch("EVENT_STORE_URL", "http://127.0.0.1:4100")
@@ -47,7 +58,50 @@ class EventStore
       request!(url, params: params, not_found: { "count" => 0 })["count"]
     end
 
+    # One page of a Project's Logs that match a Query in [from, to), newest
+    # first: {"logs" => [...], "next_cursor" => String | nil}. Pass a page's
+    # next_cursor as cursor for the page of older Logs.
+    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil)
+      body = { query: query, from: utc(from), to: utc(to) }
+      body[:cursor] = cursor if cursor.present?
+      body[:limit] = limit if limit
+      post!("#{base_url}/api/#{project_id}/logs/query", body)
+    end
+
+    # Checks a Query without running it: {"errors" => [...], "chips" => Hash | nil}.
+    def validate_logs_query(project_id:, query:)
+      post!("#{base_url}/api/#{project_id}/logs/validate", { query: query })
+    end
+
+    # One of a Project's Logs, or nil. time, the Log's own time, narrows the
+    # search to that hour.
+    def get_log(project_id:, log_id:, time: nil)
+      params = time.present? ? { time: time } : {}
+      request!("#{base_url}/api/#{project_id}/logs/#{log_id}", params: params)
+    end
+
     private
+
+    def utc(time)
+      time.utc.iso8601(3)
+    end
+
+    def post!(url, body)
+      response = RestClient.post(url, body.to_json, content_type: :json, accept: :json)
+      JSON.parse(response.body)
+    rescue RestClient::BadRequest => e
+      raise Rejected, parse_body(e.response&.body)
+    rescue RestClient::ExceptionWithResponse => e
+      raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
+    rescue StandardError => e
+      raise Unavailable, "EventStore connection error: #{e.message}"
+    end
+
+    def parse_body(body)
+      JSON.parse(body.to_s)
+    rescue JSON::ParserError
+      { "error" => body.to_s }
+    end
 
     def make_request(url, params: {}, default: nil)
       request!(url, params: params, not_found: default)

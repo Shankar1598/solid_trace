@@ -80,6 +80,10 @@ _Avoid_: APL, KQL, search
 Raw DuckDB SQL a user runs directly, only on installs that have turned it on. Its `logs` view shows the Project and time range chosen outside the text; this is a convenience, not a limit on what the SQL can read.
 _Avoid_: raw query, advanced query
 
+**Logs explorer**:
+The Console page where a Project's Logs are searched and read.
+_Avoid_: log viewer, log search, logs page
+
 **Builder**:
 The Logs explorer's default way to make a Query without typing it: filter chips plus a search box. It can show only Queries made of equality filters and one search.
 _Avoid_: query builder, visual mode, simple mode
