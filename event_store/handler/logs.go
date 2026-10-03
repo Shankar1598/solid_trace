@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,8 +74,9 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		limit = min(req.Limit, maxQueryLogs)
 	}
 	var after *storage.LogPosition
+	left := -1 // Logs a take has left to give, or -1 for no take
 	if req.Cursor != "" {
-		if after, err = decodeCursor(req.Cursor); err != nil {
+		if after, left, err = decodeCursor(req.Cursor); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid cursor"})
 		}
 	}
@@ -86,6 +88,12 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	from, to := query.Range()
 	if query.Table() {
 		return h.table(c, projectID, query, from, to)
+	}
+	if take, ok := query.Take(); ok && (req.Cursor == "" || left < 0) {
+		left = take
+	}
+	if left >= 0 {
+		limit = min(limit, left)
 	}
 	logs, err := h.logs.ScanLogs(c.UserContext(), storage.LogScan{
 		ProjectID: projectID,
@@ -100,8 +108,11 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 	var next *string
-	if len(logs) == limit {
-		cursor := encodeCursor(logs[len(logs)-1])
+	if len(logs) == limit && limit > 0 && left != limit {
+		if left >= 0 {
+			left -= limit
+		}
+		cursor := encodeCursor(logs[len(logs)-1], left)
 		next = &cursor
 	}
 	return c.JSON(fiber.Map{"logs": logs, "next_cursor": next})
@@ -192,28 +203,38 @@ func queryErrors(source string, err error) []logquery.Problem {
 	return []logquery.Problem{{Message: err.Error(), Line: 1, Column: 1, EndLine: 1, EndColumn: 1}}
 }
 
-// A cursor is a Log's position, opaque to clients.
-func encodeCursor(log models.Log) string {
-	return base64.RawURLEncoding.EncodeToString(
-		fmt.Appendf(nil, "%s|%s", log.Time.UTC().Format(time.RFC3339Nano), log.ID))
+// A cursor is a Log's position, and how many Logs the Query's take has left
+// to give (-1 for none), opaque to clients.
+func encodeCursor(log models.Log, left int) string {
+	text := fmt.Sprintf("%s|%s", log.Time.UTC().Format(time.RFC3339Nano), log.ID)
+	if left >= 0 {
+		text += "|" + strconv.Itoa(left)
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(text))
 }
 
-func decodeCursor(cursor string) (*storage.LogPosition, error) {
+func decodeCursor(cursor string) (*storage.LogPosition, int, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	t, id, ok := strings.Cut(string(raw), "|")
-	if !ok {
-		return nil, errors.New("invalid cursor")
+	parts := strings.Split(string(raw), "|")
+	if len(parts) != 2 && len(parts) != 3 {
+		return nil, 0, errors.New("invalid cursor")
 	}
-	at, err := time.Parse(time.RFC3339Nano, t)
+	at, err := time.Parse(time.RFC3339Nano, parts[0])
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	logID, err := uuid.Parse(id)
+	logID, err := uuid.Parse(parts[1])
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return &storage.LogPosition{Time: at, ID: logID}, nil
+	left := -1
+	if len(parts) == 3 {
+		if left, err = strconv.Atoi(parts[2]); err != nil || left < 0 {
+			return nil, 0, errors.New("invalid cursor")
+		}
+	}
+	return &storage.LogPosition{Time: at, ID: logID}, left, nil
 }

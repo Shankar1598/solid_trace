@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -234,4 +235,30 @@ func TestTabularStagesReturnTables(t *testing.T) {
 		`summarize count() by bin(time, 1h)`:      {"time,count_", []string{`["2026-10-01T10:00:00Z",1]`, `["2026-10-02T10:00:00Z",4]`, `["2026-10-02T11:00:00Z",1]`}, false},
 		`top 1 by duration asc | project message`: {"message", []string{`["fy"]`}, false},
 	}, "with a late Log")
+}
+
+func TestTakeAndANewestFirstSortKeepLogRows(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env)
+
+	assertQueries(t, env, map[string][]string{
+		`where level == "error" | take 1`:  {"ed"},
+		`sort by time desc | take 2`:       {"ed", "cy"},
+		`order by _time desc`:              {"ed", "cy", "bob", "ada", "di"},
+		`take 4 | take 2`:                  {"ed", "cy"},
+		`take 0`:                           {},
+		`limit 3 | sort by time desc`:      {"ed", "cy", "bob"},
+		`where duration > 100 | limit 100`: {"ed", "cy", "ada"},
+	}, "in the hot table")
+
+	// Pages stop at take's number of Logs.
+	pages := pageThrough(t, env, queryRequest{Query: `take 3`, From: allTime.from, To: allTime.to, Limit: 2})
+	if want := [][]string{{"ed", "cy"}, {"bob"}}; !reflect.DeepEqual(pages, want) {
+		t.Errorf("Expected take 3 in pages of 2 to give %v, got %v", want, pages)
+	}
+	pages = pageThrough(t, env, queryRequest{Query: `take 4`, From: allTime.from, To: allTime.to, Limit: 2})
+	if want := [][]string{{"ed", "cy"}, {"bob", "ada"}}; !reflect.DeepEqual(pages, want) {
+		t.Errorf("Expected take 4 in pages of 2 to give %v, got %v", want, pages)
+	}
 }
