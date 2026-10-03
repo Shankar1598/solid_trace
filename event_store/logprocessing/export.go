@@ -1,7 +1,6 @@
 package logprocessing
 
 import (
-	"sync"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -25,33 +24,25 @@ type HourlyExport struct {
 	store Exporter
 	clock clock.Clock
 
-	stop     chan struct{}
-	stopOnce sync.Once
-	done     chan struct{}
-	started  bool
+	*worker
 }
 
 // NewHourlyExport constructs the hourly export. It reads the time from clock.
 func NewHourlyExport(store Exporter, clock clock.Clock) *HourlyExport {
-	return &HourlyExport{store: store, clock: clock, stop: make(chan struct{}), done: make(chan struct{})}
+	return &HourlyExport{store: store, clock: clock, worker: newWorker()}
 }
 
 // Start runs the timer in its own goroutine.
 func (e *HourlyExport) Start() {
-	e.started = true
-	go e.run()
+	e.start(e.run)
 }
 
 // Stop stops the timer, waiting for an export in progress to end.
 func (e *HourlyExport) Stop() {
-	e.stopOnce.Do(func() { close(e.stop) })
-	if e.started {
-		<-e.done
-	}
+	e.halt()
 }
 
 func (e *HourlyExport) run() {
-	defer close(e.done)
 	for {
 		wait := retryExportAfter
 		if err := e.store.ExportLogs(e.clock.Now()); err != nil {

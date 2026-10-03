@@ -10,10 +10,15 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
+	"github.com/solidtrace/event_store/auth"
+	"github.com/solidtrace/event_store/handler"
+	"github.com/solidtrace/event_store/ingest"
+	"github.com/solidtrace/event_store/models"
 	"github.com/valyala/fasthttp"
 )
 
@@ -306,5 +311,85 @@ func TestBodiesInAnUnknownOrBrokenEncodingAreRefusedAndNothingIsStored(t *testin
 	}
 	if uuids := env.EventWriter.UUIDs(); len(uuids) != 0 {
 		t.Errorf("Expected no Event stored, got %d", len(uuids))
+	}
+}
+
+// heldEventWriter stores nothing: each write says it began, then waits to be
+// let go, so a test can hold ingest's waiting places full.
+type heldEventWriter struct {
+	began   chan struct{}
+	letGo   chan struct{}
+	written atomic.Int32
+}
+
+func (w *heldEventWriter) WriteEvent(event *models.Event) error {
+	w.began <- struct{}{}
+	<-w.letGo
+	w.written.Add(1)
+	return nil
+}
+
+func TestAnOverloadedIngestTurnsBodiesAwayBeforeDecodingThem(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// An ingest app with one waiting place, which an Event holds.
+	projectAuth, err := auth.NewProjectAuth(env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Failed to create auth: %v", err)
+	}
+	defer projectAuth.Close()
+	events := &heldEventWriter{began: make(chan struct{}, 1), letGo: make(chan struct{})}
+	service := ingest.NewService(ingest.Config{
+		Events: events, NotifyEvents: func(uint32) {},
+		Logs: env.PebbleWriter, NotifyLogs: func(uint32) {},
+		Clock: env.Clock, Retention: ingest.FixedRetention(30), MaxWaiting: 1,
+	})
+	app := handler.NewIngestApp(handler.NewIngestHandler(projectAuth, service), handler.NewHealthHandler(env.PebbleWriter, env.DuckDBWriter))
+	send := func(path, encoding string, body []byte) *http.Response {
+		req, _ := http.NewRequest("POST", path+"?sentry_key=test_public_key", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-ndjson")
+		if encoding != "" {
+			req.Header.Set("Content-Encoding", encoding)
+		}
+		resp, err := app.Test(req, 10000)
+		if err != nil {
+			t.Fatalf("POST %s failed: %v", path, err)
+		}
+		return resp
+	}
+	held := make(chan *http.Response, 1)
+	go func() {
+		req, _ := http.NewRequest("POST", "/api/123/store?sentry_key=test_public_key", bytes.NewReader(getSampleEventJSON()))
+		resp, _ := app.Test(req, 10000)
+		held <- resp
+	}()
+	<-events.began
+
+	// Bodies that decode past the 50 MB cap would get 413 if they were
+	// decoded; overloaded, they get 503 first.
+	bomb := ndjsonOfSize("bomb", 60<<20)
+	for _, b := range []struct {
+		path, encoding string
+		body           []byte
+	}{
+		{"/api/123/logs", "gzip", gzipped(t, bomb)},
+		{"/api/123/logs", "zstd", zstdCompressed(t, bomb)},
+		{"/api/123/envelope", "gzip", gzipped(t, bomb)},
+		{"/api/123/store", "gzip", gzipped(t, bomb)},
+	} {
+		resp := send(b.path, b.encoding, b.body)
+		if resp.StatusCode != 503 || resp.Header.Get("Retry-After") == "" {
+			t.Errorf("%s %s: expected 503 with Retry-After while overloaded, got %d", b.path, b.encoding, resp.StatusCode)
+		}
+	}
+
+	// Once the place is free, the cap applies as before.
+	close(events.letGo)
+	if resp := <-held; resp == nil || resp.StatusCode != 200 {
+		t.Fatalf("Expected the held Event stored, got %v", resp)
+	}
+	if resp := send("/api/123/logs", "gzip", gzipped(t, bomb)); resp.StatusCode != 413 {
+		t.Errorf("Expected 413 for the bomb with room to decode it, got %d", resp.StatusCode)
 	}
 }

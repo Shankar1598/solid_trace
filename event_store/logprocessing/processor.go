@@ -54,6 +54,7 @@ func isContentError(err error) bool {
 // production adapter.
 type Store interface {
 	LogProcessingCursor(projectID uint32) (uuid.UUID, error)
+	LogProcessingCursors() ([]uuid.UUID, error)
 	AppendLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error
 	TryLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error
 	Ping() error
@@ -85,10 +86,7 @@ type Processor struct {
 	failing          map[uint32]*failure // Projects whose Logs failed to store
 	lastBacklogCheck time.Time
 
-	stop     chan struct{}
-	stopOnce sync.Once
-	started  bool
-	done     chan struct{}
+	*worker
 }
 
 // failure is how a Project's Logs have failed to store since they last did.
@@ -107,15 +105,22 @@ func New(batches *storage.PebbleWriter, store Store, clock clock.Clock) *Process
 		pending: make(map[uint32]struct{}),
 		wake:    make(chan struct{}, 1),
 		failing: make(map[uint32]*failure),
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		worker:  newWorker(),
 	}
 }
 
-// Prepare runs once, before the worker starts. It deletes the Log batches a
-// crash left in Pebble after they were stored, and marks every Project that
-// has Log batches as pending.
+// Prepare runs once, before the worker starts and before Log ingest writes. It
+// keeps new Log batch ids above every Project's cursor, deletes the Log
+// batches a crash left in Pebble after they were stored, and marks every
+// Project that has Log batches as pending.
 func (p *Processor) Prepare() error {
+	cursors, err := p.store.LogProcessingCursors()
+	if err != nil {
+		return fmt.Errorf("read log processing cursors: %w", err)
+	}
+	for _, cursor := range cursors {
+		p.batches.KeepLogBatchIDsAbove(cursor)
+	}
 	projects, err := p.batches.ProjectsWithLogBatches()
 	if err != nil {
 		return fmt.Errorf("list projects with log batches: %w", err)
@@ -172,22 +177,16 @@ func (p *Processor) takeDue() (projectID uint32, ok bool, retryAt time.Time) {
 
 // Start runs the worker in its own goroutine.
 func (p *Processor) Start() {
-	p.started = true
-	go p.run()
+	p.start(p.run)
 }
 
 // Stop stops the worker and waits for it to exit. Batches not yet committed
 // are processed again after a restart, from the cursor.
 func (p *Processor) Stop() {
-	p.stopOnce.Do(func() { close(p.stop) })
-	if p.started {
-		<-p.done
-	}
+	p.halt()
 }
 
 func (p *Processor) run() {
-	defer close(p.done)
-
 	tick := time.NewTicker(tickInterval)
 	defer tick.Stop()
 

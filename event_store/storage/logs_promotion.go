@@ -16,6 +16,7 @@ import (
 
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
 // MaxPromotedKeys is how many (type, key) pairs a Project's promoted set
@@ -456,7 +457,7 @@ func (p *promotion) addColumns(ctx context.Context, conn *sql.Conn) error {
 			continue
 		}
 		_, err := conn.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s.%s ADD COLUMN %s %s",
-			logsCatalog, hotTable(p.projectID), sqlIdentifier(key.column()), key.Type.columnType()))
+			logsCatalog, hotTable(p.projectID), sqltext.Identifier(key.column()), key.Type.columnType()))
 		if err != nil {
 			return fmt.Errorf("promote %s: %w", key.column(), err)
 		}
@@ -691,7 +692,7 @@ func writeKeyCounts(conn *sql.Conn, projectID uint32, day time.Time, counts map[
 		WHEN MATCHED AND v.logs = 0 THEN DELETE
 		WHEN MATCHED THEN UPDATE SET logs = v.logs
 		WHEN NOT MATCHED AND v.logs > 0 THEN INSERT VALUES (%[1]d, DATE %[2]s, v.type, v.key, v.logs)`,
-		projectID, sqlString(dayString(day)))
+		projectID, sqltext.String(dayString(day)))
 	varchar, err := duckdb.NewTypeInfo(duckdb.TYPE_VARCHAR)
 	if err != nil {
 		return err
@@ -755,9 +756,4 @@ func promotedColumnKey(column string) (typedKey, bool) {
 // dayString is a day as a DuckDB DATE literal.
 func dayString(day time.Time) string {
 	return day.UTC().Format(time.DateOnly)
-}
-
-// sqlIdentifier quotes s as a SQL identifier.
-func sqlIdentifier(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }

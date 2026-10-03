@@ -4,13 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
 // LogColumns says where one source of a Project's Logs keeps each Field, so
@@ -30,7 +29,7 @@ type LogColumns struct {
 
 // BuiltIn is a built-in field's column, such as level.
 func (c LogColumns) BuiltIn(name string) string {
-	return sqlIdentifier(name)
+	return sqltext.Identifier(name)
 }
 
 // Map is the map that holds the Attributes of type t that aren't promoted.
@@ -43,9 +42,9 @@ func (c LogColumns) Map(t AttributeType) string {
 // if it was promoted partway through the day, else its map.
 func (c LogColumns) Attribute(t AttributeType, key string) string {
 	if c.view {
-		return fmt.Sprintf("%s[%s]", t.Map(), sqlString(key))
+		return fmt.Sprintf("%s[%s]", t.Map(), sqltext.String(key))
 	}
-	inMap := fmt.Sprintf("map_extract_value(%s, %s)", t.Map(), sqlString(key))
+	inMap := fmt.Sprintf("map_extract_value(%s, %s)", t.Map(), sqltext.String(key))
 	if c.late {
 		return inMap
 	}
@@ -53,7 +52,7 @@ func (c LogColumns) Attribute(t AttributeType, key string) string {
 	if !ok {
 		return inMap
 	}
-	column := sqlIdentifier(promoted.Column())
+	column := sqltext.Identifier(promoted.Column())
 	if promoted.Partway {
 		return fmt.Sprintf("coalesce(%s, %s)", column, inMap)
 	}
@@ -68,13 +67,14 @@ func (c LogColumns) Promoted(t AttributeType) []string {
 	var columns []string
 	for _, key := range c.set.Keys {
 		if key.Type == t {
-			columns = append(columns, sqlIdentifier(key.Column()))
+			columns = append(columns, sqltext.Identifier(key.Column()))
 		}
 	}
 	return columns
 }
 
-// LogPosition is a Log's place in newest-first order: by time, then id.
+// LogPosition is a Log's place in newest-first order: by time, then id. With
+// the nil id, it is the place after every Log at its time.
 type LogPosition struct {
 	Time time.Time
 	ID   uuid.UUID
@@ -93,33 +93,53 @@ type LogScan struct {
 	Where func(LogColumns) string
 	// Limit is how many Logs to return at most.
 	Limit int
+	// Budget, if set, is how long the scan may go on reading hours once it
+	// has read one: past it, it returns what it has found.
+	Budget time.Duration
+}
+
+// LogScanPage is what a scan found: Logs, newest first, and where the scan of
+// older Logs goes on, or nil once there are none in the range.
+type LogScanPage struct {
+	Logs []models.Log
+	Next *LogPosition
 }
 
 // ScanLogs returns up to scan.Limit of a Project's Logs that meet the
 // condition, newest first, from its hot table, its late Logs and its files.
 // Promoted values are merged back into the Attributes.
 //
-// It reads hour by hour, newest first, and stops once it has scan.Limit Logs.
-// Each hour is read in one query, while no export can publish, so it sees
-// each of the hour's Logs exactly once; an export may publish between hours.
-// Between hours it checks ctx.
-func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) ([]models.Log, error) {
+// It reads hour by hour, newest first, and stops once it has scan.Limit Logs,
+// or once it has spent scan.Budget, so that a search for rare Logs answers
+// with what it has found so far: then Next is the start of the last hour it
+// read, and the scan goes on from there.
+//
+// It reads the Logs as they were when it began (logRead), so it sees each
+// exactly once, and holds up no export. Between hours it checks ctx, and
+// cancelling ctx stops a query.
+func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, error) {
+	started := time.Now()
 	from, to := scan.From.UTC(), scan.To.UTC()
 	if scan.After != nil && scan.After.Time.Before(to) {
-		// Logs at the same time as After, with a lower id, follow it.
-		to = scan.After.Time.UTC().Add(time.Microsecond)
+		to = scan.After.Time.UTC()
+		if scan.After.ID != uuid.Nil {
+			// Logs at the same time as After, with a lower id, follow it.
+			to = to.Add(time.Microsecond)
+		}
 	}
-	logs := []models.Log{}
+	page := LogScanPage{Logs: []models.Log{}}
 	if !from.Before(to) || scan.Limit <= 0 {
-		return logs, nil
+		return page, nil
 	}
-	hours, err := s.hoursWithLogs(scan.ProjectID, from, to)
+	read, err := s.beginRead(ctx, scan.ProjectID, from, to)
 	if err != nil {
-		return nil, err
+		return LogScanPage{}, err
 	}
-	for _, hour := range hours {
+	defer read.end()
+	logs := page.Logs
+	for i, hour := range read.hours {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return LogScanPage{}, err
 		}
 		hourFrom, hourTo := hour, hour.Add(time.Hour)
 		if from.After(hourFrom) {
@@ -128,116 +148,31 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) ([]models.Log, er
 		if to.Before(hourTo) {
 			hourTo = to
 		}
-		found, err := s.scanHour(ctx, scan, hour, hourFrom, hourTo, scan.Limit-len(logs))
+		found, err := read.scanHour(scan, hour, hourFrom, hourTo, scan.Limit-len(logs))
 		if err != nil {
-			return nil, err
+			return LogScanPage{}, err
 		}
 		logs = append(logs, found...)
 		if len(logs) >= scan.Limit {
-			break
+			last := logs[len(logs)-1]
+			return LogScanPage{Logs: logs, Next: &LogPosition{Time: last.Time, ID: last.ID}}, nil
+		}
+		if scan.Budget > 0 && time.Since(started) > scan.Budget && i < len(read.hours)-1 {
+			return LogScanPage{Logs: logs, Next: &LogPosition{Time: hourFrom}}, nil
 		}
 	}
-	return logs, nil
-}
-
-// hoursWithLogs returns, newest first, the hours of [from, to) that may hold
-// a Project's Logs: those with files, and those between the oldest and the
-// newest Log not yet exported.
-//
-// An hour's Logs not yet exported are only ever exported into that hour's
-// files, so an hour listed here stays listed while the scan runs.
-func (s *LogStore) hoursWithLogs(projectID uint32, from, to time.Time) ([]time.Time, error) {
-	// Files and tables are listed together, so that no export moves an hour
-	// from one to the other between them.
-	s.publishMu.RLock()
-	defer s.publishMu.RUnlock()
-	return s.hoursWithLogsLocked(projectID, from, to)
-}
-
-// hoursWithLogsLocked is hoursWithLogs, for a caller holding publishMu.
-func (s *LogStore) hoursWithLogsLocked(projectID uint32, from, to time.Time) ([]time.Time, error) {
-	hours := map[time.Time]bool{}
-	first, last := from.Truncate(time.Hour), to.Add(-time.Microsecond).Truncate(time.Hour)
-
-	days, err := os.ReadDir(s.files.ProjectDir(projectID))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	for _, day := range days {
-		d, ok := strings.CutPrefix(day.Name(), "day=")
-		if !ok {
-			continue
-		}
-		date, err := time.Parse(time.DateOnly, d)
-		if err != nil || date.Before(LogDay(first)) || date.After(last) {
-			continue
-		}
-		hourDirs, err := os.ReadDir(s.files.DayDir(projectID, date))
-		if err != nil {
-			return nil, err
-		}
-		for _, hourDir := range hourDirs {
-			var h int
-			if _, err := fmt.Sscanf(hourDir.Name(), "hour=%02d", &h); err != nil {
-				continue
-			}
-			hour := date.Add(time.Duration(h) * time.Hour)
-			if !hour.Before(first) && !hour.After(last) {
-				hours[hour] = true
-			}
-		}
-	}
-
-	hot, err := s.tableExists(hotTable(projectID))
-	if err != nil {
-		return nil, err
-	}
-	sources := []string{fmt.Sprintf("SELECT time FROM %s.%s WHERE project_id = %d AND %s",
-		logsCatalog, lateTable, projectID, timeRange(from, to))}
-	if hot {
-		sources = append(sources, fmt.Sprintf("SELECT time FROM %s.%s WHERE %s",
-			logsCatalog, hotTable(projectID), timeRange(from, to)))
-	}
-	var oldest, newest sql.NullTime
-	err = s.db.QueryRow(fmt.Sprintf("SELECT min(time), max(time) FROM (%s)", strings.Join(sources, " UNION ALL "))).
-		Scan(&oldest, &newest)
-	if err != nil {
-		return nil, err
-	}
-	if oldest.Valid {
-		for hour := oldest.Time.UTC().Truncate(time.Hour); !hour.After(newest.Time.UTC()); hour = hour.Add(time.Hour) {
-			hours[hour] = true
-		}
-	}
-
-	sorted := make([]time.Time, 0, len(hours))
-	for hour := range hours {
-		sorted = append(sorted, hour)
-	}
-	slices.SortFunc(sorted, func(a, b time.Time) int { return b.Compare(a) })
-	return sorted, nil
+	return LogScanPage{Logs: logs}, nil
 }
 
 // scanHour returns up to limit of the Project's Logs of [from, to), within
 // one hour, that meet the scan's condition, newest first.
-func (s *LogStore) scanHour(ctx context.Context, scan LogScan, hour, from, to time.Time, limit int) ([]models.Log, error) {
-	s.publishMu.RLock()
-	defer s.publishMu.RUnlock()
-
-	// Project deletion drops the hot table, and a later Log makes it again.
-	hot, err := s.tableExists(hotTable(scan.ProjectID))
-	if err != nil {
-		return nil, err
-	}
-	files, err := s.files.Hour(scan.ProjectID, hour)
-	if err != nil {
-		return nil, err
-	}
-	set := s.PromotedSet(scan.ProjectID, hour)
+func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([]models.Log, error) {
+	files := r.files[hour]
+	set := r.store.PromotedSet(scan.ProjectID, hour)
 	bounds := timeRange(from, to)
 	if scan.After != nil {
 		bounds += fmt.Sprintf(" AND (time < %[1]s OR (time = %[1]s AND id < CAST(%[2]s AS UUID)))",
-			timestampLiteral(scan.After.Time), sqlString(scan.After.ID.String()))
+			timestampLiteral(scan.After.Time), sqltext.String(scan.After.ID.String()))
 	}
 	where := func(cols LogColumns) string {
 		condition := bounds
@@ -252,7 +187,7 @@ func (s *LogStore) scanHour(ctx context.Context, scan LogScan, hour, from, to ti
 
 	sources := []string{fmt.Sprintf("SELECT * EXCLUDE (project_id) FROM %s.%s WHERE project_id = %d AND %s",
 		logsCatalog, lateTable, scan.ProjectID, where(LogColumns{late: true}))}
-	if hot {
+	if r.hot {
 		sources = append(sources, fmt.Sprintf("SELECT * FROM (%s) WHERE %s",
 			withColumns(fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(scan.ProjectID)), set), where(promoted)))
 	}
@@ -260,7 +195,7 @@ func (s *LogStore) scanHour(ctx context.Context, scan LogScan, hour, from, to ti
 		sources = append(sources, fmt.Sprintf("SELECT * FROM (%s) WHERE %s",
 			withColumns(readFiles(files), set), where(promoted)))
 	}
-	return s.queryLogs(ctx, fmt.Sprintf(`
+	return r.queryLogs(fmt.Sprintf(`
 		SELECT * FROM (%s)
 		ORDER BY time DESC, id DESC
 		LIMIT %d`, strings.Join(sources, "\nUNION ALL BY NAME\n"), limit))
@@ -286,22 +221,21 @@ type LogTableScan struct {
 // ScanLogTable runs a query over a Project's Logs in a time range, from its
 // hot table, its late Logs and its files, and returns its rows.
 //
-// The query runs once over the whole range, while no export can publish, so
-// that it sees each Log exactly once: unlike ScanLogs, an export waits for
-// it.
+// The query runs once over the whole range, as the Logs were when it began
+// (logRead), so it sees each Log exactly once and holds up no export.
+// Cancelling ctx stops it.
 func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any, error) {
 	from, to := scan.From.UTC(), scan.To.UTC()
 	if !to.After(from) {
 		to = from
 	}
-	s.publishMu.RLock()
-	defer s.publishMu.RUnlock()
-
-	logs, err := s.logSourcesLocked(scan.ProjectID, from, to, scan.Select, scan.Where)
+	read, err := s.beginRead(ctx, scan.ProjectID, from, to)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, scan.Query(logs))
+	defer read.end()
+
+	rows, err := read.conn.QueryContext(ctx, scan.Query(read.sources(from, to, scan.Select, scan.Where)))
 	if err != nil {
 		return nil, err
 	}
@@ -309,19 +243,12 @@ func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any
 	return scanTable(rows, -1)
 }
 
-// logSourcesLocked returns, as SQL, a Project's Logs of [from, to) from its
-// hot table, its late Logs and its files. Each source is read with the select
+// sources returns, as SQL, the Project's Logs of [from, to) from its hot
+// table, its late Logs and its files. Each source is read with the select
 // list sel(cols), and filtered by where(cols) if where is set, for its
-// columns cols. The caller holds publishMu until it has run the SQL.
-func (s *LogStore) logSourcesLocked(projectID uint32, from, to time.Time, sel, where func(LogColumns) string) (string, error) {
-	hours, err := s.hoursWithLogsLocked(projectID, from, to)
-	if err != nil {
-		return "", err
-	}
-	hot, err := s.tableExists(hotTable(projectID))
-	if err != nil {
-		return "", err
-	}
+// columns cols.
+func (r *logRead) sources(from, to time.Time, sel, where func(LogColumns) string) string {
+	projectID := r.projectID
 	source := func(table string, cols LogColumns, from, to time.Time) string {
 		condition := timeRange(from, to)
 		if where != nil {
@@ -338,7 +265,7 @@ func (s *LogStore) logSourcesLocked(projectID uint32, from, to time.Time, sel, w
 	// promoted set.
 	days := map[time.Time][]time.Time{}
 	var dayOrder []time.Time
-	for _, hour := range hours {
+	for _, hour := range r.hours {
 		day := LogDay(hour)
 		if _, ok := days[day]; !ok {
 			dayOrder = append(dayOrder, day)
@@ -346,7 +273,7 @@ func (s *LogStore) logSourcesLocked(projectID uint32, from, to time.Time, sel, w
 		days[day] = append(days[day], hour)
 	}
 	for _, day := range dayOrder {
-		set := s.PromotedSet(projectID, day)
+		set := r.store.PromotedSet(projectID, day)
 		cols := LogColumns{set: set}
 		dayFrom, dayTo := day, day.Add(24*time.Hour)
 		if from.After(dayFrom) {
@@ -355,23 +282,19 @@ func (s *LogStore) logSourcesLocked(projectID uint32, from, to time.Time, sel, w
 		if to.Before(dayTo) {
 			dayTo = to
 		}
-		if hot {
+		if r.hot {
 			sources = append(sources, source(withColumns(fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(projectID)), set),
 				cols, dayFrom, dayTo))
 		}
 		var files []string
 		for _, hour := range days[day] {
-			hourFiles, err := s.files.Hour(projectID, hour)
-			if err != nil {
-				return "", err
-			}
-			files = append(files, hourFiles...)
+			files = append(files, r.files[hour]...)
 		}
 		if len(files) > 0 {
 			sources = append(sources, source(withColumns(readFiles(files), set), cols, dayFrom, dayTo))
 		}
 	}
-	return strings.Join(sources, "\nUNION ALL BY NAME\n"), nil
+	return strings.Join(sources, "\nUNION ALL BY NAME\n")
 }
 
 // scanTable reads every row of rows as DuckDB gives its values, or at most
@@ -406,7 +329,7 @@ func withColumns(source string, set PromotedSet) string {
 	}
 	columns := make([]string, len(set.Keys))
 	for i, key := range set.Keys {
-		columns[i] = fmt.Sprintf("CAST(NULL AS %s) AS %s", key.Type.columnType(), sqlIdentifier(key.Column()))
+		columns[i] = fmt.Sprintf("CAST(NULL AS %s) AS %s", key.Type.columnType(), sqltext.Identifier(key.Column()))
 	}
 	return fmt.Sprintf("%s UNION ALL BY NAME SELECT %s WHERE false", source, strings.Join(columns, ", "))
 }
@@ -415,7 +338,7 @@ func withColumns(source string, set PromotedSet) string {
 func readFiles(files []string) string {
 	quoted := make([]string, len(files))
 	for i, file := range files {
-		quoted[i] = sqlString(file)
+		quoted[i] = sqltext.String(file)
 	}
 	return fmt.Sprintf("SELECT * FROM read_parquet([%s], union_by_name = true, hive_partitioning = false)",
 		strings.Join(quoted, ", "))
@@ -427,63 +350,39 @@ func timeRange(from, to time.Time) string {
 }
 
 func timestampLiteral(t time.Time) string {
-	return fmt.Sprintf("CAST(%s AS TIMESTAMP)", sqlString(timestampString(t)))
+	return fmt.Sprintf("CAST(%s AS TIMESTAMP)", sqltext.String(timestampString(t)))
 }
 
 // LogByID returns a Project's Log with the given id, if it has one. If at is
 // set, only the Log files of at's hour are searched, else every file.
 func (s *LogStore) LogByID(ctx context.Context, projectID uint32, id uuid.UUID, at *time.Time) (models.Log, bool, error) {
-	s.publishMu.RLock()
-	defer s.publishMu.RUnlock()
-
-	hot, err := s.tableExists(hotTable(projectID))
-	if err != nil {
-		return models.Log{}, false, err
-	}
-	var files []string
+	from, to := time.Unix(0, 0).UTC(), time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 	if at != nil {
-		files, err = s.files.Hour(projectID, *at)
-	} else {
-		files, err = s.files.Project(projectID)
+		from = at.UTC().Truncate(time.Hour)
+		to = from.Add(time.Hour)
 	}
+	read, err := s.beginRead(ctx, projectID, from, to)
 	if err != nil {
 		return models.Log{}, false, err
 	}
-	match := "id = CAST(" + sqlString(id.String()) + " AS UUID)"
+	defer read.end()
+
+	var files []string
+	for _, hour := range read.hours {
+		files = append(files, read.files[hour]...)
+	}
+	match := "id = CAST(" + sqltext.String(id.String()) + " AS UUID)"
 	sources := []string{fmt.Sprintf("SELECT * EXCLUDE (project_id) FROM %s.%s WHERE project_id = %d AND %s",
 		logsCatalog, lateTable, projectID, match)}
-	if hot {
+	if read.hot {
 		sources = append(sources, fmt.Sprintf("SELECT * FROM %s.%s WHERE %s", logsCatalog, hotTable(projectID), match))
 	}
 	if len(files) > 0 {
 		sources = append(sources, fmt.Sprintf("SELECT * FROM (%s) WHERE %s", readFiles(files), match))
 	}
-	logs, err := s.queryLogs(ctx, fmt.Sprintf("SELECT * FROM (%s) LIMIT 1", strings.Join(sources, "\nUNION ALL BY NAME\n")))
+	logs, err := read.queryLogs(fmt.Sprintf("SELECT * FROM (%s) LIMIT 1", strings.Join(sources, "\nUNION ALL BY NAME\n")))
 	if err != nil || len(logs) == 0 {
 		return models.Log{}, false, err
 	}
 	return logs[0], true, nil
-}
-
-// queryLogs runs a query whose rows are Logs as a hot table holds them, with
-// any promoted columns.
-func (s *LogStore) queryLogs(ctx context.Context, query string) ([]models.Log, error) {
-	rows, err := s.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-	var logs []models.Log
-	for rows.Next() {
-		log, err := scanHotRow(rows, columns)
-		if err != nil {
-			return nil, err
-		}
-		logs = append(logs, log)
-	}
-	return logs, rows.Err()
 }

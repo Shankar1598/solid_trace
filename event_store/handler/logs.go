@@ -11,15 +11,18 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/logquery"
-	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
 
 const (
-	defaultQueryLogs = 200
-	maxQueryLogs     = 1000
+	// defaultScanBudget is how long a run of Log rows reads hours before it
+	// answers with what it has found, so that a search for rare Logs shows
+	// them while it goes on.
+	defaultScanBudget = 1500 * time.Millisecond
+	defaultQueryLogs  = 200
+	maxQueryLogs      = 1000
 	// maxTableRows is how many rows of a table a run returns at most.
 	maxTableRows = 10000
 )
@@ -30,12 +33,15 @@ type LogsHandler struct {
 	logs     *storage.LogStore
 	settings InstanceSettings
 	clock    clock.Clock
+	// ScanBudget is how long a run of Log rows reads before it answers with
+	// what it has found and a next_cursor.
+	ScanBudget time.Duration
 }
 
 // NewLogsHandler serves logs; settings say whether SQL runs; clock is the
 // time ago() and now() read.
 func NewLogsHandler(logs *storage.LogStore, settings InstanceSettings, clock clock.Clock) *LogsHandler {
-	return &LogsHandler{logs: logs, settings: settings, clock: clock}
+	return &LogsHandler{logs: logs, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
 }
 
 // queryRequest is the body of a run.
@@ -53,14 +59,17 @@ type queryRequest struct {
 // (RFC 3339), with "limit" (default 200, at most 1,000) and "cursor" (a
 // previous page's next_cursor) optional. A Query of Log rows answers {"logs":
 // […], "next_cursor"}, newest first; next_cursor is null once there are no
-// older Logs, or take's number of Logs has been given. A Query that returns a
+// older Logs, or take's number of Logs has been given. A run that has read
+// for ScanBudget answers with what it has found, fewer than limit Logs or
+// none, and a next_cursor to go on from. A Query that returns a
 // table, one with project, extend, summarize, a sort other than newest first,
 // top, count or distinct, answers {"table": {"columns": [{"name", "type"}],
 // "rows": [[…]], "truncated"}}, and ignores limit and cursor. A Query with
 // mistakes answers 400 with {"errors": […]}, as validate lists them.
 //
-// The scan goes on if the client goes away: it stops at limit Logs or the
-// end of the range.
+// The scan goes on if the client goes away, as Fiber gives the handler no
+// context that ends with the connection: it stops at limit Logs or the end
+// of the range.
 func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -70,8 +79,8 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
 	}
-	if req.From.IsZero() || req.To.IsZero() || req.To.Before(req.From) {
-		return c.Status(400).JSON(fiber.Map{"error": "from and to must be RFC 3339 times, from no later than to"})
+	if problem := rangeProblem(req.From, req.To); problem != nil {
+		return c.Status(400).JSON(problem)
 	}
 	limit := defaultQueryLogs
 	if req.Limit < 0 {
@@ -101,27 +110,28 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if left >= 0 {
 		limit = min(limit, left)
 	}
-	logs, err := h.logs.ScanLogs(c.UserContext(), storage.LogScan{
+	page, err := h.logs.ScanLogs(c.UserContext(), storage.LogScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
 		After:     after,
 		Where:     query.Where,
 		Limit:     limit,
+		Budget:    h.ScanBudget,
 	})
 	if err != nil {
 		logger.L.Error("Log query failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 	var next *string
-	if len(logs) == limit && limit > 0 && left != limit {
-		if left >= 0 {
-			left -= limit
-		}
-		cursor := encodeCursor(logs[len(logs)-1], left)
+	if left >= 0 {
+		left -= len(page.Logs)
+	}
+	if page.Next != nil && left != 0 {
+		cursor := encodeCursor(*page.Next, left)
 		next = &cursor
 	}
-	return c.JSON(fiber.Map{"logs": logs, "next_cursor": next})
+	return c.JSON(fiber.Map{"logs": page.Logs, "next_cursor": next})
 }
 
 // table answers a run of a Query that returns a table: {"table": {"columns":
@@ -203,6 +213,15 @@ func (h *LogsHandler) Get(c *fiber.Ctx) error {
 	return c.JSON(log)
 }
 
+// rangeProblem is the answer to a request whose from and to aren't a time
+// range, or nil if they are.
+func rangeProblem(from, to time.Time) fiber.Map {
+	if from.IsZero() || to.IsZero() || to.Before(from) {
+		return fiber.Map{"error": "from and to must be RFC 3339 times, from no later than to"}
+	}
+	return nil
+}
+
 func queryErrors(source string, err error) []logquery.Problem {
 	var queryErr *logquery.Error
 	if errors.As(err, &queryErr) {
@@ -213,8 +232,8 @@ func queryErrors(source string, err error) []logquery.Problem {
 
 // A cursor is a Log's position, and how many Logs the Query's take has left
 // to give (-1 for none), opaque to clients.
-func encodeCursor(log models.Log, left int) string {
-	text := fmt.Sprintf("%s|%s", log.Time.UTC().Format(time.RFC3339Nano), log.ID)
+func encodeCursor(at storage.LogPosition, left int) string {
+	text := fmt.Sprintf("%s|%s", at.Time.UTC().Format(time.RFC3339Nano), at.ID)
 	if left >= 0 {
 		text += "|" + strconv.Itoa(left)
 	}

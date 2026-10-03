@@ -66,3 +66,6 @@ Follow-ups for later tickets:
 - **M1-10 (load test):** decoding happens before the `ingest_max_waiting` gate, so nothing bounds how many bodies are decoded at once. Each decode holds up to 10 MB as sent plus 50 MB decoded. A burst of large compressed batches could use a lot of memory before the gate turns any away. Measure it under load. If it matters, a small semaphore around `requestBody` would bound it.
 - **Console:** still has no request-body cap behind Thruster (M1-11's follow-up). This ticket covers EventStore only.
 
+### 2026-10-03 code review
+
+- **Done, decided by the user:** ingest bodies are decoded only once the request holds its `ingest_max_waiting` place, so overload answers 503 before any decompression. This closes the M1-10 note above about decoding before the gate. Caps and status codes are unchanged. See the spec's 2026-10-03 code review entry, item C.

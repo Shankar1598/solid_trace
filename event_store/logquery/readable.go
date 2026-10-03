@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/solidtrace/event_store/pkg/sqltext"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -43,7 +44,7 @@ func (q *Query) ReadableSQL() string {
 			if col.x.typ() == dynamicType {
 				value = dynamicJSON(col.x, cols)
 			}
-			list[i] = value + " AS " + sqlIdentifier(col.name)
+			list[i] = value + " AS " + sqltext.Identifier(col.name)
 		}
 		final = fmt.Sprintf("SELECT %s\nFROM %s\nORDER BY %s", strings.Join(list, ", "), c.prev, c.order())
 	}
@@ -66,7 +67,7 @@ func dynamicJSON(x expr, f fields) string {
 		if ref, ok := x.(fieldRef); ok {
 			part = f.Attribute(t, ref.name)
 		} else {
-			part = "struct_extract(" + writeValue(x, f) + ", " + quoteString(dynamicField(t)) + ")"
+			part = "struct_extract(" + writeValue(x, f) + ", " + sqltext.String(dynamicField(t)) + ")"
 		}
 		if t == storage.JSONAttribute {
 			parts[i] = "CAST(" + part + " AS JSON)"

@@ -55,3 +55,6 @@ Follow-ups for later tickets:
 - **M1-09:** the envelope reads Retention through the same `storeLogs`, so wiring `storage.ConsoleSettings` covers it.
 - An item whose `items` array is cut off loses all its records. A streaming reader could keep the ones before the cut. Not needed for any SDK seen.
 
+### 2026-10-03 code review
+
+- **An envelope answers 200 once its Event is stored:** a failed Retention read or Log write after that is logged and its Logs dropped, instead of answering 500/503. See the spec's 2026-10-03 code review entry, item 8.

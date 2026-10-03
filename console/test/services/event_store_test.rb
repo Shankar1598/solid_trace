@@ -205,6 +205,42 @@ class EventStoreTest < ActiveSupport::TestCase
     end
   end
 
+  test "a 403 from a Log call other than SQL is EventStore failing, not SQL queries off" do
+    stub_request(:post, "#{@base_url}/api/123/logs/query").to_return(status: 403, body: { error: "Forbidden" }.to_json)
+
+    assert_raises(EventStore::Unavailable) do
+      EventStore.query_logs(project_id: 123, query: "", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+    end
+  end
+
+  test "Log runs wait for EventStore however long they take, and other calls keep their timeouts" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    range = { from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10) }
+    timeouts = {}
+    record = lambda do |args, &_block|
+      timeouts[args[:url].split("/").last] = {
+        read: args.fetch(:read_timeout, :default),
+        open: args.fetch(:open_timeout, :default),
+      }
+      Struct.new(:body).new("{}")
+    end
+
+    RestClient::Request.stub(:execute, record) do
+      EventStore.query_logs(project_id: 123, query: "", **range)
+      EventStore.logs_histogram(project_id: 123, query: "", **range)
+      EventStore.run_logs_sql(project_id: 123, sql: "SELECT 1", **range)
+      EventStore.validate_logs_query(project_id: 123, query: "")
+      EventStore.count_events!(project_id: 123)
+    end
+
+    unlimited = { read: nil, open: :default }
+    default = { read: :default, open: :default }
+    assert_equal(
+      { "query" => unlimited, "histogram" => unlimited, "sql" => unlimited, "validate" => default, "count" => default },
+      timeouts
+    )
+  end
+
   test "all builds event objects" do
     issue = create(:issue)
     fingerprint = create(:issue_fingerprint, issue: issue)

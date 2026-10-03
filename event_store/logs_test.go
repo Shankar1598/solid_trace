@@ -342,6 +342,37 @@ func TestCrashAfterLogsCommitBeforeTheirBatchesAreDeletedStoresThemOnce(t *testi
 	}
 }
 
+func TestLogsSentAfterTheClockStepsBackAreStored(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Each Log's own time is before every reading of the clock.
+	postLogs(t, env, "application/json", `{"message": "before", "time": "2026-10-02T09:00:01Z"}`)
+	env.ProcessLogs(t)
+	postLogs(t, env, "application/json", `{"message": "unprocessed", "time": "2026-10-02T09:00:02Z"}`)
+
+	// The clock steps back an hour while EventStore runs: one Log comes
+	// before the next processing, one after.
+	env.Clock.Set(testNow.Add(-time.Hour))
+	postLogs(t, env, "application/json", `{"message": "stepped back", "time": "2026-10-02T09:00:03Z"}`)
+	env.ProcessLogs(t)
+	postLogs(t, env, "application/json", `{"message": "processed apart", "time": "2026-10-02T09:00:04Z"}`)
+	env.ProcessLogs(t)
+
+	// It steps back again across a restart.
+	env.Clock.Set(testNow.Add(-2 * time.Hour))
+	env.Reopen(t)
+	postLogs(t, env, "application/json", `{"message": "after a restart", "time": "2026-10-02T09:00:05Z"}`)
+	env.ProcessLogs(t)
+	postLogs(t, env, "application/json", `{"message": "last", "time": "2026-10-02T09:00:06Z"}`)
+	env.ProcessLogs(t)
+
+	want := []string{"last", "after a restart", "processed apart", "stepped back", "unprocessed", "before"}
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, want) {
+		t.Errorf("Expected every acknowledged Log, %v, got %v", want, got)
+	}
+}
+
 func TestLogsAndEventsOfOneProjectDoNotMeet(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()

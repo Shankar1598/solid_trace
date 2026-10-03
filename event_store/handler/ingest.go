@@ -164,6 +164,8 @@ const retryAfterSeconds = "5"
 
 func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 	switch {
+	case isBodyError(err):
+		return renderBodyError(c, err)
 	case errors.Is(err, ingest.ErrInvalidEnvelope):
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrInvalidItemHeader):
