@@ -69,6 +69,12 @@ func main() {
 	}
 	defer projectAuth.Close()
 
+	consoleSettings, err := storage.NewConsoleSettings(cfg.SQLitePath)
+	if err != nil {
+		logger.L.Fatal("Failed to open Console settings", "error", err)
+	}
+	defer consoleSettings.Close()
+
 	// Prepare must run before the worker and the archive job start. The
 	// archive never runs inside a batch: they share batchLock.
 	var batchLock sync.Mutex
@@ -96,7 +102,7 @@ func main() {
 		Logs:         pebbleWriter,
 		NotifyLogs:   logProcessor.Notify,
 		Clock:        clock.System{},
-		Retention:    ingest.FixedRetention(30), // the instance default; Projects' own Retention isn't read yet
+		Retention:    consoleSettings,
 		MaxWaiting:   cfg.IngestMaxWaiting,
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)

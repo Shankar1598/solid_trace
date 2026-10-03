@@ -324,6 +324,11 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create auth: %v", err)
 	}
 
+	consoleSettings, err := storage.NewConsoleSettings(env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Failed to open Console settings: %v", err)
+	}
+
 	env.PebbleWriter = pebbleWriter
 	env.DuckDBWriter = duckdbWriter
 	env.LogStore = logStore
@@ -350,7 +355,7 @@ func (env *TestEnv) open(t *testing.T) {
 		Logs:         pebbleWriter,
 		NotifyLogs:   func(projectID uint32) { env.LogProcessor.Notify(projectID) },
 		Clock:        env.Clock,
-		Retention:    ingest.FixedRetention(30),
+		Retention:    consoleSettings,
 		MaxWaiting:   100,
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
@@ -373,6 +378,7 @@ func (env *TestEnv) open(t *testing.T) {
 		mqWriter.Close()
 		mqReader.Close()
 		projectAuth.Close()
+		consoleSettings.Close()
 	}
 }
 
