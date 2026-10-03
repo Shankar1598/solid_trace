@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-02, M1-03, M1-08.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] A daily pass inside EventStore deletes each Project's `day=` folders past its effective Retention (read from Console's SQLite), with those days' promoted-set and popularity rows.
 - [x] Normalisation's "older than Retention" time rule uses the Project's effective Retention instead of the fixed default.
