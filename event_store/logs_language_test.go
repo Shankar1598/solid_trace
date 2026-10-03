@@ -100,6 +100,36 @@ func TestWhereComparesMatchesAndTestsFields(t *testing.T) {
 	assertQueries(t, env, cases, "across files and a late Log")
 }
 
+func TestContainsFindsTextInArrays(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+
+	env.Clock.Set(languageAt(11, 30))
+	postAndProcess(t, env,
+		logJSON(t, "tagged", languageAt(10, 10), map[string]any{"tags": []any{"Checkout", "db"}}),
+		logJSON(t, "named", languageAt(10, 20), map[string]any{"tags": "checkout"}),
+		logJSON(t, "untagged", languageAt(10, 30), map[string]any{"user": "ada"}),
+	)
+	cases := map[string][]string{
+		`where tags contains "checkout"`:     {"named", "tagged"},
+		`where tags contains_cs "Checkout"`:  {"tagged"},
+		`where tags !contains "db"`:          {"untagged", "named"},
+		`where tags !contains_cs "Checkout"`: {"untagged", "named"},
+	}
+	assertQueries(t, env, cases, "in the hot table")
+	for query, want := range cases {
+		_, rows := sqlTable(t, env, sqlRequest{SQL: readableSQL(t, env, query), From: allTime.from, To: allTime.to})
+		if len(rows) != len(want) {
+			t.Errorf("Readable SQL of %s: expected %d rows, got %v", query, len(want), rows)
+		}
+	}
+
+	env.Clock.Set(languageAt(12, 5))
+	env.ExportLogs(t)
+	assertQueries(t, env, cases, "in files")
+}
+
 func TestWhereOnTimeNarrowsTheRangeButNeverWidensIt(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()

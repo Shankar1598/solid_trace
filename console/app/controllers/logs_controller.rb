@@ -10,6 +10,11 @@ class LogsController < ApplicationController
 
   before_action :set_organization
   before_action :set_project, except: :start
+  before_action :set_time_range, only: %i[query histogram readable_sql sql]
+
+  rescue_from EventStore::SQLQueriesOff, with: :sql_queries_off
+  rescue_from EventStore::Rejected, with: :eventstore_rejected
+  rescue_from EventStore::Unavailable, with: :eventstore_unavailable
 
   # The sidebar's Logs entry: the newest Project's explorer.
   def start
@@ -33,29 +38,19 @@ class LogsController < ApplicationController
   # of Logs, newest first, or a tabular Query's table, as EventStore answers
   # it.
   def query
-    from, to = time_range
-    return render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless from && to
-
     render json: EventStore.query_logs(
       project_id: @project.id,
       query: params[:query].to_s,
-      from: from,
-      to: to,
+      from: @from,
+      to: @to,
       cursor: params[:cursor].presence
     )
-  rescue EventStore::Rejected => e
-    render json: e.body, status: :bad_request
-  rescue EventStore::Unavailable => e
-    eventstore_unavailable(e)
   end
 
   # GET with query, from and to (ISO 8601) and an optional bucket_seconds:
   # the Logs that pass the Query's filters counted per bucket and Level, for
   # the histogram and summary line, as EventStore answers them.
   def histogram
-    from, to = time_range
-    return render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless from && to
-
     bucket = params[:bucket_seconds].presence
     bucket_seconds = bucket && Integer(bucket, 10, exception: false)
     return render json: { error: "bucket_seconds must be a whole number of seconds" }, status: :bad_request if bucket && !bucket_seconds
@@ -63,14 +58,10 @@ class LogsController < ApplicationController
     render json: EventStore.logs_histogram(
       project_id: @project.id,
       query: params[:query].to_s,
-      from: from,
-      to: to,
+      from: @from,
+      to: @to,
       bucket_seconds: bucket_seconds
     )
-  rescue EventStore::Rejected => e
-    render json: e.body, status: :bad_request
-  rescue EventStore::Unavailable => e
-    eventstore_unavailable(e)
   end
 
   # GET with query: the Query's mistakes, with positions, and its chips when
@@ -78,25 +69,12 @@ class LogsController < ApplicationController
   # browser never parses Queries.
   def validate
     render json: EventStore.validate_logs_query(project_id: @project.id, query: params[:query].to_s)
-  rescue EventStore::Rejected => e
-    render json: e.body, status: :bad_request
-  rescue EventStore::Unavailable => e
-    eventstore_unavailable(e)
   end
 
   # GET with query, from and to (ISO 8601): the Query as readable SQL against
   # the logs view, to seed SQL mode. Refused while SQL queries are off.
   def readable_sql
-    from, to = time_range
-    return render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless from && to
-
-    render json: EventStore.readable_logs_sql(project_id: @project.id, query: params[:query].to_s, from: from, to: to)
-  rescue EventStore::SQLQueriesOff => e
-    render json: { error: e.message }, status: :forbidden
-  rescue EventStore::Rejected => e
-    render json: e.body, status: :bad_request
-  rescue EventStore::Unavailable => e
-    eventstore_unavailable(e)
+    render json: EventStore.readable_logs_sql(project_id: @project.id, query: params[:query].to_s, from: @from, to: @to)
   end
 
   # POST with sql, from and to (ISO 8601): runs the SQL as written against
@@ -104,16 +82,7 @@ class LogsController < ApplicationController
   # so a link can't run SQL as whoever opens it, and refused while SQL
   # queries are off.
   def sql
-    from, to = time_range
-    return render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless from && to
-
-    render json: EventStore.run_logs_sql(project_id: @project.id, sql: params[:sql].to_s, from: from, to: to)
-  rescue EventStore::SQLQueriesOff => e
-    render json: { error: e.message }, status: :forbidden
-  rescue EventStore::Rejected => e
-    render json: e.body, status: :bad_request
-  rescue EventStore::Unavailable => e
-    eventstore_unavailable(e)
+    render json: EventStore.run_logs_sql(project_id: @project.id, sql: params[:sql].to_s, from: @from, to: @to)
   end
 
   # GET one Log by id, for the inspector. time, the Log's own time, lets
@@ -125,11 +94,17 @@ class LogsController < ApplicationController
     return head :not_found unless log
 
     render json: log
-  rescue EventStore::Unavailable => e
-    eventstore_unavailable(e)
   end
 
   private
+
+  def sql_queries_off(error)
+    render json: { error: error.message }, status: :forbidden
+  end
+
+  def eventstore_rejected(error)
+    render json: error.body, status: :bad_request
+  end
 
   def eventstore_unavailable(error)
     Rails.logger.error(error.message)
@@ -144,12 +119,14 @@ class LogsController < ApplicationController
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
   end
 
-  def time_range
-    [ params[:from], params[:to] ].map do |value|
+  # The from and to (ISO 8601) of a request that reads a time range.
+  def set_time_range
+    @from, @to = [ params[:from], params[:to] ].map do |value|
       Time.iso8601(value.to_s)
     rescue ArgumentError
       nil
     end
+    render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless @from && @to
   end
 
   def project_props(project)

@@ -30,13 +30,17 @@ type LogCounts struct {
 //
 // A body that isn't one JSON value is read as NDJSON whatever its content
 // type, so a sender that labels NDJSON as JSON still gets its Logs stored.
-func (s *Service) IngestLogs(projectID uint32, body []byte, ndjson bool) (LogCounts, error) {
+func (s *Service) IngestLogs(projectID uint32, body Body, ndjson bool) (LogCounts, error) {
 	if !s.enterGate() {
 		return LogCounts{}, ErrOverloaded
 	}
 	defer s.leaveGate()
 
-	objects, dropped := logObjects(body, ndjson)
+	raw, err := body()
+	if err != nil {
+		return LogCounts{}, err
+	}
+	objects, dropped := logObjects(raw, ndjson)
 	return s.storeLogs(projectID, objects, dropped, normalise.JSON)
 }
 
@@ -80,7 +84,7 @@ func (s *Service) storeLogs(
 		return counts, nil
 	}
 	// A Pebble write is never retried: the sender gets an error instead.
-	if err := s.logs.WriteLogBatch(projectID, logs); err != nil {
+	if err := s.logs.WriteLogBatch(projectID, logs, receipt.At); err != nil {
 		return LogCounts{}, fmt.Errorf("write log batch: %w", err)
 	}
 	s.notifyLogs(projectID)

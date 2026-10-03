@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
 // logsCatalog is the name logs.duckdb is attached under.
@@ -42,9 +42,13 @@ type LogStore struct {
 	// commit or try, or a Project's export. It is held only for each of
 	// them, never across Log processing's waits.
 	writeMu sync.Mutex
-	// publishMu keeps readers out while an export commits and renames its
-	// files, so that a reader sees each exported Log exactly once.
+	// publishMu keeps a read from beginning while an export or a deletion
+	// commits and publishes its files, so that a read sees each Log exactly
+	// once. A read holds it only while it begins (logRead).
 	publishMu sync.RWMutex
+	// pins counts, for each Log file, the reads that may still read it.
+	pinMu sync.Mutex
+	pins  map[string]int
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
@@ -55,7 +59,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 		return nil, err
 	}
 	// An ATTACH on one pooled connection is seen by every connection.
-	if _, err := events.db.Exec(fmt.Sprintf("ATTACH IF NOT EXISTS %s AS %s", sqlString(path), logsCatalog)); err != nil {
+	if _, err := events.db.Exec(fmt.Sprintf("ATTACH IF NOT EXISTS %s AS %s", sqltext.String(path), logsCatalog)); err != nil {
 		return nil, fmt.Errorf("attach %s: %w", path, err)
 	}
 	for _, ddl := range []string{
@@ -95,7 +99,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if err != nil {
 		return nil, fmt.Errorf("load promoted sets: %w", err)
 	}
-	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}}
+	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}, pins: map[string]int{}}
 	if err := store.recoverStagedFiles(); err != nil {
 		return nil, fmt.Errorf("recover staged log files: %w", err)
 	}
@@ -159,6 +163,29 @@ func (s *LogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
 		return uuid.Nil, err
 	}
 	return uuid.FromBytes(batchID)
+}
+
+// LogProcessingCursors returns the Log processing cursor of every Project
+// that has one.
+func (s *LogStore) LogProcessingCursors() ([]uuid.UUID, error) {
+	rows, err := s.db.Query("SELECT batch_id FROM logs.log_processing_cursors")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cursors []uuid.UUID
+	for rows.Next() {
+		var batchID []byte
+		if err := rows.Scan(&batchID); err != nil {
+			return nil, err
+		}
+		cursor, err := uuid.FromBytes(batchID)
+		if err != nil {
+			return nil, err
+		}
+		cursors = append(cursors, cursor)
+	}
+	return cursors, rows.Err()
 }
 
 // AppendLogBatches stores the Logs of a Project's Log batches, all in one
@@ -479,9 +506,4 @@ func goMap[V any](scanned any) map[string]V {
 		}
 	}
 	return m
-}
-
-// sqlString quotes s as a SQL string literal.
-func sqlString(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

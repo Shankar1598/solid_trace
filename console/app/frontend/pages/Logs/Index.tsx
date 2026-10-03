@@ -40,7 +40,7 @@ import {
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
 import { pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
-import { addOlderPage, startStream, streamEnd, type Log, type Stream } from '@/lib/logs/stream'
+import { fillStream, keepsFetching, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
 import type { LogTable } from '@/lib/logs/table'
 import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
@@ -107,6 +107,23 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   const [leavingSql, setLeavingSql] = useState<Mode | null>(null)
   const currentRun = useRef<Run | null>(null)
 
+  // Shows a run's stream, and fetches older pages into it while EventStore
+  // answers short of a page: a search for rare Logs answers after a few
+  // seconds with what it has found so far.
+  const fill = useCallback((run: Run, stream: Stream) => {
+    const show = (s: Stream) => {
+      if (currentRun.current === run) setResult({ status: 'done', stream: s, loadingOlder: keepsFetching(s), olderError: null })
+    }
+    show(stream)
+    fillStream(stream, cursor => fetchLogPage({
+      orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, cursor, signal: run.controller.signal,
+    }), show)
+      .catch((error: Error) => {
+        if (currentRun.current !== run || run.controller.signal.aborted) return
+        setResult(r => r.status === 'done' ? { ...r, loadingOlder: false, olderError: error.message } : r)
+      })
+  }, [orgSlug, project.slug])
+
   const start = useCallback((state: ExplorerState) => {
     currentRun.current?.controller.abort()
     const run: Run = { controller: new AbortController(), query: state.query, ...resolveRange(state.range, new Date()) }
@@ -142,16 +159,15 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     fetchRun({ orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, signal: run.controller.signal })
       .then(answer => {
         if (currentRun.current !== run) return
-        setResult(answer.kind === 'table'
-          ? { status: 'table', table: answer.table }
-          : { status: 'done', stream: startStream(answer.page), loadingOlder: false, olderError: null })
+        if (answer.kind === 'table') setResult({ status: 'table', table: answer.table })
+        else fill(run, startStream(answer.page))
       })
       .catch((error: Error) => {
         if (currentRun.current !== run || run.controller.signal.aborted) return
         setResult({ status: 'error', message: error.message })
         if (error instanceof RunError && error.problems.length > 0) setProblems(error.problems)
       })
-  }, [orgSlug, project.slug])
+  }, [orgSlug, project.slug, fill])
 
   useEffect(() => {
     if (runsOnOpen(explorer)) start(explorer.current)
@@ -363,32 +379,26 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
 
   const cancel = () => {
     currentRun.current?.controller.abort()
-    setResult({ status: 'cancelled' })
+    // A search keeps the Logs it found.
+    setResult(r => r.status === 'done' && r.stream.logs.length > 0
+      ? { ...r, loadingOlder: false, olderError: 'the search was cancelled.' }
+      : { status: 'cancelled' })
     setHistogram(h => h.status === 'running' ? { status: 'cancelled' } : h)
   }
 
   const loadOlder = useCallback(() => {
     const run = currentRun.current
     if (!run || result.status !== 'done' || result.loadingOlder) return
-    const cursor = result.stream.nextCursor
-    setResult({ ...result, loadingOlder: true, olderError: null })
-
-    fetchLogPage({ orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, cursor, signal: run.controller.signal })
-      .then(page => {
-        if (currentRun.current !== run) return
-        setResult(r => r.status === 'done' ? { ...r, stream: addOlderPage(r.stream, page), loadingOlder: false } : r)
-      })
-      .catch((error: Error) => {
-        if (currentRun.current !== run || run.controller.signal.aborted) return
-        setResult(r => r.status === 'done' ? { ...r, loadingOlder: false, olderError: error.message } : r)
-      })
-  }, [orgSlug, project.slug, result])
+    // After Cancel, Try again goes on with the same run.
+    if (run.controller.signal.aborted) run.controller = new AbortController()
+    fill(run, wantOlder(result.stream))
+  }, [fill, result])
 
   const openProject = (slug: string) => {
     if (slug !== project.slug) router.get(`/${orgSlug}/projects/${slug}/logs${searchOf(explorer.current)}`)
   }
 
-  const running = result.status === 'running'
+  const running = result.status === 'running' || (result.status === 'done' && result.loadingOlder)
 
   return (
     <DashboardLayout>
@@ -477,7 +487,11 @@ function ResultArea({ result, onLoadOlder, selectedId, onSelect }: {
     case 'table':
       return <LogTableView table={result.table} />
     case 'done':
-      if (result.stream.logs.length === 0) return <Notice>No Logs match. Widen the time range or change the Query.</Notice>
+      if (result.stream.logs.length === 0) {
+        return result.loadingOlder
+          ? <Notice>Searching… no matching Logs yet.</Notice>
+          : <Notice>No Logs match. Widen the time range or change the Query.</Notice>
+      }
       return (
         <LogStream
           logs={result.stream.logs}

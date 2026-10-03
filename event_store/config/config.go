@@ -17,8 +17,8 @@ type Config struct {
 	LogsDuckDBPath  string // logs.duckdb, attached to the DuckDB of DuckDBPath
 	LogsParquetPath string // Where the hourly export writes Log files
 	// LogsDiskLimitBytes caps the Log files of every Project together; the
-	// oldest hours are deleted past it. 0 lets them grow until the disk
-	// holding them has 10% of its space left.
+	// oldest hours are deleted past it. 0 caps them at half the disk that
+	// holds them (storage.NewLogDiskLimit).
 	LogsDiskLimitBytes int64
 	ParquetStoragePath string // Path for archived Parquet files
 	SQLitePath         string // Rails SQLite for project key auth and issues

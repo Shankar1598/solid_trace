@@ -12,8 +12,8 @@ duckdb_path: /storage/duckdb/production/events.duckdb
 # Logs' hourly Parquet files, on local disk. Default: logs_parquet next to duckdb_path.
 # logs_parquet_path: /storage/duckdb/production/logs_parquet
 # The most disk, in GB, every Project's Log files may take together; past it the
-# oldest hours are deleted. Default: they grow until the disk holding them has
-# 10% of its space left.
+# oldest hours are deleted. Default: half the size of the disk holding them, read
+# when EventStore starts.
 # logs_disk_limit_gb: 800
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3

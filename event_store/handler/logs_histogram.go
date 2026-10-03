@@ -52,7 +52,7 @@ type histogramBucket struct {
 // included, oldest first; levels count each Level and "none", for Logs with
 // no Level. A Query with mistakes answers 400 with {"errors": […]}.
 //
-// Like a table, it reads the whole range while no export can publish.
+// Like a table, it reads the whole range as it was when the read began.
 func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -67,8 +67,8 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
 	}
-	if req.From.IsZero() || req.To.IsZero() || req.To.Before(req.From) {
-		return c.Status(400).JSON(fiber.Map{"error": "from and to must be RFC 3339 times, from no later than to"})
+	if problem := rangeProblem(req.From, req.To); problem != nil {
+		return c.Status(400).JSON(problem)
 	}
 	bucket := time.Duration(req.BucketSeconds) * time.Second
 	if req.BucketSeconds < 0 || req.BucketSeconds > maxBucketSeconds {

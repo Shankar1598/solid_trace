@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/solidtrace/event_store/logquery/parser"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -141,10 +142,12 @@ func writeValue(x expr, f fields) string {
 		}
 		return dynamicValue(parts)
 	case columnRef:
-		return sqlIdentifier(x.name)
+		return sqltext.Identifier(x.name)
+	case attributeText:
+		return "coalesce(" + f.Attribute(storage.StringAttribute, x.name) + ", " + f.Attribute(storage.JSONAttribute, x.name) + ")"
 	case partOf:
 		t, _ := x.t.attributeType()
-		return "struct_extract(" + writeValue(x.x, f) + ", " + quoteString(dynamicField(t)) + ")"
+		return "struct_extract(" + writeValue(x.x, f) + ", " + sqltext.String(dynamicField(t)) + ")"
 	case literal:
 		return writeLiteral(x.Literal)
 	case compare, isEmpty, and, or, not:
@@ -171,7 +174,7 @@ func dynamicValue(parts []string) string {
 	fields := make([]string, len(parts))
 	for i, part := range parts {
 		missing[i] = part + " IS NULL"
-		fields[i] = quoteString(dynamicField(dynamicParts[i])) + ": " + part
+		fields[i] = sqltext.String(dynamicField(dynamicParts[i])) + ": " + part
 	}
 	return fmt.Sprintf("CASE WHEN %s THEN NULL ELSE {%s} END", strings.Join(missing, " AND "), strings.Join(fields, ", "))
 }
@@ -184,13 +187,13 @@ func writeTextMatch(m textMatch, f fields) string {
 	}
 	switch m.op {
 	case matchContains:
-		return x + like + quoteString("%"+escapeLike(m.pattern)+"%") + ` ESCAPE '\'`
+		return x + like + sqltext.String("%"+escapeLike(m.pattern)+"%") + ` ESCAPE '\'`
 	case matchStartsWith:
-		return x + like + quoteString(escapeLike(m.pattern)+"%") + ` ESCAPE '\'`
+		return x + like + sqltext.String(escapeLike(m.pattern)+"%") + ` ESCAPE '\'`
 	case matchEquals:
-		return x + like + quoteString(escapeLike(m.pattern)) + ` ESCAPE '\'`
+		return x + like + sqltext.String(escapeLike(m.pattern)) + ` ESCAPE '\'`
 	default:
-		return "regexp_matches(" + x + ", " + quoteString(m.pattern) + ")"
+		return "regexp_matches(" + x + ", " + sqltext.String(m.pattern) + ")"
 	}
 }
 
@@ -284,18 +287,18 @@ func writeLiteral(l Literal) string {
 	case parser.BoolLiteral:
 		return strconv.FormatBool(l.Bool)
 	case parser.DateTimeLiteral:
-		return "CAST(" + quoteString(l.Time.UTC().Format("2006-01-02 15:04:05.999999")) + " AS TIMESTAMP)"
+		return "CAST(" + sqltext.String(l.Time.UTC().Format("2006-01-02 15:04:05.999999")) + " AS TIMESTAMP)"
 	case parser.TimespanLiteral:
 		return "to_microseconds(" + strconv.FormatInt(l.Timespan.Microseconds(), 10) + ")"
 	default:
-		return quoteString(l.String)
+		return sqltext.String(l.String)
 	}
 }
 
 // writeSearch writes a case-insensitive contains over message and every
 // string Attribute.
 func writeSearch(term string, cols storage.LogColumns) string {
-	pattern := quoteString("%" + escapeLike(term) + "%")
+	pattern := sqltext.String("%" + escapeLike(term) + "%")
 	ilike := func(column string) string {
 		return column + " ILIKE " + pattern + ` ESCAPE '\'`
 	}
@@ -313,14 +316,4 @@ func writeSearch(term string, cols storage.LogColumns) string {
 // escapeLike escapes LIKE's wildcards in s, with backslash as the escape.
 func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
-}
-
-// quoteString quotes s as a SQL string literal.
-func quoteString(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
-// sqlIdentifier quotes name as a SQL identifier.
-func sqlIdentifier(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

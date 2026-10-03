@@ -52,6 +52,7 @@ type TestEnv struct {
 	FlakyLogs    *flakyLogStore
 	LogProcessor *logprocessing.Processor
 	LogCleanup   *logprocessing.Cleanup
+	LogsHandler  *handler.LogsHandler
 	MQWriter     *storage.MessageQueueWriter
 	MQReader     *storage.MessageQueueReader
 	MQPath       string
@@ -90,12 +91,12 @@ func (env *TestEnv) ExportLogs(t *testing.T) {
 	}
 }
 
-// DeleteExpiredLogs runs the daily pass at the clock's time: each Project's
+// DeleteLogsPastRetention runs the daily pass at the clock's time: each Project's
 // Logs past its Retention, and every Log of a deleted Project, are deleted.
-func (env *TestEnv) DeleteExpiredLogs(t *testing.T) {
+func (env *TestEnv) DeleteLogsPastRetention(t *testing.T) {
 	t.Helper()
-	if err := env.LogCleanup.DeleteExpiredLogs(env.Clock.Now()); err != nil {
-		t.Fatalf("Deleting expired Logs failed: %v", err)
+	if err := env.LogCleanup.DeleteLogsPastRetention(env.Clock.Now()); err != nil {
+		t.Fatalf("Deleting Logs past their Retention failed: %v", err)
 	}
 }
 
@@ -372,6 +373,7 @@ func (env *TestEnv) open(t *testing.T) {
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, env.Clock)
+	env.LogsHandler = logsHandler
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)

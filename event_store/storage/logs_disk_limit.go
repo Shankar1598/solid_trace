@@ -14,20 +14,41 @@ import (
 	"github.com/solidtrace/event_store/pkg/logger"
 )
 
-// freeDiskShare is the share of the disk holding the Log files that the
-// default disk limit keeps free.
-const freeDiskShare = 10 // percent
+// defaultDiskShare is the share of the disk holding the Log files that they
+// may take when no limit is configured. Logs are the largest thing on the
+// disk, but Pebble, the Event databases and their archive, the hot tables and
+// the system share it; half leaves them room to grow, and doesn't move when
+// they do.
+const defaultDiskShare = 50 // percent
 
 // LogDiskLimit caps how much disk all Projects' Log files take together.
 type LogDiskLimit struct {
-	// Bytes is the cap. If it is 0 or less, the Log files may grow until the
-	// disk that holds them has 10% of its space left, whatever else fills it.
+	// Bytes is the cap, more than 0.
 	Bytes int64
+}
+
+// NewLogDiskLimit is the disk limit for the Log files in dir: configured
+// bytes if more than 0, else defaultDiskShare of the size of the disk that
+// holds dir, read once now.
+func NewLogDiskLimit(configured int64, dir string) (LogDiskLimit, error) {
+	if configured > 0 {
+		return LogDiskLimit{Bytes: configured}, nil
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return LogDiskLimit{}, err
+	}
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(dir, &fs); err != nil {
+		return LogDiskLimit{}, fmt.Errorf("read the size of the disk holding %s: %w", dir, err)
+	}
+	size := int64(fs.Blocks) * int64(fs.Bsize)
+	return LogDiskLimit{Bytes: size * defaultDiskShare / 100}, nil
 }
 
 // EnforceDiskLimit deletes the oldest hours of Log files, of any Project,
 // until the files take no more than limit. Logs not yet exported are never
-// deleted.
+// deleted. If a read is reading the oldest hour, it stops there with
+// ErrLogFilesInUse, and the next pass goes on.
 func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -38,15 +59,13 @@ func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 	}
 	maxBytes := limit.Bytes
 	if maxBytes <= 0 {
-		if maxBytes, err = defaultLogDiskLimit(s.files.Dir, total); err != nil {
-			return err
-		}
+		return fmt.Errorf("no Log disk limit: %d bytes", maxBytes)
 	}
 	if total <= maxBytes {
 		return nil
 	}
 
-	// Readers never see a file vanish under them.
+	// No read begins meanwhile, and none sees a file vanish under it.
 	s.publishMu.Lock()
 	defer s.publishMu.Unlock()
 	slices.SortFunc(hours, func(a, b logHourDir) int {
@@ -58,7 +77,7 @@ func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 		}
 		logger.L.Info("Deleting the oldest Log files past the disk limit",
 			"project_id", hour.projectID, "hour", hour.hour, "bytes", hour.bytes, "limit", maxBytes)
-		if err := os.RemoveAll(hour.dir); err != nil {
+		if err := s.removeUnread(hour.dir); err != nil {
 			return err
 		}
 		total -= hour.bytes
@@ -66,21 +85,6 @@ func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 		_ = os.Remove(filepath.Dir(hour.dir))
 	}
 	return nil
-}
-
-// defaultLogDiskLimit is how large the Log files in dir, now logBytes, may
-// grow before the disk holding them has freeDiskShare of its space left.
-func defaultLogDiskLimit(dir string, logBytes int64) (int64, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return 0, err
-	}
-	var fs syscall.Statfs_t
-	if err := syscall.Statfs(dir, &fs); err != nil {
-		return 0, fmt.Errorf("read free space of %s: %w", dir, err)
-	}
-	size := int64(fs.Blocks) * int64(fs.Bsize)
-	free := int64(fs.Bavail) * int64(fs.Bsize)
-	return max(logBytes+free-size*freeDiskShare/100, 0), nil
 }
 
 // logHourDir is one Project's hour folder of Log files.

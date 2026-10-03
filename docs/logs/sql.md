@@ -61,7 +61,8 @@ An Attribute keeps the type of each value, so one Log can hold `status` in `attr
 - Times are shown in UTC.
 - A JSON value, map, list or struct is shown as JSON.
 - If the SQL fails, you see DuckDB's error message.
-- A query has no time limit. Cancelling it in the explorer stops the wait, but the server may still finish the query. While a query runs, Logs are not moved to long-term storage, so a very long query delays that work.
+- A query has no time limit. Cancelling it in the explorer stops the wait, but the server may still finish the query.
+- A query reads the Logs as they were when it started, and runs in one transaction that commits when it ends. A long query holds up nothing else, but Log files it may read are only deleted (by Retention or the disk limit) after it ends.
 
 ## From a Query to SQL
 

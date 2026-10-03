@@ -3,7 +3,7 @@
 
 # This Dockerfile is designed for production, not development. Use with Kamal or build'n'run by hand:
 # docker build -t solid-trace .
-# docker run -d -p 80:80 -e RAILS_MASTER_KEY=<value from config/master.key> --name solid-trace solid-trace
+# docker run -d -p 3000:3000 -e RAILS_MASTER_KEY=<value from config/master.key> --name solid-trace solid-trace
 
 # For a containerized dev environment, see Dev Containers: https://guides.rubyonrails.org/getting_started_with_devcontainer.html
 
@@ -71,6 +71,10 @@ COPY --chown=rails:rails --from=build /rails /rails
 # Entrypoint prepares the database.
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
 
-# Start server via Thruster by default, this can be overwritten at runtime
-EXPOSE 80
+# Start server via Thruster by default, this can be overwritten at runtime.
+# Thruster listens on 3000, as the non-root user can't bind port 80, and runs
+# Puma on 3001.
+ENV HTTP_PORT="3000" \
+    TARGET_PORT="3001"
+EXPOSE 3000
 CMD ["./bin/thrust", "./bin/rails", "server"]
