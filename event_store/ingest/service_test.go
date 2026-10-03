@@ -319,6 +319,8 @@ type fakeLogWriter struct {
 	written chan []models.Log
 	block   chan struct{}
 	entered chan struct{}
+	// err, if set, fails every write.
+	err error
 }
 
 func newFakeLogWriter() *fakeLogWriter {
@@ -332,6 +334,9 @@ func (f *fakeLogWriter) WriteLogBatch(projectID uint32, logs []models.Log, recei
 	if f.block != nil {
 		f.entered <- struct{}{}
 		<-f.block
+	}
+	if f.err != nil {
+		return f.err
 	}
 	f.written <- logs
 	return nil
@@ -536,6 +541,39 @@ func TestAnEnvelopesEventAndLogItemAreBothStored(t *testing.T) {
 	}
 	if got := messages(<-logs.written); !reflect.DeepEqual(got, []string{"alongside"}) {
 		t.Errorf("Expected the Log alongside, got %v", got)
+	}
+}
+
+func TestAnEnvelopeSucceedsOnceItsEventIsStoredWhateverBecomesOfItsLogs(t *testing.T) {
+	eventPayload := `{"message": "Envelope Test"}`
+	envelope := pythonEnvelopeHeader +
+		fmt.Sprintf(`{"type": "event", "length": %d}`, len(eventPayload)) + "\n" + eventPayload + "\n" +
+		pythonLogItem(pythonRecord("dropped"))
+
+	for name, service := range map[string]func(EventWriter, *fakeLogWriter) *Service{
+		"the Log write fails": func(events EventWriter, logs *fakeLogWriter) *Service {
+			logs.err = errors.New("pebble: closed")
+			return newTestLogService(events, logs, 10)
+		},
+		"the Retention can't be read": func(events EventWriter, logs *fakeLogWriter) *Service {
+			return newRetentionTestService(events, logs, 10, projectRetention{err: errors.New("database is locked")})
+		},
+	} {
+		events := newFakeEventWriter()
+		logs := newFakeLogWriter()
+		if err := service(events, logs).IngestEnvelope(42, []byte(envelope)); err != nil {
+			t.Errorf("When %s, expected the envelope to succeed, got %v", name, err)
+		}
+		if len(events.written) != 1 {
+			t.Errorf("When %s, expected the Event stored, got %d", name, len(events.written))
+		}
+	}
+
+	// With no Event stored, a failed Log write still fails the envelope.
+	logs := newFakeLogWriter()
+	logs.err = errors.New("pebble: closed")
+	if err := newTestLogService(nil, logs, 10).IngestEnvelope(42, []byte(pythonEnvelopeHeader+pythonLogItem(pythonRecord("lost")))); err == nil {
+		t.Errorf("Expected a Logs-only envelope whose write fails to fail")
 	}
 }
 
