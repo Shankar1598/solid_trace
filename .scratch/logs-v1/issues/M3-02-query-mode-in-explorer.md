@@ -4,7 +4,7 @@
 
 **Blocked by:** M2-05, M3-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] The bar gains a `Builder | Query` switch after the Project and time range, opening in Builder.
 - [x] Query mode opens with the Builder's Query as editable text.
