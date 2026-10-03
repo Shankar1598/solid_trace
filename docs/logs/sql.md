@@ -2,6 +2,11 @@
 
 On an instance whose operator has turned SQL queries on, the Logs explorer has a SQL mode. In it you write raw [DuckDB SQL](https://duckdb.org/docs/sql/introduction), and it runs exactly as you wrote it. SQL mode opens with the SQL of your current Query, so you can start from something that works.
 
+- SQL runs only when you press Run (or Ctrl+Enter). Changing the time range waits for Run too.
+- The explorer's URL holds your SQL, so you can share it. Opening a link with SQL never runs it: whoever opens the link presses Run.
+- SQL can't be turned back into a Query. Leaving SQL mode drops your SQL and returns to the Query it started from. If you changed the SQL, the explorer asks first.
+- The histogram and the Builder's chips are hidden in SQL mode.
+
 SQL queries are off by default. Turning them on lets every member of every Organization run any SQL. That SQL can read every Organization's Logs and Events and the server's files, write files, drop tables and slow down ingest. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
 
 ## The `logs` view
