@@ -52,6 +52,7 @@ type TestEnv struct {
 	FlakyLogs    *flakyLogStore
 	LogProcessor *logprocessing.Processor
 	LogCleanup   *logprocessing.Cleanup
+	LogsHandler  *handler.LogsHandler
 	MQWriter     *storage.MessageQueueWriter
 	MQReader     *storage.MessageQueueReader
 	MQPath       string
@@ -372,6 +373,7 @@ func (env *TestEnv) open(t *testing.T) {
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, env.Clock)
+	env.LogsHandler = logsHandler
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)

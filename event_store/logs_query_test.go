@@ -279,6 +279,37 @@ func TestARareSearchFindsItsLogsNewestFirstAcrossDays(t *testing.T) {
 	}
 }
 
+func TestASearchAnswersWhatItFoundOnceItsBudgetIsSpentAndPagesOn(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// A Log an hour for five hours; the newest and the oldest match.
+	var logs []string
+	for h := 1; h <= 5; h++ {
+		logs = append(logs, logJSON(t, fmt.Sprintf("hour %d", h), testNow.Add(-time.Duration(h)*time.Hour+time.Minute),
+			map[string]any{"rare": h == 1 || h == 5}))
+	}
+	postAndProcess(t, env, logs...)
+	env.ExportLogs(t)
+
+	// Every scan spends its budget on its first hour.
+	env.LogsHandler.ScanBudget = time.Nanosecond
+	req := queryRequest{Query: `where rare == true`, From: testNow.Add(-6 * time.Hour), To: testNow, Limit: 200}
+	pages := pageThrough(t, env, req)
+	if got, want := slices.Concat(pages...), []string{"hour 1", "hour 5"}; !slices.Equal(got, want) {
+		t.Errorf("Expected the pages to find %v, got %v", want, pages)
+	}
+	if len(pages) != 5 || len(pages[0]) != 1 || len(pages[1]) != 0 {
+		t.Errorf("Expected a page an hour, the first with its match and the next empty, got %v", pages)
+	}
+
+	// A take still gives no more than it asks for.
+	req.Query = `where rare == true | take 1`
+	if got := slices.Concat(pageThrough(t, env, req)...); !slices.Equal(got, []string{"hour 1"}) {
+		t.Errorf("Expected take 1 to give one Log, got %v", got)
+	}
+}
+
 func TestQueriesAgreeAcrossPromotionTheDailySetAndDemotion(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
