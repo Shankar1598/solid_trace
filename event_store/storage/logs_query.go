@@ -107,7 +107,7 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) ([]models.Log, er
 	if !from.Before(to) || scan.Limit <= 0 {
 		return logs, nil
 	}
-	hours, hot, err := s.hoursWithLogs(scan.ProjectID, from, to)
+	hours, err := s.hoursWithLogs(scan.ProjectID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) ([]models.Log, er
 		if to.Before(hourTo) {
 			hourTo = to
 		}
-		found, err := s.scanHour(ctx, scan, hour, hourFrom, hourTo, hot, scan.Limit-len(logs))
+		found, err := s.scanHour(ctx, scan, hour, hourFrom, hourTo, scan.Limit-len(logs))
 		if err != nil {
 			return nil, err
 		}
@@ -136,18 +136,22 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) ([]models.Log, er
 
 // hoursWithLogs returns, newest first, the hours of [from, to) that may hold
 // a Project's Logs: those with files, and those between the oldest and the
-// newest Log not yet exported. It also reports whether the Project has a
-// hot table.
+// newest Log not yet exported.
 //
 // An hour's Logs not yet exported are only ever exported into that hour's
 // files, so an hour listed here stays listed while the scan runs.
-func (s *LogStore) hoursWithLogs(projectID uint32, from, to time.Time) ([]time.Time, bool, error) {
+func (s *LogStore) hoursWithLogs(projectID uint32, from, to time.Time) ([]time.Time, error) {
+	// Files and tables are listed together, so that no export moves an hour
+	// from one to the other between them.
+	s.publishMu.RLock()
+	defer s.publishMu.RUnlock()
+
 	hours := map[time.Time]bool{}
 	first, last := from.Truncate(time.Hour), to.Add(-time.Microsecond).Truncate(time.Hour)
 
 	days, err := os.ReadDir(s.files.ProjectDir(projectID))
 	if err != nil && !os.IsNotExist(err) {
-		return nil, false, err
+		return nil, err
 	}
 	for _, day := range days {
 		d, ok := strings.CutPrefix(day.Name(), "day=")
@@ -159,10 +163,8 @@ func (s *LogStore) hoursWithLogs(projectID uint32, from, to time.Time) ([]time.T
 			continue
 		}
 		hourDirs, err := os.ReadDir(s.files.DayDir(projectID, date))
-		if os.IsNotExist(err) {
-			continue // deleted by Retention or the disk limit since
-		} else if err != nil {
-			return nil, false, err
+		if err != nil {
+			return nil, err
 		}
 		for _, hourDir := range hourDirs {
 			var h int
@@ -176,11 +178,9 @@ func (s *LogStore) hoursWithLogs(projectID uint32, from, to time.Time) ([]time.T
 		}
 	}
 
-	s.publishMu.RLock()
-	defer s.publishMu.RUnlock()
 	hot, err := s.tableExists(hotTable(projectID))
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	sources := []string{fmt.Sprintf("SELECT time FROM %s.%s WHERE project_id = %d AND %s",
 		logsCatalog, lateTable, projectID, timeRange(from, to))}
@@ -192,7 +192,7 @@ func (s *LogStore) hoursWithLogs(projectID uint32, from, to time.Time) ([]time.T
 	err = s.db.QueryRow(fmt.Sprintf("SELECT min(time), max(time) FROM (%s)", strings.Join(sources, " UNION ALL "))).
 		Scan(&oldest, &newest)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if oldest.Valid {
 		for hour := oldest.Time.UTC().Truncate(time.Hour); !hour.After(newest.Time.UTC()); hour = hour.Add(time.Hour) {
@@ -205,15 +205,20 @@ func (s *LogStore) hoursWithLogs(projectID uint32, from, to time.Time) ([]time.T
 		sorted = append(sorted, hour)
 	}
 	slices.SortFunc(sorted, func(a, b time.Time) int { return b.Compare(a) })
-	return sorted, hot, nil
+	return sorted, nil
 }
 
 // scanHour returns up to limit of the Project's Logs of [from, to), within
 // one hour, that meet the scan's condition, newest first.
-func (s *LogStore) scanHour(ctx context.Context, scan LogScan, hour, from, to time.Time, hot bool, limit int) ([]models.Log, error) {
+func (s *LogStore) scanHour(ctx context.Context, scan LogScan, hour, from, to time.Time, limit int) ([]models.Log, error) {
 	s.publishMu.RLock()
 	defer s.publishMu.RUnlock()
 
+	// Project deletion drops the hot table, and a later Log makes it again.
+	hot, err := s.tableExists(hotTable(scan.ProjectID))
+	if err != nil {
+		return nil, err
+	}
 	files, err := s.files.Hour(scan.ProjectID, hour)
 	if err != nil {
 		return nil, err
