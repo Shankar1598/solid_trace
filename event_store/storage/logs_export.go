@@ -144,8 +144,8 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 		return err
 	}
 
-	// Readers never see the Logs both in a file and in DuckDB, nor in
-	// neither: they wait for the commit and the renames.
+	// No read begins between the commit and the renames, so none sees the
+	// Logs both in a file and in DuckDB, nor in neither.
 	s.publishMu.Lock()
 	defer s.publishMu.Unlock()
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
