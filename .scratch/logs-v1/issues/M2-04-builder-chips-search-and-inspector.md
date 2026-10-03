@@ -4,7 +4,7 @@
 
 **Blocked by:** M2-03.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Every value in a line, including Level and Service, is a tag with Show only this, Hide this and Copy value. A filter built from a tag uses that value's own type.
 - [x] Filters show as chips `field = value` / `field ≠ value`; clicking the operator flips it, × removes it. Hide this keeps Logs that don't have that Field.
