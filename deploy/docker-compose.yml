@@ -50,3 +50,5 @@ services:
   db_prepare:
     <<: *console
     command: ["bin/rails", "db:prepare"]
+    # Not the console anchor's depends_on, which names db_prepare itself.
+    depends_on: []
