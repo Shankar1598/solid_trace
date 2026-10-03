@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/solidtrace/event_store/storage"
 )
 
 // queryRequest is a run of a Query, as the console sends it.
@@ -153,4 +155,176 @@ func TestEachOperatorFindsLogsInTheHotTableFilesAndLateLogs(t *testing.T) {
 	cases[`where not(level == "error" or user == "bob")`] = []string{"fy", "ada", "di"}
 	cases[`search "full"`] = []string{"ed", "fy"}
 	assertQueries(t, env, cases, "with a late Log beside the files")
+
+	// zone joins the day's set partway through the day.
+	postAndProcess(t, env, logJSON(t, "gus", at(12, 1), map[string]any{"zone": "z", "user": "gus"}))
+	if key, ok := env.LogStore.PromotedSet(123, at(12, 1)).Lookup(storage.StringAttribute, "zone"); !ok || !key.Partway {
+		t.Fatalf("Expected zone promoted partway through the day, got %+v %v", key, ok)
+	}
+	assertQueries(t, env, map[string][]string{
+		`where zone == "z"`:   {"gus"},
+		`where zone != "z"`:   {"ed", "fy", "cy", "bob", "ada", "di"},
+		`search "z"`:          {"gus"},
+		`where user == "gus"`: {"gus"},
+	}, "with a key promoted partway through the day")
+}
+
+// pageThrough runs a Query page by page until no next cursor is left, and
+// returns each page's messages.
+func pageThrough(t *testing.T, env *TestEnv, req queryRequest) [][]string {
+	t.Helper()
+	var pages [][]string
+	for range 20 {
+		page := runQuery(t, env, 123, req)
+		pages = append(pages, messages(page.Logs))
+		if page.NextCursor == nil {
+			return pages
+		}
+		req.Cursor = *page.NextCursor
+	}
+	t.Fatalf("Expected paging to end, got %v", pages)
+	return nil
+}
+
+func TestPagesContinueFromTheCursorAcrossHoursAndSources(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(11, 30))
+	// Three Logs share one time, so pages split them by id.
+	postAndProcess(t, env,
+		logJSON(t, "a", at(10, 5), nil),
+		logJSON(t, "b", at(10, 15), nil),
+		logJSON(t, "c", at(10, 15), nil),
+		logJSON(t, "d", at(10, 15), nil),
+		logJSON(t, "e", at(11, 0), nil),
+		logJSON(t, "f", at(11, 20), map[string]any{"skip": true}),
+		logJSON(t, "g", at(11, 25), nil),
+	)
+	env.Clock.Set(at(12, 5))
+	env.ExportLogs(t) // hour 10 to a file
+	postAndProcess(t, env, logJSON(t, "late", at(10, 10), nil))
+
+	all := queryMessages(t, env, "")
+	if len(all) != 8 {
+		t.Fatalf("Expected 8 Logs, got %v", all)
+	}
+	pages := pageThrough(t, env, queryRequest{From: allTime.from, To: allTime.to, Limit: 3})
+	if got := slices.Concat(pages...); !slices.Equal(got, all) {
+		t.Errorf("Expected pages of 3 to list %v, got %v", all, pages)
+	}
+	if len(pages) != 3 || len(pages[0]) != 3 || len(pages[2]) != 2 {
+		t.Errorf("Expected pages of 3, 3 and 2, got %v", pages)
+	}
+
+	pages = pageThrough(t, env, queryRequest{Query: `where skip != true`, From: allTime.from, To: allTime.to, Limit: 2})
+	if got, want := slices.Concat(pages...), slices.DeleteFunc(slices.Clone(all), func(m string) bool { return m == "f" }); !slices.Equal(got, want) {
+		t.Errorf("Expected filtered pages to list %v, got %v", want, pages)
+	}
+
+	// The time range is [from, to).
+	page := runQuery(t, env, 123, queryRequest{From: at(10, 10), To: at(11, 20), Limit: 100})
+	if got, want := messages(page.Logs), []string{"e", "d", "c", "b", "late"}; !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) || got[0] != "e" || got[4] != "late" {
+		t.Errorf("Expected %v in [10:10, 11:20), got %v", want, got)
+	}
+	if page.NextCursor != nil {
+		t.Errorf("Expected no next cursor on a short page, got %q", *page.NextCursor)
+	}
+}
+
+func TestARareSearchFindsItsLogsNewestFirstAcrossDays(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	start := time.Date(2026, 10, 1, 0, 30, 0, 0, time.UTC)
+	var expected []string
+	// A Log every hour for two days, processed as they arrive; three carry
+	// the rare value, in an Attribute or the message.
+	for h := range 48 {
+		now := start.Add(time.Duration(h) * time.Hour)
+		env.Clock.Set(now)
+		attributes := map[string]any{"user": fmt.Sprintf("user-%d", h)}
+		message := fmt.Sprintf("hour %d", h)
+		switch h {
+		case 3:
+			attributes["reason"] = "a NEEDLE in hour 3"
+			expected = append(expected, message)
+		case 20:
+			message = "needle in the message, hour 20"
+			expected = append(expected, message)
+		case 41:
+			attributes["detail"] = "needle"
+			expected = append(expected, message)
+		}
+		postAndProcess(t, env, logJSON(t, message, now, attributes))
+		if now.Minute() == 30 && h%5 == 0 {
+			env.ExportLogs(t)
+		}
+	}
+	slices.Reverse(expected)
+
+	if got := queryMessages(t, env, `search "Needle"`); !slices.Equal(got, expected) {
+		t.Errorf("Expected %v, got %v", expected, got)
+	}
+	env.Clock.Set(start.Add(50 * time.Hour))
+	env.ExportLogs(t)
+	if got := queryMessages(t, env, `search "Needle"`); !slices.Equal(got, expected) {
+		t.Errorf("After every hour is exported, expected %v, got %v", expected, got)
+	}
+	page := runQuery(t, env, 123, queryRequest{Query: `search "needle"`, From: allTime.from, To: allTime.to, Limit: 2})
+	if got := messages(page.Logs); !slices.Equal(got, expected[:2]) || page.NextCursor == nil {
+		t.Errorf("Expected the newest 2 %v and a cursor, got %v", expected[:2], got)
+	}
+}
+
+func TestQueriesAgreeAcrossPromotionTheDailySetAndDemotion(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	day1 := testNow
+	day2 := testNow.AddDate(0, 0, 1)
+
+	// Day 1's set fills with k000…k099, so extra stays in the maps.
+	env.Clock.Set(day1)
+	postAndProcess(t, env, logJSON(t, "full", day1, numberedKeys("k", 100, "a")))
+	postAndProcess(t, env, logJSON(t, "extra on day 1", day1.Add(time.Minute), map[string]any{"extra": "x", "k000": "a"}))
+	cases := map[string][]string{
+		`where extra == "x"`:   {"extra on day 1"},
+		`where k000 == "a"`:    {"extra on day 1", "full"},
+		`where k099 == "a"`:    {"full"},
+		`where k099 != "a"`:    {"extra on day 1"},
+		`search "x"`:           {"extra on day 1"},
+		`where region == "eu"`: {},
+	}
+	assertQueries(t, env, cases, "on day 1")
+
+	// Day 2's set is day 1's most common keys, extra among them, so a key of
+	// day 1's set leaves it, and its column goes at the export after 01:00.
+	env.Clock.Set(day2)
+	postAndProcess(t, env, logJSON(t, "day 2", day2, map[string]any{"extra": "x", "k099": "a", "k000": "b"}))
+	set := env.LogStore.PromotedSet(123, day2)
+	if len(set.Keys) != 100 {
+		t.Fatalf("Expected day 2's set to be full, got %d keys", len(set.Keys))
+	}
+	cases[`where extra == "x"`] = []string{"day 2", "extra on day 1"}
+	cases[`where k099 == "a"`] = []string{"day 2", "full"}
+	cases[`where k099 != "a"`] = []string{"extra on day 1"}
+	cases[`where k000 == "b"`] = []string{"day 2"}
+	cases[`search "x"`] = []string{"day 2", "extra on day 1"}
+	assertQueries(t, env, cases, "on day 2")
+
+	env.ExportLogs(t) // day 1's hours, dropping its demoted columns
+	assertQueries(t, env, cases, "after day 1 is exported")
+
+	// A late Log of day 1 holds every Attribute in the maps.
+	postAndProcess(t, env, logJSON(t, "late on day 1", day1.Add(2*time.Minute), map[string]any{"region": "eu", "k099": "a"}))
+	cases[`where region == "eu"`] = []string{"late on day 1"}
+	cases[`where k099 == "a"`] = []string{"day 2", "late on day 1", "full"}
+	assertQueries(t, env, cases, "with a late Log of day 1")
+
+	env.Clock.Set(day2.Add(3 * time.Hour))
+	env.ExportLogs(t)
+	env.Reopen(t)
+	assertQueries(t, env, cases, "after day 2's hour is exported and a restart")
 }
