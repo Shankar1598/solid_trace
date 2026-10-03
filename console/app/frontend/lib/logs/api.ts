@@ -3,6 +3,7 @@
 import type { Chips } from './builder'
 import type { Histogram } from './histogram'
 import type { Log, LogPage } from './stream'
+import type { LogTable } from './table'
 
 export interface QueryProblem {
   message: string
@@ -32,7 +33,24 @@ export interface LogPageRequest {
   signal?: AbortSignal
 }
 
-export async function fetchLogPage({ orgSlug, projectSlug, query, from, to, cursor, signal }: LogPageRequest): Promise<LogPage> {
+/** What a run answers: Log rows, or a table for a tabular Query. */
+export type RunAnswer = { kind: 'logs'; page: LogPage } | { kind: 'table'; table: LogTable }
+
+/** A run's first answer: its newest page of Logs, or its table. */
+export async function fetchRun(request: LogPageRequest): Promise<RunAnswer> {
+  const body = await runQuery(request)
+  if (body && typeof body.table === 'object' && body.table !== null) return { kind: 'table', table: body.table as LogTable }
+  return { kind: 'logs', page: body as LogPage }
+}
+
+/** A page of Logs: older ones, from a run's cursor. */
+export async function fetchLogPage(request: LogPageRequest): Promise<LogPage> {
+  const body = await runQuery(request)
+  if (Array.isArray(body?.logs)) return body as LogPage
+  throw new RunError('The Query answered a table where Logs were expected.')
+}
+
+async function runQuery({ orgSlug, projectSlug, query, from, to, cursor, signal }: LogPageRequest) {
   const params = new URLSearchParams({ query, from: from.toISOString(), to: to.toISOString() })
   if (cursor) params.set('cursor', cursor)
 
@@ -49,7 +67,7 @@ export async function fetchLogPage({ orgSlug, projectSlug, query, from, to, curs
   }
 
   const body = await response.json().catch(() => null)
-  if (response.ok && body && Array.isArray(body.logs)) return body as LogPage
+  if (response.ok && body && (Array.isArray(body.logs) || (body.table && typeof body.table === 'object'))) return body
   throw runFailure(body, response.status)
 }
 
