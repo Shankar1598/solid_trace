@@ -46,5 +46,7 @@ func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandl
 	// or those paths are captured as an event UUID.
 	app.Get("/api/:project_id/events/:event_uuid", eventsHandler.GetEvent)
 
-	app.Get("/api/:project_id/logs/latest", logsHandler.Latest)
+	app.Post("/api/:project_id/logs/query", logsHandler.Query)
+	app.Post("/api/:project_id/logs/validate", logsHandler.Validate)
+	app.Get("/api/:project_id/logs/:log_id", logsHandler.Get)
 }

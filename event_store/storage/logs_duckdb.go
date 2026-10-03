@@ -388,61 +388,6 @@ func orderedMap[V any](m map[string]V, keep func(string) bool) duckdb.OrderedMap
 	return om
 }
 
-// LatestLogs returns up to limit of a Project's newest Logs, by time, newest
-// first, from its hot table, its late Logs and its files. Promoted values are
-// merged back into the Attributes, so a reader can't tell which keys are
-// promoted, nor whether a Log has been exported.
-func (s *LogStore) LatestLogs(projectID uint32, limit int) ([]models.Log, error) {
-	s.publishMu.RLock()
-	defer s.publishMu.RUnlock()
-
-	hot, err := s.tableExists(hotTable(projectID))
-	if err != nil {
-		return nil, err
-	}
-	files, err := s.files.Project(projectID)
-	if err != nil {
-		return nil, err
-	}
-	// Each source's columns are matched by name: a hot table and each day's
-	// files have promoted columns that logs_late lacks.
-	sources := []string{fmt.Sprintf("SELECT * EXCLUDE (project_id) FROM %s.%s WHERE project_id = %d", logsCatalog, lateTable, projectID)}
-	if hot {
-		sources = append(sources, fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(projectID)))
-	}
-	if len(files) > 0 {
-		quoted := make([]string, len(files))
-		for i, file := range files {
-			quoted[i] = sqlString(file)
-		}
-		sources = append(sources, fmt.Sprintf(
-			"SELECT * FROM read_parquet([%s], union_by_name = true, hive_partitioning = false)",
-			strings.Join(quoted, ", ")))
-	}
-	rows, err := s.db.Query(fmt.Sprintf(`
-		%s
-		ORDER BY time DESC, id DESC
-		LIMIT ?`, strings.Join(sources, "\n\t\tUNION ALL BY NAME\n\t\t")), limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
-	logs := []models.Log{}
-	for rows.Next() {
-		log, err := scanHotRow(rows, columns)
-		if err != nil {
-			return nil, err
-		}
-		logs = append(logs, log)
-	}
-	return logs, rows.Err()
-}
-
 // tableExists reports whether logs.duckdb has a table named table.
 func (s *LogStore) tableExists(table string) (bool, error) {
 	var exists bool
