@@ -4,7 +4,7 @@
 
 **Blocked by:** M3-02, M3-03.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Console's EventStore client gains readable SQL and Run SQL; Console refuses both when the setting is off.
 - [x] The switch shows `Builder | Query | SQL` when the setting is on and `Builder | Query` when off.
