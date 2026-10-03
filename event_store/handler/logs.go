@@ -152,9 +152,11 @@ func (h *LogsHandler) table(c *fiber.Ctx, projectID uint32, query *logquery.Quer
 // POST /api/:project_id/logs/validate
 //
 // Checks a Query, {"query"}, without running it. Answers {"errors": […],
-// "chips"}: each error with its message and the line and column (from 1, in
-// characters) where it starts and ends; chips when the Builder can show the
-// Query, else null.
+// "chips", "stages"}: each error with its message and the line and column
+// (from 1, in characters) where it starts and ends; chips when the Builder
+// can show the Query, else null; and, when it has no errors, where each stage
+// is and whether it is a leading filter the Builder can show
+// (logquery.Stage).
 func (h *LogsHandler) Validate(c *fiber.Ctx) error {
 	var req struct {
 		Query string `json:"query"`
@@ -164,9 +166,9 @@ func (h *LogsHandler) Validate(c *fiber.Ctx) error {
 	}
 	query, err := logquery.Compile(req.Query, logquery.Bounds{Now: h.clock.Now()})
 	if err != nil {
-		return c.JSON(fiber.Map{"errors": queryErrors(req.Query, err), "chips": nil})
+		return c.JSON(fiber.Map{"errors": queryErrors(req.Query, err), "chips": nil, "stages": []logquery.Stage{}})
 	}
-	return c.JSON(fiber.Map{"errors": []logquery.Problem{}, "chips": query.Chips()})
+	return c.JSON(fiber.Map{"errors": []logquery.Problem{}, "chips": query.Chips(), "stages": query.Stages()})
 }
 
 // GET /api/:project_id/logs/:log_id?time=<RFC 3339>

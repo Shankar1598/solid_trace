@@ -78,7 +78,9 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/histogram", body)
     end
 
-    # Checks a Query without running it: {"errors" => [...], "chips" => Hash | nil}.
+    # Checks a Query without running it: {"errors" => [...], "chips" => Hash | nil,
+    # "stages" => [...]}, where stages places each stage of a Query without
+    # mistakes and says whether the Builder can show it.
     def validate_logs_query(project_id:, query:)
       post!("#{base_url}/api/#{project_id}/logs/validate", { query: query })
     end
