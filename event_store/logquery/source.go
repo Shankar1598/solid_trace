@@ -7,8 +7,8 @@ import (
 )
 
 // A Query reads the Logs of one Project, the request's. Its leading source,
-// when it has one, names them: logs, or the Project's slug as Console writes
-// it, such as my-api | where level == "error".
+// when it has one, names them: logs, or the Project's slug in brackets, as
+// Console writes it: ['my-api'] | where level == "error".
 
 // SourceOf returns the name a Query's text gives its source, or "" when it
 // gives none or doesn't parse.
@@ -30,7 +30,7 @@ func CheckSource(text, slug string) error {
 		return nil
 	}
 	if name := tree.Source.Name; name != "logs" && name != slug {
-		return &Error{Span: tree.Source.NameSpan, Message: fmt.Sprintf("expected %s, this Project's slug, or logs, got %q", slug, name)}
+		return &Error{Span: tree.Source.NameSpan, Message: fmt.Sprintf("expected ['%s'], this Project's slug, or logs, got %q", slug, name)}
 	}
 	return nil
 }
