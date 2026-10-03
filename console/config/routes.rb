@@ -25,6 +25,7 @@ Rails.application.routes.draw do
 
   scope "/:org_slug" do
     resources :issues, only: [ :index ]
+    get "logs", to: "logs#start", as: :logs
     resources :mentions, only: [ :index ]
     get "organization_users/search", to: "organization_users#search", as: :organization_users_search
     resources :projects, only: [ :index, :new, :create, :show, :update ], param: :slug do
@@ -35,6 +36,13 @@ Rails.application.routes.draw do
           patch :assign
         end
         resources :comments, only: [ :create, :destroy ]
+      end
+
+      resources :logs, only: [ :index, :show ] do
+        collection do
+          get :query
+          get :validate
+        end
       end
 
       resources :keys, only: [ :create, :destroy ], controller: "project_keys" do
