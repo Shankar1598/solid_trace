@@ -54,6 +54,7 @@ func isContentError(err error) bool {
 // production adapter.
 type Store interface {
 	LogProcessingCursor(projectID uint32) (uuid.UUID, error)
+	LogProcessingCursors() ([]uuid.UUID, error)
 	AppendLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error
 	TryLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error
 	Ping() error
@@ -112,10 +113,18 @@ func New(batches *storage.PebbleWriter, store Store, clock clock.Clock) *Process
 	}
 }
 
-// Prepare runs once, before the worker starts. It deletes the Log batches a
-// crash left in Pebble after they were stored, and marks every Project that
-// has Log batches as pending.
+// Prepare runs once, before the worker starts and before Log ingest writes. It
+// keeps new Log batch ids above every Project's cursor, deletes the Log
+// batches a crash left in Pebble after they were stored, and marks every
+// Project that has Log batches as pending.
 func (p *Processor) Prepare() error {
+	cursors, err := p.store.LogProcessingCursors()
+	if err != nil {
+		return fmt.Errorf("read log processing cursors: %w", err)
+	}
+	for _, cursor := range cursors {
+		p.batches.KeepLogBatchIDsAbove(cursor)
+	}
 	projects, err := p.batches.ProjectsWithLogBatches()
 	if err != nil {
 		return fmt.Errorf("list projects with log batches: %w", err)

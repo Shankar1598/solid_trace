@@ -80,7 +80,7 @@ func (s *Service) storeLogs(
 		return counts, nil
 	}
 	// A Pebble write is never retried: the sender gets an error instead.
-	if err := s.logs.WriteLogBatch(projectID, logs); err != nil {
+	if err := s.logs.WriteLogBatch(projectID, logs, receipt.At); err != nil {
 		return LogCounts{}, fmt.Errorf("write log batch: %w", err)
 	}
 	s.notifyLogs(projectID)
