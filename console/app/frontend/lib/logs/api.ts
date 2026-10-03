@@ -1,6 +1,7 @@
 // Runs Queries through Console's proxy of EventStore. Cancel by aborting the
 // signal: EventStore can't stop a scan, so cancel only drops the answer.
 import type { Chips } from './builder'
+import type { Histogram } from './histogram'
 import type { Log, LogPage } from './stream'
 
 export interface QueryProblem {
@@ -49,13 +50,38 @@ export async function fetchLogPage({ orgSlug, projectSlug, query, from, to, curs
 
   const body = await response.json().catch(() => null)
   if (response.ok && body && Array.isArray(body.logs)) return body as LogPage
+  throw runFailure(body, response.status)
+}
 
+export interface HistogramRequest {
+  orgSlug: string
+  projectSlug: string
+  query: string
+  from: Date
+  to: Date
+  bucketSeconds: number
+  signal?: AbortSignal
+}
+
+/** The Logs of a run's range that pass its Query's filters, counted per bucket and Level. */
+export async function fetchHistogram({ orgSlug, projectSlug, query, from, to, bucketSeconds, signal }: HistogramRequest): Promise<Histogram> {
+  const params = new URLSearchParams({
+    query, from: from.toISOString(), to: to.toISOString(), bucket_seconds: String(bucketSeconds),
+  })
+  const response = await get(`/${orgSlug}/projects/${projectSlug}/logs/histogram?${params}`, signal)
+  const body = await response.json().catch(() => null)
+  if (response.ok && body && Array.isArray(body.buckets)) return body as Histogram
+  throw runFailure(body, response.status)
+}
+
+/** A failed run's error: the Query's first mistake, or what went wrong. */
+function runFailure(body: { errors?: unknown; error?: unknown } | null, status: number): RunError {
   const problems: QueryProblem[] = Array.isArray(body?.errors) ? body.errors : []
   if (problems.length > 0) {
     const p = problems[0]
-    throw new RunError(`Line ${p.line}, column ${p.column}: ${p.message}`, problems)
+    return new RunError(`Line ${p.line}, column ${p.column}: ${p.message}`, problems)
   }
-  throw new RunError(typeof body?.error === 'string' ? body.error : `The Query failed (HTTP ${response.status}).`)
+  return new RunError(typeof body?.error === 'string' ? body.error : `The Query failed (HTTP ${status}).`)
 }
 
 export interface Validation {

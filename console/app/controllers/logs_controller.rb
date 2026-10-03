@@ -47,6 +47,30 @@ class LogsController < ApplicationController
     eventstore_unavailable(e)
   end
 
+  # GET with query, from and to (ISO 8601) and an optional bucket_seconds:
+  # the Logs that pass the Query's filters counted per bucket and Level, for
+  # the histogram and summary line, as EventStore answers them.
+  def histogram
+    from, to = time_range
+    return render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless from && to
+
+    bucket = params[:bucket_seconds].presence
+    bucket_seconds = bucket && Integer(bucket, 10, exception: false)
+    return render json: { error: "bucket_seconds must be a whole number of seconds" }, status: :bad_request if bucket && !bucket_seconds
+
+    render json: EventStore.logs_histogram(
+      project_id: @project.id,
+      query: params[:query].to_s,
+      from: from,
+      to: to,
+      bucket_seconds: bucket_seconds
+    )
+  rescue EventStore::Rejected => e
+    render json: e.body, status: :bad_request
+  rescue EventStore::Unavailable => e
+    eventstore_unavailable(e)
+  end
+
   # GET with query: the Query's mistakes, with positions, and its chips when
   # the Builder can show it. The Builder reads chips only from here, so the
   # browser never parses Queries.
