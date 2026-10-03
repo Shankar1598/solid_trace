@@ -37,7 +37,7 @@ export function QueryBox({ projectSlug, text, onChange, onRun, problems, leaving
           }
         }}
         aria-label="Query"
-        placeholder={`${projectSlug}\n| where level == "error"\n| summarize count() by service`}
+        placeholder={`['${projectSlug}']\n| where level == "error"\n| summarize count() by service`}
         className={cn(
           'w-full resize-y rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] leading-5 outline-none focus:ring-1 focus:ring-primary',
           problems.length > 0 && 'border-destructive',

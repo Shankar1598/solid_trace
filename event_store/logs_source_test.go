@@ -24,10 +24,11 @@ func seedProjectSlug(t *testing.T, sqlitePath string, projectID uint32, slug str
 	}
 }
 
-// sourceValidation is what validate says of a Query's source.
+// sourceValidation is what validate says of a Query's source, and its chips.
 type sourceValidation struct {
-	Errors []queryProblem `json:"errors"`
-	Source *string        `json:"source"`
+	Errors []queryProblem  `json:"errors"`
+	Source *string         `json:"source"`
+	Chips  json.RawMessage `json:"chips"`
 }
 
 func validateSource(t *testing.T, env *TestEnv, projectID uint32, query string) sourceValidation {
@@ -43,20 +44,19 @@ func validateSource(t *testing.T, env *TestEnv, projectID uint32, query string) 
 	return v
 }
 
-func TestAQueryNamesItsLogsByLogsOrTheProjectsSlug(t *testing.T) {
+func TestAQueryNamesItsLogsByLogsOrTheProjectsSlugInBrackets(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	seedProjectSlug(t, env.SQLitePath, 123, "my-api")
 
 	sources := map[string]string{
-		`my-api`:                             "my-api",
-		"my-api\n| where level == \"error\"": "my-api",
-		"  my-api // the API\n| search \"timeout\"": "my-api",
-		`my-api|where status - 1 == 199`:            "my-api",
-		`['my-api'] | where level == "error"`:       "my-api",
-		`logs | where level == "error"`:             "logs",
-		`where level == "error"`:                    "",
-		`count`:                                     "",
+		`['my-api']`:                                 "my-api",
+		"['my-api']\n| where level == \"error\"":     "my-api",
+		"  ['my-api'] // the API\n| search \"oops\"": "my-api",
+		`["my-api"] | where level == "error"`:        "my-api",
+		`logs | where level == "error"`:              "logs",
+		`where level == "error"`:                     "",
+		`count`:                                      "",
 	}
 	for query, want := range sources {
 		v := validateSource(t, env, 123, query)
@@ -69,12 +69,16 @@ func TestAQueryNamesItsLogsByLogsOrTheProjectsSlug(t *testing.T) {
 		}
 	}
 
+	// The source alone is a Query the Builder shows, with no clauses.
+	if v := validateSource(t, env, 123, "['my-api']\n"); string(v.Chips) == "null" {
+		t.Errorf("Expected chips for the source alone, got none and %+v", v.Errors)
+	}
+
 	// Another name is a mistake at the name, though validate still gives it,
 	// so the explorer can open the Project it names.
 	others := map[string]queryProblem{
-		`other-api | where level == "error"`: {Line: 1, Column: 1, EndLine: 1, EndColumn: 10},
-		"2fa\n| take 5":                      {Line: 1, Column: 1, EndLine: 1, EndColumn: 4},
-		`['other api']`:                      {Line: 1, Column: 1, EndLine: 1, EndColumn: 14},
+		`['other-api'] | where level == "error"`: {Line: 1, Column: 1, EndLine: 1, EndColumn: 14},
+		"\n  ['2fa']\n| take 5":                  {Line: 2, Column: 3, EndLine: 2, EndColumn: 10},
 	}
 	for query, want := range others {
 		v := validateSource(t, env, 123, query)
@@ -83,21 +87,21 @@ func TestAQueryNamesItsLogsByLogsOrTheProjectsSlug(t *testing.T) {
 			continue
 		}
 		got := v.Errors[0]
-		want.Message = fmt.Sprintf("expected my-api, this Project's slug, or logs, got %q", *v.Source)
+		want.Message = fmt.Sprintf("expected ['my-api'], this Project's slug, or logs, got %q", *v.Source)
 		if got != want {
 			t.Errorf("%q: expected %+v, got %+v", query, want, got)
 		}
 	}
 
 	status, raw := postQueryApp(t, env, "/api/123/logs/query",
-		queryRequest{Query: `other-api | where level == "error"`, From: allTime.from, To: allTime.to})
+		queryRequest{Query: `['other-api'] | where level == "error"`, From: allTime.from, To: allTime.to})
 	if status != 400 {
 		t.Errorf("A run of another Project's name: expected 400, got %d: %s", status, raw)
 	}
-	runQuery(t, env, 123, queryRequest{Query: `my-api | where level == "error"`, From: allTime.from, To: allTime.to})
+	runQuery(t, env, 123, queryRequest{Query: `['my-api'] | where level == "error"`, From: allTime.from, To: allTime.to})
 
 	// A Project Console doesn't know has no slug to check against.
-	if v := validateSource(t, env, 456, `other-api | where level == "error"`); len(v.Errors) != 0 {
+	if v := validateSource(t, env, 456, `['other-api'] | where level == "error"`); len(v.Errors) != 0 {
 		t.Errorf("Expected no mistakes for a Project Console doesn't know, got %+v", v.Errors)
 	}
 }

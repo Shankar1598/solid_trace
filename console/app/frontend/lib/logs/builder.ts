@@ -82,14 +82,9 @@ export function queryOf(builder: Builder, projectSlug: string): string {
   return stages.join('\n| ')
 }
 
-// The words that start a stage: a slug spelled as one is written ['quoted'],
-// so `count` stays a source and not the count stage.
-const STAGES = new Set(['where', 'search', 'project', 'extend', 'summarize', 'sort', 'order', 'take', 'limit', 'top', 'count', 'distinct'])
-const PLAIN_SLUG = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/
-
-/** A Project's slug as a Query's source: bare, such as `my-api`, unless it can't be. */
+/** A Project's slug as a Query's source, in brackets: `['my-api']`. */
 function sourceText(slug: string): string {
-  return PLAIN_SLUG.test(slug) && !STAGES.has(slug) ? slug : `['${escape(slug).replaceAll("'", "\\'")}']`
+  return `['${escape(slug).replaceAll("'", "\\'")}']`
 }
 
 /** One chip as its where stage, such as `where service == "api"`. */
