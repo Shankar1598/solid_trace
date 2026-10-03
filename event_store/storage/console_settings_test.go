@@ -190,3 +190,19 @@ func TestConsoleSettings_ARetentionBelowOneDayIsAnError(t *testing.T) {
 		t.Errorf("ProjectLogRetention() = %v, %v; want %v", got, err, want)
 	}
 }
+
+func TestConsoleSettings_ReadsAProjectsSlug(t *testing.T) {
+	path, console := newConsoleDB(t)
+	addProject(t, console, 1, nil)
+	settings := openConsoleSettings(t, path)
+
+	for id, want := range map[uint32]string{1: "project", 2: ""} {
+		got, err := settings.ProjectSlug(id)
+		if err != nil {
+			t.Fatalf("ProjectSlug(%d): %v", id, err)
+		}
+		if got != want {
+			t.Errorf("ProjectSlug(%d) = %q, want %q", id, got, want)
+		}
+	}
+}
