@@ -1,9 +1,9 @@
 import type { Mode } from '@/lib/logs/explorerState'
 import { cn } from '@/lib/utils'
 
-const LABELS: Record<Mode, string> = { builder: 'Builder', query: 'Query' }
+const LABELS: Record<Mode, string> = { builder: 'Builder', query: 'Query', sql: 'SQL' }
 
-/** The `Builder | Query` switch in the bar. */
+/** The `Builder | Query | SQL` switch in the bar (`Builder | Query` while SQL queries are off). */
 export function ModeSwitch({ modes, mode, disabled, onSwitch }: {
   modes: Mode[]; mode: Mode; disabled?: boolean; onSwitch: (mode: Mode) => void
 }) {

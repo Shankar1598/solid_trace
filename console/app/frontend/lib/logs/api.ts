@@ -102,6 +102,44 @@ function runFailure(body: { errors?: unknown; error?: unknown } | null, status: 
   return new RunError(typeof body?.error === 'string' ? body.error : `The Query failed (HTTP ${status}).`)
 }
 
+/** The Query as readable SQL against the logs view of [from, to), to seed SQL mode. */
+export async function fetchReadableSql({ orgSlug, projectSlug, query, from, to, signal }: {
+  orgSlug: string; projectSlug: string; query: string; from: Date; to: Date; signal?: AbortSignal
+}): Promise<string> {
+  const params = new URLSearchParams({ query, from: from.toISOString(), to: to.toISOString() })
+  const response = await get(`/${orgSlug}/projects/${projectSlug}/logs/readable_sql?${params}`, signal)
+  const body = await response.json().catch(() => null)
+  if (response.ok && body && typeof body.sql === 'string') return body.sql
+  throw runFailure(body, response.status)
+}
+
+/**
+ * Runs SQL as written against the logs view of the Project and [from, to),
+ * answering a table. A POST with the page's CSRF token, so only the page runs
+ * SQL, never a link.
+ */
+export async function runSql({ orgSlug, projectSlug, sql, from, to, signal }: {
+  orgSlug: string; projectSlug: string; sql: string; from: Date; to: Date; signal?: AbortSignal
+}): Promise<LogTable> {
+  const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? ''
+  let response: Response
+  try {
+    response = await fetch(`/${orgSlug}/projects/${projectSlug}/logs/sql`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+      credentials: 'same-origin',
+      body: JSON.stringify({ sql, from: from.toISOString(), to: to.toISOString() }),
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted) throw error
+    throw new RunError('Console could not be reached. Check your connection and run again.')
+  }
+  const body = await response.json().catch(() => null)
+  if (response.ok && body?.table && typeof body.table === 'object') return body.table as LogTable
+  throw new RunError(typeof body?.error === 'string' ? body.error : `The SQL failed (HTTP ${response.status}).`)
+}
+
 /**
  * Where validate places one stage of a Query, from its keyword to its end
  * (lines and columns from 1, columns in characters). filter: one of the
