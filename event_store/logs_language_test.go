@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -89,4 +90,39 @@ func TestWhereComparesMatchesAndTestsFields(t *testing.T) {
 	cases[`where isnotempty(status)`] = []string{"ed", "fy", "bob", "ada", "di"}
 	cases[`where duration > 100 and path contains "api"`] = []string{"ed", "cy", "ada"}
 	assertQueries(t, env, cases, "across files and a late Log")
+}
+
+func TestWhereOnTimeNarrowsTheRangeButNeverWidensIt(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env) // the clock reads 11:30
+
+	inRange := func(query string, from, to time.Time) []string {
+		t.Helper()
+		return messages(runQuery(t, env, 123, queryRequest{Query: query, From: from, To: to, Limit: 100}).Logs)
+	}
+	cases := []struct {
+		query    string
+		from, to time.Time
+		want     []string
+	}{
+		{`where time >= datetime(2026-10-02T10:15:00Z)`, allTime.from, allTime.to, []string{"ed", "cy", "bob"}},
+		{`where time < datetime(2026-10-02 10:25)`, languageAt(10, 15), languageAt(12, 0), []string{"bob"}},
+		{`where time == datetime("2026-10-02T10:20:00Z")`, allTime.from, allTime.to, []string{"bob"}},
+		{`where time > ago(1h)`, allTime.from, allTime.to, []string{"ed"}},
+		{`where _time > ago(1h)`, allTime.from, allTime.to, []string{"ed"}},
+		{`where time > now() - 1h`, allTime.from, allTime.to, []string{"ed"}},
+		{`where time >= ago(2h) and time < ago(1h)`, allTime.from, allTime.to, []string{"bob", "ada"}},
+		{`where datetime(2026-10-02) > time`, allTime.from, allTime.to, []string{"di"}},
+		// Never wider than the request's range.
+		{`where time > datetime(2026-10-01)`, languageAt(10, 0), languageAt(11, 0), []string{"cy", "bob", "ada"}},
+		{`where time < datetime(2100-01-01)`, languageAt(10, 0), languageAt(10, 25), []string{"bob", "ada"}},
+		{`where time > datetime(2000-01-01) or user == "ed"`, languageAt(10, 0), languageAt(10, 25), []string{"bob", "ada"}},
+		{`where time > datetime(2026-10-02T11:00) | where time < datetime(2026-10-02T10:00)`, allTime.from, allTime.to, []string{}},
+	}
+	for _, c := range cases {
+		if got := inRange(c.query, c.from, c.to); !slices.Equal(got, c.want) {
+			t.Errorf("%s in [%s, %s): want %v, got %v", c.query, c.from.Format(time.TimeOnly), c.to.Format(time.TimeOnly), c.want, got)
+		}
+	}
 }
