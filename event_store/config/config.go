@@ -10,12 +10,16 @@ import (
 )
 
 type Config struct {
-	Port               string
-	QueryPort          string // Query API port, always bound to 127.0.0.1
-	PebblePath         string
-	DuckDBPath         string
-	LogsDuckDBPath     string // logs.duckdb, attached to the DuckDB of DuckDBPath
-	LogsParquetPath    string // Where the hourly export writes Log files
+	Port            string
+	QueryPort       string // Query API port, always bound to 127.0.0.1
+	PebblePath      string
+	DuckDBPath      string
+	LogsDuckDBPath  string // logs.duckdb, attached to the DuckDB of DuckDBPath
+	LogsParquetPath string // Where the hourly export writes Log files
+	// LogsDiskLimitBytes caps the Log files of every Project together; the
+	// oldest hours are deleted past it. 0 lets them grow until the disk
+	// holding them has 10% of its space left.
+	LogsDiskLimitBytes int64
 	ParquetStoragePath string // Path for archived Parquet files
 	SQLitePath         string // Rails SQLite for project key auth and issues
 	MessageQueuePath   string // Separate SQLite for event_store_messages
@@ -39,6 +43,7 @@ type fileConfig struct {
 	DuckDBPath          *string        `yaml:"duckdb_path"`
 	LogsDuckDBPath      *string        `yaml:"logs_duckdb_path"`
 	LogsParquetPath     *string        `yaml:"logs_parquet_path"`
+	LogsDiskLimitGB     *int64         `yaml:"logs_disk_limit_gb"`
 	ParquetStoragePath  *string        `yaml:"parquet_storage_path"`
 	SQLitePath          *string        `yaml:"sqlite_path"`
 	MessageQueuePath    *string        `yaml:"message_queue_path"`
@@ -116,6 +121,12 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 	if config.LogsParquetPath != nil && *config.LogsParquetPath != "" {
 		cfg.LogsParquetPath = *config.LogsParquetPath
+	}
+	if config.LogsDiskLimitGB != nil {
+		if *config.LogsDiskLimitGB <= 0 {
+			return fmt.Errorf("logs_disk_limit_gb must be positive, got %d", *config.LogsDiskLimitGB)
+		}
+		cfg.LogsDiskLimitBytes = *config.LogsDiskLimitGB * 1_000_000_000
 	}
 	if config.ParquetStoragePath != nil && *config.ParquetStoragePath != "" {
 		cfg.ParquetStoragePath = *config.ParquetStoragePath
