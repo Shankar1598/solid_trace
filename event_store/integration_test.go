@@ -371,7 +371,7 @@ func (env *TestEnv) open(t *testing.T) {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
-	logsHandler := handler.NewLogsHandler(logStore)
+	logsHandler := handler.NewLogsHandler(logStore, env.Clock)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)

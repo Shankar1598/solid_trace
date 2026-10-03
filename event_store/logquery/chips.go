@@ -43,14 +43,17 @@ type Chip struct {
 // or !=, and at most one search, can be shown.
 func (q *Query) Chips() *Chips {
 	chips := &Chips{Filters: []Chip{}}
-	for _, s := range q.stages {
+	if len(q.tail) > 0 {
+		return nil
+	}
+	for _, s := range q.head {
 		switch s := s.(type) {
 		case whereStage:
-			c, ok := s.predicate.(compare)
+			chip, ok := chipOf(s.predicate)
 			if !ok {
 				return nil
 			}
-			chips.Filters = append(chips.Filters, Chip{Field: c.field.Name, Op: string(c.op), Value: c.value.Value()})
+			chips.Filters = append(chips.Filters, chip)
 		case searchStage:
 			if chips.Search != nil {
 				return nil
@@ -62,4 +65,23 @@ func (q *Query) Chips() *Chips {
 		}
 	}
 	return chips
+}
+
+// chipOf returns the chip a where stage's predicate is, if it is one: a Field
+// compared with a string, a number or a bool by == or !=.
+func chipOf(p expr) (Chip, bool) {
+	c, ok := p.(compare)
+	if !ok || (c.op != opEq && c.op != opNE) {
+		return Chip{}, false
+	}
+	field, isField := c.x.(fieldRef)
+	value, isLiteral := c.y.(literal)
+	if !isField || !isLiteral || field.t == timeType {
+		return Chip{}, false
+	}
+	switch value.Kind {
+	case parser.StringLiteral, parser.NumberLiteral, parser.BoolLiteral:
+		return Chip{Field: field.name, Op: string(c.op), Value: value.Value()}, true
+	}
+	return Chip{}, false
 }
