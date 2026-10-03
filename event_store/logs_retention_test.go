@@ -92,7 +92,7 @@ func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
 	// still holds Logs within Retention, so only the days before it go.
 	env.Clock.Set(testNow)
 	env.ExportLogs(t)
-	env.DeleteExpiredLogs(t)
+	env.DeleteLogsPastRetention(t)
 
 	assertMessages := func(projectID uint32, want ...string) {
 		t.Helper()
@@ -170,7 +170,7 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 	// Project 123 loses its last key, and Project 456 is deleted.
 	consoleExec(t, env, "DELETE FROM project_keys WHERE project_id = 123")
 	consoleExec(t, env, "DELETE FROM projects WHERE id = 456")
-	env.DeleteExpiredLogs(t)
+	env.DeleteLogsPastRetention(t)
 
 	assertDeleted := func(when string) {
 		t.Helper()
@@ -188,7 +188,7 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 	assertDeleted("after the pass")
 	env.Reopen(t)
 	assertDeleted("after a restart")
-	env.DeleteExpiredLogs(t)
+	env.DeleteLogsPastRetention(t)
 	assertDeleted("after another pass")
 }
 
@@ -201,14 +201,14 @@ func TestAnEmptyProjectsTableDeletesNoProjectsLogs(t *testing.T) {
 
 	// Console's database comes back with no Projects, as after a reset.
 	consoleExec(t, env, "DELETE FROM projects")
-	env.DeleteExpiredLogs(t)
+	env.DeleteLogsPastRetention(t)
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"kept"}) {
 		t.Errorf("Expected the Logs kept while no Project exists, got %v", got)
 	}
 
 	// Once Projects exist again, a missing one's Logs go.
 	seedProject(t, env.SQLitePath, 456, 0)
-	env.DeleteExpiredLogs(t)
+	env.DeleteLogsPastRetention(t)
 	if got := messages(latestLogs(t, env, 123, 10)); len(got) != 0 {
 		t.Errorf("Expected the deleted Project's Logs gone, got %v", got)
 	}

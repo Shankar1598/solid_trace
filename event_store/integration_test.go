@@ -91,12 +91,12 @@ func (env *TestEnv) ExportLogs(t *testing.T) {
 	}
 }
 
-// DeleteExpiredLogs runs the daily pass at the clock's time: each Project's
+// DeleteLogsPastRetention runs the daily pass at the clock's time: each Project's
 // Logs past its Retention, and every Log of a deleted Project, are deleted.
-func (env *TestEnv) DeleteExpiredLogs(t *testing.T) {
+func (env *TestEnv) DeleteLogsPastRetention(t *testing.T) {
 	t.Helper()
-	if err := env.LogCleanup.DeleteExpiredLogs(env.Clock.Now()); err != nil {
-		t.Fatalf("Deleting expired Logs failed: %v", err)
+	if err := env.LogCleanup.DeleteLogsPastRetention(env.Clock.Now()); err != nil {
+		t.Fatalf("Deleting Logs past their Retention failed: %v", err)
 	}
 }
 
