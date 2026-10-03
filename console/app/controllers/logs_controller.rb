@@ -7,6 +7,7 @@ class LogsController < ApplicationController
   layout "dashboard"
 
   LOG_ID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
+
   before_action :set_organization
   before_action :set_project, except: :start
 
