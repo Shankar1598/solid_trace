@@ -10,6 +10,7 @@ import (
 	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
+	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 var (
@@ -80,8 +81,10 @@ func (s *Service) IngestStore(projectID uint32, rawEventJSON []byte) error {
 // every other item type, transactions included.
 //
 // A log item or log record that can't be read is dropped and the envelope
-// still succeeds, as it does on Sentry. Only a malformed envelope or event
-// fails it.
+// still succeeds, as it does on Sentry. Once its Event is stored, Logs that
+// fail to store are dropped and logged, and the envelope succeeds too. Only a
+// malformed envelope or event, overload, or a failure before anything is
+// stored fails it.
 func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
 	items, err := readEnvelope(envelope)
 	if err != nil {
@@ -107,7 +110,11 @@ func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
 	if len(items.logs) > 0 {
 		records, dropped := sentryLogRecords(items.logs)
 		if _, err := s.storeLogs(projectID, records, dropped, normalise.Sentry); err != nil {
-			return err
+			if !items.hasEvent {
+				return err
+			}
+			logger.L.Error("Dropping an envelope's Logs, as its Event is stored",
+				"project_id", projectID, "logs", len(records), "error", err)
 		}
 	}
 	return nil
