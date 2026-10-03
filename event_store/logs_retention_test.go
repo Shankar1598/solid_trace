@@ -3,10 +3,13 @@ package main_test
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/solidtrace/event_store/storage"
 )
 
 // seedProject adds a Project's row to the Console database, with its own
@@ -187,4 +190,69 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 	assertDeleted("after a restart")
 	env.DeleteExpiredLogs(t)
 	assertDeleted("after another pass")
+}
+
+// hourBytes is the size of a Project's files of an hour.
+func hourBytes(t *testing.T, env *TestEnv, projectID uint32, hour time.Time) int64 {
+	t.Helper()
+	files, err := env.LogStore.Files().Hour(projectID, hour)
+	if err != nil || len(files) == 0 {
+		t.Fatalf("Expected files for Project %d's hour %v, got %v, %v", projectID, hour, files, err)
+	}
+	var size int64
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if err != nil {
+			t.Fatalf("Stat %s: %v", file, err)
+		}
+		size += info.Size()
+	}
+	return size
+}
+
+// enforceLogDiskLimit deletes the oldest Log files until they take at most
+// bytes.
+func enforceLogDiskLimit(t *testing.T, env *TestEnv, bytes int64) {
+	t.Helper()
+	if err := env.LogStore.EnforceDiskLimit(storage.LogDiskLimit{Bytes: bytes}); err != nil {
+		t.Fatalf("Enforcing the Log disk limit failed: %v", err)
+	}
+}
+
+func TestTheDiskLimitDeletesTheOldestHoursOfAnyProjectFirst(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedProject(t, env.SQLitePath, 456, 0)
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	at := func(day, hour int) time.Time { return time.Date(2026, 10, day, hour, 10, 0, 0, time.UTC) }
+	postAt(t, env, 456, "other_public_key", "456 yesterday 23:10", at(1, 23))
+	postAt(t, env, 123, "test_public_key", "123 08:10", at(2, 8))
+	postAt(t, env, 456, "other_public_key", "456 09:10", at(2, 9))
+	postAt(t, env, 123, "test_public_key", "123 10:10", at(2, 10))
+	postAt(t, env, 123, "test_public_key", "123 12:10", at(2, 12)) // stays in the hot table
+	env.Clock.Set(at(2, 12))
+	env.ExportLogs(t)
+
+	assertMessages := func(projectID uint32, when string, want ...string) {
+		t.Helper()
+		if got := messages(latestLogs(t, env, projectID, 10)); !slices.Equal(got, want) {
+			t.Errorf("Expected Project %d to keep %v %s, got %v", projectID, want, when, got)
+		}
+	}
+	oldest := hourBytes(t, env, 456, at(1, 23))
+	total := oldest + hourBytes(t, env, 123, at(2, 8)) + hourBytes(t, env, 456, at(2, 9)) + hourBytes(t, env, 123, at(2, 10))
+
+	enforceLogDiskLimit(t, env, total)
+	assertMessages(456, "at the limit", "456 09:10", "456 yesterday 23:10")
+
+	enforceLogDiskLimit(t, env, total-1)
+	assertMessages(456, "past the limit by a byte", "456 09:10")
+	assertMessages(123, "past the limit by a byte", "123 12:10", "123 10:10", "123 08:10")
+
+	enforceLogDiskLimit(t, env, hourBytes(t, env, 123, at(2, 10)))
+	assertMessages(456, "with room for one hour")
+	assertMessages(123, "with room for one hour", "123 12:10", "123 10:10")
 }
