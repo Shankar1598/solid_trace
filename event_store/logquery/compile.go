@@ -209,7 +209,7 @@ func compileCompare(e *parser.BinaryExpr) (predicate, error) {
 		return nil, err
 	}
 	if field.Name == "time" {
-		return nil, errorAt(e, "time can't be compared with %s", op)
+		return nil, errorAt(e, "time can't be compared yet; the time range sets it")
 	}
 	return compare{field: field, op: op, value: value}, nil
 }
