@@ -10,7 +10,8 @@
 //     against one source of Logs, whose columns storage.LogColumns describes,
 //     and the rest as a chain of stages over the Logs that pass them.
 //
-// Builder chips (chips.go) are read off a compiled Query.
+// What the Builder shows (chips.go) is read off a compiled Query's syntax
+// tree.
 package logquery
 
 import (
@@ -47,6 +48,8 @@ type Query struct {
 	// then tail.
 	text  string
 	spans []parser.Span
+	// tree is the Query's syntax tree, which the Builder is read from.
+	tree *parser.Query
 
 	from, to time.Time
 	// table is set when the Query returns a table rather than Log rows.
@@ -69,7 +72,7 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 		return nil, err
 	}
 	c := &compiler{text: source, bounds: bounds, scope: logScope(), reads: map[attrKey]bool{}}
-	q := &Query{from: bounds.From.UTC(), to: bounds.To.UTC(), text: source}
+	q := &Query{from: bounds.From.UTC(), to: bounds.To.UTC(), text: source, tree: tree}
 	inHead := true
 	for _, s := range tree.Stages {
 		if inHead {

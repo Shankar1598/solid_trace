@@ -1,14 +1,25 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Popover } from '@base-ui/react/popover'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
-import { cn } from '@/lib/utils'
+import { Columns3, Copy, X } from 'lucide-react'
+import { columnValue, moveColumn, pickableFields, toggleColumn } from '@/lib/logs/columns'
 import type { AttributeValue, Log } from '@/lib/logs/stream'
-import { Tag, valueText } from './TagMenu'
+import { cn } from '@/lib/utils'
+import { copy, valueText } from './TagMenu'
 
-const LINE_HEIGHT = 22
+const ROW_HEIGHT = 30
+/** The gutter before the columns, holding each row's Level square. */
+const GUTTER = 22
+/** The header's last cell, holding the column picker. */
+const PICKER = 44
 /** Start loading older Logs this many lines before the end. */
 const LOAD_AHEAD = 100
-const INLINE_ATTRIBUTES = 4
+const MIN_WIDTH = 48
+const DEFAULT_WIDTH = 140
+const WIDTHS: Record<string, number> = { time: 184, level: 80, service: 120, environment: 120, message: 520, trace_id: 280, span_id: 170 }
+/** Column widths a reader dragged, kept in their browser by field name. */
+const WIDTHS_KEY = 'solid-trace.logs.column-widths'
 
 export const LEVEL_TEXT: Record<string, string> = {
   trace: 'text-muted-foreground',
@@ -19,10 +30,13 @@ export const LEVEL_TEXT: Record<string, string> = {
   fatal: 'text-red-700 dark:text-red-300 font-bold',
 }
 
-const LEVEL_EDGE: Record<string, string> = {
-  warn: 'border-l-amber-500',
-  error: 'border-l-red-500',
-  fatal: 'border-l-red-700',
+const LEVEL_SQUARE: Record<string, string> = {
+  trace: 'bg-muted-foreground/40',
+  debug: 'bg-muted-foreground/40',
+  info: 'bg-sky-500',
+  warn: 'bg-amber-500',
+  error: 'bg-red-500',
+  fatal: 'bg-red-800 ring-1 ring-red-500',
 }
 
 interface LogStreamProps {
@@ -34,15 +48,23 @@ interface LogStreamProps {
   /** The Log open in the inspector. */
   selectedId: string | null
   onSelect: (log: Log) => void
+  columns: string[]
+  onColumns: (columns: string[]) => void
 }
 
-/** The Logs of a run as dense terminal-style lines, newest first, virtualised. */
-export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, selectedId, onSelect }: LogStreamProps) {
+/**
+ * The Logs of a run as a table, newest first, virtualised. The reader picks,
+ * orders and sizes the columns; each row starts with a square in its Level's
+ * colour. Clicking a row opens the inspector, whose values are the tags to
+ * filter on; a cell offers only Copy.
+ */
+export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, selectedId, onSelect, columns, onColumns }: LogStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [widths, setWidths] = useState<Record<string, number>>(readWidths)
   const virtualizer = useVirtualizer({
-    count: logs.length + 1, // the last line says what comes after the Logs
+    count: logs.length + 1, // the last row says what comes after the Logs
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => LINE_HEIGHT,
+    estimateSize: () => ROW_HEIGHT,
     overscan: 30,
     useFlushSync: false,
   })
@@ -53,61 +75,276 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, se
     if (end === 'more' && !loadingOlder && !olderError && lastIndex >= logs.length - LOAD_AHEAD) onLoadOlder()
   }, [end, loadingOlder, olderError, lastIndex, logs.length, onLoadOlder])
 
+  const widthOf = (column: string) => widths[column] ?? WIDTHS[column] ?? DEFAULT_WIDTH
+  const minWidth = GUTTER + columns.reduce((sum, c) => sum + widthOf(c), 0) + PICKER
+  const resize = (column: string, width: number, done: boolean) => {
+    const next = { ...widths, [column]: Math.max(MIN_WIDTH, Math.round(width)) }
+    setWidths(next)
+    if (done) saveWidths(next)
+  }
+
   return (
-    <div ref={scrollRef} className="h-full overflow-auto font-mono text-[12px] leading-[22px]">
-      <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-        {items.map(item => (
-          <div
-            key={item.key}
-            className="absolute left-0 top-0 w-full"
-            style={{ height: LINE_HEIGHT, transform: `translateY(${item.start}px)` }}
-          >
-            {item.index < logs.length
-              ? <LogLine log={logs[item.index]} selected={logs[item.index].id === selectedId} onSelect={onSelect} />
-              : <StreamEnd end={end} loading={loadingOlder} error={olderError} count={logs.length} onRetry={onLoadOlder} />}
-          </div>
-        ))}
+    <div ref={scrollRef} className="h-full overflow-auto font-mono text-[13px]">
+      <div style={{ minWidth }}>
+        <HeaderRow columns={columns} widthOf={widthOf} onResize={resize} onColumns={onColumns} logs={logs} />
+        <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          {items.map(item => (
+            <div
+              key={item.key}
+              className="absolute left-0 top-0 w-full"
+              style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
+            >
+              {item.index < logs.length
+                ? <LogRow log={logs[item.index]} columns={columns} widthOf={widthOf} selected={logs[item.index].id === selectedId} onSelect={onSelect} />
+                : <StreamEnd end={end} loading={loadingOlder} error={olderError} count={logs.length} onRetry={onLoadOlder} />}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
 }
 
-/** One Log as a line; every value in it is a tag, and clicking elsewhere inspects it. */
-function LogLine({ log, selected, onSelect }: { log: Log; selected: boolean; onSelect: (log: Log) => void }) {
-  const level = log.level ?? ''
-  const attributes = Object.entries(log.attributes ?? {}).slice(0, INLINE_ATTRIBUTES)
+function HeaderRow({ columns, widthOf, onResize, onColumns, logs }: {
+  columns: string[]
+  widthOf: (column: string) => number
+  onResize: (column: string, width: number, done: boolean) => void
+  onColumns: (columns: string[]) => void
+  logs: Log[]
+}) {
+  const dragged = useRef<string | null>(null)
+  const [dropBefore, setDropBefore] = useState<string | null>(null)
 
+  /** The column a drop over `column` lands before: it, or the next one past its middle. */
+  const target = (e: React.DragEvent, column: string) => {
+    const box = e.currentTarget.getBoundingClientRect()
+    if (e.clientX < box.left + box.width / 2) return column
+    return columns[columns.indexOf(column) + 1] ?? null
+  }
+
+  return (
+    <div className="sticky top-0 z-10 flex border-b bg-muted text-left text-muted-foreground">
+      <div className="shrink-0 border-r" style={{ width: GUTTER }} />
+      {columns.map(column => (
+        <div
+          key={column}
+          className={cn('group relative flex shrink-0 items-center border-r',
+            dropBefore === column && 'shadow-[inset_2px_0_0_var(--color-primary)]')}
+          style={{ width: widthOf(column) }}
+          onDragOver={e => {
+            if (!dragged.current) return
+            e.preventDefault()
+            setDropBefore(target(e, column) ?? '')
+          }}
+          onDragLeave={() => setDropBefore(null)}
+          onDrop={e => {
+            e.preventDefault()
+            if (dragged.current) onColumns(moveColumn(columns, dragged.current, target(e, column)))
+            dragged.current = null
+            setDropBefore(null)
+          }}
+        >
+          <span
+            draggable
+            onDragStart={e => {
+              dragged.current = column
+              e.dataTransfer.effectAllowed = 'move'
+              e.dataTransfer.setData('text/plain', column)
+            }}
+            onDragEnd={() => {
+              dragged.current = null
+              setDropBefore(null)
+            }}
+            className="min-w-0 flex-1 cursor-grab truncate px-2.5 py-2 active:cursor-grabbing"
+            title={`${column}: drag to move`}
+          >
+            {column}
+          </span>
+          {columns.length > 1 && (
+            <button
+              onClick={() => onColumns(toggleColumn(columns, column))}
+              className="absolute right-1.5 hidden rounded bg-muted p-0.5 hover:bg-background group-hover:block"
+              aria-label={`Hide the ${column} column`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+          <ResizeHandle column={column} width={widthOf(column)} onResize={onResize} />
+        </div>
+      ))}
+      <div
+        className={cn('sticky right-0 ml-auto flex shrink-0 items-center justify-end bg-muted pr-2.5', dropBefore === '' && 'shadow-[inset_2px_0_0_var(--color-primary)]')}
+        style={{ width: PICKER }}
+        onDragOver={e => {
+          if (!dragged.current) return
+          e.preventDefault()
+          setDropBefore('')
+        }}
+        onDrop={e => {
+          e.preventDefault()
+          if (dragged.current) onColumns(moveColumn(columns, dragged.current, null))
+          dragged.current = null
+          setDropBefore(null)
+        }}
+      >
+        <ColumnPicker columns={columns} logs={logs} onColumns={onColumns} />
+      </div>
+    </div>
+  )
+}
+
+/** The right edge of a header cell: drag it to size the column. */
+function ResizeHandle({ column, width, onResize }: {
+  column: string; width: number; onResize: (column: string, width: number, done: boolean) => void
+}) {
+  const start = useRef<{ x: number; width: number } | null>(null)
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize the ${column} column`}
+      className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize after:absolute after:inset-y-1.5 after:left-[3px] after:w-px after:bg-border hover:after:bg-primary"
+      onPointerDown={e => {
+        e.preventDefault()
+        e.currentTarget.setPointerCapture(e.pointerId)
+        start.current = { x: e.clientX, width: e.currentTarget.parentElement?.getBoundingClientRect().width ?? width }
+      }}
+      onPointerMove={e => {
+        if (start.current) onResize(column, start.current.width + e.clientX - start.current.x, false)
+      }}
+      onPointerUp={e => {
+        if (start.current) onResize(column, start.current.width + e.clientX - start.current.x, true)
+        start.current = null
+      }}
+      onDoubleClick={() => onResize(column, WIDTHS[column] ?? DEFAULT_WIDTH, true)}
+    />
+  )
+}
+
+/** Shows and hides columns: the built-in fields, the Attributes in view, or any Field by name. */
+function ColumnPicker({ columns, logs, onColumns }: { columns: string[]; logs: Log[]; onColumns: (columns: string[]) => void }) {
+  const [filter, setFilter] = useState('')
+  const fields = useMemo(() => pickableFields(logs), [logs])
+  const typed = filter.trim()
+  const shown = fields.filter(f => f.toLowerCase().includes(typed.toLowerCase()))
+  const extra = columns.filter(c => !fields.includes(c) && c.toLowerCase().includes(typed.toLowerCase()))
+  const canAdd = typed !== '' && !fields.includes(typed) && !columns.includes(typed)
+
+  return (
+    <Popover.Root onOpenChange={open => !open && setFilter('')}>
+      <Popover.Trigger className="rounded p-1 hover:bg-background" aria-label="Choose columns" title="Choose columns">
+        <Columns3 className="h-3.5 w-3.5" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner className="isolate z-50" side="bottom" align="end" sideOffset={4}>
+          <Popover.Popup className="flex max-h-(--available-height) w-64 flex-col bg-popover font-sans text-xs text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none">
+            <input
+              autoFocus
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && canAdd) {
+                  onColumns(toggleColumn(columns, typed))
+                  setFilter('')
+                }
+              }}
+              placeholder="Find or add a Field…"
+              className="border-b bg-transparent px-2.5 py-2 font-mono outline-none placeholder:font-sans placeholder:text-muted-foreground"
+            />
+            <div className="min-h-0 overflow-y-auto py-1">
+              {canAdd && (
+                <button
+                  onClick={() => { onColumns(toggleColumn(columns, typed)); setFilter('') }}
+                  className="flex w-full items-center px-2.5 py-1.5 text-left hover:bg-accent"
+                >
+                  Add <span className="mx-1 font-mono">{typed}</span> as a column
+                </button>
+              )}
+              {[...extra, ...shown].map(field => (
+                <label key={field} className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 hover:bg-accent">
+                  <input
+                    type="checkbox"
+                    checked={columns.includes(field)}
+                    disabled={columns.length === 1 && columns.includes(field)}
+                    onChange={() => onColumns(toggleColumn(columns, field))}
+                    className="accent-primary"
+                  />
+                  <span className="truncate font-mono">{field}</span>
+                </label>
+              ))}
+              {!canAdd && shown.length + extra.length === 0 && <div className="px-2.5 py-1.5 text-muted-foreground">No Field matches.</div>}
+            </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  )
+}
+
+/** One Log as a row; clicking it opens the inspector. */
+function LogRow({ log, columns, widthOf, selected, onSelect }: {
+  log: Log; columns: string[]; widthOf: (column: string) => number; selected: boolean; onSelect: (log: Log) => void
+}) {
+  const level = log.level ?? ''
   return (
     <div
       // Selecting text to copy it doesn't open the inspector.
       onClick={() => { if (!window.getSelection()?.toString()) onSelect(log) }}
       className={cn(
-        'flex items-center gap-2 pr-3 whitespace-nowrap border-l-[3px] cursor-pointer hover:bg-muted/50',
-        LEVEL_EDGE[level] ?? 'border-l-transparent',
-        selected && 'bg-primary/10',
+        'flex h-full whitespace-nowrap border-b border-b-border/60 cursor-pointer hover:bg-muted/50',
+        selected && 'bg-primary/10 hover:bg-primary/15',
       )}
     >
-      <Tag field="time" value={log.time} className="ml-1.5 text-muted-foreground tabular-nums">
-        <span title={log.time}>{format(new Date(log.time), 'MMM dd HH:mm:ss.SSS')}</span>
-      </Tag>
-      {log.service && <Tag field="service" value={log.service} className="text-fuchsia-600 dark:text-fuchsia-400">[{log.service}]</Tag>}
-      {level && <Tag field="level" value={level} className={cn('w-12 shrink-0 uppercase text-[11px]', LEVEL_TEXT[level])}>{level}</Tag>}
-      <Tag field="message" value={log.message} className="min-w-0 truncate">{log.message}</Tag>
-      <span className="flex gap-1 text-muted-foreground">
-        {log.environment && <Field name="environment" value={log.environment} />}
-        {attributes.map(([name, value]) => <Field key={name} name={name} value={value} />)}
-      </span>
+      <div className="flex shrink-0 items-center justify-center border-r" style={{ width: GUTTER }} title={level || undefined}>
+        <span className={cn('h-2 w-2 rounded-[2px]', LEVEL_SQUARE[level] ?? 'border border-muted-foreground/40')} />
+      </div>
+      {columns.map(column => (
+        <CellBox key={column} log={log} column={column} width={widthOf(column)} />
+      ))}
     </div>
   )
 }
 
-function Field({ name, value }: { name: string; value: AttributeValue }) {
+/** A row's cell; hovering it offers to copy its value without opening the inspector. */
+function CellBox({ log, column, width }: { log: Log; column: string; width: number }) {
+  const value = columnValue(log, column)
+  const empty = value === undefined || value === null || value === ''
   return (
-    <Tag field={name} value={value}>
-      <span className="opacity-60">{name}=</span>
-      <span className="text-foreground/80">{valueText(value, 60)}</span>
-    </Tag>
+    <div className="group/cell relative flex shrink-0 items-center border-r px-2.5" style={{ width }}>
+      <div className="min-w-0 truncate">{empty ? <span className="text-muted-foreground/50">—</span> : <Cell log={log} column={column} value={value} />}</div>
+      {!empty && (
+        <button
+          onClick={e => {
+            e.stopPropagation()
+            copy(column === 'time' ? log.time : value)
+          }}
+          className="absolute right-1 hidden items-center gap-1 rounded border bg-background px-1.5 py-0.5 font-sans text-[11px] text-foreground shadow-sm hover:bg-muted group-hover/cell:flex"
+          aria-label={`Copy ${column}`}
+        >
+          <Copy className="h-3 w-3" /> Copy
+        </button>
+      )}
+    </div>
   )
+}
+
+function Cell({ log, column, value }: { log: Log; column: string; value: AttributeValue }) {
+  switch (column) {
+    case 'time':
+      return <span title={log.time} className="text-muted-foreground tabular-nums">{format(new Date(log.time), 'MMM dd HH:mm:ss.SSS')}</span>
+    case 'level':
+      return <span className={cn('uppercase text-[12px]', LEVEL_TEXT[level(value)])}>{valueText(value)}</span>
+    case 'service':
+      return <span className="text-fuchsia-600 dark:text-fuchsia-400">{valueText(value)}</span>
+    case 'message':
+      return <span title={log.message.length > 120 ? log.message.slice(0, 2000) : undefined}>{log.message}</span>
+    default:
+      return <span className="text-foreground/80">{valueText(value, 300)}</span>
+  }
+}
+
+function level(value: AttributeValue): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function StreamEnd({ end, loading, error, count, onRetry }: {
@@ -123,5 +360,22 @@ function StreamEnd({ end, loading, error, count, onRetry }: {
   } else {
     content = count === 0 ? '' : 'No older Logs in this time range.'
   }
-  return <div className="px-3 text-center font-sans text-xs text-muted-foreground">{content}</div>
+  return <div className="sticky left-0 w-[min(100%,100vw)] px-3 text-center font-sans text-xs leading-[30px] text-muted-foreground">{content}</div>
+}
+
+function readWidths(): Record<string, number> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WIDTHS_KEY) ?? '{}')
+    return saved && typeof saved === 'object' ? saved : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveWidths(widths: Record<string, number>) {
+  try {
+    localStorage.setItem(WIDTHS_KEY, JSON.stringify(widths))
+  } catch {
+    // A browser without storage forgets the widths on reload.
+  }
 }
