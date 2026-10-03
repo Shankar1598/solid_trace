@@ -29,7 +29,8 @@ class LogsController < ApplicationController
   end
 
   # GET with query, from and to (ISO 8601) and an optional cursor: one page
-  # of Logs, newest first, as EventStore answers it.
+  # of Logs, newest first, or a tabular Query's table, as EventStore answers
+  # it.
   def query
     from, to = time_range
     return render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless from && to
