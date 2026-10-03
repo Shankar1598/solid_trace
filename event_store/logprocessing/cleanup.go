@@ -45,8 +45,8 @@ const (
 
 // Cleanup is the timer inside EventStore that keeps Logs from outliving
 // their Retention or their Project, and Log files from passing the disk
-// limit. Once a UTC day by its clock, and when it starts, it deletes expired
-// Logs; a few minutes past each hour start, it enforces the disk limit. A
+// limit. Once a UTC day by its clock, and when it starts, it deletes Logs past
+// their Retention; a few minutes past each hour start, it enforces the disk limit. A
 // failed run is tried again a minute later.
 type Cleanup struct {
 	store     CleanupStore
@@ -84,16 +84,16 @@ func (c *Cleanup) Stop() {
 
 func (c *Cleanup) run() {
 	defer close(c.done)
-	var expiredDeleted time.Time // the UTC day of the last whole daily pass
+	var lastPass time.Time // the UTC day of the last whole daily pass
 	for {
 		now := c.clock.Now()
 		failed := false
-		if day := storage.LogDay(now); !day.Equal(expiredDeleted) {
-			if err := c.DeleteExpiredLogs(now); err != nil {
-				logRetry("Deleting expired Logs failed, retrying", err)
+		if day := storage.LogDay(now); !day.Equal(lastPass) {
+			if err := c.DeleteLogsPastRetention(now); err != nil {
+				logRetry("Deleting Logs past their Retention failed, retrying", err)
 				failed = true
 			} else {
-				expiredDeleted = day
+				lastPass = day
 			}
 		}
 		if err := c.store.EnforceDiskLimit(c.diskLimit); err != nil {
@@ -130,7 +130,7 @@ func logRetry(message string, err error) {
 	logger.L.Error(message, "error", err, "retry_in", retryCleanupAfter)
 }
 
-// DeleteExpiredLogs is the daily pass at now. It deletes each Project's Logs
+// DeleteLogsPastRetention is the daily pass at now. It deletes each Project's Logs
 // of the UTC days that lie wholly past its Retention, and every Log of a
 // Project whose row is gone from Console's projects table: that is how a
 // deleted Project is told apart, not by its keys, which Console deletes and
@@ -141,7 +141,7 @@ func logRetry(message string, err error) {
 //
 // A projects table with no rows deletes nothing: it is far likelier to be a
 // reset or restored Console database than every Project deleted.
-func (c *Cleanup) DeleteExpiredLogs(now time.Time) error {
+func (c *Cleanup) DeleteLogsPastRetention(now time.Time) error {
 	retention, err := c.projects.ProjectLogRetention()
 	if err != nil {
 		return fmt.Errorf("read projects: %w", err)
@@ -169,7 +169,7 @@ func (c *Cleanup) DeleteExpiredLogs(now time.Time) error {
 		}
 		if err != nil {
 			// The next pass tries again.
-			logger.L.Error("Deleting expired Logs failed", "project_id", projectID, "error", err)
+			logger.L.Error("Deleting Logs past their Retention failed", "project_id", projectID, "error", err)
 			failed = append(failed, fmt.Errorf("project %d: %w", projectID, err))
 		}
 	}
