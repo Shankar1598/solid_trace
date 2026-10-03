@@ -79,8 +79,8 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
 	}
-	if req.From.IsZero() || req.To.IsZero() || req.To.Before(req.From) {
-		return c.Status(400).JSON(fiber.Map{"error": "from and to must be RFC 3339 times, from no later than to"})
+	if problem := rangeProblem(req.From, req.To); problem != nil {
+		return c.Status(400).JSON(problem)
 	}
 	limit := defaultQueryLogs
 	if req.Limit < 0 {
@@ -211,6 +211,15 @@ func (h *LogsHandler) Get(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "Log not found"})
 	}
 	return c.JSON(log)
+}
+
+// rangeProblem is the answer to a request whose from and to aren't a time
+// range, or nil if they are.
+func rangeProblem(from, to time.Time) fiber.Map {
+	if from.IsZero() || to.IsZero() || to.Before(from) {
+		return fiber.Map{"error": "from and to must be RFC 3339 times, from no later than to"}
+	}
+	return nil
 }
 
 func queryErrors(source string, err error) []logquery.Problem {
