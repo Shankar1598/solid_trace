@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -242,6 +243,56 @@ func TestLateLogsOfAnExportedHourGetLateFilesAndListTheSame(t *testing.T) {
 	assertListsUnchanged(t, env, 123, want, "after the second late file")
 	assertHourFiles(t, env, 123, at(10, 0), 3)
 
+	env.Reopen(t)
+	assertListsUnchanged(t, env, 123, want, "after a restart")
+}
+
+func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 10, day, hour, minute, 0, 0, time.UTC) }
+
+	// Yesterday's set fills with k000…k099, then most Logs carry k000…k089
+	// and x000…x009, so today's set demotes k090…k099.
+	env.Clock.Set(at(1, 23, 30))
+	postAndProcess(t, env, logJSON(t, "first", at(1, 23, 10), numberedKeys("k", 100, "v")))
+	common := numberedKeys("k", 90, "v")
+	for name, value := range numberedKeys("x", 10, 1) {
+		common[name] = value
+	}
+	for i := range 3 {
+		postAndProcess(t, env, logJSON(t, fmt.Sprintf("common %d", i), at(1, 23, 20+i), common))
+	}
+	env.Clock.Set(at(2, 0, 10))
+	postAndProcess(t, env, logJSON(t, "after midnight", at(2, 0, 5), map[string]any{"k095": "v", "x000": 7}))
+	if _, ok := env.LogStore.PromotedSet(123, at(2, 0, 0)).Lookup("string", "k095"); ok {
+		t.Fatalf("Expected k095 demoted today")
+	}
+	want := latestLogs(t, env, 123, 100)
+
+	// The export at 01:00 deletes yesterday's last hour.
+	env.Clock.Set(at(2, 1, 0))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the export at 01:00")
+
+	// Today's Logs and late Logs of yesterday still keep the demoted key.
+	env.Clock.Set(at(2, 1, 10))
+	postAndProcess(t, env,
+		logJSON(t, "later today", at(2, 1, 5), map[string]any{"k095": "w", "k001": "v"}),
+		logJSON(t, "late yesterday", at(1, 23, 50), map[string]any{"k095": "y"}),
+	)
+	want = latestLogs(t, env, 123, 100)
+	attributes := attributesByMessage(want)
+	if got, want := attributes["later today"], map[string]any{"k095": "w", "k001": "v"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+	if got, want := attributes["first"], numberedKeys("k", 100, "v"); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected the first Log's 100 Attributes back, got %v", got)
+	}
+	env.Clock.Set(at(2, 3, 0))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the next exports")
 	env.Reopen(t)
 	assertListsUnchanged(t, env, 123, want, "after a restart")
 }
