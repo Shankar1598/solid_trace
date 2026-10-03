@@ -1,6 +1,8 @@
 package logquery
 
 import (
+	"strings"
+
 	"github.com/solidtrace/event_store/logquery/parser"
 )
 
@@ -65,6 +67,47 @@ func (q *Query) Chips() *Chips {
 		}
 	}
 	return chips
+}
+
+// Stage is where one stage of a Query sits in its text, from its keyword to
+// its end, and what it is to the explorer: Filter when it is one of the
+// leading filters (the stages before the first that isn't a where or a
+// search), Builder when the Builder can show it as a chip or the search box.
+// The explorer names the stages the Builder can't show, and adds a pivot's
+// where after the last filter, from these places.
+type Stage struct {
+	Line      int  `json:"line"`
+	Column    int  `json:"column"`
+	EndLine   int  `json:"end_line"`
+	EndColumn int  `json:"end_column"`
+	Filter    bool `json:"filter"`
+	Builder   bool `json:"builder"`
+}
+
+// Stages places each of the Query's stages, in order.
+func (q *Query) Stages() []Stage {
+	stages := make([]Stage, 0, len(q.spans))
+	searched := false
+	for i, span := range q.spans {
+		var st Stage
+		if i < len(q.head) {
+			st.Filter = true
+			switch s := q.head[i].(type) {
+			case whereStage:
+				_, st.Builder = chipOf(s.predicate)
+			case searchStage:
+				st.Builder = !searched
+				searched = true
+			}
+		}
+		// A stage's span starts at its pipe; the stage starts at its keyword.
+		text := q.text[span.Start:span.End]
+		start := span.Start + len(text) - len(strings.TrimLeft(text, "| \t\r\n"))
+		from, to := parser.PositionOf(q.text, start), parser.PositionOf(q.text, span.End)
+		st.Line, st.Column, st.EndLine, st.EndColumn = from.Line, from.Column, to.Line, to.Column
+		stages = append(stages, st)
+	}
+	return stages
 }
 
 // chipOf returns the chip a where stage's predicate is, if it is one: a Field
