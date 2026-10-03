@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-08.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] A hand-written Go compiler in EventStore, borrowing `runreveal/pql`'s structure, is the single path from a Query to SQL. This ticket's surface: an optional leading `logs |`; `where` with `==`, `!=`, `and`, `or`, `not`; `search`. Unknown stages and functions are rejected with a position.
 - [x] Semantics: `==` never coerces (`status == 200` matches numbers, `status == "200"` strings); `!=` includes Logs missing the Field; `search` is a case-insensitive `contains` over `message` and every string Attribute. The Project and time range come from the request.
