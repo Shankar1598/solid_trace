@@ -43,6 +43,8 @@ Rails.application.routes.draw do
           get :query
           get :validate
           get :histogram
+          get :readable_sql
+          post :sql
         end
       end
 

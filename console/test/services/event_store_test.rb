@@ -161,6 +161,50 @@ class EventStoreTest < ActiveSupport::TestCase
     assert_equal "unknown stage", error.body["errors"].first["message"]
   end
 
+  test "readable_logs_sql prints a Query as SQL over a Project's time range" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    stub_request(:post, "#{@base_url}/api/123/logs/readable-sql")
+      .with(body: { query: "take 5", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z" }.to_json)
+      .to_return(status: 200, body: { sql: "SELECT * FROM logs LIMIT 5" }.to_json)
+
+    sql = EventStore.readable_logs_sql(project_id: 123, query: "take 5", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+
+    assert_equal "SELECT * FROM logs LIMIT 5", sql["sql"]
+  end
+
+  test "run_logs_sql runs SQL over a Project's time range" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    stub_request(:post, "#{@base_url}/api/123/logs/sql")
+      .with(body: { sql: "SELECT 1 AS one", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z" }.to_json)
+      .to_return(status: 200, body: { table: { columns: [ { name: "one", type: "number" } ], rows: [ [ 1 ] ], truncated: false } }.to_json)
+
+    answer = EventStore.run_logs_sql(project_id: 123, sql: "SELECT 1 AS one", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+
+    assert_equal [ [ 1 ] ], answer["table"]["rows"]
+  end
+
+  test "readable_logs_sql and run_logs_sql are refused while SQL queries are off" do
+    readable = stub_request(:post, "#{@base_url}/api/123/logs/readable-sql")
+    sql = stub_request(:post, "#{@base_url}/api/123/logs/sql")
+    range = { from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10) }
+
+    assert_raises(EventStore::SQLQueriesOff) { EventStore.readable_logs_sql(project_id: 123, query: "", **range) }
+    assert_raises(EventStore::SQLQueriesOff) { EventStore.run_logs_sql(project_id: 123, sql: "SELECT 1", **range) }
+
+    assert_not_requested readable
+    assert_not_requested sql
+  end
+
+  test "run_logs_sql is refused when EventStore has SQL queries off" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    stub_request(:post, "#{@base_url}/api/123/logs/sql")
+      .to_return(status: 403, body: { error: "SQL queries are turned off on this instance" }.to_json)
+
+    assert_raises(EventStore::SQLQueriesOff) do
+      EventStore.run_logs_sql(project_id: 123, sql: "SELECT 1", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+    end
+  end
+
   test "all builds event objects" do
     issue = create(:issue)
     fingerprint = create(:issue_fingerprint, issue: issue)

@@ -4,16 +4,18 @@ import {
   pickRange,
   resolveRange,
   runExplorer,
+  runsOnOpen,
   searchOf,
   stateFromSearch,
   switchMode,
   typeQuery,
+  typeSql,
   type Explorer,
 } from './explorerState'
 
 describe('the URL of an explorer state', () => {
   it('opens on the last hour in the Builder with no Query', () => {
-    expect(stateFromSearch('')).toEqual({ range: { kind: 'relative', span: '1h' }, mode: 'builder', query: '' })
+    expect(stateFromSearch('')).toEqual({ range: { kind: 'relative', span: '1h' }, mode: 'builder', query: '', sql: '' })
   })
 
   it('keeps a relative range relative', () => {
@@ -32,9 +34,26 @@ describe('the URL of an explorer state', () => {
   })
 
   it('reads back the mode and Query text it wrote', () => {
-    const state = { range: { kind: 'relative', span: '7d' }, mode: 'query', query: 'where service == "api"\n| search "a&b"' } as const
+    const state = { range: { kind: 'relative', span: '7d' }, mode: 'query', query: 'where service == "api"\n| search "a&b"', sql: '' } as const
 
     expect(stateFromSearch(searchOf(state))).toEqual(state)
+  })
+
+  it('reads back the SQL text it wrote', () => {
+    const state = {
+      range: { kind: 'relative', span: '1h' }, mode: 'sql', query: 'take 5', sql: "SELECT *\nFROM logs\nWHERE message LIKE '%a&b%'",
+    } as const
+
+    expect(searchOf(state)).toContain('sql=')
+    expect(stateFromSearch(searchOf(state))).toEqual(state)
+  })
+
+  it('opens a link in SQL mode in the Builder, without its SQL, while SQL queries are off', () => {
+    const search = '?range=1h&mode=sql&q=take+5&sql=SELECT+1'
+
+    expect(stateFromSearch(search, ['builder', 'query'])).toEqual({
+      range: { kind: 'relative', span: '1h' }, mode: 'builder', query: 'take 5', sql: '',
+    })
   })
 
   it('reads back an absolute range it wrote', () => {
@@ -48,6 +67,27 @@ describe('the URL of an explorer state', () => {
     expect(stateFromSearch('?from=2026-10-02T00:00:00Z&to=2026-10-01T00:00:00Z').range)
       .toEqual({ kind: 'relative', span: '1h' })
     expect(stateFromSearch('?from=2026-10-02T00:00:00Z').range).toEqual({ kind: 'relative', span: '1h' })
+  })
+})
+
+describe('opening a link', () => {
+  it('runs its Query in the Builder and Query modes', () => {
+    expect(runsOnOpen(openExplorer('?range=1h&mode=builder&q=search+%22boom%22'))).toBe(true)
+    expect(runsOnOpen(openExplorer('?range=1h&mode=query&q=take+5'))).toBe(true)
+  })
+
+  it('never runs its SQL', () => {
+    const explorer = openExplorer('?range=1h&mode=sql&q=take+5&sql=DROP+TABLE+logs_late')
+
+    expect(explorer.current.sql).toBe('DROP TABLE logs_late')
+    expect(runsOnOpen(explorer)).toBe(false)
+  })
+
+  it('runs its Query when SQL queries are off, never the SQL', () => {
+    const explorer = openExplorer('?range=1h&mode=sql&q=take+5&sql=DROP+TABLE+logs_late', ['builder', 'query'])
+
+    expect(runsOnOpen(explorer)).toBe(true)
+    expect(explorer.current).toMatchObject({ query: 'take 5', sql: '' })
   })
 })
 
@@ -78,8 +118,9 @@ describe('history entries', () => {
       get explorer(): Explorer { return explorer },
       get entries() { return entries },
       type(text: string) { explorer = typeQuery(explorer, text) },
+      typeSql(text: string) { explorer = typeSql(explorer, text) },
       pickRange(span: string) { explorer = pickRange(explorer, { kind: 'relative', span }) },
-      switchMode(mode: 'builder' | 'query') {
+      switchMode(mode: 'builder' | 'query' | 'sql') {
         const { explorer: next, replace } = switchMode(explorer, mode)
         explorer = next
         entries[entries.length - 1] = replace
@@ -151,6 +192,20 @@ describe('history entries', () => {
     expect(b.entries).toEqual(['?range=1h&mode=query&q=search+%22boom%22'])
     expect(b.explorer.current).toMatchObject({ mode: 'query', query: 'search "boom"' })
     expect(b.explorer.draft).toMatchObject({ mode: 'query', query: 'search "bang"' })
+  })
+
+  it('adds one per SQL run, holding the SQL that ran, and reopens it without running it', () => {
+    const b = browser('?range=1h&mode=sql&q=take+5&sql=SELECT+1')
+    b.typeSql('SELECT 2')
+    expect(b.entries).toHaveLength(1)
+    b.run()
+    b.typeSql('SELECT 3')
+    b.run()
+
+    b.back()
+
+    expect(b.explorer.current).toMatchObject({ mode: 'sql', query: 'take 5', sql: 'SELECT 2' })
+    expect(runsOnOpen(b.explorer)).toBe(false)
   })
 
   it('reopens a run in the mode it was left in', () => {

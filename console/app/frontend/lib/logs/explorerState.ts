@@ -1,10 +1,12 @@
 // The Logs explorer's state and its URL. The Project is in the path; the
 // search holds the time range as given (relative stays relative, absolute
-// as UTC ISO times), the mode and the Query text. Each run pushes a history
-// entry; typing doesn't, so Back undoes the last run. Switching mode
-// replaces the entry's mode, so a run reopens in the mode it was left in.
+// as UTC ISO times), the mode, the Query text and, in SQL mode, the SQL text.
+// Each run pushes a history entry; typing doesn't, so Back undoes the last
+// run. Switching mode replaces the entry's mode, so a run reopens in the mode
+// it was left in. SQL never runs on opening a URL, only when Run is pressed,
+// so a crafted link can't run SQL as whoever opens it.
 
-export type Mode = 'builder' | 'query'
+export type Mode = 'builder' | 'query' | 'sql'
 
 /** A span back from now, such as `15m`, `1h` or `7d`. */
 export type RelativeRange = { kind: 'relative'; span: string }
@@ -15,6 +17,8 @@ export interface ExplorerState {
   range: TimeRange
   mode: Mode
   query: string
+  /** The SQL text, in SQL mode; empty in the others. */
+  sql: string
 }
 
 /** What last ran (and is in the URL), and what is being edited. */
@@ -24,7 +28,12 @@ export interface Explorer {
 }
 
 /** The modes, in the switch's order. */
-export const MODES: Mode[] = ['builder', 'query']
+export const MODES: Mode[] = ['builder', 'query', 'sql']
+
+/** The modes the switch offers: SQL only while the instance has SQL queries on. */
+export function modesFor(sqlQueriesEnabled: boolean): Mode[] {
+  return sqlQueriesEnabled ? MODES : MODES.filter(m => m !== 'sql')
+}
 const SPAN = /^(\d+)([mhd])$/
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const
 
@@ -49,13 +58,16 @@ export function spanLabel(span: string): string {
   return `Last ${match[1]} ${unit}${match[1] === '1' ? '' : 's'}`
 }
 
-export function stateFromSearch(search: string): ExplorerState {
+/** A URL's state; a mode not in `modes` (SQL while it's off) opens the Builder. */
+export function stateFromSearch(search: string, modes: Mode[] = MODES): ExplorerState {
   const params = new URLSearchParams(search)
-  const mode = params.get('mode') as Mode | null
+  const given = params.get('mode') as Mode | null
+  const mode = given && modes.includes(given) ? given : 'builder'
   return {
     range: rangeFromParams(params),
-    mode: mode && MODES.includes(mode) ? mode : 'builder',
+    mode,
     query: params.get('q') ?? '',
+    sql: mode === 'sql' ? params.get('sql') ?? '' : '',
   }
 }
 
@@ -69,6 +81,7 @@ export function searchOf(state: ExplorerState): string {
   }
   params.set('mode', state.mode)
   if (state.query !== '') params.set('q', state.query)
+  if (state.sql !== '') params.set('sql', state.sql)
   return `?${params}`
 }
 
@@ -78,13 +91,22 @@ export function resolveRange(range: TimeRange, now: Date): { from: Date; to: Dat
   return { from: new Date(now.getTime() - spanMs(range.span)), to: now }
 }
 
-export function openExplorer(search: string): Explorer {
-  const state = stateFromSearch(search)
+export function openExplorer(search: string, modes: Mode[] = MODES): Explorer {
+  const state = stateFromSearch(search, modes)
   return { current: state, draft: state }
+}
+
+/** Whether opening the explorer runs what its URL holds: never SQL. */
+export function runsOnOpen(explorer: Explorer): boolean {
+  return explorer.current.mode !== 'sql'
 }
 
 export function typeQuery(explorer: Explorer, query: string): Explorer {
   return { ...explorer, draft: { ...explorer.draft, query } }
+}
+
+export function typeSql(explorer: Explorer, sql: string): Explorer {
+  return { ...explorer, draft: { ...explorer.draft, sql } }
 }
 
 export function pickRange(explorer: Explorer, range: TimeRange): Explorer {
