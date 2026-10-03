@@ -3,6 +3,7 @@ package main_test
 import (
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,4 +57,66 @@ func TestALogOlderThanItsProjectsRetentionGetsItsReceiptTime(t *testing.T) {
 	if len(got) != 1 || !got[0].Time.Equal(testNow) || got[0].Attributes["original.time"] != eightDaysAgo.Format(time.RFC3339Nano) {
 		t.Errorf("Expected a Retention of 7 days to give the receipt time %v and keep original.time, got %+v", testNow, got)
 	}
+}
+
+// postAt sends one Log to a Project at its own time, with the clock at that
+// time, so that it is a hot Log and promotes its keys for its day.
+func postAt(t *testing.T, env *TestEnv, projectID uint32, key, message string, at time.Time) {
+	t.Helper()
+	env.Clock.Set(at)
+	postAndProcessTo(t, env, projectID, key, logJSON(t, message, at, map[string]any{"user": message}))
+}
+
+func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Project 123 keeps the default 30 days, Project 456 its own 7.
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedProject(t, env.SQLitePath, 456, 7)
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	day := func(month, day, hour int) time.Time { return time.Date(2026, time.Month(month), day, hour, 30, 0, 0, time.UTC) }
+	postAt(t, env, 123, "test_public_key", "last day past 30", day(9, 1, 23))
+	postAt(t, env, 123, "test_public_key", "first day within 30", day(9, 2, 0))
+	postAt(t, env, 123, "test_public_key", "yesterday", day(10, 1, 12))
+	postAt(t, env, 456, "other_public_key", "last day past 7", day(9, 24, 23))
+	postAt(t, env, 456, "other_public_key", "first day within 7", day(9, 25, 0))
+
+	// At noon on 2 October, 30 days back is noon on 2 September: that day
+	// still holds Logs within Retention, so only the days before it go.
+	env.Clock.Set(testNow)
+	env.ExportLogs(t)
+	env.DeleteExpiredLogs(t)
+
+	assertMessages := func(projectID uint32, want ...string) {
+		t.Helper()
+		if got := messages(latestLogs(t, env, projectID, 10)); !slices.Equal(got, want) {
+			t.Errorf("Expected Project %d to keep %v, got %v", projectID, want, got)
+		}
+	}
+	assertSets := func(when string) {
+		t.Helper()
+		for _, c := range []struct {
+			projectID uint32
+			day       time.Time
+			want      []string
+		}{
+			{123, day(9, 1, 0), nil},
+			{123, day(9, 2, 0), []string{"string user"}},
+			{456, day(9, 24, 0), nil},
+			{456, day(9, 25, 0), []string{"string user"}},
+		} {
+			if got := promotedNames(env.LogStore.PromotedSet(c.projectID, c.day)); !slices.Equal(got, c.want) {
+				t.Errorf("Expected Project %d's set of %s to be %v %s, got %v", c.projectID, c.day.Format(time.DateOnly), c.want, when, got)
+			}
+		}
+	}
+	assertMessages(123, "yesterday", "first day within 30")
+	assertMessages(456, "first day within 7")
+	assertSets("after Retention")
+
+	env.Reopen(t)
+	assertMessages(123, "yesterday", "first day within 30")
+	assertSets("after a restart")
 }

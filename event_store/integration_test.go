@@ -51,6 +51,7 @@ type TestEnv struct {
 	// break.
 	FlakyLogs    *flakyLogStore
 	LogProcessor *logprocessing.Processor
+	LogCleanup   *logprocessing.Cleanup
 	MQWriter     *storage.MessageQueueWriter
 	MQReader     *storage.MessageQueueReader
 	MQPath       string
@@ -86,6 +87,15 @@ func (env *TestEnv) ExportLogs(t *testing.T) {
 	t.Helper()
 	if err := env.LogStore.ExportLogs(env.Clock.Now()); err != nil {
 		t.Fatalf("Hourly Log export failed: %v", err)
+	}
+}
+
+// DeleteExpiredLogs runs the daily pass at the clock's time: each Project's
+// Logs past its Retention, and every Log of a deleted Project, are deleted.
+func (env *TestEnv) DeleteExpiredLogs(t *testing.T) {
+	t.Helper()
+	if err := env.LogCleanup.DeleteExpiredLogs(env.Clock.Now()); err != nil {
+		t.Fatalf("Deleting expired Logs failed: %v", err)
 	}
 }
 
@@ -346,6 +356,7 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
+	env.LogCleanup = logprocessing.NewCleanup(logStore, consoleSettings, env.Clock)
 
 	// Setup Handler
 	env.EventWriter.setWriter(pebbleWriter)
