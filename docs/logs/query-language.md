@@ -1,0 +1,117 @@
+# The Query language
+
+A Query finds and shapes a Project's Logs. You pick the Project and the time range in the Logs explorer's bar, not in the Query text. A Query can narrow the time range, but it can't widen it or read another Project's Logs.
+
+A Query is a list of stages joined by `|`. Each stage takes the rows from the stage before it:
+
+```
+where level == "error"
+| summarize count() by service, bin(time, 5m)
+| sort by count_ desc
+```
+
+You can start a Query with `logs |`, but you don't have to. A dataset name in brackets, such as `['my-dataset'] |`, means the same thing, so queries pasted from other tools often work as they are. `//` starts a comment that runs to the end of the line.
+
+## Fields and values
+
+A **Field** is a built-in field or an Attribute.
+
+- **Built-in fields:** `time`, `level`, `message`, `service`, `environment`, `trace_id` and `span_id`. `time` is a datetime and the others are strings. `_time` is another name for `time`.
+- **Attributes:** any other name, such as `status` or `http.method`. A dotted name is one Attribute, because nested names are flattened when Logs arrive. Quote a name that isn't a plain word: `['user agent']`.
+
+An Attribute's values keep their own types, so one Log can hold `status` as the number `200` and another as the string `"200"`. In a comparison, the value you write decides which of these it reads:
+
+- `status == 200` matches only the number 200.
+- `status == "200"` matches only the string "200".
+
+To match either, convert the value first, for example `toint(status) == 200` or `tostring(status) == "200"`.
+
+**Values:**
+
+- Strings in single or double quotes. Backslash escapes `\n`, `\t`, `\\` and quotes.
+- Numbers such as `200`, `-1.5` and `1e3`.
+- `true` and `false`.
+- Timespans: a number and a unit, such as `30s`, `5m`, `1h`, `2d` or `100ms`.
+- Datetimes, such as `datetime(2026-10-02T10:00:00Z)` or `datetime(2026-10-02)`. A datetime without a time zone is in UTC.
+
+## Filtering: `where` and `search`
+
+`where <condition>` keeps the rows the condition is true for. Combine conditions with `and` and `or`, and negate one with `not(…)`.
+
+| Operator | Meaning |
+|---|---|
+| `==`, `!=` | Equal and not equal. Values of different types are never equal: `level == 5` matches no Log. |
+| `<`, `<=`, `>`, `>=` | Order comparisons of numbers, strings or datetimes. |
+| `=~`, `!~` | Equal or not equal, ignoring case. |
+| `contains`, `!contains` | Contains a substring, ignoring case. |
+| `contains_cs`, `!contains_cs` | Contains a substring, with case. |
+| `startswith`, `!startswith` | Starts with, ignoring case. |
+| `startswith_cs`, `!startswith_cs` | Starts with, with case. |
+| `matches regex` | Matches a regular expression (RE2 syntax), with case. |
+| `in (…)`, `!in (…)` | Equal to any value in the list, or to none of them. |
+| `isempty(x)`, `isnotempty(x)` | Missing or an empty string, or not. `isnull` and `isnotnull` mean the same. |
+
+**Missing Fields.** A test of a Field a Log doesn't have is false, and its negation is true. So `!=`, `!in`, `!contains` and `not(…)` keep Logs that don't have the Field. Hiding `user == "bob"` never hides Logs without a `user`.
+
+**Time.** `where time > ago(1h)`, `where time >= datetime(2026-10-02T10:00:00Z)` and `where time < now() - 30m` narrow the time range in the bar. A condition on time can only narrow that range, never widen it.
+
+`search "text"` keeps the Logs whose `message` or any string Attribute contains the text, ignoring case. This is what the Builder's search box does. `search` must come before any stage other than `where` and `search`.
+
+## Shaping: stages that return a table
+
+A Query that ends with only `where`, `search`, `take` and `sort by time desc` stages returns Logs, newest first, a page at a time. Any other stage makes the Query return a table. The histogram above the table still counts the Logs that pass the Query's leading filters.
+
+| Stage | What it does |
+|---|---|
+| `project a, b, name = expr` | Keeps only these columns. |
+| `extend name = expr, …` | Adds columns to each row. A column with an existing name replaces that column. |
+| `summarize agg, … by expr, …` | Makes one row per distinct `by` value, with the aggregates. You can leave out the aggregates (`summarize by service`) or the `by` part. |
+| `sort by expr [asc\|desc] [nulls first\|last], …` | Sorts the rows. `order by` means the same. The default order is descending, with missing values last when descending and first when ascending. |
+| `take n` | Keeps the first n rows. For Logs these are the newest n. `limit` means the same. |
+| `top n by expr [asc\|desc]` | Sorts the rows and keeps the first n. |
+| `count` | Returns one row with one column, `Count`: the number of rows. |
+| `distinct a, b` | Returns the distinct combinations of the columns. |
+
+**Column names.** A column you don't name is named after the Field it reads, such as `service` or `time` for `bin(time, 5m)`. An aggregate you don't name is named after its function and Field, such as `count_`, `avg_duration` or `percentile_duration_95`. When two columns would get the same name, name one of them yourself.
+
+**Row order.** A table you haven't sorted comes back sorted by its columns, left to right. A table of Logs you haven't sorted, such as one from `extend`, comes back newest first.
+
+**Tables of Logs.** When a table's rows are still Logs, as after `top` or `extend`, its columns are the built-in fields, then the Attributes the Query names, then the columns you added.
+
+**Size.** A run returns at most 10,000 rows of a table. It says when there were more.
+
+## Aggregates (in `summarize` only)
+
+| Function | Result |
+|---|---|
+| `count()` | The number of rows. |
+| `countif(condition)` | The number of rows the condition is true for. |
+| `dcount(x)` | **An estimate of** the number of distinct values of x. |
+| `sum(x)`, `avg(x)` | The sum and the mean of a number. |
+| `min(x)`, `max(x)` | The least and the greatest value: of a number, or of a string or a datetime such as `time`. |
+| `percentile(x, p)` | **An estimate of** the p-th percentile of a number, for p from 0 to 100, such as `percentile(duration, 95)`. |
+
+`dcount` and `percentile` are estimates, not exact counts. `dcount` uses HyperLogLog, which is typically within a few percent of the true count. Small counts are usually exact, but large ones can be off in either direction. `percentile` uses a T-Digest sketch, which is accurate near the middle of the data and less accurate in the extreme tails, such as above the 99.9th percentile. Don't use either one where you need an exact figure. For an exact distinct count, use `summarize by x | count`.
+
+Aggregates read an Attribute as a number, except `dcount`, which counts distinct values of any type.
+
+## Scalar functions
+
+| Function | Result |
+|---|---|
+| `bin(time, 5m)` | `time` rounded down to a multiple of the timespan, counted from 1970-01-01 UTC. |
+| `bin(x, 10)` | A number rounded down to a multiple of 10. `floor` means the same. |
+| `bin_auto(time)` | `time` rounded down to a bin size chosen from the bar's time range, giving at most about 100 bins. |
+| `ago(1h)`, `now()` | The time 1 hour before the run, and the time of the run. |
+| `tostring(x)` | x as a string. A whole number has no decimal point. |
+| `toint(x)`, `tolong(x)` | x as a whole number, rounded toward zero. A string that isn't a number gives no value. |
+| `todouble(x)`, `toreal(x)` | x as a number. |
+| `tolower(s)`, `toupper(s)`, `strlen(s)` | A string in lower case, in upper case, and its length. |
+
+Arithmetic: `+`, `-`, `*`, `/` and `%` work on numbers. You can add a timespan to a datetime or subtract one from it, as in `now() - 1h`.
+
+Any other function is an error, and the Query box shows its line and column.
+
+## Not in the language
+
+`has`, `join`, `mv-expand`, `parse`, `evaluate`, `project-away` and series and geo functions aren't supported.
