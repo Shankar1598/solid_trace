@@ -5,6 +5,8 @@
 # app, so the browser never talks to EventStore.
 class LogsController < ApplicationController
   layout "dashboard"
+
+  LOG_ID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
   before_action :set_organization
   before_action :set_project, except: :start
 
@@ -41,11 +43,39 @@ class LogsController < ApplicationController
   rescue EventStore::Rejected => e
     render json: e.body, status: :bad_request
   rescue EventStore::Unavailable => e
-    Rails.logger.error(e.message)
-    render json: { error: "EventStore is unavailable. Try again shortly." }, status: :bad_gateway
+    eventstore_unavailable(e)
+  end
+
+  # GET with query: the Query's mistakes, with positions, and its chips when
+  # the Builder can show it. The Builder reads chips only from here, so the
+  # browser never parses Queries.
+  def validate
+    render json: EventStore.validate_logs_query(project_id: @project.id, query: params[:query].to_s)
+  rescue EventStore::Rejected => e
+    render json: e.body, status: :bad_request
+  rescue EventStore::Unavailable => e
+    eventstore_unavailable(e)
+  end
+
+  # GET one Log by id, for the inspector. time, the Log's own time, lets
+  # EventStore look in one hour instead of every file of the Project.
+  def show
+    return head :not_found unless LOG_ID.match?(params[:id].to_s)
+
+    log = EventStore.get_log(project_id: @project.id, log_id: params[:id], time: params[:time].presence)
+    return head :not_found unless log
+
+    render json: log
+  rescue EventStore::Unavailable => e
+    eventstore_unavailable(e)
   end
 
   private
+
+  def eventstore_unavailable(error)
+    Rails.logger.error(error.message)
+    render json: { error: "EventStore is unavailable. Try again shortly." }, status: :bad_gateway
+  end
 
   def set_organization
     @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
