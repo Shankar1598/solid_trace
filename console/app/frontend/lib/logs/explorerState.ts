@@ -28,6 +28,25 @@ const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const
 
 export const DEFAULT_RANGE: RelativeRange = { kind: 'relative', span: '1h' }
 
+/** The relative ranges the time-range select offers. */
+export const RANGE_PRESETS: { span: string; label: string }[] = [
+  { span: '15m', label: 'Last 15 minutes' },
+  { span: '1h', label: 'Last hour' },
+  { span: '6h', label: 'Last 6 hours' },
+  { span: '24h', label: 'Last 24 hours' },
+  { span: '7d', label: 'Last 7 days' },
+  { span: '30d', label: 'Last 30 days' },
+]
+
+export function spanLabel(span: string): string {
+  const preset = RANGE_PRESETS.find(p => p.span === span)
+  if (preset) return preset.label
+  const match = SPAN.exec(span)
+  if (!match) return span
+  const unit = { m: 'minute', h: 'hour', d: 'day' }[match[2] as 'm' | 'h' | 'd']
+  return `Last ${match[1]} ${unit}${match[1] === '1' ? '' : 's'}`
+}
+
 export function stateFromSearch(search: string): ExplorerState {
   const params = new URLSearchParams(search)
   const mode = params.get('mode') as Mode | null
