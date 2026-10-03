@@ -326,3 +326,29 @@ Fixes from the code review of `feature/logs-v1` (branch `logs-v1/review-fixes`).
 - `LogsController` uses `rescue_from` and a `set_time_range` before_action (`398cd02`).
 - `EventStore.post!` reads a 403 as `SQLQueriesOff` only for the SQL endpoints; elsewhere it's `Unavailable` (`ac4ca99`).
 - `api.ts` fetches through one `callConsole` helper (`c479d51`).
+
+## Implementation decisions
+
+Decisions made during implementation that depart from this spec, or from what it assumed, with the reasoning. The user made them on 2026-10-03. Each one lists where the change landed.
+
+1. **Console listens on port 3000; there's no reverse proxy in front.**
+   - **What the spec assumed:** Angie in front of both services. The Body bullet originally said Log routes' limits are raised "in EventStore's server and Angie". [M1-11](issues/M1-11-remove-angie.md) removed Angie, so EventStore's ingest app listens on TCP 4000 itself. Console then had to bind port 80 directly.
+   - **Decision:** Console's Thruster listens on **3000**, with Puma behind it on 3001.
+   - **Reasoning:**
+     - Console runs as a non-root user (uid 1000) under `network_mode: host`, so it can't bind a port below 1024.
+     - `cap_add: NET_BIND_SERVICE` doesn't help a non-root user.
+     - The alternatives were a host `sysctl` (an easily forgotten setup step), `setcap` in the image (untested here) or running as root. A high port needs neither.
+   - **Consequence:** whatever sits in front of the VM must now send Console traffic to port 3000 rather than 80. That could be a cloud load balancer, a firewall rule or a TLS terminator.
+   - **Where it landed:** `252011c`, plus M1-11's Comments.
+2. **Every Project edit is admin-only, not just Retention.**
+   - **What the spec says:** "A Project's Retention: Organization admins, in Project settings."
+   - **Decision:** [M1-02](issues/M1-02-console-instance-settings-and-project-retention.md) added a `ProjectPolicy` that makes the whole Project update admin-only. Members can no longer rename a Project or change its platform either.
+   - **Reasoning:**
+     - Retention is edited on the same Project settings form and update action as the other fields.
+     - Gating the action is simpler and harder to get wrong than gating individual fields.
+     - Editing a Project is an admin task in practice.
+   - **Where it landed:** M1-02.
+
+Two of the user's 2026-10-03 decisions don't change this spec's behaviour, and are noted here for completeness:
+- **Fixing the compose dependency cycle** (`8929ba3`). It was a deploy bug that predated this spec.
+- **Decoding ingest bodies only after the `ingest_max_waiting` gate** (`ba7c193`). The Overload bullet says Logs share that gate but doesn't fix the order. Decoding after it means overload answers `503` with `Retry-After` before any memory is spent on decompression. The `413` and `415` rules are unchanged.

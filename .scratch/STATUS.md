@@ -9,14 +9,14 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 **Rules for agents:**
 - Don't pick up deferred hardening unprompted: the open items in [prod-readiness review.md](prod-readiness/review.md) (§1, §9, §10: tiered storage, retention, `mode=ro`, the `ValidateKey` cache, compose host networking, DSN, ingest limits, metrics, CI), 011 and 012. Each is marked deferred or `wontfix` there. A change that would make one of them worse is still worth a flag.
 - EventStore runs DuckDB 1.5.6, bundled with the driver (upgrade-pebble-duckdb 02, 2026-10-02). There is no alpha library or `duckdb_use_lib` tag any more. A shell opened before that change may still export `GOFLAGS=-tags=duckdb_use_lib`; open a new one.
-- Work happens in the main checkout on `feature/logging`. There are no worktrees; prototype branches stay as branches.
+- Work happens in the main checkout, now on `feature/logs-v1` (the logs v1 integration branch, built on `feature/logging`). There are no worktrees; prototype branches stay as branches.
 - Read [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md) before touching `event_store/storage/sqlite.go` or a Console enum or table that EventStore writes. A change to one must change the other in the same commit.
 - The logs map is the source of truth for logs; trust it over the counts below.
 - Benchmark and probe runs must finish in under a minute on the dev box.
 
 ## Where things stand
 
-- **Logs**: planning done; every map ticket is resolved. The [v1 spec](logs-v1/spec.md) has 20 tickets in [logs-v1/issues](logs-v1/issues/), named by milestone (M1 Logs are stored, M2 Logs explorer with the Builder, M3 Query and SQL modes). No Logs code yet beyond the throwaway `logsbench` harness on `feature/logging`.
+- **Logs**: v1 is implemented on `feature/logs-v1` (2026-10-03): 19 of 20 [tickets](logs-v1/issues/) resolved, code-reviewed, with the review fixes merged (`0eecf81`). It is not yet merged into `feature/logging` or `main`, and not yet clicked through in a browser. M1-10 (load test) is the only open ticket. Choices that depart from the spec are in its [Implementation decisions](logs-v1/spec.md#implementation-decisions); the review's fixes are in its Comments.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
 - **Integration notification**: resolved and merged (2026-10-02, `9a488c6`). One Console module sends new-Issue, threshold and assignment notifications through the outbox, with recorded outcomes, bounded retries and cleanup. EventStore's Event count honours the time window. Review findings left open are listed in the [spec](integration-notification/spec.md)'s Comments.
 - **Ingest write path**: reopened. 02 and 03 are resolved (2026-09-30). A code review on 2026-10-01 filed 04–06. 04, a lone bad DuckDB row stalling Event processing, is resolved (2026-10-01). 05 is `wontfix` (2026-10-02). 06 is resolved (2026-10-02). Event ingest stores the Event in Pebble before the `200`. Event processing, a single worker, catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. Review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
@@ -24,7 +24,10 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-1. Implementation of the [logs v1 spec](logs-v1/spec.md) is done on integration branch `feature/logs-v1`: every agent ticket is resolved, so the frontier is empty. Next is the code review of `feature/logs-v1`. [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) has every blocker resolved but stays `ready-for-human`, for the target VM.
+1. Click through the Logs explorer in a browser (Builder, Query, SQL modes, histogram drag, inspector, Back). No agent could; every UI check so far is tests, `tsc` and a server render.
+2. Merge `feature/logs-v1` into `feature/logging` (then `main`) when happy.
+3. [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) on the 4 vCPU / 16 GB VM: `ready-for-human`, every blocker resolved. Things to measure are in the ticket and in M1-04's and M2-01's Comments.
+4. Flagged, not fixed: Log ingest reads a Project's Retention from Console's SQLite on every request, uncached (belongs with the deferred `ValidateKey` cache).
 
 ## Efforts
 
@@ -41,7 +44,15 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 **Logs path** (a ticket opens when the ones before it are done):
 01–16 (done) → logs v1 tickets M1-01 … M3-04
 
-## Last session (2026-10-02, logs v1 tickets)
+## Last session (2026-10-02 to 03, logs v1 implementation)
+
+Ran `/implement-spec` on the logs v1 spec, on integration branch `feature/logs-v1`, with at most two sub-agents at a time (the user's limit for this box). Each ticket was built test-first in its own worktree and merged with `--no-ff`; the worktrees are removed.
+- **Resolved:** 19 tickets, including **M1-11 (remove Angie)**, added mid-run at the user's request. Console now serves through Thruster and EventStore ingests on TCP 4000.
+- **Code review:** a two-axis review (standards and spec) found 8 spec problems, among them a long read stalling Log processing, `contains` missing arrays, a disk-limit default that could delete every Log file, and a clock step back losing acknowledged batches. All were fixed, along with the standards cleanups, in `0eecf81`.
+- **Decided by the user (2026-10-03):** Console listens on port 3000; the compose dependency cycle is fixed; ingest bodies are decoded only after the `ingest_max_waiting` gate; every Project edit is admin-only. They are recorded in the spec's Implementation decisions.
+- **Lost:** the overnight restart wiped the shared agent notes in `/tmp`. They were rebuilt in `~/.cache/solid-trace/logs-v1-notes/` (setup, briefs, review), outside the repo.
+
+## Earlier session (2026-10-02, logs v1 tickets)
 
 Wrote the logs v1 tickets with `/to-tickets` and resolved [logs 13](logs/issues/13-write-v1-spec-and-first-milestone-tickets.md). The user asked for all three milestones, not only the first, with tickets named by milestone (`M1-01` … `M3-04`).
 - **Changed in the spec:** Project deletion is detected when a Project's `projects` row vanishes, not its keys. Keys are hard-deleted, so the old rule would have wiped a Project's Logs when its last key was deleted. Console has no Project destroy route yet.
