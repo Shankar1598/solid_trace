@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
 // logsCatalog is the name logs.duckdb is attached under.
@@ -59,7 +59,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 		return nil, err
 	}
 	// An ATTACH on one pooled connection is seen by every connection.
-	if _, err := events.db.Exec(fmt.Sprintf("ATTACH IF NOT EXISTS %s AS %s", sqlString(path), logsCatalog)); err != nil {
+	if _, err := events.db.Exec(fmt.Sprintf("ATTACH IF NOT EXISTS %s AS %s", sqltext.String(path), logsCatalog)); err != nil {
 		return nil, fmt.Errorf("attach %s: %w", path, err)
 	}
 	for _, ddl := range []string{
@@ -506,9 +506,4 @@ func goMap[V any](scanned any) map[string]V {
 		}
 	}
 	return m
-}
-
-// sqlString quotes s as a SQL string literal.
-func sqlString(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

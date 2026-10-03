@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
 // LogColumns says where one source of a Project's Logs keeps each Field, so
@@ -28,7 +29,7 @@ type LogColumns struct {
 
 // BuiltIn is a built-in field's column, such as level.
 func (c LogColumns) BuiltIn(name string) string {
-	return sqlIdentifier(name)
+	return sqltext.Identifier(name)
 }
 
 // Map is the map that holds the Attributes of type t that aren't promoted.
@@ -41,9 +42,9 @@ func (c LogColumns) Map(t AttributeType) string {
 // if it was promoted partway through the day, else its map.
 func (c LogColumns) Attribute(t AttributeType, key string) string {
 	if c.view {
-		return fmt.Sprintf("%s[%s]", t.Map(), sqlString(key))
+		return fmt.Sprintf("%s[%s]", t.Map(), sqltext.String(key))
 	}
-	inMap := fmt.Sprintf("map_extract_value(%s, %s)", t.Map(), sqlString(key))
+	inMap := fmt.Sprintf("map_extract_value(%s, %s)", t.Map(), sqltext.String(key))
 	if c.late {
 		return inMap
 	}
@@ -51,7 +52,7 @@ func (c LogColumns) Attribute(t AttributeType, key string) string {
 	if !ok {
 		return inMap
 	}
-	column := sqlIdentifier(promoted.Column())
+	column := sqltext.Identifier(promoted.Column())
 	if promoted.Partway {
 		return fmt.Sprintf("coalesce(%s, %s)", column, inMap)
 	}
@@ -66,7 +67,7 @@ func (c LogColumns) Promoted(t AttributeType) []string {
 	var columns []string
 	for _, key := range c.set.Keys {
 		if key.Type == t {
-			columns = append(columns, sqlIdentifier(key.Column()))
+			columns = append(columns, sqltext.Identifier(key.Column()))
 		}
 	}
 	return columns
@@ -171,7 +172,7 @@ func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([
 	bounds := timeRange(from, to)
 	if scan.After != nil {
 		bounds += fmt.Sprintf(" AND (time < %[1]s OR (time = %[1]s AND id < CAST(%[2]s AS UUID)))",
-			timestampLiteral(scan.After.Time), sqlString(scan.After.ID.String()))
+			timestampLiteral(scan.After.Time), sqltext.String(scan.After.ID.String()))
 	}
 	where := func(cols LogColumns) string {
 		condition := bounds
@@ -328,7 +329,7 @@ func withColumns(source string, set PromotedSet) string {
 	}
 	columns := make([]string, len(set.Keys))
 	for i, key := range set.Keys {
-		columns[i] = fmt.Sprintf("CAST(NULL AS %s) AS %s", key.Type.columnType(), sqlIdentifier(key.Column()))
+		columns[i] = fmt.Sprintf("CAST(NULL AS %s) AS %s", key.Type.columnType(), sqltext.Identifier(key.Column()))
 	}
 	return fmt.Sprintf("%s UNION ALL BY NAME SELECT %s WHERE false", source, strings.Join(columns, ", "))
 }
@@ -337,7 +338,7 @@ func withColumns(source string, set PromotedSet) string {
 func readFiles(files []string) string {
 	quoted := make([]string, len(files))
 	for i, file := range files {
-		quoted[i] = sqlString(file)
+		quoted[i] = sqltext.String(file)
 	}
 	return fmt.Sprintf("SELECT * FROM read_parquet([%s], union_by_name = true, hive_partitioning = false)",
 		strings.Join(quoted, ", "))
@@ -349,7 +350,7 @@ func timeRange(from, to time.Time) string {
 }
 
 func timestampLiteral(t time.Time) string {
-	return fmt.Sprintf("CAST(%s AS TIMESTAMP)", sqlString(timestampString(t)))
+	return fmt.Sprintf("CAST(%s AS TIMESTAMP)", sqltext.String(timestampString(t)))
 }
 
 // LogByID returns a Project's Log with the given id, if it has one. If at is
@@ -370,7 +371,7 @@ func (s *LogStore) LogByID(ctx context.Context, projectID uint32, id uuid.UUID, 
 	for _, hour := range read.hours {
 		files = append(files, read.files[hour]...)
 	}
-	match := "id = CAST(" + sqlString(id.String()) + " AS UUID)"
+	match := "id = CAST(" + sqltext.String(id.String()) + " AS UUID)"
 	sources := []string{fmt.Sprintf("SELECT * EXCLUDE (project_id) FROM %s.%s WHERE project_id = %d AND %s",
 		logsCatalog, lateTable, projectID, match)}
 	if read.hot {

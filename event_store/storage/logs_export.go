@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
 // ExportLogs is the hourly export at now: for each Project, it moves every Log
@@ -254,7 +255,7 @@ func (e *projectExport) stageHour(hour time.Time) (string, error) {
 			SELECT * FROM (%s)
 			ORDER BY time, id
 		) TO %s (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 30720)`,
-		strings.Join(sources, " UNION ALL BY NAME "), sqlString(staged)))
+		strings.Join(sources, " UNION ALL BY NAME "), sqltext.String(staged)))
 	if err != nil {
 		return staged, err
 	}
@@ -291,14 +292,14 @@ const fixedColumns = "id, time, level, message, service, environment, trace_id, 
 func (e *projectExport) hotRows(set []typedKey, from, to string) string {
 	columns := []string{fixedColumns, "attrs_string, attrs_number, attrs_bool, attrs_json"}
 	for _, key := range set {
-		column := sqlIdentifier(key.column())
+		column := sqltext.Identifier(key.column())
 		if !e.hotColumns[key.column()] {
 			column = fmt.Sprintf("CAST(NULL AS %s)", key.Type.columnType())
 		}
-		columns = append(columns, column+" AS "+sqlIdentifier(key.column()))
+		columns = append(columns, column+" AS "+sqltext.Identifier(key.column()))
 	}
 	return fmt.Sprintf("SELECT %s FROM %s WHERE time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP)",
-		strings.Join(columns, ", "), e.hotTable(), sqlString(from), sqlString(to))
+		strings.Join(columns, ", "), e.hotTable(), sqltext.String(from), sqltext.String(to))
 }
 
 // lateRows selects the Project's late Logs of [from, to) with the promoted
@@ -309,7 +310,7 @@ func (e *projectExport) lateRows(set []typedKey, from, to string) string {
 		var keys []string
 		for _, key := range set {
 			if key.Type == t {
-				keys = append(keys, sqlString(key.Key))
+				keys = append(keys, sqltext.String(key.Key))
 			}
 		}
 		if len(keys) == 0 {
@@ -322,10 +323,10 @@ func (e *projectExport) lateRows(set []typedKey, from, to string) string {
 	}
 	for _, key := range set {
 		columns = append(columns, fmt.Sprintf("CAST(map_extract_value(%s, %s) AS %s) AS %s",
-			key.Type.Map(), sqlString(key.Key), key.Type.columnType(), sqlIdentifier(key.column())))
+			key.Type.Map(), sqltext.String(key.Key), key.Type.columnType(), sqltext.Identifier(key.column())))
 	}
 	return fmt.Sprintf("SELECT %s FROM %s.%s WHERE project_id = %d AND time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP)",
-		strings.Join(columns, ", "), logsCatalog, lateTable, e.projectID, sqlString(from), sqlString(to))
+		strings.Join(columns, ", "), logsCatalog, lateTable, e.projectID, sqltext.String(from), sqltext.String(to))
 }
 
 // delete deletes the Project's Logs before cutoff from its hot table and
@@ -409,7 +410,7 @@ func (e *projectExport) dropDemotedColumns(cutoff time.Time) error {
 		}
 	}
 	for _, column := range demoted() {
-		if _, err := e.conn.ExecContext(e.ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", e.hotTable(), sqlIdentifier(column))); err != nil {
+		if _, err := e.conn.ExecContext(e.ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", e.hotTable(), sqltext.Identifier(column))); err != nil {
 			return fmt.Errorf("drop demoted column %s: %w", column, err)
 		}
 		logger.L.Debug("Dropping demoted Log column", "project_id", e.projectID, "column", column)
@@ -436,7 +437,7 @@ func (s *LogStore) recoverStagedFiles() error {
 	}
 	for file, projectID := range staged {
 		var id string
-		err := s.db.QueryRow(fmt.Sprintf("SELECT CAST(id AS VARCHAR) FROM read_parquet(%s) LIMIT 1", sqlString(file))).Scan(&id)
+		err := s.db.QueryRow(fmt.Sprintf("SELECT CAST(id AS VARCHAR) FROM read_parquet(%s) LIMIT 1", sqltext.String(file))).Scan(&id)
 		if err != nil {
 			logger.L.Error("Skipping unreadable staged log file", "file", file, "error", err)
 			continue

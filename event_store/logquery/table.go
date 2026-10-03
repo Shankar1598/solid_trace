@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/solidtrace/event_store/pkg/sqltext"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -21,11 +22,11 @@ func readColumn(t storage.AttributeType, key string) string {
 type tailFields struct{}
 
 func (tailFields) BuiltIn(name string) string {
-	return sqlIdentifier(name)
+	return sqltext.Identifier(name)
 }
 
 func (tailFields) Attribute(t storage.AttributeType, key string) string {
-	return sqlIdentifier(readColumn(t, key))
+	return sqltext.Identifier(readColumn(t, key))
 }
 
 // Select is the select list a source of Logs, whose columns cols describes,
@@ -37,7 +38,7 @@ func (q *Query) Select(cols storage.LogColumns) string {
 		list = append(list, cols.BuiltIn(name))
 	}
 	for _, k := range q.reads {
-		list = append(list, cols.Attribute(k.t, k.key)+" AS "+sqlIdentifier(readColumn(k.t, k.key)))
+		list = append(list, cols.Attribute(k.t, k.key)+" AS "+sqltext.Identifier(readColumn(k.t, k.key)))
 	}
 	return strings.Join(list, ", ")
 }
@@ -127,7 +128,7 @@ func (q *Query) writeTail(c *chain, f fields) {
 			var replaced []string
 			for _, col := range s.columns {
 				if has[col.name] {
-					replaced = append(replaced, sqlIdentifier(col.name))
+					replaced = append(replaced, sqltext.Identifier(col.name))
 				}
 				has[col.name] = true
 			}
@@ -184,7 +185,7 @@ func (q *Query) writeTail(c *chain, f fields) {
 func selectList(columns []namedValue, f fields) string {
 	list := make([]string, len(columns))
 	for i, col := range columns {
-		list[i] = writeValue(col.x, f) + " AS " + sqlIdentifier(col.name)
+		list[i] = writeValue(col.x, f) + " AS " + sqltext.Identifier(col.name)
 	}
 	return strings.Join(list, ", ")
 }
@@ -218,7 +219,7 @@ func orderBy(keys []sortKey, f fields) string {
 			if ref, ok := k.x.(fieldRef); ok {
 				part = f.Attribute(t, ref.name)
 			} else {
-				part = "struct_extract(" + writeValue(k.x, f) + ", " + quoteString(dynamicField(t)) + ")"
+				part = "struct_extract(" + writeValue(k.x, f) + ", " + sqltext.String(dynamicField(t)) + ")"
 			}
 			terms = append(terms, part+direction+nulls)
 		}
@@ -248,12 +249,15 @@ func (q *Query) Columns() []Column {
 func (q *Query) Row(raw []any) []any {
 	row := make([]any, len(raw))
 	for i, v := range raw {
-		row[i] = jsonValue(v)
+		row[i] = tableCell(v)
 	}
 	return row
 }
 
-func jsonValue(v any) any {
+// tableCell is a cell of a Query's table as a JSON value: a time as RFC 3339
+// in UTC, NaN and infinities as null, and a dynamic value, a struct with one
+// part set, as the value of that part.
+func tableCell(v any) any {
 	switch v := v.(type) {
 	case time.Time:
 		return v.UTC().Format(time.RFC3339Nano)
@@ -266,7 +270,7 @@ func jsonValue(v any) any {
 		// A dynamic value: one part set, the rest NULL.
 		for _, field := range []string{"s", "n", "b"} {
 			if part := v[field]; part != nil {
-				return jsonValue(part)
+				return tableCell(part)
 			}
 		}
 		if j, ok := v["j"].(string); ok && json.Valid([]byte(j)) {
