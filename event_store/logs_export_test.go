@@ -1,8 +1,12 @@
 package main_test
 
 import (
+	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,4 +52,159 @@ func TestLateAndFutureLogsAreListedAndNeverPromoted(t *testing.T) {
 	if got, want := messages(latestLogs(t, env, 456, 10)), []string{"only late"}; !slices.Equal(got, want) {
 		t.Errorf("Expected Project 456 to list %v, got %v", want, got)
 	}
+}
+
+// assertListsUnchanged checks that a Project's latest Logs are still want,
+// every field and Attribute alike.
+func assertListsUnchanged(t *testing.T, env *TestEnv, projectID uint32, want []listedLog, when string) {
+	t.Helper()
+	if got := latestLogs(t, env, projectID, 100); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected the same Logs %s:\n want %+v\n got  %+v", when, want, got)
+	}
+}
+
+// assertHourFiles checks how many files the compiler would read for a
+// Project's hour.
+func assertHourFiles(t *testing.T, env *TestEnv, projectID uint32, hour time.Time, want int) {
+	t.Helper()
+	files, err := env.LogStore.Files().Hour(projectID, hour)
+	if err != nil {
+		t.Fatalf("List files of %v: %v", hour, err)
+	}
+	if len(files) != want {
+		t.Errorf("Expected %d files for %v, got %v", want, hour, files)
+	}
+}
+
+func TestLogsListTheSameBeforeAndAfterTheHourlyExport(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+
+	// At 11:30 the hot window is 10:00 to 12:00.
+	env.Clock.Set(at(11, 30))
+	postAndProcess(t, env,
+		logJSON(t, "ten past ten", at(10, 10), map[string]any{"user": "ada", "status": 200, "cached": true}),
+		logJSON(t, "ten past eleven", at(11, 10), map[string]any{"user": "bob", "roles": []any{"a"}}),
+		logJSON(t, "yesterday", testNow.AddDate(0, 0, -1), map[string]any{"user": "old"}),
+	)
+	// At 12:05 the window has moved on to 11:00 to 13:00, so a Log of 10:20
+	// is late, and its hour hasn't been exported yet. So is one of 13:01.
+	env.Clock.Set(at(12, 5))
+	postAndProcess(t, env,
+		logJSON(t, "ten twenty", at(10, 20), map[string]any{"user": "cy", "status": 404}),
+		logJSON(t, "noon", at(12, 0), map[string]any{"flag": false}),
+		logJSON(t, "next hour", at(13, 1), map[string]any{"user": "di"}),
+	)
+	want := latestLogs(t, env, 123, 100)
+	if got := messages(want); !slices.Equal(got, []string{"next hour", "noon", "ten past eleven", "ten twenty", "ten past ten", "yesterday"}) {
+		t.Fatalf("Unexpected Logs before the export: %v", got)
+	}
+
+	env.ExportLogs(t) // hour 10, and yesterday's Log
+	assertListsUnchanged(t, env, 123, want, "after hour 10 is exported")
+	assertHourFiles(t, env, 123, at(10, 0), 1)
+	assertHourFiles(t, env, 123, at(11, 0), 0)
+
+	env.Clock.Set(at(13, 0))
+	env.ExportLogs(t) // hour 11
+	assertListsUnchanged(t, env, 123, want, "after hour 11 is exported")
+	env.ExportLogs(t) // nothing new
+	assertListsUnchanged(t, env, 123, want, "after an export with nothing to do")
+
+	env.Reopen(t)
+	assertListsUnchanged(t, env, 123, want, "after a restart")
+
+	// Later Logs still go to the hot table, and are exported in turn.
+	postAndProcess(t, env, logJSON(t, "one o'clock", at(13, 0), map[string]any{"user": "ed"}))
+	env.Clock.Set(at(16, 0))
+	want = latestLogs(t, env, 123, 100)
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after hours 12 to 14 are exported")
+	if got := messages(want); len(got) != 7 {
+		t.Errorf("Expected 7 Logs, got %v", got)
+	}
+}
+
+// unpublishLogFiles renames every Log file back to its staged name, as an
+// export leaves its files when it stops between its commit and its renames.
+func unpublishLogFiles(t *testing.T, env *TestEnv) {
+	t.Helper()
+	err := filepath.Walk(filepath.Join(env.dir, "logs_parquet"), func(path string, info os.FileInfo, err error) error {
+		if err != nil || !strings.HasSuffix(path, ".parquet") {
+			return err
+		}
+		return os.Rename(path, path+".tmp")
+	})
+	if err != nil {
+		t.Fatalf("Unpublish Log files: %v", err)
+	}
+}
+
+// copyFiles copies each existing file in names from one folder to another.
+func copyFiles(t *testing.T, from, to string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		src, err := os.Open(filepath.Join(from, name))
+		if os.IsNotExist(err) {
+			os.Remove(filepath.Join(to, name))
+			continue
+		}
+		if err != nil {
+			t.Fatalf("Open %s: %v", name, err)
+		}
+		dst, err := os.Create(filepath.Join(to, name))
+		if err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+		if _, err := io.Copy(dst, src); err != nil {
+			t.Fatalf("Copy %s: %v", name, err)
+		}
+		src.Close()
+		dst.Close()
+	}
+}
+
+func TestACrashBetweenStagingAndRenameLeavesNoHalfWrittenFileAndLosesNoLog(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	env.Clock.Set(time.Date(2026, 10, 2, 11, 30, 0, 0, time.UTC))
+	postAndProcess(t, env,
+		logJSON(t, "ten past ten", time.Date(2026, 10, 2, 10, 10, 0, 0, time.UTC), map[string]any{"user": "ada"}),
+		logJSON(t, "eleven", time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC), map[string]any{"user": "bob"}),
+	)
+	env.Clock.Set(time.Date(2026, 10, 2, 12, 5, 0, 0, time.UTC))
+	postAndProcess(t, env, logJSON(t, "late ten", time.Date(2026, 10, 2, 10, 50, 0, 0, time.UTC), map[string]any{"user": "cy"}))
+	want := latestLogs(t, env, 123, 100)
+	ten := time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)
+
+	// The export stops before it commits: logs.duckdb still holds the Logs,
+	// and the staged file is on disk.
+	env.close()
+	backup := t.TempDir()
+	duckdbFiles := []string{"logs.duckdb", "logs.duckdb.wal"}
+	copyFiles(t, env.dir, backup, duckdbFiles...)
+	env.open(t)
+	env.ExportLogs(t)
+	env.close()
+	copyFiles(t, backup, env.dir, duckdbFiles...)
+	unpublishLogFiles(t, env)
+
+	env.open(t)
+	assertListsUnchanged(t, env, 123, want, "after a crash before the export committed")
+	assertHourFiles(t, env, 123, ten, 0)
+
+	// The export stops after it commits, before it renames its file.
+	env.ExportLogs(t)
+	unpublishLogFiles(t, env)
+	env.Reopen(t)
+	assertListsUnchanged(t, env, 123, want, "after a crash before the export renamed its file")
+	assertHourFiles(t, env, 123, ten, 1)
+
+	// Exports carry on as before.
+	env.Clock.Set(time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the next export")
 }

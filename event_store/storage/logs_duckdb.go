@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/duckdb/duckdb-go/v2"
@@ -30,14 +31,26 @@ const logsCatalog = "logs"
 // Log processing commits together lives here.
 //
 // The promoted-set table is also held in memory, and read from there.
+//
+// The hourly export moves Logs out to files under files.Dir.
 type LogStore struct {
 	db       *sql.DB
 	promoted *promotedSetCache
+	files    LogFiles
+
+	// writeMu lets one write to logs.duckdb run at a time: a Log processing
+	// commit or try, or a Project's export. It is held only for each of
+	// them, never across Log processing's waits.
+	writeMu sync.Mutex
+	// publishMu keeps readers out while an export commits and renames its
+	// files, so that a reader sees each exported Log exactly once.
+	publishMu sync.RWMutex
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
-// events, creating the file if it doesn't exist.
-func NewLogStore(events *DuckDBWriter, path string) (*LogStore, error) {
+// events, creating the file if it doesn't exist. Exported Logs go under
+// filesDir. Files an export staged before a crash are settled.
+func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
@@ -82,7 +95,16 @@ func NewLogStore(events *DuckDBWriter, path string) (*LogStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load promoted sets: %w", err)
 	}
-	return &LogStore{db: events.db, promoted: promoted}, nil
+	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}}
+	if err := store.recoverStagedFiles(); err != nil {
+		return nil, fmt.Errorf("recover staged log files: %w", err)
+	}
+	return store, nil
+}
+
+// Files is where the Log files are.
+func (s *LogStore) Files() LogFiles {
+	return s.files
 }
 
 // hotTable is the name of a Project's hot table in logs.duckdb.
@@ -176,6 +198,8 @@ func (s *LogStore) appendLogBatchesTx(projectID uint32, batches []LogBatch, now 
 	if len(batches) == 0 {
 		return nil
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -365,18 +389,35 @@ func orderedMap[V any](m map[string]V, keep func(string) bool) duckdb.OrderedMap
 }
 
 // LatestLogs returns up to limit of a Project's newest Logs, by time, newest
-// first, from its hot table and its late Logs. Promoted values are merged
-// back into the Attributes, so a reader can't tell which keys are promoted.
+// first, from its hot table, its late Logs and its files. Promoted values are
+// merged back into the Attributes, so a reader can't tell which keys are
+// promoted, nor whether a Log has been exported.
 func (s *LogStore) LatestLogs(projectID uint32, limit int) ([]models.Log, error) {
+	s.publishMu.RLock()
+	defer s.publishMu.RUnlock()
+
 	hot, err := s.tableExists(hotTable(projectID))
 	if err != nil {
 		return nil, err
 	}
-	// Each source's columns are matched by name: a hot table has promoted
-	// columns that logs_late lacks.
+	files, err := s.files.Project(projectID)
+	if err != nil {
+		return nil, err
+	}
+	// Each source's columns are matched by name: a hot table and each day's
+	// files have promoted columns that logs_late lacks.
 	sources := []string{fmt.Sprintf("SELECT * EXCLUDE (project_id) FROM %s.%s WHERE project_id = %d", logsCatalog, lateTable, projectID)}
 	if hot {
 		sources = append(sources, fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(projectID)))
+	}
+	if len(files) > 0 {
+		quoted := make([]string, len(files))
+		for i, file := range files {
+			quoted[i] = sqlString(file)
+		}
+		sources = append(sources, fmt.Sprintf(
+			"SELECT * FROM read_parquet([%s], union_by_name = true, hive_partitioning = false)",
+			strings.Join(quoted, ", ")))
 	}
 	rows, err := s.db.Query(fmt.Sprintf(`
 		%s
