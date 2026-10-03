@@ -4,7 +4,7 @@
 
 **Blocked by:** M2-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] A query-app operation takes a Project, time range, Query and bucket size, and returns counts per bucket per Level (Logs with no Level counted as their own group), the Log count and per-Level counts.
 - [x] It is built as a Query through the compiler, not hand-written SQL, so it applies exactly the filters the stream does. For a Query ending in a tabular stage (M3-01), the counts are of the Logs that pass the filters before that stage.
