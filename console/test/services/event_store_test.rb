@@ -111,6 +111,56 @@ class EventStoreTest < ActiveSupport::TestCase
     assert_nil EventStore.get_log(project_id: 123, log_id: "0199a0b0-0000-7000-8000-000000000001")
   end
 
+  test "logs_histogram counts a Query's Logs per bucket over a Project's time range" do
+    levels = { trace: 0, debug: 0, info: 2, warn: 0, error: 1, fatal: 0, none: 0 }
+    stub_request(:post, "#{@base_url}/api/123/logs/histogram")
+      .with(body: {
+        query: "search \"boom\"",
+        from: "2026-10-03T09:00:00.000Z",
+        to: "2026-10-03T10:00:00.000Z",
+        bucket_seconds: 60,
+      }.to_json)
+      .to_return(status: 200, body: {
+        bucket_seconds: 60,
+        buckets: [ { time: "2026-10-03T09:00:00Z", count: 3, levels: levels } ],
+        count: 3,
+        levels: levels,
+      }.to_json)
+
+    histogram = EventStore.logs_histogram(
+      project_id: 123,
+      query: "search \"boom\"",
+      from: Time.utc(2026, 10, 3, 9),
+      to: Time.utc(2026, 10, 3, 10),
+      bucket_seconds: 60
+    )
+
+    assert_equal 3, histogram["count"]
+    assert_equal 1, histogram["levels"]["error"]
+    assert_equal [ 3 ], histogram["buckets"].map { |bucket| bucket["count"] }
+  end
+
+  test "logs_histogram leaves the bucket to EventStore when none is given" do
+    stub_request(:post, "#{@base_url}/api/123/logs/histogram")
+      .with(body: { query: "", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z" }.to_json)
+      .to_return(status: 200, body: { bucket_seconds: 60, buckets: [], count: 0, levels: {} }.to_json)
+
+    histogram = EventStore.logs_histogram(project_id: 123, query: "", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+
+    assert_equal 60, histogram["bucket_seconds"]
+  end
+
+  test "logs_histogram raises Rejected with EventStore's errors for a Query with mistakes" do
+    stub_request(:post, "#{@base_url}/api/123/logs/histogram")
+      .to_return(status: 400, body: { errors: [ { message: "unknown stage", line: 1, column: 1 } ] }.to_json)
+
+    error = assert_raises(EventStore::Rejected) do
+      EventStore.logs_histogram(project_id: 123, query: "nope", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+    end
+
+    assert_equal "unknown stage", error.body["errors"].first["message"]
+  end
+
   test "all builds event objects" do
     issue = create(:issue)
     fingerprint = create(:issue_fingerprint, issue: issue)

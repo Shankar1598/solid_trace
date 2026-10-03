@@ -68,6 +68,16 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/query", body)
     end
 
+    # Counts the Logs in [from, to) that pass a Query's filters, per bucket
+    # and Level: {"bucket_seconds", "buckets" => [{"time", "count",
+    # "levels"}], "count", "levels"}. levels has every Level and "none" for
+    # Logs with no Level. Without bucket_seconds EventStore picks the size.
+    def logs_histogram(project_id:, query:, from:, to:, bucket_seconds: nil)
+      body = { query: query, from: utc(from), to: utc(to) }
+      body[:bucket_seconds] = bucket_seconds if bucket_seconds
+      post!("#{base_url}/api/#{project_id}/logs/histogram", body)
+    end
+
     # Checks a Query without running it: {"errors" => [...], "chips" => Hash | nil}.
     def validate_logs_query(project_id:, query:)
       post!("#{base_url}/api/#{project_id}/logs/validate", { query: query })
