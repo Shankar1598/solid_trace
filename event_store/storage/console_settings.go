@@ -29,7 +29,7 @@ type InstanceSettings struct {
 }
 
 // ConsoleSettings reads Console's instance settings and Projects' Retention
-// from Console's SQLite database, read-only: Logs write no Console tables (ADR
+// and slugs from Console's SQLite database, read-only: Logs write no Console tables (ADR
 // 0001). Every call reads the database, so a change in Console shows at once;
 // callers that need a cache keep their own.
 type ConsoleSettings struct {
@@ -95,6 +95,17 @@ func (s *ConsoleSettings) LogRetentionDays(projectID uint32) (int, error) {
 		return 0, fmt.Errorf("project %d has a Retention of %d days", projectID, days)
 	}
 	return days, nil
+}
+
+// ProjectSlug returns a Project's slug, which Queries name its Logs by, or ""
+// for a Project Console doesn't know or that has none.
+func (s *ConsoleSettings) ProjectSlug(projectID uint32) (string, error) {
+	var slug sql.NullString
+	err := s.db.QueryRow("SELECT slug FROM projects WHERE id = ?", projectID).Scan(&slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return slug.String, err
 }
 
 // ProjectLogRetention returns the effective Retention, in whole days, of every

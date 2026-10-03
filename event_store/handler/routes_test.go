@@ -87,6 +87,10 @@ func (sqlOn) Instance() (storage.InstanceSettings, error) {
 	return storage.InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 30}, nil
 }
 
+func (sqlOn) ProjectSlug(uint32) (string, error) {
+	return "", nil
+}
+
 func newEvent(projectID uint32) *models.Event {
 	return &models.Event{
 		ProjectID:          projectID,

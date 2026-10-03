@@ -11,9 +11,11 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// InstanceSettings reads the instance settings the operator sets in Console.
-type InstanceSettings interface {
+// ConsoleSettings reads what Logs need from Console: the instance settings
+// the operator sets, and the slug a Project's Logs are named by in Queries.
+type ConsoleSettings interface {
 	Instance() (storage.InstanceSettings, error)
+	ProjectSlug(projectID uint32) (string, error)
 }
 
 // sqlRequest is the body of a SQL run.
@@ -99,6 +101,10 @@ func columnType(duckdbType string) string {
 // nothing, so EventStore answers whatever the SQL queries setting; Console,
 // which only seeds SQL mode with it, refuses it while the setting is off.
 func (h *LogsHandler) ReadableSQL(c *fiber.Ctx) error {
+	projectID, err := parseProjectID(c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
 	var req queryRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
@@ -106,7 +112,7 @@ func (h *LogsHandler) ReadableSQL(c *fiber.Ctx) error {
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
-	query, err := logquery.Compile(req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
