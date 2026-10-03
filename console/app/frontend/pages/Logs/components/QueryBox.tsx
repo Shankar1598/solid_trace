@@ -1,0 +1,69 @@
+import type { QueryProblem } from '@/lib/logs/api'
+import { cn } from '@/lib/utils'
+
+/** Query → Builder needs asking: the stages the Builder can't show, or the Query's mistakes. */
+export interface LeavingQuery {
+  stages: string[]
+  problems: QueryProblem[]
+}
+
+interface QueryBoxProps {
+  text: string
+  onChange: (text: string) => void
+  onRun: () => void
+  /** The mistakes of the Query last run, shown under the box. */
+  problems: QueryProblem[]
+  leaving: LeavingQuery | null
+  onDiscard: () => void
+  onStay: () => void
+}
+
+/** Query mode's editable Query text, its mistakes, and the prompt to leave it. */
+export function QueryBox({ text, onChange, onRun, problems, leaving, onDiscard, onStay }: QueryBoxProps) {
+  return (
+    <div className="border-b bg-muted/30 px-3 py-2">
+      <textarea
+        value={text}
+        autoFocus
+        spellCheck={false}
+        rows={Math.min(8, text.split('\n').length + 1)}
+        onChange={e => onChange(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            onRun()
+          }
+        }}
+        aria-label="Query"
+        placeholder={'where level == "error"\n| summarize count() by service'}
+        className={cn(
+          'w-full resize-y rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] leading-5 outline-none focus:ring-1 focus:ring-primary',
+          problems.length > 0 && 'border-destructive',
+        )}
+      />
+      {problems.map((p, i) => (
+        <div key={i} className="mt-0.5 font-mono text-[11px] text-destructive">
+          Line {p.line}, column {p.column}: {p.message}
+        </div>
+      ))}
+      {leaving && (
+        <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-amber-400 bg-amber-50 p-2 text-xs dark:bg-amber-950/30">
+          <span className="flex-1">
+            {leaving.stages.length > 0 ? (
+              <>The Builder can't show {leaving.stages.map((s, i) => (
+                <code key={i} className="mx-0.5 rounded bg-background px-1">{s}</code>
+              ))}.</>
+            ) : leaving.problems.length > 0 ? (
+              <>The Builder can't show a Query with mistakes (line {leaving.problems[0].line}, column {leaving.problems[0].column}: {leaving.problems[0].message}).</>
+            ) : (
+              <>The Builder can't show this Query.</>
+            )}
+            {' '}Switching discards your Query and returns to the last Builder filters.
+          </span>
+          <button onClick={onDiscard} className="rounded border px-2 py-1 hover:bg-background">Discard and switch</button>
+          <button onClick={onStay} className="rounded border px-2 py-1 hover:bg-background">Stay in Query</button>
+        </div>
+      )}
+    </div>
+  )
+}

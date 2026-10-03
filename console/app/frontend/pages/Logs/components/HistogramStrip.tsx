@@ -44,7 +44,7 @@ interface HistogramStripProps {
   view: HistogramView
   /** Runs the explorer over a narrower range. */
   onZoom: (range: AbsoluteRange) => void
-  /** Filters on a Level, or null when the Builder can't take a chip. */
+  /** Filters on a Level, or null while no filter can be added. */
   onLevel: ((level: HistogramLevel) => void) | null
 }
 
