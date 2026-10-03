@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
-import { List, GitMerge, Settings, LogOut } from 'lucide-react'
+import { List, GitMerge, Settings, LogOut, ScrollText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
@@ -21,10 +21,16 @@ export function Sidebar({ className }: SidebarProps) {
       active: url.endsWith('/issues') || url.includes('/issues/') || url.includes('/issues?')
     },
     {
+      label: 'Logs',
+      href: `/${current_org.slug}/logs`,
+      icon: ScrollText,
+      active: /\/logs(\/|\?|$)/.test(url)
+    },
+    {
       label: 'Projects',
       href: `/${current_org.slug}/projects`,
       icon: GitMerge,
-      active: url.includes('/projects') && !url.includes('/issues')
+      active: url.includes('/projects') && !url.includes('/issues') && !/\/logs(\/|\?|$)/.test(url)
     },
     {
       label: 'Settings',

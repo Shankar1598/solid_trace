@@ -41,6 +41,76 @@ class EventStoreTest < ActiveSupport::TestCase
     assert_equal 7, count
   end
 
+  test "query_logs runs a Query over a Project's time range" do
+    stub_request(:post, "#{@base_url}/api/123/logs/query")
+      .with(body: {
+        query: "where level == \"error\"",
+        from: "2026-10-03T09:00:00.000Z",
+        to: "2026-10-03T10:00:00.000Z",
+        cursor: "abc",
+      }.to_json)
+      .to_return(status: 200, body: { logs: [ { id: "log-1" } ], next_cursor: "def" }.to_json)
+
+    page = EventStore.query_logs(
+      project_id: 123,
+      query: "where level == \"error\"",
+      from: Time.utc(2026, 10, 3, 9),
+      to: Time.utc(2026, 10, 3, 10),
+      cursor: "abc"
+    )
+
+    assert_equal [ "log-1" ], page["logs"].map { |log| log["id"] }
+    assert_equal "def", page["next_cursor"]
+  end
+
+  test "query_logs raises Rejected with EventStore's errors for a Query with mistakes" do
+    errors = [ { message: "unknown stage", line: 1, column: 1, end_line: 1, end_column: 4 } ]
+    stub_request(:post, "#{@base_url}/api/123/logs/query")
+      .to_return(status: 400, body: { errors: errors }.to_json)
+
+    error = assert_raises(EventStore::Rejected) do
+      EventStore.query_logs(project_id: 123, query: "nope", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+    end
+
+    assert_equal "unknown stage", error.body["errors"].first["message"]
+  end
+
+  test "query_logs raises Unavailable when EventStore fails" do
+    stub_request(:post, "#{@base_url}/api/123/logs/query").to_return(status: 500, body: { error: "Internal error" }.to_json)
+
+    assert_raises(EventStore::Unavailable) do
+      EventStore.query_logs(project_id: 123, query: "", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+    end
+  end
+
+  test "validate_logs_query returns errors and chips" do
+    stub_request(:post, "#{@base_url}/api/123/logs/validate")
+      .with(body: { query: "search \"boom\"" }.to_json)
+      .to_return(status: 200, body: { errors: [], chips: { filters: [], search: "boom" } }.to_json)
+
+    result = EventStore.validate_logs_query(project_id: 123, query: "search \"boom\"")
+
+    assert_equal [], result["errors"]
+    assert_equal "boom", result["chips"]["search"]
+  end
+
+  test "get_log fetches one Log by id near its time" do
+    stub_request(:get, "#{@base_url}/api/123/logs/0199a0b0-0000-7000-8000-000000000001")
+      .with(query: { time: "2026-10-03T09:30:00.123Z" })
+      .to_return(status: 200, body: { id: "0199a0b0-0000-7000-8000-000000000001" }.to_json)
+
+    log = EventStore.get_log(project_id: 123, log_id: "0199a0b0-0000-7000-8000-000000000001", time: "2026-10-03T09:30:00.123Z")
+
+    assert_equal "0199a0b0-0000-7000-8000-000000000001", log["id"]
+  end
+
+  test "get_log returns nil for a Log that isn't there" do
+    stub_request(:get, "#{@base_url}/api/123/logs/0199a0b0-0000-7000-8000-000000000001")
+      .to_return(status: 404, body: { error: "Log not found" }.to_json)
+
+    assert_nil EventStore.get_log(project_id: 123, log_id: "0199a0b0-0000-7000-8000-000000000001")
+  end
+
   test "all builds event objects" do
     issue = create(:issue)
     fingerprint = create(:issue_fingerprint, issue: issue)
