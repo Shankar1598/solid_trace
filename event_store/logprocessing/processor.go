@@ -86,10 +86,7 @@ type Processor struct {
 	failing          map[uint32]*failure // Projects whose Logs failed to store
 	lastBacklogCheck time.Time
 
-	stop     chan struct{}
-	stopOnce sync.Once
-	started  bool
-	done     chan struct{}
+	*worker
 }
 
 // failure is how a Project's Logs have failed to store since they last did.
@@ -108,8 +105,7 @@ func New(batches *storage.PebbleWriter, store Store, clock clock.Clock) *Process
 		pending: make(map[uint32]struct{}),
 		wake:    make(chan struct{}, 1),
 		failing: make(map[uint32]*failure),
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		worker:  newWorker(),
 	}
 }
 
@@ -181,22 +177,16 @@ func (p *Processor) takeDue() (projectID uint32, ok bool, retryAt time.Time) {
 
 // Start runs the worker in its own goroutine.
 func (p *Processor) Start() {
-	p.started = true
-	go p.run()
+	p.start(p.run)
 }
 
 // Stop stops the worker and waits for it to exit. Batches not yet committed
 // are processed again after a restart, from the cursor.
 func (p *Processor) Stop() {
-	p.stopOnce.Do(func() { close(p.stop) })
-	if p.started {
-		<-p.done
-	}
+	p.halt()
 }
 
 func (p *Processor) run() {
-	defer close(p.done)
-
 	tick := time.NewTicker(tickInterval)
 	defer tick.Stop()
 
