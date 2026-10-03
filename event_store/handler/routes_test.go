@@ -113,7 +113,6 @@ func TestQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 		"/api/1/events/count",
 		"/api/1/events/context?fingerprint_ids=10",
 		"/api/1/events/" + event.EventUUID,
-		"/api/1/logs/latest",
 	}
 
 	for _, path := range paths {
@@ -127,6 +126,28 @@ func TestQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 				t.Errorf("expected 200, got %d", resp.StatusCode)
 			}
 		})
+	}
+}
+
+func TestLogQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
+	apps := newTestApps(t)
+	post := func(app *fiber.App, path, body string) int {
+		req, _ := http.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req, 5000)
+		if err != nil {
+			t.Fatalf("POST %s failed: %v", path, err)
+		}
+		return resp.StatusCode
+	}
+	run := `{"query": "", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`
+	for path, body := range map[string]string{"/api/1/logs/query": run, "/api/1/logs/validate": `{"query": ""}`} {
+		if status := post(apps.ingest, path, body); status != fiber.StatusNotFound {
+			t.Errorf("ingest app %s: expected 404, got %d", path, status)
+		}
+		if status := post(apps.query, path, body); status != fiber.StatusOK {
+			t.Errorf("query app %s: expected 200, got %d", path, status)
+		}
 	}
 }
 

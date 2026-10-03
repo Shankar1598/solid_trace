@@ -69,25 +69,11 @@ func decodeLogCounts(t *testing.T, resp *http.Response) logCounts {
 	return counts
 }
 
-// latestLogs returns a Project's latest Logs from the query app, newest first.
+// latestLogs returns a Project's latest Logs from the query app, newest
+// first: a run of the empty Query over every time a Log can have.
 func latestLogs(t *testing.T, env *TestEnv, projectID uint32, limit int) []listedLog {
 	t.Helper()
-	req, _ := http.NewRequest("GET", fmt.Sprintf("/api/%d/logs/latest?limit=%d", projectID, limit), nil)
-	resp, err := env.QueryApp.Test(req, 2000)
-	if err != nil {
-		t.Fatalf("Latest Logs request failed: %v", err)
-	}
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		t.Fatalf("Latest Logs expected 200, got %d: %s", resp.StatusCode, raw)
-	}
-	var body struct {
-		Logs []listedLog `json:"logs"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		t.Fatalf("Decode latest Logs %q: %v", raw, err)
-	}
-	return body.Logs
+	return runQuery(t, env, projectID, queryRequest{From: allTime.from, To: allTime.to, Limit: limit}).Logs
 }
 
 func TestJSONLogIsListedWithEveryFieldAfterProcessing(t *testing.T) {
