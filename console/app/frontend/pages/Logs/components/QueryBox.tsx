@@ -8,6 +8,8 @@ export interface LeavingQuery {
 }
 
 interface QueryBoxProps {
+  /** The Project's slug, which a Query starts with as its source. */
+  projectSlug: string
   text: string
   onChange: (text: string) => void
   onRun: () => void
@@ -19,7 +21,7 @@ interface QueryBoxProps {
 }
 
 /** Query mode's editable Query text, its mistakes, and the prompt to leave it. */
-export function QueryBox({ text, onChange, onRun, problems, leaving, onDiscard, onStay }: QueryBoxProps) {
+export function QueryBox({ projectSlug, text, onChange, onRun, problems, leaving, onDiscard, onStay }: QueryBoxProps) {
   return (
     <div className="border-b bg-muted/30 px-3 py-2">
       <textarea
@@ -35,7 +37,7 @@ export function QueryBox({ text, onChange, onRun, problems, leaving, onDiscard, 
           }
         }}
         aria-label="Query"
-        placeholder={'where level == "error"\n| summarize count() by service'}
+        placeholder={`${projectSlug}\n| where level == "error"\n| summarize count() by service`}
         className={cn(
           'w-full resize-y rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] leading-5 outline-none focus:ring-1 focus:ring-primary',
           problems.length > 0 && 'border-destructive',
