@@ -2,7 +2,9 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -24,6 +26,12 @@ const (
 	// TokenString is a string in single or double quotes. Its Value is the
 	// string, its escapes resolved.
 	TokenString
+	// TokenTimespan is a number with a unit of time, such as 1h or 90s. Its
+	// Value is as written.
+	TokenTimespan
+	// TokenDateTime is datetime(…), a point in time. Its Value is what the
+	// parentheses hold, unquoted.
+	TokenDateTime
 
 	TokenAnd // the keyword and
 	TokenOr  // the keyword or
@@ -47,6 +55,23 @@ const (
 	TokenLE       // <=
 	TokenGT       // >
 	TokenGE       // >=
+	TokenEqCI     // =~
+	TokenNECI     // !~
+	TokenBang     // !, before a word operator such as !in
+
+	// Word operators. The scanner gives them as TokenIdentifier (and
+	// TokenBang); the parser reads them into a BinaryExpr's Op.
+	TokenContains        // contains
+	TokenNotContains     // !contains
+	TokenContainsCS      // contains_cs
+	TokenNotContainsCS   // !contains_cs
+	TokenStartsWith      // startswith
+	TokenNotStartsWith   // !startswith
+	TokenStartsWithCS    // startswith_cs
+	TokenNotStartsWithCS // !startswith_cs
+	TokenMatchesRegex    // matches regex
+	TokenIn              // in
+	TokenNotIn           // !in
 
 	// TokenError is text that isn't a token. Its Value says why.
 	TokenError TokenKind = -1
@@ -64,7 +89,8 @@ var symbols = []struct {
 	kind TokenKind
 }{
 	// Longest first.
-	{"==", TokenEq}, {"!=", TokenNE}, {"<=", TokenLE}, {">=", TokenGE},
+	{"==", TokenEq}, {"!=", TokenNE}, {"=~", TokenEqCI}, {"!~", TokenNECI}, {"<=", TokenLE}, {">=", TokenGE},
+	{"!", TokenBang},
 	{"|", TokenPipe}, {".", TokenDot}, {",", TokenComma}, {"(", TokenLParen}, {")", TokenRParen},
 	{"]", TokenRBracket}, {"+", TokenPlus}, {"-", TokenMinus}, {"*", TokenStar},
 	{"/", TokenSlash}, {"%", TokenMod}, {"=", TokenAssign}, {"<", TokenLT}, {">", TokenGT},
@@ -152,6 +178,11 @@ func (s *scanner) identifier() Token {
 		s.pos += utf8.RuneLen(s.peek())
 	}
 	value := s.source[start:s.pos]
+	if value == "datetime" {
+		if tok, ok := s.dateTime(start); ok {
+			return tok
+		}
+	}
 	kind := TokenIdentifier
 	switch value {
 	case "and":
@@ -162,7 +193,61 @@ func (s *scanner) identifier() Token {
 	return Token{Kind: kind, Span: newSpan(start, s.pos), Value: value}
 }
 
-// number scans digits, an optional fraction and an optional exponent.
+// dateTime scans the parentheses of datetime(…), whose text is a time
+// unquoted, as in datetime(2026-10-02T10:00:00Z), or quoted. It reports false,
+// moving nothing, when no parenthesis follows.
+func (s *scanner) dateTime(start int) (Token, bool) {
+	open := s.pos
+	for open < len(s.source) && (s.source[open] == ' ' || s.source[open] == '\t') {
+		open++
+	}
+	if open >= len(s.source) || s.source[open] != '(' {
+		return Token{}, false
+	}
+	end := strings.IndexByte(s.source[open:], ')')
+	if end < 0 {
+		s.pos = len(s.source)
+		return errorToken(newSpan(start, s.pos), "expected ) after datetime(…"), true
+	}
+	s.pos = open + end + 1
+	text := strings.TrimSpace(s.source[open+1 : open+end])
+	if len(text) >= 2 && (text[0] == '"' || text[0] == '\'') && text[len(text)-1] == text[0] {
+		text = text[1 : len(text)-1]
+	}
+	return Token{Kind: TokenDateTime, Span: newSpan(start, s.pos), Value: text}, true
+}
+
+// timespanUnits are the units a timespan can be written in, as KQL spells
+// them.
+var timespanUnits = map[string]time.Duration{
+	"d": 24 * time.Hour, "day": 24 * time.Hour, "days": 24 * time.Hour,
+	"h": time.Hour, "hr": time.Hour, "hrs": time.Hour, "hour": time.Hour, "hours": time.Hour,
+	"m": time.Minute, "min": time.Minute, "minute": time.Minute, "minutes": time.Minute,
+	"s": time.Second, "sec": time.Second, "second": time.Second, "seconds": time.Second,
+	"ms": time.Millisecond, "milli": time.Millisecond, "millis": time.Millisecond,
+	"millisecond": time.Millisecond, "milliseconds": time.Millisecond,
+	"microsecond": time.Microsecond, "microseconds": time.Microsecond,
+	"tick": 100 * time.Nanosecond, "ticks": 100 * time.Nanosecond,
+}
+
+// ParseTimespan reads a timespan as TokenTimespan holds it, such as 1.5h.
+func ParseTimespan(text string) (time.Duration, error) {
+	i := strings.IndexFunc(text, func(r rune) bool { return !isDigit(r) && r != '.' })
+	if i <= 0 {
+		return 0, fmt.Errorf("%q isn't a timespan", text)
+	}
+	unit, ok := timespanUnits[text[i:]]
+	if !ok {
+		return 0, fmt.Errorf("%q isn't a timespan; use a unit such as d, h, m, s or ms", text)
+	}
+	n, err := strconv.ParseFloat(text[:i], 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q isn't a timespan", text)
+	}
+	return time.Duration(n * float64(unit)), nil
+}
+
+// number scans, an optional fraction and an optional exponent.
 func (s *scanner) number() Token {
 	start := s.pos
 	s.digits()
@@ -183,10 +268,15 @@ func (s *scanner) number() Token {
 		}
 	}
 	if s.pos < len(s.source) && isIdentPart(s.peek()) {
+		unitStart := s.pos
 		for s.pos < len(s.source) && isIdentPart(s.peek()) {
 			s.pos += utf8.RuneLen(s.peek())
 		}
-		return errorToken(newSpan(start, s.pos), "%q isn't a number", s.source[start:s.pos])
+		text := s.source[start:s.pos]
+		if _, ok := timespanUnits[s.source[unitStart:s.pos]]; ok && !strings.ContainsAny(text[:unitStart-start], "eE") {
+			return Token{Kind: TokenTimespan, Span: newSpan(start, s.pos), Value: text}
+		}
+		return errorToken(newSpan(start, s.pos), "%q isn't a number", text)
 	}
 	return Token{Kind: TokenNumber, Span: newSpan(start, s.pos), Value: s.source[start:s.pos]}
 }
