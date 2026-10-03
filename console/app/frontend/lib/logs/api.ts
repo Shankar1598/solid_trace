@@ -84,10 +84,26 @@ function runFailure(body: { errors?: unknown; error?: unknown } | null, status: 
   return new RunError(typeof body?.error === 'string' ? body.error : `The Query failed (HTTP ${status}).`)
 }
 
+/**
+ * Where validate places one stage of a Query, from its keyword to its end
+ * (lines and columns from 1, columns in characters). filter: one of the
+ * leading where and search stages; builder: the Builder can show it.
+ */
+export interface QueryStage {
+  line: number
+  column: number
+  end_line: number
+  end_column: number
+  filter: boolean
+  builder: boolean
+}
+
 export interface Validation {
   errors: QueryProblem[]
   /** The Query as Builder chips, or null when the Builder can't show it. */
   chips: Chips | null
+  /** Each stage of a Query without mistakes; none otherwise. */
+  stages: QueryStage[]
 }
 
 /** Checks a Query without running it; the Builder reads its chips from here. */

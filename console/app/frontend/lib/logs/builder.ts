@@ -27,9 +27,14 @@ export const EMPTY_BUILDER: Builder = { filters: [], search: '' }
 
 /** The Query text: one where stage per chip, in order, then the search. */
 export function queryOf(builder: Builder): string {
-  const stages = builder.filters.map(f => `where ${nameText(f.field)} ${f.op} ${valueText(f.value)}`)
+  const stages = builder.filters.map(filterText)
   if (builder.search.trim() !== '') stages.push(`search ${stringText(builder.search)}`)
   return stages.join('\n| ')
+}
+
+/** One chip as its where stage, such as `where service == "api"`. */
+export function filterText(chip: Chip): string {
+  return `where ${nameText(chip.field)} ${chip.op} ${valueText(chip.value)}`
 }
 
 export function builderOf(chips: Chips): Builder {
