@@ -42,6 +42,7 @@ Rails.application.routes.draw do
         collection do
           get :query
           get :validate
+          get :histogram
         end
       end
 
