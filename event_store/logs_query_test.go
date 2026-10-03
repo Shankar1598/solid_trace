@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -327,4 +328,166 @@ func TestQueriesAgreeAcrossPromotionTheDailySetAndDemotion(t *testing.T) {
 	env.ExportLogs(t)
 	env.Reopen(t)
 	assertQueries(t, env, cases, "after day 2's hour is exported and a restart")
+}
+
+// validation is validate's answer.
+type validation struct {
+	Errors []queryProblem `json:"errors"`
+	Chips  *struct {
+		Filters []struct {
+			Field string `json:"field"`
+			Op    string `json:"op"`
+			Value any    `json:"value"`
+		} `json:"filters"`
+		Search *string `json:"search"`
+	} `json:"chips"`
+}
+
+func validateQuery(t *testing.T, env *TestEnv, query string) validation {
+	t.Helper()
+	status, raw := postQueryApp(t, env, "/api/123/logs/validate", map[string]string{"query": query})
+	if status != 200 {
+		t.Fatalf("Validate %q expected 200, got %d: %s", query, status, raw)
+	}
+	var v validation
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("Decode validation %q: %v", raw, err)
+	}
+	return v
+}
+
+func TestValidateGivesChipsForBuilderQueriesAndPlacesMistakes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	chips := map[string]string{
+		``:     `{"filters":[],"search":null}`,
+		`logs`: `{"filters":[],"search":null}`,
+		`where status == 200 | search "time out"`: `{"filters":[{"field":"status","op":"==","value":200}],"search":"time out"}`,
+		"logs\n| where level != \"error\"\n| where cached == true | where ['http.status'] == -1.5": `{"filters":[` +
+			`{"field":"level","op":"!=","value":"error"},` +
+			`{"field":"cached","op":"==","value":true},` +
+			`{"field":"http.status","op":"==","value":-1.5}],"search":null}`,
+		`search "" | where http.method == 'GET'`: `{"filters":[{"field":"http.method","op":"==","value":"GET"}],"search":""}`,
+	}
+	for query, want := range chips {
+		v := validateQuery(t, env, query)
+		got, _ := json.Marshal(v.Chips)
+		if len(v.Errors) != 0 || string(got) != want {
+			t.Errorf("%q: expected chips %s, got %s and errors %+v", query, want, got, v.Errors)
+		}
+	}
+
+	// Valid Queries the Builder can't show.
+	for _, query := range []string{
+		`where a == 1 or b == 2`,
+		`where a == 1 and b == 2`,
+		`where not(a == 1)`,
+		`search "a" | search "b"`,
+	} {
+		if v := validateQuery(t, env, query); len(v.Errors) != 0 || v.Chips != nil {
+			t.Errorf("%q: expected no chips and no errors, got %+v", query, v)
+		}
+	}
+
+	mistakes := map[string]queryProblem{
+		"where status == 200\n| summarize count()": {Message: `unknown stage "summarize"`, Line: 2, Column: 3, EndLine: 2, EndColumn: 12},
+		`where startswith(message, "x")`:           {Message: `unknown function "startswith"`, Line: 1, Column: 7, EndLine: 1, EndColumn: 17},
+		`where status = 200`:                       {Message: `expected | or the end of the Query, got "="`, Line: 1, Column: 14, EndLine: 1, EndColumn: 15},
+		`where message == "unterminated`:           {Message: "unterminated string", Line: 1, Column: 18, EndLine: 1, EndColumn: 31},
+		`where user == "é" | bogus`:                {Message: `unknown stage "bogus"`, Line: 1, Column: 21, EndLine: 1, EndColumn: 26},
+		`where level == "x" |`:                     {Message: "expected a stage, such as where, got the end of the Query", Line: 1, Column: 21, EndLine: 1, EndColumn: 21},
+		`where status == other`:                    {Message: "expected a value: a string, a number, true or false", Line: 1, Column: 17, EndLine: 1, EndColumn: 22},
+		`where status`:                             {Message: `expected a condition, such as level == "error"`, Line: 1, Column: 7, EndLine: 1, EndColumn: 13},
+		`search timeout`:                           {Message: `search needs a quoted string, such as search "timeout"`, Line: 1, Column: 8, EndLine: 1, EndColumn: 15},
+	}
+	for query, want := range mistakes {
+		v := validateQuery(t, env, query)
+		if len(v.Errors) != 1 || v.Errors[0] != want || v.Chips != nil {
+			t.Errorf("%q: expected %+v and no chips, got %+v", query, want, v)
+		}
+	}
+
+	// A run refuses a Query with mistakes the same way.
+	status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: `where startswith(message, "x")`, From: allTime.from, To: allTime.to})
+	var refused struct {
+		Errors []queryProblem `json:"errors"`
+	}
+	json.Unmarshal(raw, &refused)
+	if status != 400 || len(refused.Errors) != 1 || refused.Errors[0] != mistakes[`where startswith(message, "x")`] {
+		t.Errorf("Expected 400 with the mistake, got %d: %s", status, raw)
+	}
+
+	// A run needs its time range, and a cursor it gave.
+	for name, req := range map[string]any{
+		"no time range":    map[string]string{"query": ""},
+		"from after to":    queryRequest{From: allTime.to, To: allTime.from},
+		"a forged cursor":  queryRequest{From: allTime.from, To: allTime.to, Cursor: "bm90IGEgY3Vyc29y"},
+		"a negative limit": queryRequest{From: allTime.from, To: allTime.to, Limit: -1},
+	} {
+		if status, raw := postQueryApp(t, env, "/api/123/logs/query", req); status != 400 {
+			t.Errorf("Expected a run with %s to be 400, got %d: %s", name, status, raw)
+		}
+	}
+}
+
+// fetchLog fetches one Log by id, with its time as a hint if at is set.
+func fetchLog(t *testing.T, env *TestEnv, projectID uint32, id string, at *time.Time) (int, listedLog) {
+	t.Helper()
+	path := fmt.Sprintf("/api/%d/logs/%s", projectID, id)
+	if at != nil {
+		path += "?time=" + at.Format(time.RFC3339Nano)
+	}
+	req, _ := http.NewRequest("GET", path, nil)
+	resp, err := env.QueryApp.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET %s failed: %v", path, err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	var log listedLog
+	if resp.StatusCode == 200 {
+		if err := json.Unmarshal(raw, &log); err != nil {
+			t.Fatalf("Decode Log %q: %v", raw, err)
+		}
+	}
+	return resp.StatusCode, log
+}
+
+func TestALogIsFetchedByIDWhereverItIsStored(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(11, 30))
+	postAndProcess(t, env,
+		logJSON(t, "exported", at(10, 10), map[string]any{"user": "ada", "status": 200}),
+		logJSON(t, "hot", at(11, 10), map[string]any{"user": "bob"}),
+	)
+	env.Clock.Set(at(12, 5))
+	env.ExportLogs(t)
+	postAndProcess(t, env, logJSON(t, "late", at(10, 20), map[string]any{"user": "cy", "cached": true}))
+
+	logs := latestLogs(t, env, 123, 10)
+	if len(logs) != 3 {
+		t.Fatalf("Expected 3 Logs, got %v", messages(logs))
+	}
+	for _, want := range logs {
+		for _, hint := range []*time.Time{nil, &want.Time} {
+			status, got := fetchLog(t, env, 123, want.ID, hint)
+			if status != 200 || !reflect.DeepEqual(got, want) {
+				t.Errorf("Fetch %q (time hint %v): expected %+v, got %d %+v", want.Message, hint != nil, want, status, got)
+			}
+		}
+	}
+
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+	if status, _ := fetchLog(t, env, 456, logs[0].ID, nil); status != 404 {
+		t.Errorf("Expected another Project's Log to be 404, got %d", status)
+	}
+	if status, _ := fetchLog(t, env, 123, "0192d6a0-0000-7000-8000-000000000000", nil); status != 404 {
+		t.Errorf("Expected an unknown id to be 404, got %d", status)
+	}
+	if status, _ := fetchLog(t, env, 123, "not-a-uuid", nil); status != 400 {
+		t.Errorf("Expected a malformed id to be 400, got %d", status)
+	}
 }
