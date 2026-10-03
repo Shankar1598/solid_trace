@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/duckdb/duckdb-go/v2"
@@ -30,14 +31,26 @@ const logsCatalog = "logs"
 // Log processing commits together lives here.
 //
 // The promoted-set table is also held in memory, and read from there.
+//
+// The hourly export moves Logs out to files under files.Dir.
 type LogStore struct {
 	db       *sql.DB
 	promoted *promotedSetCache
+	files    LogFiles
+
+	// writeMu lets one write to logs.duckdb run at a time: a Log processing
+	// commit or try, or a Project's export. It is held only for each of
+	// them, never across Log processing's waits.
+	writeMu sync.Mutex
+	// publishMu keeps readers out while an export commits and renames its
+	// files, so that a reader sees each exported Log exactly once.
+	publishMu sync.RWMutex
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
-// events, creating the file if it doesn't exist.
-func NewLogStore(events *DuckDBWriter, path string) (*LogStore, error) {
+// events, creating the file if it doesn't exist. Exported Logs go under
+// filesDir. Files an export staged before a crash are settled.
+func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
@@ -69,6 +82,10 @@ func NewLogStore(events *DuckDBWriter, path string) (*LogStore, error) {
 			key VARCHAR,
 			logs BIGINT
 		)`,
+		// Every Project's Logs whose time was outside the hot window when
+		// Log processing stored them: a hot table's fixed columns, maps only.
+		`CREATE TABLE IF NOT EXISTS logs.logs_late (
+			project_id UINTEGER,` + hotTableColumns + `)`,
 	} {
 		if _, err := events.db.Exec(ddl); err != nil {
 			return nil, err
@@ -78,7 +95,16 @@ func NewLogStore(events *DuckDBWriter, path string) (*LogStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load promoted sets: %w", err)
 	}
-	return &LogStore{db: events.db, promoted: promoted}, nil
+	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}}
+	if err := store.recoverStagedFiles(); err != nil {
+		return nil, fmt.Errorf("recover staged log files: %w", err)
+	}
+	return store, nil
+}
+
+// Files is where the Log files are.
+func (s *LogStore) Files() LogFiles {
+	return s.files
 }
 
 // hotTable is the name of a Project's hot table in logs.duckdb.
@@ -104,6 +130,17 @@ const hotTableColumns = `
 	attrs_json MAP(VARCHAR, VARCHAR)
 `
 
+// lateTable is the table that holds every Project's late Logs.
+const lateTable = "logs_late"
+
+// HotWindow is the span of time whose Logs Log processing appends to a
+// Project's hot table at now: from the start of the previous hour to the
+// start of the next. A Log outside it is late, and goes to logs_late.
+func HotWindow(now time.Time) (from, to time.Time) {
+	hour := now.UTC().Truncate(time.Hour)
+	return hour.Add(-time.Hour), hour.Add(time.Hour)
+}
+
 // hotTableFixedColumns are the names of hotTableColumns, in order.
 var hotTableFixedColumns = []string{
 	"id", "time", "level", "message", "service", "environment", "trace_id", "span_id",
@@ -126,12 +163,13 @@ func (s *LogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
 
 // AppendLogBatches stores the Logs of a Project's Log batches, all in one
 // transaction:
-//  1. it makes the promoted set of each of the Logs' days that has none;
-//  2. it promotes the Logs' new keys while their day's set has room, adding
-//     their columns to the Project's hot table;
-//  3. it appends the Logs to the hot table, created with its first Log, each
-//     promoted value in its column and not in its map;
-//  4. it adds the Logs' keys to the popularity counts;
+//  1. it makes the promoted set of each of the hot Logs' days that has none;
+//  2. it promotes the hot Logs' new keys while their day's set has room,
+//     adding their columns to the Project's hot table;
+//  3. it appends the Logs in the hot window of now to the hot table, created
+//     with its first Log, each promoted value in its column and not in its
+//     map, and the rest to logs_late, maps only;
+//  4. it adds the hot Logs' keys to the popularity counts;
 //  5. it moves the Project's Log processing cursor to the last batch.
 //
 // Either all of it commits or none does, so a batch at or below the cursor is
@@ -160,6 +198,8 @@ func (s *LogStore) appendLogBatchesTx(projectID uint32, batches []LogBatch, now 
 	if len(batches) == 0 {
 		return nil
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -197,18 +237,31 @@ func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, bat
 		return nil, fmt.Errorf("create hot table: %w", err)
 	}
 
-	var logs []models.Log
+	// Late Logs are never promoted, and don't count towards popularity:
+	// their days' sets are made or past, and a burst of old Logs shouldn't
+	// choose today's columns.
+	var hot, late []models.Log
+	from, to := HotWindow(now)
 	for _, batch := range batches {
-		logs = append(logs, batch.Logs...)
+		for _, log := range batch.Logs {
+			if log.Time.Before(from) || !log.Time.Before(to) {
+				late = append(late, log)
+			} else {
+				hot = append(hot, log)
+			}
+		}
 	}
-	promotion, err := promote(ctx, conn, projectID, logs, now)
+	promotion, err := promote(ctx, conn, projectID, hot, now)
 	if err != nil {
 		return nil, err
 	}
-	if err := appendHotRows(conn, table, logs, promotion); err != nil {
+	if err := appendHotRows(conn, table, hot, promotion); err != nil {
 		return nil, fmt.Errorf("append logs: %w", err)
 	}
-	if err := countKeys(ctx, conn, projectID, logs); err != nil {
+	if err := appendLateRows(conn, projectID, late); err != nil {
+		return nil, fmt.Errorf("append late logs: %w", err)
+	}
+	if err := countKeys(ctx, conn, projectID, hot); err != nil {
 		return nil, err
 	}
 
@@ -246,6 +299,32 @@ func appendHotRows(conn *sql.Conn, table string, logs []models.Log, promotion *p
 		for _, log := range logs {
 			set := promotion.days[LogDay(log.Time)].keys
 			if err := appender.AppendRow(hotTableRow(log, set, promoted)...); err != nil {
+				appender.Close()
+				return err
+			}
+		}
+		return appender.Close()
+	})
+}
+
+// appendLateRows appends a Project's late Logs to logs_late, every Attribute
+// in its map.
+func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	return conn.Raw(func(c any) error {
+		dConn, ok := c.(driver.Conn)
+		if !ok {
+			return fmt.Errorf("not a driver connection")
+		}
+		appender, err := duckdb.NewAppender(dConn, logsCatalog, "main", lateTable)
+		if err != nil {
+			return err
+		}
+		for _, log := range logs {
+			row := append([]driver.Value{projectID}, hotTableRow(log, nil, nil)...)
+			if err := appender.AppendRow(row...); err != nil {
 				appender.Close()
 				return err
 			}
@@ -310,23 +389,40 @@ func orderedMap[V any](m map[string]V, keep func(string) bool) duckdb.OrderedMap
 }
 
 // LatestLogs returns up to limit of a Project's newest Logs, by time, newest
-// first. Promoted values are merged back into the Attributes, so a reader
-// can't tell which keys are promoted.
+// first, from its hot table, its late Logs and its files. Promoted values are
+// merged back into the Attributes, so a reader can't tell which keys are
+// promoted, nor whether a Log has been exported.
 func (s *LogStore) LatestLogs(projectID uint32, limit int) ([]models.Log, error) {
-	table := hotTable(projectID)
-	var exists bool
-	err := s.db.QueryRow(
-		"SELECT count(*) > 0 FROM duckdb_tables() WHERE database_name = ? AND schema_name = 'main' AND table_name = ?",
-		logsCatalog, table,
-	).Scan(&exists)
-	if err != nil || !exists {
-		return []models.Log{}, err
-	}
+	s.publishMu.RLock()
+	defer s.publishMu.RUnlock()
 
+	hot, err := s.tableExists(hotTable(projectID))
+	if err != nil {
+		return nil, err
+	}
+	files, err := s.files.Project(projectID)
+	if err != nil {
+		return nil, err
+	}
+	// Each source's columns are matched by name: a hot table and each day's
+	// files have promoted columns that logs_late lacks.
+	sources := []string{fmt.Sprintf("SELECT * EXCLUDE (project_id) FROM %s.%s WHERE project_id = %d", logsCatalog, lateTable, projectID)}
+	if hot {
+		sources = append(sources, fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(projectID)))
+	}
+	if len(files) > 0 {
+		quoted := make([]string, len(files))
+		for i, file := range files {
+			quoted[i] = sqlString(file)
+		}
+		sources = append(sources, fmt.Sprintf(
+			"SELECT * FROM read_parquet([%s], union_by_name = true, hive_partitioning = false)",
+			strings.Join(quoted, ", ")))
+	}
 	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT * FROM %s.%s
+		%s
 		ORDER BY time DESC, id DESC
-		LIMIT ?`, logsCatalog, table), limit)
+		LIMIT ?`, strings.Join(sources, "\n\t\tUNION ALL BY NAME\n\t\t")), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +441,16 @@ func (s *LogStore) LatestLogs(projectID uint32, limit int) ([]models.Log, error)
 		logs = append(logs, log)
 	}
 	return logs, rows.Err()
+}
+
+// tableExists reports whether logs.duckdb has a table named table.
+func (s *LogStore) tableExists(table string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(
+		"SELECT count(*) > 0 FROM duckdb_tables() WHERE database_name = ? AND schema_name = 'main' AND table_name = ?",
+		logsCatalog, table,
+	).Scan(&exists)
+	return exists, err
 }
 
 // scanHotRow scans a hot-table row of every column into a Log, merging each
