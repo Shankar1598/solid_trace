@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"database/sql/driver"
 	"fmt"
 	"math"
 	"strings"
@@ -54,32 +53,28 @@ func (e *SQLError) Unwrap() error { return e.Err }
 // and its files, promoted values merged back into their maps. It reads at
 // most limit rows. If the query itself fails, the error is a *SQLError.
 //
-// The view is a temporary view on the query's own connection, which is
+// The view is a temporary view on the read's own connection, which is
 // closed afterwards, so nothing the query leaves on it (temporary objects,
-// an open transaction) reaches another query. Like ScanLogTable, it runs while
-// no export can publish, so that the view sees each Log exactly once.
+// an open transaction) reaches another query. Like ScanLogTable, the query
+// runs in the read's transaction, so that the view sees each Log exactly
+// once and the query holds up no export; what the query writes commits when
+// it ends. Cancelling ctx stops it.
 func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.Time, query string, limit int) (SQLResult, error) {
 	from, to = from.UTC(), to.UTC()
 	if !to.After(from) {
 		to = from
 	}
-	s.publishMu.RLock()
-	defer s.publishMu.RUnlock()
+	read, err := s.beginRead(ctx, projectID, from, to)
+	if err != nil {
+		return SQLResult{}, err
+	}
+	read.discard = true
+	defer read.end()
 
-	logs, err := s.logSourcesLocked(projectID, from, to, func(cols LogColumns) string {
+	logs := read.sources(from, to, func(cols LogColumns) string {
 		return viewSelect(projectID, cols)
 	}, nil)
-	if err != nil {
-		return SQLResult{}, err
-	}
-
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return SQLResult{}, err
-	}
-	// Returning ErrBadConn takes the connection out of the pool and closes it.
-	defer conn.Raw(func(any) error { return driver.ErrBadConn })
-
+	conn := read.conn
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("CREATE TEMPORARY VIEW %s AS %s", LogsView, logs)); err != nil {
 		return SQLResult{}, err
 	}

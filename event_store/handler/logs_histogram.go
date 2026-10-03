@@ -52,7 +52,7 @@ type histogramBucket struct {
 // included, oldest first; levels count each Level and "none", for Logs with
 // no Level. A Query with mistakes answers 400 with {"errors": […]}.
 //
-// Like a table, it reads the whole range while no export can publish.
+// Like a table, it reads the whole range as it was when the read began.
 func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {

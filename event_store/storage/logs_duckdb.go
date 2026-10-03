@@ -42,9 +42,13 @@ type LogStore struct {
 	// commit or try, or a Project's export. It is held only for each of
 	// them, never across Log processing's waits.
 	writeMu sync.Mutex
-	// publishMu keeps readers out while an export commits and renames its
-	// files, so that a reader sees each exported Log exactly once.
+	// publishMu keeps a read from beginning while an export or a deletion
+	// commits and publishes its files, so that a read sees each Log exactly
+	// once. A read holds it only while it begins (logRead).
 	publishMu sync.RWMutex
+	// pins counts, for each Log file, the reads that may still read it.
+	pinMu sync.Mutex
+	pins  map[string]int
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
@@ -95,7 +99,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if err != nil {
 		return nil, fmt.Errorf("load promoted sets: %w", err)
 	}
-	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}}
+	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}, pins: map[string]int{}}
 	if err := store.recoverStagedFiles(); err != nil {
 		return nil, fmt.Errorf("recover staged log files: %w", err)
 	}

@@ -27,7 +27,8 @@ type LogDiskLimit struct {
 
 // EnforceDiskLimit deletes the oldest hours of Log files, of any Project,
 // until the files take no more than limit. Logs not yet exported are never
-// deleted.
+// deleted. If a read is reading the oldest hour, it stops there with
+// ErrLogFilesInUse, and the next pass goes on.
 func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -46,7 +47,7 @@ func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 		return nil
 	}
 
-	// Readers never see a file vanish under them.
+	// No read begins meanwhile, and none sees a file vanish under it.
 	s.publishMu.Lock()
 	defer s.publishMu.Unlock()
 	slices.SortFunc(hours, func(a, b logHourDir) int {
@@ -58,7 +59,7 @@ func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 		}
 		logger.L.Info("Deleting the oldest Log files past the disk limit",
 			"project_id", hour.projectID, "hour", hour.hour, "bytes", hour.bytes, "limit", maxBytes)
-		if err := os.RemoveAll(hour.dir); err != nil {
+		if err := s.removeUnread(hour.dir); err != nil {
 			return err
 		}
 		total -= hour.bytes

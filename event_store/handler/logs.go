@@ -59,8 +59,9 @@ type queryRequest struct {
 // "rows": [[…]], "truncated"}}, and ignores limit and cursor. A Query with
 // mistakes answers 400 with {"errors": […]}, as validate lists them.
 //
-// The scan goes on if the client goes away: it stops at limit Logs or the
-// end of the range.
+// The scan goes on if the client goes away, as Fiber gives the handler no
+// context that ends with the connection: it stops at limit Logs or the end
+// of the range.
 func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {

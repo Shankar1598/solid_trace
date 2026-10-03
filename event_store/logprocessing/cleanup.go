@@ -90,14 +90,14 @@ func (c *Cleanup) run() {
 		failed := false
 		if day := storage.LogDay(now); !day.Equal(expiredDeleted) {
 			if err := c.DeleteExpiredLogs(now); err != nil {
-				logger.L.Error("Deleting expired Logs failed, retrying", "error", err, "retry_in", retryCleanupAfter)
+				logRetry("Deleting expired Logs failed, retrying", err)
 				failed = true
 			} else {
 				expiredDeleted = day
 			}
 		}
 		if err := c.store.EnforceDiskLimit(c.diskLimit); err != nil {
-			logger.L.Error("Enforcing the Log disk limit failed, retrying", "error", err, "retry_in", retryCleanupAfter)
+			logRetry("Enforcing the Log disk limit failed, retrying", err)
 			failed = true
 		}
 
@@ -118,6 +118,16 @@ func (c *Cleanup) run() {
 		case <-timer.C:
 		}
 	}
+}
+
+// logRetry logs a cleanup that runs again soon: as an error, unless it only
+// waits for a read of the files it would delete.
+func logRetry(message string, err error) {
+	if errors.Is(err, storage.ErrLogFilesInUse) {
+		logger.L.Info(message, "error", err, "retry_in", retryCleanupAfter)
+		return
+	}
+	logger.L.Error(message, "error", err, "retry_in", retryCleanupAfter)
 }
 
 // DeleteExpiredLogs is the daily pass at now. It deletes each Project's Logs

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -93,7 +92,7 @@ func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 		}
 		for dirDay, dir := range days {
 			if dirDay.Before(day) {
-				if err := os.RemoveAll(dir); err != nil {
+				if err := s.removeUnread(dir); err != nil {
 					return err
 				}
 			}
@@ -104,9 +103,10 @@ func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 }
 
 // deleteLogs runs change in a transaction on logs.duckdb and, once it
-// commits, deletes files with publish. Both happen with the writes and
-// readers locked out, as an export's commit and renames do, so a reader
-// never sees a file vanish under it.
+// commits, deletes files with publish. Both happen with other writes locked
+// out and no read beginning, as an export's commit and renames do. publish
+// deletes only files no read has pinned (removeUnread), so a read never sees
+// a file vanish under it.
 //
 // If publish fails after the commit, the files it didn't delete stay until
 // the next pass deletes them.
@@ -201,7 +201,7 @@ func (s *LogStore) DeleteProjectLogs(projectID uint32) error {
 		return nil
 	}, func() error {
 		s.promoted.deleteProject(projectID)
-		return os.RemoveAll(s.files.ProjectDir(projectID))
+		return s.removeUnread(s.files.ProjectDir(projectID))
 	})
 	if err != nil {
 		return err
