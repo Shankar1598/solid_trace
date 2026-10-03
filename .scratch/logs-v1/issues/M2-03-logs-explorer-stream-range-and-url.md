@@ -4,7 +4,7 @@
 
 **Blocked by:** M2-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] A Logs page per Project under the existing Organization and Project routes, behind the existing membership check, with a "Logs" entry next to Issues.
 - [x] Console's EventStore client gains the run, validate and fetch operations, mirroring the query endpoints.
