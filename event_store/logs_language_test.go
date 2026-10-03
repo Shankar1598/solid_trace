@@ -77,9 +77,14 @@ func TestWhereComparesMatchesAndTestsFields(t *testing.T) {
 		`where user == "bob"`:                          {},
 		`where user =~ "bob"`:                          {"bob"},
 	}
+	cases[`where path startswith_cs "/API"`] = []string{"ed"}
+	cases[`where path !startswith_cs "/api"`] = []string{"ed", "bob", "di"}
+	cases[`where user !~ "BOB"`] = []string{"ed", "cy", "ada", "di"}
+	cases[`where -duration < -500 or duration % 100 == 20`] = []string{"ed", "ada"}
 	assertQueries(t, env, cases, "in the hot table")
 
 	exportLanguageLogs(t, env)
+	cases[`where user !~ "BOB"`] = []string{"ed", "fy", "cy", "ada", "di"}
 	cases[`where path contains "USERS"`] = []string{"ed", "fy", "ada"}
 	cases[`where path startswith "/api"`] = []string{"ed", "fy", "cy", "ada"}
 	cases[`where user matches regex "^f"`] = []string{"fy"}
@@ -356,4 +361,30 @@ func TestValidatePlacesTheRestOfTheLanguagesMistakes(t *testing.T) {
 			t.Errorf("%q: expected no chips and no errors, got %+v", query, v)
 		}
 	}
+}
+
+func TestScalarFunctionsAndSortsInTables(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env)
+
+	assertTables(t, env, map[string]tableCase{
+		`where message in ("ada", "bob", "cy") | project message, u = toupper(user), l = tolower(path), n = strlen(message), ` +
+			`d = todouble(status), i = toint(duration), r = duration % 100, neg = -duration, b = bin(duration, 100), s = tostring(duration)`: {
+			"message,u,l,n,d,i,r,neg,b,s", []string{
+				`["ada","ADA","/api/users",3,200,120,20,-120,100,"120"]`,
+				`["bob","BOB","/health",3,200,80,80.5,-80.5,0,"80.5"]`,
+				`["cy","CY","/api/orders",2,null,300,0,-300,300,"300"]`,
+			}, false},
+		// Numbers sort before strings, and missing values go last.
+		`project message, status | sort by status asc nulls last`: {"message,status",
+			[]string{`["ada",200]`, `["ed",404]`, `["di",500]`, `["bob","200"]`, `["cy",null]`}, false},
+		`project message, status | sort by status`: {"message,status",
+			[]string{`["di",500]`, `["ed",404]`, `["ada",200]`, `["bob","200"]`, `["cy",null]`}, false},
+		`sort by message asc | project message, isslow = duration > 200, hasnote = isnotempty(note)`: {"message,isslow,hasnote",
+			[]string{`["ada",false,false]`, `["bob",false,false]`, `["cy",true,false]`, `["di",false,false]`, `["ed",true,true]`}, false},
+		`extend message = toupper(message) | where duration > 200 | project message`: {"message", []string{`["CY"]`, `["ED"]`}, false},
+		`summarize first = min(time), last = max(time), quietest = min(message)`: {"first,last,quietest",
+			[]string{`["2026-10-01T10:40:00Z","2026-10-02T11:10:00Z","ada"]`}, false},
+	}, "in the hot table")
 }
