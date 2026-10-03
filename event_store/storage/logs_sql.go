@@ -113,7 +113,7 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 	return result, nil
 }
 
-// jsonEncodable turns any value as DuckDB gives it into one that encodes as JSON: a
+// jsonEncodable turns any value DuckDB gives into one that encodes as JSON: a
 // time as RFC 3339 in UTC, a decimal as a number, a map as an object with its
 // keys as text, NaN and infinities as null. A JSON column's values come
 // decoded already.

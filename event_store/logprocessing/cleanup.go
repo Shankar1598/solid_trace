@@ -3,7 +3,6 @@ package logprocessing
 import (
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -54,36 +53,28 @@ type Cleanup struct {
 	diskLimit storage.LogDiskLimit
 	clock     clock.Clock
 
-	stop     chan struct{}
-	stopOnce sync.Once
-	done     chan struct{}
-	started  bool
+	*worker
 }
 
 // NewCleanup constructs the Log cleanup. It reads the time from clock.
 func NewCleanup(store CleanupStore, projects Projects, diskLimit storage.LogDiskLimit, clock clock.Clock) *Cleanup {
 	return &Cleanup{
 		store: store, projects: projects, diskLimit: diskLimit, clock: clock,
-		stop: make(chan struct{}), done: make(chan struct{}),
+		worker: newWorker(),
 	}
 }
 
 // Start runs the timer in its own goroutine.
 func (c *Cleanup) Start() {
-	c.started = true
-	go c.run()
+	c.start(c.run)
 }
 
 // Stop stops the timer, waiting for a run in progress to end.
 func (c *Cleanup) Stop() {
-	c.stopOnce.Do(func() { close(c.stop) })
-	if c.started {
-		<-c.done
-	}
+	c.halt()
 }
 
 func (c *Cleanup) run() {
-	defer close(c.done)
 	var lastPass time.Time // the UTC day of the last whole daily pass
 	for {
 		now := c.clock.Now()
