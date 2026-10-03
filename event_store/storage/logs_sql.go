@@ -9,6 +9,7 @@ import (
 
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
 // LogsView is the name of the view SQL queries read a Project's Logs from.
@@ -31,7 +32,7 @@ type SQLColumn struct {
 }
 
 // SQLResult is what a SQL query returned: its columns, and its rows as JSON
-// values (see jsonValue).
+// values (see jsonEncodable).
 type SQLResult struct {
 	Columns []SQLColumn
 	Rows    [][]any
@@ -106,17 +107,17 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 					continue
 				}
 			}
-			row[i] = jsonValue(v)
+			row[i] = jsonEncodable(v)
 		}
 	}
 	return result, nil
 }
 
-// jsonValue turns a value as DuckDB gives it into one that encodes as JSON: a
+// jsonEncodable turns any value as DuckDB gives it into one that encodes as JSON: a
 // time as RFC 3339 in UTC, a decimal as a number, a map as an object with its
 // keys as text, NaN and infinities as null. A JSON column's values come
 // decoded already.
-func jsonValue(v any) any {
+func jsonEncodable(v any) any {
 	switch v := v.(type) {
 	case time.Time:
 		return v.UTC().Format(time.RFC3339Nano)
@@ -125,27 +126,27 @@ func jsonValue(v any) any {
 			return nil
 		}
 	case float32:
-		return jsonValue(float64(v))
+		return jsonEncodable(float64(v))
 	case duckdb.Decimal:
 		return v.Float64()
 	case duckdb.Union:
-		return jsonValue(v.Value)
+		return jsonEncodable(v.Value)
 	case duckdb.Map:
 		object := make(map[string]any, len(v))
 		for key, value := range v {
-			object[fmt.Sprint(jsonValue(key))] = jsonValue(value)
+			object[fmt.Sprint(jsonEncodable(key))] = jsonEncodable(value)
 		}
 		return object
 	case map[string]any:
 		object := make(map[string]any, len(v))
 		for key, value := range v {
-			object[key] = jsonValue(value)
+			object[key] = jsonEncodable(value)
 		}
 		return object
 	case []any:
 		list := make([]any, len(v))
 		for i, value := range v {
-			list[i] = jsonValue(value)
+			list[i] = jsonEncodable(value)
 		}
 		return list
 	}
@@ -157,7 +158,7 @@ func jsonValue(v any) any {
 func viewSelect(projectID uint32, cols LogColumns) string {
 	list := []string{fmt.Sprintf("CAST(%d AS UINTEGER) AS project_id", projectID), "id"}
 	for _, name := range []string{"time", "level", "message", "service", "environment", "trace_id", "span_id"} {
-		list = append(list, sqlIdentifier(name))
+		list = append(list, sqltext.Identifier(name))
 	}
 	for _, t := range []AttributeType{StringAttribute, NumberAttribute, BoolAttribute, JSONAttribute} {
 		list = append(list, mergedMap(t, cols)+" AS "+t.Map())
@@ -174,7 +175,7 @@ func mergedMap(t AttributeType, cols LogColumns) string {
 	var entries []string
 	for _, key := range cols.set.Keys {
 		if key.Type == t {
-			entries = append(entries, fmt.Sprintf("{'key': %s, 'value': %s}", sqlString(key.Key), sqlIdentifier(key.Column())))
+			entries = append(entries, fmt.Sprintf("{'key': %s, 'value': %s}", sqltext.String(key.Key), sqltext.Identifier(key.Column())))
 		}
 	}
 	if len(entries) == 0 {
