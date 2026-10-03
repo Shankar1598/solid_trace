@@ -21,7 +21,7 @@ const LogsView = "logs"
 // LogViewColumns describes the logs view's columns, so that a Query can be
 // written as SQL against it: every Attribute is in its map.
 func LogViewColumns() LogColumns {
-	return LogColumns{late: true}
+	return LogColumns{late: true, view: true}
 }
 
 // SQLColumn is a column of a SQL query's result: its name, and its DuckDB

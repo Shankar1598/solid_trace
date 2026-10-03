@@ -49,5 +49,6 @@ func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandl
 	app.Post("/api/:project_id/logs/query", logsHandler.Query)
 	app.Post("/api/:project_id/logs/validate", logsHandler.Validate)
 	app.Post("/api/:project_id/logs/sql", logsHandler.SQL)
+	app.Post("/api/:project_id/logs/readable-sql", logsHandler.ReadableSQL)
 	app.Get("/api/:project_id/logs/:log_id", logsHandler.Get)
 }

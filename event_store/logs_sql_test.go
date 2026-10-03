@@ -132,3 +132,92 @@ func TestTheLogsViewCoversTheProjectAndRangeAcrossHotFilesAndLateLogs(t *testing
 		}
 	}
 }
+
+// readableSQL asks for a Query's readable SQL, over all time.
+func readableSQL(t *testing.T, env *TestEnv, query string) string {
+	t.Helper()
+	status, raw := postQueryApp(t, env, "/api/123/logs/readable-sql", queryRequest{Query: query, From: allTime.from, To: allTime.to})
+	if status != 200 {
+		t.Fatalf("Readable SQL of %q expected 200, got %d: %s", query, status, raw)
+	}
+	var answer struct {
+		SQL string `json:"sql"`
+	}
+	if err := json.Unmarshal(raw, &answer); err != nil || answer.SQL == "" {
+		t.Fatalf("Decode readable SQL %q: %v", raw, err)
+	}
+	return answer.SQL
+}
+
+func TestReadableSQLRunThroughRunSQLReturnsTheQuerysRows(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+	seedLanguageLogs(t, env)
+	exportLanguageLogs(t, env) // ada, bob, cy and di in files, ed hot, fy late
+
+	logRows := []string{
+		``,
+		`where status == 200`,
+		`where status != 200 and duration > 100`,
+		`where path contains "users" or isempty(note)`,
+		`where user in ("ada", "Bob", "fy") | where not(path startswith "/health")`,
+		`search "disk"`,
+		`search "api" | where level == "error"`,
+		`where duration > 10 | take 3`,
+		`sort by time desc | take 2`,
+	}
+	for _, query := range logRows {
+		want := queryMessages(t, env, query)
+		sql := readableSQL(t, env, query)
+		columns, rows := sqlTable(t, env, sqlRequest{SQL: sql, From: allTime.from, To: allTime.to})
+		message := slices.Index(columns, "message")
+		if message < 0 {
+			t.Fatalf("Readable SQL of %q has no message column: %v\n%s", query, columns, sql)
+		}
+		got := []string{}
+		for _, row := range rows {
+			var values []any
+			if err := json.Unmarshal([]byte(row), &values); err != nil {
+				t.Fatalf("Decode row %s: %v", row, err)
+			}
+			got = append(got, values[message].(string))
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s\n want %v\n got  %v\n%s", query, want, got, sql)
+		}
+	}
+
+	tables := map[string]bool{ // each Query, and whether its rows have an order
+		`summarize count() by level`:                                          false,
+		`summarize n = count(), avg(duration), max(duration) by service`:      false,
+		`summarize count() by status`:                                         false,
+		`summarize count() by bin(time, 1h)`:                                  false,
+		`summarize dcount(user), percentile(duration, 50)`:                    false,
+		`where duration > 50 | summarize count() by tostring(status)`:         false,
+		`search "api" | summarize sum(duration) by service`:                   false,
+		`top 3 by duration`:                                                   true,
+		`top 2 by duration asc | project message, status`:                     true,
+		`distinct service`:                                                    false,
+		`distinct service, status`:                                            false,
+		`project message, status, ms = duration * 1000 | where ms > 100000`:   false,
+		`extend slow = duration > 100 | where slow == true | project message`: false,
+		`sort by user asc | take 3 | project user, path`:                      true,
+		`summarize c = count() by service | sort by c desc, service asc`:      true,
+		`count`:                                false,
+		`where level == "error" | count`:       false,
+		`where time > ago(2h) | distinct user`: false,
+	}
+	for query, ordered := range tables {
+		wantColumns, wantRows := runTable(t, env, query)
+		sql := readableSQL(t, env, query)
+		columns, rows := sqlTable(t, env, sqlRequest{SQL: sql, From: allTime.from, To: allTime.to})
+		if !ordered {
+			slices.Sort(wantRows)
+			slices.Sort(rows)
+		}
+		if !slices.Equal(columns, wantColumns) || !slices.Equal(rows, wantRows) {
+			t.Errorf("%s\n want %v %v\n got  %v %v\n%s", query, wantColumns, wantRows, columns, rows, sql)
+		}
+	}
+}
