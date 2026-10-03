@@ -104,13 +104,13 @@ describe('the summary line', () => {
   it('filters on a clicked Level with a Level chip', () => {
     const builder = filterByLevel({ filters: [{ field: 'service', op: '==', value: 'api' }], search: 'boom' }, 'error')
 
-    expect(builder && queryOf(builder, 'my-api')).toBe('my-api\n| where service == "api"\n| where level == "error"\n| search "boom"')
+    expect(builder && queryOf(builder, 'my-api')).toBe('[\'my-api\']\n| where service == "api"\n| where level == "error"\n| search "boom"')
   })
 
   it('switches from one clicked Level to another', () => {
     const builder = filterByLevel(filterByLevel(EMPTY_BUILDER, 'warn')!, 'fatal')
 
-    expect(builder && queryOf(builder, 'my-api')).toBe('my-api\n| where level == "fatal"')
+    expect(builder && queryOf(builder, 'my-api')).toBe('[\'my-api\']\n| where level == "fatal"')
   })
 
   it("can't filter on Logs with no Level", () => {

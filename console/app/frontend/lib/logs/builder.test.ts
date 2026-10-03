@@ -22,20 +22,19 @@ import {
 } from './builder'
 
 /** A Builder's Query text after its source, for tests of its stages. */
-const stagesOf = (builder: Builder) => queryOf(builder, 'my-api').replace(/^my-api(\n\| )?/, '')
+const stagesOf = (builder: Builder) => queryOf(builder, 'my-api').replace(/^\['my-api'\](\n\| )?/, '')
 
 describe('the Query text of a Builder', () => {
-  it('is the Project\'s slug alone with no chips and no search', () => {
-    expect(queryOf(EMPTY_BUILDER, 'my-api')).toBe('my-api')
+  it('is the Project\'s slug alone, in brackets, with no clauses', () => {
+    expect(queryOf(EMPTY_BUILDER, 'my-api')).toBe("['my-api']")
   })
 
-  it('starts with the Project\'s slug as its source', () => {
-    expect(queryOf({ filters: [{ field: 'service', op: '==', value: 'api' }], search: '' }, '2fa-app'))
-      .toBe('2fa-app\n| where service == "api"')
+  it('starts with the Project\'s slug in brackets as its source', () => {
+    expect(queryOf({ filters: [{ field: 'service', op: '==', value: 'api' }], search: '' }, 'application-logs'))
+      .toBe('[\'application-logs\']\n| where service == "api"')
   })
 
-  it('quotes a slug spelled as a stage, so it stays the source', () => {
-    expect(queryOf(EMPTY_BUILDER, 'count')).toBe("['count']")
+  it('escapes a quote in the slug', () => {
     expect(queryOf(EMPTY_BUILDER, "it's")).toBe("['it\\'s']")
   })
 

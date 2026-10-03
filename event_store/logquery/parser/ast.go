@@ -12,8 +12,8 @@ func nodeSpan(n Node) Span {
 	return n.Span()
 }
 
-// Query is a whole Query: an optional source (the leading logs or the
-// Project's slug), then its stages, each after a pipe.
+// Query is a whole Query: an optional source (the leading logs, or the
+// Project's slug in brackets), then its stages, each after a pipe.
 type Query struct {
 	// Source is the leading source, or nil when the Query leaves it out.
 	Source *Ident

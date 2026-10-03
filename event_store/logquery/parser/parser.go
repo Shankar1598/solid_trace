@@ -66,7 +66,7 @@ func (p *parser) describe(tok Token, ok bool) string {
 	return fmt.Sprintf("%q", p.source[tok.Span.Start:tok.Span.End])
 }
 
-// query parses [source |] stage { | stage }.
+// query parses [logs |] stage { | stage }.
 func (p *parser) query() (*Query, error) {
 	for _, tok := range p.tokens {
 		if tok.Kind == TokenError {
@@ -74,10 +74,9 @@ func (p *parser) query() (*Query, error) {
 		}
 	}
 	q := &Query{}
-	// The source is a name that isn't a stage's, bare or in brackets: logs
-	// or the Project's slug. Which names the Query may use is the compiler's
-	// business.
-	if tok, ok := p.peek(); ok && p.atSource(tok) {
+	// The source is logs, or a name in brackets such as the Project's slug,
+	// ['my-api']. Which names the Query may use is the compiler's business.
+	if tok, ok := p.peek(); ok && (tok.Kind == TokenIdentifier && tok.Value == "logs" || tok.Kind == TokenQuotedIdentifier) {
 		p.pos++
 		q.Source = &Ident{Name: tok.Value, NameSpan: tok.Span}
 		next, ok := p.next()
@@ -113,33 +112,6 @@ func (p *parser) query() (*Query, error) {
 		}
 		q.Stages = append(q.Stages, stage)
 	}
-}
-
-// atSource reports whether tok, the Query's first token, names its source:
-// a name in brackets, or a bare name that isn't a stage's, followed by | or
-// the end. count alone is the count stage, never a source named count.
-func (p *parser) atSource(tok Token) bool {
-	if tok.Kind == TokenQuotedIdentifier {
-		return true
-	}
-	if tok.Kind != TokenIdentifier || stageKeywords[tok.Value] {
-		return false
-	}
-	next, ok := p.peekAt(p.pos + 1)
-	return !ok || next.Kind == TokenPipe
-}
-
-func (p *parser) peekAt(pos int) (Token, bool) {
-	if pos >= len(p.tokens) {
-		return Token{}, false
-	}
-	return p.tokens[pos], true
-}
-
-// stageKeywords are the words that start a stage, as stage reads them.
-var stageKeywords = map[string]bool{
-	"where": true, "search": true, "project": true, "extend": true, "summarize": true,
-	"sort": true, "order": true, "take": true, "limit": true, "top": true, "count": true, "distinct": true,
 }
 
 // stage parses one stage, after its pipe if it has one.
