@@ -31,16 +31,16 @@ const (
 // Queries, fetches single Logs, and runs SQL while the instance allows it.
 type LogsHandler struct {
 	logs     *storage.LogStore
-	settings InstanceSettings
+	settings ConsoleSettings
 	clock    clock.Clock
 	// ScanBudget is how long a run of Log rows reads before it answers with
 	// what it has found and a next_cursor.
 	ScanBudget time.Duration
 }
 
-// NewLogsHandler serves logs; settings say whether SQL runs; clock is the
-// time ago() and now() read.
-func NewLogsHandler(logs *storage.LogStore, settings InstanceSettings, clock clock.Clock) *LogsHandler {
+// NewLogsHandler serves logs; settings say whether SQL runs and what each
+// Project's Logs are named in Queries; clock is the time ago() and now() read.
+func NewLogsHandler(logs *storage.LogStore, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
 	return &LogsHandler{logs: logs, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
 }
 
@@ -95,7 +95,7 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid cursor"})
 		}
 	}
-	query, err := logquery.Compile(req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
@@ -162,23 +162,52 @@ func (h *LogsHandler) table(c *fiber.Ctx, projectID uint32, query *logquery.Quer
 // POST /api/:project_id/logs/validate
 //
 // Checks a Query, {"query"}, without running it. Answers {"errors": […],
-// "chips", "stages"}: each error with its message and the line and column
-// (from 1, in characters) where it starts and ends; chips when the Builder
-// can show the Query, else null; and, when it has no errors, where each stage
-// is and whether it is a leading filter the Builder can show
-// (logquery.Stage).
+// "source", "chips", "stages"}: each error with its message and the line and
+// column (from 1, in characters) where it starts and ends; the name the Query
+// gives its source, such as a Project's slug, else null, even when it names
+// another Project; chips when the Builder can show the Query, else null; and,
+// when it has no errors, where each stage is and whether it is a leading
+// filter the Builder can show (logquery.Stage).
 func (h *LogsHandler) Validate(c *fiber.Ctx) error {
+	projectID, err := parseProjectID(c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
 	var req struct {
 		Query string `json:"query"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query"})
 	}
-	query, err := logquery.Compile(req.Query, logquery.Bounds{Now: h.clock.Now()})
-	if err != nil {
-		return c.JSON(fiber.Map{"errors": queryErrors(req.Query, err), "chips": nil, "stages": []logquery.Stage{}})
+	var source *string
+	if name := logquery.SourceOf(req.Query); name != "" {
+		source = &name
 	}
-	return c.JSON(fiber.Map{"errors": []logquery.Problem{}, "chips": query.Chips(), "stages": query.Stages()})
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{Now: h.clock.Now()})
+	if err != nil {
+		return c.JSON(fiber.Map{"errors": queryErrors(req.Query, err), "source": source, "chips": nil, "stages": []logquery.Stage{}})
+	}
+	return c.JSON(fiber.Map{"errors": []logquery.Problem{}, "source": source, "chips": query.Chips(), "stages": query.Stages()})
+}
+
+// compile compiles a Query for a Project: a source naming Logs other than
+// the Project's is a mistake like any other. When Console's database can't
+// be read the source goes unchecked, as the Query reads the Project's Logs
+// whatever it names.
+func (h *LogsHandler) compile(projectID uint32, text string, bounds logquery.Bounds) (*logquery.Query, error) {
+	query, err := logquery.Compile(text, bounds)
+	if err != nil {
+		return nil, err
+	}
+	slug, err := h.settings.ProjectSlug(projectID)
+	if err != nil {
+		logger.L.Error("Reading the Project's slug failed", "project_id", projectID, "error", err)
+		return query, nil
+	}
+	if err := logquery.CheckSource(text, slug); err != nil {
+		return nil, err
+	}
+	return query, nil
 }
 
 // GET /api/:project_id/logs/:log_id?time=<RFC 3339>
