@@ -54,7 +54,7 @@ func unstorableLog(message string) models.Log {
 // does after normalising a request.
 func storeLogBatch(t *testing.T, env *TestEnv, projectID uint32, logs ...models.Log) {
 	t.Helper()
-	if err := env.PebbleWriter.WriteLogBatch(projectID, logs); err != nil {
+	if err := env.PebbleWriter.WriteLogBatch(projectID, logs, env.Clock.Now()); err != nil {
 		t.Fatalf("Store Log batch: %v", err)
 	}
 	env.LogProcessor.Notify(projectID)
@@ -257,8 +257,8 @@ func TestTheBacklogLineNamesAProjectWhoseLogsWaitTooLong(t *testing.T) {
 	postLogs(t, env, "application/json", `{"message": "waiting"}`)
 	resp := sendLogs(t, env, "/api/456/logs", "application/json", `{"message": "stored"}`, map[string]string{"Authorization": "Bearer other_public_key"})
 	decodeLogCounts(t, resp)
-	// A Log batch is as old as the real time it was written at.
-	written := time.Now()
+	// A Log batch is as old as the time it was received at.
+	written := env.Clock.Now()
 
 	env.Clock.Set(written.Add(30 * time.Second))
 	done := startLogProcessing(env)

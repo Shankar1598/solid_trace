@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -48,11 +49,17 @@ func logBatchKey(projectID uint32, batchID uuid.UUID) []byte {
 	return append(logBatchPrefix(projectID), batchID[:]...)
 }
 
-// WriteLogBatch stores a request's normalised Logs as one Log batch. It goes
-// through the same mutex as Events, and its id is generated under it, so
-// within a Project, Log batches are committed in id order and a reader never
-// sees a batch before a lower one.
-func (w *PebbleWriter) WriteLogBatch(projectID uint32, logs []models.Log) error {
+// WriteLogBatch stores a request's normalised Logs, received at receivedAt, as
+// one Log batch. It goes through the same mutex as Events, and its id is
+// generated under it, so within a Project, Log batches are committed in id
+// order and a reader never sees a batch before a lower one.
+//
+// The id is a UUIDv7 of receivedAt, unless that doesn't come after every id
+// written before, or seen in Pebble or a Log processing cursor
+// (KeepLogBatchIDsAbove): then it is the next id after them. So a clock that
+// steps back never puts a batch below Log processing's cursor, where it would
+// be skipped and deleted.
+func (w *PebbleWriter) WriteLogBatch(projectID uint32, logs []models.Log, receivedAt time.Time) error {
 	value, err := encodeLogBatch(logs)
 	if err != nil {
 		return fmt.Errorf("encode log batch: %w", err)
@@ -65,13 +72,75 @@ func (w *PebbleWriter) WriteLogBatch(projectID uint32, logs []models.Log) error 
 		return ErrShuttingDown
 	}
 
-	batchID, err := uuid.NewV7()
+	batchID, err := newLogBatchID(receivedAt)
 	if err != nil {
 		return fmt.Errorf("generate log batch id: %w", err)
 	}
+	if bytes.Compare(batchID[:], w.logBatchFloor[:]) <= 0 {
+		batchID = nextLogBatchID(w.logBatchFloor)
+	}
+	w.logBatchFloor = batchID
 
 	// NoSync, as for Events: a process crash loses nothing.
 	return w.db.Set(logBatchKey(projectID, batchID), value, pebble.NoSync)
+}
+
+// newLogBatchID is a UUIDv7 of time at.
+func newLogBatchID(at time.Time) (uuid.UUID, error) {
+	var id uuid.UUID
+	if _, err := rand.Read(id[:]); err != nil {
+		return uuid.Nil, err
+	}
+	var ms [8]byte
+	binary.BigEndian.PutUint64(ms[:], uint64(at.UnixMilli()))
+	copy(id[:6], ms[2:])
+	id[6] = 0x70 | id[6]&0x0f // version 7
+	id[8] = 0x80 | id[8]&0x3f // RFC 9562 variant
+	return id, nil
+}
+
+// nextLogBatchID is the id right after id: one more in its random bits, with
+// its time, version and variant kept.
+func nextLogBatchID(id uuid.UUID) uuid.UUID {
+	for i := 15; i > 8; i-- {
+		if id[i]++; id[i] != 0 {
+			return id
+		}
+	}
+	id[8] = 0x80 | (id[8]+1)&0x3f
+	return id
+}
+
+// KeepLogBatchIDsAbove makes every Log batch id written from now on come
+// after id, such as a Log processing cursor read at startup.
+func (w *PebbleWriter) KeepLogBatchIDsAbove(id uuid.UUID) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if bytes.Compare(id[:], w.logBatchFloor[:]) > 0 {
+		w.logBatchFloor = id
+	}
+}
+
+// seedLogBatchFloor keeps new Log batch ids above the newest stored batch of
+// every Project, reading one key per Project.
+func (w *PebbleWriter) seedLogBatchFloor() error {
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: logBatchKeyspace, UpperBound: logBatchKeyspaceEnd})
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+	for valid := iter.Last(); valid; {
+		key := iter.Key()
+		batchID, err := uuid.FromBytes(key[len(key)-16:])
+		if err != nil {
+			return fmt.Errorf("log batch key %x: %w", key, err)
+		}
+		if bytes.Compare(batchID[:], w.logBatchFloor[:]) > 0 {
+			w.logBatchFloor = batchID
+		}
+		valid = iter.SeekLT(logBatchPrefix(binary.BigEndian.Uint32(key[len(logBatchKeyspace):])))
+	}
+	return iter.Error()
 }
 
 // LogBatchesAfter returns a Project's Log batches that come after the batch

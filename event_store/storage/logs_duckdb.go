@@ -165,6 +165,29 @@ func (s *LogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
 	return uuid.FromBytes(batchID)
 }
 
+// LogProcessingCursors returns the Log processing cursor of every Project
+// that has one.
+func (s *LogStore) LogProcessingCursors() ([]uuid.UUID, error) {
+	rows, err := s.db.Query("SELECT batch_id FROM logs.log_processing_cursors")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cursors []uuid.UUID
+	for rows.Next() {
+		var batchID []byte
+		if err := rows.Scan(&batchID); err != nil {
+			return nil, err
+		}
+		cursor, err := uuid.FromBytes(batchID)
+		if err != nil {
+			return nil, err
+		}
+		cursors = append(cursors, cursor)
+	}
+	return cursors, rows.Err()
+}
+
 // AppendLogBatches stores the Logs of a Project's Log batches, all in one
 // transaction:
 //  1. it makes the promoted set of each of the hot Logs' days that has none;

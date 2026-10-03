@@ -328,7 +328,7 @@ func newFakeLogWriter() *fakeLogWriter {
 	}
 }
 
-func (f *fakeLogWriter) WriteLogBatch(projectID uint32, logs []models.Log) error {
+func (f *fakeLogWriter) WriteLogBatch(projectID uint32, logs []models.Log, receivedAt time.Time) error {
 	if f.block != nil {
 		f.entered <- struct{}{}
 		<-f.block
