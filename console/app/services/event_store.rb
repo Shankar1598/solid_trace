@@ -106,7 +106,7 @@ class EventStore
     # it is refused like Run SQL while SQL queries are off.
     def readable_logs_sql(project_id:, query:, from:, to:)
       refuse_sql_unless_enabled!
-      post!("#{base_url}/api/#{project_id}/logs/readable-sql", { query: query, from: utc(from), to: utc(to) })
+      post!("#{base_url}/api/#{project_id}/logs/readable-sql", { query: query, from: utc(from), to: utc(to) }, sql: true)
     end
 
     # Runs SQL as written against the logs view of a Project's [from, to):
@@ -114,7 +114,7 @@ class EventStore
     # Query's run. Raises SQLQueriesOff while SQL queries are off.
     def run_logs_sql(project_id:, sql:, from:, to:)
       refuse_sql_unless_enabled!
-      post!("#{base_url}/api/#{project_id}/logs/sql", { sql: sql, from: utc(from), to: utc(to) }, read_timeout: nil)
+      post!("#{base_url}/api/#{project_id}/logs/sql", { sql: sql, from: utc(from), to: utc(to) }, sql: true, read_timeout: nil)
     end
 
     private
@@ -129,7 +129,8 @@ class EventStore
 
     # Pass read_timeout: nil for a run, which waits as long as its Query takes:
     # v1 has no per-query timeouts. Opening the connection still times out.
-    def post!(url, body, **timeouts)
+    # Pass sql: true for a SQL endpoint, whose 403 means SQL queries are off.
+    def post!(url, body, sql: false, **timeouts)
       response = RestClient::Request.execute(
         method: :post, url: url, payload: body.to_json,
         headers: { content_type: :json, accept: :json }, **timeouts
@@ -137,8 +138,10 @@ class EventStore
       JSON.parse(response.body)
     rescue RestClient::BadRequest => e
       raise Rejected, parse_body(e.response&.body)
-    rescue RestClient::Forbidden
-      raise SQLQueriesOff
+    rescue RestClient::Forbidden => e
+      raise SQLQueriesOff if sql
+
+      raise Unavailable, "EventStore error: 403 - #{e.response&.body}"
     rescue RestClient::ExceptionWithResponse => e
       raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
     rescue StandardError => e
