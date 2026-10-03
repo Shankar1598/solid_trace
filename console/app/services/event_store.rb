@@ -19,6 +19,15 @@ class EventStore
     end
   end
 
+  # SQL queries are off on this instance (InstanceSetting#sql_queries_enabled),
+  # so Console refuses them before asking EventStore, and EventStore refuses
+  # them too (ADR 0003).
+  class SQLQueriesOff < StandardError
+    def initialize(message = "SQL queries are turned off on this instance.")
+      super
+    end
+  end
+
   # The event store's query API, which listens on loopback only.
   def self.base_url
     ENV.fetch("EVENT_STORE_URL", "http://127.0.0.1:4100")
@@ -92,7 +101,27 @@ class EventStore
       request!("#{base_url}/api/#{project_id}/logs/#{log_id}", params: params)
     end
 
+    # A Query printed as readable SQL against the logs view of a Project's
+    # [from, to): {"sql" => String}. It runs nothing, but seeds SQL mode, so
+    # it is refused like Run SQL while SQL queries are off.
+    def readable_logs_sql(project_id:, query:, from:, to:)
+      refuse_sql_unless_enabled!
+      post!("#{base_url}/api/#{project_id}/logs/readable-sql", { query: query, from: utc(from), to: utc(to) })
+    end
+
+    # Runs SQL as written against the logs view of a Project's [from, to):
+    # {"table" => {"columns", "rows", "truncated"}}, shaped like a tabular
+    # Query's run. Raises SQLQueriesOff while SQL queries are off.
+    def run_logs_sql(project_id:, sql:, from:, to:)
+      refuse_sql_unless_enabled!
+      post!("#{base_url}/api/#{project_id}/logs/sql", { sql: sql, from: utc(from), to: utc(to) })
+    end
+
     private
+
+    def refuse_sql_unless_enabled!
+      raise SQLQueriesOff unless InstanceSetting.current.sql_queries_enabled?
+    end
 
     def utc(time)
       time.utc.iso8601(3)
@@ -103,6 +132,8 @@ class EventStore
       JSON.parse(response.body)
     rescue RestClient::BadRequest => e
       raise Rejected, parse_body(e.response&.body)
+    rescue RestClient::Forbidden
+      raise SQLQueriesOff
     rescue RestClient::ExceptionWithResponse => e
       raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
     rescue StandardError => e

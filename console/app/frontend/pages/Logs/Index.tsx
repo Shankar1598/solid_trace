@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { RunError, fetchHistogram, fetchLogPage, fetchRun, validateQuery, type QueryProblem } from '@/lib/logs/api'
+import { RunError, fetchHistogram, fetchLogPage, fetchReadableSql, fetchRun, runSql, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import {
   EMPTY_BUILDER,
   builderOf,
@@ -20,12 +20,13 @@ import {
   type Chip,
 } from '@/lib/logs/builder'
 import {
-  MODES,
   RANGE_PRESETS,
+  modesFor,
   openExplorer,
   pickRange,
   resolveRange,
   runExplorer,
+  runsOnOpen,
   searchOf,
   spanLabel,
   switchMode,
@@ -34,9 +35,11 @@ import {
   type Mode,
   type TimeRange,
   typeQuery,
+  typeSql,
 } from '@/lib/logs/explorerState'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
 import { pivotQuery, toBuilder } from '@/lib/logs/queryMode'
+import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
 import { addOlderPage, startStream, streamEnd, type Log, type Stream } from '@/lib/logs/stream'
 import type { LogTable } from '@/lib/logs/table'
 import { SharedProps } from '@/types'
@@ -47,6 +50,7 @@ import { LogStream } from './components/LogStream'
 import { LogTableView } from './components/LogTableView'
 import { ModeSwitch } from './components/ModeSwitch'
 import { QueryBox, type LeavingQuery } from './components/QueryBox'
+import { SqlBox } from './components/SqlBox'
 import { TagMenuProvider, type OnFilter } from './components/TagMenu'
 
 interface ProjectOption {
@@ -58,9 +62,11 @@ interface ProjectOption {
 interface LogsIndexProps {
   project: ProjectOption
   projects: ProjectOption[]
+  sql_queries_enabled: boolean
 }
 
 type Result =
+  | { status: 'waiting' }
   | { status: 'running' }
   | { status: 'cancelled' }
   | { status: 'error'; message: string }
@@ -75,17 +81,19 @@ interface Run {
   to: Date
 }
 
-export default function LogsIndex({ project, projects }: LogsIndexProps) {
+export default function LogsIndex({ project, projects, sql_queries_enabled }: LogsIndexProps) {
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
   const basePath = `/${orgSlug}/projects/${project.slug}/logs`
+  const modes = modesFor(sql_queries_enabled)
 
   // Back remounts the page (Inertia restores it without preserving state), so
   // reading the URL once here is enough to undo the last run.
-  const [explorer, setExplorer] = useState<Explorer>(() => openExplorer(window.location.search))
+  const [explorer, setExplorer] = useState<Explorer>(() => openExplorer(window.location.search, modes))
   // For answers that arrive after a render: what the explorer is by then.
   const latest = useRef(explorer)
   latest.current = explorer
-  const [result, setResult] = useState<Result>({ status: 'running' })
+  // SQL from a URL waits for Run.
+  const [result, setResult] = useState<Result>(() => runsOnOpen(explorer) ? { status: 'running' } : { status: 'waiting' })
   const [histogram, setHistogram] = useState<HistogramView>({ status: 'running' })
   const [builderView, setBuilderView] = useState<BuilderView>(() =>
     explorer.current.query === '' ? { status: 'ready', builder: EMPTY_BUILDER } : { status: 'reading' })
@@ -93,6 +101,10 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
   // Query mode: the mistakes of the Query last run, and the prompt to leave.
   const [problems, setProblems] = useState<QueryProblem[]>([])
   const [leaving, setLeaving] = useState<LeavingQuery | null>(null)
+  // SQL mode: the readable SQL it opened with (null when it opened from a
+  // URL), and the mode a member asked to leave for with edited SQL.
+  const [sqlSeed, setSqlSeed] = useState<string | null>(null)
+  const [leavingSql, setLeavingSql] = useState<Mode | null>(null)
   const currentRun = useRef<Run | null>(null)
 
   const start = useCallback((state: ExplorerState) => {
@@ -100,6 +112,19 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
     const run: Run = { controller: new AbortController(), query: state.query, ...resolveRange(state.range, new Date()) }
     currentRun.current = run
     setResult({ status: 'running' })
+
+    // SQL answers a table, and has no histogram.
+    if (state.mode === 'sql') {
+      runSql({ orgSlug, projectSlug: project.slug, sql: state.sql, from: run.from, to: run.to, signal: run.controller.signal })
+        .then(table => {
+          if (currentRun.current === run) setResult({ status: 'table', table })
+        })
+        .catch((error: Error) => {
+          if (currentRun.current === run && !run.controller.signal.aborted) setResult({ status: 'error', message: error.message })
+        })
+      return
+    }
+
     setHistogram({ status: 'running' })
 
     // The histogram and summary count the same filters over the same range.
@@ -129,7 +154,7 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
   }, [orgSlug, project.slug])
 
   useEffect(() => {
-    start(explorer.current)
+    if (runsOnOpen(explorer)) start(explorer.current)
     return () => currentRun.current?.controller.abort()
     // Runs once per mount: later runs start from the bar.
   }, [])
@@ -175,6 +200,7 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
    */
   const commit = (next: Explorer) => {
     setLeaving(null)
+    setLeavingSql(null)
     if (next.draft.mode !== 'query') return run(next)
     validateQuery({ orgSlug, projectSlug: project.slug, query: next.draft.query })
       .then(({ errors }) => {
@@ -204,9 +230,18 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
 
   /**
    * Builder → Query keeps the Builder's Query as text. Query → Builder is
-   * silent when the Builder can show the text; otherwise it asks first.
+   * silent when the Builder can show the text; otherwise it asks first. Into
+   * SQL opens the readable SQL of the Query; out of SQL asks first when the
+   * SQL was edited.
    */
   const switchTo = (mode: Mode) => {
+    if (explorer.current.mode === 'sql') {
+      const answer = leaveSql(explorer, sqlSeed, mode)
+      if (answer.kind === 'ask') setLeavingSql(answer.mode)
+      else exitSql(mode)
+      return
+    }
+    if (mode === 'sql') return openSql()
     if (mode === 'query') {
       const { explorer: next, replace } = switchMode(explorer, 'query')
       setExplorer(next)
@@ -222,6 +257,59 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
         else setLeaving({ stages: answer.stages, problems: answer.problems })
       })
       .catch((error: Error) => toast.error(error.message))
+  }
+
+  /** Into SQL mode with the readable SQL of the Query being edited; nothing runs until Run. */
+  const openSql = () => {
+    const { query, range } = explorer.draft
+    fetchReadableSql({ orgSlug, projectSlug: project.slug, query, ...resolveRange(range, new Date()) })
+      .then(sql => {
+        const { explorer: next, replace } = enterSql(latest.current, sql)
+        setExplorer(next)
+        replaceUrl(replace)
+        setSqlSeed(sql)
+        setLeaving(null)
+        setProblems([])
+        currentRun.current?.controller.abort()
+        currentRun.current = null
+        setResult({ status: 'waiting' })
+      })
+      .catch((error: Error) => {
+        if (error instanceof RunError && error.problems.length > 0 && explorer.current.mode === 'query') setProblems(error.problems)
+        toast.error(`SQL mode needs a Query without mistakes. ${error.message}`)
+      })
+  }
+
+  /**
+   * Out of SQL mode, dropping the SQL, back to the Query it came from, which
+   * runs again in place of the SQL's result. A Query the Builder can't show
+   * lands in Query mode, asking as Query → Builder does.
+   */
+  const exitSql = (mode: Mode) => {
+    setLeavingSql(null)
+    setSqlSeed(null)
+    const leave = (to: Mode) => {
+      const { explorer: next, replace } = discardSql(latest.current, to)
+      latest.current = next
+      setExplorer(next)
+      replaceUrl(replace)
+      start(next.current)
+    }
+    if (mode !== 'builder') return leave(mode)
+
+    const query = explorer.current.query
+    validateQuery({ orgSlug, projectSlug: project.slug, query })
+      .then(validation => {
+        const answer = toBuilder(query, validation)
+        if (answer.kind === 'switch') {
+          setBuilderView({ status: 'ready', builder: answer.builder })
+          leave('builder')
+        } else {
+          leave('query')
+          setLeaving({ stages: answer.stages, problems: answer.problems })
+        }
+      })
+      .catch(() => leave('query'))
   }
 
   /** Discard and switch: back to the Builder's last filters. */
@@ -250,6 +338,7 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
   }
 
   const mode = explorer.current.mode
+  const sqlMode = mode === 'sql'
   const builder = mode === 'builder' && builderView.status === 'ready' ? builderView.builder : null
   let onFilter: OnFilter = null
   let onLevel: ((level: HistogramLevel) => void) | null = null
@@ -266,6 +355,9 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
       if (level !== 'none') pivot({ field: 'level', op: '==', value: level })
     }
   }
+
+  // SQL runs only on Run, so in SQL mode a picked range waits for it.
+  const pickBarRange = (range: TimeRange) => sqlMode ? setExplorer(pickRange(explorer, range)) : commit(pickRange(explorer, range))
 
   const closeInspector = useCallback(() => setInspected(null), [])
 
@@ -303,8 +395,8 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
       <div className="h-[calc(100vh-2rem)] flex flex-col rounded-md border overflow-hidden bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
           <ProjectSelect project={project} projects={projects} onChange={openProject} />
-          <RangeSelect range={explorer.draft.range} onChange={range => commit(pickRange(explorer, range))} />
-          <ModeSwitch modes={MODES} mode={mode} onSwitch={switchTo} />
+          <RangeSelect range={explorer.draft.range} onChange={pickBarRange} />
+          <ModeSwitch modes={modes} mode={mode} onSwitch={switchTo} />
           <div className="h-5 w-px bg-border" />
           {mode === 'builder' ? (
             <BuilderBar
@@ -315,7 +407,7 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
               onRun={() => commit(explorer)}
             />
           ) : (
-            <span className="flex-1 text-[11px] text-muted-foreground">Ctrl+Enter runs the Query.</span>
+            <span className="flex-1 text-[11px] text-muted-foreground">Ctrl+Enter runs the {sqlMode ? 'SQL' : 'Query'}.</span>
           )}
           {running ? (
             <Button variant="outline" size="sm" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
@@ -339,7 +431,23 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
           />
         )}
 
-        <HistogramStrip view={histogram} onZoom={range => commit(pickRange(explorer, range))} onLevel={onLevel} />
+        {sqlMode && (
+          <SqlBox
+            text={explorer.draft.sql}
+            onChange={text => {
+              setExplorer(typeSql(explorer, text))
+              setLeavingSql(null)
+            }}
+            onRun={() => commit(explorer)}
+            leaving={leavingSql !== null}
+            onDiscard={() => leavingSql && exitSql(leavingSql)}
+            onStay={() => setLeavingSql(null)}
+          />
+        )}
+
+        {!sqlMode && (
+          <HistogramStrip view={histogram} onZoom={range => commit(pickRange(explorer, range))} onLevel={onLevel} />
+        )}
 
         <div className="relative flex-1 min-h-0">
           <TagMenuProvider onFilter={onFilter}>
@@ -358,6 +466,8 @@ function ResultArea({ result, onLoadOlder, selectedId, onSelect }: {
   result: Result; onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void
 }) {
   switch (result.status) {
+    case 'waiting':
+      return <Notice>Press Run to run the SQL.</Notice>
     case 'running':
       return <Notice>Running the Query…</Notice>
     case 'cancelled':
