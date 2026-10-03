@@ -24,14 +24,14 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-1. Implement the [logs v1 spec](logs-v1/spec.md) with `/implement-spec`, at most two sub-agents at a time, on integration branch `feature/logs-v1`. Frontier: [M2-05](logs-v1/issues/M2-05-histogram-strip-and-summary-line.md) (histogram strip and summary line) and [M3-03](logs-v1/issues/M3-03-readable-sql-logs-view-and-run-sql.md) (readable SQL, the `logs` view and running SQL). [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) has every blocker resolved but stays `ready-for-human`, for the target VM.
+1. Implement the [logs v1 spec](logs-v1/spec.md) with `/implement-spec`, at most two sub-agents at a time, on integration branch `feature/logs-v1`. Frontier: [M3-02](logs-v1/issues/M3-02-query-mode-in-explorer.md) (Query mode in the explorer) and [M3-03](logs-v1/issues/M3-03-readable-sql-logs-view-and-run-sql.md) (readable SQL, the `logs` view and running SQL). [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) has every blocker resolved but stays `ready-for-human`, for the target VM.
 
 ## Efforts
 
 | Effort | Done / open | Start here |
 |---|---|---|
 | Logs | 16 / 0 | [map.md](logs/map.md) |
-| Logs v1 | 15 / 5 | [spec.md](logs-v1/spec.md) |
+| Logs v1 | 16 / 4 | [spec.md](logs-v1/spec.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |

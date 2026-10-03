@@ -4,7 +4,7 @@
 
 **Blocked by:** M2-02, M2-04.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Console's EventStore client gains the histogram-and-summary operation.
 - [x] A slim strip (about 48 px of bars) stacked by Level, with time labels; bucket size follows the range. Drag across it or click a bar to zoom the time range (a run, so it pushes a history entry). Choose the histogram approach to fit the stack; note it in this ticket's Comments.
