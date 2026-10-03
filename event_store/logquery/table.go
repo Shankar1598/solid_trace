@@ -50,22 +50,60 @@ const orderColumn = `"#order"`
 // head read with Select, returning its table's rows, at most limit of them.
 // Each stage is one CTE.
 func (q *Query) TableSQL(logs string, limit int) string {
-	f := tailFields{}
+	c := &chain{prev: "logs", isLogs: true}
 	ctes := []string{"logs AS (\n" + logs + "\n)"}
-	prev := "logs"
-	ordered, isLogs := false, true
-	add := func(format string, args ...any) {
-		name := fmt.Sprintf("stage%d", len(ctes))
-		ctes = append(ctes, name+" AS ("+fmt.Sprintf(format, args...)+")")
-		prev = name
+	q.writeTail(c, tailFields{})
+	for _, cte := range c.ctes {
+		ctes = append(ctes, cte.name+" AS ("+cte.sql+")")
 	}
+	return fmt.Sprintf("WITH %s\nSELECT %s FROM %s ORDER BY %s LIMIT %d",
+		strings.Join(ctes, ",\n"), selectList(q.output, tailFields{}), c.prev, c.order(), limit)
+}
+
+// chain is a Query written as a chain of CTEs, one per stage, each reading
+// the one before.
+type chain struct {
+	ctes []cte
+	// prev is the relation the next stage reads.
+	prev string
+	// ordered is set when prev's rows are numbered in their order, by
+	// orderColumn; isLogs while they are Logs, newest first unless ordered.
+	ordered, isLogs bool
+}
+
+type cte struct {
+	name, sql string
+}
+
+// add adds a stage, reading prev.
+func (c *chain) add(format string, args ...any) {
+	name := fmt.Sprintf("stage%d", len(c.ctes)+1)
+	c.ctes = append(c.ctes, cte{name: name, sql: fmt.Sprintf(format, args...)})
+	c.prev = name
+}
+
+// order is what the chain's last relation is ordered by.
+func (c *chain) order() string {
+	switch {
+	case c.ordered:
+		return orderColumn
+	case c.isLogs:
+		return newestFirstOrder
+	}
+	return "ALL"
+}
+
+// newestFirstOrder orders Logs newest first.
+const newestFirstOrder = `"time" DESC, "id" DESC`
+
+// writeTail adds the Query's tail to a chain over Logs, whose Fields f reads.
+func (q *Query) writeTail(c *chain, f fields) {
 	keepOrder := func(list string) string {
-		if ordered {
+		if c.ordered {
 			return list + ", " + orderColumn
 		}
 		return list
 	}
-	newestFirst := `"time" DESC, "id" DESC`
 	// has are the columns of the relation so far, but for the order.
 	has := map[string]bool{"id": true}
 	for _, name := range builtInOrder {
@@ -80,11 +118,11 @@ func (q *Query) TableSQL(logs string, limit int) string {
 	for _, s := range q.tail {
 		switch s := s.(type) {
 		case whereStage:
-			add("SELECT * FROM %s WHERE %s", prev, writeCondition(s.predicate, f, false))
+			c.add("SELECT * FROM %s WHERE %s", c.prev, writeCondition(s.predicate, f, false))
 		case projectStage:
-			add("SELECT %s FROM %s", keepOrder(selectList(s.columns, f)), prev)
+			c.add("SELECT %s FROM %s", keepOrder(selectList(s.columns, f)), c.prev)
 			hasOnly(s.columns)
-			isLogs = false
+			c.isLogs = false
 		case extendStage:
 			var replaced []string
 			for _, col := range s.columns {
@@ -97,7 +135,7 @@ func (q *Query) TableSQL(logs string, limit int) string {
 			if len(replaced) > 0 {
 				all = "* EXCLUDE (" + strings.Join(replaced, ", ") + ")"
 			}
-			add("SELECT %s, %s FROM %s", all, selectList(s.columns, f), prev)
+			c.add("SELECT %s, %s FROM %s", all, selectList(s.columns, f), c.prev)
 		case summarizeStage:
 			all := append(append([]namedValue{}, s.by...), s.aggregates...)
 			group := ""
@@ -108,48 +146,39 @@ func (q *Query) TableSQL(logs string, limit int) string {
 				}
 				group = " GROUP BY " + strings.Join(positions, ", ")
 			}
-			add("SELECT %s FROM %s%s", selectList(all, f), prev, group)
+			c.add("SELECT %s FROM %s%s", selectList(all, f), c.prev, group)
 			hasOnly(all)
-			ordered, isLogs = false, false
+			c.ordered, c.isLogs = false, false
 		case sortStage:
-			add("SELECT %s, row_number() OVER (ORDER BY %s) AS %s FROM %s",
-				exceptOrder(ordered), orderBy(s.keys, f), orderColumn, prev)
-			ordered = true
+			c.add("SELECT %s, row_number() OVER (ORDER BY %s) AS %s FROM %s",
+				exceptOrder(c.ordered), orderBy(s.keys, f), orderColumn, c.prev)
+			c.ordered = true
 		case takeStage:
 			switch {
-			case ordered:
-				add("SELECT * FROM %s ORDER BY %s LIMIT %d", prev, orderColumn, s.n)
-			case isLogs:
-				add("SELECT *, row_number() OVER (ORDER BY %[1]s) AS %[2]s FROM (SELECT * FROM %[3]s ORDER BY %[1]s LIMIT %[4]d)",
-					newestFirst, orderColumn, prev, s.n)
-				ordered = true
+			case c.ordered:
+				c.add("SELECT * FROM %s ORDER BY %s LIMIT %d", c.prev, orderColumn, s.n)
+			case c.isLogs:
+				c.add("SELECT *, row_number() OVER (ORDER BY %[1]s) AS %[2]s FROM (SELECT * FROM %[3]s ORDER BY %[1]s LIMIT %[4]d)",
+					newestFirstOrder, orderColumn, c.prev, s.n)
+				c.ordered = true
 			default:
-				add("SELECT * FROM %s LIMIT %d", prev, s.n)
+				c.add("SELECT * FROM %s LIMIT %d", c.prev, s.n)
 			}
 		case topStage:
 			order := orderBy([]sortKey{s.key}, f)
-			add("SELECT *, row_number() OVER (ORDER BY %[1]s) AS %[2]s FROM (SELECT %[3]s FROM %[4]s ORDER BY %[1]s LIMIT %[5]d)",
-				order, orderColumn, exceptOrder(ordered), prev, s.n)
-			ordered = true
+			c.add("SELECT *, row_number() OVER (ORDER BY %[1]s) AS %[2]s FROM (SELECT %[3]s FROM %[4]s ORDER BY %[1]s LIMIT %[5]d)",
+				order, orderColumn, exceptOrder(c.ordered), c.prev, s.n)
+			c.ordered = true
 		case countStage:
-			add(`SELECT count(*) AS "Count" FROM %s`, prev)
+			c.add(`SELECT count(*) AS "Count" FROM %s`, c.prev)
 			has = map[string]bool{"Count": true}
-			ordered, isLogs = false, false
+			c.ordered, c.isLogs = false, false
 		case distinctStage:
-			add("SELECT DISTINCT %s FROM %s", selectList(s.columns, f), prev)
+			c.add("SELECT DISTINCT %s FROM %s", selectList(s.columns, f), c.prev)
 			hasOnly(s.columns)
-			ordered, isLogs = false, false
+			c.ordered, c.isLogs = false, false
 		}
 	}
-	order := "ALL"
-	switch {
-	case ordered:
-		order = orderColumn
-	case isLogs:
-		order = newestFirst
-	}
-	return fmt.Sprintf("WITH %s\nSELECT %s FROM %s ORDER BY %s LIMIT %d",
-		strings.Join(ctes, ",\n"), selectList(q.output, f), prev, order, limit)
 }
 
 func selectList(columns []namedValue, f fields) string {

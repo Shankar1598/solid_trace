@@ -23,6 +23,9 @@ import (
 type LogColumns struct {
 	set  PromotedSet
 	late bool
+	// view is set for the logs view, read by people: maps only, written
+	// map['key'].
+	view bool
 }
 
 // BuiltIn is a built-in field's column, such as level.
@@ -39,6 +42,9 @@ func (c LogColumns) Map(t AttributeType) string {
 // without one: the key's column if it is promoted, coalesced with its map
 // if it was promoted partway through the day, else its map.
 func (c LogColumns) Attribute(t AttributeType, key string) string {
+	if c.view {
+		return fmt.Sprintf("%s[%s]", t.Map(), sqlString(key))
+	}
 	inMap := fmt.Sprintf("map_extract_value(%s, %s)", t.Map(), sqlString(key))
 	if c.late {
 		return inMap
@@ -291,24 +297,41 @@ func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any
 	s.publishMu.RLock()
 	defer s.publishMu.RUnlock()
 
-	hours, err := s.hoursWithLogsLocked(scan.ProjectID, from, to)
+	logs, err := s.logSourcesLocked(scan.ProjectID, from, to, scan.Select, scan.Where)
 	if err != nil {
 		return nil, err
 	}
-	hot, err := s.tableExists(hotTable(scan.ProjectID))
+	rows, err := s.db.QueryContext(ctx, scan.Query(logs))
 	if err != nil {
 		return nil, err
 	}
-	read := func(source string, cols LogColumns, from, to time.Time) string {
+	defer rows.Close()
+	return scanTable(rows, -1)
+}
+
+// logSourcesLocked returns, as SQL, a Project's Logs of [from, to) from its
+// hot table, its late Logs and its files. Each source is read with the select
+// list sel(cols), and filtered by where(cols) if where is set, for its
+// columns cols. The caller holds publishMu until it has run the SQL.
+func (s *LogStore) logSourcesLocked(projectID uint32, from, to time.Time, sel, where func(LogColumns) string) (string, error) {
+	hours, err := s.hoursWithLogsLocked(projectID, from, to)
+	if err != nil {
+		return "", err
+	}
+	hot, err := s.tableExists(hotTable(projectID))
+	if err != nil {
+		return "", err
+	}
+	source := func(table string, cols LogColumns, from, to time.Time) string {
 		condition := timeRange(from, to)
-		if scan.Where != nil {
-			if w := scan.Where(cols); w != "" {
+		if where != nil {
+			if w := where(cols); w != "" {
 				condition += " AND (" + w + ")"
 			}
 		}
-		return fmt.Sprintf("SELECT %s FROM (%s) WHERE %s", scan.Select(cols), source, condition)
+		return fmt.Sprintf("SELECT %s FROM (%s) WHERE %s", sel(cols), table, condition)
 	}
-	sources := []string{read(fmt.Sprintf("SELECT * FROM %s.%s WHERE project_id = %d", logsCatalog, lateTable, scan.ProjectID),
+	sources := []string{source(fmt.Sprintf("SELECT * FROM %s.%s WHERE project_id = %d", logsCatalog, lateTable, projectID),
 		LogColumns{late: true}, from, to)}
 
 	// The hot table and the files, a day at a time: each day by its own
@@ -323,7 +346,7 @@ func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any
 		days[day] = append(days[day], hour)
 	}
 	for _, day := range dayOrder {
-		set := s.PromotedSet(scan.ProjectID, day)
+		set := s.PromotedSet(projectID, day)
 		cols := LogColumns{set: set}
 		dayFrom, dayTo := day, day.Add(24*time.Hour)
 		if from.After(dayFrom) {
@@ -333,33 +356,33 @@ func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any
 			dayTo = to
 		}
 		if hot {
-			sources = append(sources, read(withColumns(fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(scan.ProjectID)), set),
+			sources = append(sources, source(withColumns(fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(projectID)), set),
 				cols, dayFrom, dayTo))
 		}
 		var files []string
 		for _, hour := range days[day] {
-			hourFiles, err := s.files.Hour(scan.ProjectID, hour)
+			hourFiles, err := s.files.Hour(projectID, hour)
 			if err != nil {
-				return nil, err
+				return "", err
 			}
 			files = append(files, hourFiles...)
 		}
 		if len(files) > 0 {
-			sources = append(sources, read(withColumns(readFiles(files), set), cols, dayFrom, dayTo))
+			sources = append(sources, source(withColumns(readFiles(files), set), cols, dayFrom, dayTo))
 		}
 	}
+	return strings.Join(sources, "\nUNION ALL BY NAME\n"), nil
+}
 
-	rows, err := s.db.QueryContext(ctx, scan.Query(strings.Join(sources, "\nUNION ALL BY NAME\n")))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// scanTable reads every row of rows as DuckDB gives its values, or at most
+// limit rows if limit isn't negative.
+func scanTable(rows *sql.Rows, limit int) ([][]any, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, err
 	}
 	table := [][]any{}
-	for rows.Next() {
+	for (limit < 0 || len(table) < limit) && rows.Next() {
 		row := make([]any, len(columns))
 		pointers := make([]any, len(columns))
 		for i := range row {
