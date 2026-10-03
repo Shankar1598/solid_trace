@@ -2,7 +2,28 @@
 // a run's filters, counted per bucket and Level by EventStore. Buckets start
 // on whole multiples of their size from the epoch, so the first and last may
 // reach outside the run's range.
+import { showOnly, type Builder } from './builder'
 import type { AbsoluteRange } from './explorerState'
+
+/** Every Level, then `none` for Logs with no Level; EventStore counts each. */
+export const HISTOGRAM_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'none'] as const
+export type HistogramLevel = (typeof HISTOGRAM_LEVELS)[number]
+export type LevelCounts = Record<HistogramLevel, number>
+
+export interface HistogramBucket {
+  /** The bucket's start, UTC ISO. */
+  time: string
+  count: number
+  levels: LevelCounts
+}
+
+/** EventStore's answer: the buckets, oldest first, and their sums for the summary line. */
+export interface Histogram {
+  bucket_seconds: number
+  buckets: HistogramBucket[]
+  count: number
+  levels: LevelCounts
+}
 
 const MINUTE = 60
 const HOUR = 60 * MINUTE
@@ -48,4 +69,17 @@ export function zoomRange({ bucket_seconds, buckets }: Buckets, range: { from: D
 /** The bar under a pointer `x` pixels into a strip `width` wide, or the nearest end bar. */
 export function barAt(x: number, width: number, bars: number): number {
   return Math.min(bars - 1, Math.max(0, Math.floor((x / width) * bars)))
+}
+
+/** (error + fatal) ÷ Log count, or null when there are no Logs. */
+export function errorRate({ count, levels }: Pick<Histogram, 'count' | 'levels'>): number | null {
+  return count === 0 ? null : (levels.error + levels.fatal) / count
+}
+
+/**
+ * A clicked per-Level count as a Level chip, replacing any other Level the
+ * Builder shows only. `none` can't be a chip: it would need isempty(level).
+ */
+export function filterByLevel(builder: Builder, level: HistogramLevel): Builder | null {
+  return level === 'none' ? null : showOnly(builder, 'level', level)
 }
