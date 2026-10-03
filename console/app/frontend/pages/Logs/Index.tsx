@@ -5,7 +5,7 @@ import { Play, Square } from 'lucide-react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { fetchLogPage, validateQuery } from '@/lib/logs/api'
+import { fetchHistogram, fetchLogPage, validateQuery } from '@/lib/logs/api'
 import { EMPTY_BUILDER, builderOf, flipFilter, hide, queryOf, removeFilter, search, showOnly, type Builder } from '@/lib/logs/builder'
 import {
   RANGE_PRESETS,
@@ -20,9 +20,11 @@ import {
   type TimeRange,
   typeQuery,
 } from '@/lib/logs/explorerState'
+import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
 import { addOlderPage, startStream, streamEnd, type Log, type Stream } from '@/lib/logs/stream'
 import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
+import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
 import { LogStream } from './components/LogStream'
 import { TagMenuProvider, type OnFilter } from './components/TagMenu'
@@ -60,6 +62,7 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
   // reading the URL once here is enough to undo the last run.
   const [explorer, setExplorer] = useState<Explorer>(() => openExplorer(window.location.search))
   const [result, setResult] = useState<Result>({ status: 'running' })
+  const [histogram, setHistogram] = useState<HistogramView>({ status: 'running' })
   const [builderView, setBuilderView] = useState<BuilderView>(() =>
     explorer.current.query === '' ? { status: 'ready', builder: EMPTY_BUILDER } : { status: 'reading' })
   const [inspected, setInspected] = useState<Log | null>(null)
@@ -70,6 +73,19 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
     const run: Run = { controller: new AbortController(), query: state.query, ...resolveRange(state.range, new Date()) }
     currentRun.current = run
     setResult({ status: 'running' })
+    setHistogram({ status: 'running' })
+
+    // The histogram and summary count the same filters over the same range.
+    fetchHistogram({
+      orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to,
+      bucketSeconds: bucketSeconds(run.from, run.to), signal: run.controller.signal,
+    })
+      .then(histogram => {
+        if (currentRun.current === run) setHistogram({ status: 'done', histogram, from: run.from, to: run.to })
+      })
+      .catch((error: Error) => {
+        if (currentRun.current === run && !run.controller.signal.aborted) setHistogram({ status: 'error', message: error.message })
+      })
 
     fetchLogPage({ orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, signal: run.controller.signal })
       .then(page => {
@@ -120,11 +136,17 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
   const onFilter: OnFilter = builder && ((kind, field, value) =>
     changeBuilder(kind === 'show' ? showOnly(builder, field, value) : hide(builder, field, value), true))
 
+  const onLevel = builder && ((level: HistogramLevel) => {
+    const filtered = filterByLevel(builder, level)
+    if (filtered) changeBuilder(filtered, true)
+  })
+
   const closeInspector = useCallback(() => setInspected(null), [])
 
   const cancel = () => {
     currentRun.current?.controller.abort()
     setResult({ status: 'cancelled' })
+    setHistogram(h => h.status === 'running' ? { status: 'cancelled' } : h)
   }
 
   const loadOlder = useCallback(() => {
@@ -178,6 +200,8 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
             <Button variant="outline" size="sm" onClick={() => commit(explorer)}><Play className="h-3.5 w-3.5" /> Run</Button>
           )}
         </div>
+
+        <HistogramStrip view={histogram} onZoom={range => commit(pickRange(explorer, range))} onLevel={onLevel} />
 
         <div className="relative flex-1 min-h-0">
           <TagMenuProvider onFilter={onFilter}>
