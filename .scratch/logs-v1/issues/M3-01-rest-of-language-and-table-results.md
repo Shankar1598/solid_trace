@@ -4,7 +4,7 @@
 
 **Blocked by:** M2-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] `where` gains comparisons (`<`, `<=`, `>`, `>=`), `contains` (case-insensitive), `contains_cs`, `startswith`, `matches regex`, `in`/`!in` (`!in` includes Logs missing the Field), `isempty`/`isnotempty`.
 - [x] Stages: `project`, `extend`, `summarize` with `count`, `dcount`, `sum`, `avg`, `min`, `max`, `percentile`, by Fields and `bin(time, …)`; `sort`, `take`, `top`, `count`, `distinct`, `search`. Unknown functions rejected with a position. KQL's semantics win where KQL and APL differ; common pasted Axiom queries work.
