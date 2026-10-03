@@ -43,8 +43,8 @@ To match either, convert the value first, for example `toint(status) == 200` or 
 | `==`, `!=` | Equal and not equal. Values of different types are never equal: `level == 5` matches no Log. |
 | `<`, `<=`, `>`, `>=` | Order comparisons of numbers, strings or datetimes. |
 | `=~`, `!~` | Equal or not equal, ignoring case. |
-| `contains`, `!contains` | Contains a substring, ignoring case. |
-| `contains_cs`, `!contains_cs` | Contains a substring, with case. |
+| `contains`, `!contains` | Contains a substring, ignoring case. On an array, the substring is looked for in the array's JSON text: `tags contains "db"` matches `["api", "db"]`. |
+| `contains_cs`, `!contains_cs` | Contains a substring, with case, arrays alike. |
 | `startswith`, `!startswith` | Starts with, ignoring case. |
 | `startswith_cs`, `!startswith_cs` | Starts with, with case. |
 | `matches regex` | Matches a regular expression (RE2 syntax), with case. |
@@ -55,7 +55,7 @@ To match either, convert the value first, for example `toint(status) == 200` or 
 
 **Time.** `where time > ago(1h)`, `where time >= datetime(2026-10-02T10:00:00Z)` and `where time < now() - 30m` narrow the time range in the bar. A condition on time can only narrow that range, never widen it.
 
-`search "text"` keeps the Logs whose `message` or any string Attribute contains the text, ignoring case. This is what the Builder's search box does. `search` must come before any stage other than `where` and `search`.
+`search "text"` keeps the Logs whose `message` or any string Attribute contains the text, ignoring case. It doesn't look in arrays; use `where tags contains "text"` for those. This is what the Builder's search box does. `search` must come before any stage other than `where` and `search`.
 
 ## Shaping: stages that return a table
 
