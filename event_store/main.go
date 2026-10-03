@@ -110,7 +110,7 @@ func main() {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
-	logsHandler := handler.NewLogsHandler(logStore, clock.System{})
+	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, clock.System{})
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners

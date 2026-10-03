@@ -75,9 +75,16 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore, clock.System{}), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore, sqlOn{}, clock.System{}), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
+}
+
+// sqlOn is an instance whose operator has turned SQL queries on.
+type sqlOn struct{}
+
+func (sqlOn) Instance() (storage.InstanceSettings, error) {
+	return storage.InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 30}, nil
 }
 
 func newEvent(projectID uint32) *models.Event {
@@ -142,7 +149,11 @@ func TestLogQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 		return resp.StatusCode
 	}
 	run := `{"query": "", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`
-	for path, body := range map[string]string{"/api/1/logs/query": run, "/api/1/logs/validate": `{"query": ""}`} {
+	for path, body := range map[string]string{
+		"/api/1/logs/query":    run,
+		"/api/1/logs/validate": `{"query": ""}`,
+		"/api/1/logs/sql":      `{"sql": "SELECT 1", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`,
+	} {
 		if status := post(apps.ingest, path, body); status != fiber.StatusNotFound {
 			t.Errorf("ingest app %s: expected 404, got %d", path, status)
 		}
