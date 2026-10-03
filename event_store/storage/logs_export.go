@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -99,14 +100,16 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 		return err
 	}
 	var staged []string
-	committed := false
+	committed, rolledBack := false, false
 	defer func() {
 		if committed {
 			return
 		}
-		if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
-			logger.L.Error("DuckDB rollback failed", "error", err)
-			discardConn(conn)
+		if !rolledBack {
+			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+				logger.L.Error("DuckDB rollback failed", "error", err)
+				discardConn(conn)
+			}
 		}
 		for _, file := range staged {
 			if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
@@ -132,10 +135,12 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 			return fmt.Errorf("export hour %s: %w", hour.Format(time.RFC3339), err)
 		}
 	}
-	if err := export.delete(cutoff); err != nil {
+	// DuckDB can't commit a DELETE made before an ALTER of the same table,
+	// so the columns go first.
+	if err := export.dropDemotedColumns(cutoff); err != nil {
 		return err
 	}
-	if err := export.dropDemotedColumns(cutoff); err != nil {
+	if err := export.delete(cutoff); err != nil {
 		return err
 	}
 
@@ -144,7 +149,9 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 	s.publishMu.Lock()
 	defer s.publishMu.Unlock()
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		// A failed COMMIT has rolled back, or left the connection unknown.
 		discardConn(conn)
+		rolledBack = true
 		return err
 	}
 	committed = true
@@ -338,8 +345,73 @@ func (e *projectExport) delete(cutoff time.Time) error {
 	return nil
 }
 
-// dropDemotedColumns is a no-op until demotion is built.
+// dropDemotedColumns drops each promoted column of the Project's hot table
+// that the sets of the days it keeps after cutoff don't have, nor the sets of the
+// days of the hot window from cutoff. Those are the keys the day's set
+// demoted, so the drop happens at the export that deletes the previous day's
+// last hour, 01:00 UTC. Log processing adds a column back if a set needs it.
 func (e *projectExport) dropDemotedColumns(cutoff time.Time) error {
+	if e.hotColumns == nil {
+		return nil
+	}
+	kept := make(map[string]bool)
+	keep := func(day time.Time) error {
+		set, err := e.daySet(day)
+		for _, key := range set {
+			kept[key.column()] = true
+		}
+		return err
+	}
+	if err := keep(cutoff); err != nil {
+		return err
+	}
+	if err := keep(cutoff.Add(2*time.Hour - time.Nanosecond)); err != nil {
+		return err
+	}
+	demoted := func() []string {
+		var columns []string
+		for _, column := range slices.Sorted(maps.Keys(e.hotColumns)) {
+			if _, promoted := promotedColumnKey(column); promoted && !kept[column] {
+				columns = append(columns, column)
+			}
+		}
+		return columns
+	}
+	if len(demoted()) == 0 {
+		return nil
+	}
+
+	// Only near midnight can the table keep another day's Logs.
+	rows, err := e.conn.QueryContext(e.ctx, fmt.Sprintf(
+		"SELECT DISTINCT CAST(time AS DATE) FROM %s WHERE time >= CAST(? AS TIMESTAMP)", e.hotTable()),
+		timestampString(cutoff))
+	if err != nil {
+		return fmt.Errorf("list days in hot table: %w", err)
+	}
+	var days []time.Time
+	for rows.Next() {
+		var day time.Time
+		if err := rows.Scan(&day); err != nil {
+			rows.Close()
+			return err
+		}
+		days = append(days, day.UTC())
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, day := range days {
+		if err := keep(day); err != nil {
+			return err
+		}
+	}
+	for _, column := range demoted() {
+		if _, err := e.conn.ExecContext(e.ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", e.hotTable(), sqlIdentifier(column))); err != nil {
+			return fmt.Errorf("drop demoted column %s: %w", column, err)
+		}
+		logger.L.Debug("Dropping demoted Log column", "project_id", e.projectID, "column", column)
+	}
 	return nil
 }
 
