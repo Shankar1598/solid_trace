@@ -205,6 +205,14 @@ class EventStoreTest < ActiveSupport::TestCase
     end
   end
 
+  test "a 403 from a Log call other than SQL is EventStore failing, not SQL queries off" do
+    stub_request(:post, "#{@base_url}/api/123/logs/query").to_return(status: 403, body: { error: "Forbidden" }.to_json)
+
+    assert_raises(EventStore::Unavailable) do
+      EventStore.query_logs(project_id: 123, query: "", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+    end
+  end
+
   test "Log runs wait for EventStore however long they take, and other calls keep their timeouts" do
     InstanceSetting.current.update!(sql_queries_enabled: true)
     range = { from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10) }
