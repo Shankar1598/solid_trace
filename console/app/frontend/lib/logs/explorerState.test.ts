@@ -6,6 +6,7 @@ import {
   runExplorer,
   searchOf,
   stateFromSearch,
+  switchMode,
   typeQuery,
   type Explorer,
 } from './explorerState'
@@ -78,6 +79,11 @@ describe('history entries', () => {
       get entries() { return entries },
       type(text: string) { explorer = typeQuery(explorer, text) },
       pickRange(span: string) { explorer = pickRange(explorer, { kind: 'relative', span }) },
+      switchMode(mode: 'builder' | 'query') {
+        const { explorer: next, replace } = switchMode(explorer, mode)
+        explorer = next
+        entries[entries.length - 1] = replace
+      },
       run() {
         const { explorer: next, push } = runExplorer(explorer)
         explorer = next
@@ -134,5 +140,29 @@ describe('history entries', () => {
     b.run()
 
     expect(b.entries).toHaveLength(1)
+  })
+
+  it('adds none when the mode switches, but keeps the mode in the URL', () => {
+    const b = browser('?range=1h&mode=builder&q=search+%22boom%22')
+    b.type('search "bang"')
+
+    b.switchMode('query')
+
+    expect(b.entries).toEqual(['?range=1h&mode=query&q=search+%22boom%22'])
+    expect(b.explorer.current).toMatchObject({ mode: 'query', query: 'search "boom"' })
+    expect(b.explorer.draft).toMatchObject({ mode: 'query', query: 'search "bang"' })
+  })
+
+  it('reopens a run in the mode it was left in', () => {
+    const b = browser('?range=1h&mode=builder')
+    b.type('search "boom"')
+    b.run()
+    b.switchMode('query')
+    b.type('search "boom" | count')
+    b.run()
+
+    b.back()
+
+    expect(b.explorer.current).toMatchObject({ mode: 'query', query: 'search "boom"' })
   })
 })

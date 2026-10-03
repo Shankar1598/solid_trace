@@ -1,7 +1,8 @@
 // The Logs explorer's state and its URL. The Project is in the path; the
 // search holds the time range as given (relative stays relative, absolute
 // as UTC ISO times), the mode and the Query text. Each run pushes a history
-// entry; typing doesn't, so Back undoes the last run.
+// entry; typing doesn't, so Back undoes the last run. Switching mode
+// replaces the entry's mode, so a run reopens in the mode it was left in.
 
 export type Mode = 'builder' | 'query'
 
@@ -22,7 +23,8 @@ export interface Explorer {
   draft: ExplorerState
 }
 
-const MODES: Mode[] = ['builder', 'query']
+/** The modes, in the switch's order. */
+export const MODES: Mode[] = ['builder', 'query']
 const SPAN = /^(\d+)([mhd])$/
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const
 
@@ -87,6 +89,15 @@ export function typeQuery(explorer: Explorer, query: string): Explorer {
 
 export function pickRange(explorer: Explorer, range: TimeRange): Explorer {
   return { ...explorer, draft: { ...explorer.draft, range } }
+}
+
+/**
+ * Switches mode without running: what ran and what is being edited stay, and
+ * `replace` is the search to put in place of the current history entry's.
+ */
+export function switchMode(explorer: Explorer, mode: Mode): { explorer: Explorer; replace: string } {
+  const current = { ...explorer.current, mode }
+  return { explorer: { current, draft: { ...explorer.draft, mode } }, replace: searchOf(current) }
 }
 
 /**
