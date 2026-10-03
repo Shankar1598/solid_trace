@@ -49,9 +49,13 @@ type queryRequest struct {
 //
 // Runs a Query over a Project's Logs of [from, to): {"query", "from", "to"}
 // (RFC 3339), with "limit" (default 200, at most 1,000) and "cursor" (a
-// previous page's next_cursor) optional. Answers {"logs": […], "next_cursor"},
-// newest first; next_cursor is null once there are no older Logs. A Query
-// with mistakes answers 400 with {"errors": […]}, as validate lists them.
+// previous page's next_cursor) optional. A Query of Log rows answers {"logs":
+// […], "next_cursor"}, newest first; next_cursor is null once there are no
+// older Logs, or take's number of Logs has been given. A Query that returns a
+// table, one with project, extend, summarize, a sort other than newest first,
+// top, count or distinct, answers {"table": {"columns": [{"name", "type"}],
+// "rows": [[…]], "truncated"}}, and ignores limit and cursor. A Query with
+// mistakes answers 400 with {"errors": […]}, as validate lists them.
 //
 // The scan goes on if the client goes away: it stops at limit Logs or the
 // end of the range.
