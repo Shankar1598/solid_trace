@@ -137,6 +137,8 @@ export interface QueryStage {
 
 export interface Validation {
   errors: QueryProblem[]
+  /** The name the Query gives its source, such as a Project's slug, or null. */
+  source: string | null
   /** The Query as Builder chips, or null when the Builder can't show it. */
   chips: Chips | null
   /** Each stage of a Query without mistakes; none otherwise. */

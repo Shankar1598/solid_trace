@@ -43,7 +43,7 @@ import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
 import { fillStream, keepsFetching, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
 import type { LogTable } from '@/lib/logs/table'
 import { SharedProps } from '@/types'
-import { BuilderBar, type BuilderView } from './components/BuilderBar'
+import { BuilderPanel, type BuilderView, type ProjectOption } from './components/BuilderPanel'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
 import { LogStream } from './components/LogStream'
@@ -52,12 +52,6 @@ import { ModeSwitch } from './components/ModeSwitch'
 import { QueryBox, type LeavingQuery } from './components/QueryBox'
 import { SqlBox } from './components/SqlBox'
 import { TagMenuProvider, type OnFilter } from './components/TagMenu'
-
-interface ProjectOption {
-  id: number
-  name: string
-  slug: string
-}
 
 interface LogsIndexProps {
   project: ProjectOption
@@ -219,7 +213,10 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     setLeavingSql(null)
     if (next.draft.mode !== 'query') return run(next)
     validateQuery({ orgSlug, projectSlug: project.slug, query: next.draft.query })
-      .then(({ errors }) => {
+      .then(({ errors, source }) => {
+        // A Query naming another of the Organization's Projects runs there.
+        const named = source !== project.slug ? projects.find(p => p.slug === source) : undefined
+        if (named) return router.get(`/${orgSlug}/projects/${named.slug}/logs${searchOf(next.draft)}`)
         setProblems(errors)
         if (errors.length === 0) run(next)
       })
@@ -237,7 +234,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     setBuilderView({ status: 'ready', builder })
     const { explorer: next, replace } = switchMode(latest.current, 'builder')
     if (runIt) {
-      commit(typeQuery(next, queryOf(builder)))
+      commit(typeQuery(next, queryOf(builder, project.slug)))
     } else {
       setExplorer(next)
       replaceUrl(replace)
@@ -260,7 +257,8 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     if (mode === 'sql') return openSql()
     if (mode === 'query') {
       const { explorer: next, replace } = switchMode(explorer, 'query')
-      setExplorer(next)
+      // An empty Query opens as the Project's slug, to write stages after.
+      setExplorer(next.draft.query === '' ? typeQuery(next, queryOf(EMPTY_BUILDER, project.slug)) : next)
       replaceUrl(replace)
       setProblems([])
       return
@@ -331,7 +329,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   /** Discard and switch: back to the Builder's last filters. */
   const discardQuery = () => {
     const builder = builderView.status === 'ready' ? builderView.builder : EMPTY_BUILDER
-    enterBuilder(builder, queryOf(builder) !== explorer.current.query)
+    enterBuilder(builder, queryOf(builder, project.slug) !== explorer.current.query)
   }
 
   /** A pivot in Query mode: a where after the leading filters of the Query that ran. */
@@ -348,7 +346,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   /** Edits the Builder; its Query text becomes the draft, run at once unless only typed. */
   const changeBuilder = (builder: Builder, run: boolean) => {
     setBuilderView({ status: 'ready', builder })
-    const next = typeQuery(explorer, queryOf(builder))
+    const next = typeQuery(explorer, queryOf(builder, project.slug))
     if (run) commit(next)
     else setExplorer(next)
   }
@@ -394,8 +392,11 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     fill(run, wantOlder(result.stream))
   }, [fill, result])
 
+  /** The Builder's Project: its filters, on the Logs of the Project picked. */
   const openProject = (slug: string) => {
-    if (slug !== project.slug) router.get(`/${orgSlug}/projects/${slug}/logs${searchOf(explorer.current)}`)
+    if (slug === project.slug) return
+    const query = builder ? queryOf(builder, slug) : explorer.current.query
+    router.get(`/${orgSlug}/projects/${slug}/logs${searchOf({ ...explorer.current, query })}`)
   }
 
   const running = result.status === 'running' || (result.status === 'done' && result.loadingOlder)
@@ -404,21 +405,10 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     <DashboardLayout>
       <div className="h-[calc(100vh-2rem)] flex flex-col rounded-md border overflow-hidden bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-          <ProjectSelect project={project} projects={projects} onChange={openProject} />
           <RangeSelect range={explorer.draft.range} onChange={pickBarRange} />
           <ModeSwitch modes={modes} mode={mode} onSwitch={switchTo} />
           <div className="h-5 w-px bg-border" />
-          {mode === 'builder' ? (
-            <BuilderBar
-              view={builderView}
-              onFlip={i => builder && changeBuilder(flipFilter(builder, i), true)}
-              onRemove={i => builder && changeBuilder(removeFilter(builder, i), true)}
-              onSearch={text => builder && changeBuilder(search(builder, text), false)}
-              onRun={() => commit(explorer)}
-            />
-          ) : (
-            <span className="flex-1 text-[11px] text-muted-foreground">Ctrl+Enter runs the {sqlMode ? 'SQL' : 'Query'}.</span>
-          )}
+          <span className="flex-1 text-[11px] text-muted-foreground">{mode !== 'builder' && `Ctrl+Enter runs the ${sqlMode ? 'SQL' : 'Query'}.`}</span>
           {running ? (
             <Button variant="outline" size="sm" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
           ) : (
@@ -426,8 +416,22 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
           )}
         </div>
 
+        {mode === 'builder' && (
+          <BuilderPanel
+            view={builderView}
+            project={project}
+            projects={projects}
+            onProject={openProject}
+            onFlip={i => builder && changeBuilder(flipFilter(builder, i), true)}
+            onRemove={i => builder && changeBuilder(removeFilter(builder, i), true)}
+            onSearch={text => builder && changeBuilder(search(builder, text), false)}
+            onRun={() => commit(explorer)}
+          />
+        )}
+
         {mode === 'query' && (
           <QueryBox
+            projectSlug={project.slug}
             text={explorer.draft.query}
             onChange={text => {
               setExplorer(typeQuery(explorer, text))
@@ -511,18 +515,6 @@ function Notice({ children, tone }: { children: React.ReactNode; tone?: 'error' 
     <div className={tone === 'error' ? 'p-10 text-center text-sm text-destructive' : 'p-10 text-center text-sm text-muted-foreground'}>
       {children}
     </div>
-  )
-}
-
-function ProjectSelect({ project, projects, onChange }: { project: ProjectOption; projects: ProjectOption[]; onChange: (slug: string) => void }) {
-  const items = Object.fromEntries(projects.map(p => [p.slug, p.name]))
-  return (
-    <Select value={project.slug} onValueChange={v => v && onChange(v as string)} items={items}>
-      <SelectTrigger className="h-8 text-xs" aria-label="Project"><SelectValue /></SelectTrigger>
-      <SelectContent>
-        {projects.map(p => <SelectItem key={p.slug} value={p.slug}>{p.name}</SelectItem>)}
-      </SelectContent>
-    </Select>
   )
 }
 

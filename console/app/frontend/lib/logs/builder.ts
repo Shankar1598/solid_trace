@@ -25,11 +25,24 @@ export interface Builder {
 
 export const EMPTY_BUILDER: Builder = { filters: [], search: '' }
 
-/** The Query text: one where stage per chip, in order, then the search. */
-export function queryOf(builder: Builder): string {
-  const stages = builder.filters.map(filterText)
+/**
+ * The Query text: the Project's slug as its source, then one where stage per
+ * chip, in order, then the search.
+ */
+export function queryOf(builder: Builder, projectSlug: string): string {
+  const stages = [sourceText(projectSlug), ...builder.filters.map(filterText)]
   if (builder.search.trim() !== '') stages.push(`search ${stringText(builder.search)}`)
   return stages.join('\n| ')
+}
+
+// The words that start a stage: a slug spelled as one is written ['quoted'],
+// so `count` stays a source and not the count stage.
+const STAGES = new Set(['where', 'search', 'project', 'extend', 'summarize', 'sort', 'order', 'take', 'limit', 'top', 'count', 'distinct'])
+const PLAIN_SLUG = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/
+
+/** A Project's slug as a Query's source: bare, such as `my-api`, unless it can't be. */
+function sourceText(slug: string): string {
+  return PLAIN_SLUG.test(slug) && !STAGES.has(slug) ? slug : `['${escape(slug).replaceAll("'", "\\'")}']`
 }
 
 /** One chip as its where stage, such as `where service == "api"`. */
