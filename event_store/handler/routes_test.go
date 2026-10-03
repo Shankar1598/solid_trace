@@ -152,6 +152,7 @@ func TestLogQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 	for path, body := range map[string]string{
 		"/api/1/logs/query":        run,
 		"/api/1/logs/validate":     `{"query": ""}`,
+		"/api/1/logs/histogram":    run,
 		"/api/1/logs/sql":          `{"sql": "SELECT 1", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`,
 		"/api/1/logs/readable-sql": run,
 	} {
