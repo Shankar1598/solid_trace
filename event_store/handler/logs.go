@@ -25,15 +25,17 @@ const (
 )
 
 // LogsHandler serves stored Logs on the query app: it runs and validates
-// Queries and fetches single Logs.
+// Queries, fetches single Logs, and runs SQL while the instance allows it.
 type LogsHandler struct {
-	logs  *storage.LogStore
-	clock clock.Clock
+	logs     *storage.LogStore
+	settings InstanceSettings
+	clock    clock.Clock
 }
 
-// NewLogsHandler serves logs; clock is the time ago() and now() read.
-func NewLogsHandler(logs *storage.LogStore, clock clock.Clock) *LogsHandler {
-	return &LogsHandler{logs: logs, clock: clock}
+// NewLogsHandler serves logs; settings say whether SQL runs; clock is the
+// time ago() and now() read.
+func NewLogsHandler(logs *storage.LogStore, settings InstanceSettings, clock clock.Clock) *LogsHandler {
+	return &LogsHandler{logs: logs, settings: settings, clock: clock}
 }
 
 // queryRequest is the body of a run.
