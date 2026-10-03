@@ -1,248 +1,208 @@
 // Package logquery compiles Queries, SolidTrace's KQL-style query language
 // for Logs, to DuckDB SQL. It is the single path from a Query to SQL.
 //
-// Compiling runs in three steps, each in its own file:
+// Compiling runs in three steps, each in its own files:
 //   - package parser turns the text into a syntax tree;
-//   - Compile (this file) checks the tree against the language's stages,
-//     functions, Fields and types, and turns it into a Query of typed stages;
-//   - the SQL emitter (sql.go) writes a Query's stages as SQL against one
-//     source of Logs, whose columns storage.LogColumns describes.
+//   - Compile (this file, expr.go and stages.go) checks the tree against the
+//     language's stages, functions, Fields and types, and turns it into a
+//     Query of typed stages;
+//   - the SQL emitter (sql.go) writes a Query as SQL: its leading filters
+//     against one source of Logs, whose columns storage.LogColumns describes,
+//     and the rest as a chain of stages over the Logs that pass them.
 //
 // Builder chips (chips.go) are read off a compiled Query.
 package logquery
 
 import (
 	"fmt"
-	"math"
-	"strconv"
+	"time"
 
 	"github.com/solidtrace/event_store/logquery/parser"
+	"github.com/solidtrace/event_store/storage"
 )
 
 // Error is a mistake in a Query, at a span of its text.
 type Error = parser.Error
 
-// Query is a compiled Query: its stages, each checked and typed.
+// Bounds are what a Query runs within: the request's time range, [From, To),
+// and the time it runs at, which ago() and now() read. A Query can narrow the
+// range but never widen it. Zero From and To, as validate has, mean no range.
+type Bounds struct {
+	From, To time.Time
+	Now      time.Time
+}
+
+// Query is a compiled Query.
+//
+// Its stages split in two: the head, its leading where and search stages,
+// which filter Logs; and the tail, every stage after them. The head is
+// written as one condition on each source of Logs (Where); the tail as a
+// chain of stages over the Logs that pass it (TableSQL). A Query whose tail
+// keeps Logs newest first, as take does, returns Log rows; any other returns
+// a table.
 type Query struct {
-	stages []stage
+	head []stage
+	tail []stage
+
+	from, to time.Time
+	// table is set when the Query returns a table rather than Log rows.
+	table bool
+	// take is how many Log rows a Query of Log rows returns at most, or 0
+	// for no limit.
+	take int
+	// reads are the Attributes, by type, that the tail reads from each Log.
+	reads []attrKey
+	// output is the table's columns, read off the tail's last relation.
+	output []outputColumn
+	// ordered is set when the tail's last relation carries a sort order.
+	ordered bool
 }
 
-// stage is one compiled stage. Every stage so far filters Logs.
-type stage interface {
-	isStage()
-}
-
-// whereStage keeps the Logs its predicate holds for.
-type whereStage struct {
-	predicate predicate
-}
-
-// searchStage keeps the Logs whose message or any string Attribute contains
-// term, ignoring case.
-type searchStage struct {
-	term string
-}
-
-func (whereStage) isStage()  {}
-func (searchStage) isStage() {}
-
-// predicate is a typed condition on one Log.
-type predicate interface {
-	isPredicate()
-}
-
-// compare is field == value or field != value. Neither coerces: a Field's
-// value of another type than value's is never equal to it.
-type compare struct {
-	field Field
-	op    compareOp
-	value Literal
-}
-
-type compareOp string
-
-const (
-	opEq compareOp = "=="
-	opNE compareOp = "!="
-)
-
-type and struct{ x, y predicate }
-type or struct{ x, y predicate }
-type not struct{ x predicate }
-
-func (compare) isPredicate() {}
-func (and) isPredicate()     {}
-func (or) isPredicate()      {}
-func (not) isPredicate()     {}
-
-// Field is a Field a Query names: a built-in field or an Attribute.
-type Field struct {
-	Name    string
-	BuiltIn bool
-}
-
-// builtInFields are the built-in fields every Log has; all are strings but
-// time.
-var builtInFields = map[string]bool{
-	"time": true, "level": true, "message": true, "service": true,
-	"environment": true, "trace_id": true, "span_id": true,
-}
-
-func fieldNamed(name string) Field {
-	return Field{Name: name, BuiltIn: builtInFields[name]}
-}
-
-// Literal is a value written in a Query: a string, a number or a bool.
-type Literal struct {
-	Kind   parser.LiteralKind
-	String string
-	Number float64
-	Bool   bool
-}
-
-// Value is the literal as a Go value: a string, a float64 or a bool.
-func (l Literal) Value() any {
-	switch l.Kind {
-	case parser.NumberLiteral:
-		return l.Number
-	case parser.BoolLiteral:
-		return l.Bool
-	default:
-		return l.String
-	}
-}
-
-// Compile parses and checks a Query's text. The error, if any, is an *Error
-// with the span of the first mistake.
-func Compile(source string) (*Query, error) {
+// Compile parses and checks a Query's text for the given bounds. The error,
+// if any, is an *Error with the span of the first mistake.
+func Compile(source string, bounds Bounds) (*Query, error) {
 	tree, err := parser.Parse(source)
 	if err != nil {
 		return nil, err
 	}
-	q := &Query{}
+	c := &compiler{text: source, bounds: bounds, scope: logScope(), reads: map[attrKey]bool{}}
+	q := &Query{from: bounds.From.UTC(), to: bounds.To.UTC()}
+	inHead := true
 	for _, s := range tree.Stages {
-		compiled, err := compileStage(s)
+		if inHead {
+			switch s.(type) {
+			case *parser.WhereStage, *parser.SearchStage:
+			default:
+				inHead = false
+				c.tail = true
+			}
+		}
+		compiled, err := c.stage(s)
 		if err != nil {
 			return nil, err
 		}
-		q.stages = append(q.stages, compiled)
+		if inHead {
+			q.head = append(q.head, compiled)
+		} else {
+			q.tail = append(q.tail, compiled)
+		}
 	}
+	q.narrow()
+	q.finish(c)
 	return q, nil
+}
+
+// Range is the time range the Query reads: the request's, narrowed by any
+// leading where on time.
+func (q *Query) Range() (from, to time.Time) {
+	return q.from, q.to
+}
+
+// Table reports whether the Query returns a table rather than Log rows.
+func (q *Query) Table() bool {
+	return q.table
+}
+
+// Take is how many Log rows a Query of Log rows returns at most, or 0 for no
+// limit.
+func (q *Query) Take() int {
+	return q.take
 }
 
 func errorAt(node parser.Node, format string, args ...any) *Error {
 	return &Error{Span: node.Span(), Message: fmt.Sprintf(format, args...)}
 }
 
-func compileStage(s parser.Stage) (stage, error) {
-	switch s := s.(type) {
-	case *parser.WhereStage:
-		p, err := compilePredicate(s.Predicate)
-		if err != nil {
-			return nil, err
-		}
-		return whereStage{predicate: p}, nil
-	case *parser.SearchStage:
-		return searchStage{term: s.Term.Value}, nil
-	default:
-		return nil, errorAt(s, "unknown stage")
+// compiler holds what a Query's stages are compiled against: the bounds, the
+// columns of the rows at the current stage, and what the tail reads.
+type compiler struct {
+	text   string
+	bounds Bounds
+	scope  scope
+	// tail is set once past the leading filter stages.
+	tail bool
+	// reads are the Attributes, by type, the tail reads from Logs; names
+	// are the Attributes it names, in order.
+	reads     map[attrKey]bool
+	readOrder []attrKey
+	names     []string
+}
+
+// read notes that the tail reads the Attribute key of type t.
+func (c *compiler) read(t storage.AttributeType, key string) {
+	if !c.tail {
+		return
+	}
+	k := attrKey{t: t, key: key}
+	if !c.reads[k] {
+		c.reads[k] = true
+		c.readOrder = append(c.readOrder, k)
 	}
 }
 
-// compilePredicate compiles an expression that must be a condition.
-func compilePredicate(e parser.Expr) (predicate, error) {
-	switch e := e.(type) {
-	case *parser.ParenExpr:
-		return compilePredicate(e.X)
-	case *parser.BinaryExpr:
-		switch e.Op {
-		case parser.TokenAnd, parser.TokenOr:
-			x, err := compilePredicate(e.X)
-			if err != nil {
-				return nil, err
-			}
-			y, err := compilePredicate(e.Y)
-			if err != nil {
-				return nil, err
-			}
-			if e.Op == parser.TokenAnd {
-				return and{x, y}, nil
-			}
-			return or{x, y}, nil
-		case parser.TokenEq, parser.TokenNE:
-			return compileCompare(e)
-		default:
-			return nil, &Error{Span: e.OpSpan, Message: "unsupported operator; a condition compares a Field with == or !="}
-		}
-	case *parser.CallExpr:
-		if e.Func.Name != "not" {
-			return nil, errorAt(e.Func, "unknown function %q", e.Func.Name)
-		}
-		if len(e.Args) != 1 {
-			return nil, errorAt(e, "not takes one condition")
-		}
-		x, err := compilePredicate(e.Args[0])
-		if err != nil {
-			return nil, err
-		}
-		return not{x}, nil
-	default:
-		return nil, errorAt(e, "expected a condition, such as level == \"error\"")
+// named notes that the tail names the Attribute key.
+func (c *compiler) named(key string) {
+	if !c.tail {
+		return
 	}
+	for _, name := range c.names {
+		if name == key {
+			return
+		}
+	}
+	c.names = append(c.names, key)
 }
 
-func compileCompare(e *parser.BinaryExpr) (predicate, error) {
-	op := opEq
-	if e.Op == parser.TokenNE {
-		op = opNE
-	}
-	ident, ok := e.X.(*parser.Ident)
-	if !ok {
-		if call, isCall := e.X.(*parser.CallExpr); isCall {
-			return nil, errorAt(call.Func, "unknown function %q", call.Func.Name)
-		}
-		return nil, errorAt(e.X, "expected a Field on the left of %s", op)
-	}
-	field := fieldNamed(ident.Name)
-	value, err := compileLiteral(e.Y)
-	if err != nil {
-		return nil, err
-	}
-	if field.Name == "time" {
-		return nil, errorAt(e, "time can't be compared yet; the time range sets it")
-	}
-	return compare{field: field, op: op, value: value}, nil
+// scope is what names mean at a stage: the columns of its rows.
+type scope struct {
+	// logs is set while the rows are Logs: a name that isn't a column is a
+	// built-in field or an Attribute.
+	logs bool
+	// columns are a table's columns, or the columns extend added to Logs.
+	columns []column
 }
 
-// compileLiteral compiles an expression that must be a literal value.
-func compileLiteral(e parser.Expr) (Literal, error) {
-	switch e := e.(type) {
-	case *parser.BasicLit:
-		switch e.Kind {
-		case parser.StringLiteral:
-			return Literal{Kind: parser.StringLiteral, String: e.Value}, nil
-		case parser.BoolLiteral:
-			return Literal{Kind: parser.BoolLiteral, Bool: e.Value == "true"}, nil
-		default:
-			return numberLiteral(e, false)
-		}
-	case *parser.UnaryExpr:
-		if lit, ok := e.X.(*parser.BasicLit); ok && lit.Kind == parser.NumberLiteral {
-			return numberLiteral(lit, e.Op == parser.TokenMinus)
-		}
-	case *parser.CallExpr:
-		return Literal{}, errorAt(e.Func, "unknown function %q", e.Func.Name)
-	}
-	return Literal{}, errorAt(e, "expected a value: a string, a number, true or false")
+type column struct {
+	name string
+	t    valueType
 }
 
-func numberLiteral(lit *parser.BasicLit, negative bool) (Literal, error) {
-	n, err := strconv.ParseFloat(lit.Value, 64)
-	if err != nil || math.IsInf(n, 0) {
-		return Literal{}, errorAt(lit, "%s is too large a number", lit.Value)
+func logScope() scope {
+	return scope{logs: true}
+}
+
+func (s scope) lookup(name string) (column, bool) {
+	for _, col := range s.columns {
+		if col.name == name {
+			return col, true
+		}
 	}
-	if negative {
-		n = -n
+	return column{}, false
+}
+
+func (s scope) names() []string {
+	names := make([]string, len(s.columns))
+	for i, col := range s.columns {
+		names[i] = col.name
 	}
-	return Literal{Kind: parser.NumberLiteral, Number: n}, nil
+	return names
+}
+
+// builtInFields are the built-in fields every Log has, and their types.
+var builtInFields = map[string]valueType{
+	"time": timeType, "level": stringType, "message": stringType, "service": stringType,
+	"environment": stringType, "trace_id": stringType, "span_id": stringType,
+}
+
+// builtInOrder is the order of the built-in fields in a table of Logs.
+var builtInOrder = []string{"time", "level", "message", "service", "environment", "trace_id", "span_id"}
+
+// fieldAliases are other names for built-in fields, so that pasted Axiom
+// queries work.
+var fieldAliases = map[string]string{"_time": "time"}
+
+// attrKey is an Attribute of one type.
+type attrKey struct {
+	t   storage.AttributeType
+	key string
 }
