@@ -4,7 +4,7 @@
 
 **Blocked by:** M1-02, M3-01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] The compiler prints a Query as readable SQL against the `logs` view, one CTE per stage.
 - [x] A query-app operation returns that readable SQL for a Query.
