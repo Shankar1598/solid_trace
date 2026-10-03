@@ -138,10 +138,17 @@ func logRetry(message string, err error) {
 //
 // A day is kept while any of its time is within Retention, as Log ingest
 // still accepts Logs of that time.
+//
+// A projects table with no rows deletes nothing: it is far likelier to be a
+// reset or restored Console database than every Project deleted.
 func (c *Cleanup) DeleteExpiredLogs(now time.Time) error {
 	retention, err := c.projects.ProjectLogRetention()
 	if err != nil {
 		return fmt.Errorf("read projects: %w", err)
+	}
+	if len(retention) == 0 {
+		logger.L.Warn("Console's projects table has no rows, so no Project's Logs are deleted this pass")
+		return nil
 	}
 	projects, err := c.store.LogProjects()
 	if err != nil {

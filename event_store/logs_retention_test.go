@@ -192,6 +192,28 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 	assertDeleted("after another pass")
 }
 
+func TestAnEmptyProjectsTableDeletesNoProjectsLogs(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedProject(t, env.SQLitePath, 123, 0)
+	postAndProcess(t, env, logJSON(t, "kept", testNow, nil))
+
+	// Console's database comes back with no Projects, as after a reset.
+	consoleExec(t, env, "DELETE FROM projects")
+	env.DeleteExpiredLogs(t)
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"kept"}) {
+		t.Errorf("Expected the Logs kept while no Project exists, got %v", got)
+	}
+
+	// Once Projects exist again, a missing one's Logs go.
+	seedProject(t, env.SQLitePath, 456, 0)
+	env.DeleteExpiredLogs(t)
+	if got := messages(latestLogs(t, env, 123, 10)); len(got) != 0 {
+		t.Errorf("Expected the deleted Project's Logs gone, got %v", got)
+	}
+}
+
 // hourBytes is the size of a Project's files of an hour.
 func hourBytes(t *testing.T, env *TestEnv, projectID uint32, hour time.Time) int64 {
 	t.Helper()
