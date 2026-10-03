@@ -152,6 +152,84 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert response.parsed_body["error"].present?
   end
 
+  test "the histogram counts the Project's Logs over the range and bucket it was given" do
+    levels = { trace: 0, debug: 0, info: 4, warn: 1, error: 2, fatal: 0, none: 1 }
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/histogram")
+      .with(body: {
+        query: "search \"boom\"",
+        from: "2026-10-03T09:00:00.000Z",
+        to: "2026-10-03T10:00:00.000Z",
+        bucket_seconds: 60,
+      }.to_json)
+      .to_return(status: 200, body: {
+        bucket_seconds: 60,
+        buckets: [ { time: "2026-10-03T09:00:00Z", count: 8, levels: levels } ],
+        count: 8,
+        levels: levels,
+      }.to_json)
+
+    get histogram_project_logs_url(@project, org_slug: @organization.slug), params: {
+      query: "search \"boom\"",
+      from: "2026-10-03T11:00:00+02:00",
+      to: "2026-10-03T10:00:00Z",
+      bucket_seconds: "60",
+    }
+
+    assert_response :success
+    assert_equal 8, response.parsed_body["count"]
+    assert_equal 2, response.parsed_body["levels"]["error"]
+    assert_equal [ 8 ], response.parsed_body["buckets"].map { |bucket| bucket["count"] }
+  end
+
+  test "someone outside the Organization can't count its Logs" do
+    sign_in_as(@outsider)
+    histogram = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/histogram")
+
+    get histogram_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", bucket_seconds: "60" }
+
+    assert_response :not_found
+    assert_not_requested histogram
+  end
+
+  test "a histogram of a Query with mistakes answers with EventStore's errors" do
+    errors = [ { message: "unknown stage \"nope\"", line: 1, column: 1, end_line: 1, end_column: 5 } ]
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/histogram")
+      .to_return(status: 400, body: { errors: errors }.to_json)
+
+    get histogram_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "nope", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", bucket_seconds: "60" }
+
+    assert_response :bad_request
+    assert_equal "unknown stage \"nope\"", response.parsed_body["errors"].first["message"]
+  end
+
+  test "a histogram's range or bucket that can't be read is refused before EventStore" do
+    histogram = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/histogram")
+
+    get histogram_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "", from: "last hour", to: "2026-10-03T10:00:00Z", bucket_seconds: "60" }
+    assert_response :bad_request
+    assert response.parsed_body["error"].present?
+
+    get histogram_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", bucket_seconds: "a minute" }
+    assert_response :bad_request
+    assert response.parsed_body["error"].present?
+
+    assert_not_requested histogram
+  end
+
+  test "the histogram answers 502 when EventStore can't" do
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/histogram").to_timeout
+
+    get histogram_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", bucket_seconds: "60" }
+
+    assert_response :bad_gateway
+    assert response.parsed_body["error"].present?
+  end
+
   test "one Log is fetched by its id, near its own time" do
     id = "0199a8b2-6a1e-7c3d-9f00-1234567890ab"
     stub_request(:get, "#{@base_url}/api/#{@project.id}/logs/#{id}")
