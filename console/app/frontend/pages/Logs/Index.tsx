@@ -5,7 +5,8 @@ import { Play, Square } from 'lucide-react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { fetchLogPage } from '@/lib/logs/api'
+import { fetchLogPage, validateQuery } from '@/lib/logs/api'
+import { EMPTY_BUILDER, builderOf, flipFilter, hide, queryOf, removeFilter, search, showOnly, type Builder } from '@/lib/logs/builder'
 import {
   RANGE_PRESETS,
   openExplorer,
@@ -17,10 +18,14 @@ import {
   type Explorer,
   type ExplorerState,
   type TimeRange,
+  typeQuery,
 } from '@/lib/logs/explorerState'
-import { addOlderPage, startStream, streamEnd, type Stream } from '@/lib/logs/stream'
+import { addOlderPage, startStream, streamEnd, type Log, type Stream } from '@/lib/logs/stream'
 import { SharedProps } from '@/types'
+import { BuilderBar, type BuilderView } from './components/BuilderBar'
+import { LogInspector } from './components/LogInspector'
 import { LogStream } from './components/LogStream'
+import { TagMenuProvider, type OnFilter } from './components/TagMenu'
 
 interface ProjectOption {
   id: number
@@ -55,6 +60,9 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
   // reading the URL once here is enough to undo the last run.
   const [explorer, setExplorer] = useState<Explorer>(() => openExplorer(window.location.search))
   const [result, setResult] = useState<Result>({ status: 'running' })
+  const [builderView, setBuilderView] = useState<BuilderView>(() =>
+    explorer.current.query === '' ? { status: 'ready', builder: EMPTY_BUILDER } : { status: 'reading' })
+  const [inspected, setInspected] = useState<Log | null>(null)
   const currentRun = useRef<Run | null>(null)
 
   const start = useCallback((state: ExplorerState) => {
@@ -78,12 +86,41 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
     // Runs once per mount: later runs start from the bar.
   }, [])
 
+  // The Builder reads chips only from validate: the browser never parses a
+  // Query, even one it wrote.
+  useEffect(() => {
+    if (builderView.status !== 'reading') return
+    const query = explorer.current.query
+    const controller = new AbortController()
+    validateQuery({ orgSlug, projectSlug: project.slug, query, signal: controller.signal })
+      .then(({ chips }) => setBuilderView(chips ? { status: 'ready', builder: builderOf(chips) } : { status: 'unshowable', query }))
+      .catch(() => {
+        if (!controller.signal.aborted) setBuilderView({ status: 'unshowable', query })
+      })
+    return () => controller.abort()
+    // Once per mount, like the first run.
+  }, [])
+
   const commit = (next: Explorer) => {
     const { explorer: ran, push } = runExplorer(next)
     setExplorer(ran)
     if (push) router.push({ url: basePath + push, preserveState: true, preserveScroll: true })
     start(ran.current)
   }
+
+  /** Edits the Builder; its Query text becomes the draft, run at once unless only typed. */
+  const changeBuilder = (builder: Builder, run: boolean) => {
+    setBuilderView({ status: 'ready', builder })
+    const next = typeQuery(explorer, queryOf(builder))
+    if (run) commit(next)
+    else setExplorer(next)
+  }
+
+  const builder = explorer.current.mode === 'builder' && builderView.status === 'ready' ? builderView.builder : null
+  const onFilter: OnFilter = builder && ((kind, field, value) =>
+    changeBuilder(kind === 'show' ? showOnly(builder, field, value) : hide(builder, field, value), true))
+
+  const closeInspector = useCallback(() => setInspected(null), [])
 
   const cancel = () => {
     currentRun.current?.controller.abort()
@@ -119,12 +156,22 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
           <ProjectSelect project={project} projects={projects} onChange={openProject} />
           <RangeSelect range={explorer.draft.range} onChange={range => commit(pickRange(explorer, range))} />
-          {explorer.current.query !== '' && (
+          <div className="h-5 w-px bg-border" />
+          {explorer.current.mode === 'builder' ? (
+            <BuilderBar
+              view={builderView}
+              onFlip={i => builder && changeBuilder(flipFilter(builder, i), true)}
+              onRemove={i => builder && changeBuilder(removeFilter(builder, i), true)}
+              onSearch={text => builder && changeBuilder(search(builder, text), false)}
+              onRun={() => commit(explorer)}
+              onClear={() => changeBuilder(EMPTY_BUILDER, true)}
+            />
+          ) : explorer.current.query !== '' && (
             <code className="truncate max-w-[50%] rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground" title={explorer.current.query}>
               {explorer.current.query}
             </code>
           )}
-          <div className="flex-1" />
+          {explorer.current.mode !== 'builder' && <div className="flex-1" />}
           {running ? (
             <Button variant="outline" size="sm" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
           ) : (
@@ -132,15 +179,22 @@ export default function LogsIndex({ project, projects }: LogsIndexProps) {
           )}
         </div>
 
-        <div className="flex-1 min-h-0">
-          <ResultArea result={result} onLoadOlder={loadOlder} />
+        <div className="relative flex-1 min-h-0">
+          <TagMenuProvider onFilter={onFilter}>
+            <ResultArea result={result} onLoadOlder={loadOlder} selectedId={inspected?.id ?? null} onSelect={setInspected} />
+            {inspected && (
+              <LogInspector key={inspected.id} log={inspected} orgSlug={orgSlug} projectSlug={project.slug} onClose={closeInspector} />
+            )}
+          </TagMenuProvider>
         </div>
       </div>
     </DashboardLayout>
   )
 }
 
-function ResultArea({ result, onLoadOlder }: { result: Result; onLoadOlder: () => void }) {
+function ResultArea({ result, onLoadOlder, selectedId, onSelect }: {
+  result: Result; onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void
+}) {
   switch (result.status) {
     case 'running':
       return <Notice>Running the Query…</Notice>
@@ -157,6 +211,8 @@ function ResultArea({ result, onLoadOlder }: { result: Result; onLoadOlder: () =
           loadingOlder={result.loadingOlder}
           olderError={result.olderError}
           onLoadOlder={onLoadOlder}
+          selectedId={selectedId}
+          onSelect={onSelect}
         />
       )
   }
