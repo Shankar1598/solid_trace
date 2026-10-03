@@ -142,9 +142,157 @@ func (p *parser) stage(pipe Span) (Stage, error) {
 			Keyword: keyword.Span,
 			Term:    &BasicLit{ValueSpan: term.Span, Kind: StringLiteral, Value: term.Value},
 		}, nil
+	case "project":
+		columns, err := p.namedExprs(keyword, true)
+		if err != nil {
+			return nil, err
+		}
+		return &ProjectStage{Pipe: pipe, Keyword: keyword.Span, Columns: columns}, nil
+	case "extend":
+		columns, err := p.namedExprs(keyword, true)
+		if err != nil {
+			return nil, err
+		}
+		return &ExtendStage{Pipe: pipe, Keyword: keyword.Span, Columns: columns}, nil
+	case "summarize":
+		s := &SummarizeStage{Pipe: pipe, Keyword: keyword.Span}
+		if !p.atWord("by") {
+			aggregates, err := p.namedExprs(keyword, true)
+			if err != nil {
+				return nil, err
+			}
+			s.Aggregates = aggregates
+		}
+		if p.atWord("by") {
+			by, _ := p.next()
+			columns, err := p.namedExprs(by, true)
+			if err != nil {
+				return nil, err
+			}
+			s.By = columns
+		}
+		return s, nil
+	case "sort", "order":
+		by, ok := p.next()
+		if !ok || by.Kind != TokenIdentifier || by.Value != "by" {
+			return nil, p.errorf(keyword.Span, "%s needs by, as in %s by time desc", keyword.Value, keyword.Value)
+		}
+		s := &SortStage{Pipe: pipe, Keyword: unionSpans(keyword.Span, by.Span)}
+		for {
+			key, err := p.sortKey(by)
+			if err != nil {
+				return nil, err
+			}
+			s.Keys = append(s.Keys, key)
+			if tok, ok := p.peek(); !ok || tok.Kind != TokenComma {
+				return s, nil
+			}
+			p.pos++
+		}
+	case "take", "limit":
+		count, err := p.count(keyword)
+		if err != nil {
+			return nil, err
+		}
+		return &TakeStage{Pipe: pipe, Keyword: keyword.Span, Count: count}, nil
+	case "top":
+		count, err := p.count(keyword)
+		if err != nil {
+			return nil, err
+		}
+		by, ok := p.next()
+		if !ok || by.Kind != TokenIdentifier || by.Value != "by" {
+			return nil, p.errorf(unionSpans(keyword.Span, count.Span()), "top needs by, as in top 10 by duration")
+		}
+		key, err := p.sortKey(by)
+		if err != nil {
+			return nil, err
+		}
+		return &TopStage{Pipe: pipe, Keyword: keyword.Span, Count: count, Key: key}, nil
+	case "count":
+		return &CountStage{Pipe: pipe, Keyword: keyword.Span}, nil
+	case "distinct":
+		columns, err := p.namedExprs(keyword, false)
+		if err != nil {
+			return nil, err
+		}
+		return &DistinctStage{Pipe: pipe, Keyword: keyword.Span, Columns: columns}, nil
 	default:
 		return nil, p.errorf(keyword.Span, "unknown stage %q", keyword.Value)
 	}
+}
+
+// atWord reports whether the next token is the word.
+func (p *parser) atWord(word string) bool {
+	tok, ok := p.peek()
+	return ok && tok.Kind == TokenIdentifier && tok.Value == word
+}
+
+// namedExprs parses one or more columns after a keyword, separated by
+// commas: expr, or name = expr when naming is allowed.
+func (p *parser) namedExprs(after Token, naming bool) ([]*NamedExpr, error) {
+	var columns []*NamedExpr
+	for {
+		if _, ok := p.peek(); !ok {
+			return nil, p.errorf(after.Span, "expected a column after %s", p.describe(after, true))
+		}
+		column := &NamedExpr{}
+		if naming && p.pos+1 < len(p.tokens) && p.tokens[p.pos+1].Kind == TokenAssign {
+			name, _ := p.next()
+			if name.Kind != TokenIdentifier && name.Kind != TokenQuotedIdentifier {
+				return nil, p.errorf(name.Span, "expected a column name before =, got %s", p.describe(name, true))
+			}
+			column.Name = &Ident{Name: name.Value, NameSpan: name.Span, Quoted: name.Kind == TokenQuotedIdentifier}
+			after, _ = p.next()
+		}
+		x, err := p.expr(0)
+		if err != nil {
+			return nil, err
+		}
+		column.X = x
+		columns = append(columns, column)
+		tok, ok := p.peek()
+		if !ok || tok.Kind != TokenComma {
+			return columns, nil
+		}
+		after, _ = p.next()
+	}
+}
+
+// sortKey parses expr [asc | desc] [nulls first | nulls last].
+func (p *parser) sortKey(after Token) (*SortKey, error) {
+	if _, ok := p.peek(); !ok {
+		return nil, p.errorf(after.Span, "expected what to sort by after %s", p.describe(after, true))
+	}
+	x, err := p.expr(0)
+	if err != nil {
+		return nil, err
+	}
+	key := &SortKey{X: x, EndSpan: nullSpan()}
+	if p.atWord("asc") || p.atWord("desc") {
+		tok, _ := p.next()
+		key.Asc = tok.Value == "asc"
+		key.EndSpan = tok.Span
+	}
+	if p.atWord("nulls") {
+		nulls, _ := p.next()
+		which, ok := p.next()
+		if !ok || which.Kind != TokenIdentifier || (which.Value != "first" && which.Value != "last") {
+			return nil, p.errorf(nulls.Span, "expected nulls first or nulls last")
+		}
+		key.Nulls = which.Value
+		key.EndSpan = which.Span
+	}
+	return key, nil
+}
+
+// count parses the whole number of rows after take or top.
+func (p *parser) count(keyword Token) (*BasicLit, error) {
+	tok, ok := p.next()
+	if !ok || tok.Kind != TokenNumber {
+		return nil, p.errorf(keyword.Span, "%s needs a number of rows, as in %s 10", keyword.Value, keyword.Value)
+	}
+	return &BasicLit{ValueSpan: tok.Span, Kind: NumberLiteral, Value: tok.Value}, nil
 }
 
 // precedence is how tightly a binary operator binds, or -1 for a token that

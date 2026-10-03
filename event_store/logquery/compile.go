@@ -47,15 +47,14 @@ type Query struct {
 	from, to time.Time
 	// table is set when the Query returns a table rather than Log rows.
 	table bool
-	// take is how many Log rows a Query of Log rows returns at most, or 0
-	// for no limit.
-	take int
+	// take is how many Log rows a Query of Log rows returns at most, if
+	// hasTake.
+	take    int
+	hasTake bool
 	// reads are the Attributes, by type, that the tail reads from each Log.
 	reads []attrKey
-	// output is the table's columns, read off the tail's last relation.
-	output []outputColumn
-	// ordered is set when the tail's last relation carries a sort order.
-	ordered bool
+	// output is the table's columns, over the tail's last stage.
+	output []namedValue
 }
 
 // Compile parses and checks a Query's text for the given bounds. The error,
@@ -103,10 +102,9 @@ func (q *Query) Table() bool {
 	return q.table
 }
 
-// Take is how many Log rows a Query of Log rows returns at most, or 0 for no
-// limit.
-func (q *Query) Take() int {
-	return q.take
+// Take is how many Log rows a Query of Log rows returns at most, if it says.
+func (q *Query) Take() (int, bool) {
+	return q.take, q.hasTake
 }
 
 func errorAt(node parser.Node, format string, args ...any) *Error {
@@ -140,11 +138,8 @@ func (c *compiler) read(t storage.AttributeType, key string) {
 	}
 }
 
-// named notes that the tail names the Attribute key.
+// named notes that the Query names the Attribute key.
 func (c *compiler) named(key string) {
-	if !c.tail {
-		return
-	}
 	for _, name := range c.names {
 		if name == key {
 			return

@@ -145,7 +145,11 @@ func (s *LogStore) hoursWithLogs(projectID uint32, from, to time.Time) ([]time.T
 	// from one to the other between them.
 	s.publishMu.RLock()
 	defer s.publishMu.RUnlock()
+	return s.hoursWithLogsLocked(projectID, from, to)
+}
 
+// hoursWithLogsLocked is hoursWithLogs, for a caller holding publishMu.
+func (s *LogStore) hoursWithLogsLocked(projectID uint32, from, to time.Time) ([]time.Time, error) {
 	hours := map[time.Time]bool{}
 	first, last := from.Truncate(time.Hour), to.Add(-time.Microsecond).Truncate(time.Hour)
 
@@ -254,6 +258,119 @@ func (s *LogStore) scanHour(ctx context.Context, scan LogScan, hour, from, to ti
 		SELECT * FROM (%s)
 		ORDER BY time DESC, id DESC
 		LIMIT %d`, strings.Join(sources, "\nUNION ALL BY NAME\n"), limit))
+}
+
+// LogTableScan asks for a table worked out from a Project's Logs in a time
+// range.
+type LogTableScan struct {
+	ProjectID uint32
+	// From and To are the time range, [From, To).
+	From, To time.Time
+	// Where returns the SQL condition a Log must meet, for a source whose
+	// columns are given; "" keeps every Log.
+	Where func(LogColumns) string
+	// Select returns the select list each source's Logs are read with. Every
+	// source's list must give the same columns.
+	Select func(LogColumns) string
+	// Query returns the query that works the table out from logs, the Logs
+	// read, as SQL to use as a subquery.
+	Query func(logs string) string
+}
+
+// ScanLogTable runs a query over a Project's Logs in a time range, from its
+// hot table, its late Logs and its files, and returns its rows.
+//
+// The query runs once over the whole range, while no export can publish, so
+// that it sees each Log exactly once: unlike ScanLogs, an export waits for
+// it.
+func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any, error) {
+	from, to := scan.From.UTC(), scan.To.UTC()
+	if !to.After(from) {
+		to = from
+	}
+	s.publishMu.RLock()
+	defer s.publishMu.RUnlock()
+
+	hours, err := s.hoursWithLogsLocked(scan.ProjectID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	hot, err := s.tableExists(hotTable(scan.ProjectID))
+	if err != nil {
+		return nil, err
+	}
+	read := func(source string, cols LogColumns, from, to time.Time) string {
+		condition := timeRange(from, to)
+		if scan.Where != nil {
+			if w := scan.Where(cols); w != "" {
+				condition += " AND (" + w + ")"
+			}
+		}
+		return fmt.Sprintf("SELECT %s FROM (%s) WHERE %s", scan.Select(cols), source, condition)
+	}
+	sources := []string{read(fmt.Sprintf("SELECT * FROM %s.%s WHERE project_id = %d", logsCatalog, lateTable, scan.ProjectID),
+		LogColumns{late: true}, from, to)}
+
+	// The hot table and the files, a day at a time: each day by its own
+	// promoted set.
+	days := map[time.Time][]time.Time{}
+	var dayOrder []time.Time
+	for _, hour := range hours {
+		day := LogDay(hour)
+		if _, ok := days[day]; !ok {
+			dayOrder = append(dayOrder, day)
+		}
+		days[day] = append(days[day], hour)
+	}
+	for _, day := range dayOrder {
+		set := s.PromotedSet(scan.ProjectID, day)
+		cols := LogColumns{set: set}
+		dayFrom, dayTo := day, day.Add(24*time.Hour)
+		if from.After(dayFrom) {
+			dayFrom = from
+		}
+		if to.Before(dayTo) {
+			dayTo = to
+		}
+		if hot {
+			sources = append(sources, read(withColumns(fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(scan.ProjectID)), set),
+				cols, dayFrom, dayTo))
+		}
+		var files []string
+		for _, hour := range days[day] {
+			hourFiles, err := s.files.Hour(scan.ProjectID, hour)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, hourFiles...)
+		}
+		if len(files) > 0 {
+			sources = append(sources, read(withColumns(readFiles(files), set), cols, dayFrom, dayTo))
+		}
+	}
+
+	rows, err := s.db.QueryContext(ctx, scan.Query(strings.Join(sources, "\nUNION ALL BY NAME\n")))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	table := [][]any{}
+	for rows.Next() {
+		row := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range row {
+			pointers[i] = &row[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			return nil, err
+		}
+		table = append(table, row)
+	}
+	return table, rows.Err()
 }
 
 // withColumns makes sure the rows of source have a column for each key of a

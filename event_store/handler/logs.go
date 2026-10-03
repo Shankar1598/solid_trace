@@ -19,6 +19,8 @@ import (
 const (
 	defaultQueryLogs = 200
 	maxQueryLogs     = 1000
+	// maxTableRows is how many rows of a table a run returns at most.
+	maxTableRows = 10000
 )
 
 // LogsHandler serves stored Logs on the query app: it runs and validates
@@ -82,6 +84,9 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	}
 
 	from, to := query.Range()
+	if query.Table() {
+		return h.table(c, projectID, query, from, to)
+	}
 	logs, err := h.logs.ScanLogs(c.UserContext(), storage.LogScan{
 		ProjectID: projectID,
 		From:      from,
@@ -100,6 +105,31 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		next = &cursor
 	}
 	return c.JSON(fiber.Map{"logs": logs, "next_cursor": next})
+}
+
+// table answers a run of a Query that returns a table: {"table": {"columns":
+// [{"name", "type"}], "rows": [[…]], "truncated"}}, at most maxTableRows
+// rows, truncated when there were more.
+func (h *LogsHandler) table(c *fiber.Ctx, projectID uint32, query *logquery.Query, from, to time.Time) error {
+	raw, err := h.logs.ScanLogTable(c.UserContext(), storage.LogTableScan{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Where:     query.Where,
+		Select:    query.Select,
+		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
+	})
+	if err != nil {
+		logger.L.Error("Log table query failed", "project_id", projectID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	truncated := len(raw) > maxTableRows
+	raw = raw[:min(len(raw), maxTableRows)]
+	rows := make([][]any, len(raw))
+	for i, r := range raw {
+		rows[i] = query.Row(r)
+	}
+	return c.JSON(fiber.Map{"table": fiber.Map{"columns": query.Columns(), "rows": rows, "truncated": truncated}})
 }
 
 // POST /api/:project_id/logs/validate
