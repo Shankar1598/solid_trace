@@ -3,6 +3,7 @@ package logprocessing
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -20,6 +21,9 @@ type CleanupStore interface {
 	DeleteLogDaysBefore(projectID uint32, day time.Time) error
 	// DeleteProjectLogs deletes everything of a Project's Logs.
 	DeleteProjectLogs(projectID uint32) error
+	// EnforceDiskLimit deletes the oldest hours of Log files, of any
+	// Project, until the files fit limit.
+	EnforceDiskLimit(limit storage.LogDiskLimit) error
 }
 
 // Projects tells which Projects exist, and the Retention of each.
@@ -31,16 +35,89 @@ type Projects interface {
 	ProjectLogRetention() (map[uint32]int, error)
 }
 
-// Cleanup keeps Logs from outliving their Retention or their Project.
+const (
+	// cleanupAfterHour is how long after each hour start the cleanup runs,
+	// so that it follows the hourly export.
+	cleanupAfterHour = 5 * time.Minute
+	// retryCleanupAfter is how soon a failed cleanup runs again.
+	retryCleanupAfter = time.Minute
+)
+
+// Cleanup is the timer inside EventStore that keeps Logs from outliving
+// their Retention or their Project, and Log files from passing the disk
+// limit. Once a UTC day by its clock, and when it starts, it deletes expired
+// Logs; a few minutes past each hour start, it enforces the disk limit. A
+// failed run is tried again a minute later.
 type Cleanup struct {
-	store    CleanupStore
-	projects Projects
-	clock    clock.Clock
+	store     CleanupStore
+	projects  Projects
+	diskLimit storage.LogDiskLimit
+	clock     clock.Clock
+
+	stop     chan struct{}
+	stopOnce sync.Once
+	done     chan struct{}
+	started  bool
 }
 
 // NewCleanup constructs the Log cleanup. It reads the time from clock.
-func NewCleanup(store CleanupStore, projects Projects, clock clock.Clock) *Cleanup {
-	return &Cleanup{store: store, projects: projects, clock: clock}
+func NewCleanup(store CleanupStore, projects Projects, diskLimit storage.LogDiskLimit, clock clock.Clock) *Cleanup {
+	return &Cleanup{
+		store: store, projects: projects, diskLimit: diskLimit, clock: clock,
+		stop: make(chan struct{}), done: make(chan struct{}),
+	}
+}
+
+// Start runs the timer in its own goroutine.
+func (c *Cleanup) Start() {
+	c.started = true
+	go c.run()
+}
+
+// Stop stops the timer, waiting for a run in progress to end.
+func (c *Cleanup) Stop() {
+	c.stopOnce.Do(func() { close(c.stop) })
+	if c.started {
+		<-c.done
+	}
+}
+
+func (c *Cleanup) run() {
+	defer close(c.done)
+	var expiredDeleted time.Time // the UTC day of the last whole daily pass
+	for {
+		now := c.clock.Now()
+		failed := false
+		if day := storage.LogDay(now); !day.Equal(expiredDeleted) {
+			if err := c.DeleteExpiredLogs(now); err != nil {
+				logger.L.Error("Deleting expired Logs failed, retrying", "error", err, "retry_in", retryCleanupAfter)
+				failed = true
+			} else {
+				expiredDeleted = day
+			}
+		}
+		if err := c.store.EnforceDiskLimit(c.diskLimit); err != nil {
+			logger.L.Error("Enforcing the Log disk limit failed, retrying", "error", err, "retry_in", retryCleanupAfter)
+			failed = true
+		}
+
+		wait := retryCleanupAfter
+		if !failed {
+			now = c.clock.Now()
+			next := now.Truncate(time.Hour).Add(cleanupAfterHour)
+			if !next.After(now) {
+				next = next.Add(time.Hour)
+			}
+			wait = next.Sub(now)
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-c.stop:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 // DeleteExpiredLogs is the daily pass at now. It deletes each Project's Logs
