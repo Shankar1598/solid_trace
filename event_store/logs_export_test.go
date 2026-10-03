@@ -208,3 +208,40 @@ func TestACrashBetweenStagingAndRenameLeavesNoHalfWrittenFileAndLosesNoLog(t *te
 	env.ExportLogs(t)
 	assertListsUnchanged(t, env, 123, want, "after the next export")
 }
+
+func TestLateLogsOfAnExportedHourGetLateFilesAndListTheSame(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(10, 30))
+	postAndProcess(t, env, logJSON(t, "ten past ten", at(10, 10), map[string]any{"user": "ada", "status": 200}))
+	env.Clock.Set(at(12, 0))
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 123, at(10, 0), 1)
+
+	// Late Logs of hour 10: one with the day's promoted keys, one with a
+	// key the day never promoted.
+	env.Clock.Set(at(13, 30))
+	postAndProcess(t, env,
+		logJSON(t, "late ten", at(10, 40), map[string]any{"user": "bob", "status": 500}),
+		logJSON(t, "late ten, new key", at(10, 41), map[string]any{"region": "eu"}),
+	)
+	want := latestLogs(t, env, 123, 100)
+	if got := messages(want); !slices.Equal(got, []string{"late ten, new key", "late ten", "ten past ten"}) {
+		t.Fatalf("Unexpected Logs before the late file: %v", got)
+	}
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the first late file")
+	assertHourFiles(t, env, 123, at(10, 0), 2)
+
+	postAndProcess(t, env, logJSON(t, "later still", at(10, 50), map[string]any{"user": "cy"}))
+	want = latestLogs(t, env, 123, 100)
+	env.Clock.Set(at(14, 0))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the second late file")
+	assertHourFiles(t, env, 123, at(10, 0), 3)
+
+	env.Reopen(t)
+	assertListsUnchanged(t, env, 123, want, "after a restart")
+}
