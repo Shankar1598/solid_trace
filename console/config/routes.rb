@@ -38,9 +38,10 @@ Rails.application.routes.draw do
         resources :comments, only: [ :create, :destroy ]
       end
 
-      resources :logs, only: [ :index ] do
+      resources :logs, only: [ :index, :show ] do
         collection do
           get :query
+          get :validate
         end
       end
 
