@@ -149,15 +149,17 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 	s.publishMu.Lock()
 	defer s.publishMu.Unlock()
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		// A failed COMMIT has rolled back, or left the connection unknown.
+		// The commit may have happened anyway, so leave the staged files
+		// for the next export's recovery to settle.
 		discardConn(conn)
-		rolledBack = true
+		rolledBack, staged = true, nil
 		return err
 	}
 	committed = true
 	for _, file := range staged {
 		if err := publishStagedLogFile(file); err != nil {
-			// Startup publishes it: its Logs are gone from DuckDB.
+			// Its Logs are gone from DuckDB, so the next export or startup
+			// publishes it.
 			return fmt.Errorf("publish %s: %w", file, err)
 		}
 	}
