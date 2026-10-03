@@ -66,3 +66,7 @@ I documented the host prerequisite in the compose file: `sysctl net.ipv4.ip_unpr
 - `docker compose config` fails with "dependency cycle detected: db_prepare". The cycle was already on the base branch. `db_prepare` inherits `depends_on: [db_prepare]` from the `console` anchor. `depends_on: []` on `db_prepare` fixes it, and the rest of the file then parses.
 - Console has no request-body cap now. Thruster's `MAX_REQUEST_BODY` defaults to 0 (no limit), and nginx's 1 MB default used to cover Console too. This belongs with the deferred hardening, alongside TLS.
 - M1-04: no proxy caps ingest bodies any more. Fiber's 4 MB app-wide `BodyLimit` is the only limit until M1-04 sets its own.
+
+### 2026-10-03 code review
+
+- **Console listens on port 3000**, decided by the user. This replaces the port-80 sysctl prerequisite. Thruster runs on 3000 and Puma on 3001, in compose and in the image. The compose dependency cycle follow-up is fixed with `depends_on: []` on `db_prepare`. See the spec's 2026-10-03 code review entry, items A and B.

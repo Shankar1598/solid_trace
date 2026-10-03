@@ -298,3 +298,31 @@ Tickets for all three milestones are in [issues/](issues/), named by milestone (
 ### 2026-10-02 Angie removed
 
 At the user's request, during implementation: [M1-11](issues/M1-11-remove-angie.md) removes Angie (nginx) from the deploy. EventStore's ingest app listens on TCP itself and Console serves through Thruster, so the Log routes' body limits live only in EventStore. M1-04 and the Body bullet are amended.
+
+### 2026-10-03 code review
+
+Fixes from the code review of `feature/logs-v1` (branch `logs-v1/review-fixes`). One line per item.
+
+**Must fix**
+1. **A long read holds up nothing** (`9293e59`). Each read (`storage/logs_read.go`, `logRead`) opens a DuckDB transaction on its own connection and lists and pins the Log files it needs, both under `publishMu` only while it begins, then runs without the lock. An export commits and renames while it runs; DuckDB's snapshot still shows the read the Logs as they were. Retention, the disk limit and Project deletion leave pinned files and return `ErrLogFilesInUse`, and the cleanup retries a minute later. Choice: `RunSQL`'s SQL now runs inside that transaction, which commits when the run ends, so a `BEGIN` in user SQL fails. **Cancel:** the DuckDB driver interrupts a query when its context ends, and every read passes the request context. A context tied to the client's connection isn't feasible end to end, so the query isn't stopped when the client goes away. Fiber v2 (fasthttp) gives handlers no context that ends with the connection. Puma doesn't tell a Rails action that the browser left, so Console's call to EventStore runs on after the explorer's Cancel anyway.
+2. **No read timeout on Log runs** (`1cc1ad7`). `query_logs`, `logs_histogram` and `run_logs_sql` pass `read_timeout: nil`; the open timeout and the Event calls are unchanged.
+3. **`contains` matches arrays** (`3ebe6eb`). `contains`, `contains_cs` and their negations on an Attribute read its string, or else its JSON text, so `tags contains "db"` matches `["api","db"]`. Choice: `search` is unchanged, because the spec scopes it to the message and string Attributes. The docs say to use `where … contains` for arrays.
+4. **Stable disk-limit default** (`af246cc`). With `logs_disk_limit_gb` unset, the limit is half the size of the disk holding the Log files, read once at startup (`storage.NewLogDiskLimit`). Why half: Logs are the largest thing on the disk, but Pebble, the Event databases and archive, the hot tables and the system share it. Half leaves them room and doesn't move when they grow.
+5. **Monotonic Log batch keys** (`8790d77`). A batch id is a UUIDv7 of the receipt time from the injected clock. If it doesn't sort after every id written, stored or used as a cursor, it becomes the next id after them. Pebble seeds that floor from its newest batches when it opens, and Log processing's `Prepare` raises it to every cursor before ingest starts. Side effect: after a clock step back, the ids carry the floor's time, so the backlog line under-reports their age until the clock catches up.
+6. **An empty `projects` table deletes nothing** (`b39553b`). The daily pass logs a warning and deletes no Project's Logs while the table has no rows.
+7. **Rare searches stream** (`a4dca66`). A run of Log rows that has read for 1.5 s (`LogsHandler.ScanBudget`), with at least one hour read, answers with what it found. Its `next_cursor` is the start of the last hour it read, encoded as that time with the nil id. Console's explorer (`fillStream` in `lib/logs/stream.ts`) shows each answer and keeps fetching while the stream is short of its target and a cursor remains. The target is 200, then 200 more per scroll, up to 10,000. Cancel keeps the Logs found so far and offers Try again. Paging, `take` and the 10,000 cap are unchanged.
+8. **An envelope answers 200 once its Event is stored** (`4ae82ce`). After the Event is written, a failed Retention read or Log write is logged and the Logs dropped. Choice: a Logs-only envelope whose write fails still fails, because nothing of it is stored.
+
+**Decided by the user 2026-10-03**
+- **A. Console on port 3000** (`252011c`). Thruster listens on 3000 (`HTTP_PORT`) and runs Puma on 3001 (`TARGET_PORT`). These are set in compose and in the image, whose `EXPOSE` is now 3000. The sysctl note is gone. The dev DSN in `ProjectKey#dsn` (`localhost:3000`) doesn't conflict and is left for its deferred item.
+- **B. Compose dependency cycle** (`8929ba3`). `db_prepare` has `depends_on: []`. `docker compose config` parses the file; it failed with "dependency cycle detected" before.
+- **C. Decode after the gate** (`ba7c193`). Ingest takes the body as an `ingest.Body`, decoded only once the request holds a waiting place, so overload answers 503 with `Retry-After` before any decompression. The as-sent cap (413) and the encoding check (415) still answer before the gate. The decoded cap (413) and undecodable bodies (400) answer from the decode.
+
+**Cleanups**
+- `DeleteExpiredLogs` is `DeleteLogsPastRetention`, and its messages speak of Retention (`289d31e`).
+- One `sqltext.String` and one `sqltext.Identifier` in `pkg/sqltext`. The two JSON conversions are now `jsonEncodable` (storage) and `tableCell` (logquery) (`24af039`).
+- `logprocessing/worker.go` holds the Start/Stop lifecycle the three timers share (`bb77941`).
+- `rangeProblem` checks every Log request's time range. The readable-SQL comment says Console gates it (`ec0f66c`).
+- `LogsController` uses `rescue_from` and a `set_time_range` before_action (`398cd02`).
+- `EventStore.post!` reads a 403 as `SQLQueriesOff` only for the SQL endpoints; elsewhere it's `Unavailable` (`ac4ca99`).
+- `api.ts` fetches through one `callConsole` helper (`c479d51`).

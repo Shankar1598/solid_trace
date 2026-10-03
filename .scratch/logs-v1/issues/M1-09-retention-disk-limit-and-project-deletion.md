@@ -47,3 +47,9 @@ Follow-ups:
 - **M2-01:** as M1-08 said, take `publishMu` for reading around file reads. Retention, Project deletion and the disk limit delete files under its write lock. After the disk limit, a day can have a promoted set but no files. Readers must expect `Hour()` to return nothing.
 - **M1-10:** measure `DeleteProjectLogs`' `DROP TABLE` and `CHECKPOINT` on a large hot table, and the hour-folder walk (`hourDirs` stats every file each hour: about Projects × 24 × Retention files).
 - **Console:** a Project destroy route, when one is added, needs nothing from EventStore: the next daily pass deletes the Logs. It runs once a UTC day and at startup.
+
+### 2026-10-03 code review
+
+- **Disk limit default changed:** half the size of the disk holding the Log files, read once at startup, replacing "Log files + free − 10% of disk", which shrank to nothing as other data grew. `logs_disk_limit_gb` still wins. See the spec's 2026-10-03 code review entry, item 4.
+- **Reads no longer hold `publishMu`** while they run. Retention, Project deletion and the disk limit skip the files a read has pinned and retry a minute later (item 1).
+- **An empty `projects` table deletes no Project's Logs** (item 6).

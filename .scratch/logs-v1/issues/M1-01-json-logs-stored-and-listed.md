@@ -82,3 +82,6 @@ Follow-ups for later tickets:
 - **Test speed:** each Seam 1 test pays a Rails `db:reset` (about 2.5 s). A Log-only env on a temp Console-shaped SQLite would be much faster as the Log suites grow.
 - **UUIDv7 and clock skew:** a batch id generated after a restart with the system clock set back could sort at or below the cursor and never be processed. Event processing has the same exposure today.
 
+### 2026-10-03 code review
+
+- **Log batch ids** are now UUIDv7s of the receipt time from the injected clock. They are kept above every stored batch and every cursor, so a clock step back can't put a batch below a cursor. `WriteLogBatch` takes the receipt time. See the spec's 2026-10-03 code review entry, item 5.

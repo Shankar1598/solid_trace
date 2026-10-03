@@ -65,3 +65,11 @@ Follow-ups:
   - Non-Log results need a different runner than `ScanLogs`.
 - **M2-03:** send `from`/`to` as UTC RFC 3339. Use `next_cursor` for older pages, and the Log's own `time` as the `time` hint on fetch.
 - **M1-10:** measure `ScanLogs`. It runs a query per hour with Logs (each with a catalog lookup and a glob), and the `min`/`max(time)` over the hot table per run.
+
+### 2026-10-03 code review
+
+- **Reads hold no lock while they run:** each read is a DuckDB snapshot plus pinned files (`logRead`).
+- **`ScanLogs` returns a `LogScanPage`** and stops after its budget with a next position.
+- **`contains` also reads an Attribute's JSON text, for arrays.**
+
+See the spec's 2026-10-03 code review entry, items 1, 3 and 7.

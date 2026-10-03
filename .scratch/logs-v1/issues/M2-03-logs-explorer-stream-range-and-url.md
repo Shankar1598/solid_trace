@@ -66,3 +66,10 @@ Follow-ups:
 - **M3-02 / M3-04:**
   - Extend `Mode` and `MODES` in `explorerState.ts` (add `sql`, and the `sql` text param).
   - SQL must never run on load: guard the mount effect in `Logs/Index.tsx`, which runs `explorer.current` today.
+
+### 2026-10-03 code review
+
+- **The stream fetches on by itself** while EventStore answers short of a page (`fillStream`, `keepsFetching`, `wantOlder` in `lib/logs/stream.ts`).
+- **Cancel keeps the Logs found so far.**
+
+See the spec's 2026-10-03 code review entry, item 7.
