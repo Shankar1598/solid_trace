@@ -21,9 +21,22 @@ import {
   type Summarize,
 } from './builder'
 
+/** A Builder's Query text after its source, for tests of its stages. */
+const stagesOf = (builder: Builder) => queryOf(builder, 'my-api').replace(/^my-api(\n\| )?/, '')
+
 describe('the Query text of a Builder', () => {
-  it('is empty with no chips and no search', () => {
-    expect(queryOf(EMPTY_BUILDER)).toBe('')
+  it('is the Project\'s slug alone with no chips and no search', () => {
+    expect(queryOf(EMPTY_BUILDER, 'my-api')).toBe('my-api')
+  })
+
+  it('starts with the Project\'s slug as its source', () => {
+    expect(queryOf({ filters: [{ field: 'service', op: '==', value: 'api' }], search: '' }, '2fa-app'))
+      .toBe('2fa-app\n| where service == "api"')
+  })
+
+  it('quotes a slug spelled as a stage, so it stays the source', () => {
+    expect(queryOf(EMPTY_BUILDER, 'count')).toBe("['count']")
+    expect(queryOf(EMPTY_BUILDER, "it's")).toBe("['it\\'s']")
   })
 
   it('writes each chip as its own where stage, in order, then the search', () => {
@@ -35,15 +48,15 @@ describe('the Query text of a Builder', () => {
       search: 'timeout',
     }
 
-    expect(queryOf(builder)).toBe('where service == "api"\n| where level != "debug"\n| search "timeout"')
+    expect(stagesOf(builder)).toBe('where service == "api"\n| where level != "debug"\n| search "timeout"')
   })
 
   it('writes a search alone as the one search stage', () => {
-    expect(queryOf({ filters: [], search: 'boom' })).toBe('search "boom"')
+    expect(stagesOf({ filters: [], search: 'boom' })).toBe('search "boom"')
   })
 
   it('leaves out a search of only spaces', () => {
-    expect(queryOf({ filters: [], search: '   ' })).toBe('')
+    expect(stagesOf({ filters: [], search: '   ' })).toBe('')
   })
 
   it('writes numbers and bools bare, so a filter keeps its value\'s type', () => {
@@ -57,7 +70,7 @@ describe('the Query text of a Builder', () => {
       search: '',
     }
 
-    expect(queryOf(builder)).toBe(
+    expect(stagesOf(builder)).toBe(
       'where status == 500\n| where status != "500"\n| where ratio == -0.25\n| where cached == false',
     )
   })
@@ -68,11 +81,11 @@ describe('the Query text of a Builder', () => {
       search: 'line one\nline\ttwo\r',
     }
 
-    expect(queryOf(builder)).toBe('where path == "C:\\\\tmp\\\\\\"a\\""\n| search "line one\\nline\\ttwo\\r"')
+    expect(stagesOf(builder)).toBe('where path == "C:\\\\tmp\\\\\\"a\\""\n| search "line one\\nline\\ttwo\\r"')
   })
 
   it('writes dotted Attribute names bare', () => {
-    expect(queryOf({ filters: [{ field: 'http.request.method', op: '==', value: 'GET' }], search: '' }))
+    expect(stagesOf({ filters: [{ field: 'http.request.method', op: '==', value: 'GET' }], search: '' }))
       .toBe('where http.request.method == "GET"')
   })
 
@@ -89,7 +102,7 @@ describe('the Query text of a Builder', () => {
       search: '',
     }
 
-    expect(queryOf(builder).split('\n| ')).toEqual([
+    expect(stagesOf(builder).split('\n| ')).toEqual([
       "where ['user-agent'] == \"curl\"",
       "where ['it\\'s'] == 1",
       "where ['2fa'] == true",
@@ -117,7 +130,7 @@ describe('a Builder read back from validate', () => {
       ],
       search: 'boom',
     })
-    expect(queryOf(builder)).toBe('where http.status != 500\n| where service == "api"\n| search "boom"')
+    expect(stagesOf(builder)).toBe('where http.status != 500\n| where service == "api"\n| search "boom"')
   })
 
   it('has an empty search box when validate gives no search', () => {
@@ -139,7 +152,7 @@ describe('editing chips', () => {
 
     expect(flipped.filters[0]).toEqual({ field: 'service', op: '!=', value: 'api' })
     expect(flipFilter(flipped, 0)).toEqual(builder)
-    expect(queryOf(flipFilter(builder, 1))).toBe('where service == "api"\n| where level == "debug"\n| search "boom"')
+    expect(stagesOf(flipFilter(builder, 1))).toBe('where service == "api"\n| where level == "debug"\n| search "boom"')
   })
 
   it('removes a chip, keeping the rest and the search', () => {
@@ -148,7 +161,7 @@ describe('editing chips', () => {
 
   it('sets the search', () => {
     expect(search(builder, 'timeout').search).toBe('timeout')
-    expect(queryOf(search(builder, ''))).toBe('where service == "api"\n| where level != "debug"')
+    expect(stagesOf(search(builder, ''))).toBe('where service == "api"\n| where level != "debug"')
   })
 })
 
@@ -156,7 +169,7 @@ describe('filtering from a tag', () => {
   it('Show only this adds field == value with the value\'s own type', () => {
     expect(showOnly(EMPTY_BUILDER, 'http.status', 404).filters).toEqual([{ field: 'http.status', op: '==', value: 404 }])
     expect(showOnly(EMPTY_BUILDER, 'http.status', '404').filters).toEqual([{ field: 'http.status', op: '==', value: '404' }])
-    expect(queryOf(showOnly(EMPTY_BUILDER, 'cached', true))).toBe('where cached == true')
+    expect(stagesOf(showOnly(EMPTY_BUILDER, 'cached', true))).toBe('where cached == true')
   })
 
   it('Hide this adds field != value, which keeps Logs that don\'t have the Field', () => {
@@ -165,7 +178,7 @@ describe('filtering from a tag', () => {
     const hidden = hide(EMPTY_BUILDER, 'level', 'debug')
 
     expect(hidden.filters).toEqual([{ field: 'level', op: '!=', value: 'debug' }])
-    expect(queryOf(hidden)).toBe('where level != "debug"')
+    expect(stagesOf(hidden)).toBe('where level != "debug"')
   })
 
   it('adds after the chips already there', () => {
@@ -216,7 +229,7 @@ describe('filtering from a tag', () => {
 })
 
 describe('the Where operators', () => {
-  const where = (chip: Chip) => queryOf({ filters: [chip], search: '' })
+  const where = (chip: Chip) => stagesOf({ filters: [chip], search: '' })
 
   it('writes comparisons, text tests, lists and presence', () => {
     expect(where({ field: 'duration_ms', op: '>=', value: 500 })).toBe('where duration_ms >= 500')
@@ -249,7 +262,7 @@ describe('Summarize, sort and limit', () => {
       filters: [{ field: 'level', op: '==', value: 'error' }], search: 'boom',
       summarize, sort: [{ column: 'count_', asc: false }], take: 20,
     }
-    expect(queryOf(builder).split('\n| ')).toEqual([
+    expect(stagesOf(builder).split('\n| ')).toEqual([
       'where level == "error"',
       'search "boom"',
       'summarize count(), avg(duration_ms), percentile(duration_ms, 99) by service, bin(time, 5m)',
@@ -259,7 +272,7 @@ describe('Summarize, sort and limit', () => {
   })
 
   it('writes a Summarize of only by columns, and automatic time bins', () => {
-    expect(queryOf({ filters: [], search: '', summarize: { aggregates: [], by: [{ field: 'time', bin: 'auto' }] } }))
+    expect(stagesOf({ filters: [], search: '', summarize: { aggregates: [], by: [{ field: 'time', bin: 'auto' }] } }))
       .toBe('summarize by bin_auto(time)')
   })
 
@@ -280,7 +293,7 @@ describe('Summarize, sort and limit', () => {
   })
 
   it('sets and clears the limit', () => {
-    expect(queryOf(setTake(EMPTY_BUILDER, 100))).toBe('take 100')
+    expect(stagesOf(setTake(EMPTY_BUILDER, 100))).toBe('take 100')
     expect(setTake(setTake(EMPTY_BUILDER, 100), null)).toEqual(EMPTY_BUILDER)
   })
 

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState } from 'react'
 import { Popover } from '@base-ui/react/popover'
 import { Plus, X } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   aggregateText,
   editableText,
@@ -26,8 +27,18 @@ import { cn } from '@/lib/utils'
 import { SuggestInput, type Suggestion } from './SuggestInput'
 import { valueText } from './TagMenu'
 
+export interface ProjectOption {
+  id: number
+  name: string
+  slug: string
+}
+
 interface BuilderPanelProps {
   builder: Builder
+  /** The Project whose Logs the Query reads, and those it can read instead. */
+  project: ProjectOption
+  projects: ProjectOption[]
+  onProject: (slug: string) => void
   /** Fields to suggest: the built-in fields and the Attributes in view, with their types. */
   fields: FieldInfo[]
   /** A Field's common values in view, to suggest. */
@@ -56,11 +67,11 @@ function FieldInput({ value, onChange, placeholder, autoFocus, types }: {
 }
 
 /**
- * The Builder's clauses, one row each: Where filters, Summarize functions by
- * Fields and time bins, and More (sort and limit). Each + adds a clause and
- * clicking one edits it; every change runs the Query.
+ * The Builder's clauses, one row each: the Project, Where filters, Summarize
+ * functions by Fields and time bins, and More (sort and limit). Each + adds a
+ * clause and clicking one edits it; every change runs the Query.
  */
-export function BuilderPanel({ builder, fields, valuesOf, onChange }: BuilderPanelProps) {
+export function BuilderPanel({ builder, project, projects, onProject, fields, valuesOf, onChange }: BuilderPanelProps) {
   const summarize = builder.summarize ?? EMPTY_SUMMARIZE
   const changeSummarize = (next: Summarize) => onChange(setSummarize(builder, next))
   const sortColumns = builder.summarize ? summarizeColumns(builder.summarize) : null
@@ -69,6 +80,10 @@ export function BuilderPanel({ builder, fields, valuesOf, onChange }: BuilderPan
     <SuggestionsContext.Provider value={{ fields, valuesOf }}>
     <div className="border-b px-3 py-2 font-mono text-xs">
       <div className="ml-1 border-l pl-4">
+        <Row label="Project">
+          <ProjectSelect project={project} projects={projects} onChange={onProject} />
+        </Row>
+
         <Row label="Where">
           {builder.filters.map((chip, i) => (
             <Clause
@@ -146,6 +161,24 @@ export function BuilderPanel({ builder, fields, valuesOf, onChange }: BuilderPan
       </div>
     </div>
     </SuggestionsContext.Provider>
+  )
+}
+
+/** The Project by its slug, as the Query names it. */
+function ProjectSelect({ project, projects, onChange }: { project: ProjectOption; projects: ProjectOption[]; onChange: (slug: string) => void }) {
+  const items = Object.fromEntries(projects.map(p => [p.slug, p.slug]))
+  return (
+    <Select value={project.slug} onValueChange={v => v && onChange(v as string)} items={items}>
+      <SelectTrigger className="h-7 w-fit font-mono text-xs" aria-label="Project"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {projects.map(p => (
+          <SelectItem key={p.slug} value={p.slug}>
+            <span className="font-mono">{p.slug}</span>
+            {p.name !== p.slug && <span className="text-muted-foreground">{p.name}</span>}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 
