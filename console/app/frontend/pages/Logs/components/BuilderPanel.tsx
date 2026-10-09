@@ -1,12 +1,14 @@
-import { createContext, useContext, useState } from 'react'
+import { Fragment, createContext, useContext, useState } from 'react'
 import { Popover } from '@base-ui/react/popover'
-import { Plus, X } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Plus, X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   aggregateText,
   editableText,
   groupText,
   parseValue,
+  search,
   setFilter,
   setSort,
   setSummarize,
@@ -23,9 +25,11 @@ import {
   type Summarize,
 } from '@/lib/logs/builder'
 import type { FieldInfo } from '@/lib/logs/columns'
+import { fieldOptions, listFragment, listParts, narrow, toggleListValue, valueOptions, type PickOption } from '@/lib/logs/pick'
 import { cn } from '@/lib/utils'
-import { SuggestInput, type Suggestion } from './SuggestInput'
+import { MenuList, OptionList, PickList, useHighlight } from './PickList'
 import { valueText } from './TagMenu'
+import { LITERAL_TEXT, MUTED_TEXT, STRING_TEXT } from './valueStyle'
 
 export interface ProjectOption {
   id: number
@@ -39,9 +43,9 @@ interface BuilderPanelProps {
   project: ProjectOption
   projects: ProjectOption[]
   onProject: (slug: string) => void
-  /** Fields to suggest: the built-in fields and the Attributes in view, with their types. */
+  /** Fields to suggest: the built-in fields and the Attributes of recent Logs, with their types. */
   fields: FieldInfo[]
-  /** A Field's common values in view, to suggest. */
+  /** A Field's common values in recent Logs, to suggest. */
   valuesOf: (field: string) => ChipValue[]
   /** A changed Builder, which runs at once. */
   onChange: (builder: Builder) => void
@@ -56,125 +60,157 @@ interface Suggestions {
 }
 const SuggestionsContext = createContext<Suggestions>({ fields: [], valuesOf: () => [] })
 
-/** An input suggesting Fields, those of a type in `types` first when given. */
-function FieldInput({ value, onChange, placeholder, autoFocus, types }: {
-  value: string; onChange: (v: string) => void; placeholder: string; autoFocus?: boolean; types?: string[]
-}) {
-  const { fields } = useContext(SuggestionsContext)
-  const fitting = types ? [...fields.filter(f => types.includes(f.type)), ...fields.filter(f => !types.includes(f.type))] : fields
-  const suggestions: Suggestion[] = fitting.filter(f => f.name !== 'time').map(f => ({ value: f.name, hint: f.type }))
-  return <SuggestInput value={value} onChange={onChange} suggestions={suggestions} placeholder={placeholder} autoFocus={autoFocus} className={INPUT} />
-}
+/** Offered for what's typed into a Field list, when no Field seen is just that. */
+const TYPED_FIELD = { hint: 'not seen' }
 
 /**
  * The Builder's clauses, one row each: the Project, Where filters, Summarize
- * functions by Fields and time bins, and More (sort and limit). Each + adds a
- * clause and clicking one edits it; every change runs the Query.
+ * functions by Fields and time bins, then the search, sort and limit, each
+ * row there once More has added it. Each + adds a clause in steps (pick a
+ * Field, then say how) and clicking one edits it; every change runs the Query.
  */
 export function BuilderPanel({ builder, project, projects, onProject, fields, valuesOf, onChange }: BuilderPanelProps) {
   const summarize = builder.summarize ?? EMPTY_SUMMARIZE
   const changeSummarize = (next: Summarize) => onChange(setSummarize(builder, next))
   const sortColumns = builder.summarize ? summarizeColumns(builder.summarize) : null
+  // What More can still add: once added, each has a row of its own.
+  const more = MORE.filter(k => (k === 'search' ? builder.search === '' : k === 'sort' ? !builder.sort : builder.take === undefined))
 
   return (
     <SuggestionsContext.Provider value={{ fields, valuesOf }}>
-    <div className="border-b px-3 py-2 font-mono text-xs">
+    <div className="border-b px-3 py-2 text-xs">
       <div className="ml-1 border-l pl-4">
         <Row label="Project">
           <ProjectSelect project={project} projects={projects} onChange={onProject} />
         </Row>
 
-        <Row label="Where">
+        <Row label="Where" muted={builder.filters.length === 0}>
           {builder.filters.map((chip, i) => (
             <Clause
               key={i}
-              text={filterLabel(chip)}
+              title={filterLabel(chip)}
               onRemove={() => onChange({ ...builder, filters: builder.filters.filter((_, j) => j !== i) })}
               editor={close => <FilterEditor chip={chip} onApply={c => { close(); onChange(setFilter(builder, i, c)) }} />}
-            />
+            >
+              <FilterText chip={chip} />
+            </Clause>
           ))}
           <Add label="Add a filter" editor={close => (
             <FilterEditor onApply={c => { close(); onChange(setFilter(builder, builder.filters.length, c)) }} />
           )} />
         </Row>
 
-        <Row label="Summarize">
+        <Row label="Summarize" muted={!builder.summarize}>
           {summarize.aggregates.map((a, i) => (
             <Clause
               key={i}
-              text={aggregateText(a)}
+              title={aggregateText(a)}
               onRemove={() => changeSummarize({ ...summarize, aggregates: summarize.aggregates.filter((_, j) => j !== i) })}
               editor={close => <AggregateEditor aggregate={a} onApply={next => {
                 close()
                 changeSummarize({ ...summarize, aggregates: summarize.aggregates.map((old, j) => (j === i ? next : old)) })
               }} />}
-            />
+            >
+              {aggregateText(a)}
+            </Clause>
           ))}
           <Add label="Add a function" editor={close => (
             <AggregateEditor onApply={a => { close(); changeSummarize({ ...summarize, aggregates: [...summarize.aggregates, a] }) }} />
           )} />
-          <span className="ml-3 text-muted-foreground">by</span>
+          <span className={cn('ml-2 mr-0.5', MUTED_TEXT)}>by</span>
           {summarize.by.map((g, i) => (
             <Clause
               key={i}
-              text={groupText(g)}
+              title={groupText(g)}
               onRemove={() => changeSummarize({ ...summarize, by: summarize.by.filter((_, j) => j !== i) })}
               editor={close => <GroupEditor group={g} onApply={next => {
                 close()
                 changeSummarize({ ...summarize, by: summarize.by.map((old, j) => (j === i ? next : old)) })
               }} />}
-            />
+            >
+              {groupText(g)}
+            </Clause>
           ))}
           <Add label="Group by a Field or time" editor={close => (
             <GroupEditor onApply={g => { close(); changeSummarize({ ...summarize, by: [...summarize.by, g] }) }} />
           )} />
         </Row>
 
-        <Row label="More" muted={!builder.sort && builder.take === undefined}>
-          {(builder.sort ?? []).map((key, i) => (
+        {builder.search !== '' && (
+          <Row label="Search">
             <Clause
-              key={i}
-              text={`sort by ${key.column} ${key.asc ? 'asc' : 'desc'}`}
-              onRemove={() => onChange(setSort(builder, (builder.sort ?? []).filter((_, j) => j !== i)))}
-              editor={close => <SortEditor columns={sortColumns} sortKey={key} onApply={next => {
-                close()
-                onChange(setSort(builder, (builder.sort ?? []).map((old, j) => (j === i ? next : old))))
-              }} />}
-            />
-          ))}
-          {builder.take !== undefined && (
+              title={`search "${builder.search}"`}
+              onRemove={() => onChange(search(builder, ''))}
+              editor={close => <SearchStep text={builder.search} onApply={text => { close(); onChange(search(builder, text)) }} />}
+            >
+              <span className={STRING_TEXT}>"{builder.search}"</span>
+            </Clause>
+          </Row>
+        )}
+
+        {builder.sort && (
+          <Row label="Sort by">
+            {builder.sort.map((key, i) => (
+              <Clause
+                key={i}
+                title={`sort by ${key.column} ${key.asc ? 'asc' : 'desc'}`}
+                onRemove={() => onChange(setSort(builder, (builder.sort ?? []).filter((_, j) => j !== i)))}
+                editor={close => <SortStep columns={sortColumns} sortKey={key} onApply={next => {
+                  close()
+                  onChange(setSort(builder, (builder.sort ?? []).map((old, j) => (j === i ? next : old))))
+                }} />}
+              >
+                {key.column} <span className={MUTED_TEXT}>{key.asc ? 'asc' : 'desc'}</span>
+              </Clause>
+            ))}
+            <Add label="Then sort by" editor={close => (
+              <SortStep columns={sortColumns} onApply={key => { close(); onChange(setSort(builder, [...(builder.sort ?? []), key])) }} />
+            )} />
+          </Row>
+        )}
+
+        {builder.take !== undefined && (
+          <Row label="Limit">
             <Clause
-              text={`limit ${builder.take}`}
+              title={`limit ${builder.take}`}
               onRemove={() => onChange(setTake(builder, null))}
-              editor={close => <LimitEditor take={builder.take} onApply={n => { close(); onChange(setTake(builder, n)) }} />}
-            />
-          )}
-          <Add label="Sort or limit" editor={close => (
-            <MoreEditor
-              columns={sortColumns}
-              hasLimit={builder.take !== undefined}
-              onSort={key => { close(); onChange(setSort(builder, [...(builder.sort ?? []), key])) }}
-              onLimit={n => { close(); onChange(setTake(builder, n)) }}
-            />
-          )} />
-        </Row>
+              editor={close => <LimitStep take={builder.take} onApply={n => { close(); onChange(setTake(builder, n)) }} />}
+            >
+              <span className={LITERAL_TEXT}>{builder.take}</span>
+            </Clause>
+          </Row>
+        )}
+
+        {more.length > 0 && (
+          <Row label="More" muted>
+            <Add label={`Add a ${listText(more)}`} editor={close => (
+              <MoreEditor
+                kinds={more}
+                columns={sortColumns}
+                onSearch={text => { close(); onChange(search(builder, text)) }}
+                onSort={key => { close(); onChange(setSort(builder, [key])) }}
+                onLimit={n => { close(); onChange(setTake(builder, n)) }}
+              />
+            )} />
+          </Row>
+        )}
       </div>
     </div>
     </SuggestionsContext.Provider>
   )
 }
 
-/** The Project by its slug, as the Query names it. */
+/** The Project by its slug, as the Query names it; the list shows each one's name too. */
 function ProjectSelect({ project, projects, onChange }: { project: ProjectOption; projects: ProjectOption[]; onChange: (slug: string) => void }) {
   const items = Object.fromEntries(projects.map(p => [p.slug, p.slug]))
   return (
     <Select value={project.slug} onValueChange={v => v && onChange(v as string)} items={items}>
-      <SelectTrigger className="h-7 w-fit font-mono text-xs" aria-label="Project"><SelectValue /></SelectTrigger>
-      <SelectContent>
+      <SelectTrigger size="sm" className="h-6 w-fit max-w-full" aria-label="Project"><SelectValue /></SelectTrigger>
+      <SelectContent align="start" alignItemWithTrigger={false} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
         {projects.map(p => (
           <SelectItem key={p.slug} value={p.slug}>
-            <span className="font-mono">{p.slug}</span>
-            {p.name !== p.slug && <span className="text-muted-foreground">{p.name}</span>}
+            <span>{p.slug}</span>
+            {p.name !== p.slug && <span className="ml-auto pl-4 text-muted-foreground">{p.name}</span>}
           </SelectItem>
         ))}
       </SelectContent>
@@ -185,23 +221,37 @@ function ProjectSelect({ project, projects, onChange }: { project: ProjectOption
 function Row({ label, muted, children }: { label: string; muted?: boolean; children: React.ReactNode }) {
   return (
     <div className="relative flex min-h-8 flex-wrap items-center gap-1.5 py-0.5">
-      <span className="absolute -left-4 top-1/2 h-px w-2.5 bg-border" />
+      <span className="absolute -left-4 top-4 h-px w-2.5 bg-border" />
       <span className={cn('w-24 shrink-0', muted ? 'text-muted-foreground' : 'text-foreground')}>{label}</span>
       {children}
     </div>
   )
 }
 
+
 /** A clause: click it to edit it in a popover, × to remove it. */
-function Clause({ text, editor, onRemove }: { text: string; editor: (close: () => void) => React.ReactNode; onRemove: () => void }) {
+function Clause({ title, editor, onRemove, children }: {
+  title: string
+  editor: (close: () => void) => React.ReactNode
+  onRemove: () => void
+  children: React.ReactNode
+}) {
   const [open, setOpen] = useState(false)
   return (
-    <span className="inline-flex max-w-96 items-center rounded border bg-muted/50">
+    <span className={cn('inline-flex h-6 max-w-96 items-stretch border bg-muted/40', open && 'border-ring')}>
       <Popover.Root open={open} onOpenChange={setOpen}>
-        <Popover.Trigger className="truncate py-1 pl-2 pr-1 text-left hover:text-primary" title={text}>{text}</Popover.Trigger>
+        <Popover.Trigger className="min-w-0 truncate px-2 text-left hover:bg-muted" title={`${title} (click to edit)`}>
+          {children}
+        </Popover.Trigger>
         <EditorPopup>{editor(() => setOpen(false))}</EditorPopup>
       </Popover.Root>
-      <button className="px-1.5 py-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={onRemove} aria-label={`Remove ${text}`}>
+      <button
+        type="button"
+        className="flex items-center border-l px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        onClick={onRemove}
+        aria-label={`Remove ${title}`}
+        title="Remove"
+      >
         <X className="h-3 w-3" />
       </button>
     </span>
@@ -212,7 +262,11 @@ function Add({ label, editor }: { label: string; editor: (close: () => void) => 
   const [open, setOpen] = useState(false)
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger className="flex h-6 w-6 items-center justify-center rounded border hover:bg-muted" aria-label={label} title={label}>
+      <Popover.Trigger
+        className="flex h-6 w-6 items-center justify-center border text-muted-foreground hover:bg-muted hover:text-foreground data-[popup-open]:border-ring data-[popup-open]:bg-muted data-[popup-open]:text-foreground"
+        aria-label={label}
+        title={label}
+      >
         <Plus className="h-3.5 w-3.5" />
       </Popover.Trigger>
       <EditorPopup>{editor(() => setOpen(false))}</EditorPopup>
@@ -223,8 +277,8 @@ function Add({ label, editor }: { label: string; editor: (close: () => void) => 
 function EditorPopup({ children }: { children: React.ReactNode }) {
   return (
     <Popover.Portal>
-      <Popover.Positioner className="isolate z-50" side="bottom" align="start" sideOffset={4}>
-        <Popover.Popup className="w-80 bg-popover p-3 font-sans text-xs text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none">
+      <Popover.Positioner className="isolate z-50" side="bottom" align="start" sideOffset={4} collisionPadding={8}>
+        <Popover.Popup className="flex max-h-(--available-height) w-72 flex-col overflow-hidden bg-popover text-xs text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none">
           {children}
         </Popover.Popup>
       </Popover.Positioner>
@@ -232,22 +286,102 @@ function EditorPopup({ children }: { children: React.ReactNode }) {
   )
 }
 
-const OPS: { op: FilterOp; label: string }[] = [
-  { op: '==', label: '==  equals' },
-  { op: '!=', label: '!=  doesn\'t equal' },
-  { op: '>', label: '>' },
-  { op: '>=', label: '>=' },
-  { op: '<', label: '<' },
-  { op: '<=', label: '<=' },
-  { op: 'contains', label: 'contains' },
-  { op: '!contains', label: 'doesn\'t contain' },
-  { op: 'startswith', label: 'starts with' },
-  { op: '!startswith', label: 'doesn\'t start with' },
-  { op: 'in', label: 'in  (one of)' },
-  { op: '!in', label: '!in  (none of)' },
-  { op: 'exists', label: 'exists' },
-  { op: 'missing', label: 'is missing' },
-]
+/** A step's heading, with the way back to the step before when there is one. */
+function StepHeader({ onBack, hint, children }: { onBack?: () => void; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex h-8 shrink-0 items-center gap-1 border-b pr-2 pl-1">
+      {onBack ? (
+        <button type="button" onClick={onBack} aria-label="Back" title="Back"
+          className="flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground">
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+      ) : <span className="w-1" />}
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      {hint && <span className="shrink-0 text-[10px] text-muted-foreground">{hint}</span>}
+    </div>
+  )
+}
+
+/** A step's form: its controls, then a note on the left of Apply. Enter applies too. */
+function StepForm({ onSubmit, disabled, note, children }: {
+  onSubmit: () => void
+  disabled: boolean
+  note?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <form className="flex min-h-0 flex-col" onSubmit={e => { e.preventDefault(); if (!disabled) onSubmit() }}>
+      <div className="flex min-h-0 flex-col gap-2 p-2">{children}</div>
+      <div className="flex shrink-0 items-end gap-3 border-t px-2 py-1.5">
+        <p className="min-w-0 flex-1 text-[11px] leading-snug text-muted-foreground">{note}</p>
+        <Button type="submit" size="xs" disabled={disabled}>Apply</Button>
+      </div>
+    </form>
+  )
+}
+
+/** One choice of a few, side by side. */
+function Segmented<T extends string>({ label, options, value, onChange }: {
+  label: string
+  options: { value: T; label: string }[]
+  value: T
+  onChange: (value: T) => void
+}) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex border">
+      {options.map(o => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={o.value === value}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            'h-6 flex-1 border-l px-1.5 first:border-l-0',
+            o.value === value ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const INPUT = 'h-7 w-full border bg-background px-2 text-xs outline-none placeholder:text-muted-foreground focus:border-ring'
+
+/** A native select with our chevron, inset like the inputs' padding, in place of the browser's arrow. */
+function NativeSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <div className="relative">
+      <select {...props} className={cn(INPUT, 'cursor-pointer appearance-none pr-7')} />
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+    </div>
+  )
+}
+
+function ValueText({ value }: { value: ChipValue }) {
+  return typeof value === 'string'
+    ? <span className={STRING_TEXT}>"{value}"</span>
+    : <span className={LITERAL_TEXT}>{String(value)}</span>
+}
+
+/** A filter as the Query reads it, its values coloured by type. */
+function FilterText({ chip }: { chip: Chip }) {
+  if (chip.op === 'exists' || chip.op === 'missing') {
+    return <>{chip.field} <span className={MUTED_TEXT}>{chip.op === 'exists' ? 'exists' : 'is missing'}</span></>
+  }
+  if (Array.isArray(chip.value)) {
+    return (
+      <>
+        {chip.field} <span className={MUTED_TEXT}>{chip.op} (</span>
+        {chip.value.map((v, i) => <Fragment key={i}>{i > 0 && <span className={MUTED_TEXT}>, </span>}<ValueText value={v} /></Fragment>)}
+        <span className={MUTED_TEXT}>)</span>
+      </>
+    )
+  }
+  return <>{chip.field} <span className={MUTED_TEXT}>{chip.op}</span> <ValueText value={chip.value as ChipValue} /></>
+}
 
 function filterLabel(chip: Chip): string {
   switch (chip.op) {
@@ -263,243 +397,374 @@ function filterLabel(chip: Chip): string {
   }
 }
 
-/**
- * A Field's common values as suggestions for the value box. For a list, the
- * suggestion is the list so far with the value added.
- */
-function valueSuggestions(values: ChipValue[], typed: string, list: boolean, text: boolean): Suggestion[] {
-  const asText = (v: ChipValue) => (text ? String(v) : editableText(v))
-  if (!list) return values.map(v => ({ value: asText(v), hint: typeof v === 'boolean' ? 'bool' : typeof v }))
-  const parts = typed.split(',').map(p => p.trim())
-  const done = parts.slice(0, -1).filter(p => p !== '')
-  return values
-    .map(asText)
-    .filter(v => !done.includes(v))
-    .map(v => ({ value: [...done, v].join(', '), hint: undefined }))
-}
+const OP_GROUPS: { label: string; ops: { op: FilterOp; label: string }[] }[] = [
+  {
+    label: 'Compare',
+    ops: [
+      { op: '==', label: '==  equals' },
+      { op: '!=', label: '!=  doesn\'t equal' },
+      { op: '>', label: '>  greater than' },
+      { op: '>=', label: '>=  at least' },
+      { op: '<', label: '<  less than' },
+      { op: '<=', label: '<=  at most' },
+    ],
+  },
+  {
+    label: 'Text',
+    ops: [
+      { op: 'contains', label: 'contains' },
+      { op: '!contains', label: 'doesn\'t contain' },
+      { op: 'startswith', label: 'starts with' },
+      { op: '!startswith', label: 'doesn\'t start with' },
+    ],
+  },
+  {
+    label: 'List',
+    ops: [
+      { op: 'in', label: 'in  (one of)' },
+      { op: '!in', label: '!in  (none of)' },
+    ],
+  },
+  {
+    label: 'Presence',
+    ops: [
+      { op: 'exists', label: 'exists' },
+      { op: 'missing', label: 'is missing' },
+    ],
+  },
+]
+
+const isTextOp = (op: FilterOp) => op.includes('contains') || op.includes('startswith')
+const isListOp = (op: FilterOp) => op === 'in' || op === '!in'
 
 /** The text a filter's value is edited as: a list comma-separated. */
 function filterValueText(chip: Chip | undefined): string {
   if (!chip || chip.value === null) return ''
   if (Array.isArray(chip.value)) return chip.value.map(editableText).join(', ')
-  return chip.op.includes('contains') || chip.op.includes('startswith') ? String(chip.value) : editableText(chip.value)
+  return isTextOp(chip.op) ? String(chip.value) : editableText(chip.value)
 }
 
+/** The filter the editor holds, or null while it's incomplete. */
+function filterOf(field: string, op: FilterOp, value: string): Chip | null {
+  if (op === 'exists' || op === 'missing') return { field, op, value: null }
+  if (isListOp(op)) {
+    const values = listParts(value).map(parseValue)
+    return values.length > 0 ? { field, op, value: values } : null
+  }
+  if (isTextOp(op)) return value === '' ? null : { field, op, value }
+  return value.trim() === '' ? null : { field, op, value: parseValue(value) }
+}
+
+/** A word on how the filter matches, where it may not be what was meant. */
+function filterNote(field: string, type: string | undefined, op: FilterOp, value: string): string | null {
+  if (op === 'exists' || op === 'missing') return null
+  if (op === 'contains' || op === '!contains') return 'Ignores case.'
+  if (isTextOp(op)) return null
+  const values = (isListOp(op) ? listParts(value) : [value]).filter(v => v.trim() !== '').map(parseValue)
+  const text = values.find(v => typeof v === 'string')
+  if (text !== undefined && (type === 'number' || type === 'bool')) {
+    return `${field} holds ${type}s in recent Logs; "${text}" is matched as text.`
+  }
+  const typed = values.find(v => typeof v !== 'string')
+  if (typed !== undefined && type === 'string') {
+    return `${typed} is matched as a ${typeof typed === 'boolean' ? 'bool' : 'number'}. Quote it, as "${typed}", to match text.`
+  }
+  if (op === '!=' || op === '!in') return `Includes Logs without ${field}.`
+  return null
+}
+
+/** Adds or edits a filter: pick the Field, then the operator and value. */
 function FilterEditor({ chip, onApply }: { chip?: Chip; onApply: (chip: Chip) => void }) {
+  const { fields, valuesOf } = useContext(SuggestionsContext)
   const [field, setField] = useState(chip?.field ?? '')
+  const [picking, setPicking] = useState(!chip)
   const [op, setOp] = useState<FilterOp>(chip?.op ?? '==')
   const [value, setValue] = useState(filterValueText(chip))
-  const { fields, valuesOf } = useContext(SuggestionsContext)
-  const needsValue = op !== 'exists' && op !== 'missing'
-  const fieldType = fields.find(f => f.name === field.trim())?.type
-  const text = op.includes('contains') || op.includes('startswith')
-  const list = op === 'in' || op === '!in'
 
-  const chipOf = (): Chip | null => {
-    const name = field.trim()
-    if (name === '' || name === 'time' || name === '_time') return null
-    if (!needsValue) return { field: name, op, value: null }
-    if (list) {
-      const values = value.split(',').map(v => v.trim()).filter(v => v !== '').map(parseValue)
-      return values.length > 0 ? { field: name, op, value: values } : null
-    }
-    if (text) return value === '' ? null : { field: name, op, value }
-    if (value.trim() === '') return null
-    return { field: name, op, value: parseValue(value) }
+  if (picking) {
+    return (
+      <PickList
+        options={fieldOptions(fields)}
+        chosen={field ? [field] : undefined}
+        placeholder="Filter on a Field…"
+        typed={TYPED_FIELD}
+        empty="No Fields seen yet."
+        onPick={name => {
+          if (name !== field) setValue('')
+          setField(name)
+          setPicking(false)
+        }}
+      />
+    )
   }
-  const next = chipOf()
-
   return (
-    <EditorForm onSubmit={() => next && onApply(next)} disabled={!next}>
-      <Labelled label="Field">
-        <FieldInput autoFocus value={field} onChange={setField} placeholder="service" />
-      </Labelled>
-      <Labelled label="Operator">
-        <select value={op} onChange={e => setOp(e.target.value as FilterOp)} className={INPUT}>
-          {OPS.map(o => <option key={o.op} value={o.op}>{o.label}</option>)}
-        </select>
-      </Labelled>
-      {needsValue && (
-        <Labelled label={list ? 'Values, comma-separated' : 'Value'}>
-          <SuggestInput
-            value={value}
-            onChange={setValue}
-            suggestions={valueSuggestions(valuesOf(field.trim()), value, list, text)}
-            placeholder={list ? '500, 502, 503' : text ? 'text' : 'api, 500 or true'}
-            className={INPUT}
-          />
-        </Labelled>
-      )}
-      {needsValue && !text && (
-        <p className="text-muted-foreground">
-          {fieldType && fieldType !== 'mixed' ? `${field.trim()} holds ${fieldType === 'array' ? 'arrays' : `${fieldType}s`} in the Logs shown. ` : ''}
-          Numbers and true/false are matched as such. Quote a value, as "500", to match it as text.
-        </p>
-      )}
-      {(field.trim() === 'time' || field.trim() === '_time') && <p className="text-muted-foreground">Use the time range to filter on time.</p>}
-    </EditorForm>
+    <ConditionStep
+      field={field}
+      type={fields.find(f => f.name === field)?.type}
+      values={valuesOf(field)}
+      op={op}
+      onOp={setOp}
+      value={value}
+      onValue={setValue}
+      onBack={() => setPicking(true)}
+      onApply={onApply}
+    />
   )
 }
 
-const FNS: { fn: AggregateFn; label: string }[] = [
-  { fn: 'count', label: 'count — Logs' },
-  { fn: 'dcount', label: 'dcount — distinct values' },
-  { fn: 'sum', label: 'sum' },
-  { fn: 'avg', label: 'avg' },
-  { fn: 'min', label: 'min' },
-  { fn: 'max', label: 'max' },
-  { fn: 'percentile', label: 'percentile' },
-]
+function ConditionStep({ field, type, values, op, onOp, value, onValue, onBack, onApply }: {
+  field: string
+  type: string | undefined
+  values: ChipValue[]
+  op: FilterOp
+  onOp: (op: FilterOp) => void
+  value: string
+  onValue: (value: string) => void
+  onBack: () => void
+  onApply: (chip: Chip) => void
+}) {
+  const needsValue = op !== 'exists' && op !== 'missing'
+  const list = isListOp(op)
+  const typed = valueOptions(values, isTextOp(op))
+  // A type on every value says nothing when they all share it.
+  const options = new Set(typed.map(o => o.hint)).size > 1 ? typed : typed.map(o => ({ ...o, hint: undefined }))
+  const known = options.map(o => o.value)
+  // A value picked shows the others still; a value being typed narrows them.
+  const shown = list ? narrow(options, listFragment(value, known)) : narrow(options, known.includes(value.trim()) ? '' : value)
+  const { active, setActive, onKeyDown } = useHighlight(shown, -1, o => pick(o))
+  const next = filterOf(field, op, value)
 
-function AggregateEditor({ aggregate, onApply }: { aggregate?: Aggregate; onApply: (a: Aggregate) => void }) {
-  const [fn, setFn] = useState<AggregateFn>(aggregate?.fn ?? 'count')
-  const [field, setField] = useState(aggregate?.field ?? '')
-  const [percent, setPercent] = useState(String(aggregate?.percent ?? 95))
-  const p = Number(percent)
-  const next: Aggregate | null = fn === 'count'
-    ? { fn }
-    : field.trim() === '' || (fn === 'percentile' && !(percent.trim() !== '' && p >= 0 && p <= 100))
-      ? null
-      : fn === 'percentile' ? { fn, field: field.trim(), percent: p } : { fn, field: field.trim() }
+  // A value applies the filter, as one click should; in a list it's added or taken out.
+  function pick(o: PickOption) {
+    if (!list) {
+      const chip = filterOf(field, op, o.value)
+      if (chip) onApply(chip)
+      return
+    }
+    onValue(toggleListValue(value, o.value, known))
+    setActive(-1)
+  }
 
   return (
-    <EditorForm onSubmit={() => next && onApply(next)} disabled={!next}>
-      <Labelled label="Function">
-        <select autoFocus value={fn} onChange={e => setFn(e.target.value as AggregateFn)} className={INPUT}>
-          {FNS.map(f => <option key={f.fn} value={f.fn}>{f.label}</option>)}
-        </select>
-      </Labelled>
-      {fn !== 'count' && (
-        <Labelled label="Of the Field">
-          <FieldInput value={field} onChange={setField} placeholder="duration_ms" types={fn === 'dcount' ? undefined : ['number']} />
-        </Labelled>
-      )}
+    <>
+      <StepHeader onBack={onBack} hint={type}>{field}</StepHeader>
+      <StepForm onSubmit={() => next && onApply(next)} disabled={!next} note={filterNote(field, type, op, value)}>
+        <NativeSelect aria-label="Operator" value={op} onChange={e => onOp(e.target.value as FilterOp)} autoFocus={!needsValue}>
+          {OP_GROUPS.map(g => (
+            <optgroup key={g.label} label={g.label}>
+              {g.ops.map(o => <option key={o.op} value={o.op}>{o.label}</option>)}
+            </optgroup>
+          ))}
+        </NativeSelect>
+        {needsValue && (
+          <input
+            autoFocus
+            aria-label={list ? 'Values' : 'Value'}
+            value={value}
+            onChange={e => { onValue(e.target.value); setActive(-1) }}
+            onKeyDown={onKeyDown}
+            placeholder={list ? 'Values, comma-separated…' : 'Value…'}
+            className={INPUT}
+          />
+        )}
+        {needsValue && shown.length > 0 && (
+          <div className="-mx-2 -mb-2 border-t">
+            <p className="px-2 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Seen in recent Logs</p>
+            <OptionList
+              options={shown}
+              active={active}
+              onActive={setActive}
+              onPick={pick}
+              chosen={list ? listParts(value) : [value.trim()]}
+              className="max-h-44"
+            />
+          </div>
+        )}
+      </StepForm>
+    </>
+  )
+}
+
+const FNS: PickOption[] = [
+  { value: 'count', hint: 'Logs' },
+  { value: 'dcount', hint: 'distinct values' },
+  { value: 'sum', hint: 'of a number' },
+  { value: 'avg', hint: 'of a number' },
+  { value: 'min', hint: 'of a number' },
+  { value: 'max', hint: 'of a number' },
+  { value: 'percentile', hint: 'of a number' },
+]
+
+const PERCENTS = ['50', '75', '90', '95', '99', '99.9']
+
+/** Adds or edits a function: pick it, then its Field (and a percentile's percentage). */
+function AggregateEditor({ aggregate, onApply }: { aggregate?: Aggregate; onApply: (a: Aggregate) => void }) {
+  const { fields } = useContext(SuggestionsContext)
+  const [fn, setFn] = useState<AggregateFn | null>(aggregate && aggregate.fn !== 'count' ? aggregate.fn : null)
+  const [percent, setPercent] = useState(String(aggregate?.percent ?? 95))
+
+  if (fn === null) {
+    return (
+      <MenuList
+        label="Function"
+        options={FNS}
+        chosen={aggregate ? [aggregate.fn] : undefined}
+        onPick={name => (name === 'count' ? onApply({ fn: 'count' }) : setFn(name as AggregateFn))}
+      />
+    )
+  }
+  const field = aggregate?.fn === fn ? aggregate.field : undefined
+  const apply = (name: string, p = percent) => onApply(fn === 'percentile' ? { fn, field: name, percent: Number(p) } : { fn, field: name })
+  return (
+    <>
+      <StepHeader onBack={() => setFn(null)}>{fn}<span className={MUTED_TEXT}>(…)</span></StepHeader>
       {fn === 'percentile' && (
-        <Labelled label="Percentage">
-          <select value={percent} onChange={e => setPercent(e.target.value)} className={INPUT}>
-            {['50', '75', '90', '95', '99', '99.9'].map(v => <option key={v} value={v}>p{v}</option>)}
-          </select>
-        </Labelled>
+        <div className="border-b p-2">
+          <Segmented
+            label="Percentage"
+            options={(PERCENTS.includes(percent) ? PERCENTS : [...PERCENTS, percent]).map(p => ({ value: p, label: `p${p}` }))}
+            value={percent}
+            onChange={p => {
+              setPercent(p)
+              // An existing percentile changes at once, as every change does.
+              if (field) apply(field, p)
+            }}
+          />
+        </div>
       )}
-      {fn !== 'count' && fn !== 'dcount' && <p className="text-muted-foreground">{fn} reads the Field as a number.</p>}
-    </EditorForm>
+      <PickList
+        options={fieldOptions(fields, fn === 'dcount' ? undefined : { types: ['number'], group: 'Numbers' })}
+        chosen={field ? [field] : undefined}
+        placeholder={`${fn} of a Field…`}
+        typed={TYPED_FIELD}
+        empty="No Fields seen yet."
+        onPick={name => apply(name)}
+      />
+    </>
   )
 }
 
 const BINS = ['auto', '1m', '5m', '15m', '1h', '6h', '1d']
+const BIN_OPTIONS: PickOption[] = BINS.map(bin => {
+  const text = groupText({ field: 'time', bin })
+  return { value: `bin:${bin}`, label: text, text, hint: bin === 'auto' ? 'follows the range' : undefined, group: 'Time' }
+})
 
+/** Adds or edits a by column: time in bins, or a Field. */
 function GroupEditor({ group, onApply }: { group?: Group; onApply: (g: Group) => void }) {
-  const [kind, setKind] = useState<'field' | 'time'>(group?.bin ? 'time' : 'field')
-  const [field, setField] = useState(group && !group.bin ? group.field : '')
-  const [bin, setBin] = useState(group?.bin ?? 'auto')
-  const name = field.trim()
-  const next: Group | null = kind === 'time' ? { field: 'time', bin } : name === '' || name === 'time' ? null : { field: name }
-
+  const { fields } = useContext(SuggestionsContext)
+  const chosen = group ? (group.bin ? `bin:${group.bin}` : group.field) : undefined
   return (
-    <EditorForm onSubmit={() => next && onApply(next)} disabled={!next}>
-      <div className="flex gap-1">
-        {(['field', 'time'] as const).map(k => (
-          <button key={k} type="button" onClick={() => setKind(k)}
-            className={cn('flex-1 rounded border px-2 py-1', kind === k ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
-            {k === 'field' ? 'A Field' : 'Time bins'}
-          </button>
-        ))}
-      </div>
-      {kind === 'field' ? (
-        <Labelled label="Field">
-          <FieldInput autoFocus value={field} onChange={setField} placeholder="service" types={['string', 'bool']} />
-        </Labelled>
-      ) : (
-        <Labelled label="Bin size">
-          <select value={bin} onChange={e => setBin(e.target.value)} className={INPUT}>
-            {BINS.map(b => <option key={b} value={b}>{b === 'auto' ? 'auto (follows the range)' : b}</option>)}
-          </select>
-        </Labelled>
-      )}
-    </EditorForm>
+    <PickList
+      options={[...BIN_OPTIONS, ...fieldOptions(fields, { types: ['string', 'bool'], group: 'Fields' })]}
+      chosen={chosen ? [chosen] : undefined}
+      placeholder="Group by time or a Field…"
+      typed={TYPED_FIELD}
+      empty="Nothing to group by."
+      onPick={value => onApply(value.startsWith('bin:') ? { field: 'time', bin: value.slice(4) } : { field: value })}
+    />
+  )
+}
+
+const MORE = ['search', 'sort', 'limit'] as const
+type More = (typeof MORE)[number]
+
+/** "a", "a or b", "a, b or c". */
+function listText(words: string[]): string {
+  return words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} or ${words.at(-1)}`
+}
+
+/** Adds a search, sort or limit, those of kinds; straight into its step when there's one. */
+function MoreEditor({ kinds, columns, onSearch, onSort, onLimit }: {
+  kinds: readonly More[]
+  columns: string[] | null
+  onSearch: (text: string) => void
+  onSort: (key: SortKey) => void
+  onLimit: (n: number) => void
+}) {
+  const [kind, setKind] = useState<More | null>(kinds.length === 1 ? kinds[0] : null)
+  const back = kinds.length > 1 ? () => setKind(null) : undefined
+  if (kind === 'search') return <SearchStep onBack={back} onApply={onSearch} />
+  if (kind === 'sort') return <SortStep columns={columns} onBack={back} onApply={onSort} />
+  if (kind === 'limit') return <LimitStep onBack={back} onApply={onLimit} />
+  const options: Record<More, PickOption> = {
+    search: { value: 'search', hint: 'text anywhere' },
+    sort: { value: 'sort', label: 'sort by', hint: 'order the rows' },
+    limit: { value: 'limit', hint: 'keep the first rows' },
+  }
+  return <MenuList label="Add" options={kinds.map(k => options[k])} onPick={value => setKind(value as More)} />
+}
+
+/** Searches the message and every string Attribute, ignoring case: the search stage. */
+function SearchStep({ text: initial, onBack, onApply }: { text?: string; onBack?: () => void; onApply: (text: string) => void }) {
+  const [text, setText] = useState(initial ?? '')
+  return (
+    <>
+      <StepHeader onBack={onBack}>search</StepHeader>
+      <StepForm onSubmit={() => onApply(text)} disabled={text.trim() === ''} note="Finds the text in the message or any text Attribute, ignoring case.">
+        <input autoFocus aria-label="Text" value={text} onChange={e => setText(e.target.value)} placeholder="Text to find…" className={INPUT} />
+      </StepForm>
+    </>
   )
 }
 
 /** columns: what a Summarize makes, or null to sort Logs by any Field. */
-function SortEditor({ columns, sortKey, onApply }: {
-  columns: string[] | null; sortKey?: SortKey; onApply: (key: SortKey) => void
+function SortStep({ columns, sortKey, onBack, onApply }: {
+  columns: string[] | null
+  sortKey?: SortKey
+  onBack?: () => void
+  onApply: (key: SortKey) => void
 }) {
-  const [column, setColumn] = useState(sortKey?.column ?? columns?.[columns.length - 1] ?? '')
+  const { fields } = useContext(SuggestionsContext)
   const [asc, setAsc] = useState(sortKey?.asc ?? false)
-  const name = column.trim()
-
   return (
-    <EditorForm onSubmit={() => name && onApply({ column: name, asc })} disabled={!name}>
-      <Labelled label="Sort by">
-        {columns ? (
-          <select autoFocus value={column} onChange={e => setColumn(e.target.value)} className={INPUT}>
-            {columns.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-        ) : (
-          <FieldInput autoFocus value={column} onChange={setColumn} placeholder="duration_ms" />
-        )}
-      </Labelled>
-      <Labelled label="Order">
-        <select value={asc ? 'asc' : 'desc'} onChange={e => setAsc(e.target.value === 'asc')} className={INPUT}>
-          <option value="desc">descending</option>
-          <option value="asc">ascending</option>
-        </select>
-      </Labelled>
-      {!columns && <p className="text-muted-foreground">Sorting Logs by a Field other than time shows them as a table.</p>}
-    </EditorForm>
+    <>
+      <StepHeader onBack={onBack}>sort by</StepHeader>
+      <div className="border-b p-2">
+        <Segmented
+          label="Order"
+          options={[{ value: 'desc', label: 'descending' }, { value: 'asc', label: 'ascending' }]}
+          value={asc ? 'asc' : 'desc'}
+          onChange={order => {
+            setAsc(order === 'asc')
+            // An existing sort changes at once, as every change does.
+            if (sortKey) onApply({ column: sortKey.column, asc: order === 'asc' })
+          }}
+        />
+      </div>
+      <PickList
+        options={columns ? columns.map(c => ({ value: c, group: 'Summarize columns' })) : fieldOptions(fields)}
+        chosen={sortKey ? [sortKey.column] : undefined}
+        placeholder={columns ? 'Sort by a column…' : 'Sort by a Field…'}
+        typed={columns ? undefined : TYPED_FIELD}
+        empty={columns ? 'No columns match.' : 'No Fields seen yet.'}
+        onPick={column => onApply({ column, asc })}
+      />
+      {!columns && <p className="border-t px-2 py-1.5 text-[11px] text-muted-foreground">Logs sorted by a Field show as a table.</p>}
+    </>
   )
 }
 
-function LimitEditor({ take, onApply }: { take?: number; onApply: (n: number) => void }) {
+const LIMITS = [10, 100, 1000, 10000]
+
+function LimitStep({ take, onBack, onApply }: { take?: number; onBack?: () => void; onApply: (n: number) => void }) {
   const [text, setText] = useState(String(take ?? 100))
   const n = Number(text)
   const ok = text.trim() !== '' && Number.isInteger(n) && n >= 0
   return (
-    <EditorForm onSubmit={() => ok && onApply(n)} disabled={!ok}>
-      <Labelled label="Keep at most">
-        <input autoFocus type="number" min={0} value={text} onChange={e => setText(e.target.value)} className={INPUT} />
-      </Labelled>
-    </EditorForm>
-  )
-}
-
-function MoreEditor({ columns, hasLimit, onSort, onLimit }: {
-  columns: string[] | null; hasLimit: boolean; onSort: (key: SortKey) => void; onLimit: (n: number) => void
-}) {
-  const [kind, setKind] = useState<'sort' | 'limit'>('sort')
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex gap-1">
-        {(['sort', 'limit'] as const).map(k => (
-          <button key={k} type="button" onClick={() => setKind(k)} disabled={k === 'limit' && hasLimit}
-            className={cn('flex-1 rounded border px-2 py-1 disabled:opacity-50', kind === k ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
-            {k === 'sort' ? 'Sort' : 'Limit'}
-          </button>
-        ))}
-      </div>
-      {kind === 'sort' ? <SortEditor columns={columns} onApply={onSort} /> : <LimitEditor onApply={onLimit} />}
-    </div>
-  )
-}
-
-const INPUT = 'h-7 w-full rounded border bg-background px-2 font-mono text-xs outline-none focus:ring-1 focus:ring-ring'
-
-function EditorForm({ onSubmit, disabled, children }: { onSubmit: () => void; disabled: boolean; children: React.ReactNode }) {
-  return (
-    <form className="flex flex-col gap-2" onSubmit={e => { e.preventDefault(); onSubmit() }}>
-      {children}
-      <button type="submit" disabled={disabled} className="h-7 self-end rounded bg-primary px-3 text-primary-foreground disabled:opacity-50">
-        Apply
-      </button>
-    </form>
-  )
-}
-
-function Labelled({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-muted-foreground">{label}</span>
-      {children}
-    </label>
+    <>
+      <StepHeader onBack={onBack}>limit</StepHeader>
+      <StepForm onSubmit={() => onApply(n)} disabled={!ok} note="Keeps the first rows, in the order shown.">
+        <input autoFocus aria-label="Rows" inputMode="numeric" value={text} onChange={e => setText(e.target.value)} className={INPUT} />
+        <div className="flex gap-1">
+          {LIMITS.map(l => (
+            <button key={l} type="button" onClick={() => onApply(l)}
+              className="h-6 flex-1 border text-muted-foreground hover:bg-muted hover:text-foreground">
+              {l.toLocaleString()}
+            </button>
+          ))}
+        </div>
+      </StepForm>
+    </>
   )
 }

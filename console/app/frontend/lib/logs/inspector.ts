@@ -30,3 +30,88 @@ export function utcTime(time: string): string {
 export function inspectorJson(log: Log): string {
   return JSON.stringify({ ...log, time: utcTime(log.time) }, null, 2)
 }
+
+/** A Log's time in the reader's zone, as "Oct 3, 2026 at 19:40:46.319 BST". */
+export function localTime(time: string, timeZone?: string): string {
+  const date = new Date(time)
+  if (isNaN(date.getTime())) return time
+  const parts = new Intl.DateTimeFormat('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3, hourCycle: 'h23',
+    timeZoneName: 'short', timeZone,
+  }).formatToParts(date)
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? ''
+  return `${part('month')} ${part('day')}, ${part('year')} at ${part('hour')}:${part('minute')}:${part('second')}.${part('fractionalSecond')} ${part('timeZoneName')}`
+}
+
+/** One line of a Log's JSON, as the inspector shows it. */
+export interface JsonLine {
+  depth: number
+  key?: string
+  /** What follows the key: a value as JSON, or a bracket. */
+  text: string
+  kind: 'string' | 'number' | 'bool' | 'null' | 'empty' | 'open' | 'close'
+  /** Whether a comma ends the line. */
+  comma: boolean
+  /** On an opening bracket: the index of the line closing it, and how many entries it holds. */
+  end?: number
+  size?: number
+  /** The Field whose value the line is (a built-in field or an Attribute), to add to the Query. */
+  field?: string
+  /** On an element of an array Field: the Field. */
+  elementOf?: string
+  /** The value the line holds whole, to copy. */
+  value?: AttributeValue
+}
+
+/**
+ * A Log's JSON (as inspectorJson writes it) one line each, so each line can
+ * offer its Field to the Query and brackets can fold.
+ */
+export function jsonLines(log: Log): JsonLine[] {
+  const lines: JsonLine[] = []
+  const emit = (value: AttributeValue, depth: number, comma: boolean, at: Omit<JsonLine, 'depth' | 'text' | 'kind' | 'comma'>) => {
+    if (value === null || typeof value !== 'object' || isEmpty(value)) {
+      lines.push({ depth, ...at, text: JSON.stringify(value), kind: kindOf(value), comma, value })
+      return
+    }
+    const array = Array.isArray(value)
+    const entries: [string | undefined, AttributeValue][] = array
+      ? value.map(v => [undefined, v as AttributeValue])
+      : Object.entries(value as Record<string, AttributeValue>)
+    const open = lines.length
+    lines.push({ depth, ...at, text: array ? '[' : '{', kind: 'open', comma: false, size: entries.length, value })
+    entries.forEach(([key, child], i) => {
+      const last = i === entries.length - 1
+      emit(child, depth + 1, !last, { key, ...childOf(depth, key, at.field) })
+    })
+    lines.push({ depth, text: array ? ']' : '}', kind: 'close', comma })
+    lines[open].end = lines.length - 1
+  }
+  emit({ ...log, time: utcTime(log.time) }, 0, false, {})
+  return lines
+}
+
+/**
+ * What a line inside the document is: the Log's own keys and its Attributes
+ * are Fields (but id, and the attributes object itself); an array Field's
+ * elements are its elements.
+ */
+function childOf(depth: number, key: string | undefined, parentField: string | undefined): Pick<JsonLine, 'field' | 'elementOf'> {
+  if (depth === 0) return key === 'id' || key === 'attributes' ? {} : { field: key }
+  if (depth === 1 && parentField === undefined) return { field: key }
+  if (parentField !== undefined && key === undefined) return { elementOf: parentField }
+  return {}
+}
+
+function isEmpty(value: object): boolean {
+  return Array.isArray(value) ? value.length === 0 : Object.keys(value).length === 0
+}
+
+function kindOf(value: AttributeValue): JsonLine['kind'] {
+  if (value === null) return 'null'
+  if (typeof value === 'string') return 'string'
+  if (typeof value === 'number') return 'number'
+  if (typeof value === 'boolean') return 'bool'
+  return 'empty'
+}

@@ -9,11 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RunError, fetchHistogram, fetchLogPage, fetchReadableSql, fetchRun, runSql, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import {
   EMPTY_BUILDER,
+  addFilter,
   builderOf,
-  hide,
+  groupBy,
   queryOf,
-  search,
-  showOnly,
   type Builder,
   type Chip,
 } from '@/lib/logs/builder'
@@ -35,7 +34,7 @@ import {
   typeQuery,
   typeSql,
 } from '@/lib/logs/explorerState'
-import { columnsFromSearch, commonValues, fieldInfos, toggleColumn, withColumns } from '@/lib/logs/columns'
+import { columnsFromSearch, commonValues, fieldInfos, rememberLogs, toggleColumn, withColumns } from '@/lib/logs/columns'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
 import { pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
@@ -366,21 +365,35 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   const mode = explorer.current.mode
   const sqlMode = mode === 'sql'
   const builder = mode === 'builder' && builderView.status === 'ready' ? builderView.builder : null
-  let onFilter: OnFilter = null
+  let addToQuery: ((chip: Chip) => void) | null = null
+  let groupByField: ((field: string) => void) | null = null
   let onLevel: ((level: HistogramLevel) => void) | null = null
   if (builder) {
-    onFilter = (kind, field, value) =>
-      changeBuilder(kind === 'show' ? showOnly(builder, field, value) : hide(builder, field, value), true)
+    addToQuery = chip => changeBuilder(addFilter(builder, chip), true)
+    // A Summarize shows a table, which has no Logs to inspect.
+    groupByField = field => {
+      setInspected(null)
+      changeBuilder(groupBy(builder, field), true)
+    }
     onLevel = level => {
       const filtered = filterByLevel(builder, level)
       if (filtered) changeBuilder(filtered, true)
     }
   } else if (mode === 'query') {
-    onFilter = (kind, field, value) => pivot({ field, op: kind === 'show' ? '==' : '!=', value })
+    addToQuery = pivot
     onLevel = level => {
       if (level !== 'none') pivot({ field: 'level', op: '==', value: level })
     }
   }
+  const filterWith = addToQuery
+  const onFilter: OnFilter = filterWith && ((kind, field, value) => filterWith({ field, op: kind === 'show' ? '==' : '!=', value }))
+  const columnControl = { shown: columns, toggle: (field: string) => changeColumns(toggleColumn(columns, field)) }
+
+  // The inspector steps through the stream's Logs, newest first.
+  const streamLogs = result.status === 'done' ? result.stream.logs : []
+  const inspectedAt = inspected ? streamLogs.findIndex(l => l.id === inspected.id) : -1
+  const onNewer = inspectedAt > 0 ? () => setInspected(streamLogs[inspectedAt - 1]) : null
+  const onOlder = inspectedAt >= 0 && inspectedAt < streamLogs.length - 1 ? () => setInspected(streamLogs[inspectedAt + 1]) : null
 
   // SQL runs only on Run, so in SQL mode a picked range waits for it.
   const pickBarRange = (range: TimeRange) => sqlMode ? setExplorer(pickRange(explorer, range)) : commit(pickRange(explorer, range))
@@ -411,11 +424,13 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     router.get(`/${orgSlug}/projects/${slug}/logs${withColumns(searchOf({ ...explorer.current, query }), columns)}`)
   }
 
-  // The Fields the Builder suggests: those of the last Logs shown, kept while a table shows.
-  const lastLogs = useRef<Log[]>([])
-  if (result.status === 'done' && result.stream.logs.length > 0) lastLogs.current = result.stream.logs
-  const fields = useMemo(() => fieldInfos(lastLogs.current), [lastLogs.current])
-  const valuesOf = useCallback((field: string) => commonValues(lastLogs.current, field), [lastLogs.current])
+  // The Fields and values the Builder suggests: those of recent runs' Logs, kept while a table shows.
+  const seen = useRef<{ from: Log[] | null; logs: Log[] }>({ from: null, logs: [] })
+  if (result.status === 'done' && result.stream.logs.length > 0 && result.stream.logs !== seen.current.from) {
+    seen.current = { from: result.stream.logs, logs: rememberLogs(seen.current.logs, result.stream.logs) }
+  }
+  const fields = useMemo(() => fieldInfos(seen.current.logs), [seen.current.logs])
+  const valuesOf = useCallback((field: string) => commonValues(seen.current.logs, field), [seen.current.logs])
 
   const running = result.status === 'running' || (result.status === 'done' && result.loadingOlder)
 
@@ -427,11 +442,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
           <ModeSwitch modes={modes} mode={mode} onSwitch={switchTo} />
           <div className="h-5 w-px bg-border" />
           {mode === 'builder' ? (
-            <BuilderBar
-              view={builderView}
-              onSearch={text => builder && changeBuilder(search(builder, text), false)}
-              onRun={() => commit(explorer)}
-            />
+            <BuilderBar view={builderView} />
           ) : (
             <span className="flex-1 text-[11px] text-muted-foreground">Ctrl+Enter runs the {sqlMode ? 'SQL' : 'Query'}.</span>
           )}
@@ -489,7 +500,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
         )}
 
         <div className="relative flex-1 min-h-0">
-          <TagMenuProvider onFilter={onFilter} columns={{ shown: columns, toggle: field => changeColumns(toggleColumn(columns, field)) }}>
+          <TagMenuProvider onFilter={onFilter} columns={columnControl}>
             <ResultArea
               result={result}
               onLoadOlder={loadOlder}
@@ -499,7 +510,16 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
               onColumns={changeColumns}
             />
             {inspected && (
-              <LogInspector key={inspected.id} log={inspected} orgSlug={orgSlug} projectSlug={project.slug} onClose={closeInspector} />
+              <LogInspector
+                key={inspected.id}
+                log={inspected}
+                orgSlug={orgSlug}
+                projectSlug={project.slug}
+                actions={{ filter: addToQuery, groupBy: groupByField, columns: columnControl }}
+                onNewer={onNewer}
+                onOlder={onOlder}
+                onClose={closeInspector}
+              />
             )}
           </TagMenuProvider>
         </div>

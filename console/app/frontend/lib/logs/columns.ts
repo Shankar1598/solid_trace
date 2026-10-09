@@ -13,6 +13,9 @@ type BuiltInField = (typeof BUILT_IN_FIELDS)[number]
 /** Logs read for the picker's Attributes: enough to find the usual ones. */
 const PICKER_LOGS = 500
 
+/** Logs kept across runs for the Builder to suggest Fields and values from. */
+const SUGGEST_LOGS = 2000
+
 export function columnsFromSearch(search: string): string[] {
   const columns = unique(new URLSearchParams(search).getAll('col').map(c => c.trim()).filter(c => c !== ''))
   return columns.length > 0 ? columns : DEFAULT_COLUMNS
@@ -56,6 +59,17 @@ export function pickableFields(logs: Log[]): string[] {
   return [...BUILT_IN_FIELDS, ...[...attributes].filter(name => !isBuiltIn(name)).sort()]
 }
 
+/**
+ * The Logs the Builder suggests from after a run: the run's first Logs, then
+ * those kept from earlier runs. A Query narrowed by a filter so still suggests
+ * the values the filter left out.
+ */
+export function rememberLogs(kept: Log[], latest: Log[]): Log[] {
+  const fresh = latest.slice(0, PICKER_LOGS)
+  const ids = new Set(fresh.map(l => l.id))
+  return [...fresh, ...kept.filter(l => !ids.has(l.id))].slice(0, SUGGEST_LOGS)
+}
+
 /** A Field the Builder suggests, with the type its values have in the Logs read. */
 export interface FieldInfo {
   name: string
@@ -70,7 +84,7 @@ const BUILT_IN_TYPES: Record<BuiltInField, string> = {
 /** The built-in fields, then the Attributes the Logs have by name, each with its type. */
 export function fieldInfos(logs: Log[]): FieldInfo[] {
   const types = new Map<string, string>()
-  for (const log of logs.slice(0, PICKER_LOGS)) {
+  for (const log of logs) {
     for (const [name, value] of Object.entries(log.attributes ?? {})) {
       if (isBuiltIn(name) || value === null || value === undefined) continue
       const type = typeOf(value)
@@ -85,7 +99,7 @@ export function fieldInfos(logs: Log[]): FieldInfo[] {
 /** The values a Field has most often in the Logs read, strings, numbers and bools only. */
 export function commonValues(logs: Log[], field: string, limit = 8): (string | number | boolean)[] {
   const counts = new Map<string, { value: string | number | boolean; n: number }>()
-  for (const log of logs.slice(0, PICKER_LOGS)) {
+  for (const log of logs) {
     const value = columnValue(log, field)
     if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
     if (typeof value === 'string' && (value === '' || value.length > 200)) continue

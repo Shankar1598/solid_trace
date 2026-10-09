@@ -7,6 +7,7 @@ import {
   columnsFromSearch,
   moveColumn,
   pickableFields,
+  rememberLogs,
   toggleColumn,
   withColumns,
 } from './columns'
@@ -93,5 +94,22 @@ describe('what the Builder suggests', () => {
     expect(commonValues(logs, 'http.status')).toEqual([200, 500])
     expect(commonValues(logs, 'service')).toEqual(['api', 'worker'])
     expect(commonValues(logs, 'tags')).toEqual([])
+  })
+})
+
+describe('the Logs the Builder suggests from', () => {
+  it('puts the latest run first and keeps earlier runs\' Logs once each', () => {
+    const a = log({}, { id: 'a' })
+    const b = log({}, { id: 'b' })
+    const c = log({}, { id: 'c' })
+    expect(rememberLogs([], [a, b]).map(l => l.id)).toEqual(['a', 'b'])
+    expect(rememberLogs([a, b], [c, a]).map(l => l.id)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('keeps at most 2000', () => {
+    const many = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => log({}, { id: `${prefix}${i}` }))
+    const kept = rememberLogs(many('old', 1900), many('new', 800))
+    expect(kept).toHaveLength(2000)
+    expect(kept.filter(l => l.id.startsWith('new'))).toHaveLength(500)
   })
 })

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   EMPTY_BUILDER,
+  addFilter,
   builderOf,
   canFilter,
   flipFilter,
+  groupBy,
   hide,
   queryOf,
   removeFilter,
@@ -311,5 +313,28 @@ describe('values typed in an editor', () => {
 
   it('shows a value so that it reads back the same', () => {
     for (const value of [500, '500', true, 'true', 'api']) expect(parseValue(editableText(value))).toEqual(value)
+  })
+})
+
+describe('adding to the Query from the inspector', () => {
+  const builder: Builder = { filters: [{ field: 'level', op: '!=', value: 'debug' }], search: '' }
+
+  it('adds == and != as Show only this and Hide this do', () => {
+    expect(addFilter(builder, { field: 'level', op: '==', value: 'error' })).toEqual(showOnly(builder, 'level', 'error'))
+    expect(addFilter(builder, { field: 'service', op: '!=', value: 'api' })).toEqual(hide(builder, 'service', 'api'))
+  })
+
+  it('adds any other filter once', () => {
+    const exists = addFilter(builder, { field: 'user.id', op: 'exists', value: null })
+    expect(exists.filters).toEqual([...builder.filters, { field: 'user.id', op: 'exists', value: null }])
+    expect(addFilter(exists, { field: 'user.id', op: 'exists', value: null })).toBe(exists)
+  })
+
+  it('counts by a Field, or adds it to the Summarize\'s by columns', () => {
+    const counted = groupBy(builder, 'service')
+    expect(counted.summarize).toEqual({ aggregates: [{ fn: 'count' }], by: [{ field: 'service' }] })
+    const avg: Builder = { ...builder, summarize: { aggregates: [{ fn: 'avg', field: 'duration_ms' }], by: [{ field: 'time', bin: 'auto' }] } }
+    expect(groupBy(avg, 'service').summarize).toEqual({ aggregates: [{ fn: 'avg', field: 'duration_ms' }], by: [{ field: 'time', bin: 'auto' }, { field: 'service' }] })
+    expect(groupBy(counted, 'service')).toEqual(counted)
   })
 })
