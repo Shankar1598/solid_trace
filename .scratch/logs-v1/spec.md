@@ -364,14 +364,17 @@ Decisions made during implementation that depart from this spec, or from what it
 
 4. **The Builder is a panel of clauses: Where, Summarize and More.**
    - **What the spec says:** the Builder bullet says "filter chips (`field = value` / `field ≠ value`; click the operator to flip, × to remove) and a search box. No level toggles, no summarize controls." Story 56 calls the Builder the place to "start by clicking".
-   - **Decision:** in Builder mode a panel under the bar holds three rows, after the user's screenshot of Axiom's query builder. The search box stays in the bar.
+   - **Decision:** in Builder mode a panel under the bar holds three rows, after the user's screenshot of Axiom's query builder.
      - **Where:** filters with `==`, `!=`, `>`, `>=`, `<`, `<=`, `contains`, `!contains`, `startswith`, `!startswith`, `in`, `!in`, exists (`isnotnull`) and missing (`isnull`), one `where` stage each. Values keep their type, and quoting a value makes it a string.
      - **Summarize:** `count`, `dcount`, `sum`, `avg`, `min`, `max` and `percentile` of one Field, by Fields and `bin(time, …)` or `bin_auto(time)`. A Summarize shows a table, as in Query mode, and the histogram still counts the filtered Logs.
-     - **More:** `sort by` columns (a Summarize's own columns when there is one) and a `take` limit.
+     - **More:** the `search` (the message and every string Attribute, ignoring case), which was a search box in the bar until the user asked to move it here; `sort by` columns (a Summarize's own columns when there is one) and a `take` limit. Once added, each has a row of its own (Search, Sort by, Limit) above More, as the user asked; Sort by has its own + for further keys. More offers only what's not there yet, and goes when all three are.
      - Each clause is edited in a small popover and runs at once; × removes it. Show only this and Hide this still add `==` / `!=` filters.
+     - A + adds a clause in steps, each a list to type into and pick from: a Field, then the operator and value for a filter; a function, then its Field; time bins or a Field to group by; search, sort or limit under More. Picking a suggested value applies a filter at once (in a list it's added or taken out). A Field not in the list can still be typed.
+     - Fields and values are suggested from up to 2,000 Logs of the recent runs, newest first, so a Query narrowed by a filter still suggests the values the filter left out.
    - **How it round-trips:** the Builder is still read back only from validate. Its `chips` now carry `summarize`, `sort` and `take` beside `filters` and `search`, read from the Query's syntax tree, so `in` and `isnull` come back as written. A stage counts as showable (`builder: true`) where it stands: filters first, then at most one each of `summarize`, `sort` and `take`, in that order. Anything else (named columns, `countif`, `project`, `top`, `or`, regexes, `where` after the tail) still sends the Query to Query mode.
    - **Reasoning:** the user asked for it on 2026-10-03, so that most questions can be built by clicking rather than writing a Query.
-   - **Where it landed:** `logquery/chips.go` and the validate tests, `lib/logs/builder.ts` (with vitest tests), `BuilderPanel.tsx`.
+     - The steps came after the user's screenshots of the first version, the same day: the Project list was as narrow as its button, so the name was clipped; the Field suggestions covered the operator, value and Apply; and More's active tab looked like its disabled Apply.
+   - **Where it landed:** `logquery/chips.go` and the validate tests, `lib/logs/builder.ts` and `lib/logs/pick.ts` (with vitest tests), `BuilderPanel.tsx` and `PickList.tsx`.
 
 Two of the user's 2026-10-03 decisions don't change this spec's behaviour, and are noted here for completeness:
 - **Fixing the compose dependency cycle** (`8929ba3`). It was a deploy bug that predated this spec.

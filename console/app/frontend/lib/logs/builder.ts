@@ -1,4 +1,4 @@
-// The Builder: Where filters, a search box, then Summarize, sort and limit.
+// The Builder: Where filters, a search, then Summarize, sort and limit.
 // Its state is a Query: it is written here as Query text, and read back only
 // from validate's chips, so the browser never parses Queries.
 
@@ -211,6 +211,25 @@ export function showOnly(builder: Builder, field: string, value: ChipValue): Bui
 export function hide(builder: Builder, field: string, value: ChipValue): Builder {
   const kept = builder.filters.filter(f => f.field !== field || f.value !== value)
   return { ...builder, filters: [...kept, { field, op: '!=', value }] }
+}
+
+/**
+ * The Builder with a filter added from a value: == and != as Show only this and
+ * Hide this add them, any other unless the Builder has it already.
+ */
+export function addFilter(builder: Builder, chip: Chip): Builder {
+  if (chip.op === '==' && canFilter(chip.value)) return showOnly(builder, chip.field, chip.value)
+  if (chip.op === '!=' && canFilter(chip.value)) return hide(builder, chip.field, chip.value)
+  const same = (f: Chip) => f.field === chip.field && f.op === chip.op && JSON.stringify(f.value) === JSON.stringify(chip.value)
+  return builder.filters.some(same) ? builder : { ...builder, filters: [...builder.filters, chip] }
+}
+
+/** Counts Logs by a Field: one more by column of the Summarize, or a new count() by it. */
+export function groupBy(builder: Builder, field: string): Builder {
+  const summarize = builder.summarize ?? { aggregates: [], by: [] }
+  const by = summarize.by.some(g => g.field === field && !g.bin) ? summarize.by : [...summarize.by, { field }]
+  const aggregates: Aggregate[] = summarize.aggregates.length > 0 ? summarize.aggregates : [{ fn: 'count' }]
+  return setSummarize(builder, { aggregates, by })
 }
 
 /** Whether a value can be a chip: Show only this and Hide this need one. */

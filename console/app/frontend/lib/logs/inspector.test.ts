@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inspectorFields, inspectorJson, utcTime } from './inspector'
+import { inspectorFields, inspectorJson, jsonLines, localTime, utcTime, type JsonLine } from './inspector'
 import type { Log } from './stream'
 
 const log: Log = {
@@ -40,5 +40,49 @@ describe('the inspector', () => {
     expect(json.time).toBe('2026-10-03T09:15:00.000Z')
     expect(json.attributes['http.status']).toBe(502)
     expect(json.id).toBe(log.id)
+  })
+})
+
+describe('the inspector\'s JSON lines', () => {
+  const lines = jsonLines({
+    id: 'x',
+    time: '2026-10-03T09:15:00Z',
+    level: 'error',
+    message: 'boom',
+    attributes: { 'http.status': 502, tags: ['a', { deep: 1 }], empty: [], cached: null },
+  })
+  const text = (l: JsonLine) => `${'  '.repeat(l.depth)}${l.key !== undefined ? `"${l.key}": ` : ''}${l.text}${l.comma ? ',' : ''}`
+
+  it('writes the Log as inspectorJson does, a line each', () => {
+    expect(lines.map(text).join('\n')).toBe(JSON.stringify({
+      id: 'x', time: '2026-10-03T09:15:00Z', level: 'error', message: 'boom',
+      attributes: { 'http.status': 502, tags: ['a', { deep: 1 }], empty: [], cached: null },
+    }, null, 2))
+  })
+
+  it('marks the Fields: the Log\'s own but id, and its Attributes; an array\'s elements are its', () => {
+    const fieldOf = (key: string) => lines.find(l => l.key === key)?.field
+    expect(fieldOf('id')).toBeUndefined()
+    expect(fieldOf('time')).toBe('time')
+    expect(fieldOf('attributes')).toBeUndefined()
+    expect(fieldOf('http.status')).toBe('http.status')
+    expect(fieldOf('tags')).toBe('tags')
+    expect(lines.find(l => l.text === '"a"')?.elementOf).toBe('tags')
+    expect(fieldOf('deep')).toBeUndefined()
+    expect(lines.find(l => l.key === 'empty')).toMatchObject({ field: 'empty', kind: 'empty', value: [] })
+  })
+
+  it('knows where each bracket closes, and how much it holds', () => {
+    const tags = lines.findIndex(l => l.key === 'tags')
+    expect(lines[tags]).toMatchObject({ kind: 'open', size: 2, value: ['a', { deep: 1 }] })
+    expect(lines[lines[tags].end!]).toMatchObject({ kind: 'close', text: ']', comma: true })
+    expect(lines[0].end).toBe(lines.length - 1)
+  })
+})
+
+describe('a Log\'s local time', () => {
+  it('reads as a date and a clock to the millisecond, with the zone', () => {
+    expect(localTime('2026-10-03T09:15:00.123Z', 'UTC')).toBe('Oct 3, 2026 at 09:15:00.123 UTC')
+    expect(localTime('2026-10-03T09:15:00.123Z', 'Europe/London')).toBe('Oct 3, 2026 at 10:15:00.123 GMT+1')
   })
 })

@@ -1,4 +1,3 @@
-import { Search } from 'lucide-react'
 import type { Builder } from '@/lib/logs/builder'
 
 /**
@@ -9,32 +8,11 @@ export type BuilderView =
   | { status: 'reading' }
   | { status: 'ready'; builder: Builder }
 
-interface BuilderBarProps {
-  view: BuilderView
-  onSearch: (text: string) => void
-  onRun: () => void
-}
-
-/** The search box: the Builder's control in the bar. Its other clauses are in the BuilderPanel. */
-export function BuilderBar({ view, onSearch, onRun }: BuilderBarProps) {
-  if (view.status === 'reading') return <span className="flex-1 text-xs text-muted-foreground">Reading the Query…</span>
-
-  const { builder } = view
+/** The Builder's place in the bar: its clauses, the search among them, are in the BuilderPanel. */
+export function BuilderBar({ view }: { view: BuilderView }) {
   return (
-    <>
-      <form
-        className="flex h-8 min-w-48 flex-1 items-center gap-2 rounded-md border px-2"
-        onSubmit={e => { e.preventDefault(); onRun() }}
-      >
-        <Search className="h-3.5 w-3.5 text-muted-foreground" />
-        <input
-          value={builder.search}
-          onChange={e => onSearch(e.target.value)}
-          placeholder="Search messages and Attributes…"
-          aria-label="Search Logs"
-          className="flex-1 bg-transparent text-xs outline-none"
-        />
-      </form>
-    </>
+    <span className="flex-1 text-[11px] text-muted-foreground">
+      {view.status === 'reading' ? 'Reading the Query…' : 'Each change in the Builder runs at once.'}
+    </span>
   )
 }

@@ -55,8 +55,8 @@ interface LogStreamProps {
 /**
  * The Logs of a run as a table, newest first, virtualised. The reader picks,
  * orders and sizes the columns; each row starts with a square in its Level's
- * colour. Clicking a row opens the inspector, whose values are the tags to
- * filter on; a cell offers only Copy.
+ * colour. Clicking a row opens the inspector, whose lines add to the Query;
+ * a cell offers only Copy.
  */
 export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, selectedId, onSelect, columns, onColumns }: LogStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -74,6 +74,19 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, se
   useEffect(() => {
     if (end === 'more' && !loadingOlder && !olderError && lastIndex >= logs.length - LOAD_AHEAD) onLoadOlder()
   }, [end, loadingOlder, olderError, lastIndex, logs.length, onLoadOlder])
+
+  // The Log the inspector steps to scrolls into view, clear of the sticky header.
+  const logsNow = useRef(logs)
+  logsNow.current = logs
+  useEffect(() => {
+    const box = scrollRef.current
+    const at = selectedId === null ? -1 : logsNow.current.findIndex(l => l.id === selectedId)
+    if (!box || at < 0) return
+    const header = box.querySelector<HTMLElement>('[data-stream-header]')?.offsetHeight ?? 0
+    const top = header + at * ROW_HEIGHT
+    if (top < box.scrollTop + header) box.scrollTop = top - header
+    else if (top + ROW_HEIGHT > box.scrollTop + box.clientHeight) box.scrollTop = top + ROW_HEIGHT - box.clientHeight
+  }, [selectedId])
 
   const widthOf = (column: string) => widths[column] ?? WIDTHS[column] ?? DEFAULT_WIDTH
   const minWidth = GUTTER + columns.reduce((sum, c) => sum + widthOf(c), 0) + PICKER
@@ -123,7 +136,7 @@ function HeaderRow({ columns, widthOf, onResize, onColumns, logs }: {
   }
 
   return (
-    <div className="sticky top-0 z-10 flex border-b bg-muted text-left text-muted-foreground">
+    <div data-stream-header className="sticky top-0 z-10 flex border-b bg-muted text-left text-muted-foreground">
       <div className="shrink-0 border-r" style={{ width: GUTTER }} />
       {columns.map(column => (
         <div
