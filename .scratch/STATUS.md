@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-10-03
+Updated: 2026-10-10
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
 
@@ -24,6 +24,8 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
+0. **Logs v2** (2026-10-10, branch `feature/logs-v2` from `feature/logs-v1`): charts, developer UX, Dashboards, Monitors (Slack, PagerDuty), Parquet in S3/GCS with a bin cache. Implemented directly from [the spec](logs-v2/spec.md), phase by phase.
+
 1. Click through the Logs explorer in a browser (Builder, Query, SQL modes, histogram drag, inspector, Back). No agent could; every UI check so far is tests, `tsc` and a server render.
 2. Merge `feature/logs-v1` into `feature/logging` (then `main`) when happy.
 3. [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) on the 4 vCPU / 16 GB VM: `ready-for-human`, every blocker resolved. Things to measure are in the ticket and in M1-04's and M2-01's Comments.
@@ -35,6 +37,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 |---|---|---|
 | Logs | 16 / 0 | [map.md](logs/map.md) |
 | Logs v1 | 19 / 1 | [spec.md](logs-v1/spec.md) |
+| Logs v2 | in progress | [spec.md](logs-v2/spec.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
