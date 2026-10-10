@@ -18,11 +18,13 @@ export async function useTheme(page: Page, info: TestInfo) {
   }, scheme)
 }
 
-export async function shoot(page: Page, name: string, opts: { fullPage?: boolean } = {}) {
+// idle: false shoots without waiting for the network to settle, for a
+// loading state whose requests a test holds open.
+export async function shoot(page: Page, name: string, opts: { fullPage?: boolean; idle?: boolean } = {}) {
   const info = test.info()
   const dir = join(root, set)
   mkdirSync(dir, { recursive: true })
-  await page.waitForLoadState('networkidle').catch(() => {})
+  if (opts.idle ?? true) await page.waitForLoadState('networkidle').catch(() => {})
   await page.waitForTimeout(250)
   const path = join(dir, `${name}--${info.project.name.replace(/^screens-/, '')}.png`)
   await page.screenshot({ path, fullPage: opts.fullPage ?? false, animations: 'disabled' })
@@ -30,10 +32,17 @@ export async function shoot(page: Page, name: string, opts: { fullPage?: boolean
 }
 
 // Fails the test on uncaught page errors and console errors, so a screen that
-// renders but throws is not mistaken for a good one.
-export function watchErrors(page: Page) {
+// renders but throws is not mistaken for a good one. `expected` lists console
+// errors a test brings about on purpose, such as the 400 a bad SQL query
+// answers, which the browser logs as a failed load.
+export function watchErrors(page: Page, expected: RegExp[] = []) {
   const errors: string[] = []
   page.on('pageerror', e => errors.push(`pageerror: ${e.message}`))
-  page.on('console', m => { if (m.type() === 'error') errors.push(`console: ${m.text()}`) })
+  page.on('console', m => {
+    if (m.type() === 'error' && !expected.some(e => e.test(m.text()))) errors.push(`console: ${m.text()}`)
+  })
   return errors
 }
+
+/** The console error a request the page expects to fail logs, by its status. */
+export const failedLoad = (status: number) => new RegExp(`^Failed to load resource: the server responded with a status of ${status}\\b`)
