@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { logsPath } from '../support/data'
-import { addFilter, builderRow, last24h, openLogs, settled, streamRows } from '../support/logs'
+import { addFilter, builderRow, last24h, openLogs, runBy, settled, streamRows } from '../support/logs'
 import { expectFits, failedLoad, shoot, useTheme, watchErrors } from '../support/screens'
 
 // Every state of the Logs v1 explorer the flows click through, for reading by
@@ -174,8 +174,7 @@ test.describe('Query mode', () => {
     await page.getByRole('button', { name: 'Query', exact: true }).click()
     const box = page.getByLabel('Query', { exact: true })
     await box.fill(`${SOURCE}\n| where level == "error"\n| summarize count() by service, bin(time, 1h)`)
-    await box.press('Control+Enter')
-    await settled(page)
+    await runBy(page, () => box.press('Control+Enter'))
     await shoot(page, 'v1-query')
     expect(errors).toEqual([])
   })
@@ -198,8 +197,7 @@ test.describe('Query mode', () => {
     await page.getByRole('button', { name: 'Query', exact: true }).click()
     const box = page.getByLabel('Query', { exact: true })
     await box.fill(`${SOURCE}\n| where level == "warn"\n| project time, service, message`)
-    await box.press('Control+Enter')
-    await settled(page)
+    await runBy(page, () => box.press('Control+Enter'))
     await page.getByRole('button', { name: 'Builder', exact: true }).click()
     await expect(page.getByText(/The Builder can't show/)).toBeVisible()
     await shoot(page, 'v1-query-leaving')
