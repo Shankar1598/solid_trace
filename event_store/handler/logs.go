@@ -46,30 +46,33 @@ func NewLogsHandler(logs *storage.LogStore, settings ConsoleSettings, clock cloc
 
 // queryRequest is the body of a run.
 type queryRequest struct {
-	Query  string    `json:"query"`
-	From   time.Time `json:"from"`
-	To     time.Time `json:"to"`
-	Limit  int       `json:"limit"`
-	Cursor string    `json:"cursor"`
+	Query          string    `json:"query"`
+	From           time.Time `json:"from"`
+	To             time.Time `json:"to"`
+	Limit          int       `json:"limit"`
+	Cursor         string    `json:"cursor"`
+	TimeoutSeconds *float64  `json:"timeout_seconds"`
 }
 
 // POST /api/:project_id/logs/query
 //
 // Runs a Query over a Project's Logs of [from, to): {"query", "from", "to"}
-// (RFC 3339), with "limit" (default 200, at most 1,000) and "cursor" (a
-// previous page's next_cursor) optional. A Query of Log rows answers {"logs":
-// […], "next_cursor"}, newest first; next_cursor is null once there are no
-// older Logs, or take's number of Logs has been given. A run that has read
-// for ScanBudget answers with what it has found, fewer than limit Logs or
-// none, and a next_cursor to go on from. A Query that returns a
-// table, one with project, extend, summarize, a sort other than newest first,
-// top, count or distinct, answers {"table": {"columns": [{"name", "type"}],
-// "rows": [[…]], "truncated"}}, and ignores limit and cursor. A Query with
-// mistakes answers 400 with {"errors": […]}, as validate lists them.
+// (RFC 3339), with "limit" (default 200, at most 1,000), "cursor" (a
+// previous page's next_cursor) and "timeout_seconds" optional. A Query of Log
+// rows answers {"logs": […], "next_cursor"}, newest first; next_cursor is
+// null once there are no older Logs, or take's number of Logs has been given.
+// A run that has read for ScanBudget answers with what it has found, fewer
+// than limit Logs or none, and a next_cursor to go on from. A Query that
+// returns a table, one with project, extend, summarize, a sort other than
+// newest first, top, count or distinct, answers {"table": …} (see table), and
+// ignores limit and cursor. Either answer carries "elapsed_ms", how long the
+// run took. A Query with mistakes answers 400 with {"errors": […]}, as
+// validate lists them.
 //
 // The scan goes on if the client goes away, as Fiber gives the handler no
-// context that ends with the connection: it stops at limit Logs or the end
-// of the range.
+// context that ends with the connection: it stops at limit Logs, the end of
+// the range, or timeout_seconds, past which the run answers 504 with
+// {"errors": [{"message"}]}.
 func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -79,6 +82,11 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
 	}
+	run, problem := startRun(c, req.TimeoutSeconds)
+	if problem != nil {
+		return c.Status(400).JSON(problem)
+	}
+	defer run.end()
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
@@ -102,7 +110,7 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 
 	from, to := query.Range()
 	if query.Table() {
-		return h.table(c, projectID, query, from, to)
+		return h.table(c, run, projectID, query, from, to)
 	}
 	if take, ok := query.Take(); ok && (req.Cursor == "" || left < 0) {
 		left = take
@@ -110,7 +118,7 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if left >= 0 {
 		limit = min(limit, left)
 	}
-	page, err := h.logs.ScanLogs(c.UserContext(), storage.LogScan{
+	page, err := h.logs.ScanLogs(run.ctx, storage.LogScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
@@ -120,6 +128,9 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		Budget:    h.ScanBudget,
 	})
 	if err != nil {
+		if run.timedOut() {
+			return run.stopped(c)
+		}
 		logger.L.Error("Log query failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
@@ -131,14 +142,18 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		cursor := encodeCursor(*page.Next, left)
 		next = &cursor
 	}
-	return c.JSON(fiber.Map{"logs": page.Logs, "next_cursor": next})
+	return run.answer(c, fiber.Map{"logs": page.Logs, "next_cursor": next})
 }
 
 // table answers a run of a Query that returns a table: {"table": {"columns":
-// [{"name", "type"}], "rows": [[…]], "truncated"}}, at most maxTableRows
-// rows, truncated when there were more.
-func (h *LogsHandler) table(c *fiber.Ctx, projectID uint32, query *logquery.Query, from, to time.Time) error {
-	raw, err := h.logs.ScanLogTable(c.UserContext(), storage.LogTableScan{
+// [{"name", "type", "agg", "bin_seconds"}], "rows": [[…]], "truncated",
+// "fill_gaps", "from", "to"}}, at most maxTableRows rows, truncated when
+// there were more. agg and bin_seconds say how to chart a column
+// (logquery.Column); fill_gaps, whether a chart may fill the time bins with
+// no row; from and to are the range the Query read, the request's as a
+// leading where on time narrows it.
+func (h *LogsHandler) table(c *fiber.Ctx, run *run, projectID uint32, query *logquery.Query, from, to time.Time) error {
+	raw, err := h.logs.ScanLogTable(run.ctx, storage.LogTableScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
@@ -147,6 +162,9 @@ func (h *LogsHandler) table(c *fiber.Ctx, projectID uint32, query *logquery.Quer
 		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
 	})
 	if err != nil {
+		if run.timedOut() {
+			return run.stopped(c)
+		}
 		logger.L.Error("Log table query failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
@@ -156,7 +174,16 @@ func (h *LogsHandler) table(c *fiber.Ctx, projectID uint32, query *logquery.Quer
 	for i, r := range raw {
 		rows[i] = query.Row(r)
 	}
-	return c.JSON(fiber.Map{"table": fiber.Map{"columns": query.Columns(), "rows": rows, "truncated": truncated}})
+	return run.answer(c, fiber.Map{"table": fiber.Map{
+		"columns":   query.Columns(),
+		"rows":      rows,
+		"truncated": truncated,
+		// Cut short, the table lacks bins that have Logs: unsorted, its
+		// rows go in order of their values, so the newest are cut.
+		"fill_gaps": query.FillGaps() && !truncated,
+		"from":      from.UTC().Format(time.RFC3339Nano),
+		"to":        to.UTC().Format(time.RFC3339Nano),
+	}})
 }
 
 // POST /api/:project_id/logs/validate
