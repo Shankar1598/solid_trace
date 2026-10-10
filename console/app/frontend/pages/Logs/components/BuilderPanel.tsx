@@ -117,23 +117,26 @@ export function BuilderPanel({ builder, project, projects, onProject, fields, va
           <Add label="Add a function" editor={close => (
             <AggregateEditor onApply={a => { close(); changeSummarize({ ...summarize, aggregates: [...summarize.aggregates, a] }) }} />
           )} />
-          <span className={cn('ml-2 mr-0.5', MUTED_TEXT)}>by</span>
-          {summarize.by.map((g, i) => (
-            <Clause
-              key={i}
-              title={groupText(g)}
-              onRemove={() => changeSummarize({ ...summarize, by: summarize.by.filter((_, j) => j !== i) })}
-              editor={close => <GroupEditor group={g} onApply={next => {
-                close()
-                changeSummarize({ ...summarize, by: summarize.by.map((old, j) => (j === i ? next : old)) })
-              }} />}
-            >
-              {groupText(g)}
-            </Clause>
-          ))}
-          <Add label="Group by a Field or time" editor={close => (
-            <GroupEditor onApply={g => { close(); changeSummarize({ ...summarize, by: [...summarize.by, g] }) }} />
-          )} />
+          {/* by and its groups wrap as one, so on a phone by leads the groups rather than trailing the functions. */}
+          <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
+            <span className={cn('ml-2 mr-0.5', MUTED_TEXT)}>by</span>
+            {summarize.by.map((g, i) => (
+              <Clause
+                key={i}
+                title={groupText(g)}
+                onRemove={() => changeSummarize({ ...summarize, by: summarize.by.filter((_, j) => j !== i) })}
+                editor={close => <GroupEditor group={g} onApply={next => {
+                  close()
+                  changeSummarize({ ...summarize, by: summarize.by.map((old, j) => (j === i ? next : old)) })
+                }} />}
+              >
+                {groupText(g)}
+              </Clause>
+            ))}
+            <Add label="Group by a Field or time" editor={close => (
+              <GroupEditor onApply={g => { close(); changeSummarize({ ...summarize, by: [...summarize.by, g] }) }} />
+            )} />
+          </span>
         </Row>
 
         {builder.search !== '' && (
