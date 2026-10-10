@@ -72,7 +72,8 @@ export function HistogramStrip({ view, onZoom, onLevel }: HistogramStripProps) {
 function SummaryLine({ histogram, onLevel }: { histogram: Histogram; onLevel: HistogramStripProps['onLevel'] }) {
   const rate = errorRate(histogram)
   return (
-    <div className="flex h-5 items-center gap-3 text-[11px] text-muted-foreground">
+    // On a phone the line wraps between its parts, never inside one.
+    <div className="flex min-h-5 flex-wrap items-center gap-x-3 whitespace-nowrap text-[11px] text-muted-foreground">
       <span><span className="font-medium text-foreground">{histogram.count.toLocaleString()}</span> {histogram.count === 1 ? 'Log' : 'Logs'}</span>
       <span>error rate <span className="font-medium text-foreground">{rateText(rate)}</span></span>
       <span className="h-3 w-px bg-border" />
@@ -154,7 +155,12 @@ function Strip({ histogram, range, onZoom }: {
         {timeLabels(buckets, range).map(({ at, time }, k, all) => (
           <span
             key={k}
-            className={cn('absolute whitespace-nowrap', k === 0 ? '' : k === all.length - 1 ? '-translate-x-full' : '-translate-x-1/2')}
+            className={cn(
+              'absolute whitespace-nowrap',
+              k === 0 ? '' : k === all.length - 1 ? '-translate-x-full' : '-translate-x-1/2',
+              // A phone has room for the ends and the middle only.
+              all.length === TIME_LABELS && (k === 1 || k === 3) && 'max-sm:hidden',
+            )}
             style={{ left: `${at * 100}%` }}
           >
             {format(time, pattern)}
