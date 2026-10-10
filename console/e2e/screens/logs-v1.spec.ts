@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { logsPath } from '../support/data'
 import { addFilter, builderRow, last24h, openLogs, settled, streamRows } from '../support/logs'
-import { failedLoad, shoot, useTheme, watchErrors } from '../support/screens'
+import { expectFits, failedLoad, shoot, useTheme, watchErrors } from '../support/screens'
 
 // Every state of the Logs v1 explorer the flows click through, for reading by
 // eye at both sizes in both themes: the Builder and its steps, Query and SQL
@@ -46,6 +46,8 @@ test.describe('Builder', () => {
     }))
     await page.goto(logsPath(last24h()))
     await expect(page.getByText('EventStore is unavailable. Try again shortly.').first()).toBeVisible()
+    // On a phone the summary line's message wraps, inside the strip.
+    await expectFits(page.getByText(/^Not counted: /))
     await shoot(page, 'v1-builder-unavailable')
     expect(errors).toEqual([])
   })
