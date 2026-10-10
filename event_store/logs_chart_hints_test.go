@@ -134,8 +134,14 @@ func TestHintsSurviveOnlyPlainRenames(t *testing.T) {
 		`summarize n = count() by bin(time, 5m), service | summarize total = sum(n) by time`: "time[300s] total[sum], fill",
 		`summarize n = count() by bin(time, 5m), service | summarize sum(n) by service`:      "service sum_n[sum], no fill",
 		`summarize n = count() by bin(time, 5m) | summarize count() by n`:                    "n count_[count], no fill",
+		// So does a column an earlier stage bins a time into.
+		`extend hour = bin(time, 1h) | summarize count() by hour, service`:                          "hour[3600s] service count_[count], fill",
+		`extend time = bin(time, 1d) | summarize count() by time`:                                   "time[86400s] count_[count], fill",
+		`summarize n = count() by bin(time, 5m) | extend h = bin(time, 1h) | summarize sum(n) by h`: "h[3600s] sum_n[sum], fill",
+		`extend t = bin(time, 1h) + 1h | summarize count() by t`:                                    "t count_[count], no fill",
 		// Hints come only from a summarize.
 		`extend t = bin(time, 1h) | project t, duration`: "t duration, no fill",
+		byHour + ` | extend day = bin(time, 1d)`:         "time[3600s] service count_[count] day, fill",
 	})
 }
 
@@ -155,7 +161,8 @@ func TestStagesThatLeaveOutRowsAfterTheSummarizeStopGapsBeingFilled(t *testing.T
 		byHour + ` | sort by n desc | take 2`: "time[3600s] service n[count], no fill",
 		byHour + ` | top 100 by n`:            "time[3600s] service n[count], no fill",
 		byHour + ` | count`:                   "Count, no fill",
-		byHour + ` | distinct time, service`:  "time service, no fill",
+		byHour + ` | distinct time, service`:  "time[3600s] service, no fill",
+		byHour + ` | distinct time, n`:        "time[3600s] n[count], no fill",
 		// A filter before the summarize leaves out Logs, not bins.
 		`where level == "error" | ` + byHour: "time[3600s] service n[count], fill",
 	})

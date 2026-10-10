@@ -27,23 +27,37 @@ type hint struct {
 // shapeOf works out a table's shape from its tail.
 //
 // Only the last summarize gives hints: a by column that bins a time gets the
-// bins' size, and an aggregate, not one inside arithmetic, its function. A
-// later project or extend keeps a column's hint only as a plain rename, and
-// any other value under that name has none. Any stage after the summarize
-// that leaves out rows clears fillGaps, as does losing the time bin column.
+// bins' size, whether it bins the time itself or groups by a column an
+// earlier stage binned it into, and an aggregate, not one inside arithmetic,
+// its function. A later project, extend or distinct keeps a column's hint
+// only as a plain rename, and any other value under that name has none. Any
+// stage after the summarize that leaves out rows clears fillGaps, as does
+// losing the time bin column.
 func shapeOf(tail []stage) shape {
+	last := -1
+	for i, st := range tail {
+		if _, ok := st.(summarizeStage); ok {
+			last = i
+		}
+	}
 	var s shape
-	for _, st := range tail {
+	for i, st := range tail {
+		// Before the last summarize, a column that bins a time may be one
+		// it groups by.
+		bins := i < last
 		switch st := st.(type) {
 		case summarizeStage:
 			s = summarized(st, s.hints)
 		case projectStage:
-			s.hints = renamed(st.columns, s.hints, nil)
+			s.hints = renamed(st.columns, s.hints, nil, bins)
 		case extendStage:
-			s.hints = renamed(st.columns, s.hints, s.hints)
+			s.hints = renamed(st.columns, s.hints, s.hints, bins)
+		case distinctStage:
+			s.hints = renamed(st.columns, s.hints, nil, bins)
+			s.fillGaps = false
 		case whereStage, takeStage, topStage:
 			s.fillGaps = false
-		case countStage, distinctStage:
+		case countStage:
 			s = shape{}
 		}
 	}
@@ -95,11 +109,12 @@ func timeBin(x expr, hints map[string]hint) (time.Duration, bool) {
 	return 0, false
 }
 
-// renamed are the hints after a project's or an extend's columns: a column
-// that is another column, as it is, takes that column's hint, and any other
-// has none. kept are the hints of the columns the stage keeps as they were,
-// extend's input; nil for project.
-func renamed(columns []namedValue, hints, kept map[string]hint) map[string]hint {
+// renamed are the hints after a project's, an extend's or a distinct's
+// columns: a column that is another column, as it is, takes that column's
+// hint, and any other has none, unless bins is set and it bins a time. kept
+// are the hints of the columns the stage keeps as they were, extend's input;
+// nil for the others.
+func renamed(columns []namedValue, hints, kept map[string]hint, bins bool) map[string]hint {
 	after := maps.Clone(kept)
 	if after == nil {
 		after = map[string]hint{}
@@ -110,6 +125,8 @@ func renamed(columns []namedValue, hints, kept map[string]hint) map[string]hint 
 			if h, ok := hints[ref.name]; ok {
 				after[col.name] = h
 			}
+		} else if size, ok := timeBin(col.x, hints); ok && bins {
+			after[col.name] = hint{bin: size}
 		}
 	}
 	return after
