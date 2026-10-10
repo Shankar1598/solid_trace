@@ -83,6 +83,10 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 			default:
 				inHead = false
 				c.tail = true
+				// The tail runs over the range the head narrows, which
+				// bin_auto sizes its bins by.
+				q.narrow()
+				c.bounds.From, c.bounds.To = q.from, q.to
 			}
 		}
 		compiled, err := c.stage(s)
@@ -96,7 +100,9 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 		}
 		q.spans = append(q.spans, s.Span())
 	}
-	q.narrow()
+	if inHead {
+		q.narrow()
+	}
 	q.finish(c)
 	return q, nil
 }
