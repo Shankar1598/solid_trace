@@ -135,8 +135,12 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 }
 
 // table answers a run of a Query that returns a table: {"table": {"columns":
-// [{"name", "type"}], "rows": [[…]], "truncated"}}, at most maxTableRows
-// rows, truncated when there were more.
+// [{"name", "type", "agg", "bin_seconds"}], "rows": [[…]], "truncated",
+// "fill_gaps", "from", "to"}}, at most maxTableRows rows, truncated when
+// there were more. agg and bin_seconds say how to chart a column
+// (logquery.Column); fill_gaps, whether a chart may fill the time bins with
+// no row; from and to are the range the Query read, the request's as a
+// leading where on time narrows it.
 func (h *LogsHandler) table(c *fiber.Ctx, projectID uint32, query *logquery.Query, from, to time.Time) error {
 	raw, err := h.logs.ScanLogTable(c.UserContext(), storage.LogTableScan{
 		ProjectID: projectID,
@@ -156,7 +160,16 @@ func (h *LogsHandler) table(c *fiber.Ctx, projectID uint32, query *logquery.Quer
 	for i, r := range raw {
 		rows[i] = query.Row(r)
 	}
-	return c.JSON(fiber.Map{"table": fiber.Map{"columns": query.Columns(), "rows": rows, "truncated": truncated}})
+	return c.JSON(fiber.Map{"table": fiber.Map{
+		"columns":   query.Columns(),
+		"rows":      rows,
+		"truncated": truncated,
+		// Cut short, the table lacks bins that have Logs: unsorted, its
+		// rows go in order of their values, so the newest are cut.
+		"fill_gaps": query.FillGaps() && !truncated,
+		"from":      from.UTC().Format(time.RFC3339Nano),
+		"to":        to.UTC().Format(time.RFC3339Nano),
+	}})
 }
 
 // POST /api/:project_id/logs/validate

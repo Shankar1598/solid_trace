@@ -229,17 +229,23 @@ func orderBy(keys []sortKey, f fields) string {
 
 // Column is one column of a Query's table: its name, and the type of its
 // values: string, number, bool, datetime, timespan, or dynamic for values
-// whose type differs from row to row.
+// whose type differs from row to row. A column of the Query's last
+// summarize, or a plain rename of one, says how to chart it: Agg is the
+// aggregate it is (count, countif, dcount, sum, avg, min, max or
+// percentile), and BinSeconds the size of the time bins it holds.
 type Column struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name       string  `json:"name"`
+	Type       string  `json:"type"`
+	Agg        string  `json:"agg,omitempty"`
+	BinSeconds float64 `json:"bin_seconds,omitempty"`
 }
 
 // Columns are the columns of the Query's table.
 func (q *Query) Columns() []Column {
 	columns := make([]Column, len(q.output))
 	for i, col := range q.output {
-		columns[i] = Column{Name: col.name, Type: col.x.typ().String()}
+		h := q.shape.hints[col.name]
+		columns[i] = Column{Name: col.name, Type: col.x.typ().String(), Agg: h.agg, BinSeconds: h.bin.Seconds()}
 	}
 	return columns
 }
