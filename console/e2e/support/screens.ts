@@ -1,4 +1,4 @@
-import { test, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -46,3 +46,10 @@ export function watchErrors(page: Page, expected: RegExp[] = []) {
 
 /** The console error a request the page expects to fail logs, by its status. */
 export const failedLoad = (status: number) => new RegExp(`^Failed to load resource: the server responded with a status of ${status}\\b`)
+
+/** Fails when a box's content runs past its edges, as wrapped text does in a fixed-height box. */
+export async function expectFits(box: Locator) {
+  const overflow = await box.evaluate(el => ({ down: el.scrollHeight - el.clientHeight, across: el.scrollWidth - el.clientWidth }))
+  expect(overflow.down, 'content below the box').toBeLessThanOrEqual(1)
+  expect(overflow.across, 'content beside the box').toBeLessThanOrEqual(1)
+}

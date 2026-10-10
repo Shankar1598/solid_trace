@@ -59,7 +59,8 @@ export function HistogramStrip({ view, onZoom, onLevel }: HistogramStripProps) {
         </>
       ) : (
         <>
-          <div className="h-5 text-[11px] leading-5 text-muted-foreground">
+          {/* At least the summary line's height, growing when a long message wraps on a phone. */}
+          <div className="min-h-5 text-[11px] leading-5 text-muted-foreground">
             {view.status === 'running' ? 'Counting Logs…' : view.status === 'cancelled' ? 'Not counted.' : `Not counted: ${view.message}`}
           </div>
           {view.status === 'running' && <div style={{ height: STRIP_HEIGHT + 16 }} />}
