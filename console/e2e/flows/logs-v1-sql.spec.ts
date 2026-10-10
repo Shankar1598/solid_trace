@@ -82,7 +82,8 @@ test('leaving SQL mode without edits is silent', async ({ page }) => {
   await settled(page)
   await expect(page.getByText(/SQL can't be turned back into a Query/)).toHaveCount(0)
   await expect(page).toHaveURL(/mode=query/)
-  await expect(page.getByLabel('Query', { exact: true })).toBeVisible()
+  // The empty Builder's Query shows as the Project's slug, as Builder to Query writes it.
+  await expect(page.getByLabel('Query', { exact: true })).toHaveValue("['solid-trace-project']")
   expect(errors).toEqual([])
 })
 

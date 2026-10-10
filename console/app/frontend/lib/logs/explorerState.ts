@@ -123,6 +123,18 @@ export function switchMode(explorer: Explorer, mode: Mode): { explorer: Explorer
 }
 
 /**
+ * Query mode writes its stages after the Query's Project, so an empty Query
+ * shows there as `projectQuery`, the Project's slug alone. That reads the
+ * same Logs as the empty Query, so it goes in what ran as well as the draft:
+ * it isn't an edit, and neither running it again nor switching back to the
+ * Builder adds a history entry or runs anything new.
+ */
+export function fillEmptyQuery(explorer: Explorer, projectQuery: string): Explorer {
+  const fill = (state: ExplorerState) => (state.mode === 'query' && state.query === '' ? { ...state, query: projectQuery } : state)
+  return { current: fill(explorer.current), draft: fill(explorer.draft) }
+}
+
+/**
  * Runs the draft. `push` is the search to push as a new history entry, or
  * null when the run changes nothing in the URL (running it again only
  * refreshes the Logs).

@@ -94,6 +94,30 @@ test('back to the Builder: silent when it can show the Query, asking when it can
   expect(errors).toEqual([])
 })
 
+test('an untouched Query is no edit: running it or going back to the Builder adds no history entry', async ({ page }) => {
+  const errors = watchErrors(page)
+  const entries = () => page.evaluate(() => history.length)
+
+  // A Query-mode link with no Query.
+  await openLogs(page, last24h('query'))
+  const opened = await entries()
+  await runBy(page, () => page.getByRole('button', { name: 'Run', exact: true }).click())
+  expect(await entries()).toBe(opened)
+
+  // Back to the Builder replaces the entry, with no run.
+  await page.getByRole('button', { name: 'Builder', exact: true }).click()
+  await expect(page).toHaveURL(/mode=builder/)
+  expect(await entries()).toBe(opened)
+
+  // From the Builder into Query mode and back, the same.
+  await page.getByRole('button', { name: 'Query', exact: true }).click()
+  await expect(page.getByLabel('Query', { exact: true })).toHaveValue(SOURCE)
+  await page.getByRole('button', { name: 'Builder', exact: true }).click()
+  await expect(page).toHaveURL(/mode=builder/)
+  expect(await entries()).toBe(opened)
+  expect(errors).toEqual([])
+})
+
 test('in Query mode a Level count and Hide add wheres after the Query, which starts with the Project', async ({ page }) => {
   const errors = watchErrors(page)
   // A Query-mode link with no Query: the box holds the Project's slug, as switching to Query mode writes it.
