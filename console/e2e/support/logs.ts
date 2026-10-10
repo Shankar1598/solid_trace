@@ -29,6 +29,20 @@ export async function settled(page: Page) {
   await expect(page.getByText('Reading the Query…')).toHaveCount(0)
 }
 
+/**
+ * Runs the explorer by `trigger` (Run, Ctrl+Enter, a Level count, Hide) and
+ * waits for the run to answer. In Query mode a run starts only once validate
+ * answers, with nothing on screen meanwhile, so settled() straight after the
+ * trigger could pass before the run starts and leave the last run's count on
+ * screen: this waits for the new run's histogram first.
+ */
+export async function runBy(page: Page, trigger: () => Promise<unknown>) {
+  const counted = page.waitForResponse(response => /\/logs\/histogram\?/.test(response.url()))
+  await trigger()
+  await counted
+  await settled(page)
+}
+
 /** The summary line's Log count, as a number. */
 export async function logCount(page: Page): Promise<number> {
   const line = summaryLine(page)

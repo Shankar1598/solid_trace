@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { addFilter, builderRow, last24h, logCount, openLogs, settled } from '../support/logs'
+import { addFilter, builderRow, last24h, logCount, openLogs, runBy, settled } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // Each run is a history entry: Back returns to the run before, its Query and
@@ -53,12 +53,10 @@ test('Back in Query mode returns to the Query run before', async ({ page }) => {
   const second = "['solid-trace-project']\n| where level == \"error\""
 
   await box.fill(first)
-  await box.press('Control+Enter')
-  await settled(page)
+  await runBy(page, () => box.press('Control+Enter'))
   const warnLogs = await logCount(page)
   await box.fill(second)
-  await box.press('Control+Enter')
-  await settled(page)
+  await runBy(page, () => box.press('Control+Enter'))
   await expect(page).toHaveURL(/error/)
 
   await page.goBack()
