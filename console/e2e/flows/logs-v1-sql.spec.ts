@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Locator } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { last24h, logCount, openLogs, settled } from '../support/logs'
@@ -75,3 +75,42 @@ test('leaving SQL mode without edits is silent', async ({ page }) => {
   await expect(page.getByLabel('Query', { exact: true })).toBeVisible()
   expect(errors).toEqual([])
 })
+
+test('on a phone a SQL error keeps its caret under the mistake', async ({ page }) => {
+  const errors = watchErrors(page, [failedLoad(400)])
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openLogs(page, last24h())
+  await page.getByRole('button', { name: 'SQL', exact: true }).click()
+  // Longer than a phone is wide.
+  await page.getByLabel('SQL', { exact: true }).fill('SELECT service, level, count(*) AS n FROM logs WHERE nope = 1 GROUP BY service, level')
+  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  const error = page.getByRole('alert')
+  await expect(error).toContainText('Referenced column "nope" not found')
+  await expectCaretUnder(error, 'nope')
+  expect(errors).toEqual([])
+})
+
+/** DuckDB's ^ is drawn on the line under its LINE, in the column where `word` starts. */
+async function expectCaretUnder(error: Locator, word: string) {
+  const at = await error.evaluate((el, word) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node.textContent ?? ''
+      const line = text.indexOf('LINE ')
+      if (line < 0) continue
+      const box = (from: number) => {
+        const range = document.createRange()
+        range.setStart(node, from)
+        range.setEnd(node, from + 1)
+        return range.getBoundingClientRect()
+      }
+      const mistake = box(text.indexOf(word, line))
+      const caret = box(text.indexOf('^', line))
+      return { mistake: { x: mistake.left, y: mistake.top }, caret: { x: caret.left, y: caret.top }, lineHeight: parseFloat(getComputedStyle(node.parentElement!).lineHeight) }
+    }
+    return null
+  }, word)
+  expect(at, 'a LINE in the error').not.toBeNull()
+  expect(Math.abs(at!.caret.x - at!.mistake.x)).toBeLessThan(2)
+  expect(at!.caret.y - at!.mistake.y).toBeCloseTo(at!.lineHeight, 0)
+}

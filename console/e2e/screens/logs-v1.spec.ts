@@ -237,9 +237,10 @@ test.describe('SQL mode', () => {
     await openLogs(page)
     await page.getByRole('button', { name: 'SQL', exact: true }).click()
     const box = page.getByLabel('SQL', { exact: true })
-    await box.fill('SELECT nope FROM logs')
+    // Longer than a phone is wide: its LINE scrolls sideways there, the caret under the mistake.
+    await box.fill('SELECT service, level, count(*) AS n FROM logs WHERE nope = 1 GROUP BY service, level')
     await page.getByRole('button', { name: 'Run', exact: true }).click()
-    await settled(page)
+    await expect(page.getByRole('alert')).toContainText('Referenced column "nope" not found')
     await shoot(page, 'v1-sql-error')
     expect(errors).toEqual([])
   })

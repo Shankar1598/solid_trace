@@ -35,6 +35,7 @@ import {
   typeSql,
 } from '@/lib/logs/explorerState'
 import { columnsFromSearch, commonValues, fieldInfos, rememberLogs, toggleColumn, withColumns } from '@/lib/logs/columns'
+import { errorParts } from '@/lib/logs/errorParts'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
 import { pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
@@ -547,7 +548,7 @@ function ResultArea({ result, onLoadOlder, selectedId, onSelect, columns, onColu
     case 'cancelled':
       return <Notice>Query cancelled. Run it again to see Logs.</Notice>
     case 'error':
-      return <Notice tone="error">{result.message}</Notice>
+      return <ErrorNotice message={result.message} />
     case 'table':
       return <LogTableView table={result.table} />
     case 'done':
@@ -572,16 +573,39 @@ function ResultArea({ result, onLoadOlder, selectedId, onSelect, columns, onColu
   }
 }
 
-function Notice({ children, tone }: { children: React.ReactNode; tone?: 'error' }) {
-  if (tone === 'error') {
-    // An error keeps its lines, left-aligned as one block, so DuckDB's ^ stays under the mistake it points at.
-    return (
-      <div className="p-10 text-sm text-destructive">
-        <p className="mx-auto w-fit max-w-full whitespace-pre-wrap break-words">{children}</p>
-      </div>
-    )
-  }
+function Notice({ children }: { children: React.ReactNode }) {
   return <div className="p-10 text-center text-sm text-muted-foreground">{children}</div>
+}
+
+/**
+ * A run's error: its lines left-aligned as one block. DuckDB's LINE and caret
+ * keep their columns, scrolling sideways when they don't fit, so the ^ stays
+ * under the mistake it points at; the prose around them wraps.
+ */
+function ErrorNotice({ message }: { message: string }) {
+  return (
+    <div role="alert" className="p-10 text-sm text-destructive">
+      <div className="mx-auto w-fit max-w-full space-y-5">
+        {errorParts(message).map((part, i) => part.kind === 'pointer'
+          ? <PointerLines key={i} text={part.text} />
+          : <p key={i} className="whitespace-pre-wrap break-words">{part.text}</p>)}
+      </div>
+    </div>
+  )
+}
+
+/** DuckDB's LINE and caret, scrolled to the caret when a phone draws it past the right edge. */
+function PointerLines({ text }: { text: string }) {
+  const scrollToCaret = useCallback((pre: HTMLPreElement | null) => {
+    const node = pre?.firstChild
+    if (!pre || !node || pre.scrollWidth <= pre.clientWidth) return
+    const caret = document.createRange()
+    caret.setStart(node, text.length - 1)
+    caret.setEnd(node, text.length)
+    const left = caret.getBoundingClientRect().left - pre.getBoundingClientRect().left + pre.scrollLeft
+    pre.scrollLeft = left - pre.clientWidth / 2
+  }, [text])
+  return <pre ref={scrollToCaret} className="overflow-x-auto font-sans">{text}</pre>
 }
 
 const CUSTOM = 'custom'
