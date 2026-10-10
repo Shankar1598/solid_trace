@@ -161,8 +161,10 @@ func TestHintsSurviveOnlyPlainRenames(t *testing.T) {
 		`extend time = bin(time, 1d) | summarize count() by time`:                                   "time[86400s] count_[count], fill",
 		`summarize n = count() by bin(time, 5m) | extend h = bin(time, 1h) | summarize sum(n) by h`: "h[3600s] sum_n[sum], fill",
 		`extend t = bin(time, 1h) + 1h | summarize count() by t`:                                    "t count_[count], no fill",
-		// Binned again, coarser bins stay as they are.
+		// Binned again, coarser bins stay as they are, unless the new size
+		// doesn't divide theirs: then the times move onto its bins.
 		`summarize n = count() by bin(time, 1h) | summarize sum(n) by bin(time, 5m)`:    "time[3600s] sum_n[sum], fill",
+		`summarize n = count() by bin(time, 1h) | summarize sum(n) by bin(time, 7m)`:    "time[420s] sum_n[sum], fill",
 		`summarize n = count() by bin(time, 5m) | summarize sum(n) by bin(time, 1h)`:    "time[3600s] sum_n[sum], fill",
 		`extend time = bin(time, 1d) | summarize count() by bin(time, 1h)`:              "time[86400s] count_[count], fill",
 		`extend day = bin(time, 1d) | extend t = bin(day, 1h) | summarize count() by t`: "t[86400s] count_[count], fill",
