@@ -38,6 +38,10 @@ Fixed after review:
 - In SQL mode the result area said "Running the Query…" and "Query cancelled. Run it again to see Logs." (`442570d`).
 - An untouched Query in Query mode counted as an edit: Run pushed a history entry for the same Logs, and back to the Builder ran them again. Leaving SQL mode for Query mode from an empty Builder left the box empty (`0e4a08d`).
 
+Fixed in the second review:
+
+- Discard and switch kept a typed Query that never ran in the draft, so the next Run, range pick or histogram zoom ran it under a Builder that didn't show it (`44a50bc`). The screen `v1-query-discarded` in `A0-fix2/` shows the Builder's Logs after Discard and Run.
+
 ## Rough edges for Phase 6
 
 Each item gives what, where, a screenshot and a suggested fix.
