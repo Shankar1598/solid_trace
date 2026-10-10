@@ -126,6 +126,12 @@ func TestHintsSurviveOnlyPlainRenames(t *testing.T) {
 		byHour + ` | project day = bin(time, 1d), count_`:                     "day count_[count], no fill",
 		byHour + ` | project service, count_`:                                 "service count_[count], no fill",
 		byHour + ` | extend n = count_, count_ = 1 | project time, n, count_`: "time[3600s] n[count] count_, fill",
+		// A table has one time axis: the first column of time bins. A copy
+		// of it is a time like any other.
+		byHour + ` | extend t = time`:                           "time[3600s] service count_[count] t, fill",
+		byHour + ` | project a = time, b = time, count_`:        "a[3600s] b count_[count], fill",
+		byHour + ` | project count_, t = time, time`:            "count_[count] t[3600s] time, fill",
+		byHour + ` | extend t = time | project t, time, count_`: "t[3600s] time count_[count], fill",
 		// An aggregate inside arithmetic is no longer one.
 		`summarize n = count() * 2, avg(duration) by bin(time, 1h)`: "time[3600s] n avg_duration[avg], fill",
 		`summarize n = -max(duration) by bin(time, 1h)`:             "time[3600s] n, fill",

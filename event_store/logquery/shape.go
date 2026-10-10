@@ -33,7 +33,11 @@ type hint struct {
 // only as a plain rename, and any other value under that name has none. Any
 // stage after the summarize that leaves out rows clears fillGaps, as does
 // losing the time bin column.
-func shapeOf(tail []stage) shape {
+//
+// A table has one time axis: of output, the table's columns, the first that
+// holds time bins. A copy of it, as extend t = time makes, is a time like
+// any other.
+func shapeOf(tail []stage, output []namedValue) shape {
 	last := -1
 	for i, st := range tail {
 		if _, ok := st.(summarizeStage); ok {
@@ -61,11 +65,19 @@ func shapeOf(tail []stage) shape {
 			s = shape{}
 		}
 	}
-	binned := false
-	for _, h := range s.hints {
-		binned = binned || h.bin > 0
+	axis := false
+	for _, col := range output {
+		h := s.hints[col.name]
+		if h.bin == 0 {
+			continue
+		}
+		if axis {
+			h.bin = 0
+			s.hints[col.name] = h
+		}
+		axis = true
 	}
-	s.fillGaps = s.fillGaps && binned
+	s.fillGaps = s.fillGaps && axis
 	return s
 }
 
