@@ -27,6 +27,14 @@ test('SQL mode opens with the readable SQL, runs on Run, and asks before discard
   // Nothing runs until Run.
   await expect(page.getByText('Press Run to run the SQL.')).toBeVisible()
 
+  // While it runs, and once cancelled, the result area speaks of the SQL.
+  await page.route(/\/logs\/sql$/, () => {})
+  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  await expect(page.getByText('Running the SQL…')).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByText('SQL cancelled. Run it again.')).toBeVisible()
+  await page.unroute(/\/logs\/sql$/)
+
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   await settled(page)
   await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeVisible()

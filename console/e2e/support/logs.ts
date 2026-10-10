@@ -25,7 +25,7 @@ export function last24h(mode = 'builder'): string {
 export async function settled(page: Page) {
   await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeVisible()
   await expect(page.getByText('Counting Logs…')).toHaveCount(0)
-  await expect(page.getByText('Running the Query…')).toHaveCount(0)
+  await expect(page.getByText(/^Running the (Query|SQL)…$/)).toHaveCount(0)
   await expect(page.getByText('Reading the Query…')).toHaveCount(0)
 }
 
