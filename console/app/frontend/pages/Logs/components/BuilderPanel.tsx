@@ -4,6 +4,7 @@ import { ChevronDown, ChevronLeft, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
+  addAggregate,
   aggregateText,
   editableText,
   groupText,
@@ -115,7 +116,7 @@ export function BuilderPanel({ builder, project, projects, onProject, fields, va
             </Clause>
           ))}
           <Add label="Add a function" editor={close => (
-            <AggregateEditor onApply={a => { close(); changeSummarize({ ...summarize, aggregates: [...summarize.aggregates, a] }) }} />
+            <AggregateEditor onApply={a => { close(); onChange(addAggregate(builder, a)) }} />
           )} />
           {/* by and its groups wrap as one, so on a phone by leads the groups rather than trailing the functions. */}
           <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
