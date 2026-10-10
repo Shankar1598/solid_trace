@@ -1,4 +1,8 @@
 import { expect, type Locator, type Page } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { logsPath } from './data'
 
 // The Logs explorer as a user sees it: its bar, its Builder and the summary
@@ -81,4 +85,44 @@ export async function addFilter(page: Page, field: string, op: string, value: st
 
 function escape(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// SQL queries are an instance setting, shared by every Playwright run
+// against the dev stack. Each run that turns them on leaves a file named by
+// its process id while it needs them, and the last one out turns them off,
+// so one run's afterAll doesn't turn SQL off under another's test.
+const SQL_HOLDERS = join(homedir(), '.cache/solid-trace/playwright-sql-holders')
+
+/** Turns SQL queries on for the dev instance, until releaseSqlQueries(). */
+export function holdSqlQueries() {
+  mkdirSync(SQL_HOLDERS, { recursive: true })
+  writeFileSync(join(SQL_HOLDERS, String(process.pid)), '')
+  setSqlQueries(true)
+}
+
+/** Turns SQL queries off again, unless another live run still holds them. */
+export function releaseSqlQueries() {
+  rmSync(join(SQL_HOLDERS, String(process.pid)), { force: true })
+  const holders = readdirSync(SQL_HOLDERS).filter(pid => {
+    if (alive(Number(pid))) return true
+    // A run that stopped without releasing them.
+    rmSync(join(SQL_HOLDERS, pid), { force: true })
+    return false
+  })
+  if (holders.length === 0) setSqlQueries(false)
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+function setSqlQueries(on: boolean) {
+  execFileSync('mise', ['exec', '--', 'bin/rails', 'instance_settings:set', `SQL_QUERIES_ENABLED=${on}`], {
+    cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
+  })
 }

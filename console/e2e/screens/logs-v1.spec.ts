@@ -1,8 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
-import { execFileSync } from 'node:child_process'
-import { resolve } from 'node:path'
 import { logsPath } from '../support/data'
-import { addFilter, builderRow, last24h, openLogs, runBy, settled, streamRows } from '../support/logs'
+import { addFilter, builderRow, holdSqlQueries, last24h, openLogs, releaseSqlQueries, runBy, settled, streamRows } from '../support/logs'
 import { expectFits, failedLoad, shoot, useTheme, watchErrors } from '../support/screens'
 
 // Every state of the Logs v1 explorer the flows click through, for reading by
@@ -206,11 +204,8 @@ test.describe('Query mode', () => {
 })
 
 test.describe('SQL mode', () => {
-  const sqlQueries = (on: boolean) => execFileSync('mise', ['exec', '--', 'bin/rails', 'instance_settings:set', `SQL_QUERIES_ENABLED=${on}`], {
-    cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
-  })
-  test.beforeAll(() => { sqlQueries(true) })
-  test.afterAll(() => { sqlQueries(false) })
+  test.beforeAll(() => { holdSqlQueries() })
+  test.afterAll(() => { releaseSqlQueries() })
 
   test('opened, run, and leaving', async ({ page }) => {
     const errors = watchErrors(page)
