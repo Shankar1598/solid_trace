@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   EMPTY_BUILDER,
+  addAggregate,
   addFilter,
   builderOf,
   canFilter,
@@ -293,6 +294,22 @@ describe('Summarize, sort and limit', () => {
     expect(setSummarize(sorted, { aggregates: [], by: [] }).sort).toEqual([{ column: 'duration_ms', asc: false }])
   })
 
+  it('starts a new Summarize by time in automatic bins, so its first function draws a chart', () => {
+    const counted = addAggregate(EMPTY_BUILDER, { fn: 'count' })
+
+    expect(counted.summarize).toEqual({ aggregates: [{ fn: 'count' }], by: [{ field: 'time', bin: 'auto' }] })
+    expect(stagesOf(counted)).toBe('summarize count() by bin_auto(time)')
+  })
+
+  it('adds a function to a Summarize as it is, by columns and all', () => {
+    const byService = setSummarize(EMPTY_BUILDER, { aggregates: [], by: [{ field: 'service' }] })
+    const avg = { fn: 'avg', field: 'duration_ms' } as const
+
+    expect(addAggregate(byService, { fn: 'count' }).summarize).toEqual({ aggregates: [{ fn: 'count' }], by: [{ field: 'service' }] })
+    expect(addAggregate(addAggregate(EMPTY_BUILDER, { fn: 'count' }), avg).summarize)
+      .toEqual({ aggregates: [{ fn: 'count' }, avg], by: [{ field: 'time', bin: 'auto' }] })
+  })
+
   it('sets and clears the limit', () => {
     expect(stagesOf(setTake(EMPTY_BUILDER, 100))).toBe('take 100')
     expect(setTake(setTake(EMPTY_BUILDER, 100), null)).toEqual(EMPTY_BUILDER)
@@ -330,9 +347,9 @@ describe('adding to the Query from the inspector', () => {
     expect(addFilter(exists, { field: 'user.id', op: 'exists', value: null })).toBe(exists)
   })
 
-  it('counts by a Field, or adds it to the Summarize\'s by columns', () => {
+  it('counts by a Field over time, or adds it to the Summarize\'s by columns', () => {
     const counted = groupBy(builder, 'service')
-    expect(counted.summarize).toEqual({ aggregates: [{ fn: 'count' }], by: [{ field: 'service' }] })
+    expect(counted.summarize).toEqual({ aggregates: [{ fn: 'count' }], by: [{ field: 'time', bin: 'auto' }, { field: 'service' }] })
     const avg: Builder = { ...builder, summarize: { aggregates: [{ fn: 'avg', field: 'duration_ms' }], by: [{ field: 'time', bin: 'auto' }] } }
     expect(groupBy(avg, 'service').summarize).toEqual({ aggregates: [{ fn: 'avg', field: 'duration_ms' }], by: [{ field: 'time', bin: 'auto' }, { field: 'service' }] })
     expect(groupBy(counted, 'service')).toEqual(counted)

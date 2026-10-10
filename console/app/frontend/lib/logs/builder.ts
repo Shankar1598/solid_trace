@@ -224,9 +224,21 @@ export function addFilter(builder: Builder, chip: Chip): Builder {
   return builder.filters.some(same) ? builder : { ...builder, filters: [...builder.filters, chip] }
 }
 
-/** Counts Logs by a Field: one more by column of the Summarize, or a new count() by it. */
+/**
+ * What a new Summarize groups by before anything else: time in automatic
+ * bins, so its first function draws a chart over time.
+ */
+const NEW_SUMMARIZE: Summarize = { aggregates: [], by: [{ field: 'time', bin: 'auto' }] }
+
+/** Adds a function to the Summarize, starting one by bin_auto(time) when there is none. */
+export function addAggregate(builder: Builder, aggregate: Aggregate): Builder {
+  const summarize = builder.summarize ?? NEW_SUMMARIZE
+  return setSummarize(builder, { ...summarize, aggregates: [...summarize.aggregates, aggregate] })
+}
+
+/** Counts Logs by a Field: one more by column of the Summarize, or a new count() by time and it. */
 export function groupBy(builder: Builder, field: string): Builder {
-  const summarize = builder.summarize ?? { aggregates: [], by: [] }
+  const summarize = builder.summarize ?? NEW_SUMMARIZE
   const by = summarize.by.some(g => g.field === field && !g.bin) ? summarize.by : [...summarize.by, { field }]
   const aggregates: Aggregate[] = summarize.aggregates.length > 0 ? summarize.aggregates : [{ fn: 'count' }]
   return setSummarize(builder, { aggregates, by })
