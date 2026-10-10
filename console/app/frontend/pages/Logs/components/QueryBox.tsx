@@ -50,7 +50,8 @@ export function QueryBox({ projectSlug, text, onChange, onRun, problems, leaving
       ))}
       {leaving && (
         <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-amber-400 bg-amber-50 p-2 text-xs dark:bg-amber-950/30">
-          <span className="flex-1">
+          {/* Wide enough that on a phone the buttons wrap below it together. */}
+          <span className="min-w-64 flex-1">
             {leaving.stages.length > 0 ? (
               <>The Builder can't show {leaving.stages.map((s, i) => (
                 <code key={i} className="mx-0.5 rounded bg-background px-1">{s}</code>
