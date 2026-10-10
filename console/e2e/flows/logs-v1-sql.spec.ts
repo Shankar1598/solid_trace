@@ -43,10 +43,12 @@ test('SQL mode opens with the readable SQL, runs on Run, and asks before discard
   expect(counts.length).toBeGreaterThan(1)
   expect(counts.reduce((sum, n) => sum + Number(n.replace(/,/g, '')), 0)).toBe(all)
 
-  // A mistake in the SQL says what DuckDB said.
+  // A mistake in the SQL says what DuckDB said, its caret under the mistake.
   await box.fill('SELECT nope FROM logs')
   await page.getByRole('button', { name: 'Run', exact: true }).click()
-  await expect(page.getByText(/nope/i).last()).toBeVisible()
+  const error = page.getByRole('alert')
+  await expect(error).toContainText('Referenced column "nope" not found')
+  await expectCaretUnder(error, 'nope')
 
   // Leaving with edits asks: Stay keeps the SQL, Discard returns to the Builder.
   await page.getByRole('button', { name: 'Builder', exact: true }).click()
