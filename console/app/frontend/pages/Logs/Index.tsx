@@ -511,6 +511,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
           <TagMenuProvider onFilter={onFilter} columns={columnControl}>
             <ResultArea
               result={result}
+              sql={sqlMode}
               onLoadOlder={loadOlder}
               selectedId={inspected?.id ?? null}
               onSelect={setInspected}
@@ -536,17 +537,18 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   )
 }
 
-function ResultArea({ result, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
-  result: Result; onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void
+/** The run's result; `sql` while SQL mode's SQL ran, which answers a table rather than Logs. */
+function ResultArea({ result, sql, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
+  result: Result; sql: boolean; onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void
   columns: string[]; onColumns: (columns: string[]) => void
 }) {
   switch (result.status) {
     case 'waiting':
       return <Notice>Press Run to run the SQL.</Notice>
     case 'running':
-      return <Notice>Running the Query…</Notice>
+      return <Notice>{sql ? 'Running the SQL…' : 'Running the Query…'}</Notice>
     case 'cancelled':
-      return <Notice>Query cancelled. Run it again to see Logs.</Notice>
+      return <Notice>{sql ? 'SQL cancelled. Run it again.' : 'Query cancelled. Run it again to see Logs.'}</Notice>
     case 'error':
       return <ErrorNotice message={result.message} />
     case 'table':

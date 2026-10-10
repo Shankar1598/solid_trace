@@ -232,6 +232,22 @@ test.describe('SQL mode', () => {
     expect(errors).toEqual([])
   })
 
+  test('running and cancelled', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openLogs(page)
+    await page.getByRole('button', { name: 'SQL', exact: true }).click()
+    await expect(page.getByLabel('SQL', { exact: true })).toHaveValue(/FROM logs/i)
+    // Hold the SQL so its run stays on screen.
+    await page.route(/\/logs\/sql$/, () => {})
+    await page.getByRole('button', { name: 'Run', exact: true }).click()
+    await expect(page.getByText('Running the SQL…')).toBeVisible()
+    await shoot(page, 'v1-sql-running', { idle: false })
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    await expect(page.getByText('SQL cancelled. Run it again.')).toBeVisible()
+    await shoot(page, 'v1-sql-cancelled', { idle: false })
+    expect(errors).toEqual([])
+  })
+
   test('a mistake', async ({ page }) => {
     const errors = watchErrors(page, [failedLoad(400)])
     await openLogs(page)
