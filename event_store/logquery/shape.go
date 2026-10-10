@@ -90,7 +90,9 @@ func summarized(st summarizeStage, before map[string]hint) shape {
 }
 
 // timeBin is the bin size of a value that bins a time: bin, or floor, of a
-// time, or a column that holds such bins already.
+// time, or a column that holds such bins already. Binning bins again to a
+// smaller size leaves them as they were, as hourly times are each already a
+// time of a 5-minute bin, so the size is the larger of the two.
 func timeBin(x expr, hints map[string]hint) (time.Duration, bool) {
 	switch x := x.(type) {
 	case call:
@@ -100,6 +102,9 @@ func timeBin(x expr, hints map[string]hint) (time.Duration, bool) {
 		size, ok := x.args[1].(literal)
 		if !ok || size.Kind != parser.TimespanLiteral {
 			return 0, false
+		}
+		if held, ok := timeBin(x.args[0], hints); ok && held > size.Timespan {
+			return held, true
 		}
 		return size.Timespan, true
 	case columnRef:
