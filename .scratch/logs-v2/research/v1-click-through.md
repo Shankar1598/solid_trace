@@ -2,7 +2,7 @@
 
 2026-10-10, unit A0. The Logs v1 explorer, clicked through in Chromium by Playwright flows (`console/e2e/flows/logs-v1-*.spec.ts`) and captured by screens (`console/e2e/screens/logs-v1.spec.ts`) at 1440×900 and 390×844, in dark and light. Every PNG was read by eye.
 
-Screenshots are in `~/.cache/solid-trace/screenshots/A0/`, named `<screen>--<size>-<theme>.png`, such as `v1-builder--phone-dark.png`. Run them again with `SCREENS_SET=A0 bun run e2e:screens` from `console/`.
+Screenshots are in `~/.cache/solid-trace/screenshots/A0/`, named `<screen>--<size>-<theme>.png`, such as `v1-builder--phone-dark.png`. The same screens after the review fixes, plus `v1-sql-running` and `v1-sql-cancelled`, are in `A0-fix1/`. Run them again with `SCREENS_SET=A0 bun run e2e:screens` from `console/`.
 
 ## What works
 
@@ -29,6 +29,14 @@ Each is its own commit on `feature/logs-v2`.
 - On a phone, the leaving prompt's two buttons wrapped one at a time (`8650d83`).
 - The Group by list ended on a bare "Fields" heading, every Field below the fold, as though there were none (`7731c82`).
 - A Query-mode link with no Query opened an empty box, and a Level count from it wrote a where with no source (`9fa01ea`).
+
+Fixed after review:
+
+- On a phone, the histogram's "Not counted: …" line had a fixed height, so a long message ran under the strip's border and over the result area (`0fc1448`).
+- On a phone, Summarize's "by" stayed at the end of the functions' line when the clauses wrapped, away from its groups (`fdd6d7f`).
+- On a phone, a SQL longer than the screen wrapped DuckDB's `LINE 1:` line and the caret's spaces, so the `^` pointed at nothing. The LINE and caret keep their columns and scroll sideways now, scrolled to the caret (`725fc9b`).
+- In SQL mode the result area said "Running the Query…" and "Query cancelled. Run it again to see Logs." (`442570d`).
+- An untouched Query in Query mode counted as an edit: Run pushed a history entry for the same Logs, and back to the Builder ran them again. Leaving SQL mode for Query mode from an empty Builder left the box empty (`0e4a08d`).
 
 ## Rough edges for Phase 6
 
@@ -77,6 +85,7 @@ Each item gives what, where, a screenshot and a suggested fix.
    - Fix: ticks at round steps (each 15 min, hour or day) for the range.
 10. **A bar's counts are in a native tooltip.** Hovering shows the browser's slow, unstyled `title`.
     - Where: each bar.
+    - Screenshot: none; a headless screenshot doesn't capture a native `title` tooltip. The bars are in `v1-builder--desktop-dark.png`.
     - Fix: a styled tooltip with the bar's time and per-Level counts, shared with `QueryChart`.
 11. **No way back out of a zoom but Back.** After a drag or a click, only Back or a preset widens the range again.
     - Where: the strip after a zoom.
@@ -162,3 +171,14 @@ Each item gives what, where, a screenshot and a suggested fix.
     - Where: the value menu on any tag.
     - Screenshots: `v1-inspector-value-menu--desktop-dark.png`, `v1-builder-summarize-value-menu--desktop-dark.png`.
     - Fix: label it as the Query reads, `service == "worker"`.
+
+### Found in review
+
+29. **Ties in a sort come back in any order.** Sorting by a Field adds no tie-break, so Logs with the same value come back in scrambled time order, and each run shows a different order.
+    - Where: Builder, More → sort by a Field; a Query's `sort by`.
+    - Screenshots: `v1-builder-search-sort-limit--desktop-dark.png` and `v1-builder-search-sort-limit--desktop-light.png`: every row is `warn`, in a different order in each.
+    - Fix: EventStore's sort adds `time desc, id desc` after the user's keys (`event_store/logquery/table.go`, `orderBy`), so ties read newest first and stay put between runs.
+30. **A keyboard can't open a Log.** Stream rows are click-only: they take no focus and have no Enter handler, and their Copy buttons stay hidden until a hover. Tab goes from Choose columns to the page's end. j and k work only once a mouse has opened the inspector.
+    - Where: the stream, `LogStream.tsx` (`LogRow`).
+    - Screenshot: `v1-builder--desktop-dark.png` (no row can show focus).
+    - Fix: rows with a roving tabindex that open the inspector on Enter, and j or k with no Log open select the newest Log (UX principle 2; Phase 2's shortcuts).
