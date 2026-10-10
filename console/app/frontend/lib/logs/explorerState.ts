@@ -1,12 +1,20 @@
 // The Logs explorer's state and its URL. The Project is in the path; the
 // search holds the time range as given (relative stays relative, absolute
-// as UTC ISO times), the mode, the Query text and, in SQL mode, the SQL text.
-// Each run pushes a history entry; typing doesn't, so Back undoes the last
-// run. Switching mode replaces the entry's mode, so a run reopens in the mode
-// it was left in. SQL never runs on opening a URL, only when Run is pressed,
-// so a crafted link can't run SQL as whoever opens it.
+// as UTC ISO times), the mode, the Query text, in SQL mode the SQL text, and
+// the chart a table is drawn as. Each run pushes a history entry; typing
+// doesn't, so Back undoes the last run. Switching mode or chart replaces the
+// entry's, so a run reopens as it was left. SQL never runs on opening a URL,
+// only when Run is pressed, so a crafted link can't run SQL as whoever opens it.
 
 export type Mode = 'builder' | 'query' | 'sql'
+
+/**
+ * How a table that can be charted is shown: as a line, area or bar chart over
+ * the table, or as the table alone. auto draws the chart its shape suggests
+ * and leaves no trace in the URL.
+ */
+export type Viz = 'auto' | 'line' | 'area' | 'bars' | 'table'
+const VIZES: Viz[] = ['auto', 'line', 'area', 'bars', 'table']
 
 /** A span back from now, such as `15m`, `1h` or `7d`. */
 export type RelativeRange = { kind: 'relative'; span: string }
@@ -19,6 +27,7 @@ export interface ExplorerState {
   query: string
   /** The SQL text, in SQL mode; empty in the others. */
   sql: string
+  viz: Viz
 }
 
 /** What last ran (and is in the URL), and what is being edited. */
@@ -63,11 +72,13 @@ export function stateFromSearch(search: string, modes: Mode[] = MODES): Explorer
   const params = new URLSearchParams(search)
   const given = params.get('mode') as Mode | null
   const mode = given && modes.includes(given) ? given : 'builder'
+  const viz = params.get('viz') as Viz | null
   return {
     range: rangeFromParams(params),
     mode,
     query: params.get('q') ?? '',
     sql: mode === 'sql' ? params.get('sql') ?? '' : '',
+    viz: viz && VIZES.includes(viz) ? viz : 'auto',
   }
 }
 
@@ -82,6 +93,7 @@ export function searchOf(state: ExplorerState): string {
   params.set('mode', state.mode)
   if (state.query !== '') params.set('q', state.query)
   if (state.sql !== '') params.set('sql', state.sql)
+  if (state.viz !== 'auto') params.set('viz', state.viz)
   return `?${params}`
 }
 
@@ -120,6 +132,16 @@ export function pickRange(explorer: Explorer, range: TimeRange): Explorer {
 export function switchMode(explorer: Explorer, mode: Mode): { explorer: Explorer; replace: string } {
   const current = { ...explorer.current, mode }
   return { explorer: { current, draft: { ...explorer.draft, mode } }, replace: searchOf(current) }
+}
+
+/**
+ * Draws tables another way, without running: what ran and the draft both
+ * change, and `replace` is the search to put in place of the current history
+ * entry's.
+ */
+export function chooseViz(explorer: Explorer, viz: Viz): { explorer: Explorer; replace: string } {
+  const current = { ...explorer.current, viz }
+  return { explorer: { current, draft: { ...explorer.draft, viz } }, replace: searchOf(current) }
 }
 
 /**
