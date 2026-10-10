@@ -110,8 +110,11 @@ func TestARunPastItsTimeoutIsStoppedOnTheServer(t *testing.T) {
 		t.Errorf("Expected a message saying the run was stopped after 0.25 s, got %q", got)
 	}
 
-	// Runs of a Query and histograms stop the same way: a timeout of a
-	// microsecond ends before their scan does.
+	// Runs of a Query and histograms hand their timeout to their scan: one
+	// of a microsecond has ended before the scan takes a connection. That a
+	// scan stops while DuckDB runs it is storage's test
+	// (TestAScanPastItsContextIsStoppedPartWayAndItsConnectionStillReads),
+	// and that a run of Log rows stops part-way, the test below.
 	runs := []struct {
 		path string
 		body map[string]any
@@ -134,6 +137,34 @@ func TestARunPastItsTimeoutIsStoppedOnTheServer(t *testing.T) {
 	}
 	answerOf(t, env, "/api/123/logs/sql", map[string]any{
 		"sql": `SELECT count(*) FROM logs`, "from": allTime.from, "to": allTime.to}, 200)
+}
+
+func TestARunOfLogRowsPastItsTimeoutIsStoppedPartWay(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// A year between two Logs is some 8,760 hours to read, one at a time,
+	// for a Query no Log passes.
+	seedProject(t, env.SQLitePath, 123, 400)
+	postAndProcess(t, env, logJSON(t, "new", testNow, nil), logJSON(t, "old", testNow.AddDate(-1, 0, 0), nil))
+	none := map[string]any{"query": `where message == "none"`, "from": allTime.from, "to": allTime.to}
+
+	// Half a second reads only some of them.
+	env.LogsHandler.ScanBudget = 500 * time.Millisecond
+	if page := answerOf(t, env, "/api/123/logs/query", none, 200); string(page["next_cursor"]) == "null" {
+		t.Fatalf("Expected a run to read for its budget and leave hours to go on from, got %s", mustMarshal(t, page))
+	}
+
+	// So a timeout of 0.25 s stops the run while it reads them.
+	none["timeout_seconds"] = 0.25
+	began := time.Now()
+	answer := answerOf(t, env, "/api/123/logs/query", none, 504)
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("Expected the run stopped soon after 0.25 s, took %v", took)
+	}
+	if got := stoppedMessage(t, answer); !strings.Contains(got, "stopped after 0.25 s") {
+		t.Errorf("Expected a message saying the run was stopped after 0.25 s, got %q", got)
+	}
 }
 
 func TestATimeoutMustBeAPositiveNumberOfSeconds(t *testing.T) {
