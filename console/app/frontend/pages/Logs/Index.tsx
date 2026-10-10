@@ -588,7 +588,8 @@ function RangeSelect({ range, onChange }: { range: TimeRange; onChange: (range: 
   return (
     <Select value={value} onValueChange={v => v && v !== CUSTOM && onChange({ kind: 'relative', span: v as string })} items={items}>
       <SelectTrigger className="h-8 text-xs" aria-label="Time range"><SelectValue /></SelectTrigger>
-      <SelectContent>
+      {/* Below the trigger, as the Project select opens: lined up with it, the list would cover the bar. */}
+      <SelectContent align="start" alignItemWithTrigger={false} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
         {Object.entries(items).map(([v, label]) => <SelectItem key={v} value={v}>{label}</SelectItem>)}
       </SelectContent>
     </Select>
