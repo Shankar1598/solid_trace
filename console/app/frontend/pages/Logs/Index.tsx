@@ -81,7 +81,13 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
 
   // Back remounts the page (Inertia restores it without preserving state), so
   // reading the URL once here is enough to undo the last run.
-  const [explorer, setExplorer] = useState<Explorer>(() => openExplorer(window.location.search, modes))
+  const [explorer, setExplorer] = useState<Explorer>(() => {
+    const opened = openExplorer(window.location.search, modes)
+    // An empty Query opens as the Project's slug, as switching to Query mode writes it.
+    return opened.current.mode === 'query' && opened.draft.query === ''
+      ? typeQuery(opened, queryOf(EMPTY_BUILDER, project.slug))
+      : opened
+  })
   // For answers that arrive after a render: what the explorer is by then.
   const latest = useRef(explorer)
   latest.current = explorer
@@ -345,7 +351,8 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
 
   /** A pivot in Query mode: a where after the leading filters of the Query that ran. */
   const pivot = (chip: Chip) => {
-    const query = explorer.current.query
+    // An empty Query reads the Project's Logs, as its slug alone does: the where goes after the slug.
+    const query = explorer.current.query || queryOf(EMPTY_BUILDER, project.slug)
     validateQuery({ orgSlug, projectSlug: project.slug, query })
       .then(({ errors, stages }) => {
         if (errors.length > 0) toast.error('Fix the Query before filtering from its results.')
