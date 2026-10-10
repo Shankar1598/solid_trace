@@ -44,14 +44,18 @@ test('a Summarize shows a table, and More adds a search, a sort and a limit', as
   const errors = watchErrors(page)
   await openLogs(page)
 
-  // count() by service.
+  // count(), which a new Summarize counts over time, then by service alone.
   await page.getByRole('button', { name: 'Add a function' }).click()
   await page.getByRole('option', { name: /^count/ }).click()
   await settled(page)
+  await expect(builderRow(page, 'Summarize')).toContainText('bin_auto(time)')
   await page.getByRole('button', { name: 'Group by a Field or time' }).click()
   await page.getByLabel('Group by time or a Field…').fill('service')
   await page.getByRole('option', { name: /^service/ }).first().click()
   await settled(page)
+  await builderRow(page, 'Summarize').getByRole('button', { name: 'Remove bin_auto(time)' }).click()
+  await settled(page)
+  await expect(builderRow(page, 'Summarize')).not.toContainText('bin_auto(time)')
   await expect(page).toHaveURL(/summarize/)
   const table = page.locator('.sticky.top-0').filter({ hasText: 'count_' })
   await expect(table).toBeVisible()

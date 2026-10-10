@@ -1,9 +1,13 @@
 import { useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
+import { QueryChart } from '@/components/charts/QueryChart'
+import { chartOf, formFor, formsOf } from '@/lib/charts/series'
+import type { AbsoluteRange, Viz } from '@/lib/logs/explorerState'
 import { pivotsOn, type LogTable, type TableColumn } from '@/lib/logs/table'
 import type { AttributeValue } from '@/lib/logs/stream'
 import { cn } from '@/lib/utils'
+import { ChartSwitch, type Shown } from './ChartSwitch'
 import { Tag, valueText } from './TagMenu'
 
 const ROW_HEIGHT = 24
@@ -15,11 +19,47 @@ const CELL_PADDING = 24 + 4
 /** Rows read to size the columns: enough to see their usual width. */
 const SIZING_ROWS = 200
 
+/** How the explorer draws a table: the chart asked for, and what changes it. */
+export interface TableChart {
+  viz: Viz
+  onViz: (viz: Viz) => void
+  /** Runs the explorer over the range dragged across a time chart. */
+  onZoom: (range: AbsoluteRange) => void
+}
+
 /**
- * A tabular Query's result, in place of the stream, virtualised. Cells of
- * Field-like columns are tags, so Show only this and Hide this pivot from them.
+ * A tabular Query's result, in place of the stream. A table that can be drawn
+ * shows its chart above it, with a switch between the chart's forms and the
+ * table alone; the two scroll together when the room is short, as on a phone.
  */
-export function LogTableView({ table }: { table: LogTable }) {
+export function LogTableView({ table, chart }: { table: LogTable; chart?: TableChart }) {
+  const model = useMemo(() => chartOf(table), [table])
+  const forms = formsOf(model)
+  if (!chart || forms.length === 0) return <TableRows table={table} />
+
+  const form = formFor(model, chart.viz)
+  // The shape's own form leaves no trace in the URL; the others are kept.
+  const onShow = (shown: Shown) => chart.onViz(shown === 'stat' ? 'auto' : shown)
+  const control = <ChartSwitch forms={forms} shown={form ?? 'table'} onChange={onShow} />
+  return (
+    <div className="flex h-full flex-col overflow-y-auto">
+      <div className="shrink-0 border-b">
+        {form
+          ? <QueryChart table={table} form={form} onZoom={chart.onZoom} actions={control} className="pb-1" />
+          : <div className="flex justify-end px-3 py-1.5">{control}</div>}
+      </div>
+      <div className="min-h-48 flex-1">
+        <TableRows table={table} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The table's rows, virtualised. Cells of Field-like columns are tags, so Show
+ * only this and Hide this pivot from them.
+ */
+function TableRows({ table }: { table: LogTable }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const widths = useMemo(() => columnWidths(table), [table])
   const total = widths.reduce((sum, w) => sum + w, 0)

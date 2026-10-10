@@ -117,8 +117,11 @@ test.describe('Builder', () => {
     await page.getByLabel('Group by time or a Field…').fill('service')
     await page.getByRole('option', { name: /^service/ }).first().click()
     await settled(page)
-    // by leads its group on one line, also when the clauses wrap on a phone.
+    // A new Summarize counts over time; by service alone makes the table.
     const summarize = builderRow(page, 'Summarize')
+    await summarize.getByRole('button', { name: 'Remove bin_auto(time)' }).click()
+    await settled(page)
+    // by leads its group on one line, also when the clauses wrap on a phone.
     const by = (await summarize.getByText('by', { exact: true }).boundingBox())!
     const group = (await summarize.getByRole('button', { name: 'service', exact: true }).boundingBox())!
     expect(Math.abs(by.y + by.height / 2 - (group.y + group.height / 2))).toBeLessThan(4)

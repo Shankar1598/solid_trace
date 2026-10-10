@@ -18,6 +18,7 @@ import {
 } from '@/lib/logs/builder'
 import {
   RANGE_PRESETS,
+  chooseViz,
   fillEmptyQuery,
   modesFor,
   openExplorer,
@@ -32,9 +33,11 @@ import {
   type ExplorerState,
   type Mode,
   type TimeRange,
+  type Viz,
   typeQuery,
   typeSql,
 } from '@/lib/logs/explorerState'
+import { chartOf, formFor } from '@/lib/charts/series'
 import { columnsFromSearch, commonValues, fieldInfos, rememberLogs, toggleColumn, withColumns } from '@/lib/logs/columns'
 import { errorParts } from '@/lib/logs/errorParts'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
@@ -48,7 +51,7 @@ import { BuilderPanel, type ProjectOption } from './components/BuilderPanel'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
 import { LogStream } from './components/LogStream'
-import { LogTableView } from './components/LogTableView'
+import { LogTableView, type TableChart } from './components/LogTableView'
 import { ModeSwitch } from './components/ModeSwitch'
 import { QueryBox, type LeavingQuery } from './components/QueryBox'
 import { SqlBox } from './components/SqlBox'
@@ -406,6 +409,24 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
 
   const closeInspector = useCallback(() => setInspected(null), [])
 
+  /** Draws tables another way: the URL keeps it, and nothing runs. */
+  const changeViz = (viz: Viz) => {
+    const { explorer: next, replace } = chooseViz(latest.current, viz)
+    latest.current = next
+    setExplorer(next)
+    replaceUrl(replace)
+  }
+  const tableChart: TableChart = { viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange }
+
+  // A time chart stands in for the histogram strip, as in Axiom. The last
+  // answer decides, through a re-run too, so the strip doesn't flash back
+  // while a chart's Query runs again.
+  const answered = useRef<LogTable | null>(null)
+  if (result.status === 'table') answered.current = result.table
+  else if (result.status !== 'running' && result.status !== 'cancelled') answered.current = null
+  const answeredChart = useMemo(() => (answered.current ? chartOf(answered.current) : null), [answered.current])
+  const timeChart = answeredChart?.kind === 'time' && formFor(answeredChart, explorer.current.viz) !== null
+
   const cancel = () => {
     currentRun.current?.controller.abort()
     // A search keeps the Logs it found.
@@ -501,7 +522,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
           />
         )}
 
-        {!sqlMode && (
+        {!sqlMode && !timeChart && (
           <HistogramStrip view={histogram} onZoom={range => commit(pickRange(explorer, range))} onLevel={onLevel} />
         )}
 
@@ -510,6 +531,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
             <ResultArea
               result={result}
               sql={sqlMode}
+              chart={tableChart}
               onLoadOlder={loadOlder}
               selectedId={inspected?.id ?? null}
               onSelect={setInspected}
@@ -536,8 +558,8 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
 }
 
 /** The run's result; `sql` while SQL mode's SQL ran, which answers a table rather than Logs. */
-function ResultArea({ result, sql, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
-  result: Result; sql: boolean; onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void
+function ResultArea({ result, sql, chart, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
+  result: Result; sql: boolean; chart: TableChart; onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void
   columns: string[]; onColumns: (columns: string[]) => void
 }) {
   switch (result.status) {
@@ -550,7 +572,7 @@ function ResultArea({ result, sql, onLoadOlder, selectedId, onSelect, columns, o
     case 'error':
       return <ErrorNotice message={result.message} />
     case 'table':
-      return <LogTableView table={result.table} />
+      return <LogTableView table={result.table} chart={chart} />
     case 'done':
       if (result.stream.logs.length === 0) {
         return result.loadingOlder
