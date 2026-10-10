@@ -390,6 +390,7 @@ func (q *Query) finish(c *compiler) {
 		}
 	}
 	q.reads = c.readOrder
+	q.shape = shapeOf(q.tail)
 }
 
 // newestFirst reports whether a sort keeps Logs newest first, as they come.
