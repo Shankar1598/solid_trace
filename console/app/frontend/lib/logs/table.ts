@@ -3,9 +3,15 @@
 
 export type ColumnType = 'string' | 'number' | 'bool' | 'datetime' | 'timespan' | 'dynamic'
 
+/** The aggregate a column holds, when it is one of the last summarize's, kept through a plain rename. */
+export type Agg = 'count' | 'countif' | 'dcount' | 'sum' | 'avg' | 'min' | 'max' | 'percentile'
+
 export interface TableColumn {
   name: string
   type: ColumnType
+  agg?: Agg
+  /** On the last summarize's time bin column, bin(time, X) or bin_auto(time): the bin's size. */
+  bin_seconds?: number
 }
 
 /** A table as EventStore answers it; truncated says rows were cut at 10,000. */
@@ -14,6 +20,14 @@ export interface LogTable {
   /** One value per column: datetimes as RFC 3339 UTC, dynamic as the JSON value held. */
   rows: unknown[][]
   truncated: boolean
+  /**
+   * True when a bin with no row has no Logs: nothing filters or cuts the
+   * rows after the last summarize, so a chart may draw its empty bins.
+   */
+  fill_gaps?: boolean
+  /** The range the Query ran over, RFC 3339 UTC, narrowed by a leading where on time. */
+  from?: string
+  to?: string
 }
 
 /**
