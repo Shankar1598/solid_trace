@@ -70,6 +70,17 @@ export function formsOf(model: ChartModel): ChartForm[] {
 }
 
 /**
+ * The form to draw a model in: the one asked for when the model can be drawn
+ * so, else the one its shape suggests; null for the table alone, or a table
+ * that isn't drawn.
+ */
+export function formFor(model: ChartModel, wanted: ChartForm | 'auto' | 'table'): ChartForm | null {
+  const forms = formsOf(model)
+  if (wanted === 'table' || forms.length === 0) return null
+  return forms.includes(wanted as ChartForm) ? (wanted as ChartForm) : forms[0]
+}
+
+/**
  * The chart a table makes:
  * - a time series when it has the last summarize's time bin column: number
  *   columns are series, and string and bool columns split them;
