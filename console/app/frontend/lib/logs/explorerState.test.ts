@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  fillEmptyQuery,
   openExplorer,
   pickRange,
   resolveRange,
@@ -206,6 +207,29 @@ describe('history entries', () => {
 
     expect(b.explorer.current).toMatchObject({ mode: 'sql', query: 'take 5', sql: 'SELECT 2' })
     expect(runsOnOpen(b.explorer)).toBe(false)
+  })
+
+  it('shows an empty Query in Query mode as the Project\'s slug, which is no edit', () => {
+    const project = "['my-api']"
+    // A Query-mode link with no Query.
+    const opened = fillEmptyQuery(openExplorer('?range=1h&mode=query'), project)
+
+    expect(opened.draft.query).toBe(project)
+    expect(runExplorer(opened).push).toBeNull()
+    const builder = switchMode(opened, 'builder').explorer
+    expect(builder.draft.query).toBe(builder.current.query)
+
+    // The Builder's empty Query, switched to Query mode.
+    const switched = fillEmptyQuery(switchMode(openExplorer('?range=1h&mode=builder'), 'query').explorer, project)
+    expect(switched.current.query).toBe(project)
+    expect(runExplorer(switched).push).toBeNull()
+  })
+
+  it('fills only an empty Query, and only in Query mode', () => {
+    const project = "['my-api']"
+
+    expect(fillEmptyQuery(openExplorer('?range=1h&mode=builder'), project).current.query).toBe('')
+    expect(fillEmptyQuery(openExplorer('?range=1h&mode=query&q=take+5'), project).current.query).toBe('take 5')
   })
 
   it('reopens a run in the mode it was left in', () => {

@@ -18,6 +18,7 @@ import {
 } from '@/lib/logs/builder'
 import {
   RANGE_PRESETS,
+  fillEmptyQuery,
   modesFor,
   openExplorer,
   pickRange,
@@ -79,16 +80,12 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
   const basePath = `/${orgSlug}/projects/${project.slug}/logs`
   const modes = modesFor(sql_queries_enabled)
+  // The Query of the Project's Logs, unfiltered: what an empty Query shows as in Query mode.
+  const projectQuery = queryOf(EMPTY_BUILDER, project.slug)
 
   // Back remounts the page (Inertia restores it without preserving state), so
   // reading the URL once here is enough to undo the last run.
-  const [explorer, setExplorer] = useState<Explorer>(() => {
-    const opened = openExplorer(window.location.search, modes)
-    // An empty Query opens as the Project's slug, as switching to Query mode writes it.
-    return opened.current.mode === 'query' && opened.draft.query === ''
-      ? typeQuery(opened, queryOf(EMPTY_BUILDER, project.slug))
-      : opened
-  })
+  const [explorer, setExplorer] = useState<Explorer>(() => fillEmptyQuery(openExplorer(window.location.search, modes), projectQuery))
   // For answers that arrive after a render: what the explorer is by then.
   const latest = useRef(explorer)
   latest.current = explorer
@@ -96,7 +93,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   const [result, setResult] = useState<Result>(() => runsOnOpen(explorer) ? { status: 'running' } : { status: 'waiting' })
   const [histogram, setHistogram] = useState<HistogramView>({ status: 'running' })
   const [builderView, setBuilderView] = useState<BuilderView>(() =>
-    explorer.current.query === '' ? { status: 'ready', builder: EMPTY_BUILDER } : { status: 'reading' })
+    explorer.current.query === '' || explorer.current.query === projectQuery ? { status: 'ready', builder: EMPTY_BUILDER } : { status: 'reading' })
   const [inspected, setInspected] = useState<Log | null>(null)
   // Query mode: the mistakes of the Query last run, and the prompt to leave.
   const [problems, setProblems] = useState<QueryProblem[]>([])
@@ -274,10 +271,9 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     }
     if (mode === 'sql') return openSql()
     if (mode === 'query') {
-      const { explorer: next, replace } = switchMode(explorer, 'query')
-      // An empty Query opens as the Project's slug, to write stages after.
-      setExplorer(next.draft.query === '' ? typeQuery(next, queryOf(EMPTY_BUILDER, project.slug)) : next)
-      replaceUrl(replace)
+      const next = fillEmptyQuery(switchMode(explorer, 'query').explorer, projectQuery)
+      setExplorer(next)
+      replaceUrl(searchOf(next.current))
       setProblems([])
       return
     }
@@ -321,10 +317,10 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     setLeavingSql(null)
     setSqlSeed(null)
     const leave = (to: Mode) => {
-      const { explorer: next, replace } = discardSql(latest.current, to)
+      const next = fillEmptyQuery(discardSql(latest.current, to).explorer, projectQuery)
       latest.current = next
       setExplorer(next)
-      replaceUrl(replace)
+      replaceUrl(searchOf(next.current))
       start(next.current)
     }
     if (mode !== 'builder') return leave(mode)
@@ -353,7 +349,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   /** A pivot in Query mode: a where after the leading filters of the Query that ran. */
   const pivot = (chip: Chip) => {
     // An empty Query reads the Project's Logs, as its slug alone does: the where goes after the slug.
-    const query = explorer.current.query || queryOf(EMPTY_BUILDER, project.slug)
+    const query = explorer.current.query || projectQuery
     validateQuery({ orgSlug, projectSlug: project.slug, query })
       .then(({ errors, stages }) => {
         if (errors.length > 0) toast.error('Fix the Query before filtering from its results.')
