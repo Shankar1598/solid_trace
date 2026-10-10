@@ -109,6 +109,22 @@ func TestASummarizeByATimeBinSaysHowToChartIt(t *testing.T) {
 	if got, want := hintsOf(twoHours), "time[300s] count_[count], fill"; got != want {
 		t.Errorf("bin_auto over two hours: want %s, got %s", want, got)
 	}
+
+	// The range is the one the Query reads, as a leading where on time
+	// narrows it: two hours of the day have 5-minute bins, ada's, bob's,
+	// cy's and ed's.
+	narrowed := runCharted(t, env, `where time >= datetime(2026-10-02T10:00:00Z) and time < datetime(2026-10-02T12:00:00Z) `+
+		`| summarize count() by bin_auto(time)`, languageAt(0, 0), languageAt(0, 0).AddDate(0, 0, 1))
+	if got, want := hintsOf(narrowed), "time[300s] count_[count], fill"; got != want || len(narrowed.Table.Rows) != 4 {
+		t.Errorf("bin_auto over two hours of a day: want %s in 4 rows, got %s in %d", want, got, len(narrowed.Table.Rows))
+	}
+	// The last hour and a half of a week, with the clock at 11:30, has
+	// 1-minute bins.
+	lastHour := runCharted(t, env, `where time > ago(1h) | summarize count() by bin_auto(time)`,
+		languageAt(12, 0).AddDate(0, 0, -7), languageAt(12, 0))
+	if got, want := hintsOf(lastHour), "time[60s] count_[count], fill"; got != want {
+		t.Errorf("bin_auto after ago(1h) in a week: want %s, got %s", want, got)
+	}
 }
 
 func TestHintsSurviveOnlyPlainRenames(t *testing.T) {
