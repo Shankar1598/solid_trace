@@ -43,14 +43,16 @@ type histogramBucket struct {
 // POST /api/:project_id/logs/histogram
 //
 // Counts the Logs of [from, to) that pass a Query's filters: {"query",
-// "from", "to"} (RFC 3339) as a run takes them, with "bucket_seconds"
-// optional (by default about 100 buckets over the range). Only the Query's
-// leading where and search stages count, so for a Query that returns a table
-// these are the Logs the table is worked out from. Answers {"bucket_seconds",
-// "buckets": [{"time", "count", "levels"}], "count", "levels"}: a bucket for
-// every bucket_seconds from the epoch that overlaps the range, empty ones
-// included, oldest first; levels count each Level and "none", for Logs with
-// no Level. A Query with mistakes answers 400 with {"errors": […]}.
+// "from", "to"} (RFC 3339) as a run takes them, with "bucket_seconds" (by
+// default about 100 buckets over the range) and "timeout_seconds" optional.
+// Only the Query's leading where and search stages count, so for a Query
+// that returns a table these are the Logs the table is worked out from.
+// Answers {"bucket_seconds", "buckets": [{"time", "count", "levels"}],
+// "count", "levels", "elapsed_ms"}: a bucket for every bucket_seconds from
+// the epoch that overlaps the range, empty ones included, oldest first;
+// levels count each Level and "none", for Logs with no Level. A Query with
+// mistakes answers 400 with {"errors": […]}, and a run past its timeout 504
+// with {"errors": [{"message"}]}.
 //
 // Like a table, it reads the whole range as it was when the read began.
 func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
@@ -59,14 +61,20 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	var req struct {
-		Query         string    `json:"query"`
-		From          time.Time `json:"from"`
-		To            time.Time `json:"to"`
-		BucketSeconds int64     `json:"bucket_seconds"`
+		Query          string    `json:"query"`
+		From           time.Time `json:"from"`
+		To             time.Time `json:"to"`
+		BucketSeconds  int64     `json:"bucket_seconds"`
+		TimeoutSeconds *float64  `json:"timeout_seconds"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
 	}
+	run, problem := startRun(c, req.TimeoutSeconds)
+	if problem != nil {
+		return c.Status(400).JSON(problem)
+	}
+	defer run.end()
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
@@ -87,7 +95,7 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 
 	counts := query.Histogram(bucket)
 	from, to := counts.Range()
-	raw, err := h.logs.ScanLogTable(c.UserContext(), storage.LogTableScan{
+	raw, err := h.logs.ScanLogTable(run.ctx, storage.LogTableScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
@@ -96,6 +104,9 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		Query:     func(logs string) string { return counts.TableSQL(logs, len(starts)*len(histogramLevels)) },
 	})
 	if err != nil {
+		if run.timedOut() {
+			return run.stopped(c)
+		}
 		logger.L.Error("Log histogram failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
@@ -123,7 +134,7 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		total += n
 		levels[level] += n
 	}
-	return c.JSON(fiber.Map{
+	return run.answer(c, fiber.Map{
 		"bucket_seconds": int64(bucket / time.Second),
 		"buckets":        buckets,
 		"count":          total,

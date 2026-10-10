@@ -62,6 +62,8 @@ type Query struct {
 	reads []attrKey
 	// output is the table's columns, over the tail's last stage.
 	output []namedValue
+	// shape is how to chart the table.
+	shape shape
 }
 
 // Compile parses and checks a Query's text for the given bounds. The error,
@@ -81,6 +83,10 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 			default:
 				inHead = false
 				c.tail = true
+				// The tail runs over the range the head narrows, which
+				// bin_auto sizes its bins by.
+				q.narrow()
+				c.bounds.From, c.bounds.To = q.from, q.to
 			}
 		}
 		compiled, err := c.stage(s)
@@ -94,7 +100,9 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 		}
 		q.spans = append(q.spans, s.Span())
 	}
-	q.narrow()
+	if inHead {
+		q.narrow()
+	}
 	q.finish(c)
 	return q, nil
 }
@@ -113,6 +121,14 @@ func (q *Query) Table() bool {
 // Take is how many Log rows a Query of Log rows returns at most, if it says.
 func (q *Query) Take() (int, bool) {
 	return q.take, q.hasTake
+}
+
+// FillGaps reports whether a chart of the Query's table may fill the time
+// bins it has no row for: when its rows are its last summarize's by a time
+// bin, and no stage since has left any out. A table cut short at a run's
+// limit of rows lacks bins too, which the run must check itself.
+func (q *Query) FillGaps() bool {
+	return q.shape.fillGaps
 }
 
 func errorAt(node parser.Node, format string, args ...any) *Error {
