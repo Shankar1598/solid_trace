@@ -33,7 +33,8 @@ export function SqlBox({ text, onChange, onRun, leaving, onDiscard, onStay }: Sq
       </div>
       {leaving && (
         <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-amber-400 bg-amber-50 p-2 text-xs dark:bg-amber-950/30">
-          <span className="flex-1">
+          {/* Wide enough that on a phone the buttons wrap below it together. */}
+          <span className="min-w-64 flex-1">
             SQL can't be turned back into a Query. Switching discards your SQL and returns to the Query it started from.
           </span>
           <button onClick={onDiscard} className="rounded border px-2 py-1 hover:bg-background">Discard and switch</button>
