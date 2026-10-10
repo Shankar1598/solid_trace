@@ -20,19 +20,21 @@ type ConsoleSettings interface {
 
 // sqlRequest is the body of a SQL run.
 type sqlRequest struct {
-	SQL  string    `json:"sql"`
-	From time.Time `json:"from"`
-	To   time.Time `json:"to"`
+	SQL            string    `json:"sql"`
+	From           time.Time `json:"from"`
+	To             time.Time `json:"to"`
+	TimeoutSeconds *float64  `json:"timeout_seconds"`
 }
 
 // POST /api/:project_id/logs/sql
 //
 // Runs raw DuckDB SQL, {"sql", "from", "to"} (RFC 3339), exactly as written,
-// with the logs view holding the Project's Logs of [from, to) (ADR 0003). Only
-// while the instance's SQL queries setting is on; otherwise 403. Answers as a
-// run's table does, {"table": {"columns": [{"name", "type"}], "rows": [[…]],
-// "truncated"}}, at most maxTableRows rows. SQL that fails answers 400 with
-// {"error"}, DuckDB's message.
+// with the logs view holding the Project's Logs of [from, to) (ADR 0003), and
+// "timeout_seconds" optional. Only while the instance's SQL queries setting is
+// on; otherwise 403. Answers {"table": {"columns": [{"name", "type"}],
+// "rows": [[…]], "truncated"}, "elapsed_ms"}, at most maxTableRows rows. SQL
+// that fails answers 400 with {"error"}, DuckDB's message, and a run past its
+// timeout 504 with {"errors": [{"message"}]}.
 func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -50,10 +52,19 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with sql, from and to"})
 	}
+	run, problem := startRun(c, req.TimeoutSeconds)
+	if problem != nil {
+		return c.Status(400).JSON(problem)
+	}
+	defer run.end()
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
-	result, err := h.logs.RunSQL(c.UserContext(), projectID, req.From, req.To, req.SQL, maxTableRows)
+	result, err := h.logs.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, maxTableRows)
+	// Stopped, the SQL fails as DuckDB interrupts it.
+	if err != nil && run.timedOut() {
+		return run.stopped(c)
+	}
 	var sqlErr *storage.SQLError
 	if errors.As(err, &sqlErr) {
 		return c.Status(400).JSON(fiber.Map{"error": sqlErr.Error()})
@@ -66,7 +77,7 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	for i, col := range result.Columns {
 		columns[i] = logquery.Column{Name: col.Name, Type: columnType(col.Type)}
 	}
-	return c.JSON(fiber.Map{"table": fiber.Map{"columns": columns, "rows": result.Rows, "truncated": result.Truncated}})
+	return run.answer(c, fiber.Map{"table": fiber.Map{"columns": columns, "rows": result.Rows, "truncated": result.Truncated}})
 }
 
 // columnType names a DuckDB type as a table's column types are named: string,
