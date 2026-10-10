@@ -566,11 +566,15 @@ function ResultArea({ result, onLoadOlder, selectedId, onSelect, columns, onColu
 }
 
 function Notice({ children, tone }: { children: React.ReactNode; tone?: 'error' }) {
-  return (
-    <div className={tone === 'error' ? 'p-10 text-center text-sm text-destructive' : 'p-10 text-center text-sm text-muted-foreground'}>
-      {children}
-    </div>
-  )
+  if (tone === 'error') {
+    // An error keeps its lines, left-aligned as one block, so DuckDB's ^ stays under the mistake it points at.
+    return (
+      <div className="p-10 text-sm text-destructive">
+        <p className="mx-auto w-fit max-w-full whitespace-pre-wrap break-words">{children}</p>
+      </div>
+    )
+  }
+  return <div className="p-10 text-center text-sm text-muted-foreground">{children}</div>
 }
 
 const CUSTOM = 'custom'
