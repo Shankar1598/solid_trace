@@ -24,11 +24,30 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.809 0.105 251.813);
-  --chart-2: oklch(0.623 0.214 259.815);
-  --chart-3: oklch(0.546 0.245 262.881);
-  --chart-4: oklch(0.488 0.243 264.376);
-  --chart-5: oklch(0.424 0.199 265.638);
+  /*
+   * Chart series, in this order and never cycled: the dataviz skill's
+   * categorical palette, checked with its validator on the card (#ffffff).
+   * Slots 3-5 are under 3:1 on white, so a chart always has its table below.
+   */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
+  --chart-7: #4a3aa7;
+  --chart-8: #e34948;
+  /*
+   * Series of Levels wear the histogram's Level colours (sky, amber, red), at
+   * full strength for lines; the greys step apart so neighbours stay distinct.
+   */
+  --chart-level-trace: #a3a3a3;
+  --chart-level-debug: #737373;
+  --chart-level-info: oklch(68.5% 0.169 237.323);
+  --chart-level-warn: oklch(76.9% 0.188 70.08);
+  --chart-level-error: oklch(63.7% 0.237 25.331);
+  --chart-level-fatal: oklch(44.4% 0.177 26.899);
+  --chart-level-none: #d4d4d4;
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -59,11 +78,22 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.809 0.105 251.813);
-  --chart-2: oklch(0.623 0.214 259.815);
-  --chart-3: oklch(0.546 0.245 262.881);
-  --chart-4: oklch(0.488 0.243 264.376);
-  --chart-5: oklch(0.424 0.199 265.638);
+  /* The same hues stepped for the dark card (#171717), checked there. */
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #008300;
+  --chart-7: #9085e9;
+  --chart-8: #e66767;
+  --chart-level-trace: #737373;
+  --chart-level-debug: #a1a1a1;
+  --chart-level-info: oklch(68.5% 0.169 237.323);
+  --chart-level-warn: oklch(76.9% 0.188 70.08);
+  --chart-level-error: oklch(63.7% 0.237 25.331);
+  --chart-level-fatal: oklch(44.4% 0.177 26.899);
+  --chart-level-none: #454545;
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -84,6 +114,9 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
+  --color-chart-8: var(--chart-8);
+  --color-chart-7: var(--chart-7);
+  --color-chart-6: var(--chart-6);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);

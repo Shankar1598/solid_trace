@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { format } from 'date-fns'
+import { timePattern } from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import {
   HISTOGRAM_LEVELS,
@@ -126,7 +127,7 @@ function Strip({ histogram, range, onZoom }: {
   if (buckets.length === 0) return <div style={{ height: STRIP_HEIGHT + 16 }} />
 
   const [low, high] = drag ? [Math.min(drag.start, drag.end), Math.max(drag.start, drag.end)] : [-1, -1]
-  const pattern = labelPattern(histogram.bucket_seconds, range)
+  const pattern = timePattern(histogram.bucket_seconds, range)
 
   return (
     <div className="select-none">
@@ -197,11 +198,4 @@ function timeLabels(buckets: HistogramBucket[], { from, to }: { from: Date; to: 
     return { at: i / buckets.length, time: new Date(buckets[i].time) }
   })
   return [{ at: 0, time: from }, ...inner, { at: 1, time: to }]
-}
-
-/** Local times to the bucket's precision, with the date once the range spans days. */
-function labelPattern(bucketSeconds: number, { from, to }: { from: Date; to: Date }): string {
-  if (bucketSeconds >= 86_400) return 'MMM dd'
-  const time = bucketSeconds < 60 ? 'HH:mm:ss' : 'HH:mm'
-  return format(from, 'yyyyMMdd') === format(to, 'yyyyMMdd') ? time : `MMM dd ${time}`
 }

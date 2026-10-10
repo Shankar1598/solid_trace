@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LogTable, TableColumn } from '@/lib/logs/table'
-import { MAX_BARS, MAX_SERIES, chartOf, formsOf, type ChartModel } from './series'
+import { MAX_BARS, MAX_SERIES, chartOf, formFor, formsOf, type ChartModel } from './series'
 
 const TIME: TableColumn = { name: 'time', type: 'datetime', bin_seconds: 300 }
 const SERVICE: TableColumn = { name: 'service', type: 'string' }
@@ -293,5 +293,20 @@ describe('the forms a model is drawn in', () => {
     expect(formsOf(chartOf(table([SERVICE, COUNT], [['api', 1]])))).toEqual(['bars'])
     expect(formsOf(chartOf(table([COUNT], [[1]])))).toEqual(['stat'])
     expect(formsOf({ kind: 'none' })).toEqual([])
+  })
+
+  it('draws the form asked for when it can, else the one its shape suggests', () => {
+    const time = chartOf(table([TIME, COUNT], [['2026-10-09T10:00:00Z', 1]]))
+    const bars = chartOf(table([SERVICE, COUNT], [['api', 1]]))
+
+    expect(formFor(time, 'auto')).toBe('line')
+    expect(formFor(time, 'area')).toBe('area')
+    expect(formFor(bars, 'line')).toBe('bars')
+    expect(formFor(chartOf(table([COUNT], [[1]])), 'bars')).toBe('stat')
+  })
+
+  it('draws nothing for the table alone, or a table that is not drawn', () => {
+    expect(formFor(chartOf(table([TIME, COUNT], [['2026-10-09T10:00:00Z', 1]])), 'table')).toBeNull()
+    expect(formFor({ kind: 'none' }, 'line')).toBeNull()
   })
 })
