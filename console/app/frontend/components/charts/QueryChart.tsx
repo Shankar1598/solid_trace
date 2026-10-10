@@ -129,7 +129,7 @@ function Plot({ model, form, onZoom, actions, className }: {
     const i = props.index ?? -1
     const lone = model.points[i]?.[s.key] != null && model.points[i - 1]?.[s.key] == null && model.points[i + 1]?.[s.key] == null
     return lone && props.cx !== undefined && props.cy !== undefined
-      ? <circle key={`${s.key}-${i}`} cx={props.cx} cy={props.cy} r={3} fill={`var(--color-${s.key})`} />
+      ? <circle key={`${s.key}-${i}`} cx={props.cx} cy={props.cy} r={4} fill={`var(--color-${s.key})`} stroke="var(--card)" strokeWidth={2} />
       : <g key={`${s.key}-${i}`} />
   }
   const chart = {
@@ -267,12 +267,17 @@ function Plot({ model, form, onZoom, actions, className }: {
 function Legend({ model, form, hidden, onToggle }: {
   model: PlotModel; form: ChartForm; hidden: Set<string>; onToggle: (key: string) => void
 }) {
-  const left = model.omitted > 0 ? `${model.omitted.toLocaleString()} more not shown` : null
-  const categories = model.kind === 'bars' && model.omittedCategories > 0
-    ? `${(model.points.length + model.omittedCategories).toLocaleString()} values of ${model.category}; the top ${model.points.length} shown`
-    : null
-  const notes = [left, categories].filter(Boolean).map(note => (
-    <span key={note} className="text-[11px] text-muted-foreground" title={`Only the ${MAX_SERIES} series with the largest totals are drawn.`}>{note}</span>
+  const notes = [
+    model.omitted > 0 && {
+      text: `${model.omitted.toLocaleString()} more not shown`,
+      why: `Only the ${MAX_SERIES} series with the largest totals are drawn.`,
+    },
+    model.kind === 'bars' && model.omittedCategories > 0 && {
+      text: `the top ${model.points.length} of ${(model.points.length + model.omittedCategories).toLocaleString()} ${model.category} values`,
+      why: `Only the ${model.points.length} bars with the largest totals are drawn.`,
+    },
+  ].filter(note => note !== false).map(({ text, why }) => (
+    <span key={text} className="text-[11px] text-muted-foreground" title={why}>{text}</span>
   ))
 
   if (model.series.length === 1) {
