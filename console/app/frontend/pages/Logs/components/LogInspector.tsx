@@ -118,7 +118,8 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, actions, onNew
         <header className="border-b px-3 pt-2.5 pb-2">
           <div className="flex items-start gap-2">
             <div className="min-w-0 flex-1">
-              <h2 className="truncate text-sm">
+              {/* Wraps on a phone rather than cutting the time short. */}
+              <h2 className="text-sm">
                 <span className="text-muted-foreground">Log</span> {localTime(log.time)}
               </h2>
               <Tag field="time" value={utc} columnable className="text-[11px] text-muted-foreground tabular-nums">{utc}</Tag>
@@ -221,7 +222,7 @@ function FieldRow({ field: { name, value }, actions }: { field: InspectorField; 
   return (
     <div className="group relative flex gap-3 border-b border-border/60 px-3 py-1.5 hover:bg-muted/40">
       <div className="w-36 shrink-0 truncate text-muted-foreground" title={name}>{name}</div>
-      <div className="min-w-0 flex-1 break-all whitespace-pre-wrap">
+      <div className="min-w-0 flex-1 wrap-anywhere whitespace-pre-wrap">
         <ValueText value={value} plainStrings />
       </div>
       <LineActions field={name} value={value} actions={actions} />
@@ -292,7 +293,7 @@ function JsonRow({ index, line, lines, shut, foldable, onFold, wrap, actions }: 
           </button>
         )}
       </span>
-      <span className={cn('min-w-0 flex-1 pr-2', wrap ? 'break-all whitespace-pre-wrap' : 'whitespace-pre')} style={{ paddingLeft: `${line.depth * 2}ch` }}>
+      <span className={cn('min-w-0 flex-1 pr-2', wrap ? 'wrap-anywhere whitespace-pre-wrap' : 'whitespace-pre')} style={{ paddingLeft: `${line.depth * 2}ch` }}>
         {line.key !== undefined && <>{JSON.stringify(line.key)}<span className={MUTED_TEXT}>: </span></>}
         {shut ? (
           <button type="button" onClick={onFold} className="text-muted-foreground hover:text-foreground">
