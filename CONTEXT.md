@@ -88,6 +88,10 @@ _Avoid_: log viewer, log search, logs page
 The Logs explorer's default way to make a Query without typing it: filter chips plus a search box. It can show only Queries made of equality filters and one search.
 _Avoid_: query builder, visual mode, simple mode
 
+**Chart**:
+A Query's table drawn as a time series, bars or a single number. Only a table its Query's last summarize shapes is drawn: the time bins are its x, the aggregates its series, and the by columns split them. The Logs explorer shows it above the table.
+_Avoid_: graph, plot, visualization
+
 **Integration**:
 An outbound notification target owned by an organization.
 _Avoid_: webhook config, notifier job
@@ -113,6 +117,7 @@ _Avoid_: app, tenant
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
 - A **Project**'s **Retention** decides when its **Logs** are deleted
+- A **Chart** draws one **Query**'s table; the **Logs explorer** shows it above the table
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 
