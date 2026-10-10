@@ -119,6 +119,11 @@ test.describe('Builder', () => {
     await page.getByLabel('Group by time or a Field…').fill('service')
     await page.getByRole('option', { name: /^service/ }).first().click()
     await settled(page)
+    // by leads its group on one line, also when the clauses wrap on a phone.
+    const summarize = builderRow(page, 'Summarize')
+    const by = (await summarize.getByText('by', { exact: true }).boundingBox())!
+    const group = (await summarize.getByRole('button', { name: 'service', exact: true }).boundingBox())!
+    expect(Math.abs(by.y + by.height / 2 - (group.y + group.height / 2))).toBeLessThan(4)
     await shoot(page, 'v1-builder-summarize')
     // A cell's value menu, which filters from the table.
     await page.getByRole('button', { name: 'billing', exact: true }).first().click()
