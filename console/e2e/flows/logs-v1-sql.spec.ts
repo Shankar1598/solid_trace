@@ -1,18 +1,12 @@
 import { test, expect, type Locator } from '@playwright/test'
-import { execFileSync } from 'node:child_process'
-import { resolve } from 'node:path'
-import { last24h, logCount, openLogs, settled } from '../support/logs'
+import { holdSqlQueries, last24h, logCount, openLogs, releaseSqlQueries, settled } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
 
 // SQL mode, on an instance with SQL queries on: the Query's readable SQL,
 // run only on Run, answering a table; leaving with edited SQL asks first.
 
-const sqlQueries = (on: boolean) => execFileSync('mise', ['exec', '--', 'bin/rails', 'instance_settings:set', `SQL_QUERIES_ENABLED=${on}`], {
-  cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
-})
-
-test.beforeAll(() => { sqlQueries(true) })
-test.afterAll(() => { sqlQueries(false) })
+test.beforeAll(() => { holdSqlQueries() })
+test.afterAll(() => { releaseSqlQueries() })
 
 test('SQL mode opens with the readable SQL, runs on Run, and asks before discarding edits', async ({ page }) => {
   // The SQL with a mistake answers 400.
