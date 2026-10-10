@@ -447,7 +447,8 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
           <RangeSelect range={explorer.draft.range} onChange={pickBarRange} />
           <ModeSwitch modes={modes} mode={mode} onSwitch={switchTo} />
-          <div className="h-5 w-px bg-border" />
+          {/* On a phone the hint wraps to a line of its own, which would leave the rule at the end of the first. */}
+          <div className="h-5 w-px bg-border max-sm:hidden" />
           {mode === 'builder' ? (
             <BuilderBar view={builderView} />
           ) : (
