@@ -113,7 +113,8 @@ export function PickList({ options, onPick, placeholder, typed, chosen, empty }:
           className="h-full min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
         />
       </div>
-      <OptionList options={shown} active={active} onActive={setActive} onPick={o => onPick(o.value)} chosen={chosen} empty={empty} className="max-h-64" />
+      {/* Tall enough that a list longer than it shows part of a row at its foot, so it reads as one to scroll. */}
+      <OptionList options={shown} active={active} onActive={setActive} onPick={o => onPick(o.value)} chosen={chosen} empty={empty} className="max-h-72" />
     </div>
   )
 }
