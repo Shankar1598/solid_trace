@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  chooseViz,
   fillEmptyQuery,
   openExplorer,
   pickRange,
@@ -16,7 +17,7 @@ import {
 
 describe('the URL of an explorer state', () => {
   it('opens on the last hour in the Builder with no Query', () => {
-    expect(stateFromSearch('')).toEqual({ range: { kind: 'relative', span: '1h' }, mode: 'builder', query: '', sql: '' })
+    expect(stateFromSearch('')).toEqual({ range: { kind: 'relative', span: '1h' }, mode: 'builder', query: '', sql: '', viz: 'auto' })
   })
 
   it('keeps a relative range relative', () => {
@@ -35,14 +36,14 @@ describe('the URL of an explorer state', () => {
   })
 
   it('reads back the mode and Query text it wrote', () => {
-    const state = { range: { kind: 'relative', span: '7d' }, mode: 'query', query: 'where service == "api"\n| search "a&b"', sql: '' } as const
+    const state = { range: { kind: 'relative', span: '7d' }, mode: 'query', query: 'where service == "api"\n| search "a&b"', sql: '', viz: 'auto' } as const
 
     expect(stateFromSearch(searchOf(state))).toEqual(state)
   })
 
   it('reads back the SQL text it wrote', () => {
     const state = {
-      range: { kind: 'relative', span: '1h' }, mode: 'sql', query: 'take 5', sql: "SELECT *\nFROM logs\nWHERE message LIKE '%a&b%'",
+      range: { kind: 'relative', span: '1h' }, mode: 'sql', query: 'take 5', sql: "SELECT *\nFROM logs\nWHERE message LIKE '%a&b%'", viz: 'auto',
     } as const
 
     expect(searchOf(state)).toContain('sql=')
@@ -53,7 +54,7 @@ describe('the URL of an explorer state', () => {
     const search = '?range=1h&mode=sql&q=take+5&sql=SELECT+1'
 
     expect(stateFromSearch(search, ['builder', 'query'])).toEqual({
-      range: { kind: 'relative', span: '1h' }, mode: 'builder', query: 'take 5', sql: '',
+      range: { kind: 'relative', span: '1h' }, mode: 'builder', query: 'take 5', sql: '', viz: 'auto',
     })
   })
 
@@ -68,6 +69,30 @@ describe('the URL of an explorer state', () => {
     expect(stateFromSearch('?from=2026-10-02T00:00:00Z&to=2026-10-01T00:00:00Z').range)
       .toEqual({ kind: 'relative', span: '1h' })
     expect(stateFromSearch('?from=2026-10-02T00:00:00Z').range).toEqual({ kind: 'relative', span: '1h' })
+  })
+})
+
+describe('the chart a table is drawn as', () => {
+  it('follows the table\'s shape when the URL has none, and writes none', () => {
+    const state = stateFromSearch('?range=1h&mode=builder&q=take+5')
+
+    expect(state.viz).toBe('auto')
+    expect(searchOf(state)).toBe('?range=1h&mode=builder&q=take+5')
+  })
+
+  it('reads back each chart it wrote', () => {
+    for (const viz of ['line', 'area', 'bars', 'table'] as const) {
+      const state = { ...stateFromSearch('?range=24h&mode=query&q=summarize+count()'), viz }
+
+      expect(searchOf(state)).toContain(`viz=${viz}`)
+      expect(stateFromSearch(searchOf(state))).toEqual(state)
+    }
+  })
+
+  it('ignores a chart it cannot read', () => {
+    expect(stateFromSearch('?range=1h&mode=builder&viz=pie').viz).toBe('auto')
+    expect(stateFromSearch('?range=1h&mode=builder&viz=').viz).toBe('auto')
+    expect(stateFromSearch('?range=1h&mode=builder&viz=Line').viz).toBe('auto')
   })
 })
 
@@ -121,6 +146,11 @@ describe('history entries', () => {
       type(text: string) { explorer = typeQuery(explorer, text) },
       typeSql(text: string) { explorer = typeSql(explorer, text) },
       pickRange(span: string) { explorer = pickRange(explorer, { kind: 'relative', span }) },
+      chooseViz(viz: 'auto' | 'line' | 'area' | 'bars' | 'table') {
+        const { explorer: next, replace } = chooseViz(explorer, viz)
+        explorer = next
+        entries[entries.length - 1] = replace
+      },
       switchMode(mode: 'builder' | 'query' | 'sql') {
         const { explorer: next, replace } = switchMode(explorer, mode)
         explorer = next
@@ -193,6 +223,23 @@ describe('history entries', () => {
     expect(b.entries).toEqual(['?range=1h&mode=query&q=search+%22boom%22'])
     expect(b.explorer.current).toMatchObject({ mode: 'query', query: 'search "boom"' })
     expect(b.explorer.draft).toMatchObject({ mode: 'query', query: 'search "bang"' })
+  })
+
+  it('adds none when the chart changes, but keeps it in the URL without running', () => {
+    const b = browser('?range=1h&mode=query&q=summarize+count()')
+    b.type('summarize count() by service')
+
+    b.chooseViz('bars')
+
+    expect(b.entries).toEqual(['?range=1h&mode=query&q=summarize+count%28%29&viz=bars'])
+    expect(b.explorer.current).toMatchObject({ query: 'summarize count()', viz: 'bars' })
+    expect(b.explorer.draft).toMatchObject({ query: 'summarize count() by service', viz: 'bars' })
+
+    // The next run keeps the chart; going back to the shape's own chart leaves no trace.
+    b.run()
+    expect(b.entries.at(-1)).toContain('viz=bars')
+    b.chooseViz('auto')
+    expect(b.entries.at(-1)).not.toContain('viz')
   })
 
   it('adds one per SQL run, holding the SQL that ran, and reopens it without running it', () => {
