@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { builderRow, last24h, logCount, openLogs, runBy, settled, streamRows, summaryLine } from '../support/logs'
+import { addFilter, builderRow, last24h, logCount, openLogs, runBy, settled, streamRows, summaryLine } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // Query mode: the Builder's Query as text to edit and run, by Run or
@@ -91,6 +91,39 @@ test('back to the Builder: silent when it can show the Query, asking when it can
   await expect(page).toHaveURL(/mode=builder/)
   await expect(builderRow(page, 'Where').getByRole('button', { name: 'level == "warn"', exact: true })).toBeVisible()
   expect(await logCount(page)).toBe(warnLogs)
+  expect(errors).toEqual([])
+})
+
+test('Discard drops a Query that never ran: Run afterwards runs what the Builder shows', async ({ page }) => {
+  const errors = watchErrors(page)
+  const unshowable = `${SOURCE}\n| where level == "warn"\n| project time, message`
+  const discardTyped = async () => {
+    await page.getByRole('button', { name: 'Query', exact: true }).click()
+    await typeQuery(page, unshowable)
+    await page.getByRole('button', { name: 'Builder', exact: true }).click()
+    await page.getByRole('button', { name: 'Discard and switch' }).click()
+    await expect(page).toHaveURL(/mode=builder/)
+  }
+  const run = () => runBy(page, () => page.getByRole('button', { name: 'Run', exact: true }).click())
+  const ranQuery = () => new URL(page.url()).searchParams.get('q') ?? ''
+
+  // From an empty Builder.
+  await openLogs(page, last24h())
+  const all = await logCount(page)
+  await discardTyped()
+  await run()
+  expect(ranQuery()).not.toContain('| project')
+  expect(await logCount(page)).toBe(all)
+  await expect(builderRow(page, 'Where').getByRole('button', { name: /==/ })).toHaveCount(0)
+
+  // From a Builder with a filter that ran.
+  await addFilter(page, 'level', '==', 'error')
+  const errorLogs = await logCount(page)
+  await discardTyped()
+  await run()
+  expect(ranQuery()).not.toContain('| project')
+  await expect(builderRow(page, 'Where').getByRole('button', { name: 'level == "error"', exact: true })).toBeVisible()
+  expect(await logCount(page)).toBe(errorLogs)
   expect(errors).toEqual([])
 })
 
