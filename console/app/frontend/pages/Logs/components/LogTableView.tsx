@@ -10,6 +10,8 @@ const ROW_HEIGHT = 24
 const CHAR_PX = 7.5
 const MIN_WIDTH = 64
 const MAX_WIDTH = 420
+/** A cell's padding (px-3) and its tag's (px-0.5), around the text. */
+const CELL_PADDING = 24 + 4
 /** Rows read to size the columns: enough to see their usual width. */
 const SIZING_ROWS = 200
 
@@ -88,6 +90,6 @@ function columnWidths(table: LogTable): number[] {
       const text = c.type === 'datetime' ? 'MMM dd HH:mm:ss.SSS' : v === null || v === undefined ? '' : valueText(v as AttributeValue)
       chars = Math.max(chars, text.length)
     }
-    return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.ceil(chars * CHAR_PX) + 24))
+    return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.ceil(chars * CHAR_PX) + CELL_PADDING))
   })
 }
