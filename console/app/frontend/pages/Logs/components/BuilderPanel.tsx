@@ -218,12 +218,13 @@ function ProjectSelect({ project, projects, onChange }: { project: ProjectOption
   )
 }
 
+/** A clause row: its label, then its clauses, which wrap under one another rather than under the label. */
 function Row({ label, muted, children }: { label: string; muted?: boolean; children: React.ReactNode }) {
   return (
-    <div className="relative flex min-h-8 flex-wrap items-center gap-1.5 py-0.5">
+    <div className="relative flex min-h-8 items-start gap-1.5 py-0.5">
       <span className="absolute -left-4 top-4 h-px w-2.5 bg-border" />
-      <span className={cn('w-24 shrink-0', muted ? 'text-muted-foreground' : 'text-foreground')}>{label}</span>
-      {children}
+      <span className={cn('w-24 shrink-0 leading-7', muted ? 'text-muted-foreground' : 'text-foreground')}>{label}</span>
+      <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-1.5">{children}</div>
     </div>
   )
 }
@@ -238,7 +239,8 @@ function Clause({ title, editor, onRemove, children }: {
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <span className={cn('inline-flex h-6 max-w-96 items-stretch border bg-muted/40', open && 'border-ring')}>
+    // At most the row's width, so a long clause truncates on a phone rather than pushing its × out of reach.
+    <span className={cn('inline-flex h-6 max-w-[min(24rem,100%)] items-stretch border bg-muted/40', open && 'border-ring')}>
       <Popover.Root open={open} onOpenChange={setOpen}>
         <Popover.Trigger className="min-w-0 truncate px-2 text-left hover:bg-muted" title={`${title} (click to edit)`}>
           {children}
