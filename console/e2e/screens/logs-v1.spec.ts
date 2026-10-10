@@ -201,6 +201,18 @@ test.describe('Query mode', () => {
     await shoot(page, 'v1-query-leaving')
     expect(errors).toEqual([])
   })
+
+  test('a Query discarded before it ran, then Run', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openLogs(page)
+    await page.getByRole('button', { name: 'Query', exact: true }).click()
+    await page.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| where level == "warn"\n| project time, service, message`)
+    await page.getByRole('button', { name: 'Builder', exact: true }).click()
+    await page.getByRole('button', { name: 'Discard and switch' }).click()
+    await runBy(page, () => page.getByRole('button', { name: 'Run', exact: true }).click())
+    await shoot(page, 'v1-query-discarded')
+    expect(errors).toEqual([])
+  })
 })
 
 test.describe('SQL mode', () => {
