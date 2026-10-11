@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -100,30 +101,27 @@ func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
 			t.Errorf("Expected Project %d to keep %v, got %v", projectID, want, got)
 		}
 	}
-	assertSets := func(when string) {
+	// The days kept keep their promoted sets, so their Logs are still found
+	// by the keys the sets promoted.
+	assertFound := func(when string) {
 		t.Helper()
-		for _, c := range []struct {
-			projectID uint32
-			day       time.Time
-			want      []string
-		}{
-			{123, day(9, 1, 0), nil},
-			{123, day(9, 2, 0), []string{"string user"}},
-			{456, day(9, 24, 0), nil},
-			{456, day(9, 25, 0), []string{"string user"}},
-		} {
-			if got := promotedNames(env.LogStore.PromotedSet(c.projectID, c.day)); !slices.Equal(got, c.want) {
-				t.Errorf("Expected Project %d's set of %s to be %v %s, got %v", c.projectID, c.day.Format(time.DateOnly), c.want, when, got)
-			}
-		}
+		assertProjectQueries(t, env, 123, map[string][]string{
+			`where user == "last day past 30"`:    {},
+			`where user == "first day within 30"`: {"first day within 30"},
+			`where user == "yesterday"`:           {"yesterday"},
+		}, when)
+		assertProjectQueries(t, env, 456, map[string][]string{
+			`where user == "last day past 7"`:    {},
+			`where user == "first day within 7"`: {"first day within 7"},
+		}, when)
 	}
 	assertMessages(123, "yesterday", "first day within 30")
 	assertMessages(456, "first day within 7")
-	assertSets("after Retention")
+	assertFound("after Retention")
 
 	env.Reopen(t)
 	assertMessages(123, "yesterday", "first day within 30")
-	assertSets("after a restart")
+	assertFound("after a restart")
 }
 
 // consoleExec changes the Console database as Console would.
@@ -166,6 +164,11 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 	if got := messages(want); !slices.Equal(got, []string{"hot", "exported", "late"}) {
 		t.Fatalf("Unexpected Logs of Project 123: %v", got)
 	}
+	// The folder of a Project's files: project=<id>.
+	projectDir := func(projectID uint32) string {
+		return filepath.Dir(filepath.Dir(filepath.Dir(hourFile(t, env, projectID, at(10, 10)))))
+	}
+	deletedDir, keptDir := projectDir(456), projectDir(123)
 
 	// Project 123 loses its last key, and Project 456 is deleted.
 	consoleExec(t, env, "DELETE FROM project_keys WHERE project_id = 123")
@@ -177,15 +180,20 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 		if got := latestLogs(t, env, 456, 10); len(got) != 0 {
 			t.Errorf("Expected the deleted Project to have no Logs %s, got %v", when, messages(got))
 		}
-		if got := env.LogStore.PromotedSet(456, at(12, 0)); len(got.Keys) != 0 {
-			t.Errorf("Expected the deleted Project to have no promoted set %s, got %v", when, promotedNames(got))
-		}
 		assertListsUnchanged(t, env, 123, want, when)
-		if got := promotedNames(env.LogStore.PromotedSet(123, at(12, 0))); !slices.Equal(got, []string{"string user"}) {
-			t.Errorf("Expected Project 123 to keep its promoted set %s, got %v", when, got)
-		}
+		// Project 123 keeps its promoted set, so its Logs are still found by
+		// the key it promoted.
+		assertProjectQueries(t, env, 123, map[string][]string{
+			`where user == "ada"`: {"exported"},
+			`where user == "bob"`: {"hot"},
+			`where user == "cy"`:  {"late"},
+		}, when)
 	}
 	assertDeleted("after the pass")
+	assertGone(t, deletedDir, "with its Project")
+	if _, err := os.Stat(keptDir); err != nil {
+		t.Errorf("Expected Project 123 to keep its files, got %v", err)
+	}
 	env.Reopen(t)
 	assertDeleted("after a restart")
 	env.DeleteLogsPastRetention(t)
@@ -217,7 +225,7 @@ func TestAnEmptyProjectsTableDeletesNoProjectsLogs(t *testing.T) {
 // hourBytes is the size of a Project's files of an hour.
 func hourBytes(t *testing.T, env *TestEnv, projectID uint32, hour time.Time) int64 {
 	t.Helper()
-	files, err := env.LogStore.Files().Hour(projectID, hour)
+	files, err := env.LogStore.HourFiles(projectID, hour)
 	if err != nil || len(files) == 0 {
 		t.Fatalf("Expected files for Project %d's hour %v, got %v, %v", projectID, hour, files, err)
 	}
@@ -266,15 +274,38 @@ func TestTheDiskLimitDeletesTheOldestHoursOfAnyProjectFirst(t *testing.T) {
 	}
 	oldest := hourBytes(t, env, 456, at(1, 23))
 	total := oldest + hourBytes(t, env, 123, at(2, 8)) + hourBytes(t, env, 456, at(2, 9)) + hourBytes(t, env, 123, at(2, 10))
+	files := map[string]string{
+		"456 yesterday 23:00": hourFile(t, env, 456, at(1, 23)),
+		"123 08:00":           hourFile(t, env, 123, at(2, 8)),
+		"456 09:00":           hourFile(t, env, 456, at(2, 9)),
+		"123 10:00":           hourFile(t, env, 123, at(2, 10)),
+	}
+	// assertOnDisk checks that the files of the hours in kept are still on
+	// disk, and that the other hours' folders are gone.
+	assertOnDisk := func(when string, kept ...string) {
+		t.Helper()
+		for hour, file := range files {
+			if slices.Contains(kept, hour) {
+				if _, err := os.Stat(file); err != nil {
+					t.Errorf("Expected the file of %s kept on disk %s, got %v", hour, when, err)
+				}
+			} else {
+				assertGone(t, filepath.Dir(file), when)
+			}
+		}
+	}
 
 	enforceLogDiskLimit(t, env, total)
 	assertMessages(456, "at the limit", "456 09:10", "456 yesterday 23:10")
+	assertOnDisk("at the limit", "456 yesterday 23:00", "123 08:00", "456 09:00", "123 10:00")
 
 	enforceLogDiskLimit(t, env, total-1)
 	assertMessages(456, "past the limit by a byte", "456 09:10")
 	assertMessages(123, "past the limit by a byte", "123 12:10", "123 10:10", "123 08:10")
+	assertOnDisk("past the limit by a byte", "123 08:00", "456 09:00", "123 10:00")
 
 	enforceLogDiskLimit(t, env, hourBytes(t, env, 123, at(2, 10)))
 	assertMessages(456, "with room for one hour")
 	assertMessages(123, "with room for one hour", "123 12:10", "123 10:10")
+	assertOnDisk("with room for one hour", "123 10:00")
 }

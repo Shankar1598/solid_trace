@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -24,9 +23,10 @@ import (
 // zstd, with the promoted columns of the hour's day, late Logs' values pulled
 // out of their maps.
 //
-// Per Project, one transaction writes the files under staged names, deletes
-// the Logs and drops the Project's demoted columns. Only once it commits are
-// the files renamed. Staged files a crash leaves behind are settled first.
+// Per Project, one transaction writes the files under staged names, adds
+// their rows to the manifest, deletes the Logs and drops the Project's
+// demoted columns. Only once it commits are the files renamed. Staged files
+// a crash leaves behind are settled first.
 func (s *LogStore) ExportLogs(now time.Time) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -228,22 +228,22 @@ func (e *projectExport) hours(cutoff time.Time) ([]time.Time, error) {
 }
 
 // stageHour writes the Project's Logs of an hour, from its hot table and
-// logs_late, to the hour's next file under its staged name, and returns that
-// name once the file may exist.
+// logs_late, to the hour's next file under its staged name, adds the file's
+// row to the manifest, and returns the staged name once the file may exist.
 func (e *projectExport) stageHour(hour time.Time) (string, error) {
 	set, err := e.daySet(hour)
 	if err != nil {
 		return "", err
 	}
-	dir := e.files.HourDir(e.projectID, hour)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(e.files.HourDir(e.projectID, hour), 0755); err != nil {
 		return "", err
 	}
-	name, err := nextHourFile(dir)
+	name, err := nextHourFile(e.ctx, e.conn, e.projectID, hour)
 	if err != nil {
 		return "", err
 	}
-	staged := filepath.Join(dir, name+stagedSuffix)
+	file := logFile{projectID: e.projectID, hour: hour, name: name}
+	staged := e.files.path(file) + stagedSuffix
 
 	from, to := timestampString(hour), timestampString(hour.Add(time.Hour))
 	sources := []string{e.lateRows(set, from, to)}
@@ -260,7 +260,14 @@ func (e *projectExport) stageHour(hour time.Time) (string, error) {
 		return staged, err
 	}
 	// A committed export's files must survive a crash before their rename.
-	return staged, syncFile(staged)
+	if err := syncFile(staged); err != nil {
+		return staged, err
+	}
+	stats, err := readLogFileStats(e.ctx, e.conn, staged, true)
+	if err != nil {
+		return staged, fmt.Errorf("read the staged file: %w", err)
+	}
+	return staged, insertLogFile(e.ctx, e.conn, file, stats)
 }
 
 // daySet reads the promoted set of the day of t, by type then key.
@@ -285,7 +292,7 @@ func (e *projectExport) daySet(t time.Time) ([]typedKey, error) {
 }
 
 // fixedColumns are the fixed columns but the maps, to select as they are.
-const fixedColumns = "id, time, level, message, service, environment, trace_id, span_id"
+const fixedColumns = "id, time, level, message, service, environment, trace_id, span_id, batch"
 
 // hotRows selects the hot table's Logs of [from, to) with the promoted
 // columns of set. Their values are in those columns already.
@@ -424,34 +431,27 @@ func publishStagedLogFile(file string) error {
 }
 
 // recoverStagedFiles settles every staged Log file an export left behind
-// when it stopped before renaming it. An export's commit deletes all of its
-// file's Logs from DuckDB or none, so one Log decides: still stored means
-// the export didn't commit, and the file is deleted; gone means it did, and
-// the file is renamed. A file that can't be read is left for an operator, as
-// readers never see staged files. Exports never overlap, so this runs only
-// when none is in progress.
+// when it stopped before renaming it. The export inserted the file's row in
+// the manifest in its transaction, so the row decides: there means the
+// export committed, and the file is renamed; missing means it didn't, and
+// the file is deleted. Exports never overlap, so this runs only when none is
+// in progress.
 func (s *LogStore) recoverStagedFiles() error {
 	staged, err := s.files.stagedFiles()
 	if err != nil {
 		return err
 	}
-	for file, projectID := range staged {
-		var id string
-		err := s.db.QueryRow(fmt.Sprintf("SELECT CAST(id AS VARCHAR) FROM read_parquet(%s) LIMIT 1", sqltext.String(file))).Scan(&id)
-		if err != nil {
-			logger.L.Error("Skipping unreadable staged log file", "file", file, "error", err)
-			continue
-		}
-		stored, err := s.logStored(projectID, id)
+	for path, file := range staged {
+		listed, err := s.logFileListed(file)
 		if err != nil {
 			return err
 		}
-		if stored {
-			logger.L.Info("Deleting staged log file of an export that didn't commit", "file", file)
-			err = os.Remove(file)
+		if listed {
+			logger.L.Info("Publishing staged log file of an export that committed", "file", path)
+			err = publishStagedLogFile(path)
 		} else {
-			logger.L.Info("Publishing staged log file of an export that committed", "file", file)
-			err = publishStagedLogFile(file)
+			logger.L.Info("Deleting staged log file of an export that didn't commit", "file", path)
+			err = os.Remove(path)
 		}
 		if err != nil {
 			return err

@@ -63,7 +63,7 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	result, err := h.logs.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, maxTableRows)
 	// Stopped, the SQL fails as DuckDB interrupts it.
 	if err != nil && run.timedOut() {
-		return run.stopped(c)
+		return run.stopped(c, shorterRange)
 	}
 	var sqlErr *storage.SQLError
 	if errors.As(err, &sqlErr) {

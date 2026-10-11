@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestLateAndFutureLogsAreListedAndNeverPromoted(t *testing.T) {
+func TestLateAndFutureLogsAreListedAndFoundByTheirKeys(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
@@ -35,13 +35,22 @@ func TestLateAndFutureLogsAreListedAndNeverPromoted(t *testing.T) {
 		t.Errorf("Expected a late Log's Attributes %v, got %v", want, got)
 	}
 
-	// Only the Log in the hot window promotes its keys.
-	if got := env.LogStore.PromotedSet(123, yesterday); len(got.Keys) != 0 {
-		t.Errorf("Expected a late Log to promote nothing, got %v", promotedNames(got))
+	// Only the Log in the hot window promotes its keys, but each Log is
+	// found by them, in logs_late and once the export at 13:00 moves the
+	// Logs before 11:00 to files with their day's set.
+	queries := map[string][]string{
+		`where user == "ada"`: {"yesterday"},
+		`where user == "bob"`: {"before the window"},
+		`where user == "cy"`:  {"first in the window"},
+		`where user == "di"`:  {"next hour"},
+		`where status == 200`: {"yesterday"},
+		`where user != "cy"`:  {"next hour", "before the window", "yesterday"},
 	}
-	if got, want := promotedNames(env.LogStore.PromotedSet(123, now)), []string{"string user"}; !slices.Equal(got, want) {
-		t.Errorf("Expected today's set %v, got %v", want, got)
-	}
+	assertQueries(t, env, queries, "with late and future Logs")
+	env.Clock.Set(time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC))
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 123, time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC), 1)
+	assertQueries(t, env, queries, "after the export")
 
 	// A Project whose only Log is late lists it too.
 	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
@@ -68,7 +77,7 @@ func assertListsUnchanged(t *testing.T, env *TestEnv, projectID uint32, want []l
 // Project's hour.
 func assertHourFiles(t *testing.T, env *TestEnv, projectID uint32, hour time.Time, want int) {
 	t.Helper()
-	files, err := env.LogStore.Files().Hour(projectID, hour)
+	files, err := env.LogStore.HourFiles(projectID, hour)
 	if err != nil {
 		t.Fatalf("List files of %v: %v", hour, err)
 	}
@@ -266,15 +275,19 @@ func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T)
 	}
 	env.Clock.Set(at(2, 0, 10))
 	postAndProcess(t, env, logJSON(t, "after midnight", at(2, 0, 5), map[string]any{"k095": "v", "x000": 7}))
-	if _, ok := env.LogStore.PromotedSet(123, at(2, 0, 0)).Lookup("string", "k095"); ok {
-		t.Fatalf("Expected k095 demoted today")
+	queries := map[string][]string{
+		`where k095 == "v"`: {"after midnight", "first"},
+		`where x000 == 7`:   {"after midnight"},
+		`where k001 == "v"`: {"common 2", "common 1", "common 0", "first"},
 	}
+	assertQueries(t, env, queries, "with k095 demoted today")
 	want := latestLogs(t, env, 123, 100)
 
 	// The export at 01:00 deletes yesterday's last hour.
 	env.Clock.Set(at(2, 1, 0))
 	env.ExportLogs(t)
 	assertListsUnchanged(t, env, 123, want, "after the export at 01:00")
+	assertQueries(t, env, queries, "after the export at 01:00")
 
 	// Today's Logs and late Logs of yesterday still keep the demoted key.
 	env.Clock.Set(at(2, 1, 10))
@@ -283,6 +296,10 @@ func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T)
 		logJSON(t, "late yesterday", at(1, 23, 50), map[string]any{"k095": "y"}),
 	)
 	want = latestLogs(t, env, 123, 100)
+	queries[`where k095 == "w"`] = []string{"later today"}
+	queries[`where k095 == "y"`] = []string{"late yesterday"}
+	queries[`where k001 == "v"`] = []string{"later today", "common 2", "common 1", "common 0", "first"}
+	assertQueries(t, env, queries, "with today's and yesterday's late Logs")
 	attributes := attributesByMessage(want)
 	if got, want := attributes["later today"], map[string]any{"k095": "w", "k001": "v"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected %v, got %v", want, got)
@@ -293,6 +310,8 @@ func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T)
 	env.Clock.Set(at(2, 3, 0))
 	env.ExportLogs(t)
 	assertListsUnchanged(t, env, 123, want, "after the next exports")
+	assertQueries(t, env, queries, "after the next exports")
 	env.Reopen(t)
 	assertListsUnchanged(t, env, 123, want, "after a restart")
+	assertQueries(t, env, queries, "after a restart")
 }

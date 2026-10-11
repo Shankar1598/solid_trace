@@ -105,7 +105,7 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	})
 	if err != nil {
 		if run.timedOut() {
-			return run.stopped(c)
+			return run.stopped(c, shorterRange)
 		}
 		logger.L.Error("Log histogram failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
