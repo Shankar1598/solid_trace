@@ -4,7 +4,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, Referen
 import type { MouseHandlerDataParam } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { MAX_SERIES, chartOf, formFor, type ChartForm, type ChartModel, type ChartPoint, type Series } from '@/lib/charts/series'
-import { timePattern, timeTicks, valueTicks } from '@/lib/charts/axis'
+import { statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
 import type { LogTable } from '@/lib/logs/table'
@@ -23,9 +23,6 @@ interface QueryChartProps {
 
 /** The most time ticks a chart labels; fewer show when they would crowd. */
 const TIME_TICKS = 6
-
-const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 })
-const precise = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
 
 /**
  * A Query's table drawn as a time series (line, area or bars), bars over
@@ -54,7 +51,7 @@ function StatTile({ name, value }: { name: string; value: number | null }) {
     <div className="min-w-0" data-chart-stat>
       <div className="truncate text-[11px] text-muted-foreground">{name}</div>
       <div className="truncate text-3xl font-semibold leading-tight text-foreground" title={value === null ? undefined : String(value)}>
-        {value === null ? '—' : Math.abs(value) >= 1e6 ? compact.format(value) : precise.format(value)}
+        {value === null ? '—' : statText(value)}
       </div>
     </div>
   )
@@ -172,12 +169,12 @@ function Plot({ model, form, onZoom, actions, className }: {
         tickLine={false}
         axisLine={false}
         tick={{ fontSize: 10 }}
-        tickFormatter={(v: number) => compact.format(v)}
+        tickFormatter={tickLabel(values.step)}
       />
       <ChartTooltip
         isAnimationActive={false}
         active={drag ? false : undefined}
-        content={<ChartTooltipContent indicator="line" labelFormatter={(_, payload) => label(payload?.[0]?.payload?.x)} />}
+        content={<ChartTooltipContent indicator="line" valueFormatter={valueText} labelFormatter={(_, payload) => label(payload?.[0]?.payload?.x)} />}
       />
       {dragArea}
     </>

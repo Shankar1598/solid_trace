@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { timePattern, timeTicks, valueTicks } from './axis'
+import { statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from './axis'
 
 const at = (time: string) => new Date(time).getTime()
 
@@ -41,22 +41,66 @@ describe('time ticks', () => {
 
 describe('value ticks', () => {
   it('fall on round numbers from zero past the largest value', () => {
-    expect(valueTicks(0, 2859)).toEqual({ domain: [0, 3000], ticks: [0, 1000, 2000, 3000] })
-    expect(valueTicks(12, 2200)).toEqual({ domain: [0, 2500], ticks: [0, 500, 1000, 1500, 2000, 2500] })
+    expect(valueTicks(0, 2859)).toEqual({ domain: [0, 3000], ticks: [0, 1000, 2000, 3000], step: 1000 })
+    expect(valueTicks(12, 2200)).toMatchObject({ domain: [0, 2500], ticks: [0, 500, 1000, 1500, 2000, 2500] })
     expect(valueTicks(0, 7085).ticks).toEqual([0, 2000, 4000, 6000, 8000])
   })
 
   it('keep small values readable', () => {
-    expect(valueTicks(0, 0.034)).toEqual({ domain: [0, 0.04], ticks: [0, 0.01, 0.02, 0.03, 0.04] })
+    expect(valueTicks(0, 0.034)).toEqual({ domain: [0, 0.04], ticks: [0, 0.01, 0.02, 0.03, 0.04], step: 0.01 })
     expect(valueTicks(0, 7).ticks).toEqual([0, 2, 4, 6, 8])
   })
 
   it('reach below zero for negative values', () => {
-    expect(valueTicks(-40, 90)).toEqual({ domain: [-50, 100], ticks: [-50, 0, 50, 100] })
+    expect(valueTicks(-40, 90)).toMatchObject({ domain: [-50, 100], ticks: [-50, 0, 50, 100] })
   })
 
   it('give a flat or empty chart a scale of its own', () => {
-    expect(valueTicks(0, 0)).toEqual({ domain: [0, 1], ticks: [0, 0.2, 0.4, 0.6, 0.8, 1] })
+    expect(valueTicks(0, 0)).toMatchObject({ domain: [0, 1], ticks: [0, 0.2, 0.4, 0.6, 0.8, 1] })
     expect(valueTicks(Infinity, -Infinity).domain).toEqual([0, 1])
+  })
+})
+
+describe('value labels', () => {
+  /** The labels a value axis shows for values up to max. */
+  const labels = (max: number) => {
+    const { ticks, step } = valueTicks(0, max)
+    return ticks.map(tickLabel(step))
+  }
+
+  it('read each tick exactly, with the decimals its step needs', () => {
+    expect(labels(1240)).toEqual(['0', '250', '500', '750', '1K', '1.25K'])
+    expect(labels(1.1)).toEqual(['0', '0.25', '0.5', '0.75', '1', '1.25'])
+    expect(labels(0.2)).toEqual(['0', '0.05', '0.1', '0.15', '0.2'])
+    expect(labels(0.034)).toEqual(['0', '0.01', '0.02', '0.03', '0.04'])
+    expect(labels(0.12)).toEqual(['0', '0.025', '0.05', '0.075', '0.1', '0.125'])
+  })
+
+  it('go compact from a thousand up, without decimals a round step does not need', () => {
+    expect(labels(2859)).toEqual(['0', '1K', '2K', '3K'])
+    expect(labels(1_100_000)).toEqual(['0', '250K', '500K', '750K', '1M', '1.25M'])
+    expect(labels(12_000)).toEqual(['0', '2.5K', '5K', '7.5K', '10K', '12.5K'])
+  })
+
+  it('never read two ticks the same', () => {
+    for (const max of [0.0004, 0.034, 0.12, 1.1, 7, 1240, 33_000, 1_100_000]) {
+      const read = labels(max)
+      expect(new Set(read).size).toBe(read.length)
+    }
+  })
+})
+
+describe('values in a tooltip or a stat tile', () => {
+  it('keep small values, and round others to two decimals', () => {
+    expect(valueText(0.0004)).toBe('0.0004')
+    expect(valueText(0.004123)).toBe('0.00412')
+    expect(valueText(1234.5678)).toBe('1,234.57')
+    expect(valueText(0)).toBe('0')
+  })
+
+  it('go compact in a stat tile from a million up', () => {
+    expect(statText(19_183)).toBe('19,183')
+    expect(statText(0.004)).toBe('0.004')
+    expect(statText(4_213_000)).toBe('4.21M')
   })
 })
