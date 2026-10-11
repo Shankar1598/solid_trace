@@ -30,13 +30,11 @@ const logsCatalog = "logs"
 // A DuckDB transaction can write only one attached database, so everything
 // Log processing commits together lives here.
 //
-// The promoted-set table is also held in memory, and read from there.
-//
-// The hourly export moves Logs out to files under files.Dir.
+// The hourly export moves Logs out to files under files.Dir, which the Log
+// file manifest lists (logs_manifest.go).
 type LogStore struct {
-	db       *sql.DB
-	promoted *promotedSetCache
-	files    LogFiles
+	db    *sql.DB
+	files LogFiles
 
 	// writeMu lets one write to logs.duckdb run at a time: a Log processing
 	// commit or try, or a Project's export. It is held only for each of
@@ -44,16 +42,20 @@ type LogStore struct {
 	writeMu sync.Mutex
 	// publishMu keeps a read from beginning while an export or a deletion
 	// commits and publishes its files, so that a read sees each Log exactly
-	// once. A read holds it only while it begins (logRead).
+	// once and pins its files before a deletion can take them. A read holds
+	// it only while it begins (logRead).
 	publishMu sync.RWMutex
-	// pins counts, for each Log file, the reads that may still read it.
+	// pins counts, for each Log file by its key (logFile.key), the reads
+	// that may still read it.
 	pinMu sync.Mutex
 	pins  map[string]int
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
 // events, creating the file if it doesn't exist. Exported Logs go under
-// filesDir. Files an export staged before a crash are settled.
+// filesDir. An install from before the Log file manifest gets its manifest
+// built from the files on disk, and files an export staged before a crash
+// are settled.
 func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
@@ -62,7 +64,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if _, err := events.db.Exec(fmt.Sprintf("ATTACH IF NOT EXISTS %s AS %s", sqltext.String(path), logsCatalog)); err != nil {
 		return nil, fmt.Errorf("attach %s: %w", path, err)
 	}
-	for _, ddl := range []string{
+	for _, ddl := range append([]string{
 		`CREATE TABLE IF NOT EXISTS logs.log_processing_cursors (
 			project_id UINTEGER,
 			batch_id UUID
@@ -90,25 +92,22 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 		// Log processing stored them: a hot table's fixed columns, maps only.
 		`CREATE TABLE IF NOT EXISTS logs.logs_late (
 			project_id UINTEGER,` + hotTableColumns + `)`,
-	} {
+	}, manifestTables...) {
 		if _, err := events.db.Exec(ddl); err != nil {
 			return nil, err
 		}
 	}
-	promoted, err := loadPromotedSets(events.db)
-	if err != nil {
-		return nil, fmt.Errorf("load promoted sets: %w", err)
+	if err := addBatchColumns(events.db); err != nil {
+		return nil, fmt.Errorf("add the batch column to the log tables: %w", err)
 	}
-	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}, pins: map[string]int{}}
+	store := &LogStore{db: events.db, files: LogFiles{Dir: filesDir}, pins: map[string]int{}}
+	if err := store.backfillManifest(); err != nil {
+		return nil, fmt.Errorf("list the log files on disk in the manifest: %w", err)
+	}
 	if err := store.recoverStagedFiles(); err != nil {
 		return nil, fmt.Errorf("recover staged log files: %w", err)
 	}
 	return store, nil
-}
-
-// Files is where the Log files are.
-func (s *LogStore) Files() LogFiles {
-	return s.files
 }
 
 // hotTable is the name of a Project's hot table in logs.duckdb.
@@ -117,8 +116,16 @@ func hotTable(projectID uint32) string {
 }
 
 // hotTableColumns are a hot table's fixed columns: the id, the seven built-in
-// fields and one map per Attribute type. attrs_json holds JSON text. Promoted
-// columns follow them.
+// fields, one map per Attribute type and the Log's batch. attrs_json holds
+// JSON text. Promoted columns follow them, but in a table from before the
+// batch column, which gets it last (addBatchColumns).
+//
+// batch is the id of the Log batch the Log came in. Log batch ids follow the
+// order Log processing commits them in, which Log ids don't, so a read of the
+// Logs ingested after a batch goes by it (ScanLogsIngestedAfter). It is
+// internal: it is no Field, so no Query or Log shows it, and the logs view
+// of SQL queries leaves it out. It is NULL for a Log stored before it was
+// added.
 const hotTableColumns = `
 	id UUID,
 	time TIMESTAMP,
@@ -131,8 +138,41 @@ const hotTableColumns = `
 	attrs_string MAP(VARCHAR, VARCHAR),
 	attrs_number MAP(VARCHAR, DOUBLE),
 	attrs_bool MAP(VARCHAR, BOOLEAN),
-	attrs_json MAP(VARCHAR, VARCHAR)
+	attrs_json MAP(VARCHAR, VARCHAR),
+	batch UUID
 `
+
+// addBatchColumns adds the batch column to logs_late and every hot table of
+// an install from before it. ALTER adds it last, so logs_late's columns are
+// in the same order whether it was made with the column or got it later.
+func addBatchColumns(db *sql.DB) error {
+	rows, err := db.Query(`
+		SELECT table_name FROM duckdb_tables()
+		WHERE database_name = ? AND schema_name = 'main' AND table_name LIKE 'logs\_hot\_%' ESCAPE '\'`,
+		logsCatalog)
+	if err != nil {
+		return err
+	}
+	tables := []string{lateTable}
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			rows.Close()
+			return err
+		}
+		tables = append(tables, table)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, table := range tables {
+		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s.%s ADD COLUMN IF NOT EXISTS batch UUID", logsCatalog, table)); err != nil {
+			return fmt.Errorf("%s: %w", table, err)
+		}
+	}
+	return nil
+}
 
 // lateTable is the table that holds every Project's late Logs.
 const lateTable = "logs_late"
@@ -148,14 +188,20 @@ func HotWindow(now time.Time) (from, to time.Time) {
 // hotTableFixedColumns are the names of hotTableColumns, in order.
 var hotTableFixedColumns = []string{
 	"id", "time", "level", "message", "service", "environment", "trace_id", "span_id",
-	"attrs_string", "attrs_number", "attrs_bool", "attrs_json",
+	"attrs_string", "attrs_number", "attrs_bool", "attrs_json", "batch",
 }
 
 // LogProcessingCursor returns the id of the last Log batch that Log processing
 // stored for a Project, or uuid.Nil if it has stored none.
 func (s *LogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
+	return logProcessingCursor(context.Background(), s.db, projectID)
+}
+
+// logProcessingCursor is LogProcessingCursor, read with db, such as a
+// connection inside its transaction.
+func logProcessingCursor(ctx context.Context, db sqlRunner, projectID uint32) (uuid.UUID, error) {
 	var batchID []byte
-	err := s.db.QueryRow("SELECT batch_id FROM logs.log_processing_cursors WHERE project_id = ?", projectID).Scan(&batchID)
+	err := db.QueryRowContext(ctx, "SELECT batch_id FROM logs.log_processing_cursors WHERE project_id = ?", projectID).Scan(&batchID)
 	if err == sql.ErrNoRows {
 		return uuid.Nil, nil
 	}
@@ -237,7 +283,7 @@ func (s *LogStore) appendLogBatchesTx(projectID uint32, batches []LogBatch, now 
 	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
 		return err
 	}
-	promoted, err := appendLogBatches(ctx, conn, projectID, batches, now.UTC())
+	err = appendLogBatches(ctx, conn, projectID, batches, now.UTC())
 	if err != nil || !commit {
 		// After a failed statement DuckDB's COMMIT returns nil but commits
 		// nothing, so roll back rather than try it.
@@ -251,64 +297,67 @@ func (s *LogStore) appendLogBatchesTx(projectID uint32, batches []LogBatch, now 
 		discardConn(conn)
 		return err
 	}
-	s.promoted.put(projectID, promoted)
 	return nil
 }
 
 // appendLogBatches does AppendLogBatches' work inside the connection's open
-// transaction, and returns the promoted sets of the Logs' days as it leaves
-// them.
-func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, batches []LogBatch, now time.Time) ([]PromotedSet, error) {
+// transaction.
+func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, batches []LogBatch, now time.Time) error {
 	table := hotTable(projectID)
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (%s)", logsCatalog, table, hotTableColumns)); err != nil {
-		return nil, fmt.Errorf("create hot table: %w", err)
+		return fmt.Errorf("create hot table: %w", err)
 	}
 
 	// Late Logs are never promoted, and don't count towards popularity:
 	// their days' sets are made or past, and a burst of old Logs shouldn't
 	// choose today's columns.
+	//
+	// hotBatches and lateBatches are the ids of the Logs' batches.
 	var hot, late []models.Log
+	var hotBatches, lateBatches []uuid.UUID
 	from, to := HotWindow(now)
 	for _, batch := range batches {
 		for _, log := range batch.Logs {
 			if log.Time.Before(from) || !log.Time.Before(to) {
-				late = append(late, log)
+				late, lateBatches = append(late, log), append(lateBatches, batch.ID)
 			} else {
-				hot = append(hot, log)
+				hot, hotBatches = append(hot, log), append(hotBatches, batch.ID)
 			}
 		}
 	}
 	promotion, err := promote(ctx, conn, projectID, hot, now)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := appendHotRows(conn, table, hot, promotion); err != nil {
-		return nil, fmt.Errorf("append logs: %w", err)
+	if err := appendHotRows(conn, table, hot, hotBatches, promotion); err != nil {
+		return fmt.Errorf("append logs: %w", err)
 	}
-	if err := appendLateRows(conn, projectID, late); err != nil {
-		return nil, fmt.Errorf("append late logs: %w", err)
+	if err := appendLateRows(conn, projectID, late, lateBatches); err != nil {
+		return fmt.Errorf("append late logs: %w", err)
 	}
 	if err := countKeys(ctx, conn, projectID, hot); err != nil {
-		return nil, err
+		return err
 	}
 
 	cursor := batches[len(batches)-1].ID
 	result, err := conn.ExecContext(ctx, "UPDATE logs.log_processing_cursors SET batch_id = ? WHERE project_id = ?", cursor.String(), projectID)
 	if err != nil {
-		return nil, fmt.Errorf("move log processing cursor: %w", err)
+		return fmt.Errorf("move log processing cursor: %w", err)
 	}
 	if moved, err := result.RowsAffected(); err != nil || moved > 0 {
-		return promotion.sets(), err
+		return err
 	}
 	if _, err := conn.ExecContext(ctx, "INSERT INTO logs.log_processing_cursors VALUES (?, ?)", projectID, cursor.String()); err != nil {
-		return nil, fmt.Errorf("create log processing cursor: %w", err)
+		return fmt.Errorf("create log processing cursor: %w", err)
 	}
-	return promotion.sets(), nil
+	return nil
 }
 
-// appendHotRows appends Logs to a hot table through an appender opened after
-// the promotion's ALTER TABLEs, as an appender opened before one fails.
-func appendHotRows(conn *sql.Conn, table string, logs []models.Log, promotion *promotion) error {
+// appendHotRows appends Logs, each of the batch at its index in batches, to
+// a hot table through an appender opened after the promotion's ALTER TABLEs,
+// as an appender opened before one fails. It names the columns, which a
+// table from before the batch column has in another order.
+func appendHotRows(conn *sql.Conn, table string, logs []models.Log, batches []uuid.UUID, promotion *promotion) error {
 	promoted := promotion.promotedColumns()
 	columns := slices.Clone(hotTableFixedColumns)
 	for _, key := range promoted {
@@ -323,9 +372,9 @@ func appendHotRows(conn *sql.Conn, table string, logs []models.Log, promotion *p
 		if err != nil {
 			return err
 		}
-		for _, log := range logs {
+		for i, log := range logs {
 			set := promotion.days[LogDay(log.Time)].keys
-			if err := appender.AppendRow(hotTableRow(log, set, promoted)...); err != nil {
+			if err := appender.AppendRow(hotTableRow(log, batches[i], set, promoted)...); err != nil {
 				appender.Close()
 				return err
 			}
@@ -334,9 +383,10 @@ func appendHotRows(conn *sql.Conn, table string, logs []models.Log, promotion *p
 	})
 }
 
-// appendLateRows appends a Project's late Logs to logs_late, every Attribute
-// in its map.
-func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log) error {
+// appendLateRows appends a Project's late Logs, each of the batch at its
+// index in batches, to logs_late, every Attribute in its map. The appender
+// goes by position: the Project, then the fixed columns, the batch last.
+func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log, batches []uuid.UUID) error {
 	if len(logs) == 0 {
 		return nil
 	}
@@ -349,8 +399,8 @@ func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log) error {
 		if err != nil {
 			return err
 		}
-		for _, log := range logs {
-			row := append([]driver.Value{projectID}, hotTableRow(log, nil, nil)...)
+		for i, log := range logs {
+			row := append([]driver.Value{projectID}, hotTableRow(log, batches[i], nil, nil)...)
 			if err := appender.AppendRow(row...); err != nil {
 				appender.Close()
 				return err
@@ -360,10 +410,10 @@ func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log) error {
 	})
 }
 
-// hotTableRow is a Log's row: the fixed columns, then the promoted columns.
-// A value whose key is in the Log's day's set goes to its column and not its
-// map; the columns of other keys are NULL.
-func hotTableRow(log models.Log, set map[typedKey]PromotedKey, promoted []typedKey) []driver.Value {
+// hotTableRow is the row of a Log of a batch: the fixed columns, then the
+// promoted columns. A value whose key is in the Log's day's set goes to its
+// column and not its map; the columns of other keys are NULL.
+func hotTableRow(log models.Log, batch uuid.UUID, set map[typedKey]PromotedKey, promoted []typedKey) []driver.Value {
 	inMap := func(t AttributeType) func(string) bool {
 		return func(key string) bool {
 			_, ok := set[typedKey{t, key}]
@@ -383,6 +433,7 @@ func hotTableRow(log models.Log, set map[typedKey]PromotedKey, promoted []typedK
 		orderedMap(log.Attributes.Number, inMap(NumberAttribute)),
 		orderedMap(log.Attributes.Bool, inMap(BoolAttribute)),
 		orderedMap(log.Attributes.JSON, inMap(JSONAttribute)),
+		duckdb.UUID(batch),
 	}
 	for _, key := range promoted {
 		var value driver.Value

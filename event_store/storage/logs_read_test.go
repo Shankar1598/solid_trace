@@ -15,10 +15,8 @@ import (
 // slowSQL is a query that would run for hours.
 const slowSQL = "SELECT sum(hash(i)) FROM range(1000000000000) t(i)"
 
-// oneConnectionLogStore is a LogStore with three Logs of Project 123 in its
-// hot table, the minutes before now, whose pool holds one connection: each
-// read takes the connection the last one gave back.
-func oneConnectionLogStore(t *testing.T, now time.Time) *LogStore {
+// newTestLogStore is a LogStore with no Logs, in a directory of its own.
+func newTestLogStore(t *testing.T) *LogStore {
 	t.Helper()
 	logger.Init()
 	dir := t.TempDir()
@@ -31,6 +29,15 @@ func oneConnectionLogStore(t *testing.T, now time.Time) *LogStore {
 	if err != nil {
 		t.Fatalf("NewLogStore: %v", err)
 	}
+	return store
+}
+
+// oneConnectionLogStore is a LogStore with three Logs of Project 123 in its
+// hot table, the minutes before now, whose pool holds one connection: each
+// read takes the connection the last one gave back.
+func oneConnectionLogStore(t *testing.T, now time.Time) *LogStore {
+	t.Helper()
+	store := newTestLogStore(t)
 	logs := make([]models.Log, 3)
 	for i := range logs {
 		logs[i] = models.Log{ID: uuid.New(), Time: now.Add(-time.Duration(i+1) * time.Minute), Message: fmt.Sprintf("log %d", i)}

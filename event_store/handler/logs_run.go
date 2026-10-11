@@ -57,11 +57,15 @@ func (r *run) timedOut() bool {
 	return errors.Is(r.ctx.Err(), context.DeadlineExceeded)
 }
 
+// shorterRange is the advice for a run of a time range stopped at its
+// timeout.
+const shorterRange = "try a shorter time range"
+
 // stopped answers a run stopped at its timeout: 504, with {"errors":
-// [{"message"}]}.
-func (r *run) stopped(c *fiber.Ctx) error {
-	message := fmt.Sprintf("the run was stopped after %s s, its timeout: try a shorter time range",
-		strconv.FormatFloat(r.timeout, 'f', -1, 64))
+// [{"message"}]}, the message ending with advice.
+func (r *run) stopped(c *fiber.Ctx, advice string) error {
+	message := fmt.Sprintf("the run was stopped after %s s, its timeout: %s",
+		strconv.FormatFloat(r.timeout, 'f', -1, 64), advice)
 	return c.Status(fiber.StatusGatewayTimeout).JSON(fiber.Map{"errors": []fiber.Map{{"message": message}}})
 }
 
