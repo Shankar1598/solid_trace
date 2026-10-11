@@ -394,9 +394,12 @@ func TestARunAfterABatchFiltersCountsPastItsLimitAndTakesOnlyLogRows(t *testing.
 			t.Errorf("Expected a Query with mistakes after %q to list them, got %s", after, mustMarshal(t, answer))
 		}
 	}
-	for _, after := range []any{"not a batch", "1234", 5} {
-		if status, raw := postQueryApp(t, env, "/api/123/logs/query", map[string]any{"query": ``, "after_batch": after}); status != 400 {
-			t.Errorf("after_batch %v: expected 400, got %d: %s", after, status, raw)
+	// A null after_batch is neither absent nor "": a Monitor that sends
+	// its unset cursor must not get an ordinary run back.
+	for _, after := range []any{"not a batch", "1234", 5, nil} {
+		body := map[string]any{"query": ``, "after_batch": after, "from": allTime.from, "to": allTime.to}
+		if status, raw := postQueryApp(t, env, "/api/123/logs/query", body); status != 400 || !strings.Contains(string(raw), "after_batch must be") {
+			t.Errorf("after_batch %v: expected 400 saying what after_batch must be, got %d: %s", after, status, raw)
 		}
 	}
 }
