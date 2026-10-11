@@ -89,13 +89,13 @@ export function spanLabel(span: string): string {
 /**
  * A range as a button shows it: "Last 6 hours", or local times such as
  * "Oct 9 10:00 – 12:30", the day written once when both times share it.
- * Seconds show only when a time has them (a zoom into a short range), and
- * the year only when it isn't `now`'s.
+ * Seconds show only in a range under an hour whose times have them (a zoom
+ * into a short range), and the year only when it isn't `now`'s.
  */
 export function rangeLabel(range: TimeRange, now: Date): string {
   if (range.kind === 'relative') return spanLabel(range.span)
   const { from, to } = range
-  const seconds = from.getSeconds() !== 0 || to.getSeconds() !== 0
+  const seconds = rangeMs(range) < UNIT_MS.h && (from.getSeconds() !== 0 || to.getSeconds() !== 0)
   const time = seconds ? 'HH:mm:ss' : 'HH:mm'
   const day = (d: Date) => (d.getFullYear() === now.getFullYear() ? 'MMM d' : 'MMM d, yyyy')
   const end = isSameDay(from, to) ? format(to, time) : format(to, `${day(to)} ${time}`)
