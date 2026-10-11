@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -133,6 +135,7 @@ func TestTheDiskLimitWaitsForAReadOfTheFilesItWouldDelete(t *testing.T) {
 
 	postAndProcess(t, env, logJSON(t, "exported", testNow.Add(-150*time.Minute), nil))
 	env.ExportLogs(t)
+	file := hourFile(t, env, 123, testNow.Add(-150*time.Minute))
 	cancel, longRead := startLongRead(t, env)
 	defer cancel()
 
@@ -143,6 +146,9 @@ func TestTheDiskLimitWaitsForAReadOfTheFilesItWouldDelete(t *testing.T) {
 	if got, err := listLatest(env); err != nil || !slices.Equal(got, []string{"exported"}) {
 		t.Errorf("Expected the Log kept during the read, got %v (%v)", got, err)
 	}
+	if _, err := os.Stat(file); err != nil {
+		t.Errorf("Expected the file kept on disk during the read, got %v", err)
+	}
 
 	// Its next pass, after the read, deletes it.
 	cancel()
@@ -151,4 +157,5 @@ func TestTheDiskLimitWaitsForAReadOfTheFilesItWouldDelete(t *testing.T) {
 	if got, err := listLatest(env); err != nil || len(got) != 0 {
 		t.Errorf("Expected the Log deleted after the read, got %v (%v)", got, err)
 	}
+	assertGone(t, filepath.Dir(file), "by the disk limit after the read")
 }
