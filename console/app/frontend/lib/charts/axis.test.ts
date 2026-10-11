@@ -51,6 +51,11 @@ describe('value ticks', () => {
     expect(valueTicks(0, 7).ticks).toEqual([0, 2, 4, 6, 8])
   })
 
+  it('take fewer steps for a short chart', () => {
+    expect(valueTicks(0, 2859, 3).ticks).toEqual([0, 1000, 2000, 3000])
+    expect(valueTicks(0, 820, 3).ticks).toEqual([0, 500, 1000])
+  })
+
   it('reach below zero for negative values', () => {
     expect(valueTicks(-40, 90)).toMatchObject({ domain: [-50, 100], ticks: [-50, 0, 50, 100] })
   })

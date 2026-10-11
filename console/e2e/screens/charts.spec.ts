@@ -98,6 +98,14 @@ test.describe('Charts', () => {
     expect(errors).toEqual([])
   })
 
+  test('panels: an average and a count by service', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openChart(page, 'summarize avg(duration_ms), count() by bin_auto(time), service')
+    await page.mouse.move(0, 0)
+    await shoot(page, 'charts-panels')
+    expect(errors).toEqual([])
+  })
+
   test('dragging to zoom', async ({ page }) => {
     const errors = watchErrors(page)
     await openChart(page, 'summarize count() by bin(time, 1h)')

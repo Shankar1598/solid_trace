@@ -416,7 +416,9 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     setExplorer(next)
     replaceUrl(replace)
   }
-  const tableChart: TableChart = { viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange }
+  // Series keep their colours across runs, so a filter or a zoom repaints none of those left.
+  const colorSlots = useRef<ReadonlyMap<string, number>>(new Map())
+  const tableChart: TableChart = { viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange, colors: colorSlots }
 
   // A time chart stands in for the histogram strip, as in Axiom. The last
   // answer decides, through a re-run too, so the strip doesn't flash back

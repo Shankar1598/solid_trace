@@ -3,12 +3,23 @@ import { format } from 'date-fns'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceArea, XAxis, YAxis } from 'recharts'
 import type { MouseHandlerDataParam } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
-import { chartOf, formFor, legendNotes, type ChartForm, type ChartPoint, type Series, type SeriesChartModel } from '@/lib/charts/series'
+import {
+  chartOf, formFor, keepColors, legendNotes,
+  type ChartForm, type ChartPoint, type Series, type SeriesChartModel,
+} from '@/lib/charts/series'
 import { statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
 import type { LogTable } from '@/lib/logs/table'
 import { cn } from '@/lib/utils'
+
+/**
+ * The palette slot each series id wore in the last chart drawn in one place,
+ * kept by its owner across tables so a re-run repaints no series.
+ */
+export interface ColorSlots {
+  current: ReadonlyMap<string, number>
+}
 
 interface QueryChartProps {
   table: LogTable
@@ -18,20 +29,33 @@ interface QueryChartProps {
   onZoom?: (range: AbsoluteRange) => void
   /** Controls at the end of the legend's line, such as the explorer's chart switch. */
   actions?: React.ReactNode
+  /** Keeps each series' colour from the last table drawn here; without it, colours follow rank. */
+  colors?: ColorSlots
   className?: string
 }
 
 /** The most time ticks a chart labels; fewer show when they would crowd. */
 const TIME_TICKS = 6
+/** A value tick's character width at 10px in the mono font, and the room beside its text. */
+const TICK_CHAR_PX = 6
+const TICK_PAD_PX = 12
 
 /**
  * A Query's table drawn as a time series (line, area or bars), bars over
- * categories, or a single number. The legend shows and hides series; dragging
- * across a time chart zooms to the bins dragged over. Used wherever a Query's
- * table is charted, so it takes the table and options, never a page's state.
+ * categories, or a single number. Columns that measure different things get
+ * a panel each, over one time axis. The legend shows and hides series;
+ * dragging across a time chart zooms to the bins dragged over. Used wherever
+ * a Query's table is charted, so it takes the table and options, never a
+ * page's state.
  */
-export function QueryChart({ table, form, onZoom, actions, className }: QueryChartProps) {
-  const model = useMemo(() => chartOf(table), [table])
+export function QueryChart({ table, form, onZoom, actions, colors, className }: QueryChartProps) {
+  const model = useMemo(() => {
+    const made = chartOf(table)
+    if (!colors) return made
+    const kept = keepColors(made, colors.current)
+    colors.current = kept.slots
+    return kept.model
+  }, [table, colors])
   const drawn = formFor(model, form ?? 'auto')
   if (model.kind === 'none' || drawn === null) return null
   if (model.kind === 'stat') {
@@ -57,18 +81,21 @@ function StatTile({ name, value }: { name: string; value: number | null }) {
   )
 }
 
+/** The bins a drag has covered, by their points' indexes. */
+type Drag = { start: number; end: number }
+
 function SeriesChart({ model, form, onZoom, actions, className }: {
   model: SeriesChartModel; form: ChartForm; onZoom?: QueryChartProps['onZoom']; actions?: React.ReactNode; className?: string
 }) {
   const [hidden, setHidden] = useState<Set<string>>(() => new Set())
-  const [drag, setDrag] = useState<{ start: number; end: number } | null>(null)
+  const [drag, setDrag] = useState<Drag | null>(null)
   const config = useMemo<ChartConfig>(
     () => Object.fromEntries(model.series.map(s => [s.key, { label: s.name, color: s.color }])),
     [model],
   )
-  const toggle = (key: string) => setHidden(h => {
+  const toggle = (id: string) => setHidden(h => {
     const next = new Set(h)
-    if (!next.delete(key)) next.add(key)
+    if (!next.delete(id)) next.add(id)
     return next
   })
 
@@ -83,7 +110,17 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
     ? [Math.min(model.points[0].x as number, time.from.getTime()), Math.max((model.points.at(-1)!.x as number) + (form === 'bars' ? binMs : 0), time.to.getTime())]
     : undefined
   const pattern = time ? timePattern(time.binSeconds, time) : ''
-  const label = (x: unknown) => (time ? format(new Date(Number(x) - (form === 'bars' ? binMs / 2 : 0)), pattern) : String(x))
+
+  // Each panel's value axis, over the series shown; one width for all, so their plots line up.
+  const several = model.panels.length > 1
+  const panels = model.panels.map(panel => {
+    const series = model.series.filter(s => panel.keys.includes(s.key))
+    const visible = series.filter(s => !hidden.has(s.id))
+    const stacked = panel.stacked && form !== 'line'
+    const values = valueTicks(...extent(model.points, visible, stacked), several ? 3 : 5)
+    return { panel, series, visible, stacked, values, label: tickLabel(values.step) }
+  })
+  const valueWidth = Math.max(...panels.map(({ values, label }) => Math.max(...values.ticks.map(t => label(t).length)))) * TICK_CHAR_PX + TICK_PAD_PX
 
   const index = (state: MouseHandlerDataParam) => {
     const i = Number(state.activeTooltipIndex)
@@ -115,10 +152,103 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
     return <ReferenceArea x1={low} x2={Math.min(high, domain![1])} fill="var(--primary)" fillOpacity={0.12} stroke="none" ifOverflow="hidden" />
   })() : null
 
-  const visible = model.series.filter(s => !hidden.has(s.key))
-  const top = visible.at(-1)?.key
-  const stack = model.stacked ? 'stack' : undefined
-  const values = valueTicks(...extent(model.points, visible, stack !== undefined && form !== 'line'))
+  const height = !several ? 'h-44 sm:h-56' : panels.length === 2 ? 'h-32 sm:h-40' : 'h-28 sm:h-32'
+
+  return (
+    <div className={cn('flex flex-col', className)}>
+      <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
+        <Legend model={model} form={form} hidden={hidden} onToggle={toggle} />
+        {actions && <div className="ml-auto">{actions}</div>}
+      </div>
+      <div role="figure" aria-label={chartLabel(model, form)}>
+        {panels.map(({ panel, series, stacked, values, label }, i) => (
+          <div key={panel.keys[0]}>
+            {several && <div className="truncate px-3 pt-1 text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
+            <ChartContainer config={config} className={cn('aspect-auto w-full px-1', height, zooms && 'cursor-crosshair select-none')}>
+              <PanelChart
+                form={form}
+                data={data}
+                series={series}
+                hidden={hidden}
+                stacked={stacked}
+                model={model}
+                xAxis={time ? (
+                  <XAxis
+                    dataKey="x"
+                    type="number"
+                    scale="time"
+                    domain={domain}
+                    ticks={domain ? timeTicks(domain[0], domain[1], TIME_TICKS) : undefined}
+                    tickFormatter={x => format(new Date(x), pattern)}
+                    tickLine={false}
+                    axisLine={{ stroke: 'var(--border)' }}
+                    minTickGap={24}
+                    tick={{ fontSize: 10 }}
+                    hide={i < panels.length - 1}
+                  />
+                ) : (
+                  <XAxis
+                    dataKey="x"
+                    type="category"
+                    tickLine={false}
+                    axisLine={{ stroke: 'var(--border)' }}
+                    interval="preserveStartEnd"
+                    minTickGap={12}
+                    tick={{ fontSize: 10 }}
+                    tickFormatter={(x: string) => (x.length > 14 ? `${x.slice(0, 13)}…` : x)}
+                    hide={i < panels.length - 1}
+                  />
+                )}
+                yAxis={(
+                  <YAxis
+                    width={valueWidth}
+                    domain={values.domain}
+                    ticks={values.ticks}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={{ fontSize: 10 }}
+                    tickFormatter={label}
+                  />
+                )}
+                tooltip={(
+                  <ChartTooltip
+                    isAnimationActive={false}
+                    active={drag ? false : undefined}
+                    content={<ChartTooltipContent indicator="line" valueFormatter={valueText} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.x)} />}
+                  />
+                )}
+                overlay={dragArea}
+                events={zoomEvents}
+              />
+            </ChartContainer>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+
+  /** A point's bin or category, for the tooltip: a bin's start in local time. */
+  function pointLabel(x: unknown): string {
+    return time ? format(new Date(Number(x) - (form === 'bars' ? binMs / 2 : 0)), pattern) : String(x)
+  }
+}
+
+/** One panel's chart: its series in the form asked for, over the axes given. */
+function PanelChart({ form, data, series, hidden, stacked, model, xAxis, yAxis, tooltip, overlay, events }: {
+  form: ChartForm
+  data: ChartPoint[]
+  series: Series[]
+  hidden: Set<string>
+  stacked: boolean
+  model: SeriesChartModel
+  xAxis: React.ReactNode
+  yAxis: React.ReactNode
+  tooltip: React.ReactNode
+  overlay: React.ReactNode
+  events: object
+}) {
+  const stack = stacked ? 'stack' : undefined
+  const top = series.filter(s => !hidden.has(s.id)).at(-1)?.key
   // A value with gaps either side draws no line, so it gets a dot.
   const dotFor = (s: Series) => (props: { cx?: number; cy?: number; index?: number }) => {
     const i = props.index ?? -1
@@ -127,130 +257,81 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
       ? <circle key={`${s.key}-${i}`} cx={props.cx} cy={props.cy} r={4} fill={`var(--color-${s.key})`} stroke="var(--card)" strokeWidth={2} />
       : <g key={`${s.key}-${i}`} />
   }
-  const chart = {
-    data,
-    margin: { top: 6, right: 12, bottom: 0, left: 0 },
-    ...zoomEvents,
-  }
+  const chart = { data, margin: { top: 6, right: 12, bottom: 0, left: 0 }, ...events }
   const axes = (
     <>
       <CartesianGrid vertical={false} stroke="var(--border)" />
-      {time ? (
-        <XAxis
-          dataKey="x"
-          type="number"
-          scale="time"
-          domain={domain}
-          ticks={domain ? timeTicks(domain[0], domain[1], TIME_TICKS) : undefined}
-          tickFormatter={x => format(new Date(x), pattern)}
-          tickLine={false}
-          axisLine={{ stroke: 'var(--border)' }}
-          minTickGap={24}
-          tick={{ fontSize: 10 }}
-        />
-      ) : (
-        <XAxis
-          dataKey="x"
-          type="category"
-          tickLine={false}
-          axisLine={{ stroke: 'var(--border)' }}
-          interval="preserveStartEnd"
-          minTickGap={12}
-          tick={{ fontSize: 10 }}
-          tickFormatter={(x: string) => (x.length > 14 ? `${x.slice(0, 13)}…` : x)}
-        />
-      )}
-      <YAxis
-        width="auto"
-        domain={values.domain}
-        ticks={values.ticks}
-        tickLine={false}
-        axisLine={false}
-        tick={{ fontSize: 10 }}
-        tickFormatter={tickLabel(values.step)}
-      />
-      <ChartTooltip
-        isAnimationActive={false}
-        active={drag ? false : undefined}
-        content={<ChartTooltipContent indicator="line" valueFormatter={valueText} labelFormatter={(_, payload) => label(payload?.[0]?.payload?.x)} />}
-      />
-      {dragArea}
+      {xAxis}
+      {yAxis}
+      {tooltip}
+      {overlay}
     </>
   )
 
+  if (form === 'bars') {
+    return (
+      <BarChart {...chart} barCategoryGap={model.kind === 'time' ? 1 : '20%'}>
+        {axes}
+        {series.map(s => (
+          <Bar
+            key={s.key}
+            dataKey={s.key}
+            name={s.name}
+            hide={hidden.has(s.id)}
+            stackId={stack}
+            fill={`var(--color-${s.key})`}
+            maxBarSize={24}
+            radius={!stack || s.key === top ? [3, 3, 0, 0] : 0}
+            stroke={stack ? 'var(--card)' : undefined}
+            strokeWidth={stack ? 1 : 0}
+            isAnimationActive={false}
+          />
+        ))}
+      </BarChart>
+    )
+  }
+  if (form === 'area') {
+    return (
+      <AreaChart {...chart}>
+        {axes}
+        {series.map(s => (
+          <Area
+            key={s.key}
+            dataKey={s.key}
+            name={s.name}
+            hide={hidden.has(s.id)}
+            stackId={stack}
+            type="linear"
+            stroke={`var(--color-${s.key})`}
+            strokeWidth={2}
+            fill={`var(--color-${s.key})`}
+            fillOpacity={stack ? 0.25 : 0.1}
+            dot={dotFor(s)}
+            activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }}
+            isAnimationActive={false}
+          />
+        ))}
+      </AreaChart>
+    )
+  }
   return (
-    <div className={cn('flex flex-col', className)}>
-      <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
-        <Legend model={model} form={form} hidden={hidden} onToggle={toggle} />
-        {actions && <div className="ml-auto">{actions}</div>}
-      </div>
-      <ChartContainer
-        config={config}
-        className={cn('aspect-auto h-44 w-full px-1 sm:h-56', zooms && 'cursor-crosshair select-none')}
-        role="figure"
-        aria-label={chartLabel(model, form)}
-      >
-        {form === 'bars' ? (
-          <BarChart {...chart} barCategoryGap={time ? 1 : '20%'}>
-            {axes}
-            {model.series.map(s => (
-              <Bar
-                key={s.key}
-                dataKey={s.key}
-                name={s.name}
-                hide={hidden.has(s.key)}
-                stackId={stack}
-                fill={`var(--color-${s.key})`}
-                maxBarSize={24}
-                radius={!stack || s.key === top ? [3, 3, 0, 0] : 0}
-                stroke={stack ? 'var(--card)' : undefined}
-                strokeWidth={stack ? 1 : 0}
-                isAnimationActive={false}
-              />
-            ))}
-          </BarChart>
-        ) : form === 'area' ? (
-          <AreaChart {...chart}>
-            {axes}
-            {model.series.map(s => (
-              <Area
-                key={s.key}
-                dataKey={s.key}
-                name={s.name}
-                hide={hidden.has(s.key)}
-                stackId={stack}
-                type="linear"
-                stroke={`var(--color-${s.key})`}
-                strokeWidth={2}
-                fill={`var(--color-${s.key})`}
-                fillOpacity={stack ? 0.25 : 0.1}
-                dot={dotFor(s)}
-                activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }}
-                isAnimationActive={false}
-              />
-            ))}
-          </AreaChart>
-        ) : (
-          <LineChart {...chart}>
-            {axes}
-            {model.series.map(s => (
-              <Line
-                key={s.key}
-                dataKey={s.key}
-                name={s.name}
-                hide={hidden.has(s.key)}
-                type="linear"
-                stroke={`var(--color-${s.key})`}
-                strokeWidth={2}
-                dot={dotFor(s)}
-                activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }}
-                isAnimationActive={false}
-              />
-            ))}
-          </LineChart>
-        )}
-      </ChartContainer>
-    </div>
+    <LineChart {...chart}>
+      {axes}
+      {series.map(s => (
+        <Line
+          key={s.key}
+          dataKey={s.key}
+          name={s.name}
+          hide={hidden.has(s.id)}
+          type="linear"
+          stroke={`var(--color-${s.key})`}
+          strokeWidth={2}
+          dot={dotFor(s)}
+          activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }}
+          isAnimationActive={false}
+        />
+      ))}
+    </LineChart>
   )
 }
 
@@ -260,31 +341,31 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
  * a stroke for lines and a block for bars and areas; the text stays in ink.
  */
 function Legend({ model, form, hidden, onToggle }: {
-  model: SeriesChartModel; form: ChartForm; hidden: Set<string>; onToggle: (key: string) => void
+  model: SeriesChartModel; form: ChartForm; hidden: Set<string>; onToggle: (id: string) => void
 }) {
   const notes = legendNotes(model).map(({ text, why }) => (
     <span key={text} className="text-[11px] text-muted-foreground" title={why}>{text}</span>
   ))
 
-  if (model.series.length === 1) {
+  if (model.legend.length === 1) {
     return (
       <>
-        <span className="truncate text-[11px] text-muted-foreground">{model.series[0].name}</span>
+        {model.panels.length === 1 && <span className="truncate text-[11px] text-muted-foreground">{model.legend[0].name}</span>}
         {notes}
       </>
     )
   }
   return (
     <>
-      {model.series.map(s => {
-        const shown = !hidden.has(s.key)
+      {model.legend.map(entry => {
+        const shown = !hidden.has(entry.id)
         return (
           <button
-            key={s.key}
+            key={entry.id}
             type="button"
             aria-pressed={shown}
-            title={`${shown ? 'Hide' : 'Show'} ${s.name}`}
-            onClick={() => onToggle(s.key)}
+            title={`${shown ? 'Hide' : 'Show'} ${entry.name}`}
+            onClick={() => onToggle(entry.id)}
             className={cn(
               'flex max-w-56 items-center gap-1.5 rounded-sm px-1 text-[11px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring',
               shown ? 'text-foreground' : 'text-muted-foreground line-through',
@@ -292,9 +373,9 @@ function Legend({ model, form, hidden, onToggle }: {
           >
             <span
               className={cn('shrink-0', form === 'line' ? 'h-0.5 w-3 rounded-full' : 'h-2 w-2 rounded-[2px]', !shown && 'opacity-40')}
-              style={{ background: s.color }}
+              style={{ background: entry.color }}
             />
-            <span className="truncate">{s.name}</span>
+            <span className="truncate">{entry.name}</span>
           </button>
         )
       })}
@@ -329,9 +410,10 @@ function extent(points: ChartPoint[], series: Series[], stacked: boolean): [numb
 
 /** What the chart shows, for a screen reader: its series and what they are drawn over. */
 function chartLabel(model: SeriesChartModel, form: ChartForm): string {
-  const names = model.series.map((s: Series) => s.name).join(', ')
+  const names = model.legend.map(e => e.name).join(', ')
+  const columns = model.panels.length > 1 ? ` in panels of ${model.panels.map(p => p.columns.join(' and ')).join('; ')}` : ''
   const over = model.kind === 'time' ? 'over time' : `by ${model.category}`
-  return `${form === 'line' ? 'Line' : form === 'area' ? 'Area' : 'Bar'} chart of ${names} ${over}`
+  return `${form === 'line' ? 'Line' : form === 'area' ? 'Area' : 'Bar'} chart of ${names} ${over}${columns}`
 }
 
 /** Each table's number, so a new table, a new run's, starts with every series shown. */
@@ -342,3 +424,4 @@ function tableKey(table: LogTable): number {
   if (id === undefined) tableIds.set(table, (id = ++lastTableId))
   return id
 }
+
