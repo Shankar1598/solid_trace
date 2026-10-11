@@ -323,25 +323,36 @@ func (p *promotion) add(d *dayPromotion, key typedKey) {
 }
 
 // settleNewDay makes every key of a new day's set partway if the day already
-// has Logs that a read finds through its set: in the Project's hot table or
-// in its files. Those were stored before the day had a set, every Attribute
-// in its map, so a read of the day must look in the maps too: late Logs the
-// export wrote to files before the day's first hot Log, or hot Logs with no
-// key a set could take.
+// has Logs that a read finds through its set and that may hold those keys in
+// their maps. They were stored before the day had a set:
+//   - Its files. Late Logs the export wrote before the day's first hot Log
+//     hold every Attribute in their maps. Only the files' footers could tell
+//     them from files of hot Logs with no key, so any file counts.
+//   - Its hot Logs with an Attribute in a map a promoted key could come
+//     from. A hot Log stored while its day had no set promoted every key it
+//     could, so such an Attribute is one whose column name another column
+//     had in another case. Hot Logs with no such Attribute don't count.
 //
-// Late Logs still in logs_late don't count: a read takes their Attributes
-// from the maps, and the export pulls their values out into the columns of
-// the set their day has then.
+// Late Logs still in logs_late don't count either: a read takes their
+// Attributes from the maps, and the export pulls their values out into the
+// columns of the set their day has then.
 func (p *promotion) settleNewDay(ctx context.Context, conn *sql.Conn, d *dayPromotion) error {
 	if !d.isNew || len(d.added) == 0 {
 		return nil
+	}
+	var inMaps []string
+	for _, t := range promotedTypes {
+		inMaps = append(inMaps, fmt.Sprintf("cardinality(%s) > 0", t.Map()))
 	}
 	from, to := timestampString(d.day), timestampString(d.day.Add(24*time.Hour))
 	var stored bool
 	err := conn.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT EXISTS (SELECT 1 FROM logs.log_files WHERE project_id = ? AND day = CAST(? AS DATE))
-			OR EXISTS (SELECT 1 FROM %s.%s WHERE time >= CAST(? AS TIMESTAMP) AND time < CAST(? AS TIMESTAMP))`,
-		logsCatalog, hotTable(p.projectID)),
+			OR EXISTS (
+				SELECT 1 FROM %s.%s
+				WHERE time >= CAST(? AS TIMESTAMP) AND time < CAST(? AS TIMESTAMP) AND (%s)
+			)`,
+		logsCatalog, hotTable(p.projectID), strings.Join(inMaps, " OR ")),
 		p.projectID, dayString(d.day), from, to).Scan(&stored)
 	if err != nil {
 		return fmt.Errorf("find the day's stored logs: %w", err)
