@@ -468,9 +468,9 @@ func (s *LogStore) backfillManifest() error {
 // before the manifest. An export's commit deleted all of its file's Logs
 // from DuckDB or none, so one Log decides: still stored means the export
 // didn't commit, and the file is deleted; gone means it did, and the file is
-// renamed. A file that can't be read is renamed to <staged name>.unreadable
-// for an operator, out of the way of recoverStagedFiles, which would delete
-// it for having no row.
+// renamed. A file that can't be read is deleted: every export fsynced its
+// staged file before COMMIT, so a damaged one is from an export that didn't
+// commit, and its Logs are still stored.
 func (s *LogStore) settleStagedFilesByTheirLogs() error {
 	staged, err := s.files.stagedFiles()
 	if err != nil {
@@ -480,8 +480,8 @@ func (s *LogStore) settleStagedFilesByTheirLogs() error {
 		var id string
 		err := s.db.QueryRow(fmt.Sprintf("SELECT CAST(id AS VARCHAR) FROM read_parquet(%s) LIMIT 1", sqltext.String(path))).Scan(&id)
 		if err != nil {
-			logger.L.Error("Keeping a staged Log file that can't be read for an operator", "file", path+unreadableSuffix, "error", err)
-			if err := os.Rename(path, path+unreadableSuffix); err != nil {
+			logger.L.Warn("Deleting a staged Log file that can't be read", "file", path, "error", err)
+			if err := os.Remove(path); err != nil {
 				return err
 			}
 			continue

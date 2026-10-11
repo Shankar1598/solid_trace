@@ -303,17 +303,21 @@ func TestAnUpgradeKeepsTheLogFilesItCannotRead(t *testing.T) {
 	env.ExportLogs(t)
 	nine, ten := hourFile(t, env, 123, at(9, 0)), hourFile(t, env, 123, at(10, 0))
 
-	// An older EventStore leaves both files damaged, and a staged file it
-	// can't tell is committed.
+	// An older EventStore leaves both files damaged, and a staged file cut
+	// off by a crash during its COPY.
 	env.close()
 	damaged := map[string][]byte{
 		nine: []byte("not a Parquet file: nine"),
 		ten:  []byte("not a Parquet file: ten"),
+	}
+	staged := map[string][]byte{
 		filepath.Join(filepath.Dir(nine), "late-1.parquet.tmp"): []byte("not a Parquet file: staged"),
 	}
-	for path, content := range damaged {
-		if err := os.WriteFile(path, content, 0644); err != nil {
-			t.Fatalf("Damage %s: %v", path, err)
+	for _, files := range []map[string][]byte{damaged, staged} {
+		for path, content := range files {
+			if err := os.WriteFile(path, content, 0644); err != nil {
+				t.Fatalf("Damage %s: %v", path, err)
+			}
 		}
 	}
 	forgetLogFileManifest(t, env)
@@ -328,6 +332,11 @@ func TestAnUpgradeKeepsTheLogFilesItCannotRead(t *testing.T) {
 		}
 	}
 	assertKept("after the upgrade")
+	for path, content := range staged {
+		if findContent(t, filepath.Dir(path), content) != "" {
+			t.Errorf("Expected the damaged staged file %s deleted by the upgrade", path)
+		}
+	}
 
 	// A late Log of hour 10 gets a file of its own.
 	env.Clock.Set(at(12, 30))
@@ -340,6 +349,6 @@ func TestAnUpgradeKeepsTheLogFilesItCannotRead(t *testing.T) {
 	// Retention deletes the damaged files with their day.
 	env.Clock.Set(at(12, 0).AddDate(0, 0, 9))
 	env.DeleteLogsPastRetention(t)
-	assertGone(t, nine, "by Retention")
+	assertGone(t, filepath.Dir(nine), "by Retention")
 	assertGone(t, filepath.Dir(ten), "by Retention")
 }
