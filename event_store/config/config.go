@@ -33,6 +33,10 @@ type Config struct {
 
 	DuckDBTempDirectory string
 	DuckDBMemoryLimit   string
+	// DuckDBExtensionDirectory holds the DuckDB extensions EventStore loads,
+	// such as httpfs for an ObjectStore. The Docker image fills the default
+	// at build time; DuckDB never downloads one itself.
+	DuckDBExtensionDirectory string
 
 	StorageTiers []StorageTier
 
@@ -42,6 +46,10 @@ type Config struct {
 
 	Debug bool
 }
+
+// DefaultDuckDBExtensionDirectory is where the Docker image puts DuckDB's
+// extensions, as <version>/<platform>/<name>.duckdb_extension.
+const DefaultDuckDBExtensionDirectory = "/usr/local/lib/solidtrace/duckdb_extensions"
 
 // ObjectStore kinds.
 const (
@@ -98,6 +106,7 @@ type fileConfig struct {
 	IngestMaxWaiting    *int           `yaml:"ingest_max_waiting"`
 	DuckDBTempDirectory *string        `yaml:"duckdb_temp_directory"`
 	DuckDBMemoryLimit   *string        `yaml:"duckdb_memory_limit"`
+	DuckDBExtensionDir  *string        `yaml:"duckdb_extension_directory"`
 	StorageTiers        *[]StorageTier `yaml:"storage_tiers"`
 	ObjectStore         yaml.Node      `yaml:"object_store"`
 	Debug               *bool          `yaml:"debug"`
@@ -132,8 +141,9 @@ func LoadFile(path string) (*Config, error) {
 
 		IngestMaxWaiting: 10000,
 
-		DuckDBTempDirectory: "",
-		DuckDBMemoryLimit:   "",
+		DuckDBTempDirectory:      "",
+		DuckDBMemoryLimit:        "",
+		DuckDBExtensionDirectory: DefaultDuckDBExtensionDirectory,
 
 		Debug: false,
 	}
@@ -209,6 +219,9 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 	if config.DuckDBMemoryLimit != nil {
 		cfg.DuckDBMemoryLimit = *config.DuckDBMemoryLimit
+	}
+	if config.DuckDBExtensionDir != nil && *config.DuckDBExtensionDir != "" {
+		cfg.DuckDBExtensionDirectory = *config.DuckDBExtensionDir
 	}
 	if config.StorageTiers != nil {
 		cfg.StorageTiers = *config.StorageTiers

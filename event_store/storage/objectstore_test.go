@@ -16,11 +16,11 @@ import (
 	"github.com/solidtrace/event_store/config"
 )
 
-// minIOStore is an ObjectStore on the bucket SOLIDTRACE_TEST_S3_ENDPOINT
-// serves, under a prefix of its own that is emptied after the test. The test
+// minIOConfig is an object_store config for the bucket
+// SOLIDTRACE_TEST_S3_ENDPOINT serves, under a prefix of its own. The test
 // skips without it; ~/.cache/solid-trace/logs-v2-notes/setup.md says how to
 // run MinIO for it.
-func minIOStore(t *testing.T) *s3Store {
+func minIOConfig(t *testing.T) *config.ObjectStore {
 	t.Helper()
 	endpoint := os.Getenv("SOLIDTRACE_TEST_S3_ENDPOINT")
 	if endpoint == "" {
@@ -30,11 +30,17 @@ func minIOStore(t *testing.T) *s3Store {
 	if bucket == "" {
 		bucket = "solidtrace-test"
 	}
-	cfg := &config.ObjectStore{
+	return &config.ObjectStore{
 		Kind: config.ObjectStoreS3, Bucket: bucket, Prefix: "test-" + uuid.NewString() + "/",
 		Region: "us-east-1", Endpoint: endpoint,
 		KeyID: os.Getenv("SOLIDTRACE_OBJECT_STORE_KEY_ID"), Secret: os.Getenv("SOLIDTRACE_OBJECT_STORE_SECRET"),
 	}
+}
+
+// minIOStore is an ObjectStore on cfg's bucket, whose objects are deleted
+// after the test.
+func minIOStore(t *testing.T, cfg *config.ObjectStore) *s3Store {
+	t.Helper()
 	store := NewObjectStore(cfg).(*s3Store)
 	t.Cleanup(func() {
 		ctx := context.Background()
@@ -144,7 +150,7 @@ func TestAFolderObjectStorePutsListsAndDeletesFiles(t *testing.T) {
 }
 
 func TestAnObjectStoreOnMinIOPutsListsAndDeletesObjects(t *testing.T) {
-	store := minIOStore(t)
+	store := minIOStore(t, minIOConfig(t))
 	testObjectStore(t, store, func(key string) string {
 		out, err := store.client.GetObject(context.Background(), &s3.GetObjectInput{
 			Bucket: aws.String(store.bucket), Key: aws.String(store.prefix + key),
@@ -162,7 +168,7 @@ func TestAnObjectStoreOnMinIOPutsListsAndDeletesObjects(t *testing.T) {
 }
 
 func TestAnObjectStoreOnMinIOListsPastOnePage(t *testing.T) {
-	store := minIOStore(t)
+	store := minIOStore(t, minIOConfig(t))
 	store.pageSize = 2
 	ctx := context.Background()
 	var want []StoredObject

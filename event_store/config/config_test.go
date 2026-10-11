@@ -199,3 +199,19 @@ func TestABadObjectStoreFailsToLoadSayingWhatIsWrong(t *testing.T) {
 		})
 	}
 }
+
+func TestDuckDBExtensionsAreWhereTheImagePutsThemByDefault(t *testing.T) {
+	cfg := loadFrom(t, "../../deploy/event_store.yml")
+
+	if want := "/usr/local/lib/solidtrace/duckdb_extensions"; cfg.DuckDBExtensionDirectory != want {
+		t.Errorf("DuckDB extension directory = %q, want %q", cfg.DuckDBExtensionDirectory, want)
+	}
+}
+
+func TestDuckDBExtensionDirectoryComesFromTheConfigFile(t *testing.T) {
+	cfg := loadFrom(t, writeConfig(t, "duckdb_extension_directory: /home/dev/.cache/duckdb_extensions\n"))
+
+	if want := "/home/dev/.cache/duckdb_extensions"; cfg.DuckDBExtensionDirectory != want {
+		t.Errorf("DuckDB extension directory = %q, want %q", cfg.DuckDBExtensionDirectory, want)
+	}
+}

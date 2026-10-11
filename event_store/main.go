@@ -36,6 +36,11 @@ func main() {
 		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
 	defer duckdbWriter.Close()
+	if cfg.ObjectStore != nil {
+		if err := duckdbWriter.UseBucket(cfg.ObjectStore, cfg.DuckDBExtensionDirectory); err != nil {
+			logger.L.Fatal("Failed to let DuckDB read the object store's bucket", "error", err)
+		}
+	}
 
 	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath, cfg.LogsParquetPath)
 	if err != nil {
