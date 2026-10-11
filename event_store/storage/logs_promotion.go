@@ -294,8 +294,8 @@ type dayPromotion struct {
 	day  time.Time
 	keys map[typedKey]PromotedKey
 	// isNew is true when the day had no promoted keys before this
-	// transaction. Any of its Logs stored earlier had no key that could be
-	// promoted, so none holds a key this transaction adds in its map.
+	// transaction. Its keys are partway only if the day already has Logs a
+	// read finds through its set (settleNewDay).
 	isNew bool
 	added []PromotedKey // keys this transaction adds, to record
 }
@@ -362,8 +362,11 @@ func promote(ctx context.Context, conn *sql.Conn, projectID uint32, logs []model
 		p.days[day] = d
 		for _, log := range byDay[day] {
 			for _, key := range logKeys(log) {
-				p.add(d, key, !d.isNew)
+				p.add(d, key)
 			}
+		}
+		if err := p.settleNewDay(ctx, conn, d); err != nil {
+			return nil, err
 		}
 	}
 
@@ -399,7 +402,7 @@ func (p *promotion) newDay(ctx context.Context, conn *sql.Conn, day time.Time) (
 	}
 	if len(previous) < MaxPromotedKeys {
 		for _, key := range previous {
-			p.add(d, key, false)
+			p.add(d, key)
 		}
 		return d, nil
 	}
@@ -409,23 +412,58 @@ func (p *promotion) newDay(ctx context.Context, conn *sql.Conn, day time.Time) (
 		return nil, err
 	}
 	for _, key := range ranked {
-		p.add(d, key, false)
+		p.add(d, key)
 	}
 	return d, nil
 }
 
 // add puts key in a day's set if it isn't in it, the set has room and the
-// key can have a column of its own.
-func (p *promotion) add(d *dayPromotion, key typedKey, partway bool) {
+// key can have a column of its own. A key a day's stored set gains is
+// partway: the day's Logs stored before hold it in their maps.
+func (p *promotion) add(d *dayPromotion, key typedKey) {
 	if _, ok := d.keys[key]; ok {
 		return
 	}
 	if len(d.keys) >= MaxPromotedKeys || key.Type == JSONAttribute || !promotable(key.Key) || !p.claimColumn(key) {
 		return
 	}
-	promoted := PromotedKey{Type: key.Type, Key: key.Key, AddedAt: p.now, Partway: partway}
+	promoted := PromotedKey{Type: key.Type, Key: key.Key, AddedAt: p.now, Partway: !d.isNew}
 	d.keys[key] = promoted
 	d.added = append(d.added, promoted)
+}
+
+// settleNewDay makes every key of a new day's set partway if the day already
+// has Logs that a read finds through its set: in the Project's hot table or
+// in its files. Those were stored with no set, every Attribute in its map,
+// so a read of the day must look in the maps too. Such a day's first Logs
+// came late, and the export wrote them to files before its first hot Log.
+//
+// Late Logs still in logs_late don't count: a read takes their Attributes
+// from the maps, and the export pulls their values out into the columns of
+// the set their day has then.
+func (p *promotion) settleNewDay(ctx context.Context, conn *sql.Conn, d *dayPromotion) error {
+	if !d.isNew || len(d.added) == 0 {
+		return nil
+	}
+	from, to := timestampString(d.day), timestampString(d.day.Add(24*time.Hour))
+	var stored bool
+	err := conn.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT EXISTS (SELECT 1 FROM logs.log_files WHERE project_id = ? AND day = CAST(? AS DATE))
+			OR EXISTS (SELECT 1 FROM %s.%s WHERE time >= CAST(? AS TIMESTAMP) AND time < CAST(? AS TIMESTAMP))`,
+		logsCatalog, hotTable(p.projectID)),
+		p.projectID, dayString(d.day), from, to).Scan(&stored)
+	if err != nil {
+		return fmt.Errorf("find the day's stored logs: %w", err)
+	}
+	if !stored {
+		return nil
+	}
+	for i, key := range d.added {
+		key.Partway = true
+		d.added[i] = key
+		d.keys[typedKey{key.Type, key.Key}] = key
+	}
+	return nil
 }
 
 // claimColumn reserves key's column name, and reports false if another
