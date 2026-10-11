@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -166,6 +167,11 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 	if got := messages(want); !slices.Equal(got, []string{"hot", "exported", "late"}) {
 		t.Fatalf("Unexpected Logs of Project 123: %v", got)
 	}
+	// The folder of a Project's files: project=<id>.
+	projectDir := func(projectID uint32) string {
+		return filepath.Dir(filepath.Dir(filepath.Dir(hourFile(t, env, projectID, at(10, 10)))))
+	}
+	deletedDir, keptDir := projectDir(456), projectDir(123)
 
 	// Project 123 loses its last key, and Project 456 is deleted.
 	consoleExec(t, env, "DELETE FROM project_keys WHERE project_id = 123")
@@ -186,6 +192,10 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 		}
 	}
 	assertDeleted("after the pass")
+	assertGone(t, deletedDir, "with its Project")
+	if _, err := os.Stat(keptDir); err != nil {
+		t.Errorf("Expected Project 123 to keep its files, got %v", err)
+	}
 	env.Reopen(t)
 	assertDeleted("after a restart")
 	env.DeleteLogsPastRetention(t)
@@ -266,15 +276,38 @@ func TestTheDiskLimitDeletesTheOldestHoursOfAnyProjectFirst(t *testing.T) {
 	}
 	oldest := hourBytes(t, env, 456, at(1, 23))
 	total := oldest + hourBytes(t, env, 123, at(2, 8)) + hourBytes(t, env, 456, at(2, 9)) + hourBytes(t, env, 123, at(2, 10))
+	files := map[string]string{
+		"456 yesterday 23:00": hourFile(t, env, 456, at(1, 23)),
+		"123 08:00":           hourFile(t, env, 123, at(2, 8)),
+		"456 09:00":           hourFile(t, env, 456, at(2, 9)),
+		"123 10:00":           hourFile(t, env, 123, at(2, 10)),
+	}
+	// assertOnDisk checks that the files of the hours in kept are still on
+	// disk, and that the other hours' folders are gone.
+	assertOnDisk := func(when string, kept ...string) {
+		t.Helper()
+		for hour, file := range files {
+			if slices.Contains(kept, hour) {
+				if _, err := os.Stat(file); err != nil {
+					t.Errorf("Expected the file of %s kept on disk %s, got %v", hour, when, err)
+				}
+			} else {
+				assertGone(t, filepath.Dir(file), when)
+			}
+		}
+	}
 
 	enforceLogDiskLimit(t, env, total)
 	assertMessages(456, "at the limit", "456 09:10", "456 yesterday 23:10")
+	assertOnDisk("at the limit", "456 yesterday 23:00", "123 08:00", "456 09:00", "123 10:00")
 
 	enforceLogDiskLimit(t, env, total-1)
 	assertMessages(456, "past the limit by a byte", "456 09:10")
 	assertMessages(123, "past the limit by a byte", "123 12:10", "123 10:10", "123 08:10")
+	assertOnDisk("past the limit by a byte", "123 08:00", "456 09:00", "123 10:00")
 
 	enforceLogDiskLimit(t, env, hourBytes(t, env, 123, at(2, 10)))
 	assertMessages(456, "with room for one hour")
 	assertMessages(123, "with room for one hour", "123 12:10", "123 10:10")
+	assertOnDisk("with room for one hour", "123 10:00")
 }

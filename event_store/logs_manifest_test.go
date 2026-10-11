@@ -236,3 +236,37 @@ func TestAReadHoldsUpTheDeletionOfOnlyItsOwnProjectsFiles(t *testing.T) {
 	cancel()
 	<-longRead
 }
+
+func TestADeletedProjectsFileThatAReadHoldsGoesWithTheNextCleanupPass(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedProject(t, env.SQLitePath, 456, 0)
+	postAndProcess(t, env, logJSON(t, "exported", testNow.Add(-150*time.Minute), nil))
+	env.ExportLogs(t)
+	file := hourFile(t, env, 123, testNow.Add(-150*time.Minute))
+	projectDir := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+
+	// Project 123 is deleted while a read of it runs.
+	cancel, longRead := startLongRead(t, env)
+	defer cancel()
+	consoleExec(t, env, "DELETE FROM projects WHERE id = 123")
+	if err := env.LogCleanup.DeleteLogsPastRetention(testNow); !errors.Is(err, storage.ErrLogFilesInUse) {
+		t.Errorf("Expected the Project's deletion to wait for the read to delete its file, got %v", err)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Errorf("Expected the file to stay while the read may read it, got %v", err)
+	}
+	if got, err := listLatest(env); err != nil || len(got) != 0 {
+		t.Errorf("Expected later reads to see no Logs of the deleted Project, got %v (%v)", got, err)
+	}
+
+	// The Project is no longer listed, and the next Cleanup pass after the
+	// read deletes its file all the same.
+	cancel()
+	<-longRead
+	env.DeleteLogsPastRetention(t)
+	enforceLogDiskLimit(t, env, 1<<40)
+	assertGone(t, projectDir, "by the next Cleanup pass after the read")
+}
