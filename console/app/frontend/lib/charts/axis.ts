@@ -1,5 +1,6 @@
-// A chart's axes: where their ticks fall and how they read, times in the
-// viewer's local time and values on round numbers.
+// A chart's axes and numbers: where ticks fall and how they read, times in
+// the viewer's local time and values on round numbers, written to the
+// precision their step needs.
 import { addDays, format, startOfDay } from 'date-fns'
 
 const SECOND = 1000
@@ -45,15 +46,58 @@ const NICE = [1, 2, 2.5, 5, 10]
  * The value axis for values from min to max: from zero, or below it for
  * negative values, to just past the largest, in about five round steps.
  */
-export function valueTicks(min: number, max: number): { domain: [number, number]; ticks: number[] } {
+export function valueTicks(min: number, max: number): { domain: [number, number]; ticks: number[]; step: number } {
   const low = Math.min(0, Number.isFinite(min) ? min : 0)
   let high = Math.max(0, Number.isFinite(max) ? max : 0)
   if (high === low) high = low + 1
   const rough = (high - low) / 5
   const power = 10 ** Math.floor(Math.log10(rough))
-  const step = NICE.map(n => n * power).find(s => s >= rough)!
+  const step = Number(NICE.map(n => n * power).find(s => s >= rough)!.toPrecision(12))
   const first = Math.floor(low / step)
   const last = Math.ceil(high / step)
   const ticks = Array.from({ length: last - first + 1 }, (_, i) => Number(((first + i) * step).toPrecision(12)))
-  return { domain: [ticks[0], ticks[ticks.length - 1]], ticks }
+  return { domain: [ticks[0], ticks[ticks.length - 1]], ticks, step }
+}
+
+/** Compact notation's units: thousands, millions, billions and trillions. */
+const UNITS = [1, 1e3, 1e6, 1e9, 1e12]
+
+/**
+ * How the ticks of a value axis `step` apart read: compact from 1,000 up, as
+ * 1K, with as many decimals as the step needs in the tick's unit, so 1,250
+ * reads 1.25K and 0.05 reads 0.05, and no two ticks read the same.
+ */
+export function tickLabel(step: number): (value: number) => string {
+  return value => {
+    const abs = Math.abs(value)
+    const unit = UNITS.filter(u => abs >= u).at(-1) ?? 1
+    return numberFormat({ notation: 'compact', maximumFractionDigits: decimals(step / unit) }).format(value)
+  }
+}
+
+/** A value as a tooltip reads it: to two decimals, or three significant digits under one. */
+export function valueText(value: number): string {
+  const abs = Math.abs(value)
+  return numberFormat(abs > 0 && abs < 1 ? { maximumSignificantDigits: 3 } : { maximumFractionDigits: 2 }).format(value)
+}
+
+/** A single number as a stat tile reads it: compact from a million up, as 4.21M. */
+export function statText(value: number): string {
+  return Math.abs(value) >= 1e6
+    ? numberFormat({ notation: 'compact', maximumSignificantDigits: 3 }).format(value)
+    : valueText(value)
+}
+
+/** The decimals a number needs: 2 for 0.25, none for 250. */
+function decimals(n: number): number {
+  const [mantissa, exponent] = Number(n.toPrecision(12)).toExponential().split('e')
+  return Math.min(20, Math.max(0, (mantissa.split('.')[1]?.length ?? 0) - Number(exponent)))
+}
+
+const formats = new Map<string, Intl.NumberFormat>()
+function numberFormat(options: Intl.NumberFormatOptions): Intl.NumberFormat {
+  const key = JSON.stringify(options)
+  let format = formats.get(key)
+  if (!format) formats.set(key, (format = new Intl.NumberFormat(undefined, options)))
+  return format
 }
