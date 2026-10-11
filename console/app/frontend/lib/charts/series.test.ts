@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LogTable, TableColumn } from '@/lib/logs/table'
-import { MAX_BARS, MAX_SERIES, chartOf, formFor, formsOf, keepColors, legendNotes, type ChartModel } from './series'
+import { MAX_BARS, MAX_SERIES, binsTime, chartOf, formFor, formsOf, keepColors, legendNotes, type ChartModel } from './series'
 
 const TIME: TableColumn = { name: 'time', type: 'datetime', bin_seconds: 300 }
 const SERVICE: TableColumn = { name: 'service', type: 'string' }
@@ -533,5 +533,14 @@ describe('the forms a model is drawn in', () => {
   it('draws nothing for the table alone, or a table that is not drawn', () => {
     expect(formFor(chartOf(table([TIME, COUNT], [['2026-10-09T10:00:00Z', 1]])), 'table')).toBeNull()
     expect(formFor({ kind: 'none' }, 'line')).toBeNull()
+  })
+})
+
+describe('a guess at a Query\'s chart before it answers', () => {
+  it('is over time when its last summarize groups by a bin of time', () => {
+    expect(binsTime("['p']\n| summarize count() by bin_auto(time), service")).toBe(true)
+    expect(binsTime("['p'] | summarize count() by bin( time, 1h) | where count_ > 3")).toBe(true)
+    expect(binsTime("['p'] | summarize count() by bin(time, 1h) | summarize count() by service")).toBe(false)
+    expect(binsTime("['p'] | where service == 'api'")).toBe(false)
   })
 })

@@ -12,8 +12,10 @@ const SOURCE = "['solid-trace-project']"
 /** The chart over the table, by its accessible name: "Line chart of api, billing … over time". */
 const chart = (page: Page) => page.getByRole('figure')
 /** The legend's buttons, one per series, each showing or hiding it. */
-const legend = (page: Page) => page.locator('[data-chart-legend] button[aria-pressed]')
-const viz = (page: Page, name: string) => page.getByRole('radiogroup', { name: 'Chart' }).getByRole('radio', { name })
+const legend = (page: Page) => page.locator('[data-chart-series]')
+const viz = (page: Page, name: string) => page.getByRole('group', { name: 'Chart' }).getByRole('button', { name })
+/** The histogram strip over the result, which a table over time stands in for. */
+const strip = (page: Page) => page.locator('[data-histogram-strip]')
 
 async function runQuery(page: Page, text: string) {
   await page.getByRole('button', { name: 'Query', exact: true }).click()
@@ -58,32 +60,75 @@ test('the chart switch changes the URL, survives a reload, and Table shows the t
   const errors = watchErrors(page)
   await openLogs(page, last24h('query'))
   await runQuery(page, `${SOURCE}\n| summarize count() by bin_auto(time), level`)
-  await expect(viz(page, 'Line')).toHaveAttribute('aria-checked', 'true')
+  await expect(viz(page, 'Line')).toHaveAttribute('aria-pressed', 'true')
   await expect(page).not.toHaveURL(/viz=/)
 
-  for (const [name, value, kind] of [['Area', 'area', 'Area'], ['Bars', 'bars', 'Bar'], ['Line', 'line', 'Line']] as const) {
+  for (const [name, value, kind] of [['Area', 'area', 'Area'], ['Bars', 'bars', 'Bar']] as const) {
     await viz(page, name).click()
     await expect(page).toHaveURL(new RegExp(`viz=${value}`))
     await expect(chart(page)).toHaveAttribute('aria-label', new RegExp(`^${kind} chart of `))
   }
+  // Line is a time chart's own form, so it leaves no trace in the URL.
+  await viz(page, 'Line').click()
+  await expect(page).not.toHaveURL(/viz=/)
+  await expect(chart(page)).toHaveAttribute('aria-label', /^Line chart of /)
 
   await viz(page, 'Bars').click()
   await expect(page).toHaveURL(/viz=bars/)
   await page.reload()
   await settled(page)
-  await expect(viz(page, 'Bars')).toHaveAttribute('aria-checked', 'true')
+  await expect(viz(page, 'Bars')).toHaveAttribute('aria-pressed', 'true')
   await expect(chart(page)).toHaveAttribute('aria-label', /^Bar chart of /)
 
-  // Table: the switch stays, the chart goes, and the histogram strip comes back.
+  // Table: the switch stays where it was, the chart goes, and the histogram strip stays away.
+  const at = (await viz(page, 'Table').boundingBox())!.y
   await viz(page, 'Table').click()
   await expect(page).toHaveURL(/viz=table/)
   await expect(chart(page)).toHaveCount(0)
-  await expect(viz(page, 'Table')).toHaveAttribute('aria-checked', 'true')
-  await expect(page.getByText(/error rate/)).toBeVisible()
+  await expect(viz(page, 'Table')).toHaveAttribute('aria-pressed', 'true')
+  expect((await viz(page, 'Table').boundingBox())!.y).toBe(at)
+  await expect(strip(page)).toHaveCount(0)
   await page.reload()
   await settled(page)
-  await expect(viz(page, 'Table')).toHaveAttribute('aria-checked', 'true')
+  await expect(viz(page, 'Table')).toHaveAttribute('aria-pressed', 'true')
   await expect(chart(page)).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('Bars over categories leaves no trace, so the next time series is a line', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize count() by service`)
+  await viz(page, 'Table').click()
+  await expect(page).toHaveURL(/viz=table/)
+  await viz(page, 'Bars').click()
+  await expect(page).not.toHaveURL(/viz=/)
+
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin_auto(time)`)
+  await expect(chart(page)).toHaveAttribute('aria-label', /^Line chart of /)
+  expect(errors).toEqual([])
+})
+
+test('a first run of a Query over time hides the histogram strip before it answers', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await expect(strip(page)).toHaveCount(1)
+  let release = () => {}
+  const held = new Promise<void>(resolve => { release = resolve })
+  await page.route(/\/logs\/query\?/, async route => {
+    await held
+    await route.continue()
+  })
+
+  const box = page.getByLabel('Query', { exact: true })
+  await box.fill(`${SOURCE}\n| summarize count() by bin_auto(time), service`)
+  await box.press('Control+Enter')
+  await expect(page.getByText('Running the Query…')).toBeVisible()
+  await expect(strip(page)).toHaveCount(0)
+  release()
+  await settled(page)
+  await expect(chart(page)).toBeVisible()
+  await expect(strip(page)).toHaveCount(0)
   expect(errors).toEqual([])
 })
 
@@ -123,15 +168,23 @@ test('summarize count() shows a single number, and by service shows bars', async
   const stat = page.locator('[data-chart-stat]')
   await expect(stat).toContainText('count_')
   await expect(stat).toContainText(/\d/)
-  await expect(viz(page, 'Number')).toHaveAttribute('aria-checked', 'true')
+  await expect(viz(page, 'Number')).toHaveAttribute('aria-pressed', 'true')
+  // The number is its table, shown once.
+  await expect(page.locator('.sticky.top-0').filter({ hasText: 'count_' })).toHaveCount(0)
   // Not a time chart: the histogram strip stays.
   await expect(page.getByText(/error rate/)).toBeVisible()
 
   await runQuery(page, `${SOURCE}\n| summarize count() by service`)
   await expect(chart(page)).toHaveAttribute('aria-label', 'Bar chart of count_ by service')
   await expect(chart(page).locator('.recharts-bar-rectangle')).toHaveCount(4)
-  await expect(viz(page, 'Bars')).toHaveAttribute('aria-checked', 'true')
+  await expect(viz(page, 'Bars')).toHaveAttribute('aria-pressed', 'true')
   await expect(viz(page, 'Line')).toHaveCount(0)
+
+  // Table shows a single number's cell.
+  await runQuery(page, `${SOURCE}\n| summarize count()`)
+  await viz(page, 'Table').click()
+  await expect(page.locator('.sticky.top-0').filter({ hasText: 'count_' })).toBeVisible()
+  await expect(page.locator('[data-chart-stat]')).toHaveCount(0)
   expect(errors).toEqual([])
 })
 
@@ -232,5 +285,16 @@ test('a bin the range covers in part says so in the tooltip', async ({ page }) =
   await expect(page.locator('.recharts-tooltip-wrapper')).toContainText('partial bin')
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await expect(page.locator('.recharts-tooltip-wrapper')).not.toContainText('partial bin')
+  expect(errors).toEqual([])
+})
+
+test('on a phone the legend entries are targets a finger can hit', async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin_auto(time), service`)
+  for (const box of await legend(page).evaluateAll(buttons => buttons.map(b => b.getBoundingClientRect().height))) {
+    expect(box).toBeGreaterThanOrEqual(24)
+  }
   expect(errors).toEqual([])
 })

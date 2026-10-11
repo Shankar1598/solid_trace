@@ -436,10 +436,12 @@ function Legend({ model, form, hidden, onToggle }: {
             key={entry.id}
             type="button"
             aria-pressed={shown}
+            data-chart-series
             title={`${shown ? 'Hide' : 'Show'} ${entry.name}`}
             onClick={() => onToggle(entry.id)}
             className={cn(
-              'flex max-w-56 items-center gap-1.5 rounded-sm px-1 text-[11px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring',
+              // 24px tall on a phone, a target a finger can hit; as dense as the text from sm up.
+              'flex min-h-6 max-w-56 items-center gap-1.5 rounded-sm px-1 text-[11px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring sm:min-h-0',
               shown ? 'text-foreground' : 'text-muted-foreground line-through',
             )}
           >

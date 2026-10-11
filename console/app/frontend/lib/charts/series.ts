@@ -125,6 +125,15 @@ export function formFor(model: ChartModel, wanted: ChartForm | 'auto' | 'table')
 }
 
 /**
+ * Whether a Query's table will likely be drawn over time: its last summarize
+ * groups by a bin of time. A guess from the text, for before it answers.
+ */
+export function binsTime(query: string): boolean {
+  const at = query.lastIndexOf('summarize')
+  return at >= 0 && /\bbin(_auto)?\s*\(\s*time\b/.test(query.slice(at))
+}
+
+/**
  * The chart a table makes:
  * - a time series when it has the last summarize's time bin column: number
  *   columns are series, and string and bool columns split them. Every bin

@@ -37,7 +37,7 @@ import {
   typeQuery,
   typeSql,
 } from '@/lib/logs/explorerState'
-import { chartOf, formFor } from '@/lib/charts/series'
+import { binsTime, chartOf } from '@/lib/charts/series'
 import { columnsFromSearch, commonValues, fieldInfos, rememberLogs, toggleColumn, withColumns } from '@/lib/logs/columns'
 import { errorParts } from '@/lib/logs/errorParts'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
@@ -420,14 +420,18 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   const colorSlots = useRef<ReadonlyMap<string, number>>(new Map())
   const tableChart: TableChart = { viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange, colors: colorSlots }
 
-  // A time chart stands in for the histogram strip, as in Axiom. The last
-  // answer decides, through a re-run too, so the strip doesn't flash back
-  // while a chart's Query runs again.
+  // A table over time stands in for the histogram strip, as in Axiom, shown
+  // as a chart or as Table alike, so the switch never moves under the
+  // pointer. The last answer decides, through a re-run too, so the strip
+  // doesn't flash back while a chart's Query runs again; before a first
+  // answer, the Query's text guesses.
   const answered = useRef<LogTable | null>(null)
   if (result.status === 'table') answered.current = result.table
   else if (result.status !== 'running' && result.status !== 'cancelled') answered.current = null
   const answeredChart = useMemo(() => (answered.current ? chartOf(answered.current) : null), [answered.current])
-  const timeChart = answeredChart?.kind === 'time' && formFor(answeredChart, explorer.current.viz) !== null
+  const timeChart = answeredChart
+    ? answeredChart.kind === 'time'
+    : result.status === 'running' && binsTime(explorer.current.query)
 
   const cancel = () => {
     currentRun.current?.controller.abort()
