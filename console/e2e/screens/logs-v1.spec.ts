@@ -161,8 +161,8 @@ test.describe('Builder', () => {
   test('time range picker', async ({ page }) => {
     const errors = watchErrors(page)
     await openLogs(page)
-    await page.getByRole('combobox', { name: 'Time range' }).click()
-    await expect(page.getByRole('option', { name: 'Last 7 days' })).toBeVisible()
+    await page.getByRole('button', { name: /^Time range: / }).click()
+    await expect(page.getByRole('dialog').getByText('Quick range')).toBeVisible()
     await shoot(page, 'v1-range-picker')
     expect(errors).toEqual([])
   })

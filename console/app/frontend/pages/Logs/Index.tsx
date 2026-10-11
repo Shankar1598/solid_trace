@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { router, usePage } from '@inertiajs/react'
-import { format } from 'date-fns'
 import { Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
+import { TimeRangePicker } from '@/components/TimeRangePicker'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RunError, fetchHistogram, fetchLogPage, fetchReadableSql, fetchRun, runSql, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import {
   EMPTY_BUILDER,
@@ -17,7 +16,6 @@ import {
   type Chip,
 } from '@/lib/logs/builder'
 import {
-  RANGE_PRESETS,
   chooseViz,
   fillEmptyQuery,
   modesFor,
@@ -27,7 +25,6 @@ import {
   runExplorer,
   runsOnOpen,
   searchOf,
-  spanLabel,
   switchMode,
   type Explorer,
   type ExplorerState,
@@ -471,7 +468,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     <DashboardLayout>
       <div className="h-[calc(100vh-2rem)] flex flex-col rounded-md border overflow-hidden bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-          <RangeSelect range={explorer.draft.range} onChange={pickBarRange} />
+          <TimeRangePicker range={explorer.draft.range} onChange={pickBarRange} retentionDays={project.log_retention_days} />
           <ModeSwitch modes={modes} mode={mode} onSwitch={switchTo} />
           <div className="h-5 w-px bg-border" />
           {mode === 'builder' ? (
@@ -634,27 +631,4 @@ function PointerLines({ text }: { text: string }) {
     pre.scrollLeft = left - pre.clientWidth / 2
   }, [text])
   return <pre ref={scrollToCaret} className="overflow-x-auto font-sans">{text}</pre>
-}
-
-const CUSTOM = 'custom'
-
-function RangeSelect({ range, onChange }: { range: TimeRange; onChange: (range: TimeRange) => void }) {
-  const items: Record<string, string> = Object.fromEntries(RANGE_PRESETS.map(p => [p.span, p.label]))
-  let value: string
-  if (range.kind === 'relative') {
-    value = range.span
-    items[value] ??= spanLabel(value)
-  } else {
-    value = CUSTOM
-    items[CUSTOM] = `${format(range.from, 'MMM dd HH:mm')} – ${format(range.to, 'MMM dd HH:mm')}`
-  }
-  return (
-    <Select value={value} onValueChange={v => v && v !== CUSTOM && onChange({ kind: 'relative', span: v as string })} items={items}>
-      <SelectTrigger className="h-8 text-xs" aria-label="Time range"><SelectValue /></SelectTrigger>
-      {/* Below the trigger, as the Project select opens: lined up with it, the list would cover the bar. */}
-      <SelectContent align="start" alignItemWithTrigger={false} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
-        {Object.entries(items).map(([v, label]) => <SelectItem key={v} value={v}>{label}</SelectItem>)}
-      </SelectContent>
-    </Select>
-  )
 }

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { builderRow, last24h, logCount, openLogs, settled, summaryLine } from '../support/logs'
+import { builderRow, last24h, logCount, openLogs, settled, summaryLine, timeRange } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // The histogram strip: drag across it, or click a bar, to zoom the range;
@@ -32,7 +32,7 @@ test('dragging across the strip zooms to the bars dragged over, and clicking a b
   // About 30% of 24 h, give or take a bar at each end.
   expect(span).toBeGreaterThan(6)
   expect(span).toBeLessThan(8.5)
-  await expect(page.getByRole('combobox', { name: 'Time range' })).not.toHaveText(/Last 24 hours/)
+  await expect(timeRange(page)).not.toHaveText(/Last 24 hours/)
   const zoomed = await logCount(page)
   expect(zoomed).toBeLessThan(all)
 

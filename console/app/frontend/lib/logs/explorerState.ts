@@ -5,6 +5,9 @@
 // doesn't, so Back undoes the last run. Switching mode or chart replaces the
 // entry's, so a run reopens as it was left. SQL never runs on opening a URL,
 // only when Run is pressed, so a crafted link can't run SQL as whoever opens it.
+import { isSpan, type RelativeRange, type TimeRange } from '../timeRange'
+
+export { resolveRange, type AbsoluteRange, type RelativeRange, type TimeRange } from '../timeRange'
 
 export type Mode = 'builder' | 'query' | 'sql'
 
@@ -15,11 +18,6 @@ export type Mode = 'builder' | 'query' | 'sql'
  */
 export type Viz = 'auto' | 'line' | 'area' | 'bars' | 'table'
 const VIZES: Viz[] = ['auto', 'line', 'area', 'bars', 'table']
-
-/** A span back from now, such as `15m`, `1h` or `7d`. */
-export type RelativeRange = { kind: 'relative'; span: string }
-export type AbsoluteRange = { kind: 'absolute'; from: Date; to: Date }
-export type TimeRange = RelativeRange | AbsoluteRange
 
 export interface ExplorerState {
   range: TimeRange
@@ -43,29 +41,8 @@ export const MODES: Mode[] = ['builder', 'query', 'sql']
 export function modesFor(sqlQueriesEnabled: boolean): Mode[] {
   return sqlQueriesEnabled ? MODES : MODES.filter(m => m !== 'sql')
 }
-const SPAN = /^(\d+)([mhd])$/
-const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const
 
 export const DEFAULT_RANGE: RelativeRange = { kind: 'relative', span: '1h' }
-
-/** The relative ranges the time-range select offers. */
-export const RANGE_PRESETS: { span: string; label: string }[] = [
-  { span: '15m', label: 'Last 15 minutes' },
-  { span: '1h', label: 'Last hour' },
-  { span: '6h', label: 'Last 6 hours' },
-  { span: '24h', label: 'Last 24 hours' },
-  { span: '7d', label: 'Last 7 days' },
-  { span: '30d', label: 'Last 30 days' },
-]
-
-export function spanLabel(span: string): string {
-  const preset = RANGE_PRESETS.find(p => p.span === span)
-  if (preset) return preset.label
-  const match = SPAN.exec(span)
-  if (!match) return span
-  const unit = { m: 'minute', h: 'hour', d: 'day' }[match[2] as 'm' | 'h' | 'd']
-  return `Last ${match[1]} ${unit}${match[1] === '1' ? '' : 's'}`
-}
 
 /** A URL's state; a mode not in `modes` (SQL while it's off) opens the Builder. */
 export function stateFromSearch(search: string, modes: Mode[] = MODES): ExplorerState {
@@ -95,12 +72,6 @@ export function searchOf(state: ExplorerState): string {
   if (state.sql !== '') params.set('sql', state.sql)
   if (state.viz !== 'auto') params.set('viz', state.viz)
   return `?${params}`
-}
-
-/** The times a range covers at `now`, `[from, to)`. */
-export function resolveRange(range: TimeRange, now: Date): { from: Date; to: Date } {
-  if (range.kind === 'absolute') return { from: range.from, to: range.to }
-  return { from: new Date(now.getTime() - spanMs(range.span)), to: now }
 }
 
 export function openExplorer(search: string, modes: Mode[] = MODES): Explorer {
@@ -181,16 +152,10 @@ export function runExplorer(explorer: Explorer): { explorer: Explorer; push: str
 
 function rangeFromParams(params: URLSearchParams): TimeRange {
   const span = params.get('range')
-  if (span !== null) return SPAN.test(span) && spanMs(span) > 0 ? { kind: 'relative', span } : DEFAULT_RANGE
+  if (span !== null) return isSpan(span) ? { kind: 'relative', span } : DEFAULT_RANGE
 
   const from = new Date(params.get('from') ?? NaN)
   const to = new Date(params.get('to') ?? NaN)
   if (isNaN(from.getTime()) || isNaN(to.getTime()) || from > to) return DEFAULT_RANGE
   return { kind: 'absolute', from, to }
-}
-
-function spanMs(span: string): number {
-  const match = SPAN.exec(span)
-  if (!match) return 0
-  return Number(match[1]) * UNIT_MS[match[2] as keyof typeof UNIT_MS]
 }
