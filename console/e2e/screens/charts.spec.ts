@@ -12,10 +12,10 @@ test.beforeEach(async ({ page }, info) => { await useTheme(page, info) })
 
 const SOURCE = "['solid-trace-project']"
 
-/** The explorer over the last 24 h, fixed so runs a moment apart chart the same bins, running q. */
-async function openChart(page: Page, q: string, extra: Record<string, string> = {}) {
+/** The explorer over the last 24 h (or `hours`), fixed so runs a moment apart chart the same bins, running q. */
+async function openChart(page: Page, q: string, extra: Record<string, string> = {}, hours = 24) {
   const to = new Date(Math.floor(Date.now() / 60_000) * 60_000)
-  const from = new Date(to.getTime() - 24 * 3600_000)
+  const from = new Date(to.getTime() - hours * 3600_000)
   const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), mode: 'query', q: `${SOURCE}\n| ${q}`, ...extra })
   await page.goto(logsPath(`?${params}`))
   await settled(page)
@@ -153,6 +153,23 @@ test.describe('Charts', () => {
     await expect(page.locator('[data-chart-series]', { hasText: 'api' })).toHaveAttribute('aria-pressed', 'false')
     await page.mouse.move(0, 0)
     await shoot(page, 'charts-hidden-after-zoom')
+    expect(errors).toEqual([])
+  })
+
+  test('day bins over a day, both partial', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openChart(page, 'summarize count() by bin(time, 1d), service')
+    await expect(page.locator('[data-chart-legend]')).toContainText('first and last bins partial')
+    await page.mouse.move(0, 0)
+    await shoot(page, 'charts-day-bins')
+    expect(errors).toEqual([])
+  })
+
+  test('day bins over a week, the partial ones faded', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openChart(page, 'summarize count() by bin(time, 1d), service', { viz: 'bars' }, 7 * 24)
+    await page.mouse.move(0, 0)
+    await shoot(page, 'charts-week-bins')
     expect(errors).toEqual([])
   })
 

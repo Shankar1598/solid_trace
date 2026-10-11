@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LogTable, TableColumn } from '@/lib/logs/table'
-import { MAX_BARS, MAX_SERIES, binsTime, chartOf, formFor, formsOf, keepColors, keepHidden, legendNotes, type ChartModel } from './series'
+import { MAX_BARS, MAX_SERIES, binsTime, chartOf, fadedSpans, formFor, formsOf, keepColors, keepHidden, legendNotes, type ChartModel } from './series'
 
 const TIME: TableColumn = { name: 'time', type: 'datetime', bin_seconds: 300 }
 const SERVICE: TableColumn = { name: 'service', type: 'string' }
@@ -138,6 +138,34 @@ describe('bins the range covers in part', () => {
     expect(whole).toMatchObject({ kind: 'time', partial: [] })
   })
 
+  const DAY = { ...TIME, bin_seconds: 86_400 }
+  const days = (first: number, n: number) => Array.from({ length: n }, (_, i) => [new Date(Date.UTC(2026, 9, first + i)).toISOString(), 10])
+
+  it('are faded, a bar each, and for a line the half of a bin around each point', () => {
+    // A week from 11:00 to 11:00: eight day bins, the first and last partial.
+    const week = drawable(chartOf(table([DAY, COUNT], days(2, 8), { from: '2026-10-02T11:00:00Z', to: '2026-10-09T11:00:00Z' })))
+    const day = 86_400_000
+
+    expect(fadedSpans(week, 'bars')).toEqual([[at('2026-10-02T00:00:00Z'), at('2026-10-03T00:00:00Z')], [at('2026-10-09T00:00:00Z'), at('2026-10-10T00:00:00Z')]])
+    expect(fadedSpans(week, 'line')).toEqual([[at('2026-10-02T00:00:00Z'), at('2026-10-02T00:00:00Z') + day / 2], [at('2026-10-09T00:00:00Z') - day / 2, at('2026-10-10T00:00:00Z')]])
+    expect(legendNotes(week)).toEqual([])
+  })
+
+  it('are not faded when they are most of the chart, and a note says so', () => {
+    // A day from 11:34 to 11:34 has two day bins, both partial.
+    const twoDays = drawable(chartOf(table([DAY, COUNT], days(10, 2), { from: '2026-10-10T11:34:00Z', to: '2026-10-11T11:34:00Z' })))
+    const lastOnly = drawable(chartOf(table([DAY, COUNT], days(10, 2), { from: '2026-10-10T00:00:00Z', to: '2026-10-11T11:34:00Z' })))
+
+    for (const form of ['line', 'area', 'bars'] as const) expect(fadedSpans(twoDays, form)).toEqual([])
+    expect(legendNotes(twoDays)).toEqual([{
+      text: 'first and last bins partial',
+      why: 'The range starts partway into the first bin and ends partway into the last, so they count only part of their time.',
+    }])
+    expect(legendNotes(lastOnly)).toEqual([{
+      text: 'last bin partial',
+      why: 'The range ends partway into the last bin, so it counts only part of its time.',
+    }])
+  })
 })
 
 describe('filling empty bins', () => {
