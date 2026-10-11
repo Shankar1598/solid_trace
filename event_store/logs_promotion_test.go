@@ -97,12 +97,13 @@ func numberedKeys(prefix string, n int, value any) map[string]any {
 	return attributes
 }
 
-func TestKeysPastAFullSetStayAttributesAndEachKeyFindsItsLogs(t *testing.T) {
+func TestLogsWithMoreKeysThanASetHoldsAreFoundByEachKey(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	// Every built-in field, and 150 keys: built-in fields don't count, and
-	// the set holds the first 100 keys.
+	// Every built-in field, and 150 keys: more than a set holds, so some
+	// stay in the maps (storage's TestASetTakesNewKeysUntilItHolds100 checks
+	// which).
 	wide := numberedKeys("k", 150, "v")
 	wide["level"] = "info"
 	wide["service"] = "web"
@@ -112,7 +113,7 @@ func TestKeysPastAFullSetStayAttributesAndEachKeyFindsItsLogs(t *testing.T) {
 	postLogs(t, env, "application/json", logJSON(t, "wide", testNow.Add(-time.Minute), wide))
 	env.ProcessLogs(t)
 
-	// A key arriving after the set filled stays in the maps.
+	// Then a key that arrives after the set is full.
 	env.Clock.Advance(time.Minute)
 	postLogs(t, env, "application/json", logJSON(t, "after", testNow, map[string]any{"late": 1, "k000": "w"}))
 	env.ProcessLogs(t)
