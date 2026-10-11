@@ -274,6 +274,21 @@ describe('many series', () => {
     expect(legendNotes(model)).toEqual([{ text: '2 more not shown', why: `Only the first ${MAX_SERIES} number columns are drawn.` }])
   })
 
+  it('ranks a cut table of 10,000 split values at once, ties in the rows\' order', () => {
+    // count() by bin_auto(time), user.id: every id once with 1 to 3 Logs, so most totals tie.
+    const USER: TableColumn = { name: 'user.id', type: 'string' }
+    const ids = Array.from({ length: 10_000 }, (_, i) => `user-${i}`)
+    const many = ids.map((id, i) => [`2026-10-09T${String(i % 24).padStart(2, '0')}:00:00Z`, id, 1 + (i % 3)])
+    const hourly = { ...TIME, bin_seconds: 3600 }
+
+    const started = performance.now()
+    const model = drawable(chartOf(table([hourly, USER, COUNT], many, { truncated: true })))
+    const took = performance.now() - started
+
+    expect(model.series.map(s => s.name)).toEqual(ids.filter((_, i) => i % 3 === 2).slice(0, MAX_SERIES))
+    expect(took).toBeLessThan(250)
+  })
+
   it('colours the series with the palette in order, never twice', () => {
     const model = drawable(chartOf(table([TIME, SERVICE, COUNT], rows)))
 
