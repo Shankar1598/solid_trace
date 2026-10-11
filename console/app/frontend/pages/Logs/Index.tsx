@@ -254,9 +254,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     if (runIt) {
       commit(typeQuery(next, queryOf(builder, project.slug)))
     } else {
-      // The Builder shows what ran, so the draft goes back to it: a discarded
-      // Query that never ran must not run with the next Run or range pick.
-      setExplorer(typeQuery(next, next.current.query))
+      setExplorer(next)
       replaceUrl(replace)
     }
   }

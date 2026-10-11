@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from '@playwright/test'
-import { holdSqlQueries, last24h, logCount, openLogs, releaseSqlQueries, settled } from '../support/logs'
+import { builderRow, holdSqlQueries, last24h, logCount, openLogs, releaseSqlQueries, runBy, settled } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
 
 // SQL mode, on an instance with SQL queries on: the Query's readable SQL,
@@ -78,6 +78,29 @@ test('leaving SQL mode without edits is silent', async ({ page }) => {
   await expect(page).toHaveURL(/mode=query/)
   // The empty Builder's Query shows as the Project's slug, as Builder to Query writes it.
   await expect(page.getByLabel('Query', { exact: true })).toHaveValue("['solid-trace-project']")
+  expect(errors).toEqual([])
+})
+
+test('leaving SQL for the Builder drops a Query typed in Query mode that never ran', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h())
+  const all = await logCount(page)
+
+  // Typed in Query mode, not run, and SQL opened from it.
+  await page.getByRole('button', { name: 'Query', exact: true }).click()
+  await page.getByLabel('Query', { exact: true }).fill(`['solid-trace-project'] | where level == "warn" | project time, message`)
+  await page.getByRole('button', { name: 'SQL', exact: true }).click()
+  await expect(page.getByLabel('SQL', { exact: true })).toHaveValue(/'warn'/)
+  await page.getByRole('button', { name: 'Builder', exact: true }).click()
+  await settled(page)
+  await expect(page.getByText(/SQL can't be turned back into a Query/)).toHaveCount(0)
+  await expect(page).toHaveURL(/mode=builder/)
+
+  // Run runs what the Builder shows: every Log, not the typed Query's warnings.
+  await runBy(page, () => page.getByRole('button', { name: 'Run', exact: true }).click())
+  expect(new URL(page.url()).searchParams.get('q') ?? '').not.toContain('warn')
+  await expect(builderRow(page, 'Where')).not.toContainText('warn')
+  expect(await logCount(page)).toBe(all)
   expect(errors).toEqual([])
 })
 
