@@ -1,13 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { format } from 'date-fns'
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceArea, XAxis, YAxis } from 'recharts'
-import type { MouseHandlerDataParam } from 'recharts'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ReferenceArea, XAxis, YAxis } from 'recharts'
+import type { LabelListEntry, MouseHandlerDataParam } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import {
   chartOf, fadedSpans, formFor, keepColors, keepHidden, legendNotes,
   type ChartForm, type ChartPoint, type Series, type SeriesChartModel,
 } from '@/lib/charts/series'
-import { statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from '@/lib/charts/axis'
+import {
+  CHAR_PX, LABEL_PAD_PX, nameChars, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks,
+} from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
 import type { LogTable } from '@/lib/logs/table'
@@ -47,15 +49,12 @@ interface QueryChartProps {
 
 /** The most time ticks a chart labels; fewer show when they would crowd. */
 const TIME_TICKS = 6
-/** A value tick's character width at 10px in the mono font, and the room beside its text. */
-const TICK_CHAR_PX = 6
-const TICK_PAD_PX = 12
 /** Bars over more categories than this, or with longer names, lie across with their names beside them. */
 const UPRIGHT_BARS = 8
 const UPRIGHT_NAME = 12
-/** A lying bar's band, and the most characters of a category's name beside it. */
+/** A lying bar's band, and the gap between its tip and its value. */
 const BAND_PX = 20
-const NAME_CHARS = 20
+const TIP_GAP_PX = 4
 
 /**
  * A Query's table drawn as a time series (line, area or bars), bars over
@@ -129,6 +128,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
 }) {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(initialHidden)
   const [drag, setDrag] = useState<Drag | null>(null)
+  const [measure, width] = useWidth()
   const config = useMemo<ChartConfig>(
     () => Object.fromEntries(model.series.map(s => [s.key, { label: s.name, color: s.color }])),
     [model],
@@ -154,10 +154,12 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
   const pattern = time ? timePattern(time.binSeconds, time) : ''
 
   // Each panel's value axis, over the series shown; one width for all, so their plots line up.
-  // Many categories, or long names, read best as bars lying across, names beside them, the chart as tall as they need.
+  // Many categories, or long names, read best as bars lying across, names beside them, the chart as tall as they need:
+  // the names take up to a share of its width, cut in the middle, and each bar's value shows at its tip.
   const names = model.kind === 'bars' ? model.points.map(p => String(p.x)) : []
   const across = names.length > UPRIGHT_BARS || names.some(n => n.length > UPRIGHT_NAME)
-  const nameWidth = Math.min(NAME_CHARS, Math.max(0, ...names.map(n => n.length))) * TICK_CHAR_PX + TICK_PAD_PX
+  const chars = Math.min(nameChars(width), Math.max(0, ...names.map(n => [...n].length)))
+  const nameWidth = chars * CHAR_PX + LABEL_PAD_PX
 
   const several = model.panels.length > 1
   const panels = model.panels.map(panel => {
@@ -165,9 +167,11 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
     const visible = series.filter(s => !hidden.has(s.id))
     const stacked = panel.stacked && form !== 'line'
     const values = valueTicks(...extent(model.points, visible, stacked), several ? 3 : 5)
-    return { panel, series, visible, stacked, values, label: tickLabel(values.step) }
+    const tips = across && (stacked || visible.length === 1)
+    const tipWidth = tips ? Math.max(0, ...model.points.map(p => tipText(p, visible).length)) * CHAR_PX + TIP_GAP_PX : 0
+    return { panel, series, visible, stacked, values, label: tickLabel(values.step), tips, tipWidth }
   })
-  const valueWidth = Math.max(...panels.map(({ values, label }) => Math.max(...values.ticks.map(t => label(t).length)))) * TICK_CHAR_PX + TICK_PAD_PX
+  const valueWidth = Math.max(...panels.map(({ values, label }) => Math.max(...values.ticks.map(t => label(t).length)))) * CHAR_PX + LABEL_PAD_PX
 
   const index = (state: MouseHandlerDataParam) => {
     const i = Number(state.activeTooltipIndex)
@@ -215,13 +219,13 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
   const height = !several ? 'h-44 sm:h-56' : panels.length === 2 ? 'h-32 sm:h-40' : 'h-28 sm:h-32'
 
   return (
-    <div className={cn('flex flex-col', className)}>
+    <div ref={measure} className={cn('flex flex-col', className)}>
       <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
         <Legend model={model} form={form} hidden={hidden} onToggle={toggle} />
         {actions && <div className="ml-auto">{actions}</div>}
       </div>
       <div role="figure" aria-label={chartLabel(model, form)}>
-        {panels.map(({ panel, series, stacked, values, label }, i) => (
+        {panels.map(({ panel, series, stacked, values, label, tips, tipWidth }, i) => (
           <div key={panel.keys[0]}>
             {several && <div className="truncate px-3 pt-1 text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
             <ChartContainer
@@ -237,6 +241,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
                 stacked={stacked}
                 model={model}
                 across={across}
+                tipWidth={tips ? tipWidth : null}
                 axisBelow={across || i === panels.length - 1}
                 xAxis={across ? (
                   <XAxis
@@ -284,7 +289,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
                     interval={0}
                     tickLine={false}
                     axisLine={false}
-                    tick={<NameTick />}
+                    tick={<NameTick chars={chars} />}
                   />
                 ) : (
                   <YAxis
@@ -324,21 +329,32 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
 }
 
 /**
- * A category's name beside its bar, on one line: cut to NAME_CHARS with its
- * full name as a title. recharts would wrap it to the axis' width instead.
+ * A category's name beside its bar, on one line: cut in the middle to chars
+ * with its full name as a title. recharts would wrap it to the axis' width instead.
  */
-function NameTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: unknown } }) {
+function NameTick({ x, y, payload, chars }: { x?: number; y?: number; payload?: { value: unknown }; chars: number }) {
   const name = String(payload?.value ?? '')
   return (
     <text x={x} y={y} dx={-4} dy={3} textAnchor="end" fontSize={10} className="fill-muted-foreground">
       <title>{name}</title>
-      {name.length > NAME_CHARS ? `${name.slice(0, NAME_CHARS - 1)}…` : name}
+      {shortName(name, chars)}
     </text>
   )
 }
 
+/** The series shown at a point that have a value there, bottom of the stack first. */
+function valued(point: ChartPoint, series: Series[]): Series[] {
+  return series.filter(s => typeof point[s.key] === 'number' && point[s.key] !== 0)
+}
+
+/** What a lying bar's tip reads: its value, or the sum of the series stacked in it. */
+function tipText(point: ChartPoint, shown: Series[]): string {
+  const values = valued(point, shown)
+  return values.length === 0 ? '' : valueText(values.reduce((sum, s) => sum + (point[s.key] as number), 0))
+}
+
 /** One panel's chart: its series in the form asked for, over the axes given. */
-function PanelChart({ form, data, series, hidden, stacked, model, across, axisBelow, xAxis, yAxis, tooltip, overlay, events }: {
+function PanelChart({ form, data, series, hidden, stacked, model, across, tipWidth, axisBelow, xAxis, yAxis, tooltip, overlay, events }: {
   form: ChartForm
   data: ChartPoint[]
   series: Series[]
@@ -347,6 +363,8 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, axisBe
   model: SeriesChartModel
   /** Bars lying across, categories down the side. */
   across: boolean
+  /** The room a lying bar's value takes past its tip, or null when the bars show none. */
+  tipWidth: number | null
   /** Whether the x axis shows below; a panel above another hides it, and keeps room for its lowest value's label. */
   axisBelow: boolean
   xAxis: React.ReactNode
@@ -356,7 +374,13 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, axisBe
   events: object
 }) {
   const stack = stacked ? 'stack' : undefined
-  const top = series.filter(s => !hidden.has(s.id)).at(-1)?.key
+  const shown = series.filter(s => !hidden.has(s.id))
+  const top = shown.at(-1)?.key
+  // A lying bar's value sits past the tip of its last segment with a value.
+  const tip = (s: Series) => (entry: LabelListEntry) => {
+    const point = entry.payload as ChartPoint
+    return valued(point, shown).at(-1)?.key === s.key ? tipText(point, shown) : undefined
+  }
   // A value with gaps either side draws no line, so it gets a dot.
   const dotFor = (s: Series) => (props: { cx?: number; cy?: number; index?: number }) => {
     const i = props.index ?? -1
@@ -365,7 +389,8 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, axisBe
       ? <circle key={`${s.key}-${i}`} cx={props.cx} cy={props.cy} r={4} fill={`var(--color-${s.key})`} stroke="var(--card)" strokeWidth={2} />
       : <g key={`${s.key}-${i}`} />
   }
-  const chart = { data, margin: { top: 6, right: 12, bottom: axisBelow ? 0 : 10, left: 0 }, ...events }
+  const right = tipWidth === null ? 12 : Math.max(12, tipWidth + TIP_GAP_PX)
+  const chart = { data, margin: { top: 6, right, bottom: axisBelow ? 0 : 10, left: 0 }, ...events }
   const axes = (
     <>
       <CartesianGrid vertical={across} horizontal={!across} stroke="var(--border)" />
@@ -393,7 +418,17 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, axisBe
             stroke={stack ? 'var(--card)' : undefined}
             strokeWidth={stack ? 1 : 0}
             isAnimationActive={false}
-          />
+          >
+            {tipWidth !== null && (
+              <LabelList
+                valueAccessor={tip(s)}
+                position="right"
+                offset={TIP_GAP_PX}
+                fontSize={10}
+                fill="var(--muted-foreground)"
+              />
+            )}
+          </Bar>
         ))}
       </BarChart>
     )
@@ -524,6 +559,19 @@ function chartLabel(model: SeriesChartModel, form: ChartForm): string {
   const columns = model.panels.length > 1 ? ` in panels of ${model.panels.map(p => p.columns.join(' and ')).join('; ')}` : ''
   const over = model.kind === 'time' ? 'over time' : `by ${model.category}`
   return `${form === 'line' ? 'Line' : form === 'area' ? 'Area' : 'Bar'} chart of ${names} ${over}${columns}`
+}
+
+/** An element's width as it changes, from when it is laid out (0 before). */
+function useWidth(): [(element: HTMLElement | null) => (() => void) | undefined, number] {
+  const [width, setWidth] = useState(0)
+  const measure = useCallback((element: HTMLElement | null) => {
+    if (!element) return undefined
+    setWidth(element.clientWidth)
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)))
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  return [measure, width]
 }
 
 /** Each table's number, so a new table, a new run's, starts afresh: the hidden series come from its owner. */

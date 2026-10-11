@@ -5,8 +5,9 @@ import { shoot, useTheme, watchErrors } from '../support/screens'
 
 // Charts in the Logs explorer, for reading by eye at both sizes in both
 // themes: a time series per service from the Builder, its Area, Bars and
-// Table forms, series of Levels, the tooltip, a series hidden, a drag to
-// zoom, bars by service, a single number, and loading, empty and error.
+// Table forms, series of Levels, the tooltip, a series hidden (and still
+// hidden after a zoom), a drag to zoom, partial day bins, bars by service,
+// bars lying across, a single number, and loading, empty and error.
 
 test.beforeEach(async ({ page }, info) => { await useTheme(page, info) })
 
@@ -178,6 +179,14 @@ test.describe('Charts', () => {
     await openChart(page, 'summarize count() by message')
     await page.mouse.move(0, 0)
     await shoot(page, 'charts-many-categories')
+    expect(errors).toEqual([])
+  })
+
+  test('bars across, stacked by Level', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openChart(page, 'where level != "info"\n| summarize count() by message, level')
+    await page.mouse.move(0, 0)
+    await shoot(page, 'charts-many-categories-levels')
     expect(errors).toEqual([])
   })
 
