@@ -533,3 +533,48 @@ func TestLateLogsStoredBeforeTheirDaysSetAreFoundByTheKeysItPromotes(t *testing.
 	assertHourFiles(t, env, 123, at(12, 0), 1)
 	assertEveryReadFinds(t, env, values, attributes, "after hour 12 and the late file are exported")
 }
+
+func TestALateFileOfADayReRankedLaterIsFoundByTheKeysTheReRankPromotes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	yesterdayAt := func(hour, minute int) time.Time { return at(hour, minute).AddDate(0, 0, -1) }
+
+	// Yesterday's set fills with k000…k099, then more Logs carry x000…x009,
+	// so today's set is re-ranked: x000…x009 and k000…k089.
+	env.Clock.Set(yesterdayAt(15, 0))
+	postAndProcess(t, env, logJSON(t, "full", yesterdayAt(15, 0), numberedKeys("k", 100, "v")))
+	for i := range 3 {
+		postAndProcess(t, env, logJSON(t, fmt.Sprintf("common %d", i), yesterdayAt(15, i+1), numberedKeys("x", 10, "c")))
+	}
+
+	// Today's first Log is late, and the export at 12:30 writes it to hour
+	// 10's file before the re-rank. Then a hot Log re-ranks.
+	env.Clock.Set(at(12, 30))
+	postAndProcess(t, env, logJSON(t, "ada", at(10, 10), map[string]any{"x000": "ada", "k000": "ada"}))
+	env.ExportLogs(t)
+	postAndProcess(t, env, logJSON(t, "cy", at(12, 10), map[string]any{"x000": "cy", "k000": "cy"}))
+
+	values := []fieldValue{
+		{"x000", "ada", []string{"ada"}},
+		{"x000", "cy", []string{"cy"}},
+		{"x000", "c", []string{"common 2", "common 1", "common 0"}},
+		{"k000", "ada", []string{"ada"}},
+		{"k000", "v", []string{"full"}},
+	}
+	attributes := map[string]map[string]any{
+		"full":     numberedKeys("k", 100, "v"),
+		"common 0": numberedKeys("x", 10, "c"),
+		"common 1": numberedKeys("x", 10, "c"),
+		"common 2": numberedKeys("x", 10, "c"),
+		"ada":      {"x000": "ada", "k000": "ada"},
+		"cy":       {"x000": "cy", "k000": "cy"},
+	}
+	assertEveryReadFinds(t, env, values, attributes, "with today's set re-ranked after the file")
+
+	env.Clock.Set(at(14, 0))
+	env.ExportLogs(t)
+	assertEveryReadFinds(t, env, values, attributes, "after hour 12 is exported")
+}
