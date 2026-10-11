@@ -505,6 +505,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
             }}
             onRun={() => commit(explorer)}
             problems={problems}
+            completions={{ fields, valuesOf, source: projectQuery }}
             leaving={leaving}
             onDiscard={discardQuery}
             onStay={() => setLeaving(null)}

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { logsPath } from '../support/data'
-import { addFilter, builderRow, holdSqlQueries, last24h, openLogs, releaseSqlQueries, runBy, settled, streamRows } from '../support/logs'
+import { addFilter, builderRow, expectEditorText, holdSqlQueries, last24h, openLogs, releaseSqlQueries, runBy, settled, streamRows } from '../support/logs'
 import { expectFits, failedLoad, shoot, useTheme, watchErrors } from '../support/screens'
 
 // Every state of the Logs v1 explorer the flows click through, for reading by
@@ -227,7 +227,7 @@ test.describe('SQL mode', () => {
     await openLogs(page)
     await page.getByRole('button', { name: 'SQL', exact: true }).click()
     const box = page.getByLabel('SQL', { exact: true })
-    await expect(box).toHaveValue(/FROM logs/i)
+    await expectEditorText(box, /FROM logs/i)
     await shoot(page, 'v1-sql-waiting')
     await box.fill('SELECT service, level, count(*) AS n\nFROM logs\nGROUP BY service, level\nORDER BY n DESC')
     await box.press('Control+Enter')
@@ -244,7 +244,7 @@ test.describe('SQL mode', () => {
     const errors = watchErrors(page)
     await openLogs(page)
     await page.getByRole('button', { name: 'SQL', exact: true }).click()
-    await expect(page.getByLabel('SQL', { exact: true })).toHaveValue(/FROM logs/i)
+    await expectEditorText(page.getByLabel('SQL', { exact: true }), /FROM logs/i)
     // Hold the SQL so its run stays on screen.
     await page.route(/\/logs\/sql$/, () => {})
     await page.getByRole('button', { name: 'Run', exact: true }).click()

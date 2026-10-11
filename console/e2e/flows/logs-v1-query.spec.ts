@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { addFilter, builderRow, last24h, logCount, openLogs, runBy, settled, streamRows, summaryLine } from '../support/logs'
+import { addFilter, builderRow, expectEditorText, last24h, logCount, openLogs, runBy, settled, streamRows, summaryLine } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // Query mode: the Builder's Query as text to edit and run, by Run or
@@ -21,7 +21,7 @@ test('a Query runs by Run and by Ctrl+Enter, and a bad one shows its line and co
 
   await page.getByRole('button', { name: 'Query', exact: true }).click()
   const box = page.getByLabel('Query', { exact: true })
-  await expect(box).toHaveValue(SOURCE)
+  await expectEditorText(box, SOURCE)
   await expect(page).toHaveURL(/mode=query/)
 
   // Run.
@@ -82,7 +82,7 @@ test('back to the Builder: silent when it can show the Query, asking when it can
 
   await page.getByRole('button', { name: 'Stay in Query' }).click()
   await expect(page.getByText(/The Builder can't show/)).toHaveCount(0)
-  await expect(page.getByLabel('Query', { exact: true })).toHaveValue(unshowable)
+  await expectEditorText(page.getByLabel('Query', { exact: true }), unshowable)
   await expect(page).toHaveURL(/mode=query/)
 
   await page.getByRole('button', { name: 'Builder', exact: true }).click()
@@ -144,7 +144,7 @@ test('an untouched Query is no edit: running it or going back to the Builder add
 
   // From the Builder into Query mode and back, the same.
   await page.getByRole('button', { name: 'Query', exact: true }).click()
-  await expect(page.getByLabel('Query', { exact: true })).toHaveValue(SOURCE)
+  await expectEditorText(page.getByLabel('Query', { exact: true }), SOURCE)
   await page.getByRole('button', { name: 'Builder', exact: true }).click()
   await expect(page).toHaveURL(/mode=builder/)
   expect(await entries()).toBe(opened)
@@ -156,12 +156,12 @@ test('in Query mode a Level count and Hide add wheres after the Query, which sta
   // A Query-mode link with no Query: the box holds the Project's slug, as switching to Query mode writes it.
   await openLogs(page, last24h('query'))
   const box = page.getByLabel('Query', { exact: true })
-  await expect(box).toHaveValue(SOURCE)
+  await expectEditorText(box, SOURCE)
 
   const warn = summaryLine(page).getByRole('button', { name: /^warn [\d,]+$/ })
   const warnCount = Number((await warn.innerText()).replace(/[^\d]/g, ''))
   await runBy(page, () => warn.click())
-  await expect(box).toHaveValue(`${SOURCE}\n| where level == "warn"`)
+  await expectEditorText(box, `${SOURCE}\n| where level == "warn"`)
   expect(await logCount(page)).toBe(warnCount)
 
   // Hide a service from the inspector: a where after the last one.
@@ -171,7 +171,7 @@ test('in Query mode a Level count and Hide add wheres after the Query, which sta
   const service = (await line.locator('> div').nth(1).innerText()).trim()
   await line.hover()
   await runBy(page, () => line.getByRole('button', { name: `Hide service == "${service}"` }).click())
-  await expect(box).toHaveValue(`${SOURCE}\n| where level == "warn"\n| where service != "${service}"`)
+  await expectEditorText(box, `${SOURCE}\n| where level == "warn"\n| where service != "${service}"`)
   expect(await logCount(page)).toBeLessThan(warnCount)
   expect(errors).toEqual([])
 })

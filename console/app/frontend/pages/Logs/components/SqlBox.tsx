@@ -1,3 +1,5 @@
+import { QueryEditor } from '@/components/QueryEditor'
+
 interface SqlBoxProps {
   text: string
   onChange: (text: string) => void
@@ -12,21 +14,15 @@ interface SqlBoxProps {
 export function SqlBox({ text, onChange, onRun, leaving, onDiscard, onStay }: SqlBoxProps) {
   return (
     <div className="border-b bg-muted/30 px-3 py-2">
-      <textarea
+      <QueryEditor
         value={text}
-        autoFocus
-        spellCheck={false}
-        rows={Math.min(12, text.split('\n').length + 1)}
-        onChange={e => onChange(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            onRun()
-          }
-        }}
-        aria-label="SQL"
+        onChange={onChange}
+        onRun={onRun}
+        language="sql"
+        label="SQL"
         placeholder="SELECT level, count(*) FROM logs GROUP BY level"
-        className="w-full resize-y rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] leading-5 outline-none focus:ring-1 focus:ring-primary"
+        maxLines={12}
+        autoFocus
       />
       <div className="mt-0.5 text-[11px] text-muted-foreground">
         <code>logs</code> holds the Logs of the Project and time range above. SQL runs as written, only when you press Run.

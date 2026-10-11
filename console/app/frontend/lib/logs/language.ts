@@ -38,12 +38,14 @@ export interface FunctionInfo {
   /** Between the parentheses, such as `x, size`; empty for none. */
   args: string
   info: string
+  /** What picking it writes, when more than its parentheses; `|` marks where the cursor lands. */
+  write?: string
 }
 
 /** Functions of one row, for any expression. */
 export const SCALAR_FUNCTIONS: FunctionInfo[] = [
-  { name: 'bin', args: 'x, size', info: 'x rounded down to a multiple of size, as bin(time, 5m).' },
-  { name: 'bin_auto', args: 'time', info: 'time rounded down to a bin size the time range picks.' },
+  { name: 'bin', args: 'x, size', info: 'x rounded down to a multiple of size, as bin(time, 5m).', write: 'bin(time, |)' },
+  { name: 'bin_auto', args: 'time', info: 'time rounded down to a bin size the time range picks.', write: 'bin_auto(time)|' },
   { name: 'ago', args: 'timespan', info: 'The time a timespan before the run, as ago(1h).' },
   { name: 'now', args: '', info: 'The time of the run.' },
   { name: 'tostring', args: 'x', info: 'x as a string.' },
