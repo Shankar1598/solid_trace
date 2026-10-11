@@ -317,9 +317,11 @@ function keepSeries(
   const units = groupBy(drawn, m => unitOf(columns[m].name, columns[m].agg))
   const byCombo = splits.length > 0 && units.length > 1 && units.every(unit => unit.length === 1)
   const empty = order.flatMap(combo => drawn.filter(m => !hasValues(combo, m)).map(m => nameOf(combo, m)))
+  // Ranked once each; ties keep the rows' order, as sort is stable.
+  const ranks = new Map(order.map(combo => [combo, rank(combo)]))
   const kept = order
     .filter(combo => drawn.some(m => hasValues(combo, m)))
-    .sort((a, b) => rank(a) - rank(b) || order.indexOf(a) - order.indexOf(b))
+    .sort((a, b) => ranks.get(a)! - ranks.get(b)!)
     .slice(0, byCombo ? MAX_SERIES : Math.max(1, Math.floor(MAX_SERIES / drawn.length)))
 
   const series: (Series & { source: string })[] = []
