@@ -1,7 +1,7 @@
 // A chart's axes and numbers: where ticks fall and how they read, times in
 // the viewer's local time and values on round numbers, written to the
 // precision their step needs.
-import { addDays, format, startOfDay } from 'date-fns'
+import { addDays, addHours, format, startOfDay, startOfHour } from 'date-fns'
 
 const SECOND = 1000
 const MINUTE = 60 * SECOND
@@ -16,20 +16,42 @@ const STEPS = [
   DAY, 2 * DAY, 7 * DAY, 14 * DAY, 30 * DAY,
 ]
 
-/** Local times to a bin's precision, with the date once the range spans days. */
+/**
+ * Local times to a bin's precision, with the date once the range spans days.
+ * Bins of a day or more start at UTC midnights, so away from UTC they start
+ * at a local time that their label shows, lest a bar under a day's tick read
+ * as the day before.
+ */
 export function timePattern(binSeconds: number, { from, to }: { from: Date; to: Date }): string {
-  if (binSeconds >= 86_400) return 'MMM dd'
+  if (binSeconds >= 86_400) {
+    const step = binSeconds * 1000
+    const firstBin = Math.floor(from.getTime() / step) * step
+    return startOfDay(firstBin).getTime() === firstBin ? 'MMM dd' : 'MMM dd HH:mm'
+  }
   const time = binSeconds < 60 ? 'HH:mm:ss' : 'HH:mm'
   return format(from, 'yyyyMMdd') === format(to, 'yyyyMMdd') ? time : `MMM dd ${time}`
 }
 
-/** At most max ticks in [from, to] (epoch ms), on round times: the smallest step that fits. */
+/**
+ * At most max ticks in [from, to] (epoch ms), on round local times: the
+ * smallest step that fits. Steps under an hour fall on whole steps of the
+ * local clock, hours on local hours that the step divides (00:00, 06:00, …
+ * whatever the zone's offset), and days on local midnights.
+ */
 export function timeTicks(from: number, to: number, max: number): number[] {
   if (to <= from) return []
   const step = STEPS.find(s => (to - from) / s <= max) ?? STEPS[STEPS.length - 1]
   const ticks: number[] = []
+  if (step < HOUR) {
+    const offset = -new Date(from).getTimezoneOffset() * MINUTE
+    for (let t = Math.ceil((from + offset) / step) * step - offset; t <= to; t += step) ticks.push(t)
+    return ticks
+  }
   if (step < DAY) {
-    for (let t = Math.ceil(from / step) * step; t <= to; t += step) ticks.push(t)
+    const hours = step / HOUR
+    for (let t = startOfHour(from); t.getTime() <= to; t = addHours(t, 1)) {
+      if (t.getTime() >= from && t.getHours() % hours === 0) ticks.push(t.getTime())
+    }
     return ticks
   }
   const days = step / DAY

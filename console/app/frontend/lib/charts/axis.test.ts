@@ -11,12 +11,11 @@ describe('time labels', () => {
     expect(timePattern(300, day)).toBe('HH:mm')
     expect(timePattern(10, day)).toBe('HH:mm:ss')
     expect(timePattern(300, days)).toBe('MMM dd HH:mm')
-    expect(timePattern(86_400, days)).toBe('MMM dd')
   })
 })
 
 describe('time ticks', () => {
-  it('fall on whole steps from the epoch, the smallest step that gives at most max', () => {
+  it('fall on whole steps of the local clock, the smallest step that gives at most max', () => {
     const ticks = timeTicks(at('2026-10-09T10:03:00Z'), at('2026-10-09T11:03:00Z'), 4)
 
     expect(ticks.map(t => new Date(t).toISOString())).toEqual([
