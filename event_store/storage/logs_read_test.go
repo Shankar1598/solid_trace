@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -77,15 +78,18 @@ func TestAScanPastItsContextIsStoppedPartWayAndItsConnectionStillReads(t *testin
 		// The read begins well within 250 ms, so the context ends while
 		// DuckDB runs the query.
 		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-		began := time.Now()
+		deadline, _ := ctx.Deadline()
 		err := s.scan(ctx)
-		took := time.Since(began)
+		ended := time.Now()
 		cancel()
-		if err == nil {
-			t.Errorf("Expected a scan of %s past its context to fail", s.name)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Expected a scan of %s past its context to fail with the deadline, got %v", s.name, err)
 		}
-		if took > 5*time.Second {
-			t.Errorf("Expected the scan of %s stopped soon after 250 ms, took %v", s.name, took)
+		if ended.Before(deadline) {
+			t.Errorf("Expected the scan of %s to run until its deadline, it ended %v before", s.name, deadline.Sub(ended))
+		}
+		if late := ended.Sub(deadline); late > 5*time.Second {
+			t.Errorf("Expected the scan of %s stopped soon after its deadline, it ended %v after", s.name, late)
 		}
 
 		// The connection it gave back reads as usual.
