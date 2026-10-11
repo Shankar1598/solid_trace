@@ -41,7 +41,7 @@ export interface Series {
 /** One bin or category: x is a bin's start (epoch ms) or a category's name. */
 export type ChartPoint = { x: number | string } & { [key: string]: number | string | null }
 
-interface Plot {
+interface SeriesSet {
   series: Series[]
   points: ChartPoint[]
   /** Series left out past MAX_SERIES. */
@@ -53,8 +53,8 @@ interface Plot {
 export type ChartModel =
   | { kind: 'none' }
   | { kind: 'stat'; name: string; value: number | null }
-  | ({ kind: 'time'; binSeconds: number; from: Date; to: Date } & Plot)
-  | ({ kind: 'bars'; category: string; omittedCategories: number } & Plot)
+  | ({ kind: 'time'; binSeconds: number; from: Date; to: Date } & SeriesSet)
+  | ({ kind: 'bars'; category: string; omittedCategories: number } & SeriesSet)
 
 /** How a model can be drawn. */
 export type ChartForm = 'line' | 'area' | 'bars' | 'stat'
@@ -109,13 +109,13 @@ export function chartOf(table: LogTable): ChartModel {
       return typeof time === 'string' ? new Date(time).getTime() : null
     }, measures, splits)
     if (!pivot) return { kind: 'none' }
-    const plot = keepSeries(pivot, columns, measures, splits, table.fill_gaps === true)
+    const drawn = keepSeries(pivot, columns, measures, splits, table.fill_gaps === true)
     const times = [...pivot.xs.keys()].map(Number).sort((a, b) => a - b)
     const from = table.from ? new Date(table.from) : new Date(times[0])
     const to = table.to ? new Date(table.to) : new Date(times[times.length - 1] + binSeconds * 1000)
-    if (table.fill_gaps) fillBins(plot, binSeconds, from, to)
-    plot.points.sort((a, b) => (a.x as number) - (b.x as number))
-    return { kind: 'time', binSeconds, from, to, ...plot }
+    if (table.fill_gaps) fillBins(drawn, binSeconds, from, to)
+    drawn.points.sort((a, b) => (a.x as number) - (b.x as number))
+    return { kind: 'time', binSeconds, from, to, ...drawn }
   }
 
   // Bars: only a summarize's table, with a column to name each bar.
@@ -123,14 +123,14 @@ export function chartOf(table: LogTable): ChartModel {
   const [category, ...rest] = splits
   const pivot = pivotRows(table, i => splitName(columns[category].name, cell(rows[i][category])), measures, rest)
   if (!pivot) return { kind: 'none' }
-  const plot = keepSeries(pivot, columns, measures, rest, false)
-  const omittedCategories = Math.max(0, plot.points.length - MAX_BARS)
+  const drawn = keepSeries(pivot, columns, measures, rest, false)
+  const omittedCategories = Math.max(0, drawn.points.length - MAX_BARS)
   if (omittedCategories > 0) {
-    const sum = (p: ChartPoint) => plot.series.reduce((s, series) => s + (typeof p[series.key] === 'number' ? (p[series.key] as number) : 0), 0)
-    const kept = new Set([...plot.points].sort((a, b) => sum(b) - sum(a)).slice(0, MAX_BARS))
-    plot.points = plot.points.filter(p => kept.has(p))
+    const sum = (p: ChartPoint) => drawn.series.reduce((s, series) => s + (typeof p[series.key] === 'number' ? (p[series.key] as number) : 0), 0)
+    const kept = new Set([...drawn.points].sort((a, b) => sum(b) - sum(a)).slice(0, MAX_BARS))
+    drawn.points = drawn.points.filter(p => kept.has(p))
   }
-  return { kind: 'bars', category: columns[category].name, omittedCategories, ...plot }
+  return { kind: 'bars', category: columns[category].name, omittedCategories, ...drawn }
 }
 
 /**
@@ -191,7 +191,7 @@ function pivotRows(
  * their Level's colour. A missing value is a zero where an empty bin has no
  * Logs and the aggregate counts, and a gap otherwise.
  */
-function keepSeries(pivot: Pivot, columns: TableColumn[], measures: number[], splits: number[], filled: boolean): Plot {
+function keepSeries(pivot: Pivot, columns: TableColumn[], measures: number[], splits: number[], filled: boolean): SeriesSet {
   const drawn = measures.slice(0, MAX_SERIES)
   const source = (combo: string, m: number) => `${combo}\u0000${m}`
   const totals = new Map<string, number>()
@@ -249,16 +249,16 @@ function keepSeries(pivot: Pivot, columns: TableColumn[], measures: number[], sp
 }
 
 /** Adds the bins with no row from the range's first bin to its last, unless there would be too many. */
-function fillBins(plot: Plot, binSeconds: number, from: Date, to: Date) {
+function fillBins(drawn: SeriesSet, binSeconds: number, from: Date, to: Date) {
   const step = binSeconds * 1000
   const first = Math.floor(from.getTime() / step) * step
   if ((to.getTime() - first) / step > MAX_FILLED_BINS) return
-  const have = new Set(plot.points.map(p => p.x))
+  const have = new Set(drawn.points.map(p => p.x))
   for (let x = first; x < to.getTime(); x += step) {
     if (have.has(x)) continue
     const point: ChartPoint = { x }
-    for (const s of plot.series) point[s.key] = emptyValue(s, true)
-    plot.points.push(point)
+    for (const s of drawn.series) point[s.key] = emptyValue(s, true)
+    drawn.points.push(point)
   }
 }
 

@@ -89,7 +89,7 @@ The Logs explorer's default way to make a Query without typing it: filter chips 
 _Avoid_: query builder, visual mode, simple mode
 
 **Chart**:
-A Query's table drawn as a time series, bars or a single number. Only a table its Query's last summarize shapes is drawn: the time bins are its x, the aggregates its series, and the by columns split them. The Logs explorer shows it above the table.
+A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single number. A time series needs the last summarize's time bins, which are its x; its number columns are the series and its by columns split them. Bars need a summarize with no time bin. Any table of one row and one number is a single number. The Logs explorer shows it above the table.
 _Avoid_: graph, plot, visualization
 
 **Integration**:
@@ -117,7 +117,7 @@ _Avoid_: app, tenant
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
 - A **Project**'s **Retention** decides when its **Logs** are deleted
-- A **Chart** draws one **Query**'s table; the **Logs explorer** shows it above the table
+- A **Chart** draws one **Query**'s or **SQL query**'s table; the **Logs explorer** shows it above the table
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 

@@ -14,14 +14,14 @@ function table(columns: TableColumn[], rows: unknown[][], extra: Partial<LogTabl
 }
 
 /** The model's series and points, for a time series or bars. */
-function plot(model: ChartModel) {
-  if (model.kind !== 'time' && model.kind !== 'bars') throw new Error(`expected a plot, got ${model.kind}`)
+function drawable(model: ChartModel) {
+  if (model.kind !== 'time' && model.kind !== 'bars') throw new Error(`expected series, got ${model.kind}`)
   return model
 }
 
 describe('a time series', () => {
   it('draws each number column over the bin column, oldest first', () => {
-    const model = plot(chartOf(table([TIME, COUNT, AVG], [
+    const model = drawable(chartOf(table([TIME, COUNT, AVG], [
       ['2026-10-09T10:05:00Z', 4, 12.5],
       ['2026-10-09T10:00:00Z', 3, 10],
     ])))
@@ -35,7 +35,7 @@ describe('a time series', () => {
   })
 
   it('pivots long rows to one series per value of a string column', () => {
-    const model = plot(chartOf(table([TIME, SERVICE, COUNT], [
+    const model = drawable(chartOf(table([TIME, SERVICE, COUNT], [
       ['2026-10-09T10:00:00Z', 'api', 12],
       ['2026-10-09T10:00:00Z', 'web', 3],
       ['2026-10-09T10:05:00Z', 'api', 9],
@@ -54,7 +54,7 @@ describe('a time series', () => {
 
   it('names a series by its split values and, with several number columns, its column', () => {
     const ok: TableColumn = { name: 'ok', type: 'bool' }
-    const model = plot(chartOf(table([TIME, SERVICE, ok, COUNT, AVG], [
+    const model = drawable(chartOf(table([TIME, SERVICE, ok, COUNT, AVG], [
       ['2026-10-09T10:00:00Z', 'api', true, 12, 40],
       ['2026-10-09T10:00:00Z', null, false, 1, 9],
     ])))
@@ -70,7 +70,7 @@ describe('a time series', () => {
 
   it('splits by a number column that comes before the aggregates, as a by column does', () => {
     const status: TableColumn = { name: 'status', type: 'number' }
-    const model = plot(chartOf(table([TIME, status, COUNT], [
+    const model = drawable(chartOf(table([TIME, status, COUNT], [
       ['2026-10-09T10:00:00Z', 200, 12],
       ['2026-10-09T10:00:00Z', 500, 2],
     ])))
@@ -80,7 +80,7 @@ describe('a time series', () => {
 
   it('draws a number column after the aggregates, such as arithmetic over them', () => {
     const rate: TableColumn = { name: 'per_minute', type: 'number' }
-    const model = plot(chartOf(table([TIME, COUNT, rate], [['2026-10-09T10:00:00Z', 10, 2]])))
+    const model = drawable(chartOf(table([TIME, COUNT, rate], [['2026-10-09T10:00:00Z', 10, 2]])))
 
     expect(model.series.map(s => s.name)).toEqual(['count_', 'per_minute'])
   })
@@ -99,7 +99,7 @@ describe('filling empty bins', () => {
   const range = { from: '2026-10-09T09:58:00Z', to: '2026-10-09T10:15:00Z' }
 
   it('fills the bins from the range\'s first to its last with zero counts', () => {
-    const model = plot(chartOf(table([TIME, COUNT], [['2026-10-09T10:05:00Z', 4]], { fill_gaps: true, ...range })))
+    const model = drawable(chartOf(table([TIME, COUNT], [['2026-10-09T10:05:00Z', 4]], { fill_gaps: true, ...range })))
 
     // Bins start on whole multiples of their size, so the first starts before from.
     expect(model.points).toEqual([
@@ -115,13 +115,13 @@ describe('filling empty bins', () => {
       TIME, { name: 'n', type: 'number', agg: 'countif' }, { name: 'd', type: 'number', agg: 'dcount' }, { name: 's', type: 'number', agg: 'sum' },
       AVG, { name: 'lo', type: 'number', agg: 'min' }, { name: 'hi', type: 'number', agg: 'max' }, { name: 'p', type: 'number', agg: 'percentile' },
     ]
-    const model = plot(chartOf(table(columns, [['2026-10-09T10:05:00Z', 1, 1, 1, 1, 1, 1, 1]], { fill_gaps: true, ...range })))
+    const model = drawable(chartOf(table(columns, [['2026-10-09T10:05:00Z', 1, 1, 1, 1, 1, 1, 1]], { fill_gaps: true, ...range })))
 
     expect(model.points[1]).toEqual({ x: at('2026-10-09T10:00:00Z'), s0: 0, s1: 0, s2: 0, s3: null, s4: null, s5: null, s6: null })
   })
 
   it('fills a series missing from a bin the same way', () => {
-    const model = plot(chartOf(table([TIME, SERVICE, COUNT], [
+    const model = drawable(chartOf(table([TIME, SERVICE, COUNT], [
       ['2026-10-09T10:00:00Z', 'api', 12],
       ['2026-10-09T10:00:00Z', 'web', 3],
       ['2026-10-09T10:05:00Z', 'api', 9],
@@ -131,7 +131,7 @@ describe('filling empty bins', () => {
   })
 
   it('fills nothing when the table says a missing bin may have Logs', () => {
-    const model = plot(chartOf(table([TIME, SERVICE, COUNT], [
+    const model = drawable(chartOf(table([TIME, SERVICE, COUNT], [
       ['2026-10-09T10:00:00Z', 'api', 12],
       ['2026-10-09T10:00:00Z', 'web', 3],
       ['2026-10-09T10:10:00Z', 'api', 9],
@@ -145,7 +145,7 @@ describe('filling empty bins', () => {
 
   it('fills no bins when there would be too many to draw', () => {
     const second: TableColumn = { ...TIME, bin_seconds: 1 }
-    const model = plot(chartOf(table([second, COUNT], [['2026-10-09T10:00:00Z', 1]], {
+    const model = drawable(chartOf(table([second, COUNT], [['2026-10-09T10:00:00Z', 1]], {
       fill_gaps: true, from: '2026-10-01T00:00:00Z', to: '2026-10-09T12:00:00Z',
     })))
 
@@ -159,7 +159,7 @@ describe('many series', () => {
   const rows = services.flatMap((s, i) => [['2026-10-09T10:00:00Z', s, i + 1], ['2026-10-09T10:05:00Z', s, i + 1]])
 
   it('keeps the series with the largest totals, largest first, and says how many were left out', () => {
-    const model = plot(chartOf(table([TIME, SERVICE, COUNT], rows)))
+    const model = drawable(chartOf(table([TIME, SERVICE, COUNT], rows)))
 
     expect(model.series.map(s => s.name)).toEqual(services.slice(4).reverse())
     expect(model.series[0].total).toBe(2 * (MAX_SERIES + 4))
@@ -169,14 +169,14 @@ describe('many series', () => {
 
   it('keeps every number column of the split values it keeps', () => {
     const wide = services.flatMap((s, i) => [['2026-10-09T10:00:00Z', s, i + 1, 10]])
-    const model = plot(chartOf(table([TIME, SERVICE, COUNT, AVG], wide)))
+    const model = drawable(chartOf(table([TIME, SERVICE, COUNT, AVG], wide)))
 
     expect(model.series.map(s => s.name)).toEqual(services.slice(-MAX_SERIES / 2).reverse().flatMap(s => [`${s} · count_`, `${s} · avg_duration_ms`]))
     expect(model.omitted).toBe(2 * (MAX_SERIES + 4) - MAX_SERIES)
   })
 
   it('colours the series with the palette in order, never twice', () => {
-    const model = plot(chartOf(table([TIME, SERVICE, COUNT], rows)))
+    const model = drawable(chartOf(table([TIME, SERVICE, COUNT], rows)))
 
     expect(model.series.map(s => s.color)).toEqual(Array.from({ length: MAX_SERIES }, (_, i) => `var(--chart-${i + 1})`))
   })
@@ -186,7 +186,7 @@ describe('series of Levels', () => {
   const LEVEL: TableColumn = { name: 'level', type: 'string' }
 
   it('wear their Level\'s colour, fatal first so it stacks on the axis', () => {
-    const model = plot(chartOf(table([TIME, LEVEL, COUNT], [
+    const model = drawable(chartOf(table([TIME, LEVEL, COUNT], [
       ['2026-10-09T10:00:00Z', 'info', 50],
       ['2026-10-09T10:00:00Z', 'error', 4],
       ['2026-10-09T10:00:00Z', null, 2],
@@ -204,8 +204,8 @@ describe('series of Levels', () => {
   })
 
   it('wear the palette when another column splits them too, or there are several numbers', () => {
-    const split = plot(chartOf(table([TIME, LEVEL, SERVICE, COUNT], [['2026-10-09T10:00:00Z', 'info', 'api', 5]])))
-    const twoNumbers = plot(chartOf(table([TIME, LEVEL, COUNT, AVG], [['2026-10-09T10:00:00Z', 'info', 5, 3]])))
+    const split = drawable(chartOf(table([TIME, LEVEL, SERVICE, COUNT], [['2026-10-09T10:00:00Z', 'info', 'api', 5]])))
+    const twoNumbers = drawable(chartOf(table([TIME, LEVEL, COUNT, AVG], [['2026-10-09T10:00:00Z', 'info', 5, 3]])))
 
     expect(split.series[0].color).toBe('var(--chart-1)')
     expect(twoNumbers.series.map(s => s.color)).toEqual(['var(--chart-1)', 'var(--chart-2)'])
@@ -214,7 +214,7 @@ describe('series of Levels', () => {
 
 describe('bars', () => {
   it('draw a summarize with no time bin, a bar per value of its first string column', () => {
-    const model = plot(chartOf(table([SERVICE, COUNT], [['api', 12], ['billing', 3], ['web', 7]])))
+    const model = drawable(chartOf(table([SERVICE, COUNT], [['api', 12], ['billing', 3], ['web', 7]])))
 
     expect(model).toMatchObject({ kind: 'bars', category: 'service', omitted: 0, omittedCategories: 0 })
     expect(model.series.map(s => s.name)).toEqual(['count_'])
@@ -223,7 +223,7 @@ describe('bars', () => {
 
   it('split each bar by the other string columns', () => {
     const LEVEL: TableColumn = { name: 'level', type: 'string' }
-    const model = plot(chartOf(table([SERVICE, LEVEL, COUNT], [
+    const model = drawable(chartOf(table([SERVICE, LEVEL, COUNT], [
       ['api', 'info', 10], ['api', 'error', 2], ['web', 'info', 7],
     ])))
 
@@ -233,7 +233,7 @@ describe('bars', () => {
 
   it('keep the categories with the largest totals, in the table\'s order', () => {
     const rows = Array.from({ length: MAX_BARS + 2 }, (_, i) => [`user-${i}`, i === 0 ? 1000 : i])
-    const model = plot(chartOf(table([{ name: 'user', type: 'string' }, COUNT], rows)))
+    const model = drawable(chartOf(table([{ name: 'user', type: 'string' }, COUNT], rows)))
 
     expect(model.points).toHaveLength(MAX_BARS)
     expect(model.points[0].x).toBe('user-0')
@@ -248,14 +248,14 @@ describe('bars', () => {
 
 describe('stacking', () => {
   it('stacks counts and sums of one column', () => {
-    expect(plot(chartOf(table([TIME, SERVICE, COUNT], [['2026-10-09T10:00:00Z', 'api', 1]]))).stacked).toBe(true)
-    expect(plot(chartOf(table([SERVICE, { name: 's', type: 'number', agg: 'sum' }], [['api', 1]]))).stacked).toBe(true)
+    expect(drawable(chartOf(table([TIME, SERVICE, COUNT], [['2026-10-09T10:00:00Z', 'api', 1]]))).stacked).toBe(true)
+    expect(drawable(chartOf(table([SERVICE, { name: 's', type: 'number', agg: 'sum' }], [['api', 1]]))).stacked).toBe(true)
   })
 
   it('never stacks values that do not add up, or two columns', () => {
-    expect(plot(chartOf(table([TIME, SERVICE, AVG], [['2026-10-09T10:00:00Z', 'api', 1]]))).stacked).toBe(false)
-    expect(plot(chartOf(table([TIME, { name: 'd', type: 'number', agg: 'dcount' }], [['2026-10-09T10:00:00Z', 1]]))).stacked).toBe(false)
-    expect(plot(chartOf(table([TIME, COUNT, { name: 's', type: 'number', agg: 'sum' }], [['2026-10-09T10:00:00Z', 1, 2]]))).stacked).toBe(false)
+    expect(drawable(chartOf(table([TIME, SERVICE, AVG], [['2026-10-09T10:00:00Z', 'api', 1]]))).stacked).toBe(false)
+    expect(drawable(chartOf(table([TIME, { name: 'd', type: 'number', agg: 'dcount' }], [['2026-10-09T10:00:00Z', 1]]))).stacked).toBe(false)
+    expect(drawable(chartOf(table([TIME, COUNT, { name: 's', type: 'number', agg: 'sum' }], [['2026-10-09T10:00:00Z', 1, 2]]))).stacked).toBe(false)
   })
 })
 

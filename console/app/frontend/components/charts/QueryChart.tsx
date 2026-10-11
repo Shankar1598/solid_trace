@@ -42,7 +42,7 @@ export function QueryChart({ table, form, onZoom, actions, className }: QueryCha
       </div>
     )
   }
-  return <Plot key={tableKey(table)} model={model} form={drawn} onZoom={onZoom} actions={actions} className={className} />
+  return <SeriesChart key={tableKey(table)} model={model} form={drawn} onZoom={onZoom} actions={actions} className={className} />
 }
 
 /** One number: its column's name over it, large. */
@@ -57,10 +57,10 @@ function StatTile({ name, value }: { name: string; value: number | null }) {
   )
 }
 
-type PlotModel = Extract<ChartModel, { kind: 'time' | 'bars' }>
+type SeriesChartModel = Extract<ChartModel, { kind: 'time' | 'bars' }>
 
-function Plot({ model, form, onZoom, actions, className }: {
-  model: PlotModel; form: ChartForm; onZoom?: QueryChartProps['onZoom']; actions?: React.ReactNode; className?: string
+function SeriesChart({ model, form, onZoom, actions, className }: {
+  model: SeriesChartModel; form: ChartForm; onZoom?: QueryChartProps['onZoom']; actions?: React.ReactNode; className?: string
 }) {
   const [hidden, setHidden] = useState<Set<string>>(() => new Set())
   const [drag, setDrag] = useState<{ start: number; end: number } | null>(null)
@@ -262,7 +262,7 @@ function Plot({ model, form, onZoom, actions, className }: {
  * a stroke for lines and a block for bars and areas; the text stays in ink.
  */
 function Legend({ model, form, hidden, onToggle }: {
-  model: PlotModel; form: ChartForm; hidden: Set<string>; onToggle: (key: string) => void
+  model: SeriesChartModel; form: ChartForm; hidden: Set<string>; onToggle: (key: string) => void
 }) {
   const notes = [
     model.omitted > 0 && {
@@ -339,7 +339,7 @@ function extent(points: ChartPoint[], series: Series[], stacked: boolean): [numb
 }
 
 /** What the chart shows, for a screen reader: its series and what they are drawn over. */
-function chartLabel(model: PlotModel, form: ChartForm): string {
+function chartLabel(model: SeriesChartModel, form: ChartForm): string {
   const names = model.series.map((s: Series) => s.name).join(', ')
   const over = model.kind === 'time' ? 'over time' : `by ${model.category}`
   return `${form === 'line' ? 'Line' : form === 'area' ? 'Area' : 'Bar'} chart of ${names} ${over}`
