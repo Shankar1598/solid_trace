@@ -130,8 +130,9 @@ func hotTable(projectID uint32) string {
 // batch is the id of the Log batch the Log came in. Log batch ids follow the
 // order Log processing commits them in, which Log ids don't, so a read of the
 // Logs ingested after a batch goes by it (ScanLogsIngestedAfter). It is
-// internal: no Query, Field, Log or SQL query sees it. It is NULL for a Log
-// stored before it was added.
+// internal: it is no Field, so no Query or Log shows it, and the logs view
+// of SQL queries leaves it out. It is NULL for a Log stored before it was
+// added.
 const hotTableColumns = `
 	id UUID,
 	time TIMESTAMP,
