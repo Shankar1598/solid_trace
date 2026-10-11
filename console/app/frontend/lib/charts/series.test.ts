@@ -342,7 +342,18 @@ describe('bars', () => {
 
     expect(model).toMatchObject({ kind: 'bars', category: 'service', omitted: 0, omittedCategories: 0 })
     expect(model.series.map(s => s.name)).toEqual(['count_'])
-    expect(model.points).toEqual([{ x: 'api', s0: 12 }, { x: 'billing', s0: 3 }, { x: 'web', s0: 7 }])
+    // Largest first, so the bars read as a ranking.
+    expect(model.points).toEqual([{ x: 'api', s0: 12 }, { x: 'web', s0: 7 }, { x: 'billing', s0: 3 }])
+  })
+
+  it('keep the order of Levels and of numbers, which have one of their own', () => {
+    const LEVEL: TableColumn = { name: 'level', type: 'string' }
+    const status: TableColumn = { name: 'http.status', type: 'dynamic' }
+    const levels = drawable(chartOf(table([LEVEL, COUNT], [['debug', 40], ['error', 3], ['info', 90], [null, 5]])))
+    const statuses = drawable(chartOf(table([status, COUNT], [[500, 2], [200, 90], [404, 7]])))
+
+    expect(levels.points.map(p => p.x)).toEqual(['error', 'info', 'debug', 'no Level'])
+    expect(statuses.points.map(p => p.x)).toEqual(['200', '404', '500'])
   })
 
   it('split each bar by the other string columns', () => {
@@ -355,12 +366,12 @@ describe('bars', () => {
     expect(model.points).toEqual([{ x: 'api', s0: 2, s1: 10 }, { x: 'web', s0: null, s1: 7 }])
   })
 
-  it('keep the categories with the largest totals, in the table\'s order', () => {
+  it('keep the categories with the largest totals, largest first', () => {
     const rows = Array.from({ length: MAX_BARS + 2 }, (_, i) => [`user-${i}`, i === 0 ? 1000 : i])
     const model = drawable(chartOf(table([{ name: 'user', type: 'string' }, COUNT], rows)))
 
     expect(model.points).toHaveLength(MAX_BARS)
-    expect(model.points[0].x).toBe('user-0')
+    expect(model.points.slice(0, 3).map(p => p.x)).toEqual(['user-0', `user-${MAX_BARS + 1}`, `user-${MAX_BARS}`])
     expect(model.points.map(p => p.x)).not.toContain('user-1')
     expect(model).toMatchObject({ omittedCategories: 2 })
     expect(legendNotes(model)).toEqual([{ text: `the top ${MAX_BARS} of ${MAX_BARS + 2} user values`, why: `Only the ${MAX_BARS} bars with the largest totals are drawn.` }])

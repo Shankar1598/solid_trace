@@ -139,6 +139,22 @@ test.describe('Charts', () => {
     expect(errors).toEqual([])
   })
 
+  test('bars across for many categories', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openChart(page, 'summarize count() by message')
+    await page.mouse.move(0, 0)
+    await shoot(page, 'charts-many-categories')
+    expect(errors).toEqual([])
+  })
+
+  test('bars by a number Attribute, in its own order', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openChart(page, 'summarize count() by http.status')
+    await page.mouse.move(0, 0)
+    await shoot(page, 'charts-bars-status')
+    expect(errors).toEqual([])
+  })
+
   test('a single number', async ({ page }) => {
     const errors = watchErrors(page)
     await openChart(page, 'summarize count()')

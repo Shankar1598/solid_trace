@@ -39,6 +39,12 @@ const TIME_TICKS = 6
 /** A value tick's character width at 10px in the mono font, and the room beside its text. */
 const TICK_CHAR_PX = 6
 const TICK_PAD_PX = 12
+/** Bars over more categories than this, or with longer names, lie across with their names beside them. */
+const UPRIGHT_BARS = 8
+const UPRIGHT_NAME = 12
+/** A lying bar's band, and the most characters of a category's name beside it. */
+const BAND_PX = 20
+const NAME_CHARS = 20
 
 /**
  * A Query's table drawn as a time series (line, area or bars), bars over
@@ -112,6 +118,11 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
   const pattern = time ? timePattern(time.binSeconds, time) : ''
 
   // Each panel's value axis, over the series shown; one width for all, so their plots line up.
+  // Many categories, or long names, read best as bars lying across, names beside them, the chart as tall as they need.
+  const names = model.kind === 'bars' ? model.points.map(p => String(p.x)) : []
+  const across = names.length > UPRIGHT_BARS || names.some(n => n.length > UPRIGHT_NAME)
+  const nameWidth = Math.min(NAME_CHARS, Math.max(0, ...names.map(n => n.length))) * TICK_CHAR_PX + TICK_PAD_PX
+
   const several = model.panels.length > 1
   const panels = model.panels.map(panel => {
     const series = model.series.filter(s => panel.keys.includes(s.key))
@@ -164,7 +175,11 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
         {panels.map(({ panel, series, stacked, values, label }, i) => (
           <div key={panel.keys[0]}>
             {several && <div className="truncate px-3 pt-1 text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
-            <ChartContainer config={config} className={cn('aspect-auto w-full px-1', height, zooms && 'cursor-crosshair select-none')}>
+            <ChartContainer
+              config={config}
+              className={cn('aspect-auto w-full px-1', !across && height, zooms && 'cursor-crosshair select-none')}
+              style={across ? { height: names.length * BAND_PX + 32 } : undefined}
+            >
               <PanelChart
                 form={form}
                 data={data}
@@ -172,7 +187,18 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
                 hidden={hidden}
                 stacked={stacked}
                 model={model}
-                xAxis={time ? (
+                across={across}
+                xAxis={across ? (
+                  <XAxis
+                    type="number"
+                    domain={values.domain}
+                    ticks={values.ticks}
+                    tickFormatter={label}
+                    tickLine={false}
+                    axisLine={{ stroke: 'var(--border)' }}
+                    tick={{ fontSize: 10 }}
+                  />
+                ) : time ? (
                   <XAxis
                     dataKey="x"
                     type="number"
@@ -199,7 +225,17 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
                     hide={i < panels.length - 1}
                   />
                 )}
-                yAxis={(
+                yAxis={across ? (
+                  <YAxis
+                    type="category"
+                    dataKey="x"
+                    width={nameWidth}
+                    interval={0}
+                    tickLine={false}
+                    axisLine={false}
+                    tick={<NameTick />}
+                  />
+                ) : (
                   <YAxis
                     width={valueWidth}
                     domain={values.domain}
@@ -233,14 +269,30 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
   }
 }
 
+/**
+ * A category's name beside its bar, on one line: cut to NAME_CHARS with its
+ * full name as a title. recharts would wrap it to the axis' width instead.
+ */
+function NameTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: unknown } }) {
+  const name = String(payload?.value ?? '')
+  return (
+    <text x={x} y={y} dx={-4} dy={3} textAnchor="end" fontSize={10} className="fill-muted-foreground">
+      <title>{name}</title>
+      {name.length > NAME_CHARS ? `${name.slice(0, NAME_CHARS - 1)}…` : name}
+    </text>
+  )
+}
+
 /** One panel's chart: its series in the form asked for, over the axes given. */
-function PanelChart({ form, data, series, hidden, stacked, model, xAxis, yAxis, tooltip, overlay, events }: {
+function PanelChart({ form, data, series, hidden, stacked, model, across, xAxis, yAxis, tooltip, overlay, events }: {
   form: ChartForm
   data: ChartPoint[]
   series: Series[]
   hidden: Set<string>
   stacked: boolean
   model: SeriesChartModel
+  /** Bars lying across, categories down the side. */
+  across: boolean
   xAxis: React.ReactNode
   yAxis: React.ReactNode
   tooltip: React.ReactNode
@@ -260,7 +312,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, xAxis, yAxis, 
   const chart = { data, margin: { top: 6, right: 12, bottom: 0, left: 0 }, ...events }
   const axes = (
     <>
-      <CartesianGrid vertical={false} stroke="var(--border)" />
+      <CartesianGrid vertical={across} horizontal={!across} stroke="var(--border)" />
       {xAxis}
       {yAxis}
       {tooltip}
@@ -270,7 +322,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, xAxis, yAxis, 
 
   if (form === 'bars') {
     return (
-      <BarChart {...chart} barCategoryGap={model.kind === 'time' ? 1 : '20%'}>
+      <BarChart {...chart} layout={across ? 'vertical' : 'horizontal'} barCategoryGap={model.kind === 'time' ? 1 : '20%'}>
         {axes}
         {series.map(s => (
           <Bar
@@ -281,7 +333,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, xAxis, yAxis, 
             stackId={stack}
             fill={`var(--color-${s.key})`}
             maxBarSize={24}
-            radius={!stack || s.key === top ? [3, 3, 0, 0] : 0}
+            radius={!stack || s.key === top ? (across ? [0, 3, 3, 0] : [3, 3, 0, 0]) : 0}
             stroke={stack ? 'var(--card)' : undefined}
             strokeWidth={stack ? 1 : 0}
             isAnimationActive={false}
