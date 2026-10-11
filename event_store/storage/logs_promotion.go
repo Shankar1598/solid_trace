@@ -324,9 +324,10 @@ func (p *promotion) add(d *dayPromotion, key typedKey) {
 
 // settleNewDay makes every key of a new day's set partway if the day already
 // has Logs that a read finds through its set: in the Project's hot table or
-// in its files. Those were stored with no set, every Attribute in its map,
-// so a read of the day must look in the maps too. Such a day's first Logs
-// came late, and the export wrote them to files before its first hot Log.
+// in its files. Those were stored before the day had a set, every Attribute
+// in its map, so a read of the day must look in the maps too: late Logs the
+// export wrote to files before the day's first hot Log, or hot Logs with no
+// key a set could take.
 //
 // Late Logs still in logs_late don't count: a read takes their Attributes
 // from the maps, and the export pulls their values out into the columns of
