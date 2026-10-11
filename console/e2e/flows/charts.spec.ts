@@ -338,3 +338,20 @@ test('a series keeps its colour when a function is added or removed', async ({ p
   for (const [name, color] of Object.entries(avg)) expect(color, name).toBe(count[name])
   expect(errors).toEqual([])
 })
+
+test('day bins a day range covers in part are drawn in full, with a note', async ({ page }) => {
+  const errors = watchErrors(page)
+  // A day starting 7 minutes into an hour: both its day bins, and its first and last hourly bins, are partial.
+  const to = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 + 7 * 60_000)
+  const from = new Date(to.getTime() - 24 * 3_600_000)
+  await openLogs(page, `?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), mode: 'query' })}`)
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin(time, 1d), service`)
+  await expect(page.locator('[data-chart-legend]')).toContainText('first and last bins partial')
+  await expect(chart(page).locator('.recharts-reference-area')).toHaveCount(0)
+
+  // Hourly bins: the partial ones are few, so they fade, and no note says so.
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin(time, 1h), service`)
+  await expect(chart(page).locator('.recharts-reference-area')).toHaveCount(2)
+  await expect(page.locator('[data-chart-legend]')).not.toContainText('partial')
+  expect(errors).toEqual([])
+})

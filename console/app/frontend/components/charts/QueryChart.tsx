@@ -4,7 +4,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, Referen
 import type { MouseHandlerDataParam } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import {
-  chartOf, formFor, keepColors, keepHidden, legendNotes,
+  chartOf, fadedSpans, formFor, keepColors, keepHidden, legendNotes,
   type ChartForm, type ChartPoint, type Series, type SeriesChartModel,
 } from '@/lib/charts/series'
 import { statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from '@/lib/charts/axis'
@@ -198,23 +198,19 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
     const high = (model.points[Math.max(drag.start, drag.end)].x as number) + binMs
     return <ReferenceArea x1={low} x2={Math.min(high, domain![1])} fill="var(--primary)" fillOpacity={0.12} stroke="none" ifOverflow="hidden" />
   })() : null
-  // A bin the range covers in part counts part of a bin, so it is faded, and with it the line into it.
-  const partialAreas = time && domain ? time.partial.map(x => {
-    const first = x < time.from.getTime()
-    const [x1, x2] = form === 'bars' || first ? [x, x + binMs] : [x - binMs, x + binMs]
-    return (
-      <ReferenceArea
-        key={x}
-        x1={Math.max(x1, domain[0])}
-        x2={Math.min(x2, domain[1])}
-        fill="var(--card)"
-        fillOpacity={0.6}
-        stroke="none"
-        ifOverflow="hidden"
-        zIndex={450}
-      />
-    )
-  }) : null
+  // A bin the range covers in part counts part of a bin, so it is faded, while such bins are few.
+  const partialAreas = time && domain ? fadedSpans(model, form).map(([x1, x2]) => (
+    <ReferenceArea
+      key={x1}
+      x1={Math.max(x1, domain[0])}
+      x2={Math.min(x2, domain[1])}
+      fill="var(--card)"
+      fillOpacity={0.6}
+      stroke="none"
+      ifOverflow="hidden"
+      zIndex={450}
+    />
+  )) : null
 
   const height = !several ? 'h-44 sm:h-56' : panels.length === 2 ? 'h-32 sm:h-40' : 'h-28 sm:h-32'
 

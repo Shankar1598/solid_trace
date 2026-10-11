@@ -99,6 +99,7 @@ export type ChartModel =
 
 /** A model drawn with axes: a time series or bars. */
 export type SeriesChartModel = Extract<ChartModel, { kind: 'time' | 'bars' }>
+type TimeChartModel = Extract<ChartModel, { kind: 'time' }>
 
 /** How a model can be drawn. */
 export type ChartForm = 'line' | 'area' | 'bars' | 'stat'
@@ -446,6 +447,31 @@ export function keepHidden(model: ChartModel, hidden: ReadonlySet<string>): Set<
 }
 
 /**
+ * Whether a time chart fades the bins its range covers in part: only while
+ * they are at most a third of its bins, so most of it is drawn at full
+ * strength to compare them with. Else a legend note says they are partial.
+ */
+function fadesPartial(model: TimeChartModel): boolean {
+  return model.partial.length > 0 && model.partial.length * 3 <= model.points.length
+}
+
+/**
+ * The spans (epoch ms) of a time chart to fade: its partial bins, whose
+ * values count part of a bin. A bar each; for a line or an area, the half of
+ * a bin either side of the bin's point, which takes in half the segment into
+ * it. None when fadesPartial says they are too many.
+ */
+export function fadedSpans(model: SeriesChartModel, form: ChartForm): [number, number][] {
+  if (model.kind !== 'time' || !fadesPartial(model)) return []
+  const step = model.binSeconds * 1000
+  const from = model.from.getTime()
+  return model.partial.map(x => {
+    if (form === 'bars') return [x, x + step]
+    return x < from ? [x, x + step / 2] : [x - step / 2, x + step]
+  })
+}
+
+/**
  * Adds a point for each bin from first to last (bin starts, epoch ms) that
  * has no row: a zero or a gap, as emptyValue says. Past MAX_FILLED_BINS only
  * the first and last bins of each run without rows get one, which is enough
@@ -508,7 +534,11 @@ export interface LegendNote {
   why: string
 }
 
-/** What a chart leaves out, and why: series past the palette, bars past MAX_BARS, series with no values, rows past a cut. */
+/**
+ * What a chart leaves out, and why: series past the palette, bars past
+ * MAX_BARS, series with no values, rows past a cut; and partial bins when
+ * they are too many to fade.
+ */
 export function legendNotes(model: SeriesChartModel): LegendNote[] {
   const notes: LegendNote[] = []
   if (model.omitted > 0) {
@@ -541,7 +571,27 @@ export function legendNotes(model: SeriesChartModel): LegendNote[] {
     const lost = model.kind === 'time' ? 'its later bins are missing, and ' : ''
     notes.push({ text: `drawn from the first ${rows} rows`, why: `The table was cut at ${rows} rows, so ${lost}the totals that rank what is drawn count only those rows.` })
   }
+  if (model.kind === 'time' && model.partial.length > 0 && !fadesPartial(model)) notes.push(partialNote(model))
   return notes
+}
+
+/** Which bins of a time chart are partial, for when they are not faded. */
+function partialNote(model: TimeChartModel): LegendNote {
+  const step = model.binSeconds * 1000
+  const first = model.points[0].x as number
+  const last = model.points[model.points.length - 1].x as number
+  const starts = model.partial.includes(first) && first < model.from.getTime()
+  const ends = model.partial.includes(last) && last + step > model.to.getTime()
+  if (starts && ends && first !== last) {
+    return {
+      text: 'first and last bins partial',
+      why: 'The range starts partway into the first bin and ends partway into the last, so they count only part of their time.',
+    }
+  }
+  if (starts && ends) return { text: 'its one bin partial', why: 'The range starts and ends partway into its one bin, so it counts only part of its time.' }
+  return starts
+    ? { text: 'first bin partial', why: 'The range starts partway into the first bin, so it counts only part of its time.' }
+    : { text: 'last bin partial', why: 'The range ends partway into the last bin, so it counts only part of its time.' }
 }
 
 function listOf(names: string[]): string {
