@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -50,7 +51,7 @@ func (s *LogStore) LogProjects() ([]uint32, error) {
 // counts.
 func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 	day = LogDay(day)
-	return s.deleteLogs(func(ctx context.Context, conn *sql.Conn) error {
+	return s.deleteLogs(projectID, func(ctx context.Context, conn *sql.Conn) error {
 		before := dayString(day)
 		for _, table := range []string{"log_promoted_sets", "log_key_counts"} {
 			if _, err := conn.ExecContext(ctx,
@@ -93,15 +94,21 @@ func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 // renames do, so a read has pinned every file whose row it saw before the
 // bytes are deleted.
 //
-// The bytes of a file a read has pinned stay, with ErrLogFilesInUse, until a
-// later deletion's pass deletes them.
-func (s *LogStore) deleteLogs(change func(context.Context, *sql.Conn) error, publish func()) error {
+// The bytes of a file a read has pinned stay until a later pass deletes
+// them. Only the Project's own pinned files return ErrLogFilesInUse, which
+// comes only once the change has committed: another Project's wait for that
+// Project's next pass, or the disk limit's.
+func (s *LogStore) deleteLogs(projectID uint32, change func(context.Context, *sql.Conn) error, publish func()) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.commitDeletion(change, publish); err != nil {
 		return err
 	}
-	return s.deleteTombstonedFiles()
+	pinned, err := s.deleteTombstonedFiles()
+	if err != nil {
+		return err
+	}
+	return filesInUse(slices.DeleteFunc(pinned, func(file logFile) bool { return file.projectID != projectID }))
 }
 
 // commitDeletion runs change in a transaction and commits it, then runs
@@ -149,7 +156,7 @@ func hotTableExists(ctx context.Context, conn *sql.Conn, projectID uint32) (bool
 // processing cursor stays, so that a Log batch it already stored is never
 // stored again.
 func (s *LogStore) DeleteProjectLogs(projectID uint32) error {
-	err := s.deleteLogs(func(ctx context.Context, conn *sql.Conn) error {
+	err := s.deleteLogs(projectID, func(ctx context.Context, conn *sql.Conn) error {
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", logsCatalog, hotTable(projectID))); err != nil {
 			return fmt.Errorf("drop hot table: %w", err)
 		}
@@ -163,11 +170,13 @@ func (s *LogStore) DeleteProjectLogs(projectID uint32) error {
 	}, func() {
 		s.promoted.deleteProject(projectID)
 	})
-	if err != nil {
+	// Files a read has pinned don't hold up the checkpoint: the deletion
+	// has committed, and the Project is no longer listed for another pass.
+	if err != nil && !errors.Is(err, ErrLogFilesInUse) {
 		return err
 	}
 	if _, err := s.db.Exec("CHECKPOINT " + logsCatalog); err != nil {
 		logger.L.Warn("Checkpoint of logs DuckDB after deleting a Project's Logs failed", "error", err)
 	}
-	return nil
+	return err
 }

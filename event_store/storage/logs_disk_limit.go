@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -50,8 +49,9 @@ func NewLogDiskLimit(configured int64, dir string) (LogDiskLimit, error) {
 // until the files on local disk, as the manifest lists them, take no more
 // than limit. Logs not yet exported are never deleted. If a read is reading
 // the oldest hour, it stops there with ErrLogFilesInUse, and the next pass
-// goes on. Each pass first deletes the bytes of files deleted earlier whose
-// reads have ended since.
+// goes on. Each pass first deletes the bytes of files deleted earlier, by any
+// deleter, whose reads have ended since, and returns ErrLogFilesInUse while a
+// read holds any of them, so that the next pass comes soon.
 func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 	maxBytes := limit.Bytes
 	if maxBytes <= 0 {
@@ -60,10 +60,11 @@ func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	earlier := s.deleteTombstonedFiles()
-	if earlier != nil && !errors.Is(earlier, ErrLogFilesInUse) {
-		return earlier
+	pinned, err := s.deleteTombstonedFiles()
+	if err != nil {
+		return err
 	}
+	earlier := filesInUse(pinned)
 	hours, total, err := s.localLogHours()
 	if err != nil {
 		return err
@@ -100,10 +101,13 @@ func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 	if err != nil {
 		return err
 	}
-	if err := s.deleteTombstonedFiles(); err != nil {
+	if pinned, err = s.deleteTombstonedFiles(); err != nil {
 		return err
 	}
-	return stopped
+	if stopped != nil {
+		return stopped
+	}
+	return filesInUse(pinned)
 }
 
 // logHour is one Project's hour of Log files on local disk.

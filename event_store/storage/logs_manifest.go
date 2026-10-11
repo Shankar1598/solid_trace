@@ -300,37 +300,33 @@ func tombstoneLogFiles(ctx context.Context, conn *sql.Conn, reason, where string
 }
 
 // deleteTombstonedFiles deletes the bytes of every tombstoned file that no
-// read has pinned, then its tombstone. A pinned one stays, and the call
-// returns ErrLogFilesInUse, so that the next pass takes it. No read pins a
-// tombstoned file anew, as none sees its row any more, so this needs no
-// publishMu. The caller holds writeMu.
-func (s *LogStore) deleteTombstonedFiles() error {
+// read has pinned, then its tombstone. A pinned one stays for a later pass,
+// and is returned. No read pins a tombstoned file anew, as none sees its row
+// any more, so this needs no publishMu. The caller holds writeMu.
+func (s *LogStore) deleteTombstonedFiles() (pinned []logFile, err error) {
 	ctx := context.Background()
 	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT "+manifestColumnsOfAKey+" FROM logs.log_file_deletions")
 	if err != nil {
-		return fmt.Errorf("list tombstoned log files: %w", err)
+		return nil, fmt.Errorf("list tombstoned log files: %w", err)
 	}
 	files, err := scanLogFiles(rows)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(files) == 0 {
-		return nil
+		return nil, nil
 	}
 	sortLogFiles(files)
 
 	var deleted []logFile
-	var inUse error
 	for _, file := range files {
 		if s.pinned(file.key()) {
-			if inUse == nil {
-				inUse = fmt.Errorf("delete %s: %w", file.key(), ErrLogFilesInUse)
-			}
+			pinned = append(pinned, file)
 			continue
 		}
 		path := s.files.path(file)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return errors.Join(fmt.Errorf("delete %s: %w", path, err), s.dropTombstones(deleted))
+			return nil, errors.Join(fmt.Errorf("delete %s: %w", path, err), s.dropTombstones(deleted))
 		}
 		// Each folder goes once it is empty.
 		for dir := filepath.Dir(path); dir != filepath.Clean(s.files.Dir); dir = filepath.Dir(dir) {
@@ -340,10 +336,16 @@ func (s *LogStore) deleteTombstonedFiles() error {
 		}
 		deleted = append(deleted, file)
 	}
-	if err := s.dropTombstones(deleted); err != nil {
-		return err
+	return pinned, s.dropTombstones(deleted)
+}
+
+// filesInUse is ErrLogFilesInUse, naming the first of files, or nil if there
+// are none.
+func filesInUse(files []logFile) error {
+	if len(files) == 0 {
+		return nil
 	}
-	return inUse
+	return fmt.Errorf("delete %s: %w", files[0].key(), ErrLogFilesInUse)
 }
 
 // dropTombstones deletes the tombstones of files whose bytes are gone, in

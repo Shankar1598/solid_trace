@@ -176,3 +176,63 @@ func TestAFileAReadIsReadingOutlivesRetentionUntilALaterPass(t *testing.T) {
 		t.Errorf("Expected only today's Log, got %v (%v)", got, err)
 	}
 }
+
+// assertGone checks that a Log file or folder is gone from disk.
+func assertGone(t *testing.T, path, when string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("Expected %s deleted from disk %s, got %v", path, when, err)
+	}
+}
+
+// hourFile is the path of a Project's only file of the hour of t.
+func hourFile(t *testing.T, env *TestEnv, projectID uint32, at time.Time) string {
+	t.Helper()
+	files, err := env.LogStore.HourFiles(projectID, at)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("Expected one file of Project %d at %v, got %v (%v)", projectID, at, files, err)
+	}
+	return files[0]
+}
+
+func TestAReadHoldsUpTheDeletionOfOnlyItsOwnProjectsFiles(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	keys := map[uint32]string{123: "test_public_key", 456: "other_public_key", 789: "third_public_key"}
+	tenDaysAgo := testNow.AddDate(0, 0, -10)
+	for _, projectID := range []uint32{123, 456, 789} {
+		seedProject(t, env.SQLitePath, projectID, 7)
+		if projectID != 123 {
+			seedProjectKey(t, env.SQLitePath, projectID, keys[projectID])
+		}
+		postAt(t, env, projectID, keys[projectID], "ten days ago", tenDaysAgo)
+	}
+	env.Clock.Set(testNow)
+	env.ExportLogs(t)
+	files := map[uint32]string{}
+	for projectID := range keys {
+		files[projectID] = hourFile(t, env, projectID, tenDaysAgo)
+	}
+
+	// A read of Project 123 holds up the deletion of its own file only.
+	cancel, longRead := startLongRead(t, env)
+	defer cancel()
+	cutoff := testNow.AddDate(0, 0, -7)
+	if err := env.LogStore.DeleteLogDaysBefore(123, cutoff); !errors.Is(err, storage.ErrLogFilesInUse) {
+		t.Errorf("Expected Retention of the read's Project to wait for the read, got %v", err)
+	}
+	if err := env.LogStore.DeleteLogDaysBefore(456, cutoff); err != nil {
+		t.Errorf("Expected Retention of another Project to go through during the read, got %v", err)
+	}
+	assertGone(t, files[456], "by another Project's Retention during the read")
+	if err := env.LogStore.DeleteProjectLogs(789); err != nil {
+		t.Errorf("Expected another Project's deletion to go through during the read, got %v", err)
+	}
+	assertGone(t, filepath.Dir(filepath.Dir(filepath.Dir(files[789]))), "by another Project's deletion during the read")
+	if _, err := os.Stat(files[123]); err != nil {
+		t.Errorf("Expected the read's file to stay while the read may read it, got %v", err)
+	}
+	cancel()
+	<-longRead
+}
