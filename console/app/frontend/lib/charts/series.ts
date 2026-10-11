@@ -172,13 +172,32 @@ export function chartOf(table: LogTable): ChartModel {
   if (!pivot) return { kind: 'none' }
   const drawn = keepSeries(pivot, table, measures, rest, false)
   if (drawn.series.length === 0) return { kind: 'none' }
+  // The bars with the largest totals, largest first; Levels and numbers keep their own order.
   const omittedCategories = Math.max(0, drawn.points.length - MAX_BARS)
-  if (omittedCategories > 0) {
-    const sum = (p: ChartPoint) => drawn.series.reduce((s, series) => s + (typeof p[series.key] === 'number' ? (p[series.key] as number) : 0), 0)
-    const kept = new Set([...drawn.points].sort((a, b) => sum(b) - sum(a)).slice(0, MAX_BARS))
-    drawn.points = drawn.points.filter(p => kept.has(p))
-  }
+  const sum = (p: ChartPoint) => drawn.series.reduce((s, series) => s + (typeof p[series.key] === 'number' ? (p[series.key] as number) : 0), 0)
+  const byTotal = [...drawn.points].sort((a, b) => sum(b) - sum(a)).slice(0, MAX_BARS)
+  const natural = naturalOrder(table, category)
+  drawn.points = natural ? byTotal.sort((a, b) => natural(a.x as string) - natural(b.x as string)) : byTotal
   return { kind: 'bars', category: columns[category].name, omittedCategories, ...drawn }
+}
+
+/**
+ * Where a bar's category falls when its values have an order of their own:
+ * Levels worst first, as the histogram stacks them, and numbers (status
+ * codes) ascending. Null when they are names, which bars rank by total.
+ */
+function naturalOrder({ columns, rows }: LogTable, category: number): ((name: string) => number) | null {
+  const field = columns[category].name
+  const values = rows.map(row => cell(row[category]))
+  const place = new Map<string, number>()
+  if (field === 'level' && values.every(v => v === null || LEVEL_ORDER.includes(v as never))) {
+    for (const v of values) place.set(splitName(field, v), v === null ? LEVEL_ORDER.length : LEVEL_ORDER.indexOf(v as never))
+  } else if (values.every(v => v === null || typeof v === 'number')) {
+    for (const v of values) place.set(splitName(field, v), v === null ? Infinity : (v as number))
+  } else {
+    return null
+  }
+  return name => place.get(name) ?? Infinity
 }
 
 /**
