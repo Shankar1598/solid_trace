@@ -81,27 +81,24 @@ func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 			return fmt.Errorf("delete hot logs: %w", err)
 		}
 		return nil
-	}, func() {
-		s.promoted.deleteBefore(projectID, day)
 	})
 }
 
 // deleteLogs runs change in a transaction on logs.duckdb, which deletes Logs
 // and leaves tombstones of the files whose rows it deletes from the manifest,
 // then deletes the bytes of tombstoned files (deleteTombstonedFiles). The
-// commit and publish, which updates what is held in memory, happen with
-// other writes locked out and no read beginning, as an export's commit and
-// renames do, so a read has pinned every file whose row it saw before the
-// bytes are deleted.
+// commit happens with other writes locked out and no read beginning, as an
+// export's commit and renames do, so a read has pinned every file whose row
+// it saw before the bytes are deleted.
 //
 // The bytes of a file a read has pinned stay until a later pass deletes
 // them. Only the Project's own pinned files return ErrLogFilesInUse, which
 // comes only once the change has committed: another Project's wait for that
 // Project's next pass, or the disk limit's.
-func (s *LogStore) deleteLogs(projectID uint32, change func(context.Context, *sql.Conn) error, publish func()) error {
+func (s *LogStore) deleteLogs(projectID uint32, change func(context.Context, *sql.Conn) error) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if err := s.commitDeletion(change, publish); err != nil {
+	if err := s.commitDeletion(change); err != nil {
 		return err
 	}
 	pinned, err := s.deleteTombstonedFiles()
@@ -111,9 +108,9 @@ func (s *LogStore) deleteLogs(projectID uint32, change func(context.Context, *sq
 	return filesInUse(slices.DeleteFunc(pinned, func(file logFile) bool { return file.projectID != projectID }))
 }
 
-// commitDeletion runs change in a transaction and commits it, then runs
-// publish, both under publishMu.
-func (s *LogStore) commitDeletion(change func(context.Context, *sql.Conn) error, publish func()) error {
+// commitDeletion runs change in a transaction and commits it under
+// publishMu.
+func (s *LogStore) commitDeletion(change func(context.Context, *sql.Conn) error) error {
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -137,7 +134,6 @@ func (s *LogStore) commitDeletion(change func(context.Context, *sql.Conn) error,
 		discardConn(conn)
 		return err
 	}
-	publish()
 	return nil
 }
 
@@ -167,8 +163,6 @@ func (s *LogStore) DeleteProjectLogs(projectID uint32) error {
 			}
 		}
 		return tombstoneLogFiles(ctx, conn, deletedWithProject, "project_id = ?", projectID)
-	}, func() {
-		s.promoted.deleteProject(projectID)
 	})
 	// Files a read has pinned don't hold up the checkpoint: the deletion
 	// has committed, and the Project is no longer listed for another pass.

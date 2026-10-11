@@ -97,7 +97,7 @@ func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 			total -= hour.bytes
 		}
 		return nil
-	}, func() {})
+	})
 	if err != nil {
 		return err
 	}

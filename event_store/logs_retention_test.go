@@ -101,30 +101,27 @@ func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
 			t.Errorf("Expected Project %d to keep %v, got %v", projectID, want, got)
 		}
 	}
-	assertSets := func(when string) {
+	// The days kept keep their promoted sets, so their Logs are still found
+	// by the keys the sets promoted.
+	assertFound := func(when string) {
 		t.Helper()
-		for _, c := range []struct {
-			projectID uint32
-			day       time.Time
-			want      []string
-		}{
-			{123, day(9, 1, 0), nil},
-			{123, day(9, 2, 0), []string{"string user"}},
-			{456, day(9, 24, 0), nil},
-			{456, day(9, 25, 0), []string{"string user"}},
-		} {
-			if got := promotedNames(env.LogStore.PromotedSet(c.projectID, c.day)); !slices.Equal(got, c.want) {
-				t.Errorf("Expected Project %d's set of %s to be %v %s, got %v", c.projectID, c.day.Format(time.DateOnly), c.want, when, got)
-			}
-		}
+		assertProjectQueries(t, env, 123, map[string][]string{
+			`where user == "last day past 30"`:    {},
+			`where user == "first day within 30"`: {"first day within 30"},
+			`where user == "yesterday"`:           {"yesterday"},
+		}, when)
+		assertProjectQueries(t, env, 456, map[string][]string{
+			`where user == "last day past 7"`:    {},
+			`where user == "first day within 7"`: {"first day within 7"},
+		}, when)
 	}
 	assertMessages(123, "yesterday", "first day within 30")
 	assertMessages(456, "first day within 7")
-	assertSets("after Retention")
+	assertFound("after Retention")
 
 	env.Reopen(t)
 	assertMessages(123, "yesterday", "first day within 30")
-	assertSets("after a restart")
+	assertFound("after a restart")
 }
 
 // consoleExec changes the Console database as Console would.
@@ -183,13 +180,14 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 		if got := latestLogs(t, env, 456, 10); len(got) != 0 {
 			t.Errorf("Expected the deleted Project to have no Logs %s, got %v", when, messages(got))
 		}
-		if got := env.LogStore.PromotedSet(456, at(12, 0)); len(got.Keys) != 0 {
-			t.Errorf("Expected the deleted Project to have no promoted set %s, got %v", when, promotedNames(got))
-		}
 		assertListsUnchanged(t, env, 123, want, when)
-		if got := promotedNames(env.LogStore.PromotedSet(123, at(12, 0))); !slices.Equal(got, []string{"string user"}) {
-			t.Errorf("Expected Project 123 to keep its promoted set %s, got %v", when, got)
-		}
+		// Project 123 keeps its promoted set, so its Logs are still found by
+		// the key it promoted.
+		assertProjectQueries(t, env, 123, map[string][]string{
+			`where user == "ada"`: {"exported"},
+			`where user == "bob"`: {"hot"},
+			`where user == "cy"`:  {"late"},
+		}, when)
 	}
 	assertDeleted("after the pass")
 	assertGone(t, deletedDir, "with its Project")
