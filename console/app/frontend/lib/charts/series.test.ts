@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { LogTable, TableColumn } from '@/lib/logs/table'
-import { MAX_BARS, MAX_SERIES, chartOf, formFor, formsOf, legendNotes, type ChartModel } from './series'
+import { MAX_BARS, MAX_SERIES, chartOf, formFor, formsOf, keepColors, legendNotes, type ChartModel } from './series'
 
 const TIME: TableColumn = { name: 'time', type: 'datetime', bin_seconds: 300 }
 const SERVICE: TableColumn = { name: 'service', type: 'string' }
 const COUNT: TableColumn = { name: 'count_', type: 'number', agg: 'count' }
 const AVG: TableColumn = { name: 'avg_duration_ms', type: 'number', agg: 'avg' }
+const COUNTIF: TableColumn = { name: 'countif_', type: 'number', agg: 'countif' }
 
 const at = (time: string) => new Date(time).getTime()
 
@@ -52,16 +53,16 @@ describe('a time series', () => {
     ])
   })
 
-  it('names a series by its split values and, with several number columns, its column', () => {
+  it('names a series by its split values and, with several number columns over one axis, its column', () => {
     const ok: TableColumn = { name: 'ok', type: 'bool' }
-    const model = drawable(chartOf(table([TIME, SERVICE, ok, COUNT, AVG], [
+    const model = drawable(chartOf(table([TIME, SERVICE, ok, COUNT, COUNTIF], [
       ['2026-10-09T10:00:00Z', 'api', true, 12, 40],
       ['2026-10-09T10:00:00Z', null, false, 1, 9],
     ])))
 
     // Split values by the total of the first number column, then each number column in the table's order.
     expect(model.series.map(s => s.name)).toEqual([
-      'api · true · count_', 'api · true · avg_duration_ms', 'no service · false · count_', 'no service · false · avg_duration_ms',
+      'api · true · count_', 'api · true · countif_', 'no service · false · count_', 'no service · false · countif_',
     ])
     expect(model.series.find(s => s.name === 'no service · false · count_')?.split).toEqual([
       { field: 'service', value: null }, { field: 'ok', value: false },
@@ -227,12 +228,21 @@ describe('many series', () => {
     expect(Object.keys(model.points[0])).toHaveLength(MAX_SERIES + 1)
   })
 
-  it('keeps every number column of the split values it keeps', () => {
+  it('keeps every number column of the split values it keeps, a hue each over one axis', () => {
+    const wide = services.flatMap((s, i) => [['2026-10-09T10:00:00Z', s, i + 1, 10]])
+    const model = drawable(chartOf(table([TIME, SERVICE, COUNT, COUNTIF], wide)))
+
+    expect(model.series.map(s => s.name)).toEqual(services.slice(-MAX_SERIES / 2).reverse().flatMap(s => [`${s} · count_`, `${s} · countif_`]))
+    expect(model.omitted).toBe(2 * (MAX_SERIES + 4) - MAX_SERIES)
+  })
+
+  it('keeps as many split values as hues when each panel draws one column', () => {
     const wide = services.flatMap((s, i) => [['2026-10-09T10:00:00Z', s, i + 1, 10]])
     const model = drawable(chartOf(table([TIME, SERVICE, COUNT, AVG], wide)))
 
-    expect(model.series.map(s => s.name)).toEqual(services.slice(-MAX_SERIES / 2).reverse().flatMap(s => [`${s} · count_`, `${s} · avg_duration_ms`]))
-    expect(model.omitted).toBe(2 * (MAX_SERIES + 4) - MAX_SERIES)
+    expect(model.legend.map(e => e.name)).toEqual(services.slice(-MAX_SERIES).reverse())
+    expect(model.series).toHaveLength(2 * MAX_SERIES)
+    expect(model.omitted).toBe(2 * 4)
   })
 
   it('say how many split values are drawn, with every number column', () => {
@@ -319,7 +329,7 @@ describe('series of Levels', () => {
 
   it('wear the palette when another column splits them too, or there are several numbers', () => {
     const split = drawable(chartOf(table([TIME, LEVEL, SERVICE, COUNT], [['2026-10-09T10:00:00Z', 'info', 'api', 5]])))
-    const twoNumbers = drawable(chartOf(table([TIME, LEVEL, COUNT, AVG], [['2026-10-09T10:00:00Z', 'info', 5, 3]])))
+    const twoNumbers = drawable(chartOf(table([TIME, LEVEL, COUNT, COUNTIF], [['2026-10-09T10:00:00Z', 'info', 5, 3]])))
 
     expect(split.series[0].color).toBe('var(--chart-1)')
     expect(twoNumbers.series.map(s => s.color)).toEqual(['var(--chart-1)', 'var(--chart-2)'])
@@ -362,15 +372,92 @@ describe('bars', () => {
 })
 
 describe('stacking', () => {
+  const stacked = (model: ChartModel) => drawable(model).panels.map(p => p.stacked)
+
   it('stacks counts and sums of one column', () => {
-    expect(drawable(chartOf(table([TIME, SERVICE, COUNT], [['2026-10-09T10:00:00Z', 'api', 1]]))).stacked).toBe(true)
-    expect(drawable(chartOf(table([SERVICE, { name: 's', type: 'number', agg: 'sum' }], [['api', 1]]))).stacked).toBe(true)
+    expect(stacked(chartOf(table([TIME, SERVICE, COUNT], [['2026-10-09T10:00:00Z', 'api', 1]])))).toEqual([true])
+    expect(stacked(chartOf(table([SERVICE, { name: 's', type: 'number', agg: 'sum' }], [['api', 1]])))).toEqual([true])
   })
 
-  it('never stacks values that do not add up, or two columns', () => {
-    expect(drawable(chartOf(table([TIME, SERVICE, AVG], [['2026-10-09T10:00:00Z', 'api', 1]]))).stacked).toBe(false)
-    expect(drawable(chartOf(table([TIME, { name: 'd', type: 'number', agg: 'dcount' }], [['2026-10-09T10:00:00Z', 1]]))).stacked).toBe(false)
-    expect(drawable(chartOf(table([TIME, COUNT, { name: 's', type: 'number', agg: 'sum' }], [['2026-10-09T10:00:00Z', 1, 2]]))).stacked).toBe(false)
+  it('never stacks values that do not add up, or two columns over one axis', () => {
+    expect(stacked(chartOf(table([TIME, SERVICE, AVG], [['2026-10-09T10:00:00Z', 'api', 1]])))).toEqual([false])
+    expect(stacked(chartOf(table([TIME, { name: 'd', type: 'number', agg: 'dcount' }], [['2026-10-09T10:00:00Z', 1]])))).toEqual([false])
+    expect(stacked(chartOf(table([TIME, COUNT, COUNTIF], [['2026-10-09T10:00:00Z', 2, 1]])))).toEqual([false])
+  })
+})
+
+describe('panels', () => {
+  const P95: TableColumn = { name: 'percentile_duration_ms_95', type: 'number', agg: 'percentile' }
+  const MAX: TableColumn = { name: 'max_duration_ms', type: 'number', agg: 'max' }
+
+  it('give columns that measure different things an axis each', () => {
+    const model = drawable(chartOf(table([TIME, AVG, COUNT], [['2026-10-09T10:00:00Z', 2500, 12]])))
+
+    expect(model.panels).toEqual([
+      { columns: ['avg_duration_ms'], keys: ['s0'], stacked: false },
+      { columns: ['count_'], keys: ['s1'], stacked: true },
+    ])
+  })
+
+  it('share one axis between counts, and between an avg, max and percentile of one Field', () => {
+    const countif: TableColumn = { name: 'countif_', type: 'number', agg: 'countif' }
+    const model = drawable(chartOf(table([TIME, COUNT, AVG, countif, P95, MAX], [['2026-10-09T10:00:00Z', 9, 30, 2, 80, 120]])))
+
+    expect(model.panels.map(p => p.columns)).toEqual([
+      ['count_', 'countif_'], ['avg_duration_ms', 'percentile_duration_ms_95', 'max_duration_ms'],
+    ])
+  })
+
+  it('give a renamed column, a sum or arithmetic over aggregates an axis of its own', () => {
+    const p95: TableColumn = { name: 'p95', type: 'number', agg: 'percentile' }
+    const sum: TableColumn = { name: 'sum_duration_ms', type: 'number', agg: 'sum' }
+    const rate: TableColumn = { name: 'rate', type: 'number' }
+    const model = drawable(chartOf(table([TIME, AVG, p95, sum, rate], [['2026-10-09T10:00:00Z', 1, 2, 3, 4]])))
+
+    expect(model.panels.map(p => p.columns)).toEqual([['avg_duration_ms'], ['p95'], ['sum_duration_ms'], ['rate']])
+  })
+
+  it('colour a split value alike in every panel, with a legend entry each, when each panel draws one column', () => {
+    const model = drawable(chartOf(table([TIME, SERVICE, AVG, COUNT], [
+      ['2026-10-09T10:00:00Z', 'api', 50, 12],
+      ['2026-10-09T10:00:00Z', 'web', 30, 3],
+    ])))
+
+    expect(model.series.map(s => [s.name, s.column, s.color])).toEqual([
+      ['api', 'avg_duration_ms', 'var(--chart-1)'], ['api', 'count_', 'var(--chart-1)'],
+      ['web', 'avg_duration_ms', 'var(--chart-2)'], ['web', 'count_', 'var(--chart-2)'],
+    ])
+    expect(model.legend.map(e => [e.name, e.color])).toEqual([['api', 'var(--chart-1)'], ['web', 'var(--chart-2)']])
+    expect(model.panels.map(p => p.keys)).toEqual([['s0', 's2'], ['s1', 's3']])
+  })
+})
+
+describe('colours kept from the last chart', () => {
+  const rows = (services: [string, number][]) => services.map(([s, n]) => ['2026-10-09T10:00:00Z', s, n])
+  const colors = (model: ChartModel) => Object.fromEntries(drawable(model).legend.map(e => [e.name, e.color]))
+
+  it('stay on a series when a filter or a new rank changes the others', () => {
+    const first = keepColors(chartOf(table([TIME, SERVICE, COUNT], rows([['api', 40], ['worker', 30], ['web', 20], ['billing', 10]]))), new Map())
+    expect(colors(first.model)).toEqual({ api: 'var(--chart-1)', worker: 'var(--chart-2)', web: 'var(--chart-3)', billing: 'var(--chart-4)' })
+
+    // api hidden, and billing now outranks web.
+    const filtered = keepColors(chartOf(table([TIME, SERVICE, COUNT], rows([['worker', 30], ['billing', 25], ['web', 20]]))), first.slots)
+    expect(colors(filtered.model)).toEqual({ worker: 'var(--chart-2)', billing: 'var(--chart-4)', web: 'var(--chart-3)' })
+
+    // api back, and a new service: the lowest slots free.
+    const back = keepColors(chartOf(table([TIME, SERVICE, COUNT], rows([['api', 40], ['worker', 30], ['cron', 5]]))), filtered.slots)
+    expect(colors(back.model)).toEqual({ api: 'var(--chart-1)', worker: 'var(--chart-2)', cron: 'var(--chart-3)' })
+  })
+
+  it('start from the first slot for a new shape, and leave Levels their own colours', () => {
+    const services = keepColors(chartOf(table([TIME, SERVICE, COUNT], rows([['api', 40], ['web', 20]]))), new Map())
+    const LEVEL: TableColumn = { name: 'level', type: 'string' }
+    const levels = keepColors(chartOf(table([TIME, LEVEL, COUNT], rows([['error', 4]]))), services.slots)
+    const hosts = keepColors(chartOf(table([TIME, { name: 'host', type: 'string' }, COUNT], rows([['h1', 3]]))), levels.slots)
+
+    expect(colors(levels.model)).toEqual({ error: 'var(--chart-level-error)' })
+    expect(levels.slots).toEqual(services.slots)
+    expect(colors(hosts.model)).toEqual({ h1: 'var(--chart-1)' })
   })
 })
 

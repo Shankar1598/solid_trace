@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
-import { QueryChart } from '@/components/charts/QueryChart'
+import { QueryChart, type ColorSlots } from '@/components/charts/QueryChart'
 import { chartOf, formFor, formsOf } from '@/lib/charts/series'
 import type { AbsoluteRange, Viz } from '@/lib/logs/explorerState'
 import { pivotsOn, type LogTable, type TableColumn } from '@/lib/logs/table'
@@ -25,6 +25,8 @@ export interface TableChart {
   onViz: (viz: Viz) => void
   /** Runs the explorer over the range dragged across a time chart. */
   onZoom: (range: AbsoluteRange) => void
+  /** Each series' colour from the last chart, so a re-run repaints none. */
+  colors: ColorSlots
 }
 
 /**
@@ -45,7 +47,7 @@ export function LogTableView({ table, chart }: { table: LogTable; chart?: TableC
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="shrink-0 border-b">
         {form
-          ? <QueryChart table={table} form={form} onZoom={chart.onZoom} actions={control} className="pb-1" />
+          ? <QueryChart table={table} form={form} onZoom={chart.onZoom} colors={chart.colors} actions={control} className="pb-1" />
           : <div className="flex justify-end px-3 py-1.5">{control}</div>}
       </div>
       <div className="min-h-48 flex-1">

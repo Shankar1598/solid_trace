@@ -33,9 +33,36 @@ export interface Series {
   /** The values of the columns that split it, which a Log has as Fields. */
   split: { field: string; value: SplitValue }[]
   agg: Agg | null
-  /** A CSS colour: the palette's next hue, or a Level's own colour. */
+  /**
+   * What the series is, whatever its rank: its split values, and its column
+   * unless each panel draws one column. Its colour and legend entry follow it.
+   */
+  id: string
+  /** Its palette slot (1 to MAX_SERIES), or null when it wears a Level's colour. */
+  slot: number | null
+  /** A CSS colour: its palette slot's hue, or a Level's own colour. */
   color: string
   total: number
+}
+
+/** A legend entry: one per series id, showing and hiding every series of it. */
+export interface LegendEntry {
+  id: string
+  name: string
+  color: string
+}
+
+/**
+ * Series drawn over one value axis: those whose columns measure one thing,
+ * such as counts of Logs, or the min, avg, max and percentiles of one Field.
+ */
+export interface Panel {
+  /** The number columns it draws. */
+  columns: string[]
+  /** Its series' keys. */
+  keys: string[]
+  /** Whether its series add up to a whole, so bars and areas stack. */
+  stacked: boolean
 }
 
 /** One bin or category: x is a bin's start (epoch ms) or a category's name. */
@@ -50,8 +77,9 @@ interface SeriesSet {
   omittedColumns: number
   /** The names of series left out because they have no value at all. */
   empty: string[]
-  /** Whether the series add up to a whole, so bars and areas stack. */
-  stacked: boolean
+  /** The series' value axes, top to bottom: one unless the columns measure different things. */
+  panels: Panel[]
+  legend: LegendEntry[]
   /** The rows the table was cut at, when EventStore cut it: the chart draws only those. */
   cutAt: number | null
 }
@@ -246,24 +274,35 @@ function keepSeries(
     const level = levelOf(combo)
     return level === null ? LEVEL_ORDER.length : LEVEL_ORDER.indexOf(level as never)
   }
+
+  // Columns of one unit share a panel. When each panel draws one column, a
+  // split value wears one hue in all of them, so as many split values as hues are kept.
+  const units = groupBy(drawn, m => unitOf(columns[m].name, columns[m].agg))
+  const byCombo = splits.length > 0 && units.length > 1 && units.every(unit => unit.length === 1)
   const empty = order.flatMap(combo => drawn.filter(m => !hasValues(combo, m)).map(m => nameOf(combo, m)))
   const kept = order
     .filter(combo => drawn.some(m => hasValues(combo, m)))
     .sort((a, b) => rank(a) - rank(b) || order.indexOf(a) - order.indexOf(b))
-    .slice(0, Math.max(1, Math.floor(MAX_SERIES / drawn.length)))
+    .slice(0, byCombo ? MAX_SERIES : Math.max(1, Math.floor(MAX_SERIES / drawn.length)))
 
   const series: (Series & { source: string })[] = []
+  const slots = new Map<string, number>()
   for (const combo of kept) {
     const values = pivot.combos.get(combo)!
     const split = splits.map((s, k) => ({ field: columns[s].name, value: values[k] }))
     for (const m of drawn.filter(m => hasValues(combo, m))) {
+      const id = JSON.stringify(byCombo ? split : [split, columns[m].name])
+      if (!slots.has(id)) slots.set(id, slots.size + 1)
+      const slot = levels ? null : slots.get(id)!
       series.push({
         key: `s${series.length}`,
-        name: nameOf(combo, m),
+        name: byCombo ? split.map(({ field, value }) => splitName(field, value)).join(' · ') : nameOf(combo, m),
         column: columns[m].name,
         split,
         agg: columns[m].agg ?? null,
-        color: levels ? `var(--chart-level-${levelOf(combo) ?? 'none'})` : `var(--chart-${series.length + 1})`,
+        id,
+        slot,
+        color: slot === null ? `var(--chart-level-${levelOf(combo) ?? 'none'})` : `var(--chart-${slot})`,
         total: totals.get(source(combo, m)) ?? 0,
         source: source(combo, m),
       })
@@ -276,16 +315,81 @@ function keepSeries(
     return point
   })
 
-  const agg = drawn.length === 1 ? columns[drawn[0]].agg : undefined
+  const panels = units.map((unit): Panel => {
+    const agg = unit.length === 1 ? columns[unit[0]].agg : undefined
+    const names = unit.map(m => columns[m].name)
+    return {
+      columns: names,
+      keys: series.filter(s => names.includes(s.column)).map(s => s.key),
+      stacked: agg !== undefined && ADDS_UP.has(agg),
+    }
+  }).filter(panel => panel.keys.length > 0)
+
+  const drawnSeries = series.map(({ source: _, ...s }) => s)
   return {
-    series: series.map(({ source: _, ...s }) => s),
+    series: drawnSeries,
     points,
     omitted: pivot.combos.size * measures.length - series.length - empty.length,
     omittedColumns: measures.length - drawn.length,
     empty,
-    stacked: agg !== undefined && ADDS_UP.has(agg),
+    panels,
+    legend: legendOf(drawnSeries),
     cutAt: truncated ? rows.length : null,
   }
+}
+
+/** One legend entry per series id, in the series' order. */
+function legendOf(series: Series[]): LegendEntry[] {
+  const entries = new Map<string, LegendEntry>()
+  for (const s of series) if (!entries.has(s.id)) entries.set(s.id, { id: s.id, name: s.name, color: s.color })
+  return [...entries.values()]
+}
+
+/**
+ * What a number column measures, so columns of one unit share an axis:
+ * counts of Logs, or the values of the Field an avg, min, max or percentile
+ * is named after (avg_duration_ms, percentile_duration_ms_95). Any other
+ * column, a renamed one included, measures something of its own.
+ */
+function unitOf(name: string, agg: Agg | undefined): string {
+  if (agg === 'count' || agg === 'countif') return 'count'
+  const named = /^(avg|min|max|percentile)_(.+?)(_\d+(?:\.\d+)?)?$/.exec(name)
+  return named && named[1] === agg ? `field ${named[2]}` : `column ${name}`
+}
+
+/** Items grouped by a key, in the order each key first appears. */
+function groupBy<T>(items: T[], keyOf: (item: T) => string): T[][] {
+  const groups = new Map<string, T[]>()
+  for (const item of items) {
+    const key = keyOf(item)
+    groups.set(key, [...(groups.get(key) ?? []), item])
+  }
+  return [...groups.values()]
+}
+
+/**
+ * The model coloured as the last chart drawn in its place was: a series id
+ * drawn there keeps its palette slot, so filtering out a series or a change
+ * of rank repaints none of the others, and a new id takes the lowest slot
+ * free. A new shape matches no id, so it starts from slot 1 again. Returns
+ * the slots to keep for the next.
+ */
+export function keepColors(model: ChartModel, slots: ReadonlyMap<string, number>): { model: ChartModel; slots: Map<string, number> } {
+  if (model.kind !== 'time' && model.kind !== 'bars') return { model, slots: new Map(slots) }
+  const ids = [...new Set(model.series.filter(s => s.slot !== null).map(s => s.id))]
+  if (ids.length === 0) return { model, slots: new Map(slots) }
+  const next = new Map<string, number>()
+  for (const id of ids) if (slots.has(id)) next.set(id, slots.get(id)!)
+  const taken = new Set(next.values())
+  for (const id of ids) {
+    if (next.has(id)) continue
+    let slot = 1
+    while (taken.has(slot)) slot++
+    next.set(id, slot)
+    taken.add(slot)
+  }
+  const series = model.series.map(s => (s.slot === null ? s : { ...s, slot: next.get(s.id)!, color: `var(--chart-${next.get(s.id)!})` }))
+  return { model: { ...model, series, legend: legendOf(series) }, slots: next }
 }
 
 /**

@@ -44,13 +44,14 @@ const NICE = [1, 2, 2.5, 5, 10]
 
 /**
  * The value axis for values from min to max: from zero, or below it for
- * negative values, to just past the largest, in about five round steps.
+ * negative values, to just past the largest, in about `steps` round steps
+ * (fewer suit a short chart).
  */
-export function valueTicks(min: number, max: number): { domain: [number, number]; ticks: number[]; step: number } {
+export function valueTicks(min: number, max: number, steps = 5): { domain: [number, number]; ticks: number[]; step: number } {
   const low = Math.min(0, Number.isFinite(min) ? min : 0)
   let high = Math.max(0, Number.isFinite(max) ? max : 0)
   if (high === low) high = low + 1
-  const rough = (high - low) / 5
+  const rough = (high - low) / steps
   const power = 10 ** Math.floor(Math.log10(rough))
   const step = Number(NICE.map(n => n * power).find(s => s >= rough)!.toPrecision(12))
   const first = Math.floor(low / step)

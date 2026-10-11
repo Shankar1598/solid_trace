@@ -182,3 +182,39 @@ test('a count by an Attribute is charted, over time and as bars', async ({ page 
   await expect(chart(page)).toHaveAttribute('aria-label', 'Bar chart of count_ by http.status')
   expect(errors).toEqual([])
 })
+
+/** Each legend entry's swatch colour, by its name. */
+async function legendColors(page: Page): Promise<Record<string, string>> {
+  return Object.fromEntries(await legend(page).evaluateAll(buttons => buttons.map(b => [
+    (b as HTMLElement).innerText.trim(), getComputedStyle(b.querySelector('span')!).backgroundColor,
+  ])))
+}
+
+test('a series keeps its colour when a filter takes another away', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin_auto(time), service`)
+  const before = await legendColors(page)
+  expect(Object.keys(before).sort()).toEqual(['api', 'billing', 'web', 'worker'])
+
+  await runQuery(page, `${SOURCE}\n| where service != "api"\n| summarize count() by bin_auto(time), service`)
+  const after = await legendColors(page)
+  expect(Object.keys(after).sort()).toEqual(['billing', 'web', 'worker'])
+  for (const [name, color] of Object.entries(after)) expect(color, name).toBe(before[name])
+  expect(errors).toEqual([])
+})
+
+test('columns that measure different things get a panel each over one time axis', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize avg(duration_ms), count() by bin_auto(time), service`)
+  await expect(page.locator('[data-chart-panel]')).toHaveText(['avg_duration_ms', 'count_'])
+  await expect(chart(page).locator('.recharts-surface')).toHaveCount(2)
+  // A service wears one colour in both panels, with one legend entry.
+  expect((await legend(page).allInnerTexts()).sort()).toEqual(['api', 'billing', 'web', 'worker'])
+
+  await runQuery(page, `${SOURCE}\n| summarize min(duration_ms), avg(duration_ms), max(duration_ms) by bin_auto(time)`)
+  await expect(page.locator('[data-chart-panel]')).toHaveCount(0)
+  await expect(chart(page).locator('.recharts-line')).toHaveCount(3)
+  expect(errors).toEqual([])
+})
