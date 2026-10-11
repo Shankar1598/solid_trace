@@ -108,6 +108,9 @@ func LogDay(t time.Time) time.Time {
 // PromotedSet returns a Project's promoted set for the UTC day of t, from
 // memory. A day without one has no keys: its Logs hold every Attribute in the
 // maps. The keys are shared; don't modify them.
+//
+// Memory takes a set only once Log processing has committed it, so a read
+// of Logs takes its sets from its own transaction instead (logRead).
 func (s *LogStore) PromotedSet(projectID uint32, t time.Time) PromotedSet {
 	day := LogDay(t)
 	s.promoted.mu.RLock()
@@ -507,10 +510,16 @@ func (p *promotion) sets() []PromotedSet {
 
 // storedSets reads a Project's promoted sets from day first to day last.
 func (p *promotion) storedSets(ctx context.Context, conn *sql.Conn, first, last time.Time) (map[time.Time][]PromotedKey, error) {
-	rows, err := conn.QueryContext(ctx, `
+	return storedSets(ctx, conn, p.projectID, first, last)
+}
+
+// storedSets reads a Project's promoted sets from the UTC day of first to
+// that of last with db, such as a connection inside its transaction.
+func storedSets(ctx context.Context, db sqlRunner, projectID uint32, first, last time.Time) (map[time.Time][]PromotedKey, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT day, type, key, added_at, partway FROM logs.log_promoted_sets
 		WHERE project_id = ? AND day BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)`,
-		p.projectID, dayString(first), dayString(last))
+		projectID, dayString(first), dayString(last))
 	if err != nil {
 		return nil, fmt.Errorf("read promoted sets: %w", err)
 	}

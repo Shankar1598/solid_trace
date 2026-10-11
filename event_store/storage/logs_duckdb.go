@@ -30,7 +30,8 @@ const logsCatalog = "logs"
 // A DuckDB transaction can write only one attached database, so everything
 // Log processing commits together lives here.
 //
-// The promoted-set table is also held in memory, and read from there.
+// The promoted-set table is also held in memory (PromotedSet). A read of
+// Logs reads it in its own transaction, so that the sets match its Logs.
 //
 // The hourly export moves Logs out to files under files.Dir, which the Log
 // file manifest lists (logs_manifest.go).
