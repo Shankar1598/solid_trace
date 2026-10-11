@@ -2,7 +2,12 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"reflect"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -117,5 +122,278 @@ func TestAMatchMonitorReadsTheLogsIngestedSinceItsLastRun(t *testing.T) {
 	postAndProcess(t, env, logJSON(t, "four", at(-5), nil))
 	if got := second.run(nil); !slices.Equal(got, []string{"four"}) {
 		t.Errorf("Expected only the new Log, got %v", got)
+	}
+}
+
+func TestAMatchMonitorReadsLateLogsWhateverTheirTimeAndTheRange(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	today := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	yesterday := func(hour, minute int) time.Time { return today(hour, minute).AddDate(0, 0, -1) }
+	env.Clock.Set(today(12, 30))
+	monitor := armMonitor(t, env, "")
+	// The last quarter hour, as a Threshold monitor reads: it holds none
+	// of the late Logs, and a run after a batch reads them all the same.
+	quarterHour := map[string]any{"from": today(12, 15), "to": today(12, 30)}
+
+	postAndProcess(t, env,
+		logJSON(t, "yesterday ten", yesterday(10, 0), nil),
+		logJSON(t, "ten past twelve", today(12, 10), nil),
+		logJSON(t, "three days ago", today(9, 0).AddDate(0, 0, -3), nil),
+	)
+	if got, want := monitor.run(quarterHour), []string{"ten past twelve", "yesterday ten", "three days ago"}; !slices.Equal(got, want) {
+		t.Errorf("Expected the late Logs read with the new one, %v, got %v", want, got)
+	}
+
+	// The export moves the late Logs to files; one more late Log of
+	// yesterday's hour 10 goes to its late file at the next export.
+	env.ExportLogs(t)
+	postAndProcess(t, env, logJSON(t, "late yesterday ten", yesterday(10, 20), nil))
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 123, yesterday(10, 0), 2)
+
+	if got, want := monitor.run(quarterHour), []string{"late yesterday ten"}; !slices.Equal(got, want) {
+		t.Errorf("Expected only the Log of the late file, %v, got %v", want, got)
+	}
+	if got := monitor.run(quarterHour); len(got) != 0 {
+		t.Errorf("Expected no more Logs, got %v", got)
+	}
+}
+
+func TestTheLogsIngestedAfterABatchAreTheSameBeforeAndAfterTheExport(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(11, 30))
+	// A Log of hour 10 stored before the Monitor is armed goes to the same
+	// file as those after, and is never read.
+	postAndProcess(t, env, logJSON(t, "before", at(10, 5), map[string]any{"user": "ada"}))
+	armed := armMonitor(t, env, "").cursor
+	postAndProcess(t, env,
+		logJSON(t, "ten", at(10, 40), map[string]any{"user": "ada", "status": 500}),
+		logJSON(t, "eleven", at(11, 20), map[string]any{"user": "bob"}),
+	)
+	postAndProcess(t, env, logJSON(t, "late", at(9, 0).AddDate(0, 0, -1), map[string]any{"user": "ada"}))
+
+	queries := map[string][]string{
+		``:                    {"eleven", "ten", "late"},
+		`where user == "ada"`: {"ten", "late"},
+		`where status >= 500`: {"ten"},
+	}
+	read := func(query string) ingestedPage { return runAfterBatch(t, env, query, armed, nil) }
+	want := map[string]ingestedPage{}
+	for query, messagesWanted := range queries {
+		want[query] = read(query)
+		if got := messages(want[query].Logs); !slices.Equal(got, messagesWanted) {
+			t.Errorf("%q: expected %v from the hot table and logs_late, got %v", query, messagesWanted, got)
+		}
+	}
+
+	// At 12:00 the export moves hour 10 and the late Log to files, and hour
+	// 11 stays hot; at 13:00 it moves hour 11.
+	for _, hour := range []int{12, 13} {
+		env.Clock.Set(at(hour, 0))
+		env.ExportLogs(t)
+		for query := range queries {
+			if got := read(query); !reflect.DeepEqual(got, want[query]) {
+				t.Errorf("%q after the export at %d:00: expected\n %+v\ngot\n %+v", query, hour, want[query], got)
+			}
+		}
+	}
+	assertHourFiles(t, env, 123, at(10, 0), 1)
+	assertHourFiles(t, env, 123, at(11, 0), 1)
+}
+
+func TestNoLogIsMissedOrReadTwiceWhenRequestsStoreTheirBatchesOutOfOrder(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	monitor := armMonitor(t, env, "")
+
+	// Two requests at once: the first is normalised first, so its Log has
+	// the lower id, but the second stores its batch first, and Log
+	// processing stores it before the first's batch is there.
+	first := logAt(t, "first request", "2026-10-02T11:50:00Z")
+	second := logAt(t, "second request", "2026-10-02T11:40:00Z")
+	storeLogBatch(t, env, 123, second)
+	env.ProcessLogs(t)
+	if got := monitor.run(nil); !slices.Equal(got, []string{"second request"}) {
+		t.Errorf("Expected the second request's Log, got %v", got)
+	}
+	storeLogBatch(t, env, 123, first)
+	env.ProcessLogs(t)
+	if got := monitor.run(nil); !slices.Equal(got, []string{"first request"}) {
+		t.Errorf("Expected the first request's Log, stored later with a lower id, got %v", got)
+	}
+
+	// The other order: both batches are stored before Log processing runs.
+	third, fourth := logAt(t, "third request", "2026-10-02T11:30:00Z"), logAt(t, "fourth request", "2026-10-02T11:35:00Z")
+	storeLogBatch(t, env, 123, third)
+	storeLogBatch(t, env, 123, fourth)
+	env.ProcessLogs(t)
+	if got := monitor.run(nil); !slices.Equal(got, []string{"fourth request", "third request"}) {
+		t.Errorf("Expected both Logs in one run, got %v", got)
+	}
+	if got := monitor.run(nil); len(got) != 0 {
+		t.Errorf("Expected no Log read twice, got %v", got)
+	}
+}
+
+func TestEveryLogOfConcurrentRequestsIsReadByExactlyOneRun(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	monitor := armMonitor(t, env, "")
+
+	// Two senders post at once, while Log processing runs in the
+	// background and the Monitor runs again and again.
+	const senders, requests = 2, 25
+	var sending sync.WaitGroup
+	for sender := range senders {
+		sending.Add(1)
+		go func() {
+			defer sending.Done()
+			for request := range requests {
+				body := logJSON(t, fmt.Sprintf("sender %d request %d", sender, request), testNow.Add(-time.Minute), nil)
+				req, _ := http.NewRequest("POST", "/api/123/logs?sentry_key=test_public_key", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := env.App.Test(req, 5000)
+				if err != nil || resp.StatusCode != 200 {
+					t.Errorf("Sender %d request %d: expected 200, got %v %v", sender, request, resp, err)
+					return
+				}
+				resp.Body.Close()
+			}
+		}()
+	}
+	sent := make(chan struct{})
+	go func() { sending.Wait(); close(sent) }()
+	processed := make(chan error, 1)
+	go func() {
+		for {
+			if err := env.LogProcessor.ProcessUntilCaughtUp(); err != nil {
+				processed <- err
+				return
+			}
+			select {
+			case <-sent:
+				processed <- env.LogProcessor.ProcessUntilCaughtUp()
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}()
+
+	read := map[string]int{}
+	for done := false; !done; {
+		select {
+		case err := <-processed:
+			if err != nil {
+				t.Fatalf("Log processing failed: %v", err)
+			}
+			done = true
+		default:
+		}
+		for _, message := range monitor.run(map[string]any{"limit": 1000}) {
+			read[message]++
+		}
+	}
+	if len(read) != senders*requests {
+		t.Errorf("Expected all %d Logs read, got %d", senders*requests, len(read))
+	}
+	for message, times := range read {
+		if times != 1 {
+			t.Errorf("Expected %q read once, got %d times", message, times)
+		}
+	}
+}
+
+func TestLogsNotYetProcessedAreReadByTheNextRun(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	monitor := armMonitor(t, env, "")
+
+	postAndProcess(t, env, logJSON(t, "processed", testNow.Add(-2*time.Minute), nil))
+	if counts := postLogs(t, env, "application/json", logJSON(t, "waiting", testNow.Add(-time.Minute), nil)); counts.Accepted != 1 {
+		t.Fatalf("Expected 1 Log accepted, got %+v", counts)
+	}
+	if got := monitor.run(nil); !slices.Equal(got, []string{"processed"}) {
+		t.Errorf("Expected only the processed Log, got %v", got)
+	}
+	env.ProcessLogs(t)
+	if got := monitor.run(nil); !slices.Equal(got, []string{"waiting"}) {
+		t.Errorf("Expected the Log processed since, got %v", got)
+	}
+}
+
+func TestARunAfterABatchFiltersCountsPastItsLimitAndTakesOnlyLogRows(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	errors := `where level == "error"`
+	armed := armMonitor(t, env, errors).cursor
+	at := func(minute int) time.Time { return testNow.Add(time.Duration(-minute) * time.Minute) }
+	log := func(message, level string, minute int) string {
+		return logJSON(t, message, at(minute), map[string]any{"level": level, "batch": "the sender's"})
+	}
+	postAndProcess(t, env, log("error 1", "error", 9), log("info 1", "info", 8), log("error 2", "error", 7))
+	postAndProcess(t, env, log("error 3", "error", 6), log("error 4", "error", 5), log("info 2", "info", 4), log("error 5", "error", 3))
+
+	page := runAfterBatch(t, env, errors, armed, map[string]any{"limit": 2})
+	if got := messages(page.Logs); !slices.Equal(got, []string{"error 5", "error 4"}) || page.Total != 5 {
+		t.Errorf("Expected the 2 newest of 5 errors, got %v of %d", got, page.Total)
+	}
+	page = runAfterBatch(t, env, errors+" | take 3", armed, nil)
+	if got := messages(page.Logs); !slices.Equal(got, []string{"error 5", "error 4", "error 3"}) || page.Total != 5 {
+		t.Errorf("Expected take's 3 newest of 5 errors, got %v of %d", got, page.Total)
+	}
+	page = runAfterBatch(t, env, `where level == "warn"`, armed, nil)
+	if len(page.Logs) != 0 || page.Total != 0 {
+		t.Errorf("Expected no warnings, got %v of %d", messages(page.Logs), page.Total)
+	}
+
+	// The Logs read are as any run lists them: the batch they came in isn't
+	// a Field, and a sender's own batch Attribute is kept.
+	page = runAfterBatch(t, env, errors, armed, map[string]any{"limit": 1})
+	if len(page.Logs) != 1 || !reflect.DeepEqual(page.Logs[0], latestLogs(t, env, 123, 1)[0]) {
+		t.Errorf("Expected the Log as a run lists it, got %+v", page.Logs)
+	}
+	if got := page.Logs[0].Attributes; !reflect.DeepEqual(got, map[string]any{"batch": "the sender's"}) {
+		t.Errorf("Expected only the sender's batch Attribute, got %v", got)
+	}
+	status, raw := postQueryApp(t, env, "/api/123/logs/query", map[string]any{"query": errors, "after_batch": armed, "limit": 1})
+	var answer struct {
+		Logs []map[string]any `json:"logs"`
+	}
+	if err := json.Unmarshal(raw, &answer); status != 200 || err != nil || len(answer.Logs) != 1 {
+		t.Fatalf("Expected one Log, got %d %s", status, raw)
+	}
+	for field := range answer.Logs[0] {
+		if !slices.Contains([]string{"id", "time", "level", "message", "service", "environment", "trace_id", "span_id", "attributes"}, field) {
+			t.Errorf("Expected only a Log's fields, got %q in %s", field, raw)
+		}
+	}
+	if _, rows := runTable(t, env, `summarize count() by batch`); !slices.Equal(rows, []string{`["the sender's",7]`}) {
+		t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", rows)
+	}
+
+	// Only a Query of Log rows runs after a batch, armed or not; a Query
+	// with mistakes, and an after_batch that isn't a batch id, answer 400.
+	for _, after := range []string{"", armed} {
+		for _, query := range []string{`summarize count()`, `where level == "error" | project message`} {
+			answer := answerOf(t, env, "/api/123/logs/query", map[string]any{"query": query, "after_batch": after}, 400)
+			if got := onlyErrorMessage(t, answer); !strings.Contains(got, "only a Query that returns Logs") {
+				t.Errorf("%q after %q: expected a message saying only Log rows can be read, got %q", query, after, got)
+			}
+		}
+		answer := answerOf(t, env, "/api/123/logs/query", map[string]any{"query": `where level ==`, "after_batch": after}, 400)
+		if _, ok := answer["errors"]; !ok {
+			t.Errorf("Expected a Query with mistakes after %q to list them, got %s", after, mustMarshal(t, answer))
+		}
+	}
+	for _, after := range []any{"not a batch", "1234", 5} {
+		if status, raw := postQueryApp(t, env, "/api/123/logs/query", map[string]any{"query": ``, "after_batch": after}); status != 400 {
+			t.Errorf("after_batch %v: expected 400, got %d: %s", after, status, raw)
+		}
 	}
 }
