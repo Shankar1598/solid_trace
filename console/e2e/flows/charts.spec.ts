@@ -298,3 +298,19 @@ test('on a phone the legend entries are targets a finger can hit', async ({ page
   }
   expect(errors).toEqual([])
 })
+
+test('a series keeps its colour when a function is added or removed', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin_auto(time), service`)
+  const count = await legendColors(page)
+
+  await runQuery(page, `${SOURCE}\n| summarize avg(duration_ms), count() by bin_auto(time), service`)
+  expect(await legendColors(page)).toEqual(count)
+  // Only some services log a duration, so avg alone draws fewer.
+  await runQuery(page, `${SOURCE}\n| summarize avg(duration_ms) by bin_auto(time), service`)
+  const avg = await legendColors(page)
+  expect(Object.keys(avg).length).toBeGreaterThan(1)
+  for (const [name, color] of Object.entries(avg)) expect(color, name).toBe(count[name])
+  expect(errors).toEqual([])
+})
