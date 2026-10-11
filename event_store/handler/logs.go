@@ -138,7 +138,7 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	})
 	if err != nil {
 		if run.timedOut() {
-			return run.stopped(c)
+			return run.stopped(c, shorterRange)
 		}
 		logger.L.Error("Log query failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
@@ -175,12 +175,17 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 // Monitor armed then reads every Log stored after.
 //
 // from, to and cursor are ignored, and from and to may be left out; a where
-// on time in the Query still applies. The run reads to its end, with no
-// ScanBudget, but stops at timeout_seconds with a 504. Only a Query that
-// returns Log rows can run after a batch: one that returns a table answers
-// 400 with {"errors": [{"message"}]}, as does a Query with mistakes. An
-// after_batch that is neither "" nor a UUID answers 400, null too: a Monitor
-// with no ingest_cursor yet arms with "".
+// on time in the Query still applies. Only a Query that returns Log rows can
+// run after a batch: one that returns a table answers 400 with {"errors":
+// [{"message"}]}, as does a Query with mistakes. An after_batch that is
+// neither "" nor a UUID answers 400, null too: a Monitor with no
+// ingest_cursor yet arms with "".
+//
+// The run reads its whole window, with no ScanBudget, but stops at
+// timeout_seconds with a 504. The Monitor then keeps its after_batch, and
+// its next window is larger still, so one whose runs keep stopping never
+// catches up: Console arms it again with "", which skips the Logs ingested
+// in between, and says so.
 func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req queryRequest) error {
 	afterBatch, after, ok := parseAfterBatch(req.AfterBatch)
 	if !ok {
@@ -217,7 +222,7 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 	}
 	if err != nil {
 		if run.timedOut() {
-			return run.stopped(c)
+			return run.stopped(c, "too many Logs were ingested since the last run to read in time")
 		}
 		logger.L.Error("Log query after a batch failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
@@ -274,7 +279,7 @@ func (h *LogsHandler) table(c *fiber.Ctx, run *run, projectID uint32, query *log
 	})
 	if err != nil {
 		if run.timedOut() {
-			return run.stopped(c)
+			return run.stopped(c, shorterRange)
 		}
 		logger.L.Error("Log table query failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})

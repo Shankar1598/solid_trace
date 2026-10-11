@@ -115,20 +115,24 @@ func TestARunPastItsTimeoutIsStoppedOnTheServer(t *testing.T) {
 	// scan stops while DuckDB runs it is storage's test
 	// (TestAScanPastItsContextIsStoppedPartWayAndItsConnectionStillReads),
 	// and that a run of Log rows stops part-way, the test below.
+	// A run after a batch reads no time range, so it isn't told to shorten
+	// one.
+	shorter, ingested := "try a shorter time range", "too many Logs were ingested since the last run"
 	runs := []struct {
-		path string
-		body map[string]any
+		path   string
+		body   map[string]any
+		advice string
 	}{
-		{"/api/123/logs/query", map[string]any{"query": `where duration > 100`}},
-		{"/api/123/logs/query", map[string]any{"query": `summarize count() by bin(time, 5m)`}},
-		{"/api/123/logs/histogram", map[string]any{"query": `where level == "error"`}},
-		{"/api/123/logs/query", map[string]any{"query": `where duration > 100`, "after_batch": "00000000-0000-0000-0000-000000000000"}},
+		{"/api/123/logs/query", map[string]any{"query": `where duration > 100`}, shorter},
+		{"/api/123/logs/query", map[string]any{"query": `summarize count() by bin(time, 5m)`}, shorter},
+		{"/api/123/logs/histogram", map[string]any{"query": `where level == "error"`}, shorter},
+		{"/api/123/logs/query", map[string]any{"query": `where duration > 100`, "after_batch": "00000000-0000-0000-0000-000000000000"}, ingested},
 	}
 	for _, run := range runs {
 		run.body["from"], run.body["to"], run.body["timeout_seconds"] = allTime.from, allTime.to, 0.000001
 		answer := answerOf(t, env, run.path, run.body, 504)
-		if got := onlyErrorMessage(t, answer); !strings.Contains(got, "stopped after 0.000001 s") {
-			t.Errorf("%s %v: expected a message saying the run was stopped, got %q", run.path, run.body, got)
+		if got := onlyErrorMessage(t, answer); !strings.Contains(got, "stopped after 0.000001 s") || !strings.Contains(got, run.advice) {
+			t.Errorf("%s %v: expected a message saying the run was stopped, and %q, got %q", run.path, run.body, run.advice, got)
 		}
 	}
 
