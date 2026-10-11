@@ -10,7 +10,7 @@ import type { Agg, LogTable, TableColumn } from '@/lib/logs/table'
 export const MAX_SERIES = 8
 /** The most bars a chart of categories draws. */
 export const MAX_BARS = 50
-/** The most bins a time series fills; past it, only the bins with rows are drawn. */
+/** The most bins a time series lays; past it, only the ends of each run of bins with no row are. */
 const MAX_FILLED_BINS = 10_000
 
 /** Aggregates whose empty bin is a zero; the others have no value there. */
@@ -83,7 +83,10 @@ export function formFor(model: ChartModel, wanted: ChartForm | 'auto' | 'table')
 /**
  * The chart a table makes:
  * - a time series when it has the last summarize's time bin column: number
- *   columns are series, and string and bool columns split them;
+ *   columns are series, and string and bool columns split them. Every bin
+ *   from the first to the last has a point, so a line breaks where a bin has
+ *   no row; when the table says such a bin has no Logs, a count there is
+ *   zero, so a count over no Logs at all is a flat zero;
  * - bars when it is a summarize with no time bin: a bar per value of its
  *   first string column, split by the others;
  * - a stat when it is one row of one number;
@@ -94,26 +97,30 @@ export function chartOf(table: LogTable): ChartModel {
   if (rows.length === 1 && columns.length === 1 && columns[0].type === 'number') {
     return { kind: 'stat', name: columns[0].name, value: numberOf(rows[0][0]) }
   }
-  if (rows.length === 0) return { kind: 'none' }
 
   const binAt = columns.findIndex(c => c.type === 'datetime' && c.bin_seconds)
   const roles = rolesOf(table, binAt)
   if (!roles) return { kind: 'none' }
   const { measures, splits } = roles
   if (measures.length === 0) return { kind: 'none' }
+  if (rows.length === 0 && !(binAt >= 0 && zeroWhenEmpty(table, measures, splits))) return { kind: 'none' }
 
   if (binAt >= 0) {
     const binSeconds = columns[binAt].bin_seconds!
+    const step = binSeconds * 1000
+    const filled = table.fill_gaps === true
     const pivot = pivotRows(table, i => {
       const time = rows[i][binAt]
       return typeof time === 'string' ? new Date(time).getTime() : null
     }, measures, splits)
     if (!pivot) return { kind: 'none' }
-    const drawn = keepSeries(pivot, columns, measures, splits, table.fill_gaps === true)
+    const drawn = keepSeries(pivot, columns, measures, splits, filled)
     const times = [...pivot.xs.keys()].map(Number).sort((a, b) => a - b)
     const from = table.from ? new Date(table.from) : new Date(times[0])
-    const to = table.to ? new Date(table.to) : new Date(times[times.length - 1] + binSeconds * 1000)
-    if (table.fill_gaps) fillBins(drawn, binSeconds, from, to)
+    const to = table.to ? new Date(table.to) : new Date(times[times.length - 1] + step)
+    // With no Logs in an empty bin, the bins run across the range; else between the rows'.
+    if (filled) layBins(drawn, step, Math.floor(from.getTime() / step) * step, Math.ceil(to.getTime() / step) * step - step, true)
+    else if (times.length > 0) layBins(drawn, step, times[0], times[times.length - 1], false)
     drawn.points.sort((a, b) => (a.x as number) - (b.x as number))
     return { kind: 'time', binSeconds, from, to, ...drawn }
   }
@@ -168,7 +175,8 @@ function pivotRows(
   table: LogTable, xOf: (row: number) => number | string | null, measures: number[], splits: number[],
 ): Pivot | null {
   const xs: Pivot['xs'] = new Map()
-  const combos: Pivot['combos'] = new Map()
+  // Nothing splitting the series leaves one, even with no rows.
+  const combos: Pivot['combos'] = new Map(splits.length === 0 ? [['[]', []]] : [])
   for (let i = 0; i < table.rows.length; i++) {
     const x = xOf(i)
     if (x === null || (typeof x === 'number' && isNaN(x))) continue
@@ -250,18 +258,41 @@ function keepSeries(pivot: Pivot, columns: TableColumn[], measures: number[], sp
   }
 }
 
-/** Adds the bins with no row from the range's first bin to its last, unless there would be too many. */
-function fillBins(drawn: SeriesSet, binSeconds: number, from: Date, to: Date) {
-  const step = binSeconds * 1000
-  const first = Math.floor(from.getTime() / step) * step
-  if ((to.getTime() - first) / step > MAX_FILLED_BINS) return
-  const have = new Set(drawn.points.map(p => p.x))
-  for (let x = first; x < to.getTime(); x += step) {
-    if (have.has(x)) continue
+/**
+ * Adds a point for each bin from first to last (bin starts, epoch ms) that
+ * has no row: a zero or a gap, as emptyValue says. Past MAX_FILLED_BINS only
+ * the first and last bins of each run without rows get one, which is enough
+ * to break a line, or drop it to zero, across the run.
+ */
+function layBins(drawn: SeriesSet, step: number, first: number, last: number, filled: boolean) {
+  const have = new Set(drawn.points.map(p => p.x as number))
+  const missing: number[] = []
+  if ((last - first) / step <= MAX_FILLED_BINS) {
+    for (let x = first; x <= last; x += step) if (!have.has(x)) missing.push(x)
+  } else {
+    const xs = [...have].sort((a, b) => a - b)
+    const ends = filled ? [first - step, ...xs, last + step] : xs
+    for (let i = 1; i < ends.length; i++) {
+      const [a, b] = [ends[i - 1], ends[i]]
+      if (b - a <= step) continue
+      missing.push(a + step)
+      if (b - step > a + step) missing.push(b - step)
+    }
+  }
+  for (const x of missing) {
     const point: ChartPoint = { x }
-    for (const s of drawn.series) point[s.key] = emptyValue(s, true)
+    for (const s of drawn.series) point[s.key] = emptyValue(s, filled)
     drawn.points.push(point)
   }
+}
+
+/**
+ * Whether a table with no rows is a flat zero: its bins have no Logs, and
+ * each number column is a count or sum of them, with nothing splitting it.
+ */
+function zeroWhenEmpty(table: LogTable, measures: number[], splits: number[]): boolean {
+  return table.fill_gaps === true && !!table.from && !!table.to && splits.length === 0 &&
+    measures.every(m => ZERO_WHEN_EMPTY.has(table.columns[m].agg as Agg))
 }
 
 function emptyValue(series: Series, filled: boolean): number | null {
