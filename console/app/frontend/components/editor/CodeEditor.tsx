@@ -1,7 +1,7 @@
 // The QueryEditor's CodeMirror, loaded on its own after the page has
 // painted. components/QueryEditor.tsx is the way in.
 import { useEffect, useRef } from 'react'
-import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { acceptCompletion, autocompletion, closeBrackets, closeBracketsKeymap, closeCompletion } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { PostgreSQL, sql } from '@codemirror/lang-sql'
 import { bracketMatching, syntaxHighlighting } from '@codemirror/language'
@@ -35,7 +35,14 @@ export default function CodeEditor(props: QueryEditorProps) {
         doc: value,
         extensions: [
           Prec.highest(keymap.of([
-            { key: 'Mod-Enter', run: () => { latest.current.onRun(); return true } },
+            {
+              key: 'Mod-Enter',
+              run: v => {
+                closeCompletion(v)
+                latest.current.onRun()
+                return true
+              },
+            },
           ])),
           // Escape closes completions first (autocompletion's keymap comes before this), then leaves the editor.
           keymap.of([

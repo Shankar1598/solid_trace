@@ -51,6 +51,16 @@ export interface Completions {
  * list of every Field.
  */
 export function completeQuery(text: string, pos: number, sources: CompletionSources, explicit = false): Completions | null {
+  const answer = completions(text, pos, sources, explicit)
+  if (!answer || explicit) return answer
+  // A word typed in full, that starts no other option, needs no list.
+  const typed = text.slice(answer.from, pos).toLowerCase()
+  const starting = answer.options.filter(o => o.label.toLowerCase().startsWith(typed))
+  if (typed !== '' && starting.length > 0 && starting.every(o => o.label.toLowerCase() === typed)) return null
+  return answer
+}
+
+function completions(text: string, pos: number, sources: CompletionSources, explicit: boolean): Completions | null {
   const before = text.slice(0, pos)
   const tokens = tokenize(before)
   const last = tokens.at(-1)
@@ -63,6 +73,8 @@ export function completeQuery(text: string, pos: number, sources: CompletionSour
 
   const word = typedWord(before)
   const from = pos - word.length
+  // Straight after a value or a ), nothing until a space: "error"and is no Query.
+  if (word === '' && !explicit && before !== '' && !/[\s(,|]$/.test(before)) return null
   const context = tokens.filter(t => t.to <= from)
   const pipe = context.map(t => t.kind).lastIndexOf('pipe')
   const stage = context.slice(pipe + 1)

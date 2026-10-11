@@ -115,8 +115,10 @@ describe('operators', () => {
     expect(answer?.options.map(o => o.label)).toContain('!contains')
   })
 
-  it('give and and or after a whole condition', () => {
+  it('give and and or after a whole condition, once a space follows it', () => {
     expect(labels(`['my-api'] | where level == "error" `)).toEqual(['and', 'or'])
+    expect(at(`['my-api'] | where level == "error"`)).toBeNull()
+    expect(at("['my-api'] | summarize count()")).toBeNull()
   })
 })
 
@@ -155,6 +157,14 @@ describe('where nothing is offered', () => {
     expect(at("['my-api'] // wh")).toBeNull()
     expect(at(`['my-api'] | search "bo`)).toBeNull()
     expect(at("['my-api'] | take ")).toBeNull()
+  })
+
+  it('once a word is typed in full and starts no other option', () => {
+    expect(at("['my-api'] | sort by time desc")).toBeNull()
+    expect(at("['my-api'] | where")).toBeNull()
+    // The editor narrows the list to what is typed; countif still starts with count.
+    expect(labels("['my-api'] | summarize count")).toContain('countif')
+    expect(labels("['my-api'] | where", SOURCES, true)).toContain('where')
   })
 
   it('reads only the text before the cursor', () => {
