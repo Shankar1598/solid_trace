@@ -263,7 +263,7 @@ func (e *projectExport) stageHour(hour time.Time) (string, error) {
 	if err := syncFile(staged); err != nil {
 		return staged, err
 	}
-	stats, err := readLogFileStats(e.ctx, e.conn, staged)
+	stats, err := readLogFileStats(e.ctx, e.conn, staged, true)
 	if err != nil {
 		return staged, fmt.Errorf("read the staged file: %w", err)
 	}
@@ -292,7 +292,7 @@ func (e *projectExport) daySet(t time.Time) ([]typedKey, error) {
 }
 
 // fixedColumns are the fixed columns but the maps, to select as they are.
-const fixedColumns = "id, time, level, message, service, environment, trace_id, span_id"
+const fixedColumns = "id, time, level, message, service, environment, trace_id, span_id, batch"
 
 // hotRows selects the hot table's Logs of [from, to) with the promoted
 // columns of set. Their values are in those columns already.

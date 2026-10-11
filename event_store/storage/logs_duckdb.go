@@ -100,6 +100,9 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 			return nil, err
 		}
 	}
+	if err := addBatchColumns(events.db); err != nil {
+		return nil, fmt.Errorf("add the batch column to the log tables: %w", err)
+	}
 	promoted, err := loadPromotedSets(events.db)
 	if err != nil {
 		return nil, fmt.Errorf("load promoted sets: %w", err)
@@ -120,8 +123,15 @@ func hotTable(projectID uint32) string {
 }
 
 // hotTableColumns are a hot table's fixed columns: the id, the seven built-in
-// fields and one map per Attribute type. attrs_json holds JSON text. Promoted
-// columns follow them.
+// fields, one map per Attribute type and the Log's batch. attrs_json holds
+// JSON text. Promoted columns follow them, but in a table from before the
+// batch column, which gets it last (addBatchColumns).
+//
+// batch is the id of the Log batch the Log came in. Log batch ids follow the
+// order Log processing commits them in, which Log ids don't, so a read of the
+// Logs ingested after a batch goes by it (ScanLogsIngestedAfter). It is
+// internal: no Query, Field, Log or SQL query sees it. It is NULL for a Log
+// stored before it was added.
 const hotTableColumns = `
 	id UUID,
 	time TIMESTAMP,
@@ -134,8 +144,41 @@ const hotTableColumns = `
 	attrs_string MAP(VARCHAR, VARCHAR),
 	attrs_number MAP(VARCHAR, DOUBLE),
 	attrs_bool MAP(VARCHAR, BOOLEAN),
-	attrs_json MAP(VARCHAR, VARCHAR)
+	attrs_json MAP(VARCHAR, VARCHAR),
+	batch UUID
 `
+
+// addBatchColumns adds the batch column to logs_late and every hot table of
+// an install from before it. ALTER adds it last, so logs_late's columns are
+// in the same order whether it was made with the column or got it later.
+func addBatchColumns(db *sql.DB) error {
+	rows, err := db.Query(`
+		SELECT table_name FROM duckdb_tables()
+		WHERE database_name = ? AND schema_name = 'main' AND table_name LIKE 'logs\_hot\_%' ESCAPE '\'`,
+		logsCatalog)
+	if err != nil {
+		return err
+	}
+	tables := []string{lateTable}
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			rows.Close()
+			return err
+		}
+		tables = append(tables, table)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, table := range tables {
+		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s.%s ADD COLUMN IF NOT EXISTS batch UUID", logsCatalog, table)); err != nil {
+			return fmt.Errorf("%s: %w", table, err)
+		}
+	}
+	return nil
+}
 
 // lateTable is the table that holds every Project's late Logs.
 const lateTable = "logs_late"
@@ -151,7 +194,7 @@ func HotWindow(now time.Time) (from, to time.Time) {
 // hotTableFixedColumns are the names of hotTableColumns, in order.
 var hotTableFixedColumns = []string{
 	"id", "time", "level", "message", "service", "environment", "trace_id", "span_id",
-	"attrs_string", "attrs_number", "attrs_bool", "attrs_json",
+	"attrs_string", "attrs_number", "attrs_bool", "attrs_json", "batch",
 }
 
 // LogProcessingCursor returns the id of the last Log batch that Log processing
@@ -270,14 +313,17 @@ func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, bat
 	// Late Logs are never promoted, and don't count towards popularity:
 	// their days' sets are made or past, and a burst of old Logs shouldn't
 	// choose today's columns.
+	//
+	// hotBatches and lateBatches are the ids of the Logs' batches.
 	var hot, late []models.Log
+	var hotBatches, lateBatches []uuid.UUID
 	from, to := HotWindow(now)
 	for _, batch := range batches {
 		for _, log := range batch.Logs {
 			if log.Time.Before(from) || !log.Time.Before(to) {
-				late = append(late, log)
+				late, lateBatches = append(late, log), append(lateBatches, batch.ID)
 			} else {
-				hot = append(hot, log)
+				hot, hotBatches = append(hot, log), append(hotBatches, batch.ID)
 			}
 		}
 	}
@@ -285,10 +331,10 @@ func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, bat
 	if err != nil {
 		return nil, err
 	}
-	if err := appendHotRows(conn, table, hot, promotion); err != nil {
+	if err := appendHotRows(conn, table, hot, hotBatches, promotion); err != nil {
 		return nil, fmt.Errorf("append logs: %w", err)
 	}
-	if err := appendLateRows(conn, projectID, late); err != nil {
+	if err := appendLateRows(conn, projectID, late, lateBatches); err != nil {
 		return nil, fmt.Errorf("append late logs: %w", err)
 	}
 	if err := countKeys(ctx, conn, projectID, hot); err != nil {
@@ -309,9 +355,11 @@ func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, bat
 	return promotion.sets(), nil
 }
 
-// appendHotRows appends Logs to a hot table through an appender opened after
-// the promotion's ALTER TABLEs, as an appender opened before one fails.
-func appendHotRows(conn *sql.Conn, table string, logs []models.Log, promotion *promotion) error {
+// appendHotRows appends Logs, each of the batch at its index in batches, to
+// a hot table through an appender opened after the promotion's ALTER TABLEs,
+// as an appender opened before one fails. It names the columns, which a
+// table from before the batch column has in another order.
+func appendHotRows(conn *sql.Conn, table string, logs []models.Log, batches []uuid.UUID, promotion *promotion) error {
 	promoted := promotion.promotedColumns()
 	columns := slices.Clone(hotTableFixedColumns)
 	for _, key := range promoted {
@@ -326,9 +374,9 @@ func appendHotRows(conn *sql.Conn, table string, logs []models.Log, promotion *p
 		if err != nil {
 			return err
 		}
-		for _, log := range logs {
+		for i, log := range logs {
 			set := promotion.days[LogDay(log.Time)].keys
-			if err := appender.AppendRow(hotTableRow(log, set, promoted)...); err != nil {
+			if err := appender.AppendRow(hotTableRow(log, batches[i], set, promoted)...); err != nil {
 				appender.Close()
 				return err
 			}
@@ -337,9 +385,10 @@ func appendHotRows(conn *sql.Conn, table string, logs []models.Log, promotion *p
 	})
 }
 
-// appendLateRows appends a Project's late Logs to logs_late, every Attribute
-// in its map.
-func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log) error {
+// appendLateRows appends a Project's late Logs, each of the batch at its
+// index in batches, to logs_late, every Attribute in its map. The appender
+// goes by position: the Project, then the fixed columns, the batch last.
+func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log, batches []uuid.UUID) error {
 	if len(logs) == 0 {
 		return nil
 	}
@@ -352,8 +401,8 @@ func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log) error {
 		if err != nil {
 			return err
 		}
-		for _, log := range logs {
-			row := append([]driver.Value{projectID}, hotTableRow(log, nil, nil)...)
+		for i, log := range logs {
+			row := append([]driver.Value{projectID}, hotTableRow(log, batches[i], nil, nil)...)
 			if err := appender.AppendRow(row...); err != nil {
 				appender.Close()
 				return err
@@ -363,10 +412,10 @@ func appendLateRows(conn *sql.Conn, projectID uint32, logs []models.Log) error {
 	})
 }
 
-// hotTableRow is a Log's row: the fixed columns, then the promoted columns.
-// A value whose key is in the Log's day's set goes to its column and not its
-// map; the columns of other keys are NULL.
-func hotTableRow(log models.Log, set map[typedKey]PromotedKey, promoted []typedKey) []driver.Value {
+// hotTableRow is the row of a Log of a batch: the fixed columns, then the
+// promoted columns. A value whose key is in the Log's day's set goes to its
+// column and not its map; the columns of other keys are NULL.
+func hotTableRow(log models.Log, batch uuid.UUID, set map[typedKey]PromotedKey, promoted []typedKey) []driver.Value {
 	inMap := func(t AttributeType) func(string) bool {
 		return func(key string) bool {
 			_, ok := set[typedKey{t, key}]
@@ -386,6 +435,7 @@ func hotTableRow(log models.Log, set map[typedKey]PromotedKey, promoted []typedK
 		orderedMap(log.Attributes.Number, inMap(NumberAttribute)),
 		orderedMap(log.Attributes.Bool, inMap(BoolAttribute)),
 		orderedMap(log.Attributes.JSON, inMap(JSONAttribute)),
+		duckdb.UUID(batch),
 	}
 	for _, key := range promoted {
 		var value driver.Value

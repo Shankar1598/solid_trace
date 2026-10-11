@@ -43,7 +43,9 @@ var manifestTables = []string{
 		min_time TIMESTAMP,
 		max_time TIMESTAMP,
 		log_count BIGINT,
-		-- The highest Log batch id in the file; NULL until it is recorded.
+		-- The highest Log batch id in the file, which a read of the Logs
+		-- ingested after a batch goes by. NULL for a file from before the
+		-- batch column: none of its Logs has one.
 		batch_max UUID,
 		local BOOLEAN,
 		remote BOOLEAN
@@ -245,18 +247,27 @@ type logFileStats struct {
 	bytes            int64
 	minTime, maxTime sql.NullTime
 	logs             sql.NullInt64
+	// batchMax is the highest Log batch id of the file's Logs, as text:
+	// NULL when none of them has one, or for a file from before the batch
+	// column.
+	batchMax sql.NullString
 }
 
 // readLogFileStats reads a Log file's size, the times of its first and last
-// Logs and how many it holds.
-func readLogFileStats(ctx context.Context, db sqlRunner, path string) (logFileStats, error) {
+// Logs and how many it holds, and, with batches, the highest Log batch id in
+// it. Only a file exported since the batch column has one.
+func readLogFileStats(ctx context.Context, db sqlRunner, path string, batches bool) (logFileStats, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return logFileStats{}, err
 	}
 	stats := logFileStats{bytes: info.Size()}
-	err = db.QueryRowContext(ctx, fmt.Sprintf("SELECT min(time), max(time), count(*) FROM read_parquet(%s)", sqltext.String(path))).
-		Scan(&stats.minTime, &stats.maxTime, &stats.logs)
+	batchMax := "NULL"
+	if batches {
+		batchMax = "CAST(max(batch) AS VARCHAR)"
+	}
+	err = db.QueryRowContext(ctx, fmt.Sprintf("SELECT min(time), max(time), count(*), %s FROM read_parquet(%s)", batchMax, sqltext.String(path))).
+		Scan(&stats.minTime, &stats.maxTime, &stats.logs, &stats.batchMax)
 	return stats, err
 }
 
@@ -268,14 +279,17 @@ func insertLogFile(ctx context.Context, db sqlRunner, file logFile, stats logFil
 		}
 		return timestampString(t.Time)
 	}
-	logs := any(nil)
+	logs, batchMax := any(nil), any(nil)
 	if stats.logs.Valid {
 		logs = stats.logs.Int64
 	}
+	if stats.batchMax.Valid {
+		batchMax = stats.batchMax.String
+	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO logs.log_files (project_id, day, hour, name, bytes, min_time, max_time, log_count, local, remote)
-		VALUES (?, CAST(? AS DATE), ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, true, false)`,
-		append(file.keyArgs(), stats.bytes, timestamp(stats.minTime), timestamp(stats.maxTime), logs)...)
+		INSERT INTO logs.log_files (project_id, day, hour, name, bytes, min_time, max_time, log_count, batch_max, local, remote)
+		VALUES (?, CAST(? AS DATE), ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, CAST(? AS UUID), true, false)`,
+		append(file.keyArgs(), stats.bytes, timestamp(stats.minTime), timestamp(stats.maxTime), logs, batchMax)...)
 	if err != nil {
 		return fmt.Errorf("add %s to the manifest: %w", file.key(), err)
 	}
@@ -418,7 +432,9 @@ func (s *LogStore) backfillManifest() error {
 		if !ok {
 			continue // not a file the export writes
 		}
-		stats, err := readLogFileStats(ctx, s.db, path)
+		// Files from before the manifest are from before the batch
+		// column too, so their batch_max stays NULL.
+		stats, err := readLogFileStats(ctx, s.db, path, false)
 		if err != nil {
 			info, statErr := os.Stat(path)
 			if statErr != nil {
