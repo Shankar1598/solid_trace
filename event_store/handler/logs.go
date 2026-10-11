@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/logquery"
+	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
@@ -52,6 +53,8 @@ type queryRequest struct {
 	Limit          int       `json:"limit"`
 	Cursor         string    `json:"cursor"`
 	TimeoutSeconds *float64  `json:"timeout_seconds"`
+	// AfterBatch is nil when the request has no after_batch.
+	AfterBatch *string `json:"after_batch"`
 }
 
 // POST /api/:project_id/logs/query
@@ -73,6 +76,9 @@ type queryRequest struct {
 // context that ends with the connection: it stops at limit Logs, the end of
 // the range, or timeout_seconds, past which the run answers 504 with
 // {"errors": [{"message"}]}.
+//
+// With "after_batch", a Match monitor's run reads the Logs ingested since
+// its last run instead (afterBatch).
 func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -87,6 +93,9 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		return c.Status(400).JSON(problem)
 	}
 	defer run.end()
+	if req.AfterBatch != nil {
+		return h.afterBatch(c, run, projectID, req)
+	}
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
@@ -143,6 +152,86 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		next = &cursor
 	}
 	return run.answer(c, fiber.Map{"logs": page.Logs, "next_cursor": next})
+}
+
+// afterBatch answers a run with "after_batch", as a Match monitor runs its
+// Query: it reads the Project's Logs ingested after a Log batch, those of
+// the later batches Log processing has stored, whatever their time. Log ids
+// don't follow the order Log processing stores Logs in, but each Project's
+// Log batch ids do.
+//
+//   - "after_batch": "" arms a new Monitor: the Query is checked, nothing is
+//     read, and the answer is {"logs": [], "next_cursor": null,
+//     "ingest_cursor", "total": 0, "elapsed_ms"}.
+//   - "after_batch": W, a Log batch id, the last run's ingest_cursor, reads
+//     the Logs of the batches after W up to ingest_cursor, and answers
+//     {"logs": […], "next_cursor": null, "ingest_cursor", "total",
+//     "elapsed_ms"}: up to limit Logs that pass the Query, newest first, and
+//     total, how many passed it in all.
+//
+// ingest_cursor is the Project's Log processing cursor, read in the same
+// transaction as the Logs: the after_batch of the Monitor's next run. It is
+// the nil UUID until Log processing has stored a batch for the Project, so a
+// Monitor armed then reads every Log stored after.
+//
+// from, to and cursor are ignored, and from and to may be left out; a where
+// on time in the Query still applies. The run reads to its end, with no
+// ScanBudget, but stops at timeout_seconds with a 504. Only a Query that
+// returns Log rows can run after a batch: one that returns a table answers
+// 400 with {"errors": [{"message"}]}, as does a Query with mistakes. An
+// after_batch that is neither "" nor a UUID answers 400.
+func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req queryRequest) error {
+	var after uuid.UUID
+	if *req.AfterBatch != "" {
+		var err error
+		if after, err = uuid.Parse(*req.AfterBatch); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "after_batch must be a Log batch id, or empty to arm a Monitor"})
+		}
+	}
+	limit := defaultQueryLogs
+	if req.Limit < 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "limit must be a positive whole number"})
+	} else if req.Limit > 0 {
+		limit = min(req.Limit, maxQueryLogs)
+	}
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{Now: h.clock.Now()})
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
+	}
+	if query.Table() {
+		return c.Status(400).JSON(fiber.Map{"errors": []fiber.Map{{
+			"message": "only a Query that returns Logs can read the Logs ingested after a batch, and this one returns a table",
+		}}})
+	}
+	if take, ok := query.Take(); ok {
+		limit = min(limit, take)
+	}
+
+	var found storage.IngestedLogs
+	if *req.AfterBatch == "" {
+		found.Logs = []models.Log{}
+		found.Cursor, err = h.logs.LogProcessingCursor(projectID)
+	} else {
+		found, err = h.logs.ScanLogsIngestedAfter(run.ctx, storage.IngestedLogScan{
+			ProjectID: projectID,
+			After:     after,
+			Where:     query.Where,
+			Limit:     limit,
+		})
+	}
+	if err != nil {
+		if run.timedOut() {
+			return run.stopped(c)
+		}
+		logger.L.Error("Log query after a batch failed", "project_id", projectID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	return run.answer(c, fiber.Map{
+		"logs":          found.Logs,
+		"next_cursor":   nil,
+		"ingest_cursor": found.Cursor.String(),
+		"total":         found.Total,
+	})
 }
 
 // table answers a run of a Query that returns a table: {"table": {"columns":

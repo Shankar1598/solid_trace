@@ -200,8 +200,14 @@ var hotTableFixedColumns = []string{
 // LogProcessingCursor returns the id of the last Log batch that Log processing
 // stored for a Project, or uuid.Nil if it has stored none.
 func (s *LogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
+	return logProcessingCursor(context.Background(), s.db, projectID)
+}
+
+// logProcessingCursor is LogProcessingCursor, read with db, such as a
+// connection inside its transaction.
+func logProcessingCursor(ctx context.Context, db sqlRunner, projectID uint32) (uuid.UUID, error) {
 	var batchID []byte
-	err := s.db.QueryRow("SELECT batch_id FROM logs.log_processing_cursors WHERE project_id = ?", projectID).Scan(&batchID)
+	err := db.QueryRowContext(ctx, "SELECT batch_id FROM logs.log_processing_cursors WHERE project_id = ?", projectID).Scan(&batchID)
 	if err == sql.ErrNoRows {
 		return uuid.Nil, nil
 	}
