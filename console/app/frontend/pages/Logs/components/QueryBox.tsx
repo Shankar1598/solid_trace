@@ -1,5 +1,6 @@
+import { QueryEditor } from '@/components/QueryEditor'
 import type { QueryProblem } from '@/lib/logs/api'
-import { cn } from '@/lib/utils'
+import type { CompletionSources } from '@/lib/logs/completions'
 
 /** Query → Builder needs asking: the stages the Builder can't show, or the Query's mistakes. */
 export interface LeavingQuery {
@@ -13,41 +14,41 @@ interface QueryBoxProps {
   text: string
   onChange: (text: string) => void
   onRun: () => void
-  /** The mistakes of the Query last run, shown under the box. */
+  /** The mistakes of the Query last run, squiggled in the box and listed under it. */
   problems: QueryProblem[]
+  /** What completions offer: the Fields and values of recent Logs, and the Project's source. */
+  completions: CompletionSources
   leaving: LeavingQuery | null
   onDiscard: () => void
   onStay: () => void
 }
 
 /** Query mode's editable Query text, its mistakes, and the prompt to leave it. */
-export function QueryBox({ projectSlug, text, onChange, onRun, problems, leaving, onDiscard, onStay }: QueryBoxProps) {
+export function QueryBox({ projectSlug, text, onChange, onRun, problems, completions, leaving, onDiscard, onStay }: QueryBoxProps) {
   return (
     <div className="border-b bg-muted/30 px-3 py-2">
-      <textarea
+      <QueryEditor
         value={text}
-        autoFocus
-        spellCheck={false}
-        rows={Math.min(8, text.split('\n').length + 1)}
-        onChange={e => onChange(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            onRun()
-          }
-        }}
-        aria-label="Query"
+        onChange={onChange}
+        onRun={onRun}
+        language="query"
+        label="Query"
         placeholder={`['${projectSlug}']\n| where level == "error"\n| summarize count() by service`}
-        className={cn(
-          'w-full resize-y rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] leading-5 outline-none focus:ring-1 focus:ring-primary',
-          problems.length > 0 && 'border-destructive',
-        )}
+        problems={problems}
+        completions={completions}
+        maxLines={8}
+        autoFocus
+        describedBy={problems.length > 0 ? 'query-problems' : undefined}
       />
-      {problems.map((p, i) => (
-        <div key={i} className="mt-0.5 font-mono text-[11px] text-destructive">
-          Line {p.line}, column {p.column}: {p.message}
+      {problems.length > 0 && (
+        <div id="query-problems">
+          {problems.map((p, i) => (
+            <div key={i} className="mt-0.5 font-mono text-[11px] text-destructive">
+              Line {p.line}, column {p.column}: {p.message}
+            </div>
+          ))}
         </div>
-      ))}
+      )}
       {leaving && (
         <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-amber-400 bg-amber-50 p-2 text-xs dark:bg-amber-950/30">
           {/* Wide enough that on a phone the buttons wrap below it together. */}

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { addFilter, builderRow, last24h, logCount, openLogs, pickQuickRange, runBy, settled, timeRange } from '../support/logs'
+import { addFilter, builderRow, expectEditorText, last24h, logCount, openLogs, pickQuickRange, runBy, settled, timeRange } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // Each run is a history entry: Back returns to the run before, its Query and
@@ -61,7 +61,7 @@ test('Back in Query mode returns to the Query run before', async ({ page }) => {
   await page.goBack()
   await settled(page)
   await expect(page).toHaveURL(/mode=query/)
-  await expect(page.getByLabel('Query', { exact: true })).toHaveValue(first)
+  await expectEditorText(page.getByLabel('Query', { exact: true }), first)
   expect(await logCount(page)).toBe(warnLogs)
   expect(errors).toEqual([])
 })

@@ -50,6 +50,18 @@
   --chart-level-error: oklch(63.7% 0.237 25.331);
   --chart-level-fatal: oklch(44.4% 0.177 26.899);
   --chart-level-none: #d4d4d4;
+  /*
+   * The QueryEditor's colours (Tailwind's 700s on white, 300s and 400s on
+   * black): strings green and literals violet as the stream writes values,
+   * stages and keywords sky, operators pink, functions amber and bracketed
+   * names orange.
+   */
+  --syntax-keyword: oklch(50% 0.134 242.749);
+  --syntax-operator: oklch(52.5% 0.223 3.958);
+  --syntax-function: oklch(55.5% 0.163 48.998);
+  --syntax-string: oklch(50.8% 0.118 165.612);
+  --syntax-literal: oklch(49.1% 0.27 292.581);
+  --syntax-name: oklch(55.3% 0.195 38.402);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -97,6 +109,12 @@
   /* Dark red is 2.1:1 on the dark card, so fatal steps lighter than error here, as the stream's fatal text does. */
   --chart-level-fatal: oklch(80.8% 0.114 19.571);
   --chart-level-none: #454545;
+  --syntax-keyword: oklch(74.6% 0.16 232.661);
+  --syntax-operator: oklch(71.8% 0.202 349.761);
+  --syntax-function: oklch(87.9% 0.169 91.605);
+  --syntax-string: oklch(76.5% 0.177 163.223);
+  --syntax-literal: oklch(70.2% 0.183 293.541);
+  --syntax-name: oklch(83.7% 0.128 66.29);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);

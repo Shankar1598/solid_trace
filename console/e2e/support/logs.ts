@@ -58,6 +58,23 @@ export async function runBy(page: Page, trigger: () => Promise<unknown>) {
   await settled(page)
 }
 
+/**
+ * The text in a QueryEditor (CodeMirror), found by its name such as
+ * getByLabel('Query', { exact: true }): its lines, without the placeholder.
+ */
+export function editorText(box: Locator): Promise<string> {
+  return box.evaluate(el => [...el.querySelectorAll('.cm-line')]
+    .map(line => (line.querySelector('.cm-placeholder') ? '' : line.textContent ?? ''))
+    .join('\n'))
+}
+
+/** Waits until a QueryEditor holds `expected`, or text that matches it. */
+export async function expectEditorText(box: Locator, expected: string | RegExp) {
+  const text = expect.poll(() => editorText(box))
+  if (typeof expected === 'string') await text.toBe(expected)
+  else await text.toMatch(expected)
+}
+
 /** The summary line's Log count, as a number. */
 export async function logCount(page: Page): Promise<number> {
   const line = summaryLine(page)

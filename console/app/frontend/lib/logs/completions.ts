@@ -25,7 +25,7 @@ export type CompletionType = 'source' | 'stage' | 'field' | 'function' | 'operat
 export interface QueryCompletion {
   label: string
   type: CompletionType
-  /** Beside the label: a Field's type, a stage's or function's signature. */
+  /** After the label: a Field's or value's type, what a stage or function takes, as `(x, p)`. */
   detail?: string
   /** What it does, in a line. */
   info?: string
@@ -210,7 +210,7 @@ function stageOptions(textBefore: string): QueryCompletion[] {
     return {
       label: s.name,
       type: 'stage',
-      detail: s.signature,
+      detail: s.signature.slice(s.name.length + 1),
       info: s.info,
       apply: `${space}${s.name}${takesMore ? ' ' : ''}`,
       reopen: takesMore,
@@ -218,19 +218,15 @@ function stageOptions(textBefore: string): QueryCompletion[] {
   })
 }
 
-/** A function, applied with its parentheses and the cursor between them when it takes arguments. */
+/**
+ * A function, applied with its parentheses and the cursor between them when
+ * it takes arguments, which completions then offer; or as its `write` says.
+ */
 function fn(f: FunctionInfo, section: string): QueryCompletion {
   const takesArgs = f.args !== ''
-  return {
-    label: f.name,
-    type: 'function',
-    detail: `${f.name}(${f.args})`,
-    info: f.info,
-    apply: `${f.name}()`,
-    cursor: takesArgs ? f.name.length + 1 : undefined,
-    reopen: takesArgs,
-    section,
-  }
+  const base = { label: f.name, type: 'function' as const, detail: `(${f.args})`, info: f.info, section }
+  if (f.write) return { ...base, apply: f.write.replace('|', ''), cursor: f.write.indexOf('|') }
+  return { ...base, apply: `${f.name}()`, cursor: takesArgs ? f.name.length + 1 : undefined, reopen: takesArgs }
 }
 
 function keyword(name: string, info: string): QueryCompletion {

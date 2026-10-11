@@ -29,7 +29,7 @@ describe('stages', () => {
     expect(answer?.from).toBe("['my-api'] | ".length)
     expect(answer?.options.map(o => o.label)).toContain('where')
     expect(answer?.options.find(o => o.label === 'where')).toMatchObject({ type: 'stage', apply: 'where ', reopen: true })
-    expect(answer?.options.find(o => o.label === 'summarize')?.detail).toBe('summarize agg, … by expr, …')
+    expect(answer?.options.find(o => o.label === 'summarize')?.detail).toBe('agg, … by expr, …')
   })
 
   it('are offered straight after a |, on the same line or the next', () => {
@@ -60,7 +60,7 @@ describe('Fields and functions', () => {
 
     expect(answer?.options.find(o => o.label === 'duration_ms')).toMatchObject({ type: 'field', detail: 'number' })
     expect(answer?.options.find(o => o.label === 'level')).toMatchObject({ type: 'field', detail: 'string' })
-    expect(answer?.options.find(o => o.label === 'tolower')).toMatchObject({ type: 'function', detail: 'tolower(s)' })
+    expect(answer?.options.find(o => o.label === 'tolower')).toMatchObject({ type: 'function', detail: '(s)' })
     // Aggregates belong to summarize.
     expect(answer?.options.map(o => o.label)).not.toContain('avg')
   })
@@ -71,8 +71,8 @@ describe('Fields and functions', () => {
 
   it('offer aggregates first in summarize, then Fields inside them', () => {
     const aggregates = at("['my-api'] | summarize ")
-    expect(aggregates?.options[0]).toMatchObject({ label: 'count', type: 'function', detail: 'count()' })
-    expect(aggregates?.options.find(o => o.label === 'percentile')?.detail).toBe('percentile(x, p)')
+    expect(aggregates?.options[0]).toMatchObject({ label: 'count', type: 'function', detail: '()' })
+    expect(aggregates?.options.find(o => o.label === 'percentile')?.detail).toBe('(x, p)')
     expect(aggregates?.options.find(o => o.label === 'avg')).toMatchObject({ apply: 'avg()', cursor: 4, reopen: true })
 
     expect(labels("['my-api'] | summarize avg(du")).toContain('duration_ms')
@@ -81,9 +81,12 @@ describe('Fields and functions', () => {
 
   it('offer by after an aggregate, then Fields and time bins', () => {
     expect(labels("['my-api'] | summarize count() ")).toEqual(['by'])
-    const groups = labels("['my-api'] | summarize count() by ")!
-    expect(groups.slice(0, 2)).toEqual(['bin_auto', 'bin'])
-    expect(groups).toContain('service')
+    const groups = at("['my-api'] | summarize count() by ")!.options
+    expect(groups.slice(0, 2).map(o => o.label)).toEqual(['bin_auto', 'bin'])
+    expect(groups.map(o => o.label)).toContain('service')
+    // Time bins come written out: bin_auto whole, bin waiting for its size.
+    expect(groups[0]).toMatchObject({ apply: 'bin_auto(time)', cursor: 'bin_auto(time)'.length })
+    expect(groups[1]).toMatchObject({ apply: 'bin(time, )', cursor: 'bin(time, '.length })
   })
 
   it('offer by after sort, and an order after a sort key', () => {
