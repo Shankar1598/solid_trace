@@ -206,11 +206,13 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
                 stacked={stacked}
                 model={model}
                 across={across}
+                axisBelow={across || i === panels.length - 1}
                 xAxis={across ? (
                   <XAxis
                     type="number"
                     domain={values.domain}
                     ticks={values.ticks}
+                    interval={0}
                     tickFormatter={label}
                     tickLine={false}
                     axisLine={{ stroke: 'var(--border)' }}
@@ -258,6 +260,7 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
                     width={valueWidth}
                     domain={values.domain}
                     ticks={values.ticks}
+                    interval={0}
                     tickLine={false}
                     axisLine={false}
                     tick={{ fontSize: 10 }}
@@ -304,7 +307,7 @@ function NameTick({ x, y, payload }: { x?: number; y?: number; payload?: { value
 }
 
 /** One panel's chart: its series in the form asked for, over the axes given. */
-function PanelChart({ form, data, series, hidden, stacked, model, across, xAxis, yAxis, tooltip, overlay, events }: {
+function PanelChart({ form, data, series, hidden, stacked, model, across, axisBelow, xAxis, yAxis, tooltip, overlay, events }: {
   form: ChartForm
   data: ChartPoint[]
   series: Series[]
@@ -313,6 +316,8 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, xAxis,
   model: SeriesChartModel
   /** Bars lying across, categories down the side. */
   across: boolean
+  /** Whether the x axis shows below; a panel above another hides it, and keeps room for its lowest value's label. */
+  axisBelow: boolean
   xAxis: React.ReactNode
   yAxis: React.ReactNode
   tooltip: React.ReactNode
@@ -329,7 +334,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, xAxis,
       ? <circle key={`${s.key}-${i}`} cx={props.cx} cy={props.cy} r={4} fill={`var(--color-${s.key})`} stroke="var(--card)" strokeWidth={2} />
       : <g key={`${s.key}-${i}`} />
   }
-  const chart = { data, margin: { top: 6, right: 12, bottom: 0, left: 0 }, ...events }
+  const chart = { data, margin: { top: 6, right: 12, bottom: axisBelow ? 0 : 10, left: 0 }, ...events }
   const axes = (
     <>
       <CartesianGrid vertical={across} horizontal={!across} stroke="var(--border)" />
