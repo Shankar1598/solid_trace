@@ -24,9 +24,9 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-0. **Logs v2** (2026-10-10, branch `feature/logs-v2` from `feature/logs-v1`): charts, developer UX, Dashboards, Monitors (Slack, PagerDuty), Parquet in S3/GCS with a bin cache. Implemented directly from [the spec](logs-v2/spec.md), phase by phase.
+0. **Logs v2** (2026-10-10, branch `feature/logs-v2` from `feature/logs-v1`): charts, developer UX, Dashboards, Monitors (Slack, PagerDuty), Parquet in S3/GCS with a bin cache. Implemented directly from [the spec](logs-v2/spec.md), phase by phase. Done (2026-10-11): the v1 click-through with Playwright (A0), chart hints and timeouts in EventStore (B1), charts in the explorer (A1), the Log file manifest (B2), after_batch for Match monitors (B3) and a promoted-set fix (B3b). Next: the time range picker and Query editor (A2a), then the value menu, palette and shortcuts (A2b). Review findings left for later: [carry-over](logs-v2/carry-over.md).
 
-1. Click through the Logs explorer in a browser (Builder, Query, SQL modes, histogram drag, inspector, Back). No agent could; every UI check so far is tests, `tsc` and a server render.
+1. ~~Click through the Logs explorer in a browser.~~ Done in Logs v2 unit A0 with Playwright; rough edges in [the click-through notes](logs-v2/research/v1-click-through.md).
 2. Merge `feature/logs-v1` into `feature/logging` (then `main`) when happy.
 3. [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) on the 4 vCPU / 16 GB VM: `ready-for-human`, every blocker resolved. Things to measure are in the ticket and in M1-04's and M2-01's Comments.
 4. Flagged, not fixed: Log ingest reads a Project's Retention from Console's SQLite on every request, uncached (belongs with the deferred `ValidateKey` cache).
