@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -247,6 +248,9 @@ func (s *LogStore) ScanLogsIngestedAfter(ctx context.Context, scan IngestedLogSc
 	}
 	defer read.end()
 	found := IngestedLogs{Logs: []models.Log{}, Cursor: read.cursor}
+	if !batchesBetween(scan.After, read.cursor) {
+		return found, nil
+	}
 	window := batchWindow(scan.After, read.cursor)
 	where := func(cols LogColumns) string {
 		condition := window
@@ -280,6 +284,13 @@ func (s *LogStore) ScanLogsIngestedAfter(ctx context.Context, scan IngestedLogSc
 		return IngestedLogs{}, err
 	}
 	return found, nil
+}
+
+// batchesBetween reports whether a Log batch can come after the batch after
+// and no later than upTo. DuckDB orders UUIDs as their bytes, as Log batch
+// ids are made in order.
+func batchesBetween(after, upTo uuid.UUID) bool {
+	return bytes.Compare(after[:], upTo[:]) < 0
 }
 
 // batchWindow is the SQL condition that a Log's batch comes after the batch

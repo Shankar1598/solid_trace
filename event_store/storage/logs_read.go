@@ -65,12 +65,16 @@ func (s *LogStore) beginRead(ctx context.Context, projectID uint32, from, to tim
 // batch after: it reads the Project's Log processing cursor, and lists the
 // files that hold a later batch. Its hours are those of the files, and those
 // between the oldest and the newest Log of a later batch in the hot table.
-// The caller must end it.
+// It reads nothing more when no batch after after is up to the cursor. The
+// caller must end it.
 func (s *LogStore) beginIngestedRead(ctx context.Context, projectID uint32, after uuid.UUID) (*logRead, error) {
 	return s.startRead(ctx, projectID, func(r *logRead) (map[time.Time][]logFile, error) {
 		var err error
 		if r.cursor, err = logProcessingCursor(r.ctx, r.conn, r.projectID); err != nil {
 			return nil, err
+		}
+		if !batchesBetween(after, r.cursor) {
+			return nil, nil
 		}
 		files, err := listLogFilesAfterBatch(r.ctx, r.conn, r.projectID, after)
 		if err != nil {
