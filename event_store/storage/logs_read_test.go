@@ -15,10 +15,8 @@ import (
 // slowSQL is a query that would run for hours.
 const slowSQL = "SELECT sum(hash(i)) FROM range(1000000000000) t(i)"
 
-// oneConnectionLogStore is a LogStore with three Logs of Project 123 in its
-// hot table, the minutes before now, whose pool holds one connection: each
-// read takes the connection the last one gave back.
-func oneConnectionLogStore(t *testing.T, now time.Time) *LogStore {
+// newTestLogStore is a LogStore with no Logs, in a directory of its own.
+func newTestLogStore(t *testing.T) *LogStore {
 	t.Helper()
 	logger.Init()
 	dir := t.TempDir()
@@ -31,6 +29,15 @@ func oneConnectionLogStore(t *testing.T, now time.Time) *LogStore {
 	if err != nil {
 		t.Fatalf("NewLogStore: %v", err)
 	}
+	return store
+}
+
+// oneConnectionLogStore is a LogStore with three Logs of Project 123 in its
+// hot table, the minutes before now, whose pool holds one connection: each
+// read takes the connection the last one gave back.
+func oneConnectionLogStore(t *testing.T, now time.Time) *LogStore {
+	t.Helper()
+	store := newTestLogStore(t)
 	logs := make([]models.Log, 3)
 	for i := range logs {
 		logs[i] = models.Log{ID: uuid.New(), Time: now.Add(-time.Duration(i+1) * time.Minute), Message: fmt.Sprintf("log %d", i)}
@@ -90,5 +97,49 @@ func TestAScanPastItsContextIsStoppedPartWayAndItsConnectionStillReads(t *testin
 		if err != nil || len(page.Logs) != 3 {
 			t.Errorf("After stopping %s, expected 3 Logs, got %d (%v)", s.name, len(page.Logs), err)
 		}
+	}
+}
+
+func TestAReadFiltersByThePromotedSetsOfTheLogsItReads(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	store := newTestLogStore(t)
+	ctx := context.Background()
+	before, promoting := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	plain := models.Log{ID: uuid.New(), Time: now.Add(-2 * time.Minute), Message: "plain"}
+	if err := store.AppendLogBatches(123, []LogBatch{{ID: before, Logs: []models.Log{plain}}}, now); err != nil {
+		t.Fatalf("AppendLogBatches: %v", err)
+	}
+	stale := store.PromotedSet(123, now)
+	ada := models.Log{ID: uuid.New(), Time: now.Add(-time.Minute), Message: "ada's",
+		Attributes: models.Attributes{String: map[string]string{"user": "ada"}}}
+	if err := store.AppendLogBatches(123, []LogBatch{{ID: promoting, Logs: []models.Log{ada}}}, now); err != nil {
+		t.Fatalf("AppendLogBatches: %v", err)
+	}
+	if _, ok := store.PromotedSet(123, now).Lookup(StringAttribute, "user"); !ok {
+		t.Fatalf("Expected the second batch to promote user")
+	}
+
+	// Log processing commits a batch, then puts the sets it made in memory.
+	// A read that begins between the two sees the batch's Logs, user in its
+	// new column, while memory still has the day's set as it was.
+	store.promoted.put(123, []PromotedSet{stale})
+
+	byAda := func(cols LogColumns) string { return cols.Attribute(StringAttribute, "user") + " = 'ada'" }
+	found, err := store.ScanLogsIngestedAfter(ctx, IngestedLogScan{ProjectID: 123, After: before, Where: byAda, Limit: 10})
+	if err != nil || len(found.Logs) != 1 || found.Total != 1 || found.Cursor != promoting {
+		t.Errorf("Expected the run after the first batch to read ada's Log up to the second, got %d Logs of %d up to %v (%v)",
+			len(found.Logs), found.Total, found.Cursor, err)
+	}
+	page, err := store.ScanLogs(ctx, LogScan{ProjectID: 123, From: now.Add(-time.Hour), To: now, Where: byAda, Limit: 10})
+	if err != nil || len(page.Logs) != 1 {
+		t.Errorf("Expected a scan to find ada's Log, got %d (%v)", len(page.Logs), err)
+	}
+	table, err := store.ScanLogTable(ctx, LogTableScan{
+		ProjectID: 123, From: now.Add(-time.Hour), To: now, Where: byAda,
+		Select: func(LogColumns) string { return "id" },
+		Query:  func(logs string) string { return "SELECT count(*) FROM (" + logs + ")" },
+	})
+	if err != nil || len(table) != 1 || fmt.Sprint(table[0]) != "[1]" {
+		t.Errorf("Expected a table counting ada's Log, got %v (%v)", table, err)
 	}
 }

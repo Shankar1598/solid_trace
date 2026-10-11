@@ -169,7 +169,7 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, err
 // one hour, that meet the scan's condition, newest first.
 func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([]models.Log, error) {
 	files := r.files[hour]
-	set := r.store.PromotedSet(scan.ProjectID, hour)
+	set := r.promotedSet(hour)
 	bounds := timeRange(from, to)
 	if scan.After != nil {
 		bounds += fmt.Sprintf(" AND (time < %[1]s OR (time = %[1]s AND id < CAST(%[2]s AS UUID)))",
@@ -372,7 +372,7 @@ func (r *logRead) sources(from, to time.Time, sel, where func(LogColumns) string
 		days[day] = append(days[day], hour)
 	}
 	for _, day := range dayOrder {
-		set := r.store.PromotedSet(projectID, day)
+		set := r.promotedSet(day)
 		cols := LogColumns{set: set}
 		dayFrom, dayTo := day, day.Add(24*time.Hour)
 		if from.After(dayFrom) {

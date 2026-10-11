@@ -18,8 +18,9 @@ import (
 var ErrLogFilesInUse = errors.New("log files are being read")
 
 // logRead is a read of a Project's Logs of a time range as they were at one
-// moment: a DuckDB transaction on a connection of its own, and the Log files
-// the manifest listed then, pinned until the read ends.
+// moment: a DuckDB transaction on a connection of its own, the Log files the
+// manifest listed then, pinned until the read ends, and the promoted sets
+// then.
 //
 // The transaction reads the manifest while no export or deletion can
 // publish, so each Log is in exactly one of the hot tables and the files,
@@ -38,6 +39,10 @@ type logRead struct {
 	// newest first, and files the paths of their files.
 	hours []time.Time
 	files map[time.Time][]string
+	// sets are the Project's promoted sets of the days of hours, by day, as
+	// the transaction sees them: which columns hold the values of the Logs
+	// it reads.
+	sets map[time.Time]PromotedSet
 	// cursor is the Project's Log processing cursor, for a read of the Logs
 	// ingested after a batch.
 	cursor uuid.UUID
@@ -139,6 +144,12 @@ func (r *logRead) begin(list func(*logRead) (map[time.Time][]logFile, error)) er
 	if err != nil {
 		return err
 	}
+	// The sets in memory change only after Log processing commits, so a
+	// read that began in between would look for a newly promoted key in its
+	// map, and miss the Logs that hold it in its column.
+	if err := r.readPromotedSets(); err != nil {
+		return err
+	}
 	for hour, hourFiles := range files {
 		for _, file := range hourFiles {
 			r.files[hour] = append(r.files[hour], s.files.path(file))
@@ -147,6 +158,33 @@ func (r *logRead) begin(list func(*logRead) (map[time.Time][]logFile, error)) er
 	}
 	s.pin(r.pinned)
 	return nil
+}
+
+// readPromotedSets reads the Project's promoted sets of the days of the
+// read's hours, in its transaction.
+func (r *logRead) readPromotedSets() error {
+	r.sets = map[time.Time]PromotedSet{}
+	if len(r.hours) == 0 {
+		return nil
+	}
+	stored, err := storedSets(r.ctx, r.conn, r.projectID, r.hours[len(r.hours)-1], r.hours[0])
+	if err != nil {
+		return err
+	}
+	for day, keys := range stored {
+		r.sets[day] = newPromotedSet(day, keys)
+	}
+	return nil
+}
+
+// promotedSet is the Project's promoted set for the UTC day of t, as the
+// read's transaction sees it.
+func (r *logRead) promotedSet(t time.Time) PromotedSet {
+	day := LogDay(t)
+	if set, ok := r.sets[day]; ok {
+		return set
+	}
+	return PromotedSet{Day: day}
 }
 
 // end ends the read: it closes the transaction, so that whatever SQL wrote in
