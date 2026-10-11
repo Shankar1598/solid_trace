@@ -9,6 +9,7 @@ import {
   editableText,
   groupText,
   parseValue,
+  removeAggregate,
   search,
   setFilter,
   setSort,
@@ -106,7 +107,7 @@ export function BuilderPanel({ builder, project, projects, onProject, fields, va
             <Clause
               key={i}
               title={aggregateText(a)}
-              onRemove={() => changeSummarize({ ...summarize, aggregates: summarize.aggregates.filter((_, j) => j !== i) })}
+              onRemove={() => onChange(removeAggregate(builder, i))}
               editor={close => <AggregateEditor aggregate={a} onApply={next => {
                 close()
                 changeSummarize({ ...summarize, aggregates: summarize.aggregates.map((old, j) => (j === i ? next : old)) })
