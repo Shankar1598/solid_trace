@@ -99,11 +99,9 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
-	limit := defaultQueryLogs
-	if req.Limit < 0 {
+	limit, ok := limitOf(req.Limit)
+	if !ok {
 		return c.Status(400).JSON(fiber.Map{"error": "limit must be a positive whole number"})
-	} else if req.Limit > 0 {
-		limit = min(req.Limit, maxQueryLogs)
 	}
 	var after *storage.LogPosition
 	left := -1 // Logs a take has left to give, or -1 for no take
@@ -188,11 +186,9 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 			return c.Status(400).JSON(fiber.Map{"error": "after_batch must be a Log batch id, or empty to arm a Monitor"})
 		}
 	}
-	limit := defaultQueryLogs
-	if req.Limit < 0 {
+	limit, ok := limitOf(req.Limit)
+	if !ok {
 		return c.Status(400).JSON(fiber.Map{"error": "limit must be a positive whole number"})
-	} else if req.Limit > 0 {
-		limit = min(req.Limit, maxQueryLogs)
 	}
 	query, err := h.compile(projectID, req.Query, logquery.Bounds{Now: h.clock.Now()})
 	if err != nil {
@@ -232,6 +228,19 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 		"ingest_cursor": found.Cursor.String(),
 		"total":         found.Total,
 	})
+}
+
+// limitOf is how many Logs a run returns at most for a request's limit: the
+// default for none, and never more than maxQueryLogs. ok is false for a
+// negative limit.
+func limitOf(requested int) (limit int, ok bool) {
+	if requested < 0 {
+		return 0, false
+	}
+	if requested == 0 {
+		return defaultQueryLogs, true
+	}
+	return min(requested, maxQueryLogs), true
 }
 
 // table answers a run of a Query that returns a table: {"table": {"columns":
