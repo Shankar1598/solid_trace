@@ -134,3 +134,22 @@ test('summarize count() shows a single number, and by service shows bars', async
   await expect(viz(page, 'Line')).toHaveCount(0)
   expect(errors).toEqual([])
 })
+
+test('the keyboard reaches the chart and sees its focus ring; a mouse press draws none', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin_auto(time), service`)
+  const surface = chart(page).locator('svg.recharts-surface')
+  const ring = () => surface.evaluate(el => ({ focused: el === document.activeElement, outline: getComputedStyle(el).outlineStyle }))
+
+  // Tab on from the legend: through the switch, onto the chart.
+  await legend(page).last().focus()
+  for (let i = 0; i < 8 && !(await ring()).focused; i++) await page.keyboard.press('Tab')
+  expect(await ring()).toEqual({ focused: true, outline: 'solid' })
+
+  await page.mouse.click(10, 10)
+  const box = (await surface.boundingBox())!
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+  expect(await ring()).toEqual({ focused: true, outline: 'none' })
+  expect(errors).toEqual([])
+})

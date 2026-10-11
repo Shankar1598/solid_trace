@@ -63,6 +63,17 @@ test.describe('Charts', () => {
     })
   }
 
+  test('the chart focused from the keyboard', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openChart(page, 'summarize count() by bin_auto(time), service')
+    const surface = chart(page).locator('svg.recharts-surface')
+    await page.locator('[data-chart-legend] button[aria-pressed]').last().focus()
+    for (let i = 0; i < 8 && !(await surface.evaluate(el => el === document.activeElement)); i++) await page.keyboard.press('Tab')
+    await expect(surface).toBeFocused()
+    await shoot(page, 'charts-keyboard-focus')
+    expect(errors).toEqual([])
+  })
+
   test('series of Levels, stacked', async ({ page }) => {
     const errors = watchErrors(page)
     await openChart(page, 'summarize count() by bin(time, 1h), level', { viz: 'bars' })
