@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -20,10 +18,11 @@ var ErrLogFilesInUse = errors.New("log files are being read")
 
 // logRead is a read of a Project's Logs of a time range as they were at one
 // moment: a DuckDB transaction on a connection of its own, and the Log files
-// there were then, pinned until the read ends.
+// the manifest listed then, pinned until the read ends.
 //
-// The transaction and the file list are taken together while no export or
-// deletion can publish, so each Log is in exactly one of them. After that, a
+// The transaction reads the manifest while no export or deletion can
+// publish, so each Log is in exactly one of the hot tables and the files,
+// and the files are pinned before a deletion can take them. After that, a
 // read holds up nothing: an export commits and renames while it runs, and
 // the transaction still sees DuckDB as it was; a deletion leaves the files a
 // read has pinned for its next pass.
@@ -35,9 +34,11 @@ type logRead struct {
 	// hot says whether the Project had a hot table.
 	hot bool
 	// hours are the hours of the range that may hold the Project's Logs,
-	// newest first, and files their files.
+	// newest first, and files the paths of their files.
 	hours []time.Time
 	files map[time.Time][]string
+	// pinned are the keys of the files.
+	pinned []string
 	// began says the transaction is open; discard, that the connection
 	// must not go back to the pool.
 	began, discard bool
@@ -72,19 +73,22 @@ func (r *logRead) begin(from, to time.Time) error {
 	if r.hot, err = hotTableExists(r.ctx, r.conn, r.projectID); err != nil {
 		return err
 	}
-	if r.hours, err = r.hoursWithLogs(from, to); err != nil {
+	// DuckDB fixes a transaction's view of logs.duckdb when it first reads
+	// it, so the manifest is read here, under the lock, with the hot tables.
+	files, err := listLogFiles(r.ctx, r.conn, r.projectID, from, to)
+	if err != nil {
 		return err
 	}
-	var pinned []string
-	for _, hour := range r.hours {
-		files, err := s.files.Hour(r.projectID, hour)
-		if err != nil {
-			return err
-		}
-		r.files[hour] = files
-		pinned = append(pinned, files...)
+	if r.hours, err = r.hoursWithLogs(from, to, files); err != nil {
+		return err
 	}
-	s.pin(pinned)
+	for hour, hourFiles := range files {
+		for _, file := range hourFiles {
+			r.files[hour] = append(r.files[hour], s.files.path(file))
+			r.pinned = append(r.pinned, file.key())
+		}
+	}
+	s.pin(r.pinned)
 	return nil
 }
 
@@ -100,46 +104,16 @@ func (r *logRead) end() {
 		discardConn(r.conn)
 	}
 	r.conn.Close()
-	for _, files := range r.files {
-		r.store.unpin(files)
-	}
+	r.store.unpin(r.pinned)
 }
 
 // hoursWithLogs returns, newest first, the hours of [from, to) that may hold
 // the Project's Logs: those with files, and those between the oldest and the
 // newest Log not yet exported.
-func (r *logRead) hoursWithLogs(from, to time.Time) ([]time.Time, error) {
-	files := r.store.files
+func (r *logRead) hoursWithLogs(from, to time.Time, files map[time.Time][]logFile) ([]time.Time, error) {
 	hours := map[time.Time]bool{}
-	first, last := from.Truncate(time.Hour), to.Add(-time.Microsecond).Truncate(time.Hour)
-
-	days, err := os.ReadDir(files.ProjectDir(r.projectID))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	for _, day := range days {
-		d, ok := strings.CutPrefix(day.Name(), "day=")
-		if !ok {
-			continue
-		}
-		date, err := time.Parse(time.DateOnly, d)
-		if err != nil || date.Before(LogDay(first)) || date.After(last) {
-			continue
-		}
-		hourDirs, err := os.ReadDir(files.DayDir(r.projectID, date))
-		if err != nil {
-			return nil, err
-		}
-		for _, hourDir := range hourDirs {
-			var h int
-			if _, err := fmt.Sscanf(hourDir.Name(), "hour=%02d", &h); err != nil {
-				continue
-			}
-			hour := date.Add(time.Duration(h) * time.Hour)
-			if !hour.Before(first) && !hour.After(last) {
-				hours[hour] = true
-			}
-		}
+	for hour := range files {
+		hours[hour] = true
 	}
 
 	sources := []string{fmt.Sprintf("SELECT time FROM %s.%s WHERE project_id = %d AND %s",
@@ -149,7 +123,7 @@ func (r *logRead) hoursWithLogs(from, to time.Time) ([]time.Time, error) {
 			logsCatalog, hotTable(r.projectID), timeRange(from, to)))
 	}
 	var oldest, newest sql.NullTime
-	err = r.conn.QueryRowContext(r.ctx, fmt.Sprintf("SELECT min(time), max(time) FROM (%s)", strings.Join(sources, " UNION ALL "))).
+	err := r.conn.QueryRowContext(r.ctx, fmt.Sprintf("SELECT min(time), max(time) FROM (%s)", strings.Join(sources, " UNION ALL "))).
 		Scan(&oldest, &newest)
 	if err != nil {
 		return nil, err
@@ -191,45 +165,30 @@ func (r *logRead) queryLogs(query string) ([]models.Log, error) {
 	return logs, rows.Err()
 }
 
-// pin marks Log files as being read, so that no deletion takes them.
-func (s *LogStore) pin(files []string) {
+// pin marks Log files, by their keys, as being read, so that no deletion
+// takes them.
+func (s *LogStore) pin(keys []string) {
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
-	for _, file := range files {
-		s.pins[file]++
+	for _, key := range keys {
+		s.pins[key]++
 	}
 }
 
 // unpin undoes pin.
-func (s *LogStore) unpin(files []string) {
+func (s *LogStore) unpin(keys []string) {
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
-	for _, file := range files {
-		if s.pins[file]--; s.pins[file] <= 0 {
-			delete(s.pins, file)
+	for _, key := range keys {
+		if s.pins[key]--; s.pins[key] <= 0 {
+			delete(s.pins, key)
 		}
 	}
 }
 
-// pinnedIn reports whether a read has pinned a Log file inside dir.
-func (s *LogStore) pinnedIn(dir string) bool {
+// pinned reports whether a read has pinned the Log file with this key.
+func (s *LogStore) pinned(key string) bool {
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
-	prefix := filepath.Clean(dir) + string(filepath.Separator)
-	for file := range s.pins {
-		if strings.HasPrefix(file, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// removeUnread deletes dir and everything in it, unless a read has pinned a
-// file in it: then it deletes nothing and returns ErrLogFilesInUse. The
-// caller holds publishMu, so no read pins a file meanwhile.
-func (s *LogStore) removeUnread(dir string) error {
-	if s.pinnedIn(dir) {
-		return fmt.Errorf("delete %s: %w", dir, ErrLogFilesInUse)
-	}
-	return os.RemoveAll(dir)
+	return s.pins[key] > 0
 }

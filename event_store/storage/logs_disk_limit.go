@@ -2,12 +2,13 @@ package storage
 
 import (
 	"cmp"
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"path"
 	"slices"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -46,103 +47,114 @@ func NewLogDiskLimit(configured int64, dir string) (LogDiskLimit, error) {
 }
 
 // EnforceDiskLimit deletes the oldest hours of Log files, of any Project,
-// until the files take no more than limit. Logs not yet exported are never
-// deleted. If a read is reading the oldest hour, it stops there with
-// ErrLogFilesInUse, and the next pass goes on.
+// until the files on local disk, as the manifest lists them, take no more
+// than limit. Logs not yet exported are never deleted. If a read is reading
+// the oldest hour, it stops there with ErrLogFilesInUse, and the next pass
+// goes on. Each pass first deletes the bytes of files deleted earlier whose
+// reads have ended since.
 func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-
-	hours, total, err := s.files.hourDirs()
-	if err != nil {
-		return fmt.Errorf("list log files: %w", err)
-	}
 	maxBytes := limit.Bytes
 	if maxBytes <= 0 {
 		return fmt.Errorf("no Log disk limit: %d bytes", maxBytes)
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	earlier := s.deleteTombstonedFiles()
+	if earlier != nil && !errors.Is(earlier, ErrLogFilesInUse) {
+		return earlier
+	}
+	hours, total, err := s.localLogHours()
+	if err != nil {
+		return err
+	}
 	if total <= maxBytes {
-		return nil
+		return earlier
 	}
 
-	// No read begins meanwhile, and none sees a file vanish under it.
-	s.publishMu.Lock()
-	defer s.publishMu.Unlock()
-	slices.SortFunc(hours, func(a, b logHourDir) int {
-		return cmp.Or(a.hour.Compare(b.hour), cmp.Compare(a.projectID, b.projectID))
-	})
-	for _, hour := range hours {
-		if total <= maxBytes {
-			break
+	var stopped error
+	err = s.commitDeletion(func(ctx context.Context, conn *sql.Conn) error {
+		for _, hour := range hours {
+			if total <= maxBytes {
+				return nil
+			}
+			// A read that begins after this check pins the files, and their
+			// bytes wait for it.
+			for _, key := range hour.keys {
+				if s.pinned(key) {
+					stopped = fmt.Errorf("delete %s: %w", key, ErrLogFilesInUse)
+					return nil
+				}
+			}
+			logger.L.Info("Deleting the oldest Log files past the disk limit",
+				"project_id", hour.projectID, "hour", hour.hour, "bytes", hour.bytes, "limit", maxBytes)
+			if err := tombstoneLogFiles(ctx, conn, deletedForTheDiskLimit,
+				"project_id = ? AND day = CAST(? AS DATE) AND hour = ? AND local",
+				hour.projectID, dayString(LogDay(hour.hour)), hour.hour.Hour()); err != nil {
+				return err
+			}
+			total -= hour.bytes
 		}
-		logger.L.Info("Deleting the oldest Log files past the disk limit",
-			"project_id", hour.projectID, "hour", hour.hour, "bytes", hour.bytes, "limit", maxBytes)
-		if err := s.removeUnread(hour.dir); err != nil {
-			return err
-		}
-		total -= hour.bytes
-		// Gone only once its last hour is.
-		_ = os.Remove(filepath.Dir(hour.dir))
+		return nil
+	}, func() {})
+	if err != nil {
+		return err
 	}
-	return nil
+	if err := s.deleteTombstonedFiles(); err != nil {
+		return err
+	}
+	return stopped
 }
 
-// logHourDir is one Project's hour folder of Log files.
-type logHourDir struct {
+// logHour is one Project's hour of Log files on local disk.
+type logHour struct {
 	projectID uint32
 	hour      time.Time
-	dir       string
-	bytes     int64
+	// bytes is the size of the hour's files, and keys their keys.
+	bytes int64
+	keys  []string
 }
 
-// hourDirs returns every Project's hour folders that hold Log files, with
-// the size of their files, and the size of all of them.
-func (f LogFiles) hourDirs() ([]logHourDir, int64, error) {
-	files, err := filepath.Glob(filepath.Join(f.Dir, "project=*", "day=*", "hour=*", "*"+parquetSuffix))
+// localLogHours returns every Project's hours of Log files on local disk,
+// oldest first, and the size of all their files.
+func (s *LogStore) localLogHours() ([]logHour, int64, error) {
+	rows, err := s.db.Query("SELECT " + manifestColumnsOfAKey + ", bytes FROM logs.log_files WHERE local")
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("list log files: %w", err)
 	}
-	byDir := make(map[string]*logHourDir)
+	defer rows.Close()
+	byHour := make(map[string]*logHour)
 	var total int64
-	for _, file := range files {
-		info, err := os.Stat(file)
-		if err != nil {
+	for rows.Next() {
+		var (
+			file  logFile
+			day   time.Time
+			hour  int
+			bytes int64
+		)
+		if err := rows.Scan(&file.projectID, &day, &hour, &file.name, &bytes); err != nil {
 			return nil, 0, err
 		}
-		dir := filepath.Dir(file)
-		hour, ok := byDir[dir]
+		file.hour = day.UTC().Add(time.Duration(hour) * time.Hour)
+		dir := path.Dir(file.key())
+		h, ok := byHour[dir]
 		if !ok {
-			hour, ok = parseHourDir(dir)
-			if !ok {
-				continue // not a folder the export writes
-			}
-			byDir[dir] = hour
+			h = &logHour{projectID: file.projectID, hour: file.hour}
+			byHour[dir] = h
 		}
-		hour.bytes += info.Size()
-		total += info.Size()
+		h.bytes += bytes
+		h.keys = append(h.keys, file.key())
+		total += bytes
 	}
-	hours := make([]logHourDir, 0, len(byDir))
-	for _, hour := range byDir {
-		hours = append(hours, *hour)
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
 	}
+	hours := make([]logHour, 0, len(byHour))
+	for _, h := range byHour {
+		hours = append(hours, *h)
+	}
+	slices.SortFunc(hours, func(a, b logHour) int {
+		return cmp.Or(a.hour.Compare(b.hour), cmp.Compare(a.projectID, b.projectID))
+	})
 	return hours, total, nil
-}
-
-// parseHourDir reads the Project and hour of a folder
-// <Dir>/project=<id>/day=<YYYY-MM-DD>/hour=<HH>.
-func parseHourDir(dir string) (*logHourDir, bool) {
-	dayDir := filepath.Dir(dir)
-	id, err := strconv.ParseUint(strings.TrimPrefix(filepath.Base(filepath.Dir(dayDir)), "project="), 10, 32)
-	if err != nil {
-		return nil, false
-	}
-	day, err := time.Parse(time.DateOnly, strings.TrimPrefix(filepath.Base(dayDir), "day="))
-	if err != nil {
-		return nil, false
-	}
-	h, err := strconv.Atoi(strings.TrimPrefix(filepath.Base(dir), "hour="))
-	if err != nil || h < 0 || h > 23 {
-		return nil, false
-	}
-	return &logHourDir{projectID: uint32(id), hour: day.Add(time.Duration(h) * time.Hour), dir: dir}, true
 }
