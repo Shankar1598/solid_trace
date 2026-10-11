@@ -35,7 +35,7 @@ export interface Series {
   agg: Agg | null
   /**
    * What the series is, whatever its rank: its split values, and its column
-   * unless each panel draws one column. Its colour and legend entry follow it.
+   * when a panel draws several columns. Its colour and legend entry follow it.
    */
   id: string
   /** Its palette slot (1 to MAX_SERIES), or null when it wears a Level's colour. */
@@ -312,10 +312,12 @@ function keepSeries(
     return level === null ? LEVEL_ORDER.length : LEVEL_ORDER.indexOf(level as never)
   }
 
-  // Columns of one unit share a panel. When each panel draws one column, a
-  // split value wears one hue in all of them, so as many split values as hues are kept.
+  // Columns of one unit share a panel. When each panel draws one column (or
+  // there is one), a split value wears one hue in all of them, so as many
+  // split values as hues are kept, and the split values alone say what a
+  // series is: adding or removing a function repaints none of them.
   const units = groupBy(drawn, m => unitOf(columns[m].name, columns[m].agg))
-  const byCombo = splits.length > 0 && units.length > 1 && units.every(unit => unit.length === 1)
+  const byCombo = splits.length > 0 && units.every(unit => unit.length === 1)
   const empty = order.flatMap(combo => drawn.filter(m => !hasValues(combo, m)).map(m => nameOf(combo, m)))
   // Ranked once each; ties keep the rows' order, as sort is stable.
   const ranks = new Map(order.map(combo => [combo, rank(combo)]))
@@ -408,10 +410,10 @@ function groupBy<T>(items: T[], keyOf: (item: T) => string): T[][] {
 
 /**
  * The model coloured as the last chart drawn in its place was: a series id
- * drawn there keeps its palette slot, so filtering out a series or a change
- * of rank repaints none of the others, and a new id takes the lowest slot
- * free. A new shape matches no id, so it starts from slot 1 again. Returns
- * the slots to keep for the next.
+ * drawn there keeps its palette slot, so filtering out a series, a change
+ * of rank, or adding or removing a function repaints none of the others,
+ * and a new id takes the lowest slot free. A new split matches no id, so it
+ * starts from slot 1 again. Returns the slots to keep for the next.
  */
 export function keepColors(model: ChartModel, slots: ReadonlyMap<string, number>): { model: ChartModel; slots: Map<string, number> } {
   if (model.kind !== 'time' && model.kind !== 'bars') return { model, slots: new Map(slots) }
