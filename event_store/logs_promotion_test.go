@@ -368,3 +368,127 @@ func TestLogsEitherSideOfMidnightFollowTheirOwnDaysSet(t *testing.T) {
 		t.Errorf("Expected %v, got %v", want, got)
 	}
 }
+
+// fieldValue is a Field's value and the messages of the Logs that carry it,
+// newest first.
+type fieldValue struct {
+	field, value string
+	want         []string
+}
+
+// assertEveryReadFinds checks that every way of reading Project 123's Logs
+// over all time finds the Logs that carry each value, and only those: a run
+// of Log rows, a Builder Query with a chip, a table counting by the Field,
+// the histogram, a run after the nil batch and SQL mode's logs view. A run
+// with no filter gives each Log every Attribute it was sent with, for the
+// field list.
+func assertEveryReadFinds(t *testing.T, env *TestEnv, values []fieldValue, attributes map[string]map[string]any, when string) {
+	t.Helper()
+	if got := attributesByMessage(latestLogs(t, env, 123, 100)); !reflect.DeepEqual(got, attributes) {
+		t.Errorf("%s: expected the Logs' Attributes\n %v\ngot\n %v", when, attributes, got)
+	}
+	for _, v := range values {
+		where := fmt.Sprintf("where %s == %q", v.field, v.value)
+		if got := queryMessages(t, env, where); !slices.Equal(got, v.want) {
+			t.Errorf("%s: a run of %s\n want %v\n got  %v", when, where, v.want, got)
+		}
+		builder := where + ` | where message != ""`
+		if chips := builderChips(validateQuery(t, env, builder)); chips == "null" {
+			t.Errorf("%s: expected chips for %s", when, builder)
+		}
+		if got := queryMessages(t, env, builder); !slices.Equal(got, v.want) {
+			t.Errorf("%s: the Builder's %s\n want %v\n got  %v", when, builder, v.want, got)
+		}
+		var wantRows []string
+		if len(v.want) > 0 {
+			wantRows = []string{fmt.Sprintf("[%q,%d]", v.value, len(v.want))}
+		}
+		table := where + " | summarize count() by " + v.field
+		if _, rows := runTable(t, env, table); !slices.Equal(rows, wantRows) {
+			t.Errorf("%s: a table of %s\n want %v\n got  %v", when, table, wantRows, rows)
+		}
+		if got := histogram(t, env, histogramRequest{Query: where, From: testNow.AddDate(0, 0, -2), To: testNow.AddDate(0, 0, 1)}).Count; got != len(v.want) {
+			t.Errorf("%s: a histogram of %s\n want %d Logs\n got  %d", when, where, len(v.want), got)
+		}
+		if got := messages(runAfterBatch(t, env, where, nilBatch, nil).Logs); !slices.Equal(got, v.want) {
+			t.Errorf("%s: a run of %s after the nil batch\n want %v\n got  %v", when, where, v.want, got)
+		}
+		sql := fmt.Sprintf("SELECT message FROM logs WHERE attrs_string[%s] = %s ORDER BY time DESC",
+			sqlString(v.field), sqlString(v.value))
+		var wantSQL []string
+		for _, message := range v.want {
+			wantSQL = append(wantSQL, fmt.Sprintf("[%q]", message))
+		}
+		if _, rows := sqlTable(t, env, sqlRequest{SQL: sql, From: allTime.from, To: allTime.to}); !slices.Equal(rows, wantSQL) {
+			t.Errorf("%s: SQL %s\n want %v\n got  %v", when, sql, wantSQL, rows)
+		}
+	}
+}
+
+// sqlString is s as a SQL string literal.
+func sqlString(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func TestLateLogsStoredBeforeTheirDaysSetAreFoundByTheKeysItPromotes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	yesterdayAt := func(hour, minute int) time.Time { return at(hour, minute).AddDate(0, 0, -1) }
+
+	// Yesterday's first Log is late, and waits in logs_late while a hot Log
+	// makes yesterday's set, with user.
+	env.Clock.Set(yesterdayAt(15, 30))
+	postAndProcess(t, env, logJSON(t, "yan", yesterdayAt(13, 10), map[string]any{"user": "yan"}))
+	postAndProcess(t, env, logJSON(t, "zed", yesterdayAt(15, 10), map[string]any{"user": "zed"}))
+	assertEveryReadFinds(t, env, []fieldValue{
+		{"user", "yan", []string{"yan"}},
+		{"user", "zed", []string{"zed"}},
+	}, map[string]map[string]any{
+		"yan": {"user": "yan"},
+		"zed": {"user": "zed"},
+	}, "with yesterday's late Log beside its set")
+
+	// Today's first Log is late too, and the export at 12:30 writes it to
+	// hour 10's file before today has a set. Another late Log of hour 10
+	// waits for a late file.
+	env.Clock.Set(at(12, 30))
+	postAndProcess(t, env, logJSON(t, "ada", at(10, 10), map[string]any{"user": "ada", "plan": "pro"}))
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 123, at(10, 0), 1)
+	postAndProcess(t, env, logJSON(t, "bea", at(10, 20), map[string]any{"user": "bea", "plan": "pro"}))
+
+	// Then a hot Log makes today's set: user from yesterday's, and plan.
+	postAndProcess(t, env, logJSON(t, "cy", at(12, 10), map[string]any{"user": "cy", "plan": "free"}))
+
+	values := []fieldValue{
+		{"user", "yan", []string{"yan"}},
+		{"user", "zed", []string{"zed"}},
+		{"user", "ada", []string{"ada"}},
+		{"user", "bea", []string{"bea"}},
+		{"user", "cy", []string{"cy"}},
+		{"plan", "pro", []string{"bea", "ada"}},
+		{"plan", "free", []string{"cy"}},
+	}
+	attributes := map[string]map[string]any{
+		"yan": {"user": "yan"},
+		"zed": {"user": "zed"},
+		"ada": {"user": "ada", "plan": "pro"},
+		"bea": {"user": "bea", "plan": "pro"},
+		"cy":  {"user": "cy", "plan": "free"},
+	}
+	assertEveryReadFinds(t, env, values, attributes, "with today's set made after the file")
+
+	env.Reopen(t)
+	assertEveryReadFinds(t, env, values, attributes, "after a restart")
+
+	// At 14:00 the export writes hour 12's file, and hour 10's late file
+	// with today's set.
+	env.Clock.Set(at(14, 0))
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 123, at(10, 0), 2)
+	assertHourFiles(t, env, 123, at(12, 0), 1)
+	assertEveryReadFinds(t, env, values, attributes, "after hour 12 and the late file are exported")
+}
