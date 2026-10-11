@@ -221,6 +221,22 @@ func TestANewDaysKeysArePartwayOnlyIfItsFilesOrHotLogsMayHoldThemInTheirMaps(t *
 			},
 			partway: true,
 		},
+		{
+			// Such a Log makes no set, and holds no key a set could take.
+			name: "its first hot Log has no Attributes",
+			before: func(t *testing.T, store *LogStore) {
+				appendLogs(t, store, now, models.Log{ID: uuid.New(), Time: october(2, 12, 5), Message: "app started"})
+			},
+			partway: false,
+		},
+		{
+			name: "its first hot Log has only a JSON Attribute",
+			before: func(t *testing.T, store *LogStore) {
+				appendLogs(t, store, now, models.Log{ID: uuid.New(), Time: october(2, 12, 5), Message: "roles",
+					Attributes: models.Attributes{JSON: map[string]string{"roles": `["admin"]`}}})
+			},
+			partway: false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
