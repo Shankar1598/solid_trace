@@ -416,9 +416,11 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     setExplorer(next)
     replaceUrl(replace)
   }
-  // Series keep their colours across runs, so a filter or a zoom repaints none of those left.
+  // Series keep their colours across runs, so a filter or a zoom repaints none of those left,
+  // and a series hidden from the legend stays hidden.
   const colorSlots = useRef<ReadonlyMap<string, number>>(new Map())
-  const tableChart: TableChart = { viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange, colors: colorSlots }
+  const hiddenSeries = useRef<ReadonlySet<string>>(new Set())
+  const tableChart: TableChart = { viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange, colors: colorSlots, hidden: hiddenSeries }
 
   // A table over time stands in for the histogram strip, as in Axiom, shown
   // as a chart or as Table alike, so the switch never moves under the

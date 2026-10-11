@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
-import { QueryChart, type ColorSlots } from '@/components/charts/QueryChart'
+import { QueryChart, type ColorSlots, type HiddenSeries } from '@/components/charts/QueryChart'
 import { chartOf, formFor, formsOf } from '@/lib/charts/series'
 import type { AbsoluteRange, Viz } from '@/lib/logs/explorerState'
 import { pivotsOn, type LogTable, type TableColumn } from '@/lib/logs/table'
@@ -27,6 +27,8 @@ export interface TableChart {
   onZoom: (range: AbsoluteRange) => void
   /** Each series' colour from the last chart, so a re-run repaints none. */
   colors: ColorSlots
+  /** The series hidden from the last chart's legend, so a re-run or a zoom shows none of them again. */
+  hidden: HiddenSeries
 }
 
 /**
@@ -48,7 +50,7 @@ export function LogTableView({ table, chart }: { table: LogTable; chart?: TableC
     <div className="flex h-full flex-col overflow-y-auto">
       <div className={cn('shrink-0', form !== 'stat' && 'border-b')}>
         {form
-          ? <QueryChart table={table} form={form} onZoom={chart.onZoom} colors={chart.colors} actions={control} className="pb-1" />
+          ? <QueryChart table={table} form={form} onZoom={chart.onZoom} colors={chart.colors} hidden={chart.hidden} actions={control} className="pb-1" />
           : <div className="flex justify-end px-3 py-1.5">{control}</div>}
       </div>
       {/* A single number is its table: Table shows the cell. */}

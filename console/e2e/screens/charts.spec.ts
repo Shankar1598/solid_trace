@@ -139,6 +139,23 @@ test.describe('Charts', () => {
     expect(errors).toEqual([])
   })
 
+  test('a series hidden from the legend stays hidden after a zoom', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openChart(page, 'summarize count() by bin(time, 1h), service')
+    await page.locator('[data-chart-series]', { hasText: 'api' }).click()
+    const box = (await chart(page).locator('.recharts-cartesian-grid').boundingBox())!
+    const y = box.y + box.height / 2
+    await page.mouse.move(box.x + box.width * 0.3, y)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * 0.6, y, { steps: 8 })
+    await page.mouse.up()
+    await settled(page)
+    await expect(page.locator('[data-chart-series]', { hasText: 'api' })).toHaveAttribute('aria-pressed', 'false')
+    await page.mouse.move(0, 0)
+    await shoot(page, 'charts-hidden-after-zoom')
+    expect(errors).toEqual([])
+  })
+
   test('bars across for many categories', async ({ page }) => {
     const errors = watchErrors(page)
     await openChart(page, 'summarize count() by message')
