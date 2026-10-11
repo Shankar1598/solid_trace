@@ -170,3 +170,15 @@ test('removing the one function a click added takes the Builder back to the Log 
   expect(new URL(page.url()).searchParams.get('q') ?? '').not.toContain('summarize')
   expect(errors).toEqual([])
 })
+
+test('a count by an Attribute is charted, over time and as bars', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin_auto(time), http.path`)
+  await expect(chart(page)).toHaveAttribute('aria-label', /^Line chart of .*\/.* over time$/)
+  await expect(page.getByText(/error rate/)).toHaveCount(0)
+
+  await runQuery(page, `${SOURCE}\n| summarize count() by http.status`)
+  await expect(chart(page)).toHaveAttribute('aria-label', 'Bar chart of count_ by http.status')
+  expect(errors).toEqual([])
+})

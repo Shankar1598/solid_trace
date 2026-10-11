@@ -95,6 +95,38 @@ describe('a time series', () => {
   })
 })
 
+describe('a by column over an Attribute', () => {
+  // EventStore types a by column over an Attribute as dynamic: its cells are the JSON values the Logs hold.
+  const path: TableColumn = { name: 'http.path', type: 'dynamic' }
+  const status: TableColumn = { name: 'http.status', type: 'dynamic' }
+
+  it('splits a time series by its values', () => {
+    const model = drawable(chartOf(table([TIME, path, COUNT], [
+      ['2026-10-09T10:00:00Z', '/orders', 12],
+      ['2026-10-09T10:00:00Z', null, 3],
+      ['2026-10-09T10:05:00Z', '/orders', 9],
+    ])))
+
+    expect(model.kind).toBe('time')
+    expect(model.series.map(s => ({ name: s.name, split: s.split }))).toEqual([
+      { name: '/orders', split: [{ field: 'http.path', value: '/orders' }] },
+      { name: 'no http.path', split: [{ field: 'http.path', value: null }] },
+    ])
+  })
+
+  it('names the bars of a summarize with no time bin, numbers and all', () => {
+    const model = drawable(chartOf(table([status, COUNT], [[200, 40], [500, 3]])))
+
+    expect(model).toMatchObject({ kind: 'bars', category: 'http.status' })
+    expect(model.points.map(p => p.x)).toEqual(['200', '500'])
+  })
+
+  it('is not drawn when a value is a list or an object, which no series can be named by', () => {
+    expect(chartOf(table([TIME, path, COUNT], [['2026-10-09T10:00:00Z', ['a'], 1]])).kind).toBe('none')
+    expect(chartOf(table([path, COUNT], [[{ a: 1 }, 1]])).kind).toBe('none')
+  })
+})
+
 describe('filling empty bins', () => {
   const range = { from: '2026-10-09T09:58:00Z', to: '2026-10-09T10:15:00Z' }
 

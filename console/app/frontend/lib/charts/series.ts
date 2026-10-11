@@ -97,7 +97,7 @@ export function chartOf(table: LogTable): ChartModel {
   if (rows.length === 0) return { kind: 'none' }
 
   const binAt = columns.findIndex(c => c.type === 'datetime' && c.bin_seconds)
-  const roles = rolesOf(columns, binAt)
+  const roles = rolesOf(table, binAt)
   if (!roles) return { kind: 'none' }
   const { measures, splits } = roles
   if (measures.length === 0) return { kind: 'none' }
@@ -136,10 +136,11 @@ export function chartOf(table: LogTable): ChartModel {
 /**
  * Which columns are drawn (measures) and which split the series. A number
  * column is a measure, unless it comes before the aggregates, where a
- * summarize puts its by columns (such as a status code). Any other column but
- * the time bin can't be placed, so the table isn't drawn.
+ * summarize puts its by columns (such as a status code). A by column over an
+ * Attribute comes as dynamic, and splits when its cells are plain values. Any
+ * other column but the time bin can't be placed, so the table isn't drawn.
  */
-function rolesOf(columns: TableColumn[], binAt: number): { measures: number[]; splits: number[] } | null {
+function rolesOf({ columns, rows }: LogTable, binAt: number): { measures: number[]; splits: number[] } | null {
   const firstAgg = columns.findIndex(c => c.agg)
   const measures: number[] = []
   const splits: number[] = []
@@ -148,6 +149,7 @@ function rolesOf(columns: TableColumn[], binAt: number): { measures: number[]; s
     const { type, agg } = columns[i]
     if (type === 'number' && (firstAgg === -1 || agg || i > firstAgg)) measures.push(i)
     else if (type === 'number' || type === 'string' || type === 'bool') splits.push(i)
+    else if (type === 'dynamic' && rows.every(row => row[i] === null || row[i] === undefined || cell(row[i]) !== null)) splits.push(i)
     else return null
   }
   return { measures, splits }
