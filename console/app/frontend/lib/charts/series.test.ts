@@ -486,6 +486,22 @@ describe('colours kept from the last chart', () => {
     expect(colors(back.model)).toEqual({ api: 'var(--chart-1)', worker: 'var(--chart-2)', cron: 'var(--chart-3)' })
   })
 
+  it('stay on a split value when a function is added or removed', () => {
+    const count = keepColors(chartOf(table([TIME, SERVICE, COUNT], rows([['api', 40], ['worker', 30], ['web', 20], ['billing', 10]]))), new Map())
+    expect(colors(count.model)).toEqual({ api: 'var(--chart-1)', worker: 'var(--chart-2)', web: 'var(--chart-3)', billing: 'var(--chart-4)' })
+
+    // avg, count: two panels of one column each, ranked by avg, where worker leads.
+    const avgs = { api: 20, worker: 90, web: 15, billing: 60 } as Record<string, number>
+    const twoRows = Object.entries({ api: 40, worker: 30, web: 20, billing: 10 }).map(([s, n]) => ['2026-10-09T10:00:00Z', s, avgs[s], n])
+    const both = keepColors(chartOf(table([TIME, SERVICE, AVG, COUNT], twoRows)), count.slots)
+    expect(colors(both.model)).toEqual(colors(count.model))
+
+    // avg alone: one measure again.
+    const avgRows = Object.entries(avgs).map(([s, n]) => ['2026-10-09T10:00:00Z', s, n])
+    const avg = keepColors(chartOf(table([TIME, SERVICE, AVG], avgRows)), both.slots)
+    expect(colors(avg.model)).toEqual(colors(count.model))
+  })
+
   it('start from the first slot for a new shape, and leave Levels their own colours', () => {
     const services = keepColors(chartOf(table([TIME, SERVICE, COUNT], rows([['api', 40], ['web', 20]]))), new Map())
     const LEVEL: TableColumn = { name: 'level', type: 'string' }
