@@ -50,6 +50,20 @@ describe('leaving SQL mode', () => {
     expect(leaveSql(fromLink, null, 'query').kind).toBe('ask')
   })
 
+  it('drops a Query typed before SQL mode that never ran, on going back to the Builder', () => {
+    // Typed in Query mode, not run, and SQL opened from it.
+    const typed = typeQuery(openExplorer('?range=24h&mode=query&q=search+%22boom%22'), 'search "bang"')
+    const fromTyped = enterSql(typed, SEED).explorer
+
+    const silent = leaveSql(fromTyped, SEED, 'builder')
+    const asked = discardSql(typeSql(fromTyped, 'SELECT 1'), 'builder')
+
+    expect(silent.kind === 'switch' && silent.explorer.draft).toMatchObject({ mode: 'builder', query: 'search "boom"', sql: '' })
+    expect(asked.explorer.draft).toMatchObject({ mode: 'builder', query: 'search "boom"', sql: '' })
+    // Query mode shows its draft, so it keeps the typed Query.
+    expect(discardSql(fromTyped, 'query').explorer.draft.query).toBe('search "bang"')
+  })
+
   it('discards the SQL once asked, going back to the Query it was opened from', () => {
     const edited = typeSql(inSql(), 'SELECT 1')
 

@@ -2,7 +2,7 @@
 // one-way: the browser never turns SQL back into a Query, so leaving SQL mode
 // drops the SQL and returns to the Query it was opened from, asking first
 // when the SQL is no longer the SQL it opened with.
-import { searchOf, type Explorer, type Mode } from './explorerState'
+import { draftIn, searchOf, type Explorer, type Mode } from './explorerState'
 
 /**
  * Into SQL mode with `sql`, the readable SQL of the Query, as both what ran
@@ -29,8 +29,11 @@ export function leaveSql(explorer: Explorer, seed: string | null, mode: Mode): L
   return { kind: 'switch', ...discardSql(explorer, mode) }
 }
 
-/** Drops the SQL, back to the Query in `mode`; `replace` is the current history entry's new search. */
+/**
+ * Drops the SQL, back to the Query in `mode` (the Builder shows the Query that
+ * ran, see draftIn); `replace` is the current history entry's new search.
+ */
 export function discardSql(explorer: Explorer, mode: Mode): { explorer: Explorer; replace: string } {
   const current = { ...explorer.current, mode, sql: '' }
-  return { explorer: { current, draft: { ...explorer.draft, mode, sql: '' } }, replace: searchOf(current) }
+  return { explorer: { current, draft: draftIn({ ...explorer.draft, sql: '' }, current) }, replace: searchOf(current) }
 }

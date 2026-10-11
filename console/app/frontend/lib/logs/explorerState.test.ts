@@ -225,6 +225,19 @@ describe('history entries', () => {
     expect(b.explorer.draft).toMatchObject({ mode: 'query', query: 'search "bang"' })
   })
 
+  it('drops a Query typed but never run on switching to the Builder, which shows what ran', () => {
+    const b = browser('?range=24h&mode=query&q=search+%22boom%22')
+    b.type('search "bang"')
+
+    b.switchMode('builder')
+
+    expect(b.explorer.draft).toMatchObject({ mode: 'builder', query: 'search "boom"' })
+    // The next Run or range pick runs what the Builder shows.
+    b.pickRange('1h')
+    b.run()
+    expect(b.entries.at(-1)).toBe('?range=1h&mode=builder&q=search+%22boom%22')
+  })
+
   it('adds none when the chart changes, but keeps it in the URL without running', () => {
     const b = browser('?range=1h&mode=query&q=summarize+count()')
     b.type('summarize count() by service')

@@ -126,12 +126,24 @@ export function pickRange(explorer: Explorer, range: TimeRange): Explorer {
 }
 
 /**
- * Switches mode without running: what ran and what is being edited stay, and
- * `replace` is the search to put in place of the current history entry's.
+ * Switches mode without running: what ran stays, and so does what is being
+ * edited, except in the Builder (see draftIn). `replace` is the search to put
+ * in place of the current history entry's.
  */
 export function switchMode(explorer: Explorer, mode: Mode): { explorer: Explorer; replace: string } {
   const current = { ...explorer.current, mode }
-  return { explorer: { current, draft: { ...explorer.draft, mode } }, replace: searchOf(current) }
+  return { explorer: { current, draft: draftIn(explorer.draft, current) }, replace: searchOf(current) }
+}
+
+/**
+ * The draft once the explorer is in `current`'s mode without a run. The
+ * Builder shows what ran, so there the draft's Query goes back to it: a Query
+ * typed in Query mode that never ran must not run with the next Run, range
+ * pick or zoom under a Builder that doesn't show it.
+ */
+export function draftIn(draft: ExplorerState, current: ExplorerState): ExplorerState {
+  const { mode } = current
+  return mode === 'builder' ? { ...draft, mode, query: current.query } : { ...draft, mode }
 }
 
 /**
