@@ -77,9 +77,8 @@ export function querySource(sources: () => CompletionSources): CompletionSource 
     for (const o of answer.options) if (o.section && !ranks.has(o.section)) ranks.set(o.section, ranks.size)
     return {
       from: answer.from,
+      // Asked again on each key (no validFor), so a word typed in full closes the list.
       options: answer.options.map((o, i) => completion(o, i, ranks)),
-      // Narrowed in place while a word is typed; asked again after anything else.
-      validFor: /^[\p{L}\p{N}_$.!=<>~"']*$/u,
     }
   }
 }
