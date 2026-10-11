@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { addFilter, builderRow, last24h, logCount, openLogs, runBy, settled } from '../support/logs'
+import { addFilter, builderRow, last24h, logCount, openLogs, pickQuickRange, runBy, settled, timeRange } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // Each run is a history entry: Back returns to the run before, its Query and
@@ -18,8 +18,7 @@ test('Back returns to the previous run, its Query and its range', async ({ page 
   const filtered = page.url()
 
   // A range picked runs too.
-  await page.getByRole('combobox', { name: 'Time range' }).click()
-  await page.getByRole('option', { name: 'Last 6 hours' }).click()
+  await pickQuickRange(page, '6 hrs')
   await settled(page)
   await expect(page).toHaveURL(/range=6h/)
   await expect(errorChip).toBeVisible()
@@ -28,7 +27,7 @@ test('Back returns to the previous run, its Query and its range', async ({ page 
   await page.goBack()
   await settled(page)
   expect(page.url()).toBe(filtered)
-  await expect(page.getByRole('combobox', { name: 'Time range' })).not.toHaveText(/Last 6 hours/)
+  await expect(timeRange(page)).not.toHaveText(/Last 6 hours/)
   await expect(errorChip).toBeVisible()
   expect(await logCount(page)).toBe(errorLogs)
 

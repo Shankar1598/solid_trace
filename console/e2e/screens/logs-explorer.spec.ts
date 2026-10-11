@@ -8,7 +8,7 @@ test('Logs explorer: Builder with the stream', async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto(logsPath('?range=24h'))
   // The sidebar's Logs link is hidden on a phone; the bar is always there.
-  await expect(page.getByRole('combobox', { name: 'Time range' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Time range: / })).toBeVisible()
   await page.waitForTimeout(1500)
   await shoot(page, 'logs-builder')
   expect(errors).toEqual([])

@@ -25,6 +25,17 @@ export function last24h(mode = 'builder'): string {
   return `?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), mode })}`
 }
 
+/** The time-range picker's button, named "Time range: <the range>". */
+export function timeRange(page: Page): Locator {
+  return page.getByRole('button', { name: /^Time range: / })
+}
+
+/** Picks one of the time-range picker's quick ranges, such as "6 hrs". */
+export async function pickQuickRange(page: Page, label: string) {
+  await timeRange(page).click()
+  await page.getByRole('dialog').getByRole('button', { name: label, exact: true }).click()
+}
+
 /** Waits until the run and the histogram have answered: Run is back and nothing is counting. */
 export async function settled(page: Page) {
   await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeVisible()
