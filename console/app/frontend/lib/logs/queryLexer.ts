@@ -118,9 +118,10 @@ function identifier(line: string, pos: number, state: LexState): { kind: TokenKi
     const close = line.indexOf(')', end)
     return { kind: 'literal', end: close < 0 ? line.length : close + 1 }
   }
+  // in ("a", "b") is an operator before a list, not a call.
+  if (WORD_OPERATORS.has(name)) return { kind: 'operator', end }
   if (after.startsWith('(')) return { kind: 'function', end }
   if (name === 'true' || name === 'false') return { kind: 'literal', end }
-  if (WORD_OPERATORS.has(name)) return { kind: 'operator', end }
   if (KEYWORDS.has(name) || (lastWord === 'nulls' && (name === 'first' || name === 'last'))) return { kind: 'keyword', end }
   return { kind: 'field', end }
 }
