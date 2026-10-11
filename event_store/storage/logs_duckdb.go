@@ -32,7 +32,8 @@ const logsCatalog = "logs"
 //
 // The promoted-set table is also held in memory, and read from there.
 //
-// The hourly export moves Logs out to files under files.Dir.
+// The hourly export moves Logs out to files under files.Dir, which the Log
+// file manifest lists (logs_manifest.go).
 type LogStore struct {
 	db       *sql.DB
 	promoted *promotedSetCache
