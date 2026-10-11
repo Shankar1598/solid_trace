@@ -32,10 +32,6 @@ const (
 	parquetSuffix  = ".parquet"
 	// stagedSuffix marks a Log file whose export may not have committed.
 	stagedSuffix = ".tmp"
-	// unreadableSuffix marks a staged Log file of an install from before the
-	// manifest that couldn't be read when it was settled, kept for an
-	// operator.
-	unreadableSuffix = ".unreadable"
 )
 
 // ProjectDir is the folder of every exported Log of a Project.
