@@ -38,8 +38,10 @@
   --chart-7: #4a3aa7;
   --chart-8: #e34948;
   /*
-   * Series of Levels wear the histogram's Level colours (sky, amber, red), at
-   * full strength for lines; the greys step apart so neighbours stay distinct.
+   * The Levels' colours, worn by the histogram strip and by series of Levels
+   * alike (sky, amber, red), checked with the dataviz validator in stack
+   * order. The greys step 0.15 apart in lightness so neighbours stay
+   * distinct; debug is the stronger grey, trace the fainter.
    */
   --chart-level-trace: #a3a3a3;
   --chart-level-debug: #737373;
@@ -92,7 +94,8 @@
   --chart-level-info: oklch(68.5% 0.169 237.323);
   --chart-level-warn: oklch(76.9% 0.188 70.08);
   --chart-level-error: oklch(63.7% 0.237 25.331);
-  --chart-level-fatal: oklch(44.4% 0.177 26.899);
+  /* Dark red is 2.1:1 on the dark card, so fatal steps lighter than error here, as the stream's fatal text does. */
+  --chart-level-fatal: oklch(80.8% 0.114 19.571);
   --chart-level-none: #454545;
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
