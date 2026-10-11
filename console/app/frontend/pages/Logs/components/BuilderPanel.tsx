@@ -37,6 +37,8 @@ export interface ProjectOption {
   id: number
   name: string
   slug: string
+  /** How many days back the Project's Logs go: its Retention. */
+  log_retention_days: number
 }
 
 interface BuilderPanelProps {
