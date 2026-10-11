@@ -1,9 +1,12 @@
 package main_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -395,5 +398,115 @@ func TestARunAfterABatchFiltersCountsPastItsLimitAndTakesOnlyLogRows(t *testing.
 		if status, raw := postQueryApp(t, env, "/api/123/logs/query", map[string]any{"query": ``, "after_batch": after}); status != 400 {
 			t.Errorf("after_batch %v: expected 400, got %d: %s", after, status, raw)
 		}
+	}
+}
+
+// forgetBatches makes the closed environment's Logs those of an install from
+// before the batch column: no hot table or logs_late has the column, no Log
+// file has it, and the manifest has no batch_max.
+func forgetBatches(t *testing.T, env *TestEnv) {
+	t.Helper()
+	db, err := sql.Open("duckdb", filepath.Join(env.dir, "logs.duckdb"))
+	if err != nil {
+		t.Fatalf("Open logs.duckdb: %v", err)
+	}
+	defer db.Close()
+	tables := []string{"logs_late"}
+	rows, err := db.Query("SELECT table_name FROM duckdb_tables() WHERE table_name LIKE 'logs_hot_%'")
+	if err != nil {
+		t.Fatalf("List hot tables: %v", err)
+	}
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			t.Fatalf("Scan: %v", err)
+		}
+		tables = append(tables, table)
+	}
+	rows.Close()
+	statements := []string{"UPDATE log_files SET batch_max = NULL"}
+	for _, table := range tables {
+		statements = append(statements, "ALTER TABLE "+table+" DROP COLUMN batch")
+	}
+	files, err := filepath.Glob(filepath.Join(env.dir, "logs_parquet", "*", "*", "*", "*.parquet"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("Expected Log files, got %v %v", files, err)
+	}
+	for _, file := range files {
+		statements = append(statements, fmt.Sprintf(
+			"COPY (SELECT * EXCLUDE (batch) FROM read_parquet('%[1]s')) TO '%[1]s.old' (FORMAT parquet)", file))
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	for _, file := range files {
+		if err := os.Rename(file+".old", file); err != nil {
+			t.Fatalf("Replace %s: %v", file, err)
+		}
+	}
+}
+
+func TestAnInstallFromBeforeTheBatchColumnKeepsItsLogsAndArmsMonitors(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(12, 30))
+	postAndProcess(t, env,
+		logJSON(t, "ten", at(10, 10), map[string]any{"user": "ada", "status": 200}),
+		logJSON(t, "yesterday", testNow.AddDate(0, 0, -1), map[string]any{"user": "old"}),
+	)
+	env.ExportLogs(t) // hour 10's data.parquet, and yesterday's
+	// A late Log of hour 10 waits in logs_late, and one of 12:10 is hot.
+	postAndProcess(t, env,
+		logJSON(t, "late ten", at(10, 40), map[string]any{"user": "bob", "status": 500}),
+		logJSON(t, "twelve", at(12, 10), map[string]any{"user": "cy"}),
+	)
+	want := answersOf(t, env)
+	if got := messages(want.logs); !slices.Equal(got, []string{"twelve", "late ten", "ten", "yesterday"}) {
+		t.Fatalf("Unexpected Logs: %v", got)
+	}
+
+	env.close()
+	forgetBatches(t, env)
+	env.open(t)
+	assertAnswersUnchanged(t, env, want, "after an upgrade from before the batch column")
+
+	// A Monitor armed now reads only Logs stored from now on.
+	monitor := armMonitor(t, env, "")
+	armed := monitor.cursor
+	postAndProcess(t, env,
+		logJSON(t, "new twelve", at(12, 20), map[string]any{"user": "di"}),
+		logJSON(t, "new late ten", at(10, 50), map[string]any{"user": "ed"}),
+	)
+	newLogs := []string{"new twelve", "new late ten"}
+	if got := monitor.run(nil); !slices.Equal(got, newLogs) {
+		t.Errorf("Expected the new Logs, got %v", got)
+	}
+
+	// The next export puts old and new late Logs of hour 10 in one late
+	// file, beside its data.parquet from before the batch column.
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 123, at(10, 0), 2)
+	if got := messages(runAfterBatch(t, env, "", armed, nil).Logs); !slices.Equal(got, newLogs) {
+		t.Errorf("Expected the same new Logs after the export, got %v", got)
+	}
+	if got := monitor.run(nil); len(got) != 0 {
+		t.Errorf("Expected no more Logs, got %v", got)
+	}
+	if got := messages(latestLogs(t, env, 123, 100)); !slices.Equal(got, []string{"new twelve", "twelve", "new late ten", "late ten", "ten", "yesterday"}) {
+		t.Errorf("Expected every Log listed after the export, got %v", got)
+	}
+	// The late file has the batch column and data.parquet hasn't.
+	if got := queryMessages(t, env, `where status >= 200`); !slices.Equal(got, []string{"late ten", "ten"}) {
+		t.Errorf("Expected a where to read the files from before and after the batch column, got %v", got)
+	}
+
+	// A restart keeps it all.
+	env.Reopen(t)
+	if got := messages(runAfterBatch(t, env, "", armed, nil).Logs); !slices.Equal(got, newLogs) {
+		t.Errorf("Expected the same new Logs after a restart, got %v", got)
 	}
 }
