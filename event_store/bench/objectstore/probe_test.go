@@ -401,13 +401,14 @@ func (e probeEnv) chartSQL(hours int, bin string, remote bool) string {
 		}
 		days = append(days, fmt.Sprintf(
 			"SELECT time FROM (SELECT * FROM read_parquet([%s], union_by_name = true, hive_partitioning = false)) WHERE time >= TIMESTAMP '%s' AND time < TIMESTAMP '%s'",
-			strings.Join(files, ", "), d.Format(time.DateTime), min(to, d.Add(24*time.Hour)).Format(time.DateTime)))
+			strings.Join(files, ", "), d.Format(time.DateTime), earlier(to, d.Add(24*time.Hour)).Format(time.DateTime)))
 	}
 	return fmt.Sprintf("SELECT time_bucket(INTERVAL '%s', time) AS bin, count(*) FROM (%s) GROUP BY bin ORDER BY bin",
 		bin, strings.Join(days, "\nUNION ALL BY NAME\n"))
 }
 
-func min(a, b time.Time) time.Time {
+// earlier returns the earlier of two times.
+func earlier(a, b time.Time) time.Time {
 	if a.Before(b) {
 		return a
 	}
