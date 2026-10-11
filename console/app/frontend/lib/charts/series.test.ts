@@ -162,26 +162,54 @@ describe('filling empty bins', () => {
     expect(model.points.find(p => p.x === at('2026-10-09T10:05:00Z'))).toEqual({ x: at('2026-10-09T10:05:00Z'), s0: 9, s1: 0 })
   })
 
-  it('fills nothing when the table says a missing bin may have Logs', () => {
+  it('leaves a gap in a bin with no row when the table says it may have Logs', () => {
     const model = drawable(chartOf(table([TIME, SERVICE, COUNT], [
       ['2026-10-09T10:00:00Z', 'api', 12],
       ['2026-10-09T10:00:00Z', 'web', 3],
       ['2026-10-09T10:10:00Z', 'api', 9],
     ], { fill_gaps: false, ...range })))
 
+    // From the first row's bin to the last: nothing is known beyond them.
     expect(model.points).toEqual([
       { x: at('2026-10-09T10:00:00Z'), s0: 12, s1: 3 },
+      { x: at('2026-10-09T10:05:00Z'), s0: null, s1: null },
       { x: at('2026-10-09T10:10:00Z'), s0: 9, s1: null },
     ])
   })
 
-  it('fills no bins when there would be too many to draw', () => {
+  it('marks only the ends of each run of empty bins when there would be too many to lay', () => {
     const second: TableColumn = { ...TIME, bin_seconds: 1 }
-    const model = drawable(chartOf(table([second, COUNT], [['2026-10-09T10:00:00Z', 1]], {
+    const filled = drawable(chartOf(table([second, COUNT], [['2026-10-09T10:00:00Z', 1]], {
       fill_gaps: true, from: '2026-10-01T00:00:00Z', to: '2026-10-09T12:00:00Z',
     })))
+    const gaps = drawable(chartOf(table([second, COUNT], [['2026-10-01T00:00:00Z', 1], ['2026-10-09T10:00:00Z', 2]])))
 
-    expect(model.points).toHaveLength(1)
+    expect(filled.points).toEqual([
+      { x: at('2026-10-01T00:00:00Z'), s0: 0 },
+      { x: at('2026-10-09T09:59:59Z'), s0: 0 },
+      { x: at('2026-10-09T10:00:00Z'), s0: 1 },
+      { x: at('2026-10-09T10:00:01Z'), s0: 0 },
+      { x: at('2026-10-09T11:59:59Z'), s0: 0 },
+    ])
+    expect(gaps.points).toEqual([
+      { x: at('2026-10-01T00:00:00Z'), s0: 1 },
+      { x: at('2026-10-01T00:00:01Z'), s0: null },
+      { x: at('2026-10-09T09:59:59Z'), s0: null },
+      { x: at('2026-10-09T10:00:00Z'), s0: 2 },
+    ])
+  })
+
+  it('draws a count over no Logs as a flat zero across the range', () => {
+    const model = drawable(chartOf(table([TIME, COUNT], [], { fill_gaps: true, ...range })))
+
+    expect(model.series.map(s => s.name)).toEqual(['count_'])
+    expect(model.points.map(p => p.s0)).toEqual([0, 0, 0, 0])
+  })
+
+  it('draws nothing for no rows it cannot fill: no hint, a gap aggregate, or split values it cannot know', () => {
+    expect(chartOf(table([TIME, COUNT], [], range)).kind).toBe('none')
+    expect(chartOf(table([TIME, AVG], [], { fill_gaps: true, ...range })).kind).toBe('none')
+    expect(chartOf(table([TIME, SERVICE, COUNT], [], { fill_gaps: true, ...range })).kind).toBe('none')
   })
 })
 
@@ -303,6 +331,7 @@ describe('tables that are not drawn', () => {
     expect(chartOf(table([{ name: 'message', type: 'string' }, SERVICE], [['boom', 'api']])).kind).toBe('none')
     expect(chartOf(table([TIME, SERVICE], [['2026-10-09T10:00:00Z', 'api']])).kind).toBe('none')
     expect(chartOf(table([TIME, COUNT], [])).kind).toBe('none')
+    expect(chartOf(table([SERVICE, COUNT], [], { fill_gaps: true, from: '2026-10-09T10:00:00Z', to: '2026-10-09T11:00:00Z' })).kind).toBe('none')
     expect(chartOf(table([COUNT, AVG], [[1, 2]])).kind).toBe('none')
   })
 
