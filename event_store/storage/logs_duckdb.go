@@ -44,16 +44,20 @@ type LogStore struct {
 	writeMu sync.Mutex
 	// publishMu keeps a read from beginning while an export or a deletion
 	// commits and publishes its files, so that a read sees each Log exactly
-	// once. A read holds it only while it begins (logRead).
+	// once and pins its files before a deletion can take them. A read holds
+	// it only while it begins (logRead).
 	publishMu sync.RWMutex
-	// pins counts, for each Log file, the reads that may still read it.
+	// pins counts, for each Log file by its key (logFile.key), the reads
+	// that may still read it.
 	pinMu sync.Mutex
 	pins  map[string]int
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
 // events, creating the file if it doesn't exist. Exported Logs go under
-// filesDir. Files an export staged before a crash are settled.
+// filesDir. An install from before the Log file manifest gets its manifest
+// built from the files on disk, and files an export staged before a crash
+// are settled.
 func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
@@ -62,7 +66,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if _, err := events.db.Exec(fmt.Sprintf("ATTACH IF NOT EXISTS %s AS %s", sqltext.String(path), logsCatalog)); err != nil {
 		return nil, fmt.Errorf("attach %s: %w", path, err)
 	}
-	for _, ddl := range []string{
+	for _, ddl := range append([]string{
 		`CREATE TABLE IF NOT EXISTS logs.log_processing_cursors (
 			project_id UINTEGER,
 			batch_id UUID
@@ -90,7 +94,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 		// Log processing stored them: a hot table's fixed columns, maps only.
 		`CREATE TABLE IF NOT EXISTS logs.logs_late (
 			project_id UINTEGER,` + hotTableColumns + `)`,
-	} {
+	}, manifestTables...) {
 		if _, err := events.db.Exec(ddl); err != nil {
 			return nil, err
 		}
@@ -100,15 +104,13 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 		return nil, fmt.Errorf("load promoted sets: %w", err)
 	}
 	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}, pins: map[string]int{}}
+	if err := store.backfillManifest(); err != nil {
+		return nil, fmt.Errorf("list the log files on disk in the manifest: %w", err)
+	}
 	if err := store.recoverStagedFiles(); err != nil {
 		return nil, fmt.Errorf("recover staged log files: %w", err)
 	}
 	return store, nil
-}
-
-// Files is where the Log files are.
-func (s *LogStore) Files() LogFiles {
-	return s.files
 }
 
 // hotTable is the name of a Project's hot table in logs.duckdb.

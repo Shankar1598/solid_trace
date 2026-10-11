@@ -217,7 +217,7 @@ func TestAnEmptyProjectsTableDeletesNoProjectsLogs(t *testing.T) {
 // hourBytes is the size of a Project's files of an hour.
 func hourBytes(t *testing.T, env *TestEnv, projectID uint32, hour time.Time) int64 {
 	t.Helper()
-	files, err := env.LogStore.Files().Hour(projectID, hour)
+	files, err := env.LogStore.HourFiles(projectID, hour)
 	if err != nil || len(files) == 0 {
 		t.Fatalf("Expected files for Project %d's hour %v, got %v, %v", projectID, hour, files, err)
 	}

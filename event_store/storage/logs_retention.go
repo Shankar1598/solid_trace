@@ -4,25 +4,23 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/logger"
 )
 
-// LogProjects lists every Project that has anything of its Logs in
-// logs.duckdb or on disk: a hot table, late Logs, files, promoted sets or
-// popularity counts. Its Log processing cursor alone doesn't count.
+// LogProjects lists every Project that has anything of its Logs: a hot table,
+// late Logs, files, promoted sets or popularity counts. Its Log processing
+// cursor alone doesn't count.
 func (s *LogStore) LogProjects() ([]uint32, error) {
 	rows, err := s.db.Query(`
 		SELECT CAST(substr(table_name, length('logs_hot_') + 1) AS UINTEGER)
 		FROM duckdb_tables() WHERE database_name = ? AND schema_name = 'main' AND table_name LIKE 'logs\_hot\_%' ESCAPE '\'
 		UNION SELECT project_id FROM logs.logs_late
 		UNION SELECT project_id FROM logs.log_promoted_sets
-		UNION SELECT project_id FROM logs.log_key_counts`,
+		UNION SELECT project_id FROM logs.log_key_counts
+		UNION SELECT project_id FROM logs.log_files`,
 		logsCatalog)
 	if err != nil {
 		return nil, fmt.Errorf("list projects with logs: %w", err)
@@ -38,13 +36,6 @@ func (s *LogStore) LogProjects() ([]uint32, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	dirs, err := s.files.projectDirs()
-	if err != nil {
-		return nil, err
-	}
-	for projectID := range dirs {
-		projects[projectID] = true
 	}
 	list := make([]uint32, 0, len(projects))
 	for projectID := range projects {
@@ -68,6 +59,10 @@ func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 				return fmt.Errorf("delete %s: %w", table, err)
 			}
 		}
+		if err := tombstoneLogFiles(ctx, conn, deletedForRetention,
+			"project_id = ? AND day < CAST(? AS DATE)", projectID, before); err != nil {
+			return err
+		}
 		if _, err := conn.ExecContext(ctx,
 			fmt.Sprintf("DELETE FROM %s.%s WHERE project_id = ? AND time < CAST(? AS TIMESTAMP)", logsCatalog, lateTable),
 			projectID, timestampString(day)); err != nil {
@@ -85,34 +80,33 @@ func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 			return fmt.Errorf("delete hot logs: %w", err)
 		}
 		return nil
-	}, func() error {
-		days, err := s.files.dayDirs(projectID)
-		if err != nil {
-			return err
-		}
-		for dirDay, dir := range days {
-			if dirDay.Before(day) {
-				if err := s.removeUnread(dir); err != nil {
-					return err
-				}
-			}
-		}
+	}, func() {
 		s.promoted.deleteBefore(projectID, day)
-		return nil
 	})
 }
 
-// deleteLogs runs change in a transaction on logs.duckdb and, once it
-// commits, deletes files with publish. Both happen with other writes locked
-// out and no read beginning, as an export's commit and renames do. publish
-// deletes only files no read has pinned (removeUnread), so a read never sees
-// a file vanish under it.
+// deleteLogs runs change in a transaction on logs.duckdb, which deletes Logs
+// and leaves tombstones of the files whose rows it deletes from the manifest,
+// then deletes the bytes of tombstoned files (deleteTombstonedFiles). The
+// commit and publish, which updates what is held in memory, happen with
+// other writes locked out and no read beginning, as an export's commit and
+// renames do, so a read has pinned every file whose row it saw before the
+// bytes are deleted.
 //
-// If publish fails after the commit, the files it didn't delete stay until
-// the next pass deletes them.
-func (s *LogStore) deleteLogs(change func(context.Context, *sql.Conn) error, publish func() error) error {
+// The bytes of a file a read has pinned stay, with ErrLogFilesInUse, until a
+// later deletion's pass deletes them.
+func (s *LogStore) deleteLogs(change func(context.Context, *sql.Conn) error, publish func()) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if err := s.commitDeletion(change, publish); err != nil {
+		return err
+	}
+	return s.deleteTombstonedFiles()
+}
+
+// commitDeletion runs change in a transaction and commits it, then runs
+// publish, both under publishMu.
+func (s *LogStore) commitDeletion(change func(context.Context, *sql.Conn) error, publish func()) error {
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -136,7 +130,8 @@ func (s *LogStore) deleteLogs(change func(context.Context, *sql.Conn) error, pub
 		discardConn(conn)
 		return err
 	}
-	return publish()
+	publish()
+	return nil
 }
 
 // hotTableExists reports whether a Project has a hot table, inside the
@@ -147,40 +142,6 @@ func hotTableExists(ctx context.Context, conn *sql.Conn, projectID uint32) (bool
 		"SELECT count(*) > 0 FROM duckdb_tables() WHERE database_name = ? AND schema_name = 'main' AND table_name = ?",
 		logsCatalog, hotTable(projectID)).Scan(&exists)
 	return exists, err
-}
-
-// projectDirs returns the folder of each Project that has one.
-func (f LogFiles) projectDirs() (map[uint32]string, error) {
-	dirs, err := filepath.Glob(filepath.Join(f.Dir, "project=*"))
-	if err != nil {
-		return nil, err
-	}
-	projects := make(map[uint32]string, len(dirs))
-	for _, dir := range dirs {
-		id, err := strconv.ParseUint(strings.TrimPrefix(filepath.Base(dir), "project="), 10, 32)
-		if err != nil {
-			continue // not a folder the export writes
-		}
-		projects[uint32(id)] = dir
-	}
-	return projects, nil
-}
-
-// dayDirs returns a Project's day folders by their UTC day.
-func (f LogFiles) dayDirs(projectID uint32) (map[time.Time]string, error) {
-	dirs, err := filepath.Glob(filepath.Join(f.ProjectDir(projectID), "day=*"))
-	if err != nil {
-		return nil, err
-	}
-	days := make(map[time.Time]string, len(dirs))
-	for _, dir := range dirs {
-		day, err := time.Parse(time.DateOnly, strings.TrimPrefix(filepath.Base(dir), "day="))
-		if err != nil {
-			continue // not a folder the export writes
-		}
-		days[day] = dir
-	}
-	return days, nil
 }
 
 // DeleteProjectLogs deletes every Log of a Project: its hot table, its late
@@ -198,10 +159,9 @@ func (s *LogStore) DeleteProjectLogs(projectID uint32) error {
 				return fmt.Errorf("delete %s: %w", table, err)
 			}
 		}
-		return nil
-	}, func() error {
+		return tombstoneLogFiles(ctx, conn, deletedWithProject, "project_id = ?", projectID)
+	}, func() {
 		s.promoted.deleteProject(projectID)
-		return s.removeUnread(s.files.ProjectDir(projectID))
 	})
 	if err != nil {
 		return err

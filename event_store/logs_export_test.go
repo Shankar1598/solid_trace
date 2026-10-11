@@ -68,7 +68,7 @@ func assertListsUnchanged(t *testing.T, env *TestEnv, projectID uint32, want []l
 // Project's hour.
 func assertHourFiles(t *testing.T, env *TestEnv, projectID uint32, hour time.Time, want int) {
 	t.Helper()
-	files, err := env.LogStore.Files().Hour(projectID, hour)
+	files, err := env.LogStore.HourFiles(projectID, hour)
 	if err != nil {
 		t.Fatalf("List files of %v: %v", hour, err)
 	}
