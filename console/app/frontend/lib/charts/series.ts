@@ -87,7 +87,14 @@ interface SeriesSet {
 export type ChartModel =
   | { kind: 'none' }
   | { kind: 'stat'; name: string; value: number | null }
-  | ({ kind: 'time'; binSeconds: number; from: Date; to: Date } & SeriesSet)
+  | ({
+    kind: 'time'
+    binSeconds: number
+    from: Date
+    to: Date
+    /** The bins (their starts) at the range's ends that it covers only in part, whose values count part of a bin. */
+    partial: number[]
+  } & SeriesSet)
   | ({ kind: 'bars'; category: string; omittedCategories: number } & SeriesSet)
 
 /** A model drawn with axes: a time series or bars. */
@@ -162,7 +169,9 @@ export function chartOf(table: LogTable): ChartModel {
     if (filled) layBins(drawn, step, Math.floor(from.getTime() / step) * step, Math.ceil(to.getTime() / step) * step - step, true)
     else if (times.length > 0) layBins(drawn, step, times[0], times[times.length - 1], false)
     drawn.points.sort((a, b) => (a.x as number) - (b.x as number))
-    return { kind: 'time', binSeconds, from, to, ...drawn }
+    const edges = [drawn.points[0]?.x as number, drawn.points[drawn.points.length - 1]?.x as number]
+    const partial = [...new Set(edges)].filter(x => x !== undefined && (x < from.getTime() || x + step > to.getTime()))
+    return { kind: 'time', binSeconds, from, to, partial, ...drawn }
   }
 
   // Bars: only a summarize's table, with a column to name each bar.

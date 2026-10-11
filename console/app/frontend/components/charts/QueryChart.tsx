@@ -106,12 +106,13 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
   })
 
   const time = model.kind === 'time' ? model : null
-  // Bars cover their bin, so they sit on its middle; lines and areas mark its start.
+  // Bars cover their bin, so they sit on its middle; lines and areas mark its start. Each point keeps its bin's start.
   const binMs = time ? time.binSeconds * 1000 : 0
   const data = useMemo<ChartPoint[]>(
-    () => (time && form === 'bars' ? model.points.map(p => ({ ...p, x: (p.x as number) + binMs / 2 })) : model.points),
+    () => (time && form === 'bars' ? model.points.map(p => ({ ...p, x: (p.x as number) + binMs / 2, start: p.x })) : model.points),
     [model, form],
   )
+  // Whole bins, so a bin the range covers in part keeps its width; only times in the range are labelled.
   const domain: [number, number] | undefined = time && model.points.length > 0
     ? [Math.min(model.points[0].x as number, time.from.getTime()), Math.max((model.points.at(-1)!.x as number) + (form === 'bars' ? binMs : 0), time.to.getTime())]
     : undefined
@@ -162,6 +163,23 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
     const high = (model.points[Math.max(drag.start, drag.end)].x as number) + binMs
     return <ReferenceArea x1={low} x2={Math.min(high, domain![1])} fill="var(--primary)" fillOpacity={0.12} stroke="none" ifOverflow="hidden" />
   })() : null
+  // A bin the range covers in part counts part of a bin, so it is faded, and with it the line into it.
+  const partialAreas = time && domain ? time.partial.map(x => {
+    const first = x < time.from.getTime()
+    const [x1, x2] = form === 'bars' || first ? [x, x + binMs] : [x - binMs, x + binMs]
+    return (
+      <ReferenceArea
+        key={x}
+        x1={Math.max(x1, domain[0])}
+        x2={Math.min(x2, domain[1])}
+        fill="var(--card)"
+        fillOpacity={0.6}
+        stroke="none"
+        ifOverflow="hidden"
+        zIndex={450}
+      />
+    )
+  }) : null
 
   const height = !several ? 'h-44 sm:h-56' : panels.length === 2 ? 'h-32 sm:h-40' : 'h-28 sm:h-32'
 
@@ -204,7 +222,7 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
                     type="number"
                     scale="time"
                     domain={domain}
-                    ticks={domain ? timeTicks(domain[0], domain[1], TIME_TICKS) : undefined}
+                    ticks={timeTicks(time.from.getTime(), time.to.getTime(), TIME_TICKS)}
                     tickFormatter={x => format(new Date(x), pattern)}
                     tickLine={false}
                     axisLine={{ stroke: 'var(--border)' }}
@@ -250,10 +268,10 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
                   <ChartTooltip
                     isAnimationActive={false}
                     active={drag ? false : undefined}
-                    content={<ChartTooltipContent indicator="line" valueFormatter={valueText} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.x)} />}
+                    content={<ChartTooltipContent indicator="line" valueFormatter={valueText} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.start ?? payload?.[0]?.payload?.x)} />}
                   />
                 )}
-                overlay={dragArea}
+                overlay={<>{partialAreas}{dragArea}</>}
                 events={zoomEvents}
               />
             </ChartContainer>
@@ -265,7 +283,9 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
 
   /** A point's bin or category, for the tooltip: a bin's start in local time. */
   function pointLabel(x: unknown): string {
-    return time ? format(new Date(Number(x) - (form === 'bars' ? binMs / 2 : 0)), pattern) : String(x)
+    if (!time) return String(x)
+    const start = Number(x)
+    return `${format(new Date(start), pattern)}${time.partial.includes(start) ? ' · partial bin' : ''}`
   }
 }
 
