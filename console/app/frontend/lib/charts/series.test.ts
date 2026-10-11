@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LogTable, TableColumn } from '@/lib/logs/table'
-import { MAX_BARS, MAX_SERIES, binsTime, chartOf, formFor, formsOf, keepColors, legendNotes, type ChartModel } from './series'
+import { MAX_BARS, MAX_SERIES, binsTime, chartOf, formFor, formsOf, keepColors, keepHidden, legendNotes, type ChartModel } from './series'
 
 const TIME: TableColumn = { name: 'time', type: 'datetime', bin_seconds: 300 }
 const SERVICE: TableColumn = { name: 'service', type: 'string' }
@@ -137,6 +137,7 @@ describe('bins the range covers in part', () => {
     expect(inside).toMatchObject({ kind: 'time', partial: [at('2026-10-09T09:55:00Z'), at('2026-10-09T10:05:00Z')] })
     expect(whole).toMatchObject({ kind: 'time', partial: [] })
   })
+
 })
 
 describe('filling empty bins', () => {
@@ -511,6 +512,32 @@ describe('colours kept from the last chart', () => {
     expect(colors(levels.model)).toEqual({ error: 'var(--chart-level-error)' })
     expect(levels.slots).toEqual(services.slots)
     expect(colors(hosts.model)).toEqual({ h1: 'var(--chart-1)' })
+  })
+})
+
+describe('series hidden from the last chart', () => {
+  const rows = (services: string[]) => services.map(s => ['2026-10-09T10:00:00Z', s, 1])
+  const idOf = (model: ChartModel, name: string) => drawable(model).legend.find(e => e.name === name)!.id
+
+  it('stay hidden in the next table that has them, and are forgotten when it has not', () => {
+    const first = chartOf(table([TIME, SERVICE, COUNT], rows(['api', 'web', 'worker'])))
+    const hidden = new Set([idOf(first, 'api'), idOf(first, 'worker')])
+
+    // A zoom or a re-run: the same services.
+    const next = chartOf(table([TIME, SERVICE, COUNT], rows(['web', 'api', 'worker', 'billing'])))
+    expect(keepHidden(next, hidden)).toEqual(new Set([idOf(next, 'api'), idOf(next, 'worker')]))
+
+    // A filter takes worker away: it is shown again when it comes back.
+    const filtered = chartOf(table([TIME, SERVICE, COUNT], rows(['api', 'web'])))
+    expect(keepHidden(filtered, hidden)).toEqual(new Set([idOf(filtered, 'api')]))
+  })
+
+  it('are all shown when they would hide every series', () => {
+    const first = chartOf(table([TIME, SERVICE, COUNT], rows(['api', 'web'])))
+    const next = chartOf(table([TIME, SERVICE, COUNT], rows(['api'])))
+
+    expect(keepHidden(next, new Set([idOf(first, 'api')]))).toEqual(new Set())
+    expect(keepHidden(chartOf(table([COUNT], [[3]])), new Set([idOf(first, 'api')]))).toEqual(new Set())
   })
 })
 

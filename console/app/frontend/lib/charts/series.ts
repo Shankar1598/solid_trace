@@ -434,6 +434,18 @@ export function keepColors(model: ChartModel, slots: ReadonlyMap<string, number>
 }
 
 /**
+ * The series ids to keep hidden in a new model: those hidden from the last
+ * chart drawn in its place that it still has, so a zoom or a re-run shows
+ * none of them again. None when they would hide every series.
+ */
+export function keepHidden(model: ChartModel, hidden: ReadonlySet<string>): Set<string> {
+  if (model.kind !== 'time' && model.kind !== 'bars') return new Set()
+  const ids = model.legend.map(e => e.id)
+  const kept = new Set(ids.filter(id => hidden.has(id)))
+  return kept.size < ids.length ? kept : new Set()
+}
+
+/**
  * Adds a point for each bin from first to last (bin starts, epoch ms) that
  * has no row: a zero or a gap, as emptyValue says. Past MAX_FILLED_BINS only
  * the first and last bins of each run without rows get one, which is enough

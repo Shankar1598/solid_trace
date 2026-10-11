@@ -4,7 +4,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, Referen
 import type { MouseHandlerDataParam } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import {
-  chartOf, formFor, keepColors, legendNotes,
+  chartOf, formFor, keepColors, keepHidden, legendNotes,
   type ChartForm, type ChartPoint, type Series, type SeriesChartModel,
 } from '@/lib/charts/series'
 import { statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from '@/lib/charts/axis'
@@ -21,6 +21,15 @@ export interface ColorSlots {
   current: ReadonlyMap<string, number>
 }
 
+/**
+ * The series ids hidden from the legend of the last chart drawn in one
+ * place, kept by its owner across tables so a re-run or a zoom shows none of
+ * them again.
+ */
+export interface HiddenSeries {
+  current: ReadonlySet<string>
+}
+
 interface QueryChartProps {
   table: LogTable
   /** How to draw it; the form its shape suggests when absent, or when it can't be drawn so. */
@@ -31,6 +40,8 @@ interface QueryChartProps {
   actions?: React.ReactNode
   /** Keeps each series' colour from the last table drawn here; without it, colours follow rank. */
   colors?: ColorSlots
+  /** Keeps the series hidden from the last table drawn here; without it, each new table shows every series. */
+  hidden?: HiddenSeries
   className?: string
 }
 
@@ -54,7 +65,7 @@ const NAME_CHARS = 20
  * a Query's table is charted, so it takes the table and options, never a
  * page's state.
  */
-export function QueryChart({ table, form, onZoom, actions, colors, className }: QueryChartProps) {
+export function QueryChart({ table, form, onZoom, actions, colors, hidden, className }: QueryChartProps) {
   const model = useMemo(() => {
     const made = chartOf(table)
     if (!colors) return made
@@ -62,6 +73,12 @@ export function QueryChart({ table, form, onZoom, actions, colors, className }: 
     colors.current = kept.slots
     return kept.model
   }, [table, colors])
+  // A table with no series, such as a single number, leaves the ones hidden for the next chart, as it does their colours.
+  const hiddenNow = useMemo(() => {
+    const kept = keepHidden(model, hidden?.current ?? new Set())
+    if (hidden && (model.kind === 'time' || model.kind === 'bars')) hidden.current = kept
+    return kept
+  }, [model, hidden])
   const drawn = formFor(model, form ?? 'auto')
   if (model.kind === 'none' || drawn === null) return null
   if (model.kind === 'stat') {
@@ -72,7 +89,18 @@ export function QueryChart({ table, form, onZoom, actions, colors, className }: 
       </div>
     )
   }
-  return <SeriesChart key={tableKey(table)} model={model} form={drawn} onZoom={onZoom} actions={actions} className={className} />
+  return (
+    <SeriesChart
+      key={tableKey(table)}
+      model={model}
+      form={drawn}
+      initialHidden={hiddenNow}
+      onHidden={hidden && (ids => { hidden.current = ids })}
+      onZoom={onZoom}
+      actions={actions}
+      className={className}
+    />
+  )
 }
 
 /** One number: its column's name over it, large. */
@@ -90,20 +118,27 @@ function StatTile({ name, value }: { name: string; value: number | null }) {
 /** The bins a drag has covered, by their points' indexes. */
 type Drag = { start: number; end: number }
 
-function SeriesChart({ model, form, onZoom, actions, className }: {
-  model: SeriesChartModel; form: ChartForm; onZoom?: QueryChartProps['onZoom']; actions?: React.ReactNode; className?: string
+function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, className }: {
+  model: SeriesChartModel
+  form: ChartForm
+  initialHidden: ReadonlySet<string>
+  onHidden?: (ids: ReadonlySet<string>) => void
+  onZoom?: QueryChartProps['onZoom']
+  actions?: React.ReactNode
+  className?: string
 }) {
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(initialHidden)
   const [drag, setDrag] = useState<Drag | null>(null)
   const config = useMemo<ChartConfig>(
     () => Object.fromEntries(model.series.map(s => [s.key, { label: s.name, color: s.color }])),
     [model],
   )
-  const toggle = (id: string) => setHidden(h => {
-    const next = new Set(h)
+  const toggle = (id: string) => {
+    const next = new Set(hidden)
     if (!next.delete(id)) next.add(id)
-    return next
-  })
+    setHidden(next)
+    onHidden?.(next)
+  }
 
   const time = model.kind === 'time' ? model : null
   // Bars cover their bin, so they sit on its middle; lines and areas mark its start. Each point keeps its bin's start.
@@ -311,7 +346,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, axisBe
   form: ChartForm
   data: ChartPoint[]
   series: Series[]
-  hidden: Set<string>
+  hidden: ReadonlySet<string>
   stacked: boolean
   model: SeriesChartModel
   /** Bars lying across, categories down the side. */
@@ -418,7 +453,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, axisBe
  * a stroke for lines and a block for bars and areas; the text stays in ink.
  */
 function Legend({ model, form, hidden, onToggle }: {
-  model: SeriesChartModel; form: ChartForm; hidden: Set<string>; onToggle: (id: string) => void
+  model: SeriesChartModel; form: ChartForm; hidden: ReadonlySet<string>; onToggle: (id: string) => void
 }) {
   const notes = legendNotes(model).map(({ text, why }) => (
     <span key={text} className="text-[11px] text-muted-foreground" title={why}>{text}</span>
@@ -495,7 +530,7 @@ function chartLabel(model: SeriesChartModel, form: ChartForm): string {
   return `${form === 'line' ? 'Line' : form === 'area' ? 'Area' : 'Bar'} chart of ${names} ${over}${columns}`
 }
 
-/** Each table's number, so a new table, a new run's, starts with every series shown. */
+/** Each table's number, so a new table, a new run's, starts afresh: the hidden series come from its owner. */
 const tableIds = new WeakMap<LogTable, number>()
 let lastTableId = 0
 function tableKey(table: LogTable): number {

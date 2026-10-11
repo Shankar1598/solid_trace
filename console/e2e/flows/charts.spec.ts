@@ -299,6 +299,30 @@ test('on a phone the legend entries are targets a finger can hit', async ({ page
   expect(errors).toEqual([])
 })
 
+test('a series hidden from the legend stays hidden through a zoom and a re-run', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin(time, 1h), service`)
+  const api = legend(page).filter({ hasText: 'api' })
+  await api.click()
+  await expect(api).toHaveAttribute('aria-pressed', 'false')
+
+  const box = (await chart(page).locator('.recharts-cartesian-grid').boundingBox())!
+  const y = box.y + box.height / 2
+  await page.mouse.move(box.x + box.width * 0.3, y)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * 0.6, y, { steps: 8 })
+  await runBy(page, () => page.mouse.up())
+  await expect(api).toHaveAttribute('aria-pressed', 'false')
+  await expect(chart(page).locator('.recharts-line-curve')).toHaveCount(3)
+
+  // A filter takes api away, and it comes back shown.
+  await runQuery(page, `${SOURCE}\n| where service != "api"\n| summarize count() by bin(time, 1h), service`)
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin(time, 1h), service`)
+  await expect(api).toHaveAttribute('aria-pressed', 'true')
+  expect(errors).toEqual([])
+})
+
 test('a series keeps its colour when a function is added or removed', async ({ page }) => {
   const errors = watchErrors(page)
   await openLogs(page, last24h('query'))
