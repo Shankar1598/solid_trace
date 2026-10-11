@@ -30,7 +30,8 @@ import (
 //     be on disk. Each deleter then deletes the bytes of every tombstoned
 //     file no read has pinned, and their tombstones (deleteTombstonedFiles).
 //   - log_file_backfill gets one row once the manifest of an install from
-//     before it has been built from the files on disk.
+//     before it has been built from the files on disk. Files put on disk
+//     after that are never listed.
 var manifestTables = []string{
 	`CREATE TABLE IF NOT EXISTS logs.log_files (
 		project_id UINTEGER,
@@ -38,6 +39,7 @@ var manifestTables = []string{
 		hour UTINYINT,
 		name VARCHAR,
 		bytes BIGINT,
+		-- NULL for a file the backfill couldn't read.
 		min_time TIMESTAMP,
 		max_time TIMESTAMP,
 		log_count BIGINT,
@@ -237,11 +239,12 @@ func nextHourFile(ctx context.Context, db sqlRunner, projectID uint32, hour time
 	return fmt.Sprintf("%s%d%s", lateFilePrefix, last+1, parquetSuffix), nil
 }
 
-// logFileStats is what the manifest records of a file's contents.
+// logFileStats is what the manifest records of a file's contents. Only its
+// size is known of a file that can't be read.
 type logFileStats struct {
 	bytes            int64
 	minTime, maxTime sql.NullTime
-	logs             int64
+	logs             sql.NullInt64
 }
 
 // readLogFileStats reads a Log file's size, the times of its first and last
@@ -265,10 +268,14 @@ func insertLogFile(ctx context.Context, db sqlRunner, file logFile, stats logFil
 		}
 		return timestampString(t.Time)
 	}
+	logs := any(nil)
+	if stats.logs.Valid {
+		logs = stats.logs.Int64
+	}
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO logs.log_files (project_id, day, hour, name, bytes, min_time, max_time, log_count, local, remote)
 		VALUES (?, CAST(? AS DATE), ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, true, false)`,
-		append(file.keyArgs(), stats.bytes, timestamp(stats.minTime), timestamp(stats.maxTime), stats.logs)...)
+		append(file.keyArgs(), stats.bytes, timestamp(stats.minTime), timestamp(stats.maxTime), logs)...)
 	if err != nil {
 		return fmt.Errorf("add %s to the manifest: %w", file.key(), err)
 	}
@@ -383,6 +390,11 @@ func (s *LogStore) dropTombstones(files []logFile) error {
 // by whether their Logs are still in DuckDB, as the manifest has no rows to
 // tell. The rows and the marker row commit together, so a crash part-way
 // leaves the whole backfill for the next start.
+//
+// A published file that can't be read is listed all the same, with only its
+// size, so that it is as it was before the manifest: reads of its hour fail
+// on it, no later file of the hour takes its name, and Retention, Project
+// deletion and the disk limit delete it.
 func (s *LogStore) backfillManifest() error {
 	var done bool
 	if err := s.db.QueryRow("SELECT count(*) > 0 FROM logs.log_file_backfill").Scan(&done); err != nil || done {
@@ -408,9 +420,13 @@ func (s *LogStore) backfillManifest() error {
 		}
 		stats, err := readLogFileStats(ctx, s.db, path)
 		if err != nil {
-			// Reads failed on it before; now they leave it out.
-			logger.L.Error("Leaving an unreadable Log file out of the manifest", "file", path, "error", err)
-			continue
+			info, statErr := os.Stat(path)
+			if statErr != nil {
+				return statErr
+			}
+			logger.L.Error("Listing a Log file that can't be read, so reads of its hour fail until it is deleted",
+				"file", path, "error", err)
+			stats = logFileStats{bytes: info.Size()}
 		}
 		files = append(files, found{file, stats})
 	}
@@ -452,7 +468,9 @@ func (s *LogStore) backfillManifest() error {
 // before the manifest. An export's commit deleted all of its file's Logs
 // from DuckDB or none, so one Log decides: still stored means the export
 // didn't commit, and the file is deleted; gone means it did, and the file is
-// renamed. A file that can't be read is left for an operator.
+// renamed. A file that can't be read is renamed to <staged name>.unreadable
+// for an operator, out of the way of recoverStagedFiles, which would delete
+// it for having no row.
 func (s *LogStore) settleStagedFilesByTheirLogs() error {
 	staged, err := s.files.stagedFiles()
 	if err != nil {
@@ -462,7 +480,10 @@ func (s *LogStore) settleStagedFilesByTheirLogs() error {
 		var id string
 		err := s.db.QueryRow(fmt.Sprintf("SELECT CAST(id AS VARCHAR) FROM read_parquet(%s) LIMIT 1", sqltext.String(path))).Scan(&id)
 		if err != nil {
-			logger.L.Error("Skipping unreadable staged log file", "file", path, "error", err)
+			logger.L.Error("Keeping a staged Log file that can't be read for an operator", "file", path+unreadableSuffix, "error", err)
+			if err := os.Rename(path, path+unreadableSuffix); err != nil {
+				return err
+			}
 			continue
 		}
 		stored, err := s.logStored(file.projectID, id)
