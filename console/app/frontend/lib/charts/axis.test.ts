@@ -92,6 +92,29 @@ describe('value labels', () => {
       expect(new Set(read).size).toBe(read.length)
     }
   })
+
+  // Compact units differ by locale: lakh and crore in India, 万 and 億 in
+  // Japan. A tick reads exactly whatever unit the viewer's locale picks.
+  const labelsIn = (locale: string, max: number) => {
+    const { ticks, step } = valueTicks(0, max)
+    return ticks.map(tickLabel(step, locale))
+  }
+
+  it('read each tick exactly in a locale whose units are not thousands', () => {
+    expect(labelsIn('en-IN', 1_100_000)).toEqual(['0', '2.5L', '5L', '7.5L', '10L', '12.5L'])
+    expect(labelsIn('en-IN', 110_000_000)).toEqual(['0', '2.5Cr', '5Cr', '7.5Cr', '10Cr', '12.5Cr'])
+    expect(labelsIn('ja-JP', 12_000)).toEqual(['0', '2500', '5000', '7500', '1万', '1.25万'])
+    expect(labelsIn('ja-JP', 110_000_000)).toEqual(['0', '2500万', '5000万', '7500万', '1億', '1.25億'])
+  })
+
+  it('never read two ticks the same in any locale', () => {
+    for (const locale of ['en-US', 'en-IN', 'ja-JP', 'zh-CN', 'de-DE']) {
+      for (const max of [0.0004, 0.034, 0.12, 1.1, 7, 1240, 12_000, 33_000, 1_100_000, 110_000_000]) {
+        const read = labelsIn(locale, max)
+        expect(new Set(read).size, `${locale} up to ${max}: ${read.join(' | ')}`).toBe(read.length)
+      }
+    }
+  })
 })
 
 describe('values in a tooltip or a stat tile', () => {

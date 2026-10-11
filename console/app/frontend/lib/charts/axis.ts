@@ -82,19 +82,19 @@ export function valueTicks(min: number, max: number, steps = 5): { domain: [numb
   return { domain: [ticks[0], ticks[ticks.length - 1]], ticks, step }
 }
 
-/** Compact notation's units: thousands, millions, billions and trillions. */
-const UNITS = [1, 1e3, 1e6, 1e9, 1e12]
-
 /**
  * How the ticks of a value axis `step` apart read: compact from 1,000 up, as
- * 1K, with as many decimals as the step needs in the tick's unit, so 1,250
- * reads 1.25K and 0.05 reads 0.05, and no two ticks read the same.
+ * 1K, with every digit down to the step's last, so 1,250 reads 1.25K and
+ * 0.05 reads 0.05, and no two ticks read the same. Counting significant
+ * digits keeps that true whatever units the viewer's locale uses (lakh and
+ * crore, or 万 and 億, as well as K and M); `locale` is for tests.
  */
-export function tickLabel(step: number): (value: number) => string {
+export function tickLabel(step: number, locale?: string): (value: number) => string {
+  const last = lastDigit(step)
   return value => {
-    const abs = Math.abs(value)
-    const unit = UNITS.filter(u => abs >= u).at(-1) ?? 1
-    return numberFormat({ notation: 'compact', maximumFractionDigits: decimals(step / unit) }).format(value)
+    if (value === 0) return numberFormat({}, locale).format(0)
+    const digits = Math.min(21, Math.max(1, leadingDigit(value) - last + 1))
+    return numberFormat({ notation: 'compact', maximumSignificantDigits: digits }, locale).format(value)
   }
 }
 
@@ -111,16 +111,21 @@ export function statText(value: number): string {
     : valueText(value)
 }
 
-/** The decimals a number needs: 2 for 0.25, none for 250. */
-function decimals(n: number): number {
+/** The power of ten of a number's leading digit: 2 for 250, -2 for 0.025. */
+function leadingDigit(n: number): number {
+  return Number(Number(n.toPrecision(12)).toExponential().split('e')[1])
+}
+
+/** The power of ten of a number's last significant digit: 1 for 250, -3 for 0.025. */
+function lastDigit(n: number): number {
   const [mantissa, exponent] = Number(n.toPrecision(12)).toExponential().split('e')
-  return Math.min(20, Math.max(0, (mantissa.split('.')[1]?.length ?? 0) - Number(exponent)))
+  return Number(exponent) - (mantissa.split('.')[1]?.length ?? 0)
 }
 
 const formats = new Map<string, Intl.NumberFormat>()
-function numberFormat(options: Intl.NumberFormatOptions): Intl.NumberFormat {
-  const key = JSON.stringify(options)
+function numberFormat(options: Intl.NumberFormatOptions, locale?: string): Intl.NumberFormat {
+  const key = `${locale ?? ''} ${JSON.stringify(options)}`
   let format = formats.get(key)
-  if (!format) formats.set(key, (format = new Intl.NumberFormat(undefined, options)))
+  if (!format) formats.set(key, (format = new Intl.NumberFormat(locale, options)))
   return format
 }
