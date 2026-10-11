@@ -10,7 +10,6 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -69,9 +68,11 @@ type PromotedKey struct {
 	// clock. A key the set started with was added when the set was made.
 	AddedAt time.Time
 	// Partway is true when the key joined the day's set after some of the
-	// day's Logs were stored. Those Logs may hold it in its map, so on that
-	// day read it as coalesce(column, map[key]). Otherwise every Log of the
-	// day that has the key holds it in the column, and never in the map.
+	// day's Logs were stored in the hot table or in files, where a read
+	// finds them through the set. Those Logs may hold it in its map, so on
+	// that day read it as coalesce(column, map[key]). Otherwise every Log of
+	// the day there that has the key holds it in the column, and never in
+	// the map. Late Logs in logs_late hold every key in the maps.
 	Partway bool
 }
 
@@ -84,6 +85,10 @@ func (k PromotedKey) Column() string {
 // PromotedSet is a Project's promoted set for one UTC day: the Attributes
 // whose values that day's Logs hold in columns of their own rather than in
 // the maps. Logs of other days follow their own day's set.
+//
+// The sets live in logs.log_promoted_sets. Log processing changes them in
+// the transaction that stores the Logs, and a read takes them in its own
+// transaction (logRead), so that they match the Logs it reads.
 type PromotedSet struct {
 	Day  time.Time     // midnight UTC
 	Keys []PromotedKey // by type, then key
@@ -103,117 +108,6 @@ func (s PromotedSet) Lookup(t AttributeType, key string) (PromotedKey, bool) {
 // LogDay is the UTC day of a Log's time t, as midnight UTC.
 func LogDay(t time.Time) time.Time {
 	return t.UTC().Truncate(24 * time.Hour)
-}
-
-// PromotedSet returns a Project's promoted set for the UTC day of t, from
-// memory. A day without one has no keys: its Logs hold every Attribute in the
-// maps. The keys are shared; don't modify them.
-//
-// Memory takes a set only once Log processing has committed it, so a read
-// of Logs takes its sets from its own transaction instead (logRead).
-func (s *LogStore) PromotedSet(projectID uint32, t time.Time) PromotedSet {
-	day := LogDay(t)
-	s.promoted.mu.RLock()
-	defer s.promoted.mu.RUnlock()
-	if set, ok := s.promoted.sets[projectID][day]; ok {
-		return set
-	}
-	return PromotedSet{Day: day}
-}
-
-// PromotedSets returns a Project's promoted sets for the UTC days from that of
-// from to that of to, inclusive, oldest first, from memory. Days without a set
-// are left out. The keys are shared; don't modify them.
-//
-// The promoted sets are how a reader learns which columns a day's Logs have,
-// with no need to read a table's or a file's schema.
-func (s *LogStore) PromotedSets(projectID uint32, from, to time.Time) []PromotedSet {
-	first, last := LogDay(from), LogDay(to)
-	s.promoted.mu.RLock()
-	defer s.promoted.mu.RUnlock()
-	var sets []PromotedSet
-	for day, set := range s.promoted.sets[projectID] {
-		if !day.Before(first) && !day.After(last) {
-			sets = append(sets, set)
-		}
-	}
-	slices.SortFunc(sets, func(a, b PromotedSet) int { return a.Day.Compare(b.Day) })
-	return sets
-}
-
-// promotedSetCache is the promoted-set table in memory: every committed set,
-// by Project and day.
-type promotedSetCache struct {
-	mu   sync.RWMutex
-	sets map[uint32]map[time.Time]PromotedSet
-}
-
-// put replaces the sets of their days.
-func (c *promotedSetCache) put(projectID uint32, sets []PromotedSet) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, set := range sets {
-		if c.sets[projectID] == nil {
-			c.sets[projectID] = make(map[time.Time]PromotedSet)
-		}
-		c.sets[projectID][set.Day] = set
-	}
-}
-
-// deleteBefore forgets a Project's sets of the days before day.
-func (c *promotedSetCache) deleteBefore(projectID uint32, day time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for setDay := range c.sets[projectID] {
-		if setDay.Before(day) {
-			delete(c.sets[projectID], setDay)
-		}
-	}
-}
-
-// deleteProject forgets every set of a Project.
-func (c *promotedSetCache) deleteProject(projectID uint32) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.sets, projectID)
-}
-
-// loadPromotedSets reads the whole promoted-set table.
-func loadPromotedSets(db *sql.DB) (*promotedSetCache, error) {
-	rows, err := db.Query("SELECT project_id, day, type, key, added_at, partway FROM logs.log_promoted_sets")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	keys := make(map[uint32]map[time.Time][]PromotedKey)
-	for rows.Next() {
-		var (
-			projectID uint32
-			day       time.Time
-			key       PromotedKey
-		)
-		if err := rows.Scan(&projectID, &day, &key.Type, &key.Key, &key.AddedAt, &key.Partway); err != nil {
-			return nil, err
-		}
-		key.AddedAt = key.AddedAt.UTC()
-		if keys[projectID] == nil {
-			keys[projectID] = make(map[time.Time][]PromotedKey)
-		}
-		day = LogDay(day)
-		keys[projectID][day] = append(keys[projectID][day], key)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	cache := &promotedSetCache{sets: make(map[uint32]map[time.Time]PromotedSet)}
-	for projectID, days := range keys {
-		for day, dayKeys := range days {
-			cache.put(projectID, []PromotedSet{newPromotedSet(day, dayKeys)})
-		}
-	}
-	return cache, nil
 }
 
 func newPromotedSet(day time.Time, keys []PromotedKey) PromotedSet {
@@ -298,10 +192,6 @@ type dayPromotion struct {
 	// read finds through its set (settleNewDay).
 	isNew bool
 	added []PromotedKey // keys this transaction adds, to record
-}
-
-func (d *dayPromotion) set() PromotedSet {
-	return newPromotedSet(d.day, slices.Collect(maps.Values(d.keys)))
 }
 
 // promotion is the promoted sets of the days of a Project's Logs in one Log
@@ -533,17 +423,6 @@ func (p *promotion) record(conn *sql.Conn) error {
 		return fmt.Errorf("record promoted keys: %w", err)
 	}
 	return nil
-}
-
-// sets returns the days' promoted sets as the transaction leaves them.
-func (p *promotion) sets() []PromotedSet {
-	var sets []PromotedSet
-	for _, d := range p.days {
-		if len(d.keys) > 0 {
-			sets = append(sets, d.set())
-		}
-	}
-	return sets
 }
 
 // storedSets reads a Project's promoted sets from day first to day last.

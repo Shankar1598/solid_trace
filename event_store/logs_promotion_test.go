@@ -8,19 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/solidtrace/event_store/storage"
 )
-
-// promotedNames lists a promoted set's (type, key) pairs as "type key", in
-// order.
-func promotedNames(set storage.PromotedSet) []string {
-	names := make([]string, len(set.Keys))
-	for i, key := range set.Keys {
-		names[i] = string(key.Type) + " " + key.Key
-	}
-	return names
-}
 
 // attributesByMessage maps each listed Log's message to its Attributes.
 func attributesByMessage(logs []listedLog) map[string]map[string]any {
@@ -31,7 +19,19 @@ func attributesByMessage(logs []listedLog) map[string]map[string]any {
 	return out
 }
 
-func TestALogsKeysArePromotedForItsDayAndReadBackUnchanged(t *testing.T) {
+// assertProjectQueries checks each Query's messages for a Project over all
+// time, newest first.
+func assertProjectQueries(t *testing.T, env *TestEnv, projectID uint32, cases map[string][]string, when string) {
+	t.Helper()
+	for query, want := range cases {
+		page := runQuery(t, env, projectID, queryRequest{Query: query, From: allTime.from, To: allTime.to, Limit: 1000})
+		if got := messages(page.Logs); !slices.Equal(got, want) {
+			t.Errorf("%s: Project %d: %s\n want %v\n got  %v", when, projectID, query, want, got)
+		}
+	}
+}
+
+func TestALogIsFoundByEachOfItsKeysAndReadBackUnchanged(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
@@ -46,34 +46,30 @@ func TestALogsKeysArePromotedForItsDayAndReadBackUnchanged(t *testing.T) {
 	env.ProcessLogs(t)
 
 	// Built-in fields aren't Attributes, and arrays are never promoted.
-	set := env.LogStore.PromotedSet(123, testNow)
-	if got, want := promotedNames(set), []string{"bool cached", "number status", "string user"}; !slices.Equal(got, want) {
-		t.Errorf("Expected promoted %v, got %v", want, got)
-	}
-	if want := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC); !set.Day.Equal(want) {
-		t.Errorf("Expected the set of %v, got %v", want, set.Day)
-	}
-	for _, key := range set.Keys {
-		if !key.AddedAt.Equal(testNow) {
-			t.Errorf("Expected %s added at %v, got %v", key.Key, testNow, key.AddedAt)
-		}
-		if key.Partway {
-			t.Errorf("Expected %s promoted from the start of the day", key.Key)
-		}
-	}
-	if key, ok := set.Lookup(storage.NumberAttribute, "status"); !ok || key.Column() != "attrs_number.status" {
-		t.Errorf("Expected status in column attrs_number.status, got %+v %v", key, ok)
-	}
-
 	want := map[string]any{"user": "ada", "status": 200.0, "cached": true, "roles": []any{"admin", "dev"}}
-	if got := attributesByMessage(latestLogs(t, env, 123, 10))["checkout"]; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected Attributes %v, got %v", want, got)
+	queries := map[string][]string{
+		`where user == "ada"`:          {"checkout"},
+		`where status == 200`:          {"checkout"},
+		`where cached == true`:         {"checkout"},
+		`where roles contains "admin"`: {"checkout"},
+		`where user != "ada"`:          {},
+		`where status == "200"`:        {},
 	}
+	check := func(when string) {
+		t.Helper()
+		if got := attributesByMessage(latestLogs(t, env, 123, 10))["checkout"]; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected Attributes %v, got %v", when, want, got)
+		}
+		assertQueries(t, env, queries, when)
+	}
+	check("in the hot table")
 
-	// Another day has a set of its own.
-	if got := env.LogStore.PromotedSet(123, testNow.AddDate(0, 0, -1)); len(got.Keys) != 0 {
-		t.Errorf("Expected no promoted keys the day before, got %v", promotedNames(got))
-	}
+	// At 13:00 the export moves hour 11 to its file.
+	env.Clock.Set(testNow.Add(time.Hour))
+	env.ExportLogs(t)
+	check("in its file")
+	env.Reopen(t)
+	check("after a restart")
 }
 
 // logJSON is one Log as a sender would send it: a message, a time and
@@ -101,11 +97,12 @@ func numberedKeys(prefix string, n int, value any) map[string]any {
 	return attributes
 }
 
-func TestPromotionStopsAt100KeysAndTheRestStayAttributes(t *testing.T) {
+func TestKeysPastAFullSetStayAttributesAndEachKeyFindsItsLogs(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	// Every built-in field, and 150 keys: built-in fields don't count.
+	// Every built-in field, and 150 keys: built-in fields don't count, and
+	// the set holds the first 100 keys.
 	wide := numberedKeys("k", 150, "v")
 	wide["level"] = "info"
 	wide["service"] = "web"
@@ -115,73 +112,72 @@ func TestPromotionStopsAt100KeysAndTheRestStayAttributes(t *testing.T) {
 	postLogs(t, env, "application/json", logJSON(t, "wide", testNow.Add(-time.Minute), wide))
 	env.ProcessLogs(t)
 
+	// A key arriving after the set filled stays in the maps.
 	env.Clock.Advance(time.Minute)
 	postLogs(t, env, "application/json", logJSON(t, "after", testNow, map[string]any{"late": 1, "k000": "w"}))
 	env.ProcessLogs(t)
 
-	set := env.LogStore.PromotedSet(123, testNow)
-	if len(set.Keys) != storage.MaxPromotedKeys {
-		t.Fatalf("Expected %d promoted keys, got %d", storage.MaxPromotedKeys, len(set.Keys))
+	queries := map[string][]string{
+		`where k000 == "v"`: {"wide"},
+		`where k000 == "w"`: {"after"},
+		`where k099 == "v"`: {"wide"},
+		`where k100 == "v"`: {"wide"},
+		`where k149 == "v"`: {"wide"},
+		`where k120 != "v"`: {"after"},
+		`where late == 1`:   {"after"},
 	}
-	if got, want := promotedNames(set)[99], "string k099"; got != want {
-		t.Errorf("Expected the first 100 keys promoted, ending %q, got %q", want, got)
+	check := func(when string) {
+		t.Helper()
+		attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+		if got, want := attributes["wide"], numberedKeys("k", 150, "v"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected all 150 Attributes back, got %d: %v", when, len(got), got)
+		}
+		if got, want := attributes["after"], map[string]any{"late": 1.0, "k000": "w"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		assertQueries(t, env, queries, when)
 	}
-	if _, ok := set.Lookup(storage.NumberAttribute, "late"); ok {
-		t.Errorf("Expected a key arriving after the set filled to stay unpromoted")
-	}
-
-	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
-	wantWide := numberedKeys("k", 150, "v")
-	if got := attributes["wide"]; !reflect.DeepEqual(got, wantWide) {
-		t.Errorf("Expected all 150 Attributes back, got %d: %v", len(got), got)
-	}
-	if got, want := attributes["after"], map[string]any{"late": 1.0, "k000": "w"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
+	check("in the hot table")
+	env.Clock.Set(testNow.Add(2 * time.Hour))
+	env.ExportLogs(t)
+	check("in their files")
 }
 
-func TestANewDayKeepsYesterdaysSetWhenItWasNotFull(t *testing.T) {
+func TestLogsOfANewDayAfterASetThatWasNotFullAreFoundByTheirKeys(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
+	// Today's set starts as yesterday's, which wasn't full.
 	yesterday := testNow.AddDate(0, 0, -1)
 	env.Clock.Set(yesterday)
 	postLogs(t, env, "application/json", logJSON(t, "yesterday", yesterday, map[string]any{"user": "ada", "status": 200}))
 	env.ProcessLogs(t)
 
 	env.Clock.Set(testNow)
-	postLogs(t, env, "application/json", logJSON(t, "today", testNow, map[string]any{"region": "eu"}))
+	postLogs(t, env, "application/json", logJSON(t, "today", testNow, map[string]any{"region": "eu", "user": "bob"}))
 	env.ProcessLogs(t)
 
-	today := env.LogStore.PromotedSet(123, testNow)
-	if got, want := promotedNames(today), []string{"number status", "string region", "string user"}; !slices.Equal(got, want) {
-		t.Errorf("Expected today's set %v, got %v", want, got)
+	queries := map[string][]string{
+		`where user == "ada"`:  {"yesterday"},
+		`where user == "bob"`:  {"today"},
+		`where status == 200`:  {"yesterday"},
+		`where region == "eu"`: {"today"},
+		`where region != "eu"`: {"yesterday"},
 	}
-	for _, key := range today.Keys {
-		if !key.AddedAt.Equal(testNow) || key.Partway {
-			t.Errorf("Expected %s in today's set from its start, at %v, got %+v", key.Key, testNow, key)
+	check := func(when string) {
+		t.Helper()
+		attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+		if got, want := attributes["yesterday"], map[string]any{"user": "ada", "status": 200.0}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
 		}
+		if got, want := attributes["today"], map[string]any{"region": "eu", "user": "bob"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		assertQueries(t, env, queries, when)
 	}
-	if got, want := promotedNames(env.LogStore.PromotedSet(123, yesterday)), []string{"number status", "string user"}; !slices.Equal(got, want) {
-		t.Errorf("Expected yesterday's set unchanged, %v, got %v", want, got)
-	}
-
-	// The sets outlive a restart.
+	check("in the hot table")
 	env.Reopen(t)
-	if got := env.LogStore.PromotedSet(123, testNow); !reflect.DeepEqual(got, today) {
-		t.Errorf("Expected today's set after a restart\n%+v\ngot\n%+v", today, got)
-	}
-	if got := env.LogStore.PromotedSets(123, yesterday, testNow); len(got) != 2 || !got[0].Day.Before(got[1].Day) {
-		t.Errorf("Expected yesterday's and today's sets, oldest first, got %+v", got)
-	}
-
-	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
-	if got, want := attributes["yesterday"], map[string]any{"user": "ada", "status": 200.0}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
-	if got, want := attributes["today"], map[string]any{"region": "eu"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
+	check("after a restart")
 }
 
 // postAndProcess sends one request of Logs and processes it before the next,
@@ -195,7 +191,7 @@ func postAndProcess(t *testing.T, env *TestEnv, logs ...string) {
 	env.ProcessLogs(t)
 }
 
-func TestANewDayAfterAFullSetPromotesYesterdaysMostCommonKeys(t *testing.T) {
+func TestLogsOfANewDayAfterAFullSetAreFoundByTheirKeys(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
@@ -219,80 +215,107 @@ func TestANewDayAfterAFullSetPromotesYesterdaysMostCommonKeys(t *testing.T) {
 	for i := range 5 {
 		postAndProcess(t, env, logJSON(t, fmt.Sprintf("common %d", i), yesterday.Add(time.Duration(i)*time.Second), common))
 	}
-	if got := env.LogStore.PromotedSet(123, yesterday); len(got.Keys) != 100 {
-		t.Fatalf("Expected yesterday's set full, got %d keys", len(got.Keys))
-	}
-	if _, ok := env.LogStore.PromotedSet(123, yesterday).Lookup(storage.NumberAttribute, "x000"); ok {
-		t.Fatalf("Expected x000 not promoted yesterday")
-	}
 
-	// Today's first Log re-ranks: the 100 keys most Logs carried yesterday.
+	// Today's first Log re-ranks: today's set is the 100 keys most Logs
+	// carried yesterday, x000 in and k095 out.
 	env.Clock.Set(testNow)
 	postAndProcess(t, env, logJSON(t, "today", testNow, map[string]any{"x000": 7, "k095": "v"}))
 
-	var want []string
-	for i := range 10 {
-		want = append(want, fmt.Sprintf("number x%03d", i))
-	}
-	for i := range 90 {
-		want = append(want, fmt.Sprintf("string k%03d", i))
-	}
-	if got := promotedNames(env.LogStore.PromotedSet(123, testNow)); !slices.Equal(got, want) {
-		t.Errorf("Expected today's set to be yesterday's top 100\n%v\ngot\n%v", want, got)
-	}
-
-	// Every Log reads back as it was sent, whichever day's set it follows.
-	attributes := attributesByMessage(latestLogs(t, env, 123, 100))
-	if got, want := attributes["today"], map[string]any{"x000": 7.0, "k095": "v"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
-	if got, want := attributes["first"], numberedKeys("k", 100, "v"); !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected the first Log's 100 Attributes back, got %v", got)
+	commons := []string{"common 4", "common 3", "common 2", "common 1", "common 0"}
+	queries := map[string][]string{
+		`where x000 == 7`:     {"today"},
+		`where x000 == 1`:     commons,
+		`where x009 == 1`:     commons,
+		`where k095 == "v"`:   {"today", "first"},
+		`where k089 == "v"`:   append(slices.Clone(commons), "first"),
+		`where j0499 == "x"`:  {"junk 1"},
+		`where j1000 == "x"`:  {"junk 2"},
+		`where k099 != "v"`:   {"today", "common 4", "common 3", "common 2", "common 1", "common 0", "junk 2", "junk 1"},
+		`where isempty(x000)`: {"junk 2", "junk 1", "first"},
 	}
 	wantCommon := numberedKeys("k", 90, "v")
 	for name := range numberedKeys("x", 10, 1) {
 		wantCommon[name] = 1.0
 	}
-	if got := attributes["common 4"]; !reflect.DeepEqual(got, wantCommon) {
-		t.Errorf("Expected\n%v\ngot\n%v", wantCommon, got)
+	check := func(when string) {
+		t.Helper()
+		// Every Log reads back as it was sent, whichever day's set it
+		// follows.
+		attributes := attributesByMessage(latestLogs(t, env, 123, 100))
+		if got, want := attributes["today"], map[string]any{"x000": 7.0, "k095": "v"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		if got, want := attributes["first"], numberedKeys("k", 100, "v"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected the first Log's 100 Attributes back, got %v", when, got)
+		}
+		if got := attributes["common 4"]; !reflect.DeepEqual(got, wantCommon) {
+			t.Errorf("%s: expected\n%v\ngot\n%v", when, wantCommon, got)
+		}
+		if got := len(attributes["junk 2"]); got != 500 {
+			t.Errorf("%s: expected the junk Log's 500 Attributes back, got %d", when, got)
+		}
+		assertQueries(t, env, queries, when)
 	}
-	if got := len(attributes["junk 2"]); got != 500 {
-		t.Errorf("Expected the junk Log's 500 Attributes back, got %d", got)
-	}
+	check("in the hot table")
+	env.Clock.Set(testNow.Add(2 * time.Hour))
+	env.ExportLogs(t)
+	check("in their files")
 }
 
-func TestAKeyFirstSeenPartwayThroughADayIsPromotedFromThen(t *testing.T) {
+func TestAKeyFirstSeenPartwayThroughADayFindsTheLogsBeforeAndAfter(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
+	setSQLQueries(t, env, true)
 
-	early := testNow.Add(-time.Hour)
-	env.Clock.Set(early)
-	postAndProcess(t, env, logJSON(t, "early", early, map[string]any{"user": "ada"}))
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 
-	env.Clock.Set(testNow)
-	postAndProcess(t, env, logJSON(t, "later", testNow, map[string]any{"user": "bob", "cart": 3}))
+	// The day's first Log makes its set, with user.
+	env.Clock.Set(at(11, 0))
+	postAndProcess(t, env, logJSON(t, "early", at(11, 0), map[string]any{"user": "ada"}))
 
-	set := env.LogStore.PromotedSet(123, testNow)
-	user, _ := set.Lookup(storage.StringAttribute, "user")
-	if user.Partway || !user.AddedAt.Equal(early) {
-		t.Errorf("Expected user promoted from the start of the day, at %v, got %+v", early, user)
+	// A late Log carries cart, which the set doesn't have, and goes to hour
+	// 10's file with cart in its map.
+	env.Clock.Set(at(12, 30))
+	postAndProcess(t, env, logJSON(t, "older", at(10, 30), map[string]any{"user": "bo", "cart": 1}))
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 123, at(10, 0), 1)
+
+	// Then a hot Log promotes cart partway through the day.
+	postAndProcess(t, env, logJSON(t, "later", at(12, 10), map[string]any{"user": "bob", "cart": 3}))
+
+	values := []fieldValue{
+		{"user", "ada", []string{"early"}},
+		{"user", "bo", []string{"older"}},
+		{"user", "bob", []string{"later"}},
 	}
-	cart, ok := set.Lookup(storage.NumberAttribute, "cart")
-	if !ok || !cart.Partway || !cart.AddedAt.Equal(testNow) {
-		t.Errorf("Expected cart promoted partway through the day, at %v, got %+v %v", testNow, cart, ok)
+	attributes := map[string]map[string]any{
+		"early": {"user": "ada"},
+		"older": {"user": "bo", "cart": 1.0},
+		"later": {"user": "bob", "cart": 3.0},
 	}
-
+	queries := map[string][]string{
+		`where cart == 1`:              {"older"},
+		`where cart == 3`:              {"later"},
+		`where cart > 0`:               {"later", "older"},
+		`where isempty(cart)`:          {"early"},
+		`where cart == 1 or cart == 3`: {"later", "older"},
+	}
+	check := func(when string) {
+		t.Helper()
+		assertEveryReadFinds(t, env, values, attributes, when)
+		assertQueries(t, env, queries, when)
+		if _, rows := runTable(t, env, `summarize count() by cart`); !slices.Equal(slices.Sorted(slices.Values(rows)), []string{`[1,1]`, `[3,1]`, `[null,1]`}) {
+			t.Errorf("%s: expected a Log for each cart and one without, got %v", when, rows)
+		}
+	}
+	check("with cart promoted partway")
 	env.Reopen(t)
-	if got, _ := env.LogStore.PromotedSet(123, testNow).Lookup(storage.NumberAttribute, "cart"); got != cart {
-		t.Errorf("Expected %+v after a restart, got %+v", cart, got)
-	}
-	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
-	if got, want := attributes["early"], map[string]any{"user": "ada"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
-	if got, want := attributes["later"], map[string]any{"user": "bob", "cart": 3.0}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
+	check("after a restart")
+
+	// At 14:00 the export moves hours 11 and 12 to their files.
+	env.Clock.Set(at(14, 0))
+	env.ExportLogs(t)
+	check("after the export")
 }
 
 func TestKeysThatCannotHaveAColumnOfTheirOwnStayAttributes(t *testing.T) {
@@ -305,21 +328,32 @@ func TestKeysThatCannotHaveAColumnOfTheirOwnStayAttributes(t *testing.T) {
 		`{"message": "one", "time": "2026-10-02T11:59:00Z", "User": "a", "user": "b", "code": 5, "say \"hi\"": "q", "nul\u0000key": "n"}`,
 		`{"message": "two", "time": "2026-10-02T11:59:01Z", "code": "E5"}`)
 
-	set := env.LogStore.PromotedSet(123, testNow)
-	if got, want := promotedNames(set), []string{"number code", "string User", "string code", "string say \"hi\""}; !slices.Equal(got, want) {
-		t.Errorf("Expected promoted %v, got %v", want, got)
+	queries := map[string][]string{
+		`where User == "a"`:         {"one"},
+		`where user == "b"`:         {"one"},
+		`where user == "a"`:         {},
+		`where code == 5`:           {"one"},
+		`where code == "E5"`:        {"two"},
+		`where ['say "hi"'] == "q"`: {"one"},
 	}
-
-	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
-	if got, want := attributes["one"], map[string]any{"User": "a", "user": "b", "code": 5.0, "say \"hi\"": "q", "nul\u0000key": "n"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
+	check := func(when string) {
+		t.Helper()
+		attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+		if got, want := attributes["one"], map[string]any{"User": "a", "user": "b", "code": 5.0, "say \"hi\"": "q", "nul\u0000key": "n"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		if got, want := attributes["two"], map[string]any{"code": "E5"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		assertQueries(t, env, queries, when)
 	}
-	if got, want := attributes["two"], map[string]any{"code": "E5"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
+	check("in the hot table")
+	env.Clock.Set(testNow.Add(2 * time.Hour))
+	env.ExportLogs(t)
+	check("in their files")
 }
 
-func TestLogsEitherSideOfMidnightFollowTheirOwnDaysSet(t *testing.T) {
+func TestLogsEitherSideOfMidnightAreFoundByTheirKeys(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
@@ -331,42 +365,49 @@ func TestLogsEitherSideOfMidnightFollowTheirOwnDaysSet(t *testing.T) {
 	// yesterday's, made in the same transaction.
 	postAndProcess(t, env,
 		logJSON(t, "before midnight", midnight.Add(-10*time.Second), map[string]any{"a": 1, "b": "x"}),
-		logJSON(t, "after midnight", midnight.Add(10*time.Second), map[string]any{"c": true}))
-
-	if got, want := promotedNames(env.LogStore.PromotedSet(123, midnight.Add(-time.Second))), []string{"number a", "string b"}; !slices.Equal(got, want) {
-		t.Errorf("Expected yesterday's set %v, got %v", want, got)
-	}
-	if got, want := promotedNames(env.LogStore.PromotedSet(123, midnight)), []string{"bool c", "number a", "string b"}; !slices.Equal(got, want) {
-		t.Errorf("Expected today's set %v, got %v", want, got)
-	}
-	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
-	if got, want := attributes["before midnight"], map[string]any{"a": 1.0, "b": "x"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
-	if got, want := attributes["after midnight"], map[string]any{"c": true}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
+		logJSON(t, "after midnight", midnight.Add(10*time.Second), map[string]any{"c": true, "a": 2}))
 
 	// Another Project's first Log of yesterday arrives after its first Log
-	// of today: yesterday gets a set of its own, and today's is unchanged.
+	// of today: yesterday gets a set of its own.
 	for _, log := range []string{
 		logJSON(t, "today first", midnight.Add(20*time.Second), map[string]any{"t": "1"}),
-		logJSON(t, "yesterday after", midnight.Add(-20*time.Second), map[string]any{"y": "2"}),
+		logJSON(t, "yesterday after", midnight.Add(-20*time.Second), map[string]any{"y": "2", "t": "0"}),
 	} {
 		resp := sendLogs(t, env, "/api/456/logs", "application/json", log, map[string]string{"Authorization": "Bearer other_public_key"})
 		decodeLogCounts(t, resp)
 		env.ProcessLogs(t)
 	}
-	if got, want := promotedNames(env.LogStore.PromotedSet(456, midnight)), []string{"string t"}; !slices.Equal(got, want) {
-		t.Errorf("Expected Project 456's set today %v, got %v", want, got)
+
+	check := func(when string) {
+		t.Helper()
+		attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+		if got, want := attributes["before midnight"], map[string]any{"a": 1.0, "b": "x"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		if got, want := attributes["after midnight"], map[string]any{"c": true, "a": 2.0}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		assertProjectQueries(t, env, 123, map[string][]string{
+			`where a == 1`:     {"before midnight"},
+			`where a == 2`:     {"after midnight"},
+			`where b == "x"`:   {"before midnight"},
+			`where c == true`:  {"after midnight"},
+			`where isempty(c)`: {"before midnight"},
+		}, when)
+		assertProjectQueries(t, env, 456, map[string][]string{
+			`where t == "1"`: {"today first"},
+			`where t == "0"`: {"yesterday after"},
+			`where y == "2"`: {"yesterday after"},
+		}, when)
 	}
-	if got, want := promotedNames(env.LogStore.PromotedSet(456, midnight.Add(-time.Second))), []string{"string y"}; !slices.Equal(got, want) {
-		t.Errorf("Expected Project 456's set yesterday %v, got %v", want, got)
-	}
-	attributes = attributesByMessage(latestLogs(t, env, 456, 10))
-	if got, want := attributes["yesterday after"], map[string]any{"y": "2"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected %v, got %v", want, got)
-	}
+	check("in the hot table")
+
+	// At 02:00 the export moves both days' Logs to their files.
+	env.Clock.Set(midnight.Add(2 * time.Hour))
+	env.ExportLogs(t)
+	check("in their files")
+	env.Reopen(t)
+	check("after a restart")
 }
 
 // fieldValue is a Field's value and the messages of the Logs that carry it,

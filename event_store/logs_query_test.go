@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/solidtrace/event_store/logquery"
-	"github.com/solidtrace/event_store/storage"
 )
 
 // queryRequest is a run of a Query, as the console sends it.
@@ -160,9 +159,6 @@ func TestEachOperatorFindsLogsInTheHotTableFilesAndLateLogs(t *testing.T) {
 
 	// zone joins the day's set partway through the day.
 	postAndProcess(t, env, logJSON(t, "gus", at(12, 1), map[string]any{"zone": "z", "user": "gus"}))
-	if key, ok := env.LogStore.PromotedSet(123, at(12, 1)).Lookup(storage.StringAttribute, "zone"); !ok || !key.Partway {
-		t.Fatalf("Expected zone promoted partway through the day, got %+v %v", key, ok)
-	}
 	assertQueries(t, env, map[string][]string{
 		`where zone == "z"`:   {"gus"},
 		`where zone != "z"`:   {"ed", "fy", "cy", "bob", "ada", "di"},
@@ -336,10 +332,6 @@ func TestQueriesAgreeAcrossPromotionTheDailySetAndDemotion(t *testing.T) {
 	// day 1's set leaves it, and its column goes at the export after 01:00.
 	env.Clock.Set(day2)
 	postAndProcess(t, env, logJSON(t, "day 2", day2, map[string]any{"extra": "x", "k099": "a", "k000": "b"}))
-	set := env.LogStore.PromotedSet(123, day2)
-	if len(set.Keys) != 100 {
-		t.Fatalf("Expected day 2's set to be full, got %d keys", len(set.Keys))
-	}
 	cases[`where extra == "x"`] = []string{"day 2", "extra on day 1"}
 	cases[`where k099 == "a"`] = []string{"day 2", "full"}
 	cases[`where k099 != "a"`] = []string{"extra on day 1"}

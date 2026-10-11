@@ -144,9 +144,8 @@ func (r *logRead) begin(list func(*logRead) (map[time.Time][]logFile, error)) er
 	if err != nil {
 		return err
 	}
-	// The sets in memory change only after Log processing commits, so a
-	// read that began in between would look for a newly promoted key in its
-	// map, and miss the Logs that hold it in its column.
+	// The promoted sets say which columns hold the values of the Logs the
+	// transaction sees, so they are read in it too.
 	if err := r.readPromotedSets(); err != nil {
 		return err
 	}

@@ -30,15 +30,11 @@ const logsCatalog = "logs"
 // A DuckDB transaction can write only one attached database, so everything
 // Log processing commits together lives here.
 //
-// The promoted-set table is also held in memory (PromotedSet). A read of
-// Logs reads it in its own transaction, so that the sets match its Logs.
-//
 // The hourly export moves Logs out to files under files.Dir, which the Log
 // file manifest lists (logs_manifest.go).
 type LogStore struct {
-	db       *sql.DB
-	promoted *promotedSetCache
-	files    LogFiles
+	db    *sql.DB
+	files LogFiles
 
 	// writeMu lets one write to logs.duckdb run at a time: a Log processing
 	// commit or try, or a Project's export. It is held only for each of
@@ -104,11 +100,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if err := addBatchColumns(events.db); err != nil {
 		return nil, fmt.Errorf("add the batch column to the log tables: %w", err)
 	}
-	promoted, err := loadPromotedSets(events.db)
-	if err != nil {
-		return nil, fmt.Errorf("load promoted sets: %w", err)
-	}
-	store := &LogStore{db: events.db, promoted: promoted, files: LogFiles{Dir: filesDir}, pins: map[string]int{}}
+	store := &LogStore{db: events.db, files: LogFiles{Dir: filesDir}, pins: map[string]int{}}
 	if err := store.backfillManifest(); err != nil {
 		return nil, fmt.Errorf("list the log files on disk in the manifest: %w", err)
 	}
@@ -291,7 +283,7 @@ func (s *LogStore) appendLogBatchesTx(projectID uint32, batches []LogBatch, now 
 	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
 		return err
 	}
-	promoted, err := appendLogBatches(ctx, conn, projectID, batches, now.UTC())
+	err = appendLogBatches(ctx, conn, projectID, batches, now.UTC())
 	if err != nil || !commit {
 		// After a failed statement DuckDB's COMMIT returns nil but commits
 		// nothing, so roll back rather than try it.
@@ -305,17 +297,15 @@ func (s *LogStore) appendLogBatchesTx(projectID uint32, batches []LogBatch, now 
 		discardConn(conn)
 		return err
 	}
-	s.promoted.put(projectID, promoted)
 	return nil
 }
 
 // appendLogBatches does AppendLogBatches' work inside the connection's open
-// transaction, and returns the promoted sets of the Logs' days as it leaves
-// them.
-func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, batches []LogBatch, now time.Time) ([]PromotedSet, error) {
+// transaction.
+func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, batches []LogBatch, now time.Time) error {
 	table := hotTable(projectID)
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (%s)", logsCatalog, table, hotTableColumns)); err != nil {
-		return nil, fmt.Errorf("create hot table: %w", err)
+		return fmt.Errorf("create hot table: %w", err)
 	}
 
 	// Late Logs are never promoted, and don't count towards popularity:
@@ -337,30 +327,30 @@ func appendLogBatches(ctx context.Context, conn *sql.Conn, projectID uint32, bat
 	}
 	promotion, err := promote(ctx, conn, projectID, hot, now)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := appendHotRows(conn, table, hot, hotBatches, promotion); err != nil {
-		return nil, fmt.Errorf("append logs: %w", err)
+		return fmt.Errorf("append logs: %w", err)
 	}
 	if err := appendLateRows(conn, projectID, late, lateBatches); err != nil {
-		return nil, fmt.Errorf("append late logs: %w", err)
+		return fmt.Errorf("append late logs: %w", err)
 	}
 	if err := countKeys(ctx, conn, projectID, hot); err != nil {
-		return nil, err
+		return err
 	}
 
 	cursor := batches[len(batches)-1].ID
 	result, err := conn.ExecContext(ctx, "UPDATE logs.log_processing_cursors SET batch_id = ? WHERE project_id = ?", cursor.String(), projectID)
 	if err != nil {
-		return nil, fmt.Errorf("move log processing cursor: %w", err)
+		return fmt.Errorf("move log processing cursor: %w", err)
 	}
 	if moved, err := result.RowsAffected(); err != nil || moved > 0 {
-		return promotion.sets(), err
+		return err
 	}
 	if _, err := conn.ExecContext(ctx, "INSERT INTO logs.log_processing_cursors VALUES (?, ?)", projectID, cursor.String()); err != nil {
-		return nil, fmt.Errorf("create log processing cursor: %w", err)
+		return fmt.Errorf("create log processing cursor: %w", err)
 	}
-	return promotion.sets(), nil
+	return nil
 }
 
 // appendHotRows appends Logs, each of the batch at its index in batches, to
