@@ -72,8 +72,10 @@ describe('labels', () => {
     expect(rangeLabel(absolute(new Date(2026, 9, 9, 22, 0), new Date(2026, 9, 10, 2, 0)), now)).toBe('Oct 9 22:00 – Oct 10 02:00')
   })
 
-  it('shows seconds only when a time has them, and the year only when it is not this one', () => {
+  it('shows seconds only in a short range whose times have them, and the year only when it is not this one', () => {
     expect(rangeLabel(absolute(new Date(2026, 9, 9, 10, 0, 15), new Date(2026, 9, 9, 10, 1, 45)), now)).toBe('Oct 9 10:00:15 – 10:01:45')
+    // Today, until now.
+    expect(rangeLabel(absolute(new Date(2026, 9, 11), now), now)).toBe('Oct 11 00:00 – 15:42')
     expect(rangeLabel(absolute(new Date(2025, 11, 31, 23, 0), new Date(2026, 0, 1, 1, 0)), now)).toBe('Dec 31, 2025 23:00 – Jan 1 01:00')
   })
 
