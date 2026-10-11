@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { builderRow, last24h, openLogs, runBy, settled } from '../support/logs'
+import { builderRow, last24h, openLogs, runBy, settled, streamRows } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // Charts in the Logs explorer: a Summarize draws its table as a chart over
@@ -151,5 +151,22 @@ test('the keyboard reaches the chart and sees its focus ring; a mouse press draw
   const box = (await surface.boundingBox())!
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
   expect(await ring()).toEqual({ focused: true, outline: 'none' })
+  expect(errors).toEqual([])
+})
+
+test('removing the one function a click added takes the Builder back to the Log stream', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h())
+  await page.getByRole('button', { name: 'Add a function' }).click()
+  await page.getByRole('option', { name: /^count/ }).click()
+  await settled(page)
+  await expect(chart(page)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Remove count()' }).click()
+  await settled(page)
+  await expect(builderRow(page, 'Summarize')).not.toContainText('bin_auto(time)')
+  await expect(chart(page)).toHaveCount(0)
+  await expect(streamRows(page).first()).toBeVisible()
+  expect(new URL(page.url()).searchParams.get('q') ?? '').not.toContain('summarize')
   expect(errors).toEqual([])
 })

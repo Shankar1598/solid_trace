@@ -9,6 +9,7 @@ import {
   groupBy,
   hide,
   queryOf,
+  removeAggregate,
   removeFilter,
   parseValue,
   editableText,
@@ -308,6 +309,23 @@ describe('Summarize, sort and limit', () => {
     expect(addAggregate(byService, { fn: 'count' }).summarize).toEqual({ aggregates: [{ fn: 'count' }], by: [{ field: 'service' }] })
     expect(addAggregate(addAggregate(EMPTY_BUILDER, { fn: 'count' }), avg).summarize)
       .toEqual({ aggregates: [{ fn: 'count' }, avg], by: [{ field: 'time', bin: 'auto' }] })
+  })
+
+  it('removes a new Summarize with its last function, by time bins and all', () => {
+    const counted = addAggregate(EMPTY_BUILDER, { fn: 'count' })
+
+    expect(removeAggregate(counted, 0)).toEqual(EMPTY_BUILDER)
+    expect(stagesOf(removeAggregate(addAggregate(counted, { fn: 'avg', field: 'duration_ms' }), 0)))
+      .toBe('summarize avg(duration_ms) by bin_auto(time)')
+  })
+
+  it('keeps by columns of the user\'s own when the last function goes', () => {
+    const byService = groupBy(EMPTY_BUILDER, 'service')
+    const byHour = setSummarize(EMPTY_BUILDER, { aggregates: [{ fn: 'count' }], by: [{ field: 'time', bin: '1h' }] })
+
+    expect(stagesOf(removeAggregate(byService, 0))).toBe('summarize by bin_auto(time), service')
+    expect(stagesOf(removeAggregate(byHour, 0))).toBe('summarize by bin(time, 1h)')
+    expect(removeAggregate(EMPTY_BUILDER, 0)).toEqual(EMPTY_BUILDER)
   })
 
   it('sets and clears the limit', () => {
