@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"os"
@@ -269,4 +270,76 @@ func TestADeletedProjectsFileThatAReadHoldsGoesWithTheNextCleanupPass(t *testing
 	env.DeleteLogsPastRetention(t)
 	enforceLogDiskLimit(t, env, 1<<40)
 	assertGone(t, projectDir, "by the next Cleanup pass after the read")
+}
+
+// findContent returns the path of a file in dir that holds content, or "".
+func findContent(t *testing.T, dir string, content []byte) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("Read %s: %v", dir, err)
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if got, err := os.ReadFile(path); err == nil && bytes.Equal(got, content) {
+			return path
+		}
+	}
+	return ""
+}
+
+func TestAnUpgradeKeepsTheLogFilesItCannotRead(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedProject(t, env.SQLitePath, 123, 7)
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(10, 30))
+	postAndProcess(t, env,
+		logJSON(t, "ten past nine", at(9, 10), nil),
+		logJSON(t, "ten past ten", at(10, 10), nil),
+	)
+	env.Clock.Set(at(12, 0))
+	env.ExportLogs(t)
+	nine, ten := hourFile(t, env, 123, at(9, 0)), hourFile(t, env, 123, at(10, 0))
+
+	// An older EventStore leaves both files damaged, and a staged file it
+	// can't tell is committed.
+	env.close()
+	damaged := map[string][]byte{
+		nine: []byte("not a Parquet file: nine"),
+		ten:  []byte("not a Parquet file: ten"),
+		filepath.Join(filepath.Dir(nine), "late-1.parquet.tmp"): []byte("not a Parquet file: staged"),
+	}
+	for path, content := range damaged {
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			t.Fatalf("Damage %s: %v", path, err)
+		}
+	}
+	forgetLogFileManifest(t, env)
+	env.open(t)
+
+	assertKept := func(when string) {
+		t.Helper()
+		for path, content := range damaged {
+			if findContent(t, filepath.Dir(path), content) == "" {
+				t.Errorf("Expected the bytes of %s kept for an operator %s", path, when)
+			}
+		}
+	}
+	assertKept("after the upgrade")
+
+	// A late Log of hour 10 gets a file of its own.
+	env.Clock.Set(at(12, 30))
+	postAndProcess(t, env, logJSON(t, "late ten", at(10, 40), nil))
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 123, at(10, 0), 2)
+	env.Reopen(t)
+	assertKept("after a late file and a restart")
+
+	// Retention deletes the damaged files with their day.
+	env.Clock.Set(at(12, 0).AddDate(0, 0, 9))
+	env.DeleteLogsPastRetention(t)
+	assertGone(t, nine, "by Retention")
+	assertGone(t, filepath.Dir(ten), "by Retention")
 }
