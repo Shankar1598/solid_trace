@@ -36,6 +36,18 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_includes props["projects"].map { |p| p["slug"] }, other.slug
   end
 
+  test "the explorer knows each Project's Log Retention, its own or the instance default" do
+    InstanceSetting.current.update!(default_log_retention_days: 14)
+    @project.update!(log_retention_days: 90)
+    other = create(:project, organization: @organization, name: "Backoffice")
+
+    props = explorer_page
+
+    assert_equal 90, props["project"]["log_retention_days"]
+    retention = props["projects"].to_h { |p| [ p["slug"], p["log_retention_days"] ] }
+    assert_equal({ @project.slug => 90, other.slug => 14 }, retention)
+  end
+
   test "someone outside the Organization can't open its Logs explorer" do
     sign_in_as(@outsider)
 
