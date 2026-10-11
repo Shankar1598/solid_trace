@@ -29,6 +29,7 @@ describe('colouring a Query', () => {
   it('reads negated word operators as one', () => {
     expect(kinds('where message !contains "x" and service !in ("a")').map(([text, kind]) => `${text}:${kind}`)).toContain('!contains:operator')
     expect(kinds('service !in ("a")')[1]).toEqual(['!in', 'operator'])
+    expect(kinds('service in ("a")')[1]).toEqual(['in', 'operator'])
   })
 
   it('reads comments to the end of the line, and strings with escapes', () => {

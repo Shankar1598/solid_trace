@@ -268,12 +268,13 @@ const RESERVED = new Set(['and', 'or', 'not', 'true', 'false'])
 const PLAIN_PART = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 /** A Field's name: bare when it's plain (dotted parts and all), else ['quoted']. */
-function nameText(name: string): string {
+export function nameText(name: string): string {
   const plain = name.split('.').every(part => PLAIN_PART.test(part) && !RESERVED.has(part))
   return plain ? name : `['${escape(name).replaceAll("'", "\\'")}']`
 }
 
-function valueText(value: ChipValue): string {
+/** A value as a Query writes it: strings quoted, numbers and bools bare. */
+export function valueText(value: ChipValue): string {
   return typeof value === 'string' ? stringText(value) : String(value)
 }
 
