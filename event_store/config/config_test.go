@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/solidtrace/event_store/config"
@@ -105,5 +106,96 @@ func TestLogsDiskLimitComesFromTheConfigFileInGB(t *testing.T) {
 
 	if want := int64(800_000_000_000); cfg.LogsDiskLimitBytes != want {
 		t.Errorf("Logs disk limit = %d bytes, want %d", cfg.LogsDiskLimitBytes, want)
+	}
+}
+
+// setObjectStoreKeys sets the bucket's key in the environment.
+func setObjectStoreKeys(t *testing.T) {
+	t.Helper()
+	t.Setenv("SOLIDTRACE_OBJECT_STORE_KEY_ID", "GOOG1EXAMPLE")
+	t.Setenv("SOLIDTRACE_OBJECT_STORE_SECRET", "example-secret")
+}
+
+func TestWithNoObjectStoreEverythingStaysLocal(t *testing.T) {
+	setObjectStoreKeys(t)
+	cfg := loadFrom(t, "../../deploy/event_store.yml")
+
+	if cfg.ObjectStore != nil {
+		t.Errorf("object store = %+v, want none", cfg.ObjectStore)
+	}
+}
+
+func TestAGCSObjectStoreGetsGCSsEndpointAndTheDefaults(t *testing.T) {
+	setObjectStoreKeys(t)
+	cfg := loadFrom(t, writeConfig(t, "object_store:\n  kind: gcs\n  bucket: acme-logs\n"))
+
+	want := config.ObjectStore{
+		Kind: "gcs", Bucket: "acme-logs", Prefix: "solidtrace/", Region: "auto",
+		Endpoint: "https://storage.googleapis.com", LocalCacheHours: 24,
+		KeyID: "GOOG1EXAMPLE", Secret: "example-secret",
+	}
+	if cfg.ObjectStore == nil || *cfg.ObjectStore != want {
+		t.Errorf("object store = %+v, want %+v", cfg.ObjectStore, want)
+	}
+}
+
+func TestAnS3ObjectStoreTakesItsEndpointPrefixAndCacheHoursFromTheFile(t *testing.T) {
+	setObjectStoreKeys(t)
+	cfg := loadFrom(t, writeConfig(t, `object_store:
+  kind: s3
+  bucket: logs
+  prefix: /team/solidtrace
+  endpoint: http://127.0.0.1:9000/
+  local_cache_hours: 0
+`))
+
+	want := config.ObjectStore{
+		Kind: "s3", Bucket: "logs", Prefix: "team/solidtrace/", Region: "us-east-1",
+		Endpoint: "http://127.0.0.1:9000", LocalCacheHours: 0,
+		KeyID: "GOOG1EXAMPLE", Secret: "example-secret",
+	}
+	if cfg.ObjectStore == nil || *cfg.ObjectStore != want {
+		t.Errorf("object store = %+v, want %+v", cfg.ObjectStore, want)
+	}
+}
+
+func TestAnObjectStoreOnAWSKeepsItsRegionAndMayHaveNoPrefix(t *testing.T) {
+	setObjectStoreKeys(t)
+	cfg := loadFrom(t, writeConfig(t, "object_store:\n  kind: s3\n  bucket: logs\n  region: eu-west-1\n  prefix: \"\"\n"))
+
+	if s := cfg.ObjectStore; s == nil || s.Region != "eu-west-1" || s.Endpoint != "" || s.Prefix != "" {
+		t.Errorf("object store = %+v, want region eu-west-1, AWS's endpoint and no prefix", s)
+	}
+}
+
+func TestABadObjectStoreFailsToLoadSayingWhatIsWrong(t *testing.T) {
+	cases := []struct {
+		name, yaml, want string
+		noKeys           bool
+	}{
+		{"no kind", "object_store:\n  bucket: logs\n", `object_store: kind must be s3 or gcs, got ""`, false},
+		{"another kind", "object_store:\n  kind: azure\n  bucket: logs\n", `object_store: kind must be s3 or gcs, got "azure"`, false},
+		{"no bucket", "object_store:\n  kind: gcs\n", "object_store: bucket is required", false},
+		{"a path for a bucket", "object_store:\n  kind: gcs\n  bucket: gs://logs\n", `object_store: bucket must be a bucket's name, with no / or spaces, got "gs://logs"`, false},
+		{"an endpoint with no scheme", "object_store:\n  kind: s3\n  bucket: logs\n  endpoint: minio:9000\n", `object_store: endpoint must be a URL such as https://s3.example.com or http://127.0.0.1:9000, got "minio:9000"`, false},
+		{"AWS with no region", "object_store:\n  kind: s3\n  bucket: logs\n", "object_store: region is required for AWS S3, such as us-east-1", false},
+		{"negative cache hours", "object_store:\n  kind: gcs\n  bucket: logs\n  local_cache_hours: -1\n", "object_store: local_cache_hours can't be negative, got -1", false},
+		{"a misspelt key", "object_store:\n  kind: gcs\n  bucket: logs\n  local_cache_hour: 2\n", "field local_cache_hour not found", false},
+		{"an empty block", "object_store:\n", "object_store: the block is empty; remove it to keep everything on local disk", false},
+		{"no keys", "object_store:\n  kind: gcs\n  bucket: logs\n", "object_store: set the bucket's key in SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.noKeys {
+				t.Setenv("SOLIDTRACE_OBJECT_STORE_KEY_ID", "")
+				t.Setenv("SOLIDTRACE_OBJECT_STORE_SECRET", "")
+			} else {
+				setObjectStoreKeys(t)
+			}
+			_, err := config.LoadFile(writeConfig(t, c.yaml))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want one saying %q", err, c.want)
+			}
+		})
 	}
 }

@@ -35,6 +35,9 @@ services:
     network_mode: host
     environment:
       EVENT_STORE_CONFIG: /etc/solid-trace/event_store.yml
+      # The object_store bucket's key, if event_store.yml has one.
+      SOLIDTRACE_OBJECT_STORE_KEY_ID: ${SOLIDTRACE_OBJECT_STORE_KEY_ID:-}
+      SOLIDTRACE_OBJECT_STORE_SECRET: ${SOLIDTRACE_OBJECT_STORE_SECRET:-}
     ulimits:
       nofile:
         soft: 65535
