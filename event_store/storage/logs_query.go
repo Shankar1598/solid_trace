@@ -201,6 +201,94 @@ func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([
 		LIMIT %d`, strings.Join(sources, "\nUNION ALL BY NAME\n"), limit))
 }
 
+// IngestedLogScan asks for a Project's Logs ingested after a Log batch: those
+// of the later batches Log processing has stored, whatever their time.
+type IngestedLogScan struct {
+	ProjectID uint32
+	// After is the Log batch the scan starts after, the nil UUID for the
+	// first.
+	After uuid.UUID
+	// Where, if set, returns the SQL condition a Log must meet, for a source
+	// whose columns are given. "" keeps every Log.
+	Where func(LogColumns) string
+	// Limit is how many Logs to return at most.
+	Limit int
+}
+
+// IngestedLogs is what an IngestedLogScan found.
+type IngestedLogs struct {
+	// Logs are up to Limit of the Logs, newest first.
+	Logs []models.Log
+	// Total counts every Log the scan found, past Limit too.
+	Total int
+	// Cursor is the Project's Log processing cursor when the scan began:
+	// the scan read the batches after After up to it, and the next scan
+	// starts after it. It is the nil UUID while Log processing has stored
+	// nothing for the Project.
+	Cursor uuid.UUID
+}
+
+// ScanLogsIngestedAfter returns the Logs of a Project's Log batches after
+// scan.After, up to its Log processing cursor, that meet the condition: from
+// its hot table, its late Logs and the files that hold a later batch, as
+// batch_max says. A Log stored before the batch column has no batch, and is
+// never read.
+//
+// Within a Project, Log processing stores batches in id order, and commits
+// its cursor with them, so a scan that starts after the last one's cursor
+// reads each Log exactly once, even one Log processing stored after a Log
+// with a later id. The cursor is read in the transaction that reads the Logs
+// (logRead), so a batch past it, stored while the scan runs, waits for the
+// next scan. Cancelling ctx stops it.
+func (s *LogStore) ScanLogsIngestedAfter(ctx context.Context, scan IngestedLogScan) (IngestedLogs, error) {
+	read, err := s.beginIngestedRead(ctx, scan.ProjectID, scan.After)
+	if err != nil {
+		return IngestedLogs{}, err
+	}
+	defer read.end()
+	found := IngestedLogs{Logs: []models.Log{}, Cursor: read.cursor}
+	window := batchWindow(scan.After, read.cursor)
+	where := func(cols LogColumns) string {
+		condition := window
+		if scan.Where != nil {
+			if w := scan.Where(cols); w != "" {
+				condition += " AND (" + w + ")"
+			}
+		}
+		return condition
+	}
+	from, to := time.Unix(0, 0).UTC(), time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	logs := read.sources(from, to, func(cols LogColumns) string {
+		if cols.late {
+			return "* EXCLUDE (project_id)"
+		}
+		return "*"
+	}, where)
+	if scan.Limit > 0 {
+		if found.Logs, err = read.queryLogs(fmt.Sprintf("SELECT * FROM (%s) ORDER BY time DESC, id DESC LIMIT %d", logs, scan.Limit)); err != nil {
+			return IngestedLogs{}, err
+		}
+		if found.Logs == nil {
+			found.Logs = []models.Log{}
+		}
+	}
+	if found.Total = len(found.Logs); found.Total < scan.Limit {
+		return found, nil
+	}
+	counted := read.sources(from, to, func(LogColumns) string { return "id" }, where)
+	if err := read.conn.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM (%s)", counted)).Scan(&found.Total); err != nil {
+		return IngestedLogs{}, err
+	}
+	return found, nil
+}
+
+// batchWindow is the SQL condition that a Log's batch comes after the batch
+// after and no later than upTo.
+func batchWindow(after, upTo uuid.UUID) string {
+	return fmt.Sprintf("batch > CAST(%s AS UUID) AND batch <= CAST(%s AS UUID)",
+		sqltext.String(after.String()), sqltext.String(upTo.String()))
+}
+
 // LogTableScan asks for a table worked out from a Project's Logs in a time
 // range.
 type LogTableScan struct {

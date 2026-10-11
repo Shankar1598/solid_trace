@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/pkg/sqltext"
 )
@@ -182,6 +183,26 @@ func listLogFiles(ctx context.Context, db sqlRunner, projectID uint32, from, to 
 	if err != nil {
 		return nil, fmt.Errorf("list log files: %w", err)
 	}
+	return scanLogFilesByHour(rows)
+}
+
+// listLogFilesAfterBatch returns a Project's published files that hold a Log
+// of a batch after the batch after, by hour, each hour's in the order they
+// were written. A file whose batch_max is NULL holds none.
+func listLogFilesAfterBatch(ctx context.Context, db sqlRunner, projectID uint32, after uuid.UUID) (map[time.Time][]logFile, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT `+manifestColumnsOfAKey+` FROM logs.log_files
+		WHERE project_id = ? AND batch_max > CAST(? AS UUID)`,
+		projectID, after.String())
+	if err != nil {
+		return nil, fmt.Errorf("list log files after a batch: %w", err)
+	}
+	return scanLogFilesByHour(rows)
+}
+
+// scanLogFilesByHour reads rows of project_id, day, hour and name into the
+// files of each hour, in the order they were written.
+func scanLogFilesByHour(rows *sql.Rows) (map[time.Time][]logFile, error) {
 	files, err := scanLogFiles(rows)
 	if err != nil {
 		return nil, err

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
 )
 
@@ -37,6 +38,9 @@ type logRead struct {
 	// newest first, and files the paths of their files.
 	hours []time.Time
 	files map[time.Time][]string
+	// cursor is the Project's Log processing cursor, for a read of the Logs
+	// ingested after a batch.
+	cursor uuid.UUID
 	// pinned are the keys of the files.
 	pinned []string
 	// began says the transaction is open; discard, that the connection
@@ -47,19 +51,70 @@ type logRead struct {
 // beginRead begins a read of a Project's Logs of [from, to). Its queries stop
 // when ctx ends. The caller must end it.
 func (s *LogStore) beginRead(ctx context.Context, projectID uint32, from, to time.Time) (*logRead, error) {
+	return s.startRead(ctx, projectID, func(r *logRead) (map[time.Time][]logFile, error) {
+		files, err := listLogFiles(r.ctx, r.conn, r.projectID, from, to)
+		if err != nil {
+			return nil, err
+		}
+		r.hours, err = r.hoursWithLogs(from, to, files)
+		return files, err
+	})
+}
+
+// beginIngestedRead begins a read of a Project's Logs ingested after the Log
+// batch after: it reads the Project's Log processing cursor, and lists the
+// files that hold a later batch. Its hours are those of the files, and those
+// between the oldest and the newest Log of a later batch in the hot table.
+// The caller must end it.
+func (s *LogStore) beginIngestedRead(ctx context.Context, projectID uint32, after uuid.UUID) (*logRead, error) {
+	return s.startRead(ctx, projectID, func(r *logRead) (map[time.Time][]logFile, error) {
+		var err error
+		if r.cursor, err = logProcessingCursor(r.ctx, r.conn, r.projectID); err != nil {
+			return nil, err
+		}
+		files, err := listLogFilesAfterBatch(r.ctx, r.conn, r.projectID, after)
+		if err != nil {
+			return nil, err
+		}
+		hours := map[time.Time]bool{}
+		for hour := range files {
+			hours[hour] = true
+		}
+		if r.hot {
+			var oldest, newest sql.NullTime
+			err := r.conn.QueryRowContext(r.ctx, fmt.Sprintf("SELECT min(time), max(time) FROM %s.%s WHERE %s",
+				logsCatalog, hotTable(r.projectID), batchWindow(after, r.cursor))).Scan(&oldest, &newest)
+			if err != nil {
+				return nil, err
+			}
+			if oldest.Valid {
+				for hour := oldest.Time.UTC().Truncate(time.Hour); !hour.After(newest.Time.UTC()); hour = hour.Add(time.Hour) {
+					hours[hour] = true
+				}
+			}
+		}
+		r.hours = newestFirst(hours)
+		return files, nil
+	})
+}
+
+// startRead begins a read of a Project's Logs, with the files list returns
+// and the hours it sets. Its queries stop when ctx ends. The caller must end
+// it.
+func (s *LogStore) startRead(ctx context.Context, projectID uint32, list func(*logRead) (map[time.Time][]logFile, error)) (*logRead, error) {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	r := &logRead{store: s, ctx: ctx, conn: conn, projectID: projectID, files: map[time.Time][]string{}}
-	if err := r.begin(from, to); err != nil {
+	if err := r.begin(list); err != nil {
 		r.end()
 		return nil, err
 	}
 	return r, nil
 }
 
-func (r *logRead) begin(from, to time.Time) error {
+func (r *logRead) begin(list func(*logRead) (map[time.Time][]logFile, error)) error {
 	s := r.store
 	s.publishMu.RLock()
 	defer s.publishMu.RUnlock()
@@ -74,12 +129,10 @@ func (r *logRead) begin(from, to time.Time) error {
 		return err
 	}
 	// DuckDB fixes a transaction's view of logs.duckdb when it first reads
-	// it, so the manifest is read here, under the lock, with the hot tables.
-	files, err := listLogFiles(r.ctx, r.conn, r.projectID, from, to)
+	// it, so the manifest, and any Log processing cursor, are read here,
+	// under the lock, with the hot tables.
+	files, err := list(r)
 	if err != nil {
-		return err
-	}
-	if r.hours, err = r.hoursWithLogs(from, to, files); err != nil {
 		return err
 	}
 	for hour, hourFiles := range files {
@@ -134,12 +187,17 @@ func (r *logRead) hoursWithLogs(from, to time.Time, files map[time.Time][]logFil
 		}
 	}
 
+	return newestFirst(hours), nil
+}
+
+// newestFirst lists a set of hours, newest first.
+func newestFirst(hours map[time.Time]bool) []time.Time {
 	sorted := make([]time.Time, 0, len(hours))
 	for hour := range hours {
 		sorted = append(sorted, hour)
 	}
 	slices.SortFunc(sorted, func(a, b time.Time) int { return b.Compare(a) })
-	return sorted, nil
+	return sorted
 }
 
 // queryLogs runs a query whose rows are Logs as a hot table holds them, with
