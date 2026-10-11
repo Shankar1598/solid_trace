@@ -128,6 +128,17 @@ describe('a by column over an Attribute', () => {
   })
 })
 
+describe('bins the range covers in part', () => {
+  it('are the first and last when the range starts or ends inside them', () => {
+    const rows = [['2026-10-09T09:55:00Z', 1], ['2026-10-09T10:00:00Z', 4], ['2026-10-09T10:05:00Z', 2]]
+    const inside = drawable(chartOf(table([TIME, COUNT], rows, { from: '2026-10-09T09:58:00Z', to: '2026-10-09T10:07:00Z' })))
+    const whole = drawable(chartOf(table([TIME, COUNT], rows, { from: '2026-10-09T09:55:00Z', to: '2026-10-09T10:10:00Z' })))
+
+    expect(inside).toMatchObject({ kind: 'time', partial: [at('2026-10-09T09:55:00Z'), at('2026-10-09T10:05:00Z')] })
+    expect(whole).toMatchObject({ kind: 'time', partial: [] })
+  })
+})
+
 describe('filling empty bins', () => {
   const range = { from: '2026-10-09T09:58:00Z', to: '2026-10-09T10:15:00Z' }
 

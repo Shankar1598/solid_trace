@@ -218,3 +218,19 @@ test('columns that measure different things get a panel each over one time axis'
   await expect(chart(page).locator('.recharts-line')).toHaveCount(3)
   expect(errors).toEqual([])
 })
+
+test('a bin the range covers in part says so in the tooltip', async ({ page }) => {
+  const errors = watchErrors(page)
+  // A range starting 7 minutes into an hour: its first hourly bin holds 53 minutes of Logs.
+  const to = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 + 7 * 60_000)
+  const from = new Date(to.getTime() - 24 * 3_600_000)
+  await openLogs(page, `?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), mode: 'query' })}`)
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin(time, 1h)`)
+  const box = (await chart(page).locator('.recharts-cartesian-grid').boundingBox())!
+
+  await page.mouse.move(box.x + 2, box.y + box.height / 2)
+  await expect(page.locator('.recharts-tooltip-wrapper')).toContainText('partial bin')
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await expect(page.locator('.recharts-tooltip-wrapper')).not.toContainText('partial bin')
+  expect(errors).toEqual([])
+})
