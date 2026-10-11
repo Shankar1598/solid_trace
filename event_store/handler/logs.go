@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -53,8 +54,9 @@ type queryRequest struct {
 	Limit          int       `json:"limit"`
 	Cursor         string    `json:"cursor"`
 	TimeoutSeconds *float64  `json:"timeout_seconds"`
-	// AfterBatch is nil when the request has no after_batch.
-	AfterBatch *string `json:"after_batch"`
+	// AfterBatch is the after_batch as sent, nil when the request has
+	// none. It is raw so that null can be told apart from no after_batch.
+	AfterBatch json.RawMessage `json:"after_batch"`
 }
 
 // POST /api/:project_id/logs/query
@@ -177,14 +179,12 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 // ScanBudget, but stops at timeout_seconds with a 504. Only a Query that
 // returns Log rows can run after a batch: one that returns a table answers
 // 400 with {"errors": [{"message"}]}, as does a Query with mistakes. An
-// after_batch that is neither "" nor a UUID answers 400.
+// after_batch that is neither "" nor a UUID answers 400, null too: a Monitor
+// with no ingest_cursor yet arms with "".
 func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req queryRequest) error {
-	var after uuid.UUID
-	if *req.AfterBatch != "" {
-		var err error
-		if after, err = uuid.Parse(*req.AfterBatch); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "after_batch must be a Log batch id, or empty to arm a Monitor"})
-		}
+	afterBatch, after, ok := parseAfterBatch(req.AfterBatch)
+	if !ok {
+		return c.Status(400).JSON(fiber.Map{"error": "after_batch must be a Log batch id, or empty to arm a Monitor"})
 	}
 	limit, ok := limitOf(req.Limit)
 	if !ok {
@@ -204,7 +204,7 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 	}
 
 	var found storage.IngestedLogs
-	if *req.AfterBatch == "" {
+	if afterBatch == "" {
 		found.Logs = []models.Log{}
 		found.Cursor, err = h.logs.LogProcessingCursor(projectID)
 	} else {
@@ -228,6 +228,19 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 		"ingest_cursor": found.Cursor.String(),
 		"total":         found.Total,
 	})
+}
+
+// parseAfterBatch reads an after_batch as sent: a string, "" or a Log batch
+// id, after. ok is false for anything else, null included.
+func parseAfterBatch(raw json.RawMessage) (text string, after uuid.UUID, ok bool) {
+	if string(raw) == "null" || json.Unmarshal(raw, &text) != nil {
+		return "", uuid.Nil, false
+	}
+	if text == "" {
+		return "", uuid.Nil, true
+	}
+	after, err := uuid.Parse(text)
+	return text, after, err == nil
 }
 
 // limitOf is how many Logs a run returns at most for a request's limit: the
