@@ -27,14 +27,15 @@ const TIME_LABELS = 5
 /** Bottom to top in a bar, so errors sit on the axis where they're easiest to see. */
 const STACK: HistogramLevel[] = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'none']
 
+/** The Levels' colours, the ones series of Levels wear in a chart (globals.css). */
 const LEVEL_FILL: Record<HistogramLevel, string> = {
-  trace: 'bg-muted-foreground/25',
-  debug: 'bg-muted-foreground/40',
-  info: 'bg-sky-500/70',
-  warn: 'bg-amber-500',
-  error: 'bg-red-500',
-  fatal: 'bg-red-800',
-  none: 'bg-muted-foreground/15',
+  trace: 'bg-(--chart-level-trace)',
+  debug: 'bg-(--chart-level-debug)',
+  info: 'bg-(--chart-level-info)',
+  warn: 'bg-(--chart-level-warn)',
+  error: 'bg-(--chart-level-error)',
+  fatal: 'bg-(--chart-level-fatal)',
+  none: 'bg-(--chart-level-none)',
 }
 
 const LEVEL_NAME: Record<HistogramLevel, string> = {
