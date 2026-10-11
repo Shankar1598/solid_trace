@@ -40,19 +40,23 @@ export function LogTableView({ table, chart }: { table: LogTable; chart?: TableC
   if (!chart || forms.length === 0) return <TableRows table={table} />
 
   const form = formFor(model, chart.viz)
-  // The shape's own form leaves no trace in the URL; the others are kept.
-  const onShow = (shown: Shown) => chart.onViz(shown === 'stat' ? 'auto' : shown)
+  // The shape's own form (Line over time, Bars over categories, a Number)
+  // leaves no trace in the URL, so it never carries over to another shape.
+  const onShow = (shown: Shown) => chart.onViz(shown === forms[0] || shown === 'stat' ? 'auto' : shown)
   const control = <ChartSwitch forms={forms} shown={form ?? 'table'} onChange={onShow} />
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      <div className="shrink-0 border-b">
+      <div className={cn('shrink-0', form !== 'stat' && 'border-b')}>
         {form
           ? <QueryChart table={table} form={form} onZoom={chart.onZoom} colors={chart.colors} actions={control} className="pb-1" />
           : <div className="flex justify-end px-3 py-1.5">{control}</div>}
       </div>
-      <div className="min-h-48 flex-1">
-        <TableRows table={table} />
-      </div>
+      {/* A single number is its table: Table shows the cell. */}
+      {form !== 'stat' && (
+        <div className="min-h-48 flex-1">
+          <TableRows table={table} />
+        </div>
+      )}
     </div>
   )
 }

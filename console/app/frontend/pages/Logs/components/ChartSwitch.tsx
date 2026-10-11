@@ -13,10 +13,14 @@ const OPTIONS: Record<Shown, { label: string; icon: typeof ChartLine }> = {
   table: { label: 'Table', icon: Table2 },
 }
 
-/** The `Line | Area | Bars | Table` switch over a table that can be drawn: the forms it can take, then Table. */
+/**
+ * The `Line | Area | Bars | Table` switch over a table that can be drawn: the
+ * forms it can take, then Table. Pressed buttons in a group, as the Mode
+ * switch is, so each is a tab stop that Enter or Space presses.
+ */
 export function ChartSwitch({ forms, shown, onChange }: { forms: ChartForm[]; shown: Shown; onChange: (shown: Shown) => void }) {
   return (
-    <div role="radiogroup" aria-label="Chart" className="flex shrink-0 overflow-hidden rounded-md border text-[11px]">
+    <div role="group" aria-label="Chart" className="flex shrink-0 overflow-hidden rounded-md border text-[11px]">
       {[...forms, 'table' as const].map(form => {
         const { label, icon: Icon } = OPTIONS[form]
         const on = form === shown
@@ -24,8 +28,7 @@ export function ChartSwitch({ forms, shown, onChange }: { forms: ChartForm[]; sh
           <button
             key={form}
             type="button"
-            role="radio"
-            aria-checked={on}
+            aria-pressed={on}
             onClick={() => !on && onChange(form)}
             className={cn(
               'flex h-6 items-center gap-1 border-l px-2 first:border-l-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',

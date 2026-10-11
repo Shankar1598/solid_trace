@@ -52,7 +52,7 @@ interface HistogramStripProps {
 /** The summary line and a slim histogram of the run's Logs, stacked by Level. */
 export function HistogramStrip({ view, onZoom, onLevel }: HistogramStripProps) {
   return (
-    <div className="border-b px-3 pt-1.5 pb-1">
+    <div className="border-b px-3 pt-1.5 pb-1" data-histogram-strip>
       {view.status === 'done' ? (
         <>
           <SummaryLine histogram={view.histogram} onLevel={onLevel} />

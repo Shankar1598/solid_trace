@@ -47,7 +47,7 @@ test.describe('Charts', () => {
   test('a series hidden from the legend', async ({ page }) => {
     const errors = watchErrors(page)
     await openChart(page, 'summarize count() by bin_auto(time), service')
-    await page.locator('[data-chart-legend] button', { hasText: 'api' }).click()
+    await page.locator('[data-chart-series]', { hasText: 'api' }).click()
     await page.mouse.move(0, 0)
     await shoot(page, 'charts-legend-hidden')
     expect(errors).toEqual([])
