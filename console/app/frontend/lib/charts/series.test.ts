@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LogTable, TableColumn } from '@/lib/logs/table'
-import { MAX_BARS, MAX_SERIES, chartOf, formFor, formsOf, type ChartModel } from './series'
+import { MAX_BARS, MAX_SERIES, chartOf, formFor, formsOf, legendNotes, type ChartModel } from './series'
 
 const TIME: TableColumn = { name: 'time', type: 'datetime', bin_seconds: 300 }
 const SERVICE: TableColumn = { name: 'service', type: 'string' }
@@ -235,10 +235,64 @@ describe('many series', () => {
     expect(model.omitted).toBe(2 * (MAX_SERIES + 4) - MAX_SERIES)
   })
 
+  it('say how many split values are drawn, with every number column', () => {
+    const three = services.slice(0, 5).flatMap((s, i) => [['2026-10-09T10:00:00Z', s, i + 1, 10, 20]])
+    const model = drawable(chartOf(table([TIME, SERVICE, COUNT, AVG, { name: 'max_duration_ms', type: 'number', agg: 'max' }], three)))
+
+    expect(model.series).toHaveLength(6)
+    expect(legendNotes(model)).toEqual([{
+      text: '9 more not shown',
+      why: 'Only the 2 service values with the largest count_ totals are drawn, each with its 3 number columns.',
+    }])
+  })
+
+  it('say when number columns past the palette are left out', () => {
+    const columns = Array.from({ length: MAX_SERIES + 2 }, (_, i): TableColumn => ({ name: `c${i}`, type: 'number', agg: 'sum' }))
+    const model = drawable(chartOf(table([TIME, ...columns], [['2026-10-09T10:00:00Z', ...columns.map(() => 1)]])))
+
+    expect(legendNotes(model)).toEqual([{ text: '2 more not shown', why: `Only the first ${MAX_SERIES} number columns are drawn.` }])
+  })
+
   it('colours the series with the palette in order, never twice', () => {
     const model = drawable(chartOf(table([TIME, SERVICE, COUNT], rows)))
 
     expect(model.series.map(s => s.color)).toEqual(Array.from({ length: MAX_SERIES }, (_, i) => `var(--chart-${i + 1})`))
+  })
+})
+
+describe('series with no values', () => {
+  const P95: TableColumn = { name: 'percentile_duration_ms_95', type: 'number', agg: 'percentile' }
+
+  it('are left out, named, and give their hue to a series that draws', () => {
+    const model = drawable(chartOf(table([TIME, SERVICE, P95], [
+      ['2026-10-09T10:00:00Z', 'billing', null],
+      ['2026-10-09T10:00:00Z', 'api', 120],
+      ['2026-10-09T10:00:00Z', 'web', null],
+      ['2026-10-09T10:05:00Z', 'worker', 80],
+    ])))
+
+    expect(model.series.map(s => [s.name, s.color])).toEqual([['api', 'var(--chart-1)'], ['worker', 'var(--chart-2)']])
+    expect(model.empty).toEqual(['billing', 'web'])
+    expect(model.omitted).toBe(0)
+    expect(legendNotes(model)).toEqual([{ text: '2 with no values', why: 'billing and web have no value in any bin, so they are not drawn.' }])
+  })
+
+  it('leave nothing to draw when every series is one', () => {
+    expect(chartOf(table([TIME, AVG], [['2026-10-09T10:00:00Z', null]])).kind).toBe('none')
+  })
+})
+
+describe('a table EventStore cut', () => {
+  it('ends its time axis at its last bin and says it was cut', () => {
+    const model = drawable(chartOf(table([TIME, COUNT], [['2026-10-09T10:00:00Z', 3], ['2026-10-09T10:05:00Z', 4]], {
+      truncated: true, from: '2026-10-09T09:58:00Z', to: '2026-10-09T12:00:00Z',
+    })))
+
+    expect(model).toMatchObject({ kind: 'time', to: new Date('2026-10-09T10:10:00Z'), cutAt: 2 })
+    expect(legendNotes(model)).toEqual([{
+      text: 'drawn from the first 2 rows',
+      why: 'The table was cut at 2 rows, so its later bins are missing, and the totals that rank what is drawn count only those rows.',
+    }])
   })
 })
 
@@ -299,6 +353,7 @@ describe('bars', () => {
     expect(model.points[0].x).toBe('user-0')
     expect(model.points.map(p => p.x)).not.toContain('user-1')
     expect(model).toMatchObject({ omittedCategories: 2 })
+    expect(legendNotes(model)).toEqual([{ text: `the top ${MAX_BARS} of ${MAX_BARS + 2} user values`, why: `Only the ${MAX_BARS} bars with the largest totals are drawn.` }])
   })
 
   it('need a summarize: a table with no aggregate is not drawn', () => {

@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceArea, XAxis, YAxis } from 'recharts'
 import type { MouseHandlerDataParam } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
-import { MAX_SERIES, chartOf, formFor, type ChartForm, type ChartModel, type ChartPoint, type Series } from '@/lib/charts/series'
+import { chartOf, formFor, legendNotes, type ChartForm, type ChartPoint, type Series, type SeriesChartModel } from '@/lib/charts/series'
 import { statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
@@ -56,8 +56,6 @@ function StatTile({ name, value }: { name: string; value: number | null }) {
     </div>
   )
 }
-
-type SeriesChartModel = Extract<ChartModel, { kind: 'time' | 'bars' }>
 
 function SeriesChart({ model, form, onZoom, actions, className }: {
   model: SeriesChartModel; form: ChartForm; onZoom?: QueryChartProps['onZoom']; actions?: React.ReactNode; className?: string
@@ -264,16 +262,7 @@ function SeriesChart({ model, form, onZoom, actions, className }: {
 function Legend({ model, form, hidden, onToggle }: {
   model: SeriesChartModel; form: ChartForm; hidden: Set<string>; onToggle: (key: string) => void
 }) {
-  const notes = [
-    model.omitted > 0 && {
-      text: `${model.omitted.toLocaleString()} more not shown`,
-      why: `Only the ${MAX_SERIES} series with the largest totals are drawn.`,
-    },
-    model.kind === 'bars' && model.omittedCategories > 0 && {
-      text: `the top ${model.points.length} of ${(model.points.length + model.omittedCategories).toLocaleString()} ${model.category} values`,
-      why: `Only the ${model.points.length} bars with the largest totals are drawn.`,
-    },
-  ].filter(note => note !== false).map(({ text, why }) => (
+  const notes = legendNotes(model).map(({ text, why }) => (
     <span key={text} className="text-[11px] text-muted-foreground" title={why}>{text}</span>
   ))
 

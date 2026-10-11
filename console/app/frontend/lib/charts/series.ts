@@ -4,7 +4,7 @@
 // which columns are aggregates (agg) and whether an empty bin means no Logs
 // (fill_gaps). Tables come long, one row per bin and split value; a chart
 // wants them wide, one point per bin with a value per series.
-import type { Agg, LogTable, TableColumn } from '@/lib/logs/table'
+import type { Agg, LogTable } from '@/lib/logs/table'
 
 /** The most series a chart draws: one per hue of the palette, never a made-up ninth. */
 export const MAX_SERIES = 8
@@ -44,10 +44,16 @@ export type ChartPoint = { x: number | string } & { [key: string]: number | stri
 interface SeriesSet {
   series: Series[]
   points: ChartPoint[]
-  /** Series left out past MAX_SERIES. */
+  /** Series left out past MAX_SERIES, those of number columns past it included. */
   omitted: number
+  /** Number columns left out past MAX_SERIES. */
+  omittedColumns: number
+  /** The names of series left out because they have no value at all. */
+  empty: string[]
   /** Whether the series add up to a whole, so bars and areas stack. */
   stacked: boolean
+  /** The rows the table was cut at, when EventStore cut it: the chart draws only those. */
+  cutAt: number | null
 }
 
 export type ChartModel =
@@ -55,6 +61,9 @@ export type ChartModel =
   | { kind: 'stat'; name: string; value: number | null }
   | ({ kind: 'time'; binSeconds: number; from: Date; to: Date } & SeriesSet)
   | ({ kind: 'bars'; category: string; omittedCategories: number } & SeriesSet)
+
+/** A model drawn with axes: a time series or bars. */
+export type SeriesChartModel = Extract<ChartModel, { kind: 'time' | 'bars' }>
 
 /** How a model can be drawn. */
 export type ChartForm = 'line' | 'area' | 'bars' | 'stat'
@@ -114,10 +123,13 @@ export function chartOf(table: LogTable): ChartModel {
       return typeof time === 'string' ? new Date(time).getTime() : null
     }, measures, splits)
     if (!pivot) return { kind: 'none' }
-    const drawn = keepSeries(pivot, columns, measures, splits, filled)
+    const drawn = keepSeries(pivot, table, measures, splits, filled)
+    if (drawn.series.length === 0) return { kind: 'none' }
     const times = [...pivot.xs.keys()].map(Number).sort((a, b) => a - b)
     const from = table.from ? new Date(table.from) : new Date(times[0])
-    const to = table.to ? new Date(table.to) : new Date(times[times.length - 1] + step)
+    // A cut table has only its oldest bins, so its time axis ends at its last.
+    const end = times.length > 0 ? times[times.length - 1] + step : 0
+    const to = new Date(Math.min(table.to ? Date.parse(table.to) : end, table.truncated ? end : Infinity))
     // With no Logs in an empty bin, the bins run across the range; else between the rows'.
     if (filled) layBins(drawn, step, Math.floor(from.getTime() / step) * step, Math.ceil(to.getTime() / step) * step - step, true)
     else if (times.length > 0) layBins(drawn, step, times[0], times[times.length - 1], false)
@@ -130,7 +142,8 @@ export function chartOf(table: LogTable): ChartModel {
   const [category, ...rest] = splits
   const pivot = pivotRows(table, i => splitName(columns[category].name, cell(rows[i][category])), measures, rest)
   if (!pivot) return { kind: 'none' }
-  const drawn = keepSeries(pivot, columns, measures, rest, false)
+  const drawn = keepSeries(pivot, table, measures, rest, false)
+  if (drawn.series.length === 0) return { kind: 'none' }
   const omittedCategories = Math.max(0, drawn.points.length - MAX_BARS)
   if (omittedCategories > 0) {
     const sum = (p: ChartPoint) => drawn.series.reduce((s, series) => s + (typeof p[series.key] === 'number' ? (p[series.key] as number) : 0), 0)
@@ -197,16 +210,30 @@ function pivotRows(
 /**
  * The series to draw and their points: the combinations of split values with
  * the largest totals of the first measure (as many as leave every measure a
- * hue), each with every measure. Series of Levels go worst first and wear
- * their Level's colour. A missing value is a zero where an empty bin has no
- * Logs and the aggregate counts, and a gap otherwise.
+ * hue), each with every measure. A series with no value at all is left out
+ * and named in empty. Series of Levels go worst first and wear their Level's
+ * colour. A missing value is a zero where an empty bin has no Logs and the
+ * aggregate counts, and a gap otherwise.
  */
-function keepSeries(pivot: Pivot, columns: TableColumn[], measures: number[], splits: number[], filled: boolean): SeriesSet {
+function keepSeries(
+  pivot: Pivot, { columns, rows, truncated }: LogTable, measures: number[], splits: number[], filled: boolean,
+): SeriesSet {
   const drawn = measures.slice(0, MAX_SERIES)
   const source = (combo: string, m: number) => `${combo}\u0000${m}`
   const totals = new Map<string, number>()
+  const valued = new Set<string>()
   for (const at of pivot.xs.values()) {
-    for (const [key, value] of at) totals.set(key, (totals.get(key) ?? 0) + (value ?? 0))
+    for (const [key, value] of at) {
+      totals.set(key, (totals.get(key) ?? 0) + (value ?? 0))
+      if (value !== null) valued.add(key)
+    }
+  }
+  // A series with no value in any row draws nothing, so it gets no hue; with no rows at all, every series is a zero.
+  const hasValues = (combo: string, m: number) => rows.length === 0 || valued.has(source(combo, m))
+  const nameOf = (combo: string, m: number) => {
+    const parts = splits.map((s, k) => splitName(columns[s].name, pivot.combos.get(combo)![k]))
+    if (drawn.length > 1 || parts.length === 0) parts.push(columns[m].name)
+    return parts.join(' · ')
   }
 
   // Series of Levels: split by level alone, one measure, every value a Level or none.
@@ -219,7 +246,9 @@ function keepSeries(pivot: Pivot, columns: TableColumn[], measures: number[], sp
     const level = levelOf(combo)
     return level === null ? LEVEL_ORDER.length : LEVEL_ORDER.indexOf(level as never)
   }
-  const kept = [...order]
+  const empty = order.flatMap(combo => drawn.filter(m => !hasValues(combo, m)).map(m => nameOf(combo, m)))
+  const kept = order
+    .filter(combo => drawn.some(m => hasValues(combo, m)))
     .sort((a, b) => rank(a) - rank(b) || order.indexOf(a) - order.indexOf(b))
     .slice(0, Math.max(1, Math.floor(MAX_SERIES / drawn.length)))
 
@@ -227,12 +256,10 @@ function keepSeries(pivot: Pivot, columns: TableColumn[], measures: number[], sp
   for (const combo of kept) {
     const values = pivot.combos.get(combo)!
     const split = splits.map((s, k) => ({ field: columns[s].name, value: values[k] }))
-    for (const m of drawn) {
-      const parts = split.map(({ field, value }) => splitName(field, value))
-      if (drawn.length > 1 || parts.length === 0) parts.push(columns[m].name)
+    for (const m of drawn.filter(m => hasValues(combo, m))) {
       series.push({
         key: `s${series.length}`,
-        name: parts.join(' · '),
+        name: nameOf(combo, m),
         column: columns[m].name,
         split,
         agg: columns[m].agg ?? null,
@@ -253,8 +280,11 @@ function keepSeries(pivot: Pivot, columns: TableColumn[], measures: number[], sp
   return {
     series: series.map(({ source: _, ...s }) => s),
     points,
-    omitted: pivot.combos.size * measures.length - series.length,
+    omitted: pivot.combos.size * measures.length - series.length - empty.length,
+    omittedColumns: measures.length - drawn.length,
+    empty,
     stacked: agg !== undefined && ADDS_UP.has(agg),
+    cutAt: truncated ? rows.length : null,
   }
 }
 
@@ -313,4 +343,50 @@ function numberOf(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) return Number(value)
   return null
+}
+
+/** A note beside a chart's legend: what it says, and why, for its title. */
+export interface LegendNote {
+  text: string
+  why: string
+}
+
+/** What a chart leaves out, and why: series past the palette, bars past MAX_BARS, series with no values, rows past a cut. */
+export function legendNotes(model: SeriesChartModel): LegendNote[] {
+  const notes: LegendNote[] = []
+  if (model.omitted > 0) {
+    const columns = [...new Set(model.series.map(s => s.column))]
+    const fields = model.series[0].split.map(f => f.field)
+    const why: string[] = []
+    if (fields.length > 0) {
+      const kept = new Set(model.series.map(s => JSON.stringify(s.split))).size
+      const each = columns.length > 1 ? `, each with its ${columns.length} number columns` : ''
+      why.push(`Only the ${kept} ${fields.join(' and ')} ${kept === 1 ? 'value' : 'values'} with the largest ${columns[0]} totals are drawn${each}.`)
+    }
+    if (model.omittedColumns > 0) why.push(`Only the first ${columns.length} number columns are drawn.`)
+    notes.push({ text: `${model.omitted.toLocaleString()} more not shown`, why: why.join(' ') })
+  }
+  if (model.kind === 'bars' && model.omittedCategories > 0) {
+    const all = model.points.length + model.omittedCategories
+    notes.push({
+      text: `the top ${model.points.length} of ${all.toLocaleString()} ${model.category} values`,
+      why: `Only the ${model.points.length} bars with the largest totals are drawn.`,
+    })
+  }
+  if (model.empty.length > 0) {
+    const n = model.empty.length
+    const names = n > 4 ? `${model.empty.slice(0, 3).join(', ')} and ${n - 3} more` : listOf(model.empty)
+    const where = model.kind === 'time' ? 'in any bin' : `for any ${model.category}`
+    notes.push({ text: `${n} with no values`, why: `${names} ${n === 1 ? 'has' : 'have'} no value ${where}, so ${n === 1 ? 'it is' : 'they are'} not drawn.` })
+  }
+  if (model.cutAt !== null) {
+    const rows = model.cutAt.toLocaleString()
+    const lost = model.kind === 'time' ? 'its later bins are missing, and ' : ''
+    notes.push({ text: `drawn from the first ${rows} rows`, why: `The table was cut at ${rows} rows, so ${lost}the totals that rank what is drawn count only those rows.` })
+  }
+  return notes
+}
+
+function listOf(names: string[]): string {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
