@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from './axis'
+import { nameChars, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from './axis'
 
 const at = (time: string) => new Date(time).getTime()
 
@@ -129,5 +129,26 @@ describe('values in a tooltip or a stat tile', () => {
     expect(statText(19_183)).toBe('19,183')
     expect(statText(0.004)).toBe('0.004')
     expect(statText(4_213_000)).toBe('4.21M')
+  })
+})
+
+describe('category names beside lying bars', () => {
+  it('keep their start and end, cut in the middle, where names that share a start still differ', () => {
+    expect(shortName('Rendered dashboard in 120ms', 20)).toBe('Rendered das…n 120ms')
+    expect(shortName('Rendered dashboard in 98ms', 20)).toBe('Rendered das…in 98ms')
+    expect(shortName('GET /api/v1/invoices/42', 20)).toBe('GET /api/v1/…ices/42')
+    expect(shortName('Charge succeeded', 20)).toBe('Charge succeeded')
+    expect(shortName('Charge succeeded', 16)).toBe('Charge succeeded')
+  })
+
+  it('cut to the length asked for', () => {
+    for (const max of [5, 12, 20, 40]) expect([...shortName('x'.repeat(100), max)]).toHaveLength(max)
+  })
+
+  it('take more of a wide chart, a phone\'s about 20 characters and the rest of a desktop\'s', () => {
+    expect(nameChars(358)).toBe(20)
+    expect(nameChars(0)).toBe(20)
+    expect(nameChars(1166)).toBeGreaterThanOrEqual(60)
+    expect(nameChars(1166)).toBeLessThanOrEqual(80)
   })
 })

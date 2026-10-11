@@ -339,6 +339,19 @@ test('a series keeps its colour when a function is added or removed', async ({ p
   expect(errors).toEqual([])
 })
 
+test('lying bars on a desktop name each category apart, and show its value at the tip', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  await runQuery(page, `${SOURCE}\n| summarize count() by message`)
+  const names = await chart(page).locator('.recharts-yAxis-tick-labels text').evaluateAll(texts => texts.map(t => t.lastChild?.textContent ?? ''))
+  expect(names.length).toBeGreaterThan(8)
+  expect(new Set(names).size).toBe(names.length)
+  const values = await chart(page).locator('.recharts-label-list text').allTextContents()
+  expect(values).toHaveLength(names.length)
+  for (const value of values) expect(value).toMatch(/^[\d,]+$/)
+  expect(errors).toEqual([])
+})
+
 test('day bins a day range covers in part are drawn in full, with a note', async ({ page }) => {
   const errors = watchErrors(page)
   // A day starting 7 minutes into an hour: both its day bins, and its first and last hourly bins, are partial.

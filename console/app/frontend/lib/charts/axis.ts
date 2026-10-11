@@ -98,6 +98,30 @@ export function tickLabel(step: number, locale?: string): (value: number) => str
   }
 }
 
+/** A label's character width at 10px in the mono font, and the room beside its text. */
+export const CHAR_PX = 6
+export const LABEL_PAD_PX = 12
+/** The fewest characters of a category's name beside a lying bar, and the share of a wide chart its names may take. */
+const NAME_CHARS = 20
+const NAME_SHARE = 0.38
+
+/** The characters of a category's name shown beside a lying bar in a chart `width` px wide: about 20 on a phone, more on a desktop. */
+export function nameChars(width: number): number {
+  return Math.max(NAME_CHARS, Math.floor((width * NAME_SHARE - LABEL_PAD_PX) / CHAR_PX))
+}
+
+/**
+ * A name cut to max characters in the middle, keeping more of its start than
+ * its end: names that share a start, such as Log messages and paths, mostly
+ * differ at their end.
+ */
+export function shortName(name: string, max: number): string {
+  const chars = [...name]
+  if (chars.length <= max) return name
+  const head = Math.ceil((max - 1) * 0.6)
+  return `${chars.slice(0, head).join('')}…${chars.slice(chars.length - (max - 1 - head)).join('')}`
+}
+
 /** A value as a tooltip reads it: to two decimals, or three significant digits under one. */
 export function valueText(value: number): string {
   const abs = Math.abs(value)
