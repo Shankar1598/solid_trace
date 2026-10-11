@@ -287,8 +287,8 @@ func (s *LogStore) ScanLogsIngestedAfter(ctx context.Context, scan IngestedLogSc
 }
 
 // batchesBetween reports whether a Log batch can come after the batch after
-// and no later than upTo. DuckDB orders UUIDs as their bytes, as Log batch
-// ids are made in order.
+// and no later than upTo. Log batch ids are made in the order of their
+// bytes, which is how DuckDB orders UUIDs too.
 func batchesBetween(after, upTo uuid.UUID) bool {
 	return bytes.Compare(after[:], upTo[:]) < 0
 }
