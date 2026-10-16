@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { editorText, expectEditorText, holdSqlQueries, openLogs, releaseSqlQueries, runBy, summaryLine } from '../support/logs'
+import { editorText, expectEditorText, holdSqlQueries, openLogs, releaseSqlQueries, runBy, summaryLine, timeRange } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
 
 // The QueryEditor in Query mode: completions for stages, Fields, operators
@@ -138,6 +138,29 @@ test('on a Mac, both Ctrl+Enter, as the hint says, and Cmd+Enter run the Query',
   expect(new URL(page.url()).searchParams.get('q')).toBe(`${SOURCE}\n| take 50`)
   // Neither key wrote a line break.
   expect(await editorText(box)).toBe(`${SOURCE}\n| take 50`)
+  expect(errors).toEqual([])
+})
+
+test('when the editor fails to load, a plain box still edits and runs, and the page stays', async ({ page }) => {
+  // As in a tab opened before a deploy, whose editor chunk is gone.
+  await page.route(/\/CodeEditor[.-][^/]*$/, route => route.abort())
+  // The aborted chunk, and React reporting the error its boundary caught.
+  const errors = watchErrors(page, [/^Failed to load resource: net::ERR_FAILED/, /Failed to fetch dynamically imported module/])
+  await openLogs(page)
+  await page.getByRole('button', { name: 'Query', exact: true }).click()
+
+  const box = page.getByRole('textbox', { name: 'Query', exact: true })
+  await expect(box).toHaveValue(SOURCE)
+  await expect(box).toBeFocused()
+  await expect(timeRange(page)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeVisible()
+
+  await page.keyboard.type('\n| take 5')
+  await runBy(page, () => box.press('Control+Enter'))
+  expect(new URL(page.url()).searchParams.get('q')).toBe(`${SOURCE}\n| take 5`)
+  await expect(box).toHaveValue(`${SOURCE}\n| take 5`)
+  await page.keyboard.press('Escape')
+  await expect(box).not.toBeFocused()
   expect(errors).toEqual([])
 })
 
