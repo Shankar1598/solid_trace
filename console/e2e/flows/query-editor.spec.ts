@@ -50,18 +50,24 @@ test('completions write a where: a stage after |, a Field, an operator and a val
   await pick(page)
   await expectEditorText(box, `${SOURCE}\n| where level `)
 
-  // Then the operators, then the values recent Logs have.
+  // Then the operators, then the values recent Logs have, which depend on
+  // the newest Logs: the flow takes the last one listed.
   await expect(option(page, '==')).toBeVisible()
   await pick(page)
-  await expect(option(page, '"error"')).toBeVisible()
-  await option(page, '"error"').click()
-  await expectEditorText(box, `${SOURCE}\n| where level == "error"`)
+  const values = completions(page).getByRole('option')
+  await expect(values.first()).toContainText(/^"\w+"/)
+  const listed = await values.locator('.cm-completionLabel').allInnerTexts()
+  const level = listed.at(-1)!
+  await values.last().click()
+  const where = `${SOURCE}\n| where level == ${level}`
+  await expectEditorText(box, where)
 
-  // Ctrl+Enter runs it; only errors show.
+  // Ctrl+Enter runs it; only that level shows.
   await runBy(page, () => box.press('Control+Enter'))
-  expect(new URL(page.url()).searchParams.get('q')).toBe(`${SOURCE}\n| where level == "error"`)
-  await expect(summaryLine(page)).toContainText(/error\s*[\d,]+$/)
-  await expect(summaryLine(page)).not.toContainText(/\binfo\b/)
+  expect(new URL(page.url()).searchParams.get('q')).toBe(where)
+  const levelCount = (value: string) => new RegExp(`\\b${JSON.parse(value)}\\s*[\\d,]+`)
+  await expect(summaryLine(page)).toContainText(levelCount(level))
+  for (const other of listed.filter(v => v !== level)) await expect(summaryLine(page)).not.toContainText(levelCount(other))
   expect(errors).toEqual([])
 })
 
