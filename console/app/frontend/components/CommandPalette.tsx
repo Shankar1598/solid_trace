@@ -104,7 +104,7 @@ function PaletteDialog({ open, onOpenChange, context }: { open: boolean; onOpenC
             placeholder="Jump to a Project's Logs, a page, a recent Query or an action…"
             className="h-10 w-full border-b bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
           />
-          <Combobox.Empty className="p-4 text-center text-xs text-muted-foreground">Nothing matches.</Combobox.Empty>
+          <Combobox.Empty className="p-4 text-center text-xs text-muted-foreground empty:p-0">Nothing matches.</Combobox.Empty>
           <Combobox.List className="max-h-80 overflow-y-auto p-1 data-empty:p-0">
             {(group: PaletteGroup) => (
               <Combobox.Group key={group.group} items={group.items}>
