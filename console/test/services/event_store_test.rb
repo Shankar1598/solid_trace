@@ -83,6 +83,37 @@ class EventStoreTest < ActiveSupport::TestCase
     end
   end
 
+  test "query_logs asks EventStore to stop the run after timeout_seconds, and waits a little longer" do
+    stub = stub_request(:post, "#{@base_url}/api/123/logs/query")
+      .with(body: hash_including(query: "summarize count()", timeout_seconds: 30))
+      .to_return(status: 200, body: { table: { columns: [], rows: [], truncated: false } }.to_json)
+    read_timeouts = []
+    execute = RestClient::Request.method(:execute)
+    record = lambda do |args, &block|
+      read_timeouts << args[:read_timeout]
+      execute.call(args, &block)
+    end
+
+    RestClient::Request.stub(:execute, record) do
+      EventStore.query_logs(project_id: 123, query: "summarize count()", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10), timeout_seconds: 30)
+    end
+
+    assert_requested stub
+    assert_equal [ 30 + EventStore::TIMEOUT_GRACE_SECONDS ], read_timeouts
+  end
+
+  test "query_logs raises TimedOut with EventStore's message when the run passes its timeout" do
+    stub_request(:post, "#{@base_url}/api/123/logs/query")
+      .to_return(status: 504, body: { error: "the run was stopped after 30 s, its timeout: try a shorter time range" }.to_json)
+
+    error = assert_raises(EventStore::TimedOut) do
+      EventStore.query_logs(project_id: 123, query: "", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10), timeout_seconds: 30)
+    end
+
+    assert_equal "the run was stopped after 30 s, its timeout: try a shorter time range", error.body["error"]
+    assert_kind_of EventStore::Unavailable, error
+  end
+
   test "validate_logs_query returns errors and chips" do
     stub_request(:post, "#{@base_url}/api/123/logs/validate")
       .with(body: { query: "search \"boom\"" }.to_json)
