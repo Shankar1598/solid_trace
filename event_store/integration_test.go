@@ -62,6 +62,13 @@ type TestEnv struct {
 	// testNow and moves only when a test moves it.
 	Clock *clock.Manual
 
+	// Bucket keeps the Log files too, if set, each local copy for
+	// LocalCacheHours (logs_bucket_test.go). BucketConfig, if set, is the
+	// object_store that DuckDB reads the bucket through.
+	Bucket          storage.ObjectStore
+	BucketConfig    *config.ObjectStore
+	LocalCacheHours int
+
 	dir   string // holds Pebble and DuckDB
 	close func()
 }
@@ -278,6 +285,12 @@ func seedProjectKey(t *testing.T, sqlitePath string, projectID uint32, publicKey
 }
 
 func setupTestEnv(t *testing.T) *TestEnv {
+	return newTestEnv(t, nil)
+}
+
+// newTestEnv is setupTestEnv, with configure, if set, changing the
+// environment before its stores open.
+func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 	logger.Init()
 	resetTestDB(t)
 
@@ -288,6 +301,9 @@ func setupTestEnv(t *testing.T) *TestEnv {
 		BatchLock:   &sync.Mutex{},
 		EventWriter: &recordingEventWriter{},
 		Clock:       clock.NewManual(testNow),
+	}
+	if configure != nil {
+		configure(env)
 	}
 	seedProjectKey(t, env.SQLitePath, 123, "test_public_key")
 	env.open(t)
@@ -309,9 +325,20 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create DuckDB: %v", err)
 	}
 
+	if env.BucketConfig != nil {
+		if err := duckdbWriter.UseBucket(env.BucketConfig, testExtensionDirectory(t)); err != nil {
+			t.Fatalf("Failed to let DuckDB read the bucket: %v", err)
+		}
+	}
+
 	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"), filepath.Join(env.dir, "logs_parquet"))
 	if err != nil {
 		t.Fatalf("Failed to attach logs DuckDB: %v", err)
+	}
+	if env.Bucket != nil {
+		if err := logStore.UseObjectStore(env.Bucket, env.LocalCacheHours); err != nil {
+			t.Fatalf("Failed to keep Log files in the bucket: %v", err)
+		}
 	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)
