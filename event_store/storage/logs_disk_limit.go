@@ -59,8 +59,12 @@ func NewLogDiskLimit(configured int64, dir string) (LogDiskLimit, error) {
 // with ErrLogFilesInUse, and the next pass goes on. Each pass first deletes
 // the bytes of files deleted earlier, by any deleter, whose reads have ended
 // since, and returns ErrLogFilesInUse while a read holds any of them, so that
-// the next pass comes soon. Bucket objects that fail to delete return an
-// error, for the same reason, but hold up nothing else.
+// the next pass comes soon.
+//
+// With a bucket, each pass then deletes the objects of files deleted
+// earlier, by any deleter (deleteTombstonedObjects). An object that fails to
+// delete is logged, and it and the rest wait for the next pass; it fails
+// nothing.
 func (s *LogStore) EnforceDiskLimit(limit LogDiskLimit) error {
 	maxBytes := limit.Bytes
 	if maxBytes <= 0 {

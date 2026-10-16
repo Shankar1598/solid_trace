@@ -28,6 +28,8 @@ type flakyBucket struct {
 	// fails, as when EventStore stops before it marks the file uploaded.
 	// failDeletes fails every deletion.
 	failPuts, putThenFail, failDeletes atomic.Bool
+	// deletes counts the deletions asked of the bucket.
+	deletes atomic.Int64
 }
 
 func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
@@ -44,6 +46,7 @@ func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
 }
 
 func (b *flakyBucket) Delete(ctx context.Context, key string) error {
+	b.deletes.Add(1)
 	if b.failDeletes.Load() {
 		return errors.New("the bucket is unavailable")
 	}
@@ -290,10 +293,12 @@ func TestRetentionAndProjectDeletionDeleteTheirFilesFromTheBucket(t *testing.T) 
 	env.EvictLogFiles(t)
 	assertGone(t, env.localFile(123, pastRetention, "data.parquet"), "past local_cache_hours")
 
-	// With the bucket failing, the Logs go, and the objects wait.
+	// With the bucket failing, the Logs go, and the objects wait: Retention
+	// doesn't wait on the bucket, so a failing one fails no Project's pass.
 	bucket.failDeletes.Store(true)
-	if err := env.LogCleanup.DeleteLogsPastRetention(env.Clock.Now()); err == nil {
-		t.Errorf("Expected Retention to fail while the bucket fails")
+	env.DeleteLogsPastRetention(t)
+	if got := bucket.deletes.Load(); got != 0 {
+		t.Errorf("Expected Retention to ask nothing of the bucket, got %d deletions", got)
 	}
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"within retention"}) {
 		t.Errorf("Expected only the Log within Retention kept, got %v", got)
@@ -302,6 +307,22 @@ func TestRetentionAndProjectDeletionDeleteTheirFilesFromTheBucket(t *testing.T) 
 		t.Errorf("Expected the deleted Project's Logs gone, got %v", messages(got))
 	}
 	assertGone(t, env.localFile(456, within, "data.parquet"), "with the deleted Project")
+	assertPresent(t, bucket.object(123, pastRetention, "data.parquet"), "while the bucket fails")
+	assertPresent(t, bucket.object(456, within, "data.parquet"), "while the bucket fails")
+
+	// Each Cleanup pass stops at the first object that fails to delete, and
+	// the failure is logged once until the objects delete again; the disk
+	// limit isn't failed by it.
+	logs := captureLogs(t)
+	for pass := int64(1); pass <= 2; pass++ {
+		enforceLogDiskLimit(t, env, 1<<40)
+		if got := bucket.deletes.Load(); got != pass {
+			t.Errorf("Expected pass %d to stop at the first failed deletion, got %d deletions in all", pass, got)
+		}
+	}
+	if got := strings.Count(logs.String(), "level=error"); got != 1 {
+		t.Errorf("Expected one error logged for the failing bucket, got %d:\n%s", got, logs)
+	}
 	assertPresent(t, bucket.object(123, pastRetention, "data.parquet"), "while the bucket fails")
 	assertPresent(t, bucket.object(456, within, "data.parquet"), "while the bucket fails")
 

@@ -360,8 +360,8 @@ func tombstoneLogFiles(ctx context.Context, conn *sql.Conn, reason, where string
 
 // deleteTombstonedFiles deletes the local bytes of every tombstoned file that
 // no read has pinned, then its tombstone, unless a bucket may hold the file
-// too: then deleteTombstonedObjects, which the caller runs after releasing
-// writeMu, deletes its object and its tombstone. A pinned one stays for a
+// too: then deleteTombstonedObjects, which EnforceDiskLimit runs after
+// releasing writeMu, deletes its object and its tombstone. A pinned one stays for a
 // later pass, and is returned. No read pins a tombstoned file anew, as none
 // sees its row any more, so this needs no publishMu. The caller holds
 // writeMu.
