@@ -62,6 +62,11 @@ type LogStore struct {
 	// holds the keys of the files whose last upload failed.
 	uploadMu      sync.Mutex
 	uploadFailing map[string]bool
+	// objectsMu lets one deletion of tombstoned files' objects run at a
+	// time, and objectsFailing says the last one stopped at an object that
+	// failed to delete.
+	objectsMu      sync.Mutex
+	objectsFailing bool
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of

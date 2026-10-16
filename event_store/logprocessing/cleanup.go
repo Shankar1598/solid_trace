@@ -21,7 +21,8 @@ type CleanupStore interface {
 	// DeleteProjectLogs deletes everything of a Project's Logs.
 	DeleteProjectLogs(projectID uint32) error
 	// EnforceDiskLimit deletes the oldest hours of Log files, of any
-	// Project, until the files fit limit.
+	// Project, until the files fit limit. If the files are kept in a
+	// bucket, it then deletes there the Log files deleted earlier.
 	EnforceDiskLimit(limit storage.LogDiskLimit) error
 	// EvictLogFiles removes the local copies of uploaded Log files kept
 	// long enough, if the files are kept in a bucket.

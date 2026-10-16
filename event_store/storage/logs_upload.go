@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -320,11 +319,16 @@ func isMissing(path string) bool {
 	return os.IsNotExist(err)
 }
 
-// deleteTombstonedObjects deletes from the bucket, one at a time, the object
-// of every tombstoned file no read or upload has pinned whose local bytes
-// are gone, then its tombstone: a tombstone goes only once both copies are
-// gone. deleteTombstonedFiles deletes the local bytes first. An object that
-// fails to delete keeps its tombstone for the next pass.
+// deleteTombstonedObjects deletes from the bucket, one at a time, oldest
+// first, the object of every tombstoned file no read or upload has pinned
+// whose local bytes are gone, then its tombstone: a tombstone goes only once
+// both copies are gone. deleteTombstonedFiles deletes the local bytes first.
+//
+// It stops at the first object that fails to delete, as the bucket is then
+// most likely down, and leaves the rest with their tombstones for the next
+// pass: a pass waits on a failing bucket for one deleteObjectTimeout at
+// most. The failure is logged the first time a pass stops, until a pass
+// gets through; it returns only the manifest's errors.
 //
 // It must run with neither writeMu nor publishMu held, as it waits on the
 // bucket; it takes writeMu only to drop the tombstones.
@@ -332,6 +336,8 @@ func (s *LogStore) deleteTombstonedObjects() error {
 	if s.bucket == nil {
 		return nil
 	}
+	s.objectsMu.Lock()
+	defer s.objectsMu.Unlock()
 	rows, err := s.db.Query("SELECT DISTINCT " + manifestColumnsOfAKey + " FROM logs.log_file_deletions")
 	if err != nil {
 		return fmt.Errorf("list tombstoned log files: %w", err)
@@ -343,7 +349,7 @@ func (s *LogStore) deleteTombstonedObjects() error {
 	sortLogFiles(files)
 	var (
 		deleted []logFile
-		failed  []error
+		failed  error
 	)
 	for _, file := range files {
 		if s.pinned(file.key()) {
@@ -356,17 +362,19 @@ func (s *LogStore) deleteTombstonedObjects() error {
 		err := s.bucket.Delete(ctx, file.key())
 		cancel()
 		if err != nil {
-			failed = append(failed, fmt.Errorf("delete %s from the bucket: %w", file.key(), err))
-			continue
+			failed = fmt.Errorf("delete %s from the bucket: %w", file.key(), err)
+			break
 		}
 		deleted = append(deleted, file)
 	}
-	s.writeMu.Lock()
-	err = s.dropTombstones(deleted)
-	s.writeMu.Unlock()
-	if len(failed) > 0 {
-		err = errors.Join(fmt.Errorf("%d deleted log files are still in the bucket, retrying on the next pass: %w",
-			len(failed), errors.Join(failed...)), err)
+	switch {
+	case failed != nil && !s.objectsFailing:
+		logger.L.Error("Deleting deleted Log files from the bucket failed, retrying on each Cleanup pass", "error", failed)
+	case failed == nil && s.objectsFailing:
+		logger.L.Info("Deleted deleted Log files from the bucket after failing", "files", len(deleted))
 	}
-	return err
+	s.objectsFailing = failed != nil
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.dropTombstones(deleted)
 }
