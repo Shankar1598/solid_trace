@@ -237,17 +237,17 @@ export function addAggregate(builder: Builder, aggregate: Aggregate): Builder {
 }
 
 /**
- * Removes a function from the Summarize. Removing the last one from a
- * Summarize still grouped only by the time bins a new one starts with
- * removes the Summarize too, so Add a function and its x leave the Builder
- * as it was; by columns of the user's own stay.
+ * Removes a function from the Summarize. Removing the last one drops the
+ * automatic time bins a new Summarize starts with, which without a function
+ * would only list distinct bins; by columns of the user's own stay. So Add a
+ * function and its x leave the Builder as it was.
  */
 export function removeAggregate(builder: Builder, index: number): Builder {
   const summarize = builder.summarize
   if (!summarize) return builder
   const aggregates = summarize.aggregates.filter((_, i) => i !== index)
-  const untouched = aggregates.length === 0 && JSON.stringify(summarize.by) === JSON.stringify(NEW_SUMMARIZE.by)
-  return setSummarize(builder, untouched ? { aggregates: [], by: [] } : { ...summarize, aggregates })
+  const by = aggregates.length === 0 ? summarize.by.filter(g => g.bin !== 'auto') : summarize.by
+  return setSummarize(builder, { aggregates, by })
 }
 
 /** Counts Logs by a Field: one more by column of the Summarize, or a new count() by time and it. */
