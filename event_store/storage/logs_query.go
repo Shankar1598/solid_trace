@@ -132,7 +132,7 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, err
 	if !from.Before(to) || scan.Limit <= 0 {
 		return page, nil
 	}
-	read, err := s.beginRead(ctx, scan.ProjectID, from, to)
+	read, err := s.beginRead(ctx, scan.ProjectID, from, to, false)
 	if err != nil {
 		return LogScanPage{}, err
 	}
@@ -328,7 +328,7 @@ func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any
 	if !to.After(from) {
 		to = from
 	}
-	read, err := s.beginRead(ctx, scan.ProjectID, from, to)
+	read, err := s.beginRead(ctx, scan.ProjectID, from, to, false)
 	if err != nil {
 		return nil, err
 	}
@@ -453,14 +453,16 @@ func timestampLiteral(t time.Time) string {
 }
 
 // LogByID returns a Project's Log with the given id, if it has one. If at is
-// set, only the Log files of at's hour are searched, else every file.
+// set, only the Log files of at's hour are searched, wherever they are; else
+// every file on local disk, as searching every file in the bucket would read
+// them all.
 func (s *LogStore) LogByID(ctx context.Context, projectID uint32, id uuid.UUID, at *time.Time) (models.Log, bool, error) {
 	from, to := time.Unix(0, 0).UTC(), time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 	if at != nil {
 		from = at.UTC().Truncate(time.Hour)
 		to = from.Add(time.Hour)
 	}
-	read, err := s.beginRead(ctx, projectID, from, to)
+	read, err := s.beginRead(ctx, projectID, from, to, at == nil)
 	if err != nil {
 		return models.Log{}, false, err
 	}

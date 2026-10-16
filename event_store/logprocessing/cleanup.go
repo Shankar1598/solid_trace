@@ -23,6 +23,9 @@ type CleanupStore interface {
 	// EnforceDiskLimit deletes the oldest hours of Log files, of any
 	// Project, until the files fit limit.
 	EnforceDiskLimit(limit storage.LogDiskLimit) error
+	// EvictLogFiles removes the local copies of uploaded Log files kept
+	// long enough, if the files are kept in a bucket.
+	EvictLogFiles(now time.Time) error
 }
 
 // Projects tells which Projects exist, and the Retention of each.
@@ -45,8 +48,9 @@ const (
 // Cleanup is the timer inside EventStore that keeps Logs from outliving
 // their Retention or their Project, and Log files from passing the disk
 // limit. Once a UTC day by its clock, and when it starts, it deletes Logs past
-// their Retention; a few minutes past each hour start, it enforces the disk limit. A
-// failed run is tried again a minute later.
+// their Retention; a few minutes past each hour start, it evicts the local
+// copies of uploaded Log files kept long enough, and enforces the disk limit.
+// A failed run is tried again a minute later.
 type Cleanup struct {
 	store     CleanupStore
 	projects  Projects
@@ -86,6 +90,10 @@ func (c *Cleanup) run() {
 			} else {
 				lastPass = day
 			}
+		}
+		if err := c.store.EvictLogFiles(now); err != nil {
+			logRetry("Evicting the local copies of uploaded Log files failed, retrying", err)
+			failed = true
 		}
 		if err := c.store.EnforceDiskLimit(c.diskLimit); err != nil {
 			logRetry("Enforcing the Log disk limit failed, retrying", err)

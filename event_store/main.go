@@ -46,6 +46,11 @@ func main() {
 	if err != nil {
 		logger.L.Fatal("Failed to open logs DuckDB", "error", err)
 	}
+	if cfg.ObjectStore != nil {
+		if err := logStore.UseObjectStore(storage.NewObjectStore(cfg.ObjectStore), cfg.ObjectStore.LocalCacheHours); err != nil {
+			logger.L.Fatal("Failed to keep Log files in the object store's bucket", "error", err)
+		}
+	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
 	if err != nil {
@@ -100,6 +105,12 @@ func main() {
 
 	logExport := logprocessing.NewHourlyExport(logStore, clock.System{})
 	logExport.Start()
+
+	// Without a bucket nothing is uploaded, and the worker never starts.
+	logUploads := logprocessing.NewLogUploads(logStore, clock.System{})
+	if cfg.ObjectStore != nil {
+		logUploads.Start()
+	}
 
 	diskLimit, err := storage.NewLogDiskLimit(cfg.LogsDiskLimitBytes, cfg.LogsParquetPath)
 	if err != nil {
@@ -174,6 +185,7 @@ func main() {
 	processor.Stop()
 	logProcessor.Stop()
 	logExport.Stop()
+	logUploads.Stop()
 	logCleanup.Stop()
 	archiveConsumer.Stop()
 }

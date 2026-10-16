@@ -36,7 +36,8 @@ type logRead struct {
 	// hot says whether the Project had a hot table.
 	hot bool
 	// hours are the hours of the range that may hold the Project's Logs,
-	// newest first, and files the paths of their files.
+	// newest first, and files where their files are: each one's local
+	// path, or its bucket URL once its local copy is evicted.
 	hours []time.Time
 	files map[time.Time][]string
 	// sets are the Project's promoted sets of the days of hours, by day, as
@@ -53,11 +54,12 @@ type logRead struct {
 	began, discard bool
 }
 
-// beginRead begins a read of a Project's Logs of [from, to). Its queries stop
-// when ctx ends. The caller must end it.
-func (s *LogStore) beginRead(ctx context.Context, projectID uint32, from, to time.Time) (*logRead, error) {
+// beginRead begins a read of a Project's Logs of [from, to), of its files on
+// local disk only if localOnly. Its queries stop when ctx ends. The caller
+// must end it.
+func (s *LogStore) beginRead(ctx context.Context, projectID uint32, from, to time.Time, localOnly bool) (*logRead, error) {
 	return s.startRead(ctx, projectID, func(r *logRead) (map[time.Time][]logFile, error) {
-		files, err := listLogFiles(r.ctx, r.conn, r.projectID, from, to)
+		files, err := listLogFiles(r.ctx, r.conn, r.projectID, from, to, localOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +153,7 @@ func (r *logRead) begin(list func(*logRead) (map[time.Time][]logFile, error)) er
 	}
 	for hour, hourFiles := range files {
 		for _, file := range hourFiles {
-			r.files[hour] = append(r.files[hour], s.files.path(file))
+			r.files[hour] = append(r.files[hour], s.location(file))
 			r.pinned = append(r.pinned, file.key())
 		}
 	}
