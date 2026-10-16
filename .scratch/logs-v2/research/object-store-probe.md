@@ -123,6 +123,16 @@ MinIO on localhost hides latency, so the 30 ms rows are the estimate for GCS. Re
 - **Warm:** no requests. In production the most recent `local_cache_hours` (24 by default) are read from local disk anyway.
 - **Cost:** GCS charges $0.004 per 10,000 Class B operations (GET, HEAD), so a cold 7-day chart costs about $0.0002. LIST is never used, because reads name every file from the manifest.
 
+## For the real GCS run
+
+What MinIO can't show, to check in the manual run (spec, Verification) with the user's HMAC key:
+
+- **Uploads, lists and deletes succeed.** GCS's front end rewrites `Accept-Encoding` before it checks the signature, and rejects the SDK's `x-id` parameter, so the adapter signs no `Accept-Encoding` and drops `x-id` (aws/aws-sdk-go-v2#1816). Checked so far only with a made-up key: GCS's echoed canonical request now holds exactly the headers and values that were signed. Before the fix it held `accept-encoding:identity,gzip(gfe)` where `identity` was signed.
+- **Region `auto`** is taken: GCS's echoed scope was `<date>/auto/s3/aws4_request`.
+- **A delete of a missing key** answers 404 `NoSuchKey`, and the adapter counts only that as done.
+- **DuckDB reads** sign only `host;x-amz-content-sha256;x-amz-date`, so httpfs isn't affected by the header rewrite. Check one chart across local and remote hours.
+- **`httpfs_connection_caching`:** see below.
+
 ## Recommendations
 
 **Turn on all three caches when a bucket is configured.** That is `parquet_metadata_cache`, `enable_http_metadata_cache` and `enable_external_file_cache`.
