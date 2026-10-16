@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -224,5 +227,72 @@ func TestDeletingAMissingObjectOnGCSIsNotAnError(t *testing.T) {
 	})
 	if err := store.Delete(context.Background(), "project=1/day=2026-10-01/hour=07/data.parquet"); err != nil || deletes != 1 {
 		t.Errorf("Expected one DELETE and no error, got %d and %v", deletes, err)
+	}
+}
+
+// GCS's front end rewrites Accept-Encoding (to "identity,gzip(gfe)") before
+// it checks a request's signature, and it rejects the SDK's x-id query
+// parameter. So no request may sign Accept-Encoding or carry x-id.
+func TestAnObjectStoresRequestsSignNoHeaderGCSRewrites(t *testing.T) {
+	type request struct{ method, query, signedHeaders, acceptEncoding string }
+	var (
+		mu       sync.Mutex
+		requests []request
+	)
+	gcs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		signed := r.Header.Get("Authorization")
+		if _, after, ok := strings.Cut(signed, "SignedHeaders="); ok {
+			signed, _, _ = strings.Cut(after, ",")
+		}
+		requests = append(requests, request{r.Method, r.URL.RawQuery, signed, r.Header.Get("Accept-Encoding")})
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/xml")
+			io.WriteString(w, `<?xml version='1.0' encoding='UTF-8'?><ListBucketResult xmlns="http://doc.s3.amazonaws.com/2006-03-01"><Name>acme</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer gcs.Close()
+	store := NewObjectStore(&config.ObjectStore{
+		Kind: config.ObjectStoreGCS, Bucket: "acme", Prefix: "solidtrace/", Region: "auto",
+		Endpoint: gcs.URL, KeyID: "GOOG1EXAMPLE", Secret: "secret",
+	})
+	ctx := context.Background()
+	key := "project=1/day=2026-10-01/hour=07/data.parquet"
+	if err := store.Put(ctx, key, writeFile(t, "hour 7")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if _, err := store.List(ctx, "project=1/"); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if err := store.Delete(ctx, key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 3 {
+		t.Fatalf("Expected a PUT, a GET and a DELETE, got %v", requests)
+	}
+	for _, r := range requests {
+		if !strings.Contains(r.signedHeaders, "host") {
+			t.Errorf("Expected %s to be signed, got the signed headers %q", r.method, r.signedHeaders)
+		}
+		if slices.Contains(strings.Split(r.signedHeaders, ";"), "accept-encoding") {
+			t.Errorf("Expected %s not to sign Accept-Encoding, got the signed headers %q", r.method, r.signedHeaders)
+		}
+		if strings.Contains(r.query, "x-id") {
+			t.Errorf("Expected %s to have no x-id, got the query %q", r.method, r.query)
+		}
+		// Sent unsigned, so Go's transport doesn't ask for gzip itself.
+		if r.acceptEncoding != "identity" {
+			t.Errorf("Expected %s to send Accept-Encoding identity, got %q", r.method, r.acceptEncoding)
+		}
+	}
+	if got := requests[1].query; !strings.Contains(got, "prefix=solidtrace%2Fproject%3D1%2F") {
+		t.Errorf("Expected the GET to keep its prefix, got the query %q", got)
 	}
 }
