@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { QueryStage, Validation } from './api'
-import { pivotQuery, toBuilder } from './queryMode'
+import { groupBy } from './builder'
+import { editAsBuilder, pivotQuery, toBuilder } from './queryMode'
 
 // Stages as validate places them: from each stage's keyword to its end.
 function stage(line: number, column: number, endLine: number, endColumn: number, filter: boolean, builder = false): QueryStage {
@@ -99,5 +100,24 @@ describe('a pivot in Query mode', () => {
     const stages = [stage(1, 1, 1, 18, true, true), stage(1, 21, 1, 26, false)]
 
     expect(pivotQuery(query, stages, show)).toBe('where user == "😀"\n| where service == "api" | count')
+  })
+})
+
+describe('Group by and Chart this in Query mode', () => {
+  const chips = { filters: [{ field: 'service', op: '==' as const, value: 'api' }], search: null }
+
+  it('writes the Query the Builder would after the edit', () => {
+    const validation: Validation = { source: 'my-api', errors: [], chips, stages: [stage(2, 3, 2, 25, true, true)] }
+
+    expect(editAsBuilder(validation, 'my-api', b => groupBy(b, 'level')))
+      .toBe('[\'my-api\']\n| where service == "api"\n| summarize count() by bin_auto(time), level')
+  })
+
+  it('gives nothing for a Query the Builder can\'t show, or one with mistakes', () => {
+    const unshowable: Validation = { source: null, errors: [], chips: null, stages: [stage(1, 1, 1, 30, false)] }
+    const wrong: Validation = { source: null, errors: [{ message: 'no', line: 1, column: 1, end_line: 1, end_column: 2 }], chips, stages: [] }
+
+    expect(editAsBuilder(unshowable, 'my-api', b => groupBy(b, 'level'))).toBeNull()
+    expect(editAsBuilder(wrong, 'my-api', b => groupBy(b, 'level'))).toBeNull()
   })
 })

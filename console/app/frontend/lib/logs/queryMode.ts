@@ -2,7 +2,7 @@
 // pivoting from its results both go by what validate says of the text (its
 // chips, and where each stage is), so the browser never parses a Query.
 import type { QueryProblem, QueryStage, Validation } from './api'
-import { builderOf, filterText, type Builder, type Chip } from './builder'
+import { builderOf, filterText, queryOf, type Builder, type Chip } from './builder'
 
 /**
  * Query → Builder: switch silently when the Builder can show the Query;
@@ -38,6 +38,16 @@ export function pivotQuery(query: string, stages: QueryStage[], chip: Chip): str
   }
   // No stages: an empty Query, or only the leading logs.
   return query.trim() === '' ? where : `${query.trimEnd()}\n| ${where}`
+}
+
+/**
+ * Group by or Chart this in Query mode: the Query as the Builder writes it
+ * after the edit, or null when the Builder can't show the Query (or it has
+ * mistakes), since then there is no Summarize to change.
+ */
+export function editAsBuilder(validation: Validation, projectSlug: string, edit: (builder: Builder) => Builder): string | null {
+  if (validation.errors.length > 0 || !validation.chips) return null
+  return queryOf(edit(builderOf(validation.chips)), projectSlug)
 }
 
 function textOf(query: string, stage: QueryStage): string {

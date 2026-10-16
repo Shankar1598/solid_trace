@@ -5,6 +5,7 @@ import {
   addFilter,
   builderOf,
   canFilter,
+  chartField,
   flipFilter,
   groupBy,
   hide,
@@ -374,5 +375,30 @@ describe('adding to the Query from the inspector', () => {
     const avg: Builder = { ...builder, summarize: { aggregates: [{ fn: 'avg', field: 'duration_ms' }], by: [{ field: 'time', bin: 'auto' }] } }
     expect(groupBy(avg, 'service').summarize).toEqual({ aggregates: [{ fn: 'avg', field: 'duration_ms' }], by: [{ field: 'time', bin: 'auto' }, { field: 'service' }] })
     expect(groupBy(counted, 'service')).toEqual(counted)
+  })
+})
+
+describe('Chart this from a value', () => {
+  const builder: Builder = { filters: [{ field: 'level', op: '!=', value: 'debug' }], search: '' }
+
+  it('charts a number\'s average over time', () => {
+    expect(stagesOf(chartField(builder, 'duration_ms', true)))
+      .toBe('where level != "debug"\n| summarize avg(duration_ms) by bin_auto(time)')
+  })
+
+  it('counts Logs by any other value\'s Field over time', () => {
+    expect(stagesOf(chartField(builder, 'service', false)))
+      .toBe('where level != "debug"\n| summarize count() by service, bin_auto(time)')
+  })
+
+  it('takes the place of the Summarize there was, and of a sort on its columns', () => {
+    const sorted = setSort(groupBy(builder, 'service'), [{ column: 'count_', asc: false }])
+    const charted = chartField(sorted, 'duration_ms', true)
+    expect(charted.summarize).toEqual({ aggregates: [{ fn: 'avg', field: 'duration_ms' }], by: [{ field: 'time', bin: 'auto' }] })
+    expect(charted.sort).toBeUndefined()
+  })
+
+  it('leaves the chart\'s time bins out once its function goes', () => {
+    expect(removeAggregate(chartField(builder, 'service', false), 0).summarize).toEqual({ aggregates: [], by: [{ field: 'service' }] })
   })
 })

@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Popover } from '@base-ui/react/popover'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
-import { Columns3, Copy, X } from 'lucide-react'
+import { ChevronDown, Columns3, X } from 'lucide-react'
 import { columnValue, moveColumn, pickableFields, toggleColumn } from '@/lib/logs/columns'
 import type { AttributeValue, Log } from '@/lib/logs/stream'
 import { cn } from '@/lib/utils'
-import { copy, valueText } from './TagMenu'
+import { Tag, valueText } from './TagMenu'
 
 const ROW_HEIGHT = 30
 /** The gutter before the columns, holding each row's Level square. */
@@ -56,7 +56,7 @@ interface LogStreamProps {
  * The Logs of a run as a table, newest first, virtualised. The reader picks,
  * orders and sizes the columns; each row starts with a square in its Level's
  * colour. Clicking a row opens the inspector, whose lines add to the Query;
- * a cell offers only Copy.
+ * a cell's button opens the value menu.
  */
 export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, selectedId, onSelect, columns, onColumns }: LogStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -318,7 +318,7 @@ function LogRow({ log, columns, widthOf, selected, onSelect }: {
   )
 }
 
-/** A row's cell; hovering it offers to copy its value without opening the inspector. */
+/** A row's cell; hovering it offers the value menu without opening the inspector. */
 function CellBox({ log, column, width }: { log: Log; column: string; width: number }) {
   const value = columnValue(log, column)
   const empty = value === undefined || value === null || value === ''
@@ -326,16 +326,15 @@ function CellBox({ log, column, width }: { log: Log; column: string; width: numb
     <div className="group/cell relative flex shrink-0 items-center border-r px-2.5" style={{ width }}>
       <div className="min-w-0 truncate">{empty ? <span className="text-muted-foreground/50">—</span> : <Cell log={log} column={column} value={value} />}</div>
       {!empty && (
-        <button
-          onClick={e => {
-            e.stopPropagation()
-            copy(column === 'time' ? log.time : value)
-          }}
-          className="absolute right-1 hidden items-center gap-1 rounded border bg-background px-1.5 py-0.5 font-sans text-[11px] text-foreground shadow-sm hover:bg-muted group-hover/cell:flex"
-          aria-label={`Copy ${column}`}
+        <Tag
+          field={column}
+          value={column === 'time' ? log.time : value}
+          columnable
+          label={`Menu for ${column}`}
+          className="absolute right-1 hidden items-center rounded border bg-background px-1 py-0.5 text-foreground shadow-sm hover:bg-muted hover:outline-none group-hover/cell:flex data-popup-open:flex"
         >
-          <Copy className="h-3 w-3" /> Copy
-        </button>
+          <ChevronDown className="h-3 w-3" />
+        </Tag>
       )}
     </div>
   )

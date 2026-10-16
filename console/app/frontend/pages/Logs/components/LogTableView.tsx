@@ -1,8 +1,9 @@
 import { useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
+import { ChevronDown } from 'lucide-react'
 import { QueryChart, type ColorSlots, type HiddenSeries } from '@/components/charts/QueryChart'
-import { chartOf, formFor, formsOf } from '@/lib/charts/series'
+import { chartOf, formFor, formsOf, type SplitValue } from '@/lib/charts/series'
 import type { AbsoluteRange, Viz } from '@/lib/logs/explorerState'
 import { pivotsOn, type LogTable, type TableColumn } from '@/lib/logs/table'
 import type { AttributeValue } from '@/lib/logs/stream'
@@ -50,7 +51,7 @@ export function LogTableView({ table, chart }: { table: LogTable; chart?: TableC
     <div className="flex h-full flex-col overflow-y-auto">
       <div className={cn('shrink-0', form !== 'stat' && 'border-b')}>
         {form
-          ? <QueryChart table={table} form={form} onZoom={chart.onZoom} colors={chart.colors} hidden={chart.hidden} actions={control} className="pb-1" />
+          ? <QueryChart table={table} form={form} onZoom={chart.onZoom} colors={chart.colors} hidden={chart.hidden} actions={control} legendValue={legendValue} className="pb-1" />
           : <div className="flex justify-end px-3 py-1.5">{control}</div>}
       </div>
       {/* A single number is its table: Table shows the cell. */}
@@ -115,6 +116,15 @@ function TableRows({ table }: { table: LogTable }) {
         )}
       </div>
     </div>
+  )
+}
+
+/** A legend entry's value menu: the entry itself shows and hides its series. */
+function legendValue(field: string, value: SplitValue) {
+  return (
+    <Tag field={field} value={value} label={`Menu for ${field} = ${valueText(value, 40)}`} className="flex h-5 items-center px-0.5 text-muted-foreground hover:text-foreground">
+      <ChevronDown className="h-3 w-3" />
+    </Tag>
   )
 }
 
