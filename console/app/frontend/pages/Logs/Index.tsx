@@ -4,6 +4,7 @@ import { Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { TimeRangePicker } from '@/components/TimeRangePicker'
+import { copyText } from '@/components/copyText'
 import { Button } from '@/components/ui/button'
 import { RunError, fetchHistogram, fetchLogPage, fetchReadableSql, fetchRun, runSql, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import {
@@ -19,6 +20,7 @@ import {
 import {
   chooseViz,
   fillEmptyQuery,
+  linkSearch,
   modesFor,
   openExplorer,
   pickRange,
@@ -29,6 +31,7 @@ import {
   switchMode,
   type Explorer,
   type ExplorerState,
+  type LinkKind,
   type Mode,
   type TimeRange,
   type Viz,
@@ -46,6 +49,7 @@ import type { LogTable } from '@/lib/logs/table'
 import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
 import { BuilderPanel, type ProjectOption } from './components/BuilderPanel'
+import { CopyLink } from './components/CopyLink'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
 import { LogStream } from './components/LogStream'
@@ -426,6 +430,13 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
 
   const closeInspector = useCallback(() => setInspected(null), [])
 
+  /** Copies a link to what ran: as shown, over the range the run used, or live. */
+  const copyLink = (kind: LinkKind) => {
+    const run = currentRun.current
+    const ran = run ?? resolveRange(explorer.current.range, new Date())
+    copyText(window.location.origin + urlOf(linkSearch(explorer.current, kind, ran)), 'Link')
+  }
+
   /** Draws tables another way: the URL keeps it, and nothing runs. */
   const changeViz = (viz: Viz) => {
     const { explorer: next, replace } = chooseViz(latest.current, viz)
@@ -498,6 +509,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
           ) : (
             <span className="flex-1 text-[11px] text-muted-foreground">Ctrl+Enter runs the {sqlMode ? 'SQL' : 'Query'}.</span>
           )}
+          <CopyLink onCopy={copyLink} />
           {running ? (
             <Button variant="outline" size="sm" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
           ) : (

@@ -150,6 +150,19 @@ export function runExplorer(explorer: Explorer): { explorer: Explorer; push: str
   return { explorer: { current: explorer.draft, draft: explorer.draft }, push }
 }
 
+/**
+ * How Copy link writes the range: as shown turns a relative range into the
+ * absolute one the run used, so the link shows the same Logs later; live
+ * keeps it relative, so it shows the Logs of when it is opened.
+ */
+export type LinkKind = 'shown' | 'live'
+
+/** The search of a link to the explorer in `state`, which ran over `ran`. */
+export function linkSearch(state: ExplorerState, kind: LinkKind, ran: { from: Date; to: Date }): string {
+  if (kind === 'live' || state.range.kind === 'absolute') return searchOf(state)
+  return searchOf({ ...state, range: { kind: 'absolute', from: ran.from, to: ran.to } })
+}
+
 function rangeFromParams(params: URLSearchParams): TimeRange {
   const span = params.get('range')
   if (span !== null) return isSpan(span) ? { kind: 'relative', span } : DEFAULT_RANGE
