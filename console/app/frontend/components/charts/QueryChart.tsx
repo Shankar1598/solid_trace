@@ -5,7 +5,7 @@ import type { LabelListEntry, MouseHandlerDataParam } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import {
   chartOf, fadedSpans, formFor, keepColors, keepHidden, legendNotes,
-  type ChartForm, type ChartPoint, type Series, type SeriesChartModel,
+  type ChartForm, type ChartPoint, type Series, type SeriesChartModel, type SplitValue,
 } from '@/lib/charts/series'
 import {
   CHAR_PX, LABEL_PAD_PX, nameChars, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks,
@@ -44,6 +44,11 @@ interface QueryChartProps {
   colors?: ColorSlots
   /** Keeps the series hidden from the last table drawn here; without it, each new table shows every series. */
   hidden?: HiddenSeries
+  /**
+   * A control beside each legend entry that is one Field's value, such as
+   * the explorer's value menu; without it, the legend only shows and hides.
+   */
+  legendValue?: (field: string, value: SplitValue) => React.ReactNode
   className?: string
 }
 
@@ -64,7 +69,7 @@ const TIP_GAP_PX = 4
  * a Query's table is charted, so it takes the table and options, never a
  * page's state.
  */
-export function QueryChart({ table, form, onZoom, actions, colors, hidden, className }: QueryChartProps) {
+export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, className }: QueryChartProps) {
   const model = useMemo(() => {
     const made = chartOf(table)
     if (!colors) return made
@@ -97,6 +102,7 @@ export function QueryChart({ table, form, onZoom, actions, colors, hidden, class
       onHidden={hidden && (ids => { hidden.current = ids })}
       onZoom={onZoom}
       actions={actions}
+      legendValue={legendValue}
       className={className}
     />
   )
@@ -117,13 +123,14 @@ function StatTile({ name, value }: { name: string; value: number | null }) {
 /** The bins a drag has covered, by their points' indexes. */
 type Drag = { start: number; end: number }
 
-function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, className }: {
+function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, className }: {
   model: SeriesChartModel
   form: ChartForm
   initialHidden: ReadonlySet<string>
   onHidden?: (ids: ReadonlySet<string>) => void
   onZoom?: QueryChartProps['onZoom']
   actions?: React.ReactNode
+  legendValue?: QueryChartProps['legendValue']
   className?: string
 }) {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(initialHidden)
@@ -221,7 +228,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, cl
   return (
     <div ref={measure} className={cn('flex flex-col', className)}>
       <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
-        <Legend model={model} form={form} hidden={hidden} onToggle={toggle} />
+        <Legend model={model} form={form} hidden={hidden} onToggle={toggle} legendValue={legendValue} />
         {actions && <div className="ml-auto">{actions}</div>}
       </div>
       <div role="figure" aria-label={chartLabel(model, form)}>
@@ -483,17 +490,25 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, tipWid
  * else the one series' name, as a chart's title. Each wears a key of its mark,
  * a stroke for lines and a block for bars and areas; the text stays in ink.
  */
-function Legend({ model, form, hidden, onToggle }: {
+function Legend({ model, form, hidden, onToggle, legendValue }: {
   model: SeriesChartModel; form: ChartForm; hidden: ReadonlySet<string>; onToggle: (id: string) => void
+  legendValue?: QueryChartProps['legendValue']
 }) {
   const notes = legendNotes(model).map(({ text, why }) => (
     <span key={text} className="text-[11px] text-muted-foreground" title={why}>{text}</span>
   ))
+  // An entry split by one Field's value gets the control for that value.
+  const splits = new Map(model.series.map(s => [s.id, s.split]))
+  const valueControl = (id: string) => {
+    const split = splits.get(id)
+    return legendValue && split?.length === 1 ? legendValue(split[0].field, split[0].value) : null
+  }
 
   if (model.legend.length === 1) {
     return (
       <>
         {model.panels.length === 1 && <span className="truncate text-[11px] text-muted-foreground">{model.legend[0].name}</span>}
+        {valueControl(model.legend[0].id)}
         {notes}
       </>
     )
@@ -503,25 +518,27 @@ function Legend({ model, form, hidden, onToggle }: {
       {model.legend.map(entry => {
         const shown = !hidden.has(entry.id)
         return (
-          <button
-            key={entry.id}
-            type="button"
-            aria-pressed={shown}
-            data-chart-series
-            title={`${shown ? 'Hide' : 'Show'} ${entry.name}`}
-            onClick={() => onToggle(entry.id)}
-            className={cn(
-              // 24px tall on a phone, a target a finger can hit; as dense as the text from sm up.
-              'flex min-h-6 max-w-56 items-center gap-1.5 rounded-sm px-1 text-[11px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring sm:min-h-0',
-              shown ? 'text-foreground' : 'text-muted-foreground line-through',
-            )}
-          >
-            <span
-              className={cn('shrink-0', form === 'line' ? 'h-0.5 w-3 rounded-full' : 'h-2 w-2 rounded-[2px]', !shown && 'opacity-40')}
-              style={{ background: entry.color }}
-            />
-            <span className="truncate">{entry.name}</span>
-          </button>
+          <span key={entry.id} className="flex min-w-0 items-center">
+            <button
+              type="button"
+              aria-pressed={shown}
+              data-chart-series
+              title={`${shown ? 'Hide' : 'Show'} ${entry.name}`}
+              onClick={() => onToggle(entry.id)}
+              className={cn(
+                // 24px tall on a phone, a target a finger can hit; as dense as the text from sm up.
+                'flex min-h-6 max-w-56 items-center gap-1.5 rounded-sm px-1 text-[11px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring sm:min-h-0',
+                shown ? 'text-foreground' : 'text-muted-foreground line-through',
+              )}
+            >
+              <span
+                className={cn('shrink-0', form === 'line' ? 'h-0.5 w-3 rounded-full' : 'h-2 w-2 rounded-[2px]', !shown && 'opacity-40')}
+                style={{ background: entry.color }}
+              />
+              <span className="truncate">{entry.name}</span>
+            </button>
+            {valueControl(entry.id)}
+          </span>
         )
       })}
       {notes}

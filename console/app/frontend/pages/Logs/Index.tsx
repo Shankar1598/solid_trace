@@ -10,6 +10,7 @@ import {
   EMPTY_BUILDER,
   addFilter,
   builderOf,
+  chartField,
   groupBy,
   queryOf,
   type Builder,
@@ -38,7 +39,7 @@ import { binsTime, chartOf } from '@/lib/charts/series'
 import { columnsFromSearch, commonValues, fieldInfos, rememberLogs, toggleColumn, withColumns } from '@/lib/logs/columns'
 import { errorParts } from '@/lib/logs/errorParts'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
-import { pivotQuery, toBuilder } from '@/lib/logs/queryMode'
+import { editAsBuilder, pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
 import { fillStream, keepsFetching, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
 import type { LogTable } from '@/lib/logs/table'
@@ -52,7 +53,7 @@ import { LogTableView, type TableChart } from './components/LogTableView'
 import { ModeSwitch } from './components/ModeSwitch'
 import { QueryBox, type LeavingQuery } from './components/QueryBox'
 import { SqlBox } from './components/SqlBox'
-import { TagMenuProvider, type OnFilter } from './components/TagMenu'
+import { TagMenuProvider, type OnFilter, type OnSummarize } from './components/TagMenu'
 
 interface LogsIndexProps {
   project: ProjectOption
@@ -346,6 +347,22 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     enterBuilder(builder, queryOf(builder, project.slug) !== explorer.current.query)
   }
 
+  /**
+   * Group by or Chart this in Query mode: the Builder's edit of the Query
+   * that ran, so its Summarize changes rather than a second one following it.
+   */
+  const summarizeQuery = (edit: (builder: Builder) => Builder) => {
+    const query = explorer.current.query || projectQuery
+    validateQuery({ orgSlug, projectSlug: project.slug, query })
+      .then(validation => {
+        const next = editAsBuilder(validation, project.slug, edit)
+        if (next === null) return toast.error('Only a Query the Builder can show can be grouped or charted from here. Add a summarize to the Query instead.')
+        setInspected(null)
+        commit(typeQuery(latest.current, next))
+      })
+      .catch((error: Error) => toast.error(error.message))
+  }
+
   /** A pivot in Query mode: a where after the leading filters of the Query that ran. */
   const pivot = (chip: Chip) => {
     // An empty Query reads the Project's Logs, as its slug alone does: the where goes after the slug.
@@ -370,14 +387,14 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   const sqlMode = mode === 'sql'
   const builder = mode === 'builder' && builderView.status === 'ready' ? builderView.builder : null
   let addToQuery: ((chip: Chip) => void) | null = null
-  let groupByField: ((field: string) => void) | null = null
+  let editSummarize: ((edit: (builder: Builder) => Builder) => void) | null = null
   let onLevel: ((level: HistogramLevel) => void) | null = null
   if (builder) {
     addToQuery = chip => changeBuilder(addFilter(builder, chip), true)
     // A Summarize shows a table, which has no Logs to inspect.
-    groupByField = field => {
+    editSummarize = edit => {
       setInspected(null)
-      changeBuilder(groupBy(builder, field), true)
+      changeBuilder(edit(builder), true)
     }
     onLevel = level => {
       const filtered = filterByLevel(builder, level)
@@ -385,12 +402,17 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     }
   } else if (mode === 'query') {
     addToQuery = pivot
+    editSummarize = summarizeQuery
     onLevel = level => {
       if (level !== 'none') pivot({ field: 'level', op: '==', value: level })
     }
   }
   const filterWith = addToQuery
   const onFilter: OnFilter = filterWith && ((kind, field, value) => filterWith({ field, op: kind === 'show' ? '==' : '!=', value }))
+  const summarizeWith = editSummarize
+  const groupByField = summarizeWith && ((field: string) => summarizeWith(b => groupBy(b, field)))
+  const onSummarize: OnSummarize = summarizeWith && ((kind, field, numeric) =>
+    summarizeWith(b => (kind === 'group' ? groupBy(b, field) : chartField(b, field, numeric))))
   const columnControl = { shown: columns, toggle: (field: string) => changeColumns(toggleColumn(columns, field)) }
 
   // The inspector steps through the stream's Logs, newest first.
@@ -531,7 +553,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
         )}
 
         <div className="relative flex-1 min-h-0">
-          <TagMenuProvider onFilter={onFilter} columns={columnControl}>
+          <TagMenuProvider onFilter={onFilter} onSummarize={onSummarize} columns={columnControl}>
             <ResultArea
               result={result}
               sql={sqlMode}

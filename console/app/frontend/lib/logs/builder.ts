@@ -258,6 +258,18 @@ export function groupBy(builder: Builder, field: string): Builder {
   return setSummarize(builder, { aggregates, by })
 }
 
+/**
+ * Chart this: a Summarize that charts a Field over time, in place of any
+ * other. A number's Field charts its average; any other counts Logs by the
+ * Field's values.
+ */
+export function chartField(builder: Builder, field: string, numeric: boolean): Builder {
+  const time: Group = { field: 'time', bin: 'auto' }
+  return setSummarize(builder, numeric
+    ? { aggregates: [{ fn: 'avg', field }], by: [time] }
+    : { aggregates: [{ fn: 'count' }], by: [{ field }, time] })
+}
+
 /** Whether a value can be a chip: Show only this and Hide this need one. */
 export function canFilter(value: unknown): value is ChipValue {
   return typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))
