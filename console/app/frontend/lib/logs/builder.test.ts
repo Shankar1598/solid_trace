@@ -319,11 +319,14 @@ describe('Summarize, sort and limit', () => {
       .toBe('summarize avg(duration_ms) by bin_auto(time)')
   })
 
-  it('keeps by columns of the user\'s own when the last function goes', () => {
+  it('keeps by columns of the user\'s own when the last function goes, but not the time bins a click added', () => {
     const byService = groupBy(EMPTY_BUILDER, 'service')
+    const counted = addAggregate(EMPTY_BUILDER, { fn: 'count' })
+    const countedByService = setSummarize(counted, { ...counted.summarize!, by: [...counted.summarize!.by, { field: 'service' }] })
     const byHour = setSummarize(EMPTY_BUILDER, { aggregates: [{ fn: 'count' }], by: [{ field: 'time', bin: '1h' }] })
 
-    expect(stagesOf(removeAggregate(byService, 0))).toBe('summarize by bin_auto(time), service')
+    expect(stagesOf(removeAggregate(byService, 0))).toBe('summarize by service')
+    expect(stagesOf(removeAggregate(countedByService, 0))).toBe('summarize by service')
     expect(stagesOf(removeAggregate(byHour, 0))).toBe('summarize by bin(time, 1h)')
     expect(removeAggregate(EMPTY_BUILDER, 0)).toEqual(EMPTY_BUILDER)
   })
