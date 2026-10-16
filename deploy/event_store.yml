@@ -32,6 +32,14 @@ parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 #   region: us-east-1          # needed for AWS S3; gcs defaults to auto
 #   endpoint: http://127.0.0.1:9000   # MinIO, R2 and others; set for you for gcs
 #   local_cache_hours: 24      # hours a Log file's local copy stays after upload; 0 allowed
+# MinIO on a development machine, with every exported hour read from it at once:
+# object_store:
+#   kind: s3
+#   bucket: solidtrace-dev
+#   prefix: dev/
+#   region: us-east-1
+#   endpoint: http://127.0.0.1:9000
+#   local_cache_hours: 0
 # Where DuckDB's httpfs extension is, as <version>/<platform>/httpfs.duckdb_extension.
 # The Docker image puts it in the default; DuckDB never downloads extensions itself.
 # duckdb_extension_directory: /usr/local/lib/solidtrace/duckdb_extensions

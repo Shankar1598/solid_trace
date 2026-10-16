@@ -14,4 +14,4 @@ Which Log files exist is recorded in `log_files`, a table in `logs.duckdb`, and 
 - A late file's name comes from the names its hour has in the manifest, tombstones included, so a new file never takes an old one's name.
 - An install from before the manifest gets its rows once, at startup, from the files on disk; a marker row (`log_file_backfill`) records that it is done. A file it can't read is listed with only its size, so its name stays taken and the deleters still delete it.
 - After that, folders are not the record: a file put on disk by hand is ignored, and a backup of the Log files must be restored together with `logs.duckdb`.
-- With a bucket ([ADR 0008](0008-log-parquet-in-a-bucket.md)), a row's `local` and `remote` say where the file's bytes are, and a read takes each file from its local path or its bucket URL.
+- With a bucket ([ADR 0008](0008-log-parquet-in-a-bucket.md)), a row's `local` and `remote` say where the file's bytes are, and a read takes each file from its local path or its bucket URL. A tombstone then stays until the file's object is deleted too.

@@ -30,6 +30,10 @@ Both clouds are reached through the S3 API with aws-sdk-go-v2, GCS through its S
   - a delete of a missing object answers 404 NoSuchKey, which counts as done; any other 404, such as NoSuchBucket, is an error, because nothing was deleted;
   - there is no multi-object delete, so objects are deleted one at a time.
 - **A file is uploaded in a single PUT**, streamed from disk, so a file can be at most 5 GB.
-- **What's left, for later units:** uploads, eviction after `local_cache_hours`, the disk limit's preference for evicting uploaded copies, deleting bucket objects through tombstones, and the Event archive's upload.
+- **Uploads and eviction.** A worker uploads each Log file right after the export publishes it, and at startup any file not yet uploaded; failures are tried again every minute. Cleanup evicts a local copy once its hour ended `local_cache_hours` ago, never while a read has the file pinned. A crash between an upload and marking it uploads the file again at the next start, to the same key with the same bytes; a crash between evicting a copy and marking it is settled at the next start.
+- **Fetching a Log by its id alone reads only local files**, the hot table and late Logs, as it would otherwise read every file in the bucket. With its time, it reads that hour's files wherever they are.
+- **The disk limit evicts uploaded copies first**, oldest first. Only when none is left does it delete Logs, of files not yet uploaded, and it logs an error then: the bucket has been failing.
+- **Deleted files' objects are deleted one at a time**, after the deleter's commit and outside its locks, by the tombstones the deleter left. A tombstone goes only once both copies are gone, so an object that fails to delete is tried again on the next Cleanup pass.
+- **What's left, for later units:** the Event archive's upload.
 
 Source: [Logs v2 spec, Phase 5](../../.scratch/logs-v2/spec.md).
