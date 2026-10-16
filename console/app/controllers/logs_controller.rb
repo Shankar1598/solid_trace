@@ -26,8 +26,8 @@ class LogsController < ApplicationController
 
   def index
     render inertia: "Logs/Index", props: {
-      project: project_props(@project),
-      projects: @current_org.projects.order(:name).map { |p| project_props(p) },
+      project: ProjectOptionSerializer.new(@project).as_json,
+      projects: ProjectOptionSerializer.list(@current_org.projects.order(:name)),
       sql_queries_enabled: InstanceSetting.current.sql_queries_enabled?,
     }
   end
