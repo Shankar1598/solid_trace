@@ -10,6 +10,8 @@ module InertiaShare
         current_org: @current_org&.as_json(only: [ :id, :name, :slug ]),
         # For the command palette, which jumps to any of them from any page.
         org_projects: @current_org&.projects&.order(:name)&.map { |p| { name: p.name, slug: p.slug } },
+        # For the command palette and the explorer's Add to dashboard.
+        org_dashboards: @current_org&.dashboards&.order(:name)&.map { |d| { id: d.id, name: d.name } },
         flash: {
           notice: flash[:notice],
           alert: flash[:alert],

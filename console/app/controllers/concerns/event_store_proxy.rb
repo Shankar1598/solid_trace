@@ -36,17 +36,4 @@ module EventStoreProxy
     end
     render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless @from && @to
   end
-
-  # A Project as the explorer and Dashboards know it. log_retention_days is
-  # how far back its Logs go, its own Retention or the instance's default, so
-  # the time-range picker can turn away longer ranges.
-  def project_props(project)
-    @default_log_retention_days ||= InstanceSetting.current.default_log_retention_days
-    {
-      id: project.id,
-      name: project.name,
-      slug: project.slug,
-      log_retention_days: project.log_retention_days || @default_log_retention_days,
-    }
-  end
 end
