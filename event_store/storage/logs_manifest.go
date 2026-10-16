@@ -86,6 +86,9 @@ type logFile struct {
 	hour time.Time
 	// name is data.parquet or late-<n>.parquet.
 	name string
+	// local says the file's bytes are on local disk. Only a read's listing
+	// sets it (listLogFiles); elsewhere a file is known by its key alone.
+	local bool
 }
 
 // key is the file's logical key, project=<id>/day=<YYYY-MM-DD>/hour=<HH>/<name>,
@@ -152,9 +155,14 @@ type sqlRunner interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// scanLogFiles reads rows of project_id, day, hour and name.
+// scanLogFiles reads rows of project_id, day, hour and name, and local if the
+// rows have it.
 func scanLogFiles(rows *sql.Rows) ([]logFile, error) {
 	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
 	var files []logFile
 	for rows.Next() {
 		var (
@@ -162,7 +170,11 @@ func scanLogFiles(rows *sql.Rows) ([]logFile, error) {
 			day  time.Time
 			hour int
 		)
-		if err := rows.Scan(&file.projectID, &day, &hour, &file.name); err != nil {
+		into := []any{&file.projectID, &day, &hour, &file.name}
+		if len(columns) > len(into) {
+			into = append(into, &file.local)
+		}
+		if err := rows.Scan(into...); err != nil {
 			return nil, err
 		}
 		file.hour = day.UTC().Add(time.Duration(hour) * time.Hour)
@@ -172,13 +184,18 @@ func scanLogFiles(rows *sql.Rows) ([]logFile, error) {
 }
 
 // listLogFiles returns a Project's published files of the hours that start in
-// [from, to), by hour, each hour's in the order they were written.
-func listLogFiles(ctx context.Context, db sqlRunner, projectID uint32, from, to time.Time) (map[time.Time][]logFile, error) {
+// [from, to), or only those on local disk if localOnly, by hour, each hour's
+// in the order they were written.
+func listLogFiles(ctx context.Context, db sqlRunner, projectID uint32, from, to time.Time, localOnly bool) (map[time.Time][]logFile, error) {
+	where := ""
+	if localOnly {
+		where = " AND local"
+	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT `+manifestColumnsOfAKey+` FROM logs.log_files
+		SELECT `+manifestColumnsOfAKey+`, local FROM logs.log_files
 		WHERE project_id = ?
 			AND day + to_hours(CAST(hour AS BIGINT)) >= CAST(? AS TIMESTAMP)
-			AND day + to_hours(CAST(hour AS BIGINT)) < CAST(? AS TIMESTAMP)`,
+			AND day + to_hours(CAST(hour AS BIGINT)) < CAST(? AS TIMESTAMP)`+where,
 		projectID, timestampString(from.UTC().Truncate(time.Hour)), timestampString(to))
 	if err != nil {
 		return nil, fmt.Errorf("list log files: %w", err)
@@ -191,7 +208,7 @@ func listLogFiles(ctx context.Context, db sqlRunner, projectID uint32, from, to 
 // were written. A file whose batch_max is NULL holds none.
 func listLogFilesAfterBatch(ctx context.Context, db sqlRunner, projectID uint32, after uuid.UUID) (map[time.Time][]logFile, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT `+manifestColumnsOfAKey+` FROM logs.log_files
+		SELECT `+manifestColumnsOfAKey+`, local FROM logs.log_files
 		WHERE project_id = ? AND batch_max > CAST(? AS UUID)`,
 		projectID, after.String())
 	if err != nil {
@@ -200,8 +217,8 @@ func listLogFilesAfterBatch(ctx context.Context, db sqlRunner, projectID uint32,
 	return scanLogFilesByHour(rows)
 }
 
-// scanLogFilesByHour reads rows of project_id, day, hour and name into the
-// files of each hour, in the order they were written.
+// scanLogFilesByHour reads rows of project_id, day, hour, name and local into
+// the files of each hour, in the order they were written.
 func scanLogFilesByHour(rows *sql.Rows) (map[time.Time][]logFile, error) {
 	files, err := scanLogFiles(rows)
 	if err != nil {
@@ -220,7 +237,7 @@ func scanLogFilesByHour(rows *sql.Rows) (map[time.Time][]logFile, error) {
 // in the order they were written.
 func (s *LogStore) HourFiles(projectID uint32, t time.Time) ([]string, error) {
 	hour := t.UTC().Truncate(time.Hour)
-	files, err := listLogFiles(context.Background(), s.db, projectID, hour, hour.Add(time.Hour))
+	files, err := listLogFiles(context.Background(), s.db, projectID, hour, hour.Add(time.Hour), false)
 	if err != nil {
 		return nil, err
 	}
@@ -341,10 +358,13 @@ func tombstoneLogFiles(ctx context.Context, conn *sql.Conn, reason, where string
 	return nil
 }
 
-// deleteTombstonedFiles deletes the bytes of every tombstoned file that no
-// read has pinned, then its tombstone. A pinned one stays for a later pass,
-// and is returned. No read pins a tombstoned file anew, as none sees its row
-// any more, so this needs no publishMu. The caller holds writeMu.
+// deleteTombstonedFiles deletes the local bytes of every tombstoned file that
+// no read has pinned, then its tombstone, unless a bucket may hold the file
+// too: then deleteTombstonedObjects, which the caller runs after releasing
+// writeMu, deletes its object and its tombstone. A pinned one stays for a
+// later pass, and is returned. No read pins a tombstoned file anew, as none
+// sees its row any more, so this needs no publishMu. The caller holds
+// writeMu.
 func (s *LogStore) deleteTombstonedFiles() (pinned []logFile, err error) {
 	ctx := context.Background()
 	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT "+manifestColumnsOfAKey+" FROM logs.log_file_deletions")
@@ -370,13 +390,10 @@ func (s *LogStore) deleteTombstonedFiles() (pinned []logFile, err error) {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return nil, errors.Join(fmt.Errorf("delete %s: %w", path, err), s.dropTombstones(deleted))
 		}
-		// Each folder goes once it is empty.
-		for dir := filepath.Dir(path); dir != filepath.Clean(s.files.Dir); dir = filepath.Dir(dir) {
-			if os.Remove(dir) != nil {
-				break
-			}
+		s.removeEmptyFolders(path)
+		if s.bucket == nil {
+			deleted = append(deleted, file)
 		}
-		deleted = append(deleted, file)
 	}
 	return pinned, s.dropTombstones(deleted)
 }

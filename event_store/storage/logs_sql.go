@@ -65,7 +65,7 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 	if !to.After(from) {
 		to = from
 	}
-	read, err := s.beginRead(ctx, projectID, from, to)
+	read, err := s.beginRead(ctx, projectID, from, to, false)
 	if err != nil {
 		return SQLResult{}, err
 	}
