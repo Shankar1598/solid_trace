@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TooltipContent } from '@/components/ui/tooltip'
+import { useShortcut } from '@/components/useShortcut'
 import { fetchLog } from '@/lib/logs/api'
 import { canFilter, type Chip, type FilterOp } from '@/lib/logs/builder'
 import { inspectorFields, inspectorJson, jsonLines, localTime, utcTime, type InspectorField, type JsonLine } from '@/lib/logs/inspector'
@@ -94,17 +95,10 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, actions, onNew
     return () => controller.abort()
   }, [orgSlug, projectSlug, listed.id, listed.time])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return
-      if (e.key === 'Escape') return onClose()
-      if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement | null)?.closest('input, textarea, select, [contenteditable]')) return
-      if (e.key === 'k') onNewer?.()
-      else if (e.key === 'j') onOlder?.()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, onNewer, onOlder])
+  // Esc closes it; k and j step to the newer and older Log.
+  useShortcut('close', onClose)
+  useShortcut('newer', onNewer)
+  useShortcut('older', onOlder)
 
   const utc = utcTime(log.time)
   const level = log.level ?? ''

@@ -1,8 +1,10 @@
 import { Component, Suspense, lazy, useEffect, useRef, type ReactNode } from 'react'
 import type { QueryProblem } from '@/lib/logs/api'
 import type { CompletionSources } from '@/lib/logs/completions'
+import type { ShortcutId } from '@/lib/shortcuts'
 import { cn } from '@/lib/utils'
 import { LINE_HEIGHT, PADDING_Y } from './editor/size'
+import { useShortcut } from './useShortcut'
 
 // CodeMirror loads on its own, so the page paints without waiting for it.
 const CodeEditor = lazy(() => import('./editor/CodeEditor'))
@@ -24,6 +26,8 @@ export interface QueryEditorProps {
   /** The box grows with its text up to this many lines, then scrolls. */
   maxLines: number
   autoFocus?: boolean
+  /** A shortcut that focuses it with the cursor at the end, such as / for the explorer's Query. */
+  focusShortcut?: ShortcutId
   /** The id of the text that describes the box, such as its mistakes. */
   describedBy?: string
   className?: string
@@ -72,15 +76,19 @@ class Unloaded extends Component<{ fallback: ReactNode; children: ReactNode }, {
 }
 
 /** A plain text box in the editor's place: no colours or completions, but it edits, runs and leaves the same keys. */
-function PlainEditor({ value, onChange, onRun, label, placeholder, maxLines, autoFocus, describedBy }: QueryEditorProps) {
+function PlainEditor({ value, onChange, onRun, label, placeholder, maxLines, autoFocus, focusShortcut, describedBy }: QueryEditorProps) {
   const box = useRef<HTMLTextAreaElement>(null)
   // As the editor does: focused with the cursor at the end.
-  useEffect(() => {
-    if (!autoFocus || !box.current) return
+  const focusAtEnd = () => {
+    if (!box.current) return false
     box.current.focus()
     box.current.setSelectionRange(box.current.value.length, box.current.value.length)
+  }
+  useEffect(() => {
+    if (autoFocus) focusAtEnd()
     // On mount only, as the editor.
   }, [])
+  useShortcut(focusShortcut ?? 'focus-query', focusShortcut ? focusAtEnd : null)
   return (
     <textarea
       ref={box}

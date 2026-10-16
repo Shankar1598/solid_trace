@@ -22,6 +22,17 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
+  test "every page shares the Organization's Projects for the command palette" do
+    create(:project, organization: @organization, name: "Backoffice")
+    create(:project, organization: create(:organization), name: "Elsewhere")
+
+    get projects_url(org_slug: @organization.slug), headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+
+    projects = JSON.parse(response.body)["props"]["org_projects"]
+    assert_equal [ "Backoffice", @project.name ].sort, projects.map { |p| p["name"] }
+    assert_includes projects, { "name" => @project.name, "slug" => @project.slug }
+  end
+
   test "show returns success" do
     get project_url(@project, org_slug: @organization.slug)
 

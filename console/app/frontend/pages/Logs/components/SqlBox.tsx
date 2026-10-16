@@ -23,6 +23,7 @@ export function SqlBox({ text, onChange, onRun, leaving, onDiscard, onStay }: Sq
         placeholder="SELECT level, count(*) FROM logs GROUP BY level"
         maxLines={12}
         autoFocus
+        focusShortcut="focus-query"
       />
       <div className="mt-0.5 text-[11px] text-muted-foreground">
         <code>logs</code> holds the Logs of the Project and time range above. SQL runs as written, only when you press Run.

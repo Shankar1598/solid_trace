@@ -38,6 +38,7 @@ export function QueryBox({ projectSlug, text, onChange, onRun, problems, complet
         completions={completions}
         maxLines={8}
         autoFocus
+        focusShortcut="focus-query"
         describedBy={problems.length > 0 ? 'query-problems' : undefined}
       />
       {problems.length > 0 && (

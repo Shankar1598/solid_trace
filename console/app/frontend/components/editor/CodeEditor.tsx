@@ -9,6 +9,7 @@ import { setDiagnostics } from '@codemirror/lint'
 import { Annotation, Compartment, EditorState, Prec } from '@codemirror/state'
 import { EditorView, highlightSpecialChars, keymap, placeholder, tooltips } from '@codemirror/view'
 import type { QueryEditorProps } from '../QueryEditor'
+import { useShortcut } from '../useShortcut'
 import { LINE_HEIGHT, PADDING_Y } from './size'
 import { diagnostics, highlightStyle, optionClass, queryLanguage, querySource } from './queryLanguage'
 
@@ -88,6 +89,13 @@ export default function CodeEditor(props: QueryEditorProps) {
     }
     // One editor per mount: the value and mistakes follow below.
   }, [])
+
+  useShortcut(props.focusShortcut ?? 'focus-query', props.focusShortcut ? () => {
+    const editor = view.current
+    if (!editor) return false
+    editor.focus()
+    editor.dispatch({ selection: { anchor: editor.state.doc.length } })
+  } : null)
 
   // A value set from outside, such as Back or a pivot, replaces the text.
   useEffect(() => {

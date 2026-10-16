@@ -3,6 +3,7 @@ import { Popover } from '@base-ui/react/popover'
 import { ChevronDown, ChevronLeft, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useShortcut } from '@/components/useShortcut'
 import {
   addAggregate,
   aggregateText,
@@ -28,6 +29,7 @@ import {
 } from '@/lib/logs/builder'
 import type { FieldInfo } from '@/lib/logs/columns'
 import { fieldOptions, listFragment, listParts, narrow, toggleListValue, valueOptions, type PickOption } from '@/lib/logs/pick'
+import type { ShortcutId } from '@/lib/shortcuts'
 import { cn } from '@/lib/utils'
 import { MenuList, OptionList, PickList, useHighlight } from './PickList'
 import { valueText } from './TagMenu'
@@ -99,7 +101,7 @@ export function BuilderPanel({ builder, project, projects, onProject, fields, va
               <FilterText chip={chip} />
             </Clause>
           ))}
-          <Add label="Add a filter" editor={close => (
+          <Add label="Add a filter" shortcut="focus-query" editor={close => (
             <FilterEditor onApply={c => { close(); onChange(setFilter(builder, builder.filters.length, c)) }} />
           )} />
         </Row>
@@ -267,8 +269,10 @@ function Clause({ title, editor, onRemove, children }: {
   )
 }
 
-function Add({ label, editor }: { label: string; editor: (close: () => void) => React.ReactNode }) {
+/** A + that opens a clause's editor; `shortcut` opens it from the keyboard too. */
+function Add({ label, shortcut, editor }: { label: string; shortcut?: ShortcutId; editor: (close: () => void) => React.ReactNode }) {
   const [open, setOpen] = useState(false)
+  useShortcut(shortcut ?? 'focus-query', shortcut ? () => setOpen(true) : null)
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
