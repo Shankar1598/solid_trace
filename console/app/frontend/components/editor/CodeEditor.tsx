@@ -29,20 +29,20 @@ export default function CodeEditor(props: QueryEditorProps) {
 
   useEffect(() => {
     const { value, language, label, placeholder: hint, maxLines, describedBy } = latest.current
+    const runQuery = (v: EditorView) => {
+      closeCompletion(v)
+      latest.current.onRun()
+      return true
+    }
     const editor = new EditorView({
       parent: host.current!,
       state: EditorState.create({
         doc: value,
         extensions: [
+          // Ctrl+Enter runs everywhere, as the bar's hint says, and so does Cmd+Enter on a Mac.
           Prec.highest(keymap.of([
-            {
-              key: 'Mod-Enter',
-              run: v => {
-                closeCompletion(v)
-                latest.current.onRun()
-                return true
-              },
-            },
+            { key: 'Mod-Enter', run: runQuery },
+            { mac: 'Ctrl-Enter', run: runQuery },
           ])),
           // Escape closes completions first (autocompletion's keymap comes before this), then leaves the editor.
           keymap.of([
