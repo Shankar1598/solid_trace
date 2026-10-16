@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"net/url"
+	"runtime"
 	"strings"
 
 	"github.com/solidtrace/event_store/config"
@@ -12,12 +13,21 @@ import (
 // bucketSecret is the name of the DuckDB secret that reads the bucket.
 const bucketSecret = "solidtrace_bucket"
 
+// remoteReadThreads is how many DuckDB threads each CPU gets while a bucket
+// is configured.
+const remoteReadThreads = 4
+
 // UseBucket lets every pooled connection read the bucket's s3:// URLs
 // (ObjectStore.URL). It loads httpfs from extensionDir, where the Docker
 // image puts it, with DuckDB never installing or loading an extension by
 // itself; makes the bucket's secret, in memory only; and turns on the caches
 // for remote Parquet: footers, HTTP metadata and file ranges. The caches
 // stay within memory_limit.
+//
+// It also gives DuckDB remoteReadThreads threads for each CPU, not one:
+// httpfs holds a thread for each request it waits on, so threads cap the
+// requests in flight. The object-store probe's cold 7-day chart took 1.9 s
+// at 16 threads on 4 CPUs, and 5.2 s at 4.
 //
 // Call it once, right after NewDuckDBWriter, and only when a bucket is
 // configured: without one, nothing changes.
@@ -49,6 +59,7 @@ func (w *DuckDBWriter) UseBucket(store *config.ObjectStore, extensionDir string)
 		"SET GLOBAL parquet_metadata_cache = true",
 		"SET GLOBAL enable_http_metadata_cache = true",
 		"SET GLOBAL enable_external_file_cache = true",
+		fmt.Sprintf("SET GLOBAL threads = %d", remoteReadThreads*runtime.NumCPU()),
 	} {
 		if _, err := w.db.Exec(setting); err != nil {
 			return fmt.Errorf("%s: %w", setting, err)
