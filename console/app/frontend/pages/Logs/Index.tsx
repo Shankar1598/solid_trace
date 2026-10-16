@@ -46,6 +46,7 @@ import { editAsBuilder, pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
 import { fillStream, keepsFetching, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
 import type { LogTable } from '@/lib/logs/table'
+import { browserStorage, recordQuery } from '@/lib/recentQueries'
 import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
 import { BuilderPanel, type ProjectOption } from './components/BuilderPanel'
@@ -136,6 +137,10 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     const run: Run = { controller: new AbortController(), query: state.query, ...resolveRange(state.range, new Date()) }
     currentRun.current = run
     setResult({ status: 'running' })
+    // Each run of a Query is a recent one; the Project's Logs unfiltered are not.
+    if (state.mode !== 'sql' && state.query !== '' && state.query !== projectQuery) {
+      recordQuery(browserStorage(), orgSlug, project.slug, { query: state.query, search: searchOf(state), at: Date.now() })
+    }
 
     // SQL answers a table, and has no histogram.
     if (state.mode === 'sql') {
@@ -174,7 +179,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
         setResult({ status: 'error', message: error.message })
         if (error instanceof RunError && error.problems.length > 0) setProblems(error.problems)
       })
-  }, [orgSlug, project.slug, fill])
+  }, [orgSlug, project.slug, projectQuery, fill])
 
   useEffect(() => {
     if (runsOnOpen(explorer)) start(explorer.current)
