@@ -4,6 +4,8 @@
 # The page runs its Queries through #query, which proxies EventStore's query
 # app, so the browser never talks to EventStore.
 class LogsController < ApplicationController
+  include EventStoreProxy
+
   layout "dashboard"
 
   LOG_ID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
@@ -11,10 +13,6 @@ class LogsController < ApplicationController
   before_action :set_organization
   before_action :set_project, except: :start
   before_action :set_time_range, only: %i[query histogram readable_sql sql]
-
-  rescue_from EventStore::SQLQueriesOff, with: :sql_queries_off
-  rescue_from EventStore::Rejected, with: :eventstore_rejected
-  rescue_from EventStore::Unavailable, with: :eventstore_unavailable
 
   # The sidebar's Logs entry: the newest Project's explorer.
   def start
@@ -98,47 +96,11 @@ class LogsController < ApplicationController
 
   private
 
-  def sql_queries_off(error)
-    render json: { error: error.message }, status: :forbidden
-  end
-
-  def eventstore_rejected(error)
-    render json: error.body, status: :bad_request
-  end
-
-  def eventstore_unavailable(error)
-    Rails.logger.error(error.message)
-    render json: { error: "EventStore is unavailable. Try again shortly." }, status: :bad_gateway
-  end
-
   def set_organization
     @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
   end
 
   def set_project
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
-  end
-
-  # The from and to (ISO 8601) of a request that reads a time range.
-  def set_time_range
-    @from, @to = [ params[:from], params[:to] ].map do |value|
-      Time.iso8601(value.to_s)
-    rescue ArgumentError
-      nil
-    end
-    render json: { error: "from and to must be ISO 8601 times" }, status: :bad_request unless @from && @to
-  end
-
-  # A Project as the explorer knows it. log_retention_days is how far back its
-  # Logs go, its own Retention or the instance's default, so the time-range
-  # picker can turn away longer ranges.
-  def project_props(project)
-    @default_log_retention_days ||= InstanceSetting.current.default_log_retention_days
-    {
-      id: project.id,
-      name: project.name,
-      slug: project.slug,
-      log_retention_days: project.log_retention_days || @default_log_retention_days,
-    }
   end
 end
