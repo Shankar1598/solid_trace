@@ -1,6 +1,7 @@
 import { Link, usePage } from '@inertiajs/react'
-import { List, GitMerge, Settings, LogOut, ScrollText, Search } from 'lucide-react'
+import { List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { navSection } from '@/lib/nav'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
 import { usePaletteOpener } from './CommandPalette'
@@ -17,31 +18,13 @@ export function Sidebar({ className }: SidebarProps) {
 
   if (!current_org) return null
 
+  const section = navSection(url)
   const navItems = [
-    {
-      label: 'Issues',
-      href: `/${current_org.slug}/issues`,
-      icon: List,
-      active: url.endsWith('/issues') || url.includes('/issues/') || url.includes('/issues?')
-    },
-    {
-      label: 'Logs',
-      href: `/${current_org.slug}/logs`,
-      icon: ScrollText,
-      active: /\/logs(\/|\?|$)/.test(url)
-    },
-    {
-      label: 'Projects',
-      href: `/${current_org.slug}/projects`,
-      icon: GitMerge,
-      active: url.includes('/projects') && !url.includes('/issues') && !/\/logs(\/|\?|$)/.test(url)
-    },
-    {
-      label: 'Settings',
-      href: `/${current_org.slug}/settings/organization`,
-      icon: Settings,
-      active: url.includes('/settings')
-    }
+    { label: 'Issues', href: `/${current_org.slug}/issues`, icon: List, active: section === 'issues' },
+    { label: 'Logs', href: `/${current_org.slug}/logs`, icon: ScrollText, active: section === 'logs' },
+    { label: 'Dashboards', href: `/${current_org.slug}/dashboards`, icon: LayoutDashboard, active: section === 'dashboards' },
+    { label: 'Projects', href: `/${current_org.slug}/projects`, icon: GitMerge, active: section === 'projects' },
+    { label: 'Settings', href: `/${current_org.slug}/settings/organization`, icon: Settings, active: section === 'settings' },
   ]
 
   return (

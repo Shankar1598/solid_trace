@@ -19,6 +19,7 @@ export interface PaletteItem {
 export interface PaletteContext {
   orgSlug: string
   projects: { name: string; slug: string }[]
+  dashboards: { id: number; name: string }[]
 }
 
 export type PaletteSource = (context: PaletteContext) => PaletteItem[]

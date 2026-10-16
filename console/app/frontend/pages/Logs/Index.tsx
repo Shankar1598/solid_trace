@@ -7,6 +7,7 @@ import { TimeRangePicker } from '@/components/TimeRangePicker'
 import { copyText } from '@/components/copyText'
 import { useShortcut } from '@/components/useShortcut'
 import { Button } from '@/components/ui/button'
+import { vizOfForm } from '@/lib/dashboards/dashboard'
 import { RunError, fetchHistogram, fetchLogPage, fetchReadableSql, fetchRun, runSql, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import {
   EMPTY_BUILDER,
@@ -52,6 +53,7 @@ import { browserStorage, recordQuery } from '@/lib/recentQueries'
 import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
 import { BuilderPanel, type ProjectOption } from './components/BuilderPanel'
+import { AddToDashboard } from './components/AddToDashboard'
 import { CopyLink } from './components/CopyLink'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
@@ -464,7 +466,12 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   // and a series hidden from the legend stays hidden.
   const colorSlots = useRef<ReadonlyMap<string, number>>(new Map())
   const hiddenSeries = useRef<ReadonlySet<string>>(new Set())
-  const tableChart: TableChart = { viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange, colors: colorSlots, hidden: hiddenSeries }
+  // Add to dashboard saves the Query that ran, drawn as shown; SQL isn't a Query, so it has none.
+  const ranQuery = explorer.current.query
+  const tableChart: TableChart = {
+    viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange, colors: colorSlots, hidden: hiddenSeries,
+    beside: sqlMode ? undefined : shown => <AddToDashboard projectId={project.id} query={ranQuery} viz={vizOfForm(shown)} />,
+  }
 
   // A table over time stands in for the histogram strip, as in Axiom, shown
   // as a chart or as Table alike, so the switch never moves under the

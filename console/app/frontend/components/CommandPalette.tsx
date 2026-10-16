@@ -10,7 +10,7 @@ import { copyText } from './copyText'
 import { ShortcutSheet } from './ShortcutSheet'
 import { useShortcut } from './useShortcut'
 
-// The layout's own items: recent Queries, each Project's Logs and the pages.
+// The layout's own items: recent Queries, each Project's Logs, each Dashboard and the pages.
 registerPaletteSource('recent-queries', ({ orgSlug, projects }) => {
   if (!orgSlug) return []
   const names = new Map(projects.map(p => [p.slug, p.name]))
@@ -27,8 +27,13 @@ registerPaletteSource('logs', ({ orgSlug, projects }) => projects.map(p => ({
   id: `logs/${p.slug}`, group: 'Logs', label: p.name, detail: 'Logs', href: `/${orgSlug}/projects/${p.slug}/logs`,
 })))
 
+registerPaletteSource('dashboards', ({ orgSlug, dashboards }) => dashboards.map(d => ({
+  id: `dashboard/${d.id}`, group: 'Dashboards', label: d.name, detail: 'Dashboard', href: `/${orgSlug}/dashboards/${d.id}`,
+})))
+
 registerPaletteSource('pages', ({ orgSlug }) => (orgSlug ? [
   { id: 'page/issues', group: 'Pages', label: 'Issues', href: `/${orgSlug}/issues` },
+  { id: 'page/dashboards', group: 'Pages', label: 'Dashboards', href: `/${orgSlug}/dashboards` },
   { id: 'page/projects', group: 'Pages', label: 'Projects', href: `/${orgSlug}/projects` },
   { id: 'page/settings', group: 'Pages', label: 'Settings', href: `/${orgSlug}/settings/organization` },
 ] : []))
@@ -57,7 +62,11 @@ export function CommandPalette({ children }: { children: React.ReactNode }) {
     { id: 'action/shortcuts', group: 'Actions', label: 'Show shortcuts', detail: '?', run: () => setSheet(true) },
   ]), [])
 
-  const context: PaletteContext = { orgSlug: props.current_org?.slug ?? '', projects: props.org_projects ?? [] }
+  const context: PaletteContext = {
+    orgSlug: props.current_org?.slug ?? '',
+    projects: props.org_projects ?? [],
+    dashboards: props.org_dashboards ?? [],
+  }
   return (
     <OpenPalette.Provider value={() => setOpen(true)}>
       {children}
@@ -101,7 +110,7 @@ function PaletteDialog({ open, onOpenChange, context }: { open: boolean; onOpenC
         >
           <Combobox.Input
             aria-label="Search the palette"
-            placeholder="Jump to a Project's Logs, a page, a recent Query or an action…"
+            placeholder="Jump to a Project's Logs, a Dashboard, a page, a recent Query or an action…"
             className="h-10 w-full border-b bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
           />
           <Combobox.Empty className="p-4 text-center text-xs text-muted-foreground empty:p-0">Nothing matches.</Combobox.Empty>
