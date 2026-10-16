@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nameChars, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from './axis'
+import { nameChars, optionsText, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from './axis'
 
 const at = (time: string) => new Date(time).getTime()
 
@@ -129,6 +129,14 @@ describe('values in a tooltip or a stat tile', () => {
     expect(statText(19_183)).toBe('19,183')
     expect(statText(0.004)).toBe('0.004')
     expect(statText(4_213_000)).toBe('4.21M')
+  })
+
+  it('read with a Dashboard chart\'s unit and decimals', () => {
+    expect(optionsText(1234.5678, { unit: 'ms' })).toBe('1,234.57 ms')
+    expect(optionsText(1234.5678, { decimals: 0 })).toBe('1,235')
+    expect(optionsText(12, { decimals: 1, unit: '%' })).toBe('12.0%')
+    expect(optionsText(4_213_000, {}, statText)).toBe('4.21M')
+    expect(optionsText(4_213_000, { decimals: 0 }, statText)).toBe('4,213,000')
   })
 })
 

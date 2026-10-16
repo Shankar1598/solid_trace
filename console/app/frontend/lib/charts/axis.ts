@@ -135,6 +135,21 @@ export function statText(value: number): string {
     : valueText(value)
 }
 
+/** How a Dashboard chart reads its values: a fixed number of decimals and a unit after them. */
+export interface ValueOptions {
+  unit?: string
+  decimals?: number
+}
+
+/** A value read with a chart's options: `decimals` fixed, else as `plain` reads it, then the unit (`%` close up). */
+export function optionsText(value: number, options: ValueOptions, plain: (value: number) => string = valueText): string {
+  const text = options.decimals === undefined
+    ? plain(value)
+    : numberFormat({ minimumFractionDigits: options.decimals, maximumFractionDigits: options.decimals }).format(value)
+  if (!options.unit) return text
+  return options.unit === '%' ? `${text}%` : `${text} ${options.unit}`
+}
+
 /** The power of ten of a number's leading digit: 2 for 250, -2 for 0.025. */
 function leadingDigit(n: number): number {
   return Number(Number(n.toPrecision(12)).toExponential().split('e')[1])
