@@ -264,7 +264,7 @@ function JsonView({ log, actions }: { log: Log; actions: InspectorActions }) {
         <IconButton label="Unfold all" onClick={() => setFolded(new Set())}><ChevronsUpDown /></IconButton>
         <IconButton label="Fold all" onClick={() => setFolded(new Set(lines.flatMap((_, i) => (foldable(i) ? [i] : []))))}><ChevronsDownUp /></IconButton>
         <IconButton label={wrap ? 'Don\'t wrap lines' : 'Wrap lines'} pressed={wrap} onClick={() => setWrap(w => !w)}><WrapText /></IconButton>
-        <IconButton label="Copy the JSON" onClick={() => copy(inspectorJson(log))}><Copy /></IconButton>
+        <IconButton label="Copy the JSON" onClick={() => copy(inspectorJson(log), 'JSON')}><Copy /></IconButton>
         <IconButton label="Download the JSON" onClick={() => download(log)}><Download /></IconButton>
       </div>
       <div className="min-h-0 flex-1 overflow-auto py-1 font-mono">{rows}</div>

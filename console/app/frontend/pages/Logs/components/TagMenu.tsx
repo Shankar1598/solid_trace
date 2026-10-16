@@ -1,7 +1,7 @@
 import { createContext, useContext, useState } from 'react'
 import { Menu as MenuPrimitive } from '@base-ui/react/menu'
 import { ChartLine, Columns3, Copy, Filter, FilterX, Group } from 'lucide-react'
-import { toast } from 'sonner'
+import { copyText } from '@/components/copyText'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -131,9 +131,7 @@ export function valueText(value: AttributeValue, max = Infinity): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
-/** Copies a value as text, saying whether it worked. */
-export function copy(value: AttributeValue) {
-  navigator.clipboard?.writeText(valueText(value))
-    .then(() => toast.success('Copied'))
-    .catch(() => toast.error('Could not copy the value'))
+/** Copies a value as text, saying whether it worked: "<what> copied". */
+export function copy(value: AttributeValue, what = 'Value') {
+  copyText(valueText(value), what)
 }

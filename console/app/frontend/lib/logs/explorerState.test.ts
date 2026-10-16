@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   chooseViz,
   fillEmptyQuery,
+  linkSearch,
   openExplorer,
   pickRange,
   resolveRange,
@@ -303,5 +304,29 @@ describe('history entries', () => {
     b.back()
 
     expect(b.explorer.current).toMatchObject({ mode: 'query', query: 'search "boom"' })
+  })
+})
+
+describe('Copy link', () => {
+  const ran = { from: new Date('2026-10-16T09:00:00Z'), to: new Date('2026-10-16T10:00:00Z') }
+  const state = stateFromSearch('?range=1h&mode=query&q=logs+%7C+where+level+%3D%3D+%22error%22&viz=bars')
+
+  it('as shown, turns a relative range into the absolute one the run used', () => {
+    const shown = stateFromSearch(linkSearch(state, 'shown', ran))
+    expect(shown).toEqual({ ...state, range: { kind: 'absolute', ...ran } })
+    expect(linkSearch(state, 'shown', ran)).toBe(
+      '?from=2026-10-16T09%3A00%3A00.000Z&to=2026-10-16T10%3A00%3A00.000Z&mode=query&q=logs+%7C+where+level+%3D%3D+%22error%22&viz=bars',
+    )
+  })
+
+  it('live, keeps the range relative', () => {
+    expect(linkSearch(state, 'live', ran)).toBe(searchOf(state))
+    expect(stateFromSearch(linkSearch(state, 'live', ran)).range).toEqual({ kind: 'relative', span: '1h' })
+  })
+
+  it('keeps an absolute range as it is, either way', () => {
+    const fixed = { ...state, range: { kind: 'absolute' as const, from: new Date('2026-10-01T00:00:00Z'), to: new Date('2026-10-02T00:00:00Z') } }
+    expect(linkSearch(fixed, 'shown', ran)).toBe(searchOf(fixed))
+    expect(linkSearch(fixed, 'live', ran)).toBe(searchOf(fixed))
   })
 })
