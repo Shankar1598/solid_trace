@@ -5,6 +5,7 @@ class Project < ApplicationRecord
   has_many :issues, dependent: :destroy
   has_many :issue_fingerprints, dependent: :destroy
   has_many :project_keys, dependent: :destroy
+  has_many :dashboard_charts, dependent: :destroy
 
   before_validation :generate_slug, on: :create
 

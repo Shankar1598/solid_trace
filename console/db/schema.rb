@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_02_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_17_090000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -56,6 +56,36 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_130000) do
     t.datetime "updated_at", null: false
     t.index ["issue_id"], name: "index_comments_on_issue_id"
     t.index ["organization_user_id"], name: "index_comments_on_organization_user_id"
+  end
+
+  create_table "dashboard_charts", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "dashboard_id", null: false
+    t.integer "h", default: 4, null: false
+    t.json "options", default: {}, null: false
+    t.integer "project_id", null: false
+    t.text "query", null: false
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.string "viz", default: "line", null: false
+    t.integer "w", default: 6, null: false
+    t.integer "x", default: 0, null: false
+    t.integer "y", default: 0, null: false
+    t.index ["dashboard_id"], name: "index_dashboard_charts_on_dashboard_id"
+    t.index ["project_id"], name: "index_dashboard_charts_on_project_id"
+  end
+
+  create_table "dashboards", force: :cascade do |t|
+    t.string "auto_refresh", default: "off", null: false
+    t.datetime "created_at", null: false
+    t.integer "created_by_id"
+    t.string "default_range", default: "1h", null: false
+    t.text "description"
+    t.string "name", null: false
+    t.integer "organization_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["created_by_id"], name: "index_dashboards_on_created_by_id"
+    t.index ["organization_id"], name: "index_dashboards_on_organization_id"
   end
 
   create_table "instance_settings", force: :cascade do |t|
@@ -196,6 +226,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_130000) do
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "comments", "issues"
   add_foreign_key "comments", "organizations_users", column: "organization_user_id"
+  add_foreign_key "dashboard_charts", "dashboards"
+  add_foreign_key "dashboard_charts", "projects"
+  add_foreign_key "dashboards", "organizations"
+  add_foreign_key "dashboards", "users", column: "created_by_id", on_delete: :nullify
   add_foreign_key "integrations", "organizations"
   add_foreign_key "issue_fingerprints", "issues"
   add_foreign_key "issue_fingerprints", "projects"
