@@ -19,6 +19,18 @@ class EventStore
     end
   end
 
+  # EventStore stopped a run at the timeout_seconds it was given: a 504 whose
+  # JSON body says so. An Unavailable, so callers that give no timeout treat
+  # it as any other failure.
+  class TimedOut < Unavailable
+    attr_reader :body
+
+    def initialize(body)
+      @body = body
+      super("EventStore stopped the run at its timeout: #{body}")
+    end
+  end
+
   # SQL queries are off on this instance (InstanceSetting#sql_queries_enabled),
   # so Console refuses them before asking EventStore, and EventStore refuses
   # them too (ADR 0003).
@@ -27,6 +39,10 @@ class EventStore
       super
     end
   end
+
+  # How much longer than a run's timeout_seconds Console waits for EventStore
+  # to answer.
+  TIMEOUT_GRACE_SECONDS = 5
 
   # The event store's query API, which listens on loopback only.
   def self.base_url
@@ -68,13 +84,18 @@ class EventStore
     end
 
     # One page of a Project's Logs that match a Query in [from, to), newest
-    # first: {"logs" => [...], "next_cursor" => String | nil}. Pass a page's
-    # next_cursor as cursor for the page of older Logs.
-    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil)
+    # first: {"logs" => [...], "next_cursor" => String | nil}, or a tabular
+    # Query's {"table" => {...}}. Pass a page's next_cursor as cursor for the
+    # page of older Logs. With timeout_seconds, EventStore stops the run after
+    # that long and this raises TimedOut; Console waits a little longer, so
+    # EventStore's answer comes first.
+    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil, timeout_seconds: nil)
       body = { query: query, from: utc(from), to: utc(to) }
       body[:cursor] = cursor if cursor.present?
       body[:limit] = limit if limit
-      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: nil)
+      body[:timeout_seconds] = timeout_seconds if timeout_seconds
+      read_timeout = timeout_seconds && (timeout_seconds + TIMEOUT_GRACE_SECONDS)
+      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout)
     end
 
     # Counts the Logs in [from, to) that pass a Query's filters, per bucket
@@ -127,8 +148,8 @@ class EventStore
       time.utc.iso8601(3)
     end
 
-    # Pass read_timeout: nil for a run, which waits as long as its Query takes:
-    # v1 has no per-query timeouts. Opening the connection still times out.
+    # Pass read_timeout: nil for a run with no timeout_seconds, which waits as
+    # long as its Query takes. Opening the connection still times out.
     # Pass sql: true for a SQL endpoint, whose 403 means SQL queries are off.
     def post!(url, body, sql: false, **timeouts)
       response = RestClient::Request.execute(
@@ -142,6 +163,8 @@ class EventStore
       raise SQLQueriesOff if sql
 
       raise Unavailable, "EventStore error: 403 - #{e.response&.body}"
+    rescue RestClient::GatewayTimeout => e
+      raise TimedOut, parse_body(e.response&.body)
     rescue RestClient::ExceptionWithResponse => e
       raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
     rescue StandardError => e
