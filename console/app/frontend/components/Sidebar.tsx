@@ -1,8 +1,11 @@
 import { Link, usePage } from '@inertiajs/react'
-import { List, GitMerge, Settings, LogOut, ScrollText } from 'lucide-react'
+import { List, GitMerge, Settings, LogOut, ScrollText, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
+import { usePaletteOpener } from './CommandPalette'
+import { onMac } from './useShortcut'
+import { keyLabel } from '@/lib/shortcuts'
 import { buttonVariants } from '@/components/ui/button'
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
@@ -10,6 +13,7 @@ interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
 export function Sidebar({ className }: SidebarProps) {
   const { url, props } = usePage<SharedProps>()
   const { current_org, current_user } = props
+  const openPalette = usePaletteOpener()
 
   if (!current_org) return null
 
@@ -57,6 +61,15 @@ export function Sidebar({ className }: SidebarProps) {
 
         {/* Navigation */}
         <div className="px-3 py-4 space-y-0.5">
+          <button
+            type="button"
+            onClick={openPalette}
+            className="mb-2 flex w-full items-center gap-3 rounded-md border px-3 py-1.5 text-[13px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+          >
+            <Search className="h-4 w-4" />
+            Search…
+            <kbd className="ml-auto font-mono text-[11px]">{keyLabel(['Mod', 'k'], onMac())}</kbd>
+          </button>
           {navItems.map((item) => (
             <Link
               key={item.href}

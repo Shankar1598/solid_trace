@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { TimeRangePicker } from '@/components/TimeRangePicker'
 import { copyText } from '@/components/copyText'
+import { useShortcut } from '@/components/useShortcut'
 import { Button } from '@/components/ui/button'
 import { RunError, fetchHistogram, fetchLogPage, fetchReadableSql, fetchRun, runSql, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import {
@@ -46,6 +47,7 @@ import { editAsBuilder, pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
 import { fillStream, keepsFetching, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
 import type { LogTable } from '@/lib/logs/table'
+import { registerPaletteSource } from '@/lib/palette'
 import { browserStorage, recordQuery } from '@/lib/recentQueries'
 import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
@@ -441,6 +443,15 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     const ran = run ?? resolveRange(explorer.current.range, new Date())
     copyText(window.location.origin + urlOf(linkSearch(explorer.current, kind, ran)), 'Link')
   }
+  const copyLinkNow = useRef(copyLink)
+  copyLinkNow.current = copyLink
+  // The palette's Copy link copies the URL, which is the live link here; this adds as shown.
+  useEffect(() => registerPaletteSource('explorer', () => [
+    { id: 'explorer/link-shown', group: 'Actions', label: 'Copy link as shown', detail: "with the run's times", run: () => copyLinkNow.current('shown') },
+  ]), [])
+
+  // Cmd/Ctrl+Enter runs from anywhere on the page; the editors run on their own.
+  useShortcut('run', () => commit(explorer))
 
   /** Draws tables another way: the URL keeps it, and nothing runs. */
   const changeViz = (viz: Viz) => {

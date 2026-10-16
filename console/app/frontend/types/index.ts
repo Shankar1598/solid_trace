@@ -97,6 +97,8 @@ export interface Integration {
 export interface SharedProps {
   current_user: User | null
   current_org: Organization | null
+  /** The Organization's Projects, for the command palette. */
+  org_projects: { name: string; slug: string }[] | null
   flash: {
     notice?: string
     alert?: string
