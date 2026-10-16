@@ -27,7 +27,7 @@ Both clouds are reached through the S3 API with aws-sdk-go-v2, GCS through its S
   - GCS rejects the `x-id` query parameter aws-sdk-go-v2 adds to PUT and DELETE, so the adapter drops it;
   - requests use path-style URLs whenever an endpoint is set;
   - listing uses ListObjects version 1;
-  - a delete of a missing object answers 404, which counts as done;
+  - a delete of a missing object answers 404 NoSuchKey, which counts as done; any other 404, such as NoSuchBucket, is an error, because nothing was deleted;
   - there is no multi-object delete, so objects are deleted one at a time.
 - **A file is uploaded in a single PUT**, streamed from disk, so a file can be at most 5 GB.
 - **What's left, for later units:** uploads, eviction after `local_cache_hours`, the disk limit's preference for evicting uploaded copies, deleting bucket objects through tombstones, and the Event archive's upload.

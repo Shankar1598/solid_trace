@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -189,6 +190,14 @@ func TestAnObjectStoreOnMinIOListsPastOnePage(t *testing.T) {
 	}
 }
 
+func TestDeletingFromAMissingBucketOnMinIOIsAnError(t *testing.T) {
+	cfg := minIOConfig(t)
+	cfg.Bucket = "solidtrace-no-such-bucket"
+	if err := NewObjectStore(cfg).Delete(context.Background(), "project=1/day=2026-10-01/hour=07/data.parquet"); err == nil {
+		t.Error("Expected a delete from a missing bucket to fail, as it deleted nothing")
+	}
+}
+
 func TestAnObjectStoresURLIsWhereDuckDBReadsIt(t *testing.T) {
 	cfg := &config.ObjectStore{Kind: config.ObjectStoreGCS, Bucket: "acme", Prefix: "solidtrace/", Region: "auto", Endpoint: config.GCSEndpoint}
 	if got, want := NewObjectStore(cfg).URL("project=1/day=2026-10-01/hour=07/data.parquet"), "s3://acme/solidtrace/project=1/day=2026-10-01/hour=07/data.parquet"; got != want {
@@ -207,26 +216,39 @@ func TestNoObjectStoreConfigIsNoStore(t *testing.T) {
 }
 
 // GCS's S3 API answers 404 to a DELETE of a missing key, where S3 and MinIO
-// answer 204.
+// answer 204. A 404 for anything else, such as a missing bucket, deleted
+// nothing, so it is an error: a deleter mustn't count it as done.
 func TestDeletingAMissingObjectOnGCSIsNotAnError(t *testing.T) {
-	var deletes int
-	gcs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			w.WriteHeader(http.StatusNotImplemented)
-			return
-		}
-		deletes++
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusNotFound)
-		io.WriteString(w, `<?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`)
-	}))
-	defer gcs.Close()
-	store := NewObjectStore(&config.ObjectStore{
-		Kind: config.ObjectStoreGCS, Bucket: "acme", Prefix: "solidtrace/", Region: "auto",
-		Endpoint: gcs.URL, KeyID: "GOOG1EXAMPLE", Secret: "secret",
-	})
-	if err := store.Delete(context.Background(), "project=1/day=2026-10-01/hour=07/data.parquet"); err != nil || deletes != 1 {
-		t.Errorf("Expected one DELETE and no error, got %d and %v", deletes, err)
+	for _, test := range []struct {
+		name, body string
+		wantErr    bool
+	}{
+		{"a missing key", `<?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`, false},
+		{"a missing bucket", `<?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist.</Message></Error>`, true},
+		{"a 404 without a code", "", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var deletes atomic.Int32
+			gcs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete {
+					w.WriteHeader(http.StatusNotImplemented)
+					return
+				}
+				deletes.Add(1)
+				w.Header().Set("Content-Type", "application/xml")
+				w.WriteHeader(http.StatusNotFound)
+				io.WriteString(w, test.body)
+			}))
+			defer gcs.Close()
+			store := NewObjectStore(&config.ObjectStore{
+				Kind: config.ObjectStoreGCS, Bucket: "acme", Prefix: "solidtrace/", Region: "auto",
+				Endpoint: gcs.URL, KeyID: "GOOG1EXAMPLE", Secret: "secret",
+			})
+			err := store.Delete(context.Background(), "project=1/day=2026-10-01/hour=07/data.parquet")
+			if (err != nil) != test.wantErr || deletes.Load() != 1 {
+				t.Errorf("Expected one DELETE and an error %v, got %d and %v", test.wantErr, deletes.Load(), err)
+			}
+		})
 	}
 }
 
