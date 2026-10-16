@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react'
+import { Component, Suspense, lazy, useEffect, useRef, type ReactNode } from 'react'
 import type { QueryProblem } from '@/lib/logs/api'
 import type { CompletionSources } from '@/lib/logs/completions'
 import { cn } from '@/lib/utils'
@@ -45,10 +45,68 @@ export function QueryEditor(props: QueryEditorProps) {
         props.className,
       )}
     >
-      <Suspense fallback={<Loading {...props} />}>
-        <CodeEditor {...props} />
-      </Suspense>
+      <Unloaded fallback={<PlainEditor {...props} />}>
+        <Suspense fallback={<Loading {...props} />}>
+          <CodeEditor {...props} />
+        </Suspense>
+      </Unloaded>
     </div>
+  )
+}
+
+/**
+ * Shows `fallback` when CodeMirror fails to load, as when a tab open since
+ * before a deploy asks for a chunk the new one no longer has, so the page
+ * stays and the box still edits and runs.
+ */
+class Unloaded extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children
+  }
+}
+
+/** A plain text box in the editor's place: no colours or completions, but it edits, runs and leaves the same keys. */
+function PlainEditor({ value, onChange, onRun, label, placeholder, maxLines, autoFocus, describedBy }: QueryEditorProps) {
+  const box = useRef<HTMLTextAreaElement>(null)
+  // As the editor does: focused with the cursor at the end.
+  useEffect(() => {
+    if (!autoFocus || !box.current) return
+    box.current.focus()
+    box.current.setSelectionRange(box.current.value.length, box.current.value.length)
+    // On mount only, as the editor.
+  }, [])
+  return (
+    <textarea
+      ref={box}
+      value={value}
+      spellCheck={false}
+      onChange={e => onChange(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault()
+          onRun()
+        } else if (e.key === 'Escape') {
+          e.currentTarget.blur()
+        }
+      }}
+      aria-label={label}
+      aria-describedby={describedBy}
+      placeholder={placeholder}
+      className="block w-full resize-none bg-transparent px-2 font-[inherit] outline-none [field-sizing:content] placeholder:text-muted-foreground"
+      style={{
+        lineHeight: `${LINE_HEIGHT}px`,
+        paddingTop: PADDING_Y,
+        paddingBottom: PADDING_Y,
+        minHeight: 2 * LINE_HEIGHT + 2 * PADDING_Y,
+        maxHeight: maxLines * LINE_HEIGHT + 2 * PADDING_Y,
+      }}
+    />
   )
 }
 
