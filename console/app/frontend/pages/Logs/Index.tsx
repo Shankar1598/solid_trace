@@ -67,7 +67,7 @@ type Result =
   | { status: 'cancelled' }
   | { status: 'error'; message: string }
   | { status: 'done'; stream: Stream; loadingOlder: boolean; olderError: string | null }
-  | { status: 'table'; table: LogTable }
+  | { status: 'table'; table: LogTable; elapsedMs: number | null }
 
 /** One run: its range resolved once, so older pages continue the same window. */
 interface Run {
@@ -136,8 +136,8 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     // SQL answers a table, and has no histogram.
     if (state.mode === 'sql') {
       runSql({ orgSlug, projectSlug: project.slug, sql: state.sql, from: run.from, to: run.to, signal: run.controller.signal })
-        .then(table => {
-          if (currentRun.current === run) setResult({ status: 'table', table })
+        .then(({ table, elapsedMs }) => {
+          if (currentRun.current === run) setResult({ status: 'table', table, elapsedMs })
         })
         .catch((error: Error) => {
           if (currentRun.current === run && !run.controller.signal.aborted) setResult({ status: 'error', message: error.message })
@@ -162,7 +162,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     fetchRun({ orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, signal: run.controller.signal })
       .then(answer => {
         if (currentRun.current !== run) return
-        if (answer.kind === 'table') setResult({ status: 'table', table: answer.table })
+        if (answer.kind === 'table') setResult({ status: 'table', table: answer.table, elapsedMs: answer.elapsedMs })
         else fill(run, startStream(answer.page))
       })
       .catch((error: Error) => {
@@ -598,7 +598,7 @@ function ResultArea({ result, sql, chart, onLoadOlder, selectedId, onSelect, col
     case 'error':
       return <ErrorNotice message={result.message} />
     case 'table':
-      return <LogTableView table={result.table} chart={chart} />
+      return <LogTableView table={result.table} elapsedMs={result.elapsedMs} chart={chart} />
     case 'done':
       if (result.stream.logs.length === 0) {
         return result.loadingOlder

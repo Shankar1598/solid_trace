@@ -2,6 +2,7 @@
 // signal: the server may still finish the scan, so cancel only drops the answer.
 import type { Chips } from './builder'
 import type { Histogram } from './histogram'
+import { elapsedOf } from './runLine'
 import type { Log, LogPage } from './stream'
 import type { LogTable } from './table'
 
@@ -33,13 +34,19 @@ export interface LogPageRequest {
   signal?: AbortSignal
 }
 
+/** A table and how long EventStore took to answer it (its elapsed_ms), when it said. */
+export interface TableAnswer {
+  table: LogTable
+  elapsedMs: number | null
+}
+
 /** What a run answers: Log rows, or a table for a tabular Query. */
-export type RunAnswer = { kind: 'logs'; page: LogPage } | { kind: 'table'; table: LogTable }
+export type RunAnswer = { kind: 'logs'; page: LogPage } | ({ kind: 'table' } & TableAnswer)
 
 /** A run's first answer: its newest page of Logs, or its table. */
 export async function fetchRun(request: LogPageRequest): Promise<RunAnswer> {
   const body = await runQuery(request)
-  if (body && typeof body.table === 'object' && body.table !== null) return { kind: 'table', table: body.table as LogTable }
+  if (body && typeof body.table === 'object' && body.table !== null) return { kind: 'table', table: body.table as LogTable, elapsedMs: elapsedOf(body) }
   return { kind: 'logs', page: body as LogPage }
 }
 
@@ -109,7 +116,7 @@ export async function fetchReadableSql({ orgSlug, projectSlug, query, from, to, 
  */
 export async function runSql({ orgSlug, projectSlug, sql, from, to, signal }: {
   orgSlug: string; projectSlug: string; sql: string; from: Date; to: Date; signal?: AbortSignal
-}): Promise<LogTable> {
+}): Promise<TableAnswer> {
   const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? ''
   const response = await callConsole(`/${orgSlug}/projects/${projectSlug}/logs/sql`, signal, {
     method: 'POST',
@@ -117,7 +124,7 @@ export async function runSql({ orgSlug, projectSlug, sql, from, to, signal }: {
     body: JSON.stringify({ sql, from: from.toISOString(), to: to.toISOString() }),
   })
   const body = await response.json().catch(() => null)
-  if (response.ok && body?.table && typeof body.table === 'object') return body.table as LogTable
+  if (response.ok && body?.table && typeof body.table === 'object') return { table: body.table as LogTable, elapsedMs: elapsedOf(body) }
   throw new RunError(typeof body?.error === 'string' ? body.error : `The SQL failed (HTTP ${response.status}).`)
 }
 

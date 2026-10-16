@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { timePattern } from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
+import { elapsedText } from '@/lib/logs/runLine'
 import {
   HISTOGRAM_LEVELS,
   barAt,
@@ -77,7 +78,10 @@ function SummaryLine({ histogram, onLevel }: { histogram: Histogram; onLevel: Hi
   return (
     // On a phone the line wraps between its parts, never inside one.
     <div className="flex min-h-5 flex-wrap items-center gap-x-3 whitespace-nowrap text-[11px] text-muted-foreground">
-      <span><span className="font-medium text-foreground">{histogram.count.toLocaleString()}</span> {histogram.count === 1 ? 'Log' : 'Logs'}</span>
+      <span>
+        <span className="font-medium text-foreground">{histogram.count.toLocaleString()}</span> {histogram.count === 1 ? 'Log' : 'Logs'}
+        {histogram.elapsed_ms !== undefined && <> · {elapsedText(histogram.elapsed_ms)}</>}
+      </span>
       <span>error rate <span className="font-medium text-foreground">{rateText(rate)}</span></span>
       <span className="h-3 w-px bg-border" />
       {HISTOGRAM_LEVELS.filter(level => histogram.levels[level] > 0).map(level => {

@@ -23,6 +23,8 @@ export interface Histogram {
   buckets: HistogramBucket[]
   count: number
   levels: LevelCounts
+  /** How long EventStore took to count, in ms. */
+  elapsed_ms?: number
 }
 
 const MINUTE = 60
