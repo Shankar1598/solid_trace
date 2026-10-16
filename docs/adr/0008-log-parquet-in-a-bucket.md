@@ -23,6 +23,8 @@ Both clouds are reached through the S3 API with aws-sdk-go-v2, GCS through its S
 - **DuckDB's caches are on while a bucket is configured:** Parquet metadata, HTTP metadata and the external file cache. They stay within `memory_limit`. The HTTP metadata cache is never invalidated, so an object's key must never be written again with different bytes.
 - **GCS's interop API has quirks the adapter allows for:**
   - checksums are sent only where S3 requires them;
+  - GCS's front end rewrites `Accept-Encoding` before GCS checks a request's signature, so the adapter leaves that header out of the signature (it is still sent);
+  - GCS rejects the `x-id` query parameter aws-sdk-go-v2 adds to PUT and DELETE, so the adapter drops it;
   - requests use path-style URLs whenever an endpoint is set;
   - listing uses ListObjects version 1;
   - a delete of a missing object answers 404, which counts as done;

@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/solidtrace/event_store/config"
 )
@@ -53,6 +54,7 @@ func NewObjectStore(cfg *config.ObjectStore) ObjectStore {
 		// default, so send and check them only where S3 requires them.
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
+		APIOptions:                 []func(*middleware.Stack) error{signNothingGCSRewrites},
 	}
 	if cfg.Endpoint != "" {
 		options.BaseEndpoint = aws.String(cfg.Endpoint)
@@ -60,6 +62,53 @@ func NewObjectStore(cfg *config.ObjectStore) ObjectStore {
 		options.UsePathStyle = true
 	}
 	return &s3Store{client: s3.New(options), bucket: cfg.Bucket, prefix: cfg.Prefix}
+}
+
+// signNothingGCSRewrites keeps Accept-Encoding out of each request's
+// signature and drops the x-id query parameter the SDK adds to PUT and
+// DELETE. GCS's front end rewrites Accept-Encoding before GCS checks the
+// signature, so a signed one never matches, and GCS rejects x-id
+// (aws/aws-sdk-go-v2#1816; rclone does the same for GCS). S3, MinIO and R2
+// need neither, so every kind gets it.
+func signNothingGCSRewrites(stack *middleware.Stack) error {
+	type acceptEncoding struct{}
+	before := middleware.FinalizeMiddlewareFunc("UnsignAcceptEncodingAndDropXID",
+		func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+			if req, ok := in.Request.(*smithyhttp.Request); ok {
+				if value := req.Header.Get("Accept-Encoding"); value != "" {
+					req.Header.Del("Accept-Encoding")
+					// Kept in the context, as requests run concurrently.
+					ctx = middleware.WithStackValue(ctx, acceptEncoding{}, value)
+				}
+				req.URL.RawQuery = withoutXID(req.URL.RawQuery)
+			}
+			return next.HandleFinalize(ctx, in)
+		})
+	after := middleware.FinalizeMiddlewareFunc("RestoreAcceptEncoding",
+		func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+			// Sent unsigned, so Go's transport doesn't ask for gzip itself.
+			if req, ok := in.Request.(*smithyhttp.Request); ok {
+				if value, ok := middleware.GetStackValue(ctx, acceptEncoding{}).(string); ok {
+					req.Header.Set("Accept-Encoding", value)
+				}
+			}
+			return next.HandleFinalize(ctx, in)
+		})
+	return errors.Join(
+		stack.Finalize.Insert(before, "Signing", middleware.Before),
+		stack.Finalize.Insert(after, "Signing", middleware.After),
+	)
+}
+
+// withoutXID returns a raw query without its x-id parameters, leaving the
+// others exactly as they were encoded.
+func withoutXID(rawQuery string) string {
+	if !strings.Contains(rawQuery, "x-id=") {
+		return rawQuery
+	}
+	parts := strings.Split(rawQuery, "&")
+	parts = slices.DeleteFunc(parts, func(part string) bool { return strings.HasPrefix(part, "x-id=") })
+	return strings.Join(parts, "&")
 }
 
 // s3Store is an ObjectStore on the S3 API: AWS S3, GCS with HMAC keys,
