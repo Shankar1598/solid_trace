@@ -22,6 +22,8 @@ export interface Log {
 export interface LogPage {
   logs: Log[]
   next_cursor: string | null
+  /** How long EventStore took to answer, in ms. */
+  elapsed_ms?: number
 }
 
 export interface Stream {

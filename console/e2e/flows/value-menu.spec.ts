@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { expectEditorText, last24h, openLogs, runBy, streamRows } from '../support/logs'
+import { expectEditorText, last24h, openLogs, runBy, streamRows, summaryLine } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // The value menu: one menu for every value in the stream, a table, a chart's
@@ -28,6 +28,8 @@ async function pick(page: Page, item: string) {
 test('Group by from a stream value counts Logs by its Field over time, as a chart', async ({ page }) => {
   const errors = watchErrors(page)
   await openLogs(page, last24h())
+  // The run line: the Logs counted, and how long EventStore took.
+  await expect(summaryLine(page)).toContainText(/[\d,]+ Logs? · [\d.]+ m?s/)
 
   await openCellMenu(page, 'service')
   for (const item of ['Show only this', 'Hide this', 'Group by', 'Chart this', 'Copy value', 'Remove column']) {
@@ -37,6 +39,7 @@ test('Group by from a stream value counts Logs by its Field over time, as a char
 
   await expect.poll(() => ranQuery(page)).toContain('summarize count() by bin_auto(time), service')
   await expect(chart(page)).toHaveAttribute('aria-label', /^Line chart of .+ over time$/)
+  await expect(page.locator('[data-run-line]')).toHaveText(/^[\d,]+ rows? · [\d.]+ m?s$/)
 
   // A legend entry is a value of service: its menu filters on it.
   const entry = page.getByRole('button', { name: /^Menu for service = / }).first()

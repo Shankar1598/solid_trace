@@ -7,6 +7,7 @@ import { chartOf, formFor, formsOf, type SplitValue } from '@/lib/charts/series'
 import type { AbsoluteRange, Viz } from '@/lib/logs/explorerState'
 import { pivotsOn, type LogTable, type TableColumn } from '@/lib/logs/table'
 import type { AttributeValue } from '@/lib/logs/stream'
+import { runLine } from '@/lib/logs/runLine'
 import { cn } from '@/lib/utils'
 import { ChartSwitch, type Shown } from './ChartSwitch'
 import { Tag, valueText } from './TagMenu'
@@ -37,10 +38,18 @@ export interface TableChart {
  * shows its chart above it, with a switch between the chart's forms and the
  * table alone; the two scroll together when the room is short, as on a phone.
  */
-export function LogTableView({ table, chart }: { table: LogTable; chart?: TableChart }) {
+export function LogTableView({ table, elapsedMs = null, chart }: { table: LogTable; elapsedMs?: number | null; chart?: TableChart }) {
   const model = useMemo(() => chartOf(table), [table])
   const forms = formsOf(model)
-  if (!chart || forms.length === 0) return <TableRows table={table} />
+  const line = <RunLine table={table} elapsedMs={elapsedMs} />
+  if (!chart || forms.length === 0) {
+    return (
+      <div className="flex h-full flex-col">
+        {line}
+        <div className="min-h-0 flex-1"><TableRows table={table} /></div>
+      </div>
+    )
+  }
 
   const form = formFor(model, chart.viz)
   // The shape's own form (Line over time, Bars over categories, a Number)
@@ -54,6 +63,7 @@ export function LogTableView({ table, chart }: { table: LogTable; chart?: TableC
           ? <QueryChart table={table} form={form} onZoom={chart.onZoom} colors={chart.colors} hidden={chart.hidden} actions={control} legendValue={legendValue} className="pb-1" />
           : <div className="flex justify-end px-3 py-1.5">{control}</div>}
       </div>
+      {line}
       {/* A single number is its table: Table shows the cell. */}
       {form !== 'stat' && (
         <div className="min-h-48 flex-1">
@@ -115,6 +125,15 @@ function TableRows({ table }: { table: LogTable }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/** The table's rows and how long the run took: "12 rows · 230 ms". */
+function RunLine({ table, elapsedMs }: { table: LogTable; elapsedMs: number | null }) {
+  return (
+    <div className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground" data-run-line>
+      {runLine(table.rows.length, 'row', elapsedMs)}
     </div>
   )
 }
