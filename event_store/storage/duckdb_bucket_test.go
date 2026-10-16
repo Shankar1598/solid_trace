@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -51,6 +52,29 @@ func TestUsingABucketWithoutHttpfsInTheExtensionDirectoryFailsSayingWhereItGoes(
 	err := w.UseBucket(cfg, dir)
 	if err == nil || !strings.Contains(err.Error(), dir+"/v") || !strings.Contains(err.Error(), "httpfs.duckdb_extension") {
 		t.Errorf("Expected an error naming where httpfs goes in %s, got %v", dir, err)
+	}
+}
+
+func TestABucketGivesDuckDBMoreThreadsThanCPUsForRemoteReads(t *testing.T) {
+	dir := testExtensionDirectory(t)
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*", "*", "httpfs.duckdb_extension")); len(matches) == 0 {
+		t.Skipf("no httpfs in %s", dir)
+	}
+	w := newTestDuckDB(t)
+	cfg := &config.ObjectStore{Kind: config.ObjectStoreS3, Bucket: "acme", Prefix: "solidtrace/", Region: "us-east-1",
+		KeyID: "EXAMPLE", Secret: "example-secret"}
+	if err := w.UseBucket(cfg, dir); err != nil {
+		t.Fatalf("UseBucket: %v", err)
+	}
+	ctx := context.Background()
+	conn, err := w.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var threads int
+	if err := conn.QueryRowContext(ctx, "SELECT current_setting('threads')").Scan(&threads); err != nil || threads != 4*runtime.NumCPU() {
+		t.Errorf("Expected %d threads on a pooled connection, got %d (%v)", 4*runtime.NumCPU(), threads, err)
 	}
 }
 

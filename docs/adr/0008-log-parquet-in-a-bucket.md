@@ -20,6 +20,7 @@ Both clouds are reached through the S3 API with aws-sdk-go-v2, GCS through its S
   - DuckDB checks the file's signature when it loads it.
   - Upgrading duckdb-go means changing `DUCKDB_VERSION` in the Dockerfile too.
 - **One secret serves every connection.** It is temporary, held in memory, scoped to the bucket and created once at startup. Every pooled connection uses it, and so does SQL mode ([ADR 0003](0003-unrestricted-sql-queries-behind-an-instance-setting.md)). The key comes from `SOLIDTRACE_OBJECT_STORE_KEY_ID` and `SOLIDTRACE_OBJECT_STORE_SECRET`, never from the config file.
+- **DuckDB gets 4 threads for each CPU while a bucket is configured**, not one, because httpfs holds a thread for each request it waits on. The setting is global, so local reads run with them too.
 - **DuckDB's caches are on while a bucket is configured:** Parquet metadata, HTTP metadata and the external file cache. They stay within `memory_limit`. The HTTP metadata cache is never invalidated, so an object's key must never be written again with different bytes.
 - **GCS's interop API has quirks the adapter allows for:**
   - checksums are sent only where S3 requires them;
