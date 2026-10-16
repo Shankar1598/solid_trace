@@ -8,7 +8,8 @@ import {
   type ChartForm, type ChartPoint, type Series, type SeriesChartModel, type SplitValue,
 } from '@/lib/charts/series'
 import {
-  CHAR_PX, LABEL_PAD_PX, nameChars, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks,
+  CHAR_PX, LABEL_PAD_PX, nameChars, optionsText, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks,
+  type ValueOptions,
 } from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
@@ -49,7 +50,13 @@ interface QueryChartProps {
    * the explorer's value menu; without it, the legend only shows and hides.
    */
   legendValue?: (field: string, value: SplitValue) => React.ReactNode
+  /** A Dashboard chart's options: stacked false never stacks; unit and decimals read the stat and tooltip values. */
+  options?: ChartOptions
   className?: string
+}
+
+export interface ChartOptions extends ValueOptions {
+  stacked?: boolean
 }
 
 /** The most time ticks a chart labels; fewer show when they would crowd. */
@@ -69,7 +76,7 @@ const TIP_GAP_PX = 4
  * a Query's table is charted, so it takes the table and options, never a
  * page's state.
  */
-export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, className }: QueryChartProps) {
+export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, className }: QueryChartProps) {
   const model = useMemo(() => {
     const made = chartOf(table)
     if (!colors) return made
@@ -88,7 +95,7 @@ export function QueryChart({ table, form, onZoom, actions, colors, hidden, legen
   if (model.kind === 'stat') {
     return (
       <div className={cn('flex items-start justify-between gap-3 px-3 py-2', className)}>
-        <StatTile name={model.name} value={model.value} />
+        <StatTile name={model.name} value={model.value} options={options} />
         {actions}
       </div>
     )
@@ -103,18 +110,19 @@ export function QueryChart({ table, form, onZoom, actions, colors, hidden, legen
       onZoom={onZoom}
       actions={actions}
       legendValue={legendValue}
+      options={options}
       className={className}
     />
   )
 }
 
 /** One number: its column's name over it, large. */
-function StatTile({ name, value }: { name: string; value: number | null }) {
+function StatTile({ name, value, options }: { name: string; value: number | null; options?: ValueOptions }) {
   return (
     <div className="min-w-0" data-chart-stat>
       <div className="truncate text-[11px] text-muted-foreground">{name}</div>
       <div className="truncate text-3xl font-semibold leading-tight text-foreground" title={value === null ? undefined : String(value)}>
-        {value === null ? '—' : statText(value)}
+        {value === null ? '—' : optionsText(value, options ?? {}, statText)}
       </div>
     </div>
   )
@@ -123,7 +131,7 @@ function StatTile({ name, value }: { name: string; value: number | null }) {
 /** The bins a drag has covered, by their points' indexes. */
 type Drag = { start: number; end: number }
 
-function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, className }: {
+function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, options, className }: {
   model: SeriesChartModel
   form: ChartForm
   initialHidden: ReadonlySet<string>
@@ -131,6 +139,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   onZoom?: QueryChartProps['onZoom']
   actions?: React.ReactNode
   legendValue?: QueryChartProps['legendValue']
+  options?: ChartOptions
   className?: string
 }) {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(initialHidden)
@@ -172,7 +181,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   const panels = model.panels.map(panel => {
     const series = model.series.filter(s => panel.keys.includes(s.key))
     const visible = series.filter(s => !hidden.has(s.id))
-    const stacked = panel.stacked && form !== 'line'
+    const stacked = panel.stacked && form !== 'line' && options?.stacked !== false
     const values = valueTicks(...extent(model.points, visible, stacked), several ? 3 : 5)
     const tips = across && (stacked || visible.length === 1)
     const tipWidth = tips ? Math.max(0, ...model.points.map(p => tipText(p, visible).length)) * CHAR_PX + TIP_GAP_PX : 0
@@ -314,7 +323,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
                   <ChartTooltip
                     isAnimationActive={false}
                     active={drag ? false : undefined}
-                    content={<ChartTooltipContent indicator="line" valueFormatter={valueText} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.start ?? payload?.[0]?.payload?.x)} />}
+                    content={<ChartTooltipContent indicator="line" valueFormatter={(value: number) => optionsText(value, options ?? {})} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.start ?? payload?.[0]?.payload?.x)} />}
                   />
                 )}
                 overlay={<>{partialAreas}{dragArea}</>}
