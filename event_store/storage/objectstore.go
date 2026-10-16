@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -194,15 +193,14 @@ func (s *s3Store) URL(key string) string {
 	return "s3://" + s.bucket + "/" + s.prefix + key
 }
 
-// isNotFound reports whether err is the bucket answering that an object
-// isn't there.
+// isNotFound reports whether err is the bucket answering NoSuchKey, as GCS
+// does to a DELETE of a missing object. Any other 404 is not: NoSuchBucket,
+// or one with no code (which the SDK calls NotFound) from something that
+// isn't the bucket. Nothing was deleted, so a deleter must not count it as
+// done.
 func isNotFound(err error) bool {
 	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) && (apiErr.ErrorCode() == "NoSuchKey" || apiErr.ErrorCode() == "NotFound") {
-		return true
-	}
-	var response *smithyhttp.ResponseError
-	return errors.As(err, &response) && response.HTTPStatusCode() == http.StatusNotFound
+	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchKey"
 }
 
 // checkObjectKey reports an error if key isn't a relative, slash-separated
