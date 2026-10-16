@@ -31,6 +31,8 @@ export interface TableChart {
   colors: ColorSlots
   /** The series hidden from the last chart's legend, so a re-run or a zoom shows none of them again. */
   hidden: HiddenSeries
+  /** Controls beside the switch for the form shown, such as Add to dashboard. */
+  beside?: (shown: Shown) => React.ReactNode
 }
 
 /**
@@ -45,6 +47,7 @@ export function LogTableView({ table, elapsedMs = null, chart }: { table: LogTab
   if (!chart || forms.length === 0) {
     return (
       <div className="flex h-full flex-col">
+        {chart?.beside && <div className="flex justify-end px-3 py-1.5">{chart.beside('table')}</div>}
         {line}
         <div className="min-h-0 flex-1"><TableRows table={table} /></div>
       </div>
@@ -55,7 +58,12 @@ export function LogTableView({ table, elapsedMs = null, chart }: { table: LogTab
   // The shape's own form (Line over time, Bars over categories, a Number)
   // leaves no trace in the URL, so it never carries over to another shape.
   const onShow = (shown: Shown) => chart.onViz(shown === forms[0] || shown === 'stat' ? 'auto' : shown)
-  const control = <ChartSwitch forms={forms} shown={form ?? 'table'} onChange={onShow} />
+  const control = (
+    <div className="flex items-center gap-2">
+      {chart.beside?.(form ?? 'table')}
+      <ChartSwitch forms={forms} shown={form ?? 'table'} onChange={onShow} />
+    </div>
+  )
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       <div className={cn('shrink-0', form !== 'stat' && 'border-b')}>

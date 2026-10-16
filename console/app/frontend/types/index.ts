@@ -99,6 +99,8 @@ export interface SharedProps {
   current_org: Organization | null
   /** The Organization's Projects, for the command palette. */
   org_projects: { name: string; slug: string }[] | null
+  /** The Organization's Dashboards, for the command palette and Add to dashboard. */
+  org_dashboards: { id: number; name: string }[] | null
   flash: {
     notice?: string
     alert?: string

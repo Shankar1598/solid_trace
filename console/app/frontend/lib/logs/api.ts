@@ -89,7 +89,7 @@ export async function fetchHistogram({ orgSlug, projectSlug, query, from, to, bu
 }
 
 /** A failed run's error: the Query's first mistake, or what went wrong. */
-function runFailure(body: { errors?: unknown; error?: unknown } | null, status: number): RunError {
+export function runFailure(body: { errors?: unknown; error?: unknown } | null, status: number): RunError {
   const problems: QueryProblem[] = Array.isArray(body?.errors) ? body.errors : []
   if (problems.length > 0) {
     const p = problems[0]
