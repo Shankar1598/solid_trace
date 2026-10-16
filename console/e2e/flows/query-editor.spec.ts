@@ -116,6 +116,25 @@ test('a mistake is squiggled where validate puts it, with its message on hover a
   expect(errors).toEqual([])
 })
 
+test('on a Mac, both Ctrl+Enter, as the hint says, and Cmd+Enter run the Query', async ({ page }) => {
+  // CodeMirror reads the platform once, when it loads.
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' }))
+  const errors = watchErrors(page)
+  const box = await queryMode(page)
+  await expect(page.getByText('Ctrl+Enter runs the Query.')).toBeVisible()
+
+  await page.keyboard.type('\n| take 5')
+  await runBy(page, () => box.press('Control+Enter'))
+  expect(new URL(page.url()).searchParams.get('q')).toBe(`${SOURCE}\n| take 5`)
+
+  await page.keyboard.type('0')
+  await runBy(page, () => box.press('Meta+Enter'))
+  expect(new URL(page.url()).searchParams.get('q')).toBe(`${SOURCE}\n| take 50`)
+  // Neither key wrote a line break.
+  expect(await editorText(box)).toBe(`${SOURCE}\n| take 50`)
+  expect(errors).toEqual([])
+})
+
 test('Escape leaves the editor, and typing never runs the Query', async ({ page }) => {
   const errors = watchErrors(page)
   const box = await queryMode(page)
