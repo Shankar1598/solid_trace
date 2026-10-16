@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +31,10 @@ type flakyBucket struct {
 	failPuts, putThenFail, failDeletes atomic.Bool
 	// deletes counts the deletions asked of the bucket.
 	deletes atomic.Int64
+	// stall, if set before an upload starts, holds each upload after it
+	// stores the object, as a request whose answer doesn't come, until
+	// stall is closed; stalled then gets a signal.
+	stall, stalled chan struct{}
 }
 
 func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
@@ -41,6 +46,17 @@ func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
 	}
 	if b.putThenFail.Load() {
 		return errors.New("stopped after the upload")
+	}
+	if b.stall != nil {
+		select {
+		case b.stalled <- struct{}{}:
+		default:
+		}
+		select {
+		case <-b.stall:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	return nil
 }
@@ -374,6 +390,46 @@ func TestTheDiskLimitEvictsUploadedCopiesBeforeItDeletesAnything(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "not yet uploaded") || !strings.Contains(logs.String(), "level=error") {
 		t.Errorf("Expected an error logged for deleting a file not yet uploaded, got %s", logs)
+	}
+}
+
+func TestAnUploadThatStallsHoldsUpNoDeletionByTheDiskLimit(t *testing.T) {
+	env, bucket := setupBucketTestEnv(t, 24)
+	defer env.Cleanup()
+
+	older, newer := testNow.Add(-270*time.Minute), testNow.Add(-210*time.Minute)
+	postAndProcess(t, env, logJSON(t, "older", older, nil))
+	postAndProcess(t, env, logJSON(t, "newer", newer, nil))
+	env.ExportLogs(t)
+
+	// The bucket stores the oldest file, and its answer doesn't come.
+	stall := make(chan struct{})
+	bucket.stall, bucket.stalled = stall, make(chan struct{}, 1)
+	release := sync.OnceFunc(func() { close(stall) })
+	defer release()
+	uploaded := make(chan error, 1)
+	go func() { uploaded <- env.LogStore.UploadLogFiles(context.Background()) }()
+	<-bucket.stalled
+
+	// The disk limit doesn't wait for the upload: it deletes both hours.
+	enforceLogDiskLimit(t, env, 1)
+	assertGone(t, env.localFile(123, older, "data.parquet"), "deleted by the disk limit while it uploads")
+	assertGone(t, env.localFile(123, newer, "data.parquet"), "deleted by the disk limit")
+	if got := latestLogs(t, env, 123, 10); len(got) != 0 {
+		t.Errorf("Expected the disk limit to delete every Log, got %v", messages(got))
+	}
+
+	// The upload then ends, and the next pass deletes the object it stored.
+	release()
+	if err := <-uploaded; err != nil {
+		t.Errorf("Expected the upload of a file deleted meanwhile to end without an error, got %v", err)
+	}
+	assertPresent(t, bucket.object(123, older, "data.parquet"), "stored before the deletion")
+	enforceLogDiskLimit(t, env, 1)
+	assertGone(t, bucket.object(123, older, "data.parquet"), "by the pass after the upload")
+	assertGone(t, bucket.object(123, newer, "data.parquet"), "as it was deleted before its upload")
+	if got := latestLogs(t, env, 123, 10); len(got) != 0 {
+		t.Errorf("Expected no Log back after the upload, got %v", messages(got))
 	}
 }
 

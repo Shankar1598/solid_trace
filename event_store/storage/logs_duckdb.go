@@ -49,6 +49,10 @@ type LogStore struct {
 	// that may still read it.
 	pinMu sync.Mutex
 	pins  map[string]int
+	// uploading is the key of the file being uploaded, if any, whose
+	// object no deletion deletes meanwhile (logs_upload.go). It is guarded
+	// by pinMu.
+	uploading string
 
 	// bucket keeps the Log files too, or is nil when they stay on local
 	// disk only, and localCacheHours is how long a file's local copy stays

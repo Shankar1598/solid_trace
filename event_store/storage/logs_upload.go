@@ -123,14 +123,20 @@ func (s *LogStore) UploadLogFiles(ctx context.Context) error {
 	return nil
 }
 
-// uploadLogFile uploads a file and marks it remote. It pins the file while it
-// uploads, and only then checks the file is still listed: a deletion that
-// takes its row meanwhile then leaves its bytes, here and in the bucket, for
-// a pass after the upload, and one that took it before isn't uploaded.
+// uploadLogFile uploads a file and marks it remote. It marks the file
+// uploading, and only then checks the file is still listed: a deletion that
+// takes its row meanwhile leaves its object for a pass after the upload
+// (deleteTombstonedObjects), and one that took it before isn't uploaded.
+//
+// The file isn't pinned, so that a deletion, the disk limit's above all,
+// never waits on the bucket: its local bytes may go meanwhile, as Put reads
+// the file it opened, and their disk space comes back when Put ends. If
+// they went before Put opened them, the file isn't listed any more, and
+// nothing failed.
 func (s *LogStore) uploadLogFile(ctx context.Context, file logFile) error {
 	key := file.key()
-	s.pin([]string{key})
-	defer s.unpin([]string{key})
+	s.markUploading(key)
+	defer s.markUploading("")
 	listed, err := s.logFileListed(file)
 	if err != nil || !listed {
 		return err
@@ -138,6 +144,9 @@ func (s *LogStore) uploadLogFile(ctx context.Context, file logFile) error {
 	putCtx, cancel := context.WithTimeout(ctx, uploadTimeout)
 	defer cancel()
 	if err := s.bucket.Put(putCtx, key, s.files.path(file)); err != nil {
+		if listed, listErr := s.logFileListed(file); listErr == nil && !listed {
+			return nil
+		}
 		return err
 	}
 	s.writeMu.Lock()
@@ -146,6 +155,21 @@ func (s *LogStore) uploadLogFile(ctx context.Context, file logFile) error {
 		return fmt.Errorf("mark %s uploaded: %w", key, err)
 	}
 	return nil
+}
+
+// markUploading records key as the file being uploaded, or none if key is
+// "". One file is uploaded at a time.
+func (s *LogStore) markUploading(key string) {
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	s.uploading = key
+}
+
+// isUploading reports whether the file with this key is being uploaded.
+func (s *LogStore) isUploading(key string) bool {
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	return s.uploading == key
 }
 
 // EvictLogFiles removes the local copies of uploaded Log files whose hour
@@ -320,9 +344,9 @@ func isMissing(path string) bool {
 }
 
 // deleteTombstonedObjects deletes from the bucket, one at a time, oldest
-// first, the object of every tombstoned file no read or upload has pinned
-// whose local bytes are gone, then its tombstone: a tombstone goes only once
-// both copies are gone. deleteTombstonedFiles deletes the local bytes first.
+// first, the object of every tombstoned file whose local bytes are gone,
+// that no read has pinned and no upload is uploading, then its tombstone: a
+// tombstone goes only once both copies are gone. deleteTombstonedFiles deletes the local bytes first.
 //
 // It stops at the first object that fails to delete, as the bucket is then
 // most likely down, and leaves the rest with their tombstones for the next
@@ -352,7 +376,7 @@ func (s *LogStore) deleteTombstonedObjects() error {
 		failed  error
 	)
 	for _, file := range files {
-		if s.pinned(file.key()) {
+		if s.pinned(file.key()) || s.isUploading(file.key()) {
 			continue
 		}
 		if !isMissing(s.files.path(file)) {
