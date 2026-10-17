@@ -12,8 +12,6 @@ class LogsController < ApplicationController
 
   layout "dashboard"
 
-  LOG_ID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
-
   before_action :set_organization
   before_action :set_project, except: :start
   before_action :set_time_range, only: %i[query histogram readable_sql sql]
@@ -118,8 +116,6 @@ class LogsController < ApplicationController
   # GET one Log by id, for the inspector. time, the Log's own time, lets
   # EventStore look in one hour instead of every file of the Project.
   def show
-    return head :not_found unless LOG_ID.match?(params[:id].to_s)
-
     log = EventStore.get_log(project_id: @project.id, log_id: params[:id], time: params[:time].presence)
     return head :not_found unless log
 

@@ -49,6 +49,9 @@ class EventStore
   # to answer.
   TIMEOUT_GRACE_SECONDS = 5
 
+  # A Log's id: a UUID.
+  LOG_ID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
+
   # The event store's query API, which listens on loopback only.
   def self.base_url
     ENV.fetch("EVENT_STORE_URL", "http://127.0.0.1:4100")
@@ -186,9 +189,12 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/validate", { query: query })
     end
 
-    # One of a Project's Logs, or nil. time, the Log's own time, narrows the
+    # One of a Project's Logs, or nil. An id that isn't a Log id (LOG_ID) is
+    # nil without asking EventStore. time, the Log's own time, narrows the
     # search to that hour.
     def get_log(project_id:, log_id:, time: nil)
+      return unless LOG_ID.match?(log_id.to_s)
+
       params = time.present? ? { time: time } : {}
       request!("#{base_url}/api/#{project_id}/logs/#{log_id}", params: params)
     end

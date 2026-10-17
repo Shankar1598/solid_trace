@@ -151,6 +151,14 @@ class EventStoreTest < ActiveSupport::TestCase
     assert_nil EventStore.get_log(project_id: 123, log_id: "0199a0b0-0000-7000-8000-000000000001")
   end
 
+  test "get_log returns nil for an id that isn't a Log id, without asking EventStore" do
+    fetch = stub_request(:get, %r{#{@base_url}/api/123/logs/.*})
+
+    assert_nil EventStore.get_log(project_id: 123, log_id: "nope")
+    assert_nil EventStore.get_log(project_id: 123, log_id: nil)
+    assert_not_requested fetch
+  end
+
   test "logs_fields lists a Project's Fields over a time range, up to a limit" do
     fields = {
       built_in: [ { name: "time", type: "datetime" }, { name: "level", type: "string" } ],
