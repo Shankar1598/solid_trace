@@ -30,6 +30,19 @@ class MemberInviteTest < ActiveSupport::TestCase
     assert_includes @organization.users.reload, User.find_by!(email: "grace@example.com")
   end
 
+  test "a member invited in another case is already in, and no second user is made" do
+    bob = create(:user, email: "bob@example.com")
+    create(:organization_user, organization: @organization, user: bob, role: :member)
+
+    invite = nil
+    assert_no_difference -> { User.count } do
+      invite = MemberInvite.call(organization: @organization, inviter: @admin, email: "BOB@example.com")
+    end
+
+    assert_not invite.done?
+    assert_equal "User is already a member of this organization", invite.error
+  end
+
   test "an existing user is added by their email, with no email sent" do
     grace = create(:user, email: "grace@example.com")
 

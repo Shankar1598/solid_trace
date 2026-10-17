@@ -1,6 +1,6 @@
 # 03: Emails match only in the case they were typed
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Area:** Console
 **Found:** 2026-10-17, by the MCP build's ticket 09 (09-verify-2)
 
@@ -27,3 +27,18 @@ This predates the MCP. The MCP makes it easier to hit, because agents change an 
 - Tests: an invite in another case finds the member; sign-in in another case works; registering an existing email in another case is refused.
 
 ## Comments
+
+### 2026-10-18 resolved
+
+`User` now has `normalizes :email, with: ->(email) { email.strip.downcase }`. Rails applies it when an email is assigned, even through `update_column`, and to finder arguments. So `find_by(email:)` in `MemberInvite`, `authenticate_by` at sign-in and the uniqueness check all match in any case, with no change to those callers.
+
+**Existing emails.** The migration `20261018090000_normalize_user_emails` lowercases and trims them. Emails that would then be the same are left as they are, and the migration names them with their ids ("Not normalized, as 2 users would share …"), because merging two users is a human decision. Until they're merged, signing in with that email finds the lower-case user only. A scratch probe on the test database checked both cases: a mixed-case email was normalised and could sign in, and a colliding pair was named and left as it was.
+
+Tests:
+
+- `test/models/user_test.rb`: an email kept trimmed and in lower case, and an email taken in another case. The second also covers registration, which saves through the model.
+- `test/controllers/sessions_controller_test.rb`: signing in in another case.
+- `test/services/member_invite_test.rb`: inviting a member in another case finds them, and no second user is made.
+
+All four fail without the change. The whole Rails suite passes (560 runs).
+
