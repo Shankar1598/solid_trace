@@ -7,7 +7,7 @@
 // range change each card cancels its own run, and none of the old range's
 // waiting runs should start in between. The browser's slot is not the
 // server's: Console keeps an aborted run's thread until EventStore answers,
-// and caps those runs itself (app/services/chart_runs.rb).
+// and caps those runs, with the explorer's, itself (app/services/chart_runs.rb).
 
 /** The most chart runs in flight at once. Each holds a Console Puma thread, so keep it under ChartRuns' cap (test/config/puma_test.rb). */
 export const MAX_IN_FLIGHT = 4
