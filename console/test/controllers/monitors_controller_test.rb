@@ -238,7 +238,7 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
         query: "['#{@project.slug}'] | summarize count() by bin(time, 5m)",
         from: "2026-10-02T10:00:00.000Z",
         to: "2026-10-03T10:00:00.000Z",
-        timeout_seconds: ChartRunning::RUN_TIMEOUT_SECONDS,
+        timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
       }.to_json)
       .to_return(status: 200, body: { table: { columns: [ COUNT_COLUMN ], rows: [ [ 3 ] ] }, elapsed_ms: 12 }.to_json)
 

@@ -82,6 +82,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
         from: "2026-10-03T09:00:00.000Z",
         to: "2026-10-03T10:30:00.250Z",
         cursor: "older",
+        timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
       }.to_json)
       .to_return(status: 200, body: { logs: [ { id: "log-1", message: "boom" } ], next_cursor: "older-still" }.to_json)
 
@@ -149,6 +150,38 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert response.parsed_body["error"].present?
   end
 
+  test "a run EventStore stops at its timeout answers 504 with EventStore's message" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    message = "the run was stopped after 30 s, its timeout: try a shorter time range"
+    %w[query histogram sql].each do |run|
+      stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/#{run}").to_return(status: 504, body: { error: message }.to_json)
+    end
+    range = { from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+
+    get query_project_logs_url(@project, org_slug: @organization.slug), params: { query: "", **range }
+    assert_response :gateway_timeout
+    assert_equal message, response.parsed_body["error"]
+
+    get histogram_project_logs_url(@project, org_slug: @organization.slug), params: { query: "", **range }
+    assert_response :gateway_timeout
+    assert_equal message, response.parsed_body["error"]
+
+    post sql_project_logs_url(@project, org_slug: @organization.slug), params: { sql: "SELECT 1", **range }, as: :json
+    assert_response :gateway_timeout
+    assert_equal message, response.parsed_body["error"]
+  end
+
+  test "the explorer still runs while Console runs as many charts as it allows" do
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+
+    holding_every_chart_run do
+      get query_project_logs_url(@project, org_slug: @organization.slug),
+        params: { query: "", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+    end
+
+    assert_response :success
+  end
+
   test "validate answers a Query's chips from EventStore" do
     chips = { filters: [ { field: "http.status", op: "!=", value: 500 } ], search: "boom" }
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/validate")
@@ -206,6 +239,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
         from: "2026-10-03T09:00:00.000Z",
         to: "2026-10-03T10:00:00.000Z",
         bucket_seconds: 60,
+        timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
       }.to_json)
       .to_return(status: 200, body: {
         bucket_seconds: 60,
@@ -380,7 +414,10 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     InstanceSetting.current.update!(sql_queries_enabled: true)
     table = { columns: [ { name: "n", type: "number" } ], rows: [ [ 3 ] ], truncated: false }
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
-      .with(body: { sql: "SELECT count(*) AS n FROM logs", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z" }.to_json)
+      .with(body: {
+        sql: "SELECT count(*) AS n FROM logs", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
+        timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
+      }.to_json)
       .to_return(status: 200, body: { table: table }.to_json)
 
     post sql_project_logs_url(@project, org_slug: @organization.slug), params: {
@@ -462,5 +499,9 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal "Logs/Index", JSON.parse(response.body)["component"]
     JSON.parse(response.body)["props"]
+  end
+
+  def holding_every_chart_run(left = ChartRuns.limit, &block)
+    left.zero? ? yield : ChartRuns.hold { holding_every_chart_run(left - 1, &block) }
   end
 end

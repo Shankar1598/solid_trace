@@ -6,13 +6,23 @@
 module EventStoreProxy
   extend ActiveSupport::Concern
 
+  # How long a run for the browser may take before EventStore stops it: the
+  # explorer's runs, a Dashboard's charts and a Monitor's preview.
+  RUN_TIMEOUT_SECONDS = 30
+
   included do
     rescue_from EventStore::SQLQueriesOff, with: :sql_queries_off
     rescue_from EventStore::Rejected, with: :eventstore_rejected
     rescue_from EventStore::Unavailable, with: :eventstore_unavailable
+    rescue_from EventStore::TimedOut, with: :run_timed_out
   end
 
   private
+
+  def run_timed_out(error)
+    message = error.body["error"].presence || "the run was stopped after #{RUN_TIMEOUT_SECONDS} s, its timeout: try a shorter time range"
+    render json: { error: message }, status: :gateway_timeout
+  end
 
   def sql_queries_off(error)
     render json: { error: error.message }, status: :forbidden
