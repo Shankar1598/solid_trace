@@ -5,18 +5,12 @@
 # the chart, so it never travels in a URL, and runs on the chart's Project
 # only while that Project is the Organization's.
 class DashboardChartsController < ApplicationController
-  include EventStoreProxy
-
-  # How long a chart's run may take before EventStore stops it.
-  RUN_TIMEOUT_SECONDS = 30
+  include ChartRunning
 
   before_action :set_organization
   before_action :set_dashboard
   before_action :set_chart, only: %i[update destroy duplicate data]
   before_action :set_time_range, only: %i[data preview]
-
-  rescue_from EventStore::TimedOut, with: :run_timed_out
-  rescue_from ChartRuns::Busy, with: :chart_runs_busy
 
   def create
     chart = @dashboard.charts.new(chart_params)
@@ -57,19 +51,6 @@ class DashboardChartsController < ApplicationController
 
   private
 
-  # A Query run on a Project over the range given, answered as the explorer's
-  # run is, as one of the chart runs ChartRuns allows. A Query that answers
-  # Logs rather than a table can't be charted.
-  def run_chart(project, query)
-    answer = ChartRuns.hold do
-      EventStore.query_logs(project_id: project.id, query: query, from: @from, to: @to, timeout_seconds: RUN_TIMEOUT_SECONDS)
-    end
-    return render json: answer if answer.is_a?(Hash) && answer["table"].is_a?(Hash)
-
-    render json: { error: "This Query answers Logs, not a table. End it with summarize, count or project to chart it." },
-      status: :unprocessable_content
-  end
-
   def set_organization
     @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
   end
@@ -107,14 +88,5 @@ class DashboardChartsController < ApplicationController
   # The Dashboard's page, over the range it was showing.
   def dashboard_page
     dashboard_path(@dashboard, org_slug: @current_org.slug, **params.permit(:range, :from, :to).to_h.symbolize_keys)
-  end
-
-  def run_timed_out(error)
-    message = error.body["error"].presence || "the run was stopped after #{RUN_TIMEOUT_SECONDS} s, its timeout: try a shorter time range"
-    render json: { error: message }, status: :gateway_timeout
-  end
-
-  def chart_runs_busy
-    render json: { error: "Console is busy running other charts. Refresh in a moment." }, status: :service_unavailable
   end
 end
