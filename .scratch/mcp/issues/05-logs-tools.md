@@ -1,6 +1,6 @@
 # 05: Logs tools
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Console
 **Blocked by:** 02, 03
 
@@ -29,3 +29,7 @@ The Logs tools from the spec's Tool catalogue, answered as the spec's "Small, li
 - `bin/rails test` passes.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `41d462f`, built after the Go track was merged. One finding confirmed and fixed: table cells were never cut, so a stack-trace message in `summarize … by message` reached the agent whole. `Table.compact` now cuts every cell at 500 characters for `query_logs`, `run_sql` and `get_chart_data`. Decisions are under 05 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).

@@ -1,6 +1,6 @@
 # 09: Admin tools and the key rule
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Console
 **Blocked by:** 02
 
@@ -30,3 +30,7 @@ The Admin row of the spec's Tool catalogue, and keys becoming admin-only in the 
 - `bin/rails test` passes.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `c807d38`. One finding confirmed and fixed: `create_project` made a Project with an empty slug (a name with no Latin letters or digits) or the slug `new`. The build also found that `ProjectKey#rotate!` was never defined, so Rotate always raised; it is now. The Playwright flow `e2e/flows/project-keys.spec.ts` is written, not run: ticket 10 runs it. Decisions are under 09 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).

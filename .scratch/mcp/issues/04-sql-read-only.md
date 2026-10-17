@@ -1,6 +1,6 @@
 # 04: SQL queries are read-only
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Go
 **Blocked by:** none
 
@@ -34,3 +34,7 @@ Make every SQL query read-only, in the explorer's SQL mode and in the MCP's `run
 - `go test -p 1 ./...` passes.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `400a98f` on `feature/mcp-go`, merged into `feature/mcp` at `19939fb`. The probe's answers are in [research/probe-04-readonly-sql.md](../research/probe-04-readonly-sql.md). One finding confirmed and fixed in the copy: on bucket installs, SQL can still send requests from the server to any web address it reaches (httpfs), which the setting's description, ADR 0003 and `docs/logs/sql.md` now say. The Playwright change to `e2e/flows/logs-v1-sql.spec.ts` is written, not run: ticket 10 runs it. Decisions are under 04 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).

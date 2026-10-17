@@ -1,6 +1,6 @@
 # 01: API tokens
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Console
 **Blocked by:** none
 
@@ -28,3 +28,7 @@ Personal API tokens, as in the spec's Design, under Tokens. A user makes them in
 - `bin/rails test`, vitest and typecheck pass.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `d49eca0`. No finding confirmed above low. The Playwright flow `e2e/flows/api-tokens.spec.ts` is written, not run: ticket 10 runs it. Decisions are under 01 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).

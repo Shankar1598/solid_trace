@@ -1,6 +1,6 @@
 # 02: MCP endpoint and tool base
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Console
 **Blocked by:** 01
 
@@ -42,3 +42,7 @@
 `bin/rails test` passes.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `1186291`. One finding confirmed and fixed: MCP tool failures went to `Rails.error.report`, which nothing subscribes to, so they reached neither the log nor Sentry. The initializer now logs and sends them itself (`1186291`); the recheck found nothing. Decisions are under 02 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).

@@ -1,6 +1,6 @@
 # 06: Dashboard and Chart tools
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Console
 **Blocked by:** 02
 
@@ -25,3 +25,7 @@ The Dashboards row of the spec's Tool catalogue.
 - The existing dashboard controller tests still pass.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `42b0081`. Two findings confirmed and fixed: `update_chart` with a new Project kept the old `['slug']` source (`f6ffd95`), and `add_chart`/`update_chart` saved Queries with mistakes without asking EventStore (`42b0081`). Decisions are under 06 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).

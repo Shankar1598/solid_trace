@@ -1,6 +1,6 @@
 # 03: Fields endpoint in EventStore
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Go
 **Blocked by:** none
 
@@ -24,3 +24,7 @@ Add `EventStore.logs_fields(project_id:, from:, to:, limit: nil)` to `console/ap
 - `go test -p 1 ./...` passes.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `1f6db66` on `feature/mcp-go`, merged into `feature/mcp` at `19939fb`. No finding confirmed above low. Decisions are under 03 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).

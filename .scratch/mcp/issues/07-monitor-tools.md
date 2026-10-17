@@ -1,6 +1,6 @@
 # 07: Monitor tools
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Console
 **Blocked by:** 02
 
@@ -26,3 +26,7 @@ The Monitors row of the spec's Tool catalogue.
 - `console/test/controllers/monitors_controller_test.rb` passes unchanged.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `ce4795e`. No finding confirmed above low. `MonitorsController` behaves as before; the save moved to `LogMonitor`. Decisions are under 07 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).

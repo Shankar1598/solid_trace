@@ -1,6 +1,6 @@
 # 08: Issue tools
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Track:** Console
 **Blocked by:** 02
 
@@ -28,3 +28,7 @@ The Issues row of the spec's Tool catalogue.
 - `bin/rails test` passes.
 
 ## Comments
+
+### 2026-10-17 resolved
+
+Built on `feature/mcp` in workflow `wf_7acd8b1c-eef` (implement, one review and one verify, a skeptic on high and medium findings, fixes, recheck). Head `11e0b9f`. No finding confirmed above low. Decisions are under 08 in the spec's Implementation decisions; findings left for later are in [carry-over.md](../carry-over.md).
