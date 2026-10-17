@@ -192,3 +192,8 @@
     cursor: pointer;
   }
 }
+
+/* A Dashboard's resize corner (react-resizable draws a dark arrow): light in dark mode, so it can be found. */
+.dark .react-resizable-handle {
+  filter: invert(1);
+}
