@@ -358,11 +358,11 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       {isThreshold && (
         <section className="space-y-2">
           <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={byGroup} onCheckedChange={checked => setByGroup(checked === true)} />
+            <Checkbox aria-label="Notify by group" checked={byGroup} onCheckedChange={checked => setByGroup(checked === true)} />
             Notify by group: each group of the summarize's by columns fires and resolves on its own
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={noData} onCheckedChange={checked => setNoData(checked === true)} />
+            <Checkbox aria-label="Alert on no data" checked={noData} onCheckedChange={checked => setNoData(checked === true)} />
             Alert on no data: a run that finds no rows at all fires
           </label>
         </section>
@@ -424,7 +424,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
           <div className="space-y-1" role="group" aria-label="Integrations">
             {integrations.map(i => (
               <label key={i.id} className="flex items-center gap-2 text-sm">
-                <Checkbox checked={integrationIds.includes(i.id)} onCheckedChange={checked => toggleIntegration(i.id, checked === true)} />
+                <Checkbox aria-label={i.name} checked={integrationIds.includes(i.id)} onCheckedChange={checked => toggleIntegration(i.id, checked === true)} />
                 {i.name} <span className="text-xs text-muted-foreground">{i.provider}{i.enabled ? '' : ', off'}</span>
               </label>
             ))}
