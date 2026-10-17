@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
@@ -384,9 +385,11 @@ func (r *logRead) sourcesIn(spans []timeSpan, sel, where func(LogColumns) string
 		}
 		return fmt.Sprintf("SELECT %s FROM (%s) WHERE %s", sel(cols), table, condition)
 	}
+	// The late Logs are always read, so the query is valid SQL even when
+	// the spans hold no time, as when a where on time leaves no range.
 	first, last := spans[0].from, spans[len(spans)-1].to
 	sources := []string{source(fmt.Sprintf("SELECT * FROM %s.%s WHERE project_id = %d", logsCatalog, lateTable, projectID),
-		LogColumns{late: true}, within(first, last))}
+		LogColumns{late: true}, cmp.Or(within(first, last), "false"))}
 
 	// The hot table and the files, a day at a time: each day by its own
 	// promoted set.

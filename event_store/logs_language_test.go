@@ -165,6 +165,44 @@ func TestWhereOnTimeNarrowsTheRangeButNeverWidensIt(t *testing.T) {
 	}
 }
 
+func TestAWhereOnTimeOutsideTheRangeGivesAnEmptyTableAndHistogram(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env) // the clock reads 11:30
+
+	// The where narrows the range to nothing.
+	const outside = `where time > datetime(2030-01-01)`
+	from, to := languageAt(0, 0), languageAt(13, 0)
+	check := func(when string) {
+		t.Helper()
+		for query, want := range map[string][]string{
+			outside + " | summarize count() by user":          nil,
+			outside + " | summarize count() by bin(time, 1h)": nil,
+			outside + " | summarize n = count()":              {"[0]"},
+		} {
+			status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: query, From: from, To: to})
+			var answer tableAnswer
+			if status != 200 || json.Unmarshal(raw, &answer) != nil || answer.Table == nil {
+				t.Errorf("%s: %s: expected 200 with a table, got %d: %s", when, query, status, raw)
+				continue
+			}
+			var rows []string
+			for _, row := range answer.Table.Rows {
+				rows = append(rows, string(row))
+			}
+			if !slices.Equal(rows, want) {
+				t.Errorf("%s: %s: want rows %v, got %v", when, query, want, rows)
+			}
+		}
+		if answer := histogram(t, env, histogramRequest{Query: outside, From: from, To: to, BucketSeconds: 3600}); answer.Count != 0 {
+			t.Errorf("%s: expected the histogram to count no Logs, got %d", when, answer.Count)
+		}
+	}
+	check("in the hot table")
+	exportLanguageLogs(t, env)
+	check("in files")
+}
+
 // tableAnswer is a run's answer for a Query that returns a table.
 type tableAnswer struct {
 	Table *struct {
