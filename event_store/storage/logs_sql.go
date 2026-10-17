@@ -49,18 +49,23 @@ type SQLError struct {
 func (e *SQLError) Error() string { return e.Err.Error() }
 func (e *SQLError) Unwrap() error { return e.Err }
 
-// RunSQL runs a SQL query exactly as written (ADR 0003), with the logs view
-// holding a Project's Logs of [from, to): from its hot table, its late Logs
-// and its files, promoted values merged back into their maps. It reads at
-// most limit rows. If the query itself fails, the error is a *SQLError.
+// RunSQL runs a read-only SQL query as written (ADR 0003), with the logs
+// view holding a Project's Logs of [from, to): from its hot table, its late
+// Logs and its files, promoted values merged back into their maps. It reads
+// at most limit rows. SQL that isn't one SELECT, or that calls a function
+// that changes something, is refused before any of it runs
+// (checkReadOnly). If the query is refused or itself fails, the error is a
+// *SQLError.
 //
 // The view is a temporary view on the read's own connection, which is
 // closed afterwards, so nothing the query leaves on it (temporary objects,
 // an open transaction) reaches another query. Like ScanLogTable, the query
 // runs in the read's transaction, so that the view sees each Log exactly
-// once and the query holds up no export; what the query writes commits when
-// it ends. Cancelling ctx stops it.
+// once and the query holds up no export. Cancelling ctx stops it.
 func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.Time, query string, limit int) (SQLResult, error) {
+	if err := s.checkReadOnly(ctx, query); err != nil {
+		return SQLResult{}, err
+	}
 	from, to = from.UTC(), to.UTC()
 	if !to.After(from) {
 		to = from
