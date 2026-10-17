@@ -98,6 +98,33 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout)
     end
 
+    # A Match monitor's run: the Logs of a Project's Log batches after
+    # after_batch, up to the batch Log processing has stored last, that match
+    # a Query: {"logs" => [...], "total", "ingest_cursor"}, at most limit
+    # Logs, newest first, and total, how many matched in all. ingest_cursor
+    # is the after_batch of the next run. after_batch "" reads nothing and
+    # answers the ingest_cursor to start from, which arms a Monitor; it is
+    # never nil. A Query that returns a table is Rejected. Raises TimedOut
+    # past timeout_seconds, when the run reads nothing and the next run starts
+    # from the same after_batch.
+    def logs_ingested_after(project_id:, query:, after_batch:, limit: nil, timeout_seconds: nil)
+      body = { query: query, after_batch: after_batch.to_s }
+      body[:limit] = limit if limit
+      body[:timeout_seconds] = timeout_seconds if timeout_seconds
+      read_timeout = timeout_seconds && (timeout_seconds + TIMEOUT_GRACE_SECONDS)
+      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout)
+    end
+
+    # What EventStore said in an error body it answered: the message of each
+    # error, joined, or the body as text.
+    def error_text(body)
+      return body.to_s unless body.is_a?(Hash)
+
+      messages = Array(body["errors"]).filter_map { |error| error.is_a?(Hash) ? error["message"] : error.to_s }
+      messages << body["error"] if body["error"].present?
+      messages.any? ? messages.join("; ") : body.to_json
+    end
+
     # Counts the Logs in [from, to) that pass a Query's filters, per bucket
     # and Level: {"bucket_seconds", "buckets" => [{"time", "count",
     # "levels"}], "count", "levels"}. levels has every Level and "none" for

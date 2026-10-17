@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 # A Notification is one row in the Integration notification outbox: a message
-# of a given +kind+ about an Issue, owed to an Integration. The
+# of a given +kind+ owed to an Integration, about an Issue or about one group
+# of a Monitor (+group_key+, "" for a Monitor of one group), never both. The
 # IntegrationNotification module writes, delivers and closes these rows.
 class Notification < ApplicationRecord
   belongs_to :integration
-  belongs_to :issue
+  belongs_to :issue, optional: true
+  belongs_to :monitor, class_name: "LogMonitor", optional: true
 
   serialize :payload, coder: MessagePackCoder
 
@@ -28,10 +30,14 @@ class Notification < ApplicationRecord
   # Failed rows at the attempt cap: their outcome is final.
   scope :exhausted, -> { where(status: :failed, attempts: MAX_ATTEMPTS..) }
 
-  def self.enqueue!(integration:, issue:, kind:, payload: {})
+  validate :one_subject
+
+  def self.enqueue!(integration:, kind:, issue: nil, monitor: nil, group_key: nil, payload: {})
     create!(
       integration: integration,
       issue: issue,
+      monitor: monitor,
+      group_key: group_key,
       kind: kind,
       payload: payload,
       status: :pending
@@ -60,5 +66,17 @@ class Notification < ApplicationRecord
     rows = where(id: row_ids)
     rows.update_counters(attempts: 1) if status.to_s == "processing"
     rows.update_all(attrs)
+  end
+
+  private
+
+  def one_subject
+    if issue_id.nil? == monitor_id.nil?
+      errors.add(:base, "must be about either an Issue or a Monitor")
+    elsif monitor_id && group_key.nil?
+      errors.add(:group_key, "must be set for a Monitor")
+    elsif issue_id && !group_key.nil?
+      errors.add(:group_key, "must be empty for an Issue")
+    end
   end
 end

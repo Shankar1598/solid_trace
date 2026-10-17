@@ -6,6 +6,7 @@ require "active_job/test_helper"
 class NotificationTest < ActiveSupport::TestCase
   include ActiveJob::TestHelper
   include ActiveSupport::Testing::TimeHelpers
+  include MonitorTestHelper
 
   setup do
     @organization = Organization.create!(name: "Test Org", slug: "test-org")
@@ -67,5 +68,26 @@ class NotificationTest < ActiveSupport::TestCase
 
       assert_equal [ record1.id, record2.id ], results.pluck(:id)
     end
+  end
+
+  test "a row is about either an Issue or one group of a Monitor, never both or neither" do
+    project = @organization.projects.create!(name: "Monitored")
+    stub_monitor_query_check(project)
+    monitor = create(:monitor, project: project)
+
+    row = Notification.enqueue!(integration: @integration, monitor: monitor, group_key: "", kind: "monitor_firing")
+    assert_nil row.issue_id
+    assert_equal "", row.group_key
+
+    both = Notification.new(integration: @integration, issue: @issue, monitor: monitor, group_key: "", kind: "monitor_firing")
+    assert_not both.valid?
+    neither = Notification.new(integration: @integration, kind: "monitor_firing")
+    assert_not neither.valid?
+    no_group = Notification.new(integration: @integration, monitor: monitor, kind: "monitor_firing")
+    assert_not no_group.valid?
+
+    assert_raises(ActiveRecord::StatementInvalid) { both.save!(validate: false) }
+    assert_raises(ActiveRecord::StatementInvalid) { neither.save!(validate: false) }
+    assert_raises(ActiveRecord::StatementInvalid) { no_group.save!(validate: false) }
   end
 end
