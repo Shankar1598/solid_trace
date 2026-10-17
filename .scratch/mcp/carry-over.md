@@ -22,12 +22,9 @@ Status: ready-for-agent
 | 08 | No test ties `get_issue`'s `trace_logs` arguments to `query_logs`'s input schema (08-review-2) | low | 11 |
 | 08 | `update_issue` matches `unassigned` case-sensitively, so `Unassigned` is looked up as an email (08-review-3, 08-verify-1) | low | 11 |
 
-## Before the MCP, found on the way
+## Filed as their own issues
 
-| From | Finding | Goes to |
-|---|---|---|
-| 01 | User settings' profile form PUTs to `/user/settings`, which no route matches (`/user_settings` and `/:org_slug/settings/user` do). Not checked in the browser. | later |
-| 09 | `MemberInvite`, like the controller before it, finds users by email case-sensitively, so inviting `BOB@example.com` when `bob@example.com` is a member makes a second user (09-verify-2) | later |
-| 09 | The New Project page still saves a Project with an empty slug or the slug `new`; only `create_project` refuses them | later |
+- Read-only SQL can still fetch web addresses on bucket installs (04-review-1, warned about, not blocked): [12](issues/12-sql-fetches-web-addresses-on-bucket-installs.md), `needs-triage`.
+- Bugs from before the MCP, found on the way, in [bugs/](../bugs/issues/): the profile form saves to a missing route ([01](../bugs/issues/01-profile-name-never-saves.md)), password reset is unbuilt ([02](../bugs/issues/02-password-reset-is-unbuilt.md)), emails match case-sensitively ([03](../bugs/issues/03-emails-match-case-sensitively.md), 09-verify-2), and the New Project page saves unreachable slugs ([04](../bugs/issues/04-project-slugs-unchecked.md)).
 
 Done in the batch: 09-verify-1 (an empty slug from `create_project`) was fixed with 09-review-1 in `c807d38`, and 02-verify-1 with 02-review-1 in `1186291`.
