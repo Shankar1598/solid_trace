@@ -25,7 +25,9 @@ module McpServer
     McpTools::RunMonitor,
     McpTools::ListIntegrations,
     McpTools::ListIssues,
-    McpTools::GetIssue
+    McpTools::GetIssue,
+    McpTools::UpdateIssue,
+    McpTools::AddComment
   ].freeze
 
   INSTRUCTIONS = <<~TEXT
