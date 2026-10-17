@@ -64,6 +64,19 @@ module Notifiers
       end
     end
 
+    test "the text says when a group fired for no data, has data again, or has no row any more" do
+      texts = {
+        firing_no_data: [ IntegrationNotification::MONITOR_FIRING, "", threshold_payload(nil) ],
+        data_again: [ IntegrationNotification::MONITOR_RESOLVED, "", threshold_payload(4.0).merge("no_data" => true) ],
+        absent: [ IntegrationNotification::MONITOR_RESOLVED, GROUP, threshold_payload(nil).merge("absent" => true) ],
+      }.transform_values { |kind, group, payload| MonitorMessage.build(row(kind, group, payload)).text }
+
+      assert_equal "No data over the last 15 minutes.", texts[:firing_no_data]
+      assert_equal "There is data again over the last 15 minutes: count_ was 4, not at or above the threshold of 100.",
+        texts[:data_again]
+      assert_equal "No rows for this group over the last 15 minutes, so it is back to ok.", texts[:absent]
+    end
+
     test "Slack: matched Logs are listed, at most ten, with how many more and that Logs were skipped" do
       deliver(@slack, matched(total: 13, logs_skipped_at: "2026-10-17T11:58:00Z"))
 
