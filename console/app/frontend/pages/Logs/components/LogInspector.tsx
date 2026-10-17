@@ -3,6 +3,7 @@ import { Tooltip as TooltipPrimitive } from '@base-ui/react/tooltip'
 import {
   Asterisk,
   ChartColumn,
+  ChartLine,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -10,6 +11,7 @@ import {
   ChevronsUpDown,
   Columns3,
   Copy,
+  Crosshair,
   Download,
   Equal,
   EqualNot,
@@ -35,6 +37,10 @@ export interface InspectorActions {
   filter: ((chip: Chip) => void) | null
   /** Counts the Query's Logs by a Field; null outside the Builder. */
   groupBy: ((field: string) => void) | null
+  /** Charts a number's Field: its average over time; null where the Query can't be summarized. */
+  chart: ((field: string) => void) | null
+  /** Shows the Logs of the Log's Service a minute either side of it, with it highlighted; null in SQL mode. */
+  around: ((log: Log) => void) | null
   columns: ColumnControl
 }
 
@@ -134,6 +140,15 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, actions, onNew
             {log.service && <Pill field="service" value={log.service}>{log.service}</Pill>}
             {log.environment && <Pill field="environment" value={log.environment}>{log.environment}</Pill>}
             {log.trace_id && <Pill field="trace_id" value={log.trace_id}><span className="text-muted-foreground">trace</span> {log.trace_id.slice(0, 8)}</Pill>}
+            {actions.around && (
+              <button
+                type="button"
+                onClick={() => actions.around?.(log)}
+                className="inline-flex h-6 items-center gap-1.5 border px-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <Crosshair className="h-3.5 w-3.5" /> Logs around this one
+              </button>
+            )}
           </div>
         </header>
 
@@ -345,6 +360,15 @@ function LineActions({ field, value, actions }: { field: string; value: Attribut
       </span>
       <span className="flex border-l">
         <IconButton label={groupLabel} disabled={!actions.groupBy || field === 'time'} onClick={() => actions.groupBy?.(field)}><ChartColumn /></IconButton>
+        {typeof value === 'number' && (
+          <IconButton
+            label={actions.chart ? `Chart this field: avg(${field}) over time` : 'SQL charts nothing from here.'}
+            disabled={!actions.chart}
+            onClick={() => actions.chart?.(field)}
+          >
+            <ChartLine />
+          </IconButton>
+        )}
         <IconButton label={shown ? 'Remove the column' : 'Add as a column'} pressed={shown} disabled={shown && actions.columns.shown.length === 1} onClick={() => actions.columns.toggle(field)}><Columns3 /></IconButton>
         <IconButton label="Copy the value" onClick={() => copy(value)}><Copy /></IconButton>
       </span>

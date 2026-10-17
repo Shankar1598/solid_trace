@@ -75,9 +75,11 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, se
     if (end === 'more' && !loadingOlder && !olderError && lastIndex >= logs.length - LOAD_AHEAD) onLoadOlder()
   }, [end, loadingOlder, olderError, lastIndex, logs.length, onLoadOlder])
 
-  // The Log the inspector steps to scrolls into view, clear of the sticky header.
+  // The Log the inspector steps to scrolls into view, clear of the sticky header,
+  // and so does a selected Log once an older page brings it (Logs around this one).
   const logsNow = useRef(logs)
   logsNow.current = logs
+  const selectedShown = selectedId !== null && logs.some(l => l.id === selectedId)
   useEffect(() => {
     const box = scrollRef.current
     const at = selectedId === null ? -1 : logsNow.current.findIndex(l => l.id === selectedId)
@@ -86,7 +88,7 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, se
     const top = header + at * ROW_HEIGHT
     if (top < box.scrollTop + header) box.scrollTop = top - header
     else if (top + ROW_HEIGHT > box.scrollTop + box.clientHeight) box.scrollTop = top + ROW_HEIGHT - box.clientHeight
-  }, [selectedId])
+  }, [selectedId, selectedShown])
 
   const widthOf = (column: string) => widths[column] ?? WIDTHS[column] ?? DEFAULT_WIDTH
   const minWidth = GUTTER + columns.reduce((sum, c) => sum + widthOf(c), 0) + PICKER

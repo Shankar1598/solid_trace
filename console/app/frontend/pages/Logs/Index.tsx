@@ -23,6 +23,7 @@ import {
   allLogsNow,
   chooseViz,
   fillEmptyQuery,
+  inBuilder,
   linkSearch,
   modesFor,
   openExplorer,
@@ -48,6 +49,7 @@ import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/hi
 import { editAsBuilder, pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
 import { fillStream, keepsFetching, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
+import { aroundLog } from '@/lib/logs/inspector'
 import type { LogTable } from '@/lib/logs/table'
 import { registerPaletteSource } from '@/lib/palette'
 import { browserStorage, recordQuery } from '@/lib/recentQueries'
@@ -433,6 +435,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
   const onFilter: OnFilter = filterWith && ((kind, field, value) => filterWith({ field, op: kind === 'show' ? '==' : '!=', value }))
   const summarizeWith = editSummarize
   const groupByField = summarizeWith && ((field: string) => summarizeWith(b => groupBy(b, field)))
+  const chartNumber = summarizeWith && ((field: string) => summarizeWith(b => chartField(b, field, true)))
   const onSummarize: OnSummarize = summarizeWith && ((kind, field, numeric) =>
     summarizeWith(b => (kind === 'group' ? groupBy(b, field) : chartField(b, field, numeric))))
   const columnControl = { shown: columns, toggle: (field: string) => changeColumns(toggleColumn(columns, field)) }
@@ -517,6 +520,27 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
     if (run.controller.signal.aborted) run.controller = new AbortController()
     fill(run, wantOlder(result.stream))
   }, [fill, result])
+
+  // Logs around this one: the Logs of its Service a minute either side, in
+  // the Builder, with the inspector kept on it so the stream highlights it.
+  // Older pages load until the stream has it, when more than a page is newer.
+  const [seeking, setSeeking] = useState<string | null>(null)
+  const showAround = (log: Log) => {
+    const { builder, range } = aroundLog(log)
+    setBuilderView({ status: 'ready', builder })
+    setProblems([])
+    setLeaving(null)
+    setSeeking(log.id)
+    run(inBuilder(latest.current, queryOf(builder, project.slug), range))
+  }
+  useEffect(() => {
+    if (seeking === null || result.status === 'running') return
+    if (result.status !== 'done' || result.olderError || streamEnd(result.stream) !== 'more' || result.stream.logs.some(l => l.id === seeking)) {
+      setSeeking(null)
+    } else if (!result.loadingOlder) {
+      loadOlder()
+    }
+  }, [seeking, result, loadOlder])
 
   /** The Builder's Project: its clauses, on the Logs of the Project picked. */
   const openProject = (slug: string) => {
@@ -638,7 +662,9 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
                 log={inspected}
                 orgSlug={orgSlug}
                 projectSlug={project.slug}
-                actions={{ filter: addToQuery, groupBy: groupByField, columns: columnControl }}
+                actions={{
+                  filter: addToQuery, groupBy: groupByField, chart: chartNumber, around: sqlMode ? null : showAround, columns: columnControl,
+                }}
                 onNewer={onNewer}
                 onOlder={onOlder}
                 onClose={closeInspector}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inspectorFields, inspectorJson, jsonLines, localTime, utcTime, type JsonLine } from './inspector'
+import { aroundLog, inspectorFields, inspectorJson, jsonLines, localTime, utcTime, type JsonLine } from './inspector'
 import type { Log } from './stream'
 
 const log: Log = {
@@ -84,5 +84,19 @@ describe('a Log\'s local time', () => {
   it('reads as a date and a clock to the millisecond, with the zone', () => {
     expect(localTime('2026-10-03T09:15:00.123Z', 'UTC')).toBe('Oct 3, 2026 at 09:15:00.123 UTC')
     expect(localTime('2026-10-03T09:15:00.123Z', 'Europe/London')).toBe('Oct 3, 2026 at 10:15:00.123 GMT+1')
+  })
+})
+
+describe('Logs around this one', () => {
+  const log: Log = { id: 'l1', time: '2026-10-17T12:00:00.250Z', message: 'boom', service: 'api', attributes: {} }
+
+  it('reads the same Service from a minute before the Log to a minute after', () => {
+    const { builder, range } = aroundLog(log)
+    expect(builder).toEqual({ filters: [{ field: 'service', op: '==', value: 'api' }], search: '' })
+    expect(range).toEqual({ kind: 'absolute', from: new Date('2026-10-17T11:59:00.250Z'), to: new Date('2026-10-17T12:01:00.250Z') })
+  })
+
+  it('reads Logs without a Service around a Log without one', () => {
+    expect(aroundLog({ ...log, service: undefined }).builder.filters).toEqual([{ field: 'service', op: 'missing', value: null }])
   })
 })
