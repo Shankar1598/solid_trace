@@ -6,4 +6,8 @@
 
 **Long numbers in tables** (seen 2026-10-17): an avg shows every digit (`405.21802759325504`); round table numbers for display.
 
+**Scope and direction** (user, 2026-10-17): the looks pass covers the whole Console, not only Logs. Circles (status dots, avatars) stay round. The Console mixes Sentry, Axiom and Better Stack, whose style languages differ; the goal is one consistent design language, chosen before any page is polished. A tour of every page (`console/e2e/screens/tour.spec.ts`, set `tour-before`) found: one monospace face for everything, four page-header patterns, three surface treatments, two brand marks, mixed corners and case, a stray violet accent, loose form spacing. Three directions (A all-mono, B sans for the interface and mono for the data, C all-sans) are compared at https://claude.ai/artifact/K6onrwpFyjBpuhWtW599HH; The user picked **B** (2026-10-17): IBM Plex Sans for the interface (titles, nav, buttons, labels, prose), JetBrains Mono for data (timestamps, values, log messages, queries, IDs, DSNs), plus the shared rules on that page (square corners, neutral palette with semantic colour only, one page header, outlined panels, sentence case, rounded tabular numbers). Every page is reviewed with seeded data before polishing.
+
+**Progress:** the [review](../research/looks-review.md) lists the work in three steps. Step 1, the foundation, is done (`b822f9d`, 2026-10-17): fonts, square corners, one neutral mark, a dark sign-in panel, and rounded table numbers. All 69 flows pass. Before and after screenshots are on the direction page. Next is step 2, the shared components: page header, table, badge, section label, panel and form section.
+
 **Status:** ready-for-human
