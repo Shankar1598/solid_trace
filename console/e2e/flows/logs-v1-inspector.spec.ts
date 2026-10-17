@@ -1,10 +1,11 @@
 import { test, expect, type Page } from '@playwright/test'
-import { builderRow, last24h, logCount, openLogs, settled, streamRows } from '../support/logs'
+import { builderRow, dummyLogs, logCount, openLogs, settled, streamRows } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // The inspector: a Log opened from the stream, its Table and JSON tabs, j and
 // k stepping through the stream, Show only and Hide from its values, and Esc
-// or the close button.
+// or the close button. Each opens the dummy Logs, whose Attributes it reads,
+// whatever else the dev Project holds.
 
 const inspector = (page: Page) => page.getByRole('complementary', { name: 'Log inspector' })
 /** The inspector's heading: "Log" and the Log's local time. */
@@ -16,7 +17,7 @@ const AT_START = { position: { x: 60, y: 15 } }
 
 test('a Log opens in the inspector, switches tabs and steps with j and k', async ({ page }) => {
   const errors = watchErrors(page)
-  await openLogs(page)
+  await openLogs(page, dummyLogs())
 
   const rows = streamRows(page)
   const firstMessage = (await rows.nth(0).locator('> div > div').last().innerText()).trim()
@@ -66,7 +67,7 @@ test('a Log opens in the inspector, switches tabs and steps with j and k', async
 
 test('Show only and Hide from a value in the inspector add a Where filter', async ({ page }) => {
   const errors = watchErrors(page)
-  await openLogs(page, last24h())
+  await openLogs(page, dummyLogs())
   const all = await logCount(page)
 
   await streamRows(page).nth(0).click(AT_START)
@@ -96,7 +97,7 @@ test('Show only and Hide from a value in the inspector add a Where filter', asyn
 
 test('a value in the inspector becomes a column, and counts Logs by its Field', async ({ page }) => {
   const errors = watchErrors(page)
-  await openLogs(page)
+  await openLogs(page, dummyLogs())
   await streamRows(page).nth(0).click(AT_START)
   const line = (name: string) => inspector(page).locator('div.group', { has: page.getByText(name, { exact: true }) }).first()
 

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { builderRow, last24h, openLogs, runBy, settled, streamRows } from '../support/logs'
+import { builderRow, DUMMY_LOGS, dummyLogs, last24h, openLogs, runBy, settled, streamRows } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // Charts in the Logs explorer: a Summarize draws its table as a chart over
@@ -7,7 +7,8 @@ import { watchErrors } from '../support/screens'
 // Line, Area, Bars or the table alone and stays in the URL; dragging across a
 // time chart narrows the range.
 
-const SOURCE = "['solid-trace-project']"
+// The dummy Logs, whose four Services the flows count, whatever else the dev Project holds.
+const SOURCE = DUMMY_LOGS
 
 /** The chart over the table, by its accessible name: "Line chart of api, billing … over time". */
 const chart = (page: Page) => page.getByRole('figure')
@@ -26,7 +27,7 @@ async function runQuery(page: Page, text: string) {
 
 test('Summarize count by service in the Builder draws a series per service over time', async ({ page }) => {
   const errors = watchErrors(page)
-  await openLogs(page, last24h())
+  await openLogs(page, dummyLogs())
   await expect(page.getByText(/error rate/)).toBeVisible()
 
   // One click: count() over time in automatic bins.
