@@ -92,6 +92,16 @@ module McpTools
       arguments.slice(*names)
     end
 
+    # A Query's leading source, such as ['shop'], as the chart editor reads it.
+    SOURCE = /\A\s*\[\s*'(?:[^'\\]|\\.)*'\s*\]/
+
+    # The Query with its leading source, if it has one, naming the Project of
+    # slug instead, as the chart editor does when a Chart's Project changes.
+    # EventStore refuses a Query whose source names another Project's Logs.
+    def with_source(query, slug)
+      query.sub(SOURCE) { "['#{slug.gsub('\\') { '\\\\' }.gsub("'") { "\\'" }}']" }
+    end
+
     # A Dashboard with its Charts, in the order the page reads them.
     def dashboard_json(dashboard)
       charts = dashboard.charts.includes(:project).to_a

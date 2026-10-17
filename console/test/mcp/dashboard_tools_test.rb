@@ -128,11 +128,28 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     @chart.reload
     assert_equal [ other, "Requests", "area", 12, 4 ], [ @chart.project, @chart.title, @chart.viz, @chart.w, @chart.h ]
     assert_equal({ "stacked" => true, "decimals" => 2 }, @chart.options)
+    assert_equal "['api']\n| summarize count() by bin_auto(time)", @chart.query
     assert_equal "api", answer.json["project"]
     assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}", answer.link
 
     assert_match(/Give at least one of project, title/, call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id).text)
     assert_equal "Not saved: H must be in 1..24.", call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, h: 30).text
+  end
+
+  test "update_chart points the Query's source at a new Project, as the chart editor does, unless a Query is given" do
+    create(:project, organization: @acme, slug: "api")
+    move = ->(**fields) { call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, **fields) }
+
+    @chart.update!(query: "  [ 'shop' ] | where level == \"error\" | summarize count()")
+    assert_not move.(project: "api").error?
+    assert_equal "['api'] | where level == \"error\" | summarize count()", @chart.reload.query
+
+    @chart.update!(query: "summarize count()")
+    move.(project: "shop")
+    assert_equal "summarize count()", @chart.reload.query
+
+    move.(project: "api", query: "['shop'] | summarize count()")
+    assert_equal "['shop'] | summarize count()", @chart.reload.query
   end
 
   test "delete_chart deletes the Chart, linking to the Dashboard" do
