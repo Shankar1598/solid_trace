@@ -17,6 +17,10 @@ event_store_archive:
   class: Maintenance::EventStoreArchiveJob
   schedule: at 2am every day
 
+monitor_scheduler:
+  class: MonitorSchedulerJob
+  schedule: every minute
+
 maintenance_notification_cleanup:
   class: "Maintenance::NotificationCleanupJob"
   schedule: at 3am every day
