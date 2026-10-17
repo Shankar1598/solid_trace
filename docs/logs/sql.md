@@ -10,7 +10,7 @@ On an instance whose operator has turned SQL queries on, the Logs explorer has a
 SQL queries are read-only. A query must be one SELECT, which may start with `WITH` or `FROM`; `DESCRIBE`, `SHOW` and `SUMMARIZE` work too. Anything else is refused before it runs, with "SQL queries are read-only: … isn't allowed":
 
 - statements that change something, such as `DROP`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `COPY`, `ATTACH`, `SET`, `PRAGMA`, `CALL`, and `EXPLAIN` too;
-- more than one statement;
+- more than one statement, and `PIVOT` without an `IN` list, which DuckDB runs as more than one;
 - the functions that change something from a SELECT: `query`, `query_table`, `json_execute_serialized_sql`, `enable_logging`, `disable_logging`, `truncate_duckdb_logs`, `write_log`, `enable_profiling`, `disable_profiling`, `enable_peg_parser`, `disable_peg_parser`, `checkpoint`, `force_checkpoint`, `nextval` and `setseed`.
 
 DuckDB's extensions load only as EventStore needs them, so a function from any other extension isn't found.
