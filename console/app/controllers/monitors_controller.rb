@@ -86,12 +86,15 @@ class MonitorsController < ApplicationController
   end
 
   # Run now: runs the Monitor at once, as its schedule would, while the
-  # request waits, so the page shows what the run found.
+  # request waits, so the page shows what the run found. A scheduled run
+  # going at the same moment holds the Monitor, and Run now says so.
   def run
     return redirect_to monitor_page(@monitor), alert: "Turn the Monitor on to run it." unless @monitor.enabled?
 
     run = MonitorEvaluation.run(@monitor, Time.current)
-    if run.status_error?
+    if run.nil?
+      redirect_to monitor_page(@monitor), alert: "The Monitor is running now: its run shows here when it ends."
+    elsif run.status_error?
       redirect_to monitor_page(@monitor), alert: "The run failed: #{run.error}"
     else
       redirect_to monitor_page(@monitor), notice: "Ran the Monitor: #{found(run)}."

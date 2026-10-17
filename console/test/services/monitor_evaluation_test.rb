@@ -211,6 +211,31 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_equal "Firing: #{monitor.name}", events.first.dig("payload", "summary")
   end
 
+  test "one run at a time per Monitor: a run while another is going does nothing, and one left past its lease is taken over" do
+    monitor = threshold_monitor
+    answer_table([ [ 12 ] ])
+    monitor.update_columns(run_started_at: 10.seconds.ago)
+
+    assert_nil evaluate(monitor)
+    assert_not_requested(:post, @query_url)
+    assert_empty monitor.runs
+    assert_empty Notification.all
+
+    travel MonitorEvaluation::RUN_LEASE
+    assert evaluate(monitor).status_ok?
+    assert_nil monitor.reload.run_started_at, "the run lets go of its Monitor"
+    assert_equal [ [ "monitor_firing", "", 12 ] ], notifications
+  end
+
+  test "a run that fails lets go of its Monitor too" do
+    monitor = threshold_monitor
+    stub_request(:post, @query_url).to_return(status: 503, body: "down")
+
+    assert evaluate(monitor).status_error?
+
+    assert_nil monitor.reload.run_started_at
+  end
+
   test "a firing group with no row resolves, and an ok group with no row is forgotten" do
     monitor = threshold_monitor(notify_by_group: true)
     api = { "service" => "api" }.to_json

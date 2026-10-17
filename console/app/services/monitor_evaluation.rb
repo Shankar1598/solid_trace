@@ -21,18 +21,43 @@
 # When EventStore is down, answers 5xx, times out or refuses the Query, the
 # run records the error as last_error, changes no state, and the next tick
 # runs the Monitor again.
+#
+# One run at a time per Monitor, whether the scheduler (MonitorEvaluationJob)
+# or Run now started it: a run takes the Monitor's run_started_at as a lease
+# and lets go when it ends, and a run that finds the lease taken does nothing.
 class MonitorEvaluation
   MATCHED_LOGS = 10
   TIMEOUTS_BEFORE_SKIPPING = 3
   # Characters of a matched Log's message kept for its Notification.
   MAX_LOG_MESSAGE = 1000
+  # How long a run holds its Monitor. Runs end well within it, as EventStore
+  # stops each at LogMonitor::RUN_TIMEOUT_SECONDS; a run whose process died
+  # is taken over after it.
+  RUN_LEASE = 5.minutes
 
   # The table EventStore answered can't be compared with the threshold.
   class Unusable < StandardError; end
 
+  # The MonitorRun recorded, or nil when another run of the Monitor is going.
   def self.run(monitor, now)
-    new(monitor, now).run
+    started = take(monitor)
+    return unless started
+
+    begin
+      new(monitor, now).run
+    ensure
+      LogMonitor.where(id: monitor.id, run_started_at: started).update_all(run_started_at: nil)
+    end
   end
+
+  # Takes the Monitor's lease, in one UPDATE so two runs can't both take it.
+  # The time it was taken at, or nil when another run holds it.
+  def self.take(monitor)
+    started = Time.current
+    free = LogMonitor.where(run_started_at: nil).or(LogMonitor.where(run_started_at: ...(started - RUN_LEASE)))
+    started if free.where(id: monitor.id).update_all(run_started_at: started) == 1
+  end
+  private_class_method :take
 
   def initialize(monitor, now)
     @monitor = monitor

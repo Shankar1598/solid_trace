@@ -219,6 +219,18 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert @monitor.reload.last_error.present?
   end
 
+  test "Run now while a scheduled run of the Monitor is going runs nothing, and says so" do
+    @monitor.update_columns(run_started_at: Time.current)
+    WebMock::RequestRegistry.instance.reset!
+
+    post run_monitor_url(@monitor, org_slug: @organization.slug)
+
+    assert_redirected_to monitor_url(@monitor, org_slug: @organization.slug)
+    assert_equal "The Monitor is running now: its run shows here when it ends.", flash[:alert]
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+    assert_empty @monitor.runs
+  end
+
   test "Run now leaves a Monitor that is off alone" do
     @monitor.update!(disabled_at: Time.current)
 

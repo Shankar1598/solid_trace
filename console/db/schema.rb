@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_17_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_17_140000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -186,6 +186,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_17_130000) do
     t.integer "project_id", null: false
     t.text "query", null: false
     t.integer "range_minutes", default: 5, null: false
+    t.datetime "run_started_at"
     t.float "threshold"
     t.integer "timeouts_in_a_row", default: 0, null: false
     t.datetime "updated_at", null: false

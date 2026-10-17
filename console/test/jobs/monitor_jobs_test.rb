@@ -55,6 +55,17 @@ class MonitorJobsTest < ActiveSupport::TestCase
     assert_equal 1, monitor.runs.count
   end
 
+  test "the run job skips a Monitor whose run is going, as one started by Run now" do
+    monitor = create(:monitor, project: @project)
+    monitor.update_columns(run_started_at: NOW - 5.seconds)
+    WebMock::RequestRegistry.instance.reset!
+
+    MonitorEvaluationJob.perform_now(monitor.id)
+
+    assert_not_requested(:post, @query_url)
+    assert_equal 0, MonitorRun.count
+  end
+
   test "the run job skips a Monitor that is no longer due, turned off or deleted" do
     ran = create(:monitor, project: @project).tap { |m| m.update_columns(next_run_at: NOW + 1.minute) }
     off = create(:monitor, project: @project, disabled_at: NOW)
