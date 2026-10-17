@@ -1,4 +1,4 @@
-import { useForm } from '@inertiajs/react'
+import { useForm, usePage } from '@inertiajs/react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -13,14 +13,20 @@ interface SettingsUserProps {
 }
 
 export default function SettingsUser({ user }: SettingsUserProps) {
-  const { data, setData, put, processing, errors } = useForm({
+  const { url } = usePage()
+  const { data, setData, put, processing, errors, transform } = useForm({
     name: user.name,
     email: user.email
   })
 
+  transform((data) => ({
+    user: data
+  }))
+
   const submit: React.FormEventHandler = (e) => {
     e.preventDefault()
-    put(`/user/settings`, {
+    // Saved where the page was served: User settings live with and without an Organization.
+    put(url, {
       onError: () => toast.error('Failed to update profile')
     })
   }

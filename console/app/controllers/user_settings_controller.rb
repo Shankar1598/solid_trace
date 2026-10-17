@@ -15,9 +15,9 @@ class UserSettingsController < ApplicationController
 
   def update
     if current_user.update(user_params)
-      redirect_back_or_to user_path(org_slug: @current_org&.slug), notice: "User settings updated"
+      redirect_back_or_to settings_page, notice: "User settings updated"
     else
-      redirect_back_or_to user_path(org_slug: @current_org&.slug), inertia: { errors: current_user.errors.to_hash }
+      redirect_back_or_to settings_page, inertia: { errors: current_user.errors.to_hash }
     end
   end
 
@@ -25,6 +25,11 @@ class UserSettingsController < ApplicationController
 
   def user_params
     params.require(:user).permit(:name)
+  end
+
+  # The page is served with and without an Organization.
+  def settings_page
+    @current_org ? user_path(org_slug: @current_org.slug) : user_settings_path
   end
 
   def set_organization
