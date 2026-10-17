@@ -36,6 +36,7 @@ class McpTest < ActionDispatch::IntegrationTest
     InstanceSetting.current.update!(sql_queries_enabled: true)
     mcp "tools/list"
     names = response.parsed_body.dig("result", "tools").map { |tool| tool["name"] }
+    assert_includes names, "run_sql"
     assert_equal McpServer::TOOLS.map(&:name_value).sort, names.sort
   end
 
