@@ -44,6 +44,14 @@ describe('typed ranges', () => {
     expect(parseRange('yesterday', now)).toEqual({ range: absolute(new Date(2026, 9, 10), new Date(2026, 9, 11)) })
   })
 
+  it('turns away a range longer than ten years, which no Retention keeps and a date may not hold', () => {
+    expect(parseRange('3650d', now)).toEqual({ range: relative('3650d') })
+    expect(parseRange('521 weeks', now)).toEqual({ range: relative('3647d') })
+    for (const text of ['3651d', '522w', '99999999999999999999d', `${'9'.repeat(400)}m`]) {
+      expect(parseRange(text, now), text).toEqual({ error: 'A range can be at most 10 years.' })
+    }
+  })
+
   it('reads nothing from an empty box', () => {
     expect(parseRange('   ', now)).toBeNull()
   })
@@ -91,6 +99,10 @@ describe('quick ranges', () => {
     ])
     expect(QUICK_RANGES.find(q => q.label === '1 day')?.span).toBe('24h')
     expect(QUICK_RANGES.every(q => isSpan(q.span))).toBe(true)
+    // A link's span a date can't hold back from now is no span.
+    expect(isSpan('3650d')).toBe(true)
+    expect(isSpan('3651d')).toBe(false)
+    expect(isSpan('99999999999999d')).toBe(false)
   })
 
   it('counts spans of the same length as the same range', () => {
