@@ -21,6 +21,38 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
+  test "an issue page shows its latest Event and a page of its Events" do
+    fingerprint = create(:issue_fingerprint, issue: @issue)
+    event = event_attrs("evt-1", fingerprint)
+    stub_request(:get, %r{/api/#{@project.id}/events/context}).to_return(body: { event: event, prev_uuid: "evt-0" }.to_json)
+    stub_request(:get, %r{/api/#{@project.id}/events\?}).to_return(body: [ event ].to_json)
+    stub_request(:get, %r{/api/#{@project.id}/events/evt-1}).to_return(body: { message: "boom" }.to_json)
+
+    props = issue_page
+    assert_equal "evt-1", props["event"]["id"]
+    assert_equal "evt-0", props["prev_event_id"]
+    assert_equal [ "evt-1" ], props["events_list"].map { |e| e["id"] }
+    assert_nil props["events_unavailable"]
+  end
+
+  test "an issue page says why when EventStore can't read Events, instead of showing none" do
+    create(:issue_fingerprint, issue: @issue)
+    why = "Events can't be read now: the Event archive in the bucket hasn't been listed yet; EventStore tries again every minute"
+    stub_request(:get, %r{/api/#{@project.id}/events}).to_return(status: 503, body: { error: why }.to_json)
+
+    props = issue_page
+    assert_equal why, props["events_unavailable"]
+    assert_nil props["event"]
+    assert_empty props["events_list"]
+  end
+
+  test "an issue page says when EventStore can't be reached" do
+    create(:issue_fingerprint, issue: @issue)
+    stub_request(:get, %r{/api/#{@project.id}/events}).to_raise(Errno::ECONNREFUSED)
+
+    assert_equal "Events can't be read now: EventStore can't be reached.", issue_page["events_unavailable"]
+  end
+
   test "should resolve issue using number param" do
     patch resolve_project_issue_url(@project, @issue, org_slug: @organization.slug)
     assert_redirected_to project_issue_url(@project, @issue, org_slug: @organization.slug)
@@ -96,5 +128,19 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
       headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
     assert_response :success
     JSON.parse(response.body)["props"]
+  end
+
+  def issue_page
+    get project_issue_url(@project, @issue, org_slug: @organization.slug),
+      headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    assert_response :success
+    JSON.parse(response.body)["props"]
+  end
+
+  def event_attrs(uuid, fingerprint)
+    {
+      uuid: uuid, project_id: @project.id, issue_fingerprint_id: fingerprint.id,
+      environment: "production", timestamp: Time.current.iso8601, tags: {},
+    }
   end
 end

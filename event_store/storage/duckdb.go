@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,26 @@ type DuckDBWriter struct {
 	archiveUploadMu      sync.Mutex
 	archiveUploadFailing map[string]bool
 	archiveListFailing   bool
+
+	// viewErr is nil while the events view reads every archive file, and
+	// otherwise says why there is no view: with a bucket, its archive files
+	// haven't been listed yet, or the last rebuild of the view failed. Event
+	// reads fail with it rather than miss archived Events. viewMu guards it,
+	// apart from archiveMu, so that reads never wait on a rebuild.
+	// viewFailing says the last rebuild failed; archiveMu guards it.
+	viewMu      sync.Mutex
+	viewErr     error
+	viewFailing bool
 }
+
+// ErrEventsUnavailable is why Event reads fail while there is no events view
+// that reads every archive file (viewErr). The archive consumer tries again
+// to build the view every minute.
+var ErrEventsUnavailable = errors.New("Events can't be read now")
+
+// errArchiveNotListed is why there is no events view before the bucket's
+// archive files are first listed.
+var errArchiveNotListed = errors.New("the Event archive in the bucket hasn't been listed yet")
 
 type QueryParams struct {
 	ProjectID           uint32
@@ -105,16 +125,23 @@ func NewDuckDBWriter(dbPath, parquetPath, tempDir, memoryLimit string) (*DuckDBW
 		return nil, err
 	}
 
+	// The keys of the archive files whose local copies were deleted once
+	// they were uploaded, so that EventStore can warn when it starts without
+	// their bucket (UseLocalEventArchiveOnly).
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS event_archive_in_bucket (key VARCHAR PRIMARY KEY)`); err != nil {
+		return nil, err
+	}
+
 	writer := &DuckDBWriter{db: db, parquetPath: parquetPath}
 
 	if err := writer.recoverStagedFiles(); err != nil {
 		return nil, fmt.Errorf("failed to recover staged archive files: %w", err)
 	}
 
-	// Create the unified view
-	if err := writer.recreateEventsView(); err != nil {
-		return nil, err
-	}
+	// Create the unified view. A failure is logged and leaves no view, so
+	// Event reads fail until the archive consumer's retry builds it, and
+	// ingest still starts.
+	_ = writer.recreateEventsView()
 
 	return writer, nil
 }
@@ -124,11 +151,70 @@ func NewDuckDBWriter(dbPath, parquetPath, tempDir, memoryLimit string) (*DuckDBW
 //
 // With a bucket, the view lists the archive files by name instead
 // (archiveFiles), and while the bucket hasn't been listed there is no view, so
-// that Event reads fail rather than miss archived Events.
+// that Event reads fail rather than miss archived Events. If the rebuild
+// fails, as when the bucket can't be read, it logs why the first time in a
+// row and drops the view, for the same reason: the old view would miss the
+// files published since it was built.
 func (w *DuckDBWriter) recreateEventsView() error {
 	w.archiveMu.Lock()
 	defer w.archiveMu.Unlock()
 
+	if w.archiveBucket != nil && w.remoteArchive == nil {
+		w.setViewErr(errArchiveNotListed)
+		_, err := w.db.Exec(`DROP VIEW IF EXISTS events`)
+		return err
+	}
+	if err := w.createEventsView(); err != nil {
+		w.setViewErr(fmt.Errorf("rebuilding the events view failed: %w", err))
+		if !w.viewFailing {
+			logger.L.Error("Rebuilding the events view failed, retrying every minute; Event reads fail until it succeeds", "error", err)
+		}
+		w.viewFailing = true
+		if _, dropErr := w.db.Exec(`DROP VIEW IF EXISTS events`); dropErr != nil {
+			logger.L.Error("Dropping the events view after a failed rebuild failed", "error", dropErr)
+		}
+		return err
+	}
+	if w.viewFailing {
+		logger.L.Info("Rebuilt the events view after failing")
+		w.viewFailing = false
+	}
+	w.setViewErr(nil)
+	return nil
+}
+
+// setViewErr records why there is no events view that reads every archive
+// file, or nil once there is.
+func (w *DuckDBWriter) setViewErr(err error) {
+	w.viewMu.Lock()
+	defer w.viewMu.Unlock()
+	w.viewErr = err
+}
+
+// eventsUnavailable is ErrEventsUnavailable, with why, while there is no
+// events view that reads every archive file, and nil otherwise.
+func (w *DuckDBWriter) eventsUnavailable() error {
+	w.viewMu.Lock()
+	defer w.viewMu.Unlock()
+	if w.viewErr == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %v; EventStore tries again every minute", ErrEventsUnavailable, w.viewErr)
+}
+
+// eventsReadError is the error of a read of the events view that failed:
+// ErrEventsUnavailable if the view was dropped meanwhile, else err.
+func (w *DuckDBWriter) eventsReadError(err error) error {
+	if unavailable := w.eventsUnavailable(); unavailable != nil {
+		return unavailable
+	}
+	return err
+}
+
+// createEventsView replaces the events view with one that reads the hot
+// table and every archive file, in one transaction. The caller holds
+// archiveMu.
+func (w *DuckDBWriter) createEventsView() error {
 	tx, err := w.db.Begin()
 	if err != nil {
 		return err
@@ -154,9 +240,6 @@ func (w *DuckDBWriter) recreateEventsView() error {
 			files = "'" + parquetGlob + "'"
 		}
 	} else {
-		if w.remoteArchive == nil {
-			return tx.Commit()
-		}
 		list, err := w.archiveFiles()
 		if err != nil {
 			return err
@@ -299,6 +382,9 @@ func (w *DuckDBWriter) HotUUIDsBetween(projectID uint32, first, last string) (ma
 
 func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 	defer w.readingArchive()()
+	if err := w.eventsUnavailable(); err != nil {
+		return nil, err
+	}
 	where, args := eventPredicate(params)
 	queryBuilder := strings.Builder{}
 	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags FROM events WHERE ")
@@ -327,7 +413,7 @@ func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
 
 	rows, err := w.db.Query(queryBuilder.String(), args...)
 	if err != nil {
-		return nil, err
+		return nil, w.eventsReadError(err)
 	}
 	defer rows.Close()
 
@@ -411,13 +497,16 @@ func eventPredicate(params QueryParams) (string, []interface{}) {
 // including the time window. Paging, sort and UUID don't apply.
 func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
 	defer w.readingArchive()()
+	if err := w.eventsUnavailable(); err != nil {
+		return 0, err
+	}
 	where, args := eventPredicate(params)
 	query := "SELECT COUNT(*) FROM events WHERE " + where
 
 	var count int64
 	err := w.db.QueryRow(query, args...).Scan(&count)
 	if err != nil {
-		return 0, err
+		return 0, w.eventsReadError(err)
 	}
 	return count, nil
 }
@@ -434,6 +523,9 @@ type EventWithContext struct {
 // If uuid is empty, returns the latest event(s) based on limit with context.
 func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithContext, error) {
 	defer w.readingArchive()()
+	if err := w.eventsUnavailable(); err != nil {
+		return nil, err
+	}
 	// prev/next run over the Issue's whole Event sequence, so only the Project
 	// and fingerprint filters apply; a time window or tags would cut it short.
 	// The events/context route rejects a time window rather than drop it here.
@@ -485,7 +577,7 @@ func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithCon
 
 	rows, err := w.db.Query(queryBuilder.String(), args...)
 	if err != nil {
-		return nil, err
+		return nil, w.eventsReadError(err)
 	}
 	defer rows.Close()
 
@@ -552,7 +644,8 @@ const stagingSuffix = ".tmp"
 // a failed run leaves behind.
 //
 // With a bucket, UploadEventArchive then uploads the files, outside batchLock
-// (event_archive_bucket.go).
+// (event_archive_bucket.go). If the events view can't be rebuilt afterwards,
+// the run still succeeds, and Event reads fail until a retry rebuilds it.
 func (w *DuckDBWriter) ArchiveEventsUpTo(cutoff time.Time) error {
 	if err := w.recoverStagedFiles(); err != nil {
 		return fmt.Errorf("failed to recover staged archive files: %w", err)
@@ -582,10 +675,9 @@ func (w *DuckDBWriter) ArchiveEventsUpTo(cutoff time.Time) error {
 		return err
 	}
 	if len(dates) == 0 {
-		// Recovery may have published files, so the view still needs rebuilding.
-		if err := w.recreateEventsView(); err != nil {
-			return fmt.Errorf("failed to recreate events view: %w", err)
-		}
+		// Recovery may have published files, so the view still needs
+		// rebuilding. A failure leaves no view, as below.
+		_ = w.recreateEventsView()
 		return nil
 	}
 
@@ -641,9 +733,11 @@ func (w *DuckDBWriter) ArchiveEventsUpTo(cutoff time.Time) error {
 		}
 	}
 
-	if err := w.recreateEventsView(); err != nil {
-		return fmt.Errorf("failed to recreate events view: %w", err)
-	}
+	// The rows have moved, so the run succeeded even if the rebuild fails.
+	// A failure is logged and leaves no events view, so Event reads fail
+	// rather than miss this run's Events, until the archive consumer's
+	// retry rebuilds it (EnsureEventsView).
+	_ = w.recreateEventsView()
 	return nil
 }
 

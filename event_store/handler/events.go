@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -58,6 +59,9 @@ func (h *EventsHandler) List(c *fiber.Ctx) error {
 	}
 
 	events, err := h.duckdb.QueryEvents(params)
+	if errors.Is(err, storage.ErrEventsUnavailable) {
+		return eventsUnavailable(c, err)
+	}
 	if err != nil {
 		logger.L.Error("Query error", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
@@ -88,6 +92,9 @@ func (h *EventsHandler) GetEventWithContext(c *fiber.Ctx) error {
 	}
 
 	results, err := h.duckdb.QueryEventWithContext(params)
+	if errors.Is(err, storage.ErrEventsUnavailable) {
+		return eventsUnavailable(c, err)
+	}
 	if err != nil {
 		logger.L.Error("QueryEventWithContext error", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
@@ -123,12 +130,22 @@ func (h *EventsHandler) Count(c *fiber.Ctx) error {
 	}
 
 	count, err := h.duckdb.CountEvents(params)
+	if errors.Is(err, storage.ErrEventsUnavailable) {
+		return eventsUnavailable(c, err)
+	}
 	if err != nil {
 		logger.L.Error("Count error", "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 
 	return c.JSON(fiber.Map{"count": count})
+}
+
+// eventsUnavailable answers a read of Events while there is no events view
+// that reads every archive file: 503, saying why, since a retry within a
+// minute may succeed.
+func eventsUnavailable(c *fiber.Ctx, err error) error {
+	return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": err.Error()})
 }
 
 func parseProjectID(c *fiber.Ctx) (uint32, error) {

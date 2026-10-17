@@ -510,6 +510,43 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_not monitor.runs.sole.logs_skipped
   end
 
+  test "a Match monitor EventStore can't arm records why, and shows the error" do
+    monitor = match_monitor
+    monitor.update_columns(ingest_cursor: nil)
+
+    {
+      -> { stub_request(:post, @query_url).to_raise(Errno::ECONNREFUSED) } => /\AEventStore connection error: .*Connection refused/,
+      -> { stub_request(:post, @query_url).to_return(status: 500, body: "Internal error") } => /\AEventStore error: 500 - Internal error\z/,
+      -> { stub_request(:post, @query_url).to_return(status: 504, body: timeout_body(TIMEOUT)) } => /\A#{Regexp.escape(TIMEOUT)}\z/,
+      -> { stub_request(:post, @query_url).to_return(status: 400, body: { error: "unknown Project" }.to_json) } => /\Aunknown Project\z/,
+    }.each do |stub, error|
+      travel 1.minute
+      stub.call
+      evaluate(monitor)
+
+      monitor.reload
+      assert_nil monitor.ingest_cursor
+      assert_match error, monitor.last_error
+      assert monitor.runs.first.status_error?
+      assert_match error, monitor.runs.first.error
+      assert_equal "error", MonitorSerializer.new(monitor).as_json[:status]
+    end
+  end
+
+  test "a third timeout whose starting again can't reach EventStore says why" do
+    monitor = match_monitor
+    stub_request(:post, @query_url).with(body: hash_including("after_batch" => CURSOR))
+      .to_return(status: 504, body: timeout_body(TIMEOUT))
+    stub_request(:post, @query_url).with(body: hash_including("after_batch" => ""))
+      .to_raise(Errno::ECONNREFUSED)
+
+    3.times { evaluate(monitor) }
+
+    assert_equal [ CURSOR, 3 ], monitor.reload.values_at(:ingest_cursor, :timeouts_in_a_row)
+    assert_match(/\A#{Regexp.escape(TIMEOUT)} Starting again from the newest Logs failed: EventStore connection error: .*Connection refused/,
+      monitor.last_error)
+  end
+
   test "EventStore down or refusing a Match run moves no cursor" do
     monitor = match_monitor
     stub_request(:post, @query_url).to_return(status: 502, body: "bad gateway")

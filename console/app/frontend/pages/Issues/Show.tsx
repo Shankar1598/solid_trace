@@ -18,6 +18,8 @@ interface IssuesShowProps {
   event: Event | null
   prev_event_id: number | null
   next_event_id: number | null
+  /** Why EventStore can't read Events now; null when it can. */
+  events_unavailable: string | null
   comments: Comment[]
   events_list: Event[]
   events_pagination: {
@@ -32,6 +34,7 @@ export default function IssuesShow({
   event,
   prev_event_id,
   next_event_id,
+  events_unavailable,
   comments,
   events_list,
   events_pagination
@@ -103,6 +106,11 @@ export default function IssuesShow({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Main Content (Tabs) */}
           <div className="lg:col-span-8 space-y-6">
+            {events_unavailable && (
+              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {events_unavailable}
+              </div>
+            )}
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
               <TabsList variant="line" className="w-full justify-start border-b bg-transparent h-auto p-0 space-x-0">
                 <TabsTrigger

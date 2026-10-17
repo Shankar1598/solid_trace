@@ -30,7 +30,10 @@ type ArchivePayload struct {
 // ArchiveConsumer polls for archive_events messages and processes them.
 // With a bucket, it also uploads the archive files (ADR 0008): once when it
 // starts, to catch up on files a restart left, right after each archive
-// run, and a minute after a pass that failed.
+// run, and a minute after a pass that failed. Each pass first builds the
+// events view if there is none, so the consumer is also what lists the
+// bucket after startup, in the background, and what rebuilds the view after
+// a rebuild fails.
 type ArchiveConsumer struct {
 	mqReader *storage.MessageQueueReader
 	duckdb   *storage.DuckDBWriter
@@ -82,9 +85,9 @@ func (c *ArchiveConsumer) Run() {
 	}
 }
 
-// uploadArchive uploads the archive files still on local disk, outside
-// batchLock, so that Event processing never waits on the bucket. The store
-// logs each failure.
+// uploadArchive builds the events view if there is none and uploads the
+// archive files still on local disk, outside batchLock, so that Event
+// processing never waits on the bucket. The store logs each failure.
 func (c *ArchiveConsumer) uploadArchive() {
 	if err := c.duckdb.UploadEventArchive(c.ctx); err != nil {
 		c.retryUploadAt = time.Now().Add(retryUploadAfter)
