@@ -32,11 +32,26 @@ class LogMonitorTest < ActiveSupport::TestCase
     theirs = create(:organization).integrations.create!(provider: "slack", settings: { "webhook_url" => "https://hooks.slack.com/y" })
 
     monitor = build(:monitor, project: @project, integrations: [ ours, theirs ])
-    assert_not monitor.valid?
-    assert_includes monitor.errors[:integrations], "must belong to the Monitor's Organization"
+    assert_not monitor.save
+    link = monitor.monitor_integrations.find { |each| each.integration == theirs }
+    assert_includes link.errors[:integration], "must belong to the Monitor's Organization"
+    assert_equal 0, LogMonitor.count
 
     monitor.integrations = [ ours ]
     assert monitor.save, monitor.errors.full_messages.to_sentence
+    assert_equal [ ours ], monitor.reload.integrations
+  end
+
+  test "Integrations linked to a saved Monitor, however they are linked, must belong to its Organization" do
+    ours = @organization.integrations.create!(provider: "slack", settings: { "webhook_url" => "https://hooks.slack.com/x" })
+    theirs = create(:organization).integrations.create!(provider: "slack", settings: { "webhook_url" => "https://hooks.slack.com/y" })
+    monitor = create(:monitor, project: @project, integrations: [ ours ])
+
+    assert_raises(ActiveRecord::RecordInvalid) { monitor.integrations = [ ours, theirs ] }
+    assert_raises(ActiveRecord::RecordInvalid) { monitor.integrations << theirs }
+    assert_raises(ActiveRecord::RecordInvalid) { MonitorIntegration.create!(monitor: monitor, integration: theirs) }
+    assert_raises(ActiveRecord::RecordInvalid) { monitor.update!(integration_ids: [ theirs.id ]) }
+
     assert_equal [ ours ], monitor.reload.integrations
   end
 

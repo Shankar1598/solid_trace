@@ -52,7 +52,6 @@ class LogMonitor < ApplicationRecord
   validates :operator, inclusion: { in: OPERATORS, message: "must be >, >=, < or <=" }, if: :kind_threshold?
   validates :threshold, numericality: true, if: :kind_threshold?
   validate :project_of_the_organization
-  validate :integrations_of_the_organization
   validate :query_runs_as_its_kind, if: :query_check_needed?
 
   before_save :run_at_the_next_tick, if: :schedule_changed?
@@ -103,13 +102,6 @@ class LogMonitor < ApplicationRecord
     return unless project && organization
 
     errors.add(:project, "must belong to the Monitor's Organization") unless project.organization_id == organization_id
-  end
-
-  def integrations_of_the_organization
-    return unless organization
-
-    foreign = integrations.reject { |integration| integration.organization_id == organization_id }
-    errors.add(:integrations, "must belong to the Monitor's Organization") if foreign.any?
   end
 
   # EventStore checks the Query when what it runs changes, and when the
