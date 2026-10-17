@@ -168,11 +168,16 @@ export function setFilter(builder: Builder, index: number, chip: Chip): Builder 
   return { ...builder, filters }
 }
 
-/** Sets the Summarize, or removes it (and a sort on its columns) when it is empty. */
+/**
+ * Sets the Summarize, or removes it (and a sort on its columns) when it is
+ * empty. A limit goes when a Summarize starts or ends: it counted Logs, or
+ * the old table's rows, and would cut the new answer short.
+ */
 export function setSummarize(builder: Builder, summarize: Summarize): Builder {
   const empty = summarize.aggregates.length === 0 && summarize.by.length === 0
-  const { summarize: _old, sort, ...rest } = builder
+  const { summarize: _old, sort, take, ...rest } = builder
   const next: Builder = empty ? rest : { ...rest, summarize }
+  if (take !== undefined && empty === !builder.summarize) next.take = take
   // A sort on a column the Summarize no longer makes would fail.
   const columns = empty ? null : summarizeColumns(summarize)
   const kept = (sort ?? []).filter(k => (columns === null ? !builder.summarize : columns.includes(k.column)))
@@ -265,7 +270,8 @@ export function groupBy(builder: Builder, field: string): Builder {
  */
 export function chartField(builder: Builder, field: string, numeric: boolean): Builder {
   const time: Group = { field: 'time', bin: 'auto' }
-  return setSummarize(builder, numeric
+  // A fresh chart: a limit on the old Summarize's rows would cut its bins.
+  return setSummarize(setTake(builder, null), numeric
     ? { aggregates: [{ fn: 'avg', field }], by: [time] }
     : { aggregates: [{ fn: 'count' }], by: [{ field }, time] })
 }

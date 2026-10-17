@@ -291,6 +291,18 @@ describe('Summarize, sort and limit', () => {
     expect(setSummarize(builder, { aggregates: [], by: [] })).toEqual(EMPTY_BUILDER)
   })
 
+  it('drops a limit on Logs when a Summarize starts, and a limit on its rows when it goes', () => {
+    const limited = setTake(EMPTY_BUILDER, 100)
+    expect(addAggregate(limited, { fn: 'count' }).take).toBeUndefined()
+    expect(groupBy(limited, 'service').take).toBeUndefined()
+
+    // A limit on the table's rows stays while the Summarize changes.
+    const top = setTake(groupBy(EMPTY_BUILDER, 'service'), 10)
+    expect(addAggregate(top, { fn: 'avg', field: 'duration_ms' }).take).toBe(10)
+    expect(groupBy(top, 'region').take).toBe(10)
+    expect(setSummarize(top, { aggregates: [], by: [] })).toEqual(EMPTY_BUILDER)
+  })
+
   it('keeps a sort on Log Fields when a Summarize is removed it never had', () => {
     const sorted = setSort(EMPTY_BUILDER, [{ column: 'duration_ms', asc: false }])
     expect(setSummarize(sorted, { aggregates: [], by: [] }).sort).toEqual([{ column: 'duration_ms', asc: false }])
@@ -396,6 +408,13 @@ describe('Chart this from a value', () => {
     const charted = chartField(sorted, 'duration_ms', true)
     expect(charted.summarize).toEqual({ aggregates: [{ fn: 'avg', field: 'duration_ms' }], by: [{ field: 'time', bin: 'auto' }] })
     expect(charted.sort).toBeUndefined()
+  })
+
+  it('charts every time bin: no limit on Logs or on the old Summarize\'s rows stays', () => {
+    expect(chartField(setTake(builder, 100), 'duration_ms', true).take).toBeUndefined()
+    const top = setTake(groupBy(builder, 'service'), 10)
+    expect(stagesOf(chartField(top, 'region', false)))
+      .toBe('where level != "debug"\n| summarize count() by region, bin_auto(time)')
   })
 
   it('leaves the chart\'s time bins out once its function goes', () => {
