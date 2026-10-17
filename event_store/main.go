@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"sync"
@@ -36,9 +37,14 @@ func main() {
 		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
 	defer duckdbWriter.Close()
+	// The Log files and the Event archive share the bucket, if one is set.
+	bucket := storage.NewObjectStore(cfg.ObjectStore)
 	if cfg.ObjectStore != nil {
 		if err := duckdbWriter.UseBucket(cfg.ObjectStore, cfg.DuckDBExtensionDirectory); err != nil {
 			logger.L.Fatal("Failed to let DuckDB read the object store's bucket", "error", err)
+		}
+		if err := duckdbWriter.UseEventArchiveBucket(context.Background(), bucket); err != nil {
+			logger.L.Fatal("Failed to keep the Event archive in the object store's bucket", "error", err)
 		}
 	}
 
@@ -47,7 +53,7 @@ func main() {
 		logger.L.Fatal("Failed to open logs DuckDB", "error", err)
 	}
 	if cfg.ObjectStore != nil {
-		if err := logStore.UseObjectStore(storage.NewObjectStore(cfg.ObjectStore), cfg.ObjectStore.LocalCacheHours); err != nil {
+		if err := logStore.UseObjectStore(bucket, cfg.ObjectStore.LocalCacheHours); err != nil {
 			logger.L.Fatal("Failed to keep Log files in the object store's bucket", "error", err)
 		}
 	} else if err := logStore.UseLocalDiskOnly(); err != nil {

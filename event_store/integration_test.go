@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -63,7 +64,8 @@ type TestEnv struct {
 	Clock *clock.Manual
 
 	// Bucket keeps the Log files too, if set, each local copy for
-	// LocalCacheHours (logs_bucket_test.go). BucketConfig, if set, is the
+	// LocalCacheHours (logs_bucket_test.go), and the Event archive
+	// (event_archive_bucket_test.go). BucketConfig, if set, is the
 	// object_store that DuckDB reads the bucket through.
 	Bucket          storage.ObjectStore
 	BucketConfig    *config.ObjectStore
@@ -333,6 +335,11 @@ func (env *TestEnv) open(t *testing.T) {
 	if env.BucketConfig != nil {
 		if err := duckdbWriter.UseBucket(env.BucketConfig, testExtensionDirectory(t)); err != nil {
 			t.Fatalf("Failed to let DuckDB read the bucket: %v", err)
+		}
+	}
+	if env.Bucket != nil {
+		if err := duckdbWriter.UseEventArchiveBucket(context.Background(), env.Bucket); err != nil {
+			t.Fatalf("Failed to keep the Event archive in the bucket: %v", err)
 		}
 	}
 

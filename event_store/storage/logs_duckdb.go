@@ -36,6 +36,9 @@ const logsCatalog = "logs"
 type LogStore struct {
 	db    *sql.DB
 	files LogFiles
+	// events is the Event store whose DuckDB instance this shares, and
+	// whose events view SQL queries can read too.
+	events *DuckDBWriter
 
 	// writeMu lets one write to logs.duckdb run at a time: a Log processing
 	// commit or try, or a Project's export. It is held only for each of
@@ -126,7 +129,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if err := addBatchColumns(events.db); err != nil {
 		return nil, fmt.Errorf("add the batch column to the log tables: %w", err)
 	}
-	store := &LogStore{db: events.db, files: LogFiles{Dir: filesDir}, pins: map[string]int{}, published: make(chan struct{}, 1)}
+	store := &LogStore{db: events.db, events: events, files: LogFiles{Dir: filesDir}, pins: map[string]int{}, published: make(chan struct{}, 1)}
 	if err := store.backfillManifest(); err != nil {
 		return nil, fmt.Errorf("list the log files on disk in the manifest: %w", err)
 	}
