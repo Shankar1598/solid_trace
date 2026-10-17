@@ -28,25 +28,38 @@ class IntegrationNotificationJobsTest < ActiveJob::TestCase
     assert_equal [ [ "issue_created", issue.id ] ], Notification.pluck(:kind, :issue_id)
   end
 
-  test "the per-Issue trigger job retries with backoff while EventStore is unavailable, then gives up with a logged error" do
+  test "a new Issue is announced while EventStore can't count Events, and the event threshold check is retried apart" do
     @slack.update!(settings: @slack.settings.merge("notify_on_event_threshold" => "1"))
     issue = create(:issue, project: @project)
     create(:issue_fingerprint, issue: issue)
     stub_request(:get, %r{/api/#{@project.id}/events/count}).to_return(status: 503, body: "down")
 
-    IntegrationNotificationJob.perform_now(issue, false)
+    IntegrationNotificationJob.perform_now(issue, true)
 
-    assert_enqueued_jobs 1, only: IntegrationNotificationJob
-    assert enqueued_jobs.last[:at].present?, "expected the retry to wait"
+    assert_equal [ "issue_created" ], Notification.pluck(:kind)
+    assert_enqueued_jobs 1, only: EventThresholdJob
 
     logged = capture_log do
       assert_nothing_raised do
-        perform_enqueued_jobs(only: IntegrationNotificationJob) until enqueued_jobs.none? { |job| job[:job] == IntegrationNotificationJob }
+        perform_enqueued_jobs(only: EventThresholdJob) until enqueued_jobs.none? { |job| job[:job] == EventThresholdJob }
       end
     end
 
-    assert_requested(:get, %r{/events/count}, times: IntegrationNotificationJob::EVENT_STORE_ATTEMPTS)
+    assert_requested(:get, %r{/events/count}, times: EventThresholdJob::EVENT_STORE_ATTEMPTS)
     assert_match "EventStore error: 503", logged
+    assert_equal [ "issue_created" ], Notification.pluck(:kind)
+  end
+
+  test "the event threshold check retries with backoff while EventStore is unavailable" do
+    @slack.update!(settings: @slack.settings.merge("notify_on_event_threshold" => "1"))
+    issue = create(:issue, project: @project)
+    create(:issue_fingerprint, issue: issue)
+    stub_request(:get, %r{/api/#{@project.id}/events/count}).to_return(status: 503, body: "down")
+
+    EventThresholdJob.perform_now(issue)
+
+    assert_enqueued_jobs 1, only: EventThresholdJob
+    assert enqueued_jobs.last[:at].present?, "expected the retry to wait"
     assert_equal 0, Notification.count
   end
 

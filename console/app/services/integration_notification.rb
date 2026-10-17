@@ -5,6 +5,7 @@
 #
 # Entry points:
 # - issue_received_event: an Issue received an Event (and may be new)
+# - check_event_threshold: the same, for the rule that reads EventStore
 # - issue_assignment_changed: an Issue's assignee changed
 # - monitor_changed: a Monitor's group started or stopped firing, or Logs
 #   matched a Match monitor
@@ -44,6 +45,10 @@ module IntegrationNotification
       ISSUE_CREATED => ->(integration, _issue, context) {
         context[:newly_created] && integration.notify_on_new_issue
       },
+    },
+    # Apart from issue_received_event because it reads EventStore, which may
+    # be unable to count Events for a long time.
+    event_threshold_check: {
       THRESHOLD_REACHED => ->(integration, issue, _context) {
         integration.notify_on_event_threshold && event_threshold_reached?(integration, issue)
       },
@@ -65,10 +70,14 @@ module IntegrationNotification
   }.freeze
 
   class << self
-    # Raises EventStore::Unavailable, before writing anything, when the
-    # threshold rule cannot get the windowed Event count; the caller retries.
     def issue_received_event(issue, newly_created:)
       apply_rules(:issue_received_event, issue, newly_created: newly_created)
+    end
+
+    # Raises EventStore::Unavailable, before writing anything, when it cannot
+    # get the windowed Event count; the caller retries.
+    def check_event_threshold(issue)
+      apply_rules(:event_threshold_check, issue)
     end
 
     def issue_assignment_changed(issue, previous_assignee_id:, new_assignee_id:)
