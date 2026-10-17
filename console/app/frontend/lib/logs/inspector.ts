@@ -2,7 +2,7 @@
 // with the raw time in UTC so it can be shared exactly.
 import type { AbsoluteRange } from '../timeRange'
 import { EMPTY_BUILDER, type Builder, type Chip } from './builder'
-import type { AttributeValue, Log } from './stream'
+import { MAX_STREAM_LOGS, PAGE_LOGS, streamEnd, type AttributeValue, type Log, type Stream } from './stream'
 
 export interface InspectorField {
   name: string
@@ -132,4 +132,29 @@ export function aroundLog(log: Log): { builder: Builder; range: AbsoluteRange } 
     builder: { ...EMPTY_BUILDER, filters: [service] },
     range: { kind: 'absolute', from: new Date(time - AROUND_MS), to: new Date(time + AROUND_MS) },
   }
+}
+
+/**
+ * When "Logs around this one" filled a page before reaching its Log, the
+ * range that brings the Log into the first page: the same start, ending as
+ * long after the Log as the Logs loaded took to fill half a page, so a busy
+ * Service needs a run or two rather than a page per 200 newer Logs. Null when
+ * that ends no sooner than the range does, so older pages load instead.
+ */
+export function narrowAround(range: AbsoluteRange, stream: Stream, log: Log): AbsoluteRange | null {
+  const oldest = stream.logs.at(-1)
+  if (!oldest) return null
+  const end = range.to.getTime()
+  const loadedMs = end - new Date(oldest.time).getTime()
+  const afterMs = Math.ceil((loadedMs * PAGE_LOGS) / 2 / stream.logs.length)
+  // A Log's time may have more digits than a millisecond, so end after its millisecond.
+  const to = new Date(log.time).getTime() + Math.max(afterMs, 1)
+  return to < end ? { kind: 'absolute', from: range.from, to: new Date(to) } : null
+}
+
+/** Why the stream of "Logs around this one" ended without its Log. */
+export function aroundMissed(stream: Stream): string {
+  return streamEnd(stream) === 'capped'
+    ? `This Log is more than ${MAX_STREAM_LOGS.toLocaleString('en-US')} Logs into the stream, so it can't be shown. Pick a shorter range around it.`
+    : "This Log isn't in the stream any more: it may have left the Project's Retention."
 }

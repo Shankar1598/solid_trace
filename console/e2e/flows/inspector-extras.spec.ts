@@ -39,6 +39,80 @@ test('Logs around this one shows its Service a minute either side, with it highl
   expect(errors).toEqual([])
 })
 
+/** A synthetic Service that logs every 10 ms: far more than a page a minute. */
+const STEP_MS = 10
+const idAt = (ms: number) => `00000000-0000-7000-8000-${ms.toString(16).padStart(12, '0')}`
+const logAt = (ms: number) => ({ id: idAt(ms), time: new Date(ms).toISOString(), level: 'info', message: `tick ${ms}`, service: 'busy-api', attributes: {} })
+
+/**
+ * Answers the explorer's runs, and the inspector's Log, from the busy Service
+ * rather than EventStore: newest first, a page of 200 at a time. `gone` ends
+ * every stream at once, as when the Logs left the Retention. Returns the
+ * query requests it answered.
+ */
+async function busyService(page: Page, state: { gone: boolean }) {
+  const queries: URL[] = []
+  await page.route(url => url.pathname.endsWith('/logs/query'), route => {
+    const url = new URL(route.request().url())
+    queries.push(url)
+    if (state.gone) return route.fulfill({ json: { logs: [], next_cursor: null } })
+    const from = Date.parse(url.searchParams.get('from')!)
+    const to = Date.parse(url.searchParams.get('to')!)
+    let ms = Number(url.searchParams.get('cursor') ?? Math.ceil(to / STEP_MS) * STEP_MS - STEP_MS)
+    const logs = []
+    for (; ms >= from && logs.length < 200; ms -= STEP_MS) logs.push(logAt(ms))
+    return route.fulfill({ json: { logs, next_cursor: ms >= from ? String(ms) : null } })
+  })
+  await page.route(url => /\/logs\/00000000-0000-7000-8000-[0-9a-f]{12}$/.test(url.pathname), route =>
+    route.fulfill({ json: logAt(parseInt(new URL(route.request().url()).pathname.slice(-12), 16)) }))
+  return queries
+}
+
+test('Logs around this one on a busy Service ends the range sooner so the first page has the Log', async ({ page }) => {
+  const errors = watchErrors(page)
+  const state = { gone: false }
+  const queries = await busyService(page, state)
+  await openLogs(page)
+
+  const row = streamRows(page).nth(5)
+  const message = (await row.locator('> div > div').last().innerText()).trim()
+  const at = Number(message.replace('tick ', ''))
+  await row.click(AT_START)
+  const before = queries.length
+  await inspector(page).getByRole('button', { name: 'Logs around this one' }).click()
+  await settled(page)
+
+  // 6,000 Logs fall in the minute after it: a run or two, not a page per 200.
+  await expect(selectedRow(page)).toContainText(message)
+  await expect(selectedRow(page)).toBeInViewport()
+  expect(queries.length - before).toBeLessThanOrEqual(3)
+  const search = new URL(page.url()).searchParams
+  expect(new Date(search.get('from')!).getTime()).toBe(at - 60_000)
+  const to = new Date(search.get('to')!).getTime()
+  expect(to).toBeGreaterThan(at)
+  expect(to).toBeLessThan(at + 60_000)
+  await expect(builderRow(page, 'Where').getByRole('button', { name: 'service == "busy-api"', exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('Logs around this one says why when the stream ends without the Log', async ({ page }) => {
+  const errors = watchErrors(page)
+  const state = { gone: false }
+  await busyService(page, state)
+  await openLogs(page)
+
+  await streamRows(page).nth(5).click(AT_START)
+  const opened = await heading(page).innerText()
+  state.gone = true
+  await inspector(page).getByRole('button', { name: 'Logs around this one' }).click()
+  await settled(page)
+
+  await expect(page.getByText("This Log isn't in the stream any more: it may have left the Project's Retention.")).toBeVisible()
+  await expect(heading(page)).toHaveText(opened)
+  await expect(selectedRow(page)).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
 test('Chart this field charts a number\'s average over time', async ({ page }) => {
   const errors = watchErrors(page)
   await openLogs(page, `?range=24h&q=${encodeURIComponent("['solid-trace-project']\n| where isnotnull(duration_ms)")}`)

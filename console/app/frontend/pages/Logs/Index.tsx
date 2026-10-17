@@ -49,7 +49,7 @@ import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/hi
 import { editAsBuilder, pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
 import { fillStream, keepsFetching, seekLog, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
-import { aroundLog } from '@/lib/logs/inspector'
+import { aroundLog, aroundMissed, narrowAround } from '@/lib/logs/inspector'
 import type { LogTable } from '@/lib/logs/table'
 import { registerPaletteSource } from '@/lib/palette'
 import { browserStorage, recordQuery } from '@/lib/recentQueries'
@@ -237,10 +237,11 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
     router.replace({ url: basePath + withColumns(searchOf(latest.current.current), next), preserveState: true, preserveScroll: true })
   }, [basePath])
 
-  const run = (next: Explorer) => {
+  /** Runs `next`, adding a history entry for it, or putting it in place of the current one. */
+  const run = (next: Explorer, history: 'push' | 'replace' = 'push') => {
     const { explorer: ran, push } = runExplorer(next)
     setExplorer(ran)
-    if (push) router.push({ url: urlOf(push), preserveState: true, preserveScroll: true })
+    if (push) router[history]({ url: urlOf(push), preserveState: true, preserveScroll: true })
     start(ran.current)
   }
 
@@ -523,20 +524,34 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
 
   // Logs around this one: the Logs of its Service a minute either side, in
   // the Builder, with the inspector kept on it so the stream highlights it.
-  // Older pages load until the stream has it, when more than a page is newer.
-  const [seeking, setSeeking] = useState<string | null>(null)
+  // When more than a page is newer than the Log, the range ends sooner after
+  // it so the first page has it (in place of the history entry), and older
+  // pages load when that can't help. Another run stops the seeking.
+  const [seeking, setSeeking] = useState<{ log: Log; run: Run | null } | null>(null)
   const showAround = (log: Log) => {
     const { builder, range } = aroundLog(log)
     setBuilderView({ status: 'ready', builder })
     setProblems([])
     setLeaving(null)
-    setSeeking(log.id)
     run(inBuilder(latest.current, queryOf(builder, project.slug), range))
+    setSeeking({ log, run: currentRun.current })
   }
+  const runNow = useRef(run)
+  runNow.current = run
   useEffect(() => {
     if (seeking === null || result.status === 'running') return
-    if (result.status !== 'done' || result.olderError || seekLog(result.stream, seeking) !== 'older') setSeeking(null)
-    else if (!result.loadingOlder) loadOlder()
+    if (currentRun.current !== seeking.run || result.status !== 'done' || result.olderError) return setSeeking(null)
+    const next = seekLog(result.stream, seeking.log.id)
+    if (next !== 'older') {
+      if (next === 'missing') toast.error(aroundMissed(result.stream))
+      return setSeeking(null)
+    }
+    if (result.loadingOlder) return
+    const ran = latest.current.current
+    const narrower = ran.range.kind === 'absolute' ? narrowAround(ran.range, result.stream, seeking.log) : null
+    if (!narrower) return loadOlder()
+    runNow.current(inBuilder(latest.current, ran.query, narrower), 'replace')
+    setSeeking({ log: seeking.log, run: currentRun.current })
   }, [seeking, result, loadOlder])
 
   /** The Builder's Project: its clauses, on the Logs of the Project picked. */
