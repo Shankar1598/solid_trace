@@ -1,0 +1,13 @@
+<%= @message.title %>
+
+<%= @message.text %>
+
+<% @message.fields.each do |label, value| -%>
+<%= label %>: <%= value %>
+<% end -%>
+<% if @message.lines.any? %>
+<% @message.lines.each do |line| -%>
+- <%= line %>
+<% end -%>
+<% end %>
+Open in the Logs explorer: <%= @message.link %>
