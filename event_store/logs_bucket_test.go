@@ -35,6 +35,9 @@ type flakyBucket struct {
 	// stores the object, as a request whose answer doesn't come, until
 	// stall is closed; stalled then gets a signal.
 	stall, stalled chan struct{}
+	// hangLists, if set before a listing starts, holds each listing until
+	// it is closed, as a bucket that doesn't answer.
+	hangLists chan struct{}
 }
 
 func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
@@ -66,6 +69,13 @@ func (b *flakyBucket) List(ctx context.Context, prefix string) ([]storage.Stored
 	if b.failLists.Load() {
 		return nil, errors.New("the bucket is unavailable")
 	}
+	if b.hangLists != nil {
+		select {
+		case <-b.hangLists:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	return b.ObjectStore.List(ctx, prefix)
 }
 
@@ -83,7 +93,8 @@ func (b *flakyBucket) object(projectID uint32, at time.Time, name string) string
 }
 
 // setupBucketTestEnv is setupTestEnv with the Log files kept in a bucket too,
-// each local copy for localCacheHours after its hour ends.
+// each local copy for localCacheHours after its hour ends, and the Event
+// archive, listed as the archive consumer does when EventStore starts.
 func setupBucketTestEnv(t *testing.T, localCacheHours int) (*TestEnv, *flakyBucket) {
 	t.Helper()
 	var bucket *flakyBucket
@@ -92,6 +103,7 @@ func setupBucketTestEnv(t *testing.T, localCacheHours int) (*TestEnv, *flakyBuck
 		bucket = &flakyBucket{ObjectStore: storage.NewDirStore(dir), dir: dir}
 		env.Bucket, env.LocalCacheHours = bucket, localCacheHours
 	})
+	env.EnsureEventsView(t)
 	return env, bucket
 }
 
