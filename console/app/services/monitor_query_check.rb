@@ -81,12 +81,7 @@ class MonitorQueryCheck
 
   # EventStore's errors for the Query, each with where it starts.
   def query_errors(body)
-    errors = Array(body["errors"]).select { |error| error.is_a?(Hash) }
-    return add(EventStore.error_text(body)) if errors.empty?
-
-    errors.each do |error|
-      add(error["line"] ? "line #{error['line']}, column #{error['column']}: #{error['message']}" : error["message"].to_s)
-    end
+    EventStore.mistakes(body).each { |mistake| add(mistake) }
   end
 
   def add(message)
