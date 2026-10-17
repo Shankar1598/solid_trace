@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { User } from '@/types'
 import { toast } from 'sonner'
+import { ApiTokens } from './components/ApiTokens'
 
 interface SettingsUserProps {
   user: User
@@ -77,6 +78,8 @@ export default function SettingsUser({ user }: SettingsUserProps) {
             </CardFooter>
           </form>
         </Card>
+
+        <ApiTokens />
       </div>
     </SettingsLayout>
   )
