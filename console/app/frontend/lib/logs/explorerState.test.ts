@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  allLogsNow,
   chooseViz,
   fillEmptyQuery,
   linkSearch,
@@ -133,6 +134,21 @@ describe('resolving a time range', () => {
     const range = { kind: 'absolute', from: new Date('2026-10-01T00:00:00Z'), to: new Date('2026-10-02T00:00:00Z') } as const
 
     expect(resolveRange(range, now)).toEqual({ from: range.from, to: range.to })
+  })
+})
+
+describe('showing a Log just sent', () => {
+  const projectQuery = "['shop']"
+
+  it('runs the Project\'s Logs unfiltered in the Builder, over the range shown', () => {
+    const explorer = openExplorer('?range=6h&mode=query&q=' + encodeURIComponent('where level == "error"'))
+    const { explorer: ran } = runExplorer(allLogsNow(explorer, projectQuery))
+    expect(ran.current).toMatchObject({ mode: 'builder', query: projectQuery, range: { kind: 'relative', span: '6h' } })
+  })
+
+  it('swaps a range that may not reach now for the default', () => {
+    const explorer = openExplorer('?from=2026-10-01T00:00:00.000Z&to=2026-10-02T00:00:00.000Z')
+    expect(allLogsNow(explorer, projectQuery).draft.range).toEqual({ kind: 'relative', span: '1h' })
   })
 })
 
