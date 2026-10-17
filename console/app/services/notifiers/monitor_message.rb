@@ -57,6 +57,13 @@ module Notifiers
         key.length <= MAX_DEDUP_KEY ? key : "#{base}-#{Digest::SHA256.hexdigest(group_key)}"
       end
 
+      # Repeated matches join one open incident, kept apart from the
+      # Monitor's group: a Match monitor changed to a Threshold monitor
+      # would otherwise fire into the Match incident left open.
+      def matched_dedup_key(monitor_id)
+        "solid-trace-monitor-#{monitor_id}-matched"
+      end
+
       # A group's columns as text: service=api, level=error.
       def group_text(group_key)
         MonitorState.group_of(group_key).map { |name, value| "#{name}=#{value.nil? ? 'null' : value}" }.join(", ")
@@ -166,7 +173,7 @@ module Notifiers
           lines: lines,
           link: explorer_url(monitor, payload["from"], payload["to"]),
           severity: "warning",
-          dedup_key: dedup_key(monitor["id"], ""),
+          dedup_key: matched_dedup_key(monitor["id"]),
           action: "trigger"
         )
       end

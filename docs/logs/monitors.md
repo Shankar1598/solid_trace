@@ -92,7 +92,7 @@ Firing sends a `trigger` event and resolved sends a `resolve` event, with the sa
 - `solid-trace-monitor-<id>` for a Monitor with one group
 - `solid-trace-monitor-<id>-<group>` for a group, where the group is its columns as JSON, or a SHA-256 of them when the key would pass PagerDuty's 255 characters
 
-A Match message is a `trigger` on `solid-trace-monitor-<id>`, so repeated matches join one open incident. A Match monitor never resolves it: resolve it in PagerDuty.
+A Match message is a `trigger` on `solid-trace-monitor-<id>-matched`, so repeated matches join one open incident, and a Match monitor changed to a Threshold monitor doesn't fire into it. A Match monitor never resolves it: resolve it in PagerDuty.
 
 Events go to PagerDuty's Events API v2, `https://events.pagerduty.com/v2/enqueue`. Set `PAGERDUTY_EVENTS_URL` to send them elsewhere, such as a local stub in development. Plain `http` works there too.
 

@@ -240,6 +240,28 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_equal "Firing: #{monitor.name}", events.first.dig("payload", "summary")
   end
 
+  test "a Match monitor changed to a Threshold monitor pages on a key of its own, apart from the open Match incident" do
+    pagerduty_url = "https://events.pagerduty.com/v2/enqueue"
+    stub_request(:post, pagerduty_url).to_return(status: 202, body: "{}")
+    pagerduty = @organization.integrations.create!(provider: "pagerduty", settings: { "routing_key" => "routing-123" })
+    monitor = match_monitor
+    monitor.update!(integrations: [ pagerduty ])
+    answer_matched(logs(2), total: 2, ingest_cursor: NEXT_CURSOR)
+    evaluate(monitor)
+    IntegrationNotification.deliver_pending(pagerduty.id)
+
+    monitor.update!(kind: "threshold", query: "#{monitor.query}\n| summarize count()", operator: ">", threshold: 10)
+    travel IntegrationNotification::RATE_LIMIT_WINDOW
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    IntegrationNotification.deliver_pending(pagerduty.id)
+
+    events = []
+    assert_requested(:post, pagerduty_url, times: 2) { |request| events << JSON.parse(request.body) }
+    assert_equal [ [ "trigger", "solid-trace-monitor-#{monitor.id}-matched" ], [ "trigger", "solid-trace-monitor-#{monitor.id}" ] ],
+      events.map { |event| event.values_at("event_action", "dedup_key") }
+  end
+
   test "unlinking PagerDuty from a firing Monitor resolves its incident; the group stays firing for Slack alone" do
     pagerduty_url = "https://events.pagerduty.com/v2/enqueue"
     stub_request(:post, pagerduty_url).to_return(status: 202, body: "{}")

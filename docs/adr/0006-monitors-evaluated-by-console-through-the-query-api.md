@@ -31,5 +31,5 @@ We chose this for three reasons:
 - **De-duplication comes from state changes.** Only a group's move between ok and firing writes rows, so a group that stays firing sends nothing more. Turning a Monitor off, deleting it or changing it to a Match monitor resolves its firing groups.
 - **Rows outlive their Monitor.** `notifications.monitor_id` has no foreign key, as with `issue_id`. Each Monitor row keeps what its message says about the Monitor, so a deleted Monitor's resolve still closes its PagerDuty incident.
 - **Monitor rows share the Integration's rate limit:** one message a minute, so a resolve can trail its firing message by about a minute. A failed Monitor row is retried for 6 hours, not 5 attempts, because a trigger lost in an outage would never be sent again.
-- **PagerDuty dedup keys** are `solid-trace-monitor-<id>`, with `-<group>` for a Monitor with groups, so a resolve closes what its trigger opened.
+- **PagerDuty dedup keys** are `solid-trace-monitor-<id>`, with `-<group>` for a Monitor with groups, so a resolve closes what its trigger opened. Match messages use `solid-trace-monitor-<id>-matched`, which no group shares, so a Threshold firing never joins a Match incident left open.
 - **`monitor_runs`** keeps each Monitor's last 100 runs; the cleanup job deletes older ones.
