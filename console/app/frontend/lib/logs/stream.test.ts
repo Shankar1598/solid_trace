@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addOlderPage, fillStream, startStream, streamEnd, wantOlder, type Log, type LogPage } from './stream'
+import { addOlderPage, fillStream, seekLog, startStream, streamEnd, wantOlder, type Log, type LogPage } from './stream'
 
 function page(first: number, count: number, nextCursor: string | null): LogPage {
   const logs: Log[] = Array.from({ length: count }, (_, i) => ({
@@ -101,5 +101,14 @@ describe('filling the stream while EventStore answers short', () => {
 
     await expect(filling).rejects.toThrow('Aborted')
     expect(fetched).toBe(1)
+  })
+})
+
+describe('looking for one Log in the stream', () => {
+  it('has it, fetches older Logs for it while more remain, or gives up', () => {
+    const stream = startStream(page(0, 200, 'older'))
+    expect(seekLog(stream, 'log-5')).toBe('found')
+    expect(seekLog(stream, 'log-250')).toBe('older')
+    expect(seekLog(startStream(page(0, 20, null)), 'log-250')).toBe('missing')
   })
 })

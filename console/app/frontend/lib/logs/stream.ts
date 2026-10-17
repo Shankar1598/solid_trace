@@ -83,3 +83,12 @@ export function streamEnd(stream: Stream): 'more' | 'end' | 'capped' {
   if (stream.nextCursor === null) return 'end'
   return stream.logs.length >= MAX_STREAM_LOGS ? 'capped' : 'more'
 }
+
+/**
+ * What a stream looking for one Log does next: it has it, it fetches older
+ * Logs for it while more remain, or the Log is missing.
+ */
+export function seekLog(stream: Stream, id: string): 'found' | 'older' | 'missing' {
+  if (stream.logs.some(l => l.id === id)) return 'found'
+  return streamEnd(stream) === 'more' ? 'older' : 'missing'
+}
