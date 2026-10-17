@@ -125,6 +125,7 @@ func TestQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 		"/api/1/events/count",
 		"/api/1/events/context?fingerprint_ids=10",
 		"/api/1/events/" + event.EventUUID,
+		"/api/1/logs/fields?from=2026-10-02T00:00:00Z&to=2026-10-03T00:00:00Z",
 	}
 
 	for _, path := range paths {

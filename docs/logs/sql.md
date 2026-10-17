@@ -1,13 +1,21 @@
 # SQL queries and the `logs` view
 
-On an instance whose operator has turned SQL queries on, the Logs explorer has a SQL mode. In it you write raw [DuckDB SQL](https://duckdb.org/docs/sql/introduction), and it runs exactly as you wrote it. SQL mode opens with the SQL of your current Query, so you can start from something that works.
+On an instance whose operator has turned SQL queries on, the Logs explorer has a SQL mode. In it you write a raw [DuckDB SQL](https://duckdb.org/docs/sql/introduction) SELECT, and it runs as you wrote it. SQL mode opens with the SQL of your current Query, so you can start from something that works.
 
 - SQL runs only when you press Run (or Ctrl+Enter). Changing the time range waits for Run too.
 - The explorer's URL holds your SQL, so you can share it. Opening a link with SQL never runs it: whoever opens the link presses Run.
 - SQL can't be turned back into a Query. Leaving SQL mode drops your SQL and returns to the Query it started from. If you changed the SQL, the explorer asks first.
 - The histogram and the Builder's chips are hidden in SQL mode.
 
-SQL queries are off by default. Turning them on lets every member of every Organization run any SQL. That SQL can read every Organization's Logs and Events and the server's files, write files, drop tables and slow down ingest. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
+SQL queries are read-only. A query must be one SELECT, which may start with `WITH` or `FROM`; `DESCRIBE`, `SHOW` and `SUMMARIZE` work too. Anything else is refused before it runs, with "SQL queries are read-only: … isn't allowed":
+
+- statements that change something, such as `DROP`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `COPY`, `ATTACH`, `SET`, `PRAGMA`, `CALL`, and `EXPLAIN` too;
+- more than one statement, and `PIVOT` without an `IN` list, which DuckDB runs as more than one;
+- the functions that change something from a SELECT: `query`, `query_table`, `json_execute_serialized_sql`, `enable_logging`, `disable_logging`, `truncate_duckdb_logs`, `write_log`, `enable_profiling`, `disable_profiling`, `enable_peg_parser`, `disable_peg_parser`, `checkpoint`, `force_checkpoint`, `nextval` and `setseed`.
+
+DuckDB's extensions load only as EventStore needs them, so a function from any other extension isn't found.
+
+SQL queries are off by default. Being read-only, SQL can't change data, settings or files, but it isn't limited to a Project: turning SQL queries on lets every member of every Organization read every Organization's Logs and Events, files on the server and the bucket, and slow down ingest. On an instance with a bucket, SQL can also send requests from the server to any web address the server can reach, internal ones too, and read the answers. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
 
 ## The `logs` view
 
@@ -60,9 +68,9 @@ An Attribute keeps the type of each value, so one Log can hold `status` in `attr
 - Results show at most 10,000 rows. A result that has more is marked as cut off.
 - Times are shown in UTC.
 - A JSON value, map, list or struct is shown as JSON.
-- If the SQL fails, you see DuckDB's error message.
+- If the SQL fails or is refused, you see why: DuckDB's error message, or what isn't allowed.
 - A query has no time limit. Cancelling it in the explorer stops the wait, but the server may still finish the query.
-- A query reads the Logs as they were when it started, and runs in one transaction that commits when it ends. A long query holds up nothing else, but Log files it may read are only deleted (by Retention or the disk limit) after it ends.
+- A query reads the Logs as they were when it started, in one transaction. A long query holds up nothing else, but Log files it may read are only deleted (by Retention or the disk limit) after it ends.
 
 ## From a Query to SQL
 

@@ -176,7 +176,7 @@ SOLIDTRACE_TEST_S3_ENDPOINT=http://127.0.0.1:9000 SOLIDTRACE_TEST_S3_BUCKET=soli
 
 While a bucket is configured, EventStore:
 
-- loads httpfs from `duckdb_extension_directory` and turns DuckDB's extension autoinstall and autoload off, so DuckDB never downloads code;
+- loads httpfs from `duckdb_extension_directory`; DuckDB's extension autoinstall and autoload are off on every install, so DuckDB never downloads code;
 - creates one secret for the bucket, held in memory, which every read uses, SQL queries too;
 - turns on DuckDB's Parquet metadata cache, HTTP metadata cache and external file cache (`parquet_metadata_cache`, `enable_http_metadata_cache` and `enable_external_file_cache`). They keep files' metadata and recently read data in memory, within `duckdb_memory_limit`, so reading the same file again sends few requests or none;
 - gives DuckDB 4 threads for each CPU, because httpfs holds a thread for each request it waits on.

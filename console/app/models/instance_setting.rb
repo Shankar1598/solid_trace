@@ -13,12 +13,13 @@ class InstanceSetting < ApplicationRecord
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
-    SQL queries let every member of every Organization run raw DuckDB SQL from the Logs explorer.
-    They are not sandboxed or limited to a Project, so turning them on lets any member:
+    SQL queries let every member of every Organization run raw DuckDB SQL from the Logs explorer and the MCP server.
+    They are read-only: anything but one SELECT is refused, so they can't change data, settings or files.
+    But they are not sandboxed or limited to a Project, so turning them on lets any member:
       - read every Organization's Logs and Events
       - read files on the server
-      - write files on the server
-      - drop tables
+      - read the bucket, when one is configured
+      - send requests from the server to any web address it can reach, internal ones too, when a bucket is configured
       - starve ingest with slow queries
     Turn them on only if you trust every member of every Organization.
   TEXT

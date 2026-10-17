@@ -93,6 +93,18 @@ func NewDuckDBWriter(dbPath, parquetPath, tempDir, memoryLimit string) (*DuckDBW
 		return nil, err
 	}
 
+	// DuckDB never installs or loads an extension by itself, so a SQL query
+	// can't bring in one whose functions change things (ADR 0003). The ones
+	// built in are loaded already, and UseBucket loads httpfs by name.
+	for _, setting := range []string{
+		"SET GLOBAL autoinstall_known_extensions = false",
+		"SET GLOBAL autoload_known_extensions = false",
+	} {
+		if _, err := db.Exec(setting); err != nil {
+			return nil, fmt.Errorf("%s: %w", setting, err)
+		}
+	}
+
 	if tempDir != "" {
 		_, err = db.Exec(fmt.Sprintf("SET temp_directory='%s'", tempDir))
 		if err != nil {
