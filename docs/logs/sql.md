@@ -15,7 +15,7 @@ SQL queries are read-only. A query must be one SELECT, which may start with `WIT
 
 DuckDB's extensions load only as EventStore needs them, so a function from any other extension isn't found.
 
-SQL queries are off by default. Being read-only, SQL can't change data, settings or files, but it isn't limited to a Project: turning SQL queries on lets every member of every Organization read every Organization's Logs and Events, files on the server and the bucket, and slow down ingest. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
+SQL queries are off by default. Being read-only, SQL can't change data, settings or files, but it isn't limited to a Project: turning SQL queries on lets every member of every Organization read every Organization's Logs and Events, files on the server and the bucket, and slow down ingest. On an instance with a bucket, SQL can also send requests from the server to any web address the server can reach, internal ones too, and read the answers. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
 
 ## The `logs` view
 
