@@ -135,6 +135,63 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert_not_requested run
   end
 
+  # get_log
+
+  test "get_log answers the whole Log, looking in its hour, linking to the explorer over its second" do
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/#{ERROR_LOG['id']}")
+      .with(query: { time: "2026-10-17T09:59:58.123000000Z" })
+      .to_return(status: 200, body: ERROR_LOG.to_json)
+
+    answer = call_tool(:get_log, user: @user, project: "shop", log: ERROR_LOG["id"], time: "2026-10-17T11:59:58.123+02:00")
+
+    assert_not answer.error?
+    assert_equal ERROR_LOG, answer.json
+    assert_explorer({ "from" => "2026-10-17T09:59:58.000Z", "to" => "2026-10-17T09:59:59.000Z", "mode" => "query" }, answer.link)
+  end
+
+  test "get_log says when there is no such Log, asking EventStore only for a Log id" do
+    fetch = stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/#{BARE_LOG['id']}").to_return(status: 404)
+
+    assert_equal "No Log #{BARE_LOG['id']} in shop. query_logs gives Logs' ids and times.",
+      call_tool(:get_log, user: @user, project: "shop", log: BARE_LOG["id"]).text
+    assert_equal "No Log nope in shop. query_logs gives Logs' ids and times.", call_tool(:get_log, user: @user, project: "shop", log: "nope").text
+    assert_equal "time must be an ISO 8601 time, such as the Log's time in its query_logs line.",
+      call_tool(:get_log, user: @user, project: "shop", log: BARE_LOG["id"], time: "yesterday").text
+    assert_requested fetch, times: 1
+  end
+
+  # list_fields
+
+  test "list_fields answers the built-in fields and the Attributes as EventStore counts them, over the last day" do
+    fields = { "built_in" => [ { "name" => "time", "type" => "datetime" }, { "name" => "level", "type" => "string" } ],
+               "attributes" => [ { "name" => "status", "type" => "number", "logs" => 12 }, { "name" => "status", "type" => "string", "logs" => 3 } ],
+               "truncated" => false }
+    travel_to NOW do
+      stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/fields")
+        .with(query: { from: "2026-10-16T10:00:00.000Z", to: "2026-10-17T10:00:00.000Z" })
+        .to_return(status: 200, body: fields.to_json)
+
+      answer = call_tool(:list_fields, user: @user, project: "shop")
+
+      assert_not answer.error?
+      assert_equal({ "project" => "shop", "from" => "2026-10-16T10:00:00.000Z", "to" => "2026-10-17T10:00:00.000Z",
+                     "built_in" => fields["built_in"], "attributes" => fields["attributes"] }, answer.json)
+      assert_explorer({ "range" => "24h", "mode" => "query" }, answer.link)
+    end
+  end
+
+  test "list_fields reads the range and limit given, and says when there were more Attributes" do
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/fields")
+      .with(query: { from: "2026-10-10T00:00:00.000Z", to: "2026-10-17T00:00:00.000Z", limit: "1" })
+      .to_return(status: 200, body: { built_in: [], attributes: [ { name: "status", type: "number", logs: 12 } ], truncated: true }.to_json)
+
+    answer = call_tool(:list_fields, user: @user, project: "shop", from: "2026-10-10T00:00:00Z", to: "2026-10-17T00:00:00Z", limit: 1)
+
+    assert_not answer.error?
+    assert_equal "More Attributes than these 1: give a larger limit, at most 500.", answer.json["more"]
+    assert call_tool(:list_fields, user: @user, project: "shop", limit: 501).error?
+  end
+
   private
 
   # Checks that link opens the explorer on the Project shop with search.
