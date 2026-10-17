@@ -23,7 +23,7 @@ export default function RichTextEditor({ value, onChange, onKeyDown, placeholder
         openOnClick: false,
       }),
       Placeholder.configure({
-        placeholder: placeholder || 'Write something...',
+        placeholder: placeholder || 'Write something…',
       }),
     ],
     content: value,

@@ -54,7 +54,7 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
       <div className="space-y-4">
         {comments.map((comment) => (
           <Card key={comment.id} id={`comment-${comment.id}`} className="py-0">
-            <CardHeader className="py-3 bg-muted/30 flex flex-row items-center justify-between space-y-0">
+            <CardHeader className="py-3 border-b flex flex-row items-center justify-between space-y-0">
               <div className="flex items-center gap-2 text-sm">
                 <span className="font-semibold">{comment.user.name}</span>
                 <span className="text-muted-foreground">commented</span>
@@ -79,12 +79,12 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
       </div>
 
       <div className="pt-4 border-t">
-        <h3 className="font-semibold mb-4">Add a comment</h3>
+        <h3 className="text-sm font-semibold mb-3">Add a comment</h3>
         <form onSubmit={submitComment} className="space-y-4">
           <RichTextEditor
             value={data.content}
             onChange={(val) => setData('content', val)}
-            placeholder="Leave a comment..."
+            placeholder="Leave a comment…"
             onKeyDown={(e: React.KeyboardEvent) => {
               if (e.key === 'Enter' && e.shiftKey) {
                 e.preventDefault()
@@ -94,7 +94,7 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
           />
           <div className="flex justify-end">
             <Button type="submit" disabled={processing || !data.content || data.content === '<p></p>'}>
-              {processing ? 'Posting...' : 'Post Comment'}
+              {processing ? 'Posting…' : 'Post comment'}
             </Button>
           </div>
         </form>

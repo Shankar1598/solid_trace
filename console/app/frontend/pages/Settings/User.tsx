@@ -1,6 +1,7 @@
 import { useForm } from '@inertiajs/react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
-import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card'
+import { PageHeader } from '@/components/PageHeader'
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -26,30 +27,19 @@ export default function SettingsUser({ user }: SettingsUserProps) {
 
   return (
     <SettingsLayout>
-      <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-1">Account Settings</h1>
-          <p className="text-muted-foreground">
-            Manage your personal profile and account preferences.
-          </p>
-        </div>
-
+      <PageHeader title="Account" description="Your name as others in the Organization see it." />
         <Card>
           <form onSubmit={submit}>
             <CardHeader>
               <CardTitle>Profile</CardTitle>
-              <CardDescription>
-                Manage your personal information.
-              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6 pb-6">
+            <CardContent className="space-y-6 pb-2">
               <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
+                <Label htmlFor="email">Email</Label>
                 <Input
                   id="email"
                   value={data.email}
                   disabled
-                  className="bg-muted"
                   placeholder="your-email@example.com"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -58,7 +48,7 @@ export default function SettingsUser({ user }: SettingsUserProps) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
+                <Label htmlFor="name">Name</Label>
                 <Input
                   id="name"
                   value={data.name}
@@ -70,14 +60,13 @@ export default function SettingsUser({ user }: SettingsUserProps) {
                 )}
               </div>
             </CardContent>
-            <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
+            <CardFooter className="justify-end">
               <Button type="submit" disabled={processing}>
-                {processing ? 'Saving...' : 'Save Changes'}
+                {processing ? 'Saving…' : 'Save changes'}
               </Button>
             </CardFooter>
           </form>
         </Card>
-      </div>
     </SettingsLayout>
   )
 }

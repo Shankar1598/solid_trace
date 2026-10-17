@@ -610,9 +610,9 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
           )}
           <CopyLink onCopy={copyLink} />
           {running ? (
-            <Button variant="outline" size="sm" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
+            <Button variant="outline" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={() => commit(explorer)}><Play className="h-3.5 w-3.5" /> Run</Button>
+            <Button variant="outline" onClick={() => commit(explorer)}><Play className="h-3.5 w-3.5" /> Run</Button>
           )}
         </div>
 

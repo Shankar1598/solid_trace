@@ -1,6 +1,6 @@
 import { router, useForm, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
-import Breadcrumbs from '@/components/Breadcrumbs'
+import { PageHeader } from '@/components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -53,37 +53,28 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
   const activeKey = project.keys && project.keys.length > 0 ? project.keys[0] : null
 
   return (
-    <DashboardLayout breadcrumbs={<Breadcrumbs items={breadcrumbItems} />}>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
-        </div>
-
+    <DashboardLayout>
+      <PageHeader breadcrumbs={breadcrumbItems} title={project.name} description={<span className="font-mono text-xs">{project.slug}</span>} />
         <div className="grid gap-6 md:grid-cols-2">
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Project Configuration</CardTitle>
-                <CardDescription>
-                  Configure your project settings and integration.
-                </CardDescription>
+                <CardTitle>Details</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Platform</Label>
-                  <Input value={project.platform || 'Not set'} disabled />
-                </div>
-                <div className="space-y-2">
-                  <Label>Project ID</Label>
-                  <Input value={project.id} disabled className="font-mono" />
-                </div>
+              <CardContent>
+                <dl className="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
+                  <dt className="text-muted-foreground">Platform</dt>
+                  <dd className="font-mono text-xs leading-5">{project.platform || <span className="font-sans text-muted-foreground">Not set</span>}</dd>
+                  <dt className="text-muted-foreground">Project ID</dt>
+                  <dd className="font-mono text-xs leading-5">{project.id}</dd>
+                </dl>
               </CardContent>
             </Card>
 
             <Card>
               <form onSubmit={submitRetention}>
                 <CardHeader>
-                  <CardTitle>Log Retention</CardTitle>
+                  <CardTitle>Log retention</CardTitle>
                   <CardDescription>
                     How many whole days this project's logs are kept before they are deleted.
                   </CardDescription>
@@ -110,9 +101,9 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
                   </p>
                 </CardContent>
                 {can_manage_project && (
-                  <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
+                  <CardFooter className="justify-end">
                     <Button type="submit" disabled={processing}>
-                      {processing ? 'Saving...' : 'Save'}
+                      {processing ? 'Saving…' : 'Save'}
                     </Button>
                   </CardFooter>
                 )}
@@ -121,13 +112,13 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
 
             <Card className="border-destructive/50">
               <CardHeader>
-                <CardTitle className="text-destructive">Danger Zone</CardTitle>
+                <CardTitle className="text-destructive">Danger zone</CardTitle>
+                <CardDescription>
+                  Deleting this project will permanently remove all issues and events associated with it.
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Deleting this project will permanently remove all issues and events associated with it.
-                </p>
-                <Button variant="destructive">Delete Project</Button>
+                <Button variant="destructive">Delete project</Button>
               </CardContent>
             </Card>
           </div>
@@ -135,7 +126,7 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Client Keys (DSN)</CardTitle>
+                <CardTitle>Client keys</CardTitle>
                 <CardDescription>
                   Use this DSN to configure your SDK.
                 </CardDescription>
@@ -144,7 +135,7 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
                 {activeKey ? (
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <Label>Public DSN</Label>
+                      <Label>DSN</Label>
                       <div className="flex gap-2">
                         <Input value={activeKey.dsn} readOnly className="font-mono text-xs" />
                         <Button
@@ -159,15 +150,15 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
                     {/* Could show Public Key separately if needed, but DSN usually contains it */}
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center p-6 text-center border-2 border-dashed rounded-lg">
+                  <div className="flex flex-col items-center justify-center p-6 text-center border border-dashed">
                     <AlertTriangle className="h-8 w-8 text-yellow-500 mb-2" />
-                    <h3 className="font-medium">No Client Keys Found</h3>
+                    <h3 className="font-medium">No client keys yet</h3>
                     <p className="text-sm text-muted-foreground mb-4">
                       This project doesn't have any client keys generated yet.
                     </p>
-                    <Button variant="outline" size="sm" onClick={() => router.post(`/${current_org.slug}/projects/${project.slug}/keys`)}>
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      Generate New Key
+                    <Button variant="outline" onClick={() => router.post(`/${current_org.slug}/projects/${project.slug}/keys`)}>
+                      <RefreshCw className="h-4 w-4" />
+                      Generate a key
                     </Button>
                   </div>
                 )}
@@ -175,7 +166,6 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
             </Card>
           </div>
         </div>
-      </div>
     </DashboardLayout>
   )
 }

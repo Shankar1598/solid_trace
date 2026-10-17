@@ -38,25 +38,25 @@ export function BreadcrumbsList({ breadcrumbs }: BreadcrumbsListProps) {
   return (
     <Card>
       <CardHeader className="border-b py-3">
-        <CardTitle className="text-sm font-medium">Breadcrumbs</CardTitle>
+        <CardTitle>Breadcrumbs</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
         <div className="divide-y">
           {breadcrumbs.values.map((breadcrumb, index) => (
-            <div key={index} className="flex items-start gap-4 p-3 text-sm hover:bg-muted/50 transition-colors">
+            <div key={index} className="flex items-start gap-4 p-3 text-sm hover:bg-muted/40">
               <div className="flex-none pt-1">
-                <div className={`p-1.5 rounded-full bg-muted ${getLevelColor(breadcrumb.level)}`}>
+                <div className={`p-1.5 bg-muted ${getLevelColor(breadcrumb.level)}`}>
                   {getIcon(breadcrumb.category)}
                 </div>
               </div>
 
               <div className="flex-1 min-w-0 space-y-1">
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                  <span className="font-mono text-xs text-muted-foreground">
                     {breadcrumb.category}
                   </span>
                   {breadcrumb.level && (
-                    <span className={`text-[10px] uppercase font-bold ${getLevelColor(breadcrumb.level)}`}>
+                    <span className={`font-mono text-xs ${getLevelColor(breadcrumb.level)}`}>
                       {breadcrumb.level}
                     </span>
                   )}
@@ -71,7 +71,7 @@ export function BreadcrumbsList({ breadcrumbs }: BreadcrumbsListProps) {
                 </p>
               </div>
 
-              <div className="flex-none text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+              <div className="flex-none font-mono text-xs text-muted-foreground whitespace-nowrap">
                 {format(new Date(breadcrumb.timestamp * 1000), 'HH:mm:ss.SSS')}
               </div>
             </div>

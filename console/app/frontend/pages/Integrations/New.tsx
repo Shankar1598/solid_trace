@@ -1,11 +1,13 @@
 import { Link, useForm, usePage } from '@inertiajs/react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/PageHeader'
+import { Card, CardContent, CardFooter } from '@/components/ui/card'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
+import { providerName } from '@/lib/integrations'
 import { SharedProps } from '@/types'
 import { FormEventHandler } from 'react'
 import { toast } from 'sonner'
@@ -24,6 +26,7 @@ interface IntegrationsNewProps {
 }
 
 export default function IntegrationsNew({ providers, defaults }: IntegrationsNewProps) {
+  const providerItems = Object.fromEntries(Object.keys(providers).map(p => [p, providerName(p)]))
   const { current_org } = usePage<SharedProps>().props
 
   const { data, setData, post, processing, errors } = useForm({
@@ -49,33 +52,26 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
 
   return (
     <SettingsLayout>
-      <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-1">Add Integration</h1>
-          <p className="text-muted-foreground">
-            Configure a new integration service for your organization.
-          </p>
-        </div>
-
+      <PageHeader
+        breadcrumbs={[{ label: 'Integrations', href: `/${current_org.slug}/settings/integrations` }, { label: 'New integration' }]}
+        title="New integration"
+        description="Somewhere SolidTrace sends alerts: a Slack channel, a PagerDuty service or email."
+      />
         <Card>
           <form onSubmit={submit}>
-            <CardHeader>
-              <CardTitle>Integration Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6 pb-6">
-
+            <CardContent className="space-y-6 pb-2">
               <div className="space-y-2">
                 <Label htmlFor="provider">Provider</Label>
                 <Select
                   value={data.provider}
                   onValueChange={(val) => setData('provider', val ?? '')}
-                  items={providers}
+                  items={providerItems}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a provider" />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(providers).map(([key, label]) => (
+                    {Object.entries(providerItems).map(([key, label]) => (
                       <SelectItem key={key} value={key}>{label}</SelectItem>
                     ))}
                   </SelectContent>
@@ -86,7 +82,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="name">Name (Optional)</Label>
+                <Label htmlFor="name">Name (optional)</Label>
                 <Input
                   id="name"
                   placeholder="e.g. Engineering Slack"
@@ -98,7 +94,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
               {/* Dynamic fields based on provider */}
               {data.provider === 'slack' && (
                 <div className="space-y-6 pt-6 border-t">
-                  <h3 className="font-medium text-sm">Slack Configuration</h3>
+                  <h3 className="text-sm font-semibold">Connection</h3>
                   <div className="space-y-2">
                     <Label htmlFor="webhook_url">Webhook URL</Label>
                     <Input
@@ -121,13 +117,13 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
 
               {data.provider === 'pagerduty' && (
                 <div className="space-y-6 pt-6 border-t">
-                  <h3 className="font-medium text-sm">PagerDuty Configuration</h3>
+                  <h3 className="text-sm font-semibold">Connection</h3>
                   <div className="space-y-2">
-                    <Label htmlFor="routing_key">Routing Key</Label>
+                    <Label htmlFor="routing_key">Routing key</Label>
                     <Input
                       id="routing_key"
                       className="font-mono"
-                      placeholder="Enter your PagerDuty Integration Key"
+                      placeholder="Your PagerDuty integration key"
                       value={data.settings.routing_key}
                       onChange={(e) => setData('settings', { ...data.settings, routing_key: e.target.value })}
                       required
@@ -137,7 +133,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="severity">Incident Severity</Label>
+                    <Label htmlFor="severity">Incident severity</Label>
                     <Select
                       value={data.settings.severity}
                       onValueChange={(val) => setData('settings', { ...data.settings, severity: val ?? 'error' })}
@@ -158,7 +154,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
 
               {data.provider === 'email' && (
                 <div className="space-y-6 pt-6 border-t">
-                  <h3 className="font-medium text-sm">Email Configuration</h3>
+                  <h3 className="text-sm font-semibold">Connection</h3>
                   <div className="space-y-2">
                     <Label htmlFor="recipients">Recipients</Label>
                     <Input
@@ -180,7 +176,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
 
               {data.provider && (
                 <div className="space-y-6 pt-6 border-t">
-                  <h3 className="font-medium text-sm">Common Notification Rules</h3>
+                  <h3 className="text-sm font-semibold">When to notify</h3>
                   <div className="flex items-center space-x-2">
                     <Checkbox
                       id="notify_on_new_issue"
@@ -188,7 +184,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
                       onCheckedChange={(val) => setData('settings', { ...data.settings, notify_on_new_issue: !!val })}
                     />
                     <Label htmlFor="notify_on_new_issue" className="text-sm font-normal">
-                      Notify when a new issue is created
+                      Notify when a new Issue is created
                     </Label>
                   </div>
 
@@ -199,7 +195,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
                       onCheckedChange={(val) => setData('settings', { ...data.settings, notify_on_assignment: !!val })}
                     />
                     <Label htmlFor="notify_on_assignment" className="text-sm font-normal">
-                      Notify when an issue is assigned
+                      Notify when an Issue is assigned
                     </Label>
                   </div>
 
@@ -211,14 +207,14 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
                         onCheckedChange={(val) => setData('settings', { ...data.settings, notify_on_event_threshold: !!val })}
                       />
                       <Label htmlFor="notify_on_event_threshold" className="text-sm font-normal">
-                        Notify when event count exceeds threshold
+                        Notify when the Event count passes the threshold
                       </Label>
                     </div>
 
                     {data.settings.notify_on_event_threshold && (
                       <div className="grid grid-cols-2 gap-4 pl-6">
                         <div className="space-y-2">
-                          <Label htmlFor="event_threshold">Event Threshold</Label>
+                          <Label htmlFor="event_threshold">Event threshold</Label>
                           <Input
                             id="event_threshold"
                             type="number"
@@ -227,7 +223,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="time_window_minutes">Time Window (Minutes)</Label>
+                          <Label htmlFor="time_window_minutes">Time window (minutes)</Label>
                           <Input
                             id="time_window_minutes"
                             type="number"
@@ -242,17 +238,16 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
               )}
 
             </CardContent>
-            <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 px-6 py-4">
-              <Link href={`/${current_org.slug}/settings/integrations`}>
-                <Button variant="outline" type="button">Cancel</Button>
+            <CardFooter className="justify-end gap-2">
+              <Link href={`/${current_org.slug}/settings/integrations`} className={buttonVariants({ variant: 'outline' })}>
+                Cancel
               </Link>
               <Button type="submit" disabled={processing}>
-                {processing ? 'Adding...' : 'Add Integration'}
+                {processing ? 'Adding…' : 'Add integration'}
               </Button>
             </CardFooter>
           </form>
         </Card>
-      </div>
     </SettingsLayout>
   )
 }

@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/badge'
 import type { Monitor, MonitorStatus } from '@/lib/monitors/monitor'
 
 const LABELS: Record<MonitorStatus, string> = { firing: 'Firing', ok: 'OK', disabled: 'Off', error: 'Error' }
+const TONES = { firing: 'error', ok: 'ok', disabled: 'neutral', error: 'warn' } as const
 
 /**
  * A Monitor's status: firing (with how many groups), ok, off, or error when its last run failed.
@@ -14,7 +15,8 @@ export function MonitorStatusBadge({ monitor }: { monitor: Pick<Monitor, 'status
   return (
     <span className="inline-flex items-center gap-2">
       <Badge
-        variant={status === 'firing' || status === 'error' ? 'destructive' : status === 'ok' ? 'secondary' : 'outline'}
+        variant={TONES[status]}
+        dot
         title={status === 'error' || failed ? monitor.last_error ?? undefined : undefined}
         data-monitor-status={status}
       >

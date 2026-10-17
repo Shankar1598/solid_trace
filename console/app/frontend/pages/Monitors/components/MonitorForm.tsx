@@ -6,6 +6,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { valueText } from '@/lib/charts/axis'
 import { fetchPreview } from '@/lib/dashboards/api'
@@ -265,12 +266,11 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
         </div>
         <div className="space-y-1">
           <Label>Kind</Label>
-          <Toggle
+          <Segmented
             label="Kind"
             value={kind}
-            options={[['threshold', 'Threshold'], ['match', 'Match']]}
+            options={[{ value: 'threshold', label: 'Threshold' }, { value: 'match', label: 'Match' }]}
             onChange={setKind}
-            className="h-9"
           />
         </div>
       </section>
@@ -283,7 +283,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       <section className="space-y-2">
         <div className="flex items-center gap-2">
           <Label>Query</Label>
-          <Toggle label="Edit the Query in" value={mode} options={[['builder', 'Builder'], ['query', 'Query']]} onChange={m => mode !== m && switchMode(m)} />
+          <Segmented label="Edit the Query in" size="sm" value={mode} options={[{ value: 'builder', label: 'Builder' }, { value: 'query', label: 'Query' }]} onChange={switchMode} />
         </div>
         {notice && <p className="text-xs text-amber-600 dark:text-amber-400">{notice}</p>}
         {mode === 'builder' ? (
@@ -449,30 +449,6 @@ function FieldError({ name, error }: { name: string; error: unknown }) {
     <>
       {messages.map((m, i) => <p key={i} role="alert" className="text-xs text-destructive">{name} {m}</p>)}
     </>
-  )
-}
-
-function Toggle<T extends string>({ label, value, options, onChange, className }: {
-  label: string
-  value: T
-  options: [T, string][]
-  onChange: (value: T) => void
-  className?: string
-}) {
-  return (
-    <div role="group" aria-label={label} className="flex w-fit overflow-hidden rounded-md border text-xs">
-      {options.map(([v, text]) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={value === v}
-          onClick={() => onChange(v)}
-          className={cn('h-6 border-l px-2 first:border-l-0', className, value === v ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted')}
-        >
-          {text}
-        </button>
-      ))}
-    </div>
   )
 }
 

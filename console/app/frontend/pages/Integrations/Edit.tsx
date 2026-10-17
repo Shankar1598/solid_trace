@@ -1,11 +1,13 @@
 import { Link, useForm, usePage } from '@inertiajs/react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/PageHeader'
+import { Card, CardContent, CardFooter } from '@/components/ui/card'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
+import { providerName } from '@/lib/integrations'
 import { SharedProps, Integration } from '@/types'
 import { FormEventHandler } from 'react'
 import { toast } from 'sonner'
@@ -15,7 +17,7 @@ interface IntegrationsEditProps {
   providers: { [key: string]: string }
 }
 
-export default function IntegrationsEdit({ integration, providers }: IntegrationsEditProps) {
+export default function IntegrationsEdit({ integration }: IntegrationsEditProps) {
   const { current_org } = usePage<SharedProps>().props
 
   const { data, setData, put, processing, errors } = useForm({
@@ -46,22 +48,16 @@ export default function IntegrationsEdit({ integration, providers }: Integration
 
   return (
     <SettingsLayout>
-      <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-1">Edit Integration</h1>
-          <p className="text-muted-foreground">
-            Update settings for your {providers[integration.provider] || integration.provider} integration.
-          </p>
-        </div>
-
+      <PageHeader
+        breadcrumbs={[{ label: 'Integrations', href: `/${current_org.slug}/settings/integrations` }, { label: integration.name || providerName(integration.provider) }]}
+        title={integration.name || providerName(integration.provider)}
+        description={`A ${providerName(integration.provider)} integration.`}
+      />
         <Card>
           <form onSubmit={submit}>
-            <CardHeader>
-              <CardTitle>{providers[integration.provider] || integration.provider} Configuration</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6 pb-6">
+            <CardContent className="space-y-6 pb-2">
               <div className="space-y-2">
-                <Label htmlFor="name">Integration Name (Optional)</Label>
+                <Label htmlFor="name">Name (optional)</Label>
                 <Input
                   id="name"
                   placeholder="e.g. Engineering Slack"
@@ -76,7 +72,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
               {/* Dynamic fields based on provider */}
               {integration.provider === 'slack' && (
                 <div className="space-y-6 pt-6 border-t">
-                  <h3 className="font-medium text-sm">Slack Configuration</h3>
+                  <h3 className="text-sm font-semibold">Connection</h3>
                   <div className="space-y-2">
                     <Label htmlFor="webhook_url">Webhook URL</Label>
                     <Input
@@ -99,13 +95,13 @@ export default function IntegrationsEdit({ integration, providers }: Integration
 
               {integration.provider === 'pagerduty' && (
                 <div className="space-y-6 pt-6 border-t">
-                  <h3 className="font-medium text-sm">PagerDuty Configuration</h3>
+                  <h3 className="text-sm font-semibold">Connection</h3>
                   <div className="space-y-2">
-                    <Label htmlFor="routing_key">Routing Key</Label>
+                    <Label htmlFor="routing_key">Routing key</Label>
                     <Input
                       id="routing_key"
                       className="font-mono"
-                      placeholder="Enter your PagerDuty Integration Key"
+                      placeholder="Your PagerDuty integration key"
                       value={data.settings.routing_key}
                       onChange={(e) => setData('settings', { ...data.settings, routing_key: e.target.value })}
                       required
@@ -115,7 +111,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="severity">Incident Severity</Label>
+                    <Label htmlFor="severity">Incident severity</Label>
                     <Select
                       value={data.settings.severity}
                       onValueChange={(val) => setData('settings', { ...data.settings, severity: val })}
@@ -136,7 +132,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
 
               {integration.provider === 'email' && (
                 <div className="space-y-6 pt-6 border-t">
-                  <h3 className="font-medium text-sm">Email Configuration</h3>
+                  <h3 className="text-sm font-semibold">Connection</h3>
                   <div className="space-y-2">
                     <Label htmlFor="recipients">Recipients</Label>
                     <Input
@@ -157,7 +153,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
               )}
 
               <div className="space-y-6 pt-6 border-t">
-                <h3 className="font-medium text-sm">Common Notification Rules</h3>
+                <h3 className="text-sm font-semibold">When to notify</h3>
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     id="notify_on_new_issue"
@@ -165,7 +161,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
                     onCheckedChange={(val) => setData('settings', { ...data.settings, notify_on_new_issue: !!val })}
                   />
                   <Label htmlFor="notify_on_new_issue" className="text-sm font-normal">
-                    Notify when a new issue is created
+                    Notify when a new Issue is created
                   </Label>
                 </div>
 
@@ -176,7 +172,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
                     onCheckedChange={(val) => setData('settings', { ...data.settings, notify_on_assignment: !!val })}
                   />
                   <Label htmlFor="notify_on_assignment" className="text-sm font-normal">
-                    Notify when an issue is assigned
+                    Notify when an Issue is assigned
                   </Label>
                 </div>
 
@@ -188,14 +184,14 @@ export default function IntegrationsEdit({ integration, providers }: Integration
                       onCheckedChange={(val) => setData('settings', { ...data.settings, notify_on_event_threshold: !!val })}
                     />
                     <Label htmlFor="notify_on_event_threshold" className="text-sm font-normal">
-                      Notify when event count exceeds threshold
+                      Notify when the Event count passes the threshold
                     </Label>
                   </div>
 
                   {data.settings.notify_on_event_threshold && (
                     <div className="grid grid-cols-2 gap-4 pl-6">
                       <div className="space-y-2">
-                        <Label htmlFor="event_threshold">Event Threshold</Label>
+                        <Label htmlFor="event_threshold">Event threshold</Label>
                         <Input
                           id="event_threshold"
                           type="number"
@@ -204,7 +200,7 @@ export default function IntegrationsEdit({ integration, providers }: Integration
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="time_window_minutes">Time Window (Minutes)</Label>
+                        <Label htmlFor="time_window_minutes">Time window (minutes)</Label>
                         <Input
                           id="time_window_minutes"
                           type="number"
@@ -224,21 +220,20 @@ export default function IntegrationsEdit({ integration, providers }: Integration
                   onCheckedChange={(val) => setData('active', !!val)}
                 />
                 <Label htmlFor="active" className="text-sm font-normal">
-                  Integration is active and enabled
+                  On: send alerts through this integration
                 </Label>
               </div>
             </CardContent>
-            <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 px-6 py-4">
-              <Link href={`/${current_org.slug}/settings/integrations`}>
-                <Button variant="outline" type="button">Cancel</Button>
+            <CardFooter className="justify-end gap-2">
+              <Link href={`/${current_org.slug}/settings/integrations`} className={buttonVariants({ variant: 'outline' })}>
+                Cancel
               </Link>
               <Button type="submit" disabled={processing}>
-                {processing ? 'Saving...' : 'Save Changes'}
+                {processing ? 'Saving…' : 'Save changes'}
               </Button>
             </CardFooter>
           </form>
         </Card>
-      </div>
     </SettingsLayout>
   )
 }

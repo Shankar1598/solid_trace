@@ -1,6 +1,7 @@
 import { useForm } from '@inertiajs/react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
-import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card'
+import { PageHeader } from '@/components/PageHeader'
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -31,65 +32,49 @@ export default function SettingsOrganization({ organization }: SettingsOrganizat
 
   return (
     <SettingsLayout>
-      <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-1">Organization Settings</h1>
-          <p className="text-muted-foreground">
-            Manage your organization profile and public identifiers.
-          </p>
-        </div>
+      <PageHeader title="Organization" description="Its name, and the slug in every link to it." />
+      <Card>
+        <form onSubmit={submitOrg}>
+          <CardHeader>
+            <CardTitle>General</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6 pb-2">
+            <div className="space-y-2">
+              <Label htmlFor="orgName">Name</Label>
+              <Input
+                id="orgName"
+                value={data.name}
+                onChange={(e) => setData('name', e.target.value)}
+                placeholder="Enter organization name"
+              />
+              {errors.name && (
+                <p className="text-sm font-medium text-destructive">{errors.name}</p>
+              )}
+            </div>
 
-        <div className="space-y-6">
-          <Card>
-            <form onSubmit={submitOrg}>
-              <CardHeader>
-                <CardTitle>General Settings</CardTitle>
-                <CardDescription>
-                  Manage your organization profile.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6 pb-6">
-                <div className="space-y-2">
-                  <Label htmlFor="orgName">Organization Name</Label>
-                  <Input
-                    id="orgName"
-                    value={data.name}
-                    onChange={(e) => setData('name', e.target.value)}
-                    placeholder="Enter organization name"
-                  />
-                  {errors.name && (
-                    <p className="text-sm font-medium text-destructive">{errors.name}</p>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="slug">Organization Slug</Label>
-                  <Input
-                    id="slug"
-                    value={data.slug}
-                    onChange={(e) => setData('slug', e.target.value)}
-                    className="font-mono"
-                  />
-                  {errors.slug && (
-                    <p className="text-sm font-medium text-destructive">{errors.slug}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    The slug is used in URLs. Changing it will break existing links.
-                  </p>
-                  {errors.slug && (
-                    <p className="text-sm font-medium text-destructive">{errors.slug}</p>
-                  )}
-                </div>
-              </CardContent>
-              <CardFooter className="flex justify-end border-t bg-muted/20 px-6 py-4">
-                <Button type="submit" disabled={processing}>
-                  {processing ? 'Saving...' : 'Save Changes'}
-                </Button>
-              </CardFooter>
-            </form>
-          </Card>
-        </div>
-      </div>
+            <div className="space-y-2">
+              <Label htmlFor="slug">Slug</Label>
+              <Input
+                id="slug"
+                value={data.slug}
+                onChange={(e) => setData('slug', e.target.value)}
+                className="font-mono"
+              />
+              {errors.slug && (
+                <p className="text-sm font-medium text-destructive">{errors.slug}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                The slug is used in URLs. Changing it will break existing links.
+              </p>
+            </div>
+          </CardContent>
+          <CardFooter className="justify-end">
+            <Button type="submit" disabled={processing}>
+              {processing ? 'Saving…' : 'Save changes'}
+            </Button>
+          </CardFooter>
+        </form>
+      </Card>
     </SettingsLayout>
   )
 }

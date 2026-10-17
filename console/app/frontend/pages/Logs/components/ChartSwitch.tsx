@@ -1,6 +1,6 @@
 import { ChartArea, ChartColumn, ChartLine, Hash, Table2 } from 'lucide-react'
+import { Segmented } from '@/components/ui/segmented'
 import type { ChartForm } from '@/lib/charts/series'
-import { cn } from '@/lib/utils'
 
 /** A form a table can be shown in: drawn as a chart over the table, or the table alone. */
 export type Shown = ChartForm | 'table'
@@ -20,26 +20,12 @@ const OPTIONS: Record<Shown, { label: string; icon: typeof ChartLine }> = {
  */
 export function ChartSwitch({ forms, shown, onChange }: { forms: ChartForm[]; shown: Shown; onChange: (shown: Shown) => void }) {
   return (
-    <div role="group" aria-label="Chart" className="flex shrink-0 overflow-hidden rounded-md border text-[11px]">
-      {[...forms, 'table' as const].map(form => {
-        const { label, icon: Icon } = OPTIONS[form]
-        const on = form === shown
-        return (
-          <button
-            key={form}
-            type="button"
-            aria-pressed={on}
-            onClick={() => !on && onChange(form)}
-            className={cn(
-              'flex h-6 items-center gap-1 border-l px-2 first:border-l-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
-              on ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-          >
-            <Icon className="h-3 w-3" />
-            {label}
-          </button>
-        )
-      })}
-    </div>
+    <Segmented
+      label="Chart"
+      size="sm"
+      value={shown}
+      options={[...forms, 'table' as const].map(form => ({ value: form, ...OPTIONS[form] }))}
+      onChange={onChange}
+    />
   )
 }
