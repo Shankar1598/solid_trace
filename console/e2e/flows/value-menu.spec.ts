@@ -39,7 +39,8 @@ test('Group by from a stream value counts Logs by its Field over time, as a char
 
   await expect.poll(() => ranQuery(page)).toContain('summarize count() by bin_auto(time), service')
   await expect(chart(page)).toHaveAttribute('aria-label', /^Line chart of .+ over time$/)
-  await expect(page.locator('[data-run-line]')).toHaveText(/^[\d,]+ rows? · [\d.]+ m?s$/)
+  // Under a time chart, the table lists each service's totals over the range.
+  await expect(page.locator('[data-run-line]')).toHaveText(/^[\d,]+ groups? over the range · [\d.]+ m?s$/)
 
   // A legend entry is a value of service: its menu filters on it.
   const entry = page.getByRole('button', { name: /^Menu for service = / }).first()
