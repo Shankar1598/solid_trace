@@ -42,6 +42,8 @@ class LogMonitor < ApplicationRecord
     inverse_of: :monitor, dependent: :delete_all
 
   scope :enabled, -> { where(disabled_at: nil) }
+  # The enabled Monitors the scheduler runs at now (due?).
+  scope :due, ->(now) { enabled.where(next_run_at: nil).or(enabled.where(next_run_at: ..(now + SCHEDULE_SLACK))) }
 
   validates :name, presence: true, length: { maximum: 200 }
   validates :query, presence: true, length: { maximum: 20_000 }
