@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { logsPath } from './data'
+import { logsPath, PROJECT } from './data'
 
 // The Logs explorer as a user sees it: its bar, its Builder and the summary
 // line over the stream, for the flows and screens that click through it.
@@ -23,6 +23,18 @@ export function last24h(mode = 'builder'): string {
   const to = new Date(Math.floor(Date.now() / 60_000) * 60_000)
   const from = new Date(to.getTime() - 24 * 3600_000)
   return `?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), mode })}`
+}
+
+/**
+ * The dummy Logs global setup sends: each has a region. Flows that count
+ * Services or open the newest Log read these, so a Log sent to the dev
+ * Project by hand (a probe, say) changes nothing they see.
+ */
+export const DUMMY_LOGS = `['${PROJECT}']\n| where isnotnull(region)`
+
+/** The dummy Logs over the last 24 h as a fixed range (last24h), in a mode. */
+export function dummyLogs(mode = 'builder'): string {
+  return `${last24h(mode)}&${new URLSearchParams({ q: DUMMY_LOGS })}`
 }
 
 /** The time-range picker's button, named "Time range: <the range>". */
