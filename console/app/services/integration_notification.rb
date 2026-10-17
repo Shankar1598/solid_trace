@@ -81,18 +81,19 @@ module IntegrationNotification
     end
 
     # Writes a row of +kind+ about one group of a Monitor for each of its
-    # active Integrations, and schedules their ticks. MonitorEvaluation calls
-    # it for each change of a group's status, in the transaction that records
-    # the change, so the rows follow the Monitor's states: a group that stays
-    # firing writes nothing more. +payload+ is what the run saw, for the
-    # message (Notifiers::MonitorMessage). Each row also keeps what the
-    # message says about the Monitor, so it is delivered even when the
-    # Monitor is deleted first.
-    def monitor_changed(monitor, kind:, group_key:, payload:)
+    # active Integrations, or of +integrations+ when given, and schedules
+    # their ticks. MonitorEvaluation calls it for each change of a group's
+    # status, in the transaction that records the change, so the rows follow
+    # the Monitor's states: a group that stays firing writes nothing more.
+    # +payload+ is what the run saw, for the message
+    # (Notifiers::MonitorMessage). Each row also keeps what the message says
+    # about the Monitor, so it is delivered even when the Monitor is deleted
+    # first.
+    def monitor_changed(monitor, kind:, group_key:, payload:, integrations: monitor.integrations)
       raise ArgumentError, "Unknown Monitor notification kind: #{kind.inspect}" unless MONITOR_KINDS.include?(kind)
 
       payload = payload.merge("monitor" => Notifiers::MonitorMessage.about(monitor))
-      monitor.integrations.active.find_each do |integration|
+      integrations.active.find_each do |integration|
         Notification.enqueue!(integration: integration, monitor: monitor, group_key: group_key, kind: kind, payload: payload)
         schedule_tick(integration, wait: INITIAL_DELAY)
       end

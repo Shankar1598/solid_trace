@@ -156,6 +156,17 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "Checkout errors (api)", 20.0, [] ], [ @monitor.name, @monitor.threshold, @monitor.integrations.to_a ]
   end
 
+  test "unticking an Integration on a firing Monitor resolves its firing groups there" do
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 42)
+
+    patch monitor_url(@monitor, org_slug: @organization.slug),
+      params: { monitor: { integration_ids: [] } }, as: :json
+
+    assert_redirected_to monitor_url(@monitor, org_slug: @organization.slug)
+    assert_equal [ [ @slack.id, "monitor_resolved", "", true ] ],
+      Notification.where(monitor_id: @monitor.id).map { |row| [ row.integration_id, row.kind, row.group_key, row.payload["unlinked"] ] }
+  end
+
   test "a change refused keeps the Monitor's Integrations" do
     patch monitor_url(@monitor, org_slug: @organization.slug),
       params: { monitor: { name: "", integration_ids: [] } }, as: :json

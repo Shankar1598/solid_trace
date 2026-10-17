@@ -36,7 +36,9 @@ class LogMonitor < ApplicationRecord
   belongs_to :organization
   belongs_to :project
   has_many :monitor_integrations, foreign_key: :monitor_id, inverse_of: :monitor, dependent: :delete_all
-  has_many :integrations, through: :monitor_integrations
+  # An Integration unticked on the form destroys its link, so the link can
+  # resolve what it was told (MonitorIntegration).
+  has_many :integrations, through: :monitor_integrations, dependent: :destroy
   has_many :states, class_name: "MonitorState", foreign_key: :monitor_id, inverse_of: :monitor, dependent: :delete_all
   has_many :runs, -> { order(ran_at: :desc, id: :desc) }, class_name: "MonitorRun", foreign_key: :monitor_id,
     inverse_of: :monitor, dependent: :delete_all
@@ -94,6 +96,14 @@ class LogMonitor < ApplicationRecord
     self.ingest_cursor = cursor
     self.ingest_cursor_at = now
     self.timeouts_in_a_row = 0
+  end
+
+  # An Integration unlinked from the Monitor hears no more about it, and no
+  # later run would resolve what it was told: each firing group sends it
+  # monitor_resolved now, which closes its PagerDuty incident. The groups
+  # stay firing for the Integrations still linked.
+  def resolve_groups_for(integration)
+    send_resolved("unlinked", operator: operator, threshold: threshold, integrations: Integration.where(id: integration.id))
   end
 
   private
@@ -158,12 +168,16 @@ class LogMonitor < ApplicationRecord
   # closes its PagerDuty incident, and its states go. Turned back on, a group
   # still past the threshold fires again.
   def resolve_groups(reason, operator:, threshold:)
+    send_resolved(reason, operator: operator, threshold: threshold, integrations: integrations)
+    states.delete_all
+  end
+
+  def send_resolved(reason, operator:, threshold:, integrations:)
     states.reload.select(&:status_firing?).each do |state|
       IntegrationNotification.monitor_changed(self, kind: IntegrationNotification::MONITOR_RESOLVED,
-        group_key: state.group_key, payload: {
+        group_key: state.group_key, integrations: integrations, payload: {
           "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true,
         })
     end
-    states.delete_all
   end
 end

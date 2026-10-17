@@ -7,8 +7,8 @@ module Notifiers
   # and what its run saw, which MonitorEvaluation stored in the row's payload:
   # - monitor_firing and monitor_resolved: value (nil for no data), column,
   #   threshold, operator, from and to (the range read); a resolve says
-  #   absent, no_data, kind_changed, turned_off or deleted when it has one of
-  #   those reasons
+  #   absent, no_data, kind_changed, turned_off, deleted or unlinked when it
+  #   has one of those reasons
   # - monitor_matched: logs (up to MonitorEvaluation::MATCHED_LOGS), total,
   #   from and to (for the explorer), and logs_skipped_at when Logs were left
   #   unread before this run
@@ -86,7 +86,8 @@ module Notifiers
       # Resolved because the number is back within the threshold, because the
       # group has no row any more (absent), because a Monitor that fired for
       # no data has data again (no_data), because the Monitor now matches
-      # Logs instead (kind_changed), or because it was turned off or deleted.
+      # Logs instead (kind_changed), because it was turned off or deleted, or
+      # because this Integration was unlinked from it.
       def resolved(monitor, group_key, payload)
         range = range_text(monitor, payload)
         text = if payload["kind_changed"]
@@ -95,6 +96,8 @@ module Notifiers
           "The Monitor was turned off, so it no longer checks the threshold."
         elsif payload["deleted"]
           "The Monitor was deleted, so it no longer checks the threshold."
+        elsif payload["unlinked"]
+          "This Integration was unlinked from the Monitor, so it hears no more about it."
         elsif payload["no_data"] && payload["value"].nil?
           "There is data again over the last #{range}."
         elsif payload["no_data"]

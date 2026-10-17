@@ -211,6 +211,39 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_equal "Firing: #{monitor.name}", events.first.dig("payload", "summary")
   end
 
+  test "unlinking PagerDuty from a firing Monitor resolves its incident; the group stays firing for Slack alone" do
+    pagerduty_url = "https://events.pagerduty.com/v2/enqueue"
+    stub_request(:post, pagerduty_url).to_return(status: 202, body: "{}")
+    pagerduty = @organization.integrations.create!(provider: "pagerduty", settings: { "routing_key" => "routing-123" })
+    monitor = threshold_monitor(notify_by_group: true)
+    monitor.update!(integrations: [ @slack, pagerduty ])
+    answer_table([ [ "api", 12 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    IntegrationNotification.deliver_pending(pagerduty.id)
+    api = { service: "api" }.to_json
+
+    monitor.update!(integrations: [ @slack ])
+
+    resolved = Notification.where(integration: pagerduty).order(:id).last
+    assert_equal [ "monitor_resolved", api, true ], [ resolved.kind, resolved.group_key, resolved.payload["unlinked"] ]
+    assert_equal "This Integration was unlinked from the Monitor, so it hears no more about it.",
+      Notifiers::MonitorMessage.build(resolved).text
+    assert_equal [ "firing" ], monitor.states.reload.map(&:status), "Slack still has the group firing"
+    travel IntegrationNotification::RATE_LIMIT_WINDOW
+    IntegrationNotification.deliver_pending(pagerduty.id)
+    events = []
+    assert_requested(:post, pagerduty_url, times: 2) { |request| events << JSON.parse(request.body) }
+    assert_equal [ "trigger", "resolve" ], events.map { |event| event["event_action"] }
+    assert_equal [ "solid-trace-monitor-#{monitor.id}-#{api}" ] * 2, events.map { |event| event["dedup_key"] }
+
+    travel 1.minute
+    answer_table([ [ "api", 3 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    assert_equal [ [ @slack.id, "monitor_firing" ], [ pagerduty.id, "monitor_firing" ], [ pagerduty.id, "monitor_resolved" ],
+      [ @slack.id, "monitor_resolved" ] ], Notification.order(:id).pluck(:integration_id, :kind),
+      "the group resolving later tells Slack only"
+  end
+
   test "one run at a time per Monitor: a run while another is going does nothing, and one left past its lease is taken over" do
     monitor = threshold_monitor
     answer_table([ [ 12 ] ])
