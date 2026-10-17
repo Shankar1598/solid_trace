@@ -49,6 +49,28 @@ type LogStore struct {
 	// that may still read it.
 	pinMu sync.Mutex
 	pins  map[string]int
+	// uploading is the key of the file being uploaded, if any, whose
+	// object no deletion deletes meanwhile (logs_upload.go). It is guarded
+	// by pinMu.
+	uploading string
+
+	// bucket keeps the Log files too, or is nil when they stay on local
+	// disk only, and localCacheHours is how long a file's local copy stays
+	// after its hour ends (logs_upload.go).
+	bucket          ObjectStore
+	localCacheHours int
+	// published gets a signal, without waiting, each time an export
+	// publishes files, so that they are uploaded at once.
+	published chan struct{}
+	// uploadMu lets one round of uploads run at a time, and uploadFailing
+	// holds the keys of the files whose last upload failed.
+	uploadMu      sync.Mutex
+	uploadFailing map[string]bool
+	// objectsMu lets one deletion of tombstoned files' objects run at a
+	// time, and objectsFailing says the last one stopped at an object that
+	// failed to delete.
+	objectsMu      sync.Mutex
+	objectsFailing bool
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
@@ -100,7 +122,7 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if err := addBatchColumns(events.db); err != nil {
 		return nil, fmt.Errorf("add the batch column to the log tables: %w", err)
 	}
-	store := &LogStore{db: events.db, files: LogFiles{Dir: filesDir}, pins: map[string]int{}}
+	store := &LogStore{db: events.db, files: LogFiles{Dir: filesDir}, pins: map[string]int{}, published: make(chan struct{}, 1)}
 	if err := store.backfillManifest(); err != nil {
 		return nil, fmt.Errorf("list the log files on disk in the manifest: %w", err)
 	}

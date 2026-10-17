@@ -94,7 +94,9 @@ func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 // The bytes of a file a read has pinned stay until a later pass deletes
 // them. Only the Project's own pinned files return ErrLogFilesInUse, which
 // comes only once the change has committed: another Project's wait for that
-// Project's next pass, or the disk limit's.
+// Project's next pass, or the disk limit's. With a bucket, the files'
+// objects wait for the disk limit's pass (deleteTombstonedObjects), so that
+// no Project's deletion waits on the bucket or fails with it.
 func (s *LogStore) deleteLogs(projectID uint32, change func(context.Context, *sql.Conn) error) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
