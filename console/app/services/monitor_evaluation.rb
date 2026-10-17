@@ -25,6 +25,9 @@
 # One run at a time per Monitor, whether the scheduler (MonitorEvaluationJob)
 # or Run now started it: a run takes the Monitor's run_started_at as a lease
 # and lets go when it ends, and a run that finds the lease taken does nothing.
+# A run whose Monitor was changed, turned off or deleted while it ran writes
+# nothing it found: the change may have resolved the Monitor's groups
+# (LogMonitor#resolve_groups), and the run's states would undo that.
 class MonitorEvaluation
   MATCHED_LOGS = 10
   TIMEOUTS_BEFORE_SKIPPING = 3
@@ -34,6 +37,7 @@ class MonitorEvaluation
   # stops each at LogMonitor::RUN_TIMEOUT_SECONDS; a run whose process died
   # is taken over after it.
   RUN_LEASE = 5.minutes
+  CHANGED_DURING_RUN = "The Monitor was changed during this run, so the run changed nothing. The next run checks it again."
 
   # The table EventStore answered can't be compared with the threshold.
   class Unusable < StandardError; end
@@ -62,6 +66,8 @@ class MonitorEvaluation
   def initialize(monitor, now)
     @monitor = monitor
     @now = now
+    # Which version of the Monitor the run reads: any save changes it.
+    @version = monitor.updated_at
     @started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
   end
 
@@ -92,7 +98,7 @@ class MonitorEvaluation
     column, groups = groups_of(table)
     groups = { "" => nil } if groups.empty? && @monitor.alert_on_no_data
 
-    ApplicationRecord.transaction do
+    record do
       firing = move_states(groups, column: column, from: from, to: to)
       finish(firing: firing)
     end
@@ -182,7 +188,7 @@ class MonitorEvaluation
     logs = Array(answer["logs"]).first(MATCHED_LOGS)
     total = [ answer["total"].to_i, logs.size ].max
 
-    ApplicationRecord.transaction do
+    record do
       notify_matched(logs, total) if total.positive?
       @monitor.update_columns(ingest_cursor: answer.fetch("ingest_cursor"), ingest_cursor_at: @now, timeouts_in_a_row: 0)
       finish(matched: total)
@@ -237,7 +243,7 @@ class MonitorEvaluation
       project_id: @monitor.project_id, query: @monitor.query, after_batch: "",
       timeout_seconds: LogMonitor::RUN_TIMEOUT_SECONDS
     )
-    ApplicationRecord.transaction do
+    record do
       @monitor.arm(answer.fetch("ingest_cursor"), @now)
       @monitor.logs_skipped_at = @now if skipping
       @monitor.update_columns(@monitor.slice(:ingest_cursor, :ingest_cursor_at, :timeouts_in_a_row, :logs_skipped_at))
@@ -260,7 +266,22 @@ class MonitorEvaluation
   end
 
   def failed(error)
-    finish(error: error)
+    record { finish(error: error) }
+  end
+
+  # Writes what the run found in one transaction, if the Monitor is still
+  # the version the run read. SQLite transactions here begin IMMEDIATE, so
+  # no save of the Monitor lands between the check and the writes. A
+  # changed Monitor records the run as changing nothing, and a deleted one
+  # records nothing (nil).
+  def record
+    ApplicationRecord.transaction do
+      version = LogMonitor.where(id: @monitor.id).pick(:updated_at)
+      if version.nil? then nil
+      elsif version != @version then finish(error: CHANGED_DURING_RUN)
+      else yield
+      end
+    end
   end
 
   # Records the run. An ok run is next due after the Monitor's interval; one
