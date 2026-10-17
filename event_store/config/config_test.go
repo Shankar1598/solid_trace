@@ -109,6 +109,21 @@ func TestLogsDiskLimitComesFromTheConfigFileInGB(t *testing.T) {
 	}
 }
 
+func TestTheBinCacheTakes64MiBUnlessTheConfigFileSays(t *testing.T) {
+	if got := loadFrom(t, filepath.Join(t.TempDir(), "missing.yml")).LogsBinCacheBytes; got != 64<<20 {
+		t.Errorf("Default bin cache = %d bytes, want 64 MiB", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_bin_cache_mb: 256\n")).LogsBinCacheBytes; got != 256<<20 {
+		t.Errorf("Bin cache = %d bytes, want 256 MiB", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_bin_cache_mb: 0\n")).LogsBinCacheBytes; got != 0 {
+		t.Errorf("Bin cache = %d bytes, want 0, off", got)
+	}
+	if _, err := config.LoadFile(writeConfig(t, "logs_bin_cache_mb: -1\n")); err == nil || !strings.Contains(err.Error(), "logs_bin_cache_mb can't be negative") {
+		t.Errorf("Expected a negative bin cache to fail, got %v", err)
+	}
+}
+
 // setObjectStoreKeys sets the bucket's key in the environment.
 func setObjectStoreKeys(t *testing.T) {
 	t.Helper()
