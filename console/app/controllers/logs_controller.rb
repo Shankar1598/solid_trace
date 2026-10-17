@@ -52,9 +52,10 @@ class LogsController < ApplicationController
     render json: { time: log[:time] }, status: :created
   end
 
-  # GET with query, from and to (ISO 8601) and an optional cursor: one page
-  # of Logs, newest first, or a tabular Query's table, as EventStore answers
-  # it.
+  # GET with query, from and to (ISO 8601), an optional cursor and totals:
+  # one page of Logs, newest first, or a tabular Query's table, as EventStore
+  # answers it. totals=1, as the explorer's run asks, adds a time chart's
+  # totals over the range to its table.
   def query
     render json: ChartRuns.hold {
       EventStore.query_logs(
@@ -63,6 +64,7 @@ class LogsController < ApplicationController
         from: @from,
         to: @to,
         cursor: params[:cursor].presence,
+        totals: params[:totals] == "1",
         timeout_seconds: RUN_TIMEOUT_SECONDS
       )
     }

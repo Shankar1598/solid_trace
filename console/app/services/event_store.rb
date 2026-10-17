@@ -98,13 +98,17 @@ class EventStore
     # One page of a Project's Logs that match a Query in [from, to), newest
     # first: {"logs" => [...], "next_cursor" => String | nil}, or a tabular
     # Query's {"table" => {...}}. Pass a page's next_cursor as cursor for the
-    # page of older Logs. With timeout_seconds, EventStore stops the run after
-    # that long and this raises TimedOut; Console waits a little longer, so
-    # EventStore's answer comes first.
-    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil, timeout_seconds: nil)
+    # page of older Logs. With totals, the table of a Query that ends in a
+    # summarize by a time bin also has "totals": a row per group, the other
+    # by columns, with its aggregates over the whole range. With
+    # timeout_seconds, EventStore stops the run after that long and this
+    # raises TimedOut; Console waits a little longer, so EventStore's answer
+    # comes first.
+    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil, totals: false, timeout_seconds: nil)
       body = { query: query, from: utc(from), to: utc(to) }
       body[:cursor] = cursor if cursor.present?
       body[:limit] = limit if limit
+      body[:totals] = true if totals
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
       post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
     end
