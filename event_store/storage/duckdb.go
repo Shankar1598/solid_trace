@@ -550,6 +550,9 @@ const stagingSuffix = ".tmp"
 // Files are written under a .tmp name, the rows are deleted in one transaction,
 // and only then are the files renamed. recoverStagedFiles settles any .tmp file
 // a failed run leaves behind.
+//
+// With a bucket, UploadEventArchive then uploads the files, outside batchLock
+// (event_archive_bucket.go).
 func (w *DuckDBWriter) ArchiveEventsUpTo(cutoff time.Time) error {
 	if err := w.recoverStagedFiles(); err != nil {
 		return fmt.Errorf("failed to recover staged archive files: %w", err)

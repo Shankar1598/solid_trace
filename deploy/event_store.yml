@@ -21,7 +21,8 @@ duckdb_path: /storage/duckdb/production/events.duckdb
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 
-# Store DuckDB parquet archives on slower storage.
+# Store DuckDB parquet archives on slower storage. With an object_store, each
+# Event archive file stays here only until it is uploaded.
 parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 
 # A bucket for Log files and the Event archive, read by DuckDB through httpfs.

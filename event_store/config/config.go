@@ -82,7 +82,8 @@ type ObjectStore struct {
 	// given.
 	Endpoint string
 	// LocalCacheHours is how long a Log file's local copy is kept after it
-	// is uploaded; 0 deletes it once uploaded.
+	// is uploaded; 0 deletes it once uploaded. The Event archive keeps no
+	// local copy.
 	LocalCacheHours int
 	// KeyID and Secret come from SOLIDTRACE_OBJECT_STORE_KEY_ID and
 	// SOLIDTRACE_OBJECT_STORE_SECRET, never from the file.
