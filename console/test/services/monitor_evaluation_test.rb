@@ -363,6 +363,25 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_nil monitor.reload.last_error
   end
 
+  test "a table EventStore cut at its row limit is an error that changes no state, since the run can't see every group" do
+    monitor = threshold_monitor(notify_by_group: true)
+    answer_table([ [ "api", 12 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    api = { service: "api" }.to_json
+    travel 1.minute
+    stub_request(:post, @query_url).with(body: hash_including("from", "to")).to_return(status: 200, body: {
+      table: { columns: [ SERVICE, COUNT_COLUMN ], rows: [ [ "web", 30 ] ], truncated: true },
+    }.to_json)
+
+    run = evaluate(monitor)
+
+    assert_equal MonitorEvaluation::TABLE_CUT, run.error
+    assert_equal run.error, monitor.reload.last_error
+    assert_state monitor, api, "firing", 12
+    assert_equal 1, monitor.states.count
+    assert_equal [ [ "monitor_firing", api, 12 ] ], notifications
+  end
+
   test "a Query EventStore refuses, or a table that isn't one number per group, is recorded as an error" do
     monitor = threshold_monitor
     stub_request(:post, @query_url).to_return(status: 400, body: { errors: [ { message: "unknown Project 'shop'" } ] }.to_json)

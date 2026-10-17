@@ -11,7 +11,8 @@
 #   group. A group whose number passes the threshold fires; ok to firing
 #   sends monitor_firing, firing to ok sends monitor_resolved, and staying
 #   firing sends nothing. A group with no row is ok, and no rows at all fire
-#   the Monitor's one group only with alert_on_no_data.
+#   the Monitor's one group only with alert_on_no_data. A table cut at
+#   EventStore's row limit is an error (TABLE_CUT).
 # - Match: reads the Logs ingested after ingest_cursor and keeps the new
 #   cursor; when any match, sends one monitor_matched with the newest
 #   MATCHED_LOGS and how many matched in all. After TIMEOUTS_BEFORE_SKIPPING
@@ -37,6 +38,11 @@ class MonitorEvaluation
   # stops each at LogMonitor::RUN_TIMEOUT_SECONDS; a run whose process died
   # is taken over after it.
   RUN_LEASE = 5.minutes
+  # EventStore answers at most 10,000 rows. A run that sees only some groups
+  # would compare a different subset each time, firing and resolving groups
+  # it merely missed, so a cut table is an error that changes no state.
+  TABLE_CUT = "The Query gives more than 10,000 rows, the most EventStore answers, so a run can't compare every " \
+    "group with the threshold: group by fewer columns, or filter the Logs before the summarize."
   CHANGED_DURING_RUN = "The Monitor was changed during this run, so the run changed nothing. The next run checks it again."
 
   # The table EventStore answered can't be compared with the threshold.
@@ -94,6 +100,7 @@ class MonitorEvaluation
     )
     table = answer["table"]
     return failed("The Query returns Logs, not a table: end it in a summarize of one number.") unless table
+    return failed(TABLE_CUT) if table["truncated"]
 
     column, groups = groups_of(table)
     groups = { "" => nil } if groups.empty? && @monitor.alert_on_no_data
