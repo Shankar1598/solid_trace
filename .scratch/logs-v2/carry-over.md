@@ -8,21 +8,22 @@ Status: ready-for-agent
 
 | From | Finding | Severity | Goes to |
 |---|---|---|---|
-| B3 | A Match monitor whose runs keep timing out never catches up; Console must re-arm it with after_batch "" after repeated timeouts and say that Logs were skipped (B3-verify-2-1) | low | A4 |
-| A2a | A typed range too long for a JavaScript Date (parseRange takes any count, lib/timeRange.ts:134) blanks the whole page (A2a-review-1-2, A2a-verify-1-3) | low | A2c |
-| A2a | On touch, the picker's initialFocus returns true, so base-ui focuses the typed box and opens the keyboard, against its own comment (A2a-review-1-3, A2a-verify-1-4) | low | A2c |
-| A2b | Chart this and Group by from the value menu keep the stream's `take` (setSummarize keeps every other key, lib/logs/builder.ts:174) (A2b-review-1-1) | low | A2c |
-| A2b | Closing the palette with Cmd/Ctrl+K skips PaletteDialog's close(), so its search text is not cleared (A2b-review-1-2) | low | A2c |
-| A2b | Recent Queries are keyed `solidtrace.recentQueries.<org>/<project>` with no user, so two people on one browser share them (A2b-review-1-3) | low | A2c |
-| A3 | The explorer's run (LogsController#query) still sends EventStore no timeout and is not counted in ChartRuns; it predates A3 (noted, not fixed, in A3's round 2) | medium | A2c |
-| B4a | The object_store block is re-marshalled and decoded on its own, so YAML error line numbers count from the block, not the file (B4a-spec-1-3, B4a-correctness-1-4) | low | B5 |
-| B4a | Nothing checks that the image's httpfs version (Dockerfile ARG DUCKDB_VERSION) matches the DuckDB in go.mod (B4a-spec-1-4) | low | B5 |
-| B4a | The comment "DuckDB never downloads extensions itself" holds only with an object_store block (B4a-correctness-1-5) | low | B5 |
-| B4b | With the object_store block removed after hours were evicted, location() hands DuckDB missing local paths and those hours fail; no startup warning (B4b-verify-1-2) | low | B5 |
-| B4b | deleteTombstonedObjects counts a pass that attempted no Delete (every tombstone skipped, pinned) as a pass that got through (B4b-recheck-2-1) | low | B5 |
-| B4a | ADR 0008 covers Log Parquet and the Event archive but describes only the Log files' lifecycle (B4a-spec-1-5) | low | B6 |
+| A4a, A4b | Turning off or deleting a firing Monitor sends no resolve, so a PagerDuty incident it opened stays open (the delete dialog says so) | medium | A5 |
+| A4b | Run now skips MonitorEvaluationJob's limits_concurrency, so a scheduled run at the same moment can send a second firing message | medium | A5 |
+| A4b | The list and Show badge check last_error before firing groups, so a firing Monitor whose last run failed shows only "Error" (A4b-review-1-1) | low | A5 |
+| A4b | The flow checks the page says OK after the higher threshold but not that the Slack stub got "Resolved" (A4b-review-1-2) | low | A5 |
+| A4a | Assigning integrations on a persisted Monitor inserts join rows before validation, so only one path enforces the Organization (A4a-review-1-5) | low | A5 |
+| A4a | A Threshold run ignores table.truncated; past 10,000 groups each run sees a different subset (A4a-review-1-3) | low | A5 |
+| A4a | A Threshold run already in flight can undo the kind-change resolve (after_update :resolve_groups) (A4a-recheck-2-1) | low | A5 |
+| A2c | `seeking` isn't tied to the run "Logs around this one" started (A2c-review-1-3); the range shortens whenever more than one page is newer than the Log (A2c-recheck-2-1); puma.rb still says explorer runs have no limit (A2c-review-1-4) | low | A5 |
+| A2c | ProjectKey#dsn on the Project page is still the hard-coded localhost:3000 DSN | low | A5 |
+| A2c | Six flows (charts ×4, logs-v1-inspector ×2) fail while a probe Log sits in the dev data's last 24 h; flows should not depend on the dev Project holding only the dummy Logs | medium | A5 |
+| B6 | With a bucket, a failed events-view rebuild after ArchiveEventsUpTo commits hides that run's Events (200 with fewer rows) until the next daily archive or a restart; nothing retries (B6-verify-1-1, B6-review-1-2) | medium | B7 |
+| B6 | With a bucket, startup binds every remote archive file before the ingest listener starts, and a failure is Fatal, against ADR 0008 (B6-review-1-1) | medium | B7 |
+| B6 | Removing object_store leaves bucket-only archived Events unread with no warning | low | B7 |
+| A4a | alert_on_no_data is not held during a Log processing backlog (spec Risks): EventStore exposes no processing lag | low | later (needs an EventStore field) |
 
-Done in batch 4: the A0 SQL→Builder bug (A2a, 5085a80), the A1 bin_auto(time) left behind (A2b), and the B1 timeout test and B3b settleNewDay test (B4a, dc5ea14 and 37f33d2).
+Done in batch 5: the B3 re-arm rule (A4a), the explorer run's timeout and the five A2a/A2b lows (A2c), the five B4a/B4b lows (B5), and ADR 0008's Event archive part (B6).
 
 ## Phase 6 polish
 
@@ -41,3 +42,6 @@ Done in batch 4: the A0 SQL→Builder bug (A2a, 5085a80), the A1 bin_auto(time) 
 - **A2b:** the value menu's buttons on stream cells and legend entries appear only on hover, and the sidebar's Search hint is hidden when the sidebar is collapsed.
 - **A3:** a card can be resized taller than the 24 rows DashboardChart allows (no maxH, A3-review-1-2); the 12-column grid is narrow at 390 px; unit and decimals don't reach axis tick labels; no flow for renaming a Dashboard or changing its default range.
 - **Compaction, measured again:** the "not now" call rests on a quiet Project and a cold 7-day figure taken right after the 24-hour chart (B4a-spec-1-2, B4a-correctness-1-3). Re-measure with the real GCS check and the 12-chart, 7-day Dashboard.
+
+- **A4b:** a field's server error stays on screen after it is fixed until the next save; the preview has Refresh but no Cancel; two Project pickers on the form (as in the chart editor); no flow or screenshot of a Match monitor's pages.
+- **B5:** the explorer's histogram strip doesn't use the bin cache; the MinIO test's all-time range has more bins than the cache takes.
