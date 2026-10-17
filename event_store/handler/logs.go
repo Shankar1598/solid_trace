@@ -268,15 +268,22 @@ func limitOf(requested int) (limit int, ok bool) {
 // (logquery.Column); fill_gaps, whether a chart may fill the time bins with
 // no row; from and to are the range the Query read, the request's as a
 // leading where on time narrows it.
+//
+// A chart's table made bin by bin takes the bins of Logs all in files from
+// the bin cache, when it has them (logquery.Query.Bins).
 func (h *LogsHandler) table(c *fiber.Ctx, run *run, projectID uint32, query *logquery.Query, from, to time.Time) error {
-	raw, err := h.logs.ScanLogTable(run.ctx, storage.LogTableScan{
+	scan := storage.LogTableScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
 		Where:     query.Where,
 		Select:    query.Select,
 		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
-	})
+	}
+	if bins, ok := query.Bins(); ok {
+		scan.Bins = &storage.TableBins{Size: bins.Size, Query: bins.Key, Limit: maxTableRows + 1}
+	}
+	raw, err := h.logs.ScanLogTable(run.ctx, scan)
 	if err != nil {
 		if run.timedOut() {
 			return run.stopped(c, shorterRange)

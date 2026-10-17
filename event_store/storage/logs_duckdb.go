@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/duckdb/duckdb-go/v2"
@@ -71,6 +72,9 @@ type LogStore struct {
 	// failed to delete.
 	objectsMu      sync.Mutex
 	objectsFailing bool
+
+	// bins is the bin cache, or nil when it is off (logs_bin_cache.go).
+	bins atomic.Pointer[binCache]
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
