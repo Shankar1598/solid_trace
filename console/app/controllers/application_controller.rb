@@ -14,11 +14,8 @@ class ApplicationController < ActionController::Base
 
   private
 
-  # Ingest as SDKs and shippers reach it: PUBLIC_INGEST_URL, or else this
-  # host at EventStore's ingest port. The Logs snippets and the Project
-  # page's DSN send there.
   def public_ingest_url
-    ENV["PUBLIC_INGEST_URL"].presence&.chomp("/") || "#{request.scheme}://#{request.host}:4000"
+    EventStore.public_ingest_url(request.base_url)
   end
 
   def user_not_authorized
