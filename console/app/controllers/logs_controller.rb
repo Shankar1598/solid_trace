@@ -31,7 +31,23 @@ class LogsController < ApplicationController
       project: ProjectOptionSerializer.new(@project).as_json,
       projects: ProjectOptionSerializer.list(@current_org.projects.order(:name)),
       sql_queries_enabled: InstanceSetting.current.sql_queries_enabled?,
+      # Where the Project's Logs go, for an empty Project's snippets.
+      ingest: { url: public_ingest_url, key: project_key&.public_key },
+      # Loaded once the page shows, so EventStore never holds the page up.
+      has_logs: InertiaRails.defer { logs_in_retention? },
     }
+  end
+
+  # POST: a sample Log sent to EventStore's ingest with the Project's key, as
+  # a shipper would send it, so an empty Project's page can show one at once.
+  # Answers the Log's time.
+  def send_test
+    key = project_key
+    return render json: { error: "This Project has no key. Add one in its settings, then send a test Log." }, status: :unprocessable_content unless key
+
+    log = test_log
+    EventStore.ingest_logs(project_id: @project.id, key: key.public_key, logs: [ log ])
+    render json: { time: log[:time] }, status: :created
   end
 
   # GET with query, from and to (ISO 8601) and an optional cursor: one page
@@ -101,6 +117,43 @@ class LogsController < ApplicationController
   end
 
   private
+
+  # The key snippets show and the test Log is sent with: the Project's first.
+  def project_key
+    @project.project_keys.order(:id).first
+  end
+
+  # Ingest as SDKs and shippers reach it: PUBLIC_INGEST_URL, or else this
+  # host at EventStore's ingest port.
+  def public_ingest_url
+    ENV["PUBLIC_INGEST_URL"].presence&.chomp("/") || "#{request.scheme}://#{request.host}:4000"
+  end
+
+  # Whether any Log is in the Project's Retention, up to the hour ahead
+  # ingest accepts; nil when EventStore can't say.
+  def logs_in_retention?
+    days = @project.log_retention_days || InstanceSetting.current.default_log_retention_days
+    now = Time.current
+    answer = EventStore.query_logs(
+      project_id: @project.id, query: "", from: now - days.days, to: now + 1.hour, limit: 1, timeout_seconds: RUN_TIMEOUT_SECONDS
+    )
+    # A page cut short by EventStore's scan budget may have older Logs.
+    answer["logs"].present? || answer["next_cursor"].present?
+  rescue EventStore::Unavailable, EventStore::Rejected => e
+    Rails.logger.error(e.message)
+    nil
+  end
+
+  def test_log
+    {
+      time: Time.current.utc.iso8601(3),
+      level: "info",
+      service: "solidtrace",
+      message: "A test Log from SolidTrace: Logs sent with this Project's key show here.",
+      sent_by: current_user.name,
+      duration_ms: rand(5..250),
+    }
+  end
 
   def set_organization
     @current_org = current_user.organizations.find_by!(slug: params[:org_slug])

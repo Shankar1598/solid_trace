@@ -16,6 +16,11 @@ services:
       RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
       SECRET_KEY_BASE: ${SECRET_KEY_BASE}
       EVENT_STORE_URL: http://127.0.0.1:4100
+      # Where Console sends an empty Project's test Log.
+      EVENT_STORE_INGEST_URL: http://127.0.0.1:4000
+      # Where SDKs and shippers reach ingest, for the Logs page's snippets.
+      # Unset, they show this host at port 4000.
+      # PUBLIC_INGEST_URL: https://ingest.example.com
     volumes:
       - /var/lib/solid-trace/storage:/storage
     restart: unless-stopped
