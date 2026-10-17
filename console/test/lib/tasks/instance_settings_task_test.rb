@@ -23,10 +23,11 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
 
     assert InstanceSetting.current.sql_queries_enabled?
     assert_includes out, "SQL queries: on"
-    [ "read every Organization's Logs and Events", "read files on the server",
-      "write files on the server", "drop tables", "starve ingest" ].each do |allowed|
+    [ "read-only", "read every Organization's Logs and Events", "read files on the server",
+      "read the bucket", "starve ingest" ].each do |allowed|
       assert_includes out, allowed
     end
+    [ "write files", "drop tables" ].each { |refused| assert_not_includes out, refused }
   end
 
   test "the operator turns SQL queries back off" do
