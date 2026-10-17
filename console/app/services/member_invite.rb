@@ -9,9 +9,10 @@
 # OrganizationUserPolicy): anyone else's invite raises
 # Pundit::NotAuthorizedError before it changes anything.
 class MemberInvite
-  # What the invite did: :added or :reactivated, with the membership; or
-  # nil, with error saying why not.
-  Result = Data.define(:outcome, :membership, :error) do
+  # What the invite did: :added or :reactivated, with the membership and
+  # whether a new user was emailed their invitation; or nil, with error
+  # saying why not.
+  Result = Data.define(:outcome, :membership, :emailed, :error) do
     def done?
       error.nil?
     end
@@ -43,10 +44,12 @@ class MemberInvite
     membership = @organization.all_organization_users.find_by(user: user)
     if membership
       Pundit.authorize(@inviter, membership, :create?)
-      return Result.new(outcome: nil, membership: membership, error: "User is already a member of this organization") if membership.kept?
+      if membership.kept?
+        return Result.new(outcome: nil, membership: membership, emailed: false, error: "User is already a member of this organization")
+      end
 
       membership.undiscard
-      return Result.new(outcome: :reactivated, membership: membership, error: nil)
+      return Result.new(outcome: :reactivated, membership: membership, emailed: false, error: nil)
     end
 
     membership = @organization.organization_users.build(user: user)
@@ -57,12 +60,12 @@ class MemberInvite
       OrganizationMailer.invitation_email(user: user, organization: @organization, password: password,
         invited_by: @inviter).deliver_later
     end
-    Result.new(outcome: :added, membership: membership, error: nil)
+    Result.new(outcome: :added, membership: membership, emailed: password.present?, error: nil)
   end
 
   private
 
   def failed(record)
-    Result.new(outcome: nil, membership: nil, error: record.errors.full_messages.first)
+    Result.new(outcome: nil, membership: nil, emailed: false, error: record.errors.full_messages.first)
   end
 end

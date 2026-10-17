@@ -27,9 +27,7 @@ class ProjectsController < ApplicationController
   end
 
   def create
-    @project = @current_org.projects.new(project_params)
-    # Its first key, so SDKs and shippers can send to it at once.
-    @project.project_keys.build
+    @project = @current_org.projects.build_with_key(project_params)
     if @project.save
       redirect_to projects_path(org_slug: @current_org.slug), notice: "Project created successfully"
     else

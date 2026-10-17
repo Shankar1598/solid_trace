@@ -27,7 +27,14 @@ module McpServer
     McpTools::ListIssues,
     McpTools::GetIssue,
     McpTools::UpdateIssue,
-    McpTools::AddComment
+    McpTools::AddComment,
+    McpTools::CreateProject,
+    McpTools::GetProjectSetup,
+    McpTools::CreateKey,
+    McpTools::RotateKey,
+    McpTools::DeleteKey,
+    McpTools::ListMembers,
+    McpTools::InviteMember
   ].freeze
 
   INSTRUCTIONS = <<~TEXT

@@ -13,8 +13,22 @@ class Project < ApplicationRecord
   # Whole days; nil means the instance default (InstanceSetting).
   validates :log_retention_days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
 
+  # A new Project with its first key, so SDKs and shippers can send to it at
+  # once, as Console makes one.
+  def self.build_with_key(attributes = {})
+    new(attributes).tap { |project| project.project_keys.build }
+  end
+
   def to_param
     slug
+  end
+
+  # Where shippers and curl send this Project's Logs as JSON, on ingest
+  # reached at ingest_url (as the Logs snippets build it).
+  def logs_url(ingest_url)
+    uri = URI(ingest_url)
+    uri.path = "#{uri.path.sub(%r{/+\z}, '')}/api/#{id}/logs"
+    uri.to_s
   end
 
   def platform

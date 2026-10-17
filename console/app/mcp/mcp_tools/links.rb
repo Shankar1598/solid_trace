@@ -28,6 +28,11 @@ module McpTools
       url(routes.project_logs_path(project, org_slug: project.organization.slug, **search))
     end
 
+    # The Organization's Members page.
+    def members(organization)
+      url(routes.organization_users_path(org_slug: organization.slug))
+    end
+
     def dashboards(organization)
       url(routes.dashboards_path(org_slug: organization.slug))
     end
