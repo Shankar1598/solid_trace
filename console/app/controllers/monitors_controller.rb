@@ -70,7 +70,8 @@ class MonitorsController < ApplicationController
 
   # Turning a Monitor on checks its Query again, so it can stay off.
   def enable
-    if @monitor.update(disabled_at: nil)
+    @monitor.disabled_at = nil
+    if checked_save(@monitor)
       redirect_to monitor_page(@monitor), notice: "Monitor turned on."
     else
       redirect_to monitor_page(@monitor), alert: "The Monitor stays off: #{@monitor.errors.full_messages.to_sentence}"
@@ -138,10 +139,20 @@ class MonitorsController < ApplicationController
       return false
     end
 
-    LogMonitor.transaction do
-      next false unless monitor.save
+    checked_save(monitor) { monitor.integrations = integrations unless integrations.nil? }
+  end
 
-      monitor.integrations = integrations unless integrations.nil?
+  # Validating a Monitor may check its Query with EventStore, which can take
+  # as long as a run, so it happens before the transaction opens: on SQLite a
+  # write transaction holds the database's write lock, and every other writer
+  # would wait on EventStore too.
+  def checked_save(monitor)
+    return false unless monitor.valid?
+
+    LogMonitor.transaction do
+      next false unless monitor.save(validate: false)
+
+      yield if block_given?
       true
     end
   end

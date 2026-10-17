@@ -204,6 +204,27 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_match "EventStore is unavailable", flash[:alert]
   end
 
+  # A write transaction holds SQLite's write lock, so EventStore's check, which
+  # can take as long as a run, must not run inside one.
+  test "turning a Monitor on, or changing its Query, checks the Query before any transaction opens" do
+    @monitor.update!(disabled_at: Time.current)
+    outside = ActiveRecord::Base.lease_connection.open_transactions
+    seen = []
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").with(body: hash_including("from", "to")).to_return do
+      seen << ActiveRecord::Base.lease_connection.open_transactions
+      { status: 200, body: { table: { columns: [ COUNT_COLUMN ], rows: [] } }.to_json }
+    end
+
+    patch enable_monitor_url(@monitor, org_slug: @organization.slug)
+    assert @monitor.reload.enabled?
+
+    patch monitor_url(@monitor, org_slug: @organization.slug),
+      params: { monitor: { query: "summarize count() by service", integration_ids: [] } }, as: :json
+    assert_equal "summarize count() by service", @monitor.reload.query
+
+    assert_equal [ outside, outside ], seen
+  end
+
   # ---------------------------------------------------------------------------
   # Run now
   # ---------------------------------------------------------------------------
