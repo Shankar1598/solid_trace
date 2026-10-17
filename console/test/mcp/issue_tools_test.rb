@@ -184,6 +184,75 @@ class McpIssueToolsTest < ActiveSupport::TestCase
       call_tool(:get_issue, user: @user, project: "secret", issue: @their_issue.number).text
   end
 
+  # Changing
+
+  test "update_issue resolves and unresolves an Issue, linking to it" do
+    answer = call_tool(:update_issue, user: @user, project: "shop", issue: @issue.number, status: "resolved")
+
+    assert_not answer.error?
+    assert_equal "resolved", @issue.reload.status
+    assert_equal [ @issue.number, "resolved" ], answer.json.values_at("number", "status")
+    assert_equal "http://console.test/acme/projects/shop/issues/#{@issue.number}", answer.link
+
+    call_tool(:update_issue, user: @user, project: "shop", issue: @issue.number, status: "unresolved")
+    assert_equal "unresolved", @issue.reload.status
+  end
+
+  test "update_issue assigns an Issue to a member by email, and unassigns it" do
+    bo = create(:organization_user, organization: @acme, user: create(:user, name: "Bo", email: "bo@acme.test"))
+
+    answer = call_tool(:update_issue, user: @user, project: "shop", issue: @issue.number, assignee: " Bo@Acme.test ")
+
+    assert_not answer.error?
+    assert_equal bo, @issue.reload.assignee
+    assert_equal({ "name" => "Bo", "email" => "bo@acme.test" }, answer.json["assignee"])
+
+    answer = call_tool(:update_issue, user: @user, project: "shop", issue: @issue.number, assignee: "unassigned", status: "resolved")
+
+    assert_nil @issue.reload.assignee
+    assert_equal [ nil, "resolved" ], answer.json.values_at("assignee", "status")
+  end
+
+  test "update_issue refuses an email that isn't a member's, and a call that changes nothing" do
+    outsider = create(:user, email: "eve@theirs.test")
+    create(:organization_user, organization: @their_issue.project.organization, user: outsider)
+    removed = create(:organization_user, organization: @acme, user: create(:user, email: "gone@acme.test"))
+    removed.discard!
+
+    [ "eve@theirs.test", "gone@acme.test", "nobody@acme.test" ].each do |email|
+      answer = call_tool(:update_issue, user: @user, project: "shop", issue: @issue.number, assignee: email)
+
+      assert answer.error?
+      assert_equal "No member #{email} in acme. list_members lists them.", answer.text
+    end
+    assert_nil @issue.reload.assignee
+
+    answer = call_tool(:update_issue, user: @user, project: "shop", issue: @issue.number)
+    assert_equal "Give status, assignee or both to change.", answer.text
+    assert_equal "No such Issue. list_issues lists them.", call_tool(:update_issue, user: @user, project: "shop", issue: 999, status: "resolved").text
+  end
+
+  test "add_comment adds the user's comment, as escaped paragraphs, linking to the Issue" do
+    answer = call_tool(:add_comment, user: @user, project: "shop", issue: @issue.number, body: "Fixed by <b>#42</b>.\n\nDeploying now.")
+
+    assert_not answer.error?
+    comment = @issue.comments.sole
+    assert_equal @membership, comment.organization_user
+    assert_equal "<p>Fixed by &lt;b&gt;#42&lt;/b&gt;.</p>\n\n<p>Deploying now.</p>", comment.content.body.to_html
+    assert_equal [ "shop", @issue.number ], answer.json.values_at("project", "issue")
+    assert_equal [ comment.id, { "name" => "Ann", "email" => "ann@acme.test" }, "Fixed by <b>#42</b>.\n\nDeploying now." ],
+      answer.json["comment"].values_at("id", "user", "body")
+    assert_equal "http://console.test/acme/projects/shop/issues/#{@issue.number}", answer.link
+  end
+
+  test "add_comment refuses a blank body" do
+    answer = call_tool(:add_comment, user: @user, project: "shop", issue: @issue.number, body: "  ")
+
+    assert answer.error?
+    assert_equal "Give the comment's body.", answer.text
+    assert_empty @issue.comments
+  end
+
   private
 
   # Answers the Issue's Event context: its Event evt-1 with the Events
