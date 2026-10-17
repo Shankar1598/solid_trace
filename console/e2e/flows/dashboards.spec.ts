@@ -169,6 +169,26 @@ test('a chart whose Query fails shows the error in its card, and the rest of the
   await expect(card(page, 'Errors').getByRole('alert')).toContainText('This Query answers Logs, not a table')
   await expect(page.getByRole('button', { name: 'Refresh' })).toBeEnabled()
 
+  // Editing the chart fixes it: its Query now counts the error Logs.
+  await card(page, 'Errors').getByRole('button', { name: 'Menu for Errors' }).click()
+  await page.getByRole('menuitem', { name: 'Edit' }).click()
+  await expect(editor.getByLabel('Title')).toHaveValue('Errors')
+  await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
+  await editor.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| where level == "error"\n| summarize count()`)
+  await editor.getByRole('group', { name: 'Viz' }).getByRole('button', { name: 'Stat' }).click()
+  await editor.getByRole('button', { name: 'Save chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await chartsRan(page, 1)
+  await expect(card(page, 'Errors').locator('[data-chart-stat]')).toBeVisible()
+  await expect(card(page, 'Errors').getByRole('alert')).toHaveCount(0)
+
+  // The palette jumps to the Dashboard from any page.
+  await page.goto(`/${ORG}/issues`)
+  await page.keyboard.press('Control+k')
+  await page.getByLabel('Search the palette').fill(name)
+  await page.getByRole('option', { name }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+
   await page.getByRole('button', { name: 'Dashboard settings' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete dashboard' }).click()
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete dashboard' }).click()

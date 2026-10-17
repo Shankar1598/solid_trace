@@ -156,8 +156,10 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
     if (options.unit) saved.unit = options.unit
     if (options.decimals !== undefined && !Number.isNaN(options.decimals)) saved.decimals = options.decimals
     const data = { chart: { project_id: project.id, title: title.trim() || titleOfQuery(query), query, viz, options: saved } }
+    // The page keeps its range and runs, so only the chart saved runs again.
     const visit = {
       preserveScroll: true,
+      preserveState: true,
       onSuccess: onClose,
       onError: (e: Record<string, string>) => setErrors(e),
       onFinish: () => setSaving(false),
