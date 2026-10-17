@@ -73,6 +73,8 @@ A Monitor's page shows each group's state and its last 100 runs.
 
 **Turning a Monitor off** stops its runs. **Deleting** it removes it and its runs. Either one resolves each firing group, so a PagerDuty incident it opened is closed. Changing a Threshold monitor into a Match monitor does the same. Turned back on, a group still past the threshold fires again.
 
+**Unticking an Integration** on a Monitor's form sends that Integration a resolve for each firing group, so its PagerDuty incident is closed too. The groups stay firing for the Integrations still ticked.
+
 ## Notifications
 
 A Monitor tells the Integrations you pick on its form. Messages go through the same outbox as Issue notifications: a message reaches an Integration about 10 seconds after the run, and each Integration gets at most one message a minute, so a resolve can follow its firing message by about a minute. The messages about one group go in order. If one fails, the ones after it wait, so a resolve never arrives before its firing message. A failed message is retried every minute for 6 hours.
@@ -101,4 +103,5 @@ An email to the Integration's recipients, with the subject "[SolidTrace] " and t
 ## Known limits
 
 - **No data during a processing backlog.** A run reads Logs once Log processing has handled them. When processing falls more than a minute behind, the newest Logs aren't readable yet, so a count looks low and **alert on no data** can fire while Logs are still arriving. It resolves once processing catches up.
+- **A turned-off Integration hears nothing.** Turning an Integration off stops every message to it, resolves too, so a PagerDuty incident a Monitor opened stays open: resolve it in PagerDuty. An Integration ticked while a group is firing gets no firing message for it, only the resolve.
 - **A Match link may miss a late Log.** The link in a Match message starts a minute before the run's starting point, or at the oldest Log it lists if that is older. A Log stored late, with a time older than that and not among the 10 listed, falls outside the link, though the message counts it.

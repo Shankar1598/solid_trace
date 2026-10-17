@@ -9,6 +9,10 @@ class MonitorIntegration < ApplicationRecord
   belongs_to :integration
 
   validate :integration_of_the_monitors_organization
+  # Unticking the Integration on the Monitor's form destroys this row. A
+  # deleted Monitor resolves its groups itself, and a deleted Integration
+  # can be told nothing, so both delete their rows without this.
+  before_destroy { monitor.resolve_groups_for(integration) }
 
   private
 
