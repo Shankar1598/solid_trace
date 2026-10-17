@@ -50,8 +50,15 @@ module McpTools
       url(routes.integrations_path(org_slug: organization.slug))
     end
 
-    def issue(issue)
-      url(routes.project_issue_path(issue.project, issue, org_slug: issue.project.organization.slug))
+    # The Issues page, with the filters given: status, query, project_id,
+    # sort and page, as IssueList takes them.
+    def issues(organization, **filters)
+      url(routes.issues_path(org_slug: organization.slug, **filters.compact))
+    end
+
+    # An Issue's page, on its latest Event or the Event whose id is event.
+    def issue(issue, event: nil)
+      url(routes.project_issue_path(issue.project, issue, org_slug: issue.project.organization.slug, event_id: event.presence))
     end
 
     private

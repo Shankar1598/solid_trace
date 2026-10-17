@@ -23,7 +23,8 @@ module McpServer
     McpTools::UpdateMonitor,
     McpTools::DeleteMonitor,
     McpTools::RunMonitor,
-    McpTools::ListIntegrations
+    McpTools::ListIntegrations,
+    McpTools::ListIssues
   ].freeze
 
   INSTRUCTIONS = <<~TEXT
