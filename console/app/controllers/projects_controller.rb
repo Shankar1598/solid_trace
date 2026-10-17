@@ -18,6 +18,7 @@ class ProjectsController < ApplicationController
       project: ProjectSerializer.new(@project, include_keys: true, ingest_url: public_ingest_url).as_json,
       default_log_retention_days: InstanceSetting.current.default_log_retention_days,
       can_manage_project: policy(@project).update?,
+      can_manage_keys: policy(ProjectKey.new(project: @project)).create?,
     }
   end
 

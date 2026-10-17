@@ -14,9 +14,10 @@ interface ProjectsShowProps {
   project: Project
   default_log_retention_days: number
   can_manage_project: boolean
+  can_manage_keys: boolean
 }
 
-export default function ProjectsShow({ project, default_log_retention_days, can_manage_project }: ProjectsShowProps) {
+export default function ProjectsShow({ project, default_log_retention_days, can_manage_project, can_manage_keys }: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const { data, setData, patch, processing, errors, transform } = useForm({
@@ -165,10 +166,12 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
                     <p className="text-sm text-muted-foreground mb-4">
                       This project doesn't have any client keys generated yet.
                     </p>
+                    {can_manage_keys && (
                     <Button variant="outline" size="sm" onClick={() => router.post(`/${current_org.slug}/projects/${project.slug}/keys`)}>
                       <RefreshCw className="mr-2 h-4 w-4" />
                       Generate New Key
                     </Button>
+                    )}
                   </div>
                 )}
               </CardContent>
