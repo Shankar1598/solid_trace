@@ -124,3 +124,4 @@ Set-up: ask the user to commit the open looks-pass work (`.scratch/logs-v2/issue
 ## Implementation decisions
 
 - **Worktree, not the main checkout (2026-10-17).** The plan put the Console track in the main checkout. The looks pass (logs v2 ticket 20) was in progress there, with uncommitted changes. So the whole effort runs in `../solid_trace-mcp` on `feature/mcp`, branched from `feature/logs-v2` at `4139293`. The Go track gets its own worktree from `feature/mcp` when it starts.
+- **Playwright flows run at the end (2026-10-17).** The shared dev stack runs the main checkout, which the looks pass is using. So the build writes the flows that tickets 01, 04 and 09 ask for but doesn't run them. Ticket 10 runs every flow, and the end-to-end MCP check, once the stack can run `feature/mcp`. Rails, Go, vitest and typecheck run in the worktrees as usual. Edits to existing pages stay minimal, to keep merge conflicts with the looks pass small.
