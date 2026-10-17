@@ -59,12 +59,11 @@ module Notifiers
       private
 
       def firing(monitor, group_key, payload)
-        value = payload["value"]
-        text = if value.nil?
-          "No data over the last #{span(monitor.range_minutes)}."
+        range = range_text(monitor, payload)
+        text = if payload["value"].nil?
+          "No data over the last #{range}."
         else
-          "#{payload['column'] || 'The value'} was #{number(value)} over the last #{span(monitor.range_minutes)}, " \
-            "#{OPERATOR_WORDS.fetch(payload['operator'], payload['operator'])} the threshold of #{number(payload['threshold'])}."
+          "#{value_text(payload)} over the last #{range}, #{threshold_text(payload)}."
         end
         threshold_message(monitor, group_key, payload, title: "Firing", text: text, severity: "error", action: "trigger")
       end
@@ -73,18 +72,34 @@ module Notifiers
       # group has no row any more (absent), or because a Monitor that fired
       # for no data has data again (no_data).
       def resolved(monitor, group_key, payload)
-        value = payload["value"]
-        range = span(monitor.range_minutes)
-        within = "#{OPERATOR_WORDS.fetch(payload['operator'], payload['operator'])} the threshold of #{number(payload['threshold'])}"
-        text = if payload["no_data"]
-          value.nil? ? "There is data again over the last #{range}." :
-            "There is data again over the last #{range}: #{payload['column'] || 'the value'} was #{number(value)}, not #{within}."
-        elsif value.nil?
+        range = range_text(monitor, payload)
+        text = if payload["no_data"] && payload["value"].nil?
+          "There is data again over the last #{range}."
+        elsif payload["no_data"]
+          "There is data again over the last #{range}: #{value_text(payload)}, not #{threshold_text(payload)}."
+        elsif payload["value"].nil?
           "No rows#{' for this group' if group_key.present?} over the last #{range}, so it is back to ok."
         else
-          "#{payload['column'] || 'The value'} was #{number(value)} over the last #{range}, no longer #{within}."
+          "#{value_text(payload)} over the last #{range}, no longer #{threshold_text(payload)}."
         end
         threshold_message(monitor, group_key, payload, title: "Resolved", text: text, severity: "info", action: "resolve")
+      end
+
+      # count_ was 120
+      def value_text(payload)
+        "#{payload['column'] || 'the value'} was #{number(payload['value'])}"
+      end
+
+      # above the threshold of 100
+      def threshold_text(payload)
+        "#{OPERATOR_WORDS.fetch(payload['operator'], payload['operator'])} the threshold of #{number(payload['threshold'])}"
+      end
+
+      # The span the run read, from its from and to, or else the Monitor's
+      # range now.
+      def range_text(monitor, payload)
+        from, to = payload.values_at("from", "to").map { |value| Time.iso8601(value.to_s) rescue nil }
+        span(from && to ? ((to - from) / 60).round : monitor.range_minutes)
       end
 
       def threshold_message(monitor, group_key, payload, title:, text:, severity:, action:)
@@ -93,7 +108,7 @@ module Notifiers
         fields << [ "Group", group ] if group.present?
         fields << [ "Value", number(payload["value"]) ]
         fields << [ "Threshold", "#{payload['operator']} #{number(payload['threshold'])}" ]
-        fields << [ "Range", "last #{span(monitor.range_minutes)}" ]
+        fields << [ "Range", "last #{range_text(monitor, payload)}" ]
 
         Message.new(
           title: [ "#{title}: #{monitor.name}", group.presence && "(#{group})" ].compact.join(" "),
