@@ -16,13 +16,14 @@ import (
 // binCachedQueries are charts made bin by bin: by an hour, a bin smaller and
 // one larger than an hour, a day, and a column binned before the
 // summarize, with aggregates of every kind that can't be added up across
-// bins.
+// bins, and a where that drops Logs.
 var binCachedQueries = []string{
 	"summarize count() by bin(time, 1h), user",
 	"summarize count(), dcount(user) by bin(time, 20m)",
 	"summarize n = count(), slowest = max(ms), mean = avg(ms) by bin(time, 2h)",
 	"summarize count() by bin(time, 1d), user",
 	`where user != "nobody" | extend half = bin(time, 30m) | summarize count(), p = percentile(ms, 50) by half`,
+	`where user == "ada" | summarize count(), slowest = max(ms) by bin(time, 1h)`,
 }
 
 // binCacheRange is the range every bin cache test charts: from part-way
@@ -57,7 +58,13 @@ func postChartLogs(t *testing.T, env *TestEnv) {
 // EventStore answered it.
 func binnedTable(t *testing.T, env *TestEnv, query string) string {
 	t.Helper()
-	status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: query, From: binCacheRange.from, To: binCacheRange.to})
+	return binnedTableIn(t, env, query, binCacheRange.from, binCacheRange.to)
+}
+
+// binnedTableIn is binnedTable over [from, to).
+func binnedTableIn(t *testing.T, env *TestEnv, query string, from, to time.Time) string {
+	t.Helper()
+	status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: query, From: from, To: to})
 	if status != 200 {
 		t.Fatalf("Query %q expected 200, got %d: %s", query, status, raw)
 	}
@@ -170,6 +177,35 @@ func TestTheBinCacheAnswersAsARunWithoutItAcrossExportsLateLogsRetentionAndDelet
 	}
 	if err := json.Unmarshal([]byte(binnedTable(t, env, binCachedQueries[0])), &empty); err != nil || len(empty.Rows) != 0 {
 		t.Errorf("Expected no rows once the Project is deleted, got %v (%v)", empty.Rows, err)
+	}
+}
+
+func TestTheBinCacheFiltersEveryStretchARunWorksOut(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// At noon, the hours up to 10:00 are exported, and a late Log of 02:50
+	// waits in logs_late.
+	postChartLogs(t, env)
+	env.ExportLogs(t)
+	postAndProcess(t, env, chartLog(t, chartAt(2, 2, 50), "bob", 900))
+
+	// From part-way into 02:00: a run with the cache works out that part
+	// and the hot 11:00 and 12:00, two stretches of one day, and takes the
+	// rest from the cache.
+	query := `where user == "ada" | summarize count(), slowest = max(ms) by bin(time, 1h)`
+	from, to := chartAt(2, 2, 40), chartAt(2, 23, 0)
+	filling := binnedTableIn(t, env, query, from, to)
+	hitsBefore, _ := binCacheStats(env)
+	again := binnedTableIn(t, env, query, from, to)
+	hitsAfter, _ := binCacheStats(env)
+	if got := hitsAfter - hitsBefore; got != 18 {
+		t.Errorf("Expected a second run to take 18 hours from the cache, got %d", got)
+	}
+	env.LogStore.UseBinCache(0)
+	uncached := binnedTableIn(t, env, query, from, to)
+	if filling != uncached || again != uncached {
+		t.Errorf("%s\n filling the bin cache: %s\n run again:             %s\n without it:            %s", query, filling, again, uncached)
 	}
 }
 
