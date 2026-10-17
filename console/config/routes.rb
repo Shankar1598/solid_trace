@@ -31,6 +31,9 @@ Rails.application.routes.draw do
         patch :layout
       end
       resources :charts, only: [ :create, :update, :destroy ], controller: "dashboard_charts" do
+        collection do
+          post :preview
+        end
         member do
           post :duplicate
           get :data

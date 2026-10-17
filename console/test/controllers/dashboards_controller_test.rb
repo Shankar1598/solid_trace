@@ -167,6 +167,8 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
     get data_dashboard_chart_url(@dashboard, @chart, org_slug: org), params: @range
     assert_response :not_found
+    post preview_dashboard_charts_url(@dashboard, org_slug: org), params: { project_id: @project.id, query: "x", **@range }, as: :json
+    assert_response :not_found
     delete dashboard_url(@dashboard, org_slug: org)
     assert_response :not_found
 
@@ -245,6 +247,54 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_response :service_unavailable
     assert_equal "Console is busy running other charts. Refresh in a moment.", response.parsed_body["error"]
     assert_not_requested run
+  end
+
+  test "the editor's preview runs a Query not yet saved on one of the Organization's Projects, with a chart's timeout" do
+    table = { columns: [ { name: "count_", type: "number", agg: "count" } ], rows: [ [ 7 ] ], truncated: false }
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+      .with(body: {
+        query: "source storefront | count",
+        from: "2026-10-03T09:00:00.000Z",
+        to: "2026-10-03T10:00:00.000Z",
+        timeout_seconds: DashboardChartsController::RUN_TIMEOUT_SECONDS,
+      }.to_json)
+      .to_return(status: 200, body: { table: table, elapsed_ms: 9 }.to_json)
+
+    post preview_dashboard_charts_url(@dashboard, org_slug: @organization.slug),
+      params: { project_id: @project.id, query: "source storefront | count", **@range }, as: :json
+
+    assert_response :success
+    assert_equal [ [ 7 ] ], response.parsed_body["table"]["rows"]
+    assert_equal 9, response.parsed_body["elapsed_ms"]
+  end
+
+  test "the editor's preview finds no Project of another Organization, and runs nothing" do
+    run = stub_request(:post, "#{@base_url}/api/#{@foreign_project.id}/logs/query")
+
+    post preview_dashboard_charts_url(@dashboard, org_slug: @organization.slug),
+      params: { project_id: @foreign_project.id, query: "source elsewhere | count", **@range }, as: :json
+
+    assert_response :not_found
+    assert_not_requested run
+  end
+
+  test "the editor's preview answers 504 past its timeout, 503 while Console is busy, and says a Logs answer can't be charted" do
+    query = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+    preview = -> { post preview_dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: { project_id: @project.id, query: "source storefront", **@range }, as: :json }
+
+    query.to_return(status: 504, body: { error: "stopped after 30 s" }.to_json)
+    preview.call
+    assert_response :gateway_timeout
+    assert_equal "stopped after 30 s", response.parsed_body["error"]
+
+    query.to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+    preview.call
+    assert_response :unprocessable_content
+    assert_match(/summarize/, response.parsed_body["error"])
+
+    holding_every_chart_run { preview.call }
+    assert_response :service_unavailable
+    assert_requested query, times: 2
   end
 
   test "a chart whose Query answers Logs says to end it with summarize" do

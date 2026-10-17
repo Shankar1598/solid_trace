@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # The chart runs this Console process is waiting on: Dashboard charts'
-# data. A run holds its Puma thread until
+# data and the chart editor's preview. A run holds its Puma thread until
 # EventStore answers, up to DashboardChartsController::RUN_TIMEOUT_SECONDS and
 # a little more, even after the browser has aborted it, since Puma doesn't
 # stop a request whose browser went away. So a range change or Refresh sends a

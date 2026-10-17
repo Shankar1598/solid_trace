@@ -13,7 +13,7 @@ class DashboardChartsController < ApplicationController
   before_action :set_organization
   before_action :set_dashboard
   before_action :set_chart, only: %i[update destroy duplicate data]
-  before_action :set_time_range, only: :data
+  before_action :set_time_range, only: %i[data preview]
 
   rescue_from EventStore::TimedOut, with: :run_timed_out
   rescue_from ChartRuns::Busy, with: :chart_runs_busy
@@ -47,6 +47,12 @@ class DashboardChartsController < ApplicationController
   # GET with from and to (ISO 8601): the chart's Query run over that range.
   def data
     run_chart(@current_org.projects.find(@chart.project_id), @chart.query)
+  end
+
+  # POST with project_id, query, from and to: the chart editor's preview of a
+  # Query not yet saved, run as a chart's is, with its timeout and in its cap.
+  def preview
+    run_chart(@current_org.projects.find(params[:project_id]), params[:query].to_s)
   end
 
   private
