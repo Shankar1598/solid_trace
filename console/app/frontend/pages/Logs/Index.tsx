@@ -88,7 +88,9 @@ interface Run {
 }
 
 export default function LogsIndex({ project, projects, sql_queries_enabled }: LogsIndexProps) {
-  const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
+  const { current_org: currentOrg, current_user: currentUser } = usePage<SharedProps>().props
+  const orgSlug = currentOrg?.slug ?? ''
+  const viewer = currentUser?.id ?? null
   const basePath = `/${orgSlug}/projects/${project.slug}/logs`
   const modes = modesFor(sql_queries_enabled)
   // The Query of the Project's Logs, unfiltered: what an empty Query shows as in Query mode.
@@ -143,8 +145,8 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
     currentRun.current = run
     setResult({ status: 'running' })
     // Each run of a Query is a recent one; the Project's Logs unfiltered are not.
-    if (state.mode !== 'sql' && state.query !== '' && state.query !== projectQuery) {
-      recordQuery(browserStorage(), orgSlug, project.slug, { query: state.query, search: searchOf(state), at: Date.now() })
+    if (viewer !== null && state.mode !== 'sql' && state.query !== '' && state.query !== projectQuery) {
+      recordQuery(browserStorage(), viewer, orgSlug, project.slug, { query: state.query, search: searchOf(state), at: Date.now() })
     }
 
     // SQL answers a table, and has no histogram.
@@ -184,7 +186,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
         setResult({ status: 'error', message: error.message })
         if (error instanceof RunError && error.problems.length > 0) setProblems(error.problems)
       })
-  }, [orgSlug, project.slug, projectQuery, fill])
+  }, [viewer, orgSlug, project.slug, projectQuery, fill])
 
   useEffect(() => {
     if (runsOnOpen(explorer)) start(explorer.current)
