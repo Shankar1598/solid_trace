@@ -16,7 +16,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Where things stand
 
-- **Logs v2**: implemented on `feature/logs-v2` (2026-10-10 to 17): charts in the explorer, developer UX, Dashboards, Monitors with Slack, PagerDuty and email, Log Parquet and the Event archive in S3 or GCS (tested on MinIO), and a bin cache. 19 of 23 [tickets](logs-v2/issues/) resolved, including a whole-branch review; Rails, vitest, typecheck, all 69 Playwright flows and the Go suite pass. Open: the looks pass and a merge (`ready-for-human`), a real GCS run (`needs-info`), leftover lows (`ready-for-agent`).
+- **Logs v2**: implemented on `feature/logs-v2` (2026-10-10 to 17): charts in the explorer, developer UX, Dashboards, Monitors with Slack, PagerDuty and email, Log Parquet and the Event archive in S3 or GCS (tested on MinIO), and a bin cache. 20 of 24 [tickets](logs-v2/issues/) resolved, including a whole-branch review; Rails, vitest, typecheck, all 69 Playwright flows and the Go suite pass. Open: the looks pass and a merge (`ready-for-human`), a real GCS run (`needs-info`), leftover lows (`ready-for-agent`).
 - **Logs**: v1 is implemented on `feature/logs-v1` (2026-10-03): 19 of 20 [tickets](logs-v1/issues/) resolved, code-reviewed, with the review fixes merged (`0eecf81`). It is not yet merged into `feature/logging` or `main`, and not yet clicked through in a browser. M1-10 (load test) is the only open ticket. Choices that depart from the spec are in its [Implementation decisions](logs-v1/spec.md#implementation-decisions); the review's fixes are in its Comments.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
 - **Integration notification**: resolved and merged (2026-10-02, `9a488c6`). One Console module sends new-Issue, threshold and assignment notifications through the outbox, with recorded outcomes, bounded retries and cleanup. EventStore's Event count honours the time window. Review findings left open are listed in the [spec](integration-notification/spec.md)'s Comments.
@@ -38,7 +38,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 |---|---|---|
 | Logs | 16 / 0 | [map.md](logs/map.md) |
 | Logs v1 | 19 / 1 | [spec.md](logs-v1/spec.md) |
-| Logs v2 | 19 / 4 | [20](logs-v2/issues/20-looks-pass.md) |
+| Logs v2 | 20 / 4 | [20](logs-v2/issues/20-looks-pass.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
