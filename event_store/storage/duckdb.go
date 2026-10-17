@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/duckdb/duckdb-go/v2"
@@ -19,6 +20,26 @@ import (
 type DuckDBWriter struct {
 	db          *sql.DB
 	parquetPath string
+
+	// archiveMu guards the Event archive's bucket fields below and the
+	// events view's rebuild (event_archive_bucket.go).
+	archiveMu sync.Mutex
+	// archiveBucket keeps the Event archive, or is nil when it stays on
+	// local disk only. remoteArchive holds the size of each archive file in
+	// the bucket by its key, or is nil while the bucket hasn't been listed.
+	archiveBucket ObjectStore
+	remoteArchive map[string]int64
+	// archiveReads tracks the reads of the events view while they run, so
+	// that an upload deletes a local copy only once no read may still open
+	// it.
+	archiveReads readGenerations
+	// archiveUploadMu lets one upload pass run at a time.
+	// archiveUploadFailing holds the keys of the files whose last upload
+	// failed, and archiveListFailing says the last listing of the bucket
+	// failed; both are guarded by archiveUploadMu.
+	archiveUploadMu      sync.Mutex
+	archiveUploadFailing map[string]bool
+	archiveListFailing   bool
 }
 
 type QueryParams struct {
@@ -100,7 +121,14 @@ func NewDuckDBWriter(dbPath, parquetPath, tempDir, memoryLimit string) (*DuckDBW
 
 // recreateEventsView rebuilds the events view to include any new parquet files.
 // This must be called after archiving to pick up newly created parquet files.
+//
+// With a bucket, the view lists the archive files by name instead
+// (archiveFiles), and while the bucket hasn't been listed there is no view, so
+// that Event reads fail rather than miss archived Events.
 func (w *DuckDBWriter) recreateEventsView() error {
+	w.archiveMu.Lock()
+	defer w.archiveMu.Unlock()
+
 	tx, err := w.db.Begin()
 	if err != nil {
 		return err
@@ -112,16 +140,33 @@ func (w *DuckDBWriter) recreateEventsView() error {
 		return err
 	}
 
-	parquetGlob := strings.ReplaceAll(filepath.Join(w.parquetPath, "*", "*.parquet"), "\\", "/")
+	var files string
+	if w.archiveBucket == nil {
+		parquetGlob := strings.ReplaceAll(filepath.Join(w.parquetPath, "*", "*.parquet"), "\\", "/")
 
-	// Check if any parquet files exist
-	var fileCount int
-	err = tx.QueryRow(fmt.Sprintf("SELECT count(*) FROM glob('%s')", parquetGlob)).Scan(&fileCount)
-	if err != nil {
-		fileCount = 0
+		// Check if any parquet files exist
+		var fileCount int
+		err = tx.QueryRow(fmt.Sprintf("SELECT count(*) FROM glob('%s')", parquetGlob)).Scan(&fileCount)
+		if err != nil {
+			fileCount = 0
+		}
+		if fileCount > 0 {
+			files = "'" + parquetGlob + "'"
+		}
+	} else {
+		if w.remoteArchive == nil {
+			return tx.Commit()
+		}
+		list, err := w.archiveFiles()
+		if err != nil {
+			return err
+		}
+		if len(list) > 0 {
+			files = sqlList(list)
+		}
 	}
 
-	if fileCount > 0 {
+	if files != "" {
 		// Create view with hot + parquet union
 		_, err = tx.Exec(fmt.Sprintf(`
             CREATE VIEW events AS
@@ -129,8 +174,8 @@ func (w *DuckDBWriter) recreateEventsView() error {
             FROM events_hot
             UNION ALL
             SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags
-            FROM read_parquet('%s', hive_partitioning = true, union_by_name = true)
-        `, parquetGlob))
+            FROM read_parquet(%s, hive_partitioning = true, union_by_name = true)
+        `, files))
 	} else {
 		// No parquet files yet, just use hot table
 		_, err = tx.Exec(`
@@ -253,6 +298,7 @@ func (w *DuckDBWriter) HotUUIDsBetween(projectID uint32, first, last string) (ma
 }
 
 func (w *DuckDBWriter) QueryEvents(params QueryParams) ([]models.Event, error) {
+	defer w.readingArchive()()
 	where, args := eventPredicate(params)
 	queryBuilder := strings.Builder{}
 	queryBuilder.WriteString("SELECT uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags FROM events WHERE ")
@@ -364,6 +410,7 @@ func eventPredicate(params QueryParams) (string, []interface{}) {
 // CountEvents counts the Events matching the same filters as QueryEvents,
 // including the time window. Paging, sort and UUID don't apply.
 func (w *DuckDBWriter) CountEvents(params QueryParams) (int64, error) {
+	defer w.readingArchive()()
 	where, args := eventPredicate(params)
 	query := "SELECT COUNT(*) FROM events WHERE " + where
 
@@ -386,6 +433,7 @@ type EventWithContext struct {
 // If uuid is provided, returns that specific event with context.
 // If uuid is empty, returns the latest event(s) based on limit with context.
 func (w *DuckDBWriter) QueryEventWithContext(params QueryParams) ([]EventWithContext, error) {
+	defer w.readingArchive()()
 	// prev/next run over the Issue's whole Event sequence, so only the Project
 	// and fingerprint filters apply; a time window or tags would cut it short.
 	// The events/context route rejects a time window rather than drop it here.
@@ -502,6 +550,9 @@ const stagingSuffix = ".tmp"
 // Files are written under a .tmp name, the rows are deleted in one transaction,
 // and only then are the files renamed. recoverStagedFiles settles any .tmp file
 // a failed run leaves behind.
+//
+// With a bucket, UploadEventArchive then uploads the files, outside batchLock
+// (event_archive_bucket.go).
 func (w *DuckDBWriter) ArchiveEventsUpTo(cutoff time.Time) error {
 	if err := w.recoverStagedFiles(); err != nil {
 		return fmt.Errorf("failed to recover staged archive files: %w", err)

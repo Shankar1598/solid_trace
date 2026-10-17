@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -120,5 +121,25 @@ func TestAFilePutInTheBucketIsReadByItsURLOnEveryPooledConnection(t *testing.T) 
 		sqltext.String(local), sqltext.String(store.URL(key)))).Scan(&count)
 	if err != nil || count != 2000 {
 		t.Errorf("Expected 2000 rows from the local file and the bucket's, got %d (%v)", count, err)
+	}
+}
+
+// The image downloads httpfs for DUCKDB_VERSION, and DuckDB loads only an
+// extension built for its own version, so the two must move together.
+func TestTheImagesHttpfsIsForTheDuckDBInGoMod(t *testing.T) {
+	dockerfile, err := os.ReadFile(filepath.Join("..", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	arg := regexp.MustCompile(`(?m)^ARG DUCKDB_VERSION=(\S+)$`).FindSubmatch(dockerfile)
+	if arg == nil {
+		t.Fatal("the Dockerfile has no ARG DUCKDB_VERSION=")
+	}
+	var version string
+	if err := newTestDuckDB(t).db.QueryRow("SELECT version()").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if string(arg[1]) != version {
+		t.Errorf("Dockerfile DUCKDB_VERSION is %s, but duckdb-go in go.mod is DuckDB %s: change DUCKDB_VERSION to match", arg[1], version)
 	}
 }

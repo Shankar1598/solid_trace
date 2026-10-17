@@ -15,10 +15,14 @@ duckdb_path: /storage/duckdb/production/events.duckdb
 # oldest hours are deleted. Default: half the size of the disk holding them, read
 # when EventStore starts.
 # logs_disk_limit_gb: 800
+# The memory, in MiB, that keeps charts' time bins of exported hours, so a chart run
+# again reads only the bins it lacks. 0 turns it off. Default: 64.
+# logs_bin_cache_mb: 64
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 
-# Store DuckDB parquet archives on slower storage.
+# Store DuckDB parquet archives on slower storage. With an object_store, each
+# Event archive file stays here only until it is uploaded.
 parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 
 # A bucket for Log files and the Event archive, read by DuckDB through httpfs.
