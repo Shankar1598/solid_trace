@@ -151,6 +151,50 @@ class EventStoreTest < ActiveSupport::TestCase
     assert_nil EventStore.get_log(project_id: 123, log_id: "0199a0b0-0000-7000-8000-000000000001")
   end
 
+  test "logs_fields lists a Project's Fields over a time range, up to a limit" do
+    fields = {
+      built_in: [ { name: "time", type: "datetime" }, { name: "level", type: "string" } ],
+      attributes: [ { name: "status", type: "number", logs: 3 }, { name: "status", type: "string", logs: 1 } ],
+      truncated: true,
+    }
+    stub_request(:get, "#{@base_url}/api/123/logs/fields")
+      .with(query: { from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z", limit: "2" })
+      .to_return(status: 200, body: fields.to_json)
+
+    answer = EventStore.logs_fields(project_id: 123, from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10), limit: 2)
+
+    assert_equal fields.deep_stringify_keys, answer
+  end
+
+  test "logs_fields leaves the limit to EventStore when none is given" do
+    stub = stub_request(:get, "#{@base_url}/api/123/logs/fields")
+      .with(query: { from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z" })
+      .to_return(status: 200, body: { built_in: [], attributes: [], truncated: false }.to_json)
+
+    EventStore.logs_fields(project_id: 123, from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+
+    assert_requested stub
+  end
+
+  test "logs_fields raises Rejected with EventStore's reason for a range or limit it refuses" do
+    stub_request(:get, %r{\A#{@base_url}/api/123/logs/fields})
+      .to_return(status: 400, body: { error: "limit must be a positive whole number" }.to_json)
+
+    error = assert_raises(EventStore::Rejected) do
+      EventStore.logs_fields(project_id: 123, from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10), limit: 0)
+    end
+
+    assert_equal "limit must be a positive whole number", error.body["error"]
+  end
+
+  test "logs_fields raises Unavailable when EventStore fails" do
+    stub_request(:get, %r{\A#{@base_url}/api/123/logs/fields}).to_return(status: 500, body: { error: "Internal error" }.to_json)
+
+    assert_raises(EventStore::Unavailable) do
+      EventStore.logs_fields(project_id: 123, from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10))
+    end
+  end
+
   test "logs_histogram counts a Query's Logs per bucket over a Project's time range" do
     levels = { trace: 0, debug: 0, info: 2, warn: 0, error: 1, fatal: 0, none: 0 }
     stub_request(:post, "#{@base_url}/api/123/logs/histogram")
@@ -270,13 +314,14 @@ class EventStoreTest < ActiveSupport::TestCase
       EventStore.logs_histogram(project_id: 123, query: "", **range)
       EventStore.run_logs_sql(project_id: 123, sql: "SELECT 1", **range)
       EventStore.validate_logs_query(project_id: 123, query: "")
+      EventStore.logs_fields(project_id: 123, **range)
       EventStore.count_events!(project_id: 123)
     end
 
     unlimited = { read: nil, open: :default }
     default = { read: :default, open: :default }
     assert_equal(
-      { "query" => unlimited, "histogram" => unlimited, "sql" => unlimited, "validate" => default, "count" => default },
+      { "query" => unlimited, "histogram" => unlimited, "sql" => unlimited, "validate" => default, "fields" => default, "count" => default },
       timeouts
     )
   end

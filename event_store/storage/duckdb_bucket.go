@@ -19,10 +19,10 @@ const remoteReadThreads = 4
 
 // UseBucket lets every pooled connection read the bucket's s3:// URLs
 // (ObjectStore.URL). It loads httpfs from extensionDir, where the Docker
-// image puts it, with DuckDB never installing or loading an extension by
-// itself; makes the bucket's secret, in memory only; and turns on the caches
-// for remote Parquet: footers, HTTP metadata and file ranges. The caches
-// stay within memory_limit.
+// image puts it, by name: DuckDB never installs or loads an extension by
+// itself (NewDuckDBWriter). It makes the bucket's secret, in memory only,
+// and turns on the caches for remote Parquet: footers, HTTP metadata and
+// file ranges. The caches stay within memory_limit.
 //
 // It also gives DuckDB remoteReadThreads threads for each CPU, not one:
 // httpfs holds a thread for each request it waits on, so threads cap the
@@ -34,14 +34,8 @@ const remoteReadThreads = 4
 func (w *DuckDBWriter) UseBucket(store *config.ObjectStore, extensionDir string) error {
 	// Settings are global, and LOAD and a temporary secret belong to the
 	// database, so each serves every pooled connection.
-	for _, setting := range []string{
-		"SET GLOBAL autoinstall_known_extensions = false",
-		"SET GLOBAL autoload_known_extensions = false",
-		"SET GLOBAL extension_directory = " + sqltext.String(extensionDir),
-	} {
-		if _, err := w.db.Exec(setting); err != nil {
-			return fmt.Errorf("%s: %w", setting, err)
-		}
+	if _, err := w.db.Exec("SET GLOBAL extension_directory = " + sqltext.String(extensionDir)); err != nil {
+		return fmt.Errorf("set DuckDB's extension directory: %w", err)
 	}
 	if _, err := w.db.Exec("LOAD httpfs"); err != nil {
 		return fmt.Errorf("load DuckDB's httpfs extension, which reads the bucket, from %s: %w", w.extensionPath(extensionDir, "httpfs"), err)
