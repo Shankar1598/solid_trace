@@ -5,8 +5,16 @@ require "json"
 
 class EventStore
   # EventStore could not answer: an error response, a connection error, a
-  # timeout or an unreadable body.
-  class Unavailable < StandardError; end
+  # timeout or an unreadable body. body is the error body EventStore answered
+  # with (its JSON, or {"error" => text}), or nil when it didn't answer.
+  class Unavailable < StandardError
+    attr_reader :body
+
+    def initialize(message = nil, body: nil)
+      @body = body
+      super(message)
+    end
+  end
 
   # EventStore refused a request it could read, such as a Query with
   # mistakes: a 400 whose JSON body says why.
@@ -23,11 +31,8 @@ class EventStore
   # JSON body says so. An Unavailable, so callers that give no timeout treat
   # it as any other failure.
   class TimedOut < Unavailable
-    attr_reader :body
-
     def initialize(body)
-      @body = body
-      super("EventStore stopped the run at its timeout: #{body}")
+      super("EventStore stopped the run at its timeout: #{body}", body: body)
     end
   end
 
@@ -65,14 +70,15 @@ class EventStore
       make_request(url)
     end
 
-    def query_events(project_id:, params: {})
-      url = "#{base_url}/api/#{project_id}/events"
-      make_request(url, params: params, default: [])
+    # Raises Unavailable when EventStore cannot answer, such as its 503
+    # while it can't read Events.
+    def query_events!(project_id:, params: {})
+      request!("#{base_url}/api/#{project_id}/events", params: params, not_found: [])
     end
 
-    def query_event_with_context(project_id:, params: {})
-      url = "#{base_url}/api/#{project_id}/events/context"
-      make_request(url, params: params)
+    # Raises Unavailable when EventStore cannot answer, as query_events! does.
+    def query_event_with_context!(project_id:, params: {})
+      request!("#{base_url}/api/#{project_id}/events/context", params: params)
     end
 
     def count_events(project_id:, params: {})
@@ -239,7 +245,8 @@ class EventStore
     rescue RestClient::NotFound
       not_found
     rescue RestClient::ExceptionWithResponse => e
-      raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
+      body = e.response&.body
+      raise Unavailable.new("EventStore error: #{e.response&.code} - #{body}", body: body.presence && parse_body(body))
     rescue StandardError => e
       raise Unavailable, "EventStore connection error: #{e.message}"
     end
@@ -296,6 +303,16 @@ class EventStore
   end
 
   def all
+    all!
+  rescue Unavailable => e
+    Rails.logger.error(e.message)
+    []
+  end
+
+  # Like all, but raises Unavailable instead of answering [] when EventStore
+  # cannot answer, so a page can say Events can't be read rather than show
+  # none.
+  def all!
     return [] if @fingerprint_ids.empty? && @uuid_filter.nil?
 
     project_id = resolve_project_id
@@ -315,7 +332,7 @@ class EventStore
 
     params.merge!(timestamp_params)
 
-    events_data = self.class.query_events(project_id: project_id, params: params)
+    events_data = self.class.query_events!(project_id: project_id, params: params)
     events_data.map { |attrs| build_event(attrs) }
   end
 
@@ -345,6 +362,15 @@ class EventStore
   # Returns { event:, prev_uuid:, next_uuid: } in a single API call
   # If uuid_filter is set, fetches that event; otherwise fetches the latest event
   def get_event_with_context
+    get_event_with_context!
+  rescue Unavailable => e
+    Rails.logger.error(e.message)
+    nil
+  end
+
+  # Like get_event_with_context, but raises Unavailable instead of answering
+  # nil when EventStore cannot answer.
+  def get_event_with_context!
     return nil if @fingerprint_ids.empty? && @uuid_filter.nil?
 
     project_id = resolve_project_id
@@ -353,7 +379,7 @@ class EventStore
     params = { fingerprint_ids: @fingerprint_ids.join(",") }
     params[:uuid] = @uuid_filter if @uuid_filter
 
-    response = self.class.query_event_with_context(project_id: project_id, params: params)
+    response = self.class.query_event_with_context!(project_id: project_id, params: params)
     return nil unless response
 
     {

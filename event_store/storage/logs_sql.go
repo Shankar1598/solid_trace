@@ -84,6 +84,10 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 	}
 	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
+		// The query may have failed for want of the events view.
+		if unavailable := s.events.eventsUnavailable(); unavailable != nil {
+			err = fmt.Errorf("%w\n%v", err, unavailable)
+		}
 		return SQLResult{}, &SQLError{err}
 	}
 	defer rows.Close()

@@ -68,6 +68,15 @@ func (env *TestEnv) UploadEventArchive(t *testing.T) {
 	}
 }
 
+// EnsureEventsView lists the Event archive in the bucket and builds the
+// events view, as the archive consumer does first when EventStore starts.
+func (env *TestEnv) EnsureEventsView(t *testing.T) {
+	t.Helper()
+	if err := env.DuckDBWriter.EnsureEventsView(context.Background()); err != nil {
+		t.Fatalf("Building the events view failed: %v", err)
+	}
+}
+
 // localArchive lists the archive files on local disk, by their path below
 // the archive folder.
 func (env *TestEnv) localArchive(t *testing.T) []string {
@@ -215,6 +224,7 @@ func TestArchivedEventsAreUploadedAndReadFromTheBucket(t *testing.T) {
 	assertEventAnswers(t, env, contextUUID, want, "read from the bucket")
 
 	env.Reopen(t)
+	env.EnsureEventsView(t)
 	assertEventAnswers(t, env, contextUUID, want, "after a restart lists the bucket")
 
 	// A later run's file joins them.
@@ -252,6 +262,7 @@ func TestAFailingBucketKeepsTheArchiveLocalUntilAnUploadAfterARestart(t *testing
 	// EventStore stops before any upload gets through.
 	bucket.failPuts.Store(false)
 	env.Reopen(t)
+	env.EnsureEventsView(t)
 	assertEventAnswers(t, env, contextUUID, want, "after the restart, from local disk")
 	env.UploadEventArchive(t)
 	assertArchiveDays(t, archiveObjects(t, bucket), "events/", []time.Time{september30, october1}, "once the bucket is back")
@@ -287,6 +298,7 @@ func TestARestartBetweenAnUploadAndDeletingTheLocalCopyReadsEachEventOnce(t *tes
 	}
 
 	env.Reopen(t)
+	env.EnsureEventsView(t)
 	assertEventAnswers(t, env, contextUUID, want, "after the restart, with each file in both places")
 	puts := bucket.puts.Load()
 	env.UploadEventArchive(t)
@@ -312,19 +324,156 @@ func TestEventReadsFailUntilTheArchiveInTheBucketIsListed(t *testing.T) {
 	logs := captureLogs(t)
 	bucket.failLists.Store(true)
 	env.Reopen(t)
-	if status, raw := getQuery(t, env, "/api/123/events"); status != 500 {
-		t.Errorf("Expected Event reads to fail while the archive isn't listed, got %d: %s", status, raw)
-	}
-	if err := env.DuckDBWriter.UploadEventArchive(context.Background()); err == nil {
-		t.Errorf("Expected the upload pass to fail while the bucket can't be listed")
+	assertEventReadsUnavailable(t, env, contextUUID, "before the archive is listed")
+	for range 2 {
+		if err := env.DuckDBWriter.UploadEventArchive(context.Background()); err == nil {
+			t.Errorf("Expected the upload pass to fail while the bucket can't be listed")
+		}
 	}
 	if n := strings.Count(logs.String(), "Listing the Event archive in the bucket failed"); n != 1 {
 		t.Errorf("Expected the failing listing logged once, got %d lines:\n%s", n, logs)
 	}
+	assertEventReadsUnavailable(t, env, contextUUID, "while the archive can't be listed")
+	// Ingest and Event processing carry on.
+	later := postEventAt(t, env, "while the bucket can't be listed", october2.Add(12*time.Hour))
+	env.Process(t)
 
 	bucket.failLists.Store(false)
 	env.UploadEventArchive(t)
-	assertEventAnswers(t, env, contextUUID, want, "once the bucket is listed")
+	got := eventAnswersOf(t, env, contextUUID)
+	want.list = append([]string{later + " " + october2.Add(12*time.Hour).Format(time.RFC3339)}, want.list...)
+	if !slices.Equal(got.list, want.list) || got.count != `{"count":5}` || len(got.sql) != 5 {
+		t.Errorf("Expected the 5 Events read once the bucket is listed, got %v, %s and %v", got.list, got.count, got.sql)
+	}
+}
+
+// assertEventReadsUnavailable checks that every kind of read of Project
+// 123's Events fails and says why, rather than answer without some of them.
+func assertEventReadsUnavailable(t *testing.T, env *TestEnv, contextUUID, when string) {
+	t.Helper()
+	const why = "Events can't be read now"
+	for _, path := range []string{
+		"/api/123/events?limit=100&sort=desc",
+		"/api/123/events/count",
+		"/api/123/events/context?uuid=" + contextUUID,
+	} {
+		if status, raw := getQuery(t, env, path); status != 503 || !strings.Contains(string(raw), why) {
+			t.Errorf("Expected GET %s to answer 503 %s, got %d: %s", path, when, status, raw)
+		}
+	}
+	status, raw := runSQL(t, env, 123, sqlRequest{SQL: "SELECT count(*) FROM events", From: allTime.from, To: allTime.to})
+	if status == 200 || !strings.Contains(string(raw), why) {
+		t.Errorf("Expected SQL mode's events view to fail %s, got %d: %s", when, status, raw)
+	}
+}
+
+func TestEventReadsFailAfterARebuildOfTheEventsViewFailsUntilARetrySucceeds(t *testing.T) {
+	env, bucket := setupBucketTestEnv(t, 24)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+	logs := captureLogs(t)
+
+	contextUUID := postArchivedDays(t, env)
+	want := eventAnswersOf(t, env, contextUUID)
+	env.ArchiveEvents(t, september30)
+	env.UploadEventArchive(t)
+
+	// 30 September's object can't be read for a while.
+	object := filepath.Join(bucket.dir, filepath.FromSlash(archiveObjects(t, bucket)[0]))
+	saved, err := os.ReadFile(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(object, []byte("unreadable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The next run moves 1 October's Events out of the hot table, but the
+	// events view can't be rebuilt to read their file.
+	env.ArchiveEvents(t, october1)
+	assertEventReadsUnavailable(t, env, contextUUID, "after the rebuild fails")
+	if err := env.DuckDBWriter.UploadEventArchive(context.Background()); err == nil {
+		t.Errorf("Expected the retry to fail while an object can't be read")
+	}
+
+	// The object can be read again, but the view would still miss
+	// 1 October's Events until a retry rebuilds it.
+	if err := os.WriteFile(object, saved, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assertEventReadsUnavailable(t, env, contextUUID, "until a retry rebuilds the view")
+	if n := strings.Count(logs.String(), "Rebuilding the events view failed"); n != 1 {
+		t.Errorf("Expected the failing rebuilds logged once, got %d lines:\n%s", n, logs)
+	}
+
+	env.UploadEventArchive(t)
+	assertEventAnswers(t, env, contextUUID, want, "once a retry rebuilds the view")
+	assertArchiveDays(t, archiveObjects(t, bucket), "events/", []time.Time{september30, october1}, "after the retry")
+	if local := env.localArchive(t); len(local) != 0 {
+		t.Errorf("Expected the local copy deleted once the view reads it from the bucket, got %v", local)
+	}
+	if !strings.Contains(logs.String(), "Rebuilt the events view after failing") {
+		t.Errorf("Expected the rebuild logged once it succeeds, got:\n%s", logs)
+	}
+}
+
+func TestIngestWorksWhileTheBucketDoesntAnswerAtStartup(t *testing.T) {
+	env, bucket := setupBucketTestEnv(t, 24)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+
+	contextUUID := postArchivedDays(t, env)
+	env.ArchiveEvents(t, october1)
+	env.UploadEventArchive(t)
+
+	// EventStore starts again while the bucket doesn't answer, and the
+	// archive consumer starts to list it.
+	bucket.hangLists = make(chan struct{})
+	started := time.Now()
+	env.Reopen(t)
+	if took := time.Since(started); took > 10*time.Second {
+		t.Errorf("Expected EventStore to start without waiting for the bucket, took %v", took)
+	}
+	consumer := pipeline.NewArchiveConsumer(env.MQReader, env.DuckDBWriter, env.BatchLock)
+	go consumer.Run()
+	defer consumer.Stop()
+
+	// Ingest and Event processing carry on, and Event reads say why they
+	// can't answer yet.
+	postEventAt(t, env, "while the bucket doesn't answer", october2.Add(12*time.Hour))
+	env.Process(t)
+	assertEventReadsUnavailable(t, env, contextUUID, "while the bucket doesn't answer")
+
+	close(bucket.hangLists)
+	waitFor(t, 10*time.Second, "Event reads to answer once the bucket is listed", func() bool {
+		status, _ := getQuery(t, env, "/api/123/events/count")
+		return status == 200
+	})
+	if events := listEvents(t, env); len(events) != 5 {
+		t.Errorf("Expected 5 Events listed once the bucket is listed, got %d", len(events))
+	}
+}
+
+func TestRemovingTheBucketWarnsThatTheArchivedEventsOnlyInItAreUnread(t *testing.T) {
+	env, _ := setupBucketTestEnv(t, 24)
+	defer env.Cleanup()
+
+	postArchivedDays(t, env)
+	env.ArchiveEvents(t, september30)
+	env.UploadEventArchive(t)
+	env.ArchiveEvents(t, october1)
+
+	// The object_store block is removed, with 1 October's file still on
+	// local disk.
+	logs := captureLogs(t)
+	env.Bucket = nil
+	env.Reopen(t)
+	if !strings.Contains(logs.String(), "Some Event archive files are only in a bucket") || !strings.Contains(logs.String(), "files=1") {
+		t.Errorf("Expected a warning that 1 Event archive file is only in the bucket, got:\n%s", logs)
+	}
+	if events := listEvents(t, env); len(events) != 3 {
+		t.Errorf("Expected 3 Events listed, without those only in the bucket, got %d", len(events))
+	}
 }
 
 func TestAnUploadDeletesALocalCopyOnlyOnceTheReadsThatMayOpenItEnd(t *testing.T) {
@@ -446,6 +595,7 @@ func TestTheEventArchiveInAnS3BucketIsReadThroughHttpfs(t *testing.T) {
 		env.Bucket, env.BucketConfig, env.LocalCacheHours = bucket, cfg, 0
 	})
 	defer env.Cleanup()
+	env.EnsureEventsView(t)
 	setSQLQueries(t, env, true)
 
 	contextUUID := postArchivedDays(t, env)
@@ -459,5 +609,6 @@ func TestTheEventArchiveInAnS3BucketIsReadThroughHttpfs(t *testing.T) {
 	assertEventAnswers(t, env, contextUUID, want, "read from the bucket through httpfs")
 
 	env.Reopen(t)
+	env.EnsureEventsView(t)
 	assertEventAnswers(t, env, contextUUID, want, "after a restart lists the bucket")
 }

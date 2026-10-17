@@ -31,7 +31,7 @@ export function EventsTabContent({
   const handleEventsPageChange = (page: number) => {
     router.visit(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}?events_page=${page}`, {
       preserveScroll: true,
-      only: ['events_list', 'events_pagination']
+      only: ['events_list', 'events_pagination', 'events_unavailable']
     })
   }
 

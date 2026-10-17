@@ -260,7 +260,8 @@ class MonitorEvaluation
     end
   rescue EventStore::Unavailable, EventStore::Rejected => e
     @monitor.update_columns(timeouts_in_a_row: @monitor.timeouts_in_a_row) if @monitor.timeouts_in_a_row_changed?
-    why = e.respond_to?(:body) ? EventStore.error_text(e.body) : e.message
+    # A connection error or a 5xx has no body EventStore answered with.
+    why = e.body ? EventStore.error_text(e.body) : e.message
     failed(error ? "#{error} Starting again from the newest Logs failed: #{why}" : why)
   end
 
