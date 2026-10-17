@@ -12,8 +12,9 @@ export default function SettingsLayout({ children, className }: SettingsLayoutPr
     <DashboardLayout>
       <div className="flex h-screen -m-4 overflow-hidden">
         <SettingsSidebar />
-        <main className={cn("flex-1 overflow-y-auto bg-background/50", className)}>
-          <div className="max-w-5xl mx-auto py-10 px-8 mb-20">
+        <main className={cn("flex-1 overflow-y-auto", className)}>
+          {/* The same padding as every other page, so the title sits where theirs does. */}
+          <div className="max-w-4xl p-4 pb-20">
             {children}
           </div>
         </main>

@@ -8,6 +8,15 @@
 
 **Scope and direction** (user, 2026-10-17): the looks pass covers the whole Console, not only Logs. Circles (status dots, avatars) stay round. The Console mixes Sentry, Axiom and Better Stack, whose style languages differ; the goal is one consistent design language, chosen before any page is polished. A tour of every page (`console/e2e/screens/tour.spec.ts`, set `tour-before`) found: one monospace face for everything, four page-header patterns, three surface treatments, two brand marks, mixed corners and case, a stray violet accent, loose form spacing. Three directions (A all-mono, B sans for the interface and mono for the data, C all-sans) are compared at https://claude.ai/artifact/K6onrwpFyjBpuhWtW599HH; The user picked **B** (2026-10-17): IBM Plex Sans for the interface (titles, nav, buttons, labels, prose), JetBrains Mono for data (timestamps, values, log messages, queries, IDs, DSNs), plus the shared rules on that page (square corners, neutral palette with semantic colour only, one page header, outlined panels, sentence case, rounded tabular numbers). Every page is reviewed with seeded data before polishing.
 
-**Progress:** the [review](../research/looks-review.md) lists the work in three steps. Step 1, the foundation, is done (`b822f9d`, 2026-10-17): fonts, square corners, one neutral mark, a dark sign-in panel, and rounded table numbers. All 69 flows pass. Before and after screenshots are on the direction page. Next is step 2, the shared components: page header, table, badge, section label, panel and form section.
+**Progress:** the [review](../research/looks-review.md) lists the work in three steps. Step 1, the foundation, is done (`b822f9d`, 2026-10-17): fonts, square corners, one neutral mark, a dark sign-in panel, and rounded table numbers. All 69 flows pass. Before and after screenshots are on the direction page. Step 2, the shared components, is done (2026-10-17):
+- one `PageHeader` with breadcrumbs, used on every signed-in page;
+- one table style, used by every index;
+- a `Badge` with neutral, info, warn, error, ok and count tones, and a dot for status;
+- a `caps-label` section label;
+- outlined panels;
+- a `Segmented` switch for Mode, Chart, Viz and Kind;
+- a sentence-case sweep.
+
+All 69 flows pass. The direction page shows each page before, after step 1 and after step 2. Next is step 3, page by page; the page-by-page list in the review says what is left. The bugs found on the way are fixed after the looks work.
 
 **Status:** ready-for-human

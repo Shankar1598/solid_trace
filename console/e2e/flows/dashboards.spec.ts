@@ -52,9 +52,10 @@ test('a member builds a Dashboard from the explorer and the editor, ranges it, l
   await expect(page.getByText(/No charts yet/)).toBeVisible()
   const dashboardUrl = page.url()
   // The sidebar lights Dashboards alone.
-  await expect(page.getByRole('link', { name: 'Dashboards' })).toHaveClass(/bg-secondary/)
-  await expect(page.getByRole('link', { name: 'Logs' })).not.toHaveClass(/bg-secondary/)
-  await expect(page.getByRole('link', { name: 'Projects' })).not.toHaveClass(/bg-secondary/)
+  const nav = page.getByRole('navigation', { name: 'Main' })
+  await expect(nav.getByRole('link', { name: 'Dashboards' })).toHaveClass(/bg-secondary/)
+  await expect(nav.getByRole('link', { name: 'Logs' })).not.toHaveClass(/bg-secondary/)
+  await expect(nav.getByRole('link', { name: 'Projects' })).not.toHaveClass(/bg-secondary/)
 
   // Add to dashboard, beside the explorer's chart switch, saves the Query as drawn.
   await openLogs(page, last24h('query'))

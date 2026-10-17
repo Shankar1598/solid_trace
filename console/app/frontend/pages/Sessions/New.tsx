@@ -21,7 +21,7 @@ export default function Login() {
     <AuthLayout>
       <Card>
         <CardHeader>
-          <CardTitle>Login</CardTitle>
+          <CardTitle>Log in</CardTitle>
           <CardDescription>
             Enter your email below to login to your account
           </CardDescription>
@@ -66,7 +66,7 @@ export default function Login() {
             </div>
 
             <Button type="submit" className="w-full" disabled={processing}>
-              {processing ? 'Logging in...' : 'Login'}
+              {processing ? 'Logging in…' : 'Log in'}
             </Button>
 
             <div className="mt-4 text-center text-sm">

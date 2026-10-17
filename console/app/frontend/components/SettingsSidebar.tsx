@@ -51,14 +51,14 @@ export function SettingsSidebar() {
       <div className="flex flex-col h-full">
         {/* Header */}
         <div className="h-14 flex items-center px-6 border-b">
-          <span className="text-sm font-semibold tracking-tight uppercase text-muted-foreground/70">Settings</span>
+          <span className="text-sm font-semibold">Settings</span>
         </div>
 
         {/* Navigation */}
         <div className="flex-1 py-6 px-3 space-y-6 overflow-y-auto">
           {settingsItems.map((group) => (
             <div key={group.group} className="space-y-2">
-              <h3 className="px-3 text-[10px] font-bold text-muted-foreground/50 uppercase tracking-[0.2em]">
+              <h3 className="caps-label px-3">
                 {group.group}
               </h3>
               <div className="space-y-0.5">
@@ -67,7 +67,7 @@ export function SettingsSidebar() {
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-2 text-[13px] font-medium transition-colors",
+                      "flex items-center gap-3 px-3 py-2 text-sm font-medium transition-colors",
                       item.active
                         ? "bg-secondary text-primary"
                         : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"

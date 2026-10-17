@@ -47,7 +47,7 @@ export function OptionList({ options, active, onActive, onPick, chosen, empty, c
       {options.map((o, i) => (
         <Fragment key={o.value}>
           {o.group && o.group !== options[i - 1]?.group && (
-            <li role="presentation" className="px-2 pb-1 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground first:pt-1">
+            <li role="presentation" className="caps-label px-2 pb-1 pt-2 first:pt-1">
               {o.group}
             </li>
           )}

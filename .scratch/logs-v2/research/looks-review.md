@@ -116,7 +116,8 @@ Source: `console/e2e/screens/tour.spec.ts` on `bin/rails db:seed dev:data` (comm
 - **Issue first seen is in the future.** It reads "First seen: in about 1 hour", and Age is "1 hour" on every Issue, while last seen is 3–8 h ago.
 - **Users column is 0** on the Issues index for Issues whose Events carry a user. Cause: `pages/Issues/Index.tsx` renders a hard-coded `format(0)`.
 - **Age counts from the Console row, not the first Event.** The Issues index's Age is `formatDistanceToNow(issue.created_at)`, so Issues ingested in a batch all read the same age.
-- **Every unresolved Issue is labelled UNHANDLED.** `pages/Issues/Index.tsx` shows UNHANDLED when `issue.status === 'unresolved'`, which is a different thing from an unhandled exception.
+- **The Issues index's time filter does nothing.** In `pages/Issues/Index.tsx` the range select (24 hours, 14 days, 30 days) only has a `defaultValue="14d"`; unlike the project and sort selects it never calls `visitFilters`, so the list is the same whatever range is picked. Connect it, or hide it until it works. The user asked (2026-10-17) for this to be fixed after the UI work, with the other bugs here.
+- ~~**Every unresolved Issue is labelled UNHANDLED.**~~ Fixed in step 2: the row shows a Resolved badge on resolved Issues and nothing else, since an Issue doesn't record whether its exception was handled.
 - **e2e flows leave dashboards behind:** "Flow dashboard <timestamp>" rows stay after the flows run.
 
 ## Order of work

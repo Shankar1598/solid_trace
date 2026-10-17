@@ -134,7 +134,7 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, actions, onNew
             {level && (
               <Pill field="level" value={level}>
                 <span className={cn('h-2 w-2 rounded-full bg-current', LEVEL_TEXT[level])} />
-                <span className={LEVEL_TEXT[level]}>{level.toUpperCase()}</span>
+                <span className={LEVEL_TEXT[level]}>{level}</span>
               </Pill>
             )}
             {log.service && <Pill field="service" value={log.service}>{log.service}</Pill>}
@@ -221,7 +221,7 @@ function FieldTable({ log, actions }: { log: Log; actions: InspectorActions }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
-      <h3 className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{title}</h3>
+      <h3 className="caps-label px-3 pt-3 pb-1">{title}</h3>
       {children}
     </section>
   )

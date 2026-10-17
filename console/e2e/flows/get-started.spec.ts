@@ -22,8 +22,8 @@ test.afterAll(() => {
 test('an empty Project shows how to send it Logs, and a test Log shows at once', async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto(`/${ORG}/projects/new`)
-  await page.getByLabel('Project Name').fill(name)
-  await page.getByRole('button', { name: 'Create Project' }).click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByRole('button', { name: 'Create project' }).click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/projects$`))
 
   await page.goto(`/${ORG}/projects/${slug}/logs?range=1h`)

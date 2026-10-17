@@ -582,7 +582,7 @@ function ConditionStep({ field, type, values, op, onOp, value, onValue, onBack, 
         )}
         {needsValue && shown.length > 0 && (
           <div className="-mx-2 -mb-2 border-t">
-            <p className="px-2 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Seen in recent Logs</p>
+            <p className="caps-label px-2 pt-2">Seen in recent Logs</p>
             <OptionList
               options={shown}
               active={active}

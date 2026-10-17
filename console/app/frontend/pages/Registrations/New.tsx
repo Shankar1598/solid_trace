@@ -31,7 +31,7 @@ export default function Register() {
         <CardContent>
           <form onSubmit={submit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Full Name</Label>
+              <Label htmlFor="name">Name</Label>
               <Input
                 id="name"
                 placeholder="John Doe"
@@ -74,7 +74,7 @@ export default function Register() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password_confirmation">Confirm Password</Label>
+              <Label htmlFor="password_confirmation">Confirm password</Label>
               <Input
                 id="password_confirmation"
                 type="password"
@@ -90,13 +90,13 @@ export default function Register() {
             </div>
 
             <Button type="submit" className="w-full" disabled={processing}>
-              {processing ? 'Creating account...' : 'Create account'}
+              {processing ? 'Creating account…' : 'Create account'}
             </Button>
 
             <div className="mt-4 text-center text-sm">
               Already have an account?{' '}
               <Link href="/login" className="underline">
-                Login
+                Log in
               </Link>
             </div>
           </form>

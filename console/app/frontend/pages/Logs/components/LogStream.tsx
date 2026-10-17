@@ -138,7 +138,7 @@ function HeaderRow({ columns, widthOf, onResize, onColumns, logs }: {
   }
 
   return (
-    <div data-stream-header className="sticky top-0 z-10 flex border-b bg-muted text-left text-muted-foreground">
+    <div data-stream-header className="sticky top-0 z-10 flex border-b bg-card text-left text-muted-foreground">
       <div className="shrink-0 border-r" style={{ width: GUTTER }} />
       {columns.map(column => (
         <div
@@ -188,7 +188,7 @@ function HeaderRow({ columns, widthOf, onResize, onColumns, logs }: {
         </div>
       ))}
       <div
-        className={cn('sticky right-0 ml-auto flex shrink-0 items-center justify-end bg-muted pr-2.5', dropBefore === '' && 'shadow-[inset_2px_0_0_var(--color-primary)]')}
+        className={cn('sticky right-0 ml-auto flex shrink-0 items-center justify-end bg-card pr-2.5', dropBefore === '' && 'shadow-[inset_2px_0_0_var(--color-primary)]')}
         style={{ width: PICKER }}
         onDragOver={e => {
           if (!dragged.current) return
@@ -347,7 +347,7 @@ function Cell({ log, column, value }: { log: Log; column: string; value: Attribu
     case 'time':
       return <span title={log.time} className="text-muted-foreground tabular-nums">{format(new Date(log.time), 'MMM dd HH:mm:ss.SSS')}</span>
     case 'level':
-      return <span className={cn('uppercase text-[12px]', LEVEL_TEXT[level(value)])}>{valueText(value)}</span>
+      return <span className={LEVEL_TEXT[level(value)]}>{valueText(value)}</span>
     case 'service':
       return <span className="text-fuchsia-600 dark:text-fuchsia-400">{valueText(value)}</span>
     case 'message':
