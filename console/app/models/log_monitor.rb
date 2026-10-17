@@ -56,7 +56,9 @@ class LogMonitor < ApplicationRecord
   validate :query_runs_as_its_kind, if: :query_check_needed?
 
   before_save :run_at_the_next_tick, if: :schedule_changed?
-  after_update :resolve_groups, if: :no_longer_a_threshold_monitor?
+  after_update :resolve_groups_on_change, if: :stopped_checking_the_threshold?
+  # Before the dependent deletes, which take its states and Integrations.
+  before_destroy :resolve_groups_on_delete, prepend: true
 
   def enabled?
     disabled_at.nil?
@@ -137,20 +139,37 @@ class LogMonitor < ApplicationRecord
     self.next_run_at = nil
   end
 
+  def stopped_checking_the_threshold?
+    no_longer_a_threshold_monitor? || turned_off?
+  end
+
   def no_longer_a_threshold_monitor?
     saved_change_to_kind? && kind_before_last_save == "threshold"
   end
 
-  # A Threshold monitor changed to a Match monitor no longer compares its
-  # groups with the threshold, and its runs never would resolve them: each
-  # firing group sends monitor_resolved now, which closes its PagerDuty
-  # incident, and its states go.
-  def resolve_groups
+  def turned_off?
+    saved_change_to_disabled_at? && disabled_at_before_last_save.nil?
+  end
+
+  def resolve_groups_on_change
+    reason = no_longer_a_threshold_monitor? ? "kind_changed" : "turned_off"
+    resolve_groups(reason, operator: operator_before_last_save, threshold: threshold_before_last_save)
+  end
+
+  def resolve_groups_on_delete
+    resolve_groups("deleted", operator: operator, threshold: threshold)
+  end
+
+  # A Threshold monitor changed to a Match monitor, turned off or deleted no
+  # longer compares its groups with the threshold, and no run would resolve
+  # them: each firing group sends monitor_resolved now, saying why, which
+  # closes its PagerDuty incident, and its states go. Turned back on, a group
+  # still past the threshold fires again.
+  def resolve_groups(reason, operator:, threshold:)
     states.reload.select(&:status_firing?).each do |state|
       IntegrationNotification.monitor_changed(self, kind: IntegrationNotification::MONITOR_RESOLVED,
         group_key: state.group_key, payload: {
-          "value" => state.last_value, "operator" => operator_before_last_save,
-          "threshold" => threshold_before_last_save, "kind_changed" => true,
+          "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true,
         })
     end
     states.delete_all

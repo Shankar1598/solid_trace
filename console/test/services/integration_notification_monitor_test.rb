@@ -141,14 +141,31 @@ class IntegrationNotificationMonitorTest < ActiveSupport::TestCase
     assert_equal %w[failed pending sent], statuses
   end
 
-  test "rows whose Monitor was deleted are skipped" do
+  test "rows whose Monitor was deleted are still delivered, from what each row keeps of it" do
     change(FIRING, value: 12)
+    @monitor.update!(name: "Checkout errors, renamed")
+    change(RESOLVED, value: 3)
+    monitor_id = @monitor.id
     @monitor.destroy!
 
     IntegrationNotification.deliver_pending(@slack.id)
 
+    assert Notification.all.all?(&:status_sent?), Notification.pluck(:status, :error_message).inspect
+    texts = []
+    assert_requested(:post, SLACK_URL, times: 2) { |request| texts << JSON.parse(request.body)["text"] }
+    assert_equal [ "🔥 Firing: Checkout errors", "✅ Resolved: Checkout errors, renamed" ], texts
+    assert_equal "solid-trace-monitor-#{monitor_id}", Notifiers::MonitorMessage.build(Notification.last).dedup_key
+  end
+
+  test "a row of a deleted Monitor that keeps nothing of it is skipped" do
+    change(FIRING, value: 12)
     row = Notification.sole
-    assert row.status_skipped?
+    row.update!(payload: row.payload.except("monitor"))
+    @monitor.destroy!
+
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert row.reload.status_skipped?
     assert_equal "Monitor missing", row.error_message
     assert_not_requested(:post, SLACK_URL)
   end

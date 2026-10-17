@@ -85,10 +85,13 @@ module IntegrationNotification
     # it for each change of a group's status, in the transaction that records
     # the change, so the rows follow the Monitor's states: a group that stays
     # firing writes nothing more. +payload+ is what the run saw, for the
-    # message (Notifiers::MonitorMessage).
+    # message (Notifiers::MonitorMessage). Each row also keeps what the
+    # message says about the Monitor, so it is delivered even when the
+    # Monitor is deleted first.
     def monitor_changed(monitor, kind:, group_key:, payload:)
       raise ArgumentError, "Unknown Monitor notification kind: #{kind.inspect}" unless MONITOR_KINDS.include?(kind)
 
+      payload = payload.merge("monitor" => Notifiers::MonitorMessage.about(monitor))
       monitor.integrations.active.find_each do |integration|
         Notification.enqueue!(integration: integration, monitor: monitor, group_key: group_key, kind: kind, payload: payload)
         schedule_tick(integration, wait: INITIAL_DELAY)
@@ -188,11 +191,13 @@ module IntegrationNotification
     # Each group of a Monitor is a chain: its rows go one at a time, oldest
     # first, and the chain stops at the first that fails, leaving the rest
     # for the retry. So a resolve never goes before the trigger it closes.
+    # A deleted Monitor's rows go too, from what each keeps of it, so the
+    # resolve written when it was deleted closes its PagerDuty incident.
     def deliver_monitor_rows(integration, row_ids)
       rows = Notification.where(id: row_ids).where.not(monitor_id: nil)
         .includes(monitor: [ :organization, :project ]).order(:created_at, :id).to_a
 
-      rows_without_monitor, rows = rows.partition { |row| row.monitor.nil? }
+      rows_without_monitor, rows = rows.partition { |row| row.monitor.nil? && row.payload&.dig("monitor").nil? }
       Notification.mark_rows(rows_without_monitor.map(&:id), :skipped, "Monitor missing") if rows_without_monitor.any?
 
       rows.group_by { |row| [ row.monitor_id, row.group_key ] }.each_value do |chain|

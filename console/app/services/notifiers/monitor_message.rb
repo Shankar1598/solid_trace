@@ -7,10 +7,13 @@ module Notifiers
   # and what its run saw, which MonitorEvaluation stored in the row's payload:
   # - monitor_firing and monitor_resolved: value (nil for no data), column,
   #   threshold, operator, from and to (the range read); a resolve says
-  #   absent, no_data or kind_changed when it has one of those reasons
+  #   absent, no_data, kind_changed, turned_off or deleted when it has one of
+  #   those reasons
   # - monitor_matched: logs (up to MonitorEvaluation::MATCHED_LOGS), total,
   #   from and to (for the explorer), and logs_skipped_at when Logs were left
   #   unread before this run
+  # Every row also keeps what the message says about its Monitor (about), so
+  # it is still delivered once the Monitor is deleted.
   module MonitorMessage
     # PagerDuty takes dedup keys of at most this many characters.
     MAX_DEDUP_KEY = 255
@@ -21,14 +24,25 @@ module Notifiers
 
     class << self
       def build(row)
-        monitor = row.monitor
         payload = row.payload || {}
+        monitor = row.monitor ? about(row.monitor) : payload.fetch("monitor")
         case row.kind
         when IntegrationNotification::MONITOR_FIRING then firing(monitor, row.group_key, payload)
         when IntegrationNotification::MONITOR_RESOLVED then resolved(monitor, row.group_key, payload)
         when IntegrationNotification::MONITOR_MATCHED then matched(monitor, payload)
         else raise ArgumentError, "Unknown Monitor notification kind: #{row.kind.inspect}"
         end
+      end
+
+      # What a message says about its Monitor: its name, Query and range, and
+      # where its Project's explorer is. Read from the Monitor while it
+      # exists, so an edit before delivery shows.
+      def about(monitor)
+        {
+          "id" => monitor.id, "name" => monitor.name, "query" => monitor.query,
+          "range_minutes" => monitor.range_minutes, "project" => monitor.project.name,
+          "project_slug" => monitor.project.slug, "organization_slug" => monitor.organization.slug,
+        }
       end
 
       # The same for every message about one group of a Monitor, so a
@@ -71,12 +85,16 @@ module Notifiers
 
       # Resolved because the number is back within the threshold, because the
       # group has no row any more (absent), because a Monitor that fired for
-      # no data has data again (no_data), or because the Monitor now matches
-      # Logs instead (kind_changed).
+      # no data has data again (no_data), because the Monitor now matches
+      # Logs instead (kind_changed), or because it was turned off or deleted.
       def resolved(monitor, group_key, payload)
         range = range_text(monitor, payload)
         text = if payload["kind_changed"]
           "The Monitor was changed to match Logs, so it no longer compares a number with the threshold."
+        elsif payload["turned_off"]
+          "The Monitor was turned off, so it no longer checks the threshold."
+        elsif payload["deleted"]
+          "The Monitor was deleted, so it no longer checks the threshold."
         elsif payload["no_data"] && payload["value"].nil?
           "There is data again over the last #{range}."
         elsif payload["no_data"]
@@ -103,25 +121,25 @@ module Notifiers
       # range now.
       def range_text(monitor, payload)
         from, to = payload.values_at("from", "to").map { |value| Time.iso8601(value.to_s) rescue nil }
-        span(from && to ? ((to - from) / 60).round : monitor.range_minutes)
+        span(from && to ? ((to - from) / 60).round : monitor["range_minutes"].to_i)
       end
 
       def threshold_message(monitor, group_key, payload, title:, text:, severity:, action:)
         group = group_text(group_key)
-        fields = [ [ "Project", monitor.project.name ] ]
+        fields = [ [ "Project", monitor["project"] ] ]
         fields << [ "Group", group ] if group.present?
         fields << [ "Value", number(payload["value"]) ]
         fields << [ "Threshold", "#{payload['operator']} #{number(payload['threshold'])}" ]
         fields << [ "Range", "last #{range_text(monitor, payload)}" ]
 
         Message.new(
-          title: [ "#{title}: #{monitor.name}", group.presence && "(#{group})" ].compact.join(" "),
+          title: [ "#{title}: #{monitor['name']}", group.presence && "(#{group})" ].compact.join(" "),
           text: text,
           fields: fields,
           lines: [],
           link: explorer_url(monitor, payload["from"], payload["to"]),
           severity: severity,
-          dedup_key: dedup_key(monitor.id, group_key),
+          dedup_key: dedup_key(monitor["id"], group_key),
           action: action
         )
       end
@@ -139,13 +157,13 @@ module Notifiers
         end
 
         Message.new(
-          title: "#{monitor.name}: #{total} #{'Log'.pluralize(total)} matched",
+          title: "#{monitor['name']}: #{total} #{'Log'.pluralize(total)} matched",
           text: text,
-          fields: [ [ "Project", monitor.project.name ], [ "Matched", total.to_s ] ],
+          fields: [ [ "Project", monitor["project"] ], [ "Matched", total.to_s ] ],
           lines: lines,
           link: explorer_url(monitor, payload["from"], payload["to"]),
           severity: "warning",
-          dedup_key: dedup_key(monitor.id, ""),
+          dedup_key: dedup_key(monitor["id"], ""),
           action: "trigger"
         )
       end
@@ -170,9 +188,9 @@ module Notifiers
 
       # The Logs explorer on the Monitor's Project and Query, over [from, to).
       def explorer_url(monitor, from, to)
-        params = { org_slug: monitor.organization.slug, host: host, mode: "query", q: monitor.query }
+        params = { org_slug: monitor["organization_slug"], host: host, mode: "query", q: monitor["query"] }
         params.merge!(from: from, to: to) if from.present? && to.present?
-        Rails.application.routes.url_helpers.project_logs_url(monitor.project, **params)
+        Rails.application.routes.url_helpers.project_logs_url(monitor["project_slug"], **params)
       end
 
       def host
