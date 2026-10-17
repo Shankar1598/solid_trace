@@ -8,6 +8,7 @@ class Integration < ApplicationRecord
   DEFAULT_TIME_WINDOW_MINUTES = 5
 
   belongs_to :organization
+  has_many :monitor_integrations, dependent: :delete_all
 
   validates :provider, presence: true, inclusion: { in: PROVIDERS }
   validates :name, presence: true

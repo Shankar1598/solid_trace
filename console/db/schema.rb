@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_17_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_17_120100) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -134,13 +134,73 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_17_090000) do
     t.index ["project_id", "status"], name: "index_issues_on_project_id_and_status"
   end
 
+  create_table "monitor_integrations", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "integration_id", null: false
+    t.integer "monitor_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["integration_id"], name: "index_monitor_integrations_on_integration_id"
+    t.index ["monitor_id", "integration_id"], name: "index_monitor_integrations_on_monitor_id_and_integration_id", unique: true
+  end
+
+  create_table "monitor_runs", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "elapsed_ms"
+    t.text "error"
+    t.integer "firing"
+    t.boolean "logs_skipped", default: false, null: false
+    t.integer "matched"
+    t.integer "monitor_id", null: false
+    t.datetime "ran_at", null: false
+    t.string "status", null: false
+    t.index ["monitor_id", "ran_at"], name: "index_monitor_runs_on_monitor_id_and_ran_at"
+  end
+
+  create_table "monitor_states", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "group_key", default: "", null: false
+    t.float "last_value"
+    t.integer "monitor_id", null: false
+    t.datetime "since", null: false
+    t.string "status", default: "ok", null: false
+    t.datetime "updated_at", null: false
+    t.index ["monitor_id", "group_key"], name: "index_monitor_states_on_monitor_id_and_group_key", unique: true
+  end
+
+  create_table "monitors", force: :cascade do |t|
+    t.boolean "alert_on_no_data", default: false, null: false
+    t.datetime "created_at", null: false
+    t.datetime "disabled_at"
+    t.string "ingest_cursor"
+    t.integer "interval_minutes", default: 1, null: false
+    t.string "kind", null: false
+    t.text "last_error"
+    t.datetime "last_run_at"
+    t.datetime "logs_skipped_at"
+    t.string "name", null: false
+    t.datetime "next_run_at"
+    t.boolean "notify_by_group", default: false, null: false
+    t.string "operator"
+    t.integer "organization_id", null: false
+    t.integer "project_id", null: false
+    t.text "query", null: false
+    t.integer "range_minutes", default: 5, null: false
+    t.float "threshold"
+    t.integer "timeouts_in_a_row", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["organization_id"], name: "index_monitors_on_organization_id"
+    t.index ["project_id"], name: "index_monitors_on_project_id"
+  end
+
   create_table "notifications", force: :cascade do |t|
     t.integer "attempts", default: 0, null: false
     t.datetime "created_at", null: false
     t.text "error_message"
+    t.string "group_key"
     t.integer "integration_id", null: false
-    t.integer "issue_id", null: false
+    t.integer "issue_id"
     t.string "kind", null: false
+    t.integer "monitor_id"
     t.binary "payload"
     t.datetime "processing_at"
     t.datetime "sent_at"
@@ -149,7 +209,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_17_090000) do
     t.index ["integration_id", "issue_id", "kind", "created_at"], name: "index_notifications_on_integration_issue_kind_created_at"
     t.index ["integration_id", "kind", "status"], name: "index_notifications_on_integration_id_and_kind_and_status"
     t.index ["integration_id"], name: "index_notifications_on_integration_id"
+    t.index ["monitor_id", "group_key", "created_at"], name: "index_notifications_on_monitor_group_created_at"
     t.index ["status", "created_at"], name: "index_notifications_on_status_and_created_at"
+    t.check_constraint "(issue_id IS NOT NULL AND monitor_id IS NULL AND group_key IS NULL) OR (issue_id IS NULL AND monitor_id IS NOT NULL AND group_key IS NOT NULL)", name: "notifications_one_subject"
   end
 
   create_table "organizations", force: :cascade do |t|
@@ -235,6 +297,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_17_090000) do
   add_foreign_key "issue_fingerprints", "projects"
   add_foreign_key "issues", "organizations_users", column: "assignee_id"
   add_foreign_key "issues", "projects"
+  add_foreign_key "monitor_integrations", "integrations", on_delete: :cascade
+  add_foreign_key "monitor_integrations", "monitors", on_delete: :cascade
+  add_foreign_key "monitor_runs", "monitors", on_delete: :cascade
+  add_foreign_key "monitor_states", "monitors", on_delete: :cascade
+  add_foreign_key "monitors", "organizations"
+  add_foreign_key "monitors", "projects"
   add_foreign_key "notifications", "integrations"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
