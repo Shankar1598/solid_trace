@@ -20,7 +20,12 @@ module McpTools
       made = organization.projects.build_with_key(name: arguments[:name].to_s.strip, log_retention_days: arguments[:log_retention_days])
       raise ToolError, "Give the Project a name." if made.name.blank?
 
+      # Every Project's page must be reachable at its slug.
       slug = made.name.parameterize
+      raise ToolError, "Give the Project a name with Latin letters or digits. Its slug is made from them." if slug.blank?
+      if slug == "new"
+        raise ToolError, "A Project can't be called new, since its page would be the New Project page. Give another name."
+      end
       if organization.projects.exists?(slug: slug)
         raise ToolError, "#{organization.slug} already has a Project #{slug}. Give another name, or use that one."
       end

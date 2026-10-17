@@ -39,6 +39,24 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert_equal 1, @acme.projects.count
   end
 
+  test "create_project won't make a Project whose name gives no slug" do
+    [ "日本語", "Проект", "!!!" ].each do |name|
+      answer = call_tool(:create_project, user: @admin, name: name)
+
+      assert answer.error?, name
+      assert_equal "Give the Project a name with Latin letters or digits. Its slug is made from them.", answer.text
+    end
+    assert_equal 1, @acme.projects.count
+  end
+
+  test "create_project won't make a Project whose slug is a page's" do
+    answer = call_tool(:create_project, user: @admin, name: "New")
+
+    assert answer.error?
+    assert_equal "A Project can't be called new, since its page would be the New Project page. Give another name.", answer.text
+    assert_equal 1, @acme.projects.count
+  end
+
   test "get_project_setup gives the DSN, Log ingest URL and key, and curl as the Project and Logs pages do" do
     second = @shop.project_keys.create!
 
