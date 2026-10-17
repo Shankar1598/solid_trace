@@ -1,7 +1,9 @@
 package main_test
 
 import (
+	"database/sql"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -221,4 +223,33 @@ func TestQueriesNotMadeBinByBinNeverUseTheBinCache(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestAnInstallFromBeforeGenerationsGetsThemForItsFiles(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	postChartLogs(t, env)
+	env.ExportLogs(t)
+
+	// Its manifest has no generations, and no sequence to make them.
+	env.close()
+	db, err := sql.Open("duckdb", filepath.Join(env.dir, "logs.duckdb"))
+	if err != nil {
+		t.Fatalf("Open logs.duckdb: %v", err)
+	}
+	for _, ddl := range []string{"ALTER TABLE log_files DROP COLUMN generation", "DROP SEQUENCE log_file_generations"} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("%s: %v", ddl, err)
+		}
+	}
+	db.Close()
+	env.open(t)
+
+	hits := assertSameWithAndWithoutTheBinCache(t, env, "after the upgrade")
+	if got := hits[binCachedQueries[0]]; got != 27 {
+		t.Errorf("Expected a second run to take 27 hours from the cache, got %d", got)
+	}
+	postAndProcess(t, env, chartLog(t, chartAt(2, 3, 10), "dee", 500))
+	env.ExportLogs(t)
+	assertSameWithAndWithoutTheBinCache(t, env, "after a late file")
 }
