@@ -12,6 +12,7 @@ class Integration < ApplicationRecord
 
   validates :provider, presence: true, inclusion: { in: PROVIDERS }
   validates :name, presence: true
+  validate :webhook_url_is_https, unless: -> { Rails.env.local? }
   before_validation :set_name
 
   scope :active, -> { where(active: true) }
@@ -87,5 +88,21 @@ class Integration < ApplicationRecord
 
   def set_name
     self.name = provider.titleize if name.blank?
+  end
+
+  # Console POSTs to a webhook URL over https only (Notifiers::HttpDelivery),
+  # so a member can't point it at a plain-http host it reaches. Development
+  # and test allow http for local stubs.
+  def webhook_url_is_https
+    return if webhook_url.blank? || https_url?(webhook_url)
+
+    errors.add(:"settings.webhook_url", "must be an https:// URL")
+  end
+
+  def https_url?(url)
+    uri = URI.parse(url.to_s)
+    uri.is_a?(URI::HTTPS) && uri.host.present?
+  rescue URI::InvalidURIError
+    false
   end
 end

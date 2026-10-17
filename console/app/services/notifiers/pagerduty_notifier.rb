@@ -7,7 +7,8 @@ module Notifiers
     EVENTS_API_URL = "https://events.pagerduty.com/v2/enqueue".freeze
 
     # Where events go: PAGERDUTY_EVENTS_URL when set, so development and
-    # tests can send them to a stub, else PagerDuty's Events API.
+    # tests can send them to a stub, else PagerDuty's Events API. The
+    # operator sets it, so it may be plain http (HttpDelivery#post_json).
     def self.events_url
       ENV["PAGERDUTY_EVENTS_URL"].presence || EVENTS_API_URL
     end
@@ -29,7 +30,7 @@ module Notifiers
     def call
       raise NotConfigured, "No routing key" if routing_key.blank?
 
-      post_json(self.class.events_url, payload)
+      post_json(self.class.events_url, payload, operator_set: true)
     end
 
     private
