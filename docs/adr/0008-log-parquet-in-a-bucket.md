@@ -16,7 +16,7 @@ Both clouds are reached through the S3 API with aws-sdk-go-v2, GCS through its S
 
 - **httpfs is a separate file tied to DuckDB's version.**
   - The Docker image downloads it for its architecture into `duckdb_extension_directory` (`/usr/local/lib/solidtrace/duckdb_extensions`).
-  - While a bucket is configured, EventStore turns DuckDB's extension autoinstall and autoload off and loads it from there, so DuckDB never downloads code while running. Without a bucket DuckDB's defaults stand, and an SQL query that needs a known extension may install it.
+  - EventStore turns DuckDB's extension autoinstall and autoload off and, while a bucket is configured, loads httpfs from there, so DuckDB never downloads code while running. Autoload was first turned off only with a bucket; since SQL queries became read-only ([ADR 0003](0003-unrestricted-sql-queries-behind-an-instance-setting.md)) it is off on every install, so an SQL query can't load an extension.
   - DuckDB checks the file's signature when it loads it.
   - Upgrading duckdb-go means changing `DUCKDB_VERSION` in the Dockerfile too.
 - **One secret serves every connection.** It is temporary, held in memory, scoped to the bucket and created once at startup. Every pooled connection uses it, and so does SQL mode ([ADR 0003](0003-unrestricted-sql-queries-behind-an-instance-setting.md)). The key comes from `SOLIDTRACE_OBJECT_STORE_KEY_ID` and `SOLIDTRACE_OBJECT_STORE_SECRET`, never from the config file.

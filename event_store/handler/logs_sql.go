@@ -28,13 +28,14 @@ type sqlRequest struct {
 
 // POST /api/:project_id/logs/sql
 //
-// Runs raw DuckDB SQL, {"sql", "from", "to"} (RFC 3339), exactly as written,
-// with the logs view holding the Project's Logs of [from, to) (ADR 0003), and
+// Runs raw DuckDB SQL, {"sql", "from", "to"} (RFC 3339), as written, with the
+// logs view holding the Project's Logs of [from, to) (ADR 0003), and
 // "timeout_seconds" optional. Only while the instance's SQL queries setting is
 // on; otherwise 403. Answers {"table": {"columns": [{"name", "type"}],
 // "rows": [[…]], "truncated"}, "elapsed_ms"}, at most maxTableRows rows. SQL
-// that fails answers 400 with {"error"}, DuckDB's message, and a run past its
-// timeout 504 with {"errors": [{"message"}]}.
+// that fails answers 400 with {"error"}, DuckDB's message, as does SQL that
+// isn't one read-only SELECT, with "SQL queries are read-only: … isn't
+// allowed". A run past its timeout answers 504 with {"errors": [{"message"}]}.
 func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
