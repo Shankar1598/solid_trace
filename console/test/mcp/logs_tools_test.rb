@@ -264,6 +264,19 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert_not_requested run
   end
 
+  # The link
+
+  test "an explorer link is built as lib/logs/explorerState.ts reads it" do
+    links = McpTools::Links.new(CONSOLE_URL)
+
+    # lib/logs/mcpLinks.test.ts checks the explorer opens each url in its state.
+    JSON.parse(file_fixture("explorer_links.json").read)["links"].each do |link|
+      given = link["given"].symbolize_keys
+      range = McpTools::TimeRange.parse(**given.slice(:range, :from, :to))
+      assert_equal link["url"], links.explorer(@shop, range: range, **given.slice(:query, :sql, :viz))
+    end
+  end
+
   test "the Logs tools only read" do
     [ McpTools::QueryLogs, McpTools::GetLog, McpTools::ListFields, McpTools::QueryLanguageReference, McpTools::RunSql ].each do |tool|
       assert_equal({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }, tool.annotations_value.to_h.compact,
