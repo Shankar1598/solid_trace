@@ -159,7 +159,7 @@ class MonitorEvaluation
 
     ApplicationRecord.transaction do
       notify_matched(logs, total) if total.positive?
-      @monitor.update_columns(ingest_cursor: answer.fetch("ingest_cursor"), timeouts_in_a_row: 0)
+      @monitor.update_columns(ingest_cursor: answer.fetch("ingest_cursor"), ingest_cursor_at: @now, timeouts_in_a_row: 0)
       finish(matched: total)
     end
   rescue EventStore::TimedOut => e
@@ -170,12 +170,22 @@ class MonitorEvaluation
     payload = {
       "logs" => logs.map { |log| slim(log) },
       "total" => total,
-      "from" => logs.filter_map { |log| log["time"] }.min,
+      "from" => matched_from(logs),
       "to" => @now.utc.iso8601,
       "logs_skipped_at" => @monitor.logs_skipped_at&.utc&.iso8601,
     }
     notify(IntegrationNotification::MONITOR_MATCHED, "", payload)
     @monitor.update_columns(logs_skipped_at: nil)
+  end
+
+  # Where the message's explorer link starts. The Logs listed are the
+  # newest, so the others are older: the link starts a processing lag
+  # before the cursor was kept, as the Logs read were processed since, or
+  # at the oldest Log listed when that came in later than its time says.
+  def matched_from(logs)
+    times = logs.filter_map { |log| Time.iso8601(log["time"].to_s) rescue nil }
+    times << @monitor.ingest_cursor_at - LogMonitor::PROCESSING_LAG if @monitor.ingest_cursor_at
+    times.min&.utc&.iso8601
   end
 
   def slim(log)
@@ -203,9 +213,9 @@ class MonitorEvaluation
       timeout_seconds: LogMonitor::RUN_TIMEOUT_SECONDS
     )
     ApplicationRecord.transaction do
-      @monitor.arm(answer.fetch("ingest_cursor"))
+      @monitor.arm(answer.fetch("ingest_cursor"), @now)
       @monitor.logs_skipped_at = @now if skipping
-      @monitor.update_columns(@monitor.slice(:ingest_cursor, :timeouts_in_a_row, :logs_skipped_at))
+      @monitor.update_columns(@monitor.slice(:ingest_cursor, :ingest_cursor_at, :timeouts_in_a_row, :logs_skipped_at))
       note = "#{error} Runs timed out #{TIMEOUTS_BEFORE_SKIPPING} times in a row, so the Monitor started again " \
         "from the newest Logs and skipped those ingested since its last run." if error
       finish(matched: 0, logs_skipped: skipping, error: note)

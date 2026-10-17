@@ -76,7 +76,7 @@ class MonitorQueryCheck
       project_id: @monitor.project_id, query: @monitor.query, after_batch: "",
       timeout_seconds: LogMonitor::RUN_TIMEOUT_SECONDS
     )
-    @monitor.arm(answer["ingest_cursor"]) if @monitor.arm?
+    @monitor.arm(answer["ingest_cursor"], @now) if @monitor.arm?
   end
 
   # EventStore's errors for the Query, each with where it starts.

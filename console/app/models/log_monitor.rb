@@ -86,9 +86,11 @@ class LogMonitor < ApplicationRecord
       will_save_change_to_kind? || turned_on?)
   end
 
-  # Starts a Match monitor's runs from ingest_cursor, a Log batch id.
-  def arm(cursor)
+  # Starts a Match monitor's runs from ingest_cursor, a Log batch id, kept
+  # at now.
+  def arm(cursor, now)
     self.ingest_cursor = cursor
+    self.ingest_cursor_at = now
     self.timeouts_in_a_row = 0
   end
 

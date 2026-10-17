@@ -267,8 +267,38 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_equal 10, row.payload["logs"].size
     assert_equal [ "log-0", "2026-10-17T11:59:30Z", "error", "checkout", "payment declined 0" ],
       row.payload["logs"].first.values_at("id", "time", "level", "service", "message")
-    assert_equal [ "2026-10-17T11:59:21Z", "2026-10-17T12:00:00Z" ], row.payload.values_at("from", "to")
+    assert_equal [ "2026-10-17T11:59:00Z", "2026-10-17T12:00:00Z" ], row.payload.values_at("from", "to"),
+      "the link starts a minute before the cursor was kept, as the Logs it doesn't list are older"
     assert_equal 13, monitor.runs.sole.matched
+  end
+
+  test "a Match message links to the explorer over all the Logs it counts, not only the ten it lists" do
+    monitor = match_monitor
+    travel 15.minutes
+    answer_matched(logs(10, newest: Time.current - 2.seconds), total: 200, ingest_cursor: NEXT_CURSOR)
+
+    evaluate(monitor)
+
+    assert_equal [ (NOW - LogMonitor::PROCESSING_LAG).iso8601, Time.current.iso8601 ], matched_range,
+      "from a minute before the cursor was kept, when the Monitor was armed"
+
+    first_run = Time.current
+    travel 15.minutes
+    answer_matched(logs(10, newest: Time.current - 2.seconds), total: 50, ingest_cursor: NEWEST_CURSOR)
+
+    evaluate(monitor)
+
+    assert_equal [ (first_run - LogMonitor::PROCESSING_LAG).iso8601, Time.current.iso8601 ], matched_range,
+      "from a minute before the last run kept the cursor"
+
+    travel 15.minutes
+    late = logs(1, newest: NOW - 1.hour).map { |log| log.merge("id" => "late") }
+    answer_matched(logs(9, newest: Time.current - 2.seconds) + late, total: 9, ingest_cursor: NEWEST_CURSOR)
+
+    evaluate(monitor)
+
+    assert_equal [ (NOW - 1.hour).iso8601, Time.current.iso8601 ], matched_range,
+      "from the oldest Log it lists, when that came in late"
   end
 
   test "a Match run with no Logs moves its cursor and sends nothing" do
@@ -334,10 +364,13 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_equal [ false, false, true ], monitor.runs.reorder(:ran_at).pluck(:logs_skipped)
 
     travel 1.minute
-    answer_matched(logs(1), total: 1, ingest_cursor: NEXT_CURSOR, after_batch: NEWEST_CURSOR)
+    answer_matched(logs(1, newest: Time.current - 2.seconds), total: 1, ingest_cursor: NEXT_CURSOR,
+      after_batch: NEWEST_CURSOR)
     evaluate(monitor)
 
     assert_equal skipped_at.iso8601, Notification.sole.payload["logs_skipped_at"]
+    assert_equal (skipped_at - LogMonitor::PROCESSING_LAG).iso8601, matched_range.first,
+      "the link starts from where the Monitor started again"
     assert_nil monitor.reload.logs_skipped_at
     assert_nil monitor.last_error
   end
@@ -403,15 +436,21 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     }.to_json)
   end
 
-  def logs(count)
+  # count Logs a second apart, newest first.
+  def logs(count, newest: NOW - 30.seconds)
     count.times.map do |i|
-      { "id" => "log-#{i}", "time" => (NOW - 30.seconds - i).iso8601, "level" => "error", "service" => "checkout",
+      { "id" => "log-#{i}", "time" => (newest - i).iso8601, "level" => "error", "service" => "checkout",
         "message" => "payment declined #{i}", "attributes" => { "order" => i } }
     end
   end
 
   def timeout_body(message = "the run was stopped after 30 s, its timeout: try a shorter time range")
     { errors: [ { message: message } ] }.to_json
+  end
+
+  # The [from, to) the newest monitor_matched row links to.
+  def matched_range
+    Notification.where(kind: "monitor_matched").order(:id).last.payload.values_at("from", "to")
   end
 
   # Each Notification written, oldest first: kind, group and value.
