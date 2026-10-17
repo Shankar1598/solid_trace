@@ -149,6 +149,12 @@ class EventStore
       messages.any? ? messages.join("; ") : body.to_json
     end
 
+    # Why EventStore couldn't read Events, from the Unavailable it raised:
+    # what it said, or that it can't be reached.
+    def events_unavailable_text(error)
+      error.body ? error_text(error.body) : "Events can't be read now: EventStore can't be reached."
+    end
+
     # A Query's mistakes in a refusal or a validate answer, one line each,
     # with its line and column when it has them; or what else EventStore
     # said, as one line.
