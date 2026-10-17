@@ -16,7 +16,10 @@ module McpServer
     McpTools::AddChart,
     McpTools::UpdateChart,
     McpTools::DeleteChart,
-    McpTools::GetChartData
+    McpTools::GetChartData,
+    McpTools::ListMonitors,
+    McpTools::GetMonitor,
+    McpTools::ListIntegrations
   ].freeze
 
   INSTRUCTIONS = <<~TEXT
