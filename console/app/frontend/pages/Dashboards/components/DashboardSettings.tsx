@@ -27,7 +27,7 @@ export function DashboardSettings({ dashboard, orgSlug, search, onClose }: {
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     form.transform(data => ({ dashboard: data }))
-    form.patch(`${basePath}${search}`, { preserveScroll: true, onSuccess: onClose })
+    form.patch(`${basePath}${search}`, { preserveScroll: true, preserveState: true, onSuccess: onClose })
   }
 
   return (
