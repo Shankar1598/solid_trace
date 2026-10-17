@@ -48,7 +48,7 @@ import { errorParts } from '@/lib/logs/errorParts'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
 import { editAsBuilder, pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
-import { fillStream, keepsFetching, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
+import { fillStream, keepsFetching, seekLog, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
 import { aroundLog } from '@/lib/logs/inspector'
 import type { LogTable } from '@/lib/logs/table'
 import { registerPaletteSource } from '@/lib/palette'
@@ -535,11 +535,8 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
   }
   useEffect(() => {
     if (seeking === null || result.status === 'running') return
-    if (result.status !== 'done' || result.olderError || streamEnd(result.stream) !== 'more' || result.stream.logs.some(l => l.id === seeking)) {
-      setSeeking(null)
-    } else if (!result.loadingOlder) {
-      loadOlder()
-    }
+    if (result.status !== 'done' || result.olderError || seekLog(result.stream, seeking) !== 'older') setSeeking(null)
+    else if (!result.loadingOlder) loadOlder()
   }, [seeking, result, loadOlder])
 
   /** The Builder's Project: its clauses, on the Logs of the Project picked. */
