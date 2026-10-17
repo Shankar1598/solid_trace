@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 # Integration notification: the one place that decides when and how an
-# Organization's Integrations are told about its Issues.
+# Organization's Integrations are told about its Issues and Monitors.
 #
 # Entry points:
 # - issue_received_event: an Issue received an Event (and may be new)
 # - issue_assignment_changed: an Issue's assignee changed
+# - monitor_changed: a Monitor's group started or stopped firing, or Logs
+#   matched a Match monitor
 # - deliver_pending: the per-Integration processor tick
 #
 # Triggers write Notification rows (the outbox) for every kind whose rule
@@ -20,6 +22,10 @@ module IntegrationNotification
   ISSUE_CREATED = "issue_created"
   THRESHOLD_REACHED = "threshold_reached"
   ASSIGNMENT_CHANGED = "assignment_changed"
+  MONITOR_FIRING = "monitor_firing"
+  MONITOR_RESOLVED = "monitor_resolved"
+  MONITOR_MATCHED = "monitor_matched"
+  MONITOR_KINDS = [ MONITOR_FIRING, MONITOR_RESOLVED, MONITOR_MATCHED ].freeze
 
   # Delay between the first row for an Integration and its tick, so that Issues
   # arriving together share one message.
@@ -47,7 +53,8 @@ module IntegrationNotification
   }.freeze
 
   # Kinds delivered together as one message per tick. Every other kind is
-  # delivered as one message per row.
+  # delivered as one message per row. Monitor kinds never are: each row is
+  # one step of its group's chain.
   BATCHED_KINDS = [ ISSUE_CREATED ].freeze
 
   ADAPTERS = {
@@ -70,6 +77,21 @@ module IntegrationNotification
         previous_assignee_id: previous_assignee_id,
         new_assignee_id: new_assignee_id
       )
+    end
+
+    # Writes a row of +kind+ about one group of a Monitor for each of its
+    # active Integrations, and schedules their ticks. MonitorEvaluation calls
+    # it for each change of a group's status, in the transaction that records
+    # the change, so the rows follow the Monitor's states: a group that stays
+    # firing writes nothing more. +payload+ is what the run saw, for the
+    # message (Notifiers::MonitorMessage).
+    def monitor_changed(monitor, kind:, group_key:, payload:)
+      raise ArgumentError, "Unknown Monitor notification kind: #{kind.inspect}" unless MONITOR_KINDS.include?(kind)
+
+      monitor.integrations.active.find_each do |integration|
+        Notification.enqueue!(integration: integration, monitor: monitor, group_key: group_key, kind: kind, payload: payload)
+        schedule_tick(integration, wait: INITIAL_DELAY)
+      end
     end
 
     def deliver_pending(integration_id)
@@ -140,8 +162,14 @@ module IntegrationNotification
       opens_at if Time.current < opens_at
     end
 
+    # Rows about Issues and rows about Monitors are delivered their own ways.
     def deliver_rows(integration, row_ids)
-      rows = Notification.where(id: row_ids).includes(issue: { project: :organization }).order(:created_at).to_a
+      deliver_issue_rows(integration, row_ids)
+      deliver_monitor_rows(integration, row_ids)
+    end
+
+    def deliver_issue_rows(integration, row_ids)
+      rows = Notification.where(id: row_ids, monitor_id: nil).includes(issue: { project: :organization }).order(:created_at).to_a
 
       rows_without_issue, rows = rows.partition { |row| row.issue.nil? }
       Notification.mark_rows(rows_without_issue.map(&:id), :skipped, "Issue missing") if rows_without_issue.any?
@@ -154,6 +182,39 @@ module IntegrationNotification
           kind_rows.each { |row| deliver_message(integration, kind, [ row ], [ row.issue ], row.payload) }
         end
       end
+    end
+
+    # Each group of a Monitor is a chain: its rows go one at a time, oldest
+    # first, and the chain stops at the first that fails, leaving the rest
+    # for the retry. So a resolve never goes before the trigger it closes.
+    def deliver_monitor_rows(integration, row_ids)
+      rows = Notification.where(id: row_ids).where.not(monitor_id: nil)
+        .includes(monitor: [ :organization, :project ]).order(:created_at, :id).to_a
+
+      rows_without_monitor, rows = rows.partition { |row| row.monitor.nil? }
+      Notification.mark_rows(rows_without_monitor.map(&:id), :skipped, "Monitor missing") if rows_without_monitor.any?
+
+      rows.group_by { |row| [ row.monitor_id, row.group_key ] }.each_value do |chain|
+        chain.each do |row|
+          Notification.mark_rows([ row.id ], :processing)
+          break unless deliver_monitor_message(integration, row)
+        end
+      end
+    end
+
+    # Delivers one Monitor row; false when it failed and may be retried.
+    def deliver_monitor_message(integration, row)
+      message = Notifiers::MonitorMessage.build(row)
+      adapter_for(integration).new(integration, kind: row.kind, message: message).call
+      Notification.mark_rows([ row.id ], :sent)
+      true
+    rescue Notifiers::NotConfigured => e
+      Notification.mark_rows([ row.id ], :skipped, e.message)
+      true
+    rescue StandardError => e
+      Rails.logger.warn("Integration notification to #{integration.provider} failed: #{e.message}")
+      Notification.mark_rows([ row.id ], :failed, e.message)
+      false
     end
 
     # Delivers one message and records its outcome on every row it carries.

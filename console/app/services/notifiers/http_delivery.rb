@@ -13,15 +13,16 @@ module Notifiers
     private
 
     # POSTs +payload+ as JSON to +url+ and returns the response. Anything other
-    # than a 2xx response raises DeliveryFailed.
+    # than a 2xx response raises DeliveryFailed. An http URL, such as a local
+    # stub's, is sent without TLS.
     def post_json(url, payload)
       uri = URI.parse(url)
       http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
+      http.use_ssl = uri.scheme == "https"
       http.open_timeout = TIMEOUT_SECONDS
       http.read_timeout = TIMEOUT_SECONDS
 
-      request = Net::HTTP::Post.new(uri.path)
+      request = Net::HTTP::Post.new(uri.request_uri)
       request["Content-Type"] = "application/json"
       request.body = payload.to_json
 
