@@ -49,6 +49,22 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to projects_url(org_slug: @organization.slug)
   end
 
+  test "a new Project gets its first key, so it can be sent Logs at once" do
+    post projects_url(org_slug: @organization.slug), params: { project: { name: "Checkout" } }
+
+    keys = @organization.projects.find_by!(name: "Checkout").project_keys
+    assert_equal 1, keys.size
+    assert_match(/\A\h{32}\z/, keys.first.public_key)
+    assert_match(/\A\h{64}\z/, keys.first.secret_key)
+  end
+
+  test "Generate New Key gives the Project another key of its own" do
+    post project_keys_url(@project, org_slug: @organization.slug)
+
+    assert_redirected_to project_url(@project, org_slug: @organization.slug)
+    assert_match(/\A\h{32}\z/, @project.project_keys.sole.public_key)
+  end
+
   test "update project" do
     sign_in_as(@admin)
 

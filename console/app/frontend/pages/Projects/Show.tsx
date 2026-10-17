@@ -1,4 +1,4 @@
-import { useForm, usePage } from '@inertiajs/react'
+import { router, useForm, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import Breadcrumbs from '@/components/Breadcrumbs'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
@@ -165,7 +165,7 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
                     <p className="text-sm text-muted-foreground mb-4">
                       This project doesn't have any client keys generated yet.
                     </p>
-                    <Button variant="outline" size="sm">
+                    <Button variant="outline" size="sm" onClick={() => router.post(`/${current_org.slug}/projects/${project.slug}/keys`)}>
                       <RefreshCw className="mr-2 h-4 w-4" />
                       Generate New Key
                     </Button>
