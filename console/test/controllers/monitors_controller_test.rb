@@ -42,6 +42,8 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     firing.states.create!(group_key: "", status: "firing", since: Time.utc(2026, 10, 3, 9), last_value: 12)
     create(:monitor, project: @project, name: "Broken", last_error: "EventStore is unavailable")
     create(:monitor, project: @project, name: "Quiet", disabled_at: Time.current)
+    failing = create(:monitor, project: @project, name: "Still firing", last_error: "EventStore is unavailable")
+    failing.states.create!(group_key: "", status: "firing", since: Time.utc(2026, 10, 3, 9), last_value: 30)
     other = create(:project, organization: create(:organization))
     stub_monitor_query_check(other)
     create(:monitor, project: other, name: "Not ours")
@@ -53,9 +55,11 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
       [ "Broken", "error", "threshold", 0, "Storefront" ],
       [ "Checkout errors", "ok", "threshold", 0, "Storefront" ],
       [ "Quiet", "disabled", "threshold", 0, "Storefront" ],
-      [ "Slow pages", "firing", "threshold", 1, "Storefront" ]
+      [ "Slow pages", "firing", "threshold", 1, "Storefront" ],
+      [ "Still firing", "firing", "threshold", 1, "Storefront" ]
     ], rows
-    assert_equal "2026-10-03T09:00:00Z", props["monitors"].last["last_run_at"]
+    assert_equal "EventStore is unavailable", props["monitors"].last["last_error"], "a firing Monitor's failed run is noted"
+    assert_equal "2026-10-03T09:00:00Z", props["monitors"][3]["last_run_at"]
   end
 
   test "every page knows the Organization's Monitors, for the palette" do

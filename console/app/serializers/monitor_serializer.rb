@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 # A Monitor as its pages know it. status is what the list shows first:
-# disabled when it is off, error when its last run failed, firing when any
-# group is firing, and ok otherwise. include_details adds each group's state,
+# disabled when it is off, firing when any group is firing (its pages note
+# last_error beside it), error when its last run failed, and ok otherwise.
+# A failed run changes no state, so the groups it left firing still are. include_details adds each group's state,
 # the runs it keeps and its Integrations, for its own page.
 class MonitorSerializer
   def initialize(monitor, include_details: false)
@@ -47,8 +48,8 @@ class MonitorSerializer
 
   def status(firing)
     if !@monitor.enabled? then "disabled"
-    elsif @monitor.last_error.present? then "error"
     elsif firing.positive? then "firing"
+    elsif @monitor.last_error.present? then "error"
     else "ok"
     end
   end
