@@ -60,6 +60,19 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to projects_url(org_slug: @organization.slug)
   end
 
+  test "the New Project form refuses a name whose slug another of the Organization's Projects has" do
+    create(:project, organization: @organization, name: "Shop", slug: nil)
+
+    assert_no_difference -> { Project.count } do
+      post projects_url(org_slug: @organization.slug), params: { project: { name: "SHOP" } }
+    end
+
+    assert_redirected_to new_project_url(org_slug: @organization.slug)
+    get new_project_url(org_slug: @organization.slug), headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    assert_equal [ "gives the slug shop, which another of this Organization's Projects has" ],
+      response.parsed_body.dig("props", "errors", "name")
+  end
+
   test "a new Project gets its first key, so it can be sent Logs at once" do
     post projects_url(org_slug: @organization.slug), params: { project: { name: "Checkout" } }
 

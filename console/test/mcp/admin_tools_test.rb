@@ -31,11 +31,19 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/projects/checkout", answer.link
   end
 
+  test "create_project won't make a Project without a name" do
+    answer = call_tool(:create_project, user: @admin, name: "  ")
+
+    assert answer.error?
+    assert_equal "Not saved: Name can't be blank.", answer.text
+    assert_equal 1, @acme.projects.count
+  end
+
   test "create_project won't make a second Project of a slug" do
     answer = call_tool(:create_project, user: @admin, name: "SHOP")
 
     assert answer.error?
-    assert_equal "acme already has a Project shop. Give another name, or use that one.", answer.text
+    assert_equal "Not saved: Name gives the slug shop, which another of this Organization's Projects has.", answer.text
     assert_equal 1, @acme.projects.count
   end
 
@@ -44,7 +52,7 @@ class McpAdminToolsTest < ActiveSupport::TestCase
       answer = call_tool(:create_project, user: @admin, name: name)
 
       assert answer.error?, name
-      assert_equal "Give the Project a name with Latin letters or digits. Its slug is made from them.", answer.text
+      assert_equal "Not saved: Name needs Latin letters or digits, since the Project's slug is made from them.", answer.text
     end
     assert_equal 1, @acme.projects.count
   end
@@ -53,7 +61,7 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     answer = call_tool(:create_project, user: @admin, name: "New")
 
     assert answer.error?
-    assert_equal "A Project can't be called new, since its page would be the New Project page. Give another name.", answer.text
+    assert_equal "Not saved: Name gives the slug new, which is the New Project page's address.", answer.text
     assert_equal 1, @acme.projects.count
   end
 
