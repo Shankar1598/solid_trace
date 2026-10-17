@@ -56,6 +56,7 @@ class LogMonitor < ApplicationRecord
   validate :query_runs_as_its_kind, if: :query_check_needed?
 
   before_save :run_at_the_next_tick, if: :schedule_changed?
+  after_update :resolve_groups, if: :no_longer_a_threshold_monitor?
 
   def enabled?
     disabled_at.nil?
@@ -134,5 +135,24 @@ class LogMonitor < ApplicationRecord
 
   def run_at_the_next_tick
     self.next_run_at = nil
+  end
+
+  def no_longer_a_threshold_monitor?
+    saved_change_to_kind? && kind_before_last_save == "threshold"
+  end
+
+  # A Threshold monitor changed to a Match monitor no longer compares its
+  # groups with the threshold, and its runs never would resolve them: each
+  # firing group sends monitor_resolved now, which closes its PagerDuty
+  # incident, and its states go.
+  def resolve_groups
+    states.reload.select(&:status_firing?).each do |state|
+      IntegrationNotification.monitor_changed(self, kind: IntegrationNotification::MONITOR_RESOLVED,
+        group_key: state.group_key, payload: {
+          "value" => state.last_value, "operator" => operator_before_last_save,
+          "threshold" => threshold_before_last_save, "kind_changed" => true,
+        })
+    end
+    states.delete_all
   end
 end

@@ -6,7 +6,8 @@ module Notifiers
   # Builds the Message for a Notification about a Monitor, from the Monitor
   # and what its run saw, which MonitorEvaluation stored in the row's payload:
   # - monitor_firing and monitor_resolved: value (nil for no data), column,
-  #   threshold, operator, from and to (the range read)
+  #   threshold, operator, from and to (the range read); a resolve says
+  #   absent, no_data or kind_changed when it has one of those reasons
   # - monitor_matched: logs (up to MonitorEvaluation::MATCHED_LOGS), total,
   #   from and to (for the explorer), and logs_skipped_at when Logs were left
   #   unread before this run
@@ -69,11 +70,14 @@ module Notifiers
       end
 
       # Resolved because the number is back within the threshold, because the
-      # group has no row any more (absent), or because a Monitor that fired
-      # for no data has data again (no_data).
+      # group has no row any more (absent), because a Monitor that fired for
+      # no data has data again (no_data), or because the Monitor now matches
+      # Logs instead (kind_changed).
       def resolved(monitor, group_key, payload)
         range = range_text(monitor, payload)
-        text = if payload["no_data"] && payload["value"].nil?
+        text = if payload["kind_changed"]
+          "The Monitor was changed to match Logs, so it no longer compares a number with the threshold."
+        elsif payload["no_data"] && payload["value"].nil?
           "There is data again over the last #{range}."
         elsif payload["no_data"]
           "There is data again over the last #{range}: #{value_text(payload)}, not #{threshold_text(payload)}."
