@@ -207,6 +207,70 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert same, "Copy docs/logs/query-language.md to console/app/mcp/docs/query-language.md."
   end
 
+  # run_sql
+
+  test "run_sql runs SQL on the Project's logs view with the run timeout, answering at most 100 rows, linking to SQL mode" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    sql = "SELECT service, count(*) AS logs FROM logs GROUP BY service"
+    rows = Array.new(120) { |i| [ "service-#{i}", i ] }
+    travel_to NOW do
+      stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
+        .with(body: { sql: sql, from: "2026-10-16T10:00:00.000Z", to: "2026-10-17T10:00:00.000Z",
+                      timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS }.to_json)
+        .to_return(status: 200, body: { table: { columns: [ { name: "service", type: "string" }, { name: "logs", type: "number" } ],
+                                                 rows: rows, truncated: false }, elapsed_ms: 8 }.to_json)
+
+      answer = call_tool(:run_sql, user: @user, project: "shop", sql: sql, range: "24h")
+
+      assert_not answer.error?
+      assert_equal({ "project" => "shop", "from" => "2026-10-16T10:00:00.000Z", "to" => "2026-10-17T10:00:00.000Z",
+                     "columns" => [ { "name" => "service", "type" => "string" }, { "name" => "logs", "type" => "number" } ],
+                     "rows" => rows.first(100), "more" => "20 more: narrow the Query." }, answer.json)
+      assert_explorer({ "range" => "24h", "mode" => "sql", "sql" => sql }, answer.link)
+    end
+  end
+
+  test "run_sql answers EventStore's refusals and SQL mistakes as it says them" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    parser_error = "Parser Error: syntax error at or near \"SELEC\"\n\nLINE 1: SELEC 1\n        ^"
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
+      .to_return({ status: 400, body: { error: "SQL queries are read-only: DROP isn't allowed" }.to_json },
+                 { status: 400, body: { error: parser_error }.to_json })
+
+    refused = call_tool(:run_sql, user: @user, project: "shop", sql: "DROP TABLE logs.log_key_counts")
+    assert refused.error?
+    assert_equal "SQL queries are read-only: DROP isn't allowed", refused.text
+    assert_equal parser_error, call_tool(:run_sql, user: @user, project: "shop", sql: "SELEC 1").text
+  end
+
+  test "run_sql is refused while SQL queries are off, without asking EventStore" do
+    run = stub_request(:post, %r{/logs/sql})
+
+    answer = run_tool(McpTools::RunSql, user: @user, project: "shop", sql: "SELECT 1")
+
+    assert answer.error?
+    assert_equal "SQL queries are turned off on this instance.", answer.text
+    assert_not McpTools::RunSql.listed?
+    assert_not_requested run
+  end
+
+  test "run_sql waits for no SQL while Console is busy" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    run = stub_request(:post, %r{/logs/sql})
+
+    holding_every_chart_run do
+      assert_match(/busy/, call_tool(:run_sql, user: @user, project: "shop", sql: "SELECT 1").text)
+    end
+    assert_not_requested run
+  end
+
+  test "the Logs tools only read" do
+    [ McpTools::QueryLogs, McpTools::GetLog, McpTools::ListFields, McpTools::QueryLanguageReference, McpTools::RunSql ].each do |tool|
+      assert_equal({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }, tool.annotations_value.to_h.compact,
+        tool.name_value)
+    end
+  end
+
   private
 
   # Checks that link opens the explorer on the Project shop with search.
