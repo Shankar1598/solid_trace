@@ -8,22 +8,16 @@ Status: ready-for-agent
 
 | From | Finding | Severity | Goes to |
 |---|---|---|---|
-| A4a, A4b | Turning off or deleting a firing Monitor sends no resolve, so a PagerDuty incident it opened stays open (the delete dialog says so) | medium | A5 |
-| A4b | Run now skips MonitorEvaluationJob's limits_concurrency, so a scheduled run at the same moment can send a second firing message | medium | A5 |
-| A4b | The list and Show badge check last_error before firing groups, so a firing Monitor whose last run failed shows only "Error" (A4b-review-1-1) | low | A5 |
-| A4b | The flow checks the page says OK after the higher threshold but not that the Slack stub got "Resolved" (A4b-review-1-2) | low | A5 |
-| A4a | Assigning integrations on a persisted Monitor inserts join rows before validation, so only one path enforces the Organization (A4a-review-1-5) | low | A5 |
-| A4a | A Threshold run ignores table.truncated; past 10,000 groups each run sees a different subset (A4a-review-1-3) | low | A5 |
-| A4a | A Threshold run already in flight can undo the kind-change resolve (after_update :resolve_groups) (A4a-recheck-2-1) | low | A5 |
-| A2c | `seeking` isn't tied to the run "Logs around this one" started (A2c-review-1-3); the range shortens whenever more than one page is newer than the Log (A2c-recheck-2-1); puma.rb still says explorer runs have no limit (A2c-review-1-4) | low | A5 |
-| A2c | ProjectKey#dsn on the Project page is still the hard-coded localhost:3000 DSN | low | A5 |
-| A2c | Six flows (charts ×4, logs-v1-inspector ×2) fail while a probe Log sits in the dev data's last 24 h; flows should not depend on the dev Project holding only the dummy Logs | medium | A5 |
-| B6 | With a bucket, a failed events-view rebuild after ArchiveEventsUpTo commits hides that run's Events (200 with fewer rows) until the next daily archive or a restart; nothing retries (B6-verify-1-1, B6-review-1-2) | medium | B7 |
-| B6 | With a bucket, startup binds every remote archive file before the ingest listener starts, and a failure is Fatal, against ADR 0008 (B6-review-1-1) | medium | B7 |
-| B6 | Removing object_store leaves bucket-only archived Events unread with no warning | low | B7 |
+| A5 | MonitorEvaluation.run works on the Monitor its caller loaded before the lease, and the version check compares only updated_at, which the run's own update_columns leave alone (A5-review-1-2, A5-verify-1-1) | low | whole-branch review |
+| A5 | A TABLE_CUT error repeats every minute whatever the interval, and Save doesn't refuse a Query whose dry run is cut (A5-review-1-3) | low | whole-branch review |
+| A5 | Deleting an Integration (dependent: :delete_all) sends no resolve for its firing Monitors (A5-review-1-1) | low | whole-branch review |
+| A5 | Deleting or turning off a Match monitor leaves the PagerDuty incident its matched messages opened (monitors.md says resolve by hand) | low | later |
+| A5 | Organization#destroy may fail on the notifications→integrations foreign key once an Integration has Notification rows (predates Logs v2; no UI deletes an Organization) | low | later |
+| B7 | Without a bucket, a failed glob() count builds a view over the hot table only and reports success (B7-review-1-2) | low | whole-branch review |
+| B7 | EventStore's new 503 for a stale events view is turned into an empty answer by Console's EventStore.make_request, so an Issue shows no Events instead of an error (B7-review-1-1) | low | whole-branch review |
 | A4a | alert_on_no_data is not held during a Log processing backlog (spec Risks): EventStore exposes no processing lag | low | later (needs an EventStore field) |
 
-Done in batch 5: the B3 re-arm rule (A4a), the explorer run's timeout and the five A2a/A2b lows (A2c), the five B4a/B4b lows (B5), and ADR 0008's Event archive part (B6).
+Done in batch 6: every A5 and B7 row from batch 5, the Console docs (query-language Charts, monitors.md, ADR 0006, glossary) and docs/logs/object-store.md.
 
 ## Phase 6 polish
 
