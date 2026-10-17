@@ -22,6 +22,9 @@ Rails.application.routes.draw do
   resource :registration, only: [ :new, :create ]
   resource :user_settings, only: [ :show, :update ], controller: "user_settings"
   resources :api_tokens, only: [ :create, :destroy ]
+  # The MCP server (McpController).
+  post "mcp", to: "mcp#create", as: :mcp, format: false
+  match "mcp", to: "mcp#method_not_allowed", via: [ :get, :delete ], as: nil, format: false
   resources :passwords, param: :token
 
   scope "/:org_slug" do

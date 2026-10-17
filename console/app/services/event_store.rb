@@ -149,6 +149,18 @@ class EventStore
       messages.any? ? messages.join("; ") : body.to_json
     end
 
+    # A Query's mistakes in a refusal or a validate answer, one line each,
+    # with its line and column when it has them; or what else EventStore
+    # said, as one line.
+    def mistakes(body)
+      errors = body.is_a?(Hash) ? Array(body["errors"]).select { |error| error.is_a?(Hash) } : []
+      return [ error_text(body) ] if errors.empty?
+
+      errors.map do |error|
+        error["line"] ? "line #{error['line']}, column #{error['column']}: #{error['message']}" : error["message"].to_s
+      end
+    end
+
     # Counts the Logs in [from, to) that pass a Query's filters, per bucket
     # and Level: {"bucket_seconds", "buckets" => [{"time", "count",
     # "levels"}], "count", "levels"}. levels has every Level and "none" for
