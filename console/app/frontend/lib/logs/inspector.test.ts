@@ -130,6 +130,15 @@ describe('Logs around this one', () => {
       expect(narrowAround(range, streamOf(0, 10), log)).toBeNull()
     })
 
+    it('loads one more page instead when, at the rate the loaded Logs came in, it would reach the Log', () => {
+      // 200 Logs 200 ms apart reach 20 s after the Log: about 100 more Logs, which the next page holds.
+      expect(narrowAround(range, streamOf(200, 200), log)).toBeNull()
+      // 200 Logs 100 ms apart reach 40 s after it: about 400 more, past the next page.
+      expect(narrowAround(range, streamOf(200, 100), log)).toEqual({
+        kind: 'absolute', from: range.from, to: new Date('2026-10-17T12:00:10.250Z'),
+      })
+    })
+
     it('says why a stream that ended without the Log does not show it', () => {
       expect(aroundMissed(streamOf(MAX_STREAM_LOGS, 1))).toBe(
         `This Log is more than ${MAX_STREAM_LOGS.toLocaleString('en-US')} Logs into the stream, so it can't be shown. Pick a shorter range around it.`)
