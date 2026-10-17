@@ -4,7 +4,7 @@
 // or leaving the page aborts them all. An aborted run's promise rejects with
 // an AbortError (see isAbort) and its slot is free at once.
 
-/** The most chart runs in flight at once. */
+/** The most chart runs in flight at once. Each holds a Console Puma thread, so keep it well under config/puma.rb's count. */
 export const MAX_IN_FLIGHT = 4
 
 export type Task<T> = (signal: AbortSignal) => Promise<T>

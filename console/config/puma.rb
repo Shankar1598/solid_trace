@@ -21,13 +21,15 @@
 # Global VM Lock (GVL) it has diminishing returns and will degrade the
 # response time (latency) of the application.
 #
-# The default is set to 3 threads as it's deemed a decent compromise between
-# throughput and latency for the average Rails application.
-#
 # Any libraries that use a connection pool or another resource pool should
 # be configured to provide at least as many connections as the number of
 # threads. This includes Active Record's `pool` parameter in `database.yml`.
-threads_count = Rails.env.development? ? 1 : ENV.fetch("RAILS_MAX_THREADS", 3)
+#
+# Console's threads mostly wait on EventStore: a Dashboard chart or an explorer
+# run can hold one for up to 35 s, and one Dashboard runs up to 4 at once. So
+# production keeps 10, well above Rails' 3, and database.yml's max_connections
+# reads the same RAILS_MAX_THREADS so the pool matches.
+threads_count = Rails.env.development? ? 1 : ENV.fetch("RAILS_MAX_THREADS", 10)
 threads threads_count, threads_count
 
 # Specifies the `port` that Puma will listen on to receive requests; default is 3000.
