@@ -42,6 +42,5 @@ Done in batch 5: the B3 re-arm rule (A4a), the explorer run's timeout and the fi
 - **A2b:** the value menu's buttons on stream cells and legend entries appear only on hover, and the sidebar's Search hint is hidden when the sidebar is collapsed.
 - **A3:** a card can be resized taller than the 24 rows DashboardChart allows (no maxH, A3-review-1-2); the 12-column grid is narrow at 390 px; unit and decimals don't reach axis tick labels; no flow for renaming a Dashboard or changing its default range.
 - **Compaction, measured again:** the "not now" call rests on a quiet Project and a cold 7-day figure taken right after the 24-hour chart (B4a-spec-1-2, B4a-correctness-1-3). Re-measure with the real GCS check and the 12-chart, 7-day Dashboard.
-
 - **A4b:** a field's server error stays on screen after it is fixed until the next save; the preview has Refresh but no Cancel; two Project pickers on the form (as in the chart editor); no flow or screenshot of a Match monitor's pages.
 - **B5:** the explorer's histogram strip doesn't use the bin cache; the MinIO test's all-time range has more bins than the cache takes.
