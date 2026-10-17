@@ -101,6 +101,15 @@ class McpTest < ActionDispatch::IntegrationTest
     assert_no_match "secret", text
   end
 
+  test "a body that isn't JSON gets JSON-RPC's parse error" do
+    post mcp_url, params: "{not json", headers: { "Authorization" => "Bearer #{@secret}",
+                                                  "Accept" => "application/json, text/event-stream",
+                                                  "Content-Type" => "application/json" }
+
+    assert_response :bad_request
+    assert_equal(-32700, response.parsed_body.dig("error", "code"))
+  end
+
   test "GET and DELETE answer 405, as the stateless transport has no stream or session" do
     get mcp_url, headers: { "Authorization" => "Bearer #{@secret}" }
     assert_response :method_not_allowed

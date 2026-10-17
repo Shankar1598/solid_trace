@@ -17,6 +17,6 @@ We chose Console for the same reasons as [ADR 0006](0006-monitors-evaluated-by-c
 - **A token is as strong as its user.** It can do whatever the user can do in every Organization they belong to, until it is revoked. Revoking deletes its row. There are no scopes or expiry in v1.
 - **`last_used_at` is written at most once a minute,** so a busy agent doesn't take SQLite's write lock on every call.
 - **No server-to-client messages.** Without sessions or a stream, the server can't send progress or notifications or ask the client anything. Every tool answers in its one response.
-- **The transport's DNS rebinding check is off.** It accepts only loopback hosts, which would turn away Console's own host. Every request needs a token, and Rails checks the Host.
+- **The transport's DNS rebinding check is off.** It guards local servers that trust whoever can reach them, and accepts only loopback hosts, which would turn away Console's own host. Every request to Console's server needs a token, which a page rebound to its address doesn't have.
 - **Answers are small and linked.** Tools answer compact JSON or one line per Log, and end with a link to the Console page that shows the same thing, so a person can follow what the agent saw.
 - **`run_sql` is listed only while SQL queries are on** ([ADR 0003](0003-unrestricted-sql-queries-behind-an-instance-setting.md)). With them on, Log text written by senders reaches the agent and can lead it to read other Organizations' data.
