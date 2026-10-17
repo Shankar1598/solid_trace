@@ -96,16 +96,20 @@ _Avoid_: graph, plot, visualization
 A page of **Charts** that belongs to an organization. Each chart saves a **Query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows. Any member of the organization can see, make, change and delete it.
 _Avoid_: board, panel page
 
+**Monitor**:
+A saved **Query** on one of an organization's **Projects** that runs every few minutes and tells its **Integrations** what it finds. A Threshold monitor's Query ends in a summarize of one number per group; a group fires when its number passes the threshold and resolves when it no longer does. A Match monitor sends the **Logs** ingested since its last run that match its Query. Any member of the organization can see, make, change and delete it.
+_Avoid_: alert, alert rule, check
+
 **Integration**:
 An outbound notification target owned by an organization.
 _Avoid_: webhook config, notifier job
 
 **Notification**:
-A message owed to one **Integration** about one or more **Issues**, recorded in the outbox until it ends as sent, failed after the last retry, or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed) that decides the message.
+A message owed to one **Integration** about one or more **Issues**, or about one group of a **Monitor**, recorded in the outbox until it ends as sent, failed after the last retry, or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched) that decides the message.
 _Avoid_: notification event, alert, event type
 
 **Integration notification**:
-The Console module that decides which **Notifications** an **Issue** change produces, and delivers them to each **Integration** in batches under a per-Integration rate limit.
+The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches, and each group of a Monitor in order.
 _Avoid_: notifier, integration notifier
 
 **Project**:
@@ -125,6 +129,7 @@ _Avoid_: app, tenant
 - A **Dashboard** holds many **Charts**, each a saved **Query** on a **Project** of the Dashboard's organization
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
+- A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
 
 ## Example dialogue
 
