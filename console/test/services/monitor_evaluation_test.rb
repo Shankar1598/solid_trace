@@ -236,6 +236,48 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_nil monitor.reload.run_started_at
   end
 
+  test "a run the Monitor was changed under writes no state and sends nothing, so it can't undo the change's resolve" do
+    monitor = threshold_monitor
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    travel 1.minute
+    answer_table_while([ [ 15 ] ]) do
+      LogMonitor.find(monitor.id).update!(kind: "match", query: "['#{@project.slug}']\n| where level == 'error'",
+        operator: nil, threshold: nil)
+    end
+
+    run = evaluate(monitor)
+
+    assert_equal [ [ "monitor_firing", "", 12 ], [ "monitor_resolved", "", 12 ] ], notifications
+    assert_empty monitor.states.reload
+    assert_equal MonitorEvaluation::CHANGED_DURING_RUN, run.error
+    assert_equal NOW + 2.minutes, monitor.reload.next_run_at, "the next tick runs it again"
+  end
+
+  test "a run whose Monitor was deleted under it records nothing" do
+    monitor = threshold_monitor
+    answer_table_while([ [ 15 ] ]) { LogMonitor.find(monitor.id).destroy! }
+
+    assert_nil evaluate(monitor)
+
+    assert_equal 0, MonitorState.count + MonitorRun.count + Notification.count
+  end
+
+  test "a Match run its Monitor was turned off under sends nothing and keeps its cursor" do
+    monitor = match_monitor
+    travel 1.minute
+    stub_request(:post, @query_url).with(body: hash_including("after_batch" => CURSOR)).to_return do
+      LogMonitor.find(monitor.id).update!(disabled_at: Time.current)
+      { status: 200, body: { logs: logs(3), total: 3, ingest_cursor: NEXT_CURSOR, next_cursor: nil }.to_json }
+    end
+
+    run = evaluate(monitor)
+
+    assert_empty Notification.all
+    assert_equal CURSOR, monitor.reload.ingest_cursor
+    assert_equal MonitorEvaluation::CHANGED_DURING_RUN, run.error
+  end
+
   test "a firing group with no row resolves, and an ok group with no row is forgotten" do
     monitor = threshold_monitor(notify_by_group: true)
     api = { "service" => "api" }.to_json
@@ -518,6 +560,15 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
   def answer_table(rows, columns: [ COUNT_COLUMN ])
     stub_request(:post, @query_url).with(body: hash_including("from", "to"))
       .to_return(status: 200, body: { table: { columns: columns, rows: rows, truncated: false } }.to_json)
+  end
+
+  # Answers rows once +change+ has run, as if it was made while EventStore
+  # worked on the run.
+  def answer_table_while(rows, columns: [ COUNT_COLUMN ], &change)
+    stub_request(:post, @query_url).with(body: hash_including("from", "to")).to_return do
+      change.call
+      { status: 200, body: { table: { columns: columns, rows: rows, truncated: false } }.to_json }
+    end
   end
 
   def answer_matched(logs, total:, ingest_cursor:, after_batch: nil)
