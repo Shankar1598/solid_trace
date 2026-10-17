@@ -112,6 +112,28 @@ Arithmetic: `+`, `-`, `*`, `/` and `%` work on numbers. You can add a timespan t
 
 Any other function is an error, and the Query box shows its line and column.
 
+## Charts
+
+When a Query returns a table, the Logs explorer draws it as a chart above the table, if it can:
+
+- **Over time:** a table grouped by a time bin, such as `summarize count() by bin_auto(time), service`. The bin column is the x axis. Each number column is a series, and the string or bool `by` columns split them, so this draws a line per Service.
+- **Bars:** a `summarize` with no time bin, such as `summarize count() by service`. The first string column names the bars, and any other string columns split them. The 50 largest bars are drawn. With more than 8 bars, or long names, they lie on their side.
+- **A number:** a table of one row and one number, such as `summarize count()` or `count`.
+
+Any other table shows on its own: one with no rows, with a second datetime column, or with two rows for the same bin and group.
+
+A chart draws at most 8 series, the ones with the largest totals, and the legend says how many more there are. Click a legend entry to hide or show its series. Columns that measure different things, such as a count and an average, get a panel each over the same time axis. Bars and areas stack only for `count`, `countif` and `sum`, whose values add up.
+
+**Time bins.** `bin(time, 5m)` makes bins of the size you give. `bin_auto(time)` picks a size from the time range, giving at most about 100 bins. It reads the range after the Query's `where` stages narrow it. Bins start at multiples of their size from 1970-01-01 UTC, so the first and last bins may cover only part of the range. The chart fades them, and its tooltip says "partial bin". A new Summarize in the Builder starts with `by bin_auto(time)`, so one click charts a count.
+
+**Empty bins.** A bin with no Logs has no row in the table. EventStore tells the chart whether it may fill those bins (`fill_gaps`). It may when nothing after the last `summarize` drops or adds rows (no `where`, `take`, `top`, `count`, `distinct` or second `summarize` after it) and the table wasn't cut at 10,000 rows. Then an empty bin counts as 0 for `count`, `countif`, `dcount` and `sum`, and as a gap for the other aggregates, which have no value without Logs. Otherwise every missing value is a gap.
+
+**The chart switch.** The switch over the chart picks Line, Area, Bars or Table for a chart over time, Bars or Table for bars, and Number or Table for a number. Your pick goes in the URL as `viz`, so a link or a reload keeps it. While a table over time shows, the histogram strip is hidden.
+
+**Zoom.** Drag across two or more bins of a chart over time to narrow the time range to them. A click does nothing.
+
+**Add to dashboard.** Beside the switch, Add to dashboard saves the Project, the Query that ran and the chart's form to a new or existing Dashboard. It is there for a Query's table, not for Logs or for SQL. Create monitor, beside it, starts a Monitor from the same Query and range: see [Monitors](monitors.md).
+
 ## Not in the language
 
 `has`, `join`, `mv-expand`, `parse`, `evaluate`, `project-away` and series and geo functions aren't supported.

@@ -100,6 +100,26 @@ _Avoid_: board, panel page
 A saved **Query** on one of an organization's **Projects** that runs every few minutes and tells its **Integrations** what it finds. A Threshold monitor's Query ends in a summarize of one number per group; a group fires when its number passes the threshold and resolves when it no longer does. A Match monitor sends the **Logs** ingested since its last run that match its Query. Any member of the organization can see, make, change and delete it.
 _Avoid_: alert, alert rule, check
 
+**Threshold monitor**:
+A **Monitor** whose **Query** ends in a summarize of one number per row. Each row is a group, named by its other columns, and each run reads the Monitor's range ending 60 seconds before the run. A group is **firing** while its number passes the threshold and **ok** otherwise.
+_Avoid_: metric alert, threshold alert, threshold rule
+
+**Match monitor**:
+A **Monitor** whose **Query** returns **Logs**. Each run reads the Logs ingested since the last one, in **Log batch** order, and sends one **Notification** when any match. It keeps no state between runs, so it is never firing.
+_Avoid_: log alert, match rule
+
+**Firing** and **ok**:
+The two states of a **Threshold monitor**'s group: firing while its number passes the threshold, or while the table is empty when the Monitor alerts on no data, and ok otherwise. Going from ok to firing sends a monitor firing **Notification** and going back sends monitor resolved; a group that stays firing sends nothing more. Turning the Monitor off, deleting it or making it a **Match monitor** resolves its firing groups.
+_Avoid_: alerting, triggered, breached, open
+
+**Log file store**:
+Where EventStore keeps a **Project**'s Log files, the hourly Parquet files its hourly export writes once an hour's **Logs** leave the hot table: the local disk, or an S3 or GCS bucket with a local copy kept for a while. A manifest in DuckDB lists each file and where it is, so reads never list folders or the bucket.
+_Avoid_: archive, cold storage, data lake
+
+**Bin cache**:
+EventStore's memory of a **Chart**'s time bins whose Logs are all in the **Log file store**, so a Chart run again, as a **Dashboard** refreshes, reads only the bins it lacks. A bin is kept under the Project, the Query, its size and start, and the generations of the Log files it covers, so a bin whose Logs have changed is never used again.
+_Avoid_: query cache, result cache
+
 **Integration**:
 An outbound notification target owned by an organization.
 _Avoid_: webhook config, notifier job
@@ -130,6 +150,8 @@ _Avoid_: app, tenant
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
+- A **Threshold monitor**'s groups are **firing** or **ok**; a **Match monitor** reads the **Logs** of each new **Log batch**
+- **Log processing**'s hourly export moves each hour's **Logs** to the **Log file store**, and the **Bin cache** keeps the **Chart** bins whose Logs are all there
 
 ## Example dialogue
 
