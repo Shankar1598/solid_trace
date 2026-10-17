@@ -93,6 +93,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
   # Charts
 
   test "add_chart places the Chart under every Chart, linking to the Dashboard" do
+    stub_query_check(@shop)
     answer = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Errors",
       query: "where level == \"error\" | summarize count() by bin_auto(time)", viz: "bar", w: 12, options: { unit: "ms", decimals: 1 })
 
@@ -120,6 +121,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
   test "update_chart changes only the fields given, keeping the options not given" do
     other = create(:project, organization: @acme, slug: "api")
     @chart.update!(options: { unit: "ms", stacked: true })
+    check = stub_query_check(other).with(body: { query: "['api']\n| summarize count() by bin_auto(time)" }.to_json)
 
     answer = call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, project: "api", viz: "area",
       w: 12, options: { unit: "", decimals: 2 })
@@ -131,13 +133,15 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal "['api']\n| summarize count() by bin_auto(time)", @chart.query
     assert_equal "api", answer.json["project"]
     assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}", answer.link
+    assert_requested check, times: 1
 
     assert_match(/Give at least one of project, title/, call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id).text)
     assert_equal "Not saved: H must be in 1..24.", call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, h: 30).text
   end
 
   test "update_chart points the Query's source at a new Project, as the chart editor does, unless a Query is given" do
-    create(:project, organization: @acme, slug: "api")
+    stub_query_check(create(:project, organization: @acme, slug: "api"))
+    stub_query_check(@shop)
     move = ->(**fields) { call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, **fields) }
 
     @chart.update!(query: "  [ 'shop' ] | where level == \"error\" | summarize count()")
@@ -150,6 +154,29 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
     move.(project: "api", query: "['shop'] | summarize count()")
     assert_equal "['shop'] | summarize count()", @chart.reload.query
+  end
+
+  test "add_chart and update_chart answer EventStore's mistakes in the Query, as the chart editor does, and save none" do
+    api = create(:project, organization: @acme, slug: "api")
+    shop_check = stub_query_check(@shop, mistakes: [ { message: "unknown stage wher", line: 1, column: 1, end_line: 1, end_column: 5 } ])
+    api_check = stub_query_check(api, mistakes: [ { message: "expected ['api'], this Project's slug, or logs, got \"shop\"", line: 1, column: 2 } ])
+    query = @chart.query
+
+    added = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Bad", query: "wher level = | summarize")
+    assert added.error?
+    assert_equal "Not saved: Query line 1, column 1: unknown stage wher.", added.text
+    assert_equal [ @chart ], @dashboard.charts.reload
+
+    changed = call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, title: "Bad", query: "wher level = | summarize")
+    assert_equal "Not saved: Query line 1, column 1: unknown stage wher.", changed.text
+    moved = call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, project: "api", query: "['shop'] | summarize count()")
+    assert_equal "Not saved: Query line 1, column 2: expected ['api'], this Project's slug, or logs, got \"shop\".", moved.text
+    @chart.reload
+    assert_equal [ @shop, "Requests", query ], [ @chart.project, @chart.title, @chart.query ]
+
+    assert_not call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, title: "Renamed").error?
+    assert_requested shop_check, times: 2
+    assert_requested api_check, times: 1
   end
 
   test "delete_chart deletes the Chart, linking to the Dashboard" do
@@ -258,6 +285,12 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
   end
 
   private
+
+  # Answers EventStore's check of a Query on project, with mistakes or none.
+  def stub_query_check(project, mistakes: [])
+    stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/validate")
+      .to_return(status: 200, body: { errors: mistakes, source: nil, chips: nil, stages: [] }.to_json)
+  end
 
   def holding_every_chart_run(left = ChartRuns.limit, &block)
     left.zero? ? yield : ChartRuns.hold { holding_every_chart_run(left - 1, &block) }

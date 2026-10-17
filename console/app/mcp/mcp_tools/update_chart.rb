@@ -22,7 +22,8 @@ module McpTools
       changes[:options] = chart.options.merge(changes[:options].stringify_keys) if changes[:options].is_a?(Hash)
       raise ToolError, "Give at least one of project, #{CHART_FIELDS.keys.join(', ')} to change." if changes.empty?
 
-      chart.update!(changes)
+      chart.assign_attributes(changes)
+      save_chart!(chart)
       json(chart_json(chart), link: links.dashboard(dashboard))
     end
   end
