@@ -93,7 +93,7 @@ module McpTools
     def save_monitor!(monitor, attributes, refused: "Not saved")
       return if monitor.save_with(attributes, integration_ids: arguments[:integration_ids])
 
-      raise ToolError, "#{refused}: #{monitor.errors.full_messages.join('; ')}."
+      raise ToolError, "#{refused}: #{monitor.errors.full_messages.join('; ').delete_suffix('.')}."
     end
 
     # A Monitor as its page knows it, with the slug of its Project, which the

@@ -19,6 +19,9 @@ module McpServer
     McpTools::GetChartData,
     McpTools::ListMonitors,
     McpTools::GetMonitor,
+    McpTools::CreateMonitor,
+    McpTools::UpdateMonitor,
+    McpTools::DeleteMonitor,
     McpTools::ListIntegrations
   ].freeze
 
