@@ -104,6 +104,27 @@ test('leaving SQL for the Builder drops a Query typed in Query mode that never r
   expect(errors).toEqual([])
 })
 
+test('SQL that would change anything is refused, and a SELECT still runs', async ({ page }) => {
+  // The refused SQL answers 400.
+  const errors = watchErrors(page, [failedLoad(400)])
+  await openLogs(page, last24h())
+  await page.getByRole('button', { name: 'SQL', exact: true }).click()
+  const box = page.getByLabel('SQL', { exact: true })
+  await expectEditorText(box, /FROM logs/i)
+
+  await box.fill('DROP TABLE logs.log_key_counts')
+  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText("SQL queries are read-only: DROP isn't allowed")
+
+  // The table is still there, and a SELECT reads it.
+  await box.fill('SELECT count(*) AS key_counts FROM logs.log_key_counts')
+  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  await settled(page)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.locator('.sticky.top-0').filter({ hasText: /^key_counts$/ })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
 test('on a phone a SQL error keeps its caret under the mistake', async ({ page }) => {
   const errors = watchErrors(page, [failedLoad(400)])
   await page.setViewportSize({ width: 390, height: 844 })
