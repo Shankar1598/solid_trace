@@ -33,6 +33,9 @@ module IntegrationNotification
   # arriving together share one message.
   INITIAL_DELAY = 10.seconds
 
+  # The most Monitor rows one statement writes.
+  ROWS_PER_WRITE = 1_000
+
   # At most one tick delivers per Integration within this window. It is also the
   # debounce before a follow-up tick picks up rows that arrived meanwhile.
   RATE_LIMIT_WINDOW = 1.minute
@@ -91,21 +94,48 @@ module IntegrationNotification
 
     # Writes a row of +kind+ about one group of a Monitor for each of its
     # active Integrations, or of +integrations+ when given, and schedules
-    # their ticks. MonitorEvaluation calls it for each change of a group's
-    # status, in the transaction that records the change, so the rows follow
-    # the Monitor's states: a group that stays firing writes nothing more.
+    # their ticks.
+    def monitor_changed(monitor, kind:, group_key:, payload:, integrations: monitor.integrations)
+      schedule_ticks(monitor_changes(monitor, [ [ kind, group_key, payload ] ], integrations: integrations))
+    end
+
+    # Writes the rows of many changes of a Monitor's groups, each
+    # [kind, group_key, payload], for each of its active Integrations, or of
+    # +integrations+ when given, ROWS_PER_WRITE rows a statement. Returns the
+    # Integrations written to, whose ticks the caller schedules
+    # (schedule_ticks) once the rows are committed.
+    #
+    # MonitorEvaluation calls it once a run, with each change of a group's
+    # status, in the transaction that records the changes and holds SQLite's
+    # write lock, so the rows follow the Monitor's states: a group that
+    # stays firing writes nothing more. A run may change thousands of
+    # groups, hence the bulk write, and the ticks wait for the commit.
     # +payload+ is what the run saw, for the message
     # (Notifiers::MonitorMessage). Each row also keeps what the message says
     # about the Monitor, so it is delivered even when the Monitor is deleted
     # first.
-    def monitor_changed(monitor, kind:, group_key:, payload:, integrations: monitor.integrations)
-      raise ArgumentError, "Unknown Monitor notification kind: #{kind.inspect}" unless MONITOR_KINDS.include?(kind)
+    def monitor_changes(monitor, changes, integrations: monitor.integrations)
+      unknown = changes.map(&:first).find { |kind| !MONITOR_KINDS.include?(kind) }
+      raise ArgumentError, "Unknown Monitor notification kind: #{unknown.inspect}" if unknown
+      return [] if changes.empty?
 
-      payload = payload.merge("monitor" => Notifiers::MonitorMessage.about(monitor))
-      integrations.active.find_each do |integration|
-        Notification.enqueue!(integration: integration, monitor: monitor, group_key: group_key, kind: kind, payload: payload)
-        schedule_tick(integration, wait: INITIAL_DELAY)
+      integrations = integrations.active.to_a
+      about = Notifiers::MonitorMessage.about(monitor)
+      now = Time.current
+      rows = changes.flat_map do |kind, group_key, payload|
+        payload = payload.merge("monitor" => about)
+        integrations.map do |integration|
+          { integration_id: integration.id, monitor_id: monitor.id, group_key: group_key, kind: kind,
+            payload: payload, status: :pending, created_at: now, updated_at: now }
+        end
       end
+      rows.each_slice(ROWS_PER_WRITE) { |slice| Notification.insert_all!(slice) }
+      integrations
+    end
+
+    # One tick for each Integration, however many rows it was written.
+    def schedule_ticks(integrations)
+      integrations.uniq.each { |integration| schedule_tick(integration, wait: INITIAL_DELAY) }
     end
 
     def deliver_pending(integration_id)

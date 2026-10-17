@@ -163,6 +163,33 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
       notifications.last(3)
   end
 
+  # A grouped Monitor's first run, or its first after it is turned back on,
+  # may fire thousands of groups at once, in the transaction that holds
+  # SQLite's write lock: their Notifications are written in bulk, and each
+  # Integration gets one tick, once the run has committed.
+  test "a run writes its changed groups' Notifications in a few statements and schedules one tick per Integration after it commits" do
+    pagerduty = @organization.integrations.create!(provider: "pagerduty", settings: { "routing_key" => "routing-123" })
+    monitor = threshold_monitor(notify_by_group: true)
+    monitor.update!(integrations: [ @slack, pagerduty ])
+    answer_table((0..199).map { |i| [ "s#{i}", 11 + i ] }, columns: [ SERVICE, COUNT_COLUMN ])
+    outside = ApplicationRecord.connection.open_transactions
+    writes = []
+    ticks = []
+    counting = ->(*, payload) { writes << payload[:sql] if payload[:sql].match?(/\A\s*(INSERT|UPDATE|DELETE)\b.*notifications/im) }
+    ticking = ->(*, payload) { ticks << [ payload[:job].arguments, ApplicationRecord.connection.open_transactions ] }
+
+    ActiveSupport::Notifications.subscribed(counting, "sql.active_record") do
+      ActiveSupport::Notifications.subscribed(ticking, "enqueue_at.active_job") { evaluate(monitor) }
+    end
+
+    assert_operator writes.size, :<=, 2, "#{writes.size} statements wrote Notifications"
+    assert_equal 200, monitor.runs.sole.firing
+    assert_equal [ 200, 200 ], [ @slack, pagerduty ].map { |integration| Notification.where(integration: integration).count }
+    assert_equal [ [ "monitor_firing", { service: "s0" }.to_json, 11 ], [ "monitor_firing", { service: "s199" }.to_json, 210 ] ],
+      Notification.where(integration: pagerduty).order(:id).to_a.values_at(0, -1).map { |row| [ row.kind, row.group_key, row.payload["value"] ] }
+    assert_equal [ [ [ @slack.id ], outside ], [ [ pagerduty.id ], outside ] ], ticks.sort
+  end
+
   test "not notifying by group, all rows are one group and the worst number decides" do
     above = threshold_monitor(operator: ">", threshold: 10)
     below = threshold_monitor(operator: "<", threshold: 10)
