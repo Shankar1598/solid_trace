@@ -57,6 +57,11 @@ test('a typed range it cannot read says what it can', async ({ page }) => {
 
   await expect(picker(page).getByText('Try 15m, 2h, 3d, 1w, last 3 hours, today or yesterday.')).toBeVisible()
   await expect(picker(page).getByRole('button', { name: 'Apply' })).toBeDisabled()
+
+  // A count too long for a date says why, and the page stays.
+  await page.getByLabel('Type a range').fill('99999999999d')
+  await expect(picker(page).getByText('A range can be at most 10 years.')).toBeVisible()
+  await expect(picker(page).getByRole('button', { name: 'Apply' })).toBeDisabled()
   expect(errors).toEqual([])
 })
 

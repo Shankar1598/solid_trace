@@ -14,6 +14,10 @@ export type TimeRange = RelativeRange | AbsoluteRange
 const SPAN = /^(\d+)([mhd])$/
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const
 const DAY_MS = UNIT_MS.d
+// The longest range: longer than any Retention, and well inside what a
+// JavaScript Date can hold back from now.
+const MAX_YEARS = 10
+const MAX_MS = MAX_YEARS * 365 * DAY_MS
 
 /** The ranges the picker offers at one click, shortest first. */
 export const QUICK_RANGES: { span: string; label: string }[] = [
@@ -32,9 +36,9 @@ export const QUICK_RANGES: { span: string; label: string }[] = [
   { span: '90d', label: '90 days' },
 ]
 
-/** Whether `span` is a span a link can hold: a whole number above 0 of m, h or d. */
+/** Whether `span` is a span a link can hold: a whole number above 0 of m, h or d, ten years at most. */
 export function isSpan(span: string): boolean {
-  return SPAN.test(span) && spanMs(span) > 0
+  return SPAN.test(span) && spanMs(span) > 0 && spanMs(span) <= MAX_MS
 }
 
 /** A span's length in milliseconds; 0 for text that isn't one. */
@@ -134,6 +138,8 @@ export function parseRange(text: string, now: Date): Parsed | null {
   const n = Number(match[2] ?? 1)
   if (n <= 0) return { error: 'A range needs at least a minute.' }
   const span = unit === 'w' ? `${n * 7}d` : `${n}${unit}`
+  // Past the longest range the times are no date, which would blank the page.
+  if (!isSpan(span)) return { error: `A range can be at most ${MAX_YEARS} years.` }
   return { range: { kind: 'relative', span } }
 }
 
