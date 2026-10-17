@@ -1,0 +1,75 @@
+{
+  "_comment": "Links to the Logs explorer on the Project shop of the Organization acme, as McpTools::Links#explorer builds them from given (test/mcp/logs_tools_test.rb), and the state lib/logs/explorerState.ts reads from each (lib/logs/mcpLinks.test.ts).",
+  "links": [
+    {
+      "given": {
+        "range": "1h",
+        "query": "where level == \"error\" and message contains \"a+b & 100%\""
+      },
+      "url": "http://console.test/acme/projects/shop/logs?mode=query&q=where+level+%3D%3D+%22error%22+and+message+contains+%22a%2Bb+%26+100%25%22&range=1h",
+      "state": {
+        "range": {
+          "kind": "relative",
+          "span": "1h"
+        },
+        "mode": "query",
+        "query": "where level == \"error\" and message contains \"a+b & 100%\"",
+        "sql": "",
+        "viz": "auto"
+      }
+    },
+    {
+      "given": {
+        "range": "6h",
+        "query": "['shop']\n| where level == 'error'\n| summarize count() by bin_auto(time)",
+        "viz": "bars"
+      },
+      "url": "http://console.test/acme/projects/shop/logs?mode=query&q=%5B%27shop%27%5D%0A%7C+where+level+%3D%3D+%27error%27%0A%7C+summarize+count%28%29+by+bin_auto%28time%29&range=6h&viz=bars",
+      "state": {
+        "range": {
+          "kind": "relative",
+          "span": "6h"
+        },
+        "mode": "query",
+        "query": "['shop']\n| where level == 'error'\n| summarize count() by bin_auto(time)",
+        "sql": "",
+        "viz": "bars"
+      }
+    },
+    {
+      "given": {
+        "from": "2026-10-17T11:00:00+02:00",
+        "to": "2026-10-17T10:00:00Z",
+        "sql": "SELECT level, count(*) FROM logs WHERE message LIKE '%é%' GROUP BY level"
+      },
+      "url": "http://console.test/acme/projects/shop/logs?from=2026-10-17T09%3A00%3A00.000Z&mode=sql&sql=SELECT+level%2C+count%28%2A%29+FROM+logs+WHERE+message+LIKE+%27%25%C3%A9%25%27+GROUP+BY+level&to=2026-10-17T10%3A00%3A00.000Z",
+      "state": {
+        "range": {
+          "kind": "absolute",
+          "from": "2026-10-17T09:00:00.000Z",
+          "to": "2026-10-17T10:00:00.000Z"
+        },
+        "mode": "sql",
+        "query": "",
+        "sql": "SELECT level, count(*) FROM logs WHERE message LIKE '%é%' GROUP BY level",
+        "viz": "auto"
+      }
+    },
+    {
+      "given": {
+        "range": "15m"
+      },
+      "url": "http://console.test/acme/projects/shop/logs?mode=query&range=15m",
+      "state": {
+        "range": {
+          "kind": "relative",
+          "span": "15m"
+        },
+        "mode": "query",
+        "query": "",
+        "sql": "",
+        "viz": "auto"
+      }
+    }
+  ]
+}
