@@ -28,6 +28,19 @@ export interface LogTable {
   /** The range the Query ran over, RFC 3339 UTC, narrowed by a leading where on time. */
   from?: string
   to?: string
+  /**
+   * A time chart's totals, when the run asked for them and the Query ends in
+   * a summarize by a time bin: a row per group (the other by columns) with
+   * its aggregates over the whole range, largest first.
+   */
+  totals?: LogTotals
+}
+
+/** A time chart's totals over the range; truncated says rows were cut at 10,000. */
+export interface LogTotals {
+  columns: TableColumn[]
+  rows: unknown[][]
+  truncated: boolean
 }
 
 /**

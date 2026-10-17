@@ -183,7 +183,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
         if (currentRun.current === run && !run.controller.signal.aborted) setHistogram({ status: 'error', message: error.message })
       })
 
-    fetchRun({ orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, signal: run.controller.signal })
+    fetchRun({ orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, totals: true, signal: run.controller.signal })
       .then(answer => {
         if (currentRun.current !== run) return
         if (answer.kind === 'table') setResult({ status: 'table', table: answer.table, elapsedMs: answer.elapsedMs })
