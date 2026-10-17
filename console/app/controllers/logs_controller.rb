@@ -2,7 +2,9 @@
 
 # The Logs explorer: the page where a Project's Logs are searched and read.
 # The page runs its Queries through #query, which proxies EventStore's query
-# app, so the browser never talks to EventStore.
+# app, so the browser never talks to EventStore. Its runs (#query, #histogram
+# and #sql) stop at RUN_TIMEOUT_SECONDS, answering 504; they aren't counted
+# in ChartRuns, which says why.
 class LogsController < ApplicationController
   include EventStoreProxy
 
@@ -41,7 +43,8 @@ class LogsController < ApplicationController
       query: params[:query].to_s,
       from: @from,
       to: @to,
-      cursor: params[:cursor].presence
+      cursor: params[:cursor].presence,
+      timeout_seconds: RUN_TIMEOUT_SECONDS
     )
   end
 
@@ -58,7 +61,8 @@ class LogsController < ApplicationController
       query: params[:query].to_s,
       from: @from,
       to: @to,
-      bucket_seconds: bucket_seconds
+      bucket_seconds: bucket_seconds,
+      timeout_seconds: RUN_TIMEOUT_SECONDS
     )
   end
 
@@ -80,7 +84,9 @@ class LogsController < ApplicationController
   # so a link can't run SQL as whoever opens it, and refused while SQL
   # queries are off.
   def sql
-    render json: EventStore.run_logs_sql(project_id: @project.id, sql: params[:sql].to_s, from: @from, to: @to)
+    render json: EventStore.run_logs_sql(
+      project_id: @project.id, sql: params[:sql].to_s, from: @from, to: @to, timeout_seconds: RUN_TIMEOUT_SECONDS
+    )
   end
 
   # GET one Log by id, for the inspector. time, the Log's own time, lets

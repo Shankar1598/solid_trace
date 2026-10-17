@@ -94,8 +94,7 @@ class EventStore
       body[:cursor] = cursor if cursor.present?
       body[:limit] = limit if limit
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
-      read_timeout = timeout_seconds && (timeout_seconds + TIMEOUT_GRACE_SECONDS)
-      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout)
+      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
     end
 
     # A Match monitor's run: the Logs of a Project's Log batches after
@@ -111,8 +110,7 @@ class EventStore
       body = { query: query, after_batch: after_batch.to_s }
       body[:limit] = limit if limit
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
-      read_timeout = timeout_seconds && (timeout_seconds + TIMEOUT_GRACE_SECONDS)
-      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout)
+      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
     end
 
     # What EventStore said in an error body it answered: the message of each
@@ -129,10 +127,12 @@ class EventStore
     # and Level: {"bucket_seconds", "buckets" => [{"time", "count",
     # "levels"}], "count", "levels"}. levels has every Level and "none" for
     # Logs with no Level. Without bucket_seconds EventStore picks the size.
-    def logs_histogram(project_id:, query:, from:, to:, bucket_seconds: nil)
+    # timeout_seconds works as in query_logs.
+    def logs_histogram(project_id:, query:, from:, to:, bucket_seconds: nil, timeout_seconds: nil)
       body = { query: query, from: utc(from), to: utc(to) }
       body[:bucket_seconds] = bucket_seconds if bucket_seconds
-      post!("#{base_url}/api/#{project_id}/logs/histogram", body, read_timeout: nil)
+      body[:timeout_seconds] = timeout_seconds if timeout_seconds
+      post!("#{base_url}/api/#{project_id}/logs/histogram", body, read_timeout: read_timeout(timeout_seconds))
     end
 
     # Checks a Query without running it: {"errors" => [...], "chips" => Hash | nil,
@@ -160,9 +160,12 @@ class EventStore
     # Runs SQL as written against the logs view of a Project's [from, to):
     # {"table" => {"columns", "rows", "truncated"}}, shaped like a tabular
     # Query's run. Raises SQLQueriesOff while SQL queries are off.
-    def run_logs_sql(project_id:, sql:, from:, to:)
+    # timeout_seconds works as in query_logs.
+    def run_logs_sql(project_id:, sql:, from:, to:, timeout_seconds: nil)
       refuse_sql_unless_enabled!
-      post!("#{base_url}/api/#{project_id}/logs/sql", { sql: sql, from: utc(from), to: utc(to) }, sql: true, read_timeout: nil)
+      body = { sql: sql, from: utc(from), to: utc(to) }
+      body[:timeout_seconds] = timeout_seconds if timeout_seconds
+      post!("#{base_url}/api/#{project_id}/logs/sql", body, sql: true, read_timeout: read_timeout(timeout_seconds))
     end
 
     private
@@ -173,6 +176,12 @@ class EventStore
 
     def utc(time)
       time.utc.iso8601(3)
+    end
+
+    # How long Console waits for a run given timeout_seconds: a little
+    # longer, so EventStore's 504 comes first. nil, no limit, without one.
+    def read_timeout(timeout_seconds)
+      timeout_seconds && (timeout_seconds + TIMEOUT_GRACE_SECONDS)
     end
 
     # Pass read_timeout: nil for a run with no timeout_seconds, which waits as

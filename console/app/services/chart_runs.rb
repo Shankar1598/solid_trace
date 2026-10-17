@@ -2,7 +2,7 @@
 
 # The chart runs this Console process is waiting on: Dashboard charts'
 # data and the chart editor's preview. A run holds its Puma thread until
-# EventStore answers, up to ChartRunning::RUN_TIMEOUT_SECONDS and
+# EventStore answers, up to EventStoreProxy::RUN_TIMEOUT_SECONDS and
 # a little more, even after the browser has aborted it, since Puma doesn't
 # stop a request whose browser went away. So a range change or Refresh sends a
 # Dashboard's runs again while the old ones still wait, and the browser's
@@ -10,6 +10,10 @@
 # SPARE_THREADS under Puma's thread count, and a run past the cap is refused
 # at once as Busy, leaving those threads for pages, sign-in and the explorer
 # however many Dashboards are open.
+#
+# The explorer's own runs aren't counted here. Each is one member's run, at
+# most a query and a histogram at a time, which EventStore stops at the same
+# timeout; counted, the explorer would answer Busy while Dashboards load.
 class ChartRuns
   class Busy < StandardError; end
 
