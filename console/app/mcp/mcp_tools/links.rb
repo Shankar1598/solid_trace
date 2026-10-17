@@ -42,6 +42,14 @@ module McpTools
       url(routes.monitor_path(monitor, org_slug: monitor.organization.slug))
     end
 
+    def monitors(organization)
+      url(routes.monitors_path(org_slug: organization.slug))
+    end
+
+    def integrations(organization)
+      url(routes.integrations_path(org_slug: organization.slug))
+    end
+
     def issue(issue)
       url(routes.project_issue_path(issue.project, issue, org_slug: issue.project.organization.slug))
     end

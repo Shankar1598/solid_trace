@@ -189,6 +189,17 @@ module McpTools
         raise(ToolError, "No Project #{arguments[:project]} in #{organization.slug}. list_projects lists them.")
     end
 
+    # A Query's leading source, such as ['shop'], as the chart editor reads it.
+    SOURCE = /\A\s*\[\s*'(?:[^'\\]|\\.)*'\s*\]/
+
+    # The Query with its leading source, if it has one, naming the Project of
+    # slug instead, as the chart editor and the Monitor form do when a Chart's
+    # or a Monitor's Project changes. EventStore refuses a Query whose source
+    # names another Project's Logs.
+    def with_source(query, slug)
+      query.sub(SOURCE) { "['#{slug.gsub('\\') { '\\\\' }.gsub("'") { "\\'" }}']" }
+    end
+
     # The range, from and to arguments as a TimeRange.
     def time_range
       @time_range ||= TimeRange.parse(range: arguments[:range], from: arguments[:from], to: arguments[:to])
