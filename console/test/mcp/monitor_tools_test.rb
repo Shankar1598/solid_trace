@@ -214,6 +214,60 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/monitors", answer.link
   end
 
+  # Run now
+
+  test "run_monitor runs a free Monitor at once: it fires, tells its Integrations, and says what it found" do
+    travel_to Time.utc(2026, 10, 3, 10) do
+      stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+        .with(body: hash_including("from" => "2026-10-03T09:54:00.000Z", "to" => "2026-10-03T09:59:00.000Z"))
+        .to_return(status: 200, body: { table: { columns: [ COUNT_COLUMN ], rows: [ [ 42 ] ] } }.to_json)
+
+      answer = call_tool(:run_monitor, user: @user, monitor: @monitor.id)
+
+      assert_not answer.error?
+      assert_equal "Ran the Monitor: 1 group firing.", answer.body
+      assert_equal "http://console.test/acme/monitors/#{@monitor.id}", answer.link
+    end
+    assert_equal [ "firing", 42.0 ], @monitor.states.sole.values_at(:status, :last_value)
+    assert_equal [ "ok", 1 ], @monitor.runs.sole.values_at(:status, :firing)
+    assert_equal [ [ @slack.id, "monitor_firing" ] ], Notification.where(monitor_id: @monitor.id).pluck(:integration_id, :kind)
+  end
+
+  test "run_monitor says what a Match monitor's run matched" do
+    stub_monitor_query_check(@shop)
+    match = create(:monitor, :match, project: @shop, name: "Panics")
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query").with(body: hash_including("after_batch"))
+      .to_return(status: 200, body: { logs: [], total: 0, ingest_cursor: NIL_CURSOR, next_cursor: nil }.to_json)
+
+    assert_equal "Ran the Monitor: 0 Logs matched.", call_tool(:run_monitor, user: @user, monitor: match.id).body
+  end
+
+  test "run_monitor while another run of the Monitor holds it runs nothing, and says so" do
+    @monitor.update_columns(run_started_at: Time.current)
+    WebMock::RequestRegistry.instance.reset!
+
+    answer = call_tool(:run_monitor, user: @user, monitor: @monitor.id)
+
+    assert answer.error?
+    assert_equal "The Monitor is running now: get_monitor shows that run when it ends.", answer.text
+    assert_not_requested :post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query"
+    assert_empty @monitor.runs
+  end
+
+  test "run_monitor says why a run failed, and leaves a Monitor that is off alone" do
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query").to_return(status: 503, body: "down")
+
+    failed = call_tool(:run_monitor, user: @user, monitor: @monitor.id)
+    assert failed.error?
+    assert_match(/\AThe run failed: /, failed.text)
+    assert_equal [ "error" ], @monitor.runs.pluck(:status)
+
+    @monitor.update!(disabled_at: Time.current)
+    off = call_tool(:run_monitor, user: @user, monitor: @monitor.id)
+    assert_equal "Turn the Monitor on to run it: update_monitor with enabled true.", off.text
+    assert_equal 1, @monitor.runs.count
+  end
+
   # Another Organization's
 
   test "another Organization's Monitor is not found, and its Monitors and Integrations aren't listed" do
@@ -222,7 +276,8 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal no_monitor, call_tool(:update_monitor, user: @user, monitor: @their_monitor.id, name: "Mine").text
     assert_equal no_monitor, call_tool(:update_monitor, user: @user, monitor: @their_monitor.id, enabled: false).text
     assert_equal no_monitor, call_tool(:delete_monitor, user: @user, monitor: @their_monitor.id).text
-    assert_equal [ "Theirs", true ], [ @their_monitor.reload.name, @their_monitor.enabled? ]
+    assert_equal no_monitor, call_tool(:run_monitor, user: @user, monitor: @their_monitor.id).text
+    assert_equal [ "Theirs", true, 0 ], [ @their_monitor.reload.name, @their_monitor.enabled?, @their_monitor.runs.count ]
     assert_equal "No Project secret in acme. list_projects lists them.",
       call_tool(:create_monitor, user: @user, project: "secret", name: "Theirs", kind: "threshold", query: "summarize count()").text
     assert_equal [ "Checkout errors" ], call_tool(:list_monitors, user: @user).json["monitors"].map { |m| m["name"] }

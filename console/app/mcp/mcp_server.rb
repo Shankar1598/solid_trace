@@ -22,6 +22,7 @@ module McpServer
     McpTools::CreateMonitor,
     McpTools::UpdateMonitor,
     McpTools::DeleteMonitor,
+    McpTools::RunMonitor,
     McpTools::ListIntegrations
   ].freeze
 
