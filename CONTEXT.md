@@ -136,6 +136,14 @@ _Avoid_: notifier, integration notifier
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant
 
+**MCP server**:
+The Console endpoint where an AI agent reads and changes Projects, Logs, Dashboards, Monitors and Issues over the Model Context Protocol, acting as the user whose **API token** it presents.
+_Avoid_: agent API, bot, integration
+
+**API token**:
+A secret a user makes in their settings that lets a client act as that user through the **MCP server**, with the user's role in each organization checked on every call. Console keeps only its digest.
+_Avoid_: API key, project key, access token
+
 ## Relationships
 
 - An **EventStore** accepts an **Event** through **Event ingest**
@@ -152,6 +160,7 @@ _Avoid_: app, tenant
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
 - A **Threshold monitor**'s groups are **firing** or **ok**; a **Match monitor** reads the **Logs** of each new **Log batch**
 - **Log processing**'s hourly export moves each hour's **Logs** to the **Log file store**, and the **Bin cache** keeps the **Chart** bins whose Logs are all there
+- An **MCP server** call acts as the user of its **API token**, with what that user's role allows in the organization it acts on
 
 ## Example dialogue
 

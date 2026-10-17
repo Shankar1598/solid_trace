@@ -16,6 +16,8 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Where things stand
 
+- **MCP server**: planned with the user on 2026-10-17 ([spec](mcp/spec.md), [tickets](mcp/issues/)), on `feature/mcp` in the worktree `../solid_trace-mcp`, branched from `feature/logs-v2` at `4139293`. An MCP endpoint in Console for the logs work, Issues and a few admin actions, signed in with API tokens. SQL queries become read-only everywhere, and keys become admin-only. 0 of 11 tickets done.
+
 - **Logs v2**: implemented on `feature/logs-v2` (2026-10-10 to 17): charts in the explorer, developer UX, Dashboards, Monitors with Slack, PagerDuty and email, Log Parquet and the Event archive in S3 or GCS (tested on MinIO), and a bin cache. 20 of 24 [tickets](logs-v2/issues/) resolved, including a whole-branch review; Rails, vitest, typecheck, all 69 Playwright flows and the Go suite pass. Open: the looks pass and a merge (`ready-for-human`), a real GCS run (`needs-info`), leftover lows (`ready-for-agent`).
 - **Logs**: v1 is implemented on `feature/logs-v1` (2026-10-03): 19 of 20 [tickets](logs-v1/issues/) resolved, code-reviewed, with the review fixes merged (`0eecf81`). It is not yet merged into `feature/logging` or `main`, and not yet clicked through in a browser. M1-10 (load test) is the only open ticket. Choices that depart from the spec are in its [Implementation decisions](logs-v1/spec.md#implementation-decisions); the review's fixes are in its Comments.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
@@ -24,6 +26,8 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 - **Upgrade Pebble and DuckDB**: EventStore uses Pebble v2.1.7 and DuckDB 1.5.6 (`v2.10506.0`, bundled). [02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) moved it back from the 2.0 alpha on 2026-10-02, on `feature/logging`, not yet on `main`. [03](upgrade-pebble-duckdb/issues/03-pebble-value-separation.md) (Pebble value separation) is open.
 
 ## Next
+
+- **MCP server** ([spec](mcp/spec.md)): start with [01, API tokens](mcp/issues/01-api-tokens.md) on the Console track and [03](mcp/issues/03-fields-endpoint.md) and [04](mcp/issues/04-sql-read-only.md) on the Go track.
 
 0. **Logs v2** ([spec](logs-v2/spec.md), [tickets](logs-v2/issues/)): built and reviewed; next with the user: [20, the looks pass](logs-v2/issues/20-looks-pass.md), [21, a real GCS run](logs-v2/issues/21-real-gcs-check.md) (needs their bucket and HMAC key) and [23, the merge](logs-v2/issues/23-merge-logs-v2.md). [22](logs-v2/issues/22-leftover-low-findings.md) lists the leftover lows.
 
@@ -39,6 +43,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logs | 16 / 0 | [map.md](logs/map.md) |
 | Logs v1 | 19 / 1 | [spec.md](logs-v1/spec.md) |
 | Logs v2 | 20 / 4 | [20](logs-v2/issues/20-looks-pass.md) |
+| MCP server | 0 / 11 | [spec.md](mcp/spec.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
