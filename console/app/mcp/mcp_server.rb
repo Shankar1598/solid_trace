@@ -9,6 +9,8 @@ module McpServer
     McpTools::Whoami,
     McpTools::ListProjects,
     McpTools::QueryLogs,
+    McpTools::GetLog,
+    McpTools::ListFields,
     McpTools::ListDashboards,
     McpTools::GetDashboard,
     McpTools::CreateDashboard,
