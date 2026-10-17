@@ -208,6 +208,21 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal false, response.parsed_body["table"]["truncated"]
   end
 
+  test "the explorer's run asks EventStore for a time chart's totals and answers them" do
+    totals = { columns: [ { name: "level", type: "string" }, { name: "count_", type: "number", agg: "count" } ], rows: [ [ "info", 3 ] ], truncated: false }
+    table = { columns: [], rows: [], truncated: false, totals: totals }
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+      .with(body: hash_including(query: "summarize count() by bin_auto(time), level", totals: true))
+      .to_return(status: 200, body: { table: table }.to_json)
+
+    get query_project_logs_url(@project, org_slug: @organization.slug), params: {
+      query: "summarize count() by bin_auto(time), level", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", totals: "1",
+    }
+
+    assert_response :success
+    assert_equal [ [ "info", 3 ] ], response.parsed_body["table"]["totals"]["rows"]
+  end
+
   test "a Query with mistakes answers with EventStore's errors" do
     errors = [ { message: "unknown stage \"nope\"", line: 1, column: 1, end_line: 1, end_column: 5 } ]
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
