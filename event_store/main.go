@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"os"
 	"os/signal"
 	"sync"
@@ -38,14 +37,18 @@ func main() {
 	}
 	defer duckdbWriter.Close()
 	// The Log files and the Event archive share the bucket, if one is set.
+	// Nothing here waits on the bucket, so ingest starts while it is down:
+	// the archive consumer lists the Event archive in it in the background.
 	bucket := storage.NewObjectStore(cfg.ObjectStore)
 	if cfg.ObjectStore != nil {
 		if err := duckdbWriter.UseBucket(cfg.ObjectStore, cfg.DuckDBExtensionDirectory); err != nil {
 			logger.L.Fatal("Failed to let DuckDB read the object store's bucket", "error", err)
 		}
-		if err := duckdbWriter.UseEventArchiveBucket(context.Background(), bucket); err != nil {
+		if err := duckdbWriter.UseEventArchiveBucket(bucket); err != nil {
 			logger.L.Fatal("Failed to keep the Event archive in the object store's bucket", "error", err)
 		}
+	} else if err := duckdbWriter.UseLocalEventArchiveOnly(); err != nil {
+		logger.L.Fatal("Failed to keep the Event archive on local disk only", "error", err)
 	}
 
 	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath, cfg.LogsParquetPath)

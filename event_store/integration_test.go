@@ -2,7 +2,6 @@ package main_test
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -337,10 +336,14 @@ func (env *TestEnv) open(t *testing.T) {
 			t.Fatalf("Failed to let DuckDB read the bucket: %v", err)
 		}
 	}
+	// As in main, nothing waits on the bucket here: a test lists the Event
+	// archive in it as the archive consumer does (EnsureEventsView).
 	if env.Bucket != nil {
-		if err := duckdbWriter.UseEventArchiveBucket(context.Background(), env.Bucket); err != nil {
+		if err := duckdbWriter.UseEventArchiveBucket(env.Bucket); err != nil {
 			t.Fatalf("Failed to keep the Event archive in the bucket: %v", err)
 		}
+	} else if err := duckdbWriter.UseLocalEventArchiveOnly(); err != nil {
+		t.Fatalf("Failed to keep the Event archive on local disk only: %v", err)
 	}
 
 	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"), filepath.Join(env.dir, "logs_parquet"))

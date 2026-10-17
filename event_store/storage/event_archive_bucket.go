@@ -21,9 +21,14 @@ import (
 // file is uploaded after the run that published it, under its path below the
 // archive folder with eventArchivePrefix before it, and its local copy is
 // deleted once it is uploaded: the archive keeps no local cache. The events
-// view lists every archive file by name: those in the bucket, listed once at
-// startup and added to after each upload, and the local files still waiting
-// for theirs.
+// view lists every archive file by name: those in the bucket, listed once
+// after startup and added to after each upload, and the local files still
+// waiting for theirs.
+//
+// Startup never waits on the bucket: the archive consumer lists it in the
+// background. Until it does, and after any rebuild of the view fails, there
+// is no events view, so Event reads fail (ErrEventsUnavailable) rather than
+// miss archived Events; the consumer tries again every minute.
 //
 // Restarts settle what a crash leaves: a local file whose key the bucket
 // lists with the same size was uploaded, so the next upload pass deletes its
@@ -44,18 +49,77 @@ const archivePattern = "*/*.parquet"
 
 // UseEventArchiveBucket keeps the Event archive in a bucket instead of on
 // local disk. Call it once, right after NewDuckDBWriter and UseBucket, and
-// before any read or archive run. It lists the bucket's archive files for the
-// events view. If the listing fails, it logs why and the view is left out, so
-// Event reads fail rather than miss archived Events, until an upload pass
-// (UploadEventArchive) lists the bucket.
-func (w *DuckDBWriter) UseEventArchiveBucket(ctx context.Context, bucket ObjectStore) error {
+// before any read or archive run. It doesn't reach the bucket, so that a
+// bucket that is slow or down never holds up startup: it drops the events
+// view, and Event reads fail with ErrEventsUnavailable until EnsureEventsView
+// lists the bucket's archive files and builds the view.
+func (w *DuckDBWriter) UseEventArchiveBucket(bucket ObjectStore) error {
 	w.archiveMu.Lock()
 	w.archiveBucket = bucket
 	w.archiveMu.Unlock()
+	return w.recreateEventsView()
+}
+
+// UseLocalEventArchiveOnly is UseEventArchiveBucket's counterpart, for when
+// no bucket is configured: call it instead, at the same point. It warns when
+// archive files whose local copies were deleted once uploaded are missing
+// from local disk, as after an object_store block is removed from the
+// config, since Event reads then miss their Events.
+func (w *DuckDBWriter) UseLocalEventArchiveOnly() error {
+	rows, err := w.db.Query("SELECT key FROM event_archive_in_bucket")
+	if err != nil {
+		return fmt.Errorf("list the Event archive files uploaded to a bucket: %w", err)
+	}
+	defer rows.Close()
+	onlyInABucket := 0
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return err
+		}
+		file := filepath.Join(w.parquetPath, filepath.FromSlash(strings.TrimPrefix(key, eventArchivePrefix)))
+		if _, err := os.Stat(file); errors.Is(err, fs.ErrNotExist) {
+			onlyInABucket++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if onlyInABucket > 0 {
+		logger.L.Warn("Some Event archive files are only in a bucket, but no object_store is configured, so Event reads miss their Events: add the object_store block back to read them", "files", onlyInABucket)
+	}
+	return nil
+}
+
+// EnsureEventsView builds the events view if there is none that reads every
+// archive file: with a bucket, it first lists the bucket's archive files if
+// they haven't been listed, and it rebuilds the view if the last rebuild
+// failed. Event reads fail with ErrEventsUnavailable until it succeeds. The
+// archive consumer calls it through UploadEventArchive, when it starts and
+// a minute after each failure.
+func (w *DuckDBWriter) EnsureEventsView(ctx context.Context) error {
 	w.archiveUploadMu.Lock()
 	defer w.archiveUploadMu.Unlock()
-	_ = w.listEventArchive(ctx)
+	return w.ensureEventsView(ctx)
+}
+
+// ensureEventsView is EnsureEventsView. The caller holds archiveUploadMu.
+func (w *DuckDBWriter) ensureEventsView(ctx context.Context) error {
+	if w.archiveBucket != nil && !w.archiveListed() {
+		if err := w.listEventArchive(ctx); err != nil {
+			return err
+		}
+	} else if w.eventsUnavailable() == nil {
+		return nil
+	}
 	return w.recreateEventsView()
+}
+
+// archiveListed reports whether the bucket's archive files have been listed.
+func (w *DuckDBWriter) archiveListed() bool {
+	w.archiveMu.Lock()
+	defer w.archiveMu.Unlock()
+	return w.remoteArchive != nil
 }
 
 // listEventArchive lists the bucket's archive files for the events view,
@@ -110,31 +174,25 @@ func (w *DuckDBWriter) listEventArchive(ctx context.Context) error {
 
 // UploadEventArchive uploads every published archive file still on local
 // disk, oldest first, and deletes each local copy once it is uploaded and no
-// read may still open it. If the bucket hasn't been listed yet, it lists it
-// first. A file that fails to upload is logged the first time it fails in a
-// row and stays on local disk, where the events view reads it; the error
-// returned says how many failed, so that the caller tries them again later.
-// It does nothing without a bucket.
+// read may still open it. First it builds the events view if there is none
+// (EnsureEventsView), listing the bucket if it hasn't been listed. A file
+// that fails to upload is logged the first time it fails in a row and stays
+// on local disk, where the events view reads it; the error returned says how
+// many failed, so that the caller tries them again later. So does an error
+// building the view, which keeps the local copies too. Without a bucket it
+// only builds the view if there is none.
 //
 // Call it outside batchLock, so that Event processing never waits on the
 // bucket.
 func (w *DuckDBWriter) UploadEventArchive(ctx context.Context) error {
-	w.archiveMu.Lock()
-	bucket, listed := w.archiveBucket, w.remoteArchive != nil
-	w.archiveMu.Unlock()
-	if bucket == nil {
-		return nil
-	}
 	w.archiveUploadMu.Lock()
 	defer w.archiveUploadMu.Unlock()
 
-	if !listed {
-		if err := w.listEventArchive(ctx); err != nil {
-			return err
-		}
-		if err := w.recreateEventsView(); err != nil {
-			return fmt.Errorf("recreate the events view: %w", err)
-		}
+	// A view that fails to build doesn't stop the uploads, as the bucket
+	// may still take files; a listing that fails does.
+	viewErr := w.ensureEventsView(ctx)
+	if w.archiveBucket == nil || (viewErr != nil && !w.archiveListed()) {
+		return viewErr
 	}
 
 	files, err := w.localArchiveFiles()
@@ -169,8 +227,11 @@ func (w *DuckDBWriter) UploadEventArchive(ctx context.Context) error {
 	}
 	w.archiveUploadFailing = failing
 
-	if err := w.deleteUploadedArchiveFiles(uploaded); err != nil {
-		return err
+	if len(uploaded) > 0 {
+		viewErr = w.deleteUploadedArchiveFiles(uploaded)
+	}
+	if viewErr != nil {
+		return viewErr
 	}
 	if first != nil {
 		return fmt.Errorf("%d of %d Event archive files failed to upload, the first: %w", len(failing), len(files), first)
@@ -199,15 +260,15 @@ func (w *DuckDBWriter) uploadArchiveFile(ctx context.Context, key, file string) 
 // deleteUploadedArchiveFiles makes the events view read the uploaded files
 // from the bucket, waits for the reads that began before, which may still
 // open their local copies, and then deletes those copies, with any date
-// folder left empty.
+// folder left empty. It records each file as only in the bucket first.
 func (w *DuckDBWriter) deleteUploadedArchiveFiles(files []string) error {
-	if len(files) == 0 {
-		return nil
-	}
 	if err := w.recreateEventsView(); err != nil {
 		return fmt.Errorf("recreate the events view: %w", err)
 	}
 	w.archiveReads.waitForEarlierReads()
+	if err := w.recordArchiveInBucket(files); err != nil {
+		return fmt.Errorf("record the Event archive files only in the bucket: %w", err)
+	}
 
 	var first error
 	for _, file := range files {
@@ -221,6 +282,17 @@ func (w *DuckDBWriter) deleteUploadedArchiveFiles(files []string) error {
 		_ = os.Remove(filepath.Dir(file))
 	}
 	return first
+}
+
+// recordArchiveInBucket records the keys of local archive files whose
+// copies are about to be deleted, for UseLocalEventArchiveOnly.
+func (w *DuckDBWriter) recordArchiveInBucket(files []string) error {
+	values := make([]string, len(files))
+	for i, file := range files {
+		values[i] = "(" + sqltext.String(w.archiveKey(file)) + ")"
+	}
+	_, err := w.db.Exec("INSERT OR IGNORE INTO event_archive_in_bucket VALUES " + strings.Join(values, ", "))
+	return err
 }
 
 // readingArchive holds off the deletion of uploaded archive files' local
