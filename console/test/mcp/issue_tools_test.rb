@@ -70,4 +70,138 @@ class McpIssueToolsTest < ActiveSupport::TestCase
     assert answer.error?
     assert_equal "No Project secret in acme. list_projects lists them.", answer.text
   end
+
+  # Reading one
+
+  test "get_issue answers the Issue with its latest Event, cut short, and the Events either side, linking to the Issue" do
+    stub_event_context(prev_uuid: "evt-0")
+    stub_payload(
+      level: "error", release: "shop@1.2", environment: "production",
+      exception: { values: [
+        { type: "KeyError", value: "key not found: :sku", stacktrace: { frames: [ frame("lib/cart.rb", 3, in_app: true) ] } },
+        { type: "NoMethodError", value: "undefined method 'price' for nil", stacktrace: { frames: [
+          frame("gems/rack.rb", 10, in_app: false), frame("app/models/cart.rb", 20, in_app: true),
+          frame("app/controllers/checkout_controller.rb", 30, in_app: true), frame("gems/active_support.rb", 40, in_app: false)
+        ] } }
+      ] },
+      tags: [ [ "browser", "Firefox" ], [ "url", "/checkout" ] ],
+      contexts: { trace: { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7" } },
+    )
+
+    answer = call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number)
+
+    assert_not answer.error?
+    assert_equal [ "shop", @issue.number, "NoMethodError in checkout", "unresolved" ], answer.json.values_at("project", "number", "title", "status")
+    assert_equal({
+      "id" => "evt-1", "time" => "2026-10-03T09:00:00.000Z", "environment" => "production", "level" => "error", "release" => "shop@1.2",
+      "exceptions" => [
+        { "type" => "NoMethodError", "value" => "undefined method 'price' for nil", "frames" => [
+          { "filename" => "app/controllers/checkout_controller.rb", "lineno" => 30, "function" => "create", "context_line" => "line 30" },
+          { "filename" => "app/models/cart.rb", "lineno" => 20, "function" => "create", "context_line" => "line 20" }
+        ] },
+        { "type" => "KeyError", "value" => "key not found: :sku", "frames" => [
+          { "filename" => "lib/cart.rb", "lineno" => 3, "function" => "create", "context_line" => "line 3" }
+        ] }
+      ],
+      "tags" => { "browser" => "Firefox", "url" => "/checkout" },
+      "trace_id" => "4bf92f3577b34da6a3ce929d0e0e4736",
+    }, answer.json["event"])
+    assert_equal [ "evt-0", nil ], answer.json.values_at("older_event", "newer_event")
+    assert_equal({ "tool" => "query_logs", "arguments" => {
+      "organization" => "acme", "project" => "shop", "query" => 'where trace_id == "4bf92f3577b34da6a3ce929d0e0e4736"',
+      "from" => "2026-10-03T08:00:00.000Z", "to" => "2026-10-03T10:00:00.000Z",
+    } }, answer.json["trace_logs"])
+    assert_equal "http://console.test/acme/projects/shop/issues/#{@issue.number}", answer.link
+  end
+
+  test "get_issue answers the Event asked for, without a trace hint when it has no trace id, linking to it" do
+    context = stub_event_context(uuid: "evt-1", next_uuid: "evt-2")
+    stub_payload(message: { formatted: "Payment declined" }, tags: { "region" => "eu" })
+
+    answer = call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number, event: "evt-1")
+
+    assert_not answer.error?
+    assert_requested context
+    assert_equal({ "id" => "evt-1", "time" => "2026-10-03T09:00:00.000Z", "environment" => "production",
+                   "message" => "Payment declined", "tags" => { "region" => "eu" } }, answer.json["event"])
+    assert_equal [ nil, "evt-2", nil ], answer.json.values_at("older_event", "newer_event", "trace_logs")
+    assert_equal "http://console.test/acme/projects/shop/issues/#{@issue.number}?event_id=evt-1", answer.link
+  end
+
+  test "get_issue answers the Issue while EventStore can't read Events, saying why its Event is left out" do
+    create(:issue_fingerprint, issue: @issue)
+    why = "Events can't be read now: the Event archive in the bucket hasn't been listed yet; EventStore tries again every minute"
+    stub_request(:get, %r{/api/#{@shop.id}/events}).to_return(status: 503, body: { error: why }.to_json)
+
+    answer = call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number)
+
+    assert_not answer.error?
+    assert_equal [ "NoMethodError in checkout", nil, why ], answer.json.values_at("title", "event", "events_unavailable")
+    assert_equal "http://console.test/acme/projects/shop/issues/#{@issue.number}", answer.link
+  end
+
+  test "get_issue says when EventStore can't be reached, and when it didn't give the Event's payload" do
+    create(:issue_fingerprint, issue: @issue)
+    stub_request(:get, %r{/api/#{@shop.id}/events}).to_raise(Errno::ECONNREFUSED)
+
+    answer = call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number)
+    assert_equal "Events can't be read now: EventStore can't be reached.", answer.json["events_unavailable"]
+
+    WebMock.reset!
+    stub_event_context
+    stub_request(:get, %r{/api/#{@shop.id}/events/evt-1\z}).to_return(status: 500)
+
+    answer = call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number)
+    assert_equal [ "evt-1", { "indexed" => "yes" }, nil ], answer.json["event"].values_at("id", "tags", "trace_id")
+    assert_match "EventStore didn't give this Event's payload", answer.json["event"]["missing"]
+  end
+
+  test "get_issue answers an Issue with no Event yet, and refuses an Event it doesn't have" do
+    assert_nil call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number).json["event"]
+
+    create(:issue_fingerprint, issue: @issue)
+    stub_request(:get, %r{/api/#{@shop.id}/events/context}).to_return(status: 404, body: { error: "Event not found" }.to_json)
+    answer = call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number, event: "nope")
+
+    assert answer.error?
+    assert_equal "No Event nope in this Issue. get_issue without event gives its latest.", answer.text
+  end
+
+  test "get_issue gives the Issue's last comments, oldest first" do
+    other = create(:organization_user, organization: @acme, user: create(:user, name: "Bo", email: "bo@acme.test"))
+    @issue.comments.create!(organization_user: @membership, content: "<p>Looking</p>", created_at: 2.minutes.ago)
+    @issue.comments.create!(organization_user: other, content: "<p>Fixed in <b>#42</b></p>", created_at: 1.minute.ago)
+
+    comments = call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number).json["comments"]
+
+    assert_equal [ [ "ann@acme.test", "Looking" ], [ "bo@acme.test", "Fixed in #42" ] ],
+      comments.map { |comment| [ comment["user"]["email"], comment["body"] ] }
+  end
+
+  test "get_issue finds Issues only in the user's Organizations" do
+    assert_equal "No such Issue. list_issues lists them.", call_tool(:get_issue, user: @user, project: "shop", issue: 999).text
+    assert_equal "No Project secret in acme. list_projects lists them.",
+      call_tool(:get_issue, user: @user, project: "secret", issue: @their_issue.number).text
+  end
+
+  private
+
+  # Answers the Issue's Event context: its Event evt-1 with the Events
+  # either side, once the Issue has a fingerprint to ask for.
+  def stub_event_context(uuid: nil, prev_uuid: nil, next_uuid: nil)
+    fingerprint = @issue.issue_fingerprints.first || create(:issue_fingerprint, issue: @issue)
+    query = { fingerprint_ids: fingerprint.id.to_s, uuid: uuid }.compact
+    event = { uuid: "evt-1", project_id: @shop.id, issue_fingerprint_id: fingerprint.id, environment: "production",
+              timestamp: "2026-10-03T09:00:00Z", tags: { "indexed" => "yes" } }
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/events/context").with(query: query)
+      .to_return(body: { event: event, prev_uuid: prev_uuid.to_s, next_uuid: next_uuid.to_s }.to_json)
+  end
+
+  def stub_payload(payload)
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/events/evt-1").to_return(body: payload.to_json)
+  end
+
+  def frame(filename, lineno, in_app:)
+    { filename: filename, lineno: lineno, function: "create", context_line: "  line #{lineno}  ", in_app: in_app, vars: { secret: "x" } }
+  end
 end
