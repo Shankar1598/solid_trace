@@ -18,7 +18,13 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 - **MCP server**: planned with the user on 2026-10-17 ([spec](mcp/spec.md), [tickets](mcp/issues/)), on `feature/mcp` in the worktree `../solid_trace-mcp`, branched from `feature/logs-v2` at `4139293`. An MCP endpoint in Console at `POST /mcp`, signed in with API tokens from User settings, with 34 tools for Logs (Queries, SQL, Fields), Dashboards, Monitors, Issues and admin actions. SQL queries are read-only everywhere, and keys are admin-only. Tickets 01 to 09 are built and reviewed (2026-10-17, head `41d462f`), with the Go track merged at `19939fb`; Rails (545 runs), vitest, typecheck and the Go suite pass. Not yet run: the Playwright flows for 01, 04 and 09 and an end-to-end check with a real MCP client, since the shared stack runs the main checkout. Lows are in [carry-over.md](mcp/carry-over.md). [12](mcp/issues/12-sql-fetches-web-addresses-on-bucket-installs.md) (`needs-triage`): on bucket installs, read-only SQL can still make the server fetch any web address, internal ones included; it is warned about, not blocked.
 
-- **Bugs**: four Console bugs from before the logs and MCP work, found on 2026-10-17 ([issues](bugs/issues/)): the profile form saves to a route that doesn't exist, "Forgot your password?" leads to an unbuilt reset (`needs-triage`), emails match case-sensitively, and the New Project page saves empty, reserved or duplicate slugs.
+- **Bugs** ([issues](bugs/issues/)): five Console bugs from before the logs and MCP work, found on 2026-10-17 and 18. Four were fixed on `feature/mcp` on 2026-10-18:
+  - the profile form, which never saved;
+  - password reset, built behind "Forgot your password?";
+  - emails, now matched in any case;
+  - Project slugs, which the New Project page no longer saves unreachable.
+
+  Their Playwright flows run with MCP ticket 10. Open: [05](bugs/issues/05-production-mail-unconfigured.md) (`needs-triage`), production has no mail settings, so no email reaches anyone and links point at `example.com`.
 - **Logs v2**: implemented on `feature/logs-v2` (2026-10-10 to 17): charts in the explorer, developer UX, Dashboards, Monitors with Slack, PagerDuty and email, Log Parquet and the Event archive in S3 or GCS (tested on MinIO), and a bin cache. 20 of 24 [tickets](logs-v2/issues/) resolved, including a whole-branch review; Rails, vitest, typecheck, all 69 Playwright flows and the Go suite pass. Open: the looks pass and a merge (`ready-for-human`), a real GCS run (`needs-info`), leftover lows (`ready-for-agent`).
 - **Logs**: v1 is implemented on `feature/logs-v1` (2026-10-03): 19 of 20 [tickets](logs-v1/issues/) resolved, code-reviewed, with the review fixes merged (`0eecf81`). It is not yet merged into `feature/logging` or `main`, and not yet clicked through in a browser. M1-10 (load test) is the only open ticket. Choices that depart from the spec are in its [Implementation decisions](logs-v1/spec.md#implementation-decisions); the review's fixes are in its Comments.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
@@ -28,7 +34,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-- **MCP server** ([spec](mcp/spec.md)): once the looks pass frees the stack, [10, docs and wrap](mcp/issues/10-docs-and-wrap.md) runs every Playwright flow on `feature/mcp` and the end-to-end MCP check; then [11, the whole-effort review](mcp/issues/11-whole-effort-review.md), and a decision on where `feature/mcp` merges. With the user: [12](mcp/issues/12-sql-fetches-web-addresses-on-bucket-installs.md), whether to block web addresses in SQL, and [bugs 02](bugs/issues/02-password-reset-is-unbuilt.md), whether to build password reset or remove its link.
+- **MCP server** ([spec](mcp/spec.md)): once the looks pass frees the stack, [10, docs and wrap](mcp/issues/10-docs-and-wrap.md) runs every Playwright flow on `feature/mcp` and the end-to-end MCP check; then [11, the whole-effort review](mcp/issues/11-whole-effort-review.md), and a decision on where `feature/mcp` merges. With the user: [12](mcp/issues/12-sql-fetches-web-addresses-on-bucket-installs.md), whether to block web addresses in SQL, and [bugs 05](bugs/issues/05-production-mail-unconfigured.md), what to call the production mail settings.
 
 0. **Logs v2** ([spec](logs-v2/spec.md), [tickets](logs-v2/issues/)): built and reviewed; next with the user: [20, the looks pass](logs-v2/issues/20-looks-pass.md), [21, a real GCS run](logs-v2/issues/21-real-gcs-check.md) (needs their bucket and HMAC key) and [23, the merge](logs-v2/issues/23-merge-logs-v2.md). [22](logs-v2/issues/22-leftover-low-findings.md) lists the leftover lows.
 
@@ -45,7 +51,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logs v1 | 19 / 1 | [spec.md](logs-v1/spec.md) |
 | Logs v2 | 20 / 4 | [20](logs-v2/issues/20-looks-pass.md) |
 | MCP server | 9 / 3 | [10](mcp/issues/10-docs-and-wrap.md) |
-| Bugs | 0 / 4 | [issues](bugs/issues/) |
+| Bugs | 4 / 1 | [05](bugs/issues/05-production-mail-unconfigured.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
