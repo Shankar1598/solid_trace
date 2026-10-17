@@ -192,6 +192,21 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert call_tool(:list_fields, user: @user, project: "shop", limit: 501).error?
   end
 
+  # query_language_reference
+
+  test "query_language_reference answers the Query language's reference" do
+    answer = call_tool(:query_language_reference, user: @user)
+
+    assert_not answer.error?
+    assert_equal Rails.root.join("app/mcp/docs/query-language.md").read, answer.text
+    assert_nil answer.link
+  end
+
+  test "the MCP server's copy of the Query language's reference is the same as docs/logs/query-language.md" do
+    same = Rails.root.join("../docs/logs/query-language.md").read == Rails.root.join("app/mcp/docs/query-language.md").read
+    assert same, "Copy docs/logs/query-language.md to console/app/mcp/docs/query-language.md."
+  end
+
   private
 
   # Checks that link opens the explorer on the Project shop with search.
