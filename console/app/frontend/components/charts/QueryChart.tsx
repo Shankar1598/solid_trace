@@ -8,7 +8,7 @@ import {
   type ChartForm, type ChartPoint, type Series, type SeriesChartModel, type SplitValue,
 } from '@/lib/charts/series'
 import {
-  CHAR_PX, LABEL_PAD_PX, nameChars, optionsText, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks,
+  CHAR_PX, LABEL_PAD_PX, nameChars, optionsText, shortName, statText, tickLabel, ticksInside, timePattern, timeTicks, valueText, valueTicks, withUnit,
   type ValueOptions,
 } from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
@@ -50,8 +50,10 @@ interface QueryChartProps {
    * the explorer's value menu; without it, the legend only shows and hides.
    */
   legendValue?: (field: string, value: SplitValue) => React.ReactNode
-  /** A Dashboard chart's options: stacked false never stacks; unit and decimals read the stat and tooltip values. */
+  /** A Dashboard chart's options: stacked false never stacks; unit and decimals read the stat and tooltip values, and the unit the value axis. */
   options?: ChartOptions
+  /** A single number's column name over it; off on a Dashboard, whose card title names it. */
+  statName?: boolean
   /** A Monitor's threshold, drawn as a line across each panel, whose value axis reaches it. */
   threshold?: number
   className?: string
@@ -69,6 +71,8 @@ const UPRIGHT_NAME = 12
 /** A lying bar's band, and the gap between its tip and its value. */
 const BAND_PX = 20
 const TIP_GAP_PX = 4
+/** The room right of the plot, where the last time label's tail can sit. */
+const PLOT_RIGHT_PX = 12
 
 /**
  * A Query's table drawn as a time series (line, area or bars), bars over
@@ -78,7 +82,7 @@ const TIP_GAP_PX = 4
  * a Query's table is charted, so it takes the table and options, never a
  * page's state.
  */
-export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, threshold, className }: QueryChartProps) {
+export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, statName = true, threshold, className }: QueryChartProps) {
   const model = useMemo(() => {
     const made = chartOf(table)
     if (!colors) return made
@@ -97,7 +101,7 @@ export function QueryChart({ table, form, onZoom, actions, colors, hidden, legen
   if (model.kind === 'stat') {
     return (
       <div className={cn('flex items-start justify-between gap-3 px-3 py-2', className)}>
-        <StatTile name={model.name} value={model.value} options={options} />
+        <StatTile name={statName ? model.name : null} value={model.value} options={options} />
         {actions}
       </div>
     )
@@ -119,11 +123,11 @@ export function QueryChart({ table, form, onZoom, actions, colors, hidden, legen
   )
 }
 
-/** One number: its column's name over it, large. */
-function StatTile({ name, value, options }: { name: string; value: number | null; options?: ValueOptions }) {
+/** One number, large, with its column's name over it when `name` is given. */
+function StatTile({ name, value, options }: { name: string | null; value: number | null; options?: ValueOptions }) {
   return (
     <div className="min-w-0" data-chart-stat>
-      <div className="truncate text-[11px] text-muted-foreground">{name}</div>
+      {name !== null && <div className="truncate font-mono text-[11px] text-muted-foreground">{name}</div>}
       <div className="truncate font-mono text-3xl font-semibold leading-tight text-foreground tabular-nums" title={value === null ? undefined : String(value)}>
         {value === null ? '—' : optionsText(value, options ?? {}, statText)}
       </div>
@@ -189,11 +193,17 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     const [low, high] = extent(model.points, visible, stacked)
     const reach = threshold === undefined ? [low, high] : [Math.min(low, threshold), Math.max(high, threshold)]
     const values = valueTicks(reach[0], reach[1], several ? 3 : 5)
+    const tick = tickLabel(values.step)
     const tips = across && (stacked || visible.length === 1)
     const tipWidth = tips ? Math.max(0, ...model.points.map(p => tipText(p, visible).length)) * CHAR_PX + TIP_GAP_PX : 0
-    return { panel, series, visible, stacked, values, label: tickLabel(values.step), tips, tipWidth }
+    return { panel, series, visible, stacked, values, label: (t: number) => withUnit(tick(t), options?.unit), tips, tipWidth }
   })
   const valueWidth = Math.max(...panels.map(({ values, label }) => Math.max(...values.ticks.map(t => label(t).length)))) * CHAR_PX + LABEL_PAD_PX
+  // A time chart's right margin is PLOT_RIGHT_PX; its labels are 10px mono, centred on their ticks.
+  const timeTickList = time ? timeTicks(time.from.getTime(), time.to.getTime(), TIME_TICKS) : []
+  const timeLabels = time && domain && timeTickList.length > 0
+    ? ticksInside(timeTickList, domain, [valueWidth, width - PLOT_RIGHT_PX], width, (format(new Date(timeTickList[0]), pattern).length * CHAR_PX) / 2)
+    : timeTickList
 
   const index = (state: MouseHandlerDataParam) => {
     const i = Number(state.activeTooltipIndex)
@@ -292,7 +302,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
                     type="number"
                     scale="time"
                     domain={domain}
-                    ticks={timeTicks(time.from.getTime(), time.to.getTime(), TIME_TICKS)}
+                    ticks={timeLabels}
                     tickFormatter={x => format(new Date(x), pattern)}
                     tickLine={false}
                     axisLine={{ stroke: 'var(--border)' }}
@@ -420,7 +430,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, tipWid
       ? <circle key={`${s.key}-${i}`} cx={props.cx} cy={props.cy} r={4} fill={`var(--color-${s.key})`} stroke="var(--card)" strokeWidth={2} />
       : <g key={`${s.key}-${i}`} />
   }
-  const right = tipWidth === null ? 12 : Math.max(12, tipWidth + TIP_GAP_PX)
+  const right = tipWidth === null ? PLOT_RIGHT_PX : Math.max(PLOT_RIGHT_PX, tipWidth + TIP_GAP_PX)
   const chart = { data, margin: { top: 6, right, bottom: axisBelow ? 0 : 10, left: 0 }, ...events }
   const axes = (
     <>
@@ -550,7 +560,7 @@ function Legend({ model, form, hidden, onToggle, legendValue }: {
               onClick={() => onToggle(entry.id)}
               className={cn(
                 // 24px tall on a phone, a target a finger can hit; as dense as the text from sm up.
-                'flex min-h-6 max-w-56 items-center gap-1.5 rounded-sm px-1 text-[11px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring sm:min-h-0',
+                'flex min-h-6 max-w-56 items-center gap-1.5 px-1 text-[11px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring sm:min-h-0',
                 shown ? 'text-foreground' : 'text-muted-foreground line-through',
               )}
             >

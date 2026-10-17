@@ -117,6 +117,9 @@ Source: `console/e2e/screens/tour.spec.ts` on `bin/rails db:seed dev:data` (comm
 - **Users column is 0** on the Issues index for Issues whose Events carry a user. Cause: `pages/Issues/Index.tsx` renders a hard-coded `format(0)`.
 - **Age counts from the Console row, not the first Event.** The Issues index's Age is `formatDistanceToNow(issue.created_at)`, so Issues ingested in a batch all read the same age.
 - **The Issues index's time filter does nothing.** In `pages/Issues/Index.tsx` the range select (24 hours, 14 days, 30 days) only has a `defaultValue="14d"`; unlike the project and sort selects it never calls `visitFilters`, so the list is the same whatever range is picked. Connect it, or hide it until it works. The user asked (2026-10-17) for this to be fixed after the UI work, with the other bugs here.
+- **The Issues index's checkboxes select nothing.** `pages/Issues/Index.tsx` draws a select-all box and one per row, with no state and no bulk action (resolve, assign). Wire them to bulk actions or remove them.
+- **Delete project does nothing.** The Danger zone's button in `pages/Projects/Show.tsx` has no handler. Confirm and delete, or remove the button.
+- **Forgot your password? opens a blank page.** `PasswordsController#new` and `#edit` render the Inertia components `passwords/new` and `passwords/edit`, which don't exist, so the client throws "Page not found". Add the two pages (email form, new-password form) in AuthLayout, or hide the link.
 - ~~**Every unresolved Issue is labelled UNHANDLED.**~~ Fixed in step 2: the row shows a Resolved badge on resolved Issues and nothing else, since an Issue doesn't record whether its exception was handled.
 - **e2e flows leave dashboards behind:** "Flow dashboard <timestamp>" rows stay after the flows run.
 

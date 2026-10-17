@@ -199,8 +199,13 @@
     @apply font-sans bg-background text-foreground;
   }
 
+  /*
+   * JetBrains Mono's ligatures are contextual alternates: they draw == as one
+   * long sign and != as ≠, so what a reader copies isn't what they saw.
+   */
   html {
     @apply font-sans;
+    font-variant-ligatures: no-contextual;
   }
 
   select {
@@ -221,4 +226,10 @@
 /* A Dashboard's resize corner (react-resizable draws a dark arrow): light in dark mode, so it can be found. */
 .dark .react-resizable-handle {
   filter: invert(1);
+}
+
+/* The comment editor's placeholder: Tiptap puts it in data-placeholder on an empty first paragraph. */
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-muted-foreground;
 }

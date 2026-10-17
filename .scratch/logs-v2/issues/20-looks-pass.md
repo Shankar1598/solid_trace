@@ -17,6 +17,34 @@
 - a `Segmented` switch for Mode, Chart, Viz and Kind;
 - a sentence-case sweep.
 
-All 69 flows pass. The direction page shows each page before, after step 1 and after step 2. Next is step 3, page by page; the page-by-page list in the review says what is left. The bugs found on the way are fixed after the looks work.
+All 69 flows pass. The direction page shows each page before, after step 1 and after step 2.
+
+Step 3, page by page at desktop size, is done (2026-10-18):
+- **Logs:**
+  - plain service names, a message column that fills the width, and a time column clear of its menu button
+  - skeleton rows and bars while a run loads
+  - one prompt style for leaving Query or SQL mode
+  - mono ligatures off
+- **Dashboards:**
+  - a chart names its Project only on a Dashboard that reads several
+  - value axes carry the chart's unit, a stat drops its column name, and the run time shows once
+  - time labels stay inside the chart
+- **Monitors:** the form in `FormSection`s at `max-w-4xl`.
+- **Issues:** the comment box framed once, with its placeholder, and without taking focus on open.
+- **Projects:** one column with the DSN first.
+- **Log in and Register:** no card, and a page-size title.
+- **Access:**
+  - every page names its browser tab
+  - the Logs stream is a keyboard grid (new flow in `shortcuts.spec.ts`)
+  - icon buttons have labels
+
+The language is written down in [docs/design-language.md](../../../docs/design-language.md), and the direction page shows four stages for 14 pages. 70 flows pass.
+
+Phones are a separate effort, [phone-layout 01](../../phone-layout/issues/01-phone-layout.md) (user, 2026-10-18).
+
+Left in this ticket:
+- the bugs in the review (after the looks work, as the user asked)
+- the measurements (10,000 stream lines, a 12-chart Dashboard over 7 days)
+- the Phase 6 carry-over list and the remaining click-through rough edges
 
 **Status:** ready-for-human

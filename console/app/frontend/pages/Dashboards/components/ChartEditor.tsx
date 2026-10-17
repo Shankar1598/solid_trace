@@ -216,9 +216,9 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
             options={[{ value: 'builder', label: 'Builder' }, { value: 'query', label: 'Query' }]}
             onChange={switchMode}
           />
-          {notice && <p className="text-xs text-amber-600 dark:text-amber-400">{notice}</p>}
+          {notice && <p className="text-xs text-warning">{notice}</p>}
           {mode === 'builder' ? (
-            <div className="rounded-md border">
+            <div className="border">
               {builder ? (
                 <BuilderPanel
                   builder={builder}
@@ -282,7 +282,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
           {errors.options && <p className="text-xs text-destructive">Options {errors.options}</p>}
         </div>
 
-        <div className="h-72 overflow-auto rounded-md border" data-chart-preview>
+        <div className="h-72 overflow-auto border" data-chart-preview>
           <ChartBody run={preview} viz={viz} options={options} />
         </div>
 

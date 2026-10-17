@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Head } from '@inertiajs/react'
 import Breadcrumbs, { type BreadcrumbItem } from './Breadcrumbs'
 import { cn } from '@/lib/utils'
 
@@ -12,17 +13,22 @@ interface PageHeaderProps {
   breadcrumbs?: BreadcrumbItem[]
   /** On the right: the page's buttons. */
   actions?: ReactNode
+  /** The browser tab's title, when `title` isn't plain text. */
+  tabTitle?: string
   className?: string
 }
 
 /**
  * Every page's header: breadcrumbs, title and description on the left, the
  * page's buttons on the right. A top-level page keeps the breadcrumbs' line
- * empty, so a title sits at the same height on every page.
+ * empty, so a title sits at the same height on every page. The title names
+ * the browser tab too.
  */
-export function PageHeader({ title, badge, description, breadcrumbs, actions, className }: PageHeaderProps) {
+export function PageHeader({ title, badge, description, breadcrumbs, actions, tabTitle, className }: PageHeaderProps) {
+  const tab = tabTitle ?? (typeof title === 'string' ? title : undefined)
   return (
     <header className={cn('mb-6 space-y-1.5', className)}>
+      {tab && <Head title={tab} />}
       <div className="min-h-5">{breadcrumbs && <Breadcrumbs items={breadcrumbs} />}</div>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0 space-y-1">

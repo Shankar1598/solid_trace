@@ -25,11 +25,11 @@ export function BreadcrumbsList({ breadcrumbs }: BreadcrumbsListProps) {
     switch (level) {
       case 'fatal':
       case 'error':
-        return 'text-red-500'
+        return 'text-destructive'
       case 'warning':
-        return 'text-amber-500'
+        return 'text-warning'
       case 'info':
-        return 'text-blue-500'
+        return 'text-info'
       default:
         return 'text-muted-foreground'
     }
