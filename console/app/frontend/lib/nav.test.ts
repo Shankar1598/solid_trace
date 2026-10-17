@@ -20,6 +20,14 @@ describe('the sidebar entry of a page', () => {
     expect(navSection('/acme/projects/dashboards')).toBe('projects')
   })
 
+  it('is Monitors for the list, a new Monitor and each Monitor, and only them', () => {
+    expect(navSection('/acme/monitors')).toBe('monitors')
+    expect(navSection('/acme/monitors/new?query=%2Fdashboards')).toBe('monitors')
+    expect(navSection('/acme/monitors/4/edit')).toBe('monitors')
+    expect(navSection('/acme/projects/monitors')).toBe('projects')
+    expect(navSection('/acme/projects/shop/logs?q=/monitors')).toBe('logs')
+  })
+
   it('is Projects for the list, a new Project and a Project\'s page', () => {
     expect(navSection('/acme/projects')).toBe('projects')
     expect(navSection('/acme/projects/new')).toBe('projects')

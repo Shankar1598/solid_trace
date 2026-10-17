@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
-import { List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard } from 'lucide-react'
+import { List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { navSection } from '@/lib/nav'
 import { SharedProps } from '@/types'
@@ -23,6 +23,7 @@ export function Sidebar({ className }: SidebarProps) {
     { label: 'Issues', href: `/${current_org.slug}/issues`, icon: List, active: section === 'issues' },
     { label: 'Logs', href: `/${current_org.slug}/logs`, icon: ScrollText, active: section === 'logs' },
     { label: 'Dashboards', href: `/${current_org.slug}/dashboards`, icon: LayoutDashboard, active: section === 'dashboards' },
+    { label: 'Monitors', href: `/${current_org.slug}/monitors`, icon: BellRing, active: section === 'monitors' },
     { label: 'Projects', href: `/${current_org.slug}/projects`, icon: GitMerge, active: section === 'projects' },
     { label: 'Settings', href: `/${current_org.slug}/settings/organization`, icon: Settings, active: section === 'settings' },
   ]

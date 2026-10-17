@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { filterGroups, paletteGroups, queryLine, registerPaletteSource, type PaletteContext, type PaletteItem } from './palette'
 
-const context: PaletteContext = { orgSlug: 'acme', projects: [{ name: 'Storefront', slug: 'storefront' }], dashboards: [] }
+const context: PaletteContext = { orgSlug: 'acme', projects: [{ name: 'Storefront', slug: 'storefront' }], dashboards: [], monitors: [] }
 const item = (group: string, label: string, detail?: string): PaletteItem => ({ id: `${group}/${label}`, group, label, detail, href: '/' })
 
 describe('the palette registry', () => {

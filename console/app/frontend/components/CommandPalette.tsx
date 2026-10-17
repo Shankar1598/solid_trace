@@ -10,7 +10,7 @@ import { copyText } from './copyText'
 import { ShortcutSheet } from './ShortcutSheet'
 import { useShortcut } from './useShortcut'
 
-// The layout's own items: recent Queries, each Project's Logs, each Dashboard and the pages.
+// The layout's own items: recent Queries, each Project's Logs, each Dashboard and Monitor, and the pages.
 registerPaletteSource('recent-queries', ({ orgSlug, projects }) => {
   if (!orgSlug) return []
   const names = new Map(projects.map(p => [p.slug, p.name]))
@@ -31,9 +31,14 @@ registerPaletteSource('dashboards', ({ orgSlug, dashboards }) => dashboards.map(
   id: `dashboard/${d.id}`, group: 'Dashboards', label: d.name, detail: 'Dashboard', href: `/${orgSlug}/dashboards/${d.id}`,
 })))
 
+registerPaletteSource('monitors', ({ orgSlug, monitors }) => monitors.map(m => ({
+  id: `monitor/${m.id}`, group: 'Monitors', label: m.name, detail: 'Monitor', href: `/${orgSlug}/monitors/${m.id}`,
+})))
+
 registerPaletteSource('pages', ({ orgSlug }) => (orgSlug ? [
   { id: 'page/issues', group: 'Pages', label: 'Issues', href: `/${orgSlug}/issues` },
   { id: 'page/dashboards', group: 'Pages', label: 'Dashboards', href: `/${orgSlug}/dashboards` },
+  { id: 'page/monitors', group: 'Pages', label: 'Monitors', href: `/${orgSlug}/monitors` },
   { id: 'page/projects', group: 'Pages', label: 'Projects', href: `/${orgSlug}/projects` },
   { id: 'page/settings', group: 'Pages', label: 'Settings', href: `/${orgSlug}/settings/organization` },
 ] : []))
@@ -66,6 +71,7 @@ export function CommandPalette({ children }: { children: React.ReactNode }) {
     orgSlug: props.current_org?.slug ?? '',
     projects: props.org_projects ?? [],
     dashboards: props.org_dashboards ?? [],
+    monitors: props.org_monitors ?? [],
   }
   return (
     <OpenPalette.Provider value={() => setOpen(true)}>
