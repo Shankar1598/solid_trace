@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { aroundLog, inspectorFields, inspectorJson, jsonLines, localTime, utcTime, type JsonLine } from './inspector'
-import type { Log } from './stream'
+import { aroundLog, aroundMissed, inspectorFields, inspectorJson, jsonLines, localTime, narrowAround, utcTime, type JsonLine } from './inspector'
+import { MAX_STREAM_LOGS, PAGE_LOGS, type Log, type Stream } from './stream'
 
 const log: Log = {
   id: '0199a8b2-6a1e-7c3d-9f00-1234567890ab',
@@ -98,5 +98,42 @@ describe('Logs around this one', () => {
 
   it('reads Logs without a Service around a Log without one', () => {
     expect(aroundLog({ ...log, service: undefined }).builder.filters).toEqual([{ field: 'service', op: 'missing', value: null }])
+  })
+
+  describe('when more than a page is newer than the Log', () => {
+    const range = aroundLog(log).range
+    const at = (ms: number): Log => ({ id: `n${ms}`, time: new Date(ms).toISOString(), message: 'tick', service: 'api', attributes: {} })
+    /** A stream of `count` Logs, one every `stepMs` back from the range's end. */
+    const streamOf = (count: number, stepMs: number, nextCursor: string | null = 'more'): Stream => ({
+      logs: Array.from({ length: count }, (_, i) => at(range.to.getTime() - stepMs * (i + 1))),
+      nextCursor,
+      target: PAGE_LOGS,
+    })
+
+    it('ends the range as long after the Log as the Logs loaded took to fill half a page', () => {
+      // 200 Logs 10 ms apart took 2 s, so 100 fit in the first second after the Log.
+      expect(narrowAround(range, streamOf(200, 10), log)).toEqual({
+        kind: 'absolute', from: range.from, to: new Date('2026-10-17T12:00:01.250Z'),
+      })
+    })
+
+    it('ends it just after the Log when the Logs come faster than a millisecond apart', () => {
+      expect(narrowAround(range, streamOf(200, 0.001), log)?.to).toEqual(new Date('2026-10-17T12:00:00.251Z'))
+    })
+
+    it('leaves the range alone when narrowing it would end it no sooner, so older pages load instead', () => {
+      // 10 Logs over 30 s: half a page would need longer than the minute after the Log.
+      expect(narrowAround(range, streamOf(10, 3_000), log)).toBeNull()
+      // Already ending just after the Log.
+      const tight = { ...range, to: new Date('2026-10-17T12:00:00.251Z') }
+      expect(narrowAround(tight, { logs: [at(tight.to.getTime())], nextCursor: 'more', target: PAGE_LOGS }, log)).toBeNull()
+      expect(narrowAround(range, streamOf(0, 10), log)).toBeNull()
+    })
+
+    it('says why a stream that ended without the Log does not show it', () => {
+      expect(aroundMissed(streamOf(MAX_STREAM_LOGS, 1))).toBe(
+        `This Log is more than ${MAX_STREAM_LOGS.toLocaleString('en-US')} Logs into the stream, so it can't be shown. Pick a shorter range around it.`)
+      expect(aroundMissed(streamOf(20, 10, null))).toBe("This Log isn't in the stream any more: it may have left the Project's Retention.")
+    })
   })
 })
