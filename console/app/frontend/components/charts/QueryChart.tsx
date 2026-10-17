@@ -124,7 +124,7 @@ function StatTile({ name, value, options }: { name: string; value: number | null
   return (
     <div className="min-w-0" data-chart-stat>
       <div className="truncate text-[11px] text-muted-foreground">{name}</div>
-      <div className="truncate text-3xl font-semibold leading-tight text-foreground" title={value === null ? undefined : String(value)}>
+      <div className="truncate font-mono text-3xl font-semibold leading-tight text-foreground tabular-nums" title={value === null ? undefined : String(value)}>
         {value === null ? '—' : optionsText(value, options ?? {}, statText)}
       </div>
     </div>
@@ -259,10 +259,10 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
       <div role="figure" aria-label={chartLabel(model, form)}>
         {panels.map(({ panel, series, stacked, values, label, tips, tipWidth }, i) => (
           <div key={panel.keys[0]}>
-            {several && <div className="truncate px-3 pt-1 text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
+            {several && <div className="truncate px-3 pt-1 font-mono text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
             <ChartContainer
               config={config}
-              className={cn('aspect-auto w-full px-1', !across && height, zooms && 'cursor-crosshair select-none')}
+              className={cn('aspect-auto w-full px-1 font-mono', !across && height, zooms && 'cursor-crosshair select-none')}
               style={across ? { height: names.length * BAND_PX + 32 } : undefined}
             >
               <PanelChart
@@ -407,7 +407,6 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, tipWid
 }) {
   const stack = stacked ? 'stack' : undefined
   const shown = series.filter(s => !hidden.has(s.id))
-  const top = shown.at(-1)?.key
   // A lying bar's value sits past the tip of its last segment with a value.
   const tip = (s: Series) => (entry: LabelListEntry) => {
     const point = entry.payload as ChartPoint
@@ -446,7 +445,6 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, tipWid
             stackId={stack}
             fill={`var(--color-${s.key})`}
             maxBarSize={24}
-            radius={!stack || s.key === top ? (across ? [0, 3, 3, 0] : [3, 3, 0, 0]) : 0}
             stroke={stack ? 'var(--card)' : undefined}
             strokeWidth={stack ? 1 : 0}
             isAnimationActive={false}
@@ -532,7 +530,7 @@ function Legend({ model, form, hidden, onToggle, legendValue }: {
   if (model.legend.length === 1) {
     return (
       <>
-        {model.panels.length === 1 && <span className="truncate text-[11px] text-muted-foreground">{model.legend[0].name}</span>}
+        {model.panels.length === 1 && <span className="truncate font-mono text-[11px] text-muted-foreground">{model.legend[0].name}</span>}
         {valueControl(model.legend[0].id)}
         {notes}
       </>
@@ -557,10 +555,10 @@ function Legend({ model, form, hidden, onToggle, legendValue }: {
               )}
             >
               <span
-                className={cn('shrink-0', form === 'line' ? 'h-0.5 w-3 rounded-full' : 'h-2 w-2 rounded-[2px]', !shown && 'opacity-40')}
+                className={cn('shrink-0', form === 'line' ? 'h-0.5 w-3' : 'h-2 w-2', !shown && 'opacity-40')}
                 style={{ background: entry.color }}
               />
-              <span className="truncate">{entry.name}</span>
+              <span className="truncate font-mono">{entry.name}</span>
             </button>
             {valueControl(entry.id)}
           </span>

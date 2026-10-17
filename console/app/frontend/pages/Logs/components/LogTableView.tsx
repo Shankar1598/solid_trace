@@ -5,7 +5,7 @@ import { ChevronDown } from 'lucide-react'
 import { QueryChart, type ColorSlots, type HiddenSeries } from '@/components/charts/QueryChart'
 import { chartOf, formFor, formsOf, keepColors, totalsColors, type SplitValue } from '@/lib/charts/series'
 import type { AbsoluteRange, Viz } from '@/lib/logs/explorerState'
-import { pivotsOn, type LogTable, type LogTotals, type TableColumn } from '@/lib/logs/table'
+import { numberText, pivotsOn, type LogTable, type LogTotals, type TableColumn } from '@/lib/logs/table'
 import type { AttributeValue } from '@/lib/logs/stream'
 import { runLine, totalsLine } from '@/lib/logs/runLine'
 import { cn } from '@/lib/utils'
@@ -123,7 +123,7 @@ function TableRows({ table, swatches = null }: { table: LogTable | LogTotals; sw
         <div className="sticky top-0 z-10 flex border-b bg-muted text-left text-muted-foreground">
           {swatched && <div className="shrink-0" style={{ width: SWATCH_WIDTH }} />}
           {table.columns.map((c, i) => (
-            <div key={i} className="shrink-0 truncate px-3 py-1.5 font-medium" style={{ width: widths[i] }} title={`${c.name} (${c.type})`}>
+            <div key={i} className={cn('shrink-0 truncate px-3 py-1.5 font-medium', c.type === 'number' && 'text-right')} style={{ width: widths[i] }} title={`${c.name} (${c.type})`}>
               {c.name}
             </div>
           ))}
@@ -138,11 +138,11 @@ function TableRows({ table, swatches = null }: { table: LogTable | LogTotals; sw
             >
               {swatched && (
                 <div className="flex shrink-0 justify-end" style={{ width: SWATCH_WIDTH }}>
-                  {swatches![item.index] && <span className="h-2 w-2 rounded-[2px]" style={{ background: swatches![item.index]! }} data-swatch />}
+                  {swatches![item.index] && <span className="h-2 w-2" style={{ background: swatches![item.index]! }} data-swatch />}
                 </div>
               )}
               {table.columns.map((c, i) => (
-                <div key={i} className="shrink-0 truncate px-3" style={{ width: widths[i] }}>
+                <div key={i} className={cn('shrink-0 truncate px-3', c.type === 'number' && 'text-right')} style={{ width: widths[i] }}>
                   <Cell column={c} value={table.rows[item.index][i] as AttributeValue} />
                 </div>
               ))}
@@ -162,7 +162,7 @@ function TableRows({ table, swatches = null }: { table: LogTable | LogTotals; sw
 /** What the run found and how long it took: "12 rows · 230 ms". */
 function RunLine({ text }: { text: string }) {
   return (
-    <div className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground" data-run-line>
+    <div className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground tabular-nums" data-run-line>
       {text}
     </div>
   )
@@ -183,7 +183,9 @@ function Cell({ column, value }: { column: TableColumn; value: AttributeValue })
     <Tag field={column.name} value={value} filterable={pivotsOn(column)}>
       {column.type === 'datetime' && typeof value === 'string'
         ? <span title={value}>{format(new Date(value), 'MMM dd HH:mm:ss.SSS')}</span>
-        : valueText(value, 200)}
+        : typeof value === 'number'
+          ? <span title={String(value)}>{numberText(column, value)}</span>
+          : valueText(value, 200)}
     </Tag>
   )
 }
@@ -194,7 +196,10 @@ function columnWidths(table: LogTable | LogTotals): number[] {
     let chars = c.name.length
     for (const row of table.rows.slice(0, SIZING_ROWS)) {
       const v = row[i]
-      const text = c.type === 'datetime' ? 'MMM dd HH:mm:ss.SSS' : v === null || v === undefined ? '' : valueText(v as AttributeValue)
+      const text = c.type === 'datetime' ? 'MMM dd HH:mm:ss.SSS'
+        : v === null || v === undefined ? ''
+        : typeof v === 'number' ? numberText(c, v)
+        : valueText(v as AttributeValue)
       chars = Math.max(chars, text.length)
     }
     return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.ceil(chars * CHAR_PX) + CELL_PADDING))

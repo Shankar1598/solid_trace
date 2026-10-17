@@ -214,7 +214,7 @@ function ProjectSelect({ project, projects, onChange }: { project: ProjectOption
   const items = Object.fromEntries(projects.map(p => [p.slug, p.slug]))
   return (
     <Select value={project.slug} onValueChange={v => v && onChange(v as string)} items={items}>
-      <SelectTrigger size="sm" className="h-6 w-fit max-w-full" aria-label="Project"><SelectValue /></SelectTrigger>
+      <SelectTrigger size="sm" className="h-6 w-fit max-w-full font-mono" aria-label="Project"><SelectValue /></SelectTrigger>
       <SelectContent align="start" alignItemWithTrigger={false} className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
         {projects.map(p => (
           <SelectItem key={p.slug} value={p.slug}>
@@ -249,7 +249,7 @@ function Clause({ title, editor, onRemove, children }: {
   const [open, setOpen] = useState(false)
   return (
     // At most the row's width, so a long clause truncates on a phone rather than pushing its × out of reach.
-    <span className={cn('inline-flex h-6 max-w-[min(24rem,100%)] items-stretch border bg-muted/40', open && 'border-ring')}>
+    <span className={cn('inline-flex h-6 max-w-[min(24rem,100%)] items-stretch border bg-muted/40 font-mono', open && 'border-ring')}>
       <Popover.Root open={open} onOpenChange={setOpen}>
         <Popover.Trigger className="min-w-0 truncate px-2 text-left hover:bg-muted" title={`${title} (click to edit)`}>
           {children}

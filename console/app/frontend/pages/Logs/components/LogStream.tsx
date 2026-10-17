@@ -311,7 +311,7 @@ function LogRow({ log, columns, widthOf, selected, onSelect }: {
       )}
     >
       <div className="flex shrink-0 items-center justify-center border-r" style={{ width: GUTTER }} title={level || undefined}>
-        <span className={cn('h-2 w-2 rounded-[2px]', LEVEL_SQUARE[level] ?? 'border border-muted-foreground/40')} />
+        <span className={cn('h-2 w-2', LEVEL_SQUARE[level] ?? 'border border-muted-foreground/40')} />
       </div>
       {columns.map(column => (
         <CellBox key={column} log={log} column={column} width={widthOf(column)} />

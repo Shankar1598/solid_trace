@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { valueText } from '@/lib/charts/axis'
 import { fetchPreview } from '@/lib/dashboards/api'
 import { withSource } from '@/lib/dashboards/dashboard'
 import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
@@ -399,7 +400,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
                       <li key={JSON.stringify(g.group)} className="flex justify-between gap-3 px-3 py-1.5" data-group-firing={g.firing}>
                         <span className="min-w-0 truncate font-mono">{groupLabel(g.group)}</span>
                         <span className={cn('shrink-0 tabular-nums', g.firing && 'font-medium text-destructive')}>
-                          {g.value ?? 'No data'}{g.firing ? ' · fires' : ''}
+                          {g.value === null ? 'No data' : <span className="font-mono">{valueText(g.value)}</span>}{g.firing ? ' · fires' : ''}
                         </span>
                       </li>
                     ))}

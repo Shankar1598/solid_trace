@@ -120,9 +120,9 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, actions, onNew
             <div className="min-w-0 flex-1">
               {/* Wraps on a phone rather than cutting the time short. */}
               <h2 className="text-sm">
-                <span className="text-muted-foreground">Log</span> {localTime(log.time)}
+                <span className="text-muted-foreground">Log</span> <span className="font-mono">{localTime(log.time)}</span>
               </h2>
-              <Tag field="time" value={utc} columnable className="text-[11px] text-muted-foreground tabular-nums">{utc}</Tag>
+              <Tag field="time" value={utc} columnable className="font-mono text-[11px] text-muted-foreground">{utc}</Tag>
             </div>
             <div className="flex items-center gap-0.5">
               <IconButton label="Newer Log (k)" disabled={!onNewer} onClick={() => onNewer?.()}><ChevronUp /></IconButton>
@@ -152,7 +152,7 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, actions, onNew
           </div>
         </header>
 
-        <div className="max-h-40 shrink-0 overflow-auto border-b px-3 py-2.5 text-sm break-words whitespace-pre-wrap">
+        <div className="max-h-40 shrink-0 overflow-auto border-b px-3 py-2.5 font-mono text-[13px] break-words whitespace-pre-wrap">
           {log.message}
           {fetched?.error && <p className="mt-2 text-xs text-muted-foreground">{fetched.error} Showing it as the stream loaded it.</p>}
         </div>
@@ -180,7 +180,7 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, actions, onNew
 /** One of the header's main Fields: a tag, so it opens the tag menu. */
 function Pill({ field, value, children }: { field: string; value: string; children: React.ReactNode }) {
   return (
-    <Tag field={field} value={value} columnable className="inline-flex h-6 items-center gap-1.5 border px-2">
+    <Tag field={field} value={value} columnable className="inline-flex h-6 items-center gap-1.5 border px-2 font-mono">
       {children}
     </Tag>
   )
@@ -229,7 +229,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function FieldRow({ field: { name, value }, actions }: { field: InspectorField; actions: InspectorActions }) {
   return (
-    <div className="group relative flex gap-3 border-b border-border/60 px-3 py-1.5 hover:bg-muted/40">
+    <div className="group relative flex gap-3 border-b border-border/60 px-3 py-1.5 font-mono hover:bg-muted/40">
       <div className="w-36 shrink-0 truncate text-muted-foreground" title={name}>{name}</div>
       <div className="min-w-0 flex-1 wrap-anywhere whitespace-pre-wrap">
         <ValueText value={value} plainStrings />
