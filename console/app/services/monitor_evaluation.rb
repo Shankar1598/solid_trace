@@ -2,8 +2,8 @@
 
 # Runs a Monitor once, at now: the one entry point for evaluating Monitors.
 # It asks EventStore, moves the Monitor's states, writes the Notifications
-# each change owes (IntegrationNotification.monitor_changed) and records the
-# run, all in one transaction.
+# each change owes (IntegrationNotification.monitor_changes) and records the
+# run, all in one transaction, then schedules each Integration's tick.
 #
 # - Threshold: runs the Query over [now - range - 60 s, now - 60 s). Each
 #   row is a group keyed by its columns other than the number, or all rows
@@ -156,7 +156,8 @@ class MonitorEvaluation
   #
   # It runs in the transaction that holds SQLite's write lock, and a run may
   # have up to 10,000 groups, so the states are written in bulk: one upsert
-  # of what changed and one delete of the ok groups that are gone.
+  # of what changed and one delete of the ok groups that are gone. The
+  # Notifications are written in bulk too, when the run is recorded.
   def move_states(groups, column:, from:, to:)
     states = @monitor.states.index_by(&:group_key)
     facts = { "column" => column, "threshold" => @monitor.threshold, "operator" => @monitor.operator,
@@ -286,8 +287,9 @@ class MonitorEvaluation
   # Recording the run
   # ---------------------------------------------------------------------------
 
+  # Keeps a change for record to write with the run's others.
   def notify(kind, group_key, payload)
-    IntegrationNotification.monitor_changed(@monitor, kind: kind, group_key: group_key, payload: payload)
+    @changes << [ kind, group_key, payload ]
   end
 
   def failed(error)
@@ -298,15 +300,22 @@ class MonitorEvaluation
   # the version the run read. SQLite transactions here begin IMMEDIATE, so
   # no save of the Monitor lands between the check and the writes. A
   # changed Monitor records the run as changing nothing, and a deleted one
-  # records nothing (nil).
+  # records nothing (nil). The Notifications the run's changes owe
+  # (notify) are written in the same transaction, and their Integrations'
+  # ticks are scheduled, one each, once it commits.
   def record
-    ApplicationRecord.transaction do
+    @changes = []
+    notified = []
+    run = ApplicationRecord.transaction do
       version = LogMonitor.where(id: @monitor.id).pick(:updated_at)
       if version.nil? then nil
       elsif version != @version then finish(error: CHANGED_DURING_RUN)
-      else yield
+      else
+        yield.tap { notified = IntegrationNotification.monitor_changes(@monitor, @changes) }
       end
     end
+    IntegrationNotification.schedule_ticks(notified)
+    run
   end
 
   # Records the run. An ok run is next due after the Monitor's interval; one

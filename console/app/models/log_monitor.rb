@@ -172,12 +172,13 @@ class LogMonitor < ApplicationRecord
     states.delete_all
   end
 
+  # The Notifications are written in bulk, as a Monitor may have thousands
+  # of firing groups and this runs in the save's transaction.
   def send_resolved(reason, operator:, threshold:, integrations:)
-    states.reload.select(&:status_firing?).each do |state|
-      IntegrationNotification.monitor_changed(self, kind: IntegrationNotification::MONITOR_RESOLVED,
-        group_key: state.group_key, integrations: integrations, payload: {
-          "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true,
-        })
+    changes = states.reload.select(&:status_firing?).map do |state|
+      [ IntegrationNotification::MONITOR_RESOLVED, state.group_key,
+        { "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true } ]
     end
+    IntegrationNotification.schedule_ticks(IntegrationNotification.monitor_changes(self, changes, integrations: integrations))
   end
 end
