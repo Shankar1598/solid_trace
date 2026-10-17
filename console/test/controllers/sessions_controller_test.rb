@@ -26,4 +26,11 @@ class SessionsControllerTest < ActionDispatch::IntegrationTest
     get root_url
     assert_redirected_to login_url
   end
+
+  test "an email in another case signs in" do
+    post login_url, params: { email: "Test@Example.COM", password: "password123" }
+
+    assert_redirected_to root_url
+    assert_not_nil cookies[:session_id]
+  end
 end
