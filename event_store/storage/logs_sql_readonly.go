@@ -47,8 +47,10 @@ type parsedSQL struct {
 	Error        bool   `json:"error"`
 	ErrorType    string `json:"error_type"`
 	ErrorMessage string `json:"error_message"`
-	Position     string `json:"position"`
-	Statements   []any  `json:"statements"`
+	// Position is the byte offset of a parser error, which DuckDB 1.5.6
+	// writes as a string.
+	Position   any   `json:"position"`
+	Statements []any `json:"statements"`
 }
 
 // checkReadOnly refuses a SQL query, with a *SQLError, unless it is one
@@ -154,8 +156,16 @@ func duckDBMessage(query string, parsed parsedSQL) string {
 		kind = strings.ToUpper(kind[:1]) + kind[1:]
 	}
 	message := fmt.Sprintf("%s Error: %s", kind, parsed.ErrorMessage)
-	position, err := strconv.Atoi(parsed.Position)
-	if err != nil || position < 0 || position > len(query) {
+	position := -1
+	switch at := parsed.Position.(type) {
+	case string:
+		if n, err := strconv.Atoi(at); err == nil {
+			position = n
+		}
+	case float64:
+		position = int(at)
+	}
+	if position < 0 || position > len(query) {
 		return message
 	}
 	start := strings.LastIndexByte(query[:position], '\n') + 1

@@ -51,6 +51,7 @@ func TestSQLThatWouldChangeAnythingIsRefusedBeforeItRuns(t *testing.T) {
 		{"SET", "SET threads = 1", "SET"},
 		{"PRAGMA", "PRAGMA enable_profiling", "PRAGMA"},
 		{"CALL checkpoint()", "CALL checkpoint()", "CALL"},
+		{"PIVOT without IN", "PIVOT logs ON level", "PIVOT"},
 		{"after comments", "-- tidy up\n/* first */ drop table logs.log_key_counts", "DROP"},
 		{"a CTE before DELETE", "WITH old AS (SELECT 1) DELETE FROM logs.log_key_counts", "a statement other than SELECT"},
 		{"two SELECTs", "SELECT 1; SELECT 2", "more than one statement"},
