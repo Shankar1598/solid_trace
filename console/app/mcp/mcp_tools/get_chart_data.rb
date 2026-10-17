@@ -7,7 +7,7 @@ module McpTools
     include DashboardTool
 
     description "Runs a Chart's saved Query on its Project over a range and answers the table the Chart draws: " \
-                "its columns and at most #{Table::MAX_ROWS} rows."
+                "#{Table::SHAPE}."
     read_only!
     takes_chart
     takes_range

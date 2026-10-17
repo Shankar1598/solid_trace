@@ -100,6 +100,18 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     end
   end
 
+  test "query_logs cuts a table's long messages at 500 characters, so counting by message stays small" do
+    stack = "Payment failed\n#{"  at checkout.rb:42\n" * 500}"
+    query = 'where level == "error" | summarize count() by message'
+    stub_request(:post, @query_url).with(body: hash_including(query: query))
+      .to_return(status: 200, body: { table: { columns: [ { name: "message", type: "string" }, { name: "count_", type: "number", agg: "count" } ],
+                                               rows: [ [ stack, 12 ], [ "timeout", 3 ] ], truncated: false, fill_gaps: false } }.to_json)
+
+    answer = call_tool(:query_logs, user: @user, project: "shop", query: query)
+
+    assert_equal [ [ "#{stack[0, 500]}…", 12 ], [ "timeout", 3 ] ], answer.json["rows"]
+  end
+
   test "query_logs answers a Query's mistakes with their positions" do
     stub_request(:post, @query_url).to_return(status: 400, body: {
       errors: [ { message: "unknown stage wher", line: 1, column: 1 }, { message: "expected a value", line: 2, column: 12 } ],
