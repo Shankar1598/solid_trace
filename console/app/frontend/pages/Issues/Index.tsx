@@ -184,7 +184,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                           <h3 className="font-semibold text-[15px] truncate text-foreground group-hover:text-primary transition-colors">
                             {issue.title}
                           </h3>
-                          <span className="text-[13px] text-muted-foreground truncate font-normal">
+                          <span className="font-mono text-xs text-muted-foreground truncate font-normal">
                             {issue.culprit}
                           </span>
                         </div>
@@ -200,10 +200,10 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                       </div>
                     </Link>
                   </TableCell>
-                  <TableCell className="text-right px-4 py-3 text-sm text-foreground/80 font-mono">
+                  <TableCell className="text-right px-4 py-3 text-sm text-foreground/80 tabular-nums">
                     {formatDistanceToNow(new Date(issue.last_seen_at || issue.created_at), { addSuffix: false }).replace('about ', '')}
                   </TableCell>
-                  <TableCell className="text-right px-4 py-3 text-sm text-muted-foreground font-mono">
+                  <TableCell className="text-right px-4 py-3 text-sm text-muted-foreground tabular-nums">
                     {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false }).replace('about ', '')}
                   </TableCell>
                   <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">

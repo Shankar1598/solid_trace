@@ -103,6 +103,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
                     <Label htmlFor="webhook_url">Webhook URL</Label>
                     <Input
                       id="webhook_url"
+                      className="font-mono"
                       placeholder="https://hooks.slack.com/services/..."
                       value={data.settings.webhook_url}
                       onChange={(e) => setData('settings', { ...data.settings, webhook_url: e.target.value })}
@@ -125,6 +126,7 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
                     <Label htmlFor="routing_key">Routing Key</Label>
                     <Input
                       id="routing_key"
+                      className="font-mono"
                       placeholder="Enter your PagerDuty Integration Key"
                       value={data.settings.routing_key}
                       onChange={(e) => setData('settings', { ...data.settings, routing_key: e.target.value })}

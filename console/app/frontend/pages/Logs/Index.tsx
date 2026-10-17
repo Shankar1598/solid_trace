@@ -766,5 +766,5 @@ function PointerLines({ text }: { text: string }) {
     const left = caret.getBoundingClientRect().left - pre.getBoundingClientRect().left + pre.scrollLeft
     pre.scrollLeft = left - pre.clientWidth / 2
   }, [text])
-  return <pre ref={scrollToCaret} className="overflow-x-auto font-sans">{text}</pre>
+  return <pre ref={scrollToCaret} className="overflow-x-auto font-mono">{text}</pre>
 }

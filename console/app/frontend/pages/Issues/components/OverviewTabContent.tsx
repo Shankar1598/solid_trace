@@ -45,7 +45,7 @@ export function OverviewTabContent({
           </div>
           <div className="flex items-center gap-1">
             <div className="text-xs text-muted-foreground mr-4">
-              {event ? format(new Date(event.created_at), 'MMM d, yyyy HH:mm:ss') : 'N/A'}
+              {event ? <span className="font-mono">{format(new Date(event.created_at), 'MMM d, yyyy HH:mm:ss')}</span> : 'N/A'}
               {event && ` (${formatDistanceToNow(new Date(event.created_at), { addSuffix: true })})`}
             </div>
             <Button

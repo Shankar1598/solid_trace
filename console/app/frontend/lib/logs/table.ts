@@ -1,6 +1,8 @@
 // A tabular Query's result: the table shown in place of the stream when a
 // Query ends in summarize, project, distinct, count, top and the like.
 
+import { valueText } from '../charts/axis'
+
 export type ColumnType = 'string' | 'number' | 'bool' | 'datetime' | 'timespan' | 'dynamic'
 
 /** The aggregate a column holds, when it is one of the last summarize's, kept through a plain rename. */
@@ -52,4 +54,13 @@ export interface LogTotals {
  */
 export function pivotsOn(column: TableColumn): boolean {
   return column.type === 'string' || column.type === 'bool' || column.type === 'dynamic'
+}
+
+/**
+ * A number as a table cell shows it: an aggregate read as a chart reads it
+ * (4,962 or 544.24), any other number exactly as the Log holds it, since it
+ * may be an ID or a status.
+ */
+export function numberText(column: TableColumn, value: number): string {
+  return column.agg ? valueText(value) : String(value)
 }

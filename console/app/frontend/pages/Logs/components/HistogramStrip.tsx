@@ -77,7 +77,7 @@ function SummaryLine({ histogram, onLevel }: { histogram: Histogram; onLevel: Hi
   const rate = errorRate(histogram)
   return (
     // On a phone the line wraps between its parts, never inside one.
-    <div className="flex min-h-5 flex-wrap items-center gap-x-3 whitespace-nowrap text-[11px] text-muted-foreground">
+    <div className="flex min-h-5 flex-wrap items-center gap-x-3 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
       <span>
         <span className="font-medium text-foreground">{histogram.count.toLocaleString()}</span> {histogram.count === 1 ? 'Log' : 'Logs'}
         {histogram.elapsed_ms !== undefined && <> · {elapsedText(histogram.elapsed_ms)}</>}
@@ -158,7 +158,7 @@ function Strip({ histogram, range, onZoom }: {
           <Bar key={bucket.time} bucket={bucket} max={max} selected={i >= low && i <= high} pattern={pattern} />
         ))}
       </div>
-      <div className="relative h-4 text-[10px] leading-4 text-muted-foreground">
+      <div className="relative h-4 font-mono text-[10px] leading-4 text-muted-foreground">
         {timeLabels(buckets, range).map(({ at, time }, k, all) => (
           <span
             key={k}
@@ -182,7 +182,7 @@ function Bar({ bucket, max, selected, pattern }: { bucket: HistogramBucket; max:
   const counts = STACK.filter(level => bucket.levels[level] > 0).map(level => `${LEVEL_NAME[level]} ${bucket.levels[level].toLocaleString()}`)
   return (
     <div
-      className={cn('flex h-full min-w-0 flex-1 flex-col-reverse rounded-[1px] hover:bg-muted', selected && 'bg-primary/15 hover:bg-primary/15')}
+      className={cn('flex h-full min-w-0 flex-1 flex-col-reverse hover:bg-muted', selected && 'bg-primary/15 hover:bg-primary/15')}
       title={`${format(new Date(bucket.time), pattern)}: ${bucket.count.toLocaleString()} ${bucket.count === 1 ? 'Log' : 'Logs'}${counts.length ? `\n${counts.join(', ')}` : ''}`}
     >
       {STACK.map(level => bucket.levels[level] > 0 && (

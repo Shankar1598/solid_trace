@@ -69,7 +69,7 @@ export function OptionList({ options, active, onActive, onPick, chosen, empty, c
             {chosen && (
               <span className="w-3 shrink-0">{chosen.includes(o.value) && <Check className="h-3 w-3" />}</span>
             )}
-            <span className="min-w-0 flex-1 truncate">{o.label ?? o.value}</span>
+            <span className="min-w-0 flex-1 truncate font-mono">{o.label ?? o.value}</span>
             {o.hint && <span className="shrink-0 text-[10px] text-muted-foreground">{o.hint}</span>}
           </li>
         </Fragment>

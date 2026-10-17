@@ -34,7 +34,7 @@ export function Sidebar({ className }: SidebarProps) {
         {/* Project Header */}
         <div className="h-14 flex items-center px-4 border-b">
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded bg-red-600 flex items-center justify-center text-white font-bold text-sm tracking-tight shadow-sm">
+            <div className="h-8 w-8 bg-foreground flex items-center justify-center text-background font-mono font-semibold text-sm">
               {current_org?.slug?.charAt(0).toUpperCase()}
             </div>
             <div className="font-semibold text-sm tracking-tight">
@@ -76,7 +76,7 @@ export function Sidebar({ className }: SidebarProps) {
       <div className="p-3 border-t">
         <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer group mb-1">
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="h-8 w-8 rounded-full bg-violet-500/10 flex items-center justify-center text-violet-600 border border-violet-200 text-xs font-bold">
+            <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-foreground border text-xs font-semibold">
               {current_user?.name?.charAt(0) || 'U'}
             </div>
             <div className="flex flex-col truncate">

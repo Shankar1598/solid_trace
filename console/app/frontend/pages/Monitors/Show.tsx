@@ -8,6 +8,7 @@ import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { valueText } from '@/lib/charts/axis'
 import { groupLabel, runText, type Monitor } from '@/lib/monitors/monitor'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
@@ -104,8 +105,8 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
                       <tr key={s.group_key} className="border-t" data-group-status={s.status}>
                         <td className="px-4 py-2 font-mono text-xs">{groupLabel(s.group)}</td>
                         <td className={s.status === 'firing' ? 'px-4 py-2 font-medium text-destructive' : 'px-4 py-2'}>{s.status === 'firing' ? 'Firing' : 'OK'}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{format(new Date(s.since), 'PPp')}</td>
-                        <td className="px-4 py-2 tabular-nums">{s.last_value ?? 'No data'}</td>
+                        <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{format(new Date(s.since), 'PPp')}</td>
+                        <td className="px-4 py-2 font-mono text-xs" title={s.last_value === null ? undefined : String(s.last_value)}>{s.last_value === null ? 'No data' : valueText(s.last_value)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -134,9 +135,9 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
                 <tbody>
                   {runs.map(r => (
                     <tr key={r.id} className="border-t" data-run-status={r.status}>
-                      <td className="whitespace-nowrap px-4 py-2 text-muted-foreground">{format(new Date(r.ran_at), 'PPpp')}</td>
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-muted-foreground">{format(new Date(r.ran_at), 'PPpp')}</td>
                       <td className={r.status === 'error' ? 'px-4 py-2 text-destructive' : 'px-4 py-2'}>{runText(r, monitor.kind)}</td>
-                      <td className="px-4 py-2 tabular-nums text-muted-foreground">{r.elapsed_ms === null ? '' : `${r.elapsed_ms} ms`}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{r.elapsed_ms === null ? '' : `${r.elapsed_ms} ms`}</td>
                     </tr>
                   ))}
                 </tbody>

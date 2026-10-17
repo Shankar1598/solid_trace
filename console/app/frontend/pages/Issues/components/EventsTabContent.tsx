@@ -60,7 +60,7 @@ export function EventsTabContent({
                 onClick={() => router.visit(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${evt.id}`, { preserveScroll: true })}
               >
                 <TableCell className="font-mono text-xs py-3 px-4">{evt.id}</TableCell>
-                <TableCell className="text-xs py-3 px-4">{format(new Date(evt.created_at), 'MMM d, yyyy HH:mm:ss')}</TableCell>
+                <TableCell className="font-mono text-xs py-3 px-4">{format(new Date(evt.created_at), 'MMM d, yyyy HH:mm:ss')}</TableCell>
                 <TableCell className="py-3 px-4">
                   <Badge variant="outline" className="px-2 py-0 text-[10px] uppercase font-mono tracking-tight bg-background">
                     {evt.environment}

@@ -149,7 +149,9 @@ function editorTheme(maxLines: number) {
       textDecorationSkipInk: 'none',
       textUnderlineOffset: '3px',
     },
+    // Tooltips hang off <body>, outside the editor's mono font: completions and diagnostics are the Query's words.
     '.cm-tooltip': {
+      fontFamily: 'var(--font-mono)',
       backgroundColor: 'var(--popover)',
       color: 'var(--popover-foreground)',
       border: '1px solid var(--border)',
