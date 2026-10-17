@@ -53,22 +53,9 @@ class IssuesController < ApplicationController
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
     @issue = @project.issues.includes(assignee: :user).find_by!(number: params[:number])
 
-    query = @issue.events.order(:desc)
-
-    # Single API call to get event with prev/next context
-    event_query = @issue.events
-    event_query = event_query.where_uuid(params[:event_id]) if params[:event_id].present?
-    event_context = event_query.get_event_with_context
-
-    if event_context
-      @event = event_context[:event]
-      @prev_event_id = event_context[:prev_uuid]
-      @next_event_id = event_context[:next_uuid]
-    end
-
     page = (params[:events_page] || 1).to_i
     per_page = 20
-    @events_list = query.offset((page - 1) * per_page).limit(per_page).all
+    load_events(page, per_page)
     @events_count = @issue.times_seen
 
     render inertia: "Issues/Show", props: {
@@ -76,6 +63,7 @@ class IssuesController < ApplicationController
       event: @event ? EventSerializer.new(@event).as_json : nil,
       prev_event_id: @prev_event_id,
       next_event_id: @next_event_id,
+      events_unavailable: @events_unavailable,
       events_list: @events_list.map { |e| EventListSerializer.new(e).as_json },
       events_pagination: {
         current_page: page,
@@ -117,6 +105,25 @@ class IssuesController < ApplicationController
   end
 
   private
+
+  # The Issue's Event (params[:event_id], else its latest) with the Events
+  # either side, and a page of its Events, newest first. When EventStore
+  # can't read Events, @events_unavailable says why, so the page doesn't show
+  # the Issue as having none.
+  def load_events(page, per_page)
+    event_query = @issue.events
+    event_query = event_query.where_uuid(params[:event_id]) if params[:event_id].present?
+    if (context = event_query.get_event_with_context!)
+      @event = context[:event]
+      @prev_event_id = context[:prev_uuid]
+      @next_event_id = context[:next_uuid]
+    end
+    @events_list = @issue.events.order(:desc).offset((page - 1) * per_page).limit(per_page).all!
+  rescue EventStore::Unavailable => e
+    Rails.logger.error(e.message)
+    @events_list = []
+    @events_unavailable = e.body ? EventStore.error_text(e.body) : "Events can't be read now: EventStore can't be reached."
+  end
 
   def set_organization
     @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
