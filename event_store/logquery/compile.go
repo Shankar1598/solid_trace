@@ -216,6 +216,22 @@ var builtInFields = map[string]valueType{
 // builtInOrder is the order of the built-in fields in a table of Logs.
 var builtInOrder = []string{"time", "level", "message", "service", "environment", "trace_id", "span_id"}
 
+// BuiltInField is a built-in field and the type of its values.
+type BuiltInField struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// BuiltInFields lists the built-in fields every Log has, in the order a
+// table of Logs shows them: time is a datetime, the others strings.
+func BuiltInFields() []BuiltInField {
+	fields := make([]BuiltInField, len(builtInOrder))
+	for i, name := range builtInOrder {
+		fields[i] = BuiltInField{Name: name, Type: builtInFields[name].String()}
+	}
+	return fields
+}
+
 // fieldAliases are other names for built-in fields, so that pasted Axiom
 // queries work.
 var fieldAliases = map[string]string{"_time": "time"}
