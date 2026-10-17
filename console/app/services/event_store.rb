@@ -165,6 +165,19 @@ class EventStore
       request!("#{base_url}/api/#{project_id}/logs/#{log_id}", params: params)
     end
 
+    # A Project's Fields over [from, to), for learning what a Query can read:
+    # {"built_in" => [{"name", "type"}], "attributes" => [{"name", "type",
+    # "logs"}], "truncated"}. built_in are the built-in fields; attributes the
+    # top Attributes of the UTC days the range touches, most Logs first, at
+    # most limit (EventStore's default 100, at most 500), and truncated
+    # whether there were more. An Attribute's type is "string", "number" or
+    # "bool", and a name whose values have two types is listed for each.
+    def logs_fields(project_id:, from:, to:, limit: nil)
+      params = { from: utc(from), to: utc(to) }
+      params[:limit] = limit if limit
+      get!("#{base_url}/api/#{project_id}/logs/fields", params)
+    end
+
     # A Query printed as readable SQL against the logs view of a Project's
     # [from, to): {"sql" => String}. It runs nothing, but seeds SQL mode, so
     # it is refused like Run SQL while SQL queries are off.
@@ -211,11 +224,22 @@ class EventStore
     # long as its Query takes. Opening the connection still times out.
     # Pass sql: true for a SQL endpoint, whose 403 means SQL queries are off.
     def post!(url, body, sql: false, headers: {}, **timeouts)
-      response = RestClient::Request.execute(
-        method: :post, url: url, payload: body.to_json,
+      execute!(
+        sql: sql, method: :post, url: url, payload: body.to_json,
         headers: { content_type: :json, accept: :json, **headers }, **timeouts
       )
-      JSON.parse(response.body)
+    end
+
+    # A Log call's GET, with params as its query string, answered as post!
+    # answers.
+    def get!(url, params)
+      execute!(method: :get, url: url, headers: { accept: :json, params: params })
+    end
+
+    # Sends a Log call's request and parses EventStore's JSON answer. A 400
+    # raises Rejected, a 504 TimedOut, and a 403 SQLQueriesOff when sql.
+    def execute!(sql: false, **request)
+      JSON.parse(RestClient::Request.execute(**request).body)
     rescue RestClient::BadRequest => e
       raise Rejected, parse_body(e.response&.body)
     rescue RestClient::Forbidden => e
