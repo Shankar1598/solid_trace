@@ -3,6 +3,7 @@ package main_test
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -249,5 +250,137 @@ func TestATablesRangeIsTheOneItsQueryRead(t *testing.T) {
 		if got := answer.Table.From + " " + answer.Table.To; got != c.want {
 			t.Errorf("%s\n want %s\n got  %s", c.query, c.want, got)
 		}
+	}
+}
+
+// totalsTable is a run's table with the totals asked for.
+type totalsTable struct {
+	Table struct {
+		Rows   []json.RawMessage `json:"rows"`
+		Totals *struct {
+			Columns []struct {
+				Name string `json:"name"`
+				Agg  string `json:"agg"`
+			} `json:"columns"`
+			Rows      []json.RawMessage `json:"rows"`
+			Truncated bool              `json:"truncated"`
+		} `json:"totals"`
+	} `json:"table"`
+}
+
+// runTotals runs a Query that returns a table over all time for Project
+// 123, asking for totals when ask is set.
+func runTotals(t *testing.T, env *TestEnv, query string, ask bool) totalsTable {
+	t.Helper()
+	body := map[string]any{"query": query, "from": allTime.from, "to": allTime.to}
+	if ask {
+		body["totals"] = true
+	}
+	status, raw := postQueryApp(t, env, "/api/123/logs/query", body)
+	if status != 200 {
+		t.Fatalf("Query %q expected 200, got %d: %s", query, status, raw)
+	}
+	var answer totalsTable
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		t.Fatalf("Decode table %q: %v", raw, err)
+	}
+	return answer
+}
+
+// totalsOf writes a table's totals as its columns, then its rows, as
+// "level count_[count]: ["info",3] ["error",2]", or "none".
+func totalsOf(answer totalsTable) string {
+	totals := answer.Table.Totals
+	if totals == nil {
+		return "none"
+	}
+	var parts []string
+	for _, col := range totals.Columns {
+		if col.Agg != "" {
+			parts = append(parts, fmt.Sprintf("%s[%s]", col.Name, col.Agg))
+		} else {
+			parts = append(parts, col.Name)
+		}
+	}
+	text := strings.Join(parts, " ") + ":"
+	for _, row := range totals.Rows {
+		text += " " + string(row)
+	}
+	if totals.Truncated {
+		text += " truncated"
+	}
+	return text
+}
+
+func TestATimeChartsTotalsAreItsGroupsOverTheRange(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env)
+
+	for query, want := range map[string]string{
+		// Five Logs over three hours, three with no level: a row per bin
+		// and level, but totals of one row per level, largest first.
+		`summarize count() by bin(time, 1h), level`: `level count_[count]: [null,3] ["error",2]`,
+		// An avg over the range, not of the bins': api's are 120 and 300 at
+		// 10:00 and 900 at 11:00, (120 + 300 + 900) / 3 = 440, where the
+		// bins' avgs, 210 and 900, would give 555.
+		`summarize avg(duration) by bin_auto(time), service`: `service avg_duration[avg]: ["api",440] ["web",80.5] ["worker",50]`,
+		`summarize dcount(service) by bin(time, 1h)`:         `dcount_service[dcount]: [3]`,
+		// The bin may come last, as Chart this puts it; ties go by group.
+		`summarize n = count() by service, bin(time, 1h)`: `service n[count]: ["api",3] ["web",1] ["worker",1]`,
+		// By the bin alone, the totals are one row.
+		`summarize count() by bin_auto(time)`: `count_[count]: [5]`,
+		// A bin of a column an earlier stage binned the time into.
+		`extend hour = bin(time, 1h) | summarize count() by hour, level`: `level count_[count]: [null,3] ["error",2]`,
+		// Only a time chart has totals.
+		`summarize count() by service`:                             "none",
+		`summarize count() by bin(time, 1h) | where count_ > 1`:    "none",
+		`summarize by bin(time, 1h)`:                               "none",
+		`summarize count() by bin(time, 1h) | sort by count_ desc`: "none",
+	} {
+		if got := totalsOf(runTotals(t, env, query, true)); got != want {
+			t.Errorf("%s\n want %s\n got  %s", query, want, got)
+		}
+	}
+
+	// The table itself is the same with totals as without them, which
+	// have none.
+	with := runTotals(t, env, `summarize count() by bin(time, 1h), level`, true)
+	without := runTotals(t, env, `summarize count() by bin(time, 1h), level`, false)
+	if got := totalsOf(without); got != "none" {
+		t.Errorf("Without totals asked for: want none, got %s", got)
+	}
+	if len(with.Table.Rows) != 4 || !reflect.DeepEqual(with.Table.Rows, without.Table.Rows) {
+		t.Errorf("Expected the same 4 rows with and without totals, got %s and %s", with.Table.Rows, without.Table.Rows)
+	}
+
+	// A Query of Log rows answers as it did.
+	status, raw := postQueryApp(t, env, "/api/123/logs/query",
+		map[string]any{"query": `where level == "error"`, "from": allTime.from, "to": allTime.to, "totals": true})
+	if status != 200 || strings.Contains(string(raw), "totals") || !strings.Contains(string(raw), `"logs"`) {
+		t.Errorf("Log rows with totals asked for: expected Logs alone, got %d: %s", status, raw)
+	}
+}
+
+func TestATimeChartsTotalsAreCutAtATablesRows(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// A Log a second in one hour, each its own group: one more than a
+	// table holds.
+	start := testNow.Add(-4 * time.Hour).Truncate(time.Hour)
+	logs := make([]string, 10001)
+	for i := range logs {
+		logs[i] = logJSON(t, "tick", start.Add(time.Duration(i%3600)*time.Second), map[string]any{"n": i})
+	}
+	postAndProcess(t, env, logs...)
+
+	cut := runTotals(t, env, `summarize count() by bin(time, 1d), n`, true)
+	if totals := cut.Table.Totals; totals == nil || !totals.Truncated || len(totals.Rows) != 10000 {
+		t.Fatalf("Expected 10,000 totals rows, truncated, got %s", totalsOf(cut))
+	}
+	whole := runTotals(t, env, `summarize count() by bin(time, 1d)`, true)
+	if got, want := totalsOf(whole), `count_[count]: [10001]`; got != want {
+		t.Errorf("By the bin alone: want %s, got %s", want, got)
 	}
 }

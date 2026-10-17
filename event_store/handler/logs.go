@@ -57,15 +57,18 @@ type queryRequest struct {
 	// AfterBatch is the after_batch as sent, nil when the request has
 	// none. It is raw so that null can be told apart from no after_batch.
 	AfterBatch json.RawMessage `json:"after_batch"`
+	// Totals asks for a time chart's totals with its table (see table).
+	Totals bool `json:"totals"`
 }
 
 // POST /api/:project_id/logs/query
 //
 // Runs a Query over a Project's Logs of [from, to): {"query", "from", "to"}
 // (RFC 3339), with "limit" (default 200, at most 1,000), "cursor" (a
-// previous page's next_cursor) and "timeout_seconds" optional. A Query of Log
-// rows answers {"logs": […], "next_cursor"}, newest first; next_cursor is
-// null once there are no older Logs, or take's number of Logs has been given.
+// previous page's next_cursor), "timeout_seconds" and "totals" optional. A
+// Query of Log rows answers {"logs": […], "next_cursor"}, newest first;
+// next_cursor is null once there are no older Logs, or take's number of Logs
+// has been given.
 // A run that has read for ScanBudget answers with what it has found, fewer
 // than limit Logs or none, and a next_cursor to go on from. A Query that
 // returns a table, one with project, extend, summarize, a sort other than
@@ -119,7 +122,7 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 
 	from, to := query.Range()
 	if query.Table() {
-		return h.table(c, run, projectID, query, from, to)
+		return h.table(c, run, projectID, query, from, to, req.Totals)
 	}
 	if take, ok := query.Take(); ok && (req.Cursor == "" || left < 0) {
 		left = take
@@ -271,33 +274,18 @@ func limitOf(requested int) (limit int, ok bool) {
 //
 // A chart's table made bin by bin takes the bins of Logs all in files from
 // the bin cache, when it has them (logquery.Query.Bins).
-func (h *LogsHandler) table(c *fiber.Ctx, run *run, projectID uint32, query *logquery.Query, from, to time.Time) error {
-	scan := storage.LogTableScan{
-		ProjectID: projectID,
-		From:      from,
-		To:        to,
-		Where:     query.Where,
-		Select:    query.Select,
-		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
-	}
-	if bins, ok := query.Bins(); ok {
-		scan.Bins = &storage.TableBins{Size: bins.Size, Query: bins.Key, Limit: maxTableRows + 1}
-	}
-	raw, err := h.logs.ScanLogTable(run.ctx, scan)
+//
+// With totals asked for, the table of a time chart, a Query whose last stage
+// is a summarize by a time bin, also has "totals": {"columns", "rows",
+// "truncated"}, a row for each group with its aggregates over the whole range
+// (logquery.Query.Totals), largest first, at most maxTableRows rows. Totals
+// are worked out from the Logs, never from the bin cache, in the same run.
+func (h *LogsHandler) table(c *fiber.Ctx, run *run, projectID uint32, query *logquery.Query, from, to time.Time, totals bool) error {
+	rows, truncated, err := h.scanTable(run, projectID, query, from, to, true)
 	if err != nil {
-		if run.timedOut() {
-			return run.stopped(c, shorterRange)
-		}
-		logger.L.Error("Log table query failed", "project_id", projectID, "error", err)
-		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+		return h.tableFailed(c, run, projectID, err)
 	}
-	truncated := len(raw) > maxTableRows
-	raw = raw[:min(len(raw), maxTableRows)]
-	rows := make([][]any, len(raw))
-	for i, r := range raw {
-		rows[i] = query.Row(r)
-	}
-	return run.answer(c, fiber.Map{"table": fiber.Map{
+	table := fiber.Map{
 		"columns":   query.Columns(),
 		"rows":      rows,
 		"truncated": truncated,
@@ -306,7 +294,53 @@ func (h *LogsHandler) table(c *fiber.Ctx, run *run, projectID uint32, query *log
 		"fill_gaps": query.FillGaps() && !truncated,
 		"from":      from.UTC().Format(time.RFC3339Nano),
 		"to":        to.UTC().Format(time.RFC3339Nano),
-	}})
+	}
+	if totalsQuery, ok := query.Totals(); totals && ok {
+		rows, truncated, err := h.scanTable(run, projectID, totalsQuery, from, to, false)
+		if err != nil {
+			return h.tableFailed(c, run, projectID, err)
+		}
+		table["totals"] = fiber.Map{"columns": totalsQuery.Columns(), "rows": rows, "truncated": truncated}
+	}
+	return run.answer(c, fiber.Map{"table": table})
+}
+
+// scanTable runs a Query's table over [from, to): at most maxTableRows rows,
+// and whether there were more. With bins, a table made bin by bin may take
+// bins from the bin cache.
+func (h *LogsHandler) scanTable(run *run, projectID uint32, query *logquery.Query, from, to time.Time, bins bool) ([][]any, bool, error) {
+	scan := storage.LogTableScan{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Where:     query.Where,
+		Select:    query.Select,
+		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
+	}
+	if b, ok := query.Bins(); ok && bins {
+		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: maxTableRows + 1}
+	}
+	raw, err := h.logs.ScanLogTable(run.ctx, scan)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(raw) > maxTableRows
+	raw = raw[:min(len(raw), maxTableRows)]
+	rows := make([][]any, len(raw))
+	for i, r := range raw {
+		rows[i] = query.Row(r)
+	}
+	return rows, truncated, nil
+}
+
+// tableFailed answers a run whose table failed: 504 once it has timed out,
+// else 500.
+func (h *LogsHandler) tableFailed(c *fiber.Ctx, run *run, projectID uint32, err error) error {
+	if run.timedOut() {
+		return run.stopped(c, shorterRange)
+	}
+	logger.L.Error("Log table query failed", "project_id", projectID, "error", err)
+	return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 }
 
 // POST /api/:project_id/logs/validate
