@@ -215,3 +215,20 @@ func TestDuckDBExtensionDirectoryComesFromTheConfigFile(t *testing.T) {
 		t.Errorf("DuckDB extension directory = %q, want %q", cfg.DuckDBExtensionDirectory, want)
 	}
 }
+
+func TestAnObjectStoreErrorGivesTheLineInTheFile(t *testing.T) {
+	setObjectStoreKeys(t)
+	cases := []struct{ name, block, want string }{
+		{"a misspelt key", "  kind: gcs\n  bucket: logs\n  local_cache_hour: 2\n", "line 8: field local_cache_hour not found"},
+		{"a value of the wrong type", "  kind: gcs\n  bucket: logs\n  local_cache_hours: many\n", "line 8: cannot unmarshal"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			yaml := "ingest_port: \"4000\"\nquery_port: \"4100\"\n# The bucket.\n\nobject_store:\n" + c.block
+			_, err := config.LoadFile(writeConfig(t, yaml))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want one saying %q", err, c.want)
+			}
+		})
+	}
+}
