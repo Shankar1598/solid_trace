@@ -11,6 +11,7 @@ module McpServer
     McpTools::QueryLogs,
     McpTools::GetLog,
     McpTools::ListFields,
+    McpTools::QueryLanguageReference,
     McpTools::ListDashboards,
     McpTools::GetDashboard,
     McpTools::CreateDashboard,
