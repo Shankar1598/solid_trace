@@ -134,6 +134,35 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_equal 1, monitor.runs.first.firing
   end
 
+  # A run writes in a transaction that holds SQLite's write lock, so it
+  # writes its states in bulk rather than a statement per group.
+  test "a run writes its groups' states in a few statements, however many groups it has" do
+    monitor = threshold_monitor(notify_by_group: true)
+    rows = ->(services, bump) { services.map { |i| [ "s#{i}", i + bump ] } }
+    key = ->(i) { { "service" => "s#{i}" }.to_json }
+    answer_table(rows.call(0..199, 0), columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    assert_equal 189, monitor.runs.sole.firing
+
+    travel 1.minute
+    # Every number grows by one; s0 to s9 (ok) and s199 (firing) are gone; s200 is new.
+    answer_table(rows.call((10..198).to_a + [ 200 ], 1), columns: [ SERVICE, COUNT_COLUMN ])
+    writes = []
+    counting = ->(*, payload) { writes << payload[:sql] if payload[:sql].match?(/\A\s*(INSERT|UPDATE|DELETE)\b.*monitor_states/im) }
+    ActiveSupport::Notifications.subscribed(counting, "sql.active_record") { evaluate(monitor) }
+
+    assert_operator writes.size, :<=, 3, writes.first(5).join("\n")
+    assert_equal 190, monitor.runs.first.firing
+    assert_equal 191, monitor.states.count
+    assert_state monitor, key.call(10), "firing", 11, since: Time.current
+    assert_state monitor, key.call(11), "firing", 12, since: NOW
+    assert_state monitor, key.call(200), "firing", 201, since: Time.current
+    assert_state monitor, key.call(199), "ok", nil, since: Time.current
+    assert_not monitor.states.exists?(group_key: key.call(5))
+    assert_equal [ [ "monitor_firing", key.call(10), 11 ], [ "monitor_firing", key.call(200), 201 ], [ "monitor_resolved", key.call(199), nil ] ],
+      notifications.last(3)
+  end
+
   test "not notifying by group, all rows are one group and the worst number decides" do
     above = threshold_monitor(operator: ">", threshold: 10)
     below = threshold_monitor(operator: "<", threshold: 10)
