@@ -87,7 +87,7 @@ Benchmarks run on MacBook Pro M3 (11-core, 18GB RAM) with ~8KB event payloads.
 
 ### Tiered storage (S3 / GCS)
 
-Not built yet. The goal is to keep recent events on local disk and move older ones to cheaper storage.
+Log files and the Event archive can already go in an S3 or GCS bucket: see [docs/logs/object-store.md](docs/logs/object-store.md). Tiering Pebble's Events is not built yet. The goal is to keep recent events on local disk and move older ones to cheaper storage.
 
 Pebble's support is limited. It can put almost all data on one remote store (S3, GCS, or an HDD path) and keep only recent writes local. It cannot chain tiers (SSD → HDD → S3) or tier by event age, so those would need to be built in the EventStore.
 

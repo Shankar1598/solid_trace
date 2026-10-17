@@ -28,7 +28,8 @@ parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 # A bucket for Log files and the Event archive, read by DuckDB through httpfs.
 # Without this block everything stays on local disk. The bucket's key comes from
 # the SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET
-# environment variables; for GCS, an HMAC key.
+# environment variables; for GCS, an HMAC key. docs/logs/object-store.md has
+# every key and how to set up the bucket.
 # object_store:
 #   kind: gcs                  # s3 or gcs; gcs uses its S3 interop API
 #   bucket: acme-solidtrace
