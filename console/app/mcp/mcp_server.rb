@@ -7,7 +7,7 @@ module McpServer
   # McpTools (see McpTools::Base), and listing it here puts it on the server.
   TOOLS = [
     McpTools::Whoami,
-    McpTools::ListProjects,
+    McpTools::ListProjects
   ].freeze
 
   INSTRUCTIONS = <<~TEXT
