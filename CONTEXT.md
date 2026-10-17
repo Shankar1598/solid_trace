@@ -92,6 +92,10 @@ _Avoid_: query builder, visual mode, simple mode
 A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single number. A time series needs the last summarize's time bins, which are its x; its number columns are the series and its by columns split them. Bars need a summarize with no time bin. Any table of one row and one number is a single number. The Logs explorer shows it above the table.
 _Avoid_: graph, plot, visualization
 
+**Dashboard**:
+A page of **Charts** that belongs to an organization. Each chart saves a **Query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows. Any member of the organization can see, make, change and delete it.
+_Avoid_: board, panel page
+
 **Integration**:
 An outbound notification target owned by an organization.
 _Avoid_: webhook config, notifier job
@@ -118,6 +122,7 @@ _Avoid_: app, tenant
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
 - A **Project**'s **Retention** decides when its **Logs** are deleted
 - A **Chart** draws one **Query**'s or **SQL query**'s table; the **Logs explorer** shows it above the table
+- A **Dashboard** holds many **Charts**, each a saved **Query** on a **Project** of the Dashboard's organization
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 
