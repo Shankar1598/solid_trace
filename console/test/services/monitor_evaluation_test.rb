@@ -73,7 +73,8 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
 
     resolved = Notification.order(:id).last.payload
     assert_equal({ "column" => "count_", "threshold" => 10.0, "operator" => ">", "value" => 4, "no_data" => false,
-                   "from" => "2026-10-17T11:56:00Z", "to" => "2026-10-17T12:01:00Z" }, resolved)
+                   "from" => "2026-10-17T11:56:00Z", "to" => "2026-10-17T12:01:00Z" }, resolved.except("monitor"))
+    assert_equal [ monitor.name, "Shop" ], resolved["monitor"].values_at("name", "project")
     assert_equal [ 1, 1, 0 ], monitor.runs.reorder(:ran_at).pluck(:firing)
   end
 
@@ -164,6 +165,50 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     answer_matched([], total: 0, ingest_cursor: NEXT_CURSOR)
     evaluate(monitor)
     assert_equal 2, Notification.count, "a Match run sends nothing about the old groups"
+  end
+
+  test "turning a firing Monitor off resolves its firing groups and forgets its states; turned on, it fires again" do
+    monitor = threshold_monitor(notify_by_group: true)
+    answer_table([ [ "api", 12 ], [ "web", 3 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    api = { service: "api" }.to_json
+
+    monitor.update!(disabled_at: Time.current)
+
+    assert_empty monitor.states.reload
+    assert_equal [ [ "monitor_firing", api, 12 ], [ "monitor_resolved", api, 12 ] ], notifications
+    resolved = Notification.order(:id).last
+    assert_equal [ ">", 10.0, true ], resolved.payload.values_at("operator", "threshold", "turned_off")
+    assert_equal "The Monitor was turned off, so it no longer checks the threshold.",
+      Notifiers::MonitorMessage.build(resolved).text
+
+    travel 1.minute
+    monitor.update!(disabled_at: nil)
+    evaluate(monitor)
+    assert_equal [ "monitor_firing", api, 12 ], notifications.last, "a group still past the threshold fires again"
+  end
+
+  test "deleting a firing Monitor resolves its firing groups, and the resolve reaches PagerDuty once the Monitor is gone" do
+    pagerduty_url = "https://events.pagerduty.com/v2/enqueue"
+    stub_request(:post, pagerduty_url).to_return(status: 202, body: "{}")
+    pagerduty = @organization.integrations.create!(provider: "pagerduty", settings: { "routing_key" => "routing-123" })
+    monitor = threshold_monitor
+    monitor.update!(integrations: [ pagerduty ])
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    IntegrationNotification.deliver_pending(pagerduty.id)
+
+    monitor.destroy!
+    travel IntegrationNotification::RATE_LIMIT_WINDOW
+    IntegrationNotification.deliver_pending(pagerduty.id)
+
+    assert_equal [ [ "monitor_firing", "", 12 ], [ "monitor_resolved", "", 12 ] ], notifications
+    assert Notification.all.all?(&:status_sent?), Notification.pluck(:status, :error_message).inspect
+    events = []
+    assert_requested(:post, pagerduty_url, times: 2) { |request| events << JSON.parse(request.body) }
+    assert_equal [ "trigger", "resolve" ], events.map { |event| event["event_action"] }
+    assert_equal [ "solid-trace-monitor-#{monitor.id}" ] * 2, events.map { |event| event["dedup_key"] }
+    assert_equal "Firing: #{monitor.name}", events.first.dig("payload", "summary")
   end
 
   test "a firing group with no row resolves, and an ok group with no row is forgotten" do

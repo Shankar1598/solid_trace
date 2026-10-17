@@ -151,7 +151,7 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete "{monitor.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
-              The Monitor stops running and its run history goes. Its Integrations are not told; a firing group stays open in PagerDuty.
+              The Monitor stops running and its run history goes. Each firing group is sent to its Integrations as resolved, which closes its PagerDuty incident.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
