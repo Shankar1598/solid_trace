@@ -28,6 +28,10 @@ module McpTools
       url(routes.project_logs_path(project, org_slug: project.organization.slug, **search))
     end
 
+    def dashboards(organization)
+      url(routes.dashboards_path(org_slug: organization.slug))
+    end
+
     # A Dashboard, over its default range or the TimeRange given.
     def dashboard(dashboard, range: nil)
       search = range ? range.link_params : {}
