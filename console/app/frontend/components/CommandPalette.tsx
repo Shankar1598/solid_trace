@@ -84,14 +84,18 @@ export function CommandPalette({ children }: { children: React.ReactNode }) {
 
 function PaletteDialog({ open, onOpenChange, context }: { open: boolean; onOpenChange: (open: boolean) => void; context: PaletteContext }) {
   const [text, setText] = useState('')
+  // Each opening starts with an empty search, however the last one closed:
+  // Cmd/Ctrl+K closes it from outside the dialog.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setText('')
+  }
   // Read on opening: recent Queries and a page's items change between openings.
   const groups = useMemo(() => (open ? paletteGroups(context) : []), [open])
   const shown = filterGroups(groups, text)
 
-  const close = () => {
-    onOpenChange(false)
-    setText('')
-  }
+  const close = () => onOpenChange(false)
   const choose = (item: PaletteItem | null) => {
     if (!item) return
     close()
