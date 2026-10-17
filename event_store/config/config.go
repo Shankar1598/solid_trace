@@ -1,12 +1,12 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -246,16 +246,14 @@ func objectStore(node *yaml.Node) (*ObjectStore, error) {
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
 		return nil, fmt.Errorf("the block is empty; remove it to keep everything on local disk")
 	}
-	// Decoded strictly, so that a misspelt key fails rather than being
-	// silently left at its default.
-	raw, err := yaml.Marshal(node)
-	if err != nil {
+	// Checked strictly, so that a misspelt key fails rather than being
+	// silently left at its default. The node is decoded in place, so errors
+	// give lines in the file.
+	if err := onlyKnownKeys(node, objectStoreFile{}); err != nil {
 		return nil, err
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	decoder.KnownFields(true)
 	var file objectStoreFile
-	if err := decoder.Decode(&file); err != nil {
+	if err := node.Decode(&file); err != nil {
 		return nil, err
 	}
 
@@ -316,4 +314,24 @@ func objectStore(node *yaml.Node) (*ObjectStore, error) {
 		return nil, fmt.Errorf("set the bucket's key in SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET")
 	}
 	return store, nil
+}
+
+// onlyKnownKeys fails on a key of the mapping node that no yaml tag of
+// fields names. yaml.v3 can only check this when decoding a whole document.
+func onlyKnownKeys(node *yaml.Node, fields any) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: must be a block of keys", node.Line)
+	}
+	known := map[string]bool{}
+	t := reflect.TypeOf(fields)
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		known[name] = true
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		if key := node.Content[i]; !known[key.Value] {
+			return fmt.Errorf("line %d: field %s not found", key.Line, key.Value)
+		}
+	}
+	return nil
 }
