@@ -1,6 +1,6 @@
 # 04: The New Project page saves slugs that can't be reached
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Area:** Console
 **Found:** 2026-10-17, by the MCP build's ticket 09 (09-review-1)
 
@@ -21,3 +21,23 @@ The MCP's `create_project` already refuses all three (`console/app/mcp/mcp_tools
 - Model tests, and a controller test that the form answers the error.
 
 ## Comments
+
+### 2026-10-18 resolved
+
+The checks are now on `Project`, so the New Project form and `create_project` share them:
+
+- **Validations:** a name is required, and on create the slug must be present, not `new`, and not another Project's in the Organization.
+- **Where errors land:** on `name`, since the slug is made from it. The form shows them under the field. The MCP answers them as "Not saved: Name …".
+- **create_project:** its own copies of the checks are gone.
+- **Existing Projects:** the checks run on create only, so a Project made before them can still be saved.
+- **Factory:** default Project names now carry a sequence number. The factory took names from `Faker::App.name`, so two Projects in one Organization could have collided at random.
+
+Tests:
+
+- `test/models/project_test.rb` covers each case.
+- `test/controllers/projects_controller_test.rb` checks that the form answers a duplicate slug's error.
+- `test/mcp/admin_tools_test.rb` covers the tool's answers, now including a blank name.
+- Five of these fail without the model change. The whole Rails suite passed with the model change (554 runs).
+
+**No unique index, unlike the fix above suggested.** An install that already has duplicate slugs would fail to migrate, and the validation covers every way a Project is made today: the form, the MCP and the factories. Duplicates made before this fix stay as they are; nothing renames them.
+
