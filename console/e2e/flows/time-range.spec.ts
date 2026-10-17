@@ -129,6 +129,20 @@ test('ranges past the Retention are turned away, saying why', async ({ page }) =
   expect(errors).toEqual([])
 })
 
+test.describe('on touch', () => {
+  test.use({ hasTouch: true })
+
+  test('the typed box waits for a tap, so no keyboard covers the quick ranges', async ({ page }) => {
+    const errors = watchErrors(page)
+    await openLogs(page)
+    await timeRange(page).tap()
+
+    await expect(picker(page).getByRole('button', { name: '1 hr', exact: true })).toBeVisible()
+    await expect(page.getByLabel('Type a range')).not.toBeFocused()
+    expect(errors).toEqual([])
+  })
+})
+
 test('Cancel and Escape leave the range as it was', async ({ page }) => {
   const errors = watchErrors(page)
   await openLogs(page)

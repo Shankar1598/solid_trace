@@ -69,7 +69,9 @@ export function TimeRangePicker({ range, onChange, retentionDays, className }: T
 
 // The typed box takes focus on opening, so a range can be typed straight
 // away; not on touch, where it would open the keyboard over the quick ranges.
-const typedBox = (openType: string) => openType === 'touch' || document.getElementById(TYPED_ID)
+// false leaves focus where it is (true would focus the box as the first
+// tabbable element).
+const typedBox = (openType: string) => openType !== 'touch' && document.getElementById(TYPED_ID)
 const TYPED_ID = 'time-range-typed'
 
 function PickerForm({ range, retentionDays, onPick, onCancel }: {
