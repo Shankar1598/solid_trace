@@ -24,10 +24,11 @@ class MonitorJobsTest < ActiveSupport::TestCase
     travel_back
   end
 
-  test "the scheduler runs every minute" do
-    task = YAML.load_file(Rails.root.join("config/recurring.yml")).fetch("monitor_scheduler")
+  test "the scheduler runs every minute in production" do
+    file = Rails.root.join("config/recurring.yml")
+    task = SolidQueue::Configuration.new.send(:config_from, file, env: "production").fetch(:monitor_scheduler)
 
-    assert_equal({ "class" => "MonitorSchedulerJob", "schedule" => "every minute" }, task)
+    assert_equal({ class: "MonitorSchedulerJob", schedule: "every minute" }, task)
   end
 
   test "the scheduler enqueues each enabled Monitor that is due, give or take the tick" do
