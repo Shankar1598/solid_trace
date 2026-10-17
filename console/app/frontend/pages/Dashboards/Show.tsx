@@ -121,6 +121,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
 
   const projectsById = useMemo(() => new Map(projects.map(p => [p.id, p])), [projects])
   const charts = dashboard.charts
+  const severalProjects = new Set(charts.map(c => c.project_id)).size > 1
   const autoRefreshItems = (Object.keys(AUTO_REFRESH_LABELS) as AutoRefresh[]).map(value => ({ value, label: AUTO_REFRESH_LABELS[value] }))
 
   return (
@@ -163,7 +164,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
         <TagMenuProvider onFilter={null} onSummarize={null} columns={NO_COLUMNS}>
           <div ref={containerRef}>
             {charts.length === 0 ? (
-              <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">
+              <div className="border border-dashed p-10 text-center text-sm text-muted-foreground">
                 No charts yet. Press Add chart, or chart a Query in the Logs explorer and press Add to dashboard beside the chart switch.
               </div>
             ) : mounted && (
@@ -181,6 +182,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                     <ChartCard
                       chart={chart}
                       project={projectsById.get(chart.project_id)}
+                      showProject={severalProjects}
                       orgSlug={orgSlug}
                       run={run}
                       range={range}

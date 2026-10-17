@@ -78,3 +78,23 @@ test('j and k step through Logs in the inspector, and Esc closes it', async ({ p
   await expect(inspector(page)).toBeHidden()
   expect(errors).toEqual([])
 })
+
+test('Tab reaches the stream at its first Log, the arrows move along it, and Enter opens one', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h())
+  const row = (index: number) => page.getByRole('grid', { name: 'Logs' }).locator(`[data-row-index="${index}"]`)
+
+  await page.getByRole('button', { name: 'Choose columns' }).focus()
+  await page.keyboard.press('Tab')
+  await expect(row(0)).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowUp')
+  await expect(row(1)).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(inspector(page)).toBeVisible()
+  await expect(row(1)).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('j')
+  await expect(row(2)).toHaveAttribute('aria-selected', 'true')
+  expect(errors).toEqual([])
+})

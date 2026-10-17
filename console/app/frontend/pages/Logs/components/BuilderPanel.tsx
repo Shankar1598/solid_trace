@@ -84,7 +84,7 @@ export function BuilderPanel({ builder, project, projects, onProject, fields, va
 
   return (
     <SuggestionsContext.Provider value={{ fields, valuesOf }}>
-    <div className="border-b px-3 py-2 text-xs">
+    <div className="px-3 py-2 text-xs">
       <div className="ml-1 border-l pl-4">
         <Row label="Project">
           <ProjectSelect project={project} projects={projects} onChange={onProject} />

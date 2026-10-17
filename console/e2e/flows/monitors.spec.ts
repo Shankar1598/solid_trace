@@ -84,6 +84,7 @@ test('a member makes a Threshold monitor from the explorer; Run now fires it int
   await page.getByRole('link', { name: 'Create monitor' }).click()
 
   await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  await expect(page).toHaveTitle('New monitor · SolidTrace')
   const nav = page.getByRole('navigation', { name: 'Main' })
   await expect(nav.getByRole('link', { name: 'Monitors' })).toHaveClass(/bg-secondary/)
   await expect(nav.getByRole('link', { name: 'Logs' })).not.toHaveClass(/bg-secondary/)
@@ -108,7 +109,7 @@ test('a member makes a Threshold monitor from the explorer; Run now fires it int
 
   // Run now fires it: the page shows the firing group and the run.
   await expect(page.getByRole('heading', { name })).toBeVisible()
-  await expect(page.getByText(`Tells ${integration.name} (slack).`)).toBeVisible()
+  await expect(page.getByText(`Tells ${integration.name} (Slack).`)).toBeVisible()
   await page.getByRole('button', { name: 'Run now' }).click()
   await expect(page.getByText('Ran the Monitor: 1 group firing.')).toBeVisible()
   await expect(status(page)).toHaveText('Firing')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nameChars, optionsText, shortName, statText, tickLabel, timePattern, timeTicks, valueText, valueTicks } from './axis'
+import { nameChars, optionsText, shortName, statText, tickLabel, ticksInside, timePattern, timeTicks, valueText, valueTicks, withUnit } from './axis'
 
 const at = (time: string) => new Date(time).getTime()
 
@@ -137,6 +137,24 @@ describe('values in a tooltip or a stat tile', () => {
     expect(optionsText(12, { decimals: 1, unit: '%' })).toBe('12.0%')
     expect(optionsText(4_213_000, {}, statText)).toBe('4.21M')
     expect(optionsText(4_213_000, { decimals: 0 }, statText)).toBe('4,213,000')
+  })
+
+  it('carry the unit onto a value axis\'s tick labels', () => {
+    expect(withUnit(tickLabel(2000)(6000), 'ms')).toBe('6K ms')
+    expect(withUnit(tickLabel(10)(40), '%')).toBe('40%')
+    expect(withUnit(tickLabel(2000)(6000))).toBe('6K')
+  })
+})
+
+describe('time labels near the edges', () => {
+  it('leave out a label that would run past the chart, keeping those that fit', () => {
+    // A plot from 40 to 588 px of a 600 px chart, over 0–100; each label is 72 px wide.
+    expect(ticksInside([0, 25, 50, 75, 98], [0, 100], [40, 588], 600, 36)).toEqual([0, 25, 50, 75])
+    expect(ticksInside([0, 50, 100], [0, 100], [10, 588], 600, 36)).toEqual([50])
+  })
+
+  it('keep every tick before the chart is measured', () => {
+    expect(ticksInside([0, 50, 100], [0, 100], [0, 0], 0, 36)).toEqual([0, 50, 100])
   })
 })
 

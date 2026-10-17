@@ -67,6 +67,8 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
                   onClick={() => deleteComment(comment.id)}
                   variant="ghost"
                   size="icon"
+                  aria-label="Delete comment"
+                  title="Delete comment"
                   className="h-6 w-6 text-muted-foreground hover:text-destructive"
                 >
                   <Trash className="h-4 w-4" />

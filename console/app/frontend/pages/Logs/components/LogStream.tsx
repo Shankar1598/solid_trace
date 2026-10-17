@@ -3,6 +3,7 @@ import { Popover } from '@base-ui/react/popover'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
 import { ChevronDown, Columns3, X } from 'lucide-react'
+import { Skeleton } from '@/components/ui/skeleton'
 import { columnValue, moveColumn, pickableFields, toggleColumn } from '@/lib/logs/columns'
 import type { AttributeValue, Log } from '@/lib/logs/stream'
 import { cn } from '@/lib/utils'
@@ -17,9 +18,12 @@ const PICKER = 44
 const LOAD_AHEAD = 100
 const MIN_WIDTH = 48
 const DEFAULT_WIDTH = 140
-const WIDTHS: Record<string, number> = { time: 184, level: 80, service: 120, environment: 120, message: 520, trace_id: 280, span_id: 170 }
+// time leaves room for its cell's menu button after the text.
+const WIDTHS: Record<string, number> = { time: 200, level: 80, service: 120, environment: 120, message: 520, trace_id: 280, span_id: 170 }
 /** Column widths a reader dragged, kept in their browser by field name. */
 const WIDTHS_KEY = 'solid-trace.logs.column-widths'
+/** The message column takes the room left over, so a wide screen shows more of each message. */
+const GROWS = 'message'
 
 export const LEVEL_TEXT: Record<string, string> = {
   trace: 'text-muted-foreground',
@@ -56,7 +60,9 @@ interface LogStreamProps {
  * The Logs of a run as a table, newest first, virtualised. The reader picks,
  * orders and sizes the columns; each row starts with a square in its Level's
  * colour. Clicking a row opens the inspector, whose lines add to the Query;
- * a cell's button opens the value menu.
+ * a cell's button opens the value menu. From the keyboard the stream is one
+ * tab stop, at the open Log or the first: the arrows move between rows and
+ * Enter or Space opens one.
  */
 export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, selectedId, onSelect, columns, onColumns }: LogStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -90,6 +96,27 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, se
     else if (top + ROW_HEIGHT > box.scrollTop + box.clientHeight) box.scrollTop = top + ROW_HEIGHT - box.clientHeight
   }, [selectedId, selectedShown])
 
+  // The row that takes Tab: the one last focused, else the open Log, else the first.
+  const [focused, setFocused] = useState<number | null>(null)
+  const selectedIndex = selectedId === null ? -1 : logs.findIndex(l => l.id === selectedId)
+  const tabStop = focused !== null && focused < logs.length ? focused : Math.max(0, selectedIndex)
+  const focusAfterRender = useRef<number | null>(null)
+  const moveFocus = (index: number) => {
+    const next = Math.min(logs.length - 1, Math.max(0, index))
+    setFocused(next)
+    focusAfterRender.current = next
+    virtualizer.scrollToIndex(next)
+  }
+  // An arrow can move to a row the virtualiser hasn't drawn yet; it's focused once drawn.
+  useEffect(() => {
+    const index = focusAfterRender.current
+    const row = index === null ? null : scrollRef.current?.querySelector<HTMLElement>(`[data-row-index="${index}"]`)
+    if (row) {
+      row.focus({ preventScroll: true })
+      focusAfterRender.current = null
+    }
+  })
+
   const widthOf = (column: string) => widths[column] ?? WIDTHS[column] ?? DEFAULT_WIDTH
   const minWidth = GUTTER + columns.reduce((sum, c) => sum + widthOf(c), 0) + PICKER
   const resize = (column: string, width: number, done: boolean) => {
@@ -99,7 +126,7 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, se
   }
 
   return (
-    <div ref={scrollRef} className="h-full overflow-auto font-mono text-[13px]">
+    <div ref={scrollRef} role="grid" aria-label="Logs" aria-rowcount={logs.length + 1} className="h-full overflow-auto font-mono text-[13px]">
       <div style={{ minWidth }}>
         <HeaderRow columns={columns} widthOf={widthOf} onResize={resize} onColumns={onColumns} logs={logs} />
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
@@ -110,7 +137,19 @@ export function LogStream({ logs, end, loadingOlder, olderError, onLoadOlder, se
               style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
             >
               {item.index < logs.length
-                ? <LogRow log={logs[item.index]} columns={columns} widthOf={widthOf} selected={logs[item.index].id === selectedId} onSelect={onSelect} />
+                ? (
+                  <LogRow
+                    log={logs[item.index]}
+                    index={item.index}
+                    columns={columns}
+                    widthOf={widthOf}
+                    selected={logs[item.index].id === selectedId}
+                    tabStop={item.index === tabStop}
+                    onSelect={onSelect}
+                    onFocus={setFocused}
+                    onMove={moveFocus}
+                  />
+                )
                 : <StreamEnd end={end} loading={loadingOlder} error={olderError} count={logs.length} onRetry={onLoadOlder} />}
             </div>
           ))}
@@ -138,12 +177,13 @@ function HeaderRow({ columns, widthOf, onResize, onColumns, logs }: {
   }
 
   return (
-    <div data-stream-header className="sticky top-0 z-10 flex border-b bg-card text-left text-muted-foreground">
-      <div className="shrink-0 border-r" style={{ width: GUTTER }} />
+    <div data-stream-header role="row" aria-rowindex={1} className="sticky top-0 z-10 flex border-b bg-card text-left text-muted-foreground">
+      <div aria-hidden className="shrink-0 border-r" style={{ width: GUTTER }} />
       {columns.map(column => (
         <div
           key={column}
-          className={cn('group relative flex shrink-0 items-center border-r',
+          role="columnheader"
+          className={cn('group relative flex shrink-0 items-center border-r', column === GROWS && 'grow',
             dropBefore === column && 'shadow-[inset_2px_0_0_var(--color-primary)]')}
           style={{ width: widthOf(column) }}
           onDragOver={e => {
@@ -178,7 +218,7 @@ function HeaderRow({ columns, widthOf, onResize, onColumns, logs }: {
           {columns.length > 1 && (
             <button
               onClick={() => onColumns(toggleColumn(columns, column))}
-              className="absolute right-1.5 hidden rounded bg-muted p-0.5 hover:bg-background group-hover:block"
+              className="absolute right-1.5 hidden bg-muted p-0.5 hover:bg-background group-hover:block"
               aria-label={`Hide the ${column} column`}
             >
               <X className="h-3 w-3" />
@@ -188,6 +228,7 @@ function HeaderRow({ columns, widthOf, onResize, onColumns, logs }: {
         </div>
       ))}
       <div
+        role="columnheader"
         className={cn('sticky right-0 ml-auto flex shrink-0 items-center justify-end bg-card pr-2.5', dropBefore === '' && 'shadow-[inset_2px_0_0_var(--color-primary)]')}
         style={{ width: PICKER }}
         onDragOver={e => {
@@ -247,7 +288,7 @@ function ColumnPicker({ columns, logs, onColumns }: { columns: string[]; logs: L
 
   return (
     <Popover.Root onOpenChange={open => !open && setFilter('')}>
-      <Popover.Trigger className="rounded p-1 hover:bg-background" aria-label="Choose columns" title="Choose columns">
+      <Popover.Trigger className="p-1 hover:bg-background" aria-label="Choose columns" title="Choose columns">
         <Columns3 className="h-3.5 w-3.5" />
       </Popover.Trigger>
       <Popover.Portal>
@@ -296,21 +337,50 @@ function ColumnPicker({ columns, logs, onColumns }: { columns: string[]; logs: L
   )
 }
 
-/** One Log as a row; clicking it opens the inspector. */
-function LogRow({ log, columns, widthOf, selected, onSelect }: {
-  log: Log; columns: string[]; widthOf: (column: string) => number; selected: boolean; onSelect: (log: Log) => void
+/** One Log as a row; clicking it, or Enter or Space on it, opens the inspector. */
+function LogRow({ log, index, columns, widthOf, selected, tabStop, onSelect, onFocus, onMove }: {
+  log: Log
+  index: number
+  columns: string[]
+  widthOf: (column: string) => number
+  selected: boolean
+  /** The stream's one tab stop. */
+  tabStop: boolean
+  onSelect: (log: Log) => void
+  onFocus: (index: number) => void
+  /** Focuses the row at that index, scrolling to it. */
+  onMove: (index: number) => void
 }) {
   const level = log.level ?? ''
   return (
     <div
+      role="row"
+      aria-rowindex={index + 2}
+      aria-selected={selected}
+      tabIndex={tabStop ? 0 : -1}
+      data-row-index={index}
       // Selecting text to copy it doesn't open the inspector.
       onClick={() => { if (!window.getSelection()?.toString()) onSelect(log) }}
+      onFocus={e => { if (e.target === e.currentTarget) onFocus(index) }}
+      onKeyDown={e => {
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(log)
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          onMove(index + (e.key === 'ArrowDown' ? 1 : -1))
+        }
+      }}
       className={cn(
-        'flex h-full whitespace-nowrap border-b border-b-border/60 cursor-pointer hover:bg-muted/50',
+        'flex h-full whitespace-nowrap border-b border-b-border/60 cursor-pointer outline-none hover:bg-muted/50',
+        'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
         selected && 'bg-primary/10 hover:bg-primary/15',
       )}
+      // Room under the header's column picker, so a growing column ends where its header does.
+      style={{ paddingRight: PICKER }}
     >
-      <div className="flex shrink-0 items-center justify-center border-r" style={{ width: GUTTER }} title={level || undefined}>
+      <div aria-hidden className="flex shrink-0 items-center justify-center border-r" style={{ width: GUTTER }} title={level || undefined}>
         <span className={cn('h-2 w-2', LEVEL_SQUARE[level] ?? 'border border-muted-foreground/40')} />
       </div>
       {columns.map(column => (
@@ -325,7 +395,7 @@ function CellBox({ log, column, width }: { log: Log; column: string; width: numb
   const value = columnValue(log, column)
   const empty = value === undefined || value === null || value === ''
   return (
-    <div className="group/cell relative flex shrink-0 items-center border-r px-2.5" style={{ width }}>
+    <div role="gridcell" className={cn('group/cell relative flex shrink-0 items-center border-r px-2.5', column === GROWS && 'grow')} style={{ width }}>
       <div className="min-w-0 truncate">{empty ? <span className="text-muted-foreground/50">—</span> : <Cell log={log} column={column} value={value} />}</div>
       {!empty && (
         <Tag
@@ -333,7 +403,7 @@ function CellBox({ log, column, width }: { log: Log; column: string; width: numb
           value={column === 'time' ? log.time : value}
           columnable
           label={`Menu for ${column}`}
-          className="absolute right-1 hidden items-center rounded border bg-background px-1 py-0.5 text-foreground shadow-sm hover:bg-muted hover:outline-none group-hover/cell:flex data-popup-open:flex"
+          className="absolute right-1 hidden items-center border bg-background px-1 py-0.5 text-foreground shadow-sm hover:bg-muted hover:outline-none group-hover/cell:flex data-popup-open:flex"
         >
           <ChevronDown className="h-3 w-3" />
         </Tag>
@@ -349,7 +419,7 @@ function Cell({ log, column, value }: { log: Log; column: string; value: Attribu
     case 'level':
       return <span className={LEVEL_TEXT[level(value)]}>{valueText(value)}</span>
     case 'service':
-      return <span className="text-fuchsia-600 dark:text-fuchsia-400">{valueText(value)}</span>
+      return <span>{valueText(value)}</span>
     case 'message':
       return <span title={log.message.length > 120 ? log.message.slice(0, 2000) : undefined}>{log.message}</span>
     default:
@@ -360,6 +430,26 @@ function Cell({ log, column, value }: { log: Log; column: string; value: Attribu
 function level(value: AttributeValue): string {
   return typeof value === 'string' ? value : ''
 }
+
+/** The stream's placeholder while a run is on its way: rows the shape of Logs under a line saying what runs. */
+export function StreamSkeleton({ label }: { label: string }) {
+  return (
+    <div role="status" className="h-full overflow-hidden">
+      <div className="border-b px-3 py-2 text-xs text-muted-foreground">{label}</div>
+      {SKELETON_MESSAGES.map((width, i) => (
+        <div key={i} className="flex items-center gap-6 border-b border-b-border/60 px-2" style={{ height: ROW_HEIGHT }}>
+          <Skeleton className="size-2" />
+          <Skeleton className="h-2.5 w-36" />
+          <Skeleton className="h-2.5 w-12" />
+          <Skeleton className="h-2.5" style={{ width }} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** The widths of the placeholder's messages, varied like real ones. */
+const SKELETON_MESSAGES = ['38%', '24%', '46%', '30%', '42%', '20%', '34%', '28%', '44%', '26%', '40%', '32%']
 
 function StreamEnd({ end, loading, error, count, onRetry }: {
   end: LogStreamProps['end']; loading: boolean; error: string | null; count: number; onRetry: () => void
@@ -374,7 +464,11 @@ function StreamEnd({ end, loading, error, count, onRetry }: {
   } else {
     content = count === 0 ? '' : 'No older Logs in this time range.'
   }
-  return <div className="sticky left-0 w-[min(100%,100vw)] px-3 text-center font-sans text-xs leading-[30px] text-muted-foreground">{content}</div>
+  return (
+    <div role="row" aria-rowindex={count + 2} className="sticky left-0 w-[min(100%,100vw)] px-3 text-center font-sans text-xs leading-[30px] text-muted-foreground">
+      <div role="gridcell">{content}</div>
+    </div>
+  )
 }
 
 function readWidths(): Record<string, number> {

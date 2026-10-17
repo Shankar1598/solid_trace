@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { valueText } from '@/lib/charts/axis'
+import { providerName } from '@/lib/integrations'
 import { groupLabel, runText, type Monitor } from '@/lib/monitors/monitor'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
@@ -78,7 +79,7 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
           <p>{ruleText(monitor)}</p>
           <p className="text-muted-foreground">
             {integrations.length > 0
-              ? <>Tells {integrations.map(i => `${i.name} (${i.provider})${i.enabled ? '' : ', off'}`).join(', ')}.</>
+              ? <>Tells {integrations.map(i => `${i.name} (${providerName(i.provider)})${i.enabled ? '' : ', off'}`).join(', ')}.</>
               : <>Tells no Integrations: its runs are recorded here only. <Link href={`${base}/edit`} className="underline">Add one</Link>.</>}
           </p>
         </section>

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { format } from 'date-fns'
+import { Skeleton } from '@/components/ui/skeleton'
 import { timePattern } from '@/lib/charts/axis'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { elapsedText } from '@/lib/logs/runLine'
@@ -23,6 +24,8 @@ export type HistogramView =
   | { status: 'done'; histogram: Histogram; from: Date; to: Date }
 
 const STRIP_HEIGHT = 48
+/** The heights of the placeholder's bars while Logs are counted, in percent: a quiet day with two busy hours. */
+const SKELETON_BARS = Array.from({ length: 60 }, (_, i) => 30 + 20 * Math.sin(i / 4) ** 2 + (i % 17 === 5 ? 40 : 0))
 const TIME_LABELS = 5
 
 /** Bottom to top in a bar, so errors sit on the axis where they're easiest to see. */
@@ -66,7 +69,11 @@ export function HistogramStrip({ view, onZoom, onLevel }: HistogramStripProps) {
           <div className="min-h-5 text-[11px] leading-5 text-muted-foreground">
             {view.status === 'running' ? 'Counting Logs…' : view.status === 'cancelled' ? 'Not counted.' : `Not counted: ${view.message}`}
           </div>
-          {view.status === 'running' && <div style={{ height: STRIP_HEIGHT + 16 }} />}
+          {view.status === 'running' && (
+            <div className="flex items-end gap-px pt-1 pb-4" style={{ height: STRIP_HEIGHT + 16 }}>
+              {SKELETON_BARS.map((height, i) => <Skeleton key={i} className="flex-1" style={{ height: `${height}%` }} />)}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -77,17 +84,21 @@ function SummaryLine({ histogram, onLevel }: { histogram: Histogram; onLevel: Hi
   const rate = errorRate(histogram)
   return (
     // On a phone the line wraps between its parts, never inside one.
-    <div className="flex min-h-5 flex-wrap items-center gap-x-3 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+    <div data-summary-line className="flex min-h-5 flex-wrap items-center gap-x-3 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
       <span>
         <span className="font-medium text-foreground">{histogram.count.toLocaleString()}</span> {histogram.count === 1 ? 'Log' : 'Logs'}
         {histogram.elapsed_ms !== undefined && <> · {elapsedText(histogram.elapsed_ms)}</>}
       </span>
-      <span>error rate <span className="font-medium text-foreground">{rateText(rate)}</span></span>
-      <span className="h-3 w-px bg-border" />
+      {histogram.count > 0 && (
+        <>
+          <span>error rate <span className="font-medium text-foreground">{rateText(rate)}</span></span>
+          <span className="h-3 w-px bg-border" />
+        </>
+      )}
       {HISTOGRAM_LEVELS.filter(level => histogram.levels[level] > 0).map(level => {
         const label = (
           <>
-            <span className={cn('inline-block h-2 w-2 rounded-sm', LEVEL_FILL[level])} />
+            <span className={cn('inline-block h-2 w-2', LEVEL_FILL[level])} />
             <span className={LEVEL_TEXT[level]}>{LEVEL_NAME[level]}</span>
             <span className="text-foreground">{histogram.levels[level].toLocaleString()}</span>
           </>
@@ -95,7 +106,7 @@ function SummaryLine({ histogram, onLevel }: { histogram: Histogram; onLevel: Hi
         return onLevel && level !== 'none' ? (
           <button
             key={level}
-            className="flex items-center gap-1 rounded px-1 hover:bg-muted"
+            className="flex items-center gap-1 px-1 hover:bg-muted"
             title={`Show only ${level} Logs`}
             onClick={() => onLevel(level)}
           >

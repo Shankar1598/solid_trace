@@ -55,6 +55,8 @@ export function OverviewTabContent({
               variant="ghost"
               size="icon"
               disabled={!prev_event_id}
+              aria-label="Previous event"
+              title="Previous event"
               className="h-8 w-8 border"
               onClick={() => prev_event_id && router.visit(
                 `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${prev_event_id}`,
@@ -67,6 +69,8 @@ export function OverviewTabContent({
               variant="ghost"
               size="icon"
               disabled={!next_event_id}
+              aria-label="Next event"
+              title="Next event"
               className="h-8 w-8 border border-l-0"
               onClick={() => next_event_id && router.visit(
                 `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${next_event_id}`,
@@ -105,7 +109,7 @@ export function OverviewTabContent({
                     </DialogClose>
                   </div>
                 </DialogHeader>
-                <div className="flex-1 overflow-auto bg-muted/40 p-4 mt-4 border border-muted-foreground/20 rounded-md">
+                <div className="flex-1 overflow-auto bg-muted/40 p-4 mt-4 border border-muted-foreground/20">
                   {formattedEventJson ? (
                     <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">
                       {formattedEventJson}

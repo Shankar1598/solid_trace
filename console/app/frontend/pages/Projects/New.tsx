@@ -45,54 +45,54 @@ export default function ProjectsNew() {
         title="New project"
         description="A Project collects one application's errors and Logs."
       />
-        <Card>
-          <form onSubmit={submit}>
-            <CardContent className="space-y-6 pb-2">
-              <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  placeholder="e.g. My Awesome App"
-                  value={data.name}
-                  onChange={(e) => setData('name', e.target.value)}
-                  required
-                />
-                {errors.name && (
-                  <p className="text-sm font-medium text-destructive">{errors.name}</p>
-                )}
-              </div>
+      <Card className="max-w-4xl">
+        <form onSubmit={submit}>
+          <CardContent className="space-y-6 pb-2">
+            <div className="space-y-2">
+              <Label htmlFor="name">Name</Label>
+              <Input
+                id="name"
+                placeholder="e.g. My Awesome App"
+                value={data.name}
+                onChange={(e) => setData('name', e.target.value)}
+                required
+              />
+              {errors.name && (
+                <p className="text-sm font-medium text-destructive">{errors.name}</p>
+              )}
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="platform">Platform</Label>
-                <Select
-                  value={data.platform}
-                  onValueChange={(val) => setData('platform', val ?? 'ruby')}
-                  items={platforms}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a platform" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {platforms.map(p => (
-                      <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.platform && (
-                  <p className="text-sm font-medium text-destructive">{errors.platform}</p>
-                )}
-              </div>
-            </CardContent>
-            <CardFooter className="justify-end gap-2">
-              <Link href={`/${current_org.slug}/projects`} className={buttonVariants({ variant: 'outline' })}>
-                Cancel
-              </Link>
-              <Button type="submit" disabled={processing}>
-                {processing ? 'Creating…' : 'Create project'}
-              </Button>
-            </CardFooter>
-          </form>
-        </Card>
+            <div className="space-y-2">
+              <Label htmlFor="platform">Platform</Label>
+              <Select
+                value={data.platform}
+                onValueChange={(val) => setData('platform', val ?? 'ruby')}
+                items={platforms}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a platform" />
+                </SelectTrigger>
+                <SelectContent>
+                  {platforms.map(p => (
+                    <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errors.platform && (
+                <p className="text-sm font-medium text-destructive">{errors.platform}</p>
+              )}
+            </div>
+          </CardContent>
+          <CardFooter className="justify-end gap-2">
+            <Link href={`/${current_org.slug}/projects`} className={buttonVariants({ variant: 'outline' })}>
+              Cancel
+            </Link>
+            <Button type="submit" disabled={processing}>
+              {processing ? 'Creating…' : 'Create project'}
+            </Button>
+          </CardFooter>
+        </form>
+      </Card>
     </DashboardLayout>
   )
 }
