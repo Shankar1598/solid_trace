@@ -129,6 +129,22 @@ export async function runSql({ orgSlug, projectSlug, sql, from, to, signal }: {
 }
 
 /**
+ * Sends a sample Log to the Project with its key, as a shipper would,
+ * answering the Log's time. A POST with the page's CSRF token.
+ */
+export async function sendTestLog({ orgSlug, projectSlug }: { orgSlug: string; projectSlug: string }): Promise<Date> {
+  const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? ''
+  const response = await callConsole(`/${orgSlug}/projects/${projectSlug}/logs/test`, undefined, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+    body: '{}',
+  })
+  const body = await response.json().catch(() => null)
+  if (response.ok && typeof body?.time === 'string') return new Date(body.time)
+  throw new RunError(typeof body?.error === 'string' ? body.error : `The test Log could not be sent (HTTP ${response.status}).`)
+}
+
+/**
  * Where validate places one stage of a Query, from its keyword to its end
  * (lines and columns from 1, columns in characters). filter: one of the
  * leading where and search stages; builder: the Builder can show it.

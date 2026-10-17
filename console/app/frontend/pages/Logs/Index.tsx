@@ -20,6 +20,7 @@ import {
   type Chip,
 } from '@/lib/logs/builder'
 import {
+  allLogsNow,
   chooseViz,
   fillEmptyQuery,
   linkSearch,
@@ -55,6 +56,7 @@ import { BuilderBar, type BuilderView } from './components/BuilderBar'
 import { BuilderPanel, type ProjectOption } from './components/BuilderPanel'
 import { AddToDashboard } from './components/AddToDashboard'
 import { CreateMonitor } from './components/CreateMonitor'
+import { GetStarted } from './components/GetStarted'
 import { CopyLink } from './components/CopyLink'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
@@ -69,6 +71,10 @@ interface LogsIndexProps {
   project: ProjectOption
   projects: ProjectOption[]
   sql_queries_enabled: boolean
+  /** Where the Project's Logs go, for an empty Project's snippets. */
+  ingest: { url: string; key: string | null }
+  /** Whether any Log is in the Project's Retention: loaded after the page; null when EventStore couldn't say. */
+  has_logs?: boolean | null
 }
 
 type Result =
@@ -87,7 +93,7 @@ interface Run {
   to: Date
 }
 
-export default function LogsIndex({ project, projects, sql_queries_enabled }: LogsIndexProps) {
+export default function LogsIndex({ project, projects, sql_queries_enabled, ingest, has_logs }: LogsIndexProps) {
   const { current_org: currentOrg, current_user: currentUser } = usePage<SharedProps>().props
   const orgSlug = currentOrg?.slug ?? ''
   const viewer = currentUser?.id ?? null
@@ -529,6 +535,23 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
 
   const running = result.status === 'running' || (result.status === 'done' && result.loadingOlder)
 
+  // An empty Project shows how to send it Logs in place of an empty stream,
+  // until this page has shown one.
+  const showTestLog = () => {
+    setBuilderView({ status: 'ready', builder: EMPTY_BUILDER })
+    setProblems([])
+    run(allLogsNow(latest.current, projectQuery))
+  }
+  const getStarted = has_logs === false && seen.current.logs.length === 0 ? (
+    <GetStarted
+      target={{ url: ingest.url, projectId: project.id, key: ingest.key }}
+      orgSlug={orgSlug}
+      projectSlug={project.slug}
+      projectQuery={projectQuery}
+      onSent={showTestLog}
+    />
+  ) : null
+
   return (
     <DashboardLayout>
       <div className="h-[calc(100vh-2rem)] flex flex-col rounded-md border overflow-hidden bg-card">
@@ -600,6 +623,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
           <TagMenuProvider onFilter={onFilter} onSummarize={onSummarize} columns={columnControl}>
             <ResultArea
               result={result}
+              getStarted={getStarted}
               sql={sqlMode}
               chart={tableChart}
               onLoadOlder={loadOlder}
@@ -628,9 +652,9 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
 }
 
 /** The run's result; `sql` while SQL mode's SQL ran, which answers a table rather than Logs. */
-function ResultArea({ result, sql, chart, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
-  result: Result; sql: boolean; chart: TableChart; onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void
-  columns: string[]; onColumns: (columns: string[]) => void
+function ResultArea({ result, getStarted, sql, chart, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
+  result: Result; getStarted: React.ReactNode; sql: boolean; chart: TableChart; onLoadOlder: () => void; selectedId: string | null
+  onSelect: (log: Log) => void; columns: string[]; onColumns: (columns: string[]) => void
 }) {
   switch (result.status) {
     case 'waiting':
@@ -645,9 +669,8 @@ function ResultArea({ result, sql, chart, onLoadOlder, selectedId, onSelect, col
       return <LogTableView table={result.table} elapsedMs={result.elapsedMs} chart={chart} />
     case 'done':
       if (result.stream.logs.length === 0) {
-        return result.loadingOlder
-          ? <Notice>Searching… no matching Logs yet.</Notice>
-          : <Notice>No Logs match. Widen the time range or change the Query.</Notice>
+        if (result.loadingOlder) return <Notice>Searching… no matching Logs yet.</Notice>
+        return getStarted ?? <Notice>No Logs match. Widen the time range or change the Query.</Notice>
       }
       return (
         <LogStream

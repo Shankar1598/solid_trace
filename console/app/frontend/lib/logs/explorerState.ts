@@ -118,6 +118,16 @@ export function draftIn(draft: ExplorerState, current: ExplorerState): ExplorerS
 }
 
 /**
+ * The Project's Logs unfiltered in the Builder, over the range shown when it
+ * reaches now, or else DEFAULT_RANGE: where a Log just sent shows. Run it.
+ */
+export function allLogsNow(explorer: Explorer, projectQuery: string): Explorer {
+  const { explorer: inBuilder } = switchMode(explorer, 'builder')
+  const range = explorer.current.range.kind === 'relative' ? explorer.current.range : DEFAULT_RANGE
+  return { ...inBuilder, draft: { ...inBuilder.draft, query: projectQuery, range } }
+}
+
+/**
  * Draws tables another way, without running: what ran and the draft both
  * change, and `replace` is the search to put in place of the current history
  * entry's.
