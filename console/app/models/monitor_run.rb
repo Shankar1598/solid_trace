@@ -15,6 +15,18 @@ class MonitorRun < ApplicationRecord
 
   validates :ran_at, presence: true
 
+  # What the run found, as Run now words it: how many Logs matched a Match
+  # monitor, or how many of a Threshold monitor's groups are firing.
+  def found
+    if monitor.kind_match?
+      "#{matched.to_i} #{'Log'.pluralize(matched.to_i)} matched"
+    elsif firing.to_i.zero?
+      "nothing firing"
+    else
+      "#{firing} #{'group'.pluralize(firing)} firing"
+    end
+  end
+
   # Deletes each Monitor's runs older than its newest KEEP.
   def self.prune
     ranked = select(:id, "ROW_NUMBER() OVER (PARTITION BY monitor_id ORDER BY ran_at DESC, id DESC) AS position")
