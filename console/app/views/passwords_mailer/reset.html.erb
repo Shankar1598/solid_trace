@@ -1,0 +1,15 @@
+<p>Hi <%= @user.name %>,</p>
+
+<p>Someone asked to reset your SolidTrace password. To choose a new one, open this link:</p>
+
+<p>
+  <%= link_to "Reset your password", @reset_url %>
+</p>
+
+<p>The link works for 15 minutes, and only until your password changes. Resetting it signs you out everywhere.</p>
+
+<hr>
+
+<p>
+  <small>If you didn't ask, ignore this email: your password stays as it is.</small>
+</p>
