@@ -95,6 +95,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
     saved.current = placesOf(dashboard.charts)
   }, [dashboard.charts])
   const persist = (next: Layout) => {
+    setLayout([...next])
     const moved = movedPlaces(saved.current, [...next])
     if (moved.length === 0) return
     const before = saved.current
@@ -169,7 +170,6 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                 gridConfig={{ cols: GRID_COLUMNS, rowHeight: ROW_PX, margin: [GAP_PX, GAP_PX], containerPadding: [0, 0] }}
                 dragConfig={{ enabled: editing, handle: '.dashboard-chart-handle' }}
                 resizeConfig={{ enabled: editing }}
-                onLayoutChange={next => setLayout([...next])}
                 onDragStop={persist}
                 onResizeStop={persist}
               >

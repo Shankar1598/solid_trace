@@ -45,7 +45,7 @@ export function ChartBody({ run, viz, options }: { run: ChartRun; viz: Dashboard
   if (!form) {
     return (
       <div className="flex h-full flex-col">
-        {viz !== 'table' && <div className="px-3 pt-1 text-[11px] text-muted-foreground">This table can't be drawn as a chart, so it shows as a table.</div>}
+        {viz !== 'table' && run.table.rows.length > 0 && <div className="px-3 pt-1 text-[11px] text-muted-foreground">This table can't be drawn as a chart, so it shows as a table.</div>}
         <div className="min-h-0 flex-1"><LogTableView table={run.table} elapsedMs={run.elapsedMs} /></div>
       </div>
     )
