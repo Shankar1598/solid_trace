@@ -38,6 +38,8 @@ class MonitorEvaluation
   # stops each at LogMonitor::RUN_TIMEOUT_SECONDS; a run whose process died
   # is taken over after it.
   RUN_LEASE = 5.minutes
+  # The most states one statement writes.
+  STATES_PER_WRITE = 1_000
   # EventStore answers at most 10,000 rows. A run that sees only some groups
   # would compare a different subset each time, firing and resolving groups
   # it merely missed, so a cut table is an error that changes no state.
@@ -151,33 +153,48 @@ class MonitorEvaluation
   # Notification each change owes. A group with no row this run is ok: a
   # firing one resolves, and an ok one is forgotten. Returns how many groups
   # are firing.
+  #
+  # It runs in the transaction that holds SQLite's write lock, and a run may
+  # have up to 10,000 groups, so the states are written in bulk: one upsert
+  # of what changed and one delete of the ok groups that are gone.
   def move_states(groups, column:, from:, to:)
     states = @monitor.states.index_by(&:group_key)
     facts = { "column" => column, "threshold" => @monitor.threshold, "operator" => @monitor.operator,
               "from" => from.utc.iso8601, "to" => to.utc.iso8601 }
+    changed = []
+    firing_count = 0
 
     groups.each do |key, value|
-      state = states.delete(key) || @monitor.states.build(group_key: key, status: "ok", since: @now)
+      state = states.delete(key)
+      status, since = state ? [ state.status, state.since ] : [ "ok", @now ]
       firing = value.nil? || @monitor.breached?(value)
-      if firing != state.status_firing?
+      firing_count += 1 if firing
+      if firing != (status == "firing")
         kind = firing ? IntegrationNotification::MONITOR_FIRING : IntegrationNotification::MONITOR_RESOLVED
         # Firing for no data, or resolving after it.
         no_data = firing ? value.nil? : state.last_value.nil?
         notify(kind, key, facts.merge("value" => value, "no_data" => no_data))
-        state.assign_attributes(status: firing ? "firing" : "ok", since: @now)
+        status, since = (firing ? "firing" : "ok"), @now
       end
-      state.update!(last_value: value)
+      next if state && state.status == status && state.last_value == value
+
+      changed << { group_key: key, status: status, since: since, last_value: value }
     end
 
+    gone = []
     states.each_value do |state|
-      next state.destroy! if state.status_ok?
+      next gone << state.id if state.status_ok?
 
       notify(IntegrationNotification::MONITOR_RESOLVED, state.group_key,
         facts.merge("value" => nil, "absent" => true, "no_data" => state.last_value.nil?))
-      state.update!(status: "ok", since: @now, last_value: nil)
+      changed << { group_key: state.group_key, status: "ok", since: @now, last_value: nil }
     end
 
-    @monitor.states.reload.count(&:status_firing?)
+    @monitor.states.where(id: gone).delete_all if gone.any?
+    changed.each_slice(STATES_PER_WRITE) do |rows|
+      @monitor.states.upsert_all(rows, unique_by: %i[monitor_id group_key])
+    end
+    firing_count
   end
 
   # ---------------------------------------------------------------------------
