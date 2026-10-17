@@ -86,10 +86,14 @@ test('the palette lists Projects\' Logs, pages and actions, and the sidebar open
   await expect(page).toHaveURL(/\/projects\/solid-trace-project\/logs/)
   await settled(page)
 
-  // Cmd+K again closes it.
+  // Cmd+K again closes it, and the next opening starts with an empty search.
   await page.keyboard.press('Control+k')
   await expect(palette(page)).toBeVisible()
+  await search(page).fill('theme')
   await page.keyboard.press('Control+k')
   await expect(palette(page)).toBeHidden()
+  await page.keyboard.press('Control+k')
+  await expect(search(page)).toHaveValue('')
+  await expect(palette(page).getByRole('option', { name: /^Issues/ }).first()).toBeVisible()
   expect(errors).toEqual([])
 })
