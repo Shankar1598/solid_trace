@@ -33,7 +33,13 @@ import (
 //   - log_file_backfill gets one row once the manifest of an install from
 //     before it has been built from the files on disk. Files put on disk
 //     after that are never listed.
+//
+// Each row has a generation, from a sequence, that no other row ever had, so
+// the generations of an hour's rows change whenever its Logs do: a new file
+// adds one, and a deletion takes its rows' away. The bin cache keys bins by
+// them; moving a file's bytes to the bucket changes none.
 var manifestTables = []string{
+	`CREATE SEQUENCE IF NOT EXISTS logs.log_file_generations`,
 	`CREATE TABLE IF NOT EXISTS logs.log_files (
 		project_id UINTEGER,
 		day DATE,
@@ -49,8 +55,12 @@ var manifestTables = []string{
 		-- batch column: none of its Logs has one.
 		batch_max UUID,
 		local BOOLEAN,
-		remote BOOLEAN
+		remote BOOLEAN,
+		generation BIGINT
 	)`,
+	// An install from before generations gets them for its rows.
+	`ALTER TABLE logs.log_files ADD COLUMN IF NOT EXISTS generation BIGINT`,
+	`UPDATE logs.log_files SET generation = nextval('logs.log_file_generations') WHERE generation IS NULL`,
 	`CREATE TABLE IF NOT EXISTS logs.log_file_deletions (
 		project_id UINTEGER,
 		day DATE,
@@ -86,9 +96,11 @@ type logFile struct {
 	hour time.Time
 	// name is data.parquet or late-<n>.parquet.
 	name string
-	// local says the file's bytes are on local disk. Only a read's listing
-	// sets it (listLogFiles); elsewhere a file is known by its key alone.
-	local bool
+	// local says the file's bytes are on local disk, and generation is its
+	// row's generation. Only a read's listing sets them (listLogFiles);
+	// elsewhere a file is known by its key alone.
+	local      bool
+	generation int64
 }
 
 // key is the file's logical key, project=<id>/day=<YYYY-MM-DD>/hour=<HH>/<name>,
@@ -155,8 +167,8 @@ type sqlRunner interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// scanLogFiles reads rows of project_id, day, hour and name, and local if the
-// rows have it.
+// scanLogFiles reads rows of project_id, day, hour and name, and local and
+// generation if the rows have them.
 func scanLogFiles(rows *sql.Rows) ([]logFile, error) {
 	defer rows.Close()
 	columns, err := rows.Columns()
@@ -170,10 +182,8 @@ func scanLogFiles(rows *sql.Rows) ([]logFile, error) {
 			day  time.Time
 			hour int
 		)
-		into := []any{&file.projectID, &day, &hour, &file.name}
-		if len(columns) > len(into) {
-			into = append(into, &file.local)
-		}
+		into := []any{&file.projectID, &day, &hour, &file.name, &file.local, &file.generation}
+		into = into[:len(columns)]
 		if err := rows.Scan(into...); err != nil {
 			return nil, err
 		}
@@ -192,7 +202,7 @@ func listLogFiles(ctx context.Context, db sqlRunner, projectID uint32, from, to 
 		where = " AND local"
 	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT `+manifestColumnsOfAKey+`, local FROM logs.log_files
+		SELECT `+manifestColumnsOfAKey+`, local, generation FROM logs.log_files
 		WHERE project_id = ?
 			AND day + to_hours(CAST(hour AS BIGINT)) >= CAST(? AS TIMESTAMP)
 			AND day + to_hours(CAST(hour AS BIGINT)) < CAST(? AS TIMESTAMP)`+where,
@@ -208,7 +218,7 @@ func listLogFiles(ctx context.Context, db sqlRunner, projectID uint32, from, to 
 // were written. A file whose batch_max is NULL holds none.
 func listLogFilesAfterBatch(ctx context.Context, db sqlRunner, projectID uint32, after uuid.UUID) (map[time.Time][]logFile, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT `+manifestColumnsOfAKey+`, local FROM logs.log_files
+		SELECT `+manifestColumnsOfAKey+`, local, generation FROM logs.log_files
 		WHERE project_id = ? AND batch_max > CAST(? AS UUID)`,
 		projectID, after.String())
 	if err != nil {
@@ -217,8 +227,8 @@ func listLogFilesAfterBatch(ctx context.Context, db sqlRunner, projectID uint32,
 	return scanLogFilesByHour(rows)
 }
 
-// scanLogFilesByHour reads rows of project_id, day, hour, name and local into
-// the files of each hour, in the order they were written.
+// scanLogFilesByHour reads rows of project_id, day, hour, name, local and
+// generation into the files of each hour, in the order they were written.
 func scanLogFilesByHour(rows *sql.Rows) (map[time.Time][]logFile, error) {
 	files, err := scanLogFiles(rows)
 	if err != nil {
@@ -325,8 +335,9 @@ func insertLogFile(ctx context.Context, db sqlRunner, file logFile, stats logFil
 		batchMax = stats.batchMax.String
 	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO logs.log_files (project_id, day, hour, name, bytes, min_time, max_time, log_count, batch_max, local, remote)
-		VALUES (?, CAST(? AS DATE), ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, CAST(? AS UUID), true, false)`,
+		INSERT INTO logs.log_files (project_id, day, hour, name, bytes, min_time, max_time, log_count, batch_max, local, remote, generation)
+		VALUES (?, CAST(? AS DATE), ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, CAST(? AS UUID), true, false,
+			nextval('logs.log_file_generations'))`,
 		append(file.keyArgs(), stats.bytes, timestamp(stats.minTime), timestamp(stats.maxTime), logs, batchMax)...)
 	if err != nil {
 		return fmt.Errorf("add %s to the manifest: %w", file.key(), err)
