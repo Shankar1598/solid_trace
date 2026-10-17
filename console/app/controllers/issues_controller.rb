@@ -4,47 +4,23 @@ class IssuesController < ApplicationController
   layout "dashboard"
   before_action :set_organization
 
-  ISSUES_PER_PAGE = 25
-
-  # An Issue with no counted Event yet is seen when it was created.
-  SORTS = {
-    "last_seen" => Arel.sql("COALESCE(issues.last_seen_at, issues.created_at) DESC, issues.id DESC"),
-    "first_seen" => Arel.sql("COALESCE(issues.first_seen_at, issues.created_at) DESC, issues.id DESC"),
-  }.freeze
-
   def index
-    @issues = scoped_resources
-
-    if params[:status].present? && params[:status] != "all"
-      @issues = @issues.where(status: params[:status])
-    end
-
-    if params[:query].present?
-      @issues = @issues.where("title LIKE ?", "%#{params[:query]}%")
-    end
-    if params[:project_id].present? && params[:project_id] != "all"
-      @issues = @issues.where(project_id: params[:project_id])
-    end
-
-    sort = SORTS.key?(params[:sort]) ? params[:sort] : "last_seen"
-    total_count = @issues.count
-    total_pages = [ (total_count.to_f / ISSUES_PER_PAGE).ceil, 1 ].max
-    page = params[:page].to_i.clamp(1, total_pages)
-    page_issues = @issues.order(SORTS[sort]).offset((page - 1) * ISSUES_PER_PAGE).limit(ISSUES_PER_PAGE)
+    list = IssueList.new(@current_org, status: params[:status], query: params[:query], project_id: params[:project_id],
+      sort: params[:sort], page: params[:page])
 
     render inertia: "Issues/Index", props: {
-      issues: page_issues.includes(:project, assignee: :user).map { |i| IssueSerializer.new(i).as_json },
+      issues: list.issues.map { |i| IssueSerializer.new(i).as_json },
       pagination: {
-        current_page: page,
-        total_pages: total_pages,
-        total_count: total_count,
+        current_page: list.page,
+        total_pages: list.total_pages,
+        total_count: list.total_count,
       },
       projects: @current_org.projects.map { |p| ProjectSerializer.new(p).as_json },
       filters: {
         status: params[:status] || "all",
         query: params[:query] || "",
         project_id: params[:project_id] || "all",
-        sort: sort,
+        sort: list.sort,
       },
     }
   end
@@ -93,14 +69,14 @@ class IssuesController < ApplicationController
   def resolve
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
     @issue = @project.issues.find_by!(number: params[:number])
-    @issue.update!(status: 1) # resolved
+    @issue.update!(status: Issue::STATUS::RESOLVED)
     redirect_to project_issue_path(@project, @issue, org_slug: @current_org.slug), notice: "Issue resolved"
   end
 
   def unresolve
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
     @issue = @project.issues.find_by!(number: params[:number])
-    @issue.update!(status: 0) # unresolved
+    @issue.update!(status: Issue::STATUS::UNRESOLVED)
     redirect_to project_issue_path(@project, @issue, org_slug: @current_org.slug), notice: "Issue unresolved"
   end
 
@@ -111,9 +87,7 @@ class IssuesController < ApplicationController
   # can't read Events, @events_unavailable says why, so the page doesn't show
   # the Issue as having none.
   def load_events(page, per_page)
-    event_query = @issue.events
-    event_query = event_query.where_uuid(params[:event_id]) if params[:event_id].present?
-    if (context = event_query.get_event_with_context!)
+    if (context = @issue.event_with_context!(params[:event_id]))
       @event = context[:event]
       @prev_event_id = context[:prev_uuid]
       @next_event_id = context[:next_uuid]
@@ -122,14 +96,10 @@ class IssuesController < ApplicationController
   rescue EventStore::Unavailable => e
     Rails.logger.error(e.message)
     @events_list = []
-    @events_unavailable = e.body ? EventStore.error_text(e.body) : "Events can't be read now: EventStore can't be reached."
+    @events_unavailable = EventStore.events_unavailable_text(e)
   end
 
   def set_organization
     @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-  end
-
-  def scoped_resources
-    Issue.joins(project: :organization).where(organizations: { id: @current_org.id })
   end
 end
