@@ -3,19 +3,21 @@
 require "test_helper"
 require "puma/configuration"
 
-# A Dashboard runs up to MAX_IN_FLIGHT charts at once. Each run holds a Puma
-# thread until EventStore answers, even after the browser aborts it, so
-# ChartRuns caps the runs under the thread count (see its test). Production
-# must have room under that cap for one Dashboard's runs at once, or a single
+# A Dashboard runs up to MAX_IN_FLIGHT charts at once, and an explorer run is
+# a Query and a histogram at once. Each run holds a Puma thread until
+# EventStore answers, even after the browser aborts it, so ChartRuns caps the
+# runs under the thread count (see its test). Production must have room under
+# that cap for one Dashboard's runs and one explorer run at once, or a single
 # viewer sees Console as busy.
 class PumaTest < ActiveSupport::TestCase
   FETCH_QUEUE = Rails.root.join("app/frontend/lib/dashboards/fetchQueue.ts")
+  EXPLORER_RUNS_AT_ONCE = 2
 
-  test "production Puma allows one Dashboard's chart runs at once, under the cap that keeps threads spare" do
+  test "production Puma allows one Dashboard's and one explorer's runs at once, under the cap that keeps threads spare" do
     max_in_flight = FETCH_QUEUE.read[/export const MAX_IN_FLIGHT = (\d+)/, 1].to_i
     assert_operator max_in_flight, :>, 0
 
-    assert_operator ChartRuns.limit(production_threads), :>=, max_in_flight
+    assert_operator ChartRuns.limit(production_threads), :>=, max_in_flight + EXPLORER_RUNS_AT_ONCE
     assert_operator production_threads - ChartRuns.limit(production_threads), :>=, ChartRuns::SPARE_THREADS
   end
 

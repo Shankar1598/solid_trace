@@ -262,15 +262,39 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal message, response.parsed_body["error"]
   end
 
-  test "the explorer still runs while Console runs as many charts as it allows" do
-    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+  test "the explorer's runs answer 503 at once while Console runs as many as it allows" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    runs = %w[query histogram sql].map { |run| stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/#{run}") }
+    range = { from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
 
     holding_every_chart_run do
-      get query_project_logs_url(@project, org_slug: @organization.slug),
-        params: { query: "", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+      get query_project_logs_url(@project, org_slug: @organization.slug), params: { query: "", **range }
+      assert_response :service_unavailable
+      assert_match "busy", response.parsed_body["error"]
+
+      get histogram_project_logs_url(@project, org_slug: @organization.slug), params: { query: "", **range }
+      assert_response :service_unavailable
+
+      post sql_project_logs_url(@project, org_slug: @organization.slug), params: { sql: "SELECT 1", **range }, as: :json
+      assert_response :service_unavailable
     end
 
+    runs.each { |run| assert_not_requested run }
+  end
+
+  test "an explorer run holds one of the runs Console allows until EventStore answers" do
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").to_return do
+      holding_every_chart_run(ChartRuns.limit - 1) do
+        assert_raises(ChartRuns::Busy) { ChartRuns.hold { flunk "ran past the limit" } }
+      end
+      { status: 200, body: { logs: [], next_cursor: nil }.to_json }
+    end
+
+    get query_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+
     assert_response :success
+    assert_equal :ran, ChartRuns.hold { :ran }
   end
 
   test "validate answers a Query's chips from EventStore" do

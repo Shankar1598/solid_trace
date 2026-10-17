@@ -3,10 +3,12 @@
 # The Logs explorer: the page where a Project's Logs are searched and read.
 # The page runs its Queries through #query, which proxies EventStore's query
 # app, so the browser never talks to EventStore. Its runs (#query, #histogram
-# and #sql) stop at RUN_TIMEOUT_SECONDS, answering 504; they aren't counted
-# in ChartRuns, which says why.
+# and #sql) stop at RUN_TIMEOUT_SECONDS, answering 504, and count against
+# ChartRuns' cap, answering 503 past it; ChartRuns says why.
 class LogsController < ApplicationController
   include EventStoreProxy
+
+  rescue_from ChartRuns::Busy, with: :runs_busy
 
   layout "dashboard"
 
@@ -54,14 +56,16 @@ class LogsController < ApplicationController
   # of Logs, newest first, or a tabular Query's table, as EventStore answers
   # it.
   def query
-    render json: EventStore.query_logs(
-      project_id: @project.id,
-      query: params[:query].to_s,
-      from: @from,
-      to: @to,
-      cursor: params[:cursor].presence,
-      timeout_seconds: RUN_TIMEOUT_SECONDS
-    )
+    render json: ChartRuns.hold {
+      EventStore.query_logs(
+        project_id: @project.id,
+        query: params[:query].to_s,
+        from: @from,
+        to: @to,
+        cursor: params[:cursor].presence,
+        timeout_seconds: RUN_TIMEOUT_SECONDS
+      )
+    }
   end
 
   # GET with query, from and to (ISO 8601) and an optional bucket_seconds:
@@ -72,14 +76,16 @@ class LogsController < ApplicationController
     bucket_seconds = bucket && Integer(bucket, 10, exception: false)
     return render json: { error: "bucket_seconds must be a whole number of seconds" }, status: :bad_request if bucket && !bucket_seconds
 
-    render json: EventStore.logs_histogram(
-      project_id: @project.id,
-      query: params[:query].to_s,
-      from: @from,
-      to: @to,
-      bucket_seconds: bucket_seconds,
-      timeout_seconds: RUN_TIMEOUT_SECONDS
-    )
+    render json: ChartRuns.hold {
+      EventStore.logs_histogram(
+        project_id: @project.id,
+        query: params[:query].to_s,
+        from: @from,
+        to: @to,
+        bucket_seconds: bucket_seconds,
+        timeout_seconds: RUN_TIMEOUT_SECONDS
+      )
+    }
   end
 
   # GET with query: the Query's mistakes, with positions, and its chips when
@@ -100,9 +106,11 @@ class LogsController < ApplicationController
   # so a link can't run SQL as whoever opens it, and refused while SQL
   # queries are off.
   def sql
-    render json: EventStore.run_logs_sql(
-      project_id: @project.id, sql: params[:sql].to_s, from: @from, to: @to, timeout_seconds: RUN_TIMEOUT_SECONDS
-    )
+    render json: ChartRuns.hold {
+      EventStore.run_logs_sql(
+        project_id: @project.id, sql: params[:sql].to_s, from: @from, to: @to, timeout_seconds: RUN_TIMEOUT_SECONDS
+      )
+    }
   end
 
   # GET one Log by id, for the inspector. time, the Log's own time, lets
@@ -117,6 +125,10 @@ class LogsController < ApplicationController
   end
 
   private
+
+  def runs_busy
+    render json: { error: "Console is busy running other Queries and charts. Run again in a moment." }, status: :service_unavailable
+  end
 
   # The key snippets show and the test Log is sent with: the Project's first.
   def project_key
