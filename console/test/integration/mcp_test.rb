@@ -101,6 +101,26 @@ class McpTest < ActionDispatch::IntegrationTest
     assert_no_match "secret", text
   end
 
+  test "a member's rotate_key and invite_member are refused, and an admin's work" do
+    key = @project.project_keys.create!
+    member = create(:user)
+    create(:organization_user, organization: @organization, user: member, role: :member)
+    _, member_secret = ApiToken.issue!(user: member, name: "Laptop")
+
+    mcp "tools/call", token: member_secret, name: "rotate_key", arguments: { project: "shop", key: key.id }
+    assert_equal [ true, "Only an Organization admin can rotate a Project's keys." ], tool_result
+    mcp "tools/call", token: member_secret, name: "invite_member", arguments: { email: "grace@example.com" }
+    assert_equal [ true, "Only an Organization admin can invite members." ], tool_result
+
+    old = key.public_key
+    mcp "tools/call", name: "rotate_key", arguments: { project: "shop", key: key.id }
+    assert_not tool_result.first
+    assert_not_equal old, key.reload.public_key
+    mcp "tools/call", name: "invite_member", arguments: { email: "grace@example.com" }
+    assert_not tool_result.first
+    assert @organization.users.exists?(email: "grace@example.com")
+  end
+
   test "a body that isn't JSON gets JSON-RPC's parse error" do
     post mcp_url, params: "{not json", headers: { "Authorization" => "Bearer #{@secret}",
                                                   "Accept" => "application/json, text/event-stream",
@@ -119,6 +139,12 @@ class McpTest < ActionDispatch::IntegrationTest
   end
 
   private
+
+  # A tools/call's isError and text.
+  def tool_result
+    result = response.parsed_body["result"]
+    [ result["isError"] || false, result["content"].map { |content| content["text"] }.join("\n") ]
+  end
 
   def mcp(method, token: @secret, **params)
     headers = { "Accept" => "application/json, text/event-stream", "Content-Type" => "application/json" }

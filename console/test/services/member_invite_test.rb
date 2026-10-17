@@ -24,6 +24,7 @@ class MemberInviteTest < ActiveSupport::TestCase
 
     assert invite.done?
     assert_equal :added, invite.outcome
+    assert invite.emailed
     assert_equal "grace", invite.membership.user.name
     assert_equal "member", invite.membership.role
     assert_includes @organization.users.reload, User.find_by!(email: "grace@example.com")
@@ -38,6 +39,7 @@ class MemberInviteTest < ActiveSupport::TestCase
     end
 
     assert_equal :added, invite.outcome
+    assert_not invite.emailed
     assert_equal grace, invite.membership.user
     assert_not_equal "Ignored", grace.reload.name
   end
