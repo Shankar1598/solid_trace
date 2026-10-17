@@ -15,7 +15,7 @@ module McpTools
     def run
       added = dashboard.charts.new(given(CHART_FIELDS.keys).merge(project: project))
       added.y = dashboard.bottom unless arguments.key?(:y)
-      added.save!
+      save_chart!(added)
 
       json(chart_json(added), link: links.dashboard(dashboard))
     end

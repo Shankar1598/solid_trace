@@ -26,7 +26,8 @@ module McpTools
       query: {
         type: "string",
         description: "The Query the Chart runs on its Project over the Dashboard's range. It must answer a table, so end it with " \
-                     "summarize, count or project, such as: where level == \"error\" | summarize count() by bin_auto(time)",
+                     "summarize, count or project, such as: where level == \"error\" | summarize count() by bin_auto(time). " \
+                     "A Query with mistakes is not saved.",
       },
       viz: {
         type: "string",
@@ -90,6 +91,22 @@ module McpTools
     # The fields of names given in the arguments, as the record takes them.
     def given(names)
       arguments.slice(*names)
+    end
+
+    # Saves a Chart whose fields are valid. A new Chart, or one whose Query or
+    # Project changed, is saved only when EventStore finds no mistakes in its
+    # Query on its Project, as the chart editor checks before it saves. The
+    # check compiles the Query and runs nothing.
+    def save_chart!(chart)
+      chart.validate!
+      if chart.new_record? || chart.query_changed? || chart.project_id_changed?
+        validation = EventStore.validate_logs_query(project_id: chart.project_id, query: chart.query)
+        if Array(validation["errors"]).any?
+          EventStore.mistakes(validation).each { |mistake| chart.errors.add(:query, mistake) }
+          raise ActiveRecord::RecordInvalid, chart
+        end
+      end
+      chart.save!
     end
 
     # A Query's leading source, such as ['shop'], as the chart editor reads it.
