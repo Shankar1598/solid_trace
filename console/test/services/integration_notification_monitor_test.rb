@@ -87,6 +87,46 @@ class IntegrationNotificationMonitorTest < ActiveSupport::TestCase
     assert resolved.reload.status_sent?
   end
 
+  test "a failed Monitor row is retried past an Issue row's attempt cap, so an outage of minutes loses no trigger" do
+    change(FIRING, value: 12)
+    change(RESOLVED, value: 3)
+    stub_request(:post, SLACK_URL).to_return(status: 500, body: "down")
+
+    (Notification::MAX_ATTEMPTS + 1).times do
+      IntegrationNotification.deliver_pending(@slack.id)
+      travel IntegrationNotification::RATE_LIMIT_WINDOW
+    end
+
+    firing, resolved = Notification.order(:id).to_a
+    assert_equal [ "failed", Notification::MAX_ATTEMPTS + 1 ], [ firing.reload.status, firing.attempts ]
+    assert resolved.reload.status_pending?, "the resolve still waits behind the trigger"
+    assert_not_includes Notification.exhausted, firing
+
+    WebMock::RequestRegistry.instance.reset!
+    stub_request(:post, SLACK_URL).to_return(status: 200, body: "ok")
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    texts = []
+    assert_requested(:post, SLACK_URL, times: 2) { |request| texts << JSON.parse(request.body)["text"] }
+    assert_equal [ "🔥 Firing: Checkout errors", "✅ Resolved: Checkout errors" ], texts
+  end
+
+  test "a Monitor row still failing after MONITOR_RETRY_FOR is given up, and its chain goes on" do
+    change(FIRING, value: 12)
+    change(RESOLVED, value: 3)
+    stub_request(:post, SLACK_URL).to_return(status: 500, body: "down")
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    travel Notification::MONITOR_RETRY_FOR + 1.second
+    stub_request(:post, SLACK_URL).to_return(status: 200, body: "ok")
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    firing, resolved = Notification.order(:id).to_a
+    assert_equal [ "failed", 1 ], [ firing.reload.status, firing.attempts ]
+    assert_includes Notification.exhausted, firing
+    assert resolved.reload.status_sent?
+  end
+
   test "a failure stops only its own group's chain" do
     change(FIRING, value: 12, group_key: { service: "api" }.to_json)
     change(RESOLVED, value: 3, group_key: { service: "api" }.to_json)

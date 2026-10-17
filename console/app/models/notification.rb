@@ -19,16 +19,27 @@ class Notification < ApplicationRecord
     skipped: 4,
   }, prefix: true
 
-  # Delivery attempts after which a failed row is no longer picked up.
+  # Delivery attempts after which a failed Issue row is no longer picked up.
   MAX_ATTEMPTS = 5
 
-  # Rows a tick still has to deliver: pending, or failed below the attempt cap.
+  # How long a failed Monitor row is retried, at every tick. A group that
+  # stays firing sends nothing more, so a trigger given up after a few
+  # minutes' outage would lose the page for the whole incident, and the
+  # rest of its group's chain waits behind it.
+  MONITOR_RETRY_FOR = 6.hours
+
+  # Rows a tick still has to deliver: pending, or failed and still retried.
   scope :deliverable, -> {
-    where(status: :pending).or(where(status: :failed, attempts: ...MAX_ATTEMPTS))
+    where(status: :pending)
+      .or(where(status: :failed, monitor_id: nil, attempts: ...MAX_ATTEMPTS))
+      .or(where(status: :failed, created_at: MONITOR_RETRY_FOR.ago..).where.not(monitor_id: nil))
   }
 
-  # Failed rows at the attempt cap: their outcome is final.
-  scope :exhausted, -> { where(status: :failed, attempts: MAX_ATTEMPTS..) }
+  # Failed rows no longer retried: their outcome is final.
+  scope :exhausted, -> {
+    where(status: :failed, monitor_id: nil, attempts: MAX_ATTEMPTS..)
+      .or(where(status: :failed, created_at: ...MONITOR_RETRY_FOR.ago).where.not(monitor_id: nil))
+  }
 
   validate :one_subject
 

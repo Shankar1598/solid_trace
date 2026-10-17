@@ -16,8 +16,9 @@
 # decides the message the adapter formats.
 #
 # Every row ends in a recorded outcome: sent; failed with the provider's error
-# and retried by later ticks up to Notification::MAX_ATTEMPTS; or skipped with
-# a reason when it can never be delivered.
+# and retried by later ticks, up to Notification::MAX_ATTEMPTS for an Issue
+# row and for Notification::MONITOR_RETRY_FOR for a Monitor row; or skipped
+# with a reason when it can never be delivered.
 module IntegrationNotification
   ISSUE_CREATED = "issue_created"
   THRESHOLD_REACHED = "threshold_reached"
