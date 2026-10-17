@@ -7,7 +7,16 @@ module McpServer
   # McpTools (see McpTools::Base), and listing it here puts it on the server.
   TOOLS = [
     McpTools::Whoami,
-    McpTools::ListProjects
+    McpTools::ListProjects,
+    McpTools::ListDashboards,
+    McpTools::GetDashboard,
+    McpTools::CreateDashboard,
+    McpTools::UpdateDashboard,
+    McpTools::DeleteDashboard,
+    McpTools::AddChart,
+    McpTools::UpdateChart,
+    McpTools::DeleteChart,
+    McpTools::GetChartData
   ].freeze
 
   INSTRUCTIONS = <<~TEXT
