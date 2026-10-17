@@ -15,14 +15,22 @@ export async function fetchChartData({ orgSlug, dashboardId, chartId, from, to, 
   return tableOf(await call(`/${orgSlug}/dashboards/${dashboardId}/charts/${chartId}/data?${params}`, { signal }))
 }
 
+export interface PreviewRun {
+  projectId: number; query: string; from: Date; to: Date; signal?: AbortSignal
+}
+
+/** The chart editor's preview, through fetchPreview. */
+export async function fetchChartPreview({ orgSlug, dashboardId, ...run }: { orgSlug: string; dashboardId: number } & PreviewRun): Promise<TableAnswer> {
+  return fetchPreview(`/${orgSlug}/dashboards/${dashboardId}/charts/preview`, run)
+}
+
 /**
- * The chart editor's preview: a Query not yet saved, run on a Project over [from, to) as a chart's
- * data is, with its timeout and within Console's cap on chart runs. The Query goes in the body.
+ * A preview: a Query not yet saved, run on a Project over [from, to) as a chart's data is, with its
+ * timeout and within Console's cap on chart runs. The Query goes in the body. The chart editor's
+ * and the Monitor form's preview endpoints answer it.
  */
-export async function fetchChartPreview({ orgSlug, dashboardId, projectId, query, from, to, signal }: {
-  orgSlug: string; dashboardId: number; projectId: number; query: string; from: Date; to: Date; signal?: AbortSignal
-}): Promise<TableAnswer> {
-  return tableOf(await call(`/${orgSlug}/dashboards/${dashboardId}/charts/preview`, {
+export async function fetchPreview(url: string, { projectId, query, from, to, signal }: PreviewRun): Promise<TableAnswer> {
+  return tableOf(await call(url, {
     method: 'POST',
     signal,
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },

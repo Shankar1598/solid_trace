@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { format } from 'date-fns'
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ReferenceArea, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ReferenceArea, ReferenceLine, XAxis, YAxis } from 'recharts'
 import type { LabelListEntry, MouseHandlerDataParam } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import {
@@ -52,6 +52,8 @@ interface QueryChartProps {
   legendValue?: (field: string, value: SplitValue) => React.ReactNode
   /** A Dashboard chart's options: stacked false never stacks; unit and decimals read the stat and tooltip values. */
   options?: ChartOptions
+  /** A Monitor's threshold, drawn as a line across each panel, whose value axis reaches it. */
+  threshold?: number
   className?: string
 }
 
@@ -76,7 +78,7 @@ const TIP_GAP_PX = 4
  * a Query's table is charted, so it takes the table and options, never a
  * page's state.
  */
-export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, className }: QueryChartProps) {
+export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, threshold, className }: QueryChartProps) {
   const model = useMemo(() => {
     const made = chartOf(table)
     if (!colors) return made
@@ -111,6 +113,7 @@ export function QueryChart({ table, form, onZoom, actions, colors, hidden, legen
       actions={actions}
       legendValue={legendValue}
       options={options}
+      threshold={threshold}
       className={className}
     />
   )
@@ -131,7 +134,7 @@ function StatTile({ name, value, options }: { name: string; value: number | null
 /** The bins a drag has covered, by their points' indexes. */
 type Drag = { start: number; end: number }
 
-function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, options, className }: {
+function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, options, threshold, className }: {
   model: SeriesChartModel
   form: ChartForm
   initialHidden: ReadonlySet<string>
@@ -140,6 +143,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   actions?: React.ReactNode
   legendValue?: QueryChartProps['legendValue']
   options?: ChartOptions
+  threshold?: number
   className?: string
 }) {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(initialHidden)
@@ -182,7 +186,9 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     const series = model.series.filter(s => panel.keys.includes(s.key))
     const visible = series.filter(s => !hidden.has(s.id))
     const stacked = panel.stacked && form !== 'line' && options?.stacked !== false
-    const values = valueTicks(...extent(model.points, visible, stacked), several ? 3 : 5)
+    const [low, high] = extent(model.points, visible, stacked)
+    const reach = threshold === undefined ? [low, high] : [Math.min(low, threshold), Math.max(high, threshold)]
+    const values = valueTicks(reach[0], reach[1], several ? 3 : 5)
     const tips = across && (stacked || visible.length === 1)
     const tipWidth = tips ? Math.max(0, ...model.points.map(p => tipText(p, visible).length)) * CHAR_PX + TIP_GAP_PX : 0
     return { panel, series, visible, stacked, values, label: tickLabel(values.step), tips, tipWidth }
@@ -231,6 +237,16 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
       zIndex={450}
     />
   )) : null
+
+  const thresholdLine = threshold === undefined ? null : (
+    <ReferenceLine
+      {...(across ? { x: threshold } : { y: threshold })}
+      stroke="var(--destructive)"
+      strokeDasharray="4 3"
+      ifOverflow="extendDomain"
+      label={{ value: `threshold ${threshold}`, position: across ? 'top' : 'insideTopRight', fontSize: 10, fill: 'var(--destructive)' }}
+    />
+  )
 
   const height = !several ? 'h-44 sm:h-56' : panels.length === 2 ? 'h-32 sm:h-40' : 'h-28 sm:h-32'
 
@@ -326,7 +342,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
                     content={<ChartTooltipContent indicator="line" valueFormatter={(value: number) => optionsText(value, options ?? {})} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.start ?? payload?.[0]?.payload?.x)} />}
                   />
                 )}
-                overlay={<>{partialAreas}{dragArea}</>}
+                overlay={<>{partialAreas}{dragArea}{thresholdLine}</>}
                 events={zoomEvents}
               />
             </ChartContainer>
