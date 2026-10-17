@@ -235,6 +235,18 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_equal message, response.parsed_body["error"]
   end
 
+  test "a chart's data answers 503 at once, without running the Query, while Console runs as many charts as it allows" do
+    run = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+
+    holding_every_chart_run do
+      get data_dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug), params: @range
+    end
+
+    assert_response :service_unavailable
+    assert_equal "Console is busy running other charts. Refresh in a moment.", response.parsed_body["error"]
+    assert_not_requested run
+  end
+
   test "a chart whose Query answers Logs says to end it with summarize" do
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
 
@@ -299,5 +311,10 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal component, response.parsed_body["component"]
     response.parsed_body["props"]
+  end
+
+  # Runs the block while this process holds every chart run it allows.
+  def holding_every_chart_run(left = ChartRuns.limit, &block)
+    left.zero? ? yield : ChartRuns.hold { holding_every_chart_run(left - 1, &block) }
   end
 end
