@@ -638,7 +638,10 @@ func TestLogFilesInAnS3BucketAreReadThroughHttpfs(t *testing.T) {
 	assertGone(t, env.localFile(123, seven, "data.parquet"), "with local_cache_hours 0")
 	assertBucketAnswers(t, env, cursor, want, "read from the bucket through httpfs")
 
+	// Retention deletes the Logs, and the rest of the Cleanup pass, the disk
+	// limit, deletes their object.
 	env.DeleteLogsPastRetention(t)
+	enforceLogDiskLimit(t, env, 1<<40)
 	objects, err := bucket.List(ctx, "")
 	if err != nil {
 		t.Fatal(err)
