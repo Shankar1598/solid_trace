@@ -68,6 +68,9 @@ type TestEnv struct {
 	Bucket          storage.ObjectStore
 	BucketConfig    *config.ObjectStore
 	LocalCacheHours int
+	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
+	// it; 0 turns it off.
+	BinCacheBytes int64
 
 	dir   string // holds Pebble and DuckDB
 	close func()
@@ -301,6 +304,8 @@ func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 		BatchLock:   &sync.Mutex{},
 		EventWriter: &recordingEventWriter{},
 		Clock:       clock.NewManual(testNow),
+
+		BinCacheBytes: config.DefaultLogsBinCacheMB << 20,
 	}
 	if configure != nil {
 		configure(env)
@@ -342,6 +347,7 @@ func (env *TestEnv) open(t *testing.T) {
 	} else if err := logStore.UseLocalDiskOnly(); err != nil {
 		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
 	}
+	logStore.UseBinCache(env.BinCacheBytes)
 
 	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)
 	if err != nil {

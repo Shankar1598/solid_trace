@@ -40,6 +40,8 @@ type logRead struct {
 	// path, or its bucket URL once its local copy is evicted.
 	hours []time.Time
 	files map[time.Time][]string
+	// generations are the manifest generations of each hour's files.
+	generations map[time.Time][]int64
 	// sets are the Project's promoted sets of the days of hours, by day, as
 	// the transaction sees them: which columns hold the values of the Logs
 	// it reads.
@@ -117,7 +119,7 @@ func (s *LogStore) startRead(ctx context.Context, projectID uint32, list func(*l
 	if err != nil {
 		return nil, err
 	}
-	r := &logRead{store: s, ctx: ctx, conn: conn, projectID: projectID, files: map[time.Time][]string{}}
+	r := &logRead{store: s, ctx: ctx, conn: conn, projectID: projectID, files: map[time.Time][]string{}, generations: map[time.Time][]int64{}}
 	if err := r.begin(list); err != nil {
 		r.end()
 		return nil, err
@@ -154,6 +156,7 @@ func (r *logRead) begin(list func(*logRead) (map[time.Time][]logFile, error)) er
 	for hour, hourFiles := range files {
 		for _, file := range hourFiles {
 			r.files[hour] = append(r.files[hour], s.location(file))
+			r.generations[hour] = append(r.generations[hour], file.generation)
 			r.pinned = append(r.pinned, file.key())
 		}
 	}

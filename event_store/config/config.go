@@ -23,6 +23,9 @@ type Config struct {
 	// oldest hours are deleted past it. 0 caps them at half the disk that
 	// holds them (storage.NewLogDiskLimit).
 	LogsDiskLimitBytes int64
+	// LogsBinCacheBytes is the memory the bin cache keeps charts' bins in;
+	// 0 turns it off.
+	LogsBinCacheBytes  int64
 	ParquetStoragePath string // Path for archived Parquet files
 	SQLitePath         string // Rails SQLite for project key auth and issues
 	MessageQueuePath   string // Separate SQLite for event_store_messages
@@ -52,6 +55,9 @@ type Config struct {
 // DefaultDuckDBExtensionDirectory is where the Docker image puts DuckDB's
 // extensions, as <version>/<platform>/<name>.duckdb_extension.
 const DefaultDuckDBExtensionDirectory = "/usr/local/lib/solidtrace/duckdb_extensions"
+
+// DefaultLogsBinCacheMB is the bin cache's size, in MiB, unless the file says.
+const DefaultLogsBinCacheMB = 64
 
 // ObjectStore kinds.
 const (
@@ -102,6 +108,7 @@ type fileConfig struct {
 	LogsDuckDBPath      *string        `yaml:"logs_duckdb_path"`
 	LogsParquetPath     *string        `yaml:"logs_parquet_path"`
 	LogsDiskLimitGB     *int64         `yaml:"logs_disk_limit_gb"`
+	LogsBinCacheMB      *int64         `yaml:"logs_bin_cache_mb"`
 	ParquetStoragePath  *string        `yaml:"parquet_storage_path"`
 	SQLitePath          *string        `yaml:"sqlite_path"`
 	MessageQueuePath    *string        `yaml:"message_queue_path"`
@@ -141,7 +148,8 @@ func LoadFile(path string) (*Config, error) {
 		SQLitePath:         "../storage/sqlite/development/solid_trace.sqlite3",
 		MessageQueuePath:   "../storage/sqlite/development/message_queue.sqlite3",
 
-		IngestMaxWaiting: 10000,
+		IngestMaxWaiting:  10000,
+		LogsBinCacheBytes: DefaultLogsBinCacheMB << 20,
 
 		DuckDBTempDirectory:      "",
 		DuckDBMemoryLimit:        "",
@@ -200,6 +208,12 @@ func applyFileConfig(cfg *Config, path string) error {
 			return fmt.Errorf("logs_disk_limit_gb must be positive, got %d", *config.LogsDiskLimitGB)
 		}
 		cfg.LogsDiskLimitBytes = *config.LogsDiskLimitGB * 1_000_000_000
+	}
+	if config.LogsBinCacheMB != nil {
+		if *config.LogsBinCacheMB < 0 {
+			return fmt.Errorf("logs_bin_cache_mb can't be negative, got %d; 0 turns the bin cache off", *config.LogsBinCacheMB)
+		}
+		cfg.LogsBinCacheBytes = *config.LogsBinCacheMB << 20
 	}
 	if config.ParquetStoragePath != nil && *config.ParquetStoragePath != "" {
 		cfg.ParquetStoragePath = *config.ParquetStoragePath

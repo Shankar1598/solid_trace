@@ -315,14 +315,18 @@ type LogTableScan struct {
 	// Query returns the query that works the table out from logs, the Logs
 	// read, as SQL to use as a subquery.
 	Query func(logs string) string
+	// Bins, if set, says the table is made bin by bin, so that bins of
+	// Logs all in files can come from the bin cache.
+	Bins *TableBins
 }
 
 // ScanLogTable runs a query over a Project's Logs in a time range, from its
 // hot table, its late Logs and its files, and returns its rows.
 //
 // The query runs once over the whole range, as the Logs were when it began
-// (logRead), so it sees each Log exactly once and holds up no export.
-// Cancelling ctx stops it.
+// (logRead), so it sees each Log exactly once and holds up no export. With
+// Bins and the bin cache on, it runs over only the bins the cache lacks
+// (scanBinnedTable). Cancelling ctx stops it.
 func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any, error) {
 	from, to := scan.From.UTC(), scan.To.UTC()
 	if !to.After(from) {
@@ -334,12 +338,10 @@ func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any
 	}
 	defer read.end()
 
-	rows, err := read.conn.QueryContext(ctx, scan.Query(read.sources(from, to, scan.Select, scan.Where)))
-	if err != nil {
-		return nil, err
+	if cache := s.bins.Load(); cache != nil && scan.Bins != nil && from.Before(to) {
+		return read.scanBinnedTable(scan, cache, from, to)
 	}
-	defer rows.Close()
-	return scanTable(rows, -1)
+	return read.queryTable(scan, []timeSpan{{from, to}})
 }
 
 // sources returns, as SQL, the Project's Logs of [from, to) from its hot
@@ -347,9 +349,34 @@ func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any
 // list sel(cols), and filtered by where(cols) if where is set, for its
 // columns cols.
 func (r *logRead) sources(from, to time.Time, sel, where func(LogColumns) string) string {
+	return r.sourcesIn([]timeSpan{{from, to}}, sel, where)
+}
+
+// timeSpan is the time range [from, to).
+type timeSpan struct {
+	from, to time.Time
+}
+
+// sourcesIn is sources over the Logs of spans, which are in time order and
+// apart, reading only the files of the hours they cover.
+func (r *logRead) sourcesIn(spans []timeSpan, sel, where func(LogColumns) string) string {
 	projectID := r.projectID
-	source := func(table string, cols LogColumns, from, to time.Time) string {
-		condition := timeRange(from, to)
+	// within is the condition that time is in one of the spans, clipped to
+	// [from, to), or "" for none.
+	within := func(from, to time.Time) string {
+		var ranges []string
+		for _, span := range spans {
+			if spanFrom, spanTo := latestTime(span.from, from), earliestTime(span.to, to); spanFrom.Before(spanTo) {
+				ranges = append(ranges, timeRange(spanFrom, spanTo))
+			}
+		}
+		if len(ranges) == 0 {
+			return ""
+		}
+		return "(" + strings.Join(ranges, ") OR (") + ")"
+	}
+	source := func(table string, cols LogColumns, times string) string {
+		condition := times
 		if where != nil {
 			if w := where(cols); w != "" {
 				condition += " AND (" + w + ")"
@@ -357,8 +384,9 @@ func (r *logRead) sources(from, to time.Time, sel, where func(LogColumns) string
 		}
 		return fmt.Sprintf("SELECT %s FROM (%s) WHERE %s", sel(cols), table, condition)
 	}
+	first, last := spans[0].from, spans[len(spans)-1].to
 	sources := []string{source(fmt.Sprintf("SELECT * FROM %s.%s WHERE project_id = %d", logsCatalog, lateTable, projectID),
-		LogColumns{late: true}, from, to)}
+		LogColumns{late: true}, within(first, last))}
 
 	// The hot table and the files, a day at a time: each day by its own
 	// promoted set.
@@ -372,28 +400,42 @@ func (r *logRead) sources(from, to time.Time, sel, where func(LogColumns) string
 		days[day] = append(days[day], hour)
 	}
 	for _, day := range dayOrder {
+		times := within(day, day.Add(24*time.Hour))
+		if times == "" {
+			continue
+		}
 		set := r.promotedSet(day)
 		cols := LogColumns{set: set}
-		dayFrom, dayTo := day, day.Add(24*time.Hour)
-		if from.After(dayFrom) {
-			dayFrom = from
-		}
-		if to.Before(dayTo) {
-			dayTo = to
-		}
 		if r.hot {
 			sources = append(sources, source(withColumns(fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(projectID)), set),
-				cols, dayFrom, dayTo))
+				cols, times))
 		}
 		var files []string
 		for _, hour := range days[day] {
-			files = append(files, r.files[hour]...)
+			if within(hour, hour.Add(time.Hour)) != "" {
+				files = append(files, r.files[hour]...)
+			}
 		}
 		if len(files) > 0 {
-			sources = append(sources, source(withColumns(readFiles(files), set), cols, dayFrom, dayTo))
+			sources = append(sources, source(withColumns(readFiles(files), set), cols, times))
 		}
 	}
 	return strings.Join(sources, "\nUNION ALL BY NAME\n")
+}
+
+// latestTime and earliestTime are the later and the earlier of two times.
+func latestTime(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
+}
+
+func earliestTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }
 
 // scanTable reads every row of rows as DuckDB gives its values, or at most

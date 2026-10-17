@@ -53,6 +53,7 @@ func main() {
 	} else if err := logStore.UseLocalDiskOnly(); err != nil {
 		logger.L.Fatal("Failed to keep Log files on local disk only", "error", err)
 	}
+	logStore.UseBinCache(cfg.LogsBinCacheBytes)
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
 	if err != nil {
