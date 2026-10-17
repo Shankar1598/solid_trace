@@ -21,6 +21,7 @@ Rails.application.routes.draw do
   resource :session
   resource :registration, only: [ :new, :create ]
   resource :user_settings, only: [ :show, :update ], controller: "user_settings"
+  resources :api_tokens, only: [ :create, :destroy ]
   resources :passwords, param: :token
 
   scope "/:org_slug" do
@@ -87,35 +88,5 @@ Rails.application.routes.draw do
       resource :user, only: [ :show, :update ], controller: "user_settings"
     end
     get "settings", to: redirect("/%{org_slug}/settings/organization")
-  end
-
-  # API Routes (Migrated from Backend)
-
-
-
-
-  # API Routes
-  namespace :api do
-    namespace :v1 do
-      scope "/:org_slug" do
-        get "issues", to: "issues#index", as: :issues
-        get "issues/:id", to: "issues#show", as: :issue
-        patch "issues/:id/resolve", to: "issues#resolve", as: :resolve_issue
-        patch "issues/:id/unresolve", to: "issues#unresolve", as: :unresolve_issue
-
-        resources :projects, param: :project_slug, only: [ :index, :show, :update ] do
-          member do
-            get "keys", to: "project_keys#index"
-            post "keys", to: "project_keys#create"
-            put "keys/:id", to: "project_keys#update"
-            delete "keys/:id", to: "project_keys#destroy"
-          end
-        end
-      end
-
-      post "auth/login", to: "auth#login"
-      post "auth/register", to: "auth#register"
-      get "auth/me", to: "auth#me"
-    end
   end
 end
