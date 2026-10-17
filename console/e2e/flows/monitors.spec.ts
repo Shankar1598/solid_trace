@@ -11,7 +11,7 @@ import { shoot, useTheme, watchErrors } from '../support/screens'
 // sets a threshold the count passes and picks a Slack Integration whose
 // webhook is a local stub. Run now fires the Monitor and the stub gets the
 // message; a higher threshold and Run now resolve it. Then the Monitor is
-// turned off and on, and deleted.
+// turned off and on, and deleted, and the stub gets the resolve.
 
 const SOURCE = "['solid-trace-project']"
 
@@ -71,7 +71,7 @@ test.afterAll(async () => {
 const status = (page: Page) => page.locator('[data-monitor-status]').first()
 
 test('a member makes a Threshold monitor from the explorer; Run now fires it into Slack, and a higher threshold resolves it', async ({ page }) => {
-  test.setTimeout(150_000)
+  test.setTimeout(210_000)
   await useTheme(page, test.info())
   const errors = watchErrors(page)
   const name = `Flow monitor ${Date.now()}`
@@ -159,5 +159,10 @@ test('a member makes a Threshold monitor from the explorer; Run now fires it int
   await expect(page.getByRole('heading', { name: 'Monitors', exact: true })).toBeVisible()
   await expect(page.locator(`[data-monitor-row="${name}"]`)).toHaveCount(0)
 
+  // The Slack stub gets the resolve after the firing message: the Integration's rate limit holds it
+  // about a minute behind, which the steps above mostly cover.
+  await expect.poll(() => about('Resolved').length, { timeout: 100_000, intervals: [2000] }).toBeGreaterThan(0)
+  const titles = stub.bodies.map(b => JSON.stringify(b))
+  expect(titles.findIndex(t => t.includes(`Resolved: ${name}`))).toBeGreaterThan(titles.findIndex(t => t.includes(`Firing: ${name}`)))
   expect(errors).toEqual([])
 })
