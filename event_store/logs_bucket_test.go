@@ -27,10 +27,10 @@ type flakyBucket struct {
 	dir string
 	// failPuts fails every upload. putThenFail stores the object, then
 	// fails, as when EventStore stops before it marks the file uploaded.
-	// failDeletes fails every deletion.
-	failPuts, putThenFail, failDeletes atomic.Bool
-	// deletes counts the deletions asked of the bucket.
-	deletes atomic.Int64
+	// failDeletes fails every deletion, and failLists every listing.
+	failPuts, putThenFail, failDeletes, failLists atomic.Bool
+	// puts and deletes count the uploads and deletions asked of the bucket.
+	puts, deletes atomic.Int64
 	// stall, if set before an upload starts, holds each upload after it
 	// stores the object, as a request whose answer doesn't come, until
 	// stall is closed; stalled then gets a signal.
@@ -38,6 +38,7 @@ type flakyBucket struct {
 }
 
 func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
+	b.puts.Add(1)
 	if b.failPuts.Load() {
 		return errors.New("the bucket is unavailable")
 	}
@@ -59,6 +60,13 @@ func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
 		}
 	}
 	return nil
+}
+
+func (b *flakyBucket) List(ctx context.Context, prefix string) ([]storage.StoredObject, error) {
+	if b.failLists.Load() {
+		return nil, errors.New("the bucket is unavailable")
+	}
+	return b.ObjectStore.List(ctx, prefix)
 }
 
 func (b *flakyBucket) Delete(ctx context.Context, key string) error {

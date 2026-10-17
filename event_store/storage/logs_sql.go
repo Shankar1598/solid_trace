@@ -65,6 +65,9 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 	if !to.After(from) {
 		to = from
 	}
+	// The query may read the events view, so it holds off the deletion of
+	// the Event archive's uploaded local copies until it ends.
+	defer s.events.readingArchive()()
 	read, err := s.beginRead(ctx, projectID, from, to, false)
 	if err != nil {
 		return SQLResult{}, err
