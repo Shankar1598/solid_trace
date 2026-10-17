@@ -36,59 +36,14 @@ class OrganizationUsersController < ApplicationController
   end
 
   def create
-    @user = User.find_by(email: create_params[:email])
-    new_user_created = false
-    generated_password = nil
+    invite = MemberInvite.call(organization: @current_org, inviter: current_user,
+      email: create_params[:email], name: create_params[:name])
+    members = organization_users_path(org_slug: @current_org.slug)
 
-    if @user.nil?
-      # Auto-create the user with a random password
-      generated_password = SecureRandom.alphanumeric(12)
-      @user = User.new(
-        email: create_params[:email],
-        name: create_params[:name].presence || create_params[:email].split("@").first,
-        password: generated_password,
-        password_confirmation: generated_password
-      )
-
-      UserPolicy.new(current_user, @user).authorize_invite!(@current_org)
-      unless @user.save
-        redirect_to organization_users_path(org_slug: @current_org.slug), alert: @user.errors.full_messages.first
-        return
-      end
-
-      new_user_created = true
-    end
-
-    existing_membership = @current_org.all_organization_users.find_by(user: @user)
-
-    if existing_membership
-      if existing_membership.discarded?
-        authorize existing_membership
-        existing_membership.undiscard
-        redirect_to organization_users_path(org_slug: @current_org.slug), notice: "Member reactivated successfully"
-      else
-        redirect_to organization_users_path(org_slug: @current_org.slug), alert: "User is already a member of this organization"
-      end
-      return
-    end
-
-    @organization_user = @current_org.organization_users.build(user: @user)
-    authorize @organization_user
-
-    if @organization_user.save
-      # Send invitation email to newly created users
-      if new_user_created && generated_password
-        OrganizationMailer.invitation_email(
-          user: @user,
-          organization: @current_org,
-          password: generated_password,
-          invited_by: current_user
-        ).deliver_later
-      end
-
-      redirect_to organization_users_path(org_slug: @current_org.slug), notice: "Member added successfully"
-    else
-      redirect_to organization_users_path(org_slug: @current_org.slug), alert: @organization_user.errors.full_messages.first
+    case invite.outcome
+    when :added then redirect_to members, notice: "Member added successfully"
+    when :reactivated then redirect_to members, notice: "Member reactivated successfully"
+    else redirect_to members, alert: invite.error
     end
   end
 
