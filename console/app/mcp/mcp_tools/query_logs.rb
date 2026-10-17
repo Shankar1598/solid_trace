@@ -18,7 +18,7 @@ module McpTools
       gives the top Services; avg, sum, min, max, dcount and percentile(x, 95) work too.
       A Query of only where, search, take and sort by time desc answers Logs, newest first, one a line, limit at a time,
       with a cursor for older ones. Any other stage, such as summarize, project, extend, top, count or distinct,
-      answers a table, of which you get its columns and at most #{Table::MAX_ROWS} rows.
+      answers a table, of which you get #{Table::SHAPE}.
       list_fields lists the Project's Fields, and query_language_reference gives the whole language.
     TEXT
     read_only!

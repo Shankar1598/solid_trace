@@ -7,7 +7,7 @@ module McpTools
   class RunSql < Base
     description <<~TEXT.squish
       Runs a DuckDB SQL SELECT on the logs view, which holds a Project's Logs over a range, and answers the table:
-      its columns and at most #{Table::MAX_ROWS} rows. The view's columns are id, time, level, message, service,
+      #{Table::SHAPE}. The view's columns are id, time, level, message, service,
       environment, trace_id, span_id and the Attributes by type, read as attrs_string['name'], attrs_number['name'],
       attrs_bool['name'] and attrs_json['name']. SQL is read-only: anything but one SELECT is refused.
       query_logs does most things more simply.
