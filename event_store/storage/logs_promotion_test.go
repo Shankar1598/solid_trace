@@ -247,3 +247,23 @@ func TestANewDaysKeysArePartwayOnlyIfItsFilesOrHotLogsMayHoldThemInTheirMaps(t *
 		})
 	}
 }
+
+func TestANewDaysKeysArePartwayIfItsHotLogsKeepAnAttributeInAMap(t *testing.T) {
+	store := newTestLogStore(t)
+	midnight := october(3, 0, 0)
+	now := midnight.Add(10 * time.Minute)
+
+	// Today's set takes User. Then yesterday's first Log arrives, still
+	// hot: its day has no set to start from, and its user can't have a
+	// column, as User has the name in another case. So yesterday's day
+	// has no set, and its hot Log keeps user in its map.
+	appendLogs(t, store, now, stringLog(midnight.Add(5*time.Minute), map[string]string{"User": "ada"}))
+	appendLogs(t, store, now, stringLog(midnight.Add(-10*time.Minute), map[string]string{"user": "cy"}))
+	if set := storedSet(t, store, midnight.Add(-time.Minute)); len(set) != 0 {
+		t.Fatalf("Expected yesterday to have no set yet, got %v", set)
+	}
+
+	// A key the day's new set takes is partway: that Log is stored without it.
+	appendLogs(t, store, now, stringLog(midnight.Add(-5*time.Minute), map[string]string{"plan": "free"}))
+	assertSet(t, store, midnight.Add(-time.Minute), stringKeys(true, map[string]string{"plan": ""}), now, nil)
+}

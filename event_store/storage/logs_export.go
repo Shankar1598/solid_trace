@@ -164,6 +164,9 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 			return fmt.Errorf("publish %s: %w", file, err)
 		}
 	}
+	if len(staged) > 0 {
+		s.notifyPublished()
+	}
 	return nil
 }
 

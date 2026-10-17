@@ -21,6 +21,29 @@ message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 # Store DuckDB parquet archives on slower storage.
 parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 
+# A bucket for Log files and the Event archive, read by DuckDB through httpfs.
+# Without this block everything stays on local disk. The bucket's key comes from
+# the SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET
+# environment variables; for GCS, an HMAC key.
+# object_store:
+#   kind: gcs                  # s3 or gcs; gcs uses its S3 interop API
+#   bucket: acme-solidtrace
+#   prefix: solidtrace/        # before every key; the default
+#   region: us-east-1          # needed for AWS S3; gcs defaults to auto
+#   endpoint: http://127.0.0.1:9000   # MinIO, R2 and others; set for you for gcs
+#   local_cache_hours: 24      # hours a Log file's local copy stays after upload; 0 allowed
+# MinIO on a development machine, with every exported hour read from it at once:
+# object_store:
+#   kind: s3
+#   bucket: solidtrace-dev
+#   prefix: dev/
+#   region: us-east-1
+#   endpoint: http://127.0.0.1:9000
+#   local_cache_hours: 0
+# Where DuckDB's httpfs extension is, as <version>/<platform>/httpfs.duckdb_extension.
+# The Docker image puts it in the default; DuckDB never downloads extensions itself.
+# duckdb_extension_directory: /usr/local/lib/solidtrace/duckdb_extensions
+
 # DuckDB memory and spill-to-disk settings
 # duckdb_temp_directory: /storage_local/duckdb/tmp
 # duckdb_memory_limit: 16GB

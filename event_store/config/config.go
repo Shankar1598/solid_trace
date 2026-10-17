@@ -1,10 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -30,10 +33,63 @@ type Config struct {
 
 	DuckDBTempDirectory string
 	DuckDBMemoryLimit   string
+	// DuckDBExtensionDirectory holds the DuckDB extensions EventStore loads,
+	// such as httpfs for an ObjectStore. The Docker image fills the default
+	// at build time; DuckDB never downloads one itself.
+	DuckDBExtensionDirectory string
 
 	StorageTiers []StorageTier
 
+	// ObjectStore is the bucket that keeps Log files and the Event
+	// archive, or nil when everything stays on local disk.
+	ObjectStore *ObjectStore
+
 	Debug bool
+}
+
+// DefaultDuckDBExtensionDirectory is where the Docker image puts DuckDB's
+// extensions, as <version>/<platform>/<name>.duckdb_extension.
+const DefaultDuckDBExtensionDirectory = "/usr/local/lib/solidtrace/duckdb_extensions"
+
+// ObjectStore kinds.
+const (
+	ObjectStoreS3  = "s3"
+	ObjectStoreGCS = "gcs"
+)
+
+// GCSEndpoint is the S3-compatible endpoint of Google Cloud Storage, which
+// takes HMAC keys.
+const GCSEndpoint = "https://storage.googleapis.com"
+
+// ObjectStore is the object_store block: a bucket reached through the S3
+// API, on S3 or anything that speaks it (GCS with HMAC keys, MinIO, R2).
+type ObjectStore struct {
+	Kind   string // ObjectStoreS3 or ObjectStoreGCS
+	Bucket string
+	// Prefix is put before every key: empty, or ending in "/".
+	Prefix string
+	Region string
+	// Endpoint is the URL of the S3 API, such as http://127.0.0.1:9000, or
+	// empty for AWS's own. It is GCSEndpoint when Kind is gcs and none is
+	// given.
+	Endpoint string
+	// LocalCacheHours is how long a Log file's local copy is kept after it
+	// is uploaded; 0 deletes it once uploaded.
+	LocalCacheHours int
+	// KeyID and Secret come from SOLIDTRACE_OBJECT_STORE_KEY_ID and
+	// SOLIDTRACE_OBJECT_STORE_SECRET, never from the file.
+	KeyID  string
+	Secret string
+}
+
+// objectStoreFile is the object_store block as written in the file.
+type objectStoreFile struct {
+	Kind            string  `yaml:"kind"`
+	Bucket          string  `yaml:"bucket"`
+	Prefix          *string `yaml:"prefix"`
+	Region          string  `yaml:"region"`
+	Endpoint        string  `yaml:"endpoint"`
+	LocalCacheHours *int    `yaml:"local_cache_hours"`
 }
 
 type fileConfig struct {
@@ -50,11 +106,30 @@ type fileConfig struct {
 	IngestMaxWaiting    *int           `yaml:"ingest_max_waiting"`
 	DuckDBTempDirectory *string        `yaml:"duckdb_temp_directory"`
 	DuckDBMemoryLimit   *string        `yaml:"duckdb_memory_limit"`
+	DuckDBExtensionDir  *string        `yaml:"duckdb_extension_directory"`
 	StorageTiers        *[]StorageTier `yaml:"storage_tiers"`
+	ObjectStore         yaml.Node      `yaml:"object_store"`
 	Debug               *bool          `yaml:"debug"`
 }
 
+// Load reads the config from the file EVENT_STORE_CONFIG names, or
+// event_store.yml, over the defaults. It exits if the file can't be read or
+// holds a bad value.
 func Load() *Config {
+	configPath := "event_store.yml"
+	if v := os.Getenv("EVENT_STORE_CONFIG"); v != "" {
+		configPath = v
+	}
+	cfg, err := LoadFile(configPath)
+	if err != nil {
+		log.Fatalf("Failed to load %s: %v", configPath, err)
+	}
+	return cfg
+}
+
+// LoadFile reads the config from the file at path over the defaults. A
+// missing file gives the defaults.
+func LoadFile(path string) (*Config, error) {
 	cfg := &Config{
 		Port:               "4000",
 		QueryPort:          "4100",
@@ -66,19 +141,15 @@ func Load() *Config {
 
 		IngestMaxWaiting: 10000,
 
-		DuckDBTempDirectory: "",
-		DuckDBMemoryLimit:   "",
+		DuckDBTempDirectory:      "",
+		DuckDBMemoryLimit:        "",
+		DuckDBExtensionDirectory: DefaultDuckDBExtensionDirectory,
 
 		Debug: false,
 	}
 
-	configPath := "event_store.yml"
-	if v := os.Getenv("EVENT_STORE_CONFIG"); v != "" {
-		configPath = v
-	}
-
-	if err := applyFileConfig(cfg, configPath); err != nil {
-		log.Fatalf("Failed to load %s: %v", configPath, err)
+	if err := applyFileConfig(cfg, path); err != nil {
+		return nil, err
 	}
 	if cfg.LogsDuckDBPath == "" {
 		cfg.LogsDuckDBPath = filepath.Join(filepath.Dir(cfg.DuckDBPath), "logs.duckdb")
@@ -87,7 +158,7 @@ func Load() *Config {
 		cfg.LogsParquetPath = filepath.Join(filepath.Dir(cfg.DuckDBPath), "logs_parquet")
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 func applyFileConfig(cfg *Config, path string) error {
@@ -149,12 +220,100 @@ func applyFileConfig(cfg *Config, path string) error {
 	if config.DuckDBMemoryLimit != nil {
 		cfg.DuckDBMemoryLimit = *config.DuckDBMemoryLimit
 	}
+	if config.DuckDBExtensionDir != nil && *config.DuckDBExtensionDir != "" {
+		cfg.DuckDBExtensionDirectory = *config.DuckDBExtensionDir
+	}
 	if config.StorageTiers != nil {
 		cfg.StorageTiers = *config.StorageTiers
+	}
+	if config.ObjectStore.Kind != 0 {
+		store, err := objectStore(&config.ObjectStore)
+		if err != nil {
+			return fmt.Errorf("object_store: %w", err)
+		}
+		cfg.ObjectStore = store
 	}
 	if config.Debug != nil {
 		cfg.Debug = *config.Debug
 	}
 
 	return nil
+}
+
+// objectStore reads and checks the object_store block, with the keys from
+// the environment.
+func objectStore(node *yaml.Node) (*ObjectStore, error) {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
+		return nil, fmt.Errorf("the block is empty; remove it to keep everything on local disk")
+	}
+	// Decoded strictly, so that a misspelt key fails rather than being
+	// silently left at its default.
+	raw, err := yaml.Marshal(node)
+	if err != nil {
+		return nil, err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	var file objectStoreFile
+	if err := decoder.Decode(&file); err != nil {
+		return nil, err
+	}
+
+	store := &ObjectStore{
+		Kind:            file.Kind,
+		Bucket:          file.Bucket,
+		Prefix:          "solidtrace/",
+		Region:          file.Region,
+		Endpoint:        strings.TrimSuffix(file.Endpoint, "/"),
+		LocalCacheHours: 24,
+		KeyID:           os.Getenv("SOLIDTRACE_OBJECT_STORE_KEY_ID"),
+		Secret:          os.Getenv("SOLIDTRACE_OBJECT_STORE_SECRET"),
+	}
+	switch store.Kind {
+	case ObjectStoreS3:
+	case ObjectStoreGCS:
+		if store.Endpoint == "" {
+			store.Endpoint = GCSEndpoint
+		}
+		if store.Region == "" {
+			store.Region = "auto"
+		}
+	default:
+		return nil, fmt.Errorf("kind must be s3 or gcs, got %q", store.Kind)
+	}
+	if store.Bucket == "" {
+		return nil, fmt.Errorf("bucket is required")
+	}
+	if strings.ContainsAny(store.Bucket, "/ ") {
+		return nil, fmt.Errorf("bucket must be a bucket's name, with no / or spaces, got %q", store.Bucket)
+	}
+	if file.Prefix != nil {
+		store.Prefix = strings.TrimLeft(*file.Prefix, "/")
+		if store.Prefix != "" && !strings.HasSuffix(store.Prefix, "/") {
+			store.Prefix += "/"
+		}
+	}
+	if store.Endpoint != "" {
+		u, err := url.Parse(store.Endpoint)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || (u.Path != "" && u.Path != "/") {
+			return nil, fmt.Errorf("endpoint must be a URL such as https://s3.example.com or http://127.0.0.1:9000, got %q", file.Endpoint)
+		}
+		if store.Region == "" {
+			// MinIO and most S3-compatible stores accept any region.
+			store.Region = "us-east-1"
+		}
+	}
+	if store.Region == "" {
+		return nil, fmt.Errorf("region is required for AWS S3, such as us-east-1")
+	}
+	if file.LocalCacheHours != nil {
+		if *file.LocalCacheHours < 0 {
+			return nil, fmt.Errorf("local_cache_hours can't be negative, got %d", *file.LocalCacheHours)
+		}
+		store.LocalCacheHours = *file.LocalCacheHours
+	}
+	if store.KeyID == "" || store.Secret == "" {
+		return nil, fmt.Errorf("set the bucket's key in SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET")
+	}
+	return store, nil
 }
