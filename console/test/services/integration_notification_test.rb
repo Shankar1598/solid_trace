@@ -340,14 +340,14 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
-  # Issue received an Event: the threshold rule
+  # Issue received an Event: the event threshold check
   # ---------------------------------------------------------------------------
 
   test "the threshold fires when the windowed count lands exactly on the threshold" do
     issue = threshold_issue
     count_request = stub_event_count(3)
 
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_equal [ [ "threshold_reached", issue.id, {} ] ], Notification.pluck(:kind, :issue_id, :payload)
     assert_requested(count_request, times: 1)
@@ -363,7 +363,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     issue = threshold_issue
     stub_event_count(7)
 
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_equal [ "threshold_reached" ], Notification.pluck(:kind)
   end
@@ -372,7 +372,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     issue = threshold_issue
     stub_event_count(2)
 
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_equal 0, Notification.count
   end
@@ -384,7 +384,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
       .with(query: { "newer_than" => 5.minutes.ago.iso8601, "fingerprint_ids" => fingerprint.id.to_s })
       .to_return(status: 200, body: { count: 3 }.to_json)
 
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_requested(count_request, times: 1)
   end
@@ -393,14 +393,14 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     issue = threshold_issue
     stub_event_count(4)
 
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
     travel 4.minutes
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_equal 1, Notification.count
 
     travel 1.minute + 1.second
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_equal [ "threshold_reached", "threshold_reached" ], Notification.pluck(:kind)
   end
@@ -411,8 +411,8 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     create(:issue_fingerprint, issue: second)
     stub_event_count(3)
 
-    IntegrationNotification.issue_received_event(first, newly_created: false)
-    IntegrationNotification.issue_received_event(second, newly_created: false)
+    IntegrationNotification.check_event_threshold(first)
+    IntegrationNotification.check_event_threshold(second)
 
     assert_equal [ first.id, second.id ], Notification.order(:id).pluck(:issue_id)
   end
@@ -425,7 +425,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
       .with(query: hash_including("newer_than" => 5.minutes.ago.iso8601))
       .to_return(status: 200, body: { count: 10 }.to_json)
 
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_equal [ "threshold_reached" ], Notification.pluck(:kind)
     assert_requested(count_request, times: 1)
@@ -436,7 +436,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     @slack.update!(settings: @slack.settings.merge("notify_on_event_threshold" => "0"))
     count_request = stub_event_count(3)
 
-    IntegrationNotification.issue_received_event(issue, newly_created: false)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_equal 0, Notification.count
     assert_not_requested(count_request)
@@ -447,19 +447,23 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     stub_event_count(3)
 
     IntegrationNotification.issue_received_event(issue, newly_created: true)
+    IntegrationNotification.check_event_threshold(issue)
 
     assert_equal [ "issue_created", "threshold_reached" ], Notification.order(:id).pluck(:kind)
   end
 
-  test "with EventStore unavailable the check raises and writes nothing, not even the issue created row" do
+  test "with EventStore unavailable the check raises and writes nothing, and the new-Issue row is written apart" do
     issue = threshold_issue
     stub_request(:get, %r{/api/#{@project.id}/events/count}).to_return(status: 503, body: "down")
 
+    IntegrationNotification.issue_received_event(issue, newly_created: true)
+    clear_enqueued_jobs
+
     assert_raises(EventStore::Unavailable) do
-      IntegrationNotification.issue_received_event(issue, newly_created: true)
+      IntegrationNotification.check_event_threshold(issue)
     end
 
-    assert_equal 0, Notification.count
+    assert_equal [ "issue_created" ], Notification.pluck(:kind)
     assert_no_enqueued_jobs(only: IntegrationNotificationProcessorJob)
   end
 
@@ -468,7 +472,7 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     stub_request(:get, %r{/api/#{@project.id}/events/count}).to_raise(Errno::ECONNREFUSED)
 
     assert_raises(EventStore::Unavailable) do
-      IntegrationNotification.issue_received_event(issue, newly_created: false)
+      IntegrationNotification.check_event_threshold(issue)
     end
   end
 
@@ -478,7 +482,8 @@ class IntegrationNotificationTest < ActiveSupport::TestCase
     create(:issue_fingerprint, issue: also_spiking)
     stub_event_count(3)
     IntegrationNotification.issue_received_event(spiking, newly_created: true)
-    IntegrationNotification.issue_received_event(also_spiking, newly_created: false)
+    IntegrationNotification.check_event_threshold(spiking)
+    IntegrationNotification.check_event_threshold(also_spiking)
 
     IntegrationNotification.deliver_pending(@slack.id)
 
