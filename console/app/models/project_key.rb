@@ -5,8 +5,12 @@ class ProjectKey < ApplicationRecord
 
   before_validation :generate_keys, on: :create
 
-  def dsn
-    "http://#{public_key}@#{project.organization.slug}.localhost:3000/1"
+  # The DSN a Sentry SDK sends this Project's Events and Logs with, for
+  # ingest reached at +ingest_url+ (as the Logs snippets build it).
+  def dsn(ingest_url)
+    uri = URI(ingest_url)
+    host = uri.port == uri.default_port ? uri.host : "#{uri.host}:#{uri.port}"
+    "#{uri.scheme}://#{public_key}@#{host}#{uri.path.sub(%r{/+\z}, '')}/#{project_id}"
   end
 
   def label

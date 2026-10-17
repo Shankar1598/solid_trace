@@ -135,12 +135,6 @@ class LogsController < ApplicationController
     @project.project_keys.order(:id).first
   end
 
-  # Ingest as SDKs and shippers reach it: PUBLIC_INGEST_URL, or else this
-  # host at EventStore's ingest port.
-  def public_ingest_url
-    ENV["PUBLIC_INGEST_URL"].presence&.chomp("/") || "#{request.scheme}://#{request.host}:4000"
-  end
-
   # Whether any Log is in the Project's Retention, up to the hour ahead
   # ingest accepts; nil when EventStore can't say.
   def logs_in_retention?
