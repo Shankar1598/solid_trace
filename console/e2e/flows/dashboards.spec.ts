@@ -19,6 +19,14 @@ async function choose(page: Page, select: Locator, option: string) {
   await page.getByRole('option', { name: option, exact: true }).click()
 }
 
+/**
+ * Points the chart editor at SOURCE's Project. It starts on the first Project
+ * by name, which is another one once `bin/rails dev:data` has run.
+ */
+async function useProject(page: Page, editor: Locator) {
+  await choose(page, editor.getByRole('combobox', { name: 'Project' }).first(), 'SolidTrace Project')
+}
+
 /** Waits for each of `count` charts to have run: its data answered, and nothing left running. */
 async function chartsRan(page: Page, count: number) {
   await expect(page.getByRole('status', { name: "Running the chart's Query" })).toHaveCount(0)
@@ -75,6 +83,7 @@ test('a member builds a Dashboard from the explorer and the editor, ranges it, l
   page.on('request', noteExplorerRun)
   await page.getByRole('button', { name: 'Add chart' }).click()
   const editor = page.getByRole('dialog')
+  await useProject(page, editor)
   await expect(editor.locator('[data-chart-preview]').getByRole('figure')).toBeVisible()
   await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
   const previewRun = page.waitForRequest(request =>
@@ -170,6 +179,7 @@ test('a chart whose Query fails shows the error in its card, and the rest of the
   // A Query that answers Logs has no table to chart: the preview and the card say what to do.
   await page.getByRole('button', { name: 'Add chart' }).click()
   const editor = page.getByRole('dialog')
+  await useProject(page, editor)
   await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
   await editor.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| where level == "error"`)
   await expect(editor.locator('[data-chart-preview]').getByRole('alert')).toContainText('End it with summarize')
