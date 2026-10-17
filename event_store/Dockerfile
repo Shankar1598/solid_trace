@@ -16,9 +16,10 @@ COPY . .
 RUN CGO_ENABLED=1 go build -o event_store .
 
 # DuckDB's httpfs extension, which reads Log files from an object_store
-# bucket. EventStore loads it from this directory and never lets DuckDB
-# download an extension itself. The version is DuckDB's in duckdb-go (go.mod);
-# change both together. DuckDB checks the file's signature when it loads it.
+# bucket. With an object_store, EventStore loads it from this directory and
+# never lets DuckDB download an extension itself. The version is DuckDB's in
+# duckdb-go (go.mod); change both together (a storage test checks they match).
+# DuckDB checks the file's signature when it loads it.
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS extensions
 ARG TARGETARCH
 ARG DUCKDB_VERSION=v1.5.6

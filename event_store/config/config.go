@@ -35,7 +35,9 @@ type Config struct {
 	DuckDBMemoryLimit   string
 	// DuckDBExtensionDirectory holds the DuckDB extensions EventStore loads,
 	// such as httpfs for an ObjectStore. The Docker image fills the default
-	// at build time; DuckDB never downloads one itself.
+	// at build time. With an ObjectStore, DuckDB never downloads an extension
+	// itself; without one, DuckDB's defaults stand, so an SQL query that
+	// needs a known extension may still install it.
 	DuckDBExtensionDirectory string
 
 	StorageTiers []StorageTier
