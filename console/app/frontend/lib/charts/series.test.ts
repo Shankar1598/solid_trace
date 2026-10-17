@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LogTable, TableColumn } from '@/lib/logs/table'
-import { MAX_BARS, MAX_SERIES, binsTime, chartOf, fadedSpans, formFor, formsOf, keepColors, keepHidden, legendNotes, type ChartModel } from './series'
+import { MAX_BARS, MAX_SERIES, binsTime, chartOf, fadedSpans, formFor, formsOf, keepColors, keepHidden, legendNotes, totalsColors, type ChartModel } from './series'
 
 const TIME: TableColumn = { name: 'time', type: 'datetime', bin_seconds: 300 }
 const SERVICE: TableColumn = { name: 'service', type: 'string' }
@@ -628,5 +628,41 @@ describe('a guess at a Query\'s chart before it answers', () => {
     expect(binsTime("['p'] | summarize count() by bin( time, 1h) | where count_ > 3")).toBe(true)
     expect(binsTime("['p'] | summarize count() by bin(time, 1h) | summarize count() by service")).toBe(false)
     expect(binsTime("['p'] | where service == 'api'")).toBe(false)
+  })
+})
+
+describe('the totals under a time chart', () => {
+  const LEVEL: TableColumn = { name: 'level', type: 'string' }
+  const bins = (columns: TableColumn[], rows: unknown[][]) => keepColors(chartOf(table(columns, rows)), new Map()).model
+
+  it('wear the colour of the series of their group', () => {
+    const model = bins([TIME, SERVICE, COUNT], [
+      ['2026-10-09T10:00:00Z', 'api', 12],
+      ['2026-10-09T10:00:00Z', 'web', 3],
+      ['2026-10-09T10:05:00Z', null, 1],
+    ])
+    const totals = { columns: [SERVICE, COUNT], rows: [['api', 12], ['web', 3], [null, 1], ['gone', 0]], truncated: false }
+
+    expect(totalsColors(model, totals)).toEqual(['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', null])
+  })
+
+  it('wear their Level\'s colour, and match the group wherever the bin column was', () => {
+    const model = bins([LEVEL, TIME, COUNT], [['error', '2026-10-09T10:00:00Z', 2], ['info', '2026-10-09T10:00:00Z', 3]])
+    const totals = { columns: [LEVEL, COUNT], rows: [['info', 3], ['error', 2]], truncated: false }
+
+    expect(totalsColors(model, totals)).toEqual(['var(--chart-level-info)', 'var(--chart-level-error)'])
+  })
+
+  it('have no colour when nothing splits the series, or a group has several', () => {
+    const one = bins([TIME, COUNT], [['2026-10-09T10:00:00Z', 4]])
+    expect(totalsColors(one, { columns: [COUNT], rows: [[4]], truncated: false })).toEqual([null])
+
+    // Columns of different units each have a panel, where a group wears one hue.
+    const panels = bins([TIME, SERVICE, COUNT, AVG], [['2026-10-09T10:00:00Z', 'api', 4, 10]])
+    expect(totalsColors(panels, { columns: [SERVICE, COUNT, AVG], rows: [['api', 4, 10]], truncated: false })).toEqual(['var(--chart-1)'])
+    // Columns of one unit share a panel, where a group has a hue for each.
+    const MAX: TableColumn = { name: 'max_duration_ms', type: 'number', agg: 'max' }
+    const shared = bins([TIME, SERVICE, AVG, MAX], [['2026-10-09T10:00:00Z', 'api', 4, 10]])
+    expect(totalsColors(shared, { columns: [SERVICE, AVG, MAX], rows: [['api', 4, 10]], truncated: false })).toEqual([null])
   })
 })

@@ -51,9 +51,20 @@ test('Summarize count by service in the Builder draws a series per service over 
   await expect(legend(page).filter({ hasText: 'billing' })).toHaveAttribute('aria-pressed', 'false')
   await expect(chart(page).locator('.recharts-line-curve')).toHaveCount(series - 1)
 
-  // The chart stands in for the histogram strip; the table stays below it.
+  // The chart stands in for the histogram strip; the table stays below it,
+  // a row per service with its count over the range and its series' colour.
   await expect(page.getByText(/error rate/)).toHaveCount(0)
-  await expect(page.locator('.sticky.top-0').filter({ hasText: 'count_' })).toContainText('service')
+  const header = page.locator('.sticky.top-0').filter({ hasText: 'count_' })
+  await expect(header).toHaveText('servicecount_')
+  await expect(page.locator('[data-run-line]')).toHaveText(/^4 groups over the range · /)
+  await expect(page.locator('[data-table-row]')).toHaveCount(series)
+  await expect(page.locator('[data-table-row] [data-swatch]')).toHaveCount(series)
+
+  // Table shows the Query's own rows, one per bin and service.
+  await viz(page, 'Table').click()
+  await expect(header).toHaveText('timeservicecount_')
+  await expect(page.locator('[data-run-line]')).toHaveText(/^[\d,]+ rows · /)
+  expect(await page.locator('[data-table-row]').count()).toBeGreaterThan(series)
   expect(errors).toEqual([])
 })
 

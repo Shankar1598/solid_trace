@@ -3,11 +3,11 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { format } from 'date-fns'
 import { ChevronDown } from 'lucide-react'
 import { QueryChart, type ColorSlots, type HiddenSeries } from '@/components/charts/QueryChart'
-import { chartOf, formFor, formsOf, type SplitValue } from '@/lib/charts/series'
+import { chartOf, formFor, formsOf, keepColors, totalsColors, type SplitValue } from '@/lib/charts/series'
 import type { AbsoluteRange, Viz } from '@/lib/logs/explorerState'
-import { pivotsOn, type LogTable, type TableColumn } from '@/lib/logs/table'
+import { pivotsOn, type LogTable, type LogTotals, type TableColumn } from '@/lib/logs/table'
 import type { AttributeValue } from '@/lib/logs/stream'
-import { runLine } from '@/lib/logs/runLine'
+import { runLine, totalsLine } from '@/lib/logs/runLine'
 import { cn } from '@/lib/utils'
 import { ChartSwitch, type Shown } from './ChartSwitch'
 import { Tag, valueText } from './TagMenu'
@@ -20,6 +20,8 @@ const MAX_WIDTH = 420
 const CELL_PADDING = 24 + 4
 /** Rows read to size the columns: enough to see their usual width. */
 const SIZING_ROWS = 200
+/** The column of a totals row's series colour. */
+const SWATCH_WIDTH = 20
 
 /** How the explorer draws a table: the chart asked for, and what changes it. */
 export interface TableChart {
@@ -39,11 +41,20 @@ export interface TableChart {
  * A tabular Query's result, in place of the stream. A table that can be drawn
  * shows its chart above it, with a switch between the chart's forms and the
  * table alone; the two scroll together when the room is short, as on a phone.
+ * Under a time chart, the rows are the table's totals when the run has them:
+ * a row per group over the range, with its series' colour, so the table
+ * reads as the legend.
  */
 export function LogTableView({ table, elapsedMs = null, chart }: { table: LogTable; elapsedMs?: number | null; chart?: TableChart }) {
   const model = useMemo(() => chartOf(table), [table])
+  const colors = chart?.colors
+  // The colours QueryChart gives the series from the same slots; it keeps them for the next table.
+  const swatches = useMemo(
+    () => (table.totals && colors ? totalsColors(keepColors(model, colors.current).model, table.totals) : null),
+    [model, table.totals, colors],
+  )
   const forms = formsOf(model)
-  const line = <RunLine table={table} elapsedMs={elapsedMs} />
+  const line = <RunLine text={runLine(table.rows.length, 'row', elapsedMs)} />
   if (!chart || forms.length === 0) {
     return (
       <div className="flex h-full flex-col">
@@ -55,6 +66,8 @@ export function LogTableView({ table, elapsedMs = null, chart }: { table: LogTab
   }
 
   const form = formFor(model, chart.viz)
+  const totals = form && model.kind === 'time' ? table.totals : undefined
+  const grouped = model.kind === 'time' && model.series.some(s => s.split.length > 0)
   // The shape's own form (Line over time, Bars over categories, a Number)
   // leaves no trace in the URL, so it never carries over to another shape.
   const onShow = (shown: Shown) => chart.onViz(shown === forms[0] || shown === 'stat' ? 'auto' : shown)
@@ -71,11 +84,11 @@ export function LogTableView({ table, elapsedMs = null, chart }: { table: LogTab
           ? <QueryChart table={table} form={form} onZoom={chart.onZoom} colors={chart.colors} hidden={chart.hidden} actions={control} legendValue={legendValue} className="pb-1" />
           : <div className="flex justify-end px-3 py-1.5">{control}</div>}
       </div>
-      {line}
+      {totals ? <RunLine text={totalsLine(grouped ? totals.rows.length : null, elapsedMs)} /> : line}
       {/* A single number is its table: Table shows the cell. */}
       {form !== 'stat' && (
         <div className="min-h-48 flex-1">
-          <TableRows table={table} />
+          {totals ? <TableRows table={totals} swatches={swatches} /> : <TableRows table={table} />}
         </div>
       )}
     </div>
@@ -84,12 +97,14 @@ export function LogTableView({ table, elapsedMs = null, chart }: { table: LogTab
 
 /**
  * The table's rows, virtualised. Cells of Field-like columns are tags, so Show
- * only this and Hide this pivot from them.
+ * only this and Hide this pivot from them. With swatches, each row starts
+ * with its series' colour.
  */
-function TableRows({ table }: { table: LogTable }) {
+function TableRows({ table, swatches = null }: { table: LogTable | LogTotals; swatches?: (string | null)[] | null }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const widths = useMemo(() => columnWidths(table), [table])
-  const total = widths.reduce((sum, w) => sum + w, 0)
+  const swatched = swatches?.some(color => color !== null) ?? false
+  const total = widths.reduce((sum, w) => sum + w, swatched ? SWATCH_WIDTH : 0)
   const virtualizer = useVirtualizer({
     count: table.rows.length,
     getScrollElement: () => scrollRef.current,
@@ -106,6 +121,7 @@ function TableRows({ table }: { table: LogTable }) {
     <div ref={scrollRef} className="h-full overflow-auto font-mono text-[12px]">
       <div style={{ minWidth: total }}>
         <div className="sticky top-0 z-10 flex border-b bg-muted text-left text-muted-foreground">
+          {swatched && <div className="shrink-0" style={{ width: SWATCH_WIDTH }} />}
           {table.columns.map((c, i) => (
             <div key={i} className="shrink-0 truncate px-3 py-1.5 font-medium" style={{ width: widths[i] }} title={`${c.name} (${c.type})`}>
               {c.name}
@@ -118,7 +134,13 @@ function TableRows({ table }: { table: LogTable }) {
               key={item.key}
               className={cn('absolute left-0 top-0 flex w-full items-center', item.index % 2 === 1 && 'bg-muted/30')}
               style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
+              data-table-row
             >
+              {swatched && (
+                <div className="flex shrink-0 justify-end" style={{ width: SWATCH_WIDTH }}>
+                  {swatches![item.index] && <span className="h-2 w-2 rounded-[2px]" style={{ background: swatches![item.index]! }} data-swatch />}
+                </div>
+              )}
               {table.columns.map((c, i) => (
                 <div key={i} className="shrink-0 truncate px-3" style={{ width: widths[i] }}>
                   <Cell column={c} value={table.rows[item.index][i] as AttributeValue} />
@@ -137,11 +159,11 @@ function TableRows({ table }: { table: LogTable }) {
   )
 }
 
-/** The table's rows and how long the run took: "12 rows · 230 ms". */
-function RunLine({ table, elapsedMs }: { table: LogTable; elapsedMs: number | null }) {
+/** What the run found and how long it took: "12 rows · 230 ms". */
+function RunLine({ text }: { text: string }) {
   return (
     <div className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground" data-run-line>
-      {runLine(table.rows.length, 'row', elapsedMs)}
+      {text}
     </div>
   )
 }
@@ -167,7 +189,7 @@ function Cell({ column, value }: { column: TableColumn; value: AttributeValue })
 }
 
 /** Each column wide enough for its name and its usual value, within bounds. */
-function columnWidths(table: LogTable): number[] {
+function columnWidths(table: LogTable | LogTotals): number[] {
   return table.columns.map((c, i) => {
     let chars = c.name.length
     for (const row of table.rows.slice(0, SIZING_ROWS)) {

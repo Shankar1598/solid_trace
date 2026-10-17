@@ -128,6 +128,8 @@ A chart draws at most 8 series, the ones with the largest totals, and the legend
 
 **Empty bins.** A bin with no Logs has no row in the table. EventStore tells the chart whether it may fill those bins (`fill_gaps`). It may when nothing after the last `summarize` drops or adds rows (no `where`, `take`, `top`, `count`, `distinct` or second `summarize` after it) and the table wasn't cut at 10,000 rows. Then an empty bin counts as 0 for `count`, `countif`, `dcount` and `sum`, and as a gap for the other aggregates, which have no value without Logs. Otherwise every missing value is a gap.
 
+**The table under a chart over time.** It lists one row per group, the `by` columns other than the time bin, with each aggregate worked out over the whole range: an `avg` or a `dcount` there is exact, not made from the bins. The rows go largest first by the first aggregate, each with its series' colour when it has one, so the table reads as the legend. The Table form of the switch shows the Query's own rows, one per bin and group.
+
 **The chart switch.** The switch over the chart picks Line, Area, Bars or Table for a chart over time, Bars or Table for bars, and Number or Table for a number. Your pick goes in the URL as `viz`, so a link or a reload keeps it. While a table over time shows, the histogram strip is hidden.
 
 **Zoom.** Drag across two or more bins of a chart over time to narrow the time range to them. A click does nothing.

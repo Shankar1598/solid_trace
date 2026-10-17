@@ -7,6 +7,15 @@ export function runLine(count: number, noun: 'Log' | 'row', elapsedMs: number | 
   return elapsedMs === null ? counted : `${counted} · ${elapsedText(elapsedMs)}`
 }
 
+/**
+ * The run line of a time chart's totals: "5 groups over the range · 230 ms",
+ * or "Totals over the range" when nothing but the time bin groups them.
+ */
+export function totalsLine(groups: number | null, elapsedMs: number | null): string {
+  const counted = groups === null ? 'Totals over the range' : `${groups.toLocaleString('en-US')} ${groups === 1 ? 'group' : 'groups'} over the range`
+  return elapsedMs === null ? counted : `${counted} · ${elapsedText(elapsedMs)}`
+}
+
 /** 230 ms under a second, then seconds: 1.4 s, and whole ones from 10 s. */
 export function elapsedText(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)} ms`

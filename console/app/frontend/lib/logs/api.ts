@@ -31,6 +31,8 @@ export interface LogPageRequest {
   from: Date
   to: Date
   cursor?: string | null
+  /** Asks for a time chart's totals with its table, as the explorer's run does. */
+  totals?: boolean
   signal?: AbortSignal
 }
 
@@ -57,9 +59,10 @@ export async function fetchLogPage(request: LogPageRequest): Promise<LogPage> {
   throw new RunError('The Query answered a table where Logs were expected.')
 }
 
-async function runQuery({ orgSlug, projectSlug, query, from, to, cursor, signal }: LogPageRequest) {
+async function runQuery({ orgSlug, projectSlug, query, from, to, cursor, totals, signal }: LogPageRequest) {
   const params = new URLSearchParams({ query, from: from.toISOString(), to: to.toISOString() })
   if (cursor) params.set('cursor', cursor)
+  if (totals) params.set('totals', '1')
 
   const response = await callConsole(`/${orgSlug}/projects/${projectSlug}/logs/query?${params}`, signal)
   const body = await response.json().catch(() => null)

@@ -4,7 +4,7 @@
 // which columns are aggregates (agg) and whether an empty bin means no Logs
 // (fill_gaps). Tables come long, one row per bin and split value; a chart
 // wants them wide, one point per bin with a value per series.
-import type { Agg, LogTable } from '@/lib/logs/table'
+import type { Agg, LogTable, LogTotals } from '@/lib/logs/table'
 
 /** The most series a chart draws: one per hue of the palette, never a made-up ninth. */
 export const MAX_SERIES = 8
@@ -432,6 +432,24 @@ export function keepColors(model: ChartModel, slots: ReadonlyMap<string, number>
   }
   const series = model.series.map(s => (s.slot === null ? s : { ...s, slot: next.get(s.id)!, color: `var(--chart-${next.get(s.id)!})` }))
   return { model: { ...model, series, legend: legendOf(series) }, slots: next }
+}
+
+/**
+ * Each totals row's colour under a time chart, so the table reads as its
+ * legend: that of the series whose split values are the row's group. Null
+ * for a row whose series isn't drawn, and for every row when nothing splits
+ * the series, or when they are told apart by their column too, which gives a
+ * group several colours.
+ */
+export function totalsColors(model: ChartModel, totals: LogTotals): (string | null)[] {
+  const none = totals.rows.map(() => null)
+  if (model.kind !== 'time' || model.series.length === 0) return none
+  const fields = model.series[0].split.map(({ field }) => field)
+  if (fields.length === 0 || model.series.some(s => s.id !== JSON.stringify(s.split))) return none
+  const at = fields.map(field => totals.columns.findIndex(c => c.name === field))
+  if (at.includes(-1)) return none
+  const colors = new Map(model.series.map(s => [s.id, s.color]))
+  return totals.rows.map(row => colors.get(JSON.stringify(fields.map((field, k) => ({ field, value: cell(row[at[k]]) })))) ?? null)
 }
 
 /**

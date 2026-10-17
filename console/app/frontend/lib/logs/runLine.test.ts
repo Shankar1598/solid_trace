@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { elapsedOf, runLine } from './runLine'
+import { elapsedOf, runLine, totalsLine } from './runLine'
 
 describe('the run line', () => {
   it('counts Logs or rows, and says how long the run took', () => {
@@ -11,6 +11,12 @@ describe('the run line', () => {
 
   it('leaves the time out when the answer had none', () => {
     expect(runLine(3, 'row', null)).toBe('3 rows')
+  })
+
+  it('counts a time chart\'s groups over the range, or says they are its totals', () => {
+    expect(totalsLine(5, 230)).toBe('5 groups over the range · 230 ms')
+    expect(totalsLine(1, null)).toBe('1 group over the range')
+    expect(totalsLine(null, 1430)).toBe('Totals over the range · 1.4 s')
   })
 
   it('reads elapsed_ms from an answer, and nothing else', () => {
