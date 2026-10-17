@@ -1,7 +1,7 @@
 // Which sidebar entry a page belongs to, from its path alone: the search is
 // left out, since a Query in it can hold any text, such as "/issues".
 
-export type NavSection = 'issues' | 'logs' | 'dashboards' | 'projects' | 'settings'
+export type NavSection = 'issues' | 'logs' | 'dashboards' | 'monitors' | 'projects' | 'settings'
 
 /** The section of a Console URL under an Organization, such as `/acme/projects/shop/logs?q=…`; null for none. */
 export function navSection(url: string): NavSection | null {
@@ -12,6 +12,7 @@ export function navSection(url: string): NavSection | null {
     case 'issues':
     case 'logs':
     case 'dashboards':
+    case 'monitors':
     case 'settings':
       return first
     case 'projects':

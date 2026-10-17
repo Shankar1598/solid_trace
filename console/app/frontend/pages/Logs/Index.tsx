@@ -54,6 +54,7 @@ import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
 import { BuilderPanel, type ProjectOption } from './components/BuilderPanel'
 import { AddToDashboard } from './components/AddToDashboard'
+import { CreateMonitor } from './components/CreateMonitor'
 import { CopyLink } from './components/CopyLink'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
@@ -466,11 +467,17 @@ export default function LogsIndex({ project, projects, sql_queries_enabled }: Lo
   // and a series hidden from the legend stays hidden.
   const colorSlots = useRef<ReadonlyMap<string, number>>(new Map())
   const hiddenSeries = useRef<ReadonlySet<string>>(new Set())
-  // Add to dashboard saves the Query that ran, drawn as shown; SQL isn't a Query, so it has none.
+  // Add to dashboard saves the Query that ran, drawn as shown, and Create monitor starts from it and
+  // its range; SQL isn't a Query, so it has neither.
   const ranQuery = explorer.current.query
   const tableChart: TableChart = {
     viz: explorer.current.viz, onViz: changeViz, onZoom: pickBarRange, colors: colorSlots, hidden: hiddenSeries,
-    beside: sqlMode ? undefined : shown => <AddToDashboard projectId={project.id} query={ranQuery} viz={vizOfForm(shown)} />,
+    beside: sqlMode ? undefined : shown => (
+      <div className="flex items-center gap-2">
+        <AddToDashboard projectId={project.id} query={ranQuery} viz={vizOfForm(shown)} />
+        <CreateMonitor projectId={project.id} query={ranQuery} range={explorer.current.range} />
+      </div>
+    ),
   }
 
   // A table over time stands in for the histogram strip, as in Axiom, shown
