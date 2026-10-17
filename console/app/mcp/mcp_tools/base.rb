@@ -18,7 +18,8 @@ module McpTools
   # #run answers with #json or #text, ending with a Console link, or raises
   # ToolError saying what to do instead. Base answers the failures tools meet
   # (a record not found, a policy's refusal, EventStore's refusals, a busy
-  # Console, a timeout) as tool errors the model can act on.
+  # Console, a Logs answer to chart, a timeout) as tool errors the model can
+  # act on.
   class Base < MCP::Tool
     ORGANIZATION = {
       type: "string",
@@ -147,6 +148,8 @@ module McpTools
       error(e.message)
     rescue ChartRuns::Busy
       error("Console is busy running other charts. Run this again in a moment.")
+    rescue ChartRuns::NotATable => e
+      error(e.message)
     rescue EventStore::TimedOut => e
       error(timed_out(e))
     rescue EventStore::Unavailable => e

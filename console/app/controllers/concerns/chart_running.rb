@@ -11,6 +11,7 @@ module ChartRunning
     include EventStoreProxy
 
     rescue_from ChartRuns::Busy, with: :chart_runs_busy
+    rescue_from ChartRuns::NotATable, with: :not_a_table
   end
 
   private
@@ -18,13 +19,11 @@ module ChartRunning
   # A Query run on a Project over @from to @to, answered as the explorer's
   # run is. A Query that answers Logs rather than a table can't be charted.
   def run_chart(project, query)
-    answer = ChartRuns.hold do
-      EventStore.query_logs(project_id: project.id, query: query, from: @from, to: @to, timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS)
-    end
-    return render json: answer if answer.is_a?(Hash) && answer["table"].is_a?(Hash)
+    render json: ChartRuns.run_chart(project, query, from: @from, to: @to)
+  end
 
-    render json: { error: "This Query answers Logs, not a table. End it with summarize, count or project to chart it." },
-      status: :unprocessable_content
+  def not_a_table(error)
+    render json: { error: error.message }, status: :unprocessable_content
   end
 
   def chart_runs_busy

@@ -21,6 +21,13 @@
 class ChartRuns
   class Busy < StandardError; end
 
+  # A chart's Query answered Logs, which can't be drawn, rather than a table.
+  class NotATable < StandardError
+    def initialize(message = "This Query answers Logs, not a table. End it with summarize, count or project to chart it.")
+      super
+    end
+  end
+
   # Puma threads no chart run may take.
   SPARE_THREADS = 3
 
@@ -28,6 +35,21 @@ class ChartRuns
   @running = 0
 
   class << self
+    # A chart's Query run on a Project from from to to, as one chart run that
+    # EventStore stops after EventStoreProxy::RUN_TIMEOUT_SECONDS: EventStore's
+    # answer, whose "table" is the table. A Dashboard's charts, the chart
+    # editor's and a Monitor's preview and the MCP server's chart tools run
+    # through it. Raises NotATable for a Query that answers Logs, and Busy
+    # past the limit.
+    def run_chart(project, query, from:, to:)
+      answer = hold do
+        EventStore.query_logs(project_id: project.id, query: query, from: from, to: to, timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS)
+      end
+      raise NotATable unless answer.is_a?(Hash) && answer["table"].is_a?(Hash)
+
+      answer
+    end
+
     # Runs the block as one chart run, or raises Busy when as many are
     # running as the limit allows.
     def hold
