@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-10-10
+Updated: 2026-10-17
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
 
@@ -9,13 +9,14 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 **Rules for agents:**
 - Don't pick up deferred hardening unprompted: the open items in [prod-readiness review.md](prod-readiness/review.md) (§1, §9, §10: tiered storage, retention, `mode=ro`, the `ValidateKey` cache, compose host networking, DSN, ingest limits, metrics, CI), 011 and 012. Each is marked deferred or `wontfix` there. A change that would make one of them worse is still worth a flag.
 - EventStore runs DuckDB 1.5.6, bundled with the driver (upgrade-pebble-duckdb 02, 2026-10-02). There is no alpha library or `duckdb_use_lib` tag any more. A shell opened before that change may still export `GOFLAGS=-tags=duckdb_use_lib`; open a new one.
-- Work happens in the main checkout, now on `feature/logs-v1` (the logs v1 integration branch, built on `feature/logging`). There are no worktrees; prototype branches stay as branches.
+- Work happens in the main checkout, now on `feature/logs-v2` (the logs v2 integration branch, built on `feature/logs-v1`). One worktree, `../solid_trace-v2-go` on `feature/logs-v2-go`, held the EventStore track; it is level with `feature/logs-v2`.
 - Read [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md) before touching `event_store/storage/sqlite.go` or a Console enum or table that EventStore writes. A change to one must change the other in the same commit.
 - The logs map is the source of truth for logs; trust it over the counts below.
 - Benchmark and probe runs must finish in under a minute on the dev box.
 
 ## Where things stand
 
+- **Logs v2**: implemented on `feature/logs-v2` (2026-10-10 to 17): charts in the explorer, developer UX, Dashboards, Monitors with Slack, PagerDuty and email, Log Parquet and the Event archive in S3 or GCS (tested on MinIO), and a bin cache. 19 of 23 [tickets](logs-v2/issues/) resolved, including a whole-branch review; Rails, vitest, typecheck, all 69 Playwright flows and the Go suite pass. Open: the looks pass and a merge (`ready-for-human`), a real GCS run (`needs-info`), leftover lows (`ready-for-agent`).
 - **Logs**: v1 is implemented on `feature/logs-v1` (2026-10-03): 19 of 20 [tickets](logs-v1/issues/) resolved, code-reviewed, with the review fixes merged (`0eecf81`). It is not yet merged into `feature/logging` or `main`, and not yet clicked through in a browser. M1-10 (load test) is the only open ticket. Choices that depart from the spec are in its [Implementation decisions](logs-v1/spec.md#implementation-decisions); the review's fixes are in its Comments.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
 - **Integration notification**: resolved and merged (2026-10-02, `9a488c6`). One Console module sends new-Issue, threshold and assignment notifications through the outbox, with recorded outcomes, bounded retries and cleanup. EventStore's Event count honours the time window. Review findings left open are listed in the [spec](integration-notification/spec.md)'s Comments.
@@ -24,7 +25,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-0. **Logs v2** (2026-10-10, branch `feature/logs-v2` from `feature/logs-v1`): charts, developer UX, Dashboards, Monitors (Slack, PagerDuty), Parquet in S3/GCS with a bin cache. Implemented directly from [the spec](logs-v2/spec.md), phase by phase. Done (2026-10-11): the v1 click-through with Playwright (A0), chart hints and timeouts in EventStore (B1), charts in the explorer (A1), the Log file manifest (B2), after_batch for Match monitors (B3) and a promoted-set fix (B3b). Done (2026-10-17): the time range picker and Query editor (A2a), the value menu, command palette, shortcuts, copy link and run line (A2b), Dashboards (A3), and Log files in an S3 or GCS bucket, tested against MinIO (B4a, B4b). Done (2026-10-17): Monitors with Slack, PagerDuty and email (A4a, A4b), onboarding for an empty Project and inspector extras (A2c), the bin cache (B5) and the Event archive in the bucket (B6). Done (2026-10-17): follow-ups and docs (A5, B7): monitors.md, object-store.md, ADR 0006. Whole-branch review done (2026-10-17): four medium bugs and two lows fixed; Rails 378 runs, vitest 371, typecheck, all 69 flows and the Go suite pass. Next, with the user: the looks pass (Phase 6) and a real GCS check with their bucket and HMAC key. Review findings left for later: [carry-over](logs-v2/carry-over.md).
+0. **Logs v2** ([spec](logs-v2/spec.md), [tickets](logs-v2/issues/)): built and reviewed; next with the user: [20, the looks pass](logs-v2/issues/20-looks-pass.md), [21, a real GCS run](logs-v2/issues/21-real-gcs-check.md) (needs their bucket and HMAC key) and [23, the merge](logs-v2/issues/23-merge-logs-v2.md). [22](logs-v2/issues/22-leftover-low-findings.md) lists the leftover lows.
 
 1. ~~Click through the Logs explorer in a browser.~~ Done in Logs v2 unit A0 with Playwright; rough edges in [the click-through notes](logs-v2/research/v1-click-through.md).
 2. Merge `feature/logs-v1` into `feature/logging` (then `main`) when happy.
@@ -37,7 +38,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 |---|---|---|
 | Logs | 16 / 0 | [map.md](logs/map.md) |
 | Logs v1 | 19 / 1 | [spec.md](logs-v1/spec.md) |
-| Logs v2 | in progress | [spec.md](logs-v2/spec.md) |
+| Logs v2 | 19 / 4 | [20](logs-v2/issues/20-looks-pass.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
@@ -47,7 +48,11 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 **Logs path** (a ticket opens when the ones before it are done):
 01–16 (done) → logs v1 tickets M1-01 … M3-04
 
-## Last session (2026-10-02 to 03, logs v1 implementation)
+## Last session (2026-10-10 to 17, logs v2)
+
+Planned Logs v2 with the user (Axiom as the reference) and built it from [the spec](logs-v2/spec.md) with workflow batches: a Console track in the main checkout and an EventStore track in a worktree, each unit implemented, reviewed, verified and fixed, then merged with `--no-ff`. On 2026-10-16 the user asked for less token spend: reviews became one review plus one verify, high and medium findings only, with 1 or 2 screenshots per UI unit and no visual polish (looks come later, with the user). A whole-branch review closed the build. Every unit's decisions are in the spec's Implementation decisions; leftovers in [carry-over.md](logs-v2/carry-over.md). Run notes for the orchestrator live in `~/.cache/solid-trace/logs-v2-notes/runs.md`.
+
+## Earlier session (2026-10-02 to 03, logs v1 implementation)
 
 Ran `/implement-spec` on the logs v1 spec, on integration branch `feature/logs-v1`, with at most two sub-agents at a time (the user's limit for this box). Each ticket was built test-first in its own worktree and merged with `--no-ff`; the worktrees are removed.
 - **Resolved:** 19 tickets, including **M1-11 (remove Angie)**, added mid-run at the user's request. Console now serves through Thruster and EventStore ingests on TCP 4000.

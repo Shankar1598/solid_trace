@@ -1,6 +1,6 @@
 # SolidTrace Logs v2: charts, dashboards, monitors and a bucket for Parquet
 
-Status: in progress
+Status: ready-for-human
 
 **Origin:** the plan the user approved on 2026-10-10. They asked to implement it directly, so this file is the spec. Departures go in Implementation decisions at the end.
 
