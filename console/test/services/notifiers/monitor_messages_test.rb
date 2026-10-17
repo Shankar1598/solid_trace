@@ -53,6 +53,22 @@ module Notifiers
       end
     end
 
+    # The title holds the group's Log values, which Slack's top-level text
+    # would read as mrkdwn: a mention or a link a Log wrote.
+    test "Slack: Log values in the title are sent as written, never as a mention or a link" do
+      group = { "service" => "<!channel>", "level" => "<https://evil.example|login> & more" }.to_json
+      deliver(@slack, row(IntegrationNotification::MONITOR_FIRING, group, threshold_payload(120.0)))
+
+      assert_requested(:post, SLACK_URL) do |request|
+        body = JSON.parse(request.body)
+        assert_equal "🔥 Firing: Checkout errors (service=&lt;!channel&gt;, level=&lt;https://evil.example|login&gt; &amp; more)",
+          body["text"]
+        assert_equal "🔥 Firing: Checkout errors (service=<!channel>, level=<https://evil.example|login> & more)",
+          body["blocks"].first.dig("text", "text"), "the header is plain_text, which Slack shows as written"
+        true
+      end
+    end
+
     test "Slack: a resolve says the group is back within the threshold" do
       deliver(@slack, resolved(value: 42.125))
 

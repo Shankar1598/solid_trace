@@ -80,7 +80,8 @@ module Notifiers
         }
       end
 
-      { text: title, blocks: blocks }
+      # The top-level text is mrkdwn, and the title holds Log values.
+      { text: mrkdwn(title), blocks: blocks }
     end
 
     # Text as Slack's mrkdwn shows it as written.
