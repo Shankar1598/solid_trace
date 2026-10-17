@@ -1,5 +1,7 @@
 // What the inspector shows of one Log: its Fields, each a tag, and its JSON,
 // with the raw time in UTC so it can be shared exactly.
+import type { AbsoluteRange } from '../timeRange'
+import { EMPTY_BUILDER, type Builder, type Chip } from './builder'
 import type { AttributeValue, Log } from './stream'
 
 export interface InspectorField {
@@ -114,4 +116,20 @@ function kindOf(value: AttributeValue): JsonLine['kind'] {
   if (typeof value === 'number') return 'number'
   if (typeof value === 'boolean') return 'bool'
   return 'empty'
+}
+
+/** How far either side of a Log "Logs around this one" reads. */
+const AROUND_MS = 60_000
+
+/**
+ * "Logs around this one": the Logs of the Log's Service, or of none when it
+ * has none, from a minute before it to a minute after.
+ */
+export function aroundLog(log: Log): { builder: Builder; range: AbsoluteRange } {
+  const time = new Date(log.time).getTime()
+  const service: Chip = log.service ? { field: 'service', op: '==', value: log.service } : { field: 'service', op: 'missing', value: null }
+  return {
+    builder: { ...EMPTY_BUILDER, filters: [service] },
+    range: { kind: 'absolute', from: new Date(time - AROUND_MS), to: new Date(time + AROUND_MS) },
+  }
 }

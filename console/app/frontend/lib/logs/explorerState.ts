@@ -122,9 +122,13 @@ export function draftIn(draft: ExplorerState, current: ExplorerState): ExplorerS
  * reaches now, or else DEFAULT_RANGE: where a Log just sent shows. Run it.
  */
 export function allLogsNow(explorer: Explorer, projectQuery: string): Explorer {
-  const { explorer: inBuilder } = switchMode(explorer, 'builder')
-  const range = explorer.current.range.kind === 'relative' ? explorer.current.range : DEFAULT_RANGE
-  return { ...inBuilder, draft: { ...inBuilder.draft, query: projectQuery, range } }
+  return inBuilder(explorer, projectQuery, explorer.current.range.kind === 'relative' ? explorer.current.range : DEFAULT_RANGE)
+}
+
+/** The Builder with the Query it shows and a range, ready to run: where the explorer jumps to show some Logs. */
+export function inBuilder(explorer: Explorer, query: string, range: TimeRange): Explorer {
+  const { explorer: next } = switchMode(explorer, 'builder')
+  return { ...next, draft: { ...next.draft, query, range } }
 }
 
 /**
