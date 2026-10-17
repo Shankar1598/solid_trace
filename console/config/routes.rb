@@ -40,6 +40,16 @@ Rails.application.routes.draw do
         end
       end
     end
+    resources :monitors do
+      collection do
+        post :preview
+      end
+      member do
+        patch :enable
+        patch :disable
+        post :run
+      end
+    end
     resources :mentions, only: [ :index ]
     get "organization_users/search", to: "organization_users#search", as: :organization_users_search
     resources :projects, only: [ :index, :new, :create, :show, :update ], param: :slug do
