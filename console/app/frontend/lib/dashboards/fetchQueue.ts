@@ -2,9 +2,14 @@
 // doesn't send EventStore every Query at once. Each run is keyed by its
 // chart: a newer run for a chart supersedes the older one, and a range change
 // or leaving the page aborts them all. An aborted run's promise rejects with
-// an AbortError (see isAbort) and its slot is free at once.
+// an AbortError (see isAbort) and its slot is free at once. A cancelled run's
+// slot goes to a waiting run only once the task that cancelled it ends: on a
+// range change each card cancels its own run, and none of the old range's
+// waiting runs should start in between. The browser's slot is not the
+// server's: Console keeps an aborted run's thread until EventStore answers,
+// and caps those runs itself (app/services/chart_runs.rb).
 
-/** The most chart runs in flight at once. Each holds a Console Puma thread, so keep it well under config/puma.rb's count. */
+/** The most chart runs in flight at once. Each holds a Console Puma thread, so keep it under ChartRuns' cap (test/config/puma_test.rb). */
 export const MAX_IN_FLIGHT = 4
 
 export type Task<T> = (signal: AbortSignal) => Promise<T>
@@ -91,7 +96,7 @@ export function createFetchQueue(limit = MAX_IN_FLIGHT): FetchQueue {
       const entry = find(key)
       if (!entry) return
       abort(entry)
-      pump()
+      queueMicrotask(pump)
     },
     abortAll() {
       for (const entry of [...inFlight.values(), ...waiting]) abort(entry)

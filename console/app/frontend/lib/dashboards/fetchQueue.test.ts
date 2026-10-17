@@ -93,6 +93,38 @@ describe('the chart fetch queue', () => {
     await expect(b).resolves.toBe('b')
   })
 
+  it('starts none of the waiting runs that a range change cancels card by card', async () => {
+    const queue = createFetchQueue(1)
+    const { calls, task } = held<string>()
+    const old = ['a', 'b'].map(key => queue.run(key, task))
+
+    // Each card's cleanup cancels its own run, then each card runs again.
+    queue.cancel('a')
+    queue.cancel('b')
+    const fresh = queue.run('a', task)
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0].signal.aborted).toBe(true)
+    expect(calls[1].signal.aborted).toBe(false)
+    for (const result of old) await expect(result).rejects.toSatisfy(isAbort)
+    calls[1].resolve('a again')
+    await expect(fresh).resolves.toBe('a again')
+  })
+
+  it('gives a cancelled run\'s slot to a waiting run once the task that cancelled it ends', async () => {
+    const queue = createFetchQueue(1)
+    const { calls, task } = held<string>()
+    queue.run('a', task).catch(() => {})
+    const waiting = queue.run('b', task)
+
+    queue.cancel('a')
+    await tick()
+
+    expect(calls).toHaveLength(2)
+    calls[1].resolve('b')
+    await expect(waiting).resolves.toBe('b')
+  })
+
   it('passes on a task that throws at once as its error', async () => {
     const queue = createFetchQueue()
     const result = queue.run('a', () => { throw new Error('bad request') })
