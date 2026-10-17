@@ -147,7 +147,7 @@ module McpTools
     rescue EventStore::SQLQueriesOff => e
       error(e.message)
     rescue ChartRuns::Busy
-      error("Console is busy running other charts. Run this again in a moment.")
+      error("Console is busy running other Queries and charts. Run this again in a moment.")
     rescue ChartRuns::NotATable => e
       error(e.message)
     rescue EventStore::TimedOut => e
