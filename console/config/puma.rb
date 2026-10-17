@@ -29,7 +29,9 @@
 # preview or an explorer run holds one for up to 35 s, and keeps it after the
 # browser aborts the run, so app/services/chart_runs.rb caps those runs 3
 # under this count: one Dashboard's 4 and one explorer run's 2 fit at once,
-# and the rest stay free for pages and sign-in. So production keeps 10, well
+# and the rest stay free for pages and sign-in. A Monitor's Run now also
+# waits up to 30 s, outside the cap: only a click starts it, one per Monitor
+# at a time, and the browser can't abort it. So production keeps 10, well
 # above Rails' 3, and database.yml's max_connections reads the same
 # RAILS_MAX_THREADS so the pool matches.
 threads_count = Rails.env.development? ? 1 : ENV.fetch("RAILS_MAX_THREADS", 10)

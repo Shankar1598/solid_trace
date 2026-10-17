@@ -138,14 +138,18 @@ export function aroundLog(log: Log): { builder: Builder; range: AbsoluteRange } 
  * When "Logs around this one" filled a page before reaching its Log, the
  * range that brings the Log into the first page: the same start, ending as
  * long after the Log as the Logs loaded took to fill half a page, so a busy
- * Service needs a run or two rather than a page per 200 newer Logs. Null when
- * that ends no sooner than the range does, so older pages load instead.
+ * Service needs a run or two rather than a page per 200 newer Logs. Null,
+ * so the next page loads instead, when at the rate the loaded Logs came in
+ * that page reaches the Log, or when narrowing ends no sooner than the range.
  */
 export function narrowAround(range: AbsoluteRange, stream: Stream, log: Log): AbsoluteRange | null {
   const oldest = stream.logs.at(-1)
   if (!oldest) return null
   const end = range.to.getTime()
-  const loadedMs = end - new Date(oldest.time).getTime()
+  const oldestMs = new Date(oldest.time).getTime()
+  const loadedMs = end - oldestMs
+  const between = loadedMs > 0 ? ((oldestMs - new Date(log.time).getTime()) * stream.logs.length) / loadedMs : Infinity
+  if (between < PAGE_LOGS) return null
   const afterMs = Math.ceil((loadedMs * PAGE_LOGS) / 2 / stream.logs.length)
   // A Log's time may have more digits than a millisecond, so end after its millisecond.
   const to = new Date(log.time).getTime() + Math.max(afterMs, 1)

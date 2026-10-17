@@ -526,18 +526,26 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
   // the Builder, with the inspector kept on it so the stream highlights it.
   // When more than a page is newer than the Log, the range ends sooner after
   // it so the first page has it (in place of the history entry), and older
-  // pages load when that can't help. Another run stops the seeking.
-  const [seeking, setSeeking] = useState<{ log: Log; run: Run | null } | null>(null)
+  // pages load when the next one reaches it or narrowing can't help. The
+  // seeking follows the run it started, its Query and range, not what the
+  // bar holds by then; another run stops it.
+  const [seeking, setSeeking] = useState<{ log: Log; run: Run } | null>(null)
+  const seekIn = (log: Log) => {
+    const started = currentRun.current
+    setSeeking(started && { log, run: started })
+  }
   const showAround = (log: Log) => {
     const { builder, range } = aroundLog(log)
     setBuilderView({ status: 'ready', builder })
     setProblems([])
     setLeaving(null)
     run(inBuilder(latest.current, queryOf(builder, project.slug), range))
-    setSeeking({ log, run: currentRun.current })
+    seekIn(log)
   }
   const runNow = useRef(run)
   runNow.current = run
+  const seekInNow = useRef(seekIn)
+  seekInNow.current = seekIn
   useEffect(() => {
     if (seeking === null || result.status === 'running') return
     if (currentRun.current !== seeking.run || result.status !== 'done' || result.olderError) return setSeeking(null)
@@ -547,11 +555,11 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
       return setSeeking(null)
     }
     if (result.loadingOlder) return
-    const ran = latest.current.current
-    const narrower = ran.range.kind === 'absolute' ? narrowAround(ran.range, result.stream, seeking.log) : null
+    const { query, from, to } = seeking.run
+    const narrower = narrowAround({ kind: 'absolute', from, to }, result.stream, seeking.log)
     if (!narrower) return loadOlder()
-    runNow.current(inBuilder(latest.current, ran.query, narrower), 'replace')
-    setSeeking({ log: seeking.log, run: currentRun.current })
+    runNow.current(inBuilder(latest.current, query, narrower), 'replace')
+    seekInNow.current(seeking.log)
   }, [seeking, result, loadOlder])
 
   /** The Builder's Project: its clauses, on the Logs of the Project picked. */
