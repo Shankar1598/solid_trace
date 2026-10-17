@@ -145,6 +145,27 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_state below, "", "firing", 5
   end
 
+  test "a Threshold monitor changed to a Match monitor resolves its firing groups and forgets its states" do
+    monitor = threshold_monitor(notify_by_group: true)
+    answer_table([ [ "api", 12 ], [ "web", 3 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    api = { service: "api" }.to_json
+    assert_equal [ [ "monitor_firing", api, 12 ] ], notifications
+
+    monitor.update!(kind: "match", query: "['#{@project.slug}']\n| where level == 'error'", operator: nil, threshold: nil)
+
+    assert_empty monitor.states.reload
+    assert_equal [ [ "monitor_firing", api, 12 ], [ "monitor_resolved", api, 12 ] ], notifications
+    resolved = Notification.order(:id).last
+    assert_equal [ ">", 10.0, true ], resolved.payload.values_at("operator", "threshold", "kind_changed")
+    assert_equal "Resolved: #{monitor.name} (service=api)", Notifiers::MonitorMessage.build(resolved).title
+
+    travel 1.minute
+    answer_matched([], total: 0, ingest_cursor: NEXT_CURSOR)
+    evaluate(monitor)
+    assert_equal 2, Notification.count, "a Match run sends nothing about the old groups"
+  end
+
   test "a firing group with no row resolves, and an ok group with no row is forgotten" do
     monitor = threshold_monitor(notify_by_group: true)
     api = { "service" => "api" }.to_json
