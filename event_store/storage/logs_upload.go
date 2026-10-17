@@ -45,6 +45,21 @@ func (s *LogStore) UseObjectStore(bucket ObjectStore, localCacheHours int) error
 	return s.settleEvictions()
 }
 
+// UseLocalDiskOnly is UseObjectStore's counterpart, for when no bucket is
+// configured: call it instead, at the same point. It warns when the manifest
+// has files whose bytes are only in a bucket, as after an object_store block
+// is removed from the config, since reads of their hours then fail.
+func (s *LogStore) UseLocalDiskOnly() error {
+	var onlyInABucket int
+	if err := s.db.QueryRow("SELECT count(*) FROM logs.log_files WHERE NOT local").Scan(&onlyInABucket); err != nil {
+		return fmt.Errorf("count log files only in a bucket: %w", err)
+	}
+	if onlyInABucket > 0 {
+		logger.L.Warn("Some Log files are only in a bucket, but no object_store is configured, so reads of their hours fail: add the object_store block back to read them", "files", onlyInABucket)
+	}
+	return nil
+}
+
 // LogFilesPublished receives a signal after an export publishes files, which
 // UploadLogFiles uploads.
 func (s *LogStore) LogFilesPublished() <-chan struct{} {
