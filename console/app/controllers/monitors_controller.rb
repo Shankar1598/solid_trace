@@ -48,7 +48,7 @@ class MonitorsController < ApplicationController
   def create
     monitor = @current_org.monitors.new
 
-    if save(monitor)
+    if monitor.save_with(monitor_params, integration_ids: integration_ids_param)
       redirect_to monitor_page(monitor), notice: "Monitor created."
     else
       redirect_to new_monitor_path(org_slug: @current_org.slug), inertia: { errors: monitor.errors.to_hash }
@@ -56,7 +56,7 @@ class MonitorsController < ApplicationController
   end
 
   def update
-    if save(@monitor)
+    if @monitor.save_with(monitor_params, integration_ids: integration_ids_param)
       redirect_to monitor_page(@monitor), notice: "Monitor saved."
     else
       redirect_to edit_monitor_path(@monitor, org_slug: @current_org.slug), inertia: { errors: @monitor.errors.to_hash }
@@ -70,8 +70,7 @@ class MonitorsController < ApplicationController
 
   # Turning a Monitor on checks its Query again, so it can stay off.
   def enable
-    @monitor.disabled_at = nil
-    if checked_save(@monitor)
+    if @monitor.save_with({ disabled_at: nil })
       redirect_to monitor_page(@monitor), notice: "Monitor turned on."
     else
       redirect_to monitor_page(@monitor), alert: "The Monitor stays off: #{@monitor.errors.full_messages.to_sentence}"
@@ -98,7 +97,7 @@ class MonitorsController < ApplicationController
     elsif run.status_error?
       redirect_to monitor_page(@monitor), alert: "The run failed: #{run.error}"
     else
-      redirect_to monitor_page(@monitor), notice: "Ran the Monitor: #{found(run)}."
+      redirect_to monitor_page(@monitor), notice: "Ran the Monitor: #{run.found}."
     end
   end
 
@@ -121,42 +120,12 @@ class MonitorsController < ApplicationController
   def form_props
     {
       projects: ProjectOptionSerializer.list(@current_org.projects.order(:name)),
-      integrations: @current_org.integrations.order(:name).map do |integration|
-        { id: integration.id, name: integration.name, provider: integration.provider, enabled: integration.active }
-      end,
+      integrations: IntegrationOptionSerializer.list(@current_org.integrations.order(:name)),
     }
   end
 
-  # Saves the Monitor and, when the form sent them, its Integrations, all or
-  # nothing. The Project and Integrations are looked up in the Organization:
-  # another Organization's Project is no Project, and its Integrations are
-  # refused.
-  def save(monitor)
-    integrations = integrations_param
-    monitor.assign_attributes(monitor_params)
-    if integrations == :foreign
-      monitor.errors.add(:integrations, "must belong to the Monitor's Organization")
-      return false
-    end
-
-    checked_save(monitor) { monitor.integrations = integrations unless integrations.nil? }
-  end
-
-  # Validating a Monitor may check its Query with EventStore, which can take
-  # as long as a run, so it happens before the transaction opens: on SQLite a
-  # write transaction holds the database's write lock, and every other writer
-  # would wait on EventStore too.
-  def checked_save(monitor)
-    return false unless monitor.valid?
-
-    LogMonitor.transaction do
-      next false unless monitor.save(validate: false)
-
-      yield if block_given?
-      true
-    end
-  end
-
+  # The Project is looked up in the Organization: another Organization's
+  # Project is no Project. LogMonitor#save_with looks up the Integrations.
   def monitor_params
     permitted = params.require(:monitor).permit(
       :project_id, :name, :kind, :query, :interval_minutes, :range_minutes, :operator, :threshold,
@@ -166,29 +135,12 @@ class MonitorsController < ApplicationController
     permitted
   end
 
-  # The Organization's Integrations named, :foreign when any is not one of
-  # them, or nil when the form sent none.
-  def integrations_param
-    permitted = params.require(:monitor).permit(integration_ids: [])
-    return unless permitted.key?(:integration_ids)
-
-    ids = permitted[:integration_ids].map(&:to_i).uniq
-    found = @current_org.integrations.where(id: ids).to_a
-    found.size == ids.size ? found : :foreign
+  # The Integration ids the form sent, or nil when it sent none.
+  def integration_ids_param
+    params.require(:monitor).permit(integration_ids: [])[:integration_ids]
   end
 
   def monitor_page(monitor)
     monitor_path(monitor, org_slug: @current_org.slug)
-  end
-
-  # What a run found, for its notice.
-  def found(run)
-    if @monitor.kind_match?
-      "#{run.matched.to_i} #{'Log'.pluralize(run.matched.to_i)} matched"
-    elsif run.firing.to_i.zero?
-      "nothing firing"
-    else
-      "#{run.firing} #{'group'.pluralize(run.firing)} firing"
-    end
   end
 end

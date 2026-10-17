@@ -65,7 +65,7 @@ class MonitorSerializer
           matched: run.matched, logs_skipped: run.logs_skipped, elapsed_ms: run.elapsed_ms,
         }
       end,
-      integrations: @monitor.integrations.order(:name).map { |i| { id: i.id, name: i.name, provider: i.provider, enabled: i.active } },
+      integrations: IntegrationOptionSerializer.list(@monitor.integrations.order(:name)),
     }
   end
 end

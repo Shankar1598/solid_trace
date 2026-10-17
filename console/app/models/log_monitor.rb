@@ -65,6 +65,32 @@ class LogMonitor < ApplicationRecord
     disabled_at.nil?
   end
 
+  # Saves the Monitor with attributes and, when integration_ids is given,
+  # those Integrations, all or nothing. They are looked up in the Monitor's
+  # Organization: another Organization's Integration refuses the save.
+  # Answers whether it saved; errors says why not.
+  #
+  # Validating may check the Query with EventStore, which can take as long
+  # as a run, so it happens before the transaction opens: on SQLite a write
+  # transaction holds the database's write lock, and every other writer
+  # would wait on EventStore too.
+  def save_with(attributes, integration_ids: nil)
+    linked = organization_integrations(integration_ids) unless integration_ids.nil?
+    assign_attributes(attributes)
+    if linked == :foreign
+      errors.add(:integrations, "must belong to the Monitor's Organization")
+      return false
+    end
+    return false unless valid?
+
+    LogMonitor.transaction do
+      next false unless save(validate: false)
+
+      self.integrations = linked unless linked.nil?
+      true
+    end
+  end
+
   # Whether the scheduler should run it at now.
   def due?(now)
     enabled? && (next_run_at.nil? || next_run_at <= now + SCHEDULE_SLACK)
@@ -107,6 +133,13 @@ class LogMonitor < ApplicationRecord
   end
 
   private
+
+  # The Organization's Integrations of ids, or :foreign when any isn't one.
+  def organization_integrations(ids)
+    ids = ids.map(&:to_i).uniq
+    found = organization.integrations.where(id: ids).to_a
+    found.size == ids.size ? found : :foreign
+  end
 
   def project_of_the_organization
     return unless project && organization
