@@ -339,6 +339,8 @@ func (env *TestEnv) open(t *testing.T) {
 		if err := logStore.UseObjectStore(env.Bucket, env.LocalCacheHours); err != nil {
 			t.Fatalf("Failed to keep Log files in the bucket: %v", err)
 		}
+	} else if err := logStore.UseLocalDiskOnly(); err != nil {
+		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
 	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)

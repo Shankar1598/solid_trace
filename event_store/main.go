@@ -50,6 +50,8 @@ func main() {
 		if err := logStore.UseObjectStore(storage.NewObjectStore(cfg.ObjectStore), cfg.ObjectStore.LocalCacheHours); err != nil {
 			logger.L.Fatal("Failed to keep Log files in the object store's bucket", "error", err)
 		}
+	} else if err := logStore.UseLocalDiskOnly(); err != nil {
+		logger.L.Fatal("Failed to keep Log files on local disk only", "error", err)
 	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)

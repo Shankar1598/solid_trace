@@ -657,3 +657,30 @@ func TestLogFilesInAnS3BucketAreReadThroughHttpfs(t *testing.T) {
 		t.Errorf("Expected the Logs within Retention kept, got %v", got)
 	}
 }
+
+func TestARestartWithoutTheBucketWarnsThatEvictedHoursCantBeRead(t *testing.T) {
+	env, _ := setupBucketTestEnv(t, 0)
+	defer env.Cleanup()
+
+	postAndProcess(t, env, logJSON(t, "evicted", testNow.Add(-270*time.Minute), nil), logJSON(t, "hot", testNow, nil))
+	env.ExportLogs(t)
+	env.UploadLogFiles(t)
+
+	// Before the eviction, every file is still on local disk.
+	logs := captureLogs(t)
+	env.Bucket = nil
+	env.Reopen(t)
+	if strings.Contains(logs.String(), "only in a bucket") {
+		t.Errorf("Expected no warning while every file is local, got %s", logs)
+	}
+
+	env.Bucket = storage.NewDirStore(filepath.Join(env.dir, "bucket"))
+	env.Reopen(t)
+	env.EvictLogFiles(t)
+	logs.Reset()
+	env.Bucket = nil
+	env.Reopen(t)
+	if !strings.Contains(logs.String(), "only in a bucket") || !strings.Contains(logs.String(), "files=1") {
+		t.Errorf("Expected a warning that one file is only in a bucket, got %s", logs)
+	}
+}
