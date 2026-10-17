@@ -9,7 +9,8 @@ module Notifiers
   # - lines: Logs that matched, one line each, and how many more did
   # - link: the Logs explorer, showing what the Monitor saw
   # - severity: error (firing), warning (Logs matched) or info (resolved)
-  # - dedup_key: the same for every message about one group of a Monitor
+  # - dedup_key: the same for every message about one group of a Monitor,
+  #   and for every Match message of one
   # - action: "trigger" or "resolve"
   #
   # It passes through a mail job as a Hash (to_h, then new(**hash)).
