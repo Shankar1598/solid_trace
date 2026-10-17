@@ -39,6 +39,17 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
+  test "the Project page's DSN sends to ingest as the Logs snippets do: PUBLIC_INGEST_URL, or this host at port 4000" do
+    key = @project.project_keys.create!
+
+    assert_equal "http://#{key.public_key}@www.example.com:4000/#{@project.id}", project_page["project"]["keys"].sole["dsn"]
+
+    ENV["PUBLIC_INGEST_URL"] = "https://ingest.example.com/sentry/"
+    assert_equal "https://#{key.public_key}@ingest.example.com/sentry/#{@project.id}", project_page["project"]["keys"].sole["dsn"]
+  ensure
+    ENV.delete("PUBLIC_INGEST_URL")
+  end
+
   test "create project" do
     assert_difference -> { @organization.projects.count }, 1 do
       post projects_url(org_slug: @organization.slug), params: {
