@@ -1,6 +1,7 @@
 // Calls to Console for Dashboards that the pages make with fetch rather than
-// an Inertia visit: a chart's data, which the fetch queue runs, and the
-// explorer's Add to dashboard and the grid's layout, which stay on the page.
+// an Inertia visit: a chart's data, which the fetch queue runs, the chart
+// editor's preview, and the explorer's Add to dashboard and the grid's layout,
+// which stay on the page.
 import { RunError, runFailure, type TableAnswer } from '../logs/api'
 import { elapsedOf } from '../logs/runLine'
 import type { LogTable } from '../logs/table'
@@ -11,7 +12,25 @@ export async function fetchChartData({ orgSlug, dashboardId, chartId, from, to, 
   orgSlug: string; dashboardId: number; chartId: number; from: Date; to: Date; signal?: AbortSignal
 }): Promise<TableAnswer> {
   const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
-  const response = await call(`/${orgSlug}/dashboards/${dashboardId}/charts/${chartId}/data?${params}`, { signal })
+  return tableOf(await call(`/${orgSlug}/dashboards/${dashboardId}/charts/${chartId}/data?${params}`, { signal }))
+}
+
+/**
+ * The chart editor's preview: a Query not yet saved, run on a Project over [from, to) as a chart's
+ * data is, with its timeout and within Console's cap on chart runs. The Query goes in the body.
+ */
+export async function fetchChartPreview({ orgSlug, dashboardId, projectId, query, from, to, signal }: {
+  orgSlug: string; dashboardId: number; projectId: number; query: string; from: Date; to: Date; signal?: AbortSignal
+}): Promise<TableAnswer> {
+  return tableOf(await call(`/${orgSlug}/dashboards/${dashboardId}/charts/preview`, {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
+    body: JSON.stringify({ project_id: projectId, query, from: from.toISOString(), to: to.toISOString() }),
+  }))
+}
+
+async function tableOf(response: Response): Promise<TableAnswer> {
   const body = await response.json().catch(() => null)
   if (response.ok && body?.table && typeof body.table === 'object') return { table: body.table as LogTable, elapsedMs: elapsedOf(body) }
   throw runFailure(body, response.status)
@@ -48,16 +67,19 @@ export function errorsText(errors: Record<string, string[]>): string {
 }
 
 async function send<T>(method: string, url: string, body: unknown): Promise<T> {
-  const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? ''
   const response = await call(url, {
     method,
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
     body: JSON.stringify(body),
   })
   const answer = await response.json().catch(() => null)
   if (response.ok) return answer as T
   if (answer?.errors && typeof answer.errors === 'object' && !Array.isArray(answer.errors)) throw new RunError(errorsText(answer.errors))
   throw new RunError(typeof answer?.error === 'string' ? answer.error : `Console answered HTTP ${response.status}. Try again.`)
+}
+
+function csrfToken(): string {
+  return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? ''
 }
 
 async function call(url: string, init: RequestInit & { signal?: AbortSignal }): Promise<Response> {

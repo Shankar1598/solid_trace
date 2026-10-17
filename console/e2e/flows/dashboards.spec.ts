@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 import { ORG } from '../support/data'
 import { last24h, openLogs, pickQuickRange, runBy } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
@@ -68,12 +68,23 @@ test('a member builds a Dashboard from the explorer and the editor, ranges it, l
   await expect(card(page, 'Logs by level').getByRole('figure')).toHaveAttribute('aria-label', /^Bar chart of .* over time$/)
 
   // Add a chart in the editor: a Query whose single number shows as a stat.
+  // The preview runs as a chart does, with the Query in a POST body, never
+  // through the explorer's run, which has no timeout.
+  const explorerRuns: string[] = []
+  const noteExplorerRun = (request: Request) => { if (request.url().includes('/logs/query')) explorerRuns.push(request.url()) }
+  page.on('request', noteExplorerRun)
   await page.getByRole('button', { name: 'Add chart' }).click()
   const editor = page.getByRole('dialog')
   await expect(editor.locator('[data-chart-preview]').getByRole('figure')).toBeVisible()
   await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
+  const previewRun = page.waitForRequest(request =>
+    request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/charts/preview') &&
+    request.postDataJSON()?.query === `${SOURCE}\n| summarize count()`)
   await editor.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| summarize count()`)
+  expect(new URL((await previewRun).url()).search).toBe('')
   await expect(editor.locator('[data-chart-preview] [data-chart-stat]')).toBeVisible()
+  page.off('request', noteExplorerRun)
+  expect(explorerRuns).toEqual([])
   await editor.getByLabel('Title').fill('Total Logs')
   await editor.getByRole('group', { name: 'Viz' }).getByRole('button', { name: 'Stat' }).click()
   await editor.getByLabel('Unit').fill('Logs')

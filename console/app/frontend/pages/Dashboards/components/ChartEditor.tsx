@@ -11,7 +11,8 @@ import {
   DASHBOARD_VIZES, newChartQuery, titleOfQuery, withSource,
   type ChartOptions, type DashboardChart, type DashboardViz,
 } from '@/lib/dashboards/dashboard'
-import { RunError, fetchRun, validateQuery, type QueryProblem } from '@/lib/logs/api'
+import { fetchChartPreview } from '@/lib/dashboards/api'
+import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/builder'
 import { fieldInfos } from '@/lib/logs/columns'
 import { cn } from '@/lib/utils'
@@ -91,9 +92,9 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
           setPreview({ status: 'error', message: `Line ${p.line}, column ${p.column}: ${p.message}` })
           return
         }
-        const answer = await fetchRun({ orgSlug, projectSlug: project.slug, query, from: ran.from, to: ran.to, signal: controller.signal })
-        if (answer.kind === 'table') setPreview({ status: 'done', table: answer.table, elapsedMs: answer.elapsedMs })
-        else setPreview({ status: 'error', message: 'This Query answers Logs, not a table. End it with summarize, count or project to chart it.' })
+        // Run as a chart's data is, with its timeout: a run abandoned for the next edit still holds a Console thread.
+        const answer = await fetchChartPreview({ orgSlug, dashboardId, projectId: project.id, query, from: ran.from, to: ran.to, signal: controller.signal })
+        setPreview({ status: 'done', table: answer.table, elapsedMs: answer.elapsedMs })
       } catch (error) {
         if (controller.signal.aborted) return
         setPreview({ status: 'error', message: error instanceof RunError ? error.message : 'The preview failed. Try again.' })
