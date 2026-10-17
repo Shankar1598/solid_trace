@@ -25,10 +25,13 @@
 # be configured to provide at least as many connections as the number of
 # threads. This includes Active Record's `pool` parameter in `database.yml`.
 #
-# Console's threads mostly wait on EventStore: a Dashboard chart or an explorer
-# run can hold one for up to 35 s, and one Dashboard runs up to 4 at once. So
-# production keeps 10, well above Rails' 3, and database.yml's max_connections
-# reads the same RAILS_MAX_THREADS so the pool matches.
+# Console's threads mostly wait on EventStore. A Dashboard chart's run holds
+# one for up to 35 s, and keeps it after the browser aborts the run, so
+# app/services/chart_runs.rb caps those runs 3 under this count: one
+# Dashboard runs its 4 at once, and the rest stay free for pages and sign-in.
+# An explorer run has no time limit. So production keeps 10, well above
+# Rails' 3, and database.yml's max_connections reads the same
+# RAILS_MAX_THREADS so the pool matches.
 threads_count = Rails.env.development? ? 1 : ENV.fetch("RAILS_MAX_THREADS", 10)
 threads threads_count, threads_count
 
