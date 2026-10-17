@@ -23,13 +23,22 @@ class EventStoreTest < ActiveSupport::TestCase
     assert_equal "evt-123", response["uuid"]
   end
 
-  test "query_events returns default on not found" do
+  test "query_events! answers no Events on not found" do
     stub_request(:get, "#{@base_url}/api/123/events")
       .to_return(status: 404, body: "")
 
-    response = EventStore.query_events(project_id: 123, params: {})
+    response = EventStore.query_events!(project_id: 123, params: {})
 
     assert_equal [], response
+  end
+
+  test "query_events! raises Unavailable with EventStore's reason when it can't read Events" do
+    why = "Events can't be read now: the bucket timed out; EventStore tries again every minute"
+    stub_request(:get, "#{@base_url}/api/123/events").to_return(status: 503, body: { error: why }.to_json)
+
+    error = assert_raises(EventStore::Unavailable) { EventStore.query_events!(project_id: 123) }
+
+    assert_equal why, EventStore.error_text(error.body)
   end
 
   test "count_events returns count" do
@@ -287,7 +296,7 @@ class EventStoreTest < ActiveSupport::TestCase
       }
     ]
 
-    EventStore.stub :query_events, response do
+    EventStore.stub :query_events!, response do
       events = EventStore.new(issue).all
 
       assert_equal 1, events.length
