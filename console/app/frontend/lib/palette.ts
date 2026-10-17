@@ -17,6 +17,8 @@ export interface PaletteItem {
 }
 
 export interface PaletteContext {
+  /** The signed-in viewer's id, whose recent Queries show. */
+  viewer: number | null
   orgSlug: string
   projects: { name: string; slug: string }[]
   dashboards: { id: number; name: string }[]

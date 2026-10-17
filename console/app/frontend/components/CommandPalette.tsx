@@ -11,10 +11,10 @@ import { ShortcutSheet } from './ShortcutSheet'
 import { useShortcut } from './useShortcut'
 
 // The layout's own items: recent Queries, each Project's Logs, each Dashboard and Monitor, and the pages.
-registerPaletteSource('recent-queries', ({ orgSlug, projects }) => {
-  if (!orgSlug) return []
+registerPaletteSource('recent-queries', ({ viewer, orgSlug, projects }) => {
+  if (!orgSlug || viewer === null) return []
   const names = new Map(projects.map(p => [p.slug, p.name]))
-  return latestQueries(browserStorage(), orgSlug, projects.map(p => p.slug)).map(r => ({
+  return latestQueries(browserStorage(), viewer, orgSlug, projects.map(p => p.slug)).map(r => ({
     id: `recent/${r.project}/${r.at}`,
     group: 'Recent Queries',
     label: queryLine(r.query),
@@ -68,6 +68,7 @@ export function CommandPalette({ children }: { children: React.ReactNode }) {
   ]), [])
 
   const context: PaletteContext = {
+    viewer: props.current_user?.id ?? null,
     orgSlug: props.current_org?.slug ?? '',
     projects: props.org_projects ?? [],
     dashboards: props.org_dashboards ?? [],
