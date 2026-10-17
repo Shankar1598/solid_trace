@@ -363,7 +363,8 @@ type timeSpan struct {
 func (r *logRead) sourcesIn(spans []timeSpan, sel, where func(LogColumns) string) string {
 	projectID := r.projectID
 	// within is the condition that time is in one of the spans, clipped to
-	// [from, to), or "" for none.
+	// [from, to), or "" for none. It is in parentheses, so a where can be
+	// added to it with AND.
 	within := func(from, to time.Time) string {
 		var ranges []string
 		for _, span := range spans {
@@ -374,7 +375,7 @@ func (r *logRead) sourcesIn(spans []timeSpan, sel, where func(LogColumns) string
 		if len(ranges) == 0 {
 			return ""
 		}
-		return "(" + strings.Join(ranges, ") OR (") + ")"
+		return "((" + strings.Join(ranges, ") OR (") + "))"
 	}
 	source := func(table string, cols LogColumns, times string) string {
 		condition := times
