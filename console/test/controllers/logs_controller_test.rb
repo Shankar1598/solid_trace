@@ -48,6 +48,97 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ @project.slug => 90, other.slug => 14 }, retention)
   end
 
+  test "the explorer has where to send the Project's Logs, for an empty Project's snippets" do
+    key = create(:project_key, project: @project)
+
+    assert_equal({ "url" => "http://www.example.com:4000", "key" => key.public_key }, explorer_page["ingest"])
+
+    ENV["PUBLIC_INGEST_URL"] = "https://ingest.example.com/"
+    assert_equal "https://ingest.example.com", explorer_page["ingest"]["url"]
+  ensure
+    ENV.delete("PUBLIC_INGEST_URL")
+  end
+
+  test "the explorer learns after it opens whether the Project has Logs in its Retention" do
+    @project.update!(log_retention_days: 7)
+    travel_to Time.utc(2026, 10, 17, 12, 0, 0) do
+      newest = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+        .with(body: {
+          query: "", from: "2026-10-10T12:00:00.000Z", to: "2026-10-17T13:00:00.000Z", limit: 1,
+          timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
+        }.to_json)
+        .to_return(status: 200, body: { logs: [ { id: "log-1" } ], next_cursor: "older" }.to_json)
+
+      assert_not explorer_page.key?("has_logs")
+      assert_not_requested newest
+      assert_equal true, explorer_page_prop("has_logs")
+
+      newest.to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+      assert_equal false, explorer_page_prop("has_logs")
+    end
+  end
+
+  test "whether the Project has Logs is unknown while EventStore can't answer" do
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").to_timeout
+
+    assert_nil explorer_page_prop("has_logs")
+  end
+
+  test "Send a test Log posts a sample Log to EventStore's ingest with the Project's key" do
+    key = create(:project_key, project: @project)
+    ENV["EVENT_STORE_INGEST_URL"] = "http://127.0.0.1:4999"
+    sent = nil
+    ingest = stub_request(:post, "http://127.0.0.1:4999/api/#{@project.id}/logs")
+      .with(headers: { "Authorization" => "Bearer #{key.public_key}", "Content-Type" => "application/json" }) { |request| sent = JSON.parse(request.body) }
+      .to_return(status: 200, body: { accepted: 1, dropped: 0, truncated: 0 }.to_json)
+
+    travel_to Time.utc(2026, 10, 17, 12, 0, 0) do
+      post test_project_logs_url(@project, org_slug: @organization.slug), as: :json
+    end
+
+    assert_response :created
+    assert_requested ingest
+    assert_equal 1, sent.size
+    assert_equal "2026-10-17T12:00:00.000Z", sent.first["time"]
+    assert_equal "info", sent.first["level"]
+    assert_match(/test Log/, sent.first["message"])
+    assert_kind_of Numeric, sent.first["duration_ms"]
+    assert_equal "2026-10-17T12:00:00.000Z", response.parsed_body["time"]
+  ensure
+    ENV.delete("EVENT_STORE_INGEST_URL")
+  end
+
+  test "someone outside the Organization can't send a test Log to its Project" do
+    create(:project_key, project: @project)
+    ingest = stub_request(:post, %r{/api/#{@project.id}/logs\z})
+    sign_in_as(@outsider)
+
+    post test_project_logs_url(@project, org_slug: @organization.slug), as: :json
+
+    assert_response :not_found
+    assert_not_requested ingest
+  end
+
+  test "Send a test Log says so when EventStore is down" do
+    create(:project_key, project: @project)
+    stub_request(:post, %r{/api/#{@project.id}/logs\z}).to_raise(Errno::ECONNREFUSED)
+
+    post test_project_logs_url(@project, org_slug: @organization.slug), as: :json
+
+    assert_response :bad_gateway
+    assert_equal "EventStore is unavailable. Try again shortly.", response.parsed_body["error"]
+  end
+
+  test "Send a test Log needs a key on the Project" do
+    ingest = stub_request(:post, %r{/api/#{@project.id}/logs\z})
+
+    post test_project_logs_url(@project, org_slug: @organization.slug), as: :json
+
+    assert_response :unprocessable_content
+    assert_equal "This Project has no key. Add one in its settings, then send a test Log.", response.parsed_body["error"]
+    assert_not_requested ingest
+  end
+
   test "someone outside the Organization can't open its Logs explorer" do
     sign_in_as(@outsider)
 
@@ -499,6 +590,16 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal "Logs/Index", JSON.parse(response.body)["component"]
     JSON.parse(response.body)["props"]
+  end
+
+  # A prop the explorer loads after it opens, as Inertia asks for a deferred one.
+  def explorer_page_prop(name)
+    get project_logs_url(@project, org_slug: @organization.slug), headers: {
+      "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest,
+      "X-Inertia-Partial-Component" => "Logs/Index", "X-Inertia-Partial-Data" => name,
+    }
+    assert_response :success
+    JSON.parse(response.body)["props"].fetch(name)
   end
 
   def holding_every_chart_run(left = ChartRuns.limit, &block)

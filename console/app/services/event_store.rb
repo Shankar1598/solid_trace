@@ -49,6 +49,12 @@ class EventStore
     ENV.fetch("EVENT_STORE_URL", "http://127.0.0.1:4100")
   end
 
+  # The event store's ingest, where SDKs and shippers send, as Console
+  # reaches it.
+  def self.ingest_url
+    ENV.fetch("EVENT_STORE_INGEST_URL", "http://127.0.0.1:4000")
+  end
+
   # ============================================================================
   # Class Methods - Direct API Access
   # ============================================================================
@@ -168,6 +174,13 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/sql", body, sql: true, read_timeout: read_timeout(timeout_seconds))
     end
 
+    # Sends Logs to a Project's ingest as a shipper would, with one of its
+    # keys: {"accepted", "dropped", "truncated"}. A 200 means they are stored;
+    # Log processing makes them readable a moment later.
+    def ingest_logs(project_id:, key:, logs:)
+      post!("#{ingest_url}/api/#{project_id}/logs", logs, headers: { authorization: "Bearer #{key}" }, read_timeout: 10)
+    end
+
     private
 
     def refuse_sql_unless_enabled!
@@ -187,10 +200,10 @@ class EventStore
     # Pass read_timeout: nil for a run with no timeout_seconds, which waits as
     # long as its Query takes. Opening the connection still times out.
     # Pass sql: true for a SQL endpoint, whose 403 means SQL queries are off.
-    def post!(url, body, sql: false, **timeouts)
+    def post!(url, body, sql: false, headers: {}, **timeouts)
       response = RestClient::Request.execute(
         method: :post, url: url, payload: body.to_json,
-        headers: { content_type: :json, accept: :json }, **timeouts
+        headers: { content_type: :json, accept: :json, **headers }, **timeouts
       )
       JSON.parse(response.body)
     rescue RestClient::BadRequest => e

@@ -69,6 +69,7 @@ Rails.application.routes.draw do
           get :histogram
           get :readable_sql
           post :sql
+          post :test, action: :send_test
         end
       end
 
