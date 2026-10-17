@@ -13,6 +13,14 @@ class ProjectKey < ApplicationRecord
     "#{uri.scheme}://#{public_key}@#{host}#{uri.path.sub(%r{/+\z}, '')}/#{project_id}"
   end
 
+  # New values in place of the key's, so the old ones no longer send.
+  def rotate!
+    self.public_key = nil
+    self.secret_key = nil
+    generate_keys
+    save!
+  end
+
   def label
     "Default"
   end

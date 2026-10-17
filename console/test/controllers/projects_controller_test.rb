@@ -69,7 +69,8 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_match(/\A\h{64}\z/, keys.first.secret_key)
   end
 
-  test "Generate New Key gives the Project another key of its own" do
+  test "an admin's Generate New Key gives the Project another key of its own" do
+    sign_in_as(@admin)
     post project_keys_url(@project, org_slug: @organization.slug)
 
     assert_redirected_to project_url(@project, org_slug: @organization.slug)
@@ -132,6 +133,13 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
 
     sign_in_as(@admin)
     assert_equal true, project_page["can_manage_project"]
+  end
+
+  test "the Project page offers key buttons to admins only" do
+    assert_equal false, project_page["can_manage_keys"]
+
+    sign_in_as(@admin)
+    assert_equal true, project_page["can_manage_keys"]
   end
 
   test "a member can't change a Project's Log Retention" do
