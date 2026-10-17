@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -63,11 +64,15 @@ type TestEnv struct {
 	Clock *clock.Manual
 
 	// Bucket keeps the Log files too, if set, each local copy for
-	// LocalCacheHours (logs_bucket_test.go). BucketConfig, if set, is the
+	// LocalCacheHours (logs_bucket_test.go), and the Event archive
+	// (event_archive_bucket_test.go). BucketConfig, if set, is the
 	// object_store that DuckDB reads the bucket through.
 	Bucket          storage.ObjectStore
 	BucketConfig    *config.ObjectStore
 	LocalCacheHours int
+	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
+	// it; 0 turns it off.
+	BinCacheBytes int64
 
 	dir   string // holds Pebble and DuckDB
 	close func()
@@ -301,6 +306,8 @@ func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 		BatchLock:   &sync.Mutex{},
 		EventWriter: &recordingEventWriter{},
 		Clock:       clock.NewManual(testNow),
+
+		BinCacheBytes: config.DefaultLogsBinCacheMB << 20,
 	}
 	if configure != nil {
 		configure(env)
@@ -330,6 +337,11 @@ func (env *TestEnv) open(t *testing.T) {
 			t.Fatalf("Failed to let DuckDB read the bucket: %v", err)
 		}
 	}
+	if env.Bucket != nil {
+		if err := duckdbWriter.UseEventArchiveBucket(context.Background(), env.Bucket); err != nil {
+			t.Fatalf("Failed to keep the Event archive in the bucket: %v", err)
+		}
+	}
 
 	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"), filepath.Join(env.dir, "logs_parquet"))
 	if err != nil {
@@ -339,7 +351,10 @@ func (env *TestEnv) open(t *testing.T) {
 		if err := logStore.UseObjectStore(env.Bucket, env.LocalCacheHours); err != nil {
 			t.Fatalf("Failed to keep Log files in the bucket: %v", err)
 		}
+	} else if err := logStore.UseLocalDiskOnly(); err != nil {
+		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
 	}
+	logStore.UseBinCache(env.BinCacheBytes)
 
 	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)
 	if err != nil {

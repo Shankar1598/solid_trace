@@ -45,6 +45,21 @@ func (s *LogStore) UseObjectStore(bucket ObjectStore, localCacheHours int) error
 	return s.settleEvictions()
 }
 
+// UseLocalDiskOnly is UseObjectStore's counterpart, for when no bucket is
+// configured: call it instead, at the same point. It warns when the manifest
+// has files whose bytes are only in a bucket, as after an object_store block
+// is removed from the config, since reads of their hours then fail.
+func (s *LogStore) UseLocalDiskOnly() error {
+	var onlyInABucket int
+	if err := s.db.QueryRow("SELECT count(*) FROM logs.log_files WHERE NOT local").Scan(&onlyInABucket); err != nil {
+		return fmt.Errorf("count log files only in a bucket: %w", err)
+	}
+	if onlyInABucket > 0 {
+		logger.L.Warn("Some Log files are only in a bucket, but no object_store is configured, so reads of their hours fail: add the object_store block back to read them", "files", onlyInABucket)
+	}
+	return nil
+}
+
 // LogFilesPublished receives a signal after an export publishes files, which
 // UploadLogFiles uploads.
 func (s *LogStore) LogFilesPublished() <-chan struct{} {
@@ -374,6 +389,7 @@ func (s *LogStore) deleteTombstonedObjects() error {
 	var (
 		deleted []logFile
 		failed  error
+		tried   bool
 	)
 	for _, file := range files {
 		if s.pinned(file.key()) || s.isUploading(file.key()) {
@@ -382,6 +398,7 @@ func (s *LogStore) deleteTombstonedObjects() error {
 		if !isMissing(s.files.path(file)) {
 			continue // deleteTombstonedFiles deletes these bytes first
 		}
+		tried = true
 		ctx, cancel := context.WithTimeout(context.Background(), deleteObjectTimeout)
 		err := s.bucket.Delete(ctx, file.key())
 		cancel()
@@ -391,13 +408,17 @@ func (s *LogStore) deleteTombstonedObjects() error {
 		}
 		deleted = append(deleted, file)
 	}
+	// A pass that tried no deletion, as every object was skipped, says
+	// nothing of the bucket.
 	switch {
 	case failed != nil && !s.objectsFailing:
 		logger.L.Error("Deleting deleted Log files from the bucket failed, retrying on each Cleanup pass", "error", failed)
-	case failed == nil && s.objectsFailing:
+	case failed == nil && tried && s.objectsFailing:
 		logger.L.Info("Deleted deleted Log files from the bucket after failing", "files", len(deleted))
 	}
-	s.objectsFailing = failed != nil
+	if tried {
+		s.objectsFailing = failed != nil
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.dropTombstones(deleted)

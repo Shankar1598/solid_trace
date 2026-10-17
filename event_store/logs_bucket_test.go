@@ -27,10 +27,10 @@ type flakyBucket struct {
 	dir string
 	// failPuts fails every upload. putThenFail stores the object, then
 	// fails, as when EventStore stops before it marks the file uploaded.
-	// failDeletes fails every deletion.
-	failPuts, putThenFail, failDeletes atomic.Bool
-	// deletes counts the deletions asked of the bucket.
-	deletes atomic.Int64
+	// failDeletes fails every deletion, and failLists every listing.
+	failPuts, putThenFail, failDeletes, failLists atomic.Bool
+	// puts and deletes count the uploads and deletions asked of the bucket.
+	puts, deletes atomic.Int64
 	// stall, if set before an upload starts, holds each upload after it
 	// stores the object, as a request whose answer doesn't come, until
 	// stall is closed; stalled then gets a signal.
@@ -38,6 +38,7 @@ type flakyBucket struct {
 }
 
 func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
+	b.puts.Add(1)
 	if b.failPuts.Load() {
 		return errors.New("the bucket is unavailable")
 	}
@@ -59,6 +60,13 @@ func (b *flakyBucket) Put(ctx context.Context, key, localPath string) error {
 		}
 	}
 	return nil
+}
+
+func (b *flakyBucket) List(ctx context.Context, prefix string) ([]storage.StoredObject, error) {
+	if b.failLists.Load() {
+		return nil, errors.New("the bucket is unavailable")
+	}
+	return b.ObjectStore.List(ctx, prefix)
 }
 
 func (b *flakyBucket) Delete(ctx context.Context, key string) error {
@@ -655,5 +663,32 @@ func TestLogFilesInAnS3BucketAreReadThroughHttpfs(t *testing.T) {
 	}
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"hot", "nine", "seven"}) {
 		t.Errorf("Expected the Logs within Retention kept, got %v", got)
+	}
+}
+
+func TestARestartWithoutTheBucketWarnsThatEvictedHoursCantBeRead(t *testing.T) {
+	env, _ := setupBucketTestEnv(t, 0)
+	defer env.Cleanup()
+
+	postAndProcess(t, env, logJSON(t, "evicted", testNow.Add(-270*time.Minute), nil), logJSON(t, "hot", testNow, nil))
+	env.ExportLogs(t)
+	env.UploadLogFiles(t)
+
+	// Before the eviction, every file is still on local disk.
+	logs := captureLogs(t)
+	env.Bucket = nil
+	env.Reopen(t)
+	if strings.Contains(logs.String(), "only in a bucket") {
+		t.Errorf("Expected no warning while every file is local, got %s", logs)
+	}
+
+	env.Bucket = storage.NewDirStore(filepath.Join(env.dir, "bucket"))
+	env.Reopen(t)
+	env.EvictLogFiles(t)
+	logs.Reset()
+	env.Bucket = nil
+	env.Reopen(t)
+	if !strings.Contains(logs.String(), "only in a bucket") || !strings.Contains(logs.String(), "files=1") {
+		t.Errorf("Expected a warning that one file is only in a bucket, got %s", logs)
 	}
 }
