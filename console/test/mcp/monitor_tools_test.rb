@@ -89,8 +89,142 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/settings/integrations", answer.link
   end
 
+  # Saving
+
+  test "create_monitor makes a Monitor with its Integrations once EventStore has checked its Query, linking to it" do
+    query = "['shop']\n| where level == 'error'\n| summarize count() by service"
+
+    answer = call_tool(:create_monitor, user: @user, project: "shop", name: "Errors by service", kind: "threshold", query: query,
+      interval_minutes: 2, range_minutes: 15, operator: ">=", threshold: 5, notify_by_group: true, integration_ids: [ @slack.id ])
+
+    assert_not answer.error?
+    made = @acme.monitors.find_by!(name: "Errors by service")
+    assert_equal [ @shop, "threshold", query, ">=", 5.0, 15, 2, true, false, true, [ @slack ] ],
+      [ made.project, made.kind, made.query, made.operator, made.threshold, made.range_minutes, made.interval_minutes,
+        made.notify_by_group, made.alert_on_no_data, made.enabled?, made.integrations.to_a ]
+    assert_equal [ made.id, "shop", [ @slack.id ], "ok" ], answer.json.values_at("id", "project", "integration_ids", "status")
+    assert_equal "http://console.test/acme/monitors/#{made.id}", answer.link
+    assert_requested(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/validate") { |request| JSON.parse(request.body)["query"] == query }
+  end
+
+  test "create_monitor answers the Query check's and the Monitor's errors and makes none" do
+    logs = call_tool(:create_monitor, user: @user, project: "shop", name: "Errors", kind: "threshold",
+      query: "['shop']\n| where level == 'error'", operator: ">", threshold: 1)
+    assert logs.error?
+    assert_match(/\ANot saved: Query must end in a summarize/, logs.text)
+
+    no_threshold = call_tool(:create_monitor, user: @user, project: "shop", name: "Errors", kind: "threshold", query: "['shop']\n| summarize count()")
+    assert_equal "Not saved: Operator must be >, >=, < or <=; Threshold is not a number.", no_threshold.text
+    assert_not LogMonitor.exists?(name: "Errors")
+  end
+
+  test "another Organization's Integration is refused, and nothing is saved" do
+    made = call_tool(:create_monitor, user: @user, project: "shop", name: "Errors", kind: "threshold", query: @monitor.query,
+      operator: ">", threshold: 1, integration_ids: [ @slack.id, @their_integration.id ])
+    assert_equal "Not saved: Integrations must belong to the Monitor's Organization.", made.text
+    assert_not LogMonitor.exists?(name: "Errors")
+
+    changed = call_tool(:update_monitor, user: @user, monitor: @monitor.id, name: "Renamed", integration_ids: [ @their_integration.id ])
+    assert_equal "Not saved: Integrations must belong to the Monitor's Organization.", changed.text
+    assert_equal [ "Checkout errors", [ @slack ] ], [ @monitor.reload.name, @monitor.integrations.to_a ]
+  end
+
+  test "update_monitor changes only the fields given, and replaces the Integrations when they're given" do
+    pager = @acme.integrations.create!(provider: "pagerduty", name: "On call", settings: { "routing_key" => "key" })
+
+    answer = call_tool(:update_monitor, user: @user, monitor: @monitor.id, name: "Checkout errors (api)", threshold: 20, integration_ids: [ pager.id ])
+
+    assert_not answer.error?
+    @monitor.reload
+    assert_equal [ "Checkout errors (api)", 20.0, ">", [ pager ] ], [ @monitor.name, @monitor.threshold, @monitor.operator, @monitor.integrations.to_a ]
+    assert_equal [ "Checkout errors (api)", [ pager.id ] ], answer.json.values_at("name", "integration_ids")
+    assert_equal "http://console.test/acme/monitors/#{@monitor.id}", answer.link
+
+    call_tool(:update_monitor, user: @user, monitor: @monitor.id, threshold: 30)
+    assert_equal [ pager ], @monitor.reload.integrations.to_a, "Integrations not given are kept"
+    call_tool(:update_monitor, user: @user, monitor: @monitor.id, integration_ids: [])
+    assert_empty @monitor.reload.integrations
+
+    assert_match(/\AGive at least one of project, enabled, name/, call_tool(:update_monitor, user: @user, monitor: @monitor.id).text)
+    assert_equal "Not saved: Name can't be blank.", call_tool(:update_monitor, user: @user, monitor: @monitor.id, name: "").text
+  end
+
+  test "update_monitor points the Query's source at a new Project, as the Monitor form does, unless a query is given" do
+    api = create(:project, organization: @acme, slug: "api")
+    stub_monitor_query_check(api)
+
+    assert_not call_tool(:update_monitor, user: @user, monitor: @monitor.id, project: "api").error?
+    assert_equal [ api, "['api']\n| where level == 'error'\n| summarize count()" ], [ @monitor.reload.project, @monitor.query ]
+
+    query = "['shop']\n| summarize count() by service"
+    assert_not call_tool(:update_monitor, user: @user, monitor: @monitor.id, project: "shop", query: query).error?
+    assert_equal [ @shop, query ], [ @monitor.reload.project, @monitor.query ]
+
+    assert_equal "No Project secret in acme. list_projects lists them.",
+      call_tool(:update_monitor, user: @user, monitor: @monitor.id, project: "secret").text
+    assert_equal @shop, @monitor.reload.project
+  end
+
+  # On and off
+
+  test "update_monitor turns a Monitor off, resolving its firing groups, and on again, checking its Query again" do
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 42)
+    WebMock::RequestRegistry.instance.reset!
+    validate = "#{EventStore.base_url}/api/#{@shop.id}/logs/validate"
+
+    off = call_tool(:update_monitor, user: @user, monitor: @monitor.id, enabled: false)
+
+    assert_not off.error?
+    assert_equal [ false, "disabled" ], off.json.values_at("enabled", "status")
+    assert_equal [ [ @slack.id, "monitor_resolved" ] ], Notification.where(monitor_id: @monitor.id).pluck(:integration_id, :kind)
+    assert_not_requested :post, validate
+    off_at = @monitor.reload.disabled_at
+    travel 1.minute do
+      assert_not call_tool(:update_monitor, user: @user, monitor: @monitor.id, enabled: false).error?
+    end
+    assert_equal off_at, @monitor.reload.disabled_at, "a Monitor already off stays off from when it was turned off"
+
+    on = call_tool(:update_monitor, user: @user, monitor: @monitor.id, enabled: true)
+
+    assert_not on.error?
+    assert_equal [ true, "ok" ], on.json.values_at("enabled", "status")
+    assert @monitor.reload.enabled?
+    assert_requested :post, validate, times: 1
+  end
+
+  test "a Monitor whose Query no longer runs stays off, saying why" do
+    @monitor.update!(disabled_at: Time.current)
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/validate").to_return(status: 503, body: "down")
+
+    answer = call_tool(:update_monitor, user: @user, monitor: @monitor.id, enabled: true)
+
+    assert answer.error?
+    assert_equal "Not saved, so the Monitor stays off: Query could not be checked, as EventStore is unavailable. Try again shortly.",
+      answer.text
+    assert_not @monitor.reload.enabled?
+  end
+
+  test "delete_monitor deletes the Monitor, linking to the Monitors page" do
+    answer = call_tool(:delete_monitor, user: @user, monitor: @monitor.id)
+
+    assert_not answer.error?
+    assert_equal "Deleted Monitor #{@monitor.id}, Checkout errors.", answer.body
+    assert_not LogMonitor.exists?(@monitor.id)
+    assert Integration.exists?(@slack.id)
+    assert_equal "http://console.test/acme/monitors", answer.link
+  end
+
+  # Another Organization's
+
   test "another Organization's Monitor is not found, and its Monitors and Integrations aren't listed" do
-    assert_equal "No such Monitor. list_monitors lists them.", call_tool(:get_monitor, user: @user, monitor: @their_monitor.id).text
+    no_monitor = "No such Monitor. list_monitors lists them."
+    assert_equal no_monitor, call_tool(:get_monitor, user: @user, monitor: @their_monitor.id).text
+    assert_equal no_monitor, call_tool(:update_monitor, user: @user, monitor: @their_monitor.id, name: "Mine").text
+    assert_equal no_monitor, call_tool(:update_monitor, user: @user, monitor: @their_monitor.id, enabled: false).text
+    assert_equal no_monitor, call_tool(:delete_monitor, user: @user, monitor: @their_monitor.id).text
+    assert_equal [ "Theirs", true ], [ @their_monitor.reload.name, @their_monitor.enabled? ]
+    assert_equal "No Project secret in acme. list_projects lists them.",
+      call_tool(:create_monitor, user: @user, project: "secret", name: "Theirs", kind: "threshold", query: "summarize count()").text
     assert_equal [ "Checkout errors" ], call_tool(:list_monitors, user: @user).json["monitors"].map { |m| m["name"] }
     assert_equal [ "Alerts" ], call_tool(:list_integrations, user: @user).json["integrations"].map { |i| i["name"] }
   end
