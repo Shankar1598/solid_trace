@@ -191,7 +191,7 @@ class McpBaseTest < ActiveSupport::TestCase
       -> { raise EventStore::Rejected.new({ "error" => "SQL queries are read-only: DROP isn't allowed" }) } =>
         "SQL queries are read-only: DROP isn't allowed",
       -> { raise EventStore::SQLQueriesOff } => "SQL queries are turned off on this instance.",
-      -> { raise ChartRuns::Busy } => "Console is busy running other charts. Run this again in a moment.",
+      -> { raise ChartRuns::Busy } => "Console is busy running other Queries and charts. Run this again in a moment.",
       -> { raise ChartRuns::NotATable } => "This Query answers Logs, not a table. End it with summarize, count or project to chart it.",
       -> { raise EventStore::TimedOut.new({ "error" => "query timed out after 30s" }) } =>
         "The run was stopped at its timeout (query timed out after 30s). Try a shorter range or a narrower Query.",

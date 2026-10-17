@@ -8,6 +8,7 @@ module McpServer
   TOOLS = [
     McpTools::Whoami,
     McpTools::ListProjects,
+    McpTools::QueryLogs,
     McpTools::ListDashboards,
     McpTools::GetDashboard,
     McpTools::CreateDashboard,
