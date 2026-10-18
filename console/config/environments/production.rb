@@ -26,6 +26,9 @@ Rails.application.configure do
   # Store uploaded files on the local file system (see config/storage.yml for options).
   config.active_storage.service = :local
 
+  # Thruster serves Console over plain HTTP on port 3000, with no proxy in front
+  # (deploy/docker-compose.yml), so assume_ssl and force_ssl stay off until TLS is set up.
+
   # Assume all access to the app is happening through a SSL-terminating reverse proxy.
   # config.assume_ssl = true
 

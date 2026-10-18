@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-10-02
+Updated: 2026-10-18
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
 
@@ -8,38 +8,98 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 **Rules for agents:**
 - Don't pick up deferred hardening unprompted: the open items in [prod-readiness review.md](prod-readiness/review.md) (§1, §9, §10: tiered storage, retention, `mode=ro`, the `ValidateKey` cache, compose host networking, DSN, ingest limits, metrics, CI), 011 and 012. Each is marked deferred or `wontfix` there. A change that would make one of them worse is still worth a flag.
-- [Upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) was re-scoped on 2026-10-02 (logs 10) to move EventStore back to the released DuckDB 1.5.5. The old hold until 2026-10-21 no longer applies.
+- EventStore runs DuckDB 1.5.6, bundled with the driver (upgrade-pebble-duckdb 02, 2026-10-02). There is no alpha library or `duckdb_use_lib` tag any more. A shell opened before that change may still export `GOFLAGS=-tags=duckdb_use_lib`; open a new one.
+- Work happens in the main checkout, now on `feature/logs-v2` (the logs v2 integration branch, built on `feature/logs-v1`). One worktree, `../solid_trace-v2-go` on `feature/logs-v2-go`, held the EventStore track; it is level with `feature/logs-v2`.
 - Read [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md) before touching `event_store/storage/sqlite.go` or a Console enum or table that EventStore writes. A change to one must change the other in the same commit.
-- The user is editing [logs/map.md](logs/map.md) and the logs tickets in parallel. Don't edit them unless asked. The Logs counts and path below can be stale, so trust the map.
+- The logs map is the source of truth for logs; trust it over the counts below.
+- Benchmark and probe runs must finish in under a minute on the dev box.
 
 ## Where things stand
 
-- **Logs**: planning only, no code yet. The map is the source of truth and is being edited in parallel. 4 research tickets and 05 (prod-readiness gaps) are done. The goal is a v1 spec plus first-milestone tickets.
+- **MCP server**: planned with the user on 2026-10-17 ([spec](mcp/spec.md), [tickets](mcp/issues/)), on `feature/mcp` in the worktree `../solid_trace-mcp`, branched from `feature/logs-v2` at `4139293`. An MCP endpoint in Console at `POST /mcp`, signed in with API tokens from User settings, with 34 tools for Logs (Queries, SQL, Fields), Dashboards, Monitors, Issues and admin actions. SQL queries are read-only everywhere, and keys are admin-only. Tickets 01 to 10 are resolved: built and reviewed on 2026-10-17, with the Go track merged at `19939fb`; on 2026-10-18 the looks pass was merged in (`d3de5fa`), [docs/mcp.md](../docs/mcp.md) written, all 77 Playwright flows passed on `feature/mcp`, and an end-to-end run with the MCP inspector made a token in User settings, listed the tools and called the Logs, Dashboard and Monitor tools ([10](mcp/issues/10-docs-and-wrap.md)'s Comments). Rails (575 runs), vitest (391), typecheck and the Go suite pass. The dev stack now runs `feature/mcp` from the worktree. The whole-effort review (11) found nothing high or medium in the code; it restored the spec's plan sections, which recording the decisions had overwritten. Lows are in [carry-over.md](mcp/carry-over.md). [12](mcp/issues/12-sql-fetches-web-addresses-on-bucket-installs.md) is resolved (2026-10-18): on bucket installs, read-only SQL could make the server fetch any web address, internal ones included. httpfs now reads only S3 URLs, so SQL reaches the bucket's endpoint and S3's and GCS's public hosts, and nothing else.
+
+- **Bugs** ([issues](bugs/issues/)): seven Console bugs from before the logs and MCP work, found on 2026-10-17 and 18. Five were fixed on `feature/mcp` on 2026-10-18:
+  - the profile form, which never saved;
+  - password reset, built behind "Forgot your password?";
+  - emails, now matched in any case;
+  - Project slugs, which the New Project page no longer saves unreachable;
+  - a user in no Organization, who now makes one on a page of its own, and sign-up, which had never worked in the browser.
+
+  Their Playwright flows pass. Open: [05](bugs/issues/05-production-mail-unconfigured.md) (`needs-triage`), production has no mail settings, so no email reaches anyone and links point at `example.com`. [07](bugs/issues/07-sql-reads-every-organization.md) resolved (2026-10-18): SQL queries read only their own Project's `logs` and `events` views; the read-only check refuses every other table, file, URL, table function and the catalogue. Its updated Playwright flow isn't run yet.
+- **Logs v2**: implemented on `feature/logs-v2` (2026-10-10 to 17): charts in the explorer, developer UX, Dashboards, Monitors with Slack, PagerDuty and email, Log Parquet and the Event archive in S3 or GCS (tested on MinIO), and a bin cache. 20 of 24 [tickets](logs-v2/issues/) resolved, including a whole-branch review; Rails, vitest, typecheck, all 69 Playwright flows and the Go suite pass. Open: the merge (`ready-for-human`), a real GCS run (`needs-info`), leftover lows (`ready-for-agent`). The looks pass is committed (`82ff11d`).
+- **Logs**: v1 is implemented on `feature/logs-v1` (2026-10-03): 19 of 20 [tickets](logs-v1/issues/) resolved, code-reviewed, with the review fixes merged (`0eecf81`). It is not yet merged into `feature/logging` or `main`, and not yet clicked through in a browser. M1-10 (load test) is the only open ticket. Choices that depart from the spec are in its [Implementation decisions](logs-v1/spec.md#implementation-decisions); the review's fixes are in its Comments.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
 - **Integration notification**: resolved and merged (2026-10-02, `9a488c6`). One Console module sends new-Issue, threshold and assignment notifications through the outbox, with recorded outcomes, bounded retries and cleanup. EventStore's Event count honours the time window. Review findings left open are listed in the [spec](integration-notification/spec.md)'s Comments.
 - **Ingest write path**: reopened. 02 and 03 are resolved (2026-09-30). A code review on 2026-10-01 filed 04–06. 04, a lone bad DuckDB row stalling Event processing, is resolved (2026-10-01). 05 is `wontfix` (2026-10-02). 06 is resolved (2026-10-02). Event ingest stores the Event in Pebble before the `200`. Event processing, a single worker, catches up Issues, DuckDB and the Console from per-Project processing cursors in Pebble. Review §4 is fixed. Accepted gap: a crash can lose an `issue_created`.
-- **Upgrade Pebble and DuckDB**: merged. EventStore now uses Pebble v2.1.7 and the DuckDB 2.0 alpha engine (`v2.0.0-alpha43385`), linked as a shared library. Two follow-ups wait on it.
+- **Upgrade Pebble and DuckDB**: EventStore uses Pebble v2.1.7 and DuckDB 1.5.6 (`v2.10506.0`, bundled). [02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) moved it back from the 2.0 alpha on 2026-10-02, on `feature/logging`, not yet on `main`. [03](upgrade-pebble-duckdb/issues/03-pebble-value-separation.md) (Pebble value separation) is open.
 
 ## Next
 
-1. [Upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md): move EventStore back to DuckDB 1.5.5 (needs triage)
-2. [Logs 14](logs/issues/14-benchmark-storage-design-on-1-5-5.md): benchmark the chosen storage design on 1.5.5 (task, AFK), the last ticket before 13 (write the v1 spec)
+- **MCP server** ([spec](mcp/spec.md)): the whole-effort review found nothing high or medium in the code ([11](mcp/issues/11-whole-effort-review.md), `ready-for-human`). Next with the user: try `claude mcp add` against the dev stack, which runs `feature/mcp`, and decide where `feature/mcp` merges. With the user: [bugs 05](bugs/issues/05-production-mail-unconfigured.md), what to call the production mail settings.
+
+0. **Logs v2** ([spec](logs-v2/spec.md), [tickets](logs-v2/issues/)): built and reviewed; next with the user: [20, the looks pass](logs-v2/issues/20-looks-pass.md), [21, a real GCS run](logs-v2/issues/21-real-gcs-check.md) (needs their bucket and HMAC key) and [23, the merge](logs-v2/issues/23-merge-logs-v2.md). [22](logs-v2/issues/22-leftover-low-findings.md) lists the leftover lows.
+
+1. ~~Click through the Logs explorer in a browser.~~ Done in Logs v2 unit A0 with Playwright; rough edges in [the click-through notes](logs-v2/research/v1-click-through.md).
+2. Merge `feature/logs-v1` into `feature/logging` (then `main`) when happy.
+3. [M1-10](logs-v1/issues/M1-10-load-test-on-target-vm.md) (load test) on the 4 vCPU / 16 GB VM: `ready-for-human`, every blocker resolved. Things to measure are in the ticket and in M1-04's and M2-01's Comments.
+4. Flagged, not fixed: Log ingest reads a Project's Retention from Console's SQLite on every request, uncached (belongs with the deferred `ValidateKey` cache).
 
 ## Efforts
 
 | Effort | Done / open | Start here |
 |---|---|---|
-| Logs | 12 / 2 | [map.md](logs/map.md) |
+| Logs | 16 / 0 | [map.md](logs/map.md) |
+| Logs v1 | 19 / 1 | [spec.md](logs-v1/spec.md) |
+| Logs v2 | 20 / 4 | [20](logs-v2/issues/20-looks-pass.md) |
+| MCP server | 11 / 1 | [11](mcp/issues/11-whole-effort-review.md) |
+| Bugs | 6 / 1 | [05](bugs/issues/05-production-mail-unconfigured.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
-| Upgrade Pebble and DuckDB | 1 / 2 | [02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) |
+| Upgrade Pebble and DuckDB | 2 / 1 | [03](upgrade-pebble-duckdb/issues/03-pebble-value-separation.md) |
+| Phone layout | 0 / 1 | [01](phone-layout/issues/01-phone-layout.md) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
-01–12 (done) → 14 (benchmark on 1.5.5, waits on upgrade 02) → 13 (write the v1 spec)
+01–16 (done) → logs v1 tickets M1-01 … M3-04
 
-## Last session (2026-10-02, logs 12 query modes)
+## Last session (2026-10-10 to 17, logs v2)
+
+Planned Logs v2 with the user (Axiom as the reference) and built it from [the spec](logs-v2/spec.md) with workflow batches: a Console track in the main checkout and an EventStore track in a worktree, each unit implemented, reviewed, verified and fixed, then merged with `--no-ff`. On 2026-10-16 the user asked for less token spend: reviews became one review plus one verify, high and medium findings only, with 1 or 2 screenshots per UI unit and no visual polish (looks come later, with the user). A whole-branch review closed the build. Every unit's decisions are in the spec's Implementation decisions; leftovers in [carry-over.md](logs-v2/carry-over.md). Run notes for the orchestrator live in `~/.cache/solid-trace/logs-v2-notes/runs.md`.
+
+## Earlier session (2026-10-02 to 03, logs v1 implementation)
+
+Ran `/implement-spec` on the logs v1 spec, on integration branch `feature/logs-v1`, with at most two sub-agents at a time (the user's limit for this box). Each ticket was built test-first in its own worktree and merged with `--no-ff`; the worktrees are removed.
+- **Resolved:** 19 tickets, including **M1-11 (remove Angie)**, added mid-run at the user's request. Console now serves through Thruster and EventStore ingests on TCP 4000.
+- **Code review:** a two-axis review (standards and spec) found 8 spec problems, among them a long read stalling Log processing, `contains` missing arrays, a disk-limit default that could delete every Log file, and a clock step back losing acknowledged batches. All were fixed, along with the standards cleanups, in `0eecf81`.
+- **Decided by the user (2026-10-03):** Console listens on port 3000; the compose dependency cycle is fixed; ingest bodies are decoded only after the `ingest_max_waiting` gate; every Project edit is admin-only. They are recorded in the spec's Implementation decisions.
+- **Lost:** the overnight restart wiped the shared agent notes in `/tmp`. They were rebuilt in `~/.cache/solid-trace/logs-v1-notes/` (setup, briefs, review), outside the repo.
+
+## Earlier session (2026-10-02, logs v1 tickets)
+
+Wrote the logs v1 tickets with `/to-tickets` and resolved [logs 13](logs/issues/13-write-v1-spec-and-first-milestone-tickets.md). The user asked for all three milestones, not only the first, with tickets named by milestone (`M1-01` … `M3-04`).
+- **Changed in the spec:** Project deletion is detected when a Project's `projects` row vanishes, not its keys. Keys are hard-deleted, so the old rule would have wiped a Project's Logs when its last key was deleted. Console has no Project destroy route yet.
+- **M1-10** (load test) is `ready-for-human`: it needs the 4 vCPU / 16 GB VM and runs past the dev box's one-minute limit.
+- No code changed.
+
+## Earlier session (2026-10-02, logs 10 second pass, 15, 16)
+
+[Logs 10](logs/issues/10-storage-architecture-and-retention.md) resolved again (grilling); [ADR 0005](../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md) supersedes ADR 0004, and ADR 0003 gains a note.
+- **Decided:** one hot table per Project with key-named promoted columns (up to 100 (type, key) pairs, at ingest); popularity counted by the Log processor per Project per UTC day of `time`; lazy daily re-rank on the first Log of a day; demoted columns dropped at the 01:00 export; a shared MAP-only `logs_late` for out-of-window Logs; the compiler learns columns only from the promoted-set table.
+- **SQL mode's `logs` view** now covers the bar's Project and time range (a convenience, not a boundary). **SQL query** in `CONTEXT.md` is amended; tickets 11 and 12 carry pointer comments.
+- Reasoned, not benchmarked. The first-milestone load test covers per-Project tables, the daily switch and checkpoints at full scale.
+- The map's last two v1 fog patches became tickets and were resolved the same session: [15](logs/issues/15-how-log-queries-run.md) (no per-query timeouts; routing, cancel and caps left to the implementer) and [16](logs/issues/16-explorer-building-blocks.md) (non-Log results as a table only, URL state with SQL never run on load, stream paging, summary line, local time, libraries left to the implementer). Ticket 13 is now the only open logs ticket.
+
+## Earlier session (2026-10-02, DuckDB 1.5.6 and logs 14)
+
+Worked in the main checkout, now on `feature/logging`; all worktrees were removed (prototype branches remain as branches). `main` was merged into `feature/logging`.
+- **[Upgrade-pebble-duckdb 02](upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md) resolved** (`9168867`): EventStore runs DuckDB 1.5.6; the alpha wiring is gone; VARIANT layouts in `logsbench` are parked for 2.0. Dev DuckDB data written by the alpha was moved to the session scratchpad, not deleted.
+- **[Logs 14](logs/issues/14-benchmark-storage-design-on-1-5-5.md) resolved:** findings in [research/14](logs/research/14-storage-design-bench.md). MAP still beats JSON; stalls remain, no crash; the hot table plateaus; export is fine. The 5 s day target was missed because the hot table has no promoted columns.
+- **Decided with the user:** promote keys at ingest, 100 per Project, re-ranked nightly by popularity; the promoted set lives in `logs.duckdb`; plain Parquet files, no DuckLake (probed with a SQLite catalog).
+- **Logs 10 reopened** for the remaining promotion questions and a new ADR superseding 0004.
+- These commits are on `feature/logging`, not on `main`.
+
+## Earlier session (2026-10-02, logs 12 query modes)
 
 [Logs 12](logs/issues/12-query-builder-ux.md) is resolved (prototype). The user chose a `Builder | Query | SQL` switch. The Builder is filter chips + search only. Query → Builder works only when the Builder can show the Query, otherwise it offers to discard. SQL starts from the compiled SQL and is one-way. **Builder** added to `CONTEXT.md`.
 - Prototype: branch `prototype/logs-query-modes` (`7d19a45`), worktree `.claude/worktrees/logs-query-modes`. Its `storage/sqlite/development` is a symlink to the main checkout's dev databases, which now hold the `db:seed` data (`admin@solidtrace.local` / `password123`).

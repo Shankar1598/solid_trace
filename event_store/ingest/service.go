@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clock"
+	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 var (
@@ -17,62 +20,154 @@ var (
 	ErrOverloaded        = errors.New("server overloaded")
 )
 
-// Service owns Event ingest after authentication succeeds: it stores each
-// Event in Pebble and nothing more. Event processing does the Issue work.
+// Service owns Event ingest and Log ingest after authentication succeeds: it
+// stores each Event, and each request's normalised Logs, in Pebble and nothing
+// more. Event processing does the Issue work; Log processing moves Logs to
+// DuckDB.
 type Service struct {
-	events EventWriter
-	notify func(projectID uint32)
+	events       EventWriter
+	notifyEvents func(projectID uint32)
+	logs         LogWriter
+	notifyLogs   func(projectID uint32)
+	clock        clock.Clock
+	retention    Retention
 
-	// waiting counts requests waiting for their Event to be written. Past
-	// maxWaiting a request is rejected as overloaded.
+	// waiting counts requests waiting for their Event or Logs to be written.
+	// Past maxWaiting a request is rejected as overloaded.
 	waiting    atomic.Int64
 	maxWaiting int64
 }
 
-// NewService constructs the Event ingest module. The EventWriter is the seam
-// to Event storage; storage.PebbleWriter is the production adapter. notify is
-// called with the Project of each Event once it is written, to wake Event
-// processing.
-func NewService(events EventWriter, notify func(projectID uint32), maxWaiting int) *Service {
+// Config is what the Service writes to and whom it tells.
+type Config struct {
+	// Events and Logs are the seams to storage; storage.PebbleWriter is the
+	// production adapter of both.
+	Events EventWriter
+	Logs   LogWriter
+	// NotifyEvents and NotifyLogs are called with the Project of each write,
+	// once it is stored, to wake Event processing and Log processing.
+	NotifyEvents func(projectID uint32)
+	NotifyLogs   func(projectID uint32)
+	// Clock gives the receipt time of Logs.
+	Clock clock.Clock
+	// Retention gives each Project's Retention, which decides how old a
+	// Log's own time may be.
+	Retention Retention
+	// MaxWaiting caps the requests, Events and Logs together, waiting for
+	// their write. Past it, ingest answers 503.
+	MaxWaiting int
+}
+
+// NewService constructs Event ingest and Log ingest.
+func NewService(cfg Config) *Service {
 	return &Service{
-		events:     events,
-		notify:     notify,
-		maxWaiting: int64(maxWaiting),
+		events:       cfg.Events,
+		notifyEvents: cfg.NotifyEvents,
+		logs:         cfg.Logs,
+		notifyLogs:   cfg.NotifyLogs,
+		clock:        cfg.Clock,
+		retention:    cfg.Retention,
+		maxWaiting:   int64(cfg.MaxWaiting),
 	}
+}
+
+// Body is a request's body, read only once the request holds a waiting
+// place, so that an overloaded ingest turns a request away before decoding
+// its body. An error it returns is returned as it is.
+type Body func() ([]byte, error)
+
+// RawBody is a Body that needs no decoding.
+func RawBody(body []byte) Body {
+	return func() ([]byte, error) { return body, nil }
 }
 
 // IngestStore ingests a raw Event payload from the store endpoint.
-func (s *Service) IngestStore(projectID uint32, rawEventJSON []byte) error {
-	return s.ingestEvent(projectID, rawEventJSON)
-}
+func (s *Service) IngestStore(projectID uint32, body Body) error {
+	if !s.enterGate() {
+		return ErrOverloaded
+	}
+	defer s.leaveGate()
 
-// IngestEnvelope ingests the event item of an envelope and ignores every
-// other item type, transactions included.
-func (s *Service) IngestEnvelope(projectID uint32, envelope []byte) error {
-	payload, found, err := eventItem(envelope)
-	if err != nil || !found {
+	rawJSON, err := body()
+	if err != nil {
 		return err
 	}
-	return s.ingestEvent(projectID, payload)
+	if !json.Valid(rawJSON) {
+		return ErrInvalidEventJSON
+	}
+	return s.writeEvent(projectID, rawJSON)
 }
 
-// eventItem walks the items of a Sentry envelope and returns the payload of
-// the first "event" item. See https://develop.sentry.dev/sdk/data-model/envelopes/
+// IngestEnvelope ingests the first event item of an envelope, as the store
+// endpoint does, and the Logs of its log items, as one Log batch. It ignores
+// every other item type, transactions included.
+//
+// A log item or log record that can't be read is dropped and the envelope
+// still succeeds, as it does on Sentry. Once its Event is stored, Logs that
+// fail to store are dropped and logged, and the envelope succeeds too. Only a
+// malformed envelope or event, overload, or a failure before anything is
+// stored fails it.
+func (s *Service) IngestEnvelope(projectID uint32, body Body) error {
+	if !s.enterGate() {
+		return ErrOverloaded
+	}
+	defer s.leaveGate()
+
+	envelope, err := body()
+	if err != nil {
+		return err
+	}
+	items, err := readEnvelope(envelope)
+	if err != nil {
+		return err
+	}
+	if items.hasEvent && !json.Valid(items.event) {
+		return ErrInvalidEventJSON
+	}
+
+	if items.hasEvent {
+		if err := s.writeEvent(projectID, items.event); err != nil {
+			return err
+		}
+	}
+	if len(items.logs) > 0 {
+		records, dropped := sentryLogRecords(items.logs)
+		if _, err := s.storeLogs(projectID, records, dropped, normalise.Sentry); err != nil {
+			if !items.hasEvent {
+				return err
+			}
+			logger.L.Error("Dropping an envelope's Logs, as its Event is stored",
+				"project_id", projectID, "logs", len(records), "error", err)
+		}
+	}
+	return nil
+}
+
+// envelopeItems are the payloads of the items of an envelope that ingest
+// reads: its first event item, and every log item.
+type envelopeItems struct {
+	hasEvent bool
+	event    []byte
+	logs     [][]byte
+}
+
+// readEnvelope walks the items of a Sentry envelope and returns the payloads
+// of its first "event" item and of its "log" items. See
+// https://develop.sentry.dev/sdk/data-model/envelopes/
 //
 //	Envelope = Headers { "\n" Item } [ "\n" ]
 //	Item     = Headers "\n" Payload
 //
 // An item header with a "length" field owns exactly that many payload bytes,
 // newlines included; without one, the payload runs to the next newline.
-func eventItem(envelope []byte) ([]byte, bool, error) {
+func readEnvelope(envelope []byte) (envelopeItems, error) {
+	var items envelopeItems
 	envelopeHeader, rest, _ := bytes.Cut(envelope, newline)
 	var headers map[string]interface{}
 	if err := json.Unmarshal(envelopeHeader, &headers); err != nil {
-		return nil, false, ErrInvalidEnvelope
+		return items, ErrInvalidEnvelope
 	}
 
-	var event []byte
-	found := false
 	for len(rest) > 0 {
 		if rest[0] == '\n' {
 			rest = rest[1:]
@@ -85,19 +180,19 @@ func eventItem(envelope []byte) ([]byte, bool, error) {
 			Length *int   `json:"length"`
 		}
 		if err := json.Unmarshal(line, &itemHeader); err != nil || itemHeader.Type == "" {
-			return nil, false, ErrInvalidItemHeader
+			return items, ErrInvalidItemHeader
 		}
 
 		var payload []byte
 		if itemHeader.Length != nil {
 			length := *itemHeader.Length
 			if length < 0 || length > len(after) {
-				return nil, false, ErrInvalidEnvelope
+				return items, ErrInvalidEnvelope
 			}
 			payload, after = after[:length], after[length:]
 			if len(after) > 0 {
 				if after[0] != '\n' {
-					return nil, false, ErrInvalidEnvelope
+					return items, ErrInvalidEnvelope
 				}
 				after = after[1:]
 			}
@@ -106,27 +201,22 @@ func eventItem(envelope []byte) ([]byte, bool, error) {
 		}
 		rest = after
 
-		if itemHeader.Type == "event" && !found {
-			event, found = payload, true
+		switch {
+		case itemHeader.Type == "event" && !items.hasEvent:
+			items.hasEvent, items.event = true, payload
+		case itemHeader.Type == "log":
+			items.logs = append(items.logs, payload)
 		}
 	}
 
-	return event, found, nil
+	return items, nil
 }
 
 var newline = []byte("\n")
 
-func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
-	if !json.Valid(rawJSON) {
-		return ErrInvalidEventJSON
-	}
-
-	if s.waiting.Add(1) > s.maxWaiting {
-		s.waiting.Add(-1)
-		return ErrOverloaded
-	}
-	defer s.waiting.Add(-1)
-
+// writeEvent stores a valid Event payload and wakes Event processing. The
+// caller is in the gate.
+func (s *Service) writeEvent(projectID uint32, rawJSON []byte) error {
 	event := models.Event{
 		ProjectID: projectID,
 		RawJSON:   bytes.Clone(rawJSON), // rawJSON is fasthttp's request buffer, reused after the handler returns
@@ -136,6 +226,20 @@ func (s *Service) ingestEvent(projectID uint32, rawJSON []byte) error {
 	if err := s.events.WriteEvent(&event); err != nil {
 		return fmt.Errorf("write event: %w", err)
 	}
-	s.notify(projectID)
+	s.notifyEvents(projectID)
 	return nil
+}
+
+// enterGate counts a request as waiting for its write, unless maxWaiting are
+// already waiting. A request that enters must call leaveGate.
+func (s *Service) enterGate() bool {
+	if s.waiting.Add(1) > s.maxWaiting {
+		s.waiting.Add(-1)
+		return false
+	}
+	return true
+}
+
+func (s *Service) leaveGate() {
+	s.waiting.Add(-1)
 }

@@ -25,6 +25,8 @@ module ActiveSupport
   end
 end
 
+Dir[File.expand_path("support/**/*.rb", __dir__)].each { |file| require file }
+
 module IntegrationTestHelper
   def sign_in_as(user, password: "password")
     post login_url, params: { email: user.email, password: password }

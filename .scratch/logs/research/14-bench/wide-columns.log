@@ -1,0 +1,16 @@
+=== RUN   TestWideColumns (DuckDB v1.5.6, 2 CPU dev box, memory_limit 2GB, threads 2)
+30000 Logs carry more than 1000 (map, key) pairs; promoted the first 1000 seen
+appender, wide: 2552 Logs/s
+appender, map: 28797 Logs/s
+SQL promotion of 120000 rows into 1000 columns: 6376 Logs/s
+checkpoint 1ms; database file 56.9 MB (map + wide); 31.061s so far
+map  at 120000 rows: count_by_service_per_minute 11 ms, common_attr_per_minute 55 ms, rare_attr_eq 58 ms, group_by_attr_top10 134 ms
+wide at 120000 rows: count_by_service_per_minute 10 ms, common_attr_per_minute 6 ms, rare_attr_eq 8 ms, group_by_attr_top10 9 ms
+results agree: true; 32.672s so far
+export Project 1 (84k rows): all 1000 columns 7969 ms, 2.9 MB; counting non-empty columns 864 ms; 991 non-empty columns 7667 ms, 2.9 MB
+map-only export of the same Logs: 513 ms, 3.1 MB
+merged schema of 24 files: first 339 ms, second 279 ms
+null counts per column of 24 files: first 814 ms, second 847 ms
+common-key histogram over 24 files: first 703 ms, second 471 ms
+done in 53.499s
+--- PASS: TestWideColumns (53.57s)

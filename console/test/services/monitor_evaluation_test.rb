@@ -1,0 +1,775 @@
+# frozen_string_literal: true
+
+require "test_helper"
+require "active_job/test_helper"
+require "webmock/minitest"
+
+# Runs Monitors through MonitorEvaluation.run with EventStore stubbed
+# (WebMock) and the clock fixed, and observes what a member and an
+# Integration would: the Monitor, its states and runs, and the
+# Notifications written.
+class MonitorEvaluationTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
+  include ActiveSupport::Testing::TimeHelpers
+  include MonitorTestHelper
+
+  NOW = Time.utc(2026, 10, 17, 12, 0, 0)
+  CURSOR = "0199f0a0-0000-7000-8000-000000000001"
+  NEXT_CURSOR = "0199f0a0-0000-7000-8000-000000000002"
+  NEWEST_CURSOR = "0199f0a0-0000-7000-8000-000000000003"
+  SLACK_URL = "https://hooks.slack.com/services/T00/B00/MONITOR"
+  SERVICE = { "name" => "service", "type" => "string" }.freeze
+  TIMEOUT = "the run was stopped after 30 s, its timeout: too many Logs were ingested since the last run to read in time"
+
+  setup do
+    travel_to NOW
+    @organization = create(:organization, slug: "acme")
+    @project = create(:project, organization: @organization, name: "Shop")
+    @slack = @organization.integrations.create!(provider: "slack", settings: { "webhook_url" => SLACK_URL })
+    stub_monitor_query_check(@project, columns: [ SERVICE, COUNT_COLUMN ], ingest_cursor: CURSOR)
+    @query_url = "#{EventStore.base_url}/api/#{@project.id}/logs/query"
+  end
+
+  teardown do
+    travel_back
+  end
+
+  # ---------------------------------------------------------------------------
+  # Threshold: transitions
+  # ---------------------------------------------------------------------------
+
+  test "a Threshold run reads [now - range - 60 s, now - 60 s) with the run timeout" do
+    monitor = threshold_monitor(range_minutes: 15)
+    answer_table([ [ 3 ] ])
+
+    evaluate(monitor)
+
+    assert_requested(:post, @query_url, times: 1) do |request|
+      body = JSON.parse(request.body)
+      body["query"] == monitor.query && body["from"] == "2026-10-17T11:44:00.000Z" &&
+        body["to"] == "2026-10-17T11:59:00.000Z" && body["timeout_seconds"] == LogMonitor::RUN_TIMEOUT_SECONDS
+    end
+  end
+
+  test "ok to firing sends firing once, staying firing sends nothing, and firing to ok sends resolved" do
+    monitor = threshold_monitor
+
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    assert_equal [ [ "monitor_firing", "", 12 ] ], notifications
+    assert_state monitor, "", "firing", 12, since: NOW
+
+    travel 1.minute
+    answer_table([ [ 40 ] ])
+    evaluate(monitor)
+    assert_equal 1, Notification.count, "a group that stays firing sends nothing more"
+    assert_state monitor, "", "firing", 40, since: NOW
+
+    travel 1.minute
+    answer_table([ [ 4 ] ])
+    evaluate(monitor)
+    assert_equal [ [ "monitor_firing", "", 12 ], [ "monitor_resolved", "", 4 ] ], notifications
+    assert_state monitor, "", "ok", 4, since: NOW + 2.minutes
+
+    resolved = Notification.order(:id).last.payload
+    assert_equal({ "column" => "count_", "threshold" => 10.0, "operator" => ">", "value" => 4, "no_data" => false,
+                   "from" => "2026-10-17T11:56:00Z", "to" => "2026-10-17T12:01:00Z" }, resolved.except("monitor"))
+    assert_equal [ monitor.name, "Shop" ], resolved["monitor"].values_at("name", "project")
+    assert_equal [ 1, 1, 0 ], monitor.runs.reorder(:ran_at).pluck(:firing)
+  end
+
+  test "a number at the threshold fires by >= and not by >" do
+    strict = threshold_monitor(operator: ">")
+    inclusive = threshold_monitor(operator: ">=")
+    answer_table([ [ 10 ] ])
+
+    evaluate(strict)
+    evaluate(inclusive)
+
+    assert strict.states.sole.status_ok?
+    assert inclusive.states.sole.status_firing?
+  end
+
+  test "a below Monitor fires on a small number" do
+    monitor = threshold_monitor(operator: "<", threshold: 5)
+    answer_table([ [ 2 ] ])
+
+    evaluate(monitor)
+
+    assert_equal [ [ "monitor_firing", "", 2 ] ], notifications
+  end
+
+  test "a firing run's Notification reaches Slack" do
+    monitor = threshold_monitor(name: "Checkout errors")
+    answer_table([ [ 12 ] ])
+    stub_request(:post, SLACK_URL).to_return(status: 200, body: "ok")
+
+    evaluate(monitor)
+    travel IntegrationNotification::INITIAL_DELAY
+    IntegrationNotification.deliver_pending(@slack.id)
+
+    assert_requested(:post, SLACK_URL) { |request| JSON.parse(request.body)["text"] == "🔥 Firing: Checkout errors" }
+    assert Notification.sole.status_sent?
+  end
+
+  # ---------------------------------------------------------------------------
+  # Threshold: groups
+  # ---------------------------------------------------------------------------
+
+  test "notifying by group, each row is a group keyed by its other columns" do
+    monitor = threshold_monitor(notify_by_group: true)
+    api = { "service" => "api" }.to_json
+    web = { "service" => "web" }.to_json
+
+    answer_table([ [ "api", 20 ], [ "web", 5 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    assert_equal [ [ "monitor_firing", api, 20 ] ], notifications
+    assert_state monitor, web, "ok", 5
+
+    travel 1.minute
+    answer_table([ [ "api", 3 ], [ "web", 30 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    assert_equal [ [ "monitor_firing", api, 20 ], [ "monitor_resolved", api, 3 ], [ "monitor_firing", web, 30 ] ],
+      notifications
+    assert_equal 1, monitor.runs.first.firing
+  end
+
+  # A run writes in a transaction that holds SQLite's write lock, so it
+  # writes its states in bulk rather than a statement per group.
+  test "a run writes its groups' states in a few statements, however many groups it has" do
+    monitor = threshold_monitor(notify_by_group: true)
+    rows = ->(services, bump) { services.map { |i| [ "s#{i}", i + bump ] } }
+    key = ->(i) { { "service" => "s#{i}" }.to_json }
+    answer_table(rows.call(0..199, 0), columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    assert_equal 189, monitor.runs.sole.firing
+
+    travel 1.minute
+    # Every number grows by one; s0 to s9 (ok) and s199 (firing) are gone; s200 is new.
+    answer_table(rows.call((10..198).to_a + [ 200 ], 1), columns: [ SERVICE, COUNT_COLUMN ])
+    writes = []
+    counting = ->(*, payload) { writes << payload[:sql] if payload[:sql].match?(/\A\s*(INSERT|UPDATE|DELETE)\b.*monitor_states/im) }
+    ActiveSupport::Notifications.subscribed(counting, "sql.active_record") { evaluate(monitor) }
+
+    assert_operator writes.size, :<=, 3, writes.first(5).join("\n")
+    assert_equal 190, monitor.runs.first.firing
+    assert_equal 191, monitor.states.count
+    assert_state monitor, key.call(10), "firing", 11, since: Time.current
+    assert_state monitor, key.call(11), "firing", 12, since: NOW
+    assert_state monitor, key.call(200), "firing", 201, since: Time.current
+    assert_state monitor, key.call(199), "ok", nil, since: Time.current
+    assert_not monitor.states.exists?(group_key: key.call(5))
+    assert_equal [ [ "monitor_firing", key.call(10), 11 ], [ "monitor_firing", key.call(200), 201 ], [ "monitor_resolved", key.call(199), nil ] ],
+      notifications.last(3)
+  end
+
+  # A grouped Monitor's first run, or its first after it is turned back on,
+  # may fire thousands of groups at once, in the transaction that holds
+  # SQLite's write lock: their Notifications are written in bulk, and each
+  # Integration gets one tick, once the run has committed.
+  test "a run writes its changed groups' Notifications in a few statements and schedules one tick per Integration after it commits" do
+    pagerduty = @organization.integrations.create!(provider: "pagerduty", settings: { "routing_key" => "routing-123" })
+    monitor = threshold_monitor(notify_by_group: true)
+    monitor.update!(integrations: [ @slack, pagerduty ])
+    answer_table((0..199).map { |i| [ "s#{i}", 11 + i ] }, columns: [ SERVICE, COUNT_COLUMN ])
+    outside = ApplicationRecord.connection.open_transactions
+    writes = []
+    ticks = []
+    counting = ->(*, payload) { writes << payload[:sql] if payload[:sql].match?(/\A\s*(INSERT|UPDATE|DELETE)\b.*notifications/im) }
+    ticking = ->(*, payload) { ticks << [ payload[:job].arguments, ApplicationRecord.connection.open_transactions ] }
+
+    ActiveSupport::Notifications.subscribed(counting, "sql.active_record") do
+      ActiveSupport::Notifications.subscribed(ticking, "enqueue_at.active_job") { evaluate(monitor) }
+    end
+
+    assert_operator writes.size, :<=, 2, "#{writes.size} statements wrote Notifications"
+    assert_equal 200, monitor.runs.sole.firing
+    assert_equal [ 200, 200 ], [ @slack, pagerduty ].map { |integration| Notification.where(integration: integration).count }
+    assert_equal [ [ "monitor_firing", { service: "s0" }.to_json, 11 ], [ "monitor_firing", { service: "s199" }.to_json, 210 ] ],
+      Notification.where(integration: pagerduty).order(:id).to_a.values_at(0, -1).map { |row| [ row.kind, row.group_key, row.payload["value"] ] }
+    assert_equal [ [ [ @slack.id ], outside ], [ [ pagerduty.id ], outside ] ], ticks.sort
+  end
+
+  test "not notifying by group, all rows are one group and the worst number decides" do
+    above = threshold_monitor(operator: ">", threshold: 10)
+    below = threshold_monitor(operator: "<", threshold: 10)
+    answer_table([ [ "api", 20 ], [ "web", 5 ], [ "jobs", nil ] ], columns: [ SERVICE, COUNT_COLUMN ])
+
+    evaluate(above)
+    evaluate(below)
+
+    assert_state above, "", "firing", 20
+    assert_state below, "", "firing", 5
+  end
+
+  test "a Threshold monitor changed to a Match monitor resolves its firing groups and forgets its states" do
+    monitor = threshold_monitor(notify_by_group: true)
+    answer_table([ [ "api", 12 ], [ "web", 3 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    api = { service: "api" }.to_json
+    assert_equal [ [ "monitor_firing", api, 12 ] ], notifications
+
+    monitor.update!(kind: "match", query: "['#{@project.slug}']\n| where level == 'error'", operator: nil, threshold: nil)
+
+    assert_empty monitor.states.reload
+    assert_equal [ [ "monitor_firing", api, 12 ], [ "monitor_resolved", api, 12 ] ], notifications
+    resolved = Notification.order(:id).last
+    assert_equal [ ">", 10.0, true ], resolved.payload.values_at("operator", "threshold", "kind_changed")
+    assert_equal "Resolved: #{monitor.name} (service=api)", Notifiers::MonitorMessage.build(resolved).title
+
+    travel 1.minute
+    answer_matched([], total: 0, ingest_cursor: NEXT_CURSOR)
+    evaluate(monitor)
+    assert_equal 2, Notification.count, "a Match run sends nothing about the old groups"
+  end
+
+  test "turning a firing Monitor off resolves its firing groups and forgets its states; turned on, it fires again" do
+    monitor = threshold_monitor(notify_by_group: true)
+    answer_table([ [ "api", 12 ], [ "web", 3 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    api = { service: "api" }.to_json
+
+    monitor.update!(disabled_at: Time.current)
+
+    assert_empty monitor.states.reload
+    assert_equal [ [ "monitor_firing", api, 12 ], [ "monitor_resolved", api, 12 ] ], notifications
+    resolved = Notification.order(:id).last
+    assert_equal [ ">", 10.0, true ], resolved.payload.values_at("operator", "threshold", "turned_off")
+    assert_equal "The Monitor was turned off, so it no longer checks the threshold.",
+      Notifiers::MonitorMessage.build(resolved).text
+
+    travel 1.minute
+    monitor.update!(disabled_at: nil)
+    evaluate(monitor)
+    assert_equal [ "monitor_firing", api, 12 ], notifications.last, "a group still past the threshold fires again"
+  end
+
+  test "deleting a firing Monitor resolves its firing groups, and the resolve reaches PagerDuty once the Monitor is gone" do
+    pagerduty_url = "https://events.pagerduty.com/v2/enqueue"
+    stub_request(:post, pagerduty_url).to_return(status: 202, body: "{}")
+    pagerduty = @organization.integrations.create!(provider: "pagerduty", settings: { "routing_key" => "routing-123" })
+    monitor = threshold_monitor
+    monitor.update!(integrations: [ pagerduty ])
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    IntegrationNotification.deliver_pending(pagerduty.id)
+
+    monitor.destroy!
+    travel IntegrationNotification::RATE_LIMIT_WINDOW
+    IntegrationNotification.deliver_pending(pagerduty.id)
+
+    assert_equal [ [ "monitor_firing", "", 12 ], [ "monitor_resolved", "", 12 ] ], notifications
+    assert Notification.all.all?(&:status_sent?), Notification.pluck(:status, :error_message).inspect
+    events = []
+    assert_requested(:post, pagerduty_url, times: 2) { |request| events << JSON.parse(request.body) }
+    assert_equal [ "trigger", "resolve" ], events.map { |event| event["event_action"] }
+    assert_equal [ "solid-trace-monitor-#{monitor.id}" ] * 2, events.map { |event| event["dedup_key"] }
+    assert_equal "Firing: #{monitor.name}", events.first.dig("payload", "summary")
+  end
+
+  test "a Match monitor changed to a Threshold monitor pages on a key of its own, apart from the open Match incident" do
+    pagerduty_url = "https://events.pagerduty.com/v2/enqueue"
+    stub_request(:post, pagerduty_url).to_return(status: 202, body: "{}")
+    pagerduty = @organization.integrations.create!(provider: "pagerduty", settings: { "routing_key" => "routing-123" })
+    monitor = match_monitor
+    monitor.update!(integrations: [ pagerduty ])
+    answer_matched(logs(2), total: 2, ingest_cursor: NEXT_CURSOR)
+    evaluate(monitor)
+    IntegrationNotification.deliver_pending(pagerduty.id)
+
+    monitor.update!(kind: "threshold", query: "#{monitor.query}\n| summarize count()", operator: ">", threshold: 10)
+    travel IntegrationNotification::RATE_LIMIT_WINDOW
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    IntegrationNotification.deliver_pending(pagerduty.id)
+
+    events = []
+    assert_requested(:post, pagerduty_url, times: 2) { |request| events << JSON.parse(request.body) }
+    assert_equal [ [ "trigger", "solid-trace-monitor-#{monitor.id}-matched" ], [ "trigger", "solid-trace-monitor-#{monitor.id}" ] ],
+      events.map { |event| event.values_at("event_action", "dedup_key") }
+  end
+
+  test "unlinking PagerDuty from a firing Monitor resolves its incident; the group stays firing for Slack alone" do
+    pagerduty_url = "https://events.pagerduty.com/v2/enqueue"
+    stub_request(:post, pagerduty_url).to_return(status: 202, body: "{}")
+    pagerduty = @organization.integrations.create!(provider: "pagerduty", settings: { "routing_key" => "routing-123" })
+    monitor = threshold_monitor(notify_by_group: true)
+    monitor.update!(integrations: [ @slack, pagerduty ])
+    answer_table([ [ "api", 12 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    IntegrationNotification.deliver_pending(pagerduty.id)
+    api = { service: "api" }.to_json
+
+    monitor.update!(integrations: [ @slack ])
+
+    resolved = Notification.where(integration: pagerduty).order(:id).last
+    assert_equal [ "monitor_resolved", api, true ], [ resolved.kind, resolved.group_key, resolved.payload["unlinked"] ]
+    assert_equal "This Integration was unlinked from the Monitor, so it hears no more about it.",
+      Notifiers::MonitorMessage.build(resolved).text
+    assert_equal [ "firing" ], monitor.states.reload.map(&:status), "Slack still has the group firing"
+    travel IntegrationNotification::RATE_LIMIT_WINDOW
+    IntegrationNotification.deliver_pending(pagerduty.id)
+    events = []
+    assert_requested(:post, pagerduty_url, times: 2) { |request| events << JSON.parse(request.body) }
+    assert_equal [ "trigger", "resolve" ], events.map { |event| event["event_action"] }
+    assert_equal [ "solid-trace-monitor-#{monitor.id}-#{api}" ] * 2, events.map { |event| event["dedup_key"] }
+
+    travel 1.minute
+    answer_table([ [ "api", 3 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    assert_equal [ [ @slack.id, "monitor_firing" ], [ pagerduty.id, "monitor_firing" ], [ pagerduty.id, "monitor_resolved" ],
+      [ @slack.id, "monitor_resolved" ] ], Notification.order(:id).pluck(:integration_id, :kind),
+      "the group resolving later tells Slack only"
+  end
+
+  test "one run at a time per Monitor: a run while another is going does nothing, and one left past its lease is taken over" do
+    monitor = threshold_monitor
+    answer_table([ [ 12 ] ])
+    monitor.update_columns(run_started_at: 10.seconds.ago)
+
+    assert_nil evaluate(monitor)
+    assert_not_requested(:post, @query_url)
+    assert_empty monitor.runs
+    assert_empty Notification.all
+
+    travel MonitorEvaluation::RUN_LEASE
+    assert evaluate(monitor).status_ok?
+    assert_nil monitor.reload.run_started_at, "the run lets go of its Monitor"
+    assert_equal [ [ "monitor_firing", "", 12 ] ], notifications
+  end
+
+  test "a run that fails lets go of its Monitor too" do
+    monitor = threshold_monitor
+    stub_request(:post, @query_url).to_return(status: 503, body: "down")
+
+    assert evaluate(monitor).status_error?
+
+    assert_nil monitor.reload.run_started_at
+  end
+
+  test "a run the Monitor was changed under writes no state and sends nothing, so it can't undo the change's resolve" do
+    monitor = threshold_monitor
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    travel 1.minute
+    answer_table_while([ [ 15 ] ]) do
+      LogMonitor.find(monitor.id).update!(kind: "match", query: "['#{@project.slug}']\n| where level == 'error'",
+        operator: nil, threshold: nil)
+    end
+
+    run = evaluate(monitor)
+
+    assert_equal [ [ "monitor_firing", "", 12 ], [ "monitor_resolved", "", 12 ] ], notifications
+    assert_empty monitor.states.reload
+    assert_equal MonitorEvaluation::CHANGED_DURING_RUN, run.error
+    assert_equal NOW + 2.minutes, monitor.reload.next_run_at, "the next tick runs it again"
+  end
+
+  test "a run whose Monitor was deleted under it records nothing" do
+    monitor = threshold_monitor
+    answer_table_while([ [ 15 ] ]) { LogMonitor.find(monitor.id).destroy! }
+
+    assert_nil evaluate(monitor)
+
+    assert_equal 0, MonitorState.count + MonitorRun.count + Notification.count
+  end
+
+  test "a Match run its Monitor was turned off under sends nothing and keeps its cursor" do
+    monitor = match_monitor
+    travel 1.minute
+    stub_request(:post, @query_url).with(body: hash_including("after_batch" => CURSOR)).to_return do
+      LogMonitor.find(monitor.id).update!(disabled_at: Time.current)
+      { status: 200, body: { logs: logs(3), total: 3, ingest_cursor: NEXT_CURSOR, next_cursor: nil }.to_json }
+    end
+
+    run = evaluate(monitor)
+
+    assert_empty Notification.all
+    assert_equal CURSOR, monitor.reload.ingest_cursor
+    assert_equal MonitorEvaluation::CHANGED_DURING_RUN, run.error
+  end
+
+  test "a firing group with no row resolves, and an ok group with no row is forgotten" do
+    monitor = threshold_monitor(notify_by_group: true)
+    api = { "service" => "api" }.to_json
+    answer_table([ [ "api", 20 ], [ "web", 5 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+
+    travel 1.minute
+    answer_table([ [ "jobs", 1 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+
+    assert_equal [ [ "monitor_firing", api, 20 ], [ "monitor_resolved", api, nil ] ], notifications
+    assert Notification.order(:id).last.payload["absent"]
+    assert_equal [ api, { "service" => "jobs" }.to_json ], monitor.states.order(:group_key).pluck(:group_key)
+    assert monitor.states.all?(&:status_ok?)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Threshold: no data
+  # ---------------------------------------------------------------------------
+
+  test "no rows are ok and send nothing" do
+    monitor = threshold_monitor
+    answer_table([])
+
+    evaluate(monitor)
+
+    assert_equal 0, Notification.count
+    assert_empty monitor.states
+    assert monitor.runs.sole.status_ok?
+  end
+
+  test "with alert_on_no_data no rows fire the Monitor's one group, and data coming back resolves it" do
+    monitor = threshold_monitor(alert_on_no_data: true, notify_by_group: true)
+    answer_table([], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+
+    assert_equal [ [ "monitor_firing", "", nil ] ], notifications
+    assert Notification.sole.payload["no_data"]
+    assert_state monitor, "", "firing", nil
+
+    travel 1.minute
+    answer_table([ [ "api", 2 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+
+    assert_equal [ "monitor_resolved", "", nil ], notifications.last
+    assert Notification.order(:id).last.payload["no_data"]
+    assert_equal [ [ "", "ok" ], [ { "service" => "api" }.to_json, "ok" ] ],
+      monitor.states.order(:group_key).pluck(:group_key, :status)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Threshold: EventStore down
+  # ---------------------------------------------------------------------------
+
+  test "EventStore down, answering 5xx or timing out records last_error, changes no state, and runs again at the next tick" do
+    monitor = threshold_monitor(interval_minutes: 10)
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    assert_equal NOW + 10.minutes, monitor.reload.next_run_at
+
+    {
+      -> { stub_request(:post, @query_url).to_raise(Errno::ECONNREFUSED) } => /EventStore connection error: .*Connection refused/,
+      -> { stub_request(:post, @query_url).to_return(status: 500, body: "Internal error") } => /EventStore error: 500/,
+      -> { stub_request(:post, @query_url).to_return(status: 504, body: timeout_body) } => /\Athe run was stopped after 30 s/,
+    }.each do |stub, error|
+      travel 10.minutes
+      stub.call
+      evaluate(monitor)
+
+      monitor.reload
+      assert_match error, monitor.last_error
+      assert_equal Time.current, monitor.last_run_at
+      assert_equal Time.current + 1.minute, monitor.next_run_at
+      assert_state monitor, "", "firing", 12, since: NOW
+      assert_equal 1, Notification.count
+      assert monitor.runs.first.status_error?
+      assert_match error, monitor.runs.first.error
+    end
+
+    travel 1.minute
+    answer_table([ [ 15 ] ])
+    evaluate(monitor)
+    assert_nil monitor.reload.last_error
+  end
+
+  test "a table EventStore cut at its row limit is an error that changes no state, since the run can't see every group" do
+    monitor = threshold_monitor(notify_by_group: true)
+    answer_table([ [ "api", 12 ] ], columns: [ SERVICE, COUNT_COLUMN ])
+    evaluate(monitor)
+    api = { service: "api" }.to_json
+    travel 1.minute
+    stub_request(:post, @query_url).with(body: hash_including("from", "to")).to_return(status: 200, body: {
+      table: { columns: [ SERVICE, COUNT_COLUMN ], rows: [ [ "web", 30 ] ], truncated: true },
+    }.to_json)
+
+    run = evaluate(monitor)
+
+    assert_equal MonitorEvaluation::TABLE_CUT, run.error
+    assert_equal run.error, monitor.reload.last_error
+    assert_state monitor, api, "firing", 12
+    assert_equal 1, monitor.states.count
+    assert_equal [ [ "monitor_firing", api, 12 ] ], notifications
+  end
+
+  test "a Query EventStore refuses, or a table that isn't one number per group, is recorded as an error" do
+    monitor = threshold_monitor
+    stub_request(:post, @query_url).to_return(status: 400, body: { errors: [ { message: "unknown Project 'shop'" } ] }.to_json)
+    evaluate(monitor)
+    assert_equal "unknown Project 'shop'", monitor.reload.last_error
+
+    answer_table([ [ 1, 2 ] ], columns: [ COUNT_COLUMN, { "name" => "avg", "type" => "number" } ])
+    evaluate(monitor)
+    assert_equal "The Query gives 2 numbers per group, not one to compare with the threshold.", monitor.reload.last_error
+
+    stub_request(:post, @query_url).to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+    evaluate(monitor)
+    assert_match "The Query returns Logs, not a table", monitor.reload.last_error
+    assert_equal 0, Notification.count + MonitorState.count
+  end
+
+  # ---------------------------------------------------------------------------
+  # Match
+  # ---------------------------------------------------------------------------
+
+  test "a Match run reads after its cursor, keeps the new cursor and sends one message with the newest ten Logs" do
+    monitor = match_monitor
+    answer_matched(logs(10), total: 13, ingest_cursor: NEXT_CURSOR)
+
+    evaluate(monitor)
+
+    assert_requested(:post, @query_url) do |request|
+      JSON.parse(request.body).values_at("after_batch", "limit", "timeout_seconds") ==
+        [ CURSOR, MonitorEvaluation::MATCHED_LOGS, LogMonitor::RUN_TIMEOUT_SECONDS ]
+    end
+    assert_equal NEXT_CURSOR, monitor.reload.ingest_cursor
+    row = Notification.sole
+    assert_equal [ "monitor_matched", "" ], [ row.kind, row.group_key ]
+    assert_equal 13, row.payload["total"]
+    assert_equal 10, row.payload["logs"].size
+    assert_equal [ "log-0", "2026-10-17T11:59:30Z", "error", "checkout", "payment declined 0" ],
+      row.payload["logs"].first.values_at("id", "time", "level", "service", "message")
+    assert_equal [ "2026-10-17T11:59:00Z", "2026-10-17T12:00:00Z" ], row.payload.values_at("from", "to"),
+      "the link starts a minute before the cursor was kept, as the Logs it doesn't list are older"
+    assert_equal 13, monitor.runs.sole.matched
+  end
+
+  test "a Match message links to the explorer over all the Logs it counts, not only the ten it lists" do
+    monitor = match_monitor
+    travel 15.minutes
+    answer_matched(logs(10, newest: Time.current - 2.seconds), total: 200, ingest_cursor: NEXT_CURSOR)
+
+    evaluate(monitor)
+
+    assert_equal [ (NOW - LogMonitor::PROCESSING_LAG).iso8601, Time.current.iso8601 ], matched_range,
+      "from a minute before the cursor was kept, when the Monitor was armed"
+
+    first_run = Time.current
+    travel 15.minutes
+    answer_matched(logs(10, newest: Time.current - 2.seconds), total: 50, ingest_cursor: NEWEST_CURSOR)
+
+    evaluate(monitor)
+
+    assert_equal [ (first_run - LogMonitor::PROCESSING_LAG).iso8601, Time.current.iso8601 ], matched_range,
+      "from a minute before the last run kept the cursor"
+
+    travel 15.minutes
+    late = logs(1, newest: NOW - 1.hour).map { |log| log.merge("id" => "late") }
+    answer_matched(logs(9, newest: Time.current - 2.seconds) + late, total: 9, ingest_cursor: NEWEST_CURSOR)
+
+    evaluate(monitor)
+
+    assert_equal [ (NOW - 1.hour).iso8601, Time.current.iso8601 ], matched_range,
+      "from the oldest Log it lists, when that came in late"
+  end
+
+  test "a Match run with no Logs moves its cursor and sends nothing" do
+    monitor = match_monitor
+    answer_matched([], total: 0, ingest_cursor: NEXT_CURSOR)
+
+    evaluate(monitor)
+
+    assert_equal NEXT_CURSOR, monitor.reload.ingest_cursor
+    assert_equal 0, Notification.count
+    assert_equal 0, monitor.runs.sole.matched
+  end
+
+  test "a Match monitor without a cursor arms itself and reads no Logs" do
+    monitor = match_monitor
+    monitor.update_columns(ingest_cursor: nil)
+    answer_matched([], total: 0, ingest_cursor: NEWEST_CURSOR)
+
+    evaluate(monitor)
+
+    assert_requested(:post, @query_url, body: hash_including("after_batch" => ""))
+    assert_equal NEWEST_CURSOR, monitor.reload.ingest_cursor
+    assert monitor.runs.sole.status_ok?
+    assert_not monitor.runs.sole.logs_skipped
+  end
+
+  test "a Match monitor EventStore can't arm records why, and shows the error" do
+    monitor = match_monitor
+    monitor.update_columns(ingest_cursor: nil)
+
+    {
+      -> { stub_request(:post, @query_url).to_raise(Errno::ECONNREFUSED) } => /\AEventStore connection error: .*Connection refused/,
+      -> { stub_request(:post, @query_url).to_return(status: 500, body: "Internal error") } => /\AEventStore error: 500 - Internal error\z/,
+      -> { stub_request(:post, @query_url).to_return(status: 504, body: timeout_body(TIMEOUT)) } => /\A#{Regexp.escape(TIMEOUT)}\z/,
+      -> { stub_request(:post, @query_url).to_return(status: 400, body: { error: "unknown Project" }.to_json) } => /\Aunknown Project\z/,
+    }.each do |stub, error|
+      travel 1.minute
+      stub.call
+      evaluate(monitor)
+
+      monitor.reload
+      assert_nil monitor.ingest_cursor
+      assert_match error, monitor.last_error
+      assert monitor.runs.first.status_error?
+      assert_match error, monitor.runs.first.error
+      assert_equal "error", MonitorSerializer.new(monitor).as_json[:status]
+    end
+  end
+
+  test "a third timeout whose starting again can't reach EventStore says why" do
+    monitor = match_monitor
+    stub_request(:post, @query_url).with(body: hash_including("after_batch" => CURSOR))
+      .to_return(status: 504, body: timeout_body(TIMEOUT))
+    stub_request(:post, @query_url).with(body: hash_including("after_batch" => ""))
+      .to_raise(Errno::ECONNREFUSED)
+
+    3.times { evaluate(monitor) }
+
+    assert_equal [ CURSOR, 3 ], monitor.reload.values_at(:ingest_cursor, :timeouts_in_a_row)
+    assert_match(/\A#{Regexp.escape(TIMEOUT)} Starting again from the newest Logs failed: EventStore connection error: .*Connection refused/,
+      monitor.last_error)
+  end
+
+  test "EventStore down or refusing a Match run moves no cursor" do
+    monitor = match_monitor
+    stub_request(:post, @query_url).to_return(status: 502, body: "bad gateway")
+    evaluate(monitor)
+    stub_request(:post, @query_url).to_return(status: 400, body: { error: "after_batch must be a Log batch id" }.to_json)
+    evaluate(monitor)
+
+    monitor.reload
+    assert_equal CURSOR, monitor.ingest_cursor
+    assert_equal "after_batch must be a Log batch id", monitor.last_error
+    assert_equal 0, monitor.timeouts_in_a_row
+    assert_equal 0, Notification.count
+  end
+
+  test "after three timeouts in a row a Match monitor starts again from the newest Logs, and its next message says Logs were skipped" do
+    monitor = match_monitor
+    stub_request(:post, @query_url).with(body: hash_including("after_batch" => CURSOR))
+      .to_return(status: 504, body: timeout_body(TIMEOUT))
+    answer_matched([], total: 0, ingest_cursor: NEWEST_CURSOR, after_batch: "")
+
+    2.times do
+      evaluate(monitor)
+      travel 1.minute
+    end
+    monitor.reload
+    assert_equal [ CURSOR, 2, TIMEOUT ], [ monitor.ingest_cursor, monitor.timeouts_in_a_row, monitor.last_error ]
+    assert_not_requested(:post, @query_url, body: hash_including("after_batch" => ""))
+
+    evaluate(monitor)
+    monitor.reload
+    skipped_at = Time.current
+    assert_equal [ NEWEST_CURSOR, 0, skipped_at ], [ monitor.ingest_cursor, monitor.timeouts_in_a_row, monitor.logs_skipped_at ]
+    third = monitor.runs.first
+    assert third.logs_skipped
+    assert_match TIMEOUT, third.error
+    assert_match "skipped those ingested since its last run", third.error
+    assert_equal [ false, false, true ], monitor.runs.reorder(:ran_at).pluck(:logs_skipped)
+
+    travel 1.minute
+    answer_matched(logs(1, newest: Time.current - 2.seconds), total: 1, ingest_cursor: NEXT_CURSOR,
+      after_batch: NEWEST_CURSOR)
+    evaluate(monitor)
+
+    assert_equal skipped_at.iso8601, Notification.sole.payload["logs_skipped_at"]
+    assert_equal (skipped_at - LogMonitor::PROCESSING_LAG).iso8601, matched_range.first,
+      "the link starts from where the Monitor started again"
+    assert_nil monitor.reload.logs_skipped_at
+    assert_nil monitor.last_error
+  end
+
+  test "a Match run that succeeds between timeouts starts the count again" do
+    monitor = match_monitor
+    stub_request(:post, @query_url).to_return(status: 504, body: timeout_body(TIMEOUT))
+    2.times { evaluate(monitor) }
+    answer_matched([], total: 0, ingest_cursor: CURSOR)
+    evaluate(monitor)
+    stub_request(:post, @query_url).to_return(status: 504, body: timeout_body(TIMEOUT))
+    2.times { evaluate(monitor) }
+
+    assert_equal 2, monitor.reload.timeouts_in_a_row
+    assert_equal CURSOR, monitor.ingest_cursor
+    assert_nil monitor.logs_skipped_at
+  end
+
+  test "when starting again fails, the next run starts again before reading" do
+    monitor = match_monitor
+    stub_request(:post, @query_url).to_return(status: 504, body: timeout_body(TIMEOUT))
+    3.times { evaluate(monitor) }
+    assert_equal [ CURSOR, 3 ], monitor.reload.values_at(:ingest_cursor, :timeouts_in_a_row)
+    assert_match "#{TIMEOUT} Starting again from the newest Logs failed: #{TIMEOUT}", monitor.last_error
+
+    answer_matched([], total: 0, ingest_cursor: NEWEST_CURSOR, after_batch: "")
+    evaluate(monitor)
+
+    assert_equal [ NEWEST_CURSOR, 0 ], monitor.reload.values_at(:ingest_cursor, :timeouts_in_a_row)
+    assert monitor.runs.first.logs_skipped
+    assert monitor.runs.first.status_ok?
+  end
+
+  private
+
+  def evaluate(monitor)
+    MonitorEvaluation.run(monitor.reload, Time.current)
+  end
+
+  # A Monitor telling Slack, saved with the requests its Query check made
+  # forgotten.
+  def threshold_monitor(**attributes)
+    create(:monitor, project: @project, operator: ">", threshold: 10, integrations: [ @slack ], **attributes)
+      .tap { WebMock::RequestRegistry.instance.reset! }
+  end
+
+  def match_monitor
+    create(:monitor, :match, project: @project, integrations: [ @slack ]).tap do |monitor|
+      assert_equal CURSOR, monitor.ingest_cursor
+      WebMock::RequestRegistry.instance.reset!
+    end
+  end
+
+  def answer_table(rows, columns: [ COUNT_COLUMN ])
+    stub_request(:post, @query_url).with(body: hash_including("from", "to"))
+      .to_return(status: 200, body: { table: { columns: columns, rows: rows, truncated: false } }.to_json)
+  end
+
+  # Answers rows once +change+ has run, as if it was made while EventStore
+  # worked on the run.
+  def answer_table_while(rows, columns: [ COUNT_COLUMN ], &change)
+    stub_request(:post, @query_url).with(body: hash_including("from", "to")).to_return do
+      change.call
+      { status: 200, body: { table: { columns: columns, rows: rows, truncated: false } }.to_json }
+    end
+  end
+
+  def answer_matched(logs, total:, ingest_cursor:, after_batch: nil)
+    body = after_batch ? hash_including("after_batch" => after_batch) : hash_including("after_batch")
+    stub_request(:post, @query_url).with(body: body).to_return(status: 200, body: {
+      logs: logs, total: total, ingest_cursor: ingest_cursor, next_cursor: nil,
+    }.to_json)
+  end
+
+  # count Logs a second apart, newest first.
+  def logs(count, newest: NOW - 30.seconds)
+    count.times.map do |i|
+      { "id" => "log-#{i}", "time" => (newest - i).iso8601, "level" => "error", "service" => "checkout",
+        "message" => "payment declined #{i}", "attributes" => { "order" => i } }
+    end
+  end
+
+  def timeout_body(message = "the run was stopped after 30 s, its timeout: try a shorter time range")
+    { errors: [ { message: message } ] }.to_json
+  end
+
+  # The [from, to) the newest monitor_matched row links to.
+  def matched_range
+    Notification.where(kind: "monitor_matched").order(:id).last.payload.values_at("from", "to")
+  end
+
+  # Each Notification written, oldest first: kind, group and value.
+  def notifications
+    Notification.order(:id).map { |row| [ row.kind, row.group_key, row.payload["value"] ] }
+  end
+
+  def assert_state(monitor, group_key, status, value, since: nil)
+    state = monitor.states.find_by!(group_key: group_key)
+    assert_equal [ status, value ], [ state.status, state.last_value ]
+    assert_equal since, state.since if since
+  end
+end

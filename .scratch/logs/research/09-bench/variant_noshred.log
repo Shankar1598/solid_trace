@@ -1,0 +1,42 @@
+2026/10/02 11:34:26 generator alone: 230594 Logs/s
+2026/10/02 11:34:57 unthrottled: 780000 Logs, 25903 Logs/s, 14.69 MB/s, flush p99 1024 ms, max backlog 0, kept up false, peak RSS 870 MB, CPU 134%
+2026/10/02 11:35:12 target: 50150 Logs, 3318 Logs/s, 1.89 MB/s, flush p99 238 ms, max backlog 174, kept up true, peak RSS 861 MB, CPU 16%
+2026/10/02 11:35:27 target_with_queries: 50198 Logs, 3296 Logs/s, 1.87 MB/s, flush p99 598 ms, max backlog 175, kept up true, peak RSS 812 MB, CPU 176%
+2026/10/02 11:35:43 burst_5x: 217807 Logs, 13863 Logs/s, 7.86 MB/s, flush p99 2973 ms, max backlog 35714, kept up false, peak RSS 1431 MB, CPU 87%
+2026/10/02 11:35:43 checkpoint 1 ms; 1098155 rows, 258.5 MB on disk (235 B/Log)
+2026/10/02 11:35:43   errors_last_15m              cold     31.3 ms  warm     17.9 ms  rows 100
+2026/10/02 11:35:43   count_by_service_per_minute  cold     45.9 ms  warm     31.5 ms  rows 36
+2026/10/02 11:35:44   common_attr_eq               cold    113.5 ms  warm     55.4 ms  rows 100
+2026/10/02 11:35:46   rare_attr_eq                 cold    921.1 ms  warm    358.8 ms  rows 94
+2026/10/02 11:35:46   mixed_numeric_range          cold    168.5 ms  warm    116.3 ms  rows 100
+2026/10/02 11:35:46   message_substring            cold     41.5 ms  warm     28.2 ms  rows 100
+2026/10/02 11:35:48   group_by_attr_top10          cold    711.9 ms  warm    356.0 ms  rows 10
+2026/10/02 11:35:48   fetch_by_id                  cold     21.5 ms  warm      4.2 ms  rows 1
+2026/10/02 11:35:49   errors_last_15m              cold     27.9 ms  warm      0.0 ms  rows 100
+2026/10/02 11:35:49   count_by_service_per_minute  cold     60.4 ms  warm      0.0 ms  rows 36
+2026/10/02 11:35:49   common_attr_eq               cold    361.8 ms  warm      0.0 ms  rows 100
+2026/10/02 11:35:50   rare_attr_eq                 cold   1176.4 ms  warm      0.0 ms  rows 94
+2026/10/02 11:35:51   mixed_numeric_range          cold    980.2 ms  warm      0.0 ms  rows 100
+2026/10/02 11:35:52   message_substring            cold     37.1 ms  warm      0.0 ms  rows 100
+2026/10/02 11:35:52   group_by_attr_top10          cold    844.4 ms  warm      0.0 ms  rows 10
+2026/10/02 11:35:53   fetch_by_id                  cold     63.4 ms  warm      0.0 ms  rows 1
+2026/10/02 11:36:17 parquet rg 122880: export 23980 ms, 1 files, 122.1 MB, 9 row groups, 89 columns
+2026/10/02 11:36:17  async on (read_ahead_depth default):
+2026/10/02 11:36:20   errors_last_15m              cold   1042.7 ms  warm    503.0 ms  rows 100
+2026/10/02 11:36:20   count_by_service_per_minute  cold     77.9 ms  warm     55.1 ms  rows 36
+2026/10/02 11:36:27   common_attr_eq               cold   3201.4 ms  warm   3119.2 ms  rows 100
+2026/10/02 11:36:34   rare_attr_eq                 cold   3688.8 ms  warm   3498.1 ms  rows 94
+2026/10/02 11:36:50   mixed_numeric_range          cold   6416.5 ms  warm   9060.6 ms  rows 100
+2026/10/02 11:36:50   message_substring            skipped: query set over its 30s budget
+2026/10/02 11:36:50   group_by_attr_top10          skipped: query set over its 30s budget
+2026/10/02 11:36:50   fetch_by_id                  skipped: query set over its 30s budget
+2026/10/02 11:36:50  async off (read_ahead_depth = 0):
+2026/10/02 11:36:54   errors_last_15m              cold   1004.8 ms  warm    936.5 ms  rows 100
+2026/10/02 11:36:54   count_by_service_per_minute  cold    104.6 ms  warm    103.4 ms  rows 36
+2026/10/02 11:37:01   common_attr_eq               cold   4056.5 ms  warm   3192.9 ms  rows 100
+2026/10/02 11:37:09   rare_attr_eq                 cold   3780.3 ms  warm   4017.9 ms  rows 94
+2026/10/02 11:37:24   mixed_numeric_range          cold   7533.1 ms  warm   6744.7 ms  rows 100
+2026/10/02 11:37:24   message_substring            skipped: query set over its 30s budget
+2026/10/02 11:37:24   group_by_attr_top10          skipped: query set over its 30s budget
+2026/10/02 11:37:24   fetch_by_id                  skipped: query set over its 30s budget
+2026/10/02 11:37:26 wrote /home/shankar/Personal/solid_trace/.claude/worktrees/feature-logging/.scratch/logs/research/09-bench/variant_noshred.json

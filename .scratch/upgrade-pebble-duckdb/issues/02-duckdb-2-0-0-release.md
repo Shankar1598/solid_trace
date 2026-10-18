@@ -1,6 +1,6 @@
 # Move EventStore back to DuckDB 1.5.5
 
-Status: needs-triage
+Status: resolved
 
 Blocked by: 01
 
@@ -25,3 +25,16 @@ The first text said the move could not start before the release. That was wrong:
 ### 2026-10-02 re-scoped to 1.5.5
 
 The ticket was "Move DuckDB from the preview to the 2.0.0 release". Logs ticket 10 decided to go back to the released 1.5.5 instead, so the hold until 2026-10-21 and the comments above no longer apply.
+
+### 2026-10-02 resolved
+
+Done on branch `feature/logging` (not yet on `main`).
+
+- The driver is `v2.10506.0` (DuckDB **1.5.6**, tagged 2026-09-30), the newest 1.5.x tag. The bindings had to be pinned to `v0.10506.0` by hand: Go's version selection would not downgrade them from the preview.
+- The alpha wiring is gone: `scripts/fetch-duckdb`, the `[env]` block in `mise.toml`, the fetch in `bin/go-dev`, the library steps in the Dockerfile and the `lib/` ignore (`.dockerignore` keeps `bin/`).
+- `TestDuckDBEngineVersion` now expects `v1.5`.
+- `duckdb.OrderedMap` is still in the 1.5 driver, so `storage/duckdb.go` is unchanged.
+- Dev data: `storage/duckdb/development` (written by the alpha) was moved aside, not deleted. Pebble's processing cursors are past those Events, so dev DuckDB starts empty.
+- `logsbench` (`event_store/bench/logslayouts`): the VARIANT layouts need 2.0 (`variant_extract_string` is missing on 1.5, and VARIANT storage needs `storage_compatibility_version` v1.5.0, after which a checkpoint ran out of memory). `Layouts()` now runs JSON and MAP only; the VARIANT code stays for the 2.0 re-check, and `TestRunReportsVariantShredding` is skipped.
+- A shell started while `mise.toml` had the `[env]` block keeps `GOFLAGS=-tags=duckdb_use_lib` exported; open a new shell (or `unset GOFLAGS CGO_LDFLAGS`), or the build looks for the removed library.
+- `go vet ./...` and `go test -p 1 ./...` pass. The Docker image was not rebuilt.

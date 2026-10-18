@@ -17,7 +17,7 @@ export default function Stacktrace({ frames }: StacktraceProps) {
   if (!frames || frames.length === 0) return null
 
   return (
-    <div className="border rounded-md divide-y overflow-hidden">
+    <div className="border divide-y overflow-hidden">
       {frames.map((frame, index) => (
         <div key={index} className="bg-background text-sm">
           <div className="px-4 py-2 bg-muted/30 flex items-center justify-between font-mono text-xs">

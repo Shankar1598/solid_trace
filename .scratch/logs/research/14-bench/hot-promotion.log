@@ -1,0 +1,15 @@
+=== RUN   TestHotTablePromotion
+ADD COLUMN on 50000 rows: 3.149ms
+append with the old appender after ADD COLUMN: database/sql/driver: could not flush appender: Failed to append: table logs has 14 columns but 13 values were supplied: appended and not yet flushed data has been invalidated due to error: consider invoking Appender.Clear followed by Appender.Close in case of unexpected errors to avoid leaking memory
+append with a new appender (one column short): database/sql/driver: could not append row: invalid column count: expected 14, got 13
+grown to 800000 rows at 10.92s
+800000 rows, 45 promoted keys; building the promoted copy took 9.948s (setup 21.486s)
+count_by_service_per_minute  map     25.9 ms, promoted     24.2 ms
+common_attr_eq               map    342.1 ms, promoted     84.5 ms
+common_attr_per_minute       map    299.1 ms, promoted     20.3 ms
+rare_attr_eq                 map    267.8 ms, promoted     43.1 ms
+group_by_attr_top10          map    276.6 ms, promoted     22.3 ms
+done in 24.61s
+--- PASS: TestHotTablePromotion (24.69s)
+PASS
+ok  	github.com/solidtrace/event_store/bench/logslayouts	(cached)

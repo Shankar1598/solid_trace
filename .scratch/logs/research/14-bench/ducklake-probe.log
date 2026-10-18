@@ -1,0 +1,135 @@
+=== RUN   TestDuckLakeProbe
+data files (catalog):
+    0 | 2 | 10447 | 1 | project_id=1/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-058b-75c5-8821-3ac16a6bf100.parquet
+    1 | 2 | 1531 | 1 | project_id=3/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0597-7b8e-bdd6-c91bad101421.parquet
+    2 | 2 | 3022 | 1 | project_id=2/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0599-72bc-ab08-aa28c0940fc2.parquet
+    3 | 2 | 10518 | 1 | project_id=1/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-06f0-7529-a785-584384c10df7.parquet
+    4 | 2 | 1548 | 1 | project_id=3/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-06f9-7664-9e89-38560d1ec4f7.parquet
+    5 | 2 | 2934 | 1 | project_id=2/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-06fb-71da-b7ac-ecc21c8530b2.parquet
+partition values:
+    0 | 1 | 0 | 1
+    0 | 1 | 1 | 2026
+    0 | 1 | 2 | 10
+    0 | 1 | 3 | 1
+    0 | 1 | 4 | 0
+    1 | 1 | 0 | 3
+    1 | 1 | 1 | 2026
+    1 | 1 | 2 | 10
+    1 | 1 | 3 | 1
+    1 | 1 | 4 | 0
+    2 | 1 | 0 | 2
+    2 | 1 | 1 | 2026
+    2 | 1 | 2 | 10
+    2 | 1 | 3 | 1
+    2 | 1 | 4 | 0
+    3 | 1 | 0 | 1
+    3 | 1 | 1 | 2026
+    3 | 1 | 2 | 10
+    3 | 1 | 3 | 1
+    3 | 1 | 4 | 0
+    4 | 1 | 0 | 3
+    4 | 1 | 1 | 2026
+    4 | 1 | 2 | 10
+    4 | 1 | 3 | 1
+    4 | 1 | 4 | 0
+    5 | 1 | 0 | 2
+    5 | 1 | 1 | 2026
+    5 | 1 | 2 | 10
+    5 | 1 | 3 | 1
+    5 | 1 | 4 | 0
+Parquet columns per file on disk (promoted ones):
+    main/logs/project_id=1/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-058b-75c5-8821-3ac16a6bf100.parquet | attrs_number.http.status_code, attrs_string.http.method, attrs_string.service.version
+    main/logs/project_id=1/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-06f0-7529-a785-584384c10df7.parquet | attrs_number.http.status_code, attrs_number.mixed.size, attrs_string.http.method, attrs_string.region, attrs_string.service.version
+    main/logs/project_id=2/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0599-72bc-ab08-aa28c0940fc2.parquet | attrs_number.http.status_code, attrs_string.http.method, attrs_string.service.version
+    main/logs/project_id=2/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-06fb-71da-b7ac-ecc21c8530b2.parquet | attrs_number.http.status_code, attrs_number.mixed.size, attrs_string.http.method, attrs_string.region, attrs_string.service.version
+    main/logs/project_id=3/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0597-7b8e-bdd6-c91bad101421.parquet | attrs_number.http.status_code, attrs_string.http.method, attrs_string.service.version
+    main/logs/project_id=3/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-06f9-7664-9e89-38560d1ec4f7.parquet | attrs_number.http.status_code, attrs_number.mixed.size, attrs_string.http.method, attrs_string.region, attrs_string.service.version
+per-file promoted columns the catalog knows (non-null values):
+    0 | attrs_number.http.status_code, attrs_string.http.method, attrs_string.service.version
+    1 | attrs_number.http.status_code, attrs_string.http.method, attrs_string.service.version
+    2 | attrs_number.http.status_code, attrs_string.http.method, attrs_string.service.version
+    3 | attrs_number.mixed.size, attrs_string.http.method, attrs_string.region
+    4 | attrs_number.mixed.size, attrs_string.http.method, attrs_string.region
+    5 | attrs_number.mixed.size, attrs_string.http.method, attrs_string.region
+column stats columns:
+    data_file_id
+    table_id
+    column_id
+    column_size_bytes
+    value_count
+    null_count
+    min_value
+    max_value
+    contains_nan
+    extra_stats
+query set over lake.logs matches the hot table
+EXPLAIN of a promoted-key filter:
+    physical_plan | ┌───────────────────────────┐
+        │    UNGROUPED_AGGREGATE    │
+        │    ────────────────────   │
+        │        Aggregates:        │
+        │        count_star()       │
+        └─────────────┬─────────────┘
+        ┌─────────────┴─────────────┐
+        │       DUCKLAKE_SCAN       │
+        │    ────────────────────   │
+        │        Table: logs        │
+        │                           │
+        │          Filters:         │
+        │ attrs_string.http.method= │
+        │           'POST'          │
+        │                           │
+        │        ~6,000 rows        │
+        └───────────────────────────┘
+parquet files on disk before deletes: 6
+after deleting Project 3: files ended / delete files:
+    2 | 0
+after a partial delete in Project 2: files ended / delete files:
+    2 | 1
+parquet files on disk after deletes: 7
+parquet files on disk after expire + cleanup: 5
+rows per Project now:
+    1 | 20965
+    2 | 4959
+ducklake_metadata:
+    created_by | DuckDB 069cc9f9b5
+    data_path | /tmp/TestDuckLakeProbe3979162699/002/data/
+    encrypted | false
+    version | 1.0
+schema and table paths:
+    schema | main | main/ | 1
+    table | logs | logs/ | 1
+4: rows and message bytes before moving:
+    25924 | 4770206
+4a: new files in the catalog:
+    7 | 1 | project_id=1/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0cad-7fd0-8aaa-1e1b51a01dc8.parquet
+    8 | 1 | project_id=3/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0cad-7d73-b8ef-6df709d7408a.parquet
+    9 | 1 | project_id=2/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0cae-79ce-93fe-e99902e412cf.parquet
+ERROR 4a: read in the overriding session: IO Error: Cannot open file "/tmp/TestDuckLakeProbe3979162699/002/tier2/main/logs/project_id=2/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0599-72bc-ab08-aa28c0940fc2.parquet": No such file or directory
+            SELECT count(*), sum(length(message)) FROM lake.logs
+parquet files under tier2: 3
+    tier2/main/logs/project_id=1/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0cad-7fd0-8aaa-1e1b51a01dc8.parquet
+    tier2/main/logs/project_id=2/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0cae-79ce-93fe-e99902e412cf.parquet
+    tier2/main/logs/project_id=3/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0cad-7d73-b8ef-6df709d7408a.parquet
+ERROR 4a: read after reattaching with the catalog's data path: IO Error: Cannot open file "/tmp/TestDuckLakeProbe3979162699/002/data/main/logs/project_id=1/year=2026/month=10/day=1/hour=0/ducklake-01a0fcfb-0cad-7fd0-8aaa-1e1b51a01dc8.parquet": No such file or directory
+            SELECT count(*), sum(length(message)) FROM lake.logs
+ERROR Invalid Configuration Error: DATA_PATH parameter "/tmp/TestDuckLakeProbe3979162699/002/moved/" does not match existing data path in the catalog "/tmp/TestDuckLakeProbe3979162699/002/data/".
+            ATTACH 'ducklake:sqlite:/tmp/TestDuckLakeProbe3979162699/002/meta.sqlite' AS lake (DATA_PATH '/tmp/TestDuckLakeProbe3979162699/002/moved/')
+4b: read with OVERRIDE_DATA_PATH set to the new location:
+    26024 | 4790686
+4b: read after editing data_path in the catalog:
+    26024 | 4790686
+4b: data_path now:
+    /tmp/TestDuckLakeProbe3979162699/002/moved/
+ERROR Invalid Input Error: Column "attrs_number.mixed.size" exists in table "logs" but was not found in file "/tmp/TestDuckLakeProbe3979162699/002/external/data.parquet"
+            CALL ducklake_add_data_files('lake', 'logs', '/tmp/TestDuckLakeProbe3979162699/002/external/data.parquet')
+ERROR Invalid Input Error: File "/tmp/TestDuckLakeProbe3979162699/002/external/data.parquet" contains an invalid partition value for the table configuration.
+            CALL ducklake_add_data_files('lake', 'logs', '/tmp/TestDuckLakeProbe3979162699/002/external/data.parquet', allow_missing => true)
+4c: registered file:
+4c: read:
+    26024 | 4790686
+4d: read with one file moved and its absolute path in the catalog:
+    26024 | 4790686
+--- PASS: TestDuckLakeProbe (5.08s)
+PASS
+ok  	github.com/solidtrace/event_store/bench/logslayouts	(cached)

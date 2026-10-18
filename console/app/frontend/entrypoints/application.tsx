@@ -4,6 +4,7 @@ import '../css/globals.css'
 import { Toaster } from '../components/ui/sonner'
 
 createInertiaApp({
+  title: title => (title ? `${title} · SolidTrace` : 'SolidTrace'),
   resolve: (name) => {
     const pages = import.meta.glob('../pages/**/*.tsx', { eager: true })
     const page = pages[`../pages/${name}.tsx`]

@@ -1,8 +1,8 @@
 import { Link, useForm, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
-import Breadcrumbs from '@/components/Breadcrumbs'
-import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/PageHeader'
+import { Card, CardContent, CardFooter } from '@/components/ui/card'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -38,76 +38,61 @@ export default function ProjectsNew() {
 
   if (!current_org) return null
 
-  const breadcrumbItems = [
-    { label: 'Projects', href: `/${current_org.slug}/projects` },
-    { label: 'New Project' }
-  ]
-
   return (
-    <DashboardLayout breadcrumbs={<Breadcrumbs items={breadcrumbItems} />}>
-      <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-1">Create New Project</h1>
-          <p className="text-muted-foreground">
-            Create a new project to start tracking errors for your application.
-          </p>
-        </div>
+    <DashboardLayout>
+      <PageHeader
+        breadcrumbs={[{ label: 'Projects', href: `/${current_org.slug}/projects` }, { label: 'New project' }]}
+        title="New project"
+        description="A Project collects one application's errors and Logs."
+      />
+      <Card className="max-w-4xl">
+        <form onSubmit={submit}>
+          <CardContent className="space-y-6 pb-2">
+            <div className="space-y-2">
+              <Label htmlFor="name">Name</Label>
+              <Input
+                id="name"
+                placeholder="e.g. My Awesome App"
+                value={data.name}
+                onChange={(e) => setData('name', e.target.value)}
+                required
+              />
+              {errors.name && (
+                <p className="text-sm font-medium text-destructive">{errors.name}</p>
+              )}
+            </div>
 
-        <Card>
-          <form onSubmit={submit}>
-            <CardHeader>
-              <CardTitle>Project Details</CardTitle>
-              <CardDescription>
-                Provide a name and select the platform for your project.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 pb-6">
-              <div className="space-y-2">
-                <Label htmlFor="name">Project Name</Label>
-                <Input
-                  id="name"
-                  placeholder="e.g. My Awesome App"
-                  value={data.name}
-                  onChange={(e) => setData('name', e.target.value)}
-                  required
-                />
-                {errors.name && (
-                  <p className="text-sm font-medium text-destructive">{errors.name}</p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="platform">Platform</Label>
-                <Select
-                  value={data.platform}
-                  onValueChange={(val) => setData('platform', val ?? 'ruby')}
-                  items={platforms}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a platform" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {platforms.map(p => (
-                      <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.platform && (
-                  <p className="text-sm font-medium text-destructive">{errors.platform}</p>
-                )}
-              </div>
-            </CardContent>
-            <CardFooter className="flex justify-end gap-2 border-t bg-muted/20 px-6 py-4">
-              <Link href={`/${current_org.slug}/projects`}>
-                <Button variant="outline" type="button">Cancel</Button>
-              </Link>
-              <Button type="submit" disabled={processing}>
-                {processing ? 'Creating...' : 'Create Project'}
-              </Button>
-            </CardFooter>
-          </form>
-        </Card>
-      </div>
+            <div className="space-y-2">
+              <Label htmlFor="platform">Platform</Label>
+              <Select
+                value={data.platform}
+                onValueChange={(val) => setData('platform', val ?? 'ruby')}
+                items={platforms}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a platform" />
+                </SelectTrigger>
+                <SelectContent>
+                  {platforms.map(p => (
+                    <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errors.platform && (
+                <p className="text-sm font-medium text-destructive">{errors.platform}</p>
+              )}
+            </div>
+          </CardContent>
+          <CardFooter className="justify-end gap-2">
+            <Link href={`/${current_org.slug}/projects`} className={buttonVariants({ variant: 'outline' })}>
+              Cancel
+            </Link>
+            <Button type="submit" disabled={processing}>
+              {processing ? 'Creating…' : 'Create project'}
+            </Button>
+          </CardFooter>
+        </form>
+      </Card>
     </DashboardLayout>
   )
 }

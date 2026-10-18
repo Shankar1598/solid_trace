@@ -1,0 +1,39 @@
+import { QueryEditor } from '@/components/QueryEditor'
+import { LeavingNotice } from './QueryBox'
+
+interface SqlBoxProps {
+  text: string
+  onChange: (text: string) => void
+  onRun: () => void
+  /** Leaving SQL mode with edited SQL: asking before discarding it. */
+  leaving: boolean
+  onDiscard: () => void
+  onStay: () => void
+}
+
+/** SQL mode's editable SQL, run only on Run, and the prompt to leave it. */
+export function SqlBox({ text, onChange, onRun, leaving, onDiscard, onStay }: SqlBoxProps) {
+  return (
+    <div className="border-b bg-muted/30 px-3 py-2">
+      <QueryEditor
+        value={text}
+        onChange={onChange}
+        onRun={onRun}
+        language="sql"
+        label="SQL"
+        placeholder="SELECT level, count(*) FROM logs GROUP BY level"
+        maxLines={12}
+        autoFocus
+        focusShortcut="focus-query"
+      />
+      <div className="mt-0.5 text-[11px] text-muted-foreground">
+        <code>logs</code> holds the Logs of the Project and time range above. SQL runs as written, only when you press Run.
+      </div>
+      {leaving && (
+        <LeavingNotice stay="Stay in SQL" onDiscard={onDiscard} onStay={onStay}>
+          SQL can't be turned back into a Query. Switching discards your SQL and returns to the Query it started from.
+        </LeavingNotice>
+      )}
+    </div>
+  )
+}

@@ -38,3 +38,9 @@ Notes for later tickets:
 - Seeding SQL from the compiler means the compiler must be able to print readable SQL against the documented `logs` view (ADR 0003), even if what it runs targets the storage layout directly. The prototype printed one CTE per stage.
 - Not decided: whether the mode and the Query text live in the URL, and how a summarized table is charted (for example `summarize … by bin(time, …)` as a chart).
 - Rejected, kept on the branch: A's chips mirrored from arbitrary text, C's pipe box and separate SQL console, and B's Summarize row.
+
+## Comments
+
+### 2026-10-02 from ticket 10 (second pass)
+
+[How are logs stored and retained?](10-storage-architecture-and-retention.md) changed what SQL mode sees: the `logs` view is built per query for the explorer's Project and time range, so in SQL mode the Project and time range now apply and users no longer filter `project_id` themselves. It is a convenience, not a boundary: the SQL still runs unvalidated and can read the raw tables ([ADR 0003](../../../docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md), [ADR 0005](../../../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md)).

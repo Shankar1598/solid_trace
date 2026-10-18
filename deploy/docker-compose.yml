@@ -1,31 +1,26 @@
 version: "3.9"
 
 services:
-  # Community maintained version of Nginx
-  angie:
-    image: docker.angie.software/angie:latest
-    network_mode: host
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-    volumes:
-      - /var/run/solid-trace:/var/run/solid-trace
-      - /etc/angie/angie.conf:/etc/angie/angie.conf:ro
-    depends_on:
-      - console
-      - event_store
-    restart: unless-stopped
-
-  # Dashboard
+  # Dashboard. Thruster serves it on port 3000 and proxies to Puma on 3001.
+  # The image runs as a non-root user, which can't bind a port below 1024 on
+  # the host network, so Console isn't on port 80.
   console: &console
     image: solid-trace-console:latest
     network_mode: host
     environment:
       RAILS_ENV: production
+      HTTP_PORT: "3000"
+      TARGET_PORT: "3001"
+      # Thruster faces clients directly, so it ignores X-Forwarded-* headers they send.
+      FORWARD_HEADERS: "false"
       RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
       SECRET_KEY_BASE: ${SECRET_KEY_BASE}
       EVENT_STORE_URL: http://127.0.0.1:4100
+      # Where Console sends an empty Project's test Log.
+      EVENT_STORE_INGEST_URL: http://127.0.0.1:4000
+      # Where SDKs and shippers reach ingest, for the Logs page's snippets.
+      # Unset, they show this host at port 4000.
+      # PUBLIC_INGEST_URL: https://ingest.example.com
     volumes:
       - /var/lib/solid-trace/storage:/storage
     restart: unless-stopped
@@ -39,12 +34,15 @@ services:
     depends_on:
       - console
 
-  # Event ingestion and storage
+  # Event ingestion and storage. Ingest listens on port 4000 directly.
   event_store:
     image: solid-trace-event-store:latest
     network_mode: host
     environment:
       EVENT_STORE_CONFIG: /etc/solid-trace/event_store.yml
+      # The object_store bucket's key, if event_store.yml has one.
+      SOLIDTRACE_OBJECT_STORE_KEY_ID: ${SOLIDTRACE_OBJECT_STORE_KEY_ID:-}
+      SOLIDTRACE_OBJECT_STORE_SECRET: ${SOLIDTRACE_OBJECT_STORE_SECRET:-}
     ulimits:
       nofile:
         soft: 65535
@@ -52,7 +50,6 @@ services:
     volumes:
       - /var/lib/solid-trace/storage:/storage
       - /var/lib/solid-trace/storage_cold:/storage_cold
-      - /var/run/solid-trace:/var/run/solid-trace
       - /etc/solid-trace/event_store.yml:/etc/solid-trace/event_store.yml:ro
     restart: unless-stopped
     depends_on:
@@ -61,3 +58,5 @@ services:
   db_prepare:
     <<: *console
     command: ["bin/rails", "db:prepare"]
+    # Not the console anchor's depends_on, which names db_prepare itself.
+    depends_on: []

@@ -1,0 +1,316 @@
+{
+  "Engine": "v1.5.6",
+  "Machine": "remote-dev-shankar-v7, 2 CPU, 12246192 kB RAM, linux/amd64",
+  "Started": "2026-10-02T13:52:26.27792174Z",
+  "Settings": {
+    "MemoryLimit": "2GB",
+    "Threads": 2
+  },
+  "HourLogs": 200000,
+  "HourMB": 113.84653600000229,
+  "Factor": 0,
+  "Promote": 20,
+  "Checkpoint": true,
+  "Cycles": [
+    {
+      "Hour": 0,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 497.137,
+      "CopyMs": 4474.43,
+      "DeleteMs": 2637.389,
+      "CheckpointMs": 0.789,
+      "TableRows": 250000,
+      "DBBytes": 58470400,
+      "WALBytes": 0,
+      "TotalBlocks": 223,
+      "FreeBlocks": 103,
+      "During": {
+        "Flushes": 10,
+        "Logs": 50000,
+        "P50Ms": 398.285,
+        "P99Ms": 805.403,
+        "MaxMs": 805.403,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 80,
+        "Logs": 400000,
+        "P50Ms": 142.025,
+        "P99Ms": 3275.066,
+        "MaxMs": 3275.066,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 1,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 571.845,
+      "CopyMs": 4228.665,
+      "DeleteMs": 17.514,
+      "CheckpointMs": 3033.785,
+      "TableRows": 250000,
+      "DBBytes": 49557504,
+      "WALBytes": 0,
+      "TotalBlocks": 189,
+      "FreeBlocks": 69,
+      "During": {
+        "Flushes": 10,
+        "Logs": 50000,
+        "P50Ms": 380.313,
+        "P99Ms": 702.279,
+        "MaxMs": 702.279,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 30,
+        "Logs": 150000,
+        "P50Ms": 140.984,
+        "P99Ms": 3457.37,
+        "MaxMs": 3457.37,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 2,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 532.034,
+      "CopyMs": 4219.714,
+      "DeleteMs": 27.304,
+      "CheckpointMs": 2728.2,
+      "TableRows": 245000,
+      "DBBytes": 47984640,
+      "WALBytes": 0,
+      "TotalBlocks": 183,
+      "FreeBlocks": 64,
+      "During": {
+        "Flushes": 9,
+        "Logs": 45000,
+        "P50Ms": 382.946,
+        "P99Ms": 816.83,
+        "MaxMs": 816.83,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 30,
+        "Logs": 150000,
+        "P50Ms": 150.502,
+        "P99Ms": 3394.44,
+        "MaxMs": 3394.44,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 3,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 666.181,
+      "CopyMs": 4222.691,
+      "DeleteMs": 78.33,
+      "CheckpointMs": 3038.794,
+      "TableRows": 255000,
+      "DBBytes": 39596032,
+      "WALBytes": 0,
+      "TotalBlocks": 151,
+      "FreeBlocks": 29,
+      "During": {
+        "Flushes": 11,
+        "Logs": 55000,
+        "P50Ms": 324.065,
+        "P99Ms": 789.638,
+        "MaxMs": 789.638,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 31,
+        "Logs": 155000,
+        "P50Ms": 134.242,
+        "P99Ms": 3069.679,
+        "MaxMs": 3069.679,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 4,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 516.827,
+      "CopyMs": 4424.968,
+      "DeleteMs": 30.298,
+      "CheckpointMs": 2880.606,
+      "TableRows": 250000,
+      "DBBytes": 49819648,
+      "WALBytes": 0,
+      "TotalBlocks": 190,
+      "FreeBlocks": 70,
+      "During": {
+        "Flushes": 10,
+        "Logs": 50000,
+        "P50Ms": 405.312,
+        "P99Ms": 740.545,
+        "MaxMs": 740.545,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 29,
+        "Logs": 145000,
+        "P50Ms": 138.204,
+        "P99Ms": 3365.962,
+        "MaxMs": 3365.962,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 5,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 426.73199999999997,
+      "CopyMs": 4163.6320000000005,
+      "DeleteMs": 40.167,
+      "CheckpointMs": 2129.563,
+      "TableRows": 245000,
+      "DBBytes": 47722496,
+      "WALBytes": 0,
+      "TotalBlocks": 182,
+      "FreeBlocks": 63,
+      "During": {
+        "Flushes": 9,
+        "Logs": 45000,
+        "P50Ms": 385.384,
+        "P99Ms": 772.272,
+        "MaxMs": 772.272,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 30,
+        "Logs": 150000,
+        "P50Ms": 148.751,
+        "P99Ms": 3210.576,
+        "MaxMs": 3210.576,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 6,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 428.111,
+      "CopyMs": 4108.33,
+      "DeleteMs": 26.44,
+      "CheckpointMs": 2917.267,
+      "TableRows": 245000,
+      "DBBytes": 38809600,
+      "WALBytes": 0,
+      "TotalBlocks": 148,
+      "FreeBlocks": 29,
+      "During": {
+        "Flushes": 9,
+        "Logs": 45000,
+        "P50Ms": 380.7,
+        "P99Ms": 975.899,
+        "MaxMs": 975.899,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 31,
+        "Logs": 155000,
+        "P50Ms": 143.555,
+        "P99Ms": 3230.835,
+        "MaxMs": 3230.835,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 7,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 398.56800000000004,
+      "CopyMs": 4455.091,
+      "DeleteMs": 15.997,
+      "CheckpointMs": 2850.046,
+      "TableRows": 245000,
+      "DBBytes": 35663872,
+      "WALBytes": 0,
+      "TotalBlocks": 136,
+      "FreeBlocks": 17,
+      "During": {
+        "Flushes": 9,
+        "Logs": 45000,
+        "P50Ms": 366.486,
+        "P99Ms": 1122.113,
+        "MaxMs": 1122.113,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 31,
+        "Logs": 155000,
+        "P50Ms": 142.572,
+        "P99Ms": 3201.867,
+        "MaxMs": 3201.867,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 8,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 471.54200000000003,
+      "CopyMs": 4632.821,
+      "DeleteMs": 2637.418,
+      "CheckpointMs": 1.723,
+      "TableRows": 250000,
+      "DBBytes": 36188160,
+      "WALBytes": 0,
+      "TotalBlocks": 138,
+      "FreeBlocks": 17,
+      "During": {
+        "Flushes": 10,
+        "Logs": 50000,
+        "P50Ms": 368.048,
+        "P99Ms": 1049.562,
+        "MaxMs": 1049.562,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 31,
+        "Logs": 155000,
+        "P50Ms": 143.765,
+        "P99Ms": 3325.514,
+        "MaxMs": 3325.514,
+        "MaxBacklogLogs": 0
+      }
+    },
+    {
+      "Hour": 9,
+      "ExportedRows": 200000,
+      "Files": 3,
+      "TopKeysMs": 457.09799999999996,
+      "CopyMs": 4051.645,
+      "DeleteMs": 21.307,
+      "CheckpointMs": 2107.297,
+      "TableRows": 245000,
+      "DBBytes": 48508928,
+      "WALBytes": 0,
+      "TotalBlocks": 185,
+      "FreeBlocks": 68,
+      "During": {
+        "Flushes": 9,
+        "Logs": 45000,
+        "P50Ms": 352.988,
+        "P99Ms": 759.565,
+        "MaxMs": 759.565,
+        "MaxBacklogLogs": 0
+      },
+      "Between": {
+        "Flushes": 30,
+        "Logs": 150000,
+        "P50Ms": 142.723,
+        "P99Ms": 3151.67,
+        "MaxMs": 3151.67,
+        "MaxBacklogLogs": 0
+      }
+    }
+  ]
+}

@@ -8,20 +8,35 @@
 #     command: "SoftDeletedRecord.due.delete_all"
 #     priority: 2
 #     schedule: at 5am every day
+#
+# Solid Queue takes only the block named after the environment when there
+# is one, so the tasks every environment runs are shared through &tasks.
 
-event_store_message_processor:
-  class: EventStoreMessageProcessorJob
-  schedule: every second
+tasks: &tasks
+  event_store_message_processor:
+    class: EventStoreMessageProcessorJob
+    schedule: every second
 
-event_store_archive:
-  class: Maintenance::EventStoreArchiveJob
-  schedule: at 2am every day
+  event_store_archive:
+    class: Maintenance::EventStoreArchiveJob
+    schedule: at 2am every day
 
-maintenance_notification_cleanup:
-  class: "Maintenance::NotificationCleanupJob"
-  schedule: at 3am every day
+  monitor_scheduler:
+    class: MonitorSchedulerJob
+    schedule: every minute
+
+  maintenance_notification_cleanup:
+    class: "Maintenance::NotificationCleanupJob"
+    schedule: at 3am every day
+
+development:
+  <<: *tasks
+
+test:
+  <<: *tasks
 
 production:
+  <<: *tasks
   clear_solid_queue_finished_jobs:
     command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
     schedule: every hour at minute 12

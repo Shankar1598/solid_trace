@@ -18,6 +18,7 @@ export interface Project {
   name: string
   slug: string
   platform?: string
+  log_retention_days?: number | null
   created_at: string
   issues_count?: number
   keys?: ProjectKey[]
@@ -96,6 +97,12 @@ export interface Integration {
 export interface SharedProps {
   current_user: User | null
   current_org: Organization | null
+  /** The Organization's Projects, for the command palette. */
+  org_projects: { name: string; slug: string }[] | null
+  /** The Organization's Dashboards, for the command palette and Add to dashboard. */
+  org_dashboards: { id: number; name: string }[] | null
+  /** The Organization's Monitors, for the command palette. */
+  org_monitors: { id: number; name: string }[] | null
   flash: {
     notice?: string
     alert?: string

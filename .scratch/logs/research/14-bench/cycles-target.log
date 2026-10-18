@@ -1,0 +1,3 @@
+2026/10/02 14:56:44 hour 0: exported 100000 rows in 3 files (top keys 214 ms, copy 1885 ms), delete 30 ms, checkpoint 432 ms; table 104800 rows, file 33.6 MB + WAL 0.0 MB, blocks 128 (73 free); flush p99 172 / max 172 ms during export, 1178 / 1178 ms between
+2026/10/02 14:57:16 hour 1: exported 100000 rows in 3 files (top keys 150 ms, copy 1389 ms), delete 14 ms, checkpoint 1216 ms; table 104003 rows, file 39.6 MB + WAL 0.0 MB, blocks 151 (100 free); flush p99 254 / max 254 ms during export, 2719 / 2719 ms between
+2026/10/02 14:57:47 hour 2: exported 100000 rows in 3 files (top keys 159 ms, copy 1754 ms), delete 11 ms, checkpoint 1479 ms; table 106403 rows, file 26.2 MB + WAL 0.0 MB, blocks 100 (48 free); flush p99 289 / max 289 ms during export, 964 / 964 ms between

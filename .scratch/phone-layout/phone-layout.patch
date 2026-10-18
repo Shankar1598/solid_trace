@@ -1,0 +1,352 @@
+diff --git a/console/app/frontend/components/PhoneNav.tsx b/console/app/frontend/components/PhoneNav.tsx
+new file mode 100644
+index 0000000..6edb5a0
+--- /dev/null
++++ b/console/app/frontend/components/PhoneNav.tsx
+@@ -0,0 +1,38 @@
++import { useEffect, useState } from 'react'
++import { Dialog } from '@base-ui/react/dialog'
++import { router, usePage } from '@inertiajs/react'
++import { Menu, X } from 'lucide-react'
++import { buttonVariants } from '@/components/ui/button'
++import type { SharedProps } from '@/types'
++import { Sidebar } from './Sidebar'
++
++/**
++ * Below md the sidebar is hidden: a bar names the Organization, and its
++ * button opens the sidebar as a drawer, which closes on the next visit.
++ */
++export function PhoneNav() {
++  const { current_org } = usePage<SharedProps>().props
++  const [open, setOpen] = useState(false)
++  useEffect(() => router.on('navigate', () => setOpen(false)), [])
++  if (!current_org) return null
++
++  return (
++    <Dialog.Root open={open} onOpenChange={setOpen}>
++      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-2 md:hidden">
++        <Dialog.Trigger className={buttonVariants({ variant: 'ghost', size: 'icon' })} aria-label="Open the menu">
++          <Menu />
++        </Dialog.Trigger>
++        <span className="truncate text-sm font-semibold">{current_org.name}</span>
++      </div>
++      <Dialog.Portal>
++        <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/50" />
++        <Dialog.Popup aria-label="Menu" className="fixed inset-y-0 left-0 z-50 flex w-64 max-w-[85vw] outline-none">
++          <Sidebar className="flex w-full" />
++          <Dialog.Close className={buttonVariants({ variant: 'ghost', size: 'icon-sm', className: 'absolute right-2 top-3.5' })} aria-label="Close the menu">
++            <X />
++          </Dialog.Close>
++        </Dialog.Popup>
++      </Dialog.Portal>
++    </Dialog.Root>
++  )
++}
+diff --git a/console/app/frontend/components/SettingsSidebar.tsx b/console/app/frontend/components/SettingsSidebar.tsx
+index ade978e..80a840f 100644
+--- a/console/app/frontend/components/SettingsSidebar.tsx
++++ b/console/app/frontend/components/SettingsSidebar.tsx
+@@ -3,13 +3,13 @@ import { Building2, Users, Puzzle, UserCircle } from 'lucide-react'
+ import { cn } from '@/lib/utils'
+ import { SharedProps } from '@/types'
+ 
+-export function SettingsSidebar() {
++/** The settings pages, in their groups, with the one open marked. */
++function useSettingsGroups() {
+   const { url, props } = usePage<SharedProps>()
+   const { current_org } = props
+-
+   if (!current_org) return null
+ 
+-  const settingsItems = [
++  return [
+     {
+       group: 'Organization',
+       items: [
+@@ -45,6 +45,12 @@ export function SettingsSidebar() {
+       ]
+     }
+   ]
++}
++
++/** The settings pages beside the page from md up. */
++export function SettingsSidebar() {
++  const settingsItems = useSettingsGroups()
++  if (!settingsItems) return null
+ 
+   return (
+     <div className="w-64 flex-shrink-0 border-r bg-card h-full hidden md:block">
+@@ -85,3 +91,26 @@ export function SettingsSidebar() {
+     </div>
+   )
+ }
++
++/** The settings pages as a row of tabs over the page on a phone, where the sidebar is hidden. */
++export function SettingsTabs() {
++  const groups = useSettingsGroups()
++  if (!groups) return null
++  return (
++    <nav aria-label="Settings" className="-mx-4 mb-4 flex overflow-x-auto border-b px-4 md:hidden">
++      {groups.flatMap(g => g.items).map(item => (
++        <Link
++          key={item.href}
++          href={item.href}
++          aria-current={item.active ? 'page' : undefined}
++          className={cn(
++            'shrink-0 border-b-2 px-3 py-2.5 text-sm',
++            item.active ? 'border-foreground font-medium text-foreground' : 'border-transparent text-muted-foreground',
++          )}
++        >
++          {item.label}
++        </Link>
++      ))}
++    </nav>
++  )
++}
+diff --git a/console/app/frontend/components/layouts/DashboardLayout.tsx b/console/app/frontend/components/layouts/DashboardLayout.tsx
+index 0265536..df355bc 100644
+--- a/console/app/frontend/components/layouts/DashboardLayout.tsx
++++ b/console/app/frontend/components/layouts/DashboardLayout.tsx
+@@ -1,4 +1,5 @@
+ import { Sidebar } from '../Sidebar'
++import { PhoneNav } from '../PhoneNav'
+ import FlashToasts from '../FlashToasts'
+ import { CommandPalette } from '../CommandPalette'
+ import { useShortcutListener } from '../useShortcut'
+@@ -7,13 +8,14 @@ interface DashboardLayoutProps {
+   children: React.ReactNode
+ }
+ 
+-/** The signed-in frame: the sidebar and the page. A page opens with a PageHeader, which holds its breadcrumbs. */
++/** The signed-in frame: the sidebar (a drawer behind a bar on a phone) and the page. A page opens with a PageHeader, which holds its breadcrumbs. */
+ export default function DashboardLayout({ children }: DashboardLayoutProps) {
+   useShortcutListener()
+   return (
+     <CommandPalette>
+       <div className="flex min-h-screen max-h-screen flex-col md:flex-row">
+         <FlashToasts />
++        <PhoneNav />
+         <Sidebar className="hidden md:flex flex-shrink-0" />
+ 
+         <div className="flex-1 flex flex-col min-w-0">
+diff --git a/console/app/frontend/components/layouts/SettingsLayout.tsx b/console/app/frontend/components/layouts/SettingsLayout.tsx
+index df33051..e550f55 100644
+--- a/console/app/frontend/components/layouts/SettingsLayout.tsx
++++ b/console/app/frontend/components/layouts/SettingsLayout.tsx
+@@ -1,5 +1,5 @@
+ import DashboardLayout from './DashboardLayout'
+-import { SettingsSidebar } from '../SettingsSidebar'
++import { SettingsSidebar, SettingsTabs } from '../SettingsSidebar'
+ import { cn } from '@/lib/utils'
+ 
+ interface SettingsLayoutProps {
+@@ -10,11 +10,13 @@ interface SettingsLayoutProps {
+ export default function SettingsLayout({ children, className }: SettingsLayoutProps) {
+   return (
+     <DashboardLayout>
+-      <div className="flex h-screen -m-4 overflow-hidden">
++      {/* The screen's height, less the phone bar (h-12) below md. */}
++      <div className="-m-4 flex h-[calc(100vh-3rem)] overflow-hidden md:h-screen">
+         <SettingsSidebar />
+         <main className={cn("flex-1 overflow-y-auto", className)}>
+           {/* The same padding as every other page, so the title sits where theirs does. */}
+           <div className="max-w-4xl p-4 pb-20">
++            <SettingsTabs />
+             {children}
+           </div>
+         </main>
+diff --git a/console/app/frontend/pages/Issues/Index.tsx b/console/app/frontend/pages/Issues/Index.tsx
+index f9f3729..75bb1f6 100644
+--- a/console/app/frontend/pages/Issues/Index.tsx
++++ b/console/app/frontend/pages/Issues/Index.tsx
+@@ -88,7 +88,8 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
+       <PageHeader title="Issues" />
+       <div className="flex flex-col h-full space-y-4">
+ 
+-        <div className="flex items-center gap-2 w-full">
++        {/* On a phone the selects share a line and the search takes the next. */}
++        <div className="flex w-full flex-wrap items-center gap-2">
+           <div className="flex items-center border">
+             <Select
+               value={filters.project_id}
+@@ -116,7 +117,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
+             </Select>
+           </div>
+ 
+-          <div className="flex-1 relative">
++          <div className="relative order-last basis-full sm:order-none sm:basis-0 sm:flex-1">
+             <Input
+               className="pl-2 text-sm"
+               placeholder="Search Issues…"
+@@ -148,16 +149,16 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
+         <Table className="table-fixed">
+           <TableHeader>
+             <TableRow className="hover:bg-transparent">
+-              <TableHead className="w-[48px] px-4">
++              <TableHead className="hidden w-[48px] px-4 md:table-cell">
+                 <div className="flex items-center justify-center">
+                   <Checkbox id="select-all" />
+                 </div>
+               </TableHead>
+               <TableHead>Issue</TableHead>
+-              <TableHead className="text-right px-4 w-32">Last seen</TableHead>
+-              <TableHead className="text-right px-4 w-32">Age</TableHead>
+-              <TableHead className="text-right px-4 w-24">Events</TableHead>
+-              <TableHead className="text-right px-4 w-24">Users</TableHead>
++              <TableHead className="w-24 px-2 text-right md:w-32 md:px-4">Last seen</TableHead>
++              <TableHead className="hidden w-32 px-4 text-right md:table-cell">Age</TableHead>
++              <TableHead className="w-16 px-2 text-right md:w-24 md:px-4">Events</TableHead>
++              <TableHead className="hidden w-24 px-4 text-right md:table-cell">Users</TableHead>
+             </TableRow>
+           </TableHeader>
+           <TableBody>
+@@ -170,7 +171,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
+             ) : (
+               issues.map((issue) => (
+                 <TableRow key={issue.id} className="group cursor-pointer">
+-                  <TableCell className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
++                  <TableCell className="hidden px-4 py-3 md:table-cell" onClick={(e) => e.stopPropagation()}>
+                     <div className="flex items-center justify-center">
+                       <Checkbox />
+                     </div>
+@@ -178,14 +179,14 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
+                   <TableCell className="p-0">
+                     <Link
+                       href={`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}`}
+-                      className="block px-2 py-3"
++                      className="block px-3 py-3 md:px-2"
+                     >
+                       <div className="flex flex-col min-w-0">
+                         <div className="flex items-baseline gap-2 mb-1">
+                           <h3 className="font-semibold truncate text-foreground group-hover:underline">
+                             {issue.title}
+                           </h3>
+-                          <span className="font-mono text-xs text-muted-foreground truncate font-normal">
++                          <span className="hidden truncate font-mono text-xs font-normal text-muted-foreground sm:inline">
+                             {issue.culprit}
+                           </span>
+                         </div>
+@@ -197,16 +198,16 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
+                       </div>
+                     </Link>
+                   </TableCell>
+-                  <TableCell className="text-right px-4 py-3 text-sm text-foreground/80 tabular-nums">
++                  <TableCell className="px-2 py-3 text-right text-sm text-foreground/80 tabular-nums md:px-4">
+                     {formatDistanceToNow(new Date(issue.last_seen_at || issue.created_at), { addSuffix: false }).replace('about ', '')}
+                   </TableCell>
+-                  <TableCell className="text-right px-4 py-3 text-sm text-muted-foreground tabular-nums">
++                  <TableCell className="hidden px-4 py-3 text-right text-sm text-muted-foreground tabular-nums md:table-cell">
+                     {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false }).replace('about ', '')}
+                   </TableCell>
+-                  <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
++                  <TableCell className="px-2 py-3 text-right font-mono text-sm font-medium text-foreground md:px-4">
+                     {new Intl.NumberFormat('en-US', { notation: "compact" }).format(issue.events_count)}
+                   </TableCell>
+-                  <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
++                  <TableCell className="hidden px-4 py-3 text-right font-mono text-sm font-medium text-foreground md:table-cell">
+                     {new Intl.NumberFormat('en-US', { notation: "compact" }).format(0)}
+                   </TableCell>
+                 </TableRow>
+--- a/console/app/frontend/pages/Dashboards/Show.tsx
++++ b/console/app/frontend/pages/Dashboards/Show.tsx
+@@ -33,6 +33,8 @@
+ /** A grid row's height and the gap between cards, in px. */
+ const ROW_PX = 64
+ const GAP_PX = 12
++/** Narrower than this, twelve columns are too thin: the charts stack in reading order, each at its own height. */
++const STACK_BELOW_PX = 640
+ const AUTO_REFRESH_LABELS: Record<AutoRefresh, string> = { off: 'Auto-refresh off', '1m': 'Every minute', '5m': 'Every 5 minutes' }
+ const NO_COLUMNS = { shown: [], toggle: () => {} }
+ 
+@@ -107,6 +109,7 @@
+     })
+   }
+   const { width, containerRef, mounted } = useContainerWidth()
++  const stacked = mounted && width < STACK_BELOW_PX
+ 
+   const copyLink = (kind: LinkKind) => {
+     const shown: TimeRange = kind === 'shown' && range.kind === 'relative' ? { kind: 'absolute', from: run.from, to: run.to } : range
+@@ -122,6 +125,23 @@
+   const projectsById = useMemo(() => new Map(projects.map(p => [p.id, p])), [projects])
+   const charts = dashboard.charts
+   const severalProjects = new Set(charts.map(c => c.project_id)).size > 1
++  const chartsById = new Map(charts.map(c => [c.id, c]))
++  const card = (chart: DashboardChart) => (
++    <ChartCard
++      chart={chart}
++      project={projectsById.get(chart.project_id)}
++      showProject={severalProjects}
++      orgSlug={orgSlug}
++      run={run}
++      range={range}
++      queue={queue}
++      editing={editing && !stacked}
++      onRunning={onRunning}
++      onEdit={() => setEditor({ chart })}
++      onDuplicate={() => duplicate(chart)}
++      onDelete={() => setDeleting(chart)}
++    />
++  )
+   const autoRefreshItems = (Object.keys(AUTO_REFRESH_LABELS) as AutoRefresh[]).map(value => ({ value, label: AUTO_REFRESH_LABELS[value] }))
+ 
+   return (
+@@ -151,7 +171,7 @@
+           {editing ? (
+             <Button onClick={() => setEditing(false)}><Check className="h-3.5 w-3.5" /> Done</Button>
+           ) : (
+-            <Button variant="outline" onClick={() => setEditing(true)} disabled={charts.length === 0}><Pencil className="h-3.5 w-3.5" /> Edit layout</Button>
++            <Button variant="outline" onClick={() => setEditing(true)} disabled={charts.length === 0 || stacked}><Pencil className="h-3.5 w-3.5" /> Edit layout</Button>
+           )}
+           <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Dashboard settings" onClick={() => setSettings(true)}>
+             <Settings className="h-4 w-4" />
+@@ -167,6 +187,13 @@
+               <div className="border border-dashed p-10 text-center text-sm text-muted-foreground">
+                 No charts yet. Press Add chart, or chart a Query in the Logs explorer and press Add to dashboard beside the chart switch.
+               </div>
++            ) : stacked ? (
++              <div className="flex flex-col gap-3">
++                {[...layout].sort((a, b) => a.y - b.y || a.x - b.x).map(item => {
++                  const chart = chartsById.get(Number(item.i))
++                  return chart && <div key={item.i} style={{ height: item.h * ROW_PX + (item.h - 1) * GAP_PX }}>{card(chart)}</div>
++                })}
++              </div>
+             ) : mounted && (
+               <ReactGridLayout
+                 layout={layout}
+@@ -177,24 +204,7 @@
+                 onDragStop={persist}
+                 onResizeStop={persist}
+               >
+-                {charts.map(chart => (
+-                  <div key={String(chart.id)}>
+-                    <ChartCard
+-                      chart={chart}
+-                      project={projectsById.get(chart.project_id)}
+-                      showProject={severalProjects}
+-                      orgSlug={orgSlug}
+-                      run={run}
+-                      range={range}
+-                      queue={queue}
+-                      editing={editing}
+-                      onRunning={onRunning}
+-                      onEdit={() => setEditor({ chart })}
+-                      onDuplicate={() => duplicate(chart)}
+-                      onDelete={() => setDeleting(chart)}
+-                    />
+-                  </div>
+-                ))}
++                {charts.map(chart => <div key={String(chart.id)}>{card(chart)}</div>)}
+               </ReactGridLayout>
+             )}
+           </div>
+--- a/console/app/frontend/pages/Logs/Index.tsx
++++ b/console/app/frontend/pages/Logs/Index.tsx
+@@ -601,7 +601,7 @@
+       {/* The explorer fills the page, so its bar stands in for the page header. */}
+       <Head title={`Logs · ${project.name}`} />
+       <h1 className="sr-only">Logs</h1>
+-      <div className="h-[calc(100vh-2rem)] flex flex-col border overflow-hidden bg-card">
++      <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-2rem)] flex flex-col border overflow-hidden bg-card">
+         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+           <TimeRangePicker range={explorer.draft.range} onChange={pickBarRange} retentionDays={project.log_retention_days} />
+           <ModeSwitch modes={modes} mode={mode} onSwitch={switchTo} />

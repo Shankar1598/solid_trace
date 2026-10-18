@@ -1,0 +1,29 @@
+=== RUN   TestScaledQueries
+wrote 100000 Logs in 4.269s
+Project 1 file: 69853 rows, 40 promoted keys
+Parquet timed after 20.924s
+hot table timed after 55.42s
+Parquet, per file, N = 40 / 5% (ms):
+    2 files        threads 2: [181.804 64.85 164.945 54.456]
+    8 files        threads 2: [440.363 249.677 646.517 199.641]
+    8 files        threads 1: [592.421 266.453 535.262 267.783]
+    projection for 253M rows: per query, ms/M rows at 2 threads, fixed ms, 1→2 speedup, projected s at 4 vCPU (2→4 scaling as 1→2):
+    count_by_service_per_minute     38.6     95.6  1.35    7.33
+    common_attr_per_minute          27.6      3.2  1.07    6.55
+    rare_attr_eq                    71.8      4.4  0.83   18.20
+    group_by_attr_top10             21.7      6.1  1.34    4.10
+hot table (ms):
+    400000 rows    threads 2: [19.089 184.175 117.389 206.47]
+    1600000 rows   threads 2: [46.019 717.11 851.784 580.995]
+    1600000 rows   threads 1: [59.859 787.457 772.438 765.229]
+    projection for 23M rows: per query, ms/M rows at 2 threads, fixed ms, 1→2 speedup, projected s at 4 vCPU (2→4 scaling as 1→2):
+    count_by_service_per_minute     22.4     10.1  1.30    0.41
+    common_attr_per_minute         444.1      6.5  1.10    9.32
+    rare_attr_eq                   612.0   -127.4  0.91   13.97
+    group_by_attr_top10            312.1     81.6  1.32    5.52
+done in 55.42s
+--- PASS: TestScaledQueries (55.56s)
+PASS
+ok  	github.com/solidtrace/event_store/bench/logslayouts	55.576s
+
+[exited with code 0]

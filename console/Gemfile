@@ -100,3 +100,6 @@ gem "rest-client"
 gem "discard"
 
 gem "pundit", "~> 2.5"
+
+# Model Context Protocol server at /mcp
+gem "mcp", "~> 1.8"

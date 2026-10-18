@@ -1,20 +1,57 @@
 # Event Store configuration.
 # Any key here overrides the defaults in config.go.
 
-ingest_socket: /var/run/solid-trace/event_store.sock
+# Public ingest. EventStore listens on it directly, with no proxy in front.
+ingest_port: "4000"
 # Query API for the console. Always bound to 127.0.0.1; never expose it.
 query_port: "4100"
 pebble_path: /storage/pebble/production/events
 duckdb_path: /storage/duckdb/production/events.duckdb
+# Logs' hot tables, attached to the same DuckDB. Default: logs.duckdb next to duckdb_path.
+# logs_duckdb_path: /storage/duckdb/production/logs.duckdb
+# Logs' hourly Parquet files, on local disk. Default: logs_parquet next to duckdb_path.
+# logs_parquet_path: /storage/duckdb/production/logs_parquet
+# The most disk, in GB, every Project's Log files may take together; past it the
+# oldest hours are deleted. Default: half the size of the disk holding them, read
+# when EventStore starts.
+# logs_disk_limit_gb: 800
+# The memory, in MiB, that keeps charts' time bins of exported hours, so a chart run
+# again reads only the bins it lacks. 0 turns it off. Default: 64.
+# logs_bin_cache_mb: 64
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 
-# Store DuckDB parquet archives on slower storage.
+# Store DuckDB parquet archives on slower storage. With an object_store, each
+# Event archive file stays here only until it is uploaded.
 parquet_storage_path: /storage_cold/duckdb/production/events_parquet
+
+# A bucket for Log files and the Event archive, read by DuckDB through httpfs.
+# Without this block everything stays on local disk. The bucket's key comes from
+# the SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET
+# environment variables; for GCS, an HMAC key. docs/logs/object-store.md has
+# every key and how to set up the bucket.
+# object_store:
+#   kind: gcs                  # s3 or gcs; gcs uses its S3 interop API
+#   bucket: acme-solidtrace
+#   prefix: solidtrace/        # before every key; the default
+#   region: us-east-1          # needed for AWS S3; gcs defaults to auto
+#   endpoint: http://127.0.0.1:9000   # MinIO, R2 and others; set for you for gcs
+#   local_cache_hours: 24      # hours a Log file's local copy stays after upload; 0 allowed
+# MinIO on a development machine, with every exported hour read from it at once:
+# object_store:
+#   kind: s3
+#   bucket: solidtrace-dev
+#   prefix: dev/
+#   region: us-east-1
+#   endpoint: http://127.0.0.1:9000
+#   local_cache_hours: 0
+# Where DuckDB's httpfs extension is, as <version>/<platform>/httpfs.duckdb_extension.
+# The Docker image puts it in the default; DuckDB never downloads extensions itself.
+# duckdb_extension_directory: /usr/local/lib/solidtrace/duckdb_extensions
 
 # DuckDB memory and spill-to-disk settings
 # duckdb_temp_directory: /storage_local/duckdb/tmp
 # duckdb_memory_limit: 16GB
 
-# Requests waiting to store their Event before ingest answers 503.
+# Requests waiting to store their Event or Logs before ingest answers 503.
 # ingest_max_waiting: 10000

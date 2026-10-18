@@ -114,11 +114,11 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
   return (
     <Card>
       <CardHeader className="border-b">
-        <CardTitle className="uppercase">Issue Statistics</CardTitle>
+        <CardTitle>Details</CardTitle>
       </CardHeader>
       <CardContent className="p-4 space-y-5">
         <div className="space-y-2">
-          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">
+          <span className="caps-label">
             Assigned to
           </span>
           <Combobox
@@ -158,7 +158,7 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
               </ComboboxList>
               {isLoading && (
                 <div className="px-2 py-2 text-xs text-muted-foreground">
-                  Loading members...
+                  Loading members…
                 </div>
               )}
               {!isLoading && query.trim().length > 0 && mergedMembers.length === 0 && (
@@ -179,9 +179,9 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
 
         <div className="flex justify-between items-start">
           <div className="space-y-1">
-            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest flex items-center gap-1.5">
+            <span className="caps-label flex items-center gap-1.5">
               <Clock className="h-3 w-3" />
-              First Seen
+              First seen
             </span>
             <div className="text-sm font-medium">{formatDistanceToNow(new Date(issue.created_at), { addSuffix: true })}</div>
             <div className="text-[10px] text-muted-foreground">{format(new Date(issue.created_at), 'MMM d, yyyy')}</div>
@@ -190,9 +190,9 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
 
         <div className="flex justify-between items-start">
           <div className="space-y-1">
-            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest flex items-center gap-1.5">
+            <span className="caps-label flex items-center gap-1.5">
               <Clock className="h-3 w-3" />
-              Last Seen
+              Last seen
             </span>
             <div className="text-sm font-medium">{formatDistanceToNow(new Date(issue.last_seen_at), { addSuffix: true })}</div>
             <div className="text-[10px] text-muted-foreground">{format(new Date(issue.last_seen_at), 'MMM d, yyyy')}</div>
@@ -203,14 +203,14 @@ export function IssueSidebar({ issue, orgSlug }: IssueSidebarProps) {
 
         <div className="grid grid-cols-2 gap-4 pt-1">
           <div className="space-y-1">
-            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest flex items-center gap-1.5">
+            <span className="caps-label flex items-center gap-1.5">
               <Hash className="h-3 w-3" />
               Events
             </span>
-            <div className="text-xl font-bold tracking-tighter">{issue.events_count}</div>
+            <div className="font-mono text-lg font-semibold tabular-nums">{issue.events_count.toLocaleString()}</div>
           </div>
           <div className="space-y-1">
-            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest flex items-center gap-1.5">
+            <span className="caps-label flex items-center gap-1.5">
               <MapPin className="h-3 w-3" />
               Project
             </span>

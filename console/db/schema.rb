@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_02_110000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_18_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -49,6 +49,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_110000) do
     t.index ["blob_id", "variation_digest"], name: "index_active_storage_variant_records_uniqueness", unique: true
   end
 
+  create_table "api_tokens", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "last_used_at"
+    t.string "name", null: false
+    t.string "token_digest", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["token_digest"], name: "index_api_tokens_on_token_digest", unique: true
+    t.index ["user_id"], name: "index_api_tokens_on_user_id"
+  end
+
   create_table "comments", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "issue_id", null: false
@@ -56,6 +67,43 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_110000) do
     t.datetime "updated_at", null: false
     t.index ["issue_id"], name: "index_comments_on_issue_id"
     t.index ["organization_user_id"], name: "index_comments_on_organization_user_id"
+  end
+
+  create_table "dashboard_charts", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "dashboard_id", null: false
+    t.integer "h", default: 4, null: false
+    t.json "options", default: {}, null: false
+    t.integer "project_id", null: false
+    t.text "query", null: false
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.string "viz", default: "line", null: false
+    t.integer "w", default: 6, null: false
+    t.integer "x", default: 0, null: false
+    t.integer "y", default: 0, null: false
+    t.index ["dashboard_id"], name: "index_dashboard_charts_on_dashboard_id"
+    t.index ["project_id"], name: "index_dashboard_charts_on_project_id"
+  end
+
+  create_table "dashboards", force: :cascade do |t|
+    t.string "auto_refresh", default: "off", null: false
+    t.datetime "created_at", null: false
+    t.integer "created_by_id"
+    t.string "default_range", default: "1h", null: false
+    t.text "description"
+    t.string "name", null: false
+    t.integer "organization_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["created_by_id"], name: "index_dashboards_on_created_by_id"
+    t.index ["organization_id"], name: "index_dashboards_on_organization_id"
+  end
+
+  create_table "instance_settings", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "default_log_retention_days", default: 30, null: false
+    t.boolean "sql_queries_enabled", default: true, null: false
+    t.datetime "updated_at", null: false
   end
 
   create_table "integrations", force: :cascade do |t|
@@ -97,13 +145,75 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_110000) do
     t.index ["project_id", "status"], name: "index_issues_on_project_id_and_status"
   end
 
+  create_table "monitor_integrations", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "integration_id", null: false
+    t.integer "monitor_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["integration_id"], name: "index_monitor_integrations_on_integration_id"
+    t.index ["monitor_id", "integration_id"], name: "index_monitor_integrations_on_monitor_id_and_integration_id", unique: true
+  end
+
+  create_table "monitor_runs", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "elapsed_ms"
+    t.text "error"
+    t.integer "firing"
+    t.boolean "logs_skipped", default: false, null: false
+    t.integer "matched"
+    t.integer "monitor_id", null: false
+    t.datetime "ran_at", null: false
+    t.string "status", null: false
+    t.index ["monitor_id", "ran_at"], name: "index_monitor_runs_on_monitor_id_and_ran_at"
+  end
+
+  create_table "monitor_states", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "group_key", default: "", null: false
+    t.float "last_value"
+    t.integer "monitor_id", null: false
+    t.datetime "since", null: false
+    t.string "status", default: "ok", null: false
+    t.datetime "updated_at", null: false
+    t.index ["monitor_id", "group_key"], name: "index_monitor_states_on_monitor_id_and_group_key", unique: true
+  end
+
+  create_table "monitors", force: :cascade do |t|
+    t.boolean "alert_on_no_data", default: false, null: false
+    t.datetime "created_at", null: false
+    t.datetime "disabled_at"
+    t.string "ingest_cursor"
+    t.datetime "ingest_cursor_at"
+    t.integer "interval_minutes", default: 1, null: false
+    t.string "kind", null: false
+    t.text "last_error"
+    t.datetime "last_run_at"
+    t.datetime "logs_skipped_at"
+    t.string "name", null: false
+    t.datetime "next_run_at"
+    t.boolean "notify_by_group", default: false, null: false
+    t.string "operator"
+    t.integer "organization_id", null: false
+    t.integer "project_id", null: false
+    t.text "query", null: false
+    t.integer "range_minutes", default: 5, null: false
+    t.datetime "run_started_at"
+    t.float "threshold"
+    t.integer "timeouts_in_a_row", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["organization_id"], name: "index_monitors_on_organization_id"
+    t.index ["project_id"], name: "index_monitors_on_project_id"
+  end
+
   create_table "notifications", force: :cascade do |t|
     t.integer "attempts", default: 0, null: false
     t.datetime "created_at", null: false
     t.text "error_message"
+    t.string "group_key"
     t.integer "integration_id", null: false
-    t.integer "issue_id", null: false
+    t.integer "issue_id"
     t.string "kind", null: false
+    t.integer "monitor_id"
     t.binary "payload"
     t.datetime "processing_at"
     t.datetime "sent_at"
@@ -112,7 +222,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_110000) do
     t.index ["integration_id", "issue_id", "kind", "created_at"], name: "index_notifications_on_integration_issue_kind_created_at"
     t.index ["integration_id", "kind", "status"], name: "index_notifications_on_integration_id_and_kind_and_status"
     t.index ["integration_id"], name: "index_notifications_on_integration_id"
+    t.index ["monitor_id", "group_key", "created_at"], name: "index_notifications_on_monitor_group_created_at"
     t.index ["status", "created_at"], name: "index_notifications_on_status_and_created_at"
+    t.check_constraint "(issue_id IS NOT NULL AND monitor_id IS NULL AND group_key IS NULL) OR (issue_id IS NULL AND monitor_id IS NOT NULL AND group_key IS NOT NULL)", name: "notifications_one_subject"
   end
 
   create_table "organizations", force: :cascade do |t|
@@ -157,6 +269,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_110000) do
 
   create_table "projects", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.integer "log_retention_days"
     t.string "name"
     t.integer "organization_id", null: false
     t.string "slug"
@@ -186,13 +299,24 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_02_110000) do
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
+  add_foreign_key "api_tokens", "users"
   add_foreign_key "comments", "issues"
   add_foreign_key "comments", "organizations_users", column: "organization_user_id"
+  add_foreign_key "dashboard_charts", "dashboards"
+  add_foreign_key "dashboard_charts", "projects"
+  add_foreign_key "dashboards", "organizations"
+  add_foreign_key "dashboards", "users", column: "created_by_id", on_delete: :nullify
   add_foreign_key "integrations", "organizations"
   add_foreign_key "issue_fingerprints", "issues"
   add_foreign_key "issue_fingerprints", "projects"
   add_foreign_key "issues", "organizations_users", column: "assignee_id"
   add_foreign_key "issues", "projects"
+  add_foreign_key "monitor_integrations", "integrations", on_delete: :cascade
+  add_foreign_key "monitor_integrations", "monitors", on_delete: :cascade
+  add_foreign_key "monitor_runs", "monitors", on_delete: :cascade
+  add_foreign_key "monitor_states", "monitors", on_delete: :cascade
+  add_foreign_key "monitors", "organizations"
+  add_foreign_key "monitors", "projects"
   add_foreign_key "notifications", "integrations"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"

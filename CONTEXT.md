@@ -25,7 +25,7 @@ The EventStore module that turns stored Events into Issues, indexes them in Duck
 _Avoid_: pipeline, ingester
 
 **Processing cursor**:
-A Project's position in Pebble, up to which Event processing has handled Events.
+A Project's position in its stored Events or Log batches, up to which Event processing or Log processing has handled them. Event processing keeps its cursor in Pebble; Log processing keeps its cursor in `logs.duckdb`, committed together with the Logs it covers.
 _Avoid_: offset, checkpoint
 
 **IssueRepository**:
@@ -56,6 +56,18 @@ _Avoid_: severity, priority
 The part of a system that emitted a Log, such as an application, a worker or a proxy. How Logs from one Project are told apart.
 _Avoid_: source, app, dataset
 
+**Log ingest**:
+The EventStore module that authenticates incoming Logs, normalises them, stores each request's Logs in Pebble as one Log batch and acknowledges them. A `200` means the Logs are stored.
+_Avoid_: shipper endpoint, collector
+
+**Log batch**:
+The normalised Logs of one ingest request, stored in Pebble as one entry until Log processing has moved them to DuckDB.
+_Avoid_: chunk, payload
+
+**Log processing**:
+The EventStore module that moves stored Log batches into each Project's hot table in DuckDB, reading each Project's Log batches from its Processing cursor. Separate from Event processing; Logs are never grouped into Issues.
+_Avoid_: pipeline, indexer
+
 **Retention**:
 How many whole days a Project's Logs are kept before they are deleted: an instance default that a Project can override.
 _Avoid_: TTL, expiry, archive period
@@ -65,38 +77,90 @@ A request for Logs written in SolidTrace's KQL-style query language. It always r
 _Avoid_: APL, KQL, search
 
 **SQL query**:
-Raw DuckDB SQL a user runs directly, unscoped by Project, only on installs that have turned it on.
+Raw DuckDB SQL a user runs directly, only on installs that have turned it on. Its `logs` and `events` views show the Project and time range chosen outside the text, and are all it can read: other tables, files and URLs are refused.
 _Avoid_: raw query, advanced query
+
+**Logs explorer**:
+The Console page where a Project's Logs are searched and read.
+_Avoid_: log viewer, log search, logs page
 
 **Builder**:
 The Logs explorer's default way to make a Query without typing it: filter chips plus a search box. It can show only Queries made of equality filters and one search.
 _Avoid_: query builder, visual mode, simple mode
+
+**Chart**:
+A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single number. A time series needs the last summarize's time bins, which are its x; its number columns are the series and its by columns split them. Bars need a summarize with no time bin. Any table of one row and one number is a single number. The Logs explorer shows it above the table.
+_Avoid_: graph, plot, visualization
+
+**Dashboard**:
+A page of **Charts** that belongs to an organization. Each chart saves a **Query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows. Any member of the organization can see, make, change and delete it.
+_Avoid_: board, panel page
+
+**Monitor**:
+A saved **Query** on one of an organization's **Projects** that runs every few minutes and tells its **Integrations** what it finds. A Threshold monitor's Query ends in a summarize of one number per group; a group fires when its number passes the threshold and resolves when it no longer does. A Match monitor sends the **Logs** ingested since its last run that match its Query. Any member of the organization can see, make, change and delete it.
+_Avoid_: alert, alert rule, check
+
+**Threshold monitor**:
+A **Monitor** whose **Query** ends in a summarize of one number per row. Each row is a group, named by its other columns, and each run reads the Monitor's range ending 60 seconds before the run. A group is **firing** while its number passes the threshold and **ok** otherwise.
+_Avoid_: metric alert, threshold alert, threshold rule
+
+**Match monitor**:
+A **Monitor** whose **Query** returns **Logs**. Each run reads the Logs ingested since the last one, in **Log batch** order, and sends one **Notification** when any match. It keeps no state between runs, so it is never firing.
+_Avoid_: log alert, match rule
+
+**Firing** and **ok**:
+The two states of a **Threshold monitor**'s group: firing while its number passes the threshold, or while the table is empty when the Monitor alerts on no data, and ok otherwise. Going from ok to firing sends a monitor firing **Notification** and going back sends monitor resolved; a group that stays firing sends nothing more. Turning the Monitor off, deleting it or making it a **Match monitor** resolves its firing groups.
+_Avoid_: alerting, triggered, breached, open
+
+**Log file store**:
+Where EventStore keeps a **Project**'s Log files, the hourly Parquet files its hourly export writes once an hour's **Logs** leave the hot table: the local disk, or an S3 or GCS bucket with a local copy kept for a while. A manifest in DuckDB lists each file and where it is, so reads never list folders or the bucket.
+_Avoid_: archive, cold storage, data lake
+
+**Bin cache**:
+EventStore's memory of a **Chart**'s time bins whose Logs are all in the **Log file store**, so a Chart run again, as a **Dashboard** refreshes, reads only the bins it lacks. A bin is kept under the Project, the Query, its size and start, and the generations of the Log files it covers, so a bin whose Logs have changed is never used again.
+_Avoid_: query cache, result cache
 
 **Integration**:
 An outbound notification target owned by an organization.
 _Avoid_: webhook config, notifier job
 
 **Notification**:
-A message owed to one **Integration** about one or more **Issues**, recorded in the outbox until it ends as sent, failed after the last retry, or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed) that decides the message.
+A message owed to one **Integration** about one or more **Issues**, or about one group of a **Monitor**, recorded in the outbox until it ends as sent, failed after the last retry, or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched) that decides the message.
 _Avoid_: notification event, alert, event type
 
 **Integration notification**:
-The Console module that decides which **Notifications** an **Issue** change produces, and delivers them to each **Integration** in batches under a per-Integration rate limit.
+The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches, and each group of a Monitor in order.
 _Avoid_: notifier, integration notifier
 
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant
 
+**MCP server**:
+The Console endpoint where an AI agent reads and changes Projects, Logs, Dashboards, Monitors and Issues over the Model Context Protocol, acting as the user whose **API token** it presents.
+_Avoid_: agent API, bot, integration
+
+**API token**:
+A secret a user makes in their settings that lets a client act as that user through the **MCP server**, with the user's role in each organization checked on every call. Console keeps only its digest.
+_Avoid_: API key, project key, access token
+
 ## Relationships
 
 - An **EventStore** accepts an **Event** through **Event ingest**
 - **Event processing** derives one **Issue** for each stored **Event**, reading each **Project**'s Events from its **Processing cursor**
+- An **EventStore** accepts **Logs** through **Log ingest**, one **Log batch** per request
+- **Log processing** moves each **Project**'s **Log batches** into DuckDB, reading them from its **Processing cursor**
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
 - A **Project**'s **Retention** decides when its **Logs** are deleted
+- A **Chart** draws one **Query**'s or **SQL query**'s table; the **Logs explorer** shows it above the table
+- A **Dashboard** holds many **Charts**, each a saved **Query** on a **Project** of the Dashboard's organization
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
+- A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
+- A **Threshold monitor**'s groups are **firing** or **ok**; a **Match monitor** reads the **Logs** of each new **Log batch**
+- **Log processing**'s hourly export moves each hour's **Logs** to the **Log file store**, and the **Bin cache** keeps the **Chart** bins whose Logs are all there
+- An **MCP server** call acts as the user of its **API token**, with what that user's role allows in the organization it acts on
 
 ## Example dialogue
 
