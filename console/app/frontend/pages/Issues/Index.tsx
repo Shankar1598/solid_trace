@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { issuesFilterQuery, TIME_RANGE_OPTIONS, type IssueFilters } from '@/lib/issues/filters'
 import { allTicked, toggleAll, toggleOne } from '@/lib/issues/selection'
+import { issueAge } from '@/lib/issues/times'
 import {
   Table,
   TableBody,
@@ -220,7 +221,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                     {formatDistanceToNow(new Date(issue.last_seen_at || issue.created_at), { addSuffix: false }).replace('about ', '')}
                   </TableCell>
                   <TableCell className="text-right px-4 py-3 text-sm text-muted-foreground tabular-nums">
-                    {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false }).replace('about ', '')}
+                    {issueAge(issue)}
                   </TableCell>
                   <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
                     {new Intl.NumberFormat('en-US', { notation: "compact" }).format(issue.events_count)}

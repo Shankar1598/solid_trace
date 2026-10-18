@@ -73,3 +73,14 @@ test('ticked Issues are resolved and unresolved together', async ({ page }) => {
   await expect(resolved).toHaveCount(0)
   expect(errors).toEqual([])
 })
+
+test("an Issue's age counts from its first Event, though the Issues were stored together", async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${ORG}/issues?project_id=${projectId}&range=30d`)
+  const age = (title: string) => page.getByRole('row').filter({ hasText: title }).getByRole('cell').nth(3)
+
+  await expect(age('Flow seen today')).toHaveText('2 hours')
+  await expect(age('Flow seen 5 days ago')).toHaveText('5 days')
+  await expect(age('Flow seen 20 days ago')).toHaveText('20 days')
+  expect(errors).toEqual([])
+})
