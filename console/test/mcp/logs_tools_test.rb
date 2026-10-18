@@ -268,6 +268,7 @@ class McpLogsToolsTest < ActiveSupport::TestCase
   end
 
   test "run_sql is refused while SQL queries are off, without asking EventStore" do
+    InstanceSetting.current.update!(sql_queries_enabled: false)
     run = stub_request(:post, %r{/logs/sql})
 
     answer = run_tool(McpTools::RunSql, user: @user, project: "shop", sql: "SELECT 1")

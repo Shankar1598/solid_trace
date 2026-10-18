@@ -485,16 +485,17 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "SQL mode is hidden while SQL queries are off" do
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+
     assert_equal false, explorer_page["sql_queries_enabled"]
   end
 
-  test "SQL mode is offered once the operator turns SQL queries on" do
-    InstanceSetting.current.update!(sql_queries_enabled: true)
-
+  test "SQL mode is offered on a fresh install" do
     assert_equal true, explorer_page["sql_queries_enabled"]
   end
 
   test "the readable SQL of a Query is refused while SQL queries are off" do
+    InstanceSetting.current.update!(sql_queries_enabled: false)
     readable = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/readable-sql")
 
     get readable_sql_project_logs_url(@project, org_slug: @organization.slug),

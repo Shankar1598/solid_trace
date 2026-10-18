@@ -23,7 +23,7 @@ class McpExceptionReporterTest < ActiveSupport::TestCase
   end
 
   test "a client's mistake, such as an unknown tool, isn't sent to Sentry" do
-    response = handle "tools/call", name: "run_sql", arguments: { query: "SELECT 1" }
+    response = handle "tools/call", name: "no_such_tool", arguments: {}
 
     assert_equal JsonRpcHandler::ErrorCode::INVALID_PARAMS, response.dig(:error, :code)
     assert_empty @sent

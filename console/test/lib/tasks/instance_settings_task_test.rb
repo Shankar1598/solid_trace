@@ -9,12 +9,12 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
     Rails.application.load_tasks unless Rake::Task.task_defined?("instance_settings:set")
   end
 
-  test "a fresh install has SQL queries off and a 30-day default Log Retention" do
+  test "a fresh install has SQL queries on and a 30-day default Log Retention" do
     out = run_task("instance_settings:show")
 
-    assert_includes out, "SQL queries: off"
+    assert_includes out, "SQL queries: on"
     assert_includes out, "Default Log Retention: 30 days"
-    assert_not InstanceSetting.current.sql_queries_enabled?
+    assert InstanceSetting.current.sql_queries_enabled?
     assert_equal 30, InstanceSetting.current.default_log_retention_days
   end
 
@@ -56,7 +56,7 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
     end
     assert_raises(SystemExit) { run_task("instance_settings:set") }
 
-    assert_not InstanceSetting.current.sql_queries_enabled?
+    assert InstanceSetting.current.sql_queries_enabled?
     assert_equal 30, InstanceSetting.current.default_log_retention_days
   end
 
