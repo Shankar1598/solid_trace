@@ -4,9 +4,12 @@ class IssuesController < ApplicationController
   layout "dashboard"
   before_action :set_organization
 
+  # The page lists the Issues seen in the last 14 days unless it's asked for
+  # another of IssueList::RANGES.
   def index
+    range = IssueList::RANGES.key?(params[:range]) ? params[:range] : "14d"
     list = IssueList.new(@current_org, status: params[:status], query: params[:query], project_id: params[:project_id],
-      sort: params[:sort], page: params[:page])
+      range: range, sort: params[:sort], page: params[:page])
 
     render inertia: "Issues/Index", props: {
       issues: list.issues.map { |i| IssueSerializer.new(i).as_json },
@@ -20,6 +23,7 @@ class IssuesController < ApplicationController
         status: params[:status] || "all",
         query: params[:query] || "",
         project_id: params[:project_id] || "all",
+        range: range,
         sort: list.sort,
       },
     }
@@ -78,6 +82,19 @@ class IssuesController < ApplicationController
     @issue = @project.issues.find_by!(number: params[:number])
     @issue.update!(status: Issue::STATUS::UNRESOLVED)
     redirect_to project_issue_path(@project, @issue, org_slug: @current_org.slug), notice: "Issue unresolved"
+  end
+
+  # PATCH with ids, the Issues ticked on the Issues page, and status. Changes
+  # each of the Organization's Issues among them as resolve and unresolve do.
+  def update_status
+    status = params.require(:status)
+    return head :bad_request unless Issue.statuses.key?(status)
+
+    issues = Issue.where(project_id: @current_org.projects.select(:id), id: Array(params[:ids])).to_a
+    issues.each { |issue| issue.update!(status: status) }
+
+    redirect_back_or_to issues_path(org_slug: @current_org.slug),
+      notice: "#{helpers.pluralize(issues.size, 'Issue')} #{status}"
   end
 
   private

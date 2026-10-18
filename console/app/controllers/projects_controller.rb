@@ -3,7 +3,7 @@
 class ProjectsController < ApplicationController
   layout "dashboard"
   before_action :set_organization
-  before_action :set_project, only: [ :show, :update ]
+  before_action :set_project, only: [ :show, :update, :destroy ]
 
   def index
     @projects = @current_org.projects.order(created_at: :desc)
@@ -18,6 +18,7 @@ class ProjectsController < ApplicationController
       project: ProjectSerializer.new(@project, include_keys: true, ingest_url: public_ingest_url).as_json,
       default_log_retention_days: InstanceSetting.current.default_log_retention_days,
       can_manage_project: policy(@project).update?,
+      can_delete_project: policy(@project).destroy?,
       can_manage_keys: policy(ProjectKey.new(project: @project)).create?,
     }
   end
@@ -43,6 +44,16 @@ class ProjectsController < ApplicationController
     else
       redirect_to project_path(@project, org_slug: @current_org.slug), inertia: { errors: @project.errors.to_hash }
     end
+  end
+
+  # Deletes the Project with its Issues, keys, Monitors and Dashboard charts.
+  # EventStore deletes its Logs in its next daily cleanup, once the Project's
+  # row is gone.
+  def destroy
+    authorize @project
+
+    @project.destroy!
+    redirect_to projects_path(org_slug: @current_org.slug), notice: "Project deleted."
   end
 
   private

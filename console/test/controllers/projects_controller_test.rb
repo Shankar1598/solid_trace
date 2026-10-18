@@ -167,6 +167,33 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 7, project_page["project"]["log_retention_days"]
   end
 
+  test "an admin deletes a Project and its Issues" do
+    issue = create(:issue, project: @project)
+    sign_in_as(@admin)
+
+    delete project_url(@project, org_slug: @organization.slug)
+
+    assert_redirected_to projects_url(org_slug: @organization.slug)
+    assert_equal "Project deleted.", flash[:notice]
+    assert_not Project.exists?(@project.id)
+    assert_not Issue.exists?(issue.id)
+  end
+
+  test "a member can't delete a Project" do
+    delete project_url(@project, org_slug: @organization.slug)
+
+    assert_response :redirect
+    assert_equal "You are not authorized to perform this action.", flash[:alert]
+    assert Project.exists?(@project.id)
+  end
+
+  test "the Project page offers deleting to admins only" do
+    assert_equal false, project_page["can_delete_project"]
+
+    sign_in_as(@admin)
+    assert_equal true, project_page["can_delete_project"]
+  end
+
   test "denies access to other org" do
     other_org = create(:organization)
 
