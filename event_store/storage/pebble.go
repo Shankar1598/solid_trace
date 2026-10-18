@@ -291,6 +291,30 @@ func (w *PebbleWriter) SetProcessingCursor(projectID uint32, eventUUID string) e
 	return w.db.Set(processingCursorKey(projectID), cursor[:], pebble.NoSync)
 }
 
+// DeleteProjectEvents deletes every Event of a Project and its processing
+// cursor, in one batch. The Events go as one range deletion, whose space
+// Pebble frees as it compacts. Project id 0, which holds the cursors, is
+// refused.
+func (w *PebbleWriter) DeleteProjectEvents(projectID uint32) error {
+	if projectID == 0 {
+		return errors.New("project id 0 holds processing cursors, not Events")
+	}
+	upper := eventKeyUpperBound(projectID)
+	if upper == nil {
+		// Past every key of the last Project: its prefix and 16 UUID bytes.
+		upper = append(eventKeyPrefix(projectID), bytes.Repeat([]byte{0xff}, 17)...)
+	}
+	batch := w.db.NewBatch()
+	defer batch.Close()
+	if err := batch.DeleteRange(eventKeyPrefix(projectID), upper, nil); err != nil {
+		return err
+	}
+	if err := batch.Delete(processingCursorKey(projectID), nil); err != nil {
+		return err
+	}
+	return batch.Commit(pebble.Sync)
+}
+
 // KeyForEvent generates a binary key for Pebble.
 // Format: project ID (4 bytes, big-endian) + UUID (16 bytes)
 // The project prefix makes a lookup under the wrong project miss, and keeps each

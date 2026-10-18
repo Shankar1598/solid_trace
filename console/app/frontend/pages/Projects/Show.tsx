@@ -168,7 +168,7 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
             <CardHeader>
               <CardTitle className="text-destructive">Danger zone</CardTitle>
               <CardDescription>
-                Deleting this project permanently removes its issues, keys, monitors and dashboard charts, and its logs within a day.
+                Deleting this project permanently removes its issues, keys, monitors and dashboard charts, and its logs and events within a day.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -183,7 +183,7 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
           <AlertDialogHeader>
             <AlertDialogTitle>Delete "{project.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
-              Its issues, keys, monitors and dashboard charts are deleted for everyone in the Organization, and SDKs sending with its keys are refused. EventStore deletes its logs within a day.
+              Its issues, keys, monitors and dashboard charts are deleted for everyone in the Organization, and SDKs sending with its keys are refused. EventStore deletes its logs and events within a day.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
