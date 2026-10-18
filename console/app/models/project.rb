@@ -7,6 +7,9 @@ class Project < ApplicationRecord
   has_many :project_keys, dependent: :destroy
   has_many :dashboard_charts, dependent: :destroy
   has_many :monitors, class_name: "LogMonitor", dependent: :destroy
+  # Rows EventStore writes for the Project (ADR 0001).
+  has_one :issue_counter, class_name: "ProjectIssueCounter", dependent: :delete
+  has_one :seen_cursor, class_name: "ProjectSeenCursor", dependent: :delete
 
   before_validation :generate_slug, on: :create
 

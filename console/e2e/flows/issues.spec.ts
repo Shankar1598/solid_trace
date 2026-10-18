@@ -25,7 +25,7 @@ test.beforeAll(() => {
 })
 
 test.afterAll(() => {
-  rails(`Project.where(slug: ${JSON.stringify(slug)}).each { |project| ProjectIssueCounter.where(project: project).delete_all; project.destroy! }`)
+  rails(`Project.where(slug: ${JSON.stringify(slug)}).destroy_all`)
 })
 
 const titles = (page: Page) => page.locator('tbody h3')
