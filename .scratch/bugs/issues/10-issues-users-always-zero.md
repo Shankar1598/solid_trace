@@ -1,6 +1,6 @@
 # 10: The Issues page's Users column always shows 0
 
-**Status:** needs-info
+**Status:** resolved
 **Area:** Console, EventStore
 **Found:** 2026-10-18, reported by the user
 
@@ -27,3 +27,7 @@ So showing a real count means building user tracking: reading the payload's `use
 Nothing is changed until then.
 
 ## Comments
+
+### 2026-10-18 resolved
+
+The user chose to hide the column for now. The Issues page has no Users column; it showed a hard-coded 0. User tracking isn't built. If "users affected" is wanted later, the section above says what it takes.

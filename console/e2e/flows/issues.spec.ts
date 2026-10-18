@@ -5,8 +5,8 @@ import { ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 
 // The Issues page's filters and table, on Issues each run makes in its own
-// Project of the seed Organization, last seen today, 5 days ago and 20 days
-// ago.
+// Project of the seed Organization, last seen today, 5 days ago, 20 days
+// ago and 60 days ago.
 
 const slug = `flow-issues-${Date.now()}`
 
@@ -19,7 +19,7 @@ let projectId: string
 
 test.beforeAll(() => {
   projectId = rails(`project = Organization.find_by!(slug: ${JSON.stringify(ORG)}).projects.create!(name: ${JSON.stringify(slug)}); ` +
-    `{ "Flow seen today" => 1.hour, "Flow seen 5 days ago" => 5.days, "Flow seen 20 days ago" => 20.days }.each { |title, ago| ` +
+    `{ "Flow seen today" => 1.hour, "Flow seen 5 days ago" => 5.days, "Flow seen 20 days ago" => 20.days, "Flow seen 60 days ago" => 60.days }.each { |title, ago| ` +
     `project.issues.create!(title: title, kind: :error, first_seen_at: ago.ago - 1.hour, last_seen_at: ago.ago, times_seen: 1) }; ` +
     `print project.id`).split('\n').pop()!
 })
@@ -46,6 +46,10 @@ test('the time filter lists the Issues seen in the range chosen', async ({ page 
 
   await chooseRange(page, 'Last 24 hours', 'Last 30 days')
   await expect(titles(page)).toHaveText(['Flow seen today', 'Flow seen 5 days ago', 'Flow seen 20 days ago'])
+
+  await chooseRange(page, 'Last 30 days', 'All time')
+  await expect(titles(page)).toHaveText(['Flow seen today', 'Flow seen 5 days ago', 'Flow seen 20 days ago', 'Flow seen 60 days ago'])
+  await expect(page).toHaveURL(/range=all/)
 
   expect(errors).toEqual([])
 })

@@ -24,7 +24,7 @@ class McpIssueToolsTest < ActiveSupport::TestCase
 
   # Listing
 
-  test "list_issues answers the Organization's Issues, the most recently seen first, linking to its Issues page" do
+  test "list_issues answers the Organization's Issues, the most recently seen first, linking to its Issues page over all time" do
     create(:issue, project: @api, title: "Timeout in api", last_seen_at: Time.utc(2026, 10, 3, 10), status: :resolved)
     @issue.update!(assignee: @membership)
 
@@ -39,7 +39,7 @@ class McpIssueToolsTest < ActiveSupport::TestCase
                    "first_seen_at" => @issue.created_at.iso8601, "last_seen_at" => "2026-10-03T09:00:00Z",
                    "assignee" => { "name" => "Ann", "email" => "ann@acme.test" } },
       answer.json["issues"].last)
-    assert_equal "http://console.test/acme/issues", answer.link
+    assert_equal "http://console.test/acme/issues?range=all", answer.link
   end
 
   test "list_issues filters by Project, status and title, sorts by first seen, and links to the Issues page so filtered" do
@@ -51,7 +51,7 @@ class McpIssueToolsTest < ActiveSupport::TestCase
 
     assert_not answer.error?
     assert_equal [ newer.number, @issue.number ], answer.json["issues"].map { |issue| issue["number"] }
-    assert_equal "http://console.test/acme/issues?project_id=#{@shop.id}&query=NoMethod&sort=first_seen&status=unresolved", answer.link
+    assert_equal "http://console.test/acme/issues?project_id=#{@shop.id}&query=NoMethod&range=all&sort=first_seen&status=unresolved", answer.link
   end
 
   test "list_issues gives the page asked for, #{IssueList::PER_PAGE} a page" do
@@ -61,7 +61,7 @@ class McpIssueToolsTest < ActiveSupport::TestCase
 
     assert_equal [ 2, 2, IssueList::PER_PAGE + 1 ], answer.json.values_at("page", "total_pages", "total_count")
     assert_equal 1, answer.json["issues"].size
-    assert_equal "http://console.test/acme/issues?page=2", answer.link
+    assert_equal "http://console.test/acme/issues?page=2&range=all", answer.link
   end
 
   test "list_issues refuses another Organization's Project" do

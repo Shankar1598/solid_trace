@@ -31,3 +31,8 @@ Tests:
 - `e2e/flows/issues.spec.ts`: ticks two Issues and resolves them, then ticks all and unresolves them. Run on this worktree's own Console and passed.
 
 **Found on the way, not fixed:** the Issue page's own Resolve and Unresolve buttons send `PUT` (`pages/Issues/Show.tsx`), but the routes are `PATCH` only, so both answer a routing error. Checked with `recognize_path`. It dates from `6688f7b`.
+
+### 2026-10-18 the user's answer
+
+- **Bulk assigning:** skipped (user). It isn't planned.
+- **The `PUT` found above:** fixed on `main` (`f7c85f9`). Resolve and Unresolve send `PATCH`, and a flow clicks both on the Issue's page.

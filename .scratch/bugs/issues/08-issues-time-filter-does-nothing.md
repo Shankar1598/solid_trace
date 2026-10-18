@@ -30,3 +30,11 @@ Tests:
 - `e2e/flows/issues.spec.ts`: picks Last 24 hours and Last 30 days and sees the list change. Run on this worktree's own Console (port 4011) and passed.
 
 **To check with the user:** the page now hides Issues not seen in 14 days unless the range is widened, as the select always claimed. There is no "all time" option. An MCP `list_issues` link to the Issues page doesn't carry a range, so the page it opens shows 14 days while the tool lists every Issue.
+
+### 2026-10-18 the user's answer
+
+The user kept the 14-day default and asked for "All time". The select now has an "All time" option (`range=all`), which lists every Issue. MCP's `list_issues`, which lists every Issue, now links to the page with `range=all`. Tests:
+- the controller test `issues list keeps every issue for all time`
+- the MCP link tests
+- a vitest case
+- the time-filter flow, which now has an Issue seen 60 days ago that only "All time" shows
