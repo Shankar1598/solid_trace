@@ -1,6 +1,6 @@
 # Pebble value separation: benchmark before enabling
 
-Status: ready-for-human
+Status: wontfix
 
 Blocked by: 01
 
@@ -26,3 +26,7 @@ Setup: 1 GB of 2.2 KB Event JSON, written as `WriteEvent` does, with `storage/pe
 - **If it is turned on later:** `MinimumSize` 512, `MaxBlobReferenceDepth` 10, `RewriteMinimumAge` 5 min. Set `TargetGarbageRatio` below 1 (for example 0.2), because Log batches share blob files with Events and are deleted.
 
 For the user: close as `wontfix`, or keep it open for when disk writes or a much larger store make it worth it.
+
+### 2026-10-18 closed
+
+The user agreed: value separation stays off. Closed as `wontfix` for now. Reopen it if disk writes start to matter, or if the store grows far beyond what fits between L0 and the shared levels. The settings to start from are in the comment above.
