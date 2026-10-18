@@ -24,6 +24,21 @@ const remoteReadThreads = 4
 // and turns on the caches for remote Parquet: footers, HTTP metadata and
 // file ranges. The caches stay within memory_limit.
 //
+// httpfs also reads any web address, so SQL queries could make the server
+// fetch internal services (MCP 12). UseBucket keeps httpfs to S3 URLs, with
+// settings SQL can't change, since SET is refused (LogStore.checkReadOnly):
+//   - http://, https:// and hf:// are refused: their file systems are turned
+//     off, and a turned-off file system can't be turned on again;
+//   - an S3 URL's query string is part of its key, not its settings, so
+//     ?s3_endpoint= can't send it elsewhere (s3_url_compatibility_mode, which
+//     also turns off globs in S3 URLs: EventStore lists its files instead);
+//   - an S3 URL outside the bucket's secret puts its bucket in the path of
+//     S3's own host, not in the host, so s3://host:port#/x can't name one.
+//     The bucket's secret names its own URL style (bucketSecretSQL).
+//
+// So SQL reaches the bucket's endpoint, and S3's and GCS's public hosts. The
+// probe is in .scratch/mcp/research/probe-12-sql-web-addresses.md.
+//
 // It also gives DuckDB remoteReadThreads threads for each CPU, not one:
 // httpfs holds a thread for each request it waits on, so threads cap the
 // requests in flight. The object-store probe's cold 7-day chart took 1.9 s
@@ -54,6 +69,9 @@ func (w *DuckDBWriter) UseBucket(store *config.ObjectStore, extensionDir string)
 		"SET GLOBAL enable_http_metadata_cache = true",
 		"SET GLOBAL enable_external_file_cache = true",
 		fmt.Sprintf("SET GLOBAL threads = %d", remoteReadThreads*runtime.NumCPU()),
+		"SET GLOBAL disabled_filesystems = 'HTTPFileSystem,HuggingFaceFileSystem'",
+		"SET GLOBAL s3_url_compatibility_mode = true",
+		"SET GLOBAL s3_url_style = 'path'",
 	} {
 		if _, err := w.db.Exec(setting); err != nil {
 			return fmt.Errorf("%s: %w", setting, err)
@@ -74,7 +92,9 @@ func (w *DuckDBWriter) extensionPath(dir, name string) string {
 }
 
 // bucketSecretSQL is the CREATE SECRET for the bucket: an S3 secret, scoped
-// to the bucket, that reaches GCS, MinIO or R2 through their endpoint.
+// to the bucket, that reaches GCS, MinIO or R2 through their endpoint. An
+// AWS bucket's secret names vhost, AWS's own style, since a secret without a
+// style follows the path style UseBucket sets.
 func bucketSecretSQL(store *config.ObjectStore) string {
 	options := []string{
 		"TYPE s3",
@@ -90,6 +110,8 @@ func bucketSecretSQL(store *config.ObjectStore) string {
 			"ENDPOINT "+sqltext.String(endpoint.Host),
 			"URL_STYLE 'path'",
 			fmt.Sprintf("USE_SSL %t", endpoint.Scheme == "https"))
+	} else {
+		options = append(options, "URL_STYLE 'vhost'")
 	}
 	return fmt.Sprintf("CREATE OR REPLACE SECRET %s (%s)", bucketSecret, strings.Join(options, ", "))
 }

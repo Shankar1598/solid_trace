@@ -179,7 +179,8 @@ While a bucket is configured, EventStore:
 - loads httpfs from `duckdb_extension_directory`; DuckDB's extension autoinstall and autoload are off on every install, so DuckDB never downloads code;
 - creates one secret for the bucket, held in memory, which every read uses, SQL queries too;
 - turns on DuckDB's Parquet metadata cache, HTTP metadata cache and external file cache (`parquet_metadata_cache`, `enable_http_metadata_cache` and `enable_external_file_cache`). They keep files' metadata and recently read data in memory, within `duckdb_memory_limit`, so reading the same file again sends few requests or none;
-- gives DuckDB 4 threads for each CPU, because httpfs holds a thread for each request it waits on.
+- gives DuckDB 4 threads for each CPU, because httpfs holds a thread for each request it waits on;
+- keeps httpfs to S3 URLs, so SQL queries reach no web address but the bucket's and S3's and Google Cloud Storage's public hosts ([ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md)). It turns DuckDB's HTTP and Hugging Face file systems off, and an S3 URL takes no settings from its query string and no globs (`s3_url_compatibility_mode`). An S3 URL outside the bucket is path-style (`s3_url_style = 'path'`), while an AWS bucket's own URLs stay virtual-hosted.
 
 The HTTP metadata cache is never cleared while EventStore runs, so never write an object under the prefix again with different bytes.
 

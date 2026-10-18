@@ -4,11 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/solidtrace/event_store/config"
@@ -76,6 +80,99 @@ func TestABucketGivesDuckDBMoreThreadsThanCPUsForRemoteReads(t *testing.T) {
 	var threads int
 	if err := conn.QueryRowContext(ctx, "SELECT current_setting('threads')").Scan(&threads); err != nil || threads != 4*runtime.NumCPU() {
 		t.Errorf("Expected %d threads on a pooled connection, got %d (%v)", 4*runtime.NumCPU(), threads, err)
+	}
+}
+
+// closedAddress is a host and port on loopback where nothing listens.
+func closedAddress(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	return addr
+}
+
+// With a bucket, httpfs is loaded, and it could fetch any address the server
+// reaches: http:// and https:// URLs, an S3 URL's ?s3_endpoint=, or a bucket
+// name that is a host, as in s3://host:port#/x (MCP 12). Every URL here is
+// refused or sent to S3's own host, so the internal server is never reached.
+func TestWithABucketSQLReachesNoOtherHost(t *testing.T) {
+	dir := testExtensionDirectory(t)
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*", "*", "httpfs.duckdb_extension")); len(matches) == 0 {
+		t.Skipf("no httpfs in %s", dir)
+	}
+	// It stands for an internal service, and counts every connection, so a
+	// TLS attempt counts too.
+	var connections atomic.Int64
+	internal := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("internal\n"))
+	}))
+	internal.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	internal.Start()
+	defer internal.Close()
+	host := internal.Listener.Addr().String()
+
+	w := newTestDuckDB(t)
+	cfg := &config.ObjectStore{Kind: config.ObjectStoreS3, Bucket: "acme", Prefix: "solidtrace/", Region: "us-east-1",
+		Endpoint: "http://" + closedAddress(t), KeyID: "EXAMPLE", Secret: "example-secret"}
+	if err := w.UseBucket(cfg, dir); err != nil {
+		t.Fatalf("UseBucket: %v", err)
+	}
+	ctx := context.Background()
+	conn, err := w.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// S3 URLs outside the bucket go to S3's public host. Nothing listens at
+	// this one either, so the test stays offline.
+	if _, err := conn.ExecContext(ctx, "SET GLOBAL s3_endpoint = "+sqltext.String(closedAddress(t))); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, url := range []string{
+		"http://" + host + "/",
+		"https://" + host + "/",
+		"s3://other/x?s3_endpoint=" + host + "&s3_use_ssl=false&s3_url_style=path",
+		"s3://acme/x?s3_endpoint=" + host + "&s3_use_ssl=false&s3_url_style=path",
+		"s3://" + host + "#/x",
+		"s3a://" + host + "#/x",
+		"r2://" + host + "#/x",
+	} {
+		before := connections.Load()
+		var content string
+		err := conn.QueryRowContext(ctx, "SELECT content FROM read_text("+sqltext.String(url)+")").Scan(&content)
+		if err == nil || connections.Load() != before {
+			t.Errorf("Expected %s to reach no other host, got %q (%v) and %d connections", url, content, err, connections.Load()-before)
+		}
+	}
+
+	var content string
+	err = conn.QueryRowContext(ctx, "SELECT content FROM read_text('hf://datasets/acme/logs/x.txt')").Scan(&content)
+	if err == nil || !strings.Contains(err.Error(), "HuggingFaceFileSystem has been disabled") {
+		t.Errorf("Expected hf:// to be refused, got %q (%v)", content, err)
+	}
+}
+
+// An AWS bucket's secret names its URL style. A secret without one follows
+// the path style UseBucket sets for every other S3 URL, and AWS buckets are
+// read at <bucket>.s3.<region>.amazonaws.com.
+func TestAnAWSBucketsSecretKeepsVirtualHostedURLs(t *testing.T) {
+	aws := bucketSecretSQL(&config.ObjectStore{Kind: config.ObjectStoreS3, Bucket: "acme", Region: "eu-west-1", KeyID: "EXAMPLE", Secret: "example-secret"})
+	if !strings.Contains(aws, "URL_STYLE 'vhost'") {
+		t.Errorf("Expected an AWS bucket's secret to name URL_STYLE 'vhost', got %s", aws)
+	}
+	minIO := bucketSecretSQL(&config.ObjectStore{Kind: config.ObjectStoreS3, Bucket: "acme", Region: "us-east-1",
+		Endpoint: "http://127.0.0.1:9000", KeyID: "EXAMPLE", Secret: "example-secret"})
+	if !strings.Contains(minIO, "URL_STYLE 'path'") || strings.Contains(minIO, "vhost") {
+		t.Errorf("Expected an endpoint's secret to name URL_STYLE 'path' only, got %s", minIO)
 	}
 }
 
