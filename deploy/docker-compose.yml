@@ -29,6 +29,13 @@ x-console: &console
     # Where SDKs and shippers reach ingest, for the Logs page's snippets.
     # Unset, they show this host at port 4000.
     PUBLIC_INGEST_URL: ${PUBLIC_INGEST_URL:-}
+    # Email, from deploy/setup. Without SMTP_ADDRESS, emails aren't sent.
+    CONSOLE_URL: ${CONSOLE_URL:-}
+    MAIL_FROM: ${MAIL_FROM:-}
+    SMTP_ADDRESS: ${SMTP_ADDRESS:-}
+    SMTP_PORT: ${SMTP_PORT:-}
+    SMTP_USERNAME: ${SMTP_USERNAME:-}
+    SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   volumes:
     - /var/lib/solid-trace/storage:/storage
   restart: unless-stopped
