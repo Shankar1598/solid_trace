@@ -15,14 +15,11 @@ class InstanceSetting < ApplicationRecord
   SQL_QUERIES_DESCRIPTION = <<~TEXT
     SQL queries let every member of every Organization run raw DuckDB SQL from the Logs explorer and the MCP server.
     They are read-only: anything but one SELECT is refused, so they can't change data, settings or files.
-    But they are not sandboxed or limited to a Project, so turning them on lets any member:
-      - read every Organization's Logs and Events
-      - read files on the server
-      - read the bucket, when one is configured
-      - send requests from the server to S3's and Google Cloud Storage's public hosts, when a bucket is configured,
-        such as to read another bucket, but to no other web address
+    They read only the logs and events views of the Project they run on: tables, files, URLs and the catalogue are refused.
+    But they are not sandboxed, so turning them on lets any member:
+      - read every Log and Event of their own Organization's Projects
       - starve ingest with slow queries
-    Turn them on only if you trust every member of every Organization.
+    Turn them on only if you trust every member of every Organization not to slow the install down.
   TEXT
 
   validates :sql_queries_enabled, inclusion: { in: [ true, false ] }

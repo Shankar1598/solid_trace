@@ -240,3 +240,14 @@ func TestTheImagesHttpfsIsForTheDuckDBInGoMod(t *testing.T) {
 		t.Errorf("Dockerfile DUCKDB_VERSION is %s, but duckdb-go in go.mod is DuckDB %s: change DUCKDB_VERSION to match", arg[1], version)
 	}
 }
+
+// DuckDB never installs or loads an extension by itself, so a SQL query
+// can't bring in one whose functions change things (ADR 0003).
+func TestDuckDBLoadsNoExtensionByItself(t *testing.T) {
+	w := newTestDuckDB(t)
+	var autoload, autoinstall bool
+	err := w.db.QueryRow("SELECT current_setting('autoload_known_extensions'), current_setting('autoinstall_known_extensions')").Scan(&autoload, &autoinstall)
+	if err != nil || autoload || autoinstall {
+		t.Errorf("Expected extension autoload and autoinstall off, got %t and %t (%v)", autoload, autoinstall, err)
+	}
+}

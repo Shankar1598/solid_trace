@@ -51,19 +51,25 @@ func (e *SQLError) Unwrap() error { return e.Err }
 
 // RunSQL runs a read-only SQL query as written (ADR 0003), with the logs
 // view holding a Project's Logs of [from, to): from its hot table, its late
-// Logs and its files, promoted values merged back into their maps. It reads
-// at most limit rows. SQL that isn't one SELECT, or that calls a function
-// that changes something, is refused before any of it runs
-// (checkReadOnly). If the query is refused or itself fails, the error is a
-// *SQLError.
+// Logs and its files, promoted values merged back into their maps. The
+// events view holds the Project's Events of [from, to). It reads at most
+// limit rows. SQL that isn't one SELECT, that calls a function that changes
+// something (checkReadOnly), or that reads anything but the two views
+// (checkScope), is refused before any of it runs. If the query is refused
+// or itself fails, the error is a *SQLError.
 //
-// The view is a temporary view on the read's own connection, which is
+// The views are temporary views on the read's own connection, which is
 // closed afterwards, so nothing the query leaves on it (temporary objects,
 // an open transaction) reaches another query. Like ScanLogTable, the query
 // runs in the read's transaction, so that the view sees each Log exactly
 // once and the query holds up no export. Cancelling ctx stops it.
 func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.Time, query string, limit int) (SQLResult, error) {
-	if err := s.checkReadOnly(ctx, query); err != nil {
+	statement, err := s.checkReadOnly(ctx, query)
+	if err != nil {
+		return SQLResult{}, err
+	}
+	readsEvents, err := s.checkScope(ctx, statement)
+	if err != nil {
 		return SQLResult{}, err
 	}
 	from, to = from.UTC(), to.UTC()
@@ -87,13 +93,20 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("CREATE TEMPORARY VIEW %s AS %s", LogsView, logs)); err != nil {
 		return SQLResult{}, err
 	}
+	// Only a query that reads the events view gets one, so a query that
+	// doesn't still runs while there is no global events view.
+	if readsEvents {
+		if err := createEventsView(ctx, conn, projectID, from, to); err != nil {
+			if s.events.eventsUnavailable() != nil {
+				return SQLResult{}, &SQLError{s.withEventsUnavailable(err)}
+			}
+			return SQLResult{}, err
+		}
+	}
 	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
 		// The query may have failed for want of the events view.
-		if unavailable := s.events.eventsUnavailable(); unavailable != nil {
-			err = fmt.Errorf("%w\n%v", err, unavailable)
-		}
-		return SQLResult{}, &SQLError{err}
+		return SQLResult{}, &SQLError{s.withEventsUnavailable(err)}
 	}
 	defer rows.Close()
 	types, err := rows.ColumnTypes()
@@ -123,6 +136,15 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 		}
 	}
 	return result, nil
+}
+
+// withEventsUnavailable is err with why Events can't be read now, while
+// they can't.
+func (s *LogStore) withEventsUnavailable(err error) error {
+	if unavailable := s.events.eventsUnavailable(); unavailable != nil {
+		return fmt.Errorf("%w\n%v", err, unavailable)
+	}
+	return err
 }
 
 // jsonEncodable turns any value DuckDB gives into one that encodes as JSON: a

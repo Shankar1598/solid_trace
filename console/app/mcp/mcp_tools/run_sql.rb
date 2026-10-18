@@ -2,14 +2,16 @@
 
 module McpTools
   # Runs SQL on a Project's Logs, as the explorer's SQL mode does. The server
-  # lists it only while SQL queries are on, and it only reads: EventStore
-  # refuses any SQL but one SELECT.
+  # lists it only while SQL queries are on, and it only reads its Project's
+  # views: EventStore refuses any SQL but one SELECT of them.
   class RunSql < Base
     description <<~TEXT.squish
       Runs a DuckDB SQL SELECT on the logs view, which holds a Project's Logs over a range, and answers the table:
       #{Table::SHAPE}. The view's columns are id, time, level, message, service,
       environment, trace_id, span_id and the Attributes by type, read as attrs_string['name'], attrs_number['name'],
-      attrs_bool['name'] and attrs_json['name']. SQL is read-only: anything but one SELECT is refused.
+      attrs_bool['name'] and attrs_json['name']. An events view holds the Project's Events over the range. SQL is
+      read-only, and reads only those two views: anything but one SELECT, and any table, file, URL or table function
+      but range, generate_series and unnest, is refused.
       query_logs does most things more simply.
     TEXT
     read_only!

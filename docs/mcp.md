@@ -57,7 +57,7 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 - `get_log`: one Log, whole, with every Attribute.
 - `list_fields`: the names a Query can read: the built-in fields, then the Project's Attributes, most used first, with their types. It counts Logs as they arrive, so it leaves out Attributes that only Logs sent more than about an hour late carry, and Attributes whose values are JSON, such as arrays. A Query still reads them.
 - `query_language_reference`: the whole Query language reference.
-- `run_sql`: runs a read-only [DuckDB SQL](logs/sql.md) SELECT on a Project's Logs. It is listed only while the instance's SQL queries are on.
+- `run_sql`: runs a read-only [DuckDB SQL](logs/sql.md) SELECT on a Project's Logs and Events. It is listed only while the instance's SQL queries are on.
 
 **Dashboards**
 
@@ -96,4 +96,4 @@ Log text is written by whoever sends Logs: your services, and anything that reac
 
 With your rights, an agent steered this way can change or delete Dashboards and Monitors, and, if you are an admin, rotate keys or invite someone. Clients that ask before a tool runs are your check: read what the agent wants to do before you allow it, especially after it has read Logs.
 
-**With SQL queries on**, the risk is wider. SQL isn't limited to a Project, so `run_sql` lets that text lead the agent to read every Organization's Logs and Events, and files on the server. On an instance that keeps Logs in a bucket, it can also make the server send requests to S3's and Google Cloud Storage's public hosts, carrying what it read in the request's path, but to no other web address. SQL queries are off by default; turn them on only where you trust every member of every Organization, and what their services log ([ADR 0003](adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md)).
+**With SQL queries on**, `run_sql` reads only the Project it runs on: its `logs` and `events` views, never other tables, files or URLs ([SQL queries](logs/sql.md)). An agent steered by Log text can read what you can read there, and its slow queries can slow down ingest. SQL queries are off by default ([ADR 0003](adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md)).

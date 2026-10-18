@@ -54,56 +54,57 @@ type parsedSQL struct {
 }
 
 // checkReadOnly refuses a SQL query, with a *SQLError, unless it is one
-// SELECT that calls none of the stateChangingFunctions. DuckDB parses it,
+// SELECT that calls none of the stateChangingFunctions, and returns the
+// SELECT as DuckDB parsed it. DuckDB parses it,
 // bound as a parameter so that none of it runs, and nothing of it is
 // prepared or run before it passes: duckdb-go runs every statement but the
 // last even when it only prepares. SQL that doesn't parse gets DuckDB's
 // message, as if it had run. An error that isn't a *SQLError is a failure
 // to check it.
-func (s *LogStore) checkReadOnly(ctx context.Context, query string) error {
+func (s *LogStore) checkReadOnly(ctx context.Context, query string) (any, error) {
 	var serialized string
 	if err := s.db.QueryRowContext(ctx, "SELECT CAST(json_serialize_sql(CAST(? AS VARCHAR)) AS VARCHAR)", query).Scan(&serialized); err != nil {
-		return fmt.Errorf("parse the SQL: %w", err)
+		return nil, fmt.Errorf("parse the SQL: %w", err)
 	}
 	var parsed parsedSQL
 	if err := json.Unmarshal([]byte(serialized), &parsed); err != nil {
-		return fmt.Errorf("read the parsed SQL: %w", err)
+		return nil, fmt.Errorf("read the parsed SQL: %w", err)
 	}
 	switch {
 	case parsed.Error && parsed.ErrorType == "not implemented" && strings.Contains(parsed.ErrorMessage, "Only SELECT"):
-		return readOnlyRefusal(statementKind(query))
+		return nil, readOnlyRefusal(statementKind(query))
 	case parsed.Error:
-		return &SQLError{errors.New(duckDBMessage(query, parsed))}
+		return nil, &SQLError{errors.New(duckDBMessage(query, parsed))}
 	case len(parsed.Statements) == 0:
-		return &SQLError{errors.New("The SQL has no statement to run.")}
+		return nil, &SQLError{errors.New("The SQL has no statement to run.")}
 	case len(parsed.Statements) > 1:
-		return readOnlyRefusal("more than one statement")
+		return nil, readOnlyRefusal("more than one statement")
 	}
-	if name := stateChangingCall(parsed.Statements[0]); name != "" {
-		return readOnlyRefusal(name + "()")
+	if name := calledFunction(parsed.Statements[0], stateChangingFunctions); name != "" {
+		return nil, readOnlyRefusal(name + "()")
 	}
-	return nil
+	return parsed.Statements[0], nil
 }
 
-// stateChangingCall is the first of the stateChangingFunctions that a parsed
-// statement calls, as a scalar, aggregate, window or table function,
-// anywhere in it, or "" if it calls none. Every call in DuckDB's parsed
-// query is an object with a function_name; its schema and catalog don't
-// matter.
-func stateChangingCall(node any) string {
+// calledFunction is the first of functions, a set of lower-case names, that
+// a parsed statement calls, as a scalar, aggregate, window or table
+// function, anywhere in it, or "" if it calls none. Every call in DuckDB's
+// parsed query is an object with a function_name; its schema and catalog
+// don't matter.
+func calledFunction(node any, functions map[string]bool) string {
 	switch node := node.(type) {
 	case map[string]any:
-		if name, ok := node["function_name"].(string); ok && stateChangingFunctions[strings.ToLower(name)] {
+		if name, ok := node["function_name"].(string); ok && functions[strings.ToLower(name)] {
 			return strings.ToLower(name)
 		}
 		for _, key := range slices.Sorted(maps.Keys(node)) {
-			if name := stateChangingCall(node[key]); name != "" {
+			if name := calledFunction(node[key], functions); name != "" {
 				return name
 			}
 		}
 	case []any:
 		for _, child := range node {
-			if name := stateChangingCall(child); name != "" {
+			if name := calledFunction(child, functions); name != "" {
 				return name
 			}
 		}
