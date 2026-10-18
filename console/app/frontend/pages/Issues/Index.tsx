@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { issuesFilterQuery, TIME_RANGE_OPTIONS, type IssueFilters } from '@/lib/issues/filters'
+import { allTicked, toggleAll, toggleOne } from '@/lib/issues/selection'
 import {
   Table,
   TableBody,
@@ -40,6 +41,15 @@ interface IssuesIndexProps {
 export default function IssuesIndex({ issues, pagination, projects, filters }: IssuesIndexProps) {
   const { current_org } = usePage<SharedProps>().props
   const [searchTerm, setSearchTerm] = useState(filters.query || '')
+  const [ticked, setTicked] = useState<number[]>([])
+  const pageIds = issues.map(issue => issue.id)
+  const allOnPage = allTicked(ticked, pageIds)
+
+  // A new page or filter, or a change made, starts with nothing ticked.
+  useEffect(() => setTicked([]), [issues])
+
+  const updateStatus = (status: 'resolved' | 'unresolved') =>
+    router.patch(`/${current_org?.slug}/issues/status`, { ids: ticked, status }, { preserveScroll: true })
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -134,13 +144,28 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
           </div>
         </div>
 
+        {ticked.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground tabular-nums">{ticked.length} selected</span>
+            <Button variant="outline" onClick={() => updateStatus('resolved')}>Resolve</Button>
+            <Button variant="outline" onClick={() => updateStatus('unresolved')}>Unresolve</Button>
+          </div>
+        )}
+
         <div className="border">
         <Table className="table-fixed">
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="w-[48px] px-4">
                 <div className="flex items-center justify-center">
-                  <Checkbox id="select-all" />
+                  <Checkbox
+                    id="select-all"
+                    aria-label="Select all Issues on this page"
+                    checked={allOnPage === true}
+                    indeterminate={allOnPage === 'some'}
+                    disabled={issues.length === 0}
+                    onCheckedChange={() => setTicked(toggleAll(ticked, pageIds))}
+                  />
                 </div>
               </TableHead>
               <TableHead>Issue</TableHead>
@@ -162,7 +187,11 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                 <TableRow key={issue.id} className="group cursor-pointer">
                   <TableCell className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center">
-                      <Checkbox />
+                      <Checkbox
+                        aria-label={`Select ${issue.title}`}
+                        checked={ticked.includes(issue.id)}
+                        onCheckedChange={() => setTicked(toggleOne(ticked, issue.id))}
+                      />
                     </div>
                   </TableCell>
                   <TableCell className="p-0">

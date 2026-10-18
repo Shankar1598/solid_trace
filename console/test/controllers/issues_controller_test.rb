@@ -66,6 +66,38 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "unresolved", @issue.reload.status
   end
 
+  test "the issues list resolves and unresolves the issues ticked" do
+    other = create(:issue, project: @project)
+    untouched = create(:issue, project: @project)
+
+    patch status_issues_url(org_slug: @organization.slug), params: { ids: [ @issue.id, other.id ], status: "resolved" },
+      headers: { "Referer" => issues_url(org_slug: @organization.slug, range: "30d") }
+
+    assert_redirected_to issues_url(org_slug: @organization.slug, range: "30d")
+    assert_equal "2 Issues resolved", flash[:notice]
+    assert_equal %w[resolved resolved unresolved], [ @issue, other, untouched ].map { |i| i.reload.status }
+
+    patch status_issues_url(org_slug: @organization.slug), params: { ids: [ other.id ], status: "unresolved" }
+    assert_equal "1 Issue unresolved", flash[:notice]
+    assert_equal "unresolved", other.reload.status
+  end
+
+  test "the issues list changes only its own organization's issues" do
+    stranger = create(:issue, project: create(:project))
+
+    patch status_issues_url(org_slug: @organization.slug), params: { ids: [ stranger.id ], status: "resolved" }
+
+    assert_equal "0 Issues resolved", flash[:notice]
+    assert_equal "unresolved", stranger.reload.status
+  end
+
+  test "the issues list refuses a status issues don't have" do
+    patch status_issues_url(org_slug: @organization.slug), params: { ids: [ @issue.id ], status: "ignored" }
+
+    assert_response :bad_request
+    assert_equal "unresolved", @issue.reload.status
+  end
+
   test "issues list serves counts from the issue without calling EventStore" do
     travel_to Time.utc(2026, 1, 10)
     @issue.update!(times_seen: 7, first_seen_at: Time.utc(2026, 1, 1), last_seen_at: Time.utc(2026, 1, 3))
