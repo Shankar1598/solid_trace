@@ -72,15 +72,19 @@ create_data_dirs() {
 create_config() {
   if as_root test -f "$CONFIG_FILE"; then
     say "Keeping $CONFIG_FILE"
-    return
+  else
+    say "Writing $CONFIG_FILE"
+    as_root install -D -m 0644 "$DEPLOY_DIR/event_store.yml" "$CONFIG_FILE"
   fi
-  say "Writing $CONFIG_FILE"
   # DuckDB's own default is 80% of memory, which leaves Console too little.
-  local memory_mb
-  memory_mb=$(awk '/^MemTotal:/ { print int($2 / 1024 / 2) }' /proc/meminfo)
-  sed "s|^# duckdb_memory_limit: .*|duckdb_memory_limit: ${memory_mb}MB|" "$DEPLOY_DIR/event_store.yml" |
-    as_root install -D -m 0644 /dev/stdin "$CONFIG_FILE"
-  as_root grep -q '^duckdb_memory_limit: ' "$CONFIG_FILE" || die "Could not set duckdb_memory_limit in $CONFIG_FILE."
+  # Only while the template's commented line is there, as deploy/setup leaves it.
+  if as_root grep -q '^# duckdb_memory_limit: ' "$CONFIG_FILE" && ! as_root grep -q '^duckdb_memory_limit: ' "$CONFIG_FILE"; then
+    local memory_mb config
+    memory_mb=$(awk '/^MemTotal:/ { print int($2 / 1024 / 2) }' /proc/meminfo)
+    config=$(as_root sed "s|^# duckdb_memory_limit: .*|duckdb_memory_limit: ${memory_mb}MB|" "$CONFIG_FILE")
+    # In place, not sed -i: a running container keeps the bind-mounted file's old inode.
+    printf '%s\n' "$config" | as_root tee "$CONFIG_FILE" >/dev/null
+  fi
 }
 
 create_secret() {
