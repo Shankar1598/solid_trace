@@ -60,7 +60,7 @@ Rails.application.routes.draw do
     end
     resources :mentions, only: [ :index ]
     get "organization_users/search", to: "organization_users#search", as: :organization_users_search
-    resources :projects, only: [ :index, :new, :create, :show, :update ], param: :slug do
+    resources :projects, only: [ :index, :new, :create, :show, :update, :destroy ], param: :slug do
       resources :issues, only: [ :show ], param: :number do
         member do
           patch :resolve

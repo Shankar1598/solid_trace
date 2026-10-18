@@ -3,6 +3,8 @@
 require "test_helper"
 
 class ProjectTest < ActiveSupport::TestCase
+  include MonitorTestHelper
+
   test "generates slug on create" do
     project = create(:project, name: "My Project", slug: nil)
 
@@ -61,5 +63,31 @@ class ProjectTest < ActiveSupport::TestCase
     project = create(:project)
 
     assert_equal "ruby", project.platform
+  end
+
+  test "deleting a Project deletes what it owns, with the rows EventStore writes for it" do
+    project = create(:project)
+    issue = create(:issue, project: project)
+    create(:issue_fingerprint, issue: issue)
+    create(:comment, issue: issue)
+    create(:project_key, project: project)
+    stub_monitor_query_check(project)
+    create(:monitor, project: project)
+    chart = create(:dashboard_chart, project: project, dashboard: create(:dashboard, organization: project.organization))
+    Project.connection.execute("INSERT INTO project_seen_cursors (project_id, event_uuid) VALUES (#{project.id}, 'abc')")
+    other = create(:issue)
+
+    project.destroy!
+
+    assert_equal 0, Issue.where(project_id: project.id).count
+    assert_equal 0, IssueFingerprint.where(project_id: project.id).count
+    assert_equal 0, Comment.where(issue_id: issue.id).count
+    assert_equal 0, ProjectKey.where(project_id: project.id).count
+    assert_equal 0, LogMonitor.where(project_id: project.id).count
+    assert_equal 0, ProjectIssueCounter.where(project_id: project.id).count
+    assert_equal 0, Project.connection.select_value("SELECT COUNT(*) FROM project_seen_cursors WHERE project_id = #{project.id}")
+    assert_not DashboardChart.exists?(chart.id)
+    assert Dashboard.exists?(chart.dashboard_id)
+    assert Issue.exists?(other.id)
   end
 end
