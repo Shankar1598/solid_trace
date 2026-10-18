@@ -67,6 +67,7 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "issues list serves counts from the issue without calling EventStore" do
+    travel_to Time.utc(2026, 1, 10)
     @issue.update!(times_seen: 7, first_seen_at: Time.utc(2026, 1, 1), last_seen_at: Time.utc(2026, 1, 3))
     create(:issue, project: @project)
     stub_request(:any, /#{Regexp.escape(EventStore.base_url)}/)
@@ -112,6 +113,7 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "issues list sorts by last seen by default and by first seen on request" do
+    travel_to Time.utc(2026, 1, 10)
     @issue.update!(first_seen_at: Time.utc(2026, 1, 1), last_seen_at: Time.utc(2026, 1, 9))
     newer = create(:issue, project: @project, first_seen_at: Time.utc(2026, 1, 5), last_seen_at: Time.utc(2026, 1, 6))
     unseen = create(:issue, project: @project, created_at: Time.utc(2026, 1, 7))
@@ -119,6 +121,31 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ @issue.id, unseen.id, newer.id ], issues_page["issues"].map { |i| i["id"] }
     assert_equal "last_seen", issues_page["filters"]["sort"]
     assert_equal [ unseen.id, newer.id, @issue.id ], issues_page(sort: "first_seen")["issues"].map { |i| i["id"] }
+  end
+
+  test "issues list keeps the issues seen in the last 14 days by default" do
+    travel_to Time.utc(2026, 1, 31)
+    @issue.update!(last_seen_at: Time.utc(2026, 1, 10))
+    recent = create(:issue, project: @project, last_seen_at: Time.utc(2026, 1, 25))
+    unseen = create(:issue, project: @project, created_at: Time.utc(2026, 1, 30))
+
+    page = issues_page
+
+    assert_equal [ unseen.id, recent.id ], page["issues"].map { |i| i["id"] }
+    assert_equal 2, page["pagination"]["total_count"]
+    assert_equal "14d", page["filters"]["range"]
+  end
+
+  test "issues list keeps the issues seen in the range asked for" do
+    travel_to Time.utc(2026, 1, 31)
+    @issue.update!(last_seen_at: Time.utc(2026, 1, 10))
+    today = create(:issue, project: @project, last_seen_at: Time.utc(2026, 1, 30, 12))
+    create(:issue, project: @project, last_seen_at: Time.utc(2026, 1, 25))
+
+    assert_equal [ today.id ], issues_page(range: "24h")["issues"].map { |i| i["id"] }
+    assert_equal "24h", issues_page(range: "24h")["filters"]["range"]
+    assert_equal 3, issues_page(range: "30d")["pagination"]["total_count"]
+    assert_equal "14d", issues_page(range: "1y")["filters"]["range"]
   end
 
   private

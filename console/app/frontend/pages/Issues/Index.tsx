@@ -10,6 +10,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { issuesFilterQuery, TIME_RANGE_OPTIONS, type IssueFilters } from '@/lib/issues/filters'
 import {
   Table,
   TableBody,
@@ -20,7 +21,6 @@ import {
 } from "@/components/ui/table"
 
 
-const TIME_RANGE_OPTIONS = { '24h': 'Last 24 hours', '14d': 'Last 14 days', '30d': 'Last 30 days' }
 const SORT_OPTIONS = {
   last_seen: 'Last seen',
   first_seen: 'First seen',
@@ -34,13 +34,7 @@ interface IssuesIndexProps {
     total_count: number
   }
   projects: Project[]
-  filters: {
-    status: string
-    query: string
-    environment: string
-    project_id: string
-    sort: string
-  }
+  filters: IssueFilters
 }
 
 export default function IssuesIndex({ issues, pagination, projects, filters }: IssuesIndexProps) {
@@ -62,17 +56,9 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
     return () => clearTimeout(handler)
   }, [searchTerm])
 
-  const getFilterUrl = (newFilters: Partial<typeof filters>) => {
-    const params = new URLSearchParams({ ...filters, ...newFilters })
-    if (params.get('status') === 'all') params.delete('status')
-    if (params.get('environment') === 'all') params.delete('environment')
-    if (params.get('project_id') === 'all') params.delete('project_id')
-    if (!params.get('query')) params.delete('query')
-    if (params.get('sort') === 'last_seen') params.delete('sort')
-    return `?${params.toString()}`
-  }
+  const getFilterUrl = (newFilters: Partial<IssueFilters>) => issuesFilterQuery(filters, newFilters)
 
-  const visitFilters = (newFilters: Partial<typeof filters>) =>
+  const visitFilters = (newFilters: Partial<IssueFilters>) =>
     router.get(getFilterUrl(newFilters), {}, { preserveState: true, replace: true, preserveScroll: true })
 
   const visitPage = (page: number) =>
@@ -104,7 +90,11 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                 ))}
               </SelectContent>
             </Select>
-            <Select defaultValue="14d" items={TIME_RANGE_OPTIONS}>
+            <Select
+              value={filters.range}
+              onValueChange={(val) => visitFilters({ range: val || '14d' })}
+              items={TIME_RANGE_OPTIONS}
+            >
               <SelectTrigger className="border-0">
                 <SelectValue />
               </SelectTrigger>
