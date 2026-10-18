@@ -26,6 +26,8 @@ Rails.application.routes.draw do
   post "mcp", to: "mcp#create", as: :mcp, format: false
   match "mcp", to: "mcp#method_not_allowed", via: [ :get, :delete ], as: nil, format: false
   resources :passwords, param: :token
+  # Where a user in no Organization makes one (OrganizationsController).
+  resources :organizations, only: [ :new, :create ]
 
   scope "/:org_slug" do
     resources :issues, only: [ :index ]
