@@ -8,10 +8,10 @@ Status: ready-for-agent
 
 | From | Finding | Severity | Goes to |
 |---|---|---|---|
-| 03 | `list_fields` never lists JSON Attributes (arrays such as `tags`) or late Logs' Attributes, because `log_key_counts` counts neither, and its description doesn't say so (03-review-1) | low | 10: say it in the description and `docs/mcp.md` |
-| 04 | ADR 0003's Consequences still says the SQL "runs unvalidated", against its own amendment (04-verify-1) | low | 10 |
-| 06 | The server's instructions name only `whoami` and `list_projects`, not the logs, Dashboard, Monitor or Issue tools | low | 10 |
-| 07 | `create_monitor`'s `kind` description promises that `summarize … by service` fires per group, which needs `notify_by_group` (07-review-1) | low | 10 |
+| 03 | `list_fields` never lists JSON Attributes (arrays such as `tags`) or late Logs' Attributes, because `log_key_counts` counts neither, and its description doesn't say so (03-review-1) | low | 10: done |
+| 04 | ADR 0003's Consequences still said the SQL "runs unvalidated", against its own amendment (04-verify-1) | low | 10: done |
+| 06 | The server's instructions name only `whoami` and `list_projects`, not the logs, Dashboard, Monitor or Issue tools | low | 10: done |
+| 07 | `create_monitor`'s `kind` description promises that `summarize … by service` fires per group, which needs `notify_by_group` (07-review-1) | low | 10: done |
 | 01 | The Revoke button stays enabled while its DELETE runs, so a double-click answers a 404 page in Inertia's modal (01-verify-1) | low | 11 |
 | 02 | `Base#json` uses `JSON.generate`, so a raw Time or record a tool passes comes out as Ruby's `to_s` or `inspect`, not ISO 8601 (02-review-2) | low | 11 |
 | 02 | A `from` or `to` with no offset is read in the server's time zone, not UTC (02-review-3) | low | 11 |
@@ -21,6 +21,8 @@ Status: ready-for-agent
 | 08 | `get_issue` answers up to 20 comments uncut (08-review-1) | low | 11 |
 | 08 | No test ties `get_issue`'s `trace_logs` arguments to `query_logs`'s input schema (08-review-2) | low | 11 |
 | 08 | `update_issue` matches `unassigned` case-sensitively, so `Unassigned` is looked up as an email (08-review-3, 08-verify-1) | low | 11 |
+| 10 | `add_chart` and `update_chart` give `options.stacked` and `options.decimals` a `type` array (`["integer","null"]`): legal JSON Schema, but the MCP inspector warns that a client mapping schemas to one `type` (Gemini's) may reject the tool. `anyOf` is its suggestion | low | 11 |
+| 10 | A revoked or wrong token's `401` carries only `WWW-Authenticate: Bearer`, so a client that supports OAuth goes looking for it: the inspector answers "Interactive OAuth requires a TTY", not that the token was refused. `error="invalid_token"` and a body that says so may help | low | 11 |
 
 ## Filed as their own issues
 

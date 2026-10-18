@@ -55,7 +55,7 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 
 - `query_logs`: runs a [Query](logs/query-language.md) on a Project's Logs. Logs come back one line each, 50 a page by default and at most 200, with a cursor for the next page; a summarize comes back as a table of at most 100 rows.
 - `get_log`: one Log, whole, with every Attribute.
-- `list_fields`: the names a Query can read: the built-in fields, then the Project's Attributes, most used first, with their types.
+- `list_fields`: the names a Query can read: the built-in fields, then the Project's Attributes, most used first, with their types. It counts Logs as they arrive, so it leaves out Attributes that only Logs sent more than about an hour late carry, and Attributes whose values are JSON, such as arrays. A Query still reads them.
 - `query_language_reference`: the whole Query language reference.
 - `run_sql`: runs a read-only [DuckDB SQL](logs/sql.md) SELECT on a Project's Logs. It is listed only while the instance's SQL queries are on.
 

@@ -15,8 +15,9 @@ module McpTools
       kind: {
         type: "string",
         enum: LogMonitor.kinds.keys,
-        description: "threshold: the Query ends in a summarize of one number per group, such as | summarize count() by service, " \
-                     "and a group fires while its number passes the threshold, and resolves when it no longer does. " \
+        description: "threshold: the Query ends in a summarize of one number per row, such as | summarize count() by service. " \
+                     "With notify_by_group, each row is a group that fires while its number passes the threshold and resolves " \
+                     "when it no longer does; without it, the worst row's number is the Monitor's one group. " \
                      "match: the Query returns Logs, and each run sends the Logs ingested since the last run that match it.",
       },
       query: {
