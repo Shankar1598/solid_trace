@@ -56,6 +56,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
 | Upgrade Pebble and DuckDB | 2 / 1 | [03](upgrade-pebble-duckdb/issues/03-pebble-value-separation.md) |
+| Phone layout | 0 / 1 | [01](phone-layout/issues/01-phone-layout.md) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):

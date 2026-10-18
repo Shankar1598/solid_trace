@@ -89,7 +89,7 @@ export function GetStarted({ target, orgSlug, projectSlug, projectQuery, onSent 
                 <Copy className="h-3.5 w-3.5" /> Copy
               </Button>
             </div>
-            <pre className="overflow-x-auto rounded-md border bg-muted/40 p-3 font-mono text-xs leading-5">{s.code}</pre>
+            <pre className="overflow-x-auto border bg-muted/40 p-3 font-mono text-xs leading-5">{s.code}</pre>
           </TabsContent>
         ))}
       </Tabs>

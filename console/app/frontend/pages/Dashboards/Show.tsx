@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { Check, Pencil, Plus, RefreshCw, Settings, Square } from 'lucide-react'
 import { copyText } from '@/components/copyText'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
+import { PageHeader } from '@/components/PageHeader'
 import { TimeRangePicker } from '@/components/TimeRangePicker'
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -120,21 +121,22 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
 
   const projectsById = useMemo(() => new Map(projects.map(p => [p.id, p])), [projects])
   const charts = dashboard.charts
+  const severalProjects = new Set(charts.map(c => c.project_id)).size > 1
   const autoRefreshItems = (Object.keys(AUTO_REFRESH_LABELS) as AutoRefresh[]).map(value => ({ value, label: AUTO_REFRESH_LABELS[value] }))
 
   return (
     <DashboardLayout>
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="mr-auto min-w-0">
-            <h1 className="truncate text-xl font-semibold">{dashboard.name}</h1>
-            {dashboard.description && <p className="truncate text-xs text-muted-foreground">{dashboard.description}</p>}
-          </div>
+      <PageHeader
+        className="mb-3"
+        breadcrumbs={[{ label: 'Dashboards', href: `/${orgSlug}/dashboards` }, { label: dashboard.name }]}
+        title={dashboard.name}
+        description={dashboard.description || undefined}
+        actions={<>
           <TimeRangePicker range={range} onChange={pickRange} />
           {running.size > 0 ? (
-            <Button variant="outline" size="sm" onClick={() => queue.abortAll()}><Square className="h-3.5 w-3.5" /> Cancel</Button>
+            <Button variant="outline" onClick={() => queue.abortAll()}><Square className="h-3.5 w-3.5" /> Cancel</Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={() => rerun(range)}><RefreshCw className="h-3.5 w-3.5" /> Refresh</Button>
+            <Button variant="outline" onClick={() => rerun(range)}><RefreshCw className="h-3.5 w-3.5" /> Refresh</Button>
           )}
           <Select value={dashboard.auto_refresh} onValueChange={value => value && setAutoRefresh(value as AutoRefresh)} items={autoRefreshItems}>
             <SelectTrigger size="sm" aria-label="Auto-refresh" className="h-8">
@@ -145,22 +147,24 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
             </SelectContent>
           </Select>
           <CopyLink onCopy={copyLink} />
-          <Button variant="outline" size="sm" onClick={() => setEditor({ chart: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
+          <Button variant="outline" onClick={() => setEditor({ chart: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
           {editing ? (
-            <Button size="sm" onClick={() => setEditing(false)}><Check className="h-3.5 w-3.5" /> Done</Button>
+            <Button onClick={() => setEditing(false)}><Check className="h-3.5 w-3.5" /> Done</Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={() => setEditing(true)} disabled={charts.length === 0}><Pencil className="h-3.5 w-3.5" /> Edit layout</Button>
+            <Button variant="outline" onClick={() => setEditing(true)} disabled={charts.length === 0}><Pencil className="h-3.5 w-3.5" /> Edit layout</Button>
           )}
           <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Dashboard settings" onClick={() => setSettings(true)}>
             <Settings className="h-4 w-4" />
           </Button>
-        </div>
+        </>}
+      />
+      <div className="flex flex-col gap-3">
         {editing && <p className="text-xs text-muted-foreground">Drag a chart by its title, or resize it from its bottom-right corner. Each change is saved.</p>}
 
         <TagMenuProvider onFilter={null} onSummarize={null} columns={NO_COLUMNS}>
           <div ref={containerRef}>
             {charts.length === 0 ? (
-              <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">
+              <div className="border border-dashed p-10 text-center text-sm text-muted-foreground">
                 No charts yet. Press Add chart, or chart a Query in the Logs explorer and press Add to dashboard beside the chart switch.
               </div>
             ) : mounted && (
@@ -178,6 +182,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                     <ChartCard
                       chart={chart}
                       project={projectsById.get(chart.project_id)}
+                      showProject={severalProjects}
                       orgSlug={orgSlug}
                       run={run}
                       range={range}

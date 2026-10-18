@@ -36,17 +36,17 @@ export function EventsTabContent({
   }
 
   return (
-    <Card>
+    <Card className="gap-0 pb-0">
       <CardHeader className="border-b px-4">
-        <CardTitle className="text-[10px] font-bold uppercase tracking-wider">Historical Events</CardTitle>
+        <CardTitle>All events</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
-          <TableHeader className="bg-muted/10">
-            <TableRow className="hover:bg-transparent border-b">
-              <TableHead className="w-[100px] text-[10px] font-bold uppercase tracking-wider py-3 px-4">ID</TableHead>
-              <TableHead className="text-[10px] font-bold uppercase tracking-wider py-3 px-4">Timestamp</TableHead>
-              <TableHead className="text-[10px] font-bold uppercase tracking-wider py-3 px-4">Environment</TableHead>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-[100px] px-4">ID</TableHead>
+              <TableHead className="px-4">Time</TableHead>
+              <TableHead className="px-4">Environment</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -54,15 +54,15 @@ export function EventsTabContent({
               <TableRow
                 key={evt.id}
                 className={cn(
-                  "cursor-pointer transition-colors border-b",
-                  event?.id === evt.id ? "bg-muted/60" : "hover:bg-muted/30"
+                  "cursor-pointer",
+                  event?.id === evt.id && "bg-muted/60"
                 )}
                 onClick={() => router.visit(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${evt.id}`, { preserveScroll: true })}
               >
                 <TableCell className="font-mono text-xs py-3 px-4">{evt.id}</TableCell>
                 <TableCell className="font-mono text-xs py-3 px-4">{format(new Date(evt.created_at), 'MMM d, yyyy HH:mm:ss')}</TableCell>
                 <TableCell className="py-3 px-4">
-                  <Badge variant="outline" className="px-2 py-0 text-[10px] uppercase font-mono tracking-tight bg-background">
+                  <Badge className="font-mono">
                     {evt.environment}
                   </Badge>
                 </TableCell>
@@ -72,15 +72,13 @@ export function EventsTabContent({
         </Table>
 
         {events_pagination.total_pages > 1 && (
-          <div className="flex items-center justify-between px-6 py-4 border-t bg-muted/10">
-            <div className="text-[11px] text-muted-foreground font-medium">
+          <div className="flex items-center justify-between px-4 py-3 border-t">
+            <div className="text-xs text-muted-foreground tabular-nums">
               Page {events_pagination.current_page} of {events_pagination.total_pages}
             </div>
             <div className="flex items-center gap-1">
               <Button
                 variant="outline"
-                size="sm"
-                className="h-8 text-[11px]"
                 disabled={events_pagination.current_page <= 1}
                 onClick={() => handleEventsPageChange(events_pagination.current_page - 1)}
               >
@@ -88,8 +86,6 @@ export function EventsTabContent({
               </Button>
               <Button
                 variant="outline"
-                size="sm"
-                className="h-8 text-[11px]"
                 disabled={events_pagination.current_page >= events_pagination.total_pages}
                 onClick={() => handleEventsPageChange(events_pagination.current_page + 1)}
               >

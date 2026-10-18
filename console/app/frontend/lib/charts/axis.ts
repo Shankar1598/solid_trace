@@ -38,6 +38,21 @@ export function timePattern(binSeconds: number, { from, to }: { from: Date; to: 
  * local clock, hours on local hours that the step divides (00:00, 06:00, …
  * whatever the zone's offset), and days on local midnights.
  */
+/**
+ * The ticks whose labels, centred on them, fit inside the chart: a label that
+ * would run past either edge is left out rather than cut off. The plot spans
+ * `plot` of a chart `width` wide; before it's measured every tick stays.
+ */
+export function ticksInside(ticks: number[], domain: [number, number], plot: [number, number], width: number, halfLabel: number): number[] {
+  const [from, to] = domain
+  if (width <= 0 || to <= from) return ticks
+  const [left, right] = plot
+  return ticks.filter(t => {
+    const x = left + ((t - from) / (to - from)) * (right - left)
+    return x - halfLabel >= 0 && x + halfLabel <= width
+  })
+}
+
 export function timeTicks(from: number, to: number, max: number): number[] {
   if (to <= from) return []
   const step = STEPS.find(s => (to - from) / s <= max) ?? STEPS[STEPS.length - 1]
@@ -146,8 +161,13 @@ export function optionsText(value: number, options: ValueOptions, plain: (value:
   const text = options.decimals === undefined
     ? plain(value)
     : numberFormat({ minimumFractionDigits: options.decimals, maximumFractionDigits: options.decimals }).format(value)
-  if (!options.unit) return text
-  return options.unit === '%' ? `${text}%` : `${text} ${options.unit}`
+  return withUnit(text, options.unit)
+}
+
+/** A number's text with a chart's unit after it, `%` close up: 6K ms, 40%. Value axes label their ticks so too. */
+export function withUnit(text: string, unit?: string): string {
+  if (!unit) return text
+  return unit === '%' ? `${text}%` : `${text} ${unit}`
 }
 
 /** The power of ten of a number's leading digit: 2 for 250, -2 for 0.025. */

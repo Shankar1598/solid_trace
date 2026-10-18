@@ -84,7 +84,7 @@ export function BuilderPanel({ builder, project, projects, onProject, fields, va
 
   return (
     <SuggestionsContext.Provider value={{ fields, valuesOf }}>
-    <div className="border-b px-3 py-2 text-xs">
+    <div className="px-3 py-2 text-xs">
       <div className="ml-1 border-l pl-4">
         <Row label="Project">
           <ProjectSelect project={project} projects={projects} onChange={onProject} />
@@ -582,7 +582,7 @@ function ConditionStep({ field, type, values, op, onOp, value, onValue, onBack, 
         )}
         {needsValue && shown.length > 0 && (
           <div className="-mx-2 -mb-2 border-t">
-            <p className="px-2 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Seen in recent Logs</p>
+            <p className="caps-label px-2 pt-2">Seen in recent Logs</p>
             <OptionList
               options={shown}
               active={active}

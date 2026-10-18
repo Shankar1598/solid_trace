@@ -13,7 +13,7 @@ export function CreateMonitor({ projectId, query, range }: { projectId: number; 
   return (
     <Link
       href={newMonitorHref(orgSlug, projectId, query, range)}
-      className="flex h-6 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+      className="flex h-6 shrink-0 items-center gap-1 border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
     >
       <BellRing className="h-3 w-3" /> Create monitor
     </Link>

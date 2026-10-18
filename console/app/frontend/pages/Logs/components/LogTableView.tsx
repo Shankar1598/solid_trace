@@ -120,7 +120,7 @@ function TableRows({ table, swatches = null }: { table: LogTable | LogTotals; sw
   return (
     <div ref={scrollRef} className="h-full overflow-auto font-mono text-[12px]">
       <div style={{ minWidth: total }}>
-        <div className="sticky top-0 z-10 flex border-b bg-muted text-left text-muted-foreground">
+        <div className="sticky top-0 z-10 flex border-b bg-card text-left text-muted-foreground">
           {swatched && <div className="shrink-0" style={{ width: SWATCH_WIDTH }} />}
           {table.columns.map((c, i) => (
             <div key={i} className={cn('shrink-0 truncate px-3 py-1.5 font-medium', c.type === 'number' && 'text-right')} style={{ width: widths[i] }} title={`${c.name} (${c.type})`}>

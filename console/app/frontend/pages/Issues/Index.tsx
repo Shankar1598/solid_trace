@@ -1,6 +1,8 @@
 import { Link, usePage, router } from '@inertiajs/react'
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
+import { PageHeader } from '@/components/PageHeader'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Issue, Project, SharedProps } from '@/types'
@@ -18,10 +20,10 @@ import {
 } from "@/components/ui/table"
 
 
-const TIME_RANGE_OPTIONS = { '24h': '24H', '14d': '14D', '30d': '30D' }
+const TIME_RANGE_OPTIONS = { '24h': 'Last 24 hours', '14d': 'Last 14 days', '30d': 'Last 30 days' }
 const SORT_OPTIONS = {
-  last_seen: 'Last Seen',
-  first_seen: 'First Seen',
+  last_seen: 'Last seen',
+  first_seen: 'First seen',
 }
 
 interface IssuesIndexProps {
@@ -77,16 +79,14 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
     router.get(getFilterUrl({}), page > 1 ? { page } : {}, { preserveState: true })
 
   const projectOptions: Record<string, string> = {
-    all: 'All Projects',
+    all: 'All projects',
     ...Object.fromEntries(projects.map(p => [p.id.toString(), p.name]))
   }
 
   return (
     <DashboardLayout>
+      <PageHeader title="Issues" />
       <div className="flex flex-col h-full space-y-4">
-        <div className="flex items-center justify-between px-1">
-          <h1 className="text-2xl font-bold tracking-tight">Issues</h1>
-        </div>
 
         <div className="flex items-center gap-2 w-full">
           <div className="flex items-center border">
@@ -119,7 +119,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
           <div className="flex-1 relative">
             <Input
               className="pl-2 text-sm"
-              placeholder="Search for issues..."
+              placeholder="Search Issues…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -144,19 +144,20 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
           </div>
         </div>
 
-        <Table className="border shadow-sm table-fixed">
-          <TableHeader className="bg-muted/30">
-            <TableRow className="hover:bg-transparent border-b">
+        <div className="border">
+        <Table className="table-fixed">
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
               <TableHead className="w-[48px] px-4">
                 <div className="flex items-center justify-center">
                   <Checkbox id="select-all" />
                 </div>
               </TableHead>
-              <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Issue</TableHead>
-              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4 w-32">Last Seen</TableHead>
-              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4 w-32">Age</TableHead>
-              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4 w-24">Events</TableHead>
-              <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider px-4 w-24">Users</TableHead>
+              <TableHead>Issue</TableHead>
+              <TableHead className="text-right px-4 w-32">Last seen</TableHead>
+              <TableHead className="text-right px-4 w-32">Age</TableHead>
+              <TableHead className="text-right px-4 w-24">Events</TableHead>
+              <TableHead className="text-right px-4 w-24">Users</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -168,7 +169,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
               </TableRow>
             ) : (
               issues.map((issue) => (
-                <TableRow key={issue.id} className="group cursor-pointer hover:bg-muted/40 transition-colors">
+                <TableRow key={issue.id} className="group cursor-pointer">
                   <TableCell className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center">
                       <Checkbox />
@@ -181,7 +182,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                     >
                       <div className="flex flex-col min-w-0">
                         <div className="flex items-baseline gap-2 mb-1">
-                          <h3 className="font-semibold text-[15px] truncate text-foreground group-hover:text-primary transition-colors">
+                          <h3 className="font-semibold truncate text-foreground group-hover:underline">
                             {issue.title}
                           </h3>
                           <span className="font-mono text-xs text-muted-foreground truncate font-normal">
@@ -189,13 +190,9 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                           </span>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <code className="px-1 py-0.5 rounded bg-muted font-mono text-[10px] text-foreground border">
-                            {issue.kind || 'error'}
-                          </code>
-                          {issue.status === 'unresolved' && (
-                            <span className="text-red-500 font-medium text-[10px] uppercase">Unhandled</span>
-                          )}
-                          <span className="text-muted-foreground/60">{issue.project.name}</span>
+                          <Badge className="font-mono">{issue.kind || 'error'}</Badge>
+                          {issue.status === 'resolved' && <Badge variant="ok" dot>Resolved</Badge>}
+                          <span>{issue.project.name}</span>
                         </div>
                       </div>
                     </Link>
@@ -217,17 +214,16 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
             )}
           </TableBody>
         </Table>
+        </div>
 
         {pagination.total_pages > 1 && (
           <div className="flex items-center justify-between px-1">
-            <div className="text-[11px] text-muted-foreground font-medium">
+            <div className="text-xs text-muted-foreground tabular-nums">
               Page {pagination.current_page} of {pagination.total_pages} · {pagination.total_count} issues
             </div>
             <div className="flex items-center gap-1">
               <Button
                 variant="outline"
-                size="sm"
-                className="h-8 text-[11px]"
                 disabled={pagination.current_page <= 1}
                 onClick={() => visitPage(pagination.current_page - 1)}
               >
@@ -235,8 +231,6 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
               </Button>
               <Button
                 variant="outline"
-                size="sm"
-                className="h-8 text-[11px]"
                 disabled={pagination.current_page >= pagination.total_pages}
                 onClick={() => visitPage(pagination.current_page + 1)}
               >

@@ -6,6 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   DASHBOARD_VIZES, newChartQuery, titleOfQuery, withSource,
@@ -15,7 +16,6 @@ import { fetchChartPreview } from '@/lib/dashboards/api'
 import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/builder'
 import { fieldInfos } from '@/lib/logs/columns'
-import { cn } from '@/lib/utils'
 import { BuilderPanel, type ProjectOption } from '../../Logs/components/BuilderPanel'
 import { ChartBody, type ChartRun } from './ChartBody'
 
@@ -209,22 +209,16 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
         </div>
 
         <div className="space-y-2">
-          <div role="group" aria-label="Edit the Query in" className="flex w-fit overflow-hidden rounded-md border text-[11px]">
-            {(['builder', 'query'] as const).map(m => (
-              <button
-                key={m}
-                type="button"
-                aria-pressed={mode === m}
-                onClick={() => mode !== m && switchMode(m)}
-                className={cn('h-6 border-l px-2 first:border-l-0', mode === m ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted')}
-              >
-                {m === 'builder' ? 'Builder' : 'Query'}
-              </button>
-            ))}
-          </div>
-          {notice && <p className="text-xs text-amber-600 dark:text-amber-400">{notice}</p>}
+          <Segmented
+            label="Edit the Query in"
+            size="sm"
+            value={mode}
+            options={[{ value: 'builder', label: 'Builder' }, { value: 'query', label: 'Query' }]}
+            onChange={switchMode}
+          />
+          {notice && <p className="text-xs text-warning">{notice}</p>}
           {mode === 'builder' ? (
-            <div className="rounded-md border">
+            <div className="border">
               {builder ? (
                 <BuilderPanel
                   builder={builder}
@@ -266,19 +260,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
         <div className="flex flex-wrap items-end gap-4">
           <div className="space-y-1">
             <Label>Viz</Label>
-            <div role="group" aria-label="Viz" className="flex overflow-hidden rounded-md border text-[11px]">
-              {DASHBOARD_VIZES.map(v => (
-                <button
-                  key={v}
-                  type="button"
-                  aria-pressed={viz === v}
-                  onClick={() => setViz(v)}
-                  className={cn('h-7 border-l px-2 first:border-l-0', viz === v ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted')}
-                >
-                  {VIZ_LABELS[v]}
-                </button>
-              ))}
-            </div>
+            <Segmented label="Viz" value={viz} options={DASHBOARD_VIZES.map(v => ({ value: v, label: VIZ_LABELS[v] }))} onChange={setViz} />
           </div>
           <label className="flex items-center gap-2 text-xs">
             <Checkbox
@@ -300,7 +282,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
           {errors.options && <p className="text-xs text-destructive">Options {errors.options}</p>}
         </div>
 
-        <div className="h-72 overflow-auto rounded-md border" data-chart-preview>
+        <div className="h-72 overflow-auto border" data-chart-preview>
           <ChartBody run={preview} viz={viz} options={options} />
         </div>
 

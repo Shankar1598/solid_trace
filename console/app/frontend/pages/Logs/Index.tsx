@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { router, usePage } from '@inertiajs/react'
+import { Head, router, usePage } from '@inertiajs/react'
 import { Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
@@ -62,7 +62,7 @@ import { GetStarted } from './components/GetStarted'
 import { CopyLink } from './components/CopyLink'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
-import { LogStream } from './components/LogStream'
+import { LogStream, StreamSkeleton } from './components/LogStream'
 import { LogTableView, type TableChart } from './components/LogTableView'
 import { ModeSwitch } from './components/ModeSwitch'
 import { QueryBox, type LeavingQuery } from './components/QueryBox'
@@ -598,34 +598,39 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
 
   return (
     <DashboardLayout>
-      <div className="h-[calc(100vh-2rem)] flex flex-col rounded-md border overflow-hidden bg-card">
+      {/* The explorer fills the page, so its bar stands in for the page header. */}
+      <Head title={`Logs · ${project.name}`} />
+      <h1 className="sr-only">Logs</h1>
+      <div className="h-[calc(100vh-2rem)] flex flex-col border overflow-hidden bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
           <TimeRangePicker range={explorer.draft.range} onChange={pickBarRange} retentionDays={project.log_retention_days} />
           <ModeSwitch modes={modes} mode={mode} onSwitch={switchTo} />
-          <div className="h-5 w-px bg-border" />
+          <div className="hidden h-5 w-px bg-border sm:block" />
           {mode === 'builder' ? (
             <BuilderBar view={builderView} />
           ) : (
-            <span className="flex-1 text-[11px] text-muted-foreground">Ctrl+Enter runs the {sqlMode ? 'SQL' : 'Query'}.</span>
+            <span className="flex-1 text-[11px] text-muted-foreground"><span className="hidden sm:inline">Ctrl+Enter runs the {sqlMode ? 'SQL' : 'Query'}.</span></span>
           )}
           <CopyLink onCopy={copyLink} />
           {running ? (
-            <Button variant="outline" size="sm" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
+            <Button variant="outline" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={() => commit(explorer)}><Play className="h-3.5 w-3.5" /> Run</Button>
+            <Button variant="outline" onClick={() => commit(explorer)}><Play className="h-3.5 w-3.5" /> Run</Button>
           )}
         </div>
 
         {builder && (
-          <BuilderPanel
-            builder={builder}
-            project={project}
-            projects={projects}
-            onProject={openProject}
-            fields={fields}
-            valuesOf={valuesOf}
-            onChange={b => changeBuilder(b, true)}
-          />
+          <div className="border-b">
+            <BuilderPanel
+              builder={builder}
+              project={project}
+              projects={projects}
+              onProject={openProject}
+              fields={fields}
+              valuesOf={valuesOf}
+              onChange={b => changeBuilder(b, true)}
+            />
+          </div>
         )}
 
         {mode === 'query' && (
@@ -706,7 +711,7 @@ function ResultArea({ result, getStarted, sql, chart, onLoadOlder, selectedId, o
     case 'waiting':
       return <Notice>Press Run to run the SQL.</Notice>
     case 'running':
-      return <Notice>{sql ? 'Running the SQL…' : 'Running the Query…'}</Notice>
+      return <StreamSkeleton label={sql ? 'Running the SQL…' : 'Running the Query…'} />
     case 'cancelled':
       return <Notice>{sql ? 'SQL cancelled. Run it again.' : 'Query cancelled. Run it again to see Logs.'}</Notice>
     case 'error':

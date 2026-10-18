@@ -22,6 +22,10 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.58 0.22 27);
+  /* The tones a badge or a status takes besides destructive: Tailwind's 700s on white, 300s and 400s on black. */
+  --info: oklch(50% 0.134 242.749);
+  --warning: oklch(55.5% 0.163 48.998);
+  --success: oklch(52.7% 0.154 150.069);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -78,7 +82,8 @@
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  /* Panels are the page itself, outlined; only what floats (popovers, menus) is lifted. */
+  --card: oklch(0.145 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
@@ -91,6 +96,9 @@
   --accent: oklch(0.371 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --info: oklch(74.6% 0.16 232.661);
+  --warning: oklch(82.8% 0.189 84.429);
+  --success: oklch(79.2% 0.209 151.711);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -117,7 +125,7 @@
   --syntax-string: oklch(76.5% 0.177 163.223);
   --syntax-literal: oklch(70.2% 0.183 293.541);
   --syntax-name: oklch(83.7% 0.128 66.29);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: oklch(0.145 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.87 0 0);
   --sidebar-primary-foreground: oklch(0.205 0 0);
@@ -154,6 +162,9 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-info: var(--info);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -188,8 +199,13 @@
     @apply font-sans bg-background text-foreground;
   }
 
+  /*
+   * JetBrains Mono's ligatures are contextual alternates: they draw == as one
+   * long sign and != as ≠, so what a reader copies isn't what they saw.
+   */
   html {
     @apply font-sans;
+    font-variant-ligatures: no-contextual;
   }
 
   select {
@@ -202,7 +218,18 @@
   }
 }
 
+/* A small label over a group: Settings' nav groups, an Issue's facts, the inspector's sections. */
+@utility caps-label {
+  @apply text-[11px] font-medium uppercase tracking-wider text-muted-foreground;
+}
+
 /* A Dashboard's resize corner (react-resizable draws a dark arrow): light in dark mode, so it can be found. */
 .dark .react-resizable-handle {
   filter: invert(1);
+}
+
+/* The comment editor's placeholder: Tiptap puts it in data-placeholder on an empty first paragraph. */
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-muted-foreground;
 }
