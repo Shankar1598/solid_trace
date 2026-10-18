@@ -241,9 +241,12 @@ module McpTools
       noun ? "No such #{noun}. #{lister} lists them." : "Not found."
     end
 
+    # EventStore's own message, which says the timeout and what to try, or a
+    # generic one.
     def timed_out(error)
-      reason = error.body["error"].presence if error.body.is_a?(Hash)
-      "The run was stopped at its timeout#{" (#{reason})" if reason}. Try a shorter range or a narrower Query."
+      return "The run was stopped at its timeout. Try a shorter range or a narrower Query." unless error.body.is_a?(Hash)
+
+      "#{EventStore.error_text(error.body).upcase_first}."
     end
   end
 end

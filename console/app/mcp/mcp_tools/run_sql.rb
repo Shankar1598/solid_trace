@@ -25,7 +25,7 @@ module McpTools
       answer = ChartRuns.hold do
         EventStore.run_logs_sql(
           project_id: project.id, sql: arguments[:sql].to_s, from: time_range.from, to: time_range.to,
-          timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS
+          timeout_seconds: EventStoreProxy::SQL_TIMEOUT_SECONDS
         )
       end
 

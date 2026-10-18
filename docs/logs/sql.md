@@ -3,6 +3,7 @@
 On an instance whose operator has turned SQL queries on, the Logs explorer has a SQL mode. In it you write a raw [DuckDB SQL](https://duckdb.org/docs/sql/introduction) SELECT, and it runs as you wrote it. SQL mode opens with the SQL of your current Query, so you can start from something that works.
 
 - SQL runs only when you press Run (or Ctrl+Enter). Changing the time range waits for Run too.
+- A query that runs for more than 10 seconds is stopped, with "the run was stopped after 10 s". DuckDB gives a query every thread it has, so the limit keeps a slow one from holding up ingest. EventStore stops SQL at 10 seconds whatever it is asked, from the explorer or the MCP server.
 - The explorer's URL holds your SQL, so you can share it. Opening a link with SQL never runs it: whoever opens the link presses Run.
 - SQL can't be turned back into a Query. Leaving SQL mode drops your SQL and returns to the Query it started from. If you changed the SQL, the explorer asks first.
 - The histogram and the Builder's chips are hidden in SQL mode.
@@ -26,7 +27,7 @@ SQL queries read only the Project you run them on: the `logs` view and the `even
 
 `WITH` parts, subqueries, joins, `VALUES`, `PIVOT` and `UNPIVOT` over the two views work.
 
-SQL queries are off by default. They can't change data, settings or files, or read beyond their Project, but a slow one can slow down ingest. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
+SQL queries are off by default. They can't change data, settings or files, or read beyond their Project, but a slow one can slow down ingest for up to 10 seconds. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
 
 ## The `logs` view
 
