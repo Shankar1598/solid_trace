@@ -34,6 +34,25 @@ func (w *SQLiteWriter) Close() error {
 	return w.db.Close()
 }
 
+// DeleteProjectIssues deletes the rows Event processing writes for a Project:
+// its Issues, their fingerprints, its Issue counter and its seen cursor, in
+// one transaction. Console deletes them with the Project; this is for a
+// deleted Project's Events that Event processing handled after that.
+func (w *SQLiteWriter) DeleteProjectIssues(projectID uint32) error {
+	tx, err := w.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, table := range []string{"issue_fingerprints", "issues", "project_issue_counters", "project_seen_cursors"} {
+		if _, err := tx.Exec("DELETE FROM "+table+" WHERE project_id = ?", projectID); err != nil {
+			return fmt.Errorf("delete %s of project %d: %w", table, projectID, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // FindOrCreateIssueFingerprint returns the ID of the issue_fingerprint.
 func (w *SQLiteWriter) FindOrCreateIssueFingerprint(projectID uint32, fingerprint string) (int64, error) {
 	var id int64

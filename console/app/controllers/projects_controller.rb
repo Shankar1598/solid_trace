@@ -47,8 +47,8 @@ class ProjectsController < ApplicationController
   end
 
   # Deletes the Project with its Issues, keys, Monitors and Dashboard charts.
-  # EventStore deletes its Logs in its next daily cleanup, once the Project's
-  # row is gone.
+  # EventStore deletes its Logs and Events in its next daily cleanups, once the
+  # Project's row is gone.
   def destroy
     authorize @project
 

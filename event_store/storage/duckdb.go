@@ -372,6 +372,14 @@ func (w *DuckDBWriter) NewestHotUUIDAfter(projectID uint32, afterUUID string) (s
 	return newest.String, err
 }
 
+// DeleteProjectHotEvents deletes a Project's rows from events_hot. Its rows in
+// the archive files stay: each file holds a date's rows of every Project. The
+// caller holds batchLock, so no batch or archive run writes them meanwhile.
+func (w *DuckDBWriter) DeleteProjectHotEvents(projectID uint32) error {
+	_, err := w.db.Exec("DELETE FROM events_hot WHERE project_id = ?", projectID)
+	return err
+}
+
 // HotUUIDsBetween returns the UUIDs in events_hot for a Project from first to
 // last, inclusive.
 func (w *DuckDBWriter) HotUUIDsBetween(projectID uint32, first, last string) (map[string]bool, error) {

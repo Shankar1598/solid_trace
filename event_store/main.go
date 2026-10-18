@@ -109,6 +109,10 @@ func main() {
 	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter, &batchLock)
 	go archiveConsumer.Run()
 
+	// Deletes a deleted Project's Events, holding batchLock while it does.
+	eventCleanup := processing.NewCleanup(pebbleWriter, duckdbWriter, sqliteWriter, consoleSettings, &batchLock, clock.System{})
+	eventCleanup.Start()
+
 	logProcessor := logprocessing.New(pebbleWriter, logStore, clock.System{})
 	if err := logProcessor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Log processing", "error", err)
@@ -199,5 +203,6 @@ func main() {
 	logExport.Stop()
 	logUploads.Stop()
 	logCleanup.Stop()
+	eventCleanup.Stop()
 	archiveConsumer.Stop()
 }

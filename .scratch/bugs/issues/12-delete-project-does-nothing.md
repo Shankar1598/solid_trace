@@ -39,3 +39,22 @@ Tests:
 - **A race:** Events stored but not yet processed when the Project is deleted are still processed. EventStore's SQLite connection doesn't turn on foreign keys, so `FindOrCreateIssue` would insert Issues and a counter row for the missing Project. They are unreachable but stay. New Events are refused once the keys are gone.
 
 **To check with the user:** whether EventStore should delete a deleted Project's Events, as Log cleanup does its Logs. Deleting a Project with very many Issues runs one `destroy` per Issue in the request, as `dependent: :destroy` already asked; it may be slow on a big Project.
+
+### 2026-10-18 EventStore deletes a deleted Project's Events
+
+The user asked for it. `processing.Cleanup` (`event_store/processing/cleanup.go`) runs when EventStore starts and once a UTC day. It looks for each Project with Events in Pebble whose row is gone from Console's `projects` table, as the Log cleanup does. While holding `batchLock`, so no Event processing batch or archive run is in the middle, it deletes:
+1. the Project's `events_hot` rows (`DuckDBWriter.DeleteProjectHotEvents`)
+2. any Issue rows Event processing wrote after Console deleted the Project (`SQLiteWriter.DeleteProjectIssues`): its Issues, fingerprints, Issue counter and seen cursor. This clears up the race above.
+3. last, its Events and processing cursor in Pebble, as one range deletion (`PebbleWriter.DeleteProjectEvents`). They go last because they are how the next pass finds the Project, should a step fail.
+
+An empty `projects` table deletes nothing.
+
+**Not deleted:** the Project's rows in the Event archive. Each archive file holds a date's rows of every Project, the rows carry no payload, and nothing deletes archive rows yet (ADR 0008).
+
+**Wording:** the Project page's Danger zone and its confirmation now say EventStore deletes the Project's logs and events within a day.
+
+**Tests:**
+- `storage/project_events_delete_test.go`: each delete takes only that Project's rows, and Project id 0 (the cursors) is refused.
+- `processing/cleanup_test.go`: only deleted Projects, in that order, under the lock; nothing for an empty `projects` table; a failed step keeps the Project's Events for the next pass.
+- `e2e/flows/project-delete.spec.ts` passes.
+- On the dev stack: a throwaway Project got 22 Events, was deleted, and EventStore's restart logged "Deleting the Events of a deleted Project" for it alone. The next restart found nothing to delete.
