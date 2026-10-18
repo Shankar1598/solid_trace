@@ -56,7 +56,7 @@ module McpTools
     end
 
     # The Issues page, with the filters given: status, query, project_id,
-    # sort and page, as IssueList takes them.
+    # range, sort and page, as IssuesController#index takes them.
     def issues(organization, **filters)
       url(routes.issues_path(org_slug: organization.slug, **filters.compact))
     end

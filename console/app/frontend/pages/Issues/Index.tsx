@@ -173,13 +173,12 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
               <TableHead className="text-right px-4 w-32">Last seen</TableHead>
               <TableHead className="text-right px-4 w-32">Age</TableHead>
               <TableHead className="text-right px-4 w-24">Events</TableHead>
-              <TableHead className="text-right px-4 w-24">Users</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {issues.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-48 text-center text-muted-foreground">
+                <TableCell colSpan={5} className="h-48 text-center text-muted-foreground">
                   No issues found matching your criteria.
                 </TableCell>
               </TableRow>
@@ -225,9 +224,6 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                   </TableCell>
                   <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
                     {new Intl.NumberFormat('en-US', { notation: "compact" }).format(issue.events_count)}
-                  </TableCell>
-                  <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
-                    {new Intl.NumberFormat('en-US', { notation: "compact" }).format(0)}
                   </TableCell>
                 </TableRow>
               ))

@@ -32,7 +32,7 @@ module McpTools
         page: list.page,
         total_pages: list.total_pages,
         total_count: list.total_count,
-      }, link: links.issues(organization, **filters, page: (list.page if list.page > 1)))
+      }, link: links.issues(organization, **filters, range: "all", page: (list.page if list.page > 1)))
     end
   end
 end

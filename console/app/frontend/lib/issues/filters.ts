@@ -8,7 +8,7 @@ export interface IssueFilters {
   sort: string
 }
 
-export const TIME_RANGE_OPTIONS = { '24h': 'Last 24 hours', '14d': 'Last 14 days', '30d': 'Last 30 days' }
+export const TIME_RANGE_OPTIONS = { '24h': 'Last 24 hours', '14d': 'Last 14 days', '30d': 'Last 30 days', all: 'All time' }
 
 // The Issues page's query string for filters with changes applied, leaving
 // out each filter at its default.

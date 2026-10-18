@@ -5,9 +5,9 @@ class IssuesController < ApplicationController
   before_action :set_organization
 
   # The page lists the Issues seen in the last 14 days unless it's asked for
-  # another of IssueList::RANGES.
+  # another of IssueList::RANGES, or for all of them with "all".
   def index
-    range = IssueList::RANGES.key?(params[:range]) ? params[:range] : "14d"
+    range = IssueList::RANGES.key?(params[:range]) || params[:range] == "all" ? params[:range] : "14d"
     list = IssueList.new(@current_org, status: params[:status], query: params[:query], project_id: params[:project_id],
       range: range, sort: params[:sort], page: params[:page])
 

@@ -180,6 +180,17 @@ class IssuesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "14d", issues_page(range: "1y")["filters"]["range"]
   end
 
+  test "issues list keeps every issue for all time" do
+    travel_to Time.utc(2026, 1, 31)
+    @issue.update!(last_seen_at: Time.utc(2025, 1, 10))
+    create(:issue, project: @project, last_seen_at: Time.utc(2026, 1, 30))
+
+    page = issues_page(range: "all")
+
+    assert_equal 2, page["pagination"]["total_count"]
+    assert_equal "all", page["filters"]["range"]
+  end
+
   private
 
   def issues_page(params = {})

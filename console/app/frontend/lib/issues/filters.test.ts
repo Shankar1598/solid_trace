@@ -10,6 +10,7 @@ describe('issuesFilterQuery', () => {
 
   it('carries a chosen range', () => {
     expect(issuesFilterQuery(defaults, { range: '24h' })).toBe('?range=24h')
+    expect(issuesFilterQuery(defaults, { range: 'all' })).toBe('?range=all')
   })
 
   it('keeps the other filters when the range changes', () => {
