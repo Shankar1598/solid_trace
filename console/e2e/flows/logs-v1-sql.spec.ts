@@ -121,6 +121,8 @@ test('SQL that would change anything is refused, and a SELECT still runs', async
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   await settled(page)
   await expect(page.getByRole('alert')).toHaveCount(0)
+  // One value shows as a Number; its table names the column.
+  await page.getByRole('group', { name: 'Chart' }).getByRole('button', { name: 'Table' }).click()
   await expect(page.locator('.sticky.top-0').filter({ hasText: /^key_counts$/ })).toBeVisible()
   expect(errors).toEqual([])
 })

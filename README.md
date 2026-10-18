@@ -42,6 +42,10 @@ Starts Rails, Vite, EventStore, and background jobs via `Procfile.dev`.
 
 The EventStore listens on two ports. Ingest (`4000`) is public: SDKs send events there. The query API (`query_port`, default `4100`) serves stored events to the console without authentication, so it binds to `127.0.0.1` only. Never expose it.
 
+## MCP server
+
+Agents such as Claude Code and Cursor can query Logs, read Issues and build Dashboards and Monitors through SolidTrace's MCP server, with an API token made in User settings. See [docs/mcp.md](docs/mcp.md).
+
 ## Project Structure
 
 - `console/` — Rails app (UI, API, user management)
