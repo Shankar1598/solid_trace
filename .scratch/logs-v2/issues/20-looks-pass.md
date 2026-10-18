@@ -44,7 +44,24 @@ Phones are a separate effort, [phone-layout 01](../../phone-layout/issues/01-pho
 
 Left in this ticket:
 - the bugs in the review (after the looks work, as the user asked)
-- the measurements (10,000 stream lines, a 12-chart Dashboard over 7 days)
 - the Phase 6 carry-over list and the remaining click-through rough edges
 
 **Status:** ready-for-human
+
+## Comments
+
+### 2026-10-18 measurements
+
+Both measurements are done, on `main` with about 2 million dummy Logs over 7 days. The details are in [research/dashboard-and-stream.md](../research/dashboard-and-stream.md).
+
+- **10,000 stream lines stay smooth** on a production build of the frontend. Wheel scrolling at 10,000 lines holds 60 frames a second with no long tasks. The DOM stays at about 2,350 nodes, and the JS heap grows from 12 MB to 23 MB. The development build stutters at any length; that comes from React's development-only work.
+- **The 12-chart Dashboard over 7 days:**
+  - Its Queries take 5.6 s cold and 3.6–4.2 s warm, 4 at a time.
+  - In the browser it takes 5.0 s cold and 2.7–3.0 s warm.
+  - Binned charts come from the bin cache once they've run. The stat and table charts run in full every time, and `dcount(user.id)` (3.5 s with three others running) sets the warm figure.
+- **Compaction stays "not now".** One file per day speeds up only `count()` locally. The bucket side is for 21, with this Dashboard (Dashboard 6 in dev).
+
+Not done, for the user to decide:
+- serving stat and table charts from the bin cache when their aggregates add up
+- memoising `LogRow`: the patch is in `~/.cache/solid-trace/perf-20/`, and it only helps the development build
+
