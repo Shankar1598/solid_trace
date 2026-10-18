@@ -49,7 +49,8 @@ parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 # The Docker image puts it in the default; DuckDB never downloads extensions itself.
 # duckdb_extension_directory: /usr/local/lib/solidtrace/duckdb_extensions
 
-# DuckDB memory and spill-to-disk settings
+# DuckDB memory and spill-to-disk settings. deploy/install sets the memory
+# limit to half the machine's memory; DuckDB's own default is 80%.
 # duckdb_temp_directory: /storage_local/duckdb/tmp
 # duckdb_memory_limit: 16GB
 
