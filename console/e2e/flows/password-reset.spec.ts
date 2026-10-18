@@ -1,11 +1,13 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
+import { ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 
 // "Forgot your password?" from the sign-in page: ask for a link, open it,
 // choose a new password, and sign in with it. The link comes from rails
-// runner, as the flow can't read the email. Each run makes its own user.
+// runner, as the flow can't read the email. Each run makes its own user, a
+// member of the seed Organization so that signing in lands on its Issues.
 
 const email = `flow-reset-${Date.now()}@solidtrace.local`
 
@@ -17,11 +19,12 @@ const rails = (code: string) =>
 test.use({ storageState: { cookies: [], origins: [] } })
 
 test.beforeAll(() => {
-  rails(`User.create!(name: "Flow Reset", email: ${JSON.stringify(email)}, password: "old-password-1")`)
+  rails(`user = User.create!(name: "Flow Reset", email: ${JSON.stringify(email)}, password: "old-password-1"); ` +
+    `OrganizationUser.create!(organization: Organization.find_by!(slug: ${JSON.stringify(ORG)}), user: user, role: :member)`)
 })
 
 test.afterAll(() => {
-  rails(`User.where(email: ${JSON.stringify(email)}).destroy_all`)
+  rails(`User.where(email: ${JSON.stringify(email)}).each { |user| OrganizationUser.where(user: user).delete_all; user.destroy! }`)
 })
 
 test('a forgotten password is reset through its link, and the new one signs in', async ({ page }) => {
@@ -51,6 +54,6 @@ test('a forgotten password is reset through its link, and the new one signs in',
   await page.fill('input[type=email]', email)
   await page.fill('input[type=password]', 'new-password-1')
   await page.click('button[type=submit]')
-  await page.waitForURL(url => !url.pathname.startsWith('/login'))
+  await page.waitForURL(url => url.pathname === `/${ORG}/issues`)
   expect(errors).toEqual([])
 })
