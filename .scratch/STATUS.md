@@ -37,7 +37,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-- **MCP server** ([spec](mcp/spec.md)): the whole-effort review found nothing high or medium in the code ([11](mcp/issues/11-whole-effort-review.md), `ready-for-human`). Next: connect Claude to the dev stack's MCP endpoint, which now runs `main`, and call the tools. With the user: [bugs 05](bugs/issues/05-production-mail-unconfigured.md), what's left of the production mail settings, and the four Console bugs questions above.
+- **MCP server** ([spec](mcp/spec.md)): the whole-effort review found nothing high or medium in the code ([11](mcp/issues/11-whole-effort-review.md), `ready-for-human`). Claude Code was connected to the dev stack's endpoint on `main` (2026-10-18) and called every tool but the key, invite, `create_project` and `run_monitor` ones: all worked. Its findings are in [13](mcp/issues/13-claude-code-check-findings.md) (`needs-triage`); the main one is that `create_monitor` can't make a Monitor that is off. With the user: [bugs 05](bugs/issues/05-production-mail-unconfigured.md), what's left of the production mail settings, and the four Console bugs questions above.
 
 0. **Logs v2** ([spec](logs-v2/spec.md), [tickets](logs-v2/issues/)): built and reviewed; merged into `main` ([23](logs-v2/issues/23-merge-logs-v2.md), resolved). Ticket 20's two measurements are done (2026-10-18, [research](logs-v2/research/dashboard-and-stream.md)): 10,000 stream lines stay smooth on a production build, the 12-chart 7-day Dashboard takes 5.6 s cold and 3.6–4.2 s warm, and compaction stays "not now". Next: the rest of [20, the looks pass](logs-v2/issues/20-looks-pass.md), with the user, and, with the user on `main`, [21, a real GCS run](logs-v2/issues/21-real-gcs-check.md) (needs their bucket and HMAC key). [22](logs-v2/issues/22-leftover-low-findings.md) lists the leftover lows.
 
@@ -53,7 +53,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logs | 16 / 0 | [map.md](logs/map.md) |
 | Logs v1 | 19 / 1 | [spec.md](logs-v1/spec.md) |
 | Logs v2 | 21 / 3 | [20](logs-v2/issues/20-looks-pass.md) |
-| MCP server | 11 / 1 | [11](mcp/issues/11-whole-effort-review.md) |
+| MCP server | 11 / 2 | [11](mcp/issues/11-whole-effort-review.md), [13](mcp/issues/13-claude-code-check-findings.md) |
 | Bugs | 10 / 2 | [05](bugs/issues/05-production-mail-unconfigured.md), [10](bugs/issues/10-issues-users-always-zero.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
