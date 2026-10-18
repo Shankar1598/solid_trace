@@ -33,3 +33,7 @@ What to call the settings, and which are needed. A proposal in the style of the 
 Then document them next to `PUBLIC_INGEST_URL`, and add a test that production reads them.
 
 ## Comments
+
+### 2026-10-18
+
+`feb0cdc` (`feature/logs-v2`, merged into `main`) does most of this. Production reads `CONSOLE_URL`, `MAIL_FROM` and `SMTP_*` from the environment, the compose file passes them to Console, and `deploy/setup` asks for them. Not checked against this ticket yet: whether the invite, reset and Monitor email paths say mail isn't set up when SMTP is unset, and whether a test checks that production reads the settings.
