@@ -20,6 +20,22 @@ Two services:
 - **EventStore** — Go service. Ingests and processes events.
   - Uses Pebble for event ingest and DuckDB for analytical queries.
 
+## Install on a VM
+
+On a Debian or Ubuntu machine:
+
+```bash
+git clone https://github.com/solidtrace/solid_trace.git
+cd solid_trace
+deploy/setup
+```
+
+`deploy/setup` asks, stage by stage, for Console's and ingest's public URLs, an SMTP server for email, and whether Log files and the Event archive go in a GCS bucket, with the `gcloud` commands that create the bucket and its HMAC key. It writes the answers to `deploy/.env` and `/etc/solid-trace/event_store.yml`, then runs `deploy/install`. Run it again to change any of them.
+
+`deploy/install` installs Docker if it is missing, creates `/var/lib/solid-trace` for data and EventStore's config if there is none, writes Console's secret to `deploy/.env`, then builds and starts the services with `deploy/docker-compose.yml`. Run on its own, it installs with the defaults: no email, everything on local disk. Console is on port `3000`, ingest on `4000`. The services restart on failure and at boot, and their logs rotate.
+
+To upgrade: `git pull && deploy/install`. It keeps the config and the secrets.
+
 ## Dev Setup
 
 ```bash
