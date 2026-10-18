@@ -1,31 +1,49 @@
-version: "3.9"
+name: solid-trace
+
+# Rotated container logs. Docker's default json-file driver never rotates, so
+# a busy install would fill the disk.
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 50m
+    max-file: "5"
+
+# Console's image, shared by the dashboard, the background jobs and db_prepare.
+x-console: &console
+  image: solid-trace-console:latest
+  # Built by the console service, never pulled.
+  pull_policy: never
+  network_mode: host
+  environment:
+    RAILS_ENV: production
+    HTTP_PORT: "3000"
+    TARGET_PORT: "3001"
+    # Thruster faces clients directly, so it ignores X-Forwarded-* headers they send.
+    FORWARD_HEADERS: "false"
+    # Optional: only Sentry's DSN is in the credentials.
+    RAILS_MASTER_KEY: ${RAILS_MASTER_KEY:-}
+    SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run deploy/install, which writes it to deploy/.env}
+    EVENT_STORE_URL: http://127.0.0.1:4100
+    # Where Console sends an empty Project's test Log.
+    EVENT_STORE_INGEST_URL: http://127.0.0.1:4000
+    # Where SDKs and shippers reach ingest, for the Logs page's snippets.
+    # Unset, they show this host at port 4000.
+    PUBLIC_INGEST_URL: ${PUBLIC_INGEST_URL:-}
+  volumes:
+    - /var/lib/solid-trace/storage:/storage
+  restart: unless-stopped
+  logging: *logging
 
 services:
   # Dashboard. Thruster serves it on port 3000 and proxies to Puma on 3001.
   # The image runs as a non-root user, which can't bind a port below 1024 on
   # the host network, so Console isn't on port 80.
-  console: &console
-    image: solid-trace-console:latest
-    network_mode: host
-    environment:
-      RAILS_ENV: production
-      HTTP_PORT: "3000"
-      TARGET_PORT: "3001"
-      # Thruster faces clients directly, so it ignores X-Forwarded-* headers they send.
-      FORWARD_HEADERS: "false"
-      RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
-      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
-      EVENT_STORE_URL: http://127.0.0.1:4100
-      # Where Console sends an empty Project's test Log.
-      EVENT_STORE_INGEST_URL: http://127.0.0.1:4000
-      # Where SDKs and shippers reach ingest, for the Logs page's snippets.
-      # Unset, they show this host at port 4000.
-      # PUBLIC_INGEST_URL: https://ingest.example.com
-    volumes:
-      - /var/lib/solid-trace/storage:/storage
-    restart: unless-stopped
+  console:
+    <<: *console
+    build: ../console
     depends_on:
-      - db_prepare
+      db_prepare:
+        condition: service_completed_successfully
 
   # Background jobs
   jobs:
@@ -37,26 +55,33 @@ services:
   # Event ingestion and storage. Ingest listens on port 4000 directly.
   event_store:
     image: solid-trace-event-store:latest
+    build: ../event_store
     network_mode: host
     environment:
       EVENT_STORE_CONFIG: /etc/solid-trace/event_store.yml
       # The object_store bucket's key, if event_store.yml has one.
       SOLIDTRACE_OBJECT_STORE_KEY_ID: ${SOLIDTRACE_OBJECT_STORE_KEY_ID:-}
       SOLIDTRACE_OBJECT_STORE_SECRET: ${SOLIDTRACE_OBJECT_STORE_SECRET:-}
+    # Pebble's tables and DuckDB's Parquet files each hold a file descriptor.
+    # 1048576 is the most the kernel allows by default (fs.nr_open).
     ulimits:
       nofile:
-        soft: 65535
-        hard: 65535
+        soft: 1048576
+        hard: 1048576
     volumes:
       - /var/lib/solid-trace/storage:/storage
       - /var/lib/solid-trace/storage_cold:/storage_cold
       - /etc/solid-trace/event_store.yml:/etc/solid-trace/event_store.yml:ro
     restart: unless-stopped
+    # Room for DuckDB's checkpoint and an in-flight upload after the HTTP servers stop.
+    stop_grace_period: 30s
+    logging: *logging
     depends_on:
-      - db_prepare
+      db_prepare:
+        condition: service_completed_successfully
 
+  # Creates or migrates Console's tables, which EventStore also writes, then exits.
   db_prepare:
     <<: *console
     command: ["bin/rails", "db:prepare"]
-    # Not the console anchor's depends_on, which names db_prepare itself.
-    depends_on: []
+    restart: "no"
