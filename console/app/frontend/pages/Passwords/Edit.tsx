@@ -29,7 +29,7 @@ export default function EditPassword({ token }: EditPasswordProps) {
         <CardHeader>
           <CardTitle>Choose a new password</CardTitle>
           <CardDescription>
-            Saving it signs you out everywhere
+            Saving it signs you out everywhere and revokes your API tokens
           </CardDescription>
         </CardHeader>
         <CardContent>

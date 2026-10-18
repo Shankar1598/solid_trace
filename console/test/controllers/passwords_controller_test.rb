@@ -80,6 +80,20 @@ class PasswordsControllerTest < ActionDispatch::IntegrationTest
     assert User.authenticate_by(email: @user.email, password: "new-password")
   end
 
+  # A reset is how a user takes their account back, so whatever a stolen
+  # session made goes too: an API token works without the password.
+  test "a reset revokes the user's API tokens, so the MCP server refuses them" do
+    _token, secret = ApiToken.issue!(user: @user, name: "Laptop")
+
+    put password_url(@user.password_reset_token),
+      params: { password: "new-password", password_confirmation: "new-password" }, as: :json, headers: inertia
+
+    assert_equal 0, @user.api_tokens.count
+    post mcp_url, params: { jsonrpc: "2.0", id: 1, method: "tools/list" }, as: :json,
+      headers: { "Authorization" => "Bearer #{secret}", "Accept" => "application/json, text/event-stream" }
+    assert_response :unauthorized
+  end
+
   test "a link works only until the password is reset" do
     token = @user.password_reset_token
     put password_url(token), params: { password: "new-password", password_confirmation: "new-password" }, as: :json, headers: inertia
