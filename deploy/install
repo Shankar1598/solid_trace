@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Installs SolidTrace on this machine with Docker Compose, or upgrades it.
+#
+#   deploy/install                  # from a clone of the repository
+#   git pull && deploy/install      # to upgrade
+#
+# Installs Docker if it is missing (Debian and Ubuntu), starts it at boot,
+# creates the data directories, EventStore's config and Console's secret, then
+# builds the images and starts the services. Safe to run again: it never
+# overwrites the config or the secret.
+
+set -euo pipefail
+
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA_DIR=/var/lib/solid-trace
+CONFIG_FILE=/etc/solid-trace/event_store.yml
+ENV_FILE="$DEPLOY_DIR/.env"
+# The user Console's image runs as (console/Dockerfile).
+CONSOLE_UID=1000
+
+say() { printf '\n== %s\n' "$*"; }
+die() { printf '\nerror: %s\n' "$*" >&2; exit 1; }
+as_root() { if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
+compose() { as_root docker compose --project-directory "$DEPLOY_DIR" -f "$DEPLOY_DIR/docker-compose.yml" "$@"; }
+
+install_docker() {
+  local packages=()
+  command -v curl >/dev/null || packages+=(curl ca-certificates)
+  command -v docker >/dev/null || packages+=(docker-ce docker-ce-cli containerd.io)
+  as_root docker buildx version >/dev/null 2>&1 || packages+=(docker-buildx-plugin)
+  as_root docker compose version >/dev/null 2>&1 || packages+=(docker-compose-plugin)
+  (( ${#packages[@]} )) || return 0
+
+  # shellcheck source=/dev/null
+  . /etc/os-release
+  [[ $ID == ubuntu || $ID == debian ]] ||
+    die "Needs Docker with the Compose and Buildx plugins, and curl. This script installs them on Debian and Ubuntu only: https://docs.docker.com/engine/install/"
+
+  say "Installing ${packages[*]}"
+  # Docker's apt repository, as in https://docs.docker.com/engine/install/ubuntu/
+  as_root apt-get update -qq
+  as_root apt-get install -y -qq ca-certificates curl >/dev/null
+  as_root install -m 0755 -d /etc/apt/keyrings
+  as_root curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
+  as_root chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$ID ${UBUNTU_CODENAME:-$VERSION_CODENAME} stable" |
+    as_root tee /etc/apt/sources.list.d/docker.list >/dev/null
+  as_root apt-get update -qq
+  as_root apt-get install -y -qq "${packages[@]}" >/dev/null
+}
+
+start_docker() {
+  if [[ -d /run/systemd/system ]] && systemctl cat docker.service >/dev/null 2>&1; then
+    # At boot too, so the services come back after a reboot.
+    as_root systemctl enable --now docker.service
+  elif ! as_root docker info >/dev/null 2>&1; then
+    # No systemd, as in WSL or a container.
+    as_root service docker start
+  fi
+  for _ in {1..30}; do
+    as_root docker info >/dev/null 2>&1 && return
+    sleep 1
+  done
+  die "Docker did not start."
+}
+
+create_data_dirs() {
+  say "Creating $DATA_DIR"
+  as_root install -d -m 0755 -o "$CONSOLE_UID" -g "$CONSOLE_UID" "$DATA_DIR/storage" "$DATA_DIR/storage_cold"
+}
+
+create_config() {
+  if as_root test -f "$CONFIG_FILE"; then
+    say "Keeping $CONFIG_FILE"
+  else
+    say "Writing $CONFIG_FILE"
+    as_root install -D -m 0644 "$DEPLOY_DIR/event_store.yml" "$CONFIG_FILE"
+  fi
+  # DuckDB's own default is 80% of memory, which leaves Console too little.
+  # Only while the template's commented line is there, as deploy/setup leaves it.
+  if as_root grep -q '^# duckdb_memory_limit: ' "$CONFIG_FILE" && ! as_root grep -q '^duckdb_memory_limit: ' "$CONFIG_FILE"; then
+    local memory_mb config
+    memory_mb=$(awk '/^MemTotal:/ { print int($2 / 1024 / 2) }' /proc/meminfo)
+    config=$(as_root sed "s|^# duckdb_memory_limit: .*|duckdb_memory_limit: ${memory_mb}MB|" "$CONFIG_FILE")
+    # In place, not sed -i: a running container keeps the bind-mounted file's old inode.
+    printf '%s\n' "$config" | as_root tee "$CONFIG_FILE" >/dev/null
+  fi
+}
+
+create_secret() {
+  if grep -qs '^SECRET_KEY_BASE=.' "$ENV_FILE"; then
+    return
+  fi
+  say "Writing Console's secret to $ENV_FILE"
+  (umask 077 && echo "SECRET_KEY_BASE=$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
+}
+
+start_services() {
+  say "Building the images and starting the services"
+  compose up --detach --build --remove-orphans ||
+    die "The services did not start. See: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs"
+}
+
+wait_for() {
+  local name=$1 url=$2
+  for _ in {1..60}; do
+    curl -fsS -o /dev/null "$url" 2>/dev/null && return
+    sleep 2
+  done
+  die "$name did not answer at $url. See: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs"
+}
+
+install_docker
+start_docker
+create_data_dirs
+create_config
+create_secret
+start_services
+wait_for Console http://127.0.0.1:3000/up
+wait_for EventStore http://127.0.0.1:4000/health
+
+host=$(hostname -I 2>/dev/null | awk '{ print $1 }')
+cat <<EOF
+
+SolidTrace is running, and restarts with the machine.
+  Console:  http://${host:-this-machine}:3000
+  Ingest:   http://${host:-this-machine}:4000
+  Data:     $DATA_DIR
+  Config:   $CONFIG_FILE (restart after editing: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml restart event_store)
+  Secrets:  $ENV_FILE
+  Logs:     sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs -f
+  Upgrade:  git pull && deploy/install
+EOF

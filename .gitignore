@@ -32,3 +32,6 @@
 
 local/*
 !local/.keep
+
+# Console's secret, written by deploy/install.
+/deploy/.env
