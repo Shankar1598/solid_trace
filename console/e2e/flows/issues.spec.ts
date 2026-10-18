@@ -74,6 +74,22 @@ test('ticked Issues are resolved and unresolved together', async ({ page }) => {
   expect(errors).toEqual([])
 })
 
+test("an Issue's page resolves and unresolves it", async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${ORG}/issues?project_id=${projectId}`)
+  await titles(page).filter({ hasText: 'Flow seen today' }).click()
+  await expect(page.getByRole('heading', { name: 'Flow seen today' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Resolve', exact: true }).click()
+  await expect(page.getByText('Issue resolved')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Unresolve', exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Unresolve', exact: true }).click()
+  await expect(page.getByText('Issue unresolved')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Resolve', exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
 test("an Issue's age counts from its first Event, though the Issues were stored together", async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto(`/${ORG}/issues?project_id=${projectId}&range=30d`)

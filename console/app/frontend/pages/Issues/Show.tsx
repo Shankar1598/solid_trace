@@ -61,11 +61,11 @@ export default function IssuesShow({
   }
 
   const handleResolve = () => {
-    router.put(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}/resolve`)
+    router.patch(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}/resolve`)
   }
 
   const handleUnresolve = () => {
-    router.put(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}/unresolve`)
+    router.patch(`/${current_org?.slug}/projects/${issue.project.slug}/issues/${issue.number}/unresolve`)
   }
 
   if (!current_org) return null
