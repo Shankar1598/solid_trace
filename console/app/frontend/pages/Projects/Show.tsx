@@ -2,6 +2,9 @@ import { router, useForm, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
+import {
+  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -15,11 +18,13 @@ interface ProjectsShowProps {
   default_log_retention_days: number
   can_manage_project: boolean
   can_manage_keys: boolean
+  can_delete_project: boolean
 }
 
-export default function ProjectsShow({ project, default_log_retention_days, can_manage_project, can_manage_keys }: ProjectsShowProps) {
+export default function ProjectsShow({ project, default_log_retention_days, can_manage_project, can_manage_keys, can_delete_project }: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const { data, setData, patch, processing, errors, transform } = useForm({
     log_retention_days: project.log_retention_days?.toString() ?? ''
   })
@@ -158,18 +163,35 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
           </form>
         </Card>
 
-        <Card className="border-destructive/50">
-          <CardHeader>
-            <CardTitle className="text-destructive">Danger zone</CardTitle>
-            <CardDescription>
-              Deleting this project will permanently remove all issues and events associated with it.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="destructive">Delete project</Button>
-          </CardContent>
-        </Card>
+        {can_delete_project && (
+          <Card className="border-destructive/50">
+            <CardHeader>
+              <CardTitle className="text-destructive">Danger zone</CardTitle>
+              <CardDescription>
+                Deleting this project permanently removes its issues, keys, monitors and dashboard charts, and its logs within a day.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="destructive" onClick={() => setDeleting(true)}>Delete project</Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
+
+      <AlertDialog open={deleting} onOpenChange={setDeleting}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete "{project.name}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Its issues, keys, monitors and dashboard charts are deleted for everyone in the Organization, and SDKs sending with its keys are refused. EventStore deletes its logs within a day.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button variant="destructive" onClick={() => router.delete(`/${current_org.slug}/projects/${project.slug}`)}>Delete project</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   )
 }

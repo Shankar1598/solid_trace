@@ -30,7 +30,11 @@ Rails.application.routes.draw do
   resources :organizations, only: [ :new, :create ]
 
   scope "/:org_slug" do
-    resources :issues, only: [ :index ]
+    resources :issues, only: [ :index ] do
+      collection do
+        patch :status, action: :update_status
+      end
+    end
     get "logs", to: "logs#start", as: :logs
     resources :dashboards, only: [ :index, :show, :create, :update, :destroy ] do
       member do
@@ -58,7 +62,7 @@ Rails.application.routes.draw do
     end
     resources :mentions, only: [ :index ]
     get "organization_users/search", to: "organization_users#search", as: :organization_users_search
-    resources :projects, only: [ :index, :new, :create, :show, :update ], param: :slug do
+    resources :projects, only: [ :index, :new, :create, :show, :update, :destroy ], param: :slug do
       resources :issues, only: [ :show ], param: :number do
         member do
           patch :resolve

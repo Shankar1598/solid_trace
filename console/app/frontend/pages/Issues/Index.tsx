@@ -10,6 +10,9 @@ import { formatDistanceToNow } from 'date-fns'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { issuesFilterQuery, TIME_RANGE_OPTIONS, type IssueFilters } from '@/lib/issues/filters'
+import { allTicked, toggleAll, toggleOne } from '@/lib/issues/selection'
+import { issueAge } from '@/lib/issues/times'
 import {
   Table,
   TableBody,
@@ -20,7 +23,6 @@ import {
 } from "@/components/ui/table"
 
 
-const TIME_RANGE_OPTIONS = { '24h': 'Last 24 hours', '14d': 'Last 14 days', '30d': 'Last 30 days' }
 const SORT_OPTIONS = {
   last_seen: 'Last seen',
   first_seen: 'First seen',
@@ -34,18 +36,21 @@ interface IssuesIndexProps {
     total_count: number
   }
   projects: Project[]
-  filters: {
-    status: string
-    query: string
-    environment: string
-    project_id: string
-    sort: string
-  }
+  filters: IssueFilters
 }
 
 export default function IssuesIndex({ issues, pagination, projects, filters }: IssuesIndexProps) {
   const { current_org } = usePage<SharedProps>().props
   const [searchTerm, setSearchTerm] = useState(filters.query || '')
+  const [ticked, setTicked] = useState<number[]>([])
+  const pageIds = issues.map(issue => issue.id)
+  const allOnPage = allTicked(ticked, pageIds)
+
+  // A new page or filter, or a change made, starts with nothing ticked.
+  useEffect(() => setTicked([]), [issues])
+
+  const updateStatus = (status: 'resolved' | 'unresolved') =>
+    router.patch(`/${current_org?.slug}/issues/status`, { ids: ticked, status }, { preserveScroll: true })
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -62,17 +67,9 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
     return () => clearTimeout(handler)
   }, [searchTerm])
 
-  const getFilterUrl = (newFilters: Partial<typeof filters>) => {
-    const params = new URLSearchParams({ ...filters, ...newFilters })
-    if (params.get('status') === 'all') params.delete('status')
-    if (params.get('environment') === 'all') params.delete('environment')
-    if (params.get('project_id') === 'all') params.delete('project_id')
-    if (!params.get('query')) params.delete('query')
-    if (params.get('sort') === 'last_seen') params.delete('sort')
-    return `?${params.toString()}`
-  }
+  const getFilterUrl = (newFilters: Partial<IssueFilters>) => issuesFilterQuery(filters, newFilters)
 
-  const visitFilters = (newFilters: Partial<typeof filters>) =>
+  const visitFilters = (newFilters: Partial<IssueFilters>) =>
     router.get(getFilterUrl(newFilters), {}, { preserveState: true, replace: true, preserveScroll: true })
 
   const visitPage = (page: number) =>
@@ -104,7 +101,11 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                 ))}
               </SelectContent>
             </Select>
-            <Select defaultValue="14d" items={TIME_RANGE_OPTIONS}>
+            <Select
+              value={filters.range}
+              onValueChange={(val) => visitFilters({ range: val || '14d' })}
+              items={TIME_RANGE_OPTIONS}
+            >
               <SelectTrigger className="border-0">
                 <SelectValue />
               </SelectTrigger>
@@ -144,13 +145,28 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
           </div>
         </div>
 
+        {ticked.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground tabular-nums">{ticked.length} selected</span>
+            <Button variant="outline" onClick={() => updateStatus('resolved')}>Resolve</Button>
+            <Button variant="outline" onClick={() => updateStatus('unresolved')}>Unresolve</Button>
+          </div>
+        )}
+
         <div className="border">
         <Table className="table-fixed">
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="w-[48px] px-4">
                 <div className="flex items-center justify-center">
-                  <Checkbox id="select-all" />
+                  <Checkbox
+                    id="select-all"
+                    aria-label="Select all Issues on this page"
+                    checked={allOnPage === true}
+                    indeterminate={allOnPage === 'some'}
+                    disabled={issues.length === 0}
+                    onCheckedChange={() => setTicked(toggleAll(ticked, pageIds))}
+                  />
                 </div>
               </TableHead>
               <TableHead>Issue</TableHead>
@@ -172,7 +188,11 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                 <TableRow key={issue.id} className="group cursor-pointer">
                   <TableCell className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center">
-                      <Checkbox />
+                      <Checkbox
+                        aria-label={`Select ${issue.title}`}
+                        checked={ticked.includes(issue.id)}
+                        onCheckedChange={() => setTicked(toggleOne(ticked, issue.id))}
+                      />
                     </div>
                   </TableCell>
                   <TableCell className="p-0">
@@ -201,7 +221,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                     {formatDistanceToNow(new Date(issue.last_seen_at || issue.created_at), { addSuffix: false }).replace('about ', '')}
                   </TableCell>
                   <TableCell className="text-right px-4 py-3 text-sm text-muted-foreground tabular-nums">
-                    {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false }).replace('about ', '')}
+                    {issueAge(issue)}
                   </TableCell>
                   <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
                     {new Intl.NumberFormat('en-US', { notation: "compact" }).format(issue.events_count)}
