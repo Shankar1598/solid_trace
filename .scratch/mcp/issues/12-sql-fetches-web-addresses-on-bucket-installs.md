@@ -1,6 +1,6 @@
 # 12: Read-only SQL can fetch web addresses on bucket installs
 
-**Status:** needs-triage
+**Status:** resolved
 **Track:** Go
 **Blocked by:** none
 
@@ -34,3 +34,28 @@ In the explorer, a member writes the SQL. Through `run_sql`, an agent writes it,
 Option 2 is the one to check first. Whichever is chosen, amend ADR 0003 and update the setting's description to match.
 
 ## Comments
+
+### 2026-10-18 resolved
+
+The user asked for a fix. Option 2 alone wasn't enough: a probe on DuckDB 1.5.6, with MinIO and a local listener standing in for an internal service, found two more ways in. Its notes are in [probe-12](../research/probe-12-sql-web-addresses.md).
+
+- **The query string.** An S3 URL takes its settings from its query string. `s3://other/x?s3_endpoint=127.0.0.1:PORT&s3_use_ssl=false` sent the request, and returned the answer, with `HTTPFileSystem` off. It also worked inside the bucket's own secret, and through `s3a`, `s3n`, `gcs`, `gs` and `r2`.
+- **The bucket name as a host.** A virtual-hosted URL makes the bucket name the host. `s3://127.0.0.1:PORT#/x` became `https://127.0.0.1:PORT#.s3.amazonaws.com/x`, which connects to 127.0.0.1:PORT, so it could still reach internal HTTPS services and scan ports.
+
+`UseBucket` now sets three global settings after making the secret (`event_store/storage/duckdb_bucket.go`):
+
+- `disabled_filesystems = 'HTTPFileSystem,HuggingFaceFileSystem'`: `http://`, `https://` and `hf://` are refused. DuckDB can't turn them on again, even with `SET`.
+- `s3_url_compatibility_mode = true`: an S3 URL's query string is part of its key. S3 globs are off too, which costs nothing, since EventStore names each file.
+- `s3_url_style = 'path'`: an S3 URL outside the bucket's secret goes to S3's own host, with the bucket in the path.
+
+**AWS buckets:** a secret with no style follows `s3_url_style`, so an AWS bucket's secret now names `URL_STYLE 'vhost'`, AWS's own style. Endpoint secrets (MinIO, GCS, R2) keep `path`.
+
+**What's left:** SQL now reaches the bucket's endpoint and S3's and Google Cloud Storage's public hosts, and nothing else. There it can read public buckets, or carry what it read in a request's path to someone's bucket. Those are public hosts, and an agent can send what it read anywhere with its own tools.
+
+**Tests:**
+- `TestWithABucketSQLReachesNoOtherHost` tries each way in: `http`, `https`, the query string inside and outside the secret, and `#` hosts through `s3`, `s3a` and `r2`. Each must be refused without one connection to the listener, and `hf://` must be refused. It stays offline: it points S3's default endpoint at a closed port.
+- `TestAnAWSBucketsSecretKeepsVirtualHostedURLs` checks both secret styles.
+
+Both failed before the fix, every case of the first among them. The Go suite passes with the MinIO bucket tests (10 packages), and so does Rails (575 runs).
+
+**Docs:** ADR 0003 has a new amendment, and its first amendment and Consequences now point to it. The setting's description (with its test), `docs/logs/sql.md`, `docs/mcp.md` and `docs/logs/object-store.md` say SQL reaches no web address but S3's and GCS's.

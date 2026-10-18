@@ -19,7 +19,8 @@ class InstanceSetting < ApplicationRecord
       - read every Organization's Logs and Events
       - read files on the server
       - read the bucket, when one is configured
-      - send requests from the server to any web address it can reach, internal ones too, when a bucket is configured
+      - send requests from the server to S3's and Google Cloud Storage's public hosts, when a bucket is configured,
+        such as to read another bucket, but to no other web address
       - starve ingest with slow queries
     Turn them on only if you trust every member of every Organization.
   TEXT
