@@ -128,7 +128,7 @@ class McpLogsToolsTest < ActiveSupport::TestCase
       errors: [ { message: "the run was stopped after 30 s, its timeout: try a shorter time range" } ],
     }.to_json)
 
-    assert_equal "The run was stopped at its timeout. Try a shorter range or a narrower Query.",
+    assert_equal "The run was stopped after 30 s, its timeout: try a shorter time range.",
       call_tool(:query_logs, user: @user, project: "shop", range: "30d").text
 
     holding_every_chart_run do
@@ -221,14 +221,14 @@ class McpLogsToolsTest < ActiveSupport::TestCase
 
   # run_sql
 
-  test "run_sql runs SQL on the Project's logs view with the run timeout, answering at most 100 rows, linking to SQL mode" do
+  test "run_sql runs SQL on the Project's logs view with the SQL timeout, answering at most 100 rows, linking to SQL mode" do
     InstanceSetting.current.update!(sql_queries_enabled: true)
     sql = "SELECT service, count(*) AS logs FROM logs GROUP BY service"
     rows = Array.new(120) { |i| [ "service-#{i}", i ] }
     travel_to NOW do
       stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
         .with(body: { sql: sql, from: "2026-10-16T10:00:00.000Z", to: "2026-10-17T10:00:00.000Z",
-                      timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS }.to_json)
+                      timeout_seconds: 10 }.to_json)
         .to_return(status: 200, body: { table: { columns: [ { name: "service", type: "string" }, { name: "logs", type: "number" } ],
                                                  rows: rows, truncated: false }, elapsed_ms: 8 }.to_json)
 
@@ -253,6 +253,18 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert refused.error?
     assert_equal "SQL queries are read-only: DROP isn't allowed", refused.text
     assert_equal parser_error, call_tool(:run_sql, user: @user, project: "shop", sql: "SELEC 1").text
+  end
+
+  test "run_sql answers SQL EventStore stopped at its timeout with EventStore's message" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql").to_return(status: 504, body: {
+      errors: [ { message: "the run was stopped after 10 s, its timeout: try a shorter time range or a simpler query" } ],
+    }.to_json)
+
+    answer = call_tool(:run_sql, user: @user, project: "shop", sql: "SELECT 1")
+
+    assert answer.error?
+    assert_equal "The run was stopped after 10 s, its timeout: try a shorter time range or a simpler query.", answer.text
   end
 
   test "run_sql is refused while SQL queries are off, without asking EventStore" do

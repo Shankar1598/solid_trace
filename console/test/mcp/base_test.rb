@@ -193,8 +193,8 @@ class McpBaseTest < ActiveSupport::TestCase
       -> { raise EventStore::SQLQueriesOff } => "SQL queries are turned off on this instance.",
       -> { raise ChartRuns::Busy } => "Console is busy running other Queries and charts. Run this again in a moment.",
       -> { raise ChartRuns::NotATable } => "This Query answers Logs, not a table. End it with summarize, count or project to chart it.",
-      -> { raise EventStore::TimedOut.new({ "error" => "query timed out after 30s" }) } =>
-        "The run was stopped at its timeout (query timed out after 30s). Try a shorter range or a narrower Query.",
+      -> { raise EventStore::TimedOut.new({ "errors" => [ { "message" => "the run was stopped after 30 s, its timeout: try a shorter time range" } ] }) } =>
+        "The run was stopped after 30 s, its timeout: try a shorter time range.",
       -> { raise EventStore::TimedOut.new(nil) } => "The run was stopped at its timeout. Try a shorter range or a narrower Query.",
       -> { raise EventStore::Unavailable, "connection refused" } => "EventStore is unavailable. Try again shortly.",
     }.each do |failure, message|

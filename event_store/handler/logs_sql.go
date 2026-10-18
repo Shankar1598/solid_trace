@@ -26,12 +26,32 @@ type sqlRequest struct {
 	TimeoutSeconds *float64  `json:"timeout_seconds"`
 }
 
+// sqlTimeoutSeconds is the longest a SQL run may take. DuckDB gives a query
+// every thread it has, so a slow one would hold them from ingest for as long
+// as it ran.
+const sqlTimeoutSeconds = 10.0
+
+// sqlTimeout is the timeout a SQL run gets for the timeout_seconds it asked
+// for: sqlTimeoutSeconds at most, and when it asked for none. One startRun
+// refuses, not positive or longer than a day, is passed on for it to refuse.
+func sqlTimeout(asked *float64) *float64 {
+	timeout := sqlTimeoutSeconds
+	if asked != nil && (*asked < timeout || *asked > maxTimeoutSeconds) {
+		timeout = *asked
+	}
+	return &timeout
+}
+
+// simplerSQL is the advice for SQL stopped at its timeout.
+const simplerSQL = "try a shorter time range or a simpler query"
+
 // POST /api/:project_id/logs/sql
 //
 // Runs raw DuckDB SQL, {"sql", "from", "to"} (RFC 3339), as written, with the
 // logs view holding the Project's Logs of [from, to) (ADR 0003), and
 // "timeout_seconds" optional. Only while the instance's SQL queries setting is
-// on; otherwise 403. Answers {"table": {"columns": [{"name", "type"}],
+// on; otherwise 403. The run stops after timeout_seconds, and after
+// sqlTimeoutSeconds whatever it asks for. Answers {"table": {"columns": [{"name", "type"}],
 // "rows": [[…]], "truncated"}, "elapsed_ms"}, at most maxTableRows rows. SQL
 // that fails answers 400 with {"error"}, DuckDB's message, as does SQL that
 // isn't one read-only SELECT, with "SQL queries are read-only: … isn't
@@ -53,7 +73,7 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with sql, from and to"})
 	}
-	run, problem := startRun(c, req.TimeoutSeconds)
+	run, problem := startRun(c, sqlTimeout(req.TimeoutSeconds))
 	if problem != nil {
 		return c.Status(400).JSON(problem)
 	}
@@ -64,7 +84,7 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	result, err := h.logs.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, maxTableRows)
 	// Stopped, the SQL fails as DuckDB interrupts it.
 	if err != nil && run.timedOut() {
-		return run.stopped(c, shorterRange)
+		return run.stopped(c, simplerSQL)
 	}
 	var sqlErr *storage.SQLError
 	if errors.As(err, &sqlErr) {

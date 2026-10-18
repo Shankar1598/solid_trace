@@ -259,9 +259,13 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
   test "a run EventStore stops at its timeout answers 504 with EventStore's message" do
     InstanceSetting.current.update!(sql_queries_enabled: true)
     message = "the run was stopped after 30 s, its timeout: try a shorter time range"
-    %w[query histogram sql].each do |run|
-      stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/#{run}").to_return(status: 504, body: { error: message }.to_json)
+    %w[query histogram].each do |run|
+      stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/#{run}").to_return(status: 504, body: { errors: [ { message: message } ] }.to_json)
     end
+    sql_message = "the run was stopped after 10 s, its timeout: try a shorter time range or a simpler query"
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+      .with { |request| JSON.parse(request.body)["timeout_seconds"] == 10 }
+      .to_return(status: 504, body: { errors: [ { message: sql_message } ] }.to_json)
     range = { from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
 
     get query_project_logs_url(@project, org_slug: @organization.slug), params: { query: "", **range }
@@ -274,7 +278,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
 
     post sql_project_logs_url(@project, org_slug: @organization.slug), params: { sql: "SELECT 1", **range }, as: :json
     assert_response :gateway_timeout
-    assert_equal message, response.parsed_body["error"]
+    assert_equal sql_message, response.parsed_body["error"]
   end
 
   test "the explorer's runs answer 503 at once while Console runs as many as it allows" do
@@ -546,7 +550,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
       .with(body: {
         sql: "SELECT count(*) AS n FROM logs", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
-        timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
+        timeout_seconds: 10,
       }.to_json)
       .to_return(status: 200, body: { table: table }.to_json)
 

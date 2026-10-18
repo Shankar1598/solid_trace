@@ -106,8 +106,8 @@ func TestARunPastItsTimeoutIsStoppedOnTheServer(t *testing.T) {
 	if took := time.Since(began); took > 5*time.Second {
 		t.Errorf("Expected the SQL stopped soon after 0.25 s, took %v", took)
 	}
-	if got := onlyErrorMessage(t, answer); !strings.Contains(got, "stopped after 0.25 s") {
-		t.Errorf("Expected a message saying the run was stopped after 0.25 s, got %q", got)
+	if got := onlyErrorMessage(t, answer); !strings.Contains(got, "stopped after 0.25 s") || !strings.Contains(got, "a simpler query") {
+		t.Errorf("Expected a message saying the run was stopped after 0.25 s, and to try a simpler query, got %q", got)
 	}
 
 	// Runs of a Query and histograms hand their timeout to their scan: one
