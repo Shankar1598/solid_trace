@@ -14,6 +14,10 @@ class ApplicationController < ActionController::Base
 
   private
 
+  def public_ingest_url
+    EventStore.public_ingest_url(request.base_url)
+  end
+
   def user_not_authorized
     flash[:alert] = "You are not authorized to perform this action."
     redirect_back(fallback_location: root_path)

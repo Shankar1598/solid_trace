@@ -42,6 +42,16 @@ class Issue < ApplicationRecord
     EventStore.new(self)
   end
 
+  # The Event uuid names, or the latest when it's blank, as {event:,
+  # prev_uuid:, next_uuid:} with the Events either side of it, older and
+  # newer; nil when the Issue has no such Event. Raises
+  # EventStore::Unavailable when EventStore can't read Events.
+  def event_with_context!(uuid = nil)
+    query = events
+    query = query.where_uuid(uuid) if uuid.present?
+    query.get_event_with_context!
+  end
+
   private
 
   def assignee_must_match_organization

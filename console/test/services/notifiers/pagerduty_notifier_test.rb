@@ -42,6 +42,21 @@ module Notifiers
       end
     end
 
+    test "the operator's PAGERDUTY_EVENTS_URL is posted to over plain http, even outside development and test" do
+      url = "http://pagerduty-stub.internal:8080/v2/enqueue"
+      stub_request(:post, url).to_return(status: 202, body: "{}")
+      previous = ENV["PAGERDUTY_EVENTS_URL"]
+      ENV["PAGERDUTY_EVENTS_URL"] = url
+
+      Rails.stub(:env, ActiveSupport::EnvironmentInquirer.new("production")) do
+        PagerdutyNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+      end
+
+      assert_requested(:post, url)
+    ensure
+      ENV["PAGERDUTY_EVENTS_URL"] = previous
+    end
+
     test "raises NotConfigured and does not post when routing_key is blank" do
       @integration.settings["routing_key"] = ""
       @integration.save!

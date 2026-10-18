@@ -78,6 +78,33 @@ module Notifiers
       assert_match "Timeout", error.message
     end
 
+    # A member sets the webhook URL, so outside development and test it
+    # can't make Console POST to a plain-http host, such as EventStore's
+    # query API.
+    test "outside development and test, a webhook URL that isn't https is refused and nothing is posted" do
+      [ "http://127.0.0.1:4100/api/1/logs/query", "ftp://hooks.example.com/x" ].each do |url|
+        @integration.settings["webhook_url"] = url
+        stub_request(:post, /.*/).to_return(status: 200, body: "ok")
+
+        error = in_production do
+          assert_raises(DeliveryFailed) { SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call }
+        end
+
+        assert_match "https", error.message
+        assert_not_requested(:post, /.*/)
+      end
+    end
+
+    test "in development and test, a local stub's http webhook URL is posted to" do
+      url = "http://127.0.0.1:9999/slack"
+      @integration.settings["webhook_url"] = url
+      stub_request(:post, url).to_return(status: 200, body: "ok")
+
+      SlackNotifier.new(@integration, kind: "issue_created", issues: [ @issue ]).call
+
+      assert_requested(:post, url)
+    end
+
     # -----------------------------------------------------------------------
     # Payload: issue_created
     # -----------------------------------------------------------------------
@@ -222,6 +249,12 @@ module Notifiers
         SlackNotifier.new(@integration, kind: "issue_notification", issues: [ @issue ]).call
       end
       assert_not_requested(:post, "https://hooks.slack.com/services/T00/B00/XXX")
+    end
+
+    private
+
+    def in_production(&block)
+      Rails.stub(:env, ActiveSupport::EnvironmentInquirer.new("production"), &block)
     end
   end
 end

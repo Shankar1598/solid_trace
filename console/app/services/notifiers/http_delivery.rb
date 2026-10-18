@@ -14,14 +14,25 @@ module Notifiers
 
     # POSTs +payload+ as JSON to +url+ and returns the response. Anything other
     # than a 2xx response raises DeliveryFailed.
-    def post_json(url, payload)
+    #
+    # Only https URLs are sent to, as a member sets an Integration's webhook
+    # URL and must not make Console POST to plain-http hosts it reaches, such
+    # as EventStore's query API. A plain http URL is sent without TLS only in
+    # development and test, where stubs stand in for the providers, or when
+    # the operator set it (+operator_set+, PAGERDUTY_EVENTS_URL).
+    def post_json(url, payload, operator_set: false)
       uri = URI.parse(url)
+      plain_http = uri.scheme == "http" && (operator_set || Rails.env.local?)
+      unless uri.scheme == "https" || plain_http
+        raise DeliveryFailed, "The URL doesn't start with https://, and Console sends notifications over https only."
+      end
+
       http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
+      http.use_ssl = !plain_http
       http.open_timeout = TIMEOUT_SECONDS
       http.read_timeout = TIMEOUT_SECONDS
 
-      request = Net::HTTP::Post.new(uri.path)
+      request = Net::HTTP::Post.new(uri.request_uri)
       request["Content-Type"] = "application/json"
       request.body = payload.to_json
 

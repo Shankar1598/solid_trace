@@ -12,7 +12,8 @@ import (
 )
 
 // Sentry SDKs retry no status, so these codes only decide what the SDK logs
-// and whether it backs off. A 429 would pause the SDK for 60s.
+// and whether it backs off. A 429 would pause the SDK for 60s. Every 503
+// tells the sender to retry in a few seconds; nothing else does.
 func TestRenderIngestErrorStatus(t *testing.T) {
 	logger.Init()
 
@@ -43,6 +44,13 @@ func TestRenderIngestErrorStatus(t *testing.T) {
 			}
 			if resp.StatusCode != tt.want {
 				t.Errorf("expected %d, got %d", tt.want, resp.StatusCode)
+			}
+			retryAfter := resp.Header.Get(fiber.HeaderRetryAfter)
+			if tt.want == fiber.StatusServiceUnavailable && retryAfter != "5" {
+				t.Errorf("expected Retry-After 5, got %q", retryAfter)
+			}
+			if tt.want != fiber.StatusServiceUnavailable && retryAfter != "" {
+				t.Errorf("expected no Retry-After, got %q", retryAfter)
 			}
 		})
 	}

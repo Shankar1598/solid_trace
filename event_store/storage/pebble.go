@@ -28,6 +28,9 @@ type PebbleWriter struct {
 	// mu serialises Event writes, so Event keys commit in UUID order.
 	mu      sync.Mutex
 	stopped bool
+	// logBatchFloor is the highest Log batch id written or seen, which
+	// every new one comes after.
+	logBatchFloor uuid.UUID
 }
 
 func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
@@ -104,7 +107,12 @@ func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
 		}
 	}
 
-	return &PebbleWriter{db: db}, nil
+	w := &PebbleWriter{db: db}
+	if err := w.seedLogBatchFloor(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("read newest log batches: %w", err)
+	}
+	return w, nil
 }
 
 // WriteEvent stores one Event's raw payload and sets its EventUUID.

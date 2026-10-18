@@ -27,6 +27,24 @@ class UserTest < ActiveSupport::TestCase
     assert_includes user.errors[:email], "has already been taken"
   end
 
+  # One person, one user: an email is kept trimmed and in lower case, and
+  # found in any case.
+  test "an email is kept trimmed and in lower case" do
+    user = create(:user, email: "  Grace.Hopper@Example.COM ")
+
+    assert_equal "grace.hopper@example.com", user.reload.email
+    assert_equal user, User.find_by(email: "GRACE.hopper@example.com")
+  end
+
+  test "an email another user has in another case is taken" do
+    create(:user, email: "test@example.com")
+
+    user = User.new(name: "Other", email: "Test@Example.com", password: "password")
+
+    assert_not user.valid?
+    assert_includes user.errors[:email], "has already been taken"
+  end
+
   test "authenticates with password" do
     user = create(:user, password: "secret")
 

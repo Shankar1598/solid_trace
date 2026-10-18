@@ -1,0 +1,19 @@
+<h1><%= @message.title %></h1>
+
+<p><%= @message.text %></p>
+
+<% @message.fields.each do |label, value| %>
+  <p><strong><%= label %>:</strong> <%= value %></p>
+<% end %>
+
+<% if @message.lines.any? %>
+  <ul>
+    <% @message.lines.each do |line| %>
+      <li><code><%= line %></code></li>
+    <% end %>
+  </ul>
+<% end %>
+
+<p>
+  <%= link_to "Open in the Logs explorer", @message.link %>
+</p>

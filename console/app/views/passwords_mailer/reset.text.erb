@@ -1,0 +1,11 @@
+Hi <%= @user.name %>,
+
+Someone asked to reset your SolidTrace password. To choose a new one, open this link:
+
+<%= @reset_url %>
+
+The link works for 15 minutes, and only until your password changes. Resetting it signs you out everywhere and revokes your API tokens.
+
+---
+
+If you didn't ask, ignore this email: your password stays as it is.

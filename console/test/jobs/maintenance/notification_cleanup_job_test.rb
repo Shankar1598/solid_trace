@@ -5,6 +5,7 @@ require "test_helper"
 module Maintenance
   class NotificationCleanupJobTest < ActiveSupport::TestCase
     include ActiveSupport::Testing::TimeHelpers
+    include MonitorTestHelper
 
     setup do
       organization = create(:organization)
@@ -44,6 +45,20 @@ module Maintenance
 
       assert_deleted old_capped
       assert_kept new_capped, old_retryable, old_pending, old_processing
+    end
+
+    test "keeps each Monitor's last 100 runs" do
+      project = create(:project)
+      stub_monitor_query_check(project)
+      busy, quiet = 2.times.map { create(:monitor, project: project) }
+      MonitorRun.insert_all(105.times.map { |i| { monitor_id: busy.id, ran_at: i.minutes.ago, status: "ok", created_at: Time.current } })
+      MonitorRun.insert_all(3.times.map { |i| { monitor_id: quiet.id, ran_at: i.minutes.ago, status: "ok", created_at: Time.current } })
+
+      NotificationCleanupJob.perform_now
+
+      assert_equal MonitorRun::KEEP, busy.runs.count
+      assert_equal 99.minutes.ago, busy.runs.minimum(:ran_at)
+      assert_equal 3, quiet.runs.count
     end
 
     private

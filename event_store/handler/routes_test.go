@@ -15,6 +15,7 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -50,6 +51,11 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	}
 	t.Cleanup(duckdbWriter.Close)
 
+	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(tmpDir, "logs.duckdb"), filepath.Join(tmpDir, "logs_parquet"))
+	if err != nil {
+		t.Fatalf("Failed to attach logs DuckDB: %v", err)
+	}
+
 	var duckdbEvents []models.Event
 	for _, event := range events {
 		if err := pebbleWriter.WriteEvent(event); err != nil {
@@ -69,9 +75,20 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore, sqlOn{}, clock.System{}), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
+}
+
+// sqlOn is an instance whose operator has turned SQL queries on.
+type sqlOn struct{}
+
+func (sqlOn) Instance() (storage.InstanceSettings, error) {
+	return storage.InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 30}, nil
+}
+
+func (sqlOn) ProjectSlug(uint32) (string, error) {
+	return "", nil
 }
 
 func newEvent(projectID uint32) *models.Event {
@@ -108,6 +125,7 @@ func TestQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 		"/api/1/events/count",
 		"/api/1/events/context?fingerprint_ids=10",
 		"/api/1/events/" + event.EventUUID,
+		"/api/1/logs/fields?from=2026-10-02T00:00:00Z&to=2026-10-03T00:00:00Z",
 	}
 
 	for _, path := range paths {
@@ -121,6 +139,34 @@ func TestQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 				t.Errorf("expected 200, got %d", resp.StatusCode)
 			}
 		})
+	}
+}
+
+func TestLogQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
+	apps := newTestApps(t)
+	post := func(app *fiber.App, path, body string) int {
+		req, _ := http.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req, 5000)
+		if err != nil {
+			t.Fatalf("POST %s failed: %v", path, err)
+		}
+		return resp.StatusCode
+	}
+	run := `{"query": "", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`
+	for path, body := range map[string]string{
+		"/api/1/logs/query":        run,
+		"/api/1/logs/validate":     `{"query": ""}`,
+		"/api/1/logs/histogram":    run,
+		"/api/1/logs/sql":          `{"sql": "SELECT 1", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`,
+		"/api/1/logs/readable-sql": run,
+	} {
+		if status := post(apps.ingest, path, body); status != fiber.StatusNotFound {
+			t.Errorf("ingest app %s: expected 404, got %d", path, status)
+		}
+		if status := post(apps.query, path, body); status != fiber.StatusOK {
+			t.Errorf("query app %s: expected 200, got %d", path, status)
+		}
 	}
 }
 
@@ -207,7 +253,7 @@ func newIngestApp(t *testing.T, withKeysTable bool) *fiber.App {
 }
 
 func TestIngestKeyLookupStatus(t *testing.T) {
-	for _, path := range []string{"/api/1/store?sentry_key=unknown", "/api/1/envelope?sentry_key=unknown"} {
+	for _, path := range []string{"/api/1/store?sentry_key=unknown", "/api/1/envelope?sentry_key=unknown", "/api/1/logs?sentry_key=unknown"} {
 		t.Run("unknown key is 401 "+path, func(t *testing.T) {
 			if resp := send(t, newIngestApp(t, true), http.MethodPost, path); resp.StatusCode != fiber.StatusUnauthorized {
 				t.Errorf("expected 401, got %d", resp.StatusCode)

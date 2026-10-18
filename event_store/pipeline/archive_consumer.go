@@ -16,6 +16,9 @@ const (
 	pollInterval = 5 * time.Second
 	// batchSize is how many messages to fetch at once
 	batchSize = 10
+	// retryUploadAfter is how soon the Event archive's failed uploads are
+	// tried again, as the Log files' are.
+	retryUploadAfter = time.Minute
 )
 
 // ArchivePayload represents the payload of an archive_events message.
@@ -24,7 +27,13 @@ type ArchivePayload struct {
 	Date string `msgpack:"date"`
 }
 
-// ArchiveConsumer polls for archive_events messages and processes them
+// ArchiveConsumer polls for archive_events messages and processes them.
+// With a bucket, it also uploads the archive files (ADR 0008): once when it
+// starts, to catch up on files a restart left, right after each archive
+// run, and a minute after a pass that failed. Each pass first builds the
+// events view if there is none, so the consumer is also what lists the
+// bucket after startup, in the background, and what rebuilds the view after
+// a rebuild fails.
 type ArchiveConsumer struct {
 	mqReader *storage.MessageQueueReader
 	duckdb   *storage.DuckDBWriter
@@ -35,6 +44,9 @@ type ArchiveConsumer struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	done      chan struct{}
+	// retryUploadAt is when to try failed uploads again, or zero if none
+	// failed.
+	retryUploadAt time.Time
 }
 
 // NewArchiveConsumer creates a new archive consumer
@@ -57,6 +69,7 @@ func (c *ArchiveConsumer) Run() {
 	defer ticker.Stop()
 
 	logger.L.Info("Archive consumer started", "poll_interval", pollInterval)
+	c.uploadArchive()
 
 	for {
 		select {
@@ -64,9 +77,23 @@ func (c *ArchiveConsumer) Run() {
 			logger.L.Info("Archive consumer stopped")
 			return
 		case <-ticker.C:
-			c.processBatch()
+			archived := c.processBatch()
+			if archived || (!c.retryUploadAt.IsZero() && !time.Now().Before(c.retryUploadAt)) {
+				c.uploadArchive()
+			}
 		}
 	}
+}
+
+// uploadArchive builds the events view if there is none and uploads the
+// archive files still on local disk, outside batchLock, so that Event
+// processing never waits on the bucket. The store logs each failure.
+func (c *ArchiveConsumer) uploadArchive() {
+	if err := c.duckdb.UploadEventArchive(c.ctx); err != nil {
+		c.retryUploadAt = time.Now().Add(retryUploadAfter)
+		return
+	}
+	c.retryUploadAt = time.Time{}
 }
 
 // Stop stops the consumer and waits for Run to return.
@@ -75,25 +102,33 @@ func (c *ArchiveConsumer) Stop() {
 	<-c.done
 }
 
-func (c *ArchiveConsumer) processBatch() {
+// processBatch processes the pending archive messages, and reports whether
+// any archive run published files.
+func (c *ArchiveConsumer) processBatch() bool {
 	messages, err := c.mqReader.FetchPendingMessages(archiveMessageType, batchSize)
 	if err != nil {
 		logger.L.Error("Failed to fetch archive messages", "error", err)
-		return
+		return false
 	}
 
+	archived := false
 	for _, msg := range messages {
-		c.processMessage(msg)
+		if c.processMessage(msg) {
+			archived = true
+		}
 	}
+	return archived
 }
 
-func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
+// processMessage processes one archive message, and reports whether its
+// archive run succeeded.
+func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) bool {
 	logger.L.Info("Processing archive message", "id", msg.ID)
 
 	// Mark as processing
 	if err := c.mqReader.MarkProcessing(msg.ID); err != nil {
 		logger.L.Error("Failed to mark message as processing", "id", msg.ID, "error", err)
-		return
+		return false
 	}
 
 	// Unpack payload
@@ -102,7 +137,7 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 		errMsg := "Failed to unpack payload: " + err.Error()
 		logger.L.Error(errMsg, "id", msg.ID)
 		c.mqReader.MarkFailed(msg.ID, errMsg)
-		return
+		return false
 	}
 
 	// Parse date
@@ -111,7 +146,7 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 		errMsg := "Invalid date format: " + err.Error()
 		logger.L.Error(errMsg, "id", msg.ID, "date", payload.Date)
 		c.mqReader.MarkFailed(msg.ID, errMsg)
-		return
+		return false
 	}
 
 	// Don't allow a cutoff of today or a future date
@@ -120,7 +155,7 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 		errMsg := "Archive cutoff must be before today"
 		logger.L.Error(errMsg, "id", msg.ID, "date", payload.Date)
 		c.mqReader.MarkFailed(msg.ID, errMsg)
-		return
+		return false
 	}
 
 	switch msg.MessageType {
@@ -133,20 +168,21 @@ func (c *ArchiveConsumer) processMessage(msg storage.ConsoleMessage) {
 			errMsg := "Archive failed: " + err.Error()
 			logger.L.Error(errMsg, "id", msg.ID, "cutoff", payload.Date)
 			c.mqReader.MarkFailed(msg.ID, errMsg)
-			return
+			return false
 		}
 	default:
 		errMsg := "Unknown message type: " + msg.MessageType
 		logger.L.Error(errMsg, "id", msg.ID)
 		c.mqReader.MarkFailed(msg.ID, errMsg)
-		return
+		return false
 	}
 
 	// Mark as processed
 	if err := c.mqReader.MarkProcessed(msg.ID); err != nil {
 		logger.L.Error("Failed to mark message as processed", "id", msg.ID, "error", err)
-		return
+		return true
 	}
 
 	logger.L.Info("Archive completed", "id", msg.ID, "cutoff", payload.Date)
+	return true
 }

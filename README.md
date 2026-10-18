@@ -42,6 +42,10 @@ Starts Rails, Vite, EventStore, and background jobs via `Procfile.dev`.
 
 The EventStore listens on two ports. Ingest (`4000`) is public: SDKs send events there. The query API (`query_port`, default `4100`) serves stored events to the console without authentication, so it binds to `127.0.0.1` only. Never expose it.
 
+## MCP server
+
+Agents such as Claude Code and Cursor can query Logs, read Issues and build Dashboards and Monitors through SolidTrace's MCP server, with an API token made in User settings. See [docs/mcp.md](docs/mcp.md).
+
 ## Project Structure
 
 - `console/` — Rails app (UI, API, user management)
@@ -87,7 +91,7 @@ Benchmarks run on MacBook Pro M3 (11-core, 18GB RAM) with ~8KB event payloads.
 
 ### Tiered storage (S3 / GCS)
 
-Not built yet. The goal is to keep recent events on local disk and move older ones to cheaper storage.
+Log files and the Event archive can already go in an S3 or GCS bucket: see [docs/logs/object-store.md](docs/logs/object-store.md). Tiering Pebble's Events is not built yet. The goal is to keep recent events on local disk and move older ones to cheaper storage.
 
 Pebble's support is limited. It can put almost all data on one remote store (S3, GCS, or an HDD path) and keep only recent writes local. It cannot chain tiers (SSD → HDD → S3) or tier by event age, so those would need to be built in the EventStore.
 

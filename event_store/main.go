@@ -1,11 +1,8 @@
 package main
 
 import (
-	"fmt"
-	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -15,7 +12,9 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
+	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/pipeline"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/processing"
 	"github.com/solidtrace/event_store/storage"
@@ -37,6 +36,33 @@ func main() {
 		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
 	defer duckdbWriter.Close()
+	// The Log files and the Event archive share the bucket, if one is set.
+	// Nothing here waits on the bucket, so ingest starts while it is down:
+	// the archive consumer lists the Event archive in it in the background.
+	bucket := storage.NewObjectStore(cfg.ObjectStore)
+	if cfg.ObjectStore != nil {
+		if err := duckdbWriter.UseBucket(cfg.ObjectStore, cfg.DuckDBExtensionDirectory); err != nil {
+			logger.L.Fatal("Failed to let DuckDB read the object store's bucket", "error", err)
+		}
+		if err := duckdbWriter.UseEventArchiveBucket(bucket); err != nil {
+			logger.L.Fatal("Failed to keep the Event archive in the object store's bucket", "error", err)
+		}
+	} else if err := duckdbWriter.UseLocalEventArchiveOnly(); err != nil {
+		logger.L.Fatal("Failed to keep the Event archive on local disk only", "error", err)
+	}
+
+	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath, cfg.LogsParquetPath)
+	if err != nil {
+		logger.L.Fatal("Failed to open logs DuckDB", "error", err)
+	}
+	if cfg.ObjectStore != nil {
+		if err := logStore.UseObjectStore(bucket, cfg.ObjectStore.LocalCacheHours); err != nil {
+			logger.L.Fatal("Failed to keep Log files in the object store's bucket", "error", err)
+		}
+	} else if err := logStore.UseLocalDiskOnly(); err != nil {
+		logger.L.Fatal("Failed to keep Log files on local disk only", "error", err)
+	}
+	logStore.UseBinCache(cfg.LogsBinCacheBytes)
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
 	if err != nil {
@@ -65,6 +91,12 @@ func main() {
 	}
 	defer projectAuth.Close()
 
+	consoleSettings, err := storage.NewConsoleSettings(cfg.SQLitePath)
+	if err != nil {
+		logger.L.Fatal("Failed to open Console settings", "error", err)
+	}
+	defer consoleSettings.Close()
+
 	// Prepare must run before the worker and the archive job start. The
 	// archive never runs inside a batch: they share batchLock.
 	var batchLock sync.Mutex
@@ -77,21 +109,50 @@ func main() {
 	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter, &batchLock)
 	go archiveConsumer.Run()
 
-	ingestService := ingest.NewService(pebbleWriter, processor.Notify, cfg.IngestMaxWaiting)
+	logProcessor := logprocessing.New(pebbleWriter, logStore, clock.System{})
+	if err := logProcessor.Prepare(); err != nil {
+		logger.L.Fatal("Failed to prepare Log processing", "error", err)
+	}
+	logProcessor.Start()
+
+	logExport := logprocessing.NewHourlyExport(logStore, clock.System{})
+	logExport.Start()
+
+	// Without a bucket nothing is uploaded, and the worker never starts.
+	logUploads := logprocessing.NewLogUploads(logStore, clock.System{})
+	if cfg.ObjectStore != nil {
+		logUploads.Start()
+	}
+
+	diskLimit, err := storage.NewLogDiskLimit(cfg.LogsDiskLimitBytes, cfg.LogsParquetPath)
+	if err != nil {
+		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
+	}
+	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
+	logCleanup := logprocessing.NewCleanup(logStore, consoleSettings, diskLimit, clock.System{})
+	logCleanup.Start()
+
+	ingestService := ingest.NewService(ingest.Config{
+		Events:       pebbleWriter,
+		NotifyEvents: processor.Notify,
+		Logs:         pebbleWriter,
+		NotifyLogs:   logProcessor.Notify,
+		Clock:        clock.System{},
+		Retention:    consoleSettings,
+		MaxWaiting:   cfg.IngestMaxWaiting,
+	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
+	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, clock.System{})
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
-	app := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
-	})
-	handler.RegisterIngestRoutes(app, ingestHandler, healthHandler)
+	app := handler.NewIngestApp(ingestHandler, healthHandler)
 
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, healthHandler)
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, healthHandler)
 
 	// Maintenance API
 	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)
@@ -107,7 +168,7 @@ func main() {
 
 	go func() {
 		logger.L.Info("Starting ingest server", "port", cfg.Port)
-		if err := listenIngest(app, cfg); err != nil {
+		if err := app.Listen(":" + cfg.Port); err != nil {
 			logger.L.Fatal("Server error", "error", err)
 		}
 	}()
@@ -134,27 +195,9 @@ func main() {
 
 	// Then the stores close through the defers above.
 	processor.Stop()
+	logProcessor.Stop()
+	logExport.Stop()
+	logUploads.Stop()
+	logCleanup.Stop()
 	archiveConsumer.Stop()
-}
-
-func listenIngest(app *fiber.App, cfg *config.Config) error {
-	if cfg.SocketPath == "" {
-		return app.Listen(":" + cfg.Port)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(cfg.SocketPath), 0o755); err != nil {
-		return fmt.Errorf("create socket directory: %w", err)
-	}
-	if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove existing socket: %w", err)
-	}
-	listener, err := net.Listen("unix", cfg.SocketPath)
-	if err != nil {
-		return fmt.Errorf("listen on socket: %w", err)
-	}
-	if err := os.Chmod(cfg.SocketPath, 0o660); err != nil {
-		return fmt.Errorf("chmod socket: %w", err)
-	}
-	logger.L.Info("Listening on unix socket", "socket", cfg.SocketPath)
-	return app.Listener(listener)
 }
