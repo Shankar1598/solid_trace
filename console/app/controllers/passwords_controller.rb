@@ -2,8 +2,9 @@
 
 # The sign-in page's "Forgot your password?": an email is sent a link, the
 # link opens a form for a new password, and the new password ends every
-# session. Whether a user has the email is never said. A link works for 15
-# minutes, and only until the password changes.
+# session and revokes the user's API tokens, which work without it. Whether a
+# user has the email is never said. A link works for 15 minutes, and only
+# until the password changes.
 class PasswordsController < ApplicationController
   layout "auth"
   allow_unauthenticated_access
@@ -34,6 +35,7 @@ class PasswordsController < ApplicationController
 
     if @user.errors.none? && @user.update(params.permit(:password, :password_confirmation))
       @user.sessions.destroy_all
+      @user.api_tokens.delete_all
       redirect_to login_path, notice: "Password reset. Sign in with the new one."
     else
       redirect_to edit_password_path(params[:token]), inertia: { errors: @user.errors.to_hash }

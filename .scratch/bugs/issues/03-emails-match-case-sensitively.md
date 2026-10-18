@@ -32,7 +32,7 @@ This predates the MCP. The MCP makes it easier to hit, because agents change an 
 
 `User` now has `normalizes :email, with: ->(email) { email.strip.downcase }`. Rails applies it when an email is assigned, even through `update_column`, and to finder arguments. So `find_by(email:)` in `MemberInvite`, `authenticate_by` at sign-in and the uniqueness check all match in any case, with no change to those callers.
 
-**Existing emails.** The migration `20261018090000_normalize_user_emails` lowercases and trims them. Emails that would then be the same are left as they are, and the migration names them with their ids ("Not normalized, as 2 users would share …"), because merging two users is a human decision. Until they're merged, signing in with that email finds the lower-case user only. A scratch probe on the test database checked both cases: a mixed-case email was normalised and could sign in, and a colliding pair was named and left as it was.
+**Existing emails.** The migration `20261018090000_normalize_user_emails` lowercases and trims them. Of users whose emails would then be the same, one keeps the email: the one already in lower case, or else the oldest. The others are left as typed, and the migration names each one ("Left as typed, since user 3 has bob@example.com: user 4 (BOB@example.com). Merge them by hand."), because merging two users is a human decision. Until they're merged, the email signs in as the user who kept it. (Fixed after review; see below.)
 
 Tests:
 
@@ -41,4 +41,10 @@ Tests:
 - `test/services/member_invite_test.rb`: inviting a member in another case finds them, and no second user is made.
 
 All four fail without the change. The whole Rails suite passes (560 runs).
+
+### 2026-10-18 review
+
+The review found one medium here. The first version of the migration left every member of a colliding group as typed. When none of them was already in lower case (`Bob@Example.com` and `BOB@example.com`), every lookup became `bob@example.com`, which no row had. So none of them could sign in or reset, and the next invite of that email made a third user.
+
+Now one member of each group keeps the normalised email, as described above. `test/migrations/normalize_user_emails_test.rb` covers three cases: one email normalised, a group with one member already in lower case, and a group with none. The last two failed against the first version. The migration's warning goes only to the migration's output (the `db_prepare` container's log in `deploy/docker-compose.yml`), so an admin may not see it. Users left as typed can't sign in until they are merged.
 

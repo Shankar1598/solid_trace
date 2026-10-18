@@ -10,6 +10,7 @@
 - how to connect from Claude Code and Cursor, with a token;
 - every tool in one line each;
 - that a tool acts as the token's user with that user's rights;
+- that a token works until it is revoked, or until its user resets their password, which revokes all of them (bugs 02);
 - the warning that Log text is written by whoever sends Logs and reaches the agent. With SQL on, that text can lead the agent to read other Organizations' data and, when a bucket is configured, to send requests from the server to any web address it can reach (ticket 04's review).
 
 Link it from the README and from the User settings tokens section.
