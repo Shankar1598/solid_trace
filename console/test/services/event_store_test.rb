@@ -276,6 +276,7 @@ class EventStoreTest < ActiveSupport::TestCase
   end
 
   test "readable_logs_sql and run_logs_sql are refused while SQL queries are off" do
+    InstanceSetting.current.update!(sql_queries_enabled: false)
     readable = stub_request(:post, "#{@base_url}/api/123/logs/readable-sql")
     sql = stub_request(:post, "#{@base_url}/api/123/logs/sql")
     range = { from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10) }

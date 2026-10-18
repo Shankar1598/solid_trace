@@ -101,7 +101,7 @@ func assertLogRetentionDays(t *testing.T, settings *ConsoleSettings, projectID u
 	}
 }
 
-func TestConsoleSettings_FreshInstallHasSQLOffAndThirtyDayRetention(t *testing.T) {
+func TestConsoleSettings_FreshInstallHasSQLOnAndThirtyDayRetention(t *testing.T) {
 	path, console := newConsoleDB(t)
 	addProject(t, console, 1, nil)
 	// Console isn't running: its connection is closed and the WAL files are gone.
@@ -109,7 +109,7 @@ func TestConsoleSettings_FreshInstallHasSQLOffAndThirtyDayRetention(t *testing.T
 
 	settings := openConsoleSettings(t, path)
 
-	assertInstanceSettings(t, settings, InstanceSettings{SQLQueriesEnabled: false, DefaultLogRetentionDays: 30})
+	assertInstanceSettings(t, settings, InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 30})
 	assertLogRetentionDays(t, settings, 1, 30)
 }
 

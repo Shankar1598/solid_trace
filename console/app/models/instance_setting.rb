@@ -19,7 +19,7 @@ class InstanceSetting < ApplicationRecord
     But they are not sandboxed, so turning them on lets any member:
       - read every Log and Event of their own Organization's Projects
       - starve ingest with slow queries
-    Turn them on only if you trust every member of every Organization not to slow the install down.
+    They are on by default. Turn them off if you don't trust every member of every Organization not to slow the install down.
   TEXT
 
   validates :sql_queries_enabled, inclusion: { in: [ true, false ] }

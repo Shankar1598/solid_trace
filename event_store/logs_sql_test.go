@@ -66,14 +66,14 @@ func sqlTable(t *testing.T, env *TestEnv, req sqlRequest) ([]string, []string) {
 	return columns, rows
 }
 
-func TestRunSQLIsRefusedWhileTheSettingIsOff(t *testing.T) {
+func TestRunSQLRunsByDefaultAndIsRefusedWhileTheSettingIsOff(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	seedLanguageLogs(t, env)
 
 	req := sqlRequest{SQL: "SELECT count(*) FROM logs", From: allTime.from, To: allTime.to}
-	if status, raw := runSQL(t, env, 123, req); status != 403 {
-		t.Errorf("Expected 403 before the operator sets anything, got %d: %s", status, raw)
+	if status, raw := runSQL(t, env, 123, req); status != 200 {
+		t.Errorf("Expected 200 before the operator sets anything, got %d: %s", status, raw)
 	}
 	setSQLQueries(t, env, false)
 	if status, raw := runSQL(t, env, 123, req); status != 403 {

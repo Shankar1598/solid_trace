@@ -25,6 +25,7 @@ class McpTest < ActionDispatch::IntegrationTest
 
   test "tools/list holds the SQL tools only while SQL queries are on" do
     sql_tools = McpServer::TOOLS.select(&:needs_sql_queries?).map(&:name_value)
+    InstanceSetting.current.update!(sql_queries_enabled: false)
 
     mcp "tools/list"
     names = response.parsed_body.dig("result", "tools").map { |tool| tool["name"] }

@@ -33,6 +33,10 @@ Everything else is refused, with "SQL queries can read only the logs and events 
 
 This is a check, the kind of AST allow-list this record warned about, not the structural sandbox. It is acceptable now because the ways round lighter checks that the research found are already closed: `SET` and every statement but one SELECT are refused, nothing of the SQL runs during the parse, and `query()` and its kind are refused. With file paths and URLs refused, SQL also reaches no web address at all, bucket or not. A DuckDB upgrade should look for new kinds of table reference, new table functions and table macros, new scalar functions that read settings, files or the catalogue, and new replacement scans. Saved SQL that read raw tables, files or other Projects stops working, Dashboard charts included.
 
+## Amended: SQL queries are on by default (2026-10-18)
+
+With SQL reading only its own Project (the amendment above) and stopped after 10 seconds, whatever it asks for, so that a slow query holds DuckDB's threads from ingest for no longer, the setting is on by default. The column default changed, and EventStore's default for a missing row with it ([ADR 0001](0001-eventstore-writes-console-tables.md)). An install whose operator set the setting keeps what was set. The operator can still turn SQL off. This record's title and opening describe the setting as it began.
+
 ## Consequences
 
 - Users query a stable `logs` view, not the storage tables, so storage layout changes don't break their SQL.

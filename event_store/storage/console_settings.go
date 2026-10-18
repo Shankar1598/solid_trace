@@ -12,7 +12,7 @@ import (
 // instance_settings table has no row. They mirror that table's column
 // defaults in console/db/schema.rb, which owns them.
 const (
-	defaultSQLQueriesEnabled = false
+	defaultSQLQueriesEnabled = true
 	defaultLogRetentionDays  = 30
 )
 

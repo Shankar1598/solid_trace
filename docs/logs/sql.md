@@ -27,7 +27,7 @@ SQL queries read only the Project you run them on: the `logs` view and the `even
 
 `WITH` parts, subqueries, joins, `VALUES`, `PIVOT` and `UNPIVOT` over the two views work.
 
-SQL queries are off by default. They can't change data, settings or files, or read beyond their Project, but a slow one can slow down ingest for up to 10 seconds. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
+SQL queries are on by default, and the operator can turn them off (`bin/rails instance_settings:set SQL_QUERIES_ENABLED=false`). They can't change data, settings or files, or read beyond their Project, but a slow one can slow down ingest for up to 10 seconds. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
 
 ## The `logs` view
 

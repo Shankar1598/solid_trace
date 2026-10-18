@@ -220,6 +220,7 @@ class McpBaseTest < ActiveSupport::TestCase
 
   test "a tool that needs SQL queries is listed only while they're on" do
     sql_tool = Class.new(McpTools::Base) { needs_sql_queries! }
+    InstanceSetting.current.update!(sql_queries_enabled: false)
 
     assert McpTools::Whoami.listed?
     assert_not sql_tool.listed?

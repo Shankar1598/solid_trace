@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_18_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_18_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -102,7 +102,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_18_090000) do
   create_table "instance_settings", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "default_log_retention_days", default: 30, null: false
-    t.boolean "sql_queries_enabled", default: false, null: false
+    t.boolean "sql_queries_enabled", default: true, null: false
     t.datetime "updated_at", null: false
   end
 
