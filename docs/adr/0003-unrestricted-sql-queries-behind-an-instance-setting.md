@@ -11,7 +11,7 @@ This came with the MCP server, whose `run_sql` tool lets an agent run SQL that L
 ## Consequences
 
 - Users query a stable `logs` view, not the storage tables, so storage layout changes don't break their SQL.
-- Since [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) the `logs` view shows only the explorer's Project and time range. That is a convenience, not Project scoping: the SQL still runs unvalidated and can read the raw tables.
+- Since [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) the `logs` view shows only the explorer's Project and time range. That is a convenience, not Project scoping: the read-only check (above) is the only check, and the SQL can read the raw tables.
 - If SQL must later be offered on installs with untrusted members, the fix is the structural sandbox, and existing cross-Project SQL will break.
 - On an install with an `object_store` bucket ([ADR 0008](0008-log-parquet-in-a-bucket.md)), SQL mode can read the bucket through the instance's DuckDB secret, which every connection shares. Any `s3://<bucket>/…` URL works, including other Projects' Log files and the Event archive. Since SQL queries are read-only, it can't write there: only `COPY` writes through httpfs. The httpfs extension that reads the bucket also reads `http://` and `https://` URLs, so SQL can fetch any web address the server can reach. Without a bucket httpfs isn't loaded, and those URLs fail.
 
