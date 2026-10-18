@@ -20,11 +20,24 @@ With a bucket, EventStore loads httpfs, and httpfs read more than the bucket. It
 
 SQL can't change the settings, since `SET` is refused. It now reaches only the bucket's endpoint and S3's and Google Cloud Storage's public hosts. There it can still read public buckets, or carry what it read in the path of a request to someone's bucket. Those hosts are public, and an agent can send what it read anywhere with its own tools. `TestWithABucketSQLReachesNoOtherHost` tries each way in. A DuckDB upgrade should look for new file systems in httpfs, and for new URL settings.
 
+## Amended: SQL reads only its own Project (2026-10-18)
+
+Once sign-up works, a stranger who signs up could turn SQL on an install into a read of every Organization's Logs: the hot tables, the global `events` view, every Log and Event file by path or wildcard, the bucket and the catalogue. Refusing SQL that names another Organization couldn't work: tables are named by Project, the `events` view mixes every Project, and a wildcard names nothing. So the check now allows only what is known to be safe, from the same parse, and refuses the query unless every table reference is one of these:
+
+- `logs` or `events`, unqualified: the temporary views RunSQL makes on the query's connection for its Project and time range. The temporary `events` view hides the global one, which it names with its database.
+- a `WITH` part in scope, as DuckDB binds it: each part sees only the parts before it, and a recursive one itself. A `WITH` name must be a plain identifier, which DuckDB can't read as a file, and mustn't be a table or view in the database, the global `events` view included, so a slip in following scope can't reach the real one.
+- a subquery, join, `VALUES` list, `PIVOT` or `UNPIVOT` over the above, or `DESCRIBE`, `SHOW` or `SUMMARIZE` of them.
+- `range`, `generate_series` or `unnest`, the table functions that read nothing.
+
+Everything else is refused, with "SQL queries can read only the logs and events views: … isn't allowed": qualified names, file paths and URLs in `FROM` (DuckDB parses them as table names), every other table function, table macros among them, `SHOW TABLES`, `information_schema` and `pg_catalog`, and the scalar functions that read settings or the catalogue (`current_setting`, `getvariable`, `pg_get_viewdef`, `pg_get_constraintdef`). The check sees only the user's SQL, not the views' definitions, so the views' own `read_parquet` keeps working.
+
+This is a check, the kind of AST allow-list this record warned about, not the structural sandbox. It is acceptable now because the ways round lighter checks that the research found are already closed: `SET` and every statement but one SELECT are refused, nothing of the SQL runs during the parse, and `query()` and its kind are refused. With file paths and URLs refused, SQL also reaches no web address at all, bucket or not. A DuckDB upgrade should look for new kinds of table reference, new table functions and table macros, new scalar functions that read settings, files or the catalogue, and new replacement scans. Saved SQL that read raw tables, files or other Projects stops working, Dashboard charts included.
+
 ## Consequences
 
 - Users query a stable `logs` view, not the storage tables, so storage layout changes don't break their SQL.
-- Since [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) the `logs` view shows only the explorer's Project and time range. That is a convenience, not Project scoping: the read-only check (above) is the only check, and the SQL can read the raw tables.
-- If SQL must later be offered on installs with untrusted members, the fix is the structural sandbox, and existing cross-Project SQL will break.
-- On an install with an `object_store` bucket ([ADR 0008](0008-log-parquet-in-a-bucket.md)), SQL mode can read the bucket through the instance's DuckDB secret, which every connection shares. Any `s3://<bucket>/…` URL works, including other Projects' Log files and the Event archive. Since SQL queries are read-only, it can't write there: only `COPY` writes through httpfs. The httpfs extension that reads the bucket reads only S3 URLs (the next amendment), so SQL reaches the bucket's endpoint and S3's and Google Cloud Storage's public hosts, and no other web address. Without a bucket httpfs isn't loaded, and no remote URL reads.
+- Since [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) the `logs` view shows only the explorer's Project and time range. Since the amendment above it is a limit too: with the `events` view, it is all SQL can read.
+- If the check ever proves not enough, the fix is the structural sandbox.
+- On an install with an `object_store` bucket ([ADR 0008](0008-log-parquet-in-a-bucket.md)), the views read the bucket through the instance's DuckDB secret, which every connection shares. SQL itself can't name an `s3://` URL since the amendment on reading only its own Project, so it reads none of the bucket but its Project's views. httpfs is still kept to S3 URLs (the amendment on web addresses), as a second guard.
 
 Source: [What query language(s) do users write?](../../.scratch/logs/issues/11-query-language.md).

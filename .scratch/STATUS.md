@@ -25,7 +25,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
   - Project slugs, which the New Project page no longer saves unreachable;
   - a user in no Organization, who now makes one on a page of its own, and sign-up, which had never worked in the browser.
 
-  Their Playwright flows pass. Open: [05](bugs/issues/05-production-mail-unconfigured.md) (`needs-triage`), production has no mail settings, so no email reaches anyone and links point at `example.com`. [07](bugs/issues/07-sql-reads-every-organization.md) (`ready-for-agent`, after MCP 12): SQL queries read every Organization's Logs; the read-only check will allow only the query's own Project's `logs` and `events` views.
+  Their Playwright flows pass. Open: [05](bugs/issues/05-production-mail-unconfigured.md) (`needs-triage`), production has no mail settings, so no email reaches anyone and links point at `example.com`. [07](bugs/issues/07-sql-reads-every-organization.md) resolved (2026-10-18): SQL queries read only their own Project's `logs` and `events` views; the read-only check refuses every other table, file, URL, table function and the catalogue. Its updated Playwright flow isn't run yet.
 - **Logs v2**: implemented on `feature/logs-v2` (2026-10-10 to 17): charts in the explorer, developer UX, Dashboards, Monitors with Slack, PagerDuty and email, Log Parquet and the Event archive in S3 or GCS (tested on MinIO), and a bin cache. 20 of 24 [tickets](logs-v2/issues/) resolved, including a whole-branch review; Rails, vitest, typecheck, all 69 Playwright flows and the Go suite pass. Open: the merge (`ready-for-human`), a real GCS run (`needs-info`), leftover lows (`ready-for-agent`). The looks pass is committed (`82ff11d`).
 - **Logs**: v1 is implemented on `feature/logs-v1` (2026-10-03): 19 of 20 [tickets](logs-v1/issues/) resolved, code-reviewed, with the review fixes merged (`0eecf81`). It is not yet merged into `feature/logging` or `main`, and not yet clicked through in a browser. M1-10 (load test) is the only open ticket. Choices that depart from the spec are in its [Implementation decisions](logs-v1/spec.md#implementation-decisions); the review's fixes are in its Comments.
 - **Prod-readiness**: closed for 0.1. [review.md](prod-readiness/review.md) items are deferred, except §7, filed as [015](prod-readiness/issues/015-issue-list-counts-and-pagination.md), resolved (2026-10-02). §8 is decided in [ADR 0001](../docs/adr/0001-eventstore-writes-console-tables.md). 011 and 012 are `wontfix` for now. The fixed items (§2, §4, §5, §6, 013, 014) stay fixed.
@@ -52,7 +52,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Logs v1 | 19 / 1 | [spec.md](logs-v1/spec.md) |
 | Logs v2 | 20 / 4 | [20](logs-v2/issues/20-looks-pass.md) |
 | MCP server | 11 / 1 | [11](mcp/issues/11-whole-effort-review.md) |
-| Bugs | 5 / 2 | [05](bugs/issues/05-production-mail-unconfigured.md), [07](bugs/issues/07-sql-reads-every-organization.md) |
+| Bugs | 6 / 1 | [05](bugs/issues/05-production-mail-unconfigured.md) |
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |

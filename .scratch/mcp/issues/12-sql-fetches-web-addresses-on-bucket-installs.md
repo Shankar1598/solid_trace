@@ -59,3 +59,7 @@ The user asked for a fix. Option 2 alone wasn't enough: a probe on DuckDB 1.5.6,
 Both failed before the fix, every case of the first among them. The Go suite passes with the MinIO bucket tests (10 packages), and so does Rails (575 runs).
 
 **Docs:** ADR 0003 has a new amendment, and its first amendment and Consequences now point to it. The setting's description (with its test), `docs/logs/sql.md`, `docs/mcp.md` and `docs/logs/object-store.md` say SQL reaches no web address but S3's and GCS's.
+
+### 2026-10-18 after bugs 07
+
+[Bugs 07](../../bugs/issues/07-sql-reads-every-organization.md) made the read-only check refuse every table reference but the Project's `logs` and `events` views. That covers file paths and URLs in `FROM` and every file-reading table function. So SQL can no longer name a URL at all, `s3://` included, and reaches no web address, bucket or not. This ticket's httpfs settings stay as a second guard behind that check.

@@ -104,7 +104,7 @@ test('leaving SQL for the Builder drops a Query typed in Query mode that never r
   expect(errors).toEqual([])
 })
 
-test('SQL that would change anything is refused, and a SELECT still runs', async ({ page }) => {
+test('SQL that would change anything or read beyond its Project is refused, and a SELECT still runs', async ({ page }) => {
   // The refused SQL answers 400.
   const errors = watchErrors(page, [failedLoad(400)])
   await openLogs(page, last24h())
@@ -116,14 +116,21 @@ test('SQL that would change anything is refused, and a SELECT still runs', async
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText("SQL queries are read-only: DROP isn't allowed")
 
-  // The table is still there, and a SELECT reads it.
-  await box.fill('SELECT count(*) AS key_counts FROM logs.log_key_counts')
+  // SQL reads only the Project's logs and events views, not the tables behind them.
+  await box.fill('SELECT count(*) FROM logs.log_key_counts')
+  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText(
+    "SQL queries can read only the logs and events views: logs.log_key_counts isn't allowed",
+  )
+
+  // A SELECT of the logs view still runs.
+  await box.fill('SELECT count(*) AS log_count FROM logs')
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   await settled(page)
   await expect(page.getByRole('alert')).toHaveCount(0)
   // One value shows as a Number; its table names the column.
   await page.getByRole('group', { name: 'Chart' }).getByRole('button', { name: 'Table' }).click()
-  await expect(page.locator('.sticky.top-0').filter({ hasText: /^key_counts$/ })).toBeVisible()
+  await expect(page.locator('.sticky.top-0').filter({ hasText: /^log_count$/ })).toBeVisible()
   expect(errors).toEqual([])
 })
 

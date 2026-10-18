@@ -1,6 +1,6 @@
 # 07: SQL queries read every Organization's Logs
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Area:** EventStore, with Console's setting text and the docs
 **Found:** 2026-10-18, while deciding [06](06-no-organization-dead-end.md)
 **After:** [MCP 12](../../mcp/issues/12-sql-fetches-web-addresses-on-bucket-installs.md), which is changing the same ADR, setting text and docs (uncommitted on 2026-10-18)
@@ -95,3 +95,30 @@ One Console or MCP test should show that the refusal message reaches the user.
 - Slow queries starving ingest.
 
 ## Comments
+
+### 2026-10-18 resolved
+
+The read-only check now also allows only what is known to be safe (`LogStore.checkScope`, `event_store/storage/logs_sql_scope.go`), on the same `json_serialize_sql` parse. `checkReadOnly` returns the parsed SELECT; `checkScope` walks it.
+
+**How the references parse** (DuckDB 1.5.6, probed on the parse):
+- Every table reference has a `type`, an `alias` and a `sample`, and no `class` (expressions have one) and no `modifiers` (query nodes have them). The kinds: `BASE_TABLE`, `TABLE_FUNCTION`, `SUBQUERY`, `JOIN`, `EXPRESSION_LIST`, `EMPTY`, `PIVOT` (`UNPIVOT` too) and `SHOW_REF`. Any other kind is refused.
+- A file path or URL in `FROM` is a `BASE_TABLE` with the path as its name, so it is refused with every name but `logs`, `events` and `WITH` names in scope.
+- `DESCRIBE x`, `SHOW x` and `SUMMARIZE x` are a `SHOW_REF` holding `SELECT * FROM x`, so the same walk checks them. `SHOW TABLES` and `SHOW ALL TABLES` are a `SHOW_REF` with a `table_name` (`"tables"`, `__show_tables_expanded`) and no query: refused.
+- The `PIVOT … ON` statement isn't a SELECT and was already refused. `FROM x PIVOT (…)` is a `PIVOT` reference, walked.
+- `WITH` names live in each query node's `cte_map`, in order. DuckDB binds each part with only the parts before it in scope: a part that names itself or a later one reads the real table, view or file of that name. So the walk does the same (`walkWith`), and only a recursive part (`RECURSIVE_CTE_NODE`, with a `cte_name`) sees its own name. Scope passes down only, so a name used outside its node is refused. A `WITH` name must be a plain identifier, which DuckDB can't read as a file, and mustn't be a table or view in the database, the global `events` view included. The review found the first version put every name in scope for every part, which let `WITH events AS (SELECT * FROM events)` read the global view and a path-named part read files. Both are now tests.
+
+**Scalar functions:** `current_setting` and `getvariable` read settings and variables. The `pg_catalog` macros `pg_get_viewdef` and `pg_get_constraintdef` run `duckdb_views()` and `duckdb_constraints()` when they run, which the parse doesn't show: `pg_get_viewdef` would show the views' file paths. These four are refused. The others I checked read nothing of the catalogue that matters (`current_database`, `current_schema`, `format_type`, `get_block_size`). Table macros such as `histogram(table, column)` are table functions, so they are refused.
+
+**The events view:** a query that names `events` gets a temporary view of `<database>.main.events` for its Project and range (`createEventsView`). It is named with its database because the temporary view hides the global one: `SELECT DISTINCT project_id FROM events` answers only the Project. A query that doesn't read `events` gets no view, so it runs while the global view is missing. A query that does, while the view is missing, gets the "Events can't be read now" message, as before.
+
+**Message:** "SQL queries can read only the logs and events views: logs.logs_hot_456 isn't allowed". It names the reference as written, or `read_parquet()`, or `SHOW TABLES`.
+
+**Tests:**
+- `event_store/logs_sql_scope_test.go`, `TestSQLThatReadsBeyondItsProjectsViewsIsRefused` has 44 cases. Hot tables, raw and qualified. `main.logs`, `temp.logs` and `main.events`. A Log file's path, a wildcard and an `s3://` URL. Each file reader, `parquet_metadata`, `duckdb_tables()`, `pragma_table_info` and a table macro. `information_schema`, `pg_class`, the `duckdb_tables` view, `SHOW TABLES` and `SHOW ALL TABLES`. `SHOW`, `DESCRIBE` and `SUMMARIZE` of another table, and the four scalar functions. A `WITH` name that is a table, one used outside its scope and one used before its `WITH`; a part that names itself (`events`) or a later part (also called `events`); and a `WITH` name that is a file path or a wildcard. Then each of those nested in a subquery, scalar subquery, join, `PIVOT`, `UNPIVOT`, `WITH` part, table function argument, lambda and `UNION`.
+- `TestSQLReadsItsOwnProjectsLogsAndEvents` checks that the `events` view holds only the Project's Events of the range. The docs' and explorer's examples still run, and so do `WITH` (also named `logs`, also recursive), `logs` joined with `events`, `range`, `generate_series`, `unnest`, `VALUES`, `PIVOT`, `UNPIVOT`, `DESCRIBE logs`/`events` and `SUMMARIZE` of a query.
+- The readable-SQL test still runs every summarize a chart draws.
+- Changed tests: the read-only test read `logs.log_key_counts` through SQL, and now reads it through `AttributeCounts`. The autoload check moved to `storage.TestDuckDBLoadsNoExtensionByItself`, as SQL can't call `current_setting` any more.
+- The Playwright flow `logs-v1-sql.spec.ts` now shows the refusal reaching the user: it runs `SELECT count(*) FROM logs.log_key_counts`, which it used to expect to work. Not run: the dev stack's EventStore runs an older binary, and the peer session asked that it not be restarted.
+
+**Docs:** ADR 0003 has an amendment and new Consequences. Also updated: `CONTEXT.md`'s SQL query entry, `InstanceSetting::SQL_QUERIES_DESCRIPTION` (with its test), `run_sql`'s description, `docs/logs/sql.md` (what's refused, and a section on the `events` view), `docs/mcp.md`, `docs/logs/object-store.md`, and a comment on MCP 12.
+
