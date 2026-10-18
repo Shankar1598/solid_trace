@@ -20,6 +20,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { createApiToken, mcpSnippets, type ApiToken } from '@/lib/apiTokens'
 
+// docs/mcp.md, where the README's repository keeps it.
+const MCP_DOCS = 'https://github.com/solidtrace/solid_trace/blob/main/docs/mcp.md'
+
 type ApiTokensProps = {
   api_tokens: ApiToken[]
   /** Where a client adds the MCP server, as the page's request reached Console. */
@@ -64,7 +67,8 @@ export function ApiTokens() {
       <CardHeader>
         <CardTitle>API tokens</CardTitle>
         <CardDescription>
-          An API token lets Claude Code, Cursor or another MCP client act as you through SolidTrace's MCP server, with your role in each Organization.
+          An API token lets Claude Code, Cursor or another MCP client act as you through SolidTrace's MCP server, with your role in each Organization.{' '}
+          <a href={MCP_DOCS} target="_blank" rel="noreferrer" className="underline underline-offset-2">How to connect, and what it can do</a>
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6 pb-6">
@@ -105,7 +109,7 @@ export function ApiTokens() {
                   <TableCell>{token.name}</TableCell>
                   <TableCell className="text-muted-foreground">{ago(token.created_at)}</TableCell>
                   <TableCell className="text-muted-foreground">{token.last_used_at ? ago(token.last_used_at) : 'Never'}</TableCell>
-                  <TableCell>
+                  <TableCell className="text-right">
                     <Button variant="outline" size="sm" onClick={() => setRevoking(token)} aria-label={`Revoke ${token.name}`}>
                       Revoke
                     </Button>

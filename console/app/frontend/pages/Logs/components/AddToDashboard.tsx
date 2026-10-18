@@ -70,7 +70,7 @@ export function AddToDashboard({ projectId, query, viz }: { projectId: number; q
       <button
         type="button"
         onClick={start}
-        className="flex h-6 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        className="flex h-6 shrink-0 items-center gap-1 border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
       >
         <LayoutDashboard className="h-3 w-3" /> Add to dashboard
       </button>

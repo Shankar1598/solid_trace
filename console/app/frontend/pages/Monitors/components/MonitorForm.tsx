@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, router } from '@inertiajs/react'
 import { QueryChart } from '@/components/charts/QueryChart'
+import { FormSection } from '@/components/FormSection'
 import { QueryEditor } from '@/components/QueryEditor'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ChartSkeleton } from '@/components/ui/skeleton'
 import { valueText } from '@/lib/charts/axis'
 import { fetchPreview } from '@/lib/dashboards/api'
 import { withSource } from '@/lib/dashboards/dashboard'
+import { providerName } from '@/lib/integrations'
 import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/builder'
 import { fieldInfos } from '@/lib/logs/columns'
@@ -246,48 +250,48 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   const listed = [...firing, ...(found?.groups.filter(g => !g.firing) ?? [])]
 
   return (
-    <form onSubmit={save} className="space-y-6">
-      <section className="grid gap-4 sm:grid-cols-[1fr_auto_auto]">
-        <div className="space-y-1">
-          <Label htmlFor="monitor-name">Name</Label>
-          <Input id="monitor-name" value={name} onChange={e => setName(e.target.value)} placeholder="Checkout errors" />
-          <FieldError name="Name" error={errors.name} />
-        </div>
-        <div className="space-y-1">
-          <Label>Project</Label>
-          <Select value={String(project.id)} onValueChange={value => value && pickProject(Number(value))} items={projectItems}>
-            <SelectTrigger aria-label="Project" className="min-w-44"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {projectItems.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <FieldError name="Project" error={errors.project} />
+    <form onSubmit={save} className="max-w-4xl space-y-6">
+      <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+          <div className="space-y-1">
+            <Label htmlFor="monitor-name">Name</Label>
+            <Input id="monitor-name" value={name} onChange={e => setName(e.target.value)} placeholder="Checkout errors" />
+            <FieldError name="Name" error={errors.name} />
+          </div>
+          <div className="space-y-1">
+            <Label>Project</Label>
+            <Select value={String(project.id)} onValueChange={value => value && pickProject(Number(value))} items={projectItems}>
+              <SelectTrigger aria-label="Project" className="min-w-52"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {projectItems.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <FieldError name="Project" error={errors.project} />
+          </div>
         </div>
         <div className="space-y-1">
           <Label>Kind</Label>
-          <Toggle
+          <Segmented
             label="Kind"
             value={kind}
-            options={[['threshold', 'Threshold'], ['match', 'Match']]}
+            options={[{ value: 'threshold', label: 'Threshold' }, { value: 'match', label: 'Match' }]}
             onChange={setKind}
-            className="h-9"
           />
+          <p className="text-xs text-muted-foreground">
+            {isThreshold
+              ? 'Runs its Query over a range and fires when a group\'s number passes the threshold. The Query ends in a summarize of one number.'
+              : 'Reads the Logs ingested since its last run and sends one message when any match its Query.'}
+          </p>
         </div>
-      </section>
-      <p className="-mt-3 text-xs text-muted-foreground">
-        {isThreshold
-          ? 'A Threshold monitor runs its Query over a range and fires when a group\'s number passes the threshold. The Query ends in a summarize of one number.'
-          : 'A Match monitor reads the Logs ingested since its last run and sends one message when any match its Query.'}
-      </p>
+      </div>
 
-      <section className="space-y-2">
-        <div className="flex items-center gap-2">
-          <Label>Query</Label>
-          <Toggle label="Edit the Query in" value={mode} options={[['builder', 'Builder'], ['query', 'Query']]} onChange={m => mode !== m && switchMode(m)} />
-        </div>
-        {notice && <p className="text-xs text-amber-600 dark:text-amber-400">{notice}</p>}
+      <FormSection
+        title="Query"
+        actions={<Segmented label="Edit the Query in" size="sm" value={mode} options={[{ value: 'builder', label: 'Builder' }, { value: 'query', label: 'Query' }]} onChange={switchMode} />}
+      >
+        {notice && <p className="text-xs text-warning">{notice}</p>}
         {mode === 'builder' ? (
-          <div className="rounded-md border">
+          <div className="border">
             {builder ? (
               <BuilderPanel
                 builder={builder}
@@ -323,67 +327,68 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
           </div>
         )}
         <FieldError name="Query" error={errors.query} />
-      </section>
+      </FormSection>
 
-      <section className="flex flex-wrap items-start gap-4">
-        <div className="space-y-1">
-          <Label htmlFor="monitor-interval">Run every (minutes)</Label>
-          <Input id="monitor-interval" type="number" min={1} max={MAX_INTERVAL_MINUTES} className="w-32" value={intervalText} onChange={e => setIntervalText(e.target.value)} />
-          <FieldError name="Interval" error={errors.interval_minutes} />
+      <FormSection title={isThreshold ? 'When it fires' : 'When it runs'}>
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="monitor-interval">Run every (minutes)</Label>
+            <Input id="monitor-interval" type="number" min={1} max={MAX_INTERVAL_MINUTES} className="w-32" value={intervalText} onChange={e => setIntervalText(e.target.value)} />
+            <FieldError name="Interval" error={errors.interval_minutes} />
+          </div>
+          {isThreshold && (
+            <>
+              <div className="space-y-1">
+                <Label htmlFor="monitor-range">Over the last (minutes)</Label>
+                <Input id="monitor-range" type="number" min={1} max={MAX_RANGE_MINUTES} className="w-32" value={range} onChange={e => setRange(e.target.value)} />
+                <FieldError name="Range" error={errors.range_minutes} />
+              </div>
+              <div className="space-y-1">
+                <Label>Fires when the number is</Label>
+                <div className="flex gap-2">
+                  <Select value={operator} onValueChange={value => value && setOperator(value as MonitorOperator)} items={OPERATORS.map(o => ({ value: o, label: o }))}>
+                    <SelectTrigger aria-label="Operator" className="w-20 font-mono"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {OPERATORS.map(o => <SelectItem key={o} value={o} className="font-mono">{o}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Input aria-label="Threshold" type="number" step="any" className="w-32" value={threshold} placeholder="10" onChange={e => setThreshold(e.target.value)} />
+                </div>
+                <FieldError name="Operator" error={errors.operator} />
+                <FieldError name="Threshold" error={errors.threshold} />
+              </div>
+            </>
+          )}
         </div>
         {isThreshold && (
-          <>
-            <div className="space-y-1">
-              <Label htmlFor="monitor-range">Over the last (minutes)</Label>
-              <Input id="monitor-range" type="number" min={1} max={MAX_RANGE_MINUTES} className="w-32" value={range} onChange={e => setRange(e.target.value)} />
-              <FieldError name="Range" error={errors.range_minutes} />
-            </div>
-            <div className="space-y-1">
-              <Label>Fires when the number is</Label>
-              <div className="flex gap-2">
-                <Select value={operator} onValueChange={value => value && setOperator(value as MonitorOperator)} items={OPERATORS.map(o => ({ value: o, label: o }))}>
-                  <SelectTrigger aria-label="Operator" className="w-20"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {OPERATORS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Input aria-label="Threshold" type="number" step="any" className="w-32" value={threshold} placeholder="10" onChange={e => setThreshold(e.target.value)} />
-              </div>
-              <FieldError name="Operator" error={errors.operator} />
-              <FieldError name="Threshold" error={errors.threshold} />
-            </div>
-          </>
-        )}
-      </section>
-
-      {isThreshold && (
-        <section className="space-y-2">
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox aria-label="Notify by group" checked={byGroup} onCheckedChange={checked => setByGroup(checked === true)} />
-            Notify by group: each group of the summarize's by columns fires and resolves on its own
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox aria-label="Alert on no data" checked={noData} onCheckedChange={checked => setNoData(checked === true)} />
-            Alert on no data: a run that finds no rows at all fires
-          </label>
-        </section>
-      )}
-
-      {isThreshold && (
-        <section className="space-y-2" aria-label="Preview">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Last {CHART_HOURS} hours, in bins of {rangeMinutes} {rangeMinutes === 1 ? 'minute' : 'minutes'}</h2>
-            <Button type="button" variant="outline" size="sm" onClick={() => setAgain(n => n + 1)}>Refresh preview</Button>
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox aria-label="Notify by group" checked={byGroup} onCheckedChange={checked => setByGroup(checked === true)} />
+              Notify by group: each group of the summarize's by columns fires and resolves on its own
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox aria-label="Alert on no data" checked={noData} onCheckedChange={checked => setNoData(checked === true)} />
+              Alert on no data: a run that finds no rows at all fires
+            </label>
           </div>
-          <div className="min-h-48 rounded-md border" data-monitor-preview>
+        )}
+      </FormSection>
+
+      {isThreshold && (
+        <FormSection
+          title="Preview"
+          description={`The last ${CHART_HOURS} hours, in bins of ${rangeMinutes} ${rangeMinutes === 1 ? 'minute' : 'minutes'}.`}
+          actions={<Button type="button" variant="outline" size="sm" onClick={() => setAgain(n => n + 1)}>Refresh preview</Button>}
+        >
+          <div className="min-h-48 border" data-monitor-preview>
             <RunView run={chart}>
               {table => (table.rows.length === 0
                 ? <p className="p-3 text-xs text-muted-foreground">No rows over the last {CHART_HOURS} hours.</p>
                 : <QueryChart table={table} form="line" threshold={thresholdValue ?? undefined} className="pb-1" />)}
             </RunView>
           </div>
-          <div className="space-y-1" data-monitor-groups>
-            <h2 className="text-sm font-semibold">A run now</h2>
+          <div className="space-y-1.5" data-monitor-groups>
+            <h3 className="text-sm font-medium">If it ran now</h3>
             <RunView run={now}>
               {() => (found?.error ? (
                 <p role="alert" className="text-xs text-destructive">{found.error}</p>
@@ -395,7 +400,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
                     {firing.length === 0 ? 'Nothing would fire now.' : `${firing.length} ${firing.length === 1 ? 'group' : 'groups'} would fire now.`}
                     {thresholdValue === null && ' Set a threshold to compare with.'}
                   </p>
-                  <ul className="divide-y rounded-md border text-xs">
+                  <ul className="divide-y border text-xs">
                     {listed.slice(0, GROUPS_SHOWN).map(g => (
                       <li key={JSON.stringify(g.group)} className="flex justify-between gap-3 px-3 py-1.5" data-group-firing={g.firing}>
                         <span className="min-w-0 truncate font-mono">{groupLabel(g.group)}</span>
@@ -410,33 +415,37 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
               ))}
             </RunView>
           </div>
-        </section>
+        </FormSection>
       )}
 
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <Label>Integrations</Label>
-          <a href={`/${orgSlug}/settings/integrations/new`} target="_blank" rel="noreferrer" className="text-xs underline">Add Integration</a>
-          <button type="button" className="text-xs underline" onClick={() => router.reload({ only: ['integrations'] })}>Reload the list</button>
-        </div>
+      <FormSection
+        title="Notify"
+        description="The Integrations it tells when it fires and when it resolves."
+        actions={
+          <>
+            <a href={`/${orgSlug}/settings/integrations/new`} target="_blank" rel="noreferrer" className="text-xs underline underline-offset-2">Add integration</a>
+            <button type="button" className="text-xs underline underline-offset-2" onClick={() => router.reload({ only: ['integrations'] })}>Reload the list</button>
+          </>
+        }
+      >
         {integrations.length === 0 ? (
           <p className="text-xs text-muted-foreground">The Organization has no Integrations yet. Without one, runs are recorded on the Monitor's page only.</p>
         ) : (
-          <div className="space-y-1" role="group" aria-label="Integrations">
+          <div className="space-y-2" role="group" aria-label="Integrations">
             {integrations.map(i => (
               <label key={i.id} className="flex items-center gap-2 text-sm">
                 <Checkbox aria-label={i.name} checked={integrationIds.includes(i.id)} onCheckedChange={checked => toggleIntegration(i.id, checked === true)} />
-                {i.name} <span className="text-xs text-muted-foreground">{i.provider}{i.enabled ? '' : ', off'}</span>
+                {i.name} <span className="text-xs text-muted-foreground">{providerName(i.provider)}{i.enabled ? '' : ', off'}</span>
               </label>
             ))}
           </div>
         )}
         <FieldError name="Integrations" error={errors.integrations} />
-      </section>
+      </FormSection>
 
-      <div className="flex gap-2">
-        <Button type="submit" disabled={saving}>{saving ? 'Saving…' : monitorId === undefined ? 'Create monitor' : 'Save monitor'}</Button>
+      <div className="flex justify-end gap-2 border-t pt-6">
         <Link href={monitorId === undefined ? `/${orgSlug}/monitors` : `/${orgSlug}/monitors/${monitorId}`} className={buttonVariants({ variant: 'outline' })}>Cancel</Link>
+        <Button type="submit" disabled={saving}>{saving ? 'Saving…' : monitorId === undefined ? 'Create monitor' : 'Save monitor'}</Button>
       </div>
     </form>
   )
@@ -452,38 +461,9 @@ function FieldError({ name, error }: { name: string; error: unknown }) {
   )
 }
 
-function Toggle<T extends string>({ label, value, options, onChange, className }: {
-  label: string
-  value: T
-  options: [T, string][]
-  onChange: (value: T) => void
-  className?: string
-}) {
-  return (
-    <div role="group" aria-label={label} className="flex w-fit overflow-hidden rounded-md border text-xs">
-      {options.map(([v, text]) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={value === v}
-          onClick={() => onChange(v)}
-          className={cn('h-6 border-l px-2 first:border-l-0', className, value === v ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted')}
-        >
-          {text}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 function RunView({ run, children }: { run: Run; children: (table: LogTable) => React.ReactNode }) {
   if (run.status === 'running') {
-    return (
-      <div role="status" aria-label="Running the preview" className="flex h-full min-h-24 flex-col gap-2 p-3">
-        <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
-        <div className="flex-1 animate-pulse rounded bg-muted" />
-      </div>
-    )
+    return <ChartSkeleton label="Running the preview" />
   }
   if (run.status === 'error') return <p role="alert" className="p-3 text-xs text-destructive">{run.message}</p>
   return <>{children(run.table)}</>

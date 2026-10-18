@@ -27,14 +27,14 @@ test.afterAll(() => {
   rails(`Project.where(slug: ${JSON.stringify([forAdmin, forMember])}).destroy_all`)
 })
 
-const noKeys = (page: Page) => page.getByText('No Client Keys Found')
+const noKeys = (page: Page) => page.getByText('No client keys yet')
 
 test("an admin generates a key-less Project's key and sees its DSN", async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto(`/${ORG}/projects/${forAdmin}`)
   await expect(noKeys(page)).toBeVisible()
 
-  await page.getByRole('button', { name: 'Generate New Key' }).click()
+  await page.getByRole('button', { name: 'Generate a key' }).click()
 
   await expect(page.getByText('Key created successfully')).toBeVisible()
   await expect(noKeys(page)).toHaveCount(0)
@@ -56,7 +56,8 @@ test.describe('as a member', () => {
 
     await page.goto(`/${ORG}/projects/${forMember}`)
     await expect(noKeys(page)).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Generate New Key' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Generate a key' })).toHaveCount(0)
+    await expect(page.getByText('Only an Organization admin can generate one.')).toBeVisible()
     expect(errors).toEqual([])
   })
 })

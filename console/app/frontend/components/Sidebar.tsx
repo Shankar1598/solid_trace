@@ -43,12 +43,11 @@ export function Sidebar({ className }: SidebarProps) {
           </div>
         </div>
 
-        {/* Navigation */}
-        <div className="px-3 py-4 space-y-0.5">
+        <nav aria-label="Main" className="px-3 py-4 space-y-0.5">
           <button
             type="button"
             onClick={openPalette}
-            className="mb-2 flex w-full items-center gap-3 rounded-md border px-3 py-1.5 text-[13px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            className="mb-2 flex w-full items-center gap-3 border px-3 py-1.5 text-[13px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
           >
             <Search className="h-4 w-4" />
             Search…
@@ -59,7 +58,7 @@ export function Sidebar({ className }: SidebarProps) {
               key={item.href}
               href={item.href}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-[14px] font-medium transition-colors",
+                "flex items-center gap-3 px-3 py-2 text-sm font-medium transition-colors",
                 item.active
                   ? "bg-secondary text-primary"
                   : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
@@ -69,12 +68,12 @@ export function Sidebar({ className }: SidebarProps) {
               {item.label}
             </Link>
           ))}
-        </div>
+        </nav>
       </div>
 
       {/* User Footer */}
       <div className="p-3 border-t">
-        <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer group mb-1">
+        <div className="flex items-center justify-between p-2 hover:bg-muted/50 transition-colors cursor-pointer group mb-1">
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-foreground border text-xs font-semibold">
               {current_user?.name?.charAt(0) || 'U'}

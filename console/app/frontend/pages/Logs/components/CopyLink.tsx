@@ -15,7 +15,7 @@ import type { LinkKind } from '@/lib/logs/explorerState'
 export function CopyLink({ onCopy }: { onCopy: (kind: LinkKind) => void }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
+      <DropdownMenuTrigger render={<Button variant="outline" />}>
         <Link className="h-3.5 w-3.5" /> Copy link
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56">

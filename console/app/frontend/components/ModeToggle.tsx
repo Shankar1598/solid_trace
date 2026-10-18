@@ -17,7 +17,7 @@ export function ModeToggle({ className }: { className?: string }) {
   }, [])
 
   return (
-    <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme" className={cn("h-8 w-8 text-muted-foreground hover:text-foreground", className)}>
+    <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme" aria-label="Toggle theme" className={cn("h-8 w-8 text-muted-foreground hover:text-foreground", className)}>
       {dark ? (
         <Moon className="h-4 w-4" />
       ) : (

@@ -15,7 +15,7 @@ export function ShortcutSheet({ open, onOpenChange }: { open: boolean; onOpenCha
         <dl className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2" aria-label="Shortcuts">
           {SHORTCUTS.map(s => (
             <div key={s.id} className="contents">
-              <dt><kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]">{keyLabel(s.keys, mac)}</kbd></dt>
+              <dt><kbd className="border bg-muted px-1.5 py-0.5 font-mono text-[11px]">{keyLabel(s.keys, mac)}</kbd></dt>
               <dd>{s.does}</dd>
             </div>
           ))}

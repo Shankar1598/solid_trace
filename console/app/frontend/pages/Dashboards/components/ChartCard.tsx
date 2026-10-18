@@ -27,9 +27,11 @@ export interface DashboardRun {
  * or delete it. A failed run shows its error here. In Edit mode the title
  * is the handle that drags the card.
  */
-export function ChartCard({ chart, project, orgSlug, run, range, queue, editing, onRunning, onEdit, onDuplicate, onDelete }: {
+export function ChartCard({ chart, project, showProject, orgSlug, run, range, queue, editing, onRunning, onEdit, onDuplicate, onDelete }: {
   chart: DashboardChart
   project: ProjectOption | undefined
+  /** Whether the header names the chart's Project: only when the Dashboard's charts read more than one. */
+  showProject: boolean
   orgSlug: string
   run: DashboardRun
   /** The range shown, for Open in explorer. */
@@ -61,7 +63,7 @@ export function ChartCard({ chart, project, orgSlug, run, range, queue, editing,
   }, [run, chart.id, chart.updated_at])
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-md border bg-card" data-chart-card={chart.title}>
+    <div className="flex h-full flex-col overflow-hidden border bg-card" data-chart-card={chart.title}>
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1">
         <h2 className={cn('min-w-0 flex-1 truncate text-[13px] font-medium', editing && 'dashboard-chart-handle cursor-move')} title={chart.title}>
           {chart.title}
@@ -69,7 +71,9 @@ export function ChartCard({ chart, project, orgSlug, run, range, queue, editing,
         {answer.status === 'done' && answer.elapsedMs !== null && (
           <span className="shrink-0 text-[11px] text-muted-foreground">{elapsedText(answer.elapsedMs)}</span>
         )}
-        <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">{project?.name ?? 'Project gone'}</span>
+        {(showProject || !project) && (
+          <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">{project?.name ?? 'Project gone'}</span>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-6 w-6" aria-label={`Menu for ${chart.title}`} />}>
             <MoreHorizontal className="h-3.5 w-3.5" />

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { router, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
-import Breadcrumbs from '@/components/Breadcrumbs'
+import { PageHeader } from '@/components/PageHeader'
 import { OverviewTabContent } from './components/OverviewTabContent'
 import { EventsTabContent } from './components/EventsTabContent'
 import { IssueSidebar } from './components/IssueSidebar'
@@ -9,9 +9,11 @@ import CommentList from './components/CommentList'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import { Issue, Event, Comment, SharedProps } from '@/types'
 import { CheckCircle2, XCircle } from 'lucide-react'
+
+/** A section tab: as wide as its label, its underline on the list's rule. */
+const TAB = 'flex-none px-0 py-2.5 text-sm transition-none after:bottom-[-1px]'
 
 interface IssuesShowProps {
   issue: Issue
@@ -74,64 +76,54 @@ export default function IssuesShow({
   ]
 
   return (
-    <DashboardLayout breadcrumbs={<Breadcrumbs items={breadcrumbItems} />}>
+    <DashboardLayout>
+      <PageHeader
+        breadcrumbs={breadcrumbItems}
+        title={issue.title}
+        badge={issue.status === 'resolved' ? <Badge variant="ok" dot>Resolved</Badge> : <Badge variant="error" dot>Unresolved</Badge>}
+        description={issue.culprit && <span className="font-mono text-xs">{issue.culprit}</span>}
+        actions={issue.status === 'resolved' ? (
+          <Button onClick={handleUnresolve} variant="outline">
+            <XCircle className="h-4 w-4" />
+            Unresolve
+          </Button>
+        ) : (
+          <Button onClick={handleResolve} variant="outline">
+            <CheckCircle2 className="h-4 w-4" />
+            Resolve
+          </Button>
+        )}
+      />
       <div className="space-y-6">
-        {/* Header Section */}
-        <div className="space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <h1 className="text-2xl font-bold tracking-tight">{issue.title}</h1>
-              <p className="text-muted-foreground font-mono text-sm">{issue.culprit}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant={issue.status === 'resolved' ? 'secondary' : 'destructive'} className="uppercase tracking-wider text-[10px] py-0.5">
-                {issue.status}
-              </Badge>
-              <Separator orientation="vertical" className="h-4 mx-2" />
-              {issue.status === 'resolved' ? (
-                <Button onClick={handleUnresolve} variant="outline" size="sm" className="gap-2">
-                  <XCircle className="h-4 w-4 text-red-500" />
-                  Unresolve
-                </Button>
-              ) : (
-                <Button onClick={handleResolve} variant="outline" size="sm" className="gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                  Resolve
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Main Content (Tabs) */}
           <div className="lg:col-span-8 space-y-6">
             {events_unavailable && (
-              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <div role="alert" className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 {events_unavailable}
               </div>
             )}
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-              <TabsList variant="line" className="w-full justify-start border-b bg-transparent h-auto p-0 space-x-0">
+              <TabsList variant="line" className="w-full justify-start gap-5 border-b h-auto p-0">
                 <TabsTrigger
                   value="overview"
-                  className="data-active:bg-transparent px-6 py-3 text-sm font-medium transition-none after:bg-primary after:bottom-[-1px] data-active:after:opacity-100"
+                  className={TAB}
                 >
                   Overview
                 </TabsTrigger>
                 <TabsTrigger
                   value="events"
-                  className="data-active:bg-transparent px-6 py-3 text-sm font-medium transition-none after:bg-primary after:bottom-[-1px] data-active:after:opacity-100"
+                  className={TAB}
                 >
                   Events
                 </TabsTrigger>
                 <TabsTrigger
                   value="comments"
-                  className="data-active:bg-transparent px-6 py-3 text-sm font-medium transition-none after:bg-primary after:bottom-[-1px] data-active:after:opacity-100"
+                  className={TAB}
                 >
                   Comments
                   {comments.length > 0 && (
-                    <Badge variant="secondary" className="ml-2 px-1.5 py-0 text-[10px]">
+                    <Badge variant="count">
                       {comments.length}
                     </Badge>
                   )}

@@ -82,7 +82,7 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_match(/\A\h{64}\z/, keys.first.secret_key)
   end
 
-  test "an admin's Generate New Key gives the Project another key of its own" do
+  test "an admin's Generate a key gives the Project another key of its own" do
     sign_in_as(@admin)
     post project_keys_url(@project, org_slug: @organization.slug)
 

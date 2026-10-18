@@ -1,4 +1,5 @@
 import { QueryEditor } from '@/components/QueryEditor'
+import { Button } from '@/components/ui/button'
 import type { QueryProblem } from '@/lib/logs/api'
 import type { CompletionSources } from '@/lib/logs/completions'
 
@@ -51,24 +52,33 @@ export function QueryBox({ projectSlug, text, onChange, onRun, problems, complet
         </div>
       )}
       {leaving && (
-        <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md border border-amber-400 bg-amber-50 p-2 text-xs dark:bg-amber-950/30">
-          {/* Wide enough that on a phone the buttons wrap below it together. */}
-          <span className="min-w-64 flex-1">
-            {leaving.stages.length > 0 ? (
-              <>The Builder can't show {leaving.stages.map((s, i) => (
-                <code key={i} className="mx-0.5 rounded bg-background px-1">{s}</code>
-              ))}.</>
-            ) : leaving.problems.length > 0 ? (
-              <>The Builder can't show a Query with mistakes (line {leaving.problems[0].line}, column {leaving.problems[0].column}: {leaving.problems[0].message}).</>
-            ) : (
-              <>The Builder can't show this Query.</>
-            )}
-            {' '}Switching discards your Query and returns to the last Builder filters.
-          </span>
-          <button onClick={onDiscard} className="rounded border px-2 py-1 hover:bg-background">Discard and switch</button>
-          <button onClick={onStay} className="rounded border px-2 py-1 hover:bg-background">Stay in Query</button>
-        </div>
+        <LeavingNotice stay="Stay in Query" onDiscard={onDiscard} onStay={onStay}>
+          {leaving.stages.length > 0 ? (
+            <>The Builder can't show {leaving.stages.map((s, i) => (
+              <code key={i} className="mx-0.5 border bg-background px-1">{s}</code>
+            ))}.</>
+          ) : leaving.problems.length > 0 ? (
+            <>The Builder can't show a Query with mistakes (line {leaving.problems[0].line}, column {leaving.problems[0].column}: {leaving.problems[0].message}).</>
+          ) : (
+            <>The Builder can't show this Query.</>
+          )}
+          {' '}Switching discards your Query and returns to the last Builder filters.
+        </LeavingNotice>
       )}
+    </div>
+  )
+}
+
+/** Asks before leaving a mode would discard what was typed in it. */
+export function LeavingNotice({ children, stay, onDiscard, onStay }: {
+  children: React.ReactNode; stay: string; onDiscard: () => void; onStay: () => void
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-3 border border-warning/40 bg-warning/10 p-2 text-xs">
+      {/* Wide enough that on a phone the buttons wrap below it together. */}
+      <span className="min-w-64 flex-1">{children}</span>
+      <Button variant="outline" size="sm" onClick={onDiscard}>Discard and switch</Button>
+      <Button variant="outline" size="sm" onClick={onStay}>{stay}</Button>
     </div>
   )
 }

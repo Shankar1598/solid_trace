@@ -17,6 +17,9 @@ interface OverviewTabContentProps {
   current_org: { slug: string }
 }
 
+/** The frames switch's tabs, drawn as the app's segmented switches are. */
+const FRAMES_TAB = 'h-full flex-none border-0 border-l px-2.5 text-xs first:border-l-0 data-active:bg-primary data-active:text-primary-foreground dark:data-active:bg-primary dark:data-active:text-primary-foreground dark:data-active:border-transparent'
+
 export function OverviewTabContent({
   issue,
   event,
@@ -52,6 +55,8 @@ export function OverviewTabContent({
               variant="ghost"
               size="icon"
               disabled={!prev_event_id}
+              aria-label="Previous event"
+              title="Previous event"
               className="h-8 w-8 border"
               onClick={() => prev_event_id && router.visit(
                 `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${prev_event_id}`,
@@ -64,6 +69,8 @@ export function OverviewTabContent({
               variant="ghost"
               size="icon"
               disabled={!next_event_id}
+              aria-label="Next event"
+              title="Next event"
               className="h-8 w-8 border border-l-0"
               onClick={() => next_event_id && router.visit(
                 `/${current_org.slug}/projects/${issue.project.slug}/issues/${issue.number}?event_id=${next_event_id}`,
@@ -102,7 +109,7 @@ export function OverviewTabContent({
                     </DialogClose>
                   </div>
                 </DialogHeader>
-                <div className="flex-1 overflow-auto bg-muted/40 p-4 mt-4 border border-muted-foreground/20 rounded-md">
+                <div className="flex-1 overflow-auto bg-muted/40 p-4 mt-4 border border-muted-foreground/20">
                   {formattedEventJson ? (
                     <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">
                       {formattedEventJson}
@@ -122,12 +129,12 @@ export function OverviewTabContent({
           {event && event.event_data && (event.event_data as any).exception ? (
             <Tabs defaultValue="relevant" className="w-full">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Exception</h3>
-                <TabsList className="bg-muted h-9 p-1">
-                  <TabsTrigger value="relevant" className="text-xs px-3 data-active:bg-background data-active:shadow-none border border-transparent data-active:border-input">
+                <h3 className="text-sm font-semibold">Exception</h3>
+                <TabsList className="h-8 gap-0 border bg-transparent p-0">
+                  <TabsTrigger value="relevant" className={FRAMES_TAB}>
                     Most relevant
                   </TabsTrigger>
-                  <TabsTrigger value="full" className="text-xs px-3 data-active:bg-background data-active:shadow-none border border-transparent data-active:border-input">
+                  <TabsTrigger value="full" className={FRAMES_TAB}>
                     Full stack trace
                   </TabsTrigger>
                 </TabsList>
@@ -160,7 +167,7 @@ export function OverviewTabContent({
             <CardHeader className="border-b">
               <div className="flex items-center gap-2">
                 <UserIcon className="h-4 w-4 text-muted-foreground" />
-                <CardTitle className="text-xs font-bold uppercase tracking-wider">User Context</CardTitle>
+                <CardTitle>User context</CardTitle>
               </div>
             </CardHeader>
             <CardContent className="p-4">
@@ -170,10 +177,12 @@ export function OverviewTabContent({
             </CardContent>
           </Card>
 
-          <Card className="border-muted shadow-none">
-            <CardHeader className="py-3 px-4 bg-muted/30 border-b flex flex-row items-center gap-2 space-y-0">
-              <Tag className="h-4 w-4 text-muted-foreground" />
-              <CardTitle className="text-xs font-bold uppercase tracking-wider">Tags</CardTitle>
+          <Card>
+            <CardHeader className="border-b">
+              <div className="flex items-center gap-2">
+                <Tag className="h-4 w-4 text-muted-foreground" />
+                <CardTitle>Tags</CardTitle>
+              </div>
             </CardHeader>
             <CardContent className="p-4">
               <div className="grid grid-cols-1 gap-1">

@@ -97,9 +97,9 @@ export async function logCount(page: Page): Promise<number> {
   return Number(match[1].replace(/,/g, ''))
 }
 
-/** The summary line over the histogram: "9,172 Logs  error rate 7.6%  debug 1,492 …". */
+/** The summary line over the histogram: "9,172 Logs  error rate 7.6%  debug 1,492 …", or "0 Logs" alone. */
 export function summaryLine(page: Page): Locator {
-  return page.getByText(/error rate/).locator('..')
+  return page.locator('[data-summary-line]')
 }
 
 /** The stream's rows, the Logs of the run. */

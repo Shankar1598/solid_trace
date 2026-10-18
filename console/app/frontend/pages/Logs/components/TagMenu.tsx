@@ -118,7 +118,7 @@ export function Tag({ field, value, filterable = true, columnable = false, label
       onClick={e => e.stopPropagation()}
       aria-label={label}
       title={label}
-      className={cn('rounded-sm px-0.5 text-left cursor-pointer hover:bg-primary/15 hover:outline hover:outline-1 hover:outline-primary/40 data-popup-open:bg-primary/15', className)}
+      className={cn('px-0.5 text-left cursor-pointer hover:bg-primary/15 hover:outline hover:outline-1 hover:outline-primary/40 data-popup-open:bg-primary/15', className)}
     >
       {children}
     </DropdownMenuTrigger>

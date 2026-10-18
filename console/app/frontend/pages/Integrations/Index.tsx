@@ -1,8 +1,11 @@
 import { Link, usePage } from '@inertiajs/react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
+import { PageHeader } from '@/components/PageHeader'
 import { Card, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { providerName } from '@/lib/integrations'
 import { Integration, SharedProps } from '@/types'
 import { Plus, Settings, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
@@ -28,84 +31,81 @@ export default function IntegrationsIndex({ integrations }: IntegrationsIndexPro
 
   return (
     <SettingsLayout>
-      <div className="space-y-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight mb-1">Integrations</h1>
-            <p className="text-muted-foreground">
-              Connect SolidTrace with external services and alerts.
-            </p>
-          </div>
-          <Link href={`/${current_org.slug}/settings/integrations/new`}>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Integration
-            </Button>
+      <PageHeader
+        title="Integrations"
+        description="Where SolidTrace sends alerts: Slack channels, PagerDuty services and email."
+        actions={
+          <Link href={`/${current_org.slug}/settings/integrations/new`} className={buttonVariants()}>
+            <Plus className="h-4 w-4" />
+            Add integration
           </Link>
-        </div>
+        }
+      />
 
-        <div className="grid gap-4">
-          {integrations.length === 0 ? (
-            <Card className="border-dashed bg-muted/20">
-              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                <div className="bg-muted rounded-full p-4 mb-4">
-                  <Settings className="h-8 w-8 text-muted-foreground" />
-                </div>
-                <h3 className="text-lg font-medium">No integrations yet</h3>
-                <p className="text-sm text-muted-foreground mb-6 max-w-sm">
-                  Integrations allow you to receive alerts and sync data with external services like Slack or PagerDuty.
-                </p>
-                <Link href={`/${current_org.slug}/settings/integrations/new`}>
-                  <Button variant="outline">Create your first integration</Button>
-                </Link>
-              </CardContent>
-            </Card>
-          ) : (
-            integrations.map((integration) => (
-              <Card key={integration.id} className="hover:border-primary/20 transition-colors">
-                <CardContent className="p-6 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-xl bg-primary/5 flex items-center justify-center font-bold text-primary border border-primary/10">
-                      {integration.provider.substring(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-lg">{integration.name || integration.provider}</h3>
-                        {!integration.enabled && (
-                          <Badge variant="secondary" className="text-[10px] h-4 uppercase tracking-wider">Disabled</Badge>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground capitalize">
-                        {integration.provider} Integration
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground mr-2 hidden lg:inline">
-                      Created {formatDistanceToNow(new Date(integration.created_at))} ago
-                    </span>
-                    <Link href={`/${current_org.slug}/settings/integrations/${integration.id}/edit`}>
-                      <Button variant="outline" size="sm" className="h-9">
-                        <Settings className="h-4 w-4 mr-2" />
-                        Configure
-                      </Button>
+      {integrations.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <Settings className="mb-4 h-12 w-12 text-muted-foreground opacity-50" />
+            <h3 className="text-lg font-medium">No integrations yet</h3>
+            <p className="text-sm text-muted-foreground mb-6 max-w-sm">
+              Integrations allow you to receive alerts and sync data with external services like Slack or PagerDuty.
+            </p>
+            <Link href={`/${current_org.slug}/settings/integrations/new`} className={buttonVariants({ variant: 'outline' })}>
+              Create your first integration
+            </Link>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Provider</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead><span className="sr-only">Actions</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {integrations.map((integration) => (
+                <TableRow key={integration.id}>
+                  <TableCell>
+                    <Link href={`/${current_org.slug}/settings/integrations/${integration.id}/edit`} className="font-medium hover:underline">
+                      {integration.name || providerName(integration.provider)}
                     </Link>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDelete(integration.id)}
-                      className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          )}
+                  </TableCell>
+                  <TableCell>{providerName(integration.provider)}</TableCell>
+                  <TableCell>
+                    {integration.enabled ? <Badge variant="ok" dot>On</Badge> : <Badge dot>Off</Badge>}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{formatDistanceToNow(new Date(integration.created_at))} ago</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Link
+                        href={`/${current_org.slug}/settings/integrations/${integration.id}/edit`}
+                        className={buttonVariants({ variant: 'outline' })}
+                      >
+                        <Settings className="h-4 w-4" />
+                        Configure
+                      </Link>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Delete ${integration.name || providerName(integration.provider)}`}
+                        onClick={() => handleDelete(integration.id)}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
-      </div>
+      )}
     </SettingsLayout>
   )
 }
