@@ -49,3 +49,27 @@ test('the time filter lists the Issues seen in the range chosen', async ({ page 
 
   expect(errors).toEqual([])
 })
+
+test('ticked Issues are resolved and unresolved together', async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${ORG}/issues?project_id=${projectId}&range=30d`)
+  const resolved = page.locator('tbody').getByText('Resolved', { exact: true })
+  await expect(titles(page)).toHaveCount(3)
+
+  await page.getByRole('checkbox', { name: 'Select Flow seen today' }).click()
+  await page.getByRole('checkbox', { name: 'Select Flow seen 20 days ago' }).click()
+  await expect(page.getByText('2 selected')).toBeVisible()
+  await page.getByRole('button', { name: 'Resolve', exact: true }).click()
+
+  await expect(page.getByText('2 Issues resolved')).toBeVisible()
+  await expect(resolved).toHaveCount(2)
+  await expect(page.getByText('2 selected')).toHaveCount(0)
+
+  await page.getByRole('checkbox', { name: 'Select all Issues on this page' }).click()
+  await expect(page.getByText('3 selected')).toBeVisible()
+  await page.getByRole('button', { name: 'Unresolve', exact: true }).click()
+
+  await expect(page.getByText('3 Issues unresolved')).toBeVisible()
+  await expect(resolved).toHaveCount(0)
+  expect(errors).toEqual([])
+})

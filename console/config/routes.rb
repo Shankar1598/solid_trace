@@ -28,7 +28,11 @@ Rails.application.routes.draw do
   resources :passwords, param: :token
 
   scope "/:org_slug" do
-    resources :issues, only: [ :index ]
+    resources :issues, only: [ :index ] do
+      collection do
+        patch :status, action: :update_status
+      end
+    end
     get "logs", to: "logs#start", as: :logs
     resources :dashboards, only: [ :index, :show, :create, :update, :destroy ] do
       member do

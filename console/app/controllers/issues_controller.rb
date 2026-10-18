@@ -84,6 +84,19 @@ class IssuesController < ApplicationController
     redirect_to project_issue_path(@project, @issue, org_slug: @current_org.slug), notice: "Issue unresolved"
   end
 
+  # PATCH with ids, the Issues ticked on the Issues page, and status. Changes
+  # each of the Organization's Issues among them as resolve and unresolve do.
+  def update_status
+    status = params.require(:status)
+    return head :bad_request unless Issue.statuses.key?(status)
+
+    issues = Issue.where(project_id: @current_org.projects.select(:id), id: Array(params[:ids])).to_a
+    issues.each { |issue| issue.update!(status: status) }
+
+    redirect_back_or_to issues_path(org_slug: @current_org.slug),
+      notice: "#{helpers.pluralize(issues.size, 'Issue')} #{status}"
+  end
+
   private
 
   # The Issue's Event (params[:event_id], else its latest) with the Events
