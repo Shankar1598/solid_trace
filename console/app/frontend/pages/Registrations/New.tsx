@@ -6,12 +6,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 export default function Register() {
-  const { data, setData, post, processing, errors } = useForm({
+  const { data, setData, post, processing, errors, transform } = useForm({
     name: '',
     email: '',
     password: '',
     password_confirmation: '',
   })
+
+  // RegistrationsController reads the fields under user. Unwrapped, Rails
+  // would wrap them under registration, after the controller.
+  transform((data) => ({ user: data }))
 
   const submit: FormEventHandler = (e) => {
     e.preventDefault()

@@ -1,6 +1,6 @@
 # 06: A user with no Organization signs in to a dead end
 
-**Status:** needs-triage
+**Status:** resolved
 **Area:** Console
 **Found:** 2026-10-18, by MCP ticket 10's run of the password-reset flow
 
@@ -27,3 +27,28 @@ What a user with no Organization should see. Some options:
 - **Close sign-up** and make invites the only way in, if open sign-up isn't wanted on a self-hosted install.
 
 ## Comments
+
+### 2026-10-18 resolved
+
+The user asked for a fix. This builds the page `HomeController`'s comment had planned ("a 'create org' page"). It covers everyone in no Organization: new sign-ups, archived members, and users made by hand.
+
+- **Home.** `HomeController` sends a user in no Organization to **Make an Organization** (`/organizations/new`), and the rest to their first Organization's Issues, as before. It keeps the flash, so sign-up's "Welcome!" shows on the page it lands on.
+- **The page.** It's an Inertia page, `Organizations/New`, in the sign-in pages' layout, so it renders in place of the form, not in Inertia's error modal. It asks for a name, says to ask an admin for an invite to join someone else's Organization, and has Log out.
+- **Making one.** `Organization.make_for(user, name:)` saves the Organization and makes the user its admin, in one transaction. A blank name comes back with its error. Success opens the new Organization's Issues: "<name> is made. Add a Project to send it Events and Logs."
+- **The slug comes from the name.** A taken slug gets a number (`acme-2`), rather than an error, since slugs are global and a user can't see other Organizations. So does a slug that one of Console's top-level paths uses, since an Organization's pages are under `/:org_slug`: `/passwords/issues` would be a reset link. The paths are read from the routes: `api_tokens`, `cable`, `health`, `login`, `mcp`, `organizations`, `passwords`, `rails`, `registration`, `session`, `up` and `user_settings`. A name with no Latin letters or digits gets `organization`, and underscores become hyphens.
+
+**Found on the way, and fixed: signing up never worked in the browser.** `Registrations/New` posted its fields unwrapped. Rails wrapped them as `registration`, after the controller, and `RegistrationsController#user_params` requires `user`, so every sign-up answered `400 ParameterMissing`. It's the same mistake as [bugs 01](01-profile-name-never-saves.md)'s profile form, and fixed the same way: the form wraps its fields under `user`. The controller tests had posted `user: {…}` themselves, so only the browser showed it.
+
+Tests:
+
+- `test/models/organization_test.rb`, 6 new cases: admin and slug, a taken slug, top-level paths, a non-Latin name, underscores, and a blank name making no membership.
+- `test/controllers/organizations_controller_test.rb`, 8 cases:
+  - home, for a user in no Organization, an archived member, and a member as before;
+  - sign-up leading to the page with the welcome kept;
+  - the Inertia page;
+  - making one;
+  - a blank name;
+  - signed out.
+- `e2e/flows/make-organization.spec.ts`: signs up in the browser, lands on Make an Organization with the welcome, makes one, and lands on its Issues. It failed at sign-up's 400 before the form's fix.
+
+Rails (589 runs), vitest (391) and typecheck pass. Every Playwright flow passed but one. user-settings timed out on a page that never rendered, while the box was busy with another session's tests; the server had answered it in 39 ms. Run again on its own, it passed 4 times out of 4.
