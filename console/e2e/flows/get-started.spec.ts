@@ -29,10 +29,10 @@ test('an empty Project shows how to send it Logs, and a test Log shows at once',
   await page.goto(`/${ORG}/projects/${slug}/logs?range=1h`)
   await expect(page.getByRole('heading', { name: firstLogs })).toBeVisible()
 
-  // The snippets carry the new Project's own key and Log route.
+  // The snippets carry the new Project's own key, and the key-only Log route.
   const shown = page.getByRole('tabpanel')
   await expect(shown).toContainText(/Authorization: Bearer [0-9a-f]{32}/)
-  await expect(shown).toContainText(/http:\/\/localhost:4000\/api\/\d+\/logs/)
+  await expect(shown).toContainText('http://localhost:4000/api/logs')
   for (const tab of ['Vector', 'Fluent Bit', 'Sentry SDK']) {
     await page.getByRole('tab', { name: tab }).click()
     await expect(shown).toContainText(tab === 'Sentry SDK' ? /dsn: 'http:\/\/[0-9a-f]{32}@localhost:4000\/\d+'/ : /[0-9a-f]{32}/)
