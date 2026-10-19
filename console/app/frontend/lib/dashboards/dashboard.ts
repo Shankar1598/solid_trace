@@ -2,6 +2,7 @@
 // around them: the range a page shows, how a chart's viz maps to the
 // explorer's chart forms, a chart's link to the explorer, and the places a
 // grid change moves charts to.
+import type { AutoRefresh } from '../autoRefresh'
 import type { ChartForm } from '../charts/series'
 import { searchOf, stateFromSearch, type Viz } from '../logs/explorerState'
 import { isSpan, type TimeRange } from '../timeRange'
@@ -9,8 +10,7 @@ import { isSpan, type TimeRange } from '../timeRange'
 export type DashboardViz = 'line' | 'area' | 'bar' | 'stat' | 'table'
 export const DASHBOARD_VIZES: DashboardViz[] = ['line', 'area', 'bar', 'stat', 'table']
 
-export type AutoRefresh = 'off' | '1m' | '5m'
-export const AUTO_REFRESH_MS: Record<AutoRefresh, number | null> = { off: null, '1m': 60_000, '5m': 300_000 }
+export type { AutoRefresh } from '../autoRefresh'
 
 /** How a chart reads its values; each only when set. */
 export interface ChartOptions {

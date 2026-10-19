@@ -4,6 +4,7 @@ import { Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { TimeRangePicker } from '@/components/TimeRangePicker'
+import { AutoRefreshPicker, useAutoRefresh } from '@/components/AutoRefreshPicker'
 import { copyText } from '@/components/copyText'
 import { useShortcut } from '@/components/useShortcut'
 import { Button } from '@/components/ui/button'
@@ -48,10 +49,11 @@ import { errorParts } from '@/lib/logs/errorParts'
 import { bucketSeconds, filterByLevel, type HistogramLevel } from '@/lib/logs/histogram'
 import { editAsBuilder, pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
-import { fillStream, keepsFetching, seekLog, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
+import { PAGE_LOGS, fillStream, keepsFetching, seekLog, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
 import { aroundLog, aroundMissed, narrowAround } from '@/lib/logs/inspector'
 import type { LogTable } from '@/lib/logs/table'
 import { registerPaletteSource } from '@/lib/palette'
+import { readLogsAutoRefresh, saveLogsAutoRefresh, type AutoRefresh } from '@/lib/autoRefresh'
 import { browserStorage, recordQuery } from '@/lib/recentQueries'
 import { SharedProps } from '@/types'
 import { BuilderBar, type BuilderView } from './components/BuilderBar'
@@ -147,13 +149,17 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
       })
   }, [orgSlug, project.slug])
 
-  const start = useCallback((state: ExplorerState) => {
+  /**
+   * Runs `state`. An auto-refresh is quiet: the last answers stay until the
+   * new ones arrive, and it isn't another recent Query.
+   */
+  const start = useCallback((state: ExplorerState, quiet = false) => {
     currentRun.current?.controller.abort()
     const run: Run = { controller: new AbortController(), query: state.query, ...resolveRange(state.range, new Date()) }
     currentRun.current = run
-    setResult({ status: 'running' })
+    if (!quiet) setResult({ status: 'running' })
     // Each run of a Query is a recent one; the Project's Logs unfiltered are not.
-    if (viewer !== null && state.mode !== 'sql' && state.query !== '' && state.query !== projectQuery) {
+    if (!quiet && viewer !== null && state.mode !== 'sql' && state.query !== '' && state.query !== projectQuery) {
       recordQuery(browserStorage(), viewer, orgSlug, project.slug, { query: state.query, search: searchOf(state), at: Date.now() })
     }
 
@@ -169,7 +175,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
       return
     }
 
-    setHistogram({ status: 'running' })
+    if (!quiet) setHistogram({ status: 'running' })
 
     // The histogram and summary count the same filters over the same range.
     fetchHistogram({
@@ -579,6 +585,23 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
 
   const running = result.status === 'running' || (result.status === 'done' && result.loadingOlder)
 
+  // Auto-refresh runs what ran again over a relative range. It waits while a
+  // Log is open or older pages are loaded, so what's being read stays put, and
+  // SQL runs only on Run.
+  const [autoRefresh, setAutoRefresh] = useState<AutoRefresh>(() => readLogsAutoRefresh(browserStorage()))
+  const pickAutoRefresh = (value: AutoRefresh) => {
+    setAutoRefresh(value)
+    saveLogsAutoRefresh(browserStorage(), value)
+  }
+  let refreshPaused: string | null = null
+  if (sqlMode) refreshPaused = 'SQL runs only on Run'
+  else if (explorer.current.range.kind === 'absolute') refreshPaused = 'the range is fixed'
+  else if (inspected) refreshPaused = 'a Log is open'
+  else if (result.status === 'done' && result.stream.target > PAGE_LOGS) refreshPaused = 'older Logs are loaded'
+  else if (result.status === 'cancelled') refreshPaused = 'the run was cancelled'
+  const refreshes = refreshPaused === null && seeking === null && !running && (result.status === 'done' || result.status === 'table' || result.status === 'error')
+  useAutoRefresh(autoRefresh, refreshes, () => start(latest.current.current, true))
+
   // An empty Project shows how to send it Logs in place of an empty stream,
   // until this page has shown one.
   const showTestLog = () => {
@@ -612,6 +635,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
             <span className="flex-1 text-[11px] text-muted-foreground"><span className="hidden sm:inline">Ctrl+Enter runs the {sqlMode ? 'SQL' : 'Query'}.</span></span>
           )}
           <CopyLink onCopy={copyLink} />
+          <AutoRefreshPicker value={autoRefresh} onChange={pickAutoRefresh} paused={refreshPaused} />
           {running ? (
             <Button variant="outline" onClick={cancel}><Square className="h-3.5 w-3.5" /> Cancel</Button>
           ) : (

@@ -9,14 +9,14 @@ import { copyText } from '@/components/copyText'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { TimeRangePicker } from '@/components/TimeRangePicker'
+import { AutoRefreshPicker, useAutoRefresh } from '@/components/AutoRefreshPicker'
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { saveLayout } from '@/lib/dashboards/api'
 import {
-  AUTO_REFRESH_MS, GRID_COLUMNS, movedPlaces, rangeOfSearch, searchOfRange,
+  GRID_COLUMNS, movedPlaces, rangeOfSearch, searchOfRange,
   type AutoRefresh, type Dashboard, type DashboardChart, type Place,
 } from '@/lib/dashboards/dashboard'
 import { createFetchQueue } from '@/lib/dashboards/fetchQueue'
@@ -33,7 +33,6 @@ import { DashboardSettings } from './components/DashboardSettings'
 /** A grid row's height and the gap between cards, in px. */
 const ROW_PX = 64
 const GAP_PX = 12
-const AUTO_REFRESH_LABELS: Record<AutoRefresh, string> = { off: 'Auto-refresh off', '1m': 'Every minute', '5m': 'Every 5 minutes' }
 const NO_COLUMNS = { shown: [], toggle: () => {} }
 
 interface DashboardsShowProps {
@@ -72,13 +71,9 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
     rerun(next)
   }
 
-  // Auto-refresh runs a relative range again; an absolute one would answer the same.
-  useEffect(() => {
-    const every = AUTO_REFRESH_MS[dashboard.auto_refresh]
-    if (!every || range.kind !== 'relative') return
-    const timer = setInterval(() => rerun(range), every)
-    return () => clearInterval(timer)
-  }, [dashboard.auto_refresh, range, rerun])
+  // Auto-refresh runs a relative range again, counting from when the last run
+  // finished; an absolute range would answer the same.
+  useAutoRefresh(dashboard.auto_refresh, range.kind === 'relative' && running.size === 0, () => rerun(range))
 
   const onRunning = useCallback((id: number, on: boolean) => setRunning(prev => {
     if (prev.has(id) === on) return prev
@@ -122,7 +117,6 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   const projectsById = useMemo(() => new Map(projects.map(p => [p.id, p])), [projects])
   const charts = dashboard.charts
   const severalProjects = new Set(charts.map(c => c.project_id)).size > 1
-  const autoRefreshItems = (Object.keys(AUTO_REFRESH_LABELS) as AutoRefresh[]).map(value => ({ value, label: AUTO_REFRESH_LABELS[value] }))
 
   return (
     <DashboardLayout>
@@ -138,14 +132,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           ) : (
             <Button variant="outline" onClick={() => rerun(range)}><RefreshCw className="h-3.5 w-3.5" /> Refresh</Button>
           )}
-          <Select value={dashboard.auto_refresh} onValueChange={value => value && setAutoRefresh(value as AutoRefresh)} items={autoRefreshItems}>
-            <SelectTrigger size="sm" aria-label="Auto-refresh" className="h-8">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {autoRefreshItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <AutoRefreshPicker value={dashboard.auto_refresh} onChange={setAutoRefresh} paused={range.kind === 'absolute' ? 'the range is fixed' : null} />
           <CopyLink onCopy={copyLink} />
           <Button variant="outline" onClick={() => setEditor({ chart: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
           {editing ? (

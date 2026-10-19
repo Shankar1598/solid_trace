@@ -18,7 +18,7 @@ module McpTools
         type: "string",
         description: "The range the Dashboard shows until someone picks another: a span back from now such as 15m, 1h, 24h or 7d. 1h when made.",
       },
-      auto_refresh: { type: "string", enum: Dashboard::AUTO_REFRESH, description: "How often the open page runs its Charts again. off when made." },
+      auto_refresh: { type: "string", enum: Dashboard::AUTO_REFRESH, description: "How often the open page runs its Charts again. 15s when made." },
     }.freeze
 
     CHART_FIELDS = {
