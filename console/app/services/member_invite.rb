@@ -19,6 +19,12 @@ class MemberInvite
     def done?
       error.nil?
     end
+
+    # Whether nothing was done because the user is already Invited here,
+    # and so has an Invite link to hand over.
+    def already_invited?
+      error == ALREADY_INVITED
+    end
   end
 
   def self.call(organization:, inviter:, email:, name: nil)
