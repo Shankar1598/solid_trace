@@ -6,7 +6,7 @@
 class DashboardsController < ApplicationController
   layout "dashboard"
 
-  before_action :set_organization
+  before_action :set_current_org
   before_action :set_dashboard, only: %i[show update destroy layout]
 
   def index
@@ -80,10 +80,6 @@ class DashboardsController < ApplicationController
   end
 
   private
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-  end
 
   def set_dashboard
     @dashboard = @current_org.dashboards.find(params[:id])

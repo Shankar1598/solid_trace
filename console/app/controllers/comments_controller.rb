@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 class CommentsController < ApplicationController
+  before_action :set_current_org
   before_action :set_issue
 
   def create
@@ -32,7 +33,6 @@ class CommentsController < ApplicationController
   end
 
   def set_issue
-    @current_org = Current.user.organizations.find_by!(slug: params[:org_slug])
     @project = @current_org.projects.find_by!(slug: params[:project_slug])
     @issue = @project.issues.find_by!(number: params[:issue_number])
     @current_org_user = @current_org.organization_users.find_by!(user: Current.user)
