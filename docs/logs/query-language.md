@@ -90,10 +90,27 @@ A Query that ends with only `where`, `search`, `take` and `sort by time desc` st
 | `sum(x)`, `avg(x)` | The sum and the mean of a number. |
 | `min(x)`, `max(x)` | The least and the greatest value: of a number, or of a string or a datetime such as `time`. |
 | `percentile(x, p)` | **An estimate of** the p-th percentile of a number, for p from 0 to 100, such as `percentile(duration, 95)`. |
+| `rate()` | The rows per second, averaged over the time bin: the rows' count over the seconds of the bin that lie in the range. With no time bin, over the whole range. |
+| `peak_rate()` | The rows in the busiest whole second of the time bin, or of the range with no time bin. The bin must be a whole number of seconds. |
 
 `dcount` and `percentile` are estimates, not exact counts. `dcount` uses HyperLogLog, which is typically within a few percent of the true count. Small counts are usually exact, but large ones can be off in either direction. `percentile` uses a T-Digest sketch, which is accurate near the middle of the data and less accurate in the extreme tails, such as above the 99.9th percentile. Don't use either one where you need an exact figure. For an exact distinct count, use `summarize by x | count`.
 
 Aggregates read an Attribute as a number, except `dcount`, which counts distinct values of any type.
+
+### Requests per second
+
+Filter to the requests first, then chart both rates:
+
+```
+where path == "/v2/search"
+| summarize rate(), peak_rate() by bin_auto(time), shop
+```
+
+The time bin is the first `by` column that bins the Logs' `time`. `rate()` divides each bin's count by its seconds, the empty ones too, so a burst inside the bin is averaged out. A bin that the range's start or end cuts is divided by its seconds in the range, so it still reads a true rate.
+
+`peak_rate()` counts the Logs in each second of the bin, as `bin(time, 1s)` puts them, and keeps the busiest. It reads each Log's own time, so it is the true busiest second at any bin size: over a month, `bin_auto(time)` makes 12-hour bins, and each one's `peak_rate_` is still the busiest single second of those 12 hours. Within groups, rates add up to the whole and peak rates don't, as groups peak in different seconds.
+
+Both take no arguments. They are not the same as `summarize n = count() by bin(time, 1s) | summarize avg(n), max(n) by bin_auto(time)`: there, seconds with no Logs have no row, so `avg(n)` is too high.
 
 ## Scalar functions
 
@@ -122,11 +139,11 @@ When a Query returns a table, the Logs explorer draws it as a chart above the ta
 
 Any other table shows on its own: one with no rows, with a second datetime column, or with two rows for the same bin and group.
 
-A chart draws at most 8 series, the ones with the largest totals, and the legend says how many more there are. Click a legend entry to hide or show its series. Columns that measure different things, such as a count and an average, get a panel each over the same time axis. Bars and areas stack only for `count`, `countif` and `sum`, whose values add up.
+A chart draws at most 8 series, the ones with the largest totals, and the legend says how many more there are. Click a legend entry to hide or show its series. Columns that measure different things, such as a count and an average, get a panel each over the same time axis; `rate` and `peak_rate` share one, in Logs per second. Bars and areas stack only for `count`, `countif`, `sum` and `rate`, whose values add up.
 
 **Time bins.** `bin(time, 5m)` makes bins of the size you give. `bin_auto(time)` picks a size from the time range, giving at most about 100 bins. It reads the range after the Query's `where` stages narrow it. Bins start at multiples of their size from 1970-01-01 UTC, so the first and last bins may cover only part of the range. The chart fades them, and its tooltip says "partial bin". A new Summarize in the Builder starts with `by bin_auto(time)`, so one click charts a count.
 
-**Empty bins.** A bin with no Logs has no row in the table. EventStore tells the chart whether it may fill those bins (`fill_gaps`). It may when nothing after the last `summarize` drops or adds rows (no `where`, `take`, `top`, `count`, `distinct` or second `summarize` after it) and the table wasn't cut at 10,000 rows. Then an empty bin counts as 0 for `count`, `countif`, `dcount` and `sum`, and as a gap for the other aggregates, which have no value without Logs. Otherwise every missing value is a gap.
+**Empty bins.** A bin with no Logs has no row in the table. EventStore tells the chart whether it may fill those bins (`fill_gaps`). It may when nothing after the last `summarize` drops or adds rows (no `where`, `take`, `top`, `count`, `distinct` or second `summarize` after it) and the table wasn't cut at 10,000 rows. Then an empty bin counts as 0 for `count`, `countif`, `dcount`, `sum`, `rate` and `peak_rate`, and as a gap for the other aggregates, which have no value without Logs. Otherwise every missing value is a gap.
 
 **The table under a chart over time.** It lists one row per group, the `by` columns other than the time bin, with each aggregate worked out over the whole range: an `avg` or a `dcount` there is exact, not made from the bins. The rows go largest first by the first aggregate, each with its series' colour when it has one, so the table reads as the legend. The Table form of the switch shows the Query's own rows, one per bin and group.
 
