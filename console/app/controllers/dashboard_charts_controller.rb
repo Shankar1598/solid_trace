@@ -7,7 +7,7 @@
 class DashboardChartsController < ApplicationController
   include ChartRunning
 
-  before_action :set_organization
+  before_action :set_current_org
   before_action :set_dashboard
   before_action :set_chart, only: %i[update destroy duplicate data]
   before_action :set_time_range, only: %i[data preview]
@@ -50,10 +50,6 @@ class DashboardChartsController < ApplicationController
   end
 
   private
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-  end
 
   def set_dashboard
     @dashboard = @current_org.dashboards.find(params[:dashboard_id])

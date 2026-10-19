@@ -132,6 +132,10 @@ _Avoid_: notification event, alert, event type
 The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches, and each group of a Monitor in order.
 _Avoid_: notifier, integration notifier
 
+**Organization**:
+The group of people, with their roles, that shares a set of **Projects**, **Dashboards**, **Monitors** and **Integrations**. A user can belong to several and works in one at a time.
+_Avoid_: team, workspace, org (in prose), tenant
+
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant

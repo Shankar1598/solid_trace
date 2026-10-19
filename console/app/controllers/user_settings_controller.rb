@@ -2,7 +2,7 @@
 
 class UserSettingsController < ApplicationController
   layout "dashboard"
-  before_action :set_organization
+  before_action :set_current_org, if: -> { params[:org_slug] }
 
   def show
     render inertia: "Settings/User", props: {
@@ -30,11 +30,5 @@ class UserSettingsController < ApplicationController
   # The page is served with and without an Organization.
   def settings_page
     @current_org ? user_path(org_slug: @current_org.slug) : user_settings_path
-  end
-
-  def set_organization
-    if params[:org_slug]
-      @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-    end
   end
 end

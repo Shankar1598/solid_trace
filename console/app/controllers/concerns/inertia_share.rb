@@ -8,6 +8,8 @@ module InertiaShare
       {
         current_user: current_user&.as_json(only: [ :id, :name, :email ]),
         current_org: @current_org&.as_json(only: [ :id, :name, :slug ]),
+        # For the Organization selector and the command palette.
+        organizations: @current_org && current_user.organizations_by_name.map { |o| { name: o.name, slug: o.slug } },
         # For the command palette, which jumps to any of them from any page.
         org_projects: @current_org&.projects&.order(:name)&.map { |p| { name: p.name, slug: p.slug } },
         # For the command palette and the explorer's Add to dashboard.

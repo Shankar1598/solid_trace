@@ -9,6 +9,11 @@ class User < ApplicationRecord
   has_many :all_organization_users, class_name: "OrganizationUser", dependent: :restrict_with_error
   has_many :organizations, through: :organization_users
 
+  # The user's Organizations by name, ignoring case.
+  def organizations_by_name
+    organizations.order(Arel.sql("LOWER(organizations.name)"))
+  end
+
   # One person, one user: kept trimmed and in lower case, and found in any
   # case, as sign-in and invites look users up by it.
   normalizes :email, with: ->(email) { email.strip.downcase }
