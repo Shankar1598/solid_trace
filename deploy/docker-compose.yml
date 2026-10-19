@@ -16,7 +16,7 @@ x-console: &console
   # Built by the console service or pulled by deploy/install, never by Compose.
   pull_policy: never
   network_mode: host
-  environment:
+  environment: &console-environment
     RAILS_ENV: production
     HTTP_PORT: "3000"
     TARGET_PORT: "3001"
@@ -109,8 +109,38 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  # Creates or migrates Console's tables, which EventStore also writes, then exits.
+  # Creates or migrates Console's tables, which EventStore also writes, seeds
+  # the Meta Organization once (docs/adr/0011), then exits.
   db_prepare:
     <<: *console
-    command: ["bin/rails", "db:prepare"]
+    environment:
+      <<: *console-environment
+      # Its Project's key, which deploy/install writes. Unset, nothing is seeded.
+      META_PROJECT_KEY: ${META_PROJECT_KEY:-}
+    command: ["bin/rails", "db:prepare", "meta_organization:seed"]
     restart: "no"
+    # So Vector is reading the containers' output before db_prepare writes any.
+    depends_on:
+      - vector
+
+  # Sends every other service's output to the Meta Organization's Project as
+  # Logs, through Log ingest on port 4000 (docs/adr/0011). Lines written while
+  # it is down are not sent; they stay in `docker compose logs`.
+  vector:
+    image: timberio/vector:0.58.0-alpine
+    network_mode: host
+    environment:
+      # The same key db_prepare seeds the Project with.
+      META_PROJECT_KEY: ${META_PROJECT_KEY:-}
+      # The only way the key above reaches vector.yaml (checked on 0.58.0): off
+      # by default since Vector 0.5x, so a config from elsewhere can't read the
+      # environment; this one is ours. Without it Vector sends the literal
+      # ${META_PROJECT_KEY} and every request gets a 401.
+      VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION: "true"
+    volumes:
+      # Read-only, but access to the socket is still root on the VM.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # The directory, not the file, so a git pull's new vector.yaml is seen.
+      - ./vector:/etc/vector:ro
+    restart: unless-stopped
+    logging: *logging

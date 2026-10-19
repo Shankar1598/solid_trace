@@ -282,6 +282,66 @@ func TestLogRouteRejectsAMissingUnknownOrOtherProjectsKey(t *testing.T) {
 	}
 }
 
+func TestKeyOnlyLogRouteStoresTheLogsInTheKeysProject(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	forms := map[string]struct {
+		path    string
+		headers map[string]string
+	}{
+		"sentry_key query":     {"/api/logs?sentry_key=other_public_key", nil},
+		"X-Sentry-Auth":        {"/api/logs", map[string]string{"X-Sentry-Auth": "Sentry sentry_version=7, sentry_key=other_public_key"}},
+		"Authorization Sentry": {"/api/logs", map[string]string{"Authorization": "Sentry sentry_key=other_public_key, sentry_version=7"}},
+		"Authorization Bearer": {"/api/logs", map[string]string{"Authorization": "Bearer other_public_key"}},
+	}
+	for name, form := range forms {
+		t.Run(name, func(t *testing.T) {
+			resp := sendLogs(t, env, form.path, "application/json", fmt.Sprintf(`{"message": %q}`, name), form.headers)
+			if counts := decodeLogCounts(t, resp); counts != (logCounts{Accepted: 1}) {
+				t.Errorf("Expected 1 accepted, got %+v", counts)
+			}
+		})
+	}
+	resp := sendLogs(t, env, "/api/logs", "application/x-ndjson", "{\"message\": \"line 1\"}\n{\"message\": \"line 2\"}\n", map[string]string{"Authorization": "Bearer other_public_key"})
+	if counts := decodeLogCounts(t, resp); counts != (logCounts{Accepted: 2}) {
+		t.Errorf("Expected 2 NDJSON lines accepted, got %+v", counts)
+	}
+
+	env.ProcessLogs(t)
+	if got := len(latestLogs(t, env, 456, 10)); got != len(forms)+2 {
+		t.Errorf("Expected %d Logs stored in Project 456, got %d", len(forms)+2, got)
+	}
+	if got := latestLogs(t, env, 123, 10); len(got) != 0 {
+		t.Errorf("Expected no Logs stored for Project 123, got %v", messages(got))
+	}
+}
+
+func TestKeyOnlyLogRouteRejectsAMissingOrUnknownKey(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	cases := map[string]map[string]string{
+		"missing key": nil,
+		"unknown key": {"Authorization": "Bearer no_such_key"},
+	}
+	for name, headers := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := sendLogs(t, env, "/api/logs", "application/json", `{"message": "rejected"}`, headers)
+			if resp.StatusCode != 401 {
+				body, _ := io.ReadAll(resp.Body)
+				t.Errorf("Expected 401, got %d: %s", resp.StatusCode, body)
+			}
+		})
+	}
+
+	env.ProcessLogs(t)
+	if got := latestLogs(t, env, 123, 10); len(got) != 0 {
+		t.Errorf("Expected no Logs stored, got %v", messages(got))
+	}
+}
+
 func TestEachProjectListsOnlyItsOwnLogs(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()

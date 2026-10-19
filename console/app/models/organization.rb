@@ -20,7 +20,7 @@ class Organization < ApplicationRecord
     organization = new(name: name.to_s.strip)
     organization.slug = free_slug(organization.name)
     transaction do
-      organization.save && organization.organization_users.create!(user: user, role: :admin)
+      organization.save && organization.add_admin(user)
     end
     organization
   end
@@ -38,5 +38,10 @@ class Organization < ApplicationRecord
   # slug that is one of them would be hidden behind that page's routes.
   def self.top_level_paths
     Rails.application.routes.routes.filter_map { |route| route.path.spec.to_s[%r{\A/([a-z0-9_-]+)}, 1] }.to_set
+  end
+
+  # Makes user a member of this Organization, as its admin.
+  def add_admin(user)
+    organization_users.create!(user: user, role: :admin)
   end
 end

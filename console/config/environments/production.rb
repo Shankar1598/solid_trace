@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "active_support/core_ext/integer/time"
+require_relative "../../lib/level_log_formatter"
 
 Rails.application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
@@ -39,9 +40,10 @@ Rails.application.configure do
     config.ssl_options = { hsts: false, redirect: { exclude: ->(request) { request.path == "/up" } } }
   end
 
-  # Log to STDOUT with the current request id as a default log tag.
+  # Log to STDOUT with the current request id as a default log tag, each line
+  # starting with its Level: `INFO [request-id] message`.
   config.log_tags = [ :request_id ]
-  config.logger   = ActiveSupport::TaggedLogging.logger(STDOUT)
+  config.logger   = LevelLogFormatter.logger(STDOUT)
 
   # Change to "debug" to log everything (including potentially personally-identifiable information!).
   config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
