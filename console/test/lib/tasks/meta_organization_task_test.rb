@@ -23,6 +23,40 @@ class MetaOrganizationTaskTest < ActiveSupport::TestCase
     assert_empty organization.users
   end
 
+  test "run again, it makes nothing more" do
+    seed
+    seed
+
+    assert_equal 1, Organization.count
+    assert_equal 1, Project.count
+  end
+
+  test "a deleted Meta Organization is not made again" do
+    seed
+    Organization.sole.destroy!
+
+    seed
+
+    assert_empty Organization.all
+  end
+
+  test "a deleted Meta Project is not made again" do
+    seed
+    Project.sole.destroy!
+
+    seed
+
+    assert_empty Project.all
+  end
+
+  test "without the key, as in local development, it does nothing, and seeds once the key is set" do
+    seed(nil)
+    assert_empty Organization.all
+
+    seed
+    assert_equal [ "SolidTrace" ], Organization.pluck(:name)
+  end
+
   private
 
   def seed(key = KEY)
