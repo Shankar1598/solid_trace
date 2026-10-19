@@ -26,6 +26,9 @@ Rails.application.routes.draw do
   post "mcp", to: "mcp#create", as: :mcp, format: false
   match "mcp", to: "mcp#method_not_allowed", via: [ :get, :delete ], as: nil, format: false
   resources :passwords, param: :token
+  # An Invite link, where an Invited member sets a password (InvitesController).
+  get "invites/:token", to: "invites#edit", as: :invite
+  put "invites/:token", to: "invites#update"
   # Where a user in no Organization makes one (OrganizationsController).
   resources :organizations, only: [ :new, :create ]
 

@@ -2,16 +2,11 @@ Welcome to SolidTrace!
 
 Hi <%= @user.name %>,
 
-<%= @invited_by.name %> has added you to the <%= @organization.name %> organization on SolidTrace.
+<%= @invited_by.name %> has invited you to the <%= @organization.name %> organization on SolidTrace.
 
-Your Login Credentials
-======================
-Email: <%= @user.email %>
-Password: <%= @password %>
+Set your password and sign in: <%= @invite_url %>
 
-Login here: <%= @login_url %>
-
-For security reasons, we recommend changing your password after your first login.
+The link works once, for seven days. If it has expired, ask an admin of <%= @organization.name %> for a new one.
 
 ---
 
