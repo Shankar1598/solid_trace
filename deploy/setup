@@ -346,12 +346,27 @@ if [[ $HTTPS == yes ]]; then
     note "Not on GCP, or its metadata server didn't answer: fill in the <...> values,"
     note "or do the same in your cloud's console."
   fi
+  # The IP's name if it's already a static address. Empty when it isn't, or when
+  # this machine's account can't list addresses, which gcloud doesn't tell apart.
+  static_ip=""
+  if [[ -n $project && -n $external_ip ]] && command -v gcloud >/dev/null; then
+    static_ip=$(timeout 20 gcloud compute addresses list --project="$project" --filter="address=$external_ip" \
+      --format='value(name)' --quiet 2>/dev/null | head -n1 || true)
+  fi
   open_url "https://shell.cloud.google.com/?show=terminal"
-  step "In Cloud Shell, run these. Skip the first if the IP is already static."
+  if [[ -n $static_ip ]]; then
+    note "$external_ip is already a static address ($static_ip)."
+  fi
+  step "In Cloud Shell, run these."
   printf '\n%s' "$BOLD"
-  cat <<EOF
-gcloud compute addresses create solidtrace-ip --project=${project:-<project>} --region=${region:-<region>} --addresses=${external_ip:-<external IP>}
+  if [[ -z $static_ip ]]; then
+    # Creates the static address only if the IP isn't one already.
+    cat <<EOF
+gcloud compute addresses list --project=${project:-<project>} --filter="address=${external_ip:-<external IP>}" --format="value(name)" | grep -q . || gcloud compute addresses create solidtrace-ip --project=${project:-<project>} --region=${region:-<region>} --addresses=${external_ip:-<external IP>}
 
+EOF
+  fi
+  cat <<EOF
 gcloud compute firewall-rules create solidtrace-https --project=${project:-<project>} --network=${network:-default} --allow=tcp:80,tcp:443,tcp:4443 --target-tags=solidtrace
 
 gcloud compute instances add-tags ${instance:-<instance>} --project=${project:-<project>} --zone=${zone:-<zone>} --tags=solidtrace
