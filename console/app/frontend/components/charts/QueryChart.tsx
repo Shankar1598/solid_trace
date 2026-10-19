@@ -11,6 +11,7 @@ import {
   CHAR_PX, LABEL_PAD_PX, nameChars, optionsText, shortName, statText, tickLabel, ticksInside, timePattern, timeTicks, valueText, valueTicks, withUnit,
   type ValueOptions,
 } from '@/lib/charts/axis'
+import { binSize, binSpan } from '@/lib/charts/bins'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
 import type { LogTable } from '@/lib/logs/table'
@@ -264,7 +265,12 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     <div ref={measure} className={cn('flex flex-col', className)}>
       <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
         <Legend model={model} form={form} hidden={hidden} onToggle={toggle} legendValue={legendValue} />
-        {actions && <div className="ml-auto">{actions}</div>}
+        {(time || actions) && (
+          <div className="ml-auto flex items-center gap-3">
+            {time && <span className="font-mono text-[10px] text-muted-foreground" data-chart-bin>{binSize(time.binSeconds)} bins</span>}
+            {actions}
+          </div>
+        )}
       </div>
       <div role="figure" aria-label={chartLabel(model, form)}>
         {panels.map(({ panel, series, stacked, values, label, tips, tipWidth }, i) => (
@@ -362,11 +368,11 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     </div>
   )
 
-  /** A point's bin or category, for the tooltip: a bin's start in local time. */
+  /** A point's bin or category, for the tooltip: a bin's span, start to end, in local time. */
   function pointLabel(x: unknown): string {
     if (!time) return String(x)
     const start = Number(x)
-    return `${format(new Date(start), pattern)}${time.partial.includes(start) ? ' · partial bin' : ''}`
+    return `${binSpan(start, time.binSeconds, pattern)}${time.partial.includes(start) ? ' · partial bin' : ''}`
   }
 }
 
