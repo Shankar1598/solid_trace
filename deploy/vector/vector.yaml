@@ -16,11 +16,19 @@ sources:
       - solid-trace-vector-
 
 transforms:
+  # When a container stops, Vector reads its last line again. Docker's time,
+  # to the nanosecond, tells the copy apart from a line written twice.
+  once:
+    type: dedupe
+    inputs: [containers]
+    fields:
+      match: [container_id, timestamp, message]
+
   # One Docker line becomes one Log: its time, Level and message, its Compose
   # service as the Service and its container as an Attribute.
   lines:
     type: remap
-    inputs: [containers]
+    inputs: [once]
     source: |
       line = string(.message) ?? ""
       log = {}

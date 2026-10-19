@@ -132,6 +132,9 @@ services:
     environment:
       # The Meta Organization Project's key, which deploy/install writes.
       META_PROJECT_KEY: ${META_PROJECT_KEY:-}
+      # Lets vector.yaml read the key above. Off by default since Vector 0.5x,
+      # so a config from elsewhere can't read the environment; this one is ours.
+      VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION: "true"
     volumes:
       # Read-only, but access to the socket is still root on the VM.
       - /var/run/docker.sock:/var/run/docker.sock:ro
