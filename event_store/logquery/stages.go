@@ -115,6 +115,7 @@ func (c *compiler) stage(s parser.Stage) (stage, error) {
 		if err != nil {
 			return nil, err
 		}
+		c.perSecond = c.query.perSecondOf(c.scope, by, len(c.query.tail))
 		aggregates, err := c.columns(s.Aggregates, true)
 		if err != nil {
 			return nil, err
@@ -217,16 +218,18 @@ func aggregateName(x expr) string {
 	return name
 }
 
-func hasAggregate(x expr) bool {
+// hasAggregate reports whether x has an aggregate: of one of fns, if any are
+// given.
+func hasAggregate(x expr, fns ...string) bool {
 	switch x := x.(type) {
 	case aggregate:
-		return true
+		return len(fns) == 0 || slices.Contains(fns, x.fn)
 	case arith:
-		return hasAggregate(x.x) || hasAggregate(x.y)
+		return hasAggregate(x.x, fns...) || hasAggregate(x.y, fns...)
 	case negative:
-		return hasAggregate(x.x)
+		return hasAggregate(x.x, fns...)
 	case call:
-		return slices.ContainsFunc(x.args, hasAggregate)
+		return slices.ContainsFunc(x.args, func(arg expr) bool { return hasAggregate(arg, fns...) })
 	}
 	return false
 }

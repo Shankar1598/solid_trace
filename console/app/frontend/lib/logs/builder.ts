@@ -20,9 +20,12 @@ export interface Chip {
   value: ChipValue | ChipValue[] | null
 }
 
-export type AggregateFn = 'count' | 'dcount' | 'sum' | 'avg' | 'min' | 'max' | 'percentile'
+export type AggregateFn = 'count' | 'rate' | 'peak_rate' | 'dcount' | 'sum' | 'avg' | 'min' | 'max' | 'percentile'
 
-/** One of Summarize's functions: count() has no Field; percentile has its percentage. */
+/** The functions that take no Field: count(), rate() and peak_rate(). */
+export const WITHOUT_FIELD: ReadonlySet<AggregateFn> = new Set(['count', 'rate', 'peak_rate'])
+
+/** One of Summarize's functions: count(), rate() and peak_rate() have no Field; percentile has its percentage. */
 export interface Aggregate {
   fn: AggregateFn
   field?: string
@@ -117,7 +120,7 @@ function summarizeText(summarize: Summarize): string | null {
 }
 
 export function aggregateText(a: Aggregate): string {
-  if (a.fn === 'count') return 'count()'
+  if (WITHOUT_FIELD.has(a.fn)) return `${a.fn}()`
   const field = nameText(a.field ?? '')
   return a.fn === 'percentile' ? `percentile(${field}, ${a.percent ?? 95})` : `${a.fn}(${field})`
 }

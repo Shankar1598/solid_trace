@@ -147,6 +147,18 @@ class LogMonitorTest < ActiveSupport::TestCase
     assert_match "can't group by a time bin (time)", monitor.errors[:query].sole
   end
 
+  test "a Threshold monitor's Query can end in a summarize of a peak rate per group" do
+    stub_monitor_query_check(@project, columns: [
+      { "name" => "shop", "type" => "string" },
+      { "name" => "peak_rate_", "type" => "number", "agg" => "peak_rate" }
+    ])
+
+    monitor = build(:monitor, project: @project,
+      query: "['shop']\n| where path == \"/v2/search\"\n| summarize peak_rate() by shop")
+
+    assert monitor.valid?, monitor.errors.full_messages.to_sentence
+  end
+
   test "a Threshold monitor's check says when EventStore is unavailable or the dry run times out" do
     stub_request(:post, %r{/logs/query}).to_return(status: 502, body: "bad gateway")
     monitor = build(:monitor, project: @project)

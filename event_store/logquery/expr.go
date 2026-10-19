@@ -620,6 +620,7 @@ var scalarFunctions = map[string]function{
 
 var aggregateFunctions = map[string]bool{
 	"count": true, "countif": true, "dcount": true, "sum": true, "avg": true, "min": true, "max": true, "percentile": true,
+	"rate": true, "peak_rate": true,
 }
 
 func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates bool) (expr, error) {
@@ -777,6 +778,19 @@ func (c *compiler) aggregate(e *parser.CallExpr) (expr, error) {
 	case "count":
 		if len(e.Args) != 0 {
 			return nil, errorAt(e, "count takes no arguments; use dcount(x) for distinct values")
+		}
+		return aggregate{fn: name, t: numberType}, nil
+	case "rate", "peak_rate":
+		if len(e.Args) != 0 {
+			return nil, errorAt(e, "%s takes no arguments; filter with where first, as in where path == \"/\" | summarize %s()", name, name)
+		}
+		if name == "peak_rate" {
+			if !c.perSecond.logTime {
+				return nil, errorAt(e, "peak_rate() counts Logs in each second of their time, which these rows don't have")
+			}
+			if c.perSecond.bin%time.Second != 0 {
+				return nil, errorAt(e, "peak_rate() needs time bins of whole seconds, not %s", c.perSecond.bin)
+			}
 		}
 		return aggregate{fn: name, t: numberType}, nil
 	case "countif":
