@@ -44,8 +44,13 @@ func (q *Query) Bins() (Bins, bool) {
 	if !ok || size <= 0 || size%time.Microsecond != 0 || size != q.shape.hints[s.by[0].name].bin {
 		return Bins{}, false
 	}
+	// The range is left out, so a later run over another range takes the
+	// same bins: only rate() reads it, and a bin the cache keeps lies wholly
+	// in the range, so its rate is its count over its size.
+	keyed := *q
+	keyed.from, keyed.to = time.Time{}, time.Time{}
 	sum := sha256.New()
-	for _, part := range []string{q.Where(storage.LogColumns{}), q.Select(storage.LogColumns{}), q.TableSQL("", 0)} {
+	for _, part := range []string{q.Where(storage.LogColumns{}), q.Select(storage.LogColumns{}), keyed.TableSQL("", 0)} {
 		sum.Write([]byte(part))
 		sum.Write([]byte{0})
 	}
