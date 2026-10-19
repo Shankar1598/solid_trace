@@ -534,8 +534,8 @@ pause
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Start SolidTrace"
-say "deploy/install installs Docker if it's missing, then builds the images and"
-say "starts everything with these settings. The first build takes several minutes."
+say "deploy/install installs Docker if it's missing, then pulls the release's"
+say "images and starts everything with these settings."
 printf '\n'
 RUN_INSTALL=0
 if confirm "Run deploy/install now?"; then

@@ -1,26 +1,43 @@
 name: Release images
 
-# Builds Console's and EventStore's images for a published release and pushes
-# them to GitHub Container Registry, tagged with the release's tag and latest.
-# deploy/install pulls them when its checkout is at that tag.
+# Builds Console's and EventStore's images for a published release, for amd64
+# and arm64 (GCP's T2A, AWS's Graviton), and pushes them to GitHub Container
+# Registry, tagged with the release's tag and latest. deploy/install pulls them.
+#
+# Each architecture builds on its own native runner, as emulating arm64 makes
+# the cgo and asset builds far slower; a last job joins the two into one tag.
+# Run it by hand with a release's tag to rebuild that release's images.
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to build, such as v0.2.0
+        required: true
 
 permissions:
   contents: read
   packages: write
 
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
 jobs:
-  image:
-    runs-on: ubuntu-latest
+  build:
     strategy:
       matrix:
         app: [console, event_store]
+        platform:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.platform.runner }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
 
       - name: Name the image
         id: name
@@ -40,18 +57,67 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Pushed by digest only; the join job tags it.
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.app }}
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ steps.name.outputs.image }}:${{ github.event.release.tag_name }}
-            ${{ steps.name.outputs.image }}:latest
+          platforms: linux/${{ matrix.platform.arch }}
+          outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           # Links the package to this repository on GitHub.
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.version=${{ github.event.release.tag_name }}
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+            org.opencontainers.image.version=${{ env.TAG }}
+          cache-from: type=gha,scope=${{ matrix.app }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}-${{ matrix.platform.arch }}
+
+      - name: Record the digest
+        run: |
+          mkdir -p digests
+          echo '${{ steps.build.outputs.digest }}' > 'digests/${{ matrix.platform.arch }}'
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.app }}-${{ matrix.platform.arch }}
+          path: digests/*
+          retention-days: 1
+
+  join:
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        app: [console, event_store]
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.app }}-*
+          merge-multiple: true
+          path: digests
+
+      - name: Name the image
+        id: name
+        run: |
+          owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/$owner/solid-trace-$(echo '${{ matrix.app }}' | tr _ -)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag both architectures as one image
+        run: |
+          image='${{ steps.name.outputs.image }}'
+          docker buildx imagetools create \
+            --tag "$image:$TAG" --tag "$image:latest" \
+            $(for f in digests/*; do echo "$image@$(cat "$f")"; done)
+          docker buildx imagetools inspect "$image:$TAG"
