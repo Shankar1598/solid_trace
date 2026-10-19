@@ -62,7 +62,8 @@ export function Sidebar({ className }: SidebarProps) {
                     <DropdownMenuItem
                       key={org.slug}
                       aria-current={current ? 'page' : undefined}
-                      render={<Link href={current ? url : orgSwitchUrl(url, org.slug)} />}
+                      // The current Organization only closes the menu.
+                      render={current ? undefined : <Link href={orgSwitchUrl(url, org.slug)} />}
                     >
                       <span className="min-w-0 flex-1 truncate">{org.name}</span>
                       {current && <Check className="h-3.5 w-3.5" aria-label="Current Organization" />}
