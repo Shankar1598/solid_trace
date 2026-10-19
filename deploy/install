@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Installs SolidTrace on this machine with Docker Compose, or upgrades it.
 #
-#   deploy/install                  # from a clone of the repository
-#   git pull && deploy/install      # to upgrade
+#   deploy/install                                  # from a clone of the repository
+#   git fetch --tags && git checkout <tag> && deploy/install   # to upgrade
 #
 # Installs Docker if it is missing (Debian and Ubuntu), starts it at boot,
 # creates the data directories, EventStore's config and Console's secret, then
-# builds the images and starts the services, with Caddy in front if deploy/setup-gcp
-# turned HTTPS on. Safe to run again: it never overwrites the config or the secret.
+# starts the services, with Caddy in front if deploy/setup-gcp turned HTTPS on.
+# At a release tag it pulls that release's images from GitHub's registry; on any
+# other commit it builds them. Safe to run again: it never overwrites the config
+# or the secret.
 
 set -euo pipefail
 
@@ -102,9 +104,45 @@ env_value() { grep -sE "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2- || true; }
 
 https_on() { [[ $(env_value COMPOSE_PROFILES) == *https* ]]; }
 
+# set_version writes SOLIDTRACE_VERSION to deploy/.env: the release tag this
+# checkout is at, whose images are on GitHub's registry, or dev on any other commit.
+set_version() {
+  local version tmp
+  version=$(git -C "$DEPLOY_DIR" describe --tags --exact-match 2>/dev/null || true)
+  VERSION=${version:-dev}
+  tmp=$(mktemp)
+  grep -svE '^SOLIDTRACE_VERSION=' "$ENV_FILE" > "$tmp" || true
+  echo "SOLIDTRACE_VERSION=$VERSION" >> "$tmp"
+  # In place, so the file keeps its owner and mode (it holds secrets).
+  cat "$tmp" > "$ENV_FILE"
+  rm -f "$tmp"
+}
+
+# pull_images pulls a release's images, and fails if any isn't there.
+pull_images() {
+  local image
+  # Console's image is listed once for each service that runs it.
+  for image in $(compose config --images | sort -u); do
+    as_root docker pull --quiet "$image" >/dev/null || return 1
+  done
+}
+
 start_services() {
-  say "Building the images and starting the services"
-  compose up --detach --build --remove-orphans ||
+  local build=--build
+  if [[ $VERSION != dev ]]; then
+    say "Pulling SolidTrace $VERSION's images"
+    if pull_images; then
+      build=--no-build
+    else
+      printf '\nwarning: %s\n' "Couldn't pull $VERSION's images, so building them from this checkout instead." >&2
+    fi
+  fi
+  if [[ $build == --build ]]; then
+    say "Building the images and starting the services"
+  else
+    say "Starting the services"
+  fi
+  compose up --detach "$build" --remove-orphans ||
     die "The services did not start. See: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs"
   if https_on; then
     # A changed Caddyfile alone doesn't recreate Caddy.
@@ -143,6 +181,7 @@ start_docker
 create_data_dirs
 create_config
 create_secret
+set_version
 start_services
 wait_for Console http://127.0.0.1:3000/up
 wait_for EventStore http://127.0.0.1:4000/health
@@ -168,7 +207,8 @@ SolidTrace is running, and restarts with the machine.
   Config:   $CONFIG_FILE (restart after editing: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml restart event_store)
   Secrets:  $ENV_FILE
   Logs:     sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs -f
-  Upgrade:  git pull && deploy/install
+  Version:  $VERSION
+  Upgrade:  git fetch --tags && git checkout <tag> && deploy/install (on main: git pull && deploy/install)
 EOF
 
 if (( ${#HTTPS_FAILED[@]} )); then
