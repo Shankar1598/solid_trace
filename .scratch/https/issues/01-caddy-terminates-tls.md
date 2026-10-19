@@ -6,7 +6,7 @@
 **What to build:** the [spec](../spec.md)'s decisions, in `deploy/` and Console's production config.
 
 - [x] `deploy/caddy/Caddyfile`: `PUBLIC_HOST` on 443 to Console and on 4443 to ingest, the `shortlived` issuer, `default_sni`.
-- [x] A `caddy` service in `deploy/docker-compose.yml` under the `https` profile, with its data in `/var/lib/solid-trace/caddy`. Thruster's `FORWARD_HEADERS` comes from `deploy/.env`.
+- [x] A `caddy` service in `deploy/docker-compose.yml` under the `https` profile, with its data in `deploy/data/caddy`. Thruster's `FORWARD_HEADERS` comes from `deploy/.env`.
 - [x] `deploy/setup-gcp` asks whether to use HTTPS, suggests and checks the public IP, writes `PUBLIC_HOST`, the URLs, `FORWARD_HEADERS` and `COMPOSE_PROFILES`, and prints the GCP static IP and firewall commands.
 - [x] `deploy/install` creates Caddy's data directory, reloads Caddy's config, removes Caddy when HTTPS is off, checks both HTTPS URLs and prints them.
 - [x] Console's `production.rb`: `assume_ssl` and `force_ssl` from `CONSOLE_URL`, HSTS off.
