@@ -19,10 +19,10 @@ export interface Snippet {
 
 const NO_KEY = 'YOUR_PROJECT_KEY'
 
-/** The JSON Log route, for curl and shippers. */
-function logsRoute({ url, projectId }: IngestTarget): URL {
+/** The JSON Log route, for curl and shippers. It finds the Project from the key alone. */
+function logsRoute({ url }: IngestTarget): URL {
   const base = new URL(url)
-  base.pathname = `${base.pathname.replace(/\/+$/, '')}/api/${projectId}/logs`
+  base.pathname = `${base.pathname.replace(/\/+$/, '')}/api/logs`
   return base
 }
 
