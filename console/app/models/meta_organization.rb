@@ -28,4 +28,13 @@ module MetaOrganization
       settings.update!(meta_organization_seeded: true, meta_organization_id: organization.id)
     end
   end
+
+  # Makes user the Meta Organization's admin while it has never had a member,
+  # as when the person who set up a fresh install signs up first.
+  def self.join_first(user)
+    organization = InstanceSetting.current.meta_organization
+    return if organization.nil? || organization.all_organization_users.exists?
+
+    organization.organization_users.create!(user: user, role: :admin)
+  end
 end
