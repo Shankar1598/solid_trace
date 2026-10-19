@@ -2,8 +2,6 @@ package main_test
 
 import (
 	"encoding/json"
-	"slices"
-	"strings"
 	"testing"
 	"time"
 )
@@ -50,39 +48,6 @@ func seedRateLogs(t *testing.T, env *TestEnv) {
 	postAndProcess(t, env, logs...)
 }
 
-// rateTable runs a Query over [from, to) and returns its table's column
-// names, joined by commas, and its rows as JSON.
-func rateTable(t *testing.T, env *TestEnv, query string, from, to time.Time) (string, []string) {
-	t.Helper()
-	status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: query, From: from, To: to})
-	if status != 200 {
-		t.Fatalf("Query %q expected 200, got %d: %s", query, status, raw)
-	}
-	var answer tableAnswer
-	if err := json.Unmarshal(raw, &answer); err != nil || answer.Table == nil {
-		t.Fatalf("Query %q expected a table, got %s (%v)", query, raw, err)
-	}
-	var columns, rows []string
-	for _, col := range answer.Table.Columns {
-		columns = append(columns, col.Name)
-	}
-	for _, row := range answer.Table.Rows {
-		rows = append(rows, string(row))
-	}
-	return strings.Join(columns, ","), rows
-}
-
-// assertRates runs each Query over rateRange and checks its table.
-func assertRates(t *testing.T, env *TestEnv, cases map[string]tableCase, when string) {
-	t.Helper()
-	for query, want := range cases {
-		columns, rows := rateTable(t, env, query, rateRange.from, rateRange.to)
-		if columns != want.columns || !slices.Equal(rows, want.rows) {
-			t.Errorf("%s: %s\n want %s %v\n got  %s %v", when, query, want.columns, want.rows, columns, rows)
-		}
-	}
-}
-
 func TestRateAndPeakRateCountRequestsPerSecondOfEachBin(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
@@ -115,7 +80,7 @@ func TestRateAndPeakRateCountRequestsPerSecondOfEachBin(t *testing.T) {
 		search + `summarize count(), rate(), peak_rate()`:       {"count_,rate_,peak_rate_", []string{`[33,0.2,9]`}, false},
 		`where path == "/none" | summarize rate(), peak_rate()`: {"rate_,peak_rate_", []string{`[0,0]`}, false},
 	}
-	assertRates(t, env, cases, "in the hot table")
+	assertTablesIn(t, env, cases, rateRange.from, rateRange.to, "in the hot table")
 
 	// The chart's hints, and its totals over the whole range.
 	query := search + `summarize rate(), peak_rate() by bin(time, 1m)`
@@ -134,7 +99,7 @@ func TestRateAndPeakRateCountRequestsPerSecondOfEachBin(t *testing.T) {
 	// Hour 10 goes to a file.
 	env.ExportLogs(t)
 	assertHourFiles(t, env, 123, rateAt(0, 0, 0), 1)
-	assertRates(t, env, cases, "after the export")
+	assertTablesIn(t, env, cases, rateRange.from, rateRange.to, "after the export")
 }
 
 func TestPeakRateNeedsBinsOfWholeSecondsAndTheLogsTime(t *testing.T) {
