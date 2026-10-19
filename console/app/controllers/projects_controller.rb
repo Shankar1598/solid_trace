@@ -2,7 +2,7 @@
 
 class ProjectsController < ApplicationController
   layout "dashboard"
-  before_action :set_organization
+  before_action :set_current_org
   before_action :set_project, only: [ :show, :update, :destroy ]
 
   def index
@@ -57,10 +57,6 @@ class ProjectsController < ApplicationController
   end
 
   private
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-  end
 
   def set_project
     @project = @current_org.projects.find_by!(slug: params[:slug])
