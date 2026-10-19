@@ -1,6 +1,6 @@
 # 01: Inviting from the Members page fails with a 400
 
-**Status:** ready-for-agent
+**Status:** claimed
 **Spec:** [spec.md](../spec.md)
 
 **What to build:** the fix for the 400 alone, so that it can land before the rest.
