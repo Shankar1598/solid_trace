@@ -25,3 +25,18 @@ Both take no arguments (filter with `where` first), are numbers, and are named a
 - [ ] One check on the dev box's Logs: `peak_rate()` over 7 days against `count()` over the same range, both under a minute; the times go in the Comments.
 
 ## Comments
+
+### 2026-10-19 dev-box check
+
+Over the last 7 days of `solid-trace-project`'s Logs (2026-10-12T20:45:19Z to 2026-10-19T20:45:19Z), on the dev stack after the merge into `feature/request-rates`. Each Query ran once, POSTed to EventStore's `/api/1/logs/query` as the explorer sends it (`totals: true`, `timeout_seconds: 30`), timed with `curl -w '%{time_total}'`:
+
+| Query | Time | Result |
+|---|---|---|
+| `summarize count()` | 0.27 s | 1 row: 1,857,106 Logs |
+| `summarize peak_rate()` | 0.20 s | 1 row: 162 a second |
+| `summarize count() by bin_auto(time)` | 0.19 s | 52 rows of 3 h bins and 1 totals row; 1.9 KB answer |
+| `summarize rate(), peak_rate() by bin_auto(time)` | 0.54 s | 52 rows of 3 h bins and 1 totals row; 2.9 KB answer |
+
+- **Cold:** these were the first runs of these Queries after EventStore's restart about a minute before. The bin cache is in memory and starts empty, and its key is the Query's SQL, so it held none of these bins. The OS file cache may have held the Log files.
+- **Checks on the rows:** the first bin is partial (881 s in range): its rate is 1,871 / 881 = 2.12. The totals rate times the range's 604,800 s gives the count, 1,857,106.
+- The dev Logs end in the 03:00–06:00 UTC bin of 2026-10-19, so the range's last 5 of 57 bins have no rows.
