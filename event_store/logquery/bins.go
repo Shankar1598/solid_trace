@@ -44,8 +44,13 @@ func (q *Query) Bins() (Bins, bool) {
 	if !ok || size <= 0 || size%time.Microsecond != 0 || size != q.shape.hints[s.by[0].name].bin {
 		return Bins{}, false
 	}
+	// The range is left out, so a later run over another range takes the
+	// same bins: only rate() reads it, and a bin the cache keeps lies wholly
+	// in the range, so its rate is its count over its size.
+	keyed := *q
+	keyed.from, keyed.to = time.Time{}, time.Time{}
 	sum := sha256.New()
-	for _, part := range []string{q.Where(storage.LogColumns{}), q.Select(storage.LogColumns{}), q.TableSQL("", 0)} {
+	for _, part := range []string{q.Where(storage.LogColumns{}), q.Select(storage.LogColumns{}), keyed.TableSQL("", 0)} {
 		sum.Write([]byte(part))
 		sum.Write([]byte{0})
 	}
@@ -90,8 +95,10 @@ func (q *Query) isLogTime(x expr, at int) bool {
 }
 
 // definition finds the column name as the stage at index at of the tail
-// reads it: the value the latest extend or project before it gave the
-// column, and that stage's index, which the value is read at.
+// reads it: the value the latest stage before it that made the column gave
+// it, and that stage's index, which the value is read at. Any stage but
+// extend makes all its rows' columns, so a name it doesn't make, or makes
+// as a summarize's aggregate, has none.
 func (q *Query) definition(name string, at int) (expr, int, bool) {
 	for i := at - 1; i >= 0; i-- {
 		var columns []namedValue
@@ -100,6 +107,12 @@ func (q *Query) definition(name string, at int) (expr, int, bool) {
 			columns = st.columns
 		case projectStage:
 			columns = st.columns
+		case summarizeStage:
+			columns = st.by
+		case distinctStage:
+			columns = st.columns
+		case countStage:
+			return nil, 0, false
 		default:
 			continue
 		}
@@ -108,7 +121,7 @@ func (q *Query) definition(name string, at int) (expr, int, bool) {
 				return col.x, i, true
 			}
 		}
-		if _, ok := q.tail[i].(projectStage); ok {
+		if _, ok := q.tail[i].(extendStage); !ok {
 			return nil, 0, false
 		}
 	}

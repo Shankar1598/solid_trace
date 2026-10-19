@@ -6,7 +6,7 @@ import { valueText } from '../charts/axis'
 export type ColumnType = 'string' | 'number' | 'bool' | 'datetime' | 'timespan' | 'dynamic'
 
 /** The aggregate a column holds, when it is one of the last summarize's, kept through a plain rename. */
-export type Agg = 'count' | 'countif' | 'dcount' | 'sum' | 'avg' | 'min' | 'max' | 'percentile'
+export type Agg = 'count' | 'countif' | 'dcount' | 'sum' | 'avg' | 'min' | 'max' | 'percentile' | 'rate' | 'peak_rate'
 
 export interface TableColumn {
   name: string

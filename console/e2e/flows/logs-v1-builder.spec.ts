@@ -100,6 +100,29 @@ test('a Summarize shows a table, and More adds a search, a sort and a limit', as
   expect(errors).toEqual([])
 })
 
+test('a Summarize adds a rate and a peak rate, which take no Field', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page)
+
+  for (const fn of ['rate', 'peak_rate']) {
+    await page.getByRole('button', { name: 'Add a function' }).click()
+    await page.getByRole('option', { name: new RegExp(`^${fn}`) }).click()
+    await settled(page)
+  }
+  await expect(builderRow(page, 'Summarize')).toContainText('rate()')
+  await expect(builderRow(page, 'Summarize')).toContainText('peak_rate()')
+  await expect(builderRow(page, 'Summarize')).toContainText('bin_auto(time)')
+  await expect(page).toHaveURL(/peak_rate/)
+
+  // Over the whole range, without the time bin: one row of each.
+  await builderRow(page, 'Summarize').getByRole('button', { name: 'Remove bin_auto(time)' }).click()
+  await settled(page)
+  const table = page.locator('.sticky.top-0').filter({ hasText: 'peak_rate_' })
+  await expect(table).toBeVisible()
+  await expect(table).toContainText('rate_')
+  expect(errors).toEqual([])
+})
+
 test('Cancel stops a run, and Run starts it again', async ({ page }) => {
   const errors = watchErrors(page)
   await openLogs(page)
