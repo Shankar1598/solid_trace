@@ -89,7 +89,7 @@ func (b *flakyBucket) Delete(ctx context.Context, key string) error {
 
 // object is where the bucket keeps a Project's Log file of the hour of at.
 func (b *flakyBucket) object(projectID uint32, at time.Time, name string) string {
-	return filepath.Join(b.dir, filepath.FromSlash(logFileKey(projectID, at, name)))
+	return filepath.Join(b.dir, filepath.FromSlash(logObjectKey(projectID, at, name)))
 }
 
 // setupBucketTestEnv is setupTestEnv with the Log files kept in a bucket too,
@@ -107,10 +107,14 @@ func setupBucketTestEnv(t *testing.T, localCacheHours int) (*TestEnv, *flakyBuck
 	return env, bucket
 }
 
-// logFileKey is a Log file's key: its path under the files folder, and in the
-// bucket.
+// logFileKey is a Log file's logical key: its path under the files folder.
 func logFileKey(projectID uint32, at time.Time, name string) string {
 	return fmt.Sprintf("project=%d/day=%s/hour=%02d/%s", projectID, at.UTC().Format(time.DateOnly), at.UTC().Hour(), name)
+}
+
+// logObjectKey is a Log file's key in the bucket.
+func logObjectKey(projectID uint32, at time.Time, name string) string {
+	return "logs/" + logFileKey(projectID, at, name)
 }
 
 // localFile is where a Project's Log file of the hour of at is on local disk.
@@ -670,7 +674,7 @@ func TestLogFilesInAnS3BucketAreReadThroughHttpfs(t *testing.T) {
 	for _, object := range objects {
 		keys = append(keys, object.Key)
 	}
-	if wantKeys := []string{logFileKey(123, seven, "data.parquet"), logFileKey(123, nine, "data.parquet")}; !slices.Equal(keys, wantKeys) {
+	if wantKeys := []string{logObjectKey(123, seven, "data.parquet"), logObjectKey(123, nine, "data.parquet")}; !slices.Equal(keys, wantKeys) {
 		t.Errorf("Expected Retention to delete its file from the bucket, leaving %v, got %v", wantKeys, keys)
 	}
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"hot", "nine", "seven"}) {

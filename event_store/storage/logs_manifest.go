@@ -104,10 +104,21 @@ type logFile struct {
 }
 
 // key is the file's logical key, project=<id>/day=<YYYY-MM-DD>/hour=<HH>/<name>,
-// which is also its path under the files folder. Pins and tombstones go by
-// it, wherever the file's bytes are.
+// which is also its path under the files folder and, after logObjectPrefix,
+// its key in the bucket. Pins and tombstones go by it, wherever the file's
+// bytes are.
 func (f logFile) key() string {
 	return fmt.Sprintf("project=%d/day=%s/hour=%02d/%s", f.projectID, dayString(LogDay(f.hour)), f.hour.UTC().Hour(), f.name)
+}
+
+// logObjectPrefix begins the bucket key of every Log file, keeping them apart
+// from the Event archive's events/ keys.
+const logObjectPrefix = "logs/"
+
+// objectKey is the file's key in the bucket: its logical key under
+// logObjectPrefix.
+func (f logFile) objectKey() string {
+	return logObjectPrefix + f.key()
 }
 
 // keyArgs are the arguments of manifestConditionOfAKey.
