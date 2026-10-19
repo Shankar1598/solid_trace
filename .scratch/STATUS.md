@@ -39,6 +39,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
+- **Release v0.3.0** (2026-10-19, pre-release): Log files go under `logs/` in the bucket, beside `events/` (`49ce346`). Objects uploaded under the old keys aren't moved, so a bucket install must empty its Log files and `logs.duckdb` before upgrading.
 - **Release v0.2.0** (2026-10-19, pre-release): images for amd64 and arm64 on ghcr.io, built on native runners by `.github/workflows/release.yml` (also runnable by hand with a tag). `deploy/install` now always pulls a release's images (the checkout's tag, or the newest before it) and stops if a pull fails; `--build` builds from the checkout. The user is installing on GCP T2A (arm64) VMs.
 - **SolidTrace's own Logs**: on the VM, `deploy/install` and check the "SolidTrace" Project gets Logs from console, jobs, event_store, caddy and db_prepare ([03](self-logs/issues/03-vector-ships-solidtraces-logs.md)). Shippers inside the VPC send to `http://<internal-ip>:4000`, not Caddy (its certificate is for the public IP).
 - **HTTPS**: on the GCP VM, `deploy/setup-gcp` with HTTPS, then a valid lock at `https://<ip>` and an Event sent to `https://<ip>:4443` ([01](https/issues/01-caddy-terminates-tls.md)).
