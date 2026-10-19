@@ -4,8 +4,10 @@ module McpTools
   # Invites someone to an Organization by email, as its Members page does
   # (MemberInvite). For the Organization's admins.
   class InviteMember < Base
-    description "Invites someone to an Organization as a member, by email. Someone new to SolidTrace gets a user " \
-                "and an email with their password; an archived member is brought back. Only an Organization admin can."
+    description "Invites someone to an Organization as a member, by email. Someone new to SolidTrace is Invited: " \
+                "the answer's invite_link lets them set a password and sign in, and is emailed to them when mail is " \
+                "set up (emailed). Someone with a password is added at once; an archived member is brought back. " \
+                "Only an Organization admin can."
     writes!(open_world: true)
     takes_organization
     argument :email, { type: "string", description: "The email to invite." }, required: true
@@ -13,15 +15,16 @@ module McpTools
 
     def run
       invite = MemberInvite.call(organization: organization, inviter: user, email: arguments[:email], name: arguments[:name])
-      raise ToolError, "Not invited: #{invite.error}." unless invite.done?
+      raise ToolError, "Not invited: #{invite.error}." unless invite.done? || invite.already_invited?
 
       member = invite.membership
       json({
         organization: organization.slug,
         member: { name: member.user.name, email: member.user.email, role: member.role },
-        outcome: invite.outcome.to_s,
+        outcome: invite.already_invited? ? "already_invited" : invite.outcome.to_s,
         emailed: invite.emailed,
-      }, link: links.members(organization))
+        invite_link: (links.invite(member.user, organization) if member.user.invited?),
+      }.compact, link: links.members(organization))
     rescue Pundit::NotAuthorizedError
       raise ToolError, "Only an Organization admin can invite members."
     end
