@@ -24,7 +24,7 @@ module MetaOrganization
       project.project_keys.build(public_key: key)
       project.save!
       oldest_user = User.order(:created_at, :id).first
-      organization.organization_users.create!(user: oldest_user, role: :admin) if oldest_user
+      organization.add_admin(oldest_user) if oldest_user
       settings.update!(meta_organization_seeded: true, meta_organization_id: organization.id)
     end
   end
@@ -35,6 +35,6 @@ module MetaOrganization
     organization = InstanceSetting.current.meta_organization
     return if organization.nil? || organization.all_organization_users.exists?
 
-    organization.organization_users.create!(user: user, role: :admin)
+    organization.add_admin(user)
   end
 end
