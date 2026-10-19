@@ -216,10 +216,23 @@ func TestArchivedEventsAreUploadedAndReadFromTheBucket(t *testing.T) {
 	assertArchiveDays(t, env.localArchive(t), "", []time.Time{september30, october1}, "on local disk before the upload")
 	assertEventAnswers(t, env, contextUUID, want, "before the upload")
 
+	logs := captureLogs(t)
 	env.UploadEventArchive(t)
-	assertArchiveDays(t, archiveObjects(t, bucket), "events/", []time.Time{september30, october1}, "in the bucket")
+	objects := archiveObjects(t, bucket)
+	assertArchiveDays(t, objects, "events/", []time.Time{september30, october1}, "in the bucket")
 	if local := env.localArchive(t); len(local) != 0 {
 		t.Errorf("Expected no local copy or date folder kept after the upload, got %v", local)
+	}
+	// Each file's upload and the deletion of its local copy are logged.
+	for _, message := range []string{"Uploaded an Event archive file to the bucket", "Deleted the local copy of an uploaded Event archive file"} {
+		if got := strings.Count(logs.String(), message); got != len(objects) {
+			t.Errorf("Expected %q logged for each of %d files, got %d in %s", message, len(objects), got, logs.String())
+		}
+	}
+	for _, key := range objects {
+		if !strings.Contains(logs.String(), key) {
+			t.Errorf("Expected %s named in the log, got %s", key, logs.String())
+		}
 	}
 	assertEventAnswers(t, env, contextUUID, want, "read from the bucket")
 
