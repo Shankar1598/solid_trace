@@ -64,7 +64,7 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
 
     dashboard = @organization.dashboards.find_by!(name: "Latency")
     assert_redirected_to dashboard_url(dashboard, org_slug: @organization.slug)
-    assert_equal [ "24h", "off", @member.id ], [ dashboard.default_range, dashboard.auto_refresh, dashboard.created_by_id ]
+    assert_equal [ "24h", "15s", @member.id ], [ dashboard.default_range, dashboard.auto_refresh, dashboard.created_by_id ]
   end
 
   test "a member makes a Dashboard from the explorer as JSON" do
