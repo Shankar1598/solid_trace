@@ -16,7 +16,7 @@ import (
 // binCachedQueries are charts made bin by bin: by an hour, a bin smaller and
 // one larger than an hour, a day, and a column binned before the
 // summarize, with aggregates of every kind that can't be added up across
-// bins, and a where that drops Logs.
+// bins, rates, and a where that drops Logs.
 var binCachedQueries = []string{
 	"summarize count() by bin(time, 1h), user",
 	"summarize count(), dcount(user) by bin(time, 20m)",
@@ -24,6 +24,7 @@ var binCachedQueries = []string{
 	"summarize count() by bin(time, 1d), user",
 	`where user != "nobody" | extend half = bin(time, 30m) | summarize count(), p = percentile(ms, 50) by half`,
 	`where user == "ada" | summarize count(), slowest = max(ms) by bin(time, 1h)`,
+	"summarize rate(), peak_rate() by bin(time, 1h), user",
 }
 
 // binCacheRange is the range every bin cache test charts: from part-way
@@ -177,6 +178,30 @@ func TestTheBinCacheAnswersAsARunWithoutItAcrossExportsLateLogsRetentionAndDelet
 	}
 	if err := json.Unmarshal([]byte(binnedTable(t, env, binCachedQueries[0])), &empty); err != nil || len(empty.Rows) != 0 {
 		t.Errorf("Expected no rows once the Project is deleted, got %v (%v)", empty.Rows, err)
+	}
+}
+
+func TestARateChartRunOverALaterRangeTakesTheBinsBothHold(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	postChartLogs(t, env)
+	env.ExportLogs(t)
+
+	// Ten minutes later, as a Dashboard refreshes, the range's ends cut
+	// other hours, whose rates are worked out afresh.
+	query := "summarize count(), rate(), peak_rate() by bin(time, 1h)"
+	later := struct{ from, to time.Time }{binCacheRange.from.Add(10 * time.Minute), binCacheRange.to.Add(10 * time.Minute)}
+	binnedTable(t, env, query)
+	hitsBefore, _ := binCacheStats(env)
+	refreshed := binnedTableIn(t, env, query, later.from, later.to)
+	hitsAfter, _ := binCacheStats(env)
+	// Of the 29 whole hours both ranges hold, two hold hot Logs.
+	if got := hitsAfter - hitsBefore; got != 27 {
+		t.Errorf("Expected the later run to take 27 hours from the cache, got %d", got)
+	}
+	env.LogStore.UseBinCache(0)
+	if uncached := binnedTableIn(t, env, query, later.from, later.to); refreshed != uncached {
+		t.Errorf("%s\n from the bin cache: %s\n without it:         %s", query, refreshed, uncached)
 	}
 }
 

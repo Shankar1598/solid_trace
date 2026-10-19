@@ -112,7 +112,7 @@ func TestRateAndPeakRateCountRequestsPerSecondOfEachBin(t *testing.T) {
 			`["2026-10-02T10:00:00Z",6]`, `["2026-10-02T10:01:00Z",12]`, `["2026-10-02T10:02:00Z",15]`, `["2026-10-02T10:03:00Z",12]`,
 		}, false},
 		// With no time bin, the bin is the range: 33 requests in 165s.
-		search + `summarize count(), rate(), peak_rate()`: {"count_,rate_,peak_rate_", []string{`[33,0.2,9]`}, false},
+		search + `summarize count(), rate(), peak_rate()`:       {"count_,rate_,peak_rate_", []string{`[33,0.2,9]`}, false},
 		`where path == "/none" | summarize rate(), peak_rate()`: {"rate_,peak_rate_", []string{`[0,0]`}, false},
 	}
 	assertRates(t, env, cases, "in the hot table")
