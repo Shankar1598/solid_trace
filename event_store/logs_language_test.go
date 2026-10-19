@@ -220,7 +220,13 @@ type tableAnswer struct {
 // table's column names and its rows as JSON, one row per element.
 func runTable(t *testing.T, env *TestEnv, query string) ([]string, []string) {
 	t.Helper()
-	status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: query, From: allTime.from, To: allTime.to})
+	return runTableIn(t, env, query, allTime.from, allTime.to)
+}
+
+// runTableIn is runTable over [from, to).
+func runTableIn(t *testing.T, env *TestEnv, query string, from, to time.Time) ([]string, []string) {
+	t.Helper()
+	status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{Query: query, From: from, To: to})
 	if status != 200 {
 		t.Fatalf("Query %q expected 200, got %d: %s", query, status, raw)
 	}
@@ -249,10 +255,17 @@ type tableCase struct {
 	unordered bool
 }
 
+// assertTables runs each Query over all time and checks its table.
 func assertTables(t *testing.T, env *TestEnv, cases map[string]tableCase, when string) {
 	t.Helper()
+	assertTablesIn(t, env, cases, allTime.from, allTime.to, when)
+}
+
+// assertTablesIn is assertTables over [from, to).
+func assertTablesIn(t *testing.T, env *TestEnv, cases map[string]tableCase, from, to time.Time, when string) {
+	t.Helper()
 	for query, want := range cases {
-		columns, rows := runTable(t, env, query)
+		columns, rows := runTableIn(t, env, query, from, to)
 		if want.unordered {
 			slices.Sort(rows)
 			want.rows = slices.Sorted(slices.Values(want.rows))
