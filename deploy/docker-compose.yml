@@ -130,10 +130,12 @@ services:
     image: timberio/vector:0.58.0-alpine
     network_mode: host
     environment:
-      # The Meta Organization Project's key, which deploy/install writes.
+      # The same key db_prepare seeds the Project with.
       META_PROJECT_KEY: ${META_PROJECT_KEY:-}
-      # Lets vector.yaml read the key above. Off by default since Vector 0.5x,
-      # so a config from elsewhere can't read the environment; this one is ours.
+      # The only way the key above reaches vector.yaml (checked on 0.58.0): off
+      # by default since Vector 0.5x, so a config from elsewhere can't read the
+      # environment; this one is ours. Without it Vector sends the literal
+      # ${META_PROJECT_KEY} and every request gets a 401.
       VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION: "true"
     volumes:
       # Read-only, but access to the socket is still root on the VM.
