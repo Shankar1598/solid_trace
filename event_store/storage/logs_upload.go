@@ -81,7 +81,7 @@ func (s *LogStore) location(file logFile) string {
 	if file.local || s.bucket == nil {
 		return s.files.path(file)
 	}
-	return s.bucket.URL(file.key())
+	return s.bucket.URL(file.objectKey())
 }
 
 // UploadLogFiles uploads every published Log file not yet in the bucket,
@@ -158,7 +158,7 @@ func (s *LogStore) uploadLogFile(ctx context.Context, file logFile) error {
 	}
 	putCtx, cancel := context.WithTimeout(ctx, uploadTimeout)
 	defer cancel()
-	if err := s.bucket.Put(putCtx, key, s.files.path(file)); err != nil {
+	if err := s.bucket.Put(putCtx, file.objectKey(), s.files.path(file)); err != nil {
 		if listed, listErr := s.logFileListed(file); listErr == nil && !listed {
 			return nil
 		}
@@ -404,7 +404,7 @@ func (s *LogStore) deleteTombstonedObjects() error {
 		}
 		tried = true
 		ctx, cancel := context.WithTimeout(context.Background(), deleteObjectTimeout)
-		err := s.bucket.Delete(ctx, file.key())
+		err := s.bucket.Delete(ctx, file.objectKey())
 		cancel()
 		if err != nil {
 			failed = fmt.Errorf("delete %s from the bucket: %w", file.key(), err)
