@@ -78,3 +78,35 @@ func TestAnObjectPassThatTriesNoDeletionLeavesAFailingBucketFailing(t *testing.T
 		t.Errorf("Expected the recovery logged once, got %d:\n%s", got, logs.String())
 	}
 }
+
+// Each Log file uploaded, and each local copy evicted, is logged with its key.
+func TestUploadsAndEvictionsAreLogged(t *testing.T) {
+	store := newTestLogStore(t)
+	if err := store.UseObjectStore(NewDirStore(filepath.Join(t.TempDir(), "bucket")), 24); err != nil {
+		t.Fatal(err)
+	}
+	hour := october(1, 12, 0)
+	appendLogs(t, store, hour, stringLog(hour.Add(30*time.Minute), nil))
+	if err := store.ExportLogs(october(1, 15, 0)); err != nil {
+		t.Fatal(err)
+	}
+	key := logFile{projectID: promotionProject, hour: hour, name: "data.parquet"}.key()
+
+	var logs bytes.Buffer
+	logger.L = logf.New(logf.Opts{Writer: &logs})
+	t.Cleanup(logger.Init)
+
+	if err := store.UploadLogFiles(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "Uploaded a Log file to the bucket") || !strings.Contains(logs.String(), key) {
+		t.Errorf("Expected the upload of %s to be logged, got %s", key, logs.String())
+	}
+	logs.Reset()
+	if err := store.EvictLogFiles(october(3, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "Evicted the local copy of an uploaded Log file") || !strings.Contains(logs.String(), key) {
+		t.Errorf("Expected the eviction of %s to be logged, got %s", key, logs.String())
+	}
+}

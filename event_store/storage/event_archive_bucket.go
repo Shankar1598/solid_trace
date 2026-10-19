@@ -254,6 +254,7 @@ func (w *DuckDBWriter) uploadArchiveFile(ctx context.Context, key, file string) 
 	w.archiveMu.Lock()
 	w.remoteArchive[key] = info.Size()
 	w.archiveMu.Unlock()
+	logger.L.Info("Uploaded an Event archive file to the bucket", "file", key)
 	return nil
 }
 
@@ -278,6 +279,7 @@ func (w *DuckDBWriter) deleteUploadedArchiveFiles(files []string) error {
 			}
 			continue
 		}
+		logger.L.Info("Deleted the local copy of an uploaded Event archive file", "file", w.archiveKey(file))
 		// Fails, harmlessly, while the folder holds other files.
 		_ = os.Remove(filepath.Dir(file))
 	}

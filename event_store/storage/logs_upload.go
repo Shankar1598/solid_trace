@@ -169,6 +169,7 @@ func (s *LogStore) uploadLogFile(ctx context.Context, file logFile) error {
 	if _, err := s.db.ExecContext(ctx, "UPDATE logs.log_files SET remote = true WHERE "+manifestConditionOfAKey, file.keyArgs()...); err != nil {
 		return fmt.Errorf("mark %s uploaded: %w", key, err)
 	}
+	logger.L.Info("Uploaded a Log file to the bucket", "file", key)
 	return nil
 }
 
@@ -273,6 +274,9 @@ func (s *LogStore) evictBatch(files []logFile) (evicted, pinned []logFile, err e
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		discardConn(conn)
 		return nil, pinned, err
+	}
+	for _, file := range evicted {
+		logger.L.Info("Evicted the local copy of an uploaded Log file", "file", file.key())
 	}
 	return evicted, pinned, removeErr
 }
