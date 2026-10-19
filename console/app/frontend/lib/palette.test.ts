@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { filterGroups, paletteGroups, queryLine, registerPaletteSource, type PaletteContext, type PaletteItem } from './palette'
+import { filterGroups, organizationItems, paletteGroups, queryLine, registerPaletteSource, type PaletteContext, type PaletteItem } from './palette'
 
-const context: PaletteContext = { viewer: 1, orgSlug: 'acme', projects: [{ name: 'Storefront', slug: 'storefront' }], dashboards: [], monitors: [] }
+const context: PaletteContext = { viewer: 1, orgSlug: 'acme', organizations: [], projects: [{ name: 'Storefront', slug: 'storefront' }], dashboards: [], monitors: [] }
 const item = (group: string, label: string, detail?: string): PaletteItem => ({ id: `${group}/${label}`, group, label, detail, href: '/' })
 
 describe('the palette registry', () => {
@@ -43,6 +43,20 @@ describe('searching the palette', () => {
     expect(filterGroups(groups, 'theme').map(g => g.group)).toEqual(['Actions'])
     expect(filterGroups(groups, '  ')).toEqual(groups)
     expect(filterGroups(groups, 'nothing')).toEqual([])
+  })
+})
+
+describe('the palette\'s Organizations', () => {
+  it('are the viewer\'s other Organizations, each going to its Issues', () => {
+    const organizations = [{ name: 'Acme', slug: 'acme' }, { name: 'Meta', slug: 'meta' }, { name: 'Zeta', slug: 'zeta' }]
+    expect(organizationItems({ ...context, organizations })).toEqual([
+      { id: 'organization/meta', group: 'Organizations', label: 'Meta', detail: 'Organization', href: '/meta/issues' },
+      { id: 'organization/zeta', group: 'Organizations', label: 'Zeta', detail: 'Organization', href: '/zeta/issues' },
+    ])
+  })
+
+  it('are none for a viewer in one Organization', () => {
+    expect(organizationItems({ ...context, organizations: [{ name: 'Acme', slug: 'acme' }] })).toEqual([])
   })
 })
 

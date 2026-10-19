@@ -97,6 +97,8 @@ export interface Integration {
 export interface SharedProps {
   current_user: User | null
   current_org: Organization | null
+  /** The viewer's Organizations by name, for the sidebar's selector and the command palette; absent outside an Organization. */
+  organizations?: { name: string; slug: string }[] | null
   /** The Organization's Projects, for the command palette. */
   org_projects: { name: string; slug: string }[] | null
   /** The Organization's Dashboards, for the command palette and Add to dashboard. */
