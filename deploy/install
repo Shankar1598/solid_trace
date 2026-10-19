@@ -3,14 +3,16 @@
 #
 #   deploy/install                                  # from a clone of the repository
 #   git fetch --tags && git checkout <tag> && deploy/install   # to upgrade
+#   deploy/install --build                          # build the images from this checkout
 #
 # Installs Docker if it is missing (Debian and Ubuntu), starts it at boot,
 # creates the data directories, EventStore's config, Console's secret and the
 # Meta Organization's project key, then
 # starts the services, with Caddy in front if deploy/setup-gcp turned HTTPS on.
-# At a release tag it pulls that release's images from GitHub's registry; on any
-# other commit it builds them. Safe to run again: it never overwrites the config
-# or the secrets.
+# It pulls a release's images from GitHub's registry, for amd64 or arm64: the
+# release this checkout is at, or on any other commit the newest release before
+# it. With --build it builds them from this checkout instead. Safe to run again:
+# it never overwrites the config or the secrets.
 
 set -euo pipefail
 
@@ -121,12 +123,18 @@ env_value() { grep -sE "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2- || true; }
 
 https_on() { [[ $(env_value COMPOSE_PROFILES) == *https* ]]; }
 
-# set_version writes SOLIDTRACE_VERSION to deploy/.env: the release tag this
-# checkout is at, whose images are on GitHub's registry, or dev on any other commit.
+# set_version writes SOLIDTRACE_VERSION to deploy/.env: the release whose images
+# run, the one this checkout is at or the newest before it, or dev with --build.
 set_version() {
-  local version tmp
-  version=$(git -C "$DEPLOY_DIR" describe --tags --exact-match 2>/dev/null || true)
-  VERSION=${version:-dev}
+  local tmp
+  if (( BUILD )); then
+    VERSION=dev
+  else
+    VERSION=$(git -C "$DEPLOY_DIR" describe --tags --abbrev=0 --match 'v*' 2>/dev/null) ||
+      die "No release tag before this commit, so no images to pull. Check out a release (git fetch --tags && git checkout <tag>), or build them: deploy/install --build"
+    [[ $VERSION == "$(git -C "$DEPLOY_DIR" describe --tags --exact-match 2>/dev/null)" ]] ||
+      printf '\nwarning: %s\n' "This commit isn't a release, so it runs $VERSION's images, which may not match this checkout. To run this checkout's code: deploy/install --build" >&2
+  fi
   tmp=$(mktemp)
   grep -svE '^SOLIDTRACE_VERSION=' "$ENV_FILE" > "$tmp" || true
   echo "SOLIDTRACE_VERSION=$VERSION" >> "$tmp"
@@ -135,28 +143,24 @@ set_version() {
   rm -f "$tmp"
 }
 
-# pull_images pulls a release's images, and fails if any isn't there.
+# pull_images pulls a release's images, and stops if any isn't there.
 pull_images() {
   local image
   # Console's image is listed once for each service that runs it.
   for image in $(compose config --images | sort -u); do
-    as_root docker pull --quiet "$image" >/dev/null || return 1
+    as_root docker pull --quiet "$image" >/dev/null ||
+      die "Couldn't pull $image. Its release may still be building (see https://github.com/Shankar1598/solid_trace/actions), or build from this checkout: deploy/install --build"
   done
 }
 
 start_services() {
-  local build=--build
-  if [[ $VERSION != dev ]]; then
-    say "Pulling SolidTrace $VERSION's images"
-    if pull_images; then
-      build=--no-build
-    else
-      printf '\nwarning: %s\n' "Couldn't pull $VERSION's images, so building them from this checkout instead." >&2
-    fi
-  fi
-  if [[ $build == --build ]]; then
+  local build=--no-build
+  if (( BUILD )); then
+    build=--build
     say "Building the images and starting the services"
   else
+    say "Pulling SolidTrace $VERSION's images"
+    pull_images
     say "Starting the services"
   fi
   compose up --detach "$build" --remove-orphans ||
@@ -196,6 +200,8 @@ wait_for() {
 check_old_paths
 # deploy/setup-gcp runs this check before it asks anything.
 [[ ${1:-} == --check-old-paths ]] && exit 0
+BUILD=0
+[[ ${1:-} == --build ]] && BUILD=1
 install_docker
 start_docker
 create_data_dirs
@@ -245,7 +251,7 @@ SolidTrace is running, and restarts with the machine.
             whose admin is the first user to sign up. Recent ones also in:
             sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs -f
   Version:  $VERSION
-  Upgrade:  git fetch --tags && git checkout <tag> && deploy/install (on main: git pull && deploy/install)
+  Upgrade:  git fetch --tags && git checkout <tag> && deploy/install (main's code: git pull && deploy/install --build)
 
 Shipping Logs to a Project (Vector, Fluent Bit, curl):
   Inside the VPC:  $internal_logs_url
