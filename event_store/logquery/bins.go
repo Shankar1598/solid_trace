@@ -95,8 +95,10 @@ func (q *Query) isLogTime(x expr, at int) bool {
 }
 
 // definition finds the column name as the stage at index at of the tail
-// reads it: the value the latest extend or project before it gave the
-// column, and that stage's index, which the value is read at.
+// reads it: the value the latest stage before it that made the column gave
+// it, and that stage's index, which the value is read at. Any stage but
+// extend makes all its rows' columns, so a name it doesn't make, or makes
+// as a summarize's aggregate, has none.
 func (q *Query) definition(name string, at int) (expr, int, bool) {
 	for i := at - 1; i >= 0; i-- {
 		var columns []namedValue
@@ -105,6 +107,12 @@ func (q *Query) definition(name string, at int) (expr, int, bool) {
 			columns = st.columns
 		case projectStage:
 			columns = st.columns
+		case summarizeStage:
+			columns = st.by
+		case distinctStage:
+			columns = st.columns
+		case countStage:
+			return nil, 0, false
 		default:
 			continue
 		}
@@ -113,7 +121,7 @@ func (q *Query) definition(name string, at int) (expr, int, bool) {
 				return col.x, i, true
 			}
 		}
-		if _, ok := q.tail[i].(projectStage); ok {
+		if _, ok := q.tail[i].(extendStage); !ok {
 			return nil, 0, false
 		}
 	}
