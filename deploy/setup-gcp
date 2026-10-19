@@ -190,12 +190,12 @@ finish() {
 #
 #   deploy/setup-gcp
 
-TOTAL_STAGES=8
+TOTAL_STAGES=9
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$DEPLOY_DIR/.env"
 CONFIG_FILE="$DEPLOY_DIR/config/event_store.yml"
-SERVICE_ACCOUNT=solidtrace-event-store
+SERVICE_ACCOUNT=solid-trace
 
 as_root() { if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
 compose() { as_root docker compose --project-directory "$DEPLOY_DIR" -f "$DEPLOY_DIR/docker-compose.yml" "$@"; }
@@ -234,6 +234,17 @@ write_config() { printf '%s\n' "$1" > "$CONFIG_FILE"; }
 gcp_metadata() {
   curl -fsS -m 2 -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/$1" 2>/dev/null || true
 }
+
+# open_cloud_shell opens Cloud Shell once a run; later stages reuse its tab.
+CLOUD_SHELL_OPEN=0
+open_cloud_shell() {
+  (( CLOUD_SHELL_OPEN )) && return
+  open_url "https://shell.cloud.google.com/?show=terminal"
+  CLOUD_SHELL_OPEN=1
+}
+
+# command_block COMMAND prints a command to copy, in bold.
+command_block() { printf '\n%s%s%s\n\n' "$BOLD" "$1" "$RESET"; }
 
 # public_host_problem HOST prints why Let's Encrypt can't give HOST a
 # certificate, or nothing. HOST is an IPv4 address or a domain.
@@ -355,7 +366,7 @@ if [[ $HTTPS == yes ]]; then
     static_ip=$(timeout 20 gcloud compute addresses list --project="$project" --filter="address=$external_ip" \
       --format='value(name)' --quiet 2>/dev/null | head -n1 || true)
   fi
-  open_url "https://shell.cloud.google.com/?show=terminal"
+  open_cloud_shell
   if [[ -n $static_ip ]]; then
     note "$external_ip is already a static address ($static_ip)."
   fi
@@ -432,52 +443,79 @@ while :; do
   STORAGE=""
 done
 write_env STORAGE "$STORAGE"
-# Two GCS stages fewer.
-[[ $STORAGE == gcs ]] || TOTAL_STAGES=$((TOTAL_STAGES - 2))
+# Three GCS stages fewer.
+[[ $STORAGE == gcs ]] || TOTAL_STAGES=$((TOTAL_STAGES - 3))
 
 if [[ $STORAGE == gcs ]]; then
+  # This machine's project and region, when it's on GCP. Stage 2 may have read them.
+  [[ -n ${project-} ]] || project=$(gcp_metadata project/project-id)
+  if [[ -z ${region-} ]]; then
+    zone=$(gcp_metadata instance/zone); zone=${zone##*/}
+    region=${zone%-*}
+  fi
+
   # ── 5 ───────────────────────────────────────────────────────────────────
-  stage "GCS: the bucket and a service account"
-  say "EventStore gets a bucket and a service account of its own, which may"
-  say "read, write and delete the bucket's objects."
+  stage "GCS: the bucket"
+  say "EventStore gets a bucket of its own for Log files and the Event archive."
   printf '\n'
-  ask_required GCP_PROJECT_ID "Google Cloud project ID:"
+  if [[ -n $project ]]; then
+    note "GCP says this machine is in project $project."
+    ask_default GCP_PROJECT_ID "Google Cloud project ID:" "$project"
+  else
+    ask_required GCP_PROJECT_ID "Google Cloud project ID:"
+  fi
+  write_env GCP_PROJECT_ID "$GCP_PROJECT_ID"
+  printf '\n'
+  bucket_exists=0
+  confirm "Have you already created the bucket?" && bucket_exists=1
   while :; do
-    ask_required GCS_BUCKET "Bucket name, new or existing:"
+    ask_required GCS_BUCKET "Bucket name:"
     [[ $GCS_BUCKET =~ ^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$ ]] && break
     warn "Bucket names are 3 to 63 lowercase letters, digits, dots, dashes and underscores."
     GCS_BUCKET=""
   done
-  ask_default GCS_LOCATION "Bucket location, near this machine:" us-central1
-  write_env GCP_PROJECT_ID "$GCP_PROJECT_ID"
   write_env GCS_BUCKET "$GCS_BUCKET"
-  write_env GCS_LOCATION "$GCS_LOCATION"
-  printf '\n'
-  open_url "https://shell.cloud.google.com/?show=terminal"
-  step "In Cloud Shell (or anywhere gcloud is signed in to the project), run these."
-  note "Skip the first if the bucket exists, the second if the service account does."
-  printf '\n%s' "$BOLD"
-  cat <<EOF
-gcloud storage buckets create gs://$GCS_BUCKET --project=$GCP_PROJECT_ID --location=$GCS_LOCATION --uniform-bucket-level-access
-
-gcloud iam service-accounts create $SERVICE_ACCOUNT --project=$GCP_PROJECT_ID --display-name="SolidTrace EventStore"
-
-gcloud storage buckets add-iam-policy-binding gs://$GCS_BUCKET --member=serviceAccount:$SERVICE_ACCOUNT@$GCP_PROJECT_ID.iam.gserviceaccount.com --role=roles/storage.objectUser
-EOF
-  printf '%s\n' "$RESET"
-  pause "Press Enter once they've run"
+  if (( bucket_exists )); then
+    pause
+  else
+    ask_default GCS_LOCATION "Bucket location, near this machine:" "${region:-us-central1}"
+    write_env GCS_LOCATION "$GCS_LOCATION"
+    printf '\n'
+    open_cloud_shell
+    step "In Cloud Shell, create it:"
+    command_block "gcloud storage buckets create gs://$GCS_BUCKET --project=$GCP_PROJECT_ID --location=$GCS_LOCATION --uniform-bucket-level-access"
+    pause "Press Enter once it's run"
+  fi
 
   # ── 6 ───────────────────────────────────────────────────────────────────
-  stage "GCS: the HMAC key"
-  say "EventStore reaches GCS through its S3 API, with an HMAC key for the"
-  say "service account."
+  stage "GCS: the $SERVICE_ACCOUNT service account"
+  SERVICE_ACCOUNT_EMAIL=$SERVICE_ACCOUNT@$GCP_PROJECT_ID.iam.gserviceaccount.com
+  say "EventStore reaches the bucket as the $SERVICE_ACCOUNT service account, which"
+  say "may read, write and delete the bucket's objects."
   printf '\n'
+  if ! confirm "Have you already created the $SERVICE_ACCOUNT service account?"; then
+    printf '\n'
+    open_cloud_shell
+    step "In Cloud Shell, create it:"
+    command_block "gcloud iam service-accounts create $SERVICE_ACCOUNT --project=$GCP_PROJECT_ID --display-name=SolidTrace"
+    pause "Press Enter once it's run"
+    printf '\n'
+  fi
+  open_cloud_shell
+  step "In Cloud Shell, let it use gs://$GCS_BUCKET:"
+  command_block "gcloud storage buckets add-iam-policy-binding gs://$GCS_BUCKET --member=serviceAccount:$SERVICE_ACCOUNT_EMAIL --role=roles/storage.objectUser"
+  pause "Press Enter once it's run"
+
+  # ── 7 ───────────────────────────────────────────────────────────────────
+  stage "GCS: the HMAC key"
+  say "EventStore reaches GCS through its S3 API, with an HMAC key for $SERVICE_ACCOUNT."
+  printf '\n'
+  if [[ -n $(_existing SOLIDTRACE_OBJECT_STORE_KEY_ID || true) ]]; then
+    note "A key is saved already: press Enter twice to keep it."
+  fi
+  open_cloud_shell
   step "In Cloud Shell, run:"
-  printf '\n%s' "$BOLD"
-  cat <<EOF
-gcloud storage hmac create $SERVICE_ACCOUNT@$GCP_PROJECT_ID.iam.gserviceaccount.com --project=$GCP_PROJECT_ID
-EOF
-  printf '%s\n' "$RESET"
+  command_block "gcloud storage hmac create $SERVICE_ACCOUNT_EMAIL --project=$GCP_PROJECT_ID"
   step "It prints an accessId and a secret. The secret is shown only once."
   note "Or in the Cloud console: Cloud Storage → Settings → Interoperability →"
   note "Create a key for a service account → $SERVICE_ACCOUNT."
@@ -489,7 +527,7 @@ EOF
   pause
 fi
 
-# ── 7 ─────────────────────────────────────────────────────────────────────
+# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "EventStore's config"
 CONFIG_CHANGED=0
 if [[ ! -f $CONFIG_FILE ]]; then
@@ -532,7 +570,7 @@ else
 fi
 pause
 
-# ── 8 ─────────────────────────────────────────────────────────────────────
+# ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Start SolidTrace"
 say "deploy/install installs Docker if it's missing, then pulls the release's"
 say "images and starts everything with these settings."
