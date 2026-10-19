@@ -16,6 +16,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Where things stand
 
+- **SolidTrace's own Logs** ([spec](self-logs/spec.md), [tickets](self-logs/issues/)): planned with the user on 2026-10-19. A VM install seeds a Meta Organization with a "SolidTrace" Project, and Vector ships every container's output from Docker to it, through a new key-only route, `POST /api/logs` ([ADR 0011](../docs/adr/0011-meta-organization-and-vector-reads-docker-logs.md)). 01 and 02 are `ready-for-agent`; 03 is blocked by them. Also on 2026-10-19: EventStore logs each file it uploads to the bucket and each local copy it deletes (`8b30ab6`), and the message queue's rows are deleted after 30 days (`cc3ce5e`).
 - **HTTPS** ([spec](https/spec.md), [01](https/issues/01-caddy-terminates-tls.md)): planned with the user and built on `main` (2026-10-19). With HTTPS on in `deploy/setup-gcp`, Caddy terminates TLS for the VM's bare public IP, with Let's Encrypt's 160-hour certificates: Console on 443, ingest on 4443 ([ADR 0010](../docs/adr/0010-caddy-terminates-tls.md)). Checked with `caddy validate`, `docker compose config` and Console's production config; reviewed. `ready-for-human`: the real certificate needs the user's GCP VM.
 - **Merged into `main`** (2026-10-18), each with `--no-ff` and no conflicts: `feature/mcp` (Logs v1 and v2, the looks pass, the MCP server, bugs 01 to 07), then `feature/console-bugs` (bugs 08, 09, 11, 12), then `feature/logs-v2` (`deploy/install`, `deploy/setup` and production email settings). On the merge: typecheck, vitest (399), the 288 Rails tests for the changed code and the 12 affected Playwright flows pass, among them the SQL flow on a rebuilt EventStore. The full Go, Rails and Playwright suites are for the user to run. Performance testing and the real GCS run happen on `main`.
 
@@ -38,6 +39,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
+- **SolidTrace's own Logs**: `/implement` [01](self-logs/issues/01-key-only-log-ingest.md) and [02](self-logs/issues/02-seed-the-meta-organization.md), then [03](self-logs/issues/03-vector-ships-solidtraces-logs.md).
 - **HTTPS**: on the GCP VM, `deploy/setup-gcp` with HTTPS, then a valid lock at `https://<ip>` and an Event sent to `https://<ip>:4443` ([01](https/issues/01-caddy-terminates-tls.md)).
 - **MCP server** ([spec](mcp/spec.md)): the whole-effort review found nothing high or medium in the code ([11](mcp/issues/11-whole-effort-review.md), `ready-for-human`). Claude Code was connected to the dev stack's endpoint on `main` (2026-10-18) and called every tool but the key, invite, `create_project` and `run_monitor` ones: all worked. Its findings are in [13](mcp/issues/13-claude-code-check-findings.md) (`needs-triage`); the main one is that `create_monitor` can't make a Monitor that is off. With the user: [bugs 05](bugs/issues/05-production-mail-unconfigured.md), what's left of the production mail settings, and the four Console bugs questions above.
 
@@ -60,6 +62,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
+| SolidTrace's own Logs | 0 / 3 | [spec.md](self-logs/spec.md) |
 | HTTPS | 0 / 1 | [01](https/issues/01-caddy-terminates-tls.md) |
 | Upgrade Pebble and DuckDB | 3 / 0 | 03 closed as `wontfix` |
 | Phone layout | 0 / 1 | [01](phone-layout/issues/01-phone-layout.md) |
