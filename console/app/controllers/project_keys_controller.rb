@@ -3,7 +3,7 @@
 # A Project's keys, which only the Organization's admins change
 # (ProjectKeyPolicy).
 class ProjectKeysController < ApplicationController
-  before_action :set_organization
+  before_action :set_current_org
   before_action :set_project
 
   def create
@@ -28,10 +28,6 @@ class ProjectKeysController < ApplicationController
   end
 
   private
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-  end
 
   def set_project
     @project = @current_org.projects.find_by!(slug: params[:project_slug])

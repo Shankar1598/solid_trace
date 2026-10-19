@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 class MentionsController < ApplicationController
+  before_action :set_current_org
+
   def index
-    @current_org = Current.user.organizations.find_by!(slug: params[:org_slug])
     @users = @current_org.users
 
     # Support query filtering for remote-filtering mode

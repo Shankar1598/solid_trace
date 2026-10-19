@@ -5,6 +5,7 @@ class ApplicationController < ActionController::Base
   allow_browser versions: :modern
 
   include Authentication
+  include CurrentOrganization
   include InertiaShare
   include Pundit::Authorization
 

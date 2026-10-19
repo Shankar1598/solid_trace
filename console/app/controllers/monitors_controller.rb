@@ -8,7 +8,7 @@ class MonitorsController < ApplicationController
 
   layout "dashboard"
 
-  before_action :set_organization
+  before_action :set_current_org
   before_action :set_monitor, only: %i[show edit update destroy enable disable run]
   before_action :set_time_range, only: :preview
 
@@ -108,10 +108,6 @@ class MonitorsController < ApplicationController
   end
 
   private
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-  end
 
   def set_monitor
     @monitor = @current_org.monitors.find(params[:id])
