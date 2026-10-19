@@ -69,6 +69,8 @@ export const SCALAR_FUNCTIONS: FunctionInfo[] = [
 export const AGGREGATES: FunctionInfo[] = [
   { name: 'count', args: '', info: 'The number of rows.' },
   { name: 'countif', args: 'condition', info: 'The number of rows the condition is true for.' },
+  { name: 'rate', args: '', info: 'The rows per second, averaged over the time bin or range.' },
+  { name: 'peak_rate', args: '', info: 'The rows in the busiest second of the time bin or range.' },
   { name: 'avg', args: 'x', info: 'The mean of a number.' },
   { name: 'sum', args: 'x', info: 'The sum of a number.' },
   { name: 'min', args: 'x', info: 'The least value.' },

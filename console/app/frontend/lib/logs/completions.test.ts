@@ -74,6 +74,8 @@ describe('Fields and functions', () => {
     expect(aggregates?.options[0]).toMatchObject({ label: 'count', type: 'function', detail: '()' })
     expect(aggregates?.options.find(o => o.label === 'percentile')?.detail).toBe('(x, p)')
     expect(aggregates?.options.find(o => o.label === 'avg')).toMatchObject({ apply: 'avg()', cursor: 4, reopen: true })
+    expect(aggregates?.options.find(o => o.label === 'rate')?.detail).toBe('()')
+    expect(aggregates?.options.find(o => o.label === 'peak_rate')?.detail).toBe('()')
 
     expect(labels("['my-api'] | summarize avg(du")).toContain('duration_ms')
     expect(labels("['my-api'] | summarize avg(du")).not.toContain('count')

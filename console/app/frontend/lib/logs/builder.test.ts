@@ -284,6 +284,13 @@ describe('Summarize, sort and limit', () => {
     expect(summarizeColumns(summarize)).toEqual(['service', 'time', 'count_', 'avg_duration_ms', 'percentile_duration_ms_99'])
   })
 
+  it('writes rates and peak rates, which take no Field, as count does', () => {
+    const rates: Summarize = { aggregates: [{ fn: 'rate' }, { fn: 'peak_rate' }], by: [{ field: 'time', bin: 'auto' }, { field: 'shop' }] }
+
+    expect(stagesOf({ filters: [], search: '', summarize: rates })).toBe('summarize rate(), peak_rate() by bin_auto(time), shop')
+    expect(summarizeColumns(rates)).toEqual(['time', 'shop', 'rate_', 'peak_rate_'])
+  })
+
   it('drops a sort on columns a changed Summarize no longer makes', () => {
     const builder = setSort(setSummarize(EMPTY_BUILDER, summarize), [{ column: 'avg_duration_ms', asc: true }, { column: 'service', asc: true }])
     const changed = setSummarize(builder, { aggregates: [{ fn: 'count' }], by: [{ field: 'service' }] })
