@@ -22,6 +22,9 @@ class InstanceSetting < ApplicationRecord
     They are on by default. Turn them off if you don't trust every member of every Organization not to slow the install down.
   TEXT
 
+  # The Meta Organization (ADR 0011), until it is deleted.
+  belongs_to :meta_organization, class_name: "Organization", optional: true
+
   validates :sql_queries_enabled, inclusion: { in: [ true, false ] }
   validates :default_log_retention_days, numericality: { only_integer: true, greater_than: 0 }
 
