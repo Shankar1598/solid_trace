@@ -20,6 +20,7 @@ export interface Snippet {
 const NO_KEY = 'YOUR_PROJECT_KEY'
 
 /** The JSON Log route, for curl and shippers. It finds the Project from the key alone. */
+// Project#logs_url in app/models/project.rb builds the same path.
 function logsRoute({ url }: IngestTarget): URL {
   const base = new URL(url)
   base.pathname = `${base.pathname.replace(/\/+$/, '')}/api/logs`
