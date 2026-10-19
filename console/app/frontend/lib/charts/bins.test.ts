@@ -29,18 +29,32 @@ describe('bin size', () => {
 })
 
 describe('bin span', () => {
-  it('reads from the bin\'s start to its end in local time, to the axis\' precision', () => {
-    expect(binSpan(at(2026, 9, 9, 19, 2), 60, 'HH:mm')).toBe('19:02–19:03')
-    expect(binSpan(at(2026, 9, 9, 19, 2, 10), 10, 'HH:mm:ss')).toBe('19:02:10–19:02:20')
+  // A range within one day, and one across days.
+  const day = { from: new Date(2026, 9, 9, 18), to: new Date(2026, 9, 9, 20) }
+  const days = { from: new Date(2026, 9, 5), to: new Date(2026, 9, 12) }
+
+  it('reads from the bin\'s start to its end in local time, to the minute or the second', () => {
+    expect(binSpan(at(2026, 9, 9, 19, 2), 60, day)).toBe('19:02–19:03')
+    expect(binSpan(at(2026, 9, 9, 19, 2, 10), 10, day)).toBe('19:02:10–19:02:20')
   })
 
-  it('gives the date once when the bin starts and ends on the same day', () => {
-    expect(binSpan(at(2026, 9, 9, 10), 3_600, 'MMM dd HH:mm')).toBe('Oct 09 10:00–11:00')
-    expect(binSpan(at(2026, 9, 9, 23), 3_600, 'MMM dd HH:mm')).toBe('Oct 09 23:00–Oct 10 00:00')
+  it('gives seconds when the bin is not a whole number of minutes', () => {
+    expect(binSpan(at(2026, 9, 9, 19, 1, 30), 90, day)).toBe('19:01:30–19:03:00')
   })
 
-  it('gives both days for a bin of days', () => {
-    expect(binSpan(at(2026, 9, 9), 86_400, 'MMM dd')).toBe('Oct 09–Oct 10')
-    expect(binSpan(at(2026, 9, 5), 604_800, 'MMM dd')).toBe('Oct 05–Oct 12')
+  it('gives milliseconds when the bin is not a whole number of seconds', () => {
+    expect(binSpan(at(2026, 9, 9, 19, 2, 10), 0.5, day)).toBe('19:02:10.000–19:02:10.500')
+    expect(binSpan(at(2026, 9, 9, 19, 2, 10), 1.5, day)).toBe('19:02:10.000–19:02:11.500')
+  })
+
+  it('gives the date once when the range spans days and the bin starts and ends on the same day', () => {
+    expect(binSpan(at(2026, 9, 9, 10), 3_600, days)).toBe('Oct 09 10:00–11:00')
+    expect(binSpan(at(2026, 9, 9, 23), 3_600, days)).toBe('Oct 09 23:00–Oct 10 00:00')
+  })
+
+  it('gives both days for a bin of days, with their time when it does not start at local midnight', () => {
+    expect(binSpan(at(2026, 9, 9), 86_400, day)).toBe('Oct 09–Oct 10')
+    expect(binSpan(at(2026, 9, 5), 604_800, days)).toBe('Oct 05–Oct 12')
+    expect(binSpan(at(2026, 9, 8, 20), 86_400, days)).toBe('Oct 08 20:00–Oct 09 20:00')
   })
 })
