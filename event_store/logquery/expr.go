@@ -246,7 +246,7 @@ func (e aggregate) typ() valueType   { return e.t }
 
 // condition compiles an expression that must be a condition.
 func (c *compiler) condition(e parser.Expr) (expr, error) {
-	x, err := c.expr(e, anyType, false)
+	x, err := c.expr(e, anyType, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -258,8 +258,9 @@ func (c *compiler) condition(e parser.Expr) (expr, error) {
 
 // expr compiles an expression. want is the type its context asks for, which
 // decides the type an Attribute is read as; anyType reads it as dynamic.
-// aggregates allows summarize's functions.
-func (c *compiler) expr(e parser.Expr, want valueType, aggregates bool) (expr, error) {
+// aggregates, if not nil, allows summarize's functions, and is what its
+// rates are counted in.
+func (c *compiler) expr(e parser.Expr, want valueType, aggregates *rateBasis) (expr, error) {
 	switch e := e.(type) {
 	case *parser.Ident:
 		return c.name(e, want)
@@ -363,7 +364,7 @@ func parseDateTime(text string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func (c *compiler) unary(e *parser.UnaryExpr, aggregates bool) (expr, error) {
+func (c *compiler) unary(e *parser.UnaryExpr, aggregates *rateBasis) (expr, error) {
 	if lit, ok := e.X.(*parser.BasicLit); ok && lit.Kind == parser.NumberLiteral {
 		l, err := numberLiteral(lit, e.Op == parser.TokenMinus)
 		return literal{l}, err
@@ -428,7 +429,7 @@ var textOps = map[parser.TokenKind]struct {
 	parser.TokenNECI:            {matchEquals, false, true},
 }
 
-func (c *compiler) binary(e *parser.BinaryExpr, aggregates bool) (expr, error) {
+func (c *compiler) binary(e *parser.BinaryExpr, aggregates *rateBasis) (expr, error) {
 	switch e.Op {
 	case parser.TokenAnd, parser.TokenOr:
 		x, err := c.condition(e.X)
@@ -488,7 +489,7 @@ func (c *compiler) source(span parser.Span) string {
 
 // compare compiles x <op> y. The side with a type decides the type the
 // other is read as.
-func (c *compiler) compare(e *parser.BinaryExpr, op compareOp, aggregates bool) (expr, error) {
+func (c *compiler) compare(e *parser.BinaryExpr, op compareOp, aggregates *rateBasis) (expr, error) {
 	y, err := c.expr(e.Y, anyType, aggregates)
 	if err != nil {
 		return nil, err
@@ -532,7 +533,7 @@ func concrete(t valueType) valueType {
 
 // in compiles x in (a, b, …) as x == a or x == b …, and !in as its negation,
 // so !in keeps Logs missing the Field.
-func (c *compiler) in(e *parser.BinaryExpr, aggregates bool) (expr, error) {
+func (c *compiler) in(e *parser.BinaryExpr, aggregates *rateBasis) (expr, error) {
 	list := e.Y.(*parser.ListExpr)
 	var match expr
 	for _, elem := range list.Elems {
@@ -559,7 +560,7 @@ func (c *compiler) in(e *parser.BinaryExpr, aggregates bool) (expr, error) {
 	return match, nil
 }
 
-func (c *compiler) arith(e *parser.BinaryExpr, aggregates bool) (expr, error) {
+func (c *compiler) arith(e *parser.BinaryExpr, aggregates *rateBasis) (expr, error) {
 	x, err := c.expr(e.X, numberType, aggregates)
 	if err != nil {
 		return nil, err
@@ -623,7 +624,7 @@ var aggregateFunctions = map[string]bool{
 	"rate": true, "peak_rate": true,
 }
 
-func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates bool) (expr, error) {
+func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates *rateBasis) (expr, error) {
 	name := e.Func.Name
 	arity := func(n int, usage string) error {
 		if len(e.Args) != n {
@@ -683,10 +684,10 @@ func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates bool) (ex
 		return call{fn: "bin", args: []expr{x, size}, t: timeType}, nil
 	}
 	if aggregateFunctions[name] {
-		if !aggregates {
+		if aggregates == nil {
 			return nil, errorAt(e.Func, "%s() only works in summarize", name)
 		}
-		return c.aggregate(e)
+		return c.aggregate(e, *aggregates)
 	}
 	fn, ok := scalarFunctions[name]
 	if !ok {
@@ -734,7 +735,7 @@ func checkCall(name string, e *parser.CallExpr, args []expr) error {
 // timespan compiles an argument that must be a timespan written in the
 // Query.
 func (c *compiler) timespan(e parser.Expr) (time.Duration, error) {
-	x, err := c.expr(e, timespanType, false)
+	x, err := c.expr(e, timespanType, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -771,8 +772,9 @@ func autoBin(span time.Duration) time.Duration {
 	return ladder[len(ladder)-1]
 }
 
-// aggregate compiles one of summarize's functions.
-func (c *compiler) aggregate(e *parser.CallExpr) (expr, error) {
+// aggregate compiles one of summarize's functions, whose rates are counted
+// in basis.
+func (c *compiler) aggregate(e *parser.CallExpr, basis rateBasis) (expr, error) {
 	name := e.Func.Name
 	switch name {
 	case "count":
@@ -780,17 +782,23 @@ func (c *compiler) aggregate(e *parser.CallExpr) (expr, error) {
 			return nil, errorAt(e, "count takes no arguments; use dcount(x) for distinct values")
 		}
 		return aggregate{fn: name, t: numberType}, nil
-	case "rate", "peak_rate":
-		if len(e.Args) != 0 {
-			return nil, errorAt(e, "%s takes no arguments; filter with where first, as in where path == \"/\" | summarize %s()", name, name)
+	case "rate":
+		if err := rateArgs(e); err != nil {
+			return nil, err
 		}
-		if name == "peak_rate" {
-			if !c.perSecond.logTime {
-				return nil, errorAt(e, "peak_rate() counts Logs in each second of their time, which these rows don't have")
-			}
-			if c.perSecond.bin%time.Second != 0 {
-				return nil, errorAt(e, "peak_rate() needs time bins of whole seconds, not %s", c.perSecond.bin)
-			}
+		if basis.otherTime {
+			return nil, errorAt(e, "rate() needs a time bin of the Logs' own time, such as bin(time, 1m)")
+		}
+		return aggregate{fn: name, t: numberType}, nil
+	case "peak_rate":
+		if err := rateArgs(e); err != nil {
+			return nil, err
+		}
+		if !basis.logTime {
+			return nil, errorAt(e, "peak_rate() counts rows in each second of the Logs' own time, which these rows don't have")
+		}
+		if basis.bin%time.Second != 0 {
+			return nil, errorAt(e, "peak_rate() needs time bins of whole seconds, not %s", basis.bin)
 		}
 		return aggregate{fn: name, t: numberType}, nil
 	case "countif":
@@ -810,7 +818,7 @@ func (c *compiler) aggregate(e *parser.CallExpr) (expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		p, err := c.expr(e.Args[1], numberType, false)
+		p, err := c.expr(e.Args[1], numberType, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -831,7 +839,7 @@ func (c *compiler) aggregate(e *parser.CallExpr) (expr, error) {
 		}
 		return aggregate{fn: name, x: x, t: numberType}, nil
 	case "min", "max":
-		x, err := c.expr(e.Args[0], anyType, false)
+		x, err := c.expr(e.Args[0], anyType, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -846,7 +854,7 @@ func (c *compiler) aggregate(e *parser.CallExpr) (expr, error) {
 		}
 		return aggregate{fn: name, x: x, t: x.typ()}, nil
 	default: // dcount
-		x, err := c.expr(e.Args[0], anyType, false)
+		x, err := c.expr(e.Args[0], anyType, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -856,7 +864,7 @@ func (c *compiler) aggregate(e *parser.CallExpr) (expr, error) {
 
 // number compiles an argument that must be a number.
 func (c *compiler) number(e parser.Expr, fn string) (expr, error) {
-	x, err := c.expr(e, numberType, false)
+	x, err := c.expr(e, numberType, nil)
 	if err != nil {
 		return nil, err
 	}
