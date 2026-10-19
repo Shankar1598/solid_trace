@@ -222,6 +222,17 @@ if https_on; then
   check_https Console "$console_url/up"
   check_https Ingest "$ingest_url/health"
 fi
+# Shippers inside the VPC send to the internal IP on 4000: not through Caddy,
+# whose certificate names the public host, nor out through the external IP,
+# which GCP bills.
+internal_logs_url="http://${host:-this-machine}:4000/api/logs"
+public_ingest_url=$(env_value PUBLIC_INGEST_URL)
+https_on && public_ingest_url=${public_ingest_url:-$ingest_url}
+if [[ -n $public_ingest_url ]]; then
+  external_logs_url="$public_ingest_url/api/logs"
+else
+  external_logs_url="http://<public IP>:4000/api/logs, once the firewall opens port 4000 (or turn HTTPS on in deploy/setup-gcp)"
+fi
 cat <<EOF
 
 SolidTrace is running, and restarts with the machine.
@@ -235,6 +246,14 @@ SolidTrace is running, and restarts with the machine.
             sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs -f
   Version:  $VERSION
   Upgrade:  git fetch --tags && git checkout <tag> && deploy/install (on main: git pull && deploy/install)
+
+Shipping Logs to a Project (Vector, Fluent Bit, curl):
+  Inside the VPC:  $internal_logs_url
+                   Plain HTTP. The firewall must let the VPC reach port 4000, never the internet.
+  From outside:    $external_logs_url
+  Auth header:     Authorization: Bearer <the Project's key>
+  The Project's Logs page has its key and ready-made Vector and Fluent Bit config.
+  Sentry SDKs inside the VPC: the Project's DSN with its host swapped for ${host:-this-machine}:4000, over http.
 EOF
 
 if (( ${#HTTPS_FAILED[@]} )); then
