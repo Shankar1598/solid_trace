@@ -9,10 +9,10 @@ describe('snippets for an empty Project', () => {
     expect(snippets(ingest).map(s => s.label)).toEqual(['curl', 'Vector', 'Fluent Bit', 'Sentry SDK'])
   })
 
-  it('fills in the Project\'s Log route and key', () => {
-    expect(code('curl')).toContain("'http://localhost:4000/api/7/logs'")
+  it('fills in the key-only Log route and the Project\'s key', () => {
+    expect(code('curl')).toContain("'http://localhost:4000/api/logs'")
     expect(code('curl')).toContain("-H 'Authorization: Bearer abc123'")
-    expect(code('vector')).toContain('uri: http://localhost:4000/api/7/logs')
+    expect(code('vector')).toContain('uri: http://localhost:4000/api/logs')
     expect(code('vector')).toContain('token: abc123')
   })
 
@@ -20,7 +20,7 @@ describe('snippets for an empty Project', () => {
     const fluent = code('fluent-bit')
     expect(fluent).toMatch(/Host +localhost\n/)
     expect(fluent).toMatch(/Port +4000\n/)
-    expect(fluent).toMatch(/URI +\/api\/7\/logs\n/)
+    expect(fluent).toMatch(/URI +\/api\/logs\n/)
     expect(fluent).toMatch(/Header +Authorization Bearer abc123/)
     expect(fluent).toMatch(/Json_date_key +time\n/)
     expect(fluent).not.toContain('tls')
@@ -28,7 +28,7 @@ describe('snippets for an empty Project', () => {
     const secure = code('fluent-bit', { ...ingest, url: 'https://logs.example.com/ingest/' })
     expect(secure).toMatch(/Host +logs.example.com\n/)
     expect(secure).toMatch(/Port +443\n/)
-    expect(secure).toMatch(/URI +\/ingest\/api\/7\/logs\n/)
+    expect(secure).toMatch(/URI +\/ingest\/api\/logs\n/)
     expect(secure).toMatch(/tls +On\n/)
   })
 
