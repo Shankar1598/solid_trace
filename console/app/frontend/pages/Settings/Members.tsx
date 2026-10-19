@@ -31,13 +31,15 @@ interface SettingsMembersProps {
 export default function SettingsMembers({ organization, can_manage_members }: SettingsMembersProps) {
   const { current_user } = usePage<SharedProps>().props
 
-  const { data, setData, post, processing, errors, reset } = useForm({
+  const { data, setData, post, processing, errors, reset, transform } = useForm({
     email: '',
     name: ''
   })
 
   const submitMember: React.FormEventHandler = (e) => {
     e.preventDefault()
+    // The controller reads params[:member].
+    transform((data) => ({ member: data }))
     post(`/${organization.slug}/settings/organization_users`, {
       onSuccess: () => {
         reset()
