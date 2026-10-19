@@ -120,6 +120,8 @@ func TestRatesNeedBinsOfTheLogsTime(t *testing.T) {
 			Message: `rate() needs a time bin of the Logs' own time, such as bin(time, 1m)`, Line: 1, Column: 37, EndLine: 1, EndColumn: 43},
 		`extend t = time - 1h | summarize n = rate() by bin(t, 1m), service`: {
 			Message: `rate() needs a time bin of the Logs' own time, such as bin(time, 1m)`, Line: 1, Column: 38, EndLine: 1, EndColumn: 44},
+		`summarize rate() by time`: {
+			Message: `rate() needs a time bin of the Logs' own time, such as bin(time, 1m)`, Line: 1, Column: 11, EndLine: 1, EndColumn: 17},
 		`summarize rate(path)`: {
 			Message: `rate takes no arguments; filter with where first, as in where path == "/" | summarize rate()`, Line: 1, Column: 11, EndLine: 1, EndColumn: 21},
 	}
