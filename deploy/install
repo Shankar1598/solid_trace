@@ -106,23 +106,14 @@ create_config() {
   fi
 }
 
-create_secret() {
-  if grep -qs '^SECRET_KEY_BASE=.' "$ENV_FILE"; then
+# ensure_env_secret NAME BYTES MESSAGE appends NAME, BYTES random bytes in hex,
+# to deploy/.env, readable by its owner alone, unless it already has a value.
+ensure_env_secret() {
+  if grep -qs "^$1=." "$ENV_FILE"; then
     return
   fi
-  say "Writing Console's secret to $ENV_FILE"
-  (umask 077 && echo "SECRET_KEY_BASE=$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
-}
-
-# create_meta_project_key writes the project key of the Meta Organization's
-# Project, which receives SolidTrace's own Logs (docs/adr/0011). db_prepare
-# gives the Project this key when it seeds it, and Vector sends with it.
-create_meta_project_key() {
-  if grep -qs '^META_PROJECT_KEY=.' "$ENV_FILE"; then
-    return
-  fi
-  say "Writing the Meta Organization's project key to $ENV_FILE"
-  (umask 077 && echo "META_PROJECT_KEY=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
+  say "$3"
+  (umask 077 && echo "$1=$(od -An -N"$2" -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
 }
 
 # env_value KEY prints KEY's value in deploy/.env, or nothing.
@@ -209,8 +200,11 @@ install_docker
 start_docker
 create_data_dirs
 create_config
-create_secret
-create_meta_project_key
+ensure_env_secret SECRET_KEY_BASE 64 "Writing Console's secret to $ENV_FILE"
+# The project key of the Meta Organization's Project, which receives
+# SolidTrace's own Logs (docs/adr/0011). db_prepare gives the Project this key
+# when it seeds it, and Vector sends with it.
+ensure_env_secret META_PROJECT_KEY 16 "Writing the Meta Organization's project key to $ENV_FILE"
 set_version
 start_services
 wait_for Console http://127.0.0.1:3000/up
@@ -239,7 +233,7 @@ SolidTrace is running, and restarts with the machine.
   Logs:     SolidTrace's own, in Console's "SolidTrace" Organization and Project,
             whose admin is the first user to sign up. Recent ones also in:
             sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs -f
-  Version: $VERSION
+  Version:  $VERSION
   Upgrade:  git fetch --tags && git checkout <tag> && deploy/install (on main: git pull && deploy/install)
 EOF
 
