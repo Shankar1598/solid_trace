@@ -74,7 +74,7 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 		return nil, err
 	}
 	q := &Query{from: bounds.From.UTC(), to: bounds.To.UTC(), text: source, tree: tree}
-	c := &compiler{text: source, bounds: bounds, scope: logScope(), reads: map[attrKey]bool{}, query: q}
+	c := &compiler{text: source, bounds: bounds, scope: logScope(), reads: map[attrKey]bool{}}
 	inHead := true
 	for _, s := range tree.Stages {
 		if inHead {
@@ -89,7 +89,7 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 				c.bounds.From, c.bounds.To = q.from, q.to
 			}
 		}
-		compiled, err := c.stage(s)
+		compiled, err := c.stage(s, q)
 		if err != nil {
 			return nil, err
 		}
@@ -143,11 +143,6 @@ type compiler struct {
 	scope  scope
 	// tail is set once past the leading filter stages.
 	tail bool
-	// query is the Query being compiled, whose tail so far says what a
-	// summarize's by columns bin.
-	query *Query
-	// perSecond is what the summarize being compiled counts peak_rate() in.
-	perSecond perSecond
 	// reads are the Attributes, by type, the tail reads from Logs; names
 	// are the Attributes it names, in order.
 	reads     map[attrKey]bool

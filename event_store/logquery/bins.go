@@ -102,9 +102,10 @@ func (q *Query) isLogTime(x expr, at int) bool {
 func (q *Query) definition(name string, at int) (expr, int, bool) {
 	for i := at - 1; i >= 0; i-- {
 		var columns []namedValue
+		extend := false
 		switch st := q.tail[i].(type) {
 		case extendStage:
-			columns = st.columns
+			columns, extend = st.columns, true
 		case projectStage:
 			columns = st.columns
 		case summarizeStage:
@@ -121,7 +122,7 @@ func (q *Query) definition(name string, at int) (expr, int, bool) {
 				return col.x, i, true
 			}
 		}
-		if _, ok := q.tail[i].(extendStage); !ok {
+		if !extend {
 			return nil, 0, false
 		}
 	}

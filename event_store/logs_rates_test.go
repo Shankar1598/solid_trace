@@ -102,7 +102,7 @@ func TestRateAndPeakRateCountRequestsPerSecondOfEachBin(t *testing.T) {
 	assertTablesIn(t, env, cases, rateRange.from, rateRange.to, "after the export")
 }
 
-func TestPeakRateNeedsBinsOfWholeSecondsAndTheLogsTime(t *testing.T) {
+func TestRatesNeedBinsOfTheLogsTime(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
@@ -111,9 +111,15 @@ func TestPeakRateNeedsBinsOfWholeSecondsAndTheLogsTime(t *testing.T) {
 		`summarize rate(), peak_rate() by service, bin(time, 1500ms)`: {
 			Message: `peak_rate() needs time bins of whole seconds, not 1.5s`, Line: 1, Column: 19, EndLine: 1, EndColumn: 30},
 		`summarize n = count() by bin(time, 1m) | summarize peak_rate()`: {
-			Message: `peak_rate() counts Logs in each second of their time, which these rows don't have`, Line: 1, Column: 52, EndLine: 1, EndColumn: 63},
+			Message: `peak_rate() counts rows in each second of the Logs' own time, which these rows don't have`, Line: 1, Column: 52, EndLine: 1, EndColumn: 63},
 		`extend time = time | summarize n = count() by bin(time, 1m) | summarize peak_rate()`: {
-			Message: `peak_rate() counts Logs in each second of their time, which these rows don't have`, Line: 1, Column: 73, EndLine: 1, EndColumn: 84},
+			Message: `peak_rate() counts rows in each second of the Logs' own time, which these rows don't have`, Line: 1, Column: 73, EndLine: 1, EndColumn: 84},
+		// rate() divides by the seconds of a bin of the Logs' own time, so
+		// a bin of another time is refused, not read as the whole range.
+		`extend time = time - 1h | summarize rate() by bin(time, 1m)`: {
+			Message: `rate() needs a time bin of the Logs' own time, such as bin(time, 1m)`, Line: 1, Column: 37, EndLine: 1, EndColumn: 43},
+		`extend t = time - 1h | summarize n = rate() by bin(t, 1m), service`: {
+			Message: `rate() needs a time bin of the Logs' own time, such as bin(time, 1m)`, Line: 1, Column: 38, EndLine: 1, EndColumn: 44},
 		`summarize rate(path)`: {
 			Message: `rate takes no arguments; filter with where first, as in where path == "/" | summarize rate()`, Line: 1, Column: 11, EndLine: 1, EndColumn: 21},
 	}
@@ -130,6 +136,10 @@ func TestPeakRateNeedsBinsOfWholeSecondsAndTheLogsTime(t *testing.T) {
 		`extend t = bin(time, 1m) | summarize peak_rate() by t`,
 		`summarize rate() by bin(time, 500ms)`,
 		`summarize n = count() by bin(time, 1m) | summarize rate()`,
+		`summarize n = count() by bin(time, 1m) | summarize rate() by time`,
+		`extend t = time - 1h | summarize rate() by bin(time, 1m), bin(t, 1h)`,
+		// After distinct, peak_rate() counts the rows in each second.
+		`distinct time, shop | summarize peak_rate() by bin(time, 1m)`,
 	} {
 		if v := validateQuery(t, env, query); len(v.Errors) != 0 {
 			t.Errorf("%q: expected no errors, got %+v", query, v.Errors)
