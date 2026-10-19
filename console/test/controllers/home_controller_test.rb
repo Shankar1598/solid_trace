@@ -61,6 +61,16 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to issues_url(org_slug: @acme.slug)
   end
 
+  test "every Organization page shares the user's Organizations by name, and only theirs" do
+    create(:organization, name: "Elsewhere")
+    @meta.organization_users.create!(user: create(:user))
+
+    get projects_url(org_slug: @meta.slug), headers: inertia
+
+    assert_equal [ { "name" => "Acme", "slug" => @acme.slug }, { "name" => "Meta", "slug" => @meta.slug } ],
+      response.parsed_body.dig("props", "organizations")
+  end
+
   test "another Organization's page is still not found, and is not remembered" do
     other = create(:organization, name: "Elsewhere")
     get projects_url(org_slug: @meta.slug)
@@ -70,5 +80,11 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     get root_url
 
     assert_redirected_to issues_url(org_slug: @meta.slug)
+  end
+
+  private
+
+  def inertia
+    { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
   end
 end
