@@ -136,6 +136,18 @@ _Avoid_: notifier, integration notifier
 The group of people, with their roles, that shares a set of **Projects**, **Dashboards**, **Monitors** and **Integrations**. A user can belong to several and works in one at a time.
 _Avoid_: team, workspace, org (in prose), tenant
 
+**Invite**:
+An admin adding someone to an **Organization** by email. Someone who already has a password becomes a member at once; anyone else becomes an **Invited** member.
+_Avoid_: invitation request, join request
+
+**Invited**:
+A member who has never set a password, and so can't sign in yet. They stop being Invited when they set one, from an **Invite link** or a password reset, and are then an ordinary member of every Organization that invited them.
+_Avoid_: pending user, inactive user
+
+**Invite link**:
+A link an admin copies for an **Invited** member, and shares however they like, that lets the member set a password once and signs them in to the Organization it came from. It stops working after seven days, once a password is set, or when the member is removed from that Organization.
+_Avoid_: magic link, invitation email, activation link
+
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant
@@ -168,6 +180,7 @@ _Avoid_: API key, project key, access token
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
 - A **Threshold monitor**'s groups are **firing** or **ok**; a **Match monitor** reads the **Logs** of each new **Log batch**
 - **Log processing**'s hourly export moves each hour's **Logs** to the **Log file store**, and the **Bin cache** keeps the **Chart** bins whose Logs are all there
+- An **Invite** to an **Organization** makes someone without a password an **Invited** member, whom an **Invite link** lets set a password
 - An **MCP server** call acts as the user of its **API token**, with what that user's role allows in the organization it acts on
 
 ## Example dialogue
