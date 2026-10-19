@@ -104,9 +104,9 @@ func (h *IngestHandler) KeyOnlyLogs(c *fiber.Ctx) error {
 }
 
 // ingestLogs authenticates the request's project key, refuses it unless
-// keyFitsPath accepts its Project, and ingests the body as that Project's
+// projectAllowed accepts its Project, and ingests the body as that Project's
 // Logs.
-func (h *IngestHandler) ingestLogs(c *fiber.Ctx, keyFitsPath func(projectID uint32) bool) error {
+func (h *IngestHandler) ingestLogs(c *fiber.Ctx, projectAllowed func(projectID uint32) bool) error {
 	publicKey := h.extractSentryKey(c)
 	if publicKey == "" {
 		publicKey = bearerToken(c)
@@ -119,7 +119,7 @@ func (h *IngestHandler) ingestLogs(c *fiber.Ctx, keyFitsPath func(projectID uint
 	if err != nil {
 		return h.renderKeyError(c, err)
 	}
-	if !keyFitsPath(projectID) {
+	if !projectAllowed(projectID) {
 		return c.Status(401).JSON(fiber.Map{"error": "Project key is not for this project"})
 	}
 
