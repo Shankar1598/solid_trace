@@ -1,5 +1,5 @@
 # TLS for Console and ingest at PUBLIC_HOST, the public IP or domain that
-# deploy/setup writes to deploy/.env. Caddy gets the certificate from Let's
+# deploy/setup-gcp writes to deploy/.env. Caddy gets the certificate from Let's
 # Encrypt and redirects http:// to https://. See docs/adr/0010.
 {
 	# An IP address gets a certificate only from this profile, valid 160 hours.

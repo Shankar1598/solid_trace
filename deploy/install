@@ -6,7 +6,7 @@
 #
 # Installs Docker if it is missing (Debian and Ubuntu), starts it at boot,
 # creates the data directories, EventStore's config and Console's secret, then
-# builds the images and starts the services, with Caddy in front if deploy/setup
+# builds the images and starts the services, with Caddy in front if deploy/setup-gcp
 # turned HTTPS on. Safe to run again: it never overwrites the config or the secret.
 
 set -euo pipefail
@@ -79,7 +79,7 @@ create_config() {
     as_root install -D -m 0644 "$DEPLOY_DIR/event_store.yml" "$CONFIG_FILE"
   fi
   # DuckDB's own default is 80% of memory, which leaves Console too little.
-  # Only while the template's commented line is there, as deploy/setup leaves it.
+  # Only while the template's commented line is there, as deploy/setup-gcp leaves it.
   if as_root grep -q '^# duckdb_memory_limit: ' "$CONFIG_FILE" && ! as_root grep -q '^duckdb_memory_limit: ' "$CONFIG_FILE"; then
     local memory_mb config
     memory_mb=$(awk '/^MemTotal:/ { print int($2 / 1024 / 2) }' /proc/meminfo)

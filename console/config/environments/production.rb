@@ -26,7 +26,7 @@ Rails.application.configure do
   # Store uploaded files on the local file system (see config/storage.yml for options).
   config.active_storage.service = :local
 
-  # With HTTPS on in deploy/setup, CONSOLE_URL is https:// and Caddy terminates
+  # With HTTPS on in deploy/setup-gcp, CONSOLE_URL is https:// and Caddy terminates
   # TLS in front of Thruster. Without it, Thruster serves plain HTTP on port 3000.
   console_url = URI(ENV["CONSOLE_URL"].presence || "http://example.com")
   if console_url.scheme == "https"
@@ -63,7 +63,7 @@ Rails.application.configure do
   # Set this to true and configure the email server for immediate delivery to raise delivery errors.
   # config.action_mailer.raise_delivery_errors = false
 
-  # Links in emails point at Console's public URL. deploy/setup writes it, and
+  # Links in emails point at Console's public URL. deploy/setup-gcp writes it, and
   # the SMTP settings below, to deploy/.env.
   config.action_mailer.default_url_options = { host: console_url.host, port: console_url.port, protocol: console_url.scheme }
 

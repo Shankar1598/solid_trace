@@ -4,7 +4,7 @@ Planned with the user on 2026-10-19, for testing on a GCP VM with no domain yet.
 
 ## What we're building
 
-`deploy/setup` can turn on HTTPS. Caddy, one more Compose service, gets Let's Encrypt certificates and terminates TLS for Console and ingest:
+`deploy/setup-gcp` can turn on HTTPS. Caddy, one more Compose service, gets Let's Encrypt certificates and terminates TLS for Console and ingest:
 
 - Console at `https://<public host>` (443), proxied to Thruster on `127.0.0.1:3000`.
 - Ingest at `https://<public host>:4443`, proxied to EventStore on `127.0.0.1:4000`.

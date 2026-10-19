@@ -188,7 +188,7 @@ finish() {
 # HTTPS, email, and where EventStore keeps Log files and the Event archive (this
 # machine's disk or a GCS bucket). Run it again to change any of them.
 #
-#   deploy/setup
+#   deploy/setup-gcp
 
 TOTAL_STAGES=8
 
@@ -221,7 +221,7 @@ write_env_quoted() {
   local value=${2#\'}
   value=${value%\'}
   if [[ $value == *\'* ]]; then
-    warn "$1 can't contain a single quote (Compose can't read it). Run deploy/setup again with another."
+    warn "$1 can't contain a single quote (Compose can't read it). Run deploy/setup-gcp again with another."
     exit 1
   fi
   write_env "$1" "'$value'"
@@ -409,7 +409,7 @@ if confirm "Send email from this install?"; then
 else
   SMTP_ADDRESS=""
   write_env SMTP_ADDRESS ""
-  note "Console won't send email. Run deploy/setup again to add it."
+  note "Console won't send email. Run deploy/setup-gcp again to add it."
 fi
 pause
 
@@ -507,7 +507,7 @@ if [[ $STORAGE == gcs ]]; then
   if confirm "Write it?"; then
     write_config "$(config_without_object_store)
 
-# Written by deploy/setup.
+# Written by deploy/setup-gcp.
 $block"
     CONFIG_CHANGED=1
     printf '  %s✓ wrote%s object_store → %s\n' "$GREEN" "$RESET" "$CONFIG_FILE"
