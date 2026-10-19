@@ -40,7 +40,11 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
-- **Release v0.4.0** (2026-10-19, pre-release): request rates on Charts (`rate()`, `peak_rate()`, and each time Chart's bin size), merged from `feature/request-rates` (`c86ee5d`). There are no migrations or config changes. The full Go, Rails and Playwright suites still haven't run on it. One flow is fragile: `charts.spec.ts` "a series hidden from the legend stays hidden through a zoom and a re-run" fails when the dev Logs end early in the last 24 h but still number 5,000 or more, since global setup tops them up only below 5,000.
+- **Release v0.4.0** (2026-10-19, pre-release): request rates on Charts (`rate()`, `peak_rate()`, and each time Chart's bin size), merged from `feature/request-rates` (`c86ee5d`). There are no migrations or config changes. Full run on `main` (2026-10-19):
+  - The Go suite passes.
+  - Rails passes, 614 runs, on an unseeded test database (`db:test:prepare`). After `db:reset`, the seeds fail 9 self-logs tests.
+  - Playwright: 88 of 89 flows pass. `get-started.spec.ts:35` still expects the old `/api/<id>/logs` route, which the Logs snippets left in `95a7342`.
+  - The Charts zoom flow was flaky: global setup topped Logs up only below 5,000 in 24 h. It now also tops up when an hour of the last 24, bar the newest two, has none.
 - **Release v0.3.0** (2026-10-19, pre-release): Log files go under `logs/` in the bucket, beside `events/` (`49ce346`). Objects uploaded under the old keys aren't moved, so a bucket install must empty its Log files and `logs.duckdb` before upgrading.
 - **Release v0.2.0** (2026-10-19, pre-release): images for amd64 and arm64 on ghcr.io, built on native runners by `.github/workflows/release.yml` (also runnable by hand with a tag). `deploy/install` now always pulls a release's images (the checkout's tag, or the newest before it) and stops if a pull fails; `--build` builds from the checkout. The user is installing on GCP T2A (arm64) VMs.
 - **SolidTrace's own Logs**: on the VM, `deploy/install` and check the "SolidTrace" Project gets Logs from console, jobs, event_store, caddy and db_prepare ([03](self-logs/issues/03-vector-ships-solidtraces-logs.md)). Shippers inside the VPC send to `http://<internal-ip>:4000`, not Caddy (its certificate is for the public IP).
