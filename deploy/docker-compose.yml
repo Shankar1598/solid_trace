@@ -19,7 +19,7 @@ x-console: &console
     HTTP_PORT: "3000"
     TARGET_PORT: "3001"
     # Without HTTPS, Thruster faces clients directly, so it ignores X-Forwarded-*
-    # headers they send. With HTTPS, deploy/setup sets it to true: Caddy sets them.
+    # headers they send. With HTTPS, deploy/setup-gcp sets it to true: Caddy sets them.
     FORWARD_HEADERS: ${FORWARD_HEADERS:-false}
     # Optional: only Sentry's DSN is in the credentials.
     RAILS_MASTER_KEY: ${RAILS_MASTER_KEY:-}
@@ -30,7 +30,7 @@ x-console: &console
     # Where SDKs and shippers reach ingest, for the Logs page's snippets.
     # Unset, they show this host at port 4000.
     PUBLIC_INGEST_URL: ${PUBLIC_INGEST_URL:-}
-    # Email, from deploy/setup. Without SMTP_ADDRESS, emails aren't sent.
+    # Email, from deploy/setup-gcp. Without SMTP_ADDRESS, emails aren't sent.
     CONSOLE_URL: ${CONSOLE_URL:-}
     MAIL_FROM: ${MAIL_FROM:-}
     SMTP_ADDRESS: ${SMTP_ADDRESS:-}
@@ -90,7 +90,7 @@ services:
         condition: service_completed_successfully
 
   # TLS in front of Console (443) and ingest (4443), only with HTTPS on in
-  # deploy/setup, which sets COMPOSE_PROFILES=https. It runs as root, so it can
+  # deploy/setup-gcp, which sets COMPOSE_PROFILES=https. It runs as root, so it can
   # bind ports 80 and 443.
   caddy:
     image: caddy:2.11.4-alpine
