@@ -2,7 +2,8 @@
 
 class OrganizationUsersController < ApplicationController
   layout "dashboard"
-  before_action :set_organization
+  before_action :set_current_org
+  before_action :set_current_org_user
 
   def index
     render inertia: "Settings/Members", props: {
@@ -74,8 +75,7 @@ class OrganizationUsersController < ApplicationController
 
   private
 
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
+  def set_current_org_user
     @current_org_user = @current_org.organization_users.find_by(user: current_user)
   end
 

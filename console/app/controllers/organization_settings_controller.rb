@@ -2,7 +2,7 @@
 
 class OrganizationSettingsController < ApplicationController
   layout "dashboard"
-  before_action :set_organization
+  before_action :set_current_org
 
   def show
     render inertia: "Settings/Organization", props: {
@@ -20,10 +20,6 @@ class OrganizationSettingsController < ApplicationController
   end
 
   private
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-  end
 
   def organization_params
     params.require(:organization).permit(:name, :slug)

@@ -2,7 +2,7 @@
 
 class IssuesController < ApplicationController
   layout "dashboard"
-  before_action :set_organization
+  before_action :set_current_org
 
   # The page lists the Issues seen in the last 14 days unless it's asked for
   # another of IssueList::RANGES, or for all of them with "all".
@@ -114,9 +114,5 @@ class IssuesController < ApplicationController
     Rails.logger.error(e.message)
     @events_list = []
     @events_unavailable = EventStore.events_unavailable_text(e)
-  end
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
   end
 end

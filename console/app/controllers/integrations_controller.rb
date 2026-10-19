@@ -2,7 +2,7 @@
 
 class IntegrationsController < ApplicationController
   layout "dashboard"
-  before_action :set_organization
+  before_action :set_current_org
   before_action :set_integration, only: [ :edit, :update, :destroy ]
 
   def index
@@ -51,10 +51,6 @@ class IntegrationsController < ApplicationController
   end
 
   private
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
-  end
 
   def set_integration
     @integration = @current_org.integrations.find(params[:id])
