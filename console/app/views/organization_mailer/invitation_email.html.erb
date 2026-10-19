@@ -3,23 +3,16 @@
 <p>Hi <%= @user.name %>,</p>
 
 <p>
-  <strong><%= @invited_by.name %></strong> has added you to the
+  <strong><%= @invited_by.name %></strong> has invited you to the
   <strong><%= @organization.name %></strong> organization on SolidTrace.
 </p>
 
-<h2>Your Login Credentials</h2>
-
 <p>
-  <strong>Email:</strong> <%= @user.email %><br>
-  <strong>Password:</strong> <%= @password %>
+  <%= link_to "Set your password and sign in", @invite_url %>
 </p>
 
 <p>
-  <%= link_to "Login to SolidTrace", @login_url %>
-</p>
-
-<p>
-  For security reasons, we recommend changing your password after your first login.
+  The link works once, for seven days. If it has expired, ask an admin of <%= @organization.name %> for a new one.
 </p>
 
 <hr>

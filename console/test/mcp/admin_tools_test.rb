@@ -163,16 +163,34 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/settings/organization_users", answer.link
   end
 
-  test "an admin's invite_member adds someone new and emails them" do
+  test "an admin's invite_member invites someone new, emails them, and answers their invite link" do
     answer = nil
     assert_enqueued_emails 1 do
       answer = call_tool(:invite_member, user: @admin, email: "grace@example.com", name: "Grace")
     end
 
     assert_not answer.error?, answer.text
+    json = answer.json
+    link = json.delete("invite_link")
     assert_equal({ "organization" => "acme", "member" => { "name" => "Grace", "email" => "grace@example.com", "role" => "member" },
-                   "outcome" => "added", "emailed" => true }, answer.json)
+                   "outcome" => "invited", "emailed" => true }, json)
+    assert_match %r{\Ahttp://console\.test/invites/[^?]+\?org=acme\z}, link
     assert_equal "http://console.test/acme/settings/organization_users", answer.link
+  end
+
+  test "invite_member answers the invite link of someone still Invited, and none for someone with a password" do
+    call_tool(:invite_member, user: @admin, email: "grace@example.com")
+
+    answer = call_tool(:invite_member, user: @admin, email: "grace@example.com")
+    assert_not answer.error?, answer.text
+    assert_equal "already_invited", answer.json["outcome"]
+    assert_not answer.json["emailed"]
+    assert_match %r{\Ahttp://console\.test/invites/}, answer.json["invite_link"]
+
+    create(:user, email: "lin@example.com")
+    answer = call_tool(:invite_member, user: @admin, email: "lin@example.com")
+    assert_equal "added", answer.json["outcome"]
+    assert_not answer.json.key?("invite_link")
   end
 
   test "invite_member says why someone wasn't invited" do

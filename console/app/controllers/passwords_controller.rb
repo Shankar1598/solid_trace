@@ -4,7 +4,7 @@
 # link opens a form for a new password, and the new password ends every
 # session and revokes the user's API tokens, which work without it. Whether a
 # user has the email is never said. A link works for 15 minutes, and only
-# until the password changes.
+# until the password changes. Setting one ends being Invited.
 class PasswordsController < ApplicationController
   layout "auth"
   allow_unauthenticated_access
@@ -33,7 +33,7 @@ class PasswordsController < ApplicationController
   def update
     @user.errors.add(:password, :blank) if params[:password].blank?
 
-    if @user.errors.none? && @user.update(params.permit(:password, :password_confirmation))
+    if @user.errors.none? && @user.update(params.permit(:password, :password_confirmation).merge(invited: false))
       @user.sessions.destroy_all
       @user.api_tokens.delete_all
       redirect_to login_path, notice: "Password reset. Sign in with the new one."

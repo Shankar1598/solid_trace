@@ -7,7 +7,8 @@ class OrganizationUsersController < ApplicationController
 
   def index
     render inertia: "Settings/Members", props: {
-      organization: OrganizationSerializer.new(@current_org, include_members: true).as_json,
+      organization: OrganizationSerializer.new(@current_org, include_members: true,
+        invite_urls_from: (request.base_url if @current_org_user.admin?)).as_json,
       can_manage_members: @current_org_user.admin?,
     }
   end
@@ -41,9 +42,13 @@ class OrganizationUsersController < ApplicationController
       email: create_params[:email], name: create_params[:name])
     members = organization_users_path(org_slug: @current_org.slug)
 
+    name = invite.membership&.user&.name
     case invite.outcome
-    when :added then redirect_to members, notice: "Member added successfully"
-    when :reactivated then redirect_to members, notice: "Member reactivated successfully"
+    when :invited
+      redirect_to members, notice: invite.emailed ? "#{name} invited and emailed their invite link." :
+        "#{name} invited. Copy their invite link from the table."
+    when :added then redirect_to members, notice: "#{name} added"
+    when :reactivated then redirect_to members, notice: "#{name} reactivated"
     else redirect_to members, alert: invite.error
     end
   end
