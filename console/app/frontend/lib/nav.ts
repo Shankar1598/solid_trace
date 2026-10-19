@@ -23,3 +23,13 @@ export function navSection(url: string): NavSection | null {
       return null
   }
 }
+
+/**
+ * Where switching to the Organization `slug` lands from the page at `url`:
+ * that Organization's index for the page's section (Settings meaning its
+ * Organization settings), or its Issues for a page with no section.
+ */
+export function orgSwitchUrl(url: string, slug: string): string {
+  const section = navSection(url) ?? 'issues'
+  return section === 'settings' ? `/${slug}/settings/organization` : `/${slug}/${section}`
+}
