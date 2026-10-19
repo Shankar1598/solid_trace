@@ -1,0 +1,199 @@
+# Ships every SolidTrace container's output to the Meta Organization's Project
+# as Logs (docs/adr/0011). Vector reads it from Docker, so the services keep
+# logging to stdout and `docker compose logs` works as before.
+#
+# Run the tests below after a change:
+#   docker run --rm -v ./deploy/vector:/etc/vector:ro timberio/vector:<tag> test /etc/vector/vector.yaml
+
+sources:
+  containers:
+    type: docker_logs
+    # This Compose project's containers, as deploy/docker-compose.yml names
+    # them, without Vector's own.
+    include_labels:
+      - com.docker.compose.project=solid-trace
+    exclude_containers:
+      - solid-trace-vector-
+
+transforms:
+  # One Docker line becomes one Log: its time, Level and message, its Compose
+  # service as the Service and its container as an Attribute.
+  lines:
+    type: remap
+    inputs: [containers]
+    source: |
+      line = string(.message) ?? ""
+      log = {}
+
+      json, err = parse_json(line)
+      if err == null && is_object(json) {
+        # Caddy and Thruster. EventStore reads their time, level and msg.
+        log = object!(json)
+      } else if match(line, r'^(DEBUG|INFO|WARN|ERROR|FATAL|ANY) ') {
+        # Rails: INFO [request-id] message
+        parts = parse_regex!(line, r'(?s)^(?P<level>[A-Z]+) (?P<message>.*)$')
+        log.level = parts.level
+        log.message = parts.message
+      } else {
+        logfmt, err = parse_logfmt(line)
+        if err == null && exists(logfmt.level) && (exists(logfmt.message) || exists(logfmt.msg)) {
+          # EventStore: timestamp=... level=info message=... caller=...
+          log = logfmt
+        } else {
+          # Anything else, such as Puma's start-up lines or a backtrace.
+          log.message = line
+        }
+      }
+
+      if !exists(log.time) && !exists(log.timestamp) && !exists(log.ts) {
+        log.time = .timestamp
+      }
+      log.service = .label."com.docker.compose.service"
+      log.container = .container_name
+      . = log
+
+sinks:
+  solidtrace:
+    type: http
+    inputs: [lines]
+    # Log ingest's key-only route, which finds the Project from the key.
+    uri: http://127.0.0.1:4000/api/logs
+    method: post
+    auth:
+      strategy: bearer
+      # deploy/install writes it to deploy/.env. A deleted Project's key gets
+      # a 401, and Vector drops the request.
+      token: "${META_PROJECT_KEY}"
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    request:
+      headers:
+        Content-Type: application/x-ndjson
+    batch:
+      timeout_secs: 1
+    # EventStore may not be up yet; requests are retried until it is,
+    # including on a 503 while it is busy.
+    healthcheck:
+      enabled: false
+
+tests:
+  - name: an EventStore logfmt line
+    inputs:
+      - insert_at: lines
+        type: vrl
+        source: |
+          .message = "timestamp=2026-10-19T10:00:00.123Z level=info message=\"Listening for ingest\" caller=/app/main.go:150 port=4000 "
+          .timestamp = t'2026-10-19T10:00:00.125Z'
+          .container_name = "solid-trace-event_store-1"
+          .label = {"com.docker.compose.project": "solid-trace", "com.docker.compose.service": "event_store"}
+          .stream = "stderr"
+    outputs:
+      - extract_from: lines
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(., {
+                "timestamp": "2026-10-19T10:00:00.123Z",
+                "level": "info",
+                "message": "Listening for ingest",
+                "caller": "/app/main.go:150",
+                "port": "4000",
+                "service": "event_store",
+                "container": "solid-trace-event_store-1"
+              })
+
+  - name: a Console line with its Level and request id
+    inputs:
+      - insert_at: lines
+        type: vrl
+        source: |
+          .message = "WARN [4f2a9c1e-request] Can't verify CSRF token authenticity."
+          .timestamp = t'2026-10-19T10:00:01.5Z'
+          .container_name = "solid-trace-console-1"
+          .label = {"com.docker.compose.project": "solid-trace", "com.docker.compose.service": "console"}
+          .stream = "stdout"
+    outputs:
+      - extract_from: lines
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(., {
+                "time": t'2026-10-19T10:00:01.5Z',
+                "level": "WARN",
+                "message": "[4f2a9c1e-request] Can't verify CSRF token authenticity.",
+                "service": "console",
+                "container": "solid-trace-console-1"
+              })
+
+  - name: a Thruster JSON line from the jobs container
+    inputs:
+      - insert_at: lines
+        type: vrl
+        source: |
+          .message = "{\"time\":\"2026-10-19T10:00:02.1Z\",\"level\":\"INFO\",\"msg\":\"Request\",\"path\":\"/up\",\"status\":200}"
+          .timestamp = t'2026-10-19T10:00:02.2Z'
+          .container_name = "solid-trace-jobs-1"
+          .label = {"com.docker.compose.project": "solid-trace", "com.docker.compose.service": "jobs"}
+          .stream = "stdout"
+    outputs:
+      - extract_from: lines
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(., {
+                "time": "2026-10-19T10:00:02.1Z",
+                "level": "INFO",
+                "msg": "Request",
+                "path": "/up",
+                "status": 200,
+                "service": "jobs",
+                "container": "solid-trace-jobs-1"
+              })
+
+  - name: a Caddy JSON line, its time an epoch
+    inputs:
+      - insert_at: lines
+        type: vrl
+        source: |
+          .message = "{\"level\":\"info\",\"ts\":1760868003.25,\"logger\":\"tls\",\"msg\":\"certificate obtained\"}"
+          .timestamp = t'2026-10-19T10:00:03.3Z'
+          .container_name = "solid-trace-caddy-1"
+          .label = {"com.docker.compose.project": "solid-trace", "com.docker.compose.service": "caddy"}
+          .stream = "stderr"
+    outputs:
+      - extract_from: lines
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(., {
+                "level": "info",
+                "ts": 1760868003.25,
+                "logger": "tls",
+                "msg": "certificate obtained",
+                "service": "caddy",
+                "container": "solid-trace-caddy-1"
+              })
+
+  - name: a plain db_prepare line keeps Docker's time
+    inputs:
+      - insert_at: lines
+        type: vrl
+        source: |
+          .message = "== 20261019100000 AddMetaOrganization: migrating ======="
+          .timestamp = t'2026-10-19T10:00:04Z'
+          .container_name = "solid-trace-db_prepare-1"
+          .label = {"com.docker.compose.project": "solid-trace", "com.docker.compose.service": "db_prepare"}
+          .stream = "stdout"
+    outputs:
+      - extract_from: lines
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(., {
+                "time": t'2026-10-19T10:00:04Z',
+                "message": "== 20261019100000 AddMetaOrganization: migrating =======",
+                "service": "db_prepare",
+                "container": "solid-trace-db_prepare-1"
+              })

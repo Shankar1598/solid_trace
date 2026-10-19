@@ -236,8 +236,10 @@ SolidTrace is running, and restarts with the machine.
   Data:     $DATA_DIR
   Config:   $CONFIG_FILE (restart after editing: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml restart event_store)
   Secrets:  $ENV_FILE
-  Logs:     sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs -f
-  Version:  $VERSION
+  Logs:     SolidTrace's own, in Console's "SolidTrace" Organization and Project,
+            whose admin is the first user to sign up. Recent ones also in:
+            sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs -f
+  Version: $VERSION
   Upgrade:  git fetch --tags && git checkout <tag> && deploy/install (on main: git pull && deploy/install)
 EOF
 
