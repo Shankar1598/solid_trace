@@ -33,6 +33,16 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to issues_url(org_slug: @meta.slug)
   end
 
+  test "a JSON request under an Organization doesn't make it the last used" do
+    get projects_url(org_slug: @acme.slug)
+
+    get mentions_url(org_slug: @meta.slug, format: :json)
+    assert_response :success
+    get root_url
+
+    assert_redirected_to issues_url(org_slug: @acme.slug)
+  end
+
   test "home opens the first Organization by name before any is opened" do
     zeta = create(:organization, name: "Zeta")
     create(:organization_user, organization: zeta, user: @user)
@@ -61,13 +71,16 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to issues_url(org_slug: @acme.slug)
   end
 
-  test "every Organization page shares the user's Organizations by name, and only theirs" do
+  test "every Organization page shares the user's Organizations by name, in any case, and only theirs" do
     create(:organization, name: "Elsewhere")
+    beta = create(:organization, name: "beta")
+    create(:organization_user, organization: beta, user: @user)
     @meta.organization_users.create!(user: create(:user))
 
     get projects_url(org_slug: @meta.slug), headers: inertia
 
-    assert_equal [ { "name" => "Acme", "slug" => @acme.slug }, { "name" => "Meta", "slug" => @meta.slug } ],
+    assert_equal [ { "name" => "Acme", "slug" => @acme.slug }, { "name" => "beta", "slug" => beta.slug },
+                  { "name" => "Meta", "slug" => @meta.slug } ],
       response.parsed_body.dig("props", "organizations")
   end
 
