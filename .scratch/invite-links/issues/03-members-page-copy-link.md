@@ -1,6 +1,6 @@
 # 03: Members page shows Invited rows with a copy-link button
 
-**Status:** ready-for-agent
+**Status:** claimed
 **Spec:** [spec.md](../spec.md)
 **Blocked by:** 02
 
