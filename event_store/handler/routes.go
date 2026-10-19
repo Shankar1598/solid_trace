@@ -13,9 +13,11 @@ func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler) *f
 		// The server reads no larger body, as sent, for any route. The Event
 		// routes refuse more than their own, smaller cap themselves.
 		BodyLimit: logBodyLimit,
-		// Ingest faces clients directly, with no proxy to buffer slow ones, so
-		// it bounds a request and an idle connection. Fiber's default is to
-		// wait forever.
+		// Ingest faces clients directly, or through Caddy, which streams
+		// requests without buffering them. Either way no proxy absorbs slow
+		// clients, so it bounds a request and an idle connection. Fiber's
+		// default is to wait forever. Caddy's keep-alive (deploy/caddy) is
+		// shorter than IdleTimeout.
 		ReadTimeout: 30 * time.Second, // headers and body of one request
 		IdleTimeout: 10 * time.Second, // between keep-alive requests
 	})

@@ -30,9 +30,11 @@ cd solid_trace
 deploy/setup
 ```
 
-`deploy/setup` asks, stage by stage, for Console's and ingest's public URLs, an SMTP server for email, and whether Log files and the Event archive go in a GCS bucket, with the `gcloud` commands that create the bucket and its HMAC key. It writes the answers to `deploy/.env` and `/etc/solid-trace/event_store.yml`, then runs `deploy/install`. Run it again to change any of them.
+`deploy/setup` asks, stage by stage, whether to use HTTPS and for Console's and ingest's public URLs, an SMTP server for email, and whether Log files and the Event archive go in a GCS bucket, with the `gcloud` commands that create the bucket and its HMAC key. It writes the answers to `deploy/.env` and `/etc/solid-trace/event_store.yml`, then runs `deploy/install`. Run it again to change any of them.
 
 `deploy/install` installs Docker if it is missing, creates `/var/lib/solid-trace` for data and EventStore's config if there is none, writes Console's secret to `deploy/.env`, then builds and starts the services with `deploy/docker-compose.yml`. Run on its own, it installs with the defaults: no email, everything on local disk. Console is on port `3000`, ingest on `4000`. The services restart on failure and at boot, and their logs rotate.
+
+With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](deploy/caddy/Caddyfile)) gets a Let's Encrypt certificate for the machine's public IP or domain: Console is on `https://<host>`, ingest on `https://<host>:4443`. Ports 80, 443 and 4443 must be open to the internet, and 3000 and 4000 closed; setup prints the GCP firewall and static-IP commands. An IP's certificate lasts 160 hours, and Caddy renews it ([ADR 0010](docs/adr/0010-caddy-terminates-tls.md)).
 
 To upgrade: `git pull && deploy/install`. It keeps the config and the secrets.
 

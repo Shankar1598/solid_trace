@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-10-18
+Updated: 2026-10-19
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
 
@@ -16,6 +16,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Where things stand
 
+- **HTTPS** ([spec](https/spec.md), [01](https/issues/01-caddy-terminates-tls.md)): planned with the user and built on `main` (2026-10-19). With HTTPS on in `deploy/setup`, Caddy terminates TLS for the VM's bare public IP, with Let's Encrypt's 160-hour certificates: Console on 443, ingest on 4443 ([ADR 0010](../docs/adr/0010-caddy-terminates-tls.md)). Checked with `caddy validate`, `docker compose config` and Console's production config; reviewed. `ready-for-human`: the real certificate needs the user's GCP VM.
 - **Merged into `main`** (2026-10-18), each with `--no-ff` and no conflicts: `feature/mcp` (Logs v1 and v2, the looks pass, the MCP server, bugs 01 to 07), then `feature/console-bugs` (bugs 08, 09, 11, 12), then `feature/logs-v2` (`deploy/install`, `deploy/setup` and production email settings). On the merge: typecheck, vitest (399), the 288 Rails tests for the changed code and the 12 affected Playwright flows pass, among them the SQL flow on a rebuilt EventStore. The full Go, Rails and Playwright suites are for the user to run. Performance testing and the real GCS run happen on `main`.
 
 - **MCP server**: planned with the user on 2026-10-17 ([spec](mcp/spec.md), [tickets](mcp/issues/)), on `feature/mcp` in the worktree `../solid_trace-mcp`, branched from `feature/logs-v2` at `4139293`. An MCP endpoint in Console at `POST /mcp`, signed in with API tokens from User settings, with 34 tools for Logs (Queries, SQL, Fields), Dashboards, Monitors, Issues and admin actions. SQL queries are read-only everywhere, and keys are admin-only. Tickets 01 to 10 are resolved: built and reviewed on 2026-10-17, with the Go track merged at `19939fb`; on 2026-10-18 the looks pass was merged in (`d3de5fa`), [docs/mcp.md](../docs/mcp.md) written, all 77 Playwright flows passed on `feature/mcp`, and an end-to-end run with the MCP inspector made a token in User settings, listed the tools and called the Logs, Dashboard and Monitor tools ([10](mcp/issues/10-docs-and-wrap.md)'s Comments). Rails (575 runs), vitest (391), typecheck and the Go suite pass. The dev stack now runs `feature/mcp` from the worktree. The whole-effort review (11) found nothing high or medium in the code; it restored the spec's plan sections, which recording the decisions had overwritten. Lows are in [carry-over.md](mcp/carry-over.md). [12](mcp/issues/12-sql-fetches-web-addresses-on-bucket-installs.md) is resolved (2026-10-18): on bucket installs, read-only SQL could make the server fetch any web address, internal ones included. httpfs now reads only S3 URLs, so SQL reaches the bucket's endpoint and S3's and GCS's public hosts, and nothing else.
@@ -37,6 +38,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
+- **HTTPS**: on the GCP VM, `deploy/setup` with HTTPS, then a valid lock at `https://<ip>` and an Event sent to `https://<ip>:4443` ([01](https/issues/01-caddy-terminates-tls.md)).
 - **MCP server** ([spec](mcp/spec.md)): the whole-effort review found nothing high or medium in the code ([11](mcp/issues/11-whole-effort-review.md), `ready-for-human`). Claude Code was connected to the dev stack's endpoint on `main` (2026-10-18) and called every tool but the key, invite, `create_project` and `run_monitor` ones: all worked. Its findings are in [13](mcp/issues/13-claude-code-check-findings.md) (`needs-triage`); the main one is that `create_monitor` can't make a Monitor that is off. With the user: [bugs 05](bugs/issues/05-production-mail-unconfigured.md), what's left of the production mail settings, and the four Console bugs questions above.
 
 0. **Logs v2** ([spec](logs-v2/spec.md), [tickets](logs-v2/issues/)): built and reviewed; merged into `main` ([23](logs-v2/issues/23-merge-logs-v2.md), resolved). Ticket 20's two measurements are done (2026-10-18, [research](logs-v2/research/dashboard-and-stream.md)): 10,000 stream lines stay smooth on a production build, the 12-chart 7-day Dashboard takes 5.6 s cold and 3.6–4.2 s warm, and compaction stays "not now". Next: the rest of [20, the looks pass](logs-v2/issues/20-looks-pass.md), with the user, and, with the user on `main`, [21, a real GCS run](logs-v2/issues/21-real-gcs-check.md) (needs their bucket and HMAC key). [22](logs-v2/issues/22-leftover-low-findings.md) lists the leftover lows.
@@ -58,6 +60,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Prod-readiness | 6 / 0 | [review.md](prod-readiness/review.md) |
 | Integration notification | 5 / 0 | [spec.md](integration-notification/spec.md) |
 | Ingest write path | 6 / 0 | [spec.md](ingest-write-path/spec.md) |
+| HTTPS | 0 / 1 | [01](https/issues/01-caddy-terminates-tls.md) |
 | Upgrade Pebble and DuckDB | 3 / 0 | 03 closed as `wontfix` |
 | Phone layout | 0 / 1 | [01](phone-layout/issues/01-phone-layout.md) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |

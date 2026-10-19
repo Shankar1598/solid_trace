@@ -18,8 +18,9 @@ x-console: &console
     RAILS_ENV: production
     HTTP_PORT: "3000"
     TARGET_PORT: "3001"
-    # Thruster faces clients directly, so it ignores X-Forwarded-* headers they send.
-    FORWARD_HEADERS: "false"
+    # Without HTTPS, Thruster faces clients directly, so it ignores X-Forwarded-*
+    # headers they send. With HTTPS, deploy/setup sets it to true: Caddy sets them.
+    FORWARD_HEADERS: ${FORWARD_HEADERS:-false}
     # Optional: only Sentry's DSN is in the credentials.
     RAILS_MASTER_KEY: ${RAILS_MASTER_KEY:-}
     SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run deploy/install, which writes it to deploy/.env}
@@ -59,7 +60,8 @@ services:
     depends_on:
       - console
 
-  # Event ingestion and storage. Ingest listens on port 4000 directly.
+  # Event ingestion and storage. Ingest listens on port 4000 directly, behind
+  # Caddy on 4443 with HTTPS on.
   event_store:
     image: solid-trace-event-store:latest
     build: ../event_store
@@ -86,6 +88,23 @@ services:
     depends_on:
       db_prepare:
         condition: service_completed_successfully
+
+  # TLS in front of Console (443) and ingest (4443), only with HTTPS on in
+  # deploy/setup, which sets COMPOSE_PROFILES=https. It runs as root, so it can
+  # bind ports 80 and 443.
+  caddy:
+    image: caddy:2.11.4-alpine
+    profiles: [https]
+    network_mode: host
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+    volumes:
+      # The directory, not the file, so a git pull's new Caddyfile is seen.
+      - ./caddy:/etc/caddy:ro
+      # Certificates. Kept across restarts, or Let's Encrypt's rate limits bite.
+      - /var/lib/solid-trace/caddy:/data
+    restart: unless-stopped
+    logging: *logging
 
   # Creates or migrates Console's tables, which EventStore also writes, then exits.
   db_prepare:

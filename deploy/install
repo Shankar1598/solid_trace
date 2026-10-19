@@ -6,8 +6,8 @@
 #
 # Installs Docker if it is missing (Debian and Ubuntu), starts it at boot,
 # creates the data directories, EventStore's config and Console's secret, then
-# builds the images and starts the services. Safe to run again: it never
-# overwrites the config or the secret.
+# builds the images and starts the services, with Caddy in front if deploy/setup
+# turned HTTPS on. Safe to run again: it never overwrites the config or the secret.
 
 set -euo pipefail
 
@@ -67,6 +67,8 @@ start_docker() {
 create_data_dirs() {
   say "Creating $DATA_DIR"
   as_root install -d -m 0755 -o "$CONSOLE_UID" -g "$CONSOLE_UID" "$DATA_DIR/storage" "$DATA_DIR/storage_cold"
+  # Caddy's certificates. Its image runs as root.
+  as_root install -d -m 0700 "$DATA_DIR/caddy"
 }
 
 create_config() {
@@ -95,10 +97,36 @@ create_secret() {
   (umask 077 && echo "SECRET_KEY_BASE=$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
 }
 
+# env_value KEY prints KEY's value in deploy/.env, or nothing.
+env_value() { grep -sE "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2- || true; }
+
+https_on() { [[ $(env_value COMPOSE_PROFILES) == *https* ]]; }
+
 start_services() {
   say "Building the images and starting the services"
   compose up --detach --build --remove-orphans ||
     die "The services did not start. See: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs"
+  if https_on; then
+    # A changed Caddyfile alone doesn't recreate Caddy.
+    compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+  else
+    # Compose leaves a service running when its profile is turned off.
+    compose --profile https rm --stop --force caddy >/dev/null 2>&1 || true
+  fi
+}
+
+# check_https NAME URL records NAME if URL doesn't answer over HTTPS with a
+# valid certificate. It connects to this machine, so the firewall isn't in the way.
+check_https() {
+  local name=$1 url=$2 hostport
+  hostport=${url#https://}
+  hostport=${hostport%%/*}
+  [[ $hostport == *:* ]] || hostport="$hostport:443"
+  for _ in {1..30}; do
+    curl -fsS -o /dev/null --connect-to "$hostport:127.0.0.1:${hostport##*:}" "$url" 2>/dev/null && return
+    sleep 2
+  done
+  HTTPS_FAILED+=("$name at $url")
 }
 
 wait_for() {
@@ -120,14 +148,34 @@ wait_for Console http://127.0.0.1:3000/up
 wait_for EventStore http://127.0.0.1:4000/health
 
 host=$(hostname -I 2>/dev/null | awk '{ print $1 }')
+console_url="http://${host:-this-machine}:3000"
+ingest_url="http://${host:-this-machine}:4000"
+HTTPS_FAILED=()
+if https_on; then
+  public_host=$(env_value PUBLIC_HOST)
+  console_url="https://$public_host"
+  ingest_url="https://$public_host:4443"
+  # The first certificate takes Let's Encrypt a few seconds to a minute.
+  check_https Console "$console_url/up"
+  check_https Ingest "$ingest_url/health"
+fi
 cat <<EOF
 
 SolidTrace is running, and restarts with the machine.
-  Console:  http://${host:-this-machine}:3000
-  Ingest:   http://${host:-this-machine}:4000
+  Console:  $console_url
+  Ingest:   $ingest_url
   Data:     $DATA_DIR
   Config:   $CONFIG_FILE (restart after editing: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml restart event_store)
   Secrets:  $ENV_FILE
   Logs:     sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs -f
   Upgrade:  git pull && deploy/install
 EOF
+
+if (( ${#HTTPS_FAILED[@]} )); then
+  printf '\nwarning: no valid certificate yet for:\n' >&2
+  printf '  %s\n' "${HTTPS_FAILED[@]}" >&2
+  cat >&2 <<EOF
+Let's Encrypt must reach $public_host on ports 80 and 443 from the internet.
+See why: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs caddy
+EOF
+fi

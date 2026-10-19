@@ -1,0 +1,32 @@
+# TLS for Console and ingest at PUBLIC_HOST, the public IP or domain that
+# deploy/setup writes to deploy/.env. Caddy gets the certificate from Let's
+# Encrypt and redirects http:// to https://. See docs/adr/0010.
+{
+	# An IP address gets a certificate only from this profile, valid 160 hours.
+	# Domains use it too, so a domain later changes only PUBLIC_HOST.
+	cert_issuer acme {
+		profile shortlived
+	}
+	# Clients that connect to an IP send no server name.
+	default_sni {$PUBLIC_HOST}
+}
+
+(proxy) {
+	reverse_proxy {args[0]} {
+		# Shorter than the upstream's idle timeout (EventStore's is 10 seconds),
+		# so Caddy never sends a request on a connection the upstream is closing.
+		transport http {
+			keepalive 5s
+		}
+	}
+}
+
+# Console, through Thruster.
+{$PUBLIC_HOST} {
+	import proxy 127.0.0.1:3000
+}
+
+# Ingest, for SDKs and shippers.
+{$PUBLIC_HOST}:4443 {
+	import proxy 127.0.0.1:4000
+}
