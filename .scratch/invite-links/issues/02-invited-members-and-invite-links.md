@@ -1,6 +1,6 @@
 # 02: Invited members and the invite link page
 
-**Status:** ready-for-agent
+**Status:** claimed
 **Spec:** [spec.md](../spec.md)
 **Blocked by:** 01
 
