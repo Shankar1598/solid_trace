@@ -194,7 +194,7 @@ TOTAL_STAGES=8
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$DEPLOY_DIR/.env"
-CONFIG_FILE=/etc/solid-trace/event_store.yml
+CONFIG_FILE="$DEPLOY_DIR/config/event_store.yml"
 SERVICE_ACCOUNT=solidtrace-event-store
 
 as_root() { if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
@@ -227,9 +227,8 @@ write_env_quoted() {
   write_env "$1" "'$value'"
 }
 
-# write_config CONTENT replaces the config's content in place. A running
-# container keeps the old file if a new one replaces it.
-write_config() { printf '%s\n' "$1" | as_root tee "$CONFIG_FILE" >/dev/null; }
+# write_config CONTENT replaces the config's content.
+write_config() { printf '%s\n' "$1" > "$CONFIG_FILE"; }
 
 # gcp_metadata PATH prints a value from GCP's metadata server, or nothing off GCP.
 gcp_metadata() {
@@ -255,11 +254,14 @@ public_host_problem() {
 
 # The config without the object_store block this wizard writes.
 config_without_object_store() {
-  as_root awk '/^# Written by deploy\/setup/ { next }
+  awk '/^# Written by deploy\/setup/ { next }
     /^object_store:/ { skip = 1; next }
     skip && /^([[:space:]]|$)/ { next }
     { skip = 0; print }' "$CONFIG_FILE"
 }
+
+# An install from before deploy/data must move its data and config first.
+"$DEPLOY_DIR/install" --check-old-paths
 
 banner "SolidTrace setup"
 
@@ -490,8 +492,8 @@ fi
 # ── 7 ─────────────────────────────────────────────────────────────────────
 stage "EventStore's config"
 CONFIG_CHANGED=0
-if ! as_root test -f "$CONFIG_FILE"; then
-  as_root install -D -m 0644 "$DEPLOY_DIR/event_store.yml" "$CONFIG_FILE"
+if [[ ! -f $CONFIG_FILE ]]; then
+  install -D -m 0644 "$DEPLOY_DIR/event_store.yml" "$CONFIG_FILE"
   note "Created $CONFIG_FILE from deploy/event_store.yml."
 fi
 if [[ $STORAGE == gcs ]]; then
@@ -514,7 +516,7 @@ $block"
   else
     SKIPPED+=("The object_store block in $CONFIG_FILE")
   fi
-elif as_root grep -q '^object_store:' "$CONFIG_FILE"; then
+elif grep -q '^object_store:' "$CONFIG_FILE"; then
   warn "$CONFIG_FILE has an object_store block. Without it, files whose only"
   warn "copy is in the bucket aren't read any more: their Log hours fail and"
   warn "Event reads leave those archived Events out."

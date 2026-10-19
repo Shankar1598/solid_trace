@@ -40,7 +40,7 @@ x-console: &console
     SMTP_USERNAME: ${SMTP_USERNAME:-}
     SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   volumes:
-    - /var/lib/solid-trace/storage:/storage
+    - ./data/storage:/storage
   restart: unless-stopped
   logging: *logging
 
@@ -81,9 +81,9 @@ services:
         soft: 1048576
         hard: 1048576
     volumes:
-      - /var/lib/solid-trace/storage:/storage
-      - /var/lib/solid-trace/storage_cold:/storage_cold
-      - /etc/solid-trace/event_store.yml:/etc/solid-trace/event_store.yml:ro
+      - ./data/storage:/storage
+      - ./data/storage_cold:/storage_cold
+      - ./config:/etc/solid-trace:ro
     restart: unless-stopped
     # Room for DuckDB's checkpoint and an in-flight upload after the HTTP servers stop.
     stop_grace_period: 30s
@@ -105,7 +105,7 @@ services:
       # The directory, not the file, so a git pull's new Caddyfile is seen.
       - ./caddy:/etc/caddy:ro
       # Certificates. Kept across restarts, or Let's Encrypt's rate limits bite.
-      - /var/lib/solid-trace/caddy:/data
+      - ./data/caddy:/data
     restart: unless-stopped
     logging: *logging
 

@@ -33,5 +33,8 @@
 local/*
 !local/.keep
 
-# Console's secret, written by deploy/install.
+# A VM install's state, all in deploy/: the secrets (deploy/.env), EventStore's
+# config, and the data, Caddy's certificates among it.
 /deploy/.env
+/deploy/config/
+/deploy/data/
