@@ -1,7 +1,8 @@
 import { Link, usePage } from '@inertiajs/react'
-import { List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing } from 'lucide-react'
+import { List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Check, ChevronsUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { navSection } from '@/lib/nav'
+import { navSection, orgSwitchUrl } from '@/lib/nav'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
 import { usePaletteOpener } from './CommandPalette'
@@ -18,6 +19,18 @@ export function Sidebar({ className }: SidebarProps) {
 
   if (!current_org) return null
 
+  const organizations = props.organizations ?? []
+  const orgHeader = (
+    <>
+      <div className="h-8 w-8 shrink-0 bg-foreground flex items-center justify-center text-background font-mono font-semibold text-sm">
+        {current_org.slug.charAt(0).toUpperCase()}
+      </div>
+      <div className="min-w-0 truncate font-semibold text-sm tracking-tight">
+        {current_org.name}
+      </div>
+    </>
+  )
+
   const section = navSection(url)
   const navItems = [
     { label: 'Issues', href: `/${current_org.slug}/issues`, icon: List, active: section === 'issues' },
@@ -31,16 +44,37 @@ export function Sidebar({ className }: SidebarProps) {
   return (
     <div className={cn("min-h-screen border-r bg-card text-card-foreground md:flex hidden w-[240px] flex-shrink-0 flex-col justify-between z-20", className)}>
       <div className="flex flex-col flex-1">
-        {/* Project Header */}
+        {/* Organization Header: a selector with two or more Organizations */}
         <div className="h-14 flex items-center px-4 border-b">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 bg-foreground flex items-center justify-center text-background font-mono font-semibold text-sm">
-              {current_org?.slug?.charAt(0).toUpperCase()}
-            </div>
-            <div className="font-semibold text-sm tracking-tight">
-              {current_org?.name}
-            </div>
-          </div>
+          {organizations.length > 1 ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label="Switch Organization"
+                className="-mx-2 flex min-w-0 flex-1 items-center gap-3 px-2 py-1 text-left hover:bg-muted/50 data-popup-open:bg-muted/50"
+              >
+                {orgHeader}
+                <ChevronsUpDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="min-w-52">
+                {organizations.map(org => {
+                  const current = org.slug === current_org.slug
+                  return (
+                    <DropdownMenuItem
+                      key={org.slug}
+                      aria-current={current ? 'page' : undefined}
+                      // The current Organization only closes the menu.
+                      render={current ? undefined : <Link href={orgSwitchUrl(url, org.slug)} />}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{org.name}</span>
+                      {current && <Check className="h-3.5 w-3.5" aria-label="Current Organization" />}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <div className="flex items-center gap-3">{orgHeader}</div>
+          )}
         </div>
 
         <nav aria-label="Main" className="px-3 py-4 space-y-0.5">

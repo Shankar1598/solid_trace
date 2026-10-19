@@ -13,7 +13,7 @@ class LogsController < ApplicationController
 
   layout "dashboard"
 
-  before_action :set_organization
+  before_action :set_current_org
   before_action :set_project, except: :start
   before_action :set_time_range, only: %i[query histogram readable_sql sql]
 
@@ -158,10 +158,6 @@ class LogsController < ApplicationController
       sent_by: current_user.name,
       duration_ms: rand(5..250),
     }
-  end
-
-  def set_organization
-    @current_org = current_user.organizations.find_by!(slug: params[:org_slug])
   end
 
   def set_project

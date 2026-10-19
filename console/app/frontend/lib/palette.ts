@@ -20,6 +20,8 @@ export interface PaletteContext {
   /** The signed-in viewer's id, whose recent Queries show. */
   viewer: number | null
   orgSlug: string
+  /** The viewer's Organizations, by name, the current one among them. */
+  organizations: { name: string; slug: string }[]
   projects: { name: string; slug: string }[]
   dashboards: { id: number; name: string }[]
   monitors: { id: number; name: string }[]
@@ -57,6 +59,12 @@ export function paletteGroups(context: PaletteContext): PaletteGroup[] {
   }
   return [...groups].map(([group, items]) => ({ group, items }))
 }
+
+/** The "Organizations" group: the viewer's other Organizations, each going to its Issues. */
+export const organizationItems: PaletteSource = ({ orgSlug, organizations }) =>
+  organizations
+    .filter(o => o.slug !== orgSlug)
+    .map(o => ({ id: `organization/${o.slug}`, group: 'Organizations', label: o.name, detail: 'Organization', href: `/${o.slug}/issues` }))
 
 /** The items with every word of `text` in their group, label or detail, ignoring case; groups left empty go. */
 export function filterGroups(groups: PaletteGroup[], text: string): PaletteGroup[] {
