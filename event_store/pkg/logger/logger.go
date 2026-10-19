@@ -2,6 +2,7 @@ package logger
 
 import (
 	"os"
+	"time"
 
 	"github.com/zerodha/logf"
 )
@@ -16,10 +17,11 @@ func Init() {
 // colour codes reach a Log when Vector ships the output (docs/adr/0011).
 func New(out *os.File) logf.Logger {
 	opts := logf.Opts{
-		Writer:          out,
-		EnableColor:     isTerminal(out),
-		EnableCaller:    true,
-		TimestampFormat: "2006-01-02 15:04:05 MST",
+		Writer:       out,
+		EnableColor:  isTerminal(out),
+		EnableCaller: true,
+		// RFC 3339, so the time is one logfmt value.
+		TimestampFormat: time.RFC3339Nano,
 	}
 	if os.Getenv("DEBUG") == "true" {
 		opts.Level = logf.DebugLevel
