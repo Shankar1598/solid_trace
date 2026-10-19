@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { Combobox } from '@base-ui/react/combobox'
 import { router, usePage } from '@inertiajs/react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { filterGroups, paletteGroups, queryLine, registerPaletteSource, type PaletteContext, type PaletteGroup, type PaletteItem } from '@/lib/palette'
+import { filterGroups, organizationItems, paletteGroups, queryLine, registerPaletteSource, type PaletteContext, type PaletteGroup, type PaletteItem } from '@/lib/palette'
 import { browserStorage, latestQueries } from '@/lib/recentQueries'
 import { toggleTheme } from '@/lib/theme'
 import type { SharedProps } from '@/types'
@@ -43,6 +43,8 @@ registerPaletteSource('pages', ({ orgSlug }) => (orgSlug ? [
   { id: 'page/settings', group: 'Pages', label: 'Settings', href: `/${orgSlug}/settings/organization` },
 ] : []))
 
+registerPaletteSource('organizations', organizationItems)
+
 const OpenPalette = createContext<() => void>(() => {})
 
 /** Opens the command palette, as Cmd/Ctrl+K does. */
@@ -70,6 +72,7 @@ export function CommandPalette({ children }: { children: React.ReactNode }) {
   const context: PaletteContext = {
     viewer: props.current_user?.id ?? null,
     orgSlug: props.current_org?.slug ?? '',
+    organizations: props.organizations ?? [],
     projects: props.org_projects ?? [],
     dashboards: props.org_dashboards ?? [],
     monitors: props.org_monitors ?? [],
