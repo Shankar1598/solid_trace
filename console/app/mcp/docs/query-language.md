@@ -106,7 +106,7 @@ where path == "/v2/search"
 | summarize rate(), peak_rate() by bin_auto(time), shop
 ```
 
-The time bin is the first `by` column that bins the Logs' `time`. `rate()` divides each bin's count by its seconds, the empty ones too, so a burst inside the bin is averaged out. A bin that the range's start or end cuts is divided by its seconds in the range, so it still reads a true rate.
+The time bin is the first `by` column that bins the Logs' `time`. `rate()` by a time column that isn't such a bin, such as a `time` that `extend` changes, is an error. `rate()` divides each bin's count by its seconds, the empty ones too, so a burst inside the bin is averaged out. A bin that the range's start or end cuts is divided by its seconds in the range, so it still reads a true rate. Only a `where` on `time` before any other stage narrows the range, so put it first: over an hour, `extend x = 1 | where time > ago(10m) | summarize rate()` divides by the whole hour and reads 6 times too low.
 
 `peak_rate()` counts the Logs in each second of the bin, as `bin(time, 1s)` puts them, and keeps the busiest. It reads each Log's own time, so it is the true busiest second at any bin size: over a month, `bin_auto(time)` makes 12-hour bins, and each one's `peak_rate_` is still the busiest single second of those 12 hours. Within groups, rates add up to the whole and peak rates don't, as groups peak in different seconds.
 
@@ -139,7 +139,7 @@ When a Query returns a table, the Logs explorer draws it as a chart above the ta
 
 Any other table shows on its own: one with no rows, with a second datetime column, or with two rows for the same bin and group.
 
-A chart draws at most 8 series, the ones with the largest totals, and the legend says how many more there are. Click a legend entry to hide or show its series. Columns that measure different things, such as a count and an average, get a panel each over the same time axis; `rate` and `peak_rate` share one, in Logs per second. Bars and areas stack only for `count`, `countif`, `sum` and `rate`, whose values add up.
+A chart draws at most 8 series, the ones with the largest totals, and the legend says how many more there are. Click a legend entry to hide or show its series. Columns that measure different things, such as a count and an average, get a panel each over the same time axis; `rate` and `peak_rate` share one, in Logs per second. Bars and areas stack only for `count`, `countif`, `sum` and `rate`, whose values add up, and only when that column has its panel alone. So `summarize rate(), peak_rate() by bin_auto(time), shop` draws each shop's rate unstacked, in the panel it shares with `peak_rate`.
 
 **Time bins.** `bin(time, 5m)` makes bins of the size you give. `bin_auto(time)` picks a size from the time range, giving at most about 100 bins. It reads the range after the Query's `where` stages narrow it. Bins start at multiples of their size from 1970-01-01 UTC, so the first and last bins may cover only part of the range. The chart fades them, and its tooltip says "partial bin". The chart says its bin size beside the legend, such as "1m bins", and its tooltip gives each bin's span, such as 19:02–19:03, so a count over 5-minute bins doesn't read as one per minute. A new Summarize in the Builder starts with `by bin_auto(time)`, so one click charts a count.
 
