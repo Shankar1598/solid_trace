@@ -16,6 +16,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Where things stand
 
+- **Request rates on Charts** ([spec](request-rates/spec.md), [tickets](request-rates/issues/)): planned with the user on 2026-10-19, after Better Stack's 15-second buckets overstated a White Fox peak. Built on `feature/request-rates` (2026-10-19, `efb118c`), not merged into `main` yet. Both tickets are resolved. [01](request-rates/issues/01-chart-shows-its-bin.md): every time Chart says its bin size, such as `1m bins`, and its tooltip gives the bin's span. [02](request-rates/issues/02-rate-and-peak-rate-aggregates.md): the `rate()` and `peak_rate()` aggregates, in one summarize the bin cache still takes. `bin_auto` stays at about 100 bins. Over 7 days of dev Logs (1.86 M), `rate(), peak_rate() by bin_auto(time)` answers in 0.5–0.6 s cold. Reviewed (standards and spec): nothing high, fixes merged. Left as is: one shared table of aggregate traits instead of parallel lists in Go and TS. Targeted tests and the Charts, Builder, Dashboards and Monitors flows pass; the full Go, Rails and Playwright suites are for the user.
 - **SolidTrace's own Logs** ([spec](self-logs/spec.md), [tickets](self-logs/issues/)): planned with the user on 2026-10-19. A VM install seeds a Meta Organization with a "SolidTrace" Project, and Vector ships every container's output from Docker to it, through a new key-only route, `POST /api/logs` ([ADR 0011](../docs/adr/0011-meta-organization-and-vector-reads-docker-logs.md)). Built on `feature/self-logs` and merged into `main` (2026-10-19, `672b95a`), released in v0.2.0: 01 and 02 resolved, 03 `ready-for-human` (Vector checked end to end on the dev box against a stand-in EventStore; the real VM run remains). Image `timberio/vector:0.58.0-alpine`; the key is `META_PROJECT_KEY` in `deploy/.env`, and Vector reads it only with `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true`. Reviewed (standards and spec), fixes merged. Left open: the first-sign-up admin rule runs only in sign-up and isn't race-safe; Rails backtrace lines become level-less Logs. Targeted tests pass; full Go and Rails suites are for the user. Also on 2026-10-19: EventStore logs each file it uploads to the bucket and each local copy it deletes (`8b30ab6`), and the message queue's rows are deleted after 30 days (`cc3ce5e`).
 - **HTTPS** ([spec](https/spec.md), [01](https/issues/01-caddy-terminates-tls.md)): planned with the user and built on `main` (2026-10-19). With HTTPS on in `deploy/setup-gcp`, Caddy terminates TLS for the VM's bare public IP, with Let's Encrypt's 160-hour certificates: Console on 443, ingest on 4443 ([ADR 0010](../docs/adr/0010-caddy-terminates-tls.md)). Checked with `caddy validate`, `docker compose config` and Console's production config; reviewed. `ready-for-human`: the real certificate needs the user's GCP VM.
 - **Merged into `main`** (2026-10-18), each with `--no-ff` and no conflicts: `feature/mcp` (Logs v1 and v2, the looks pass, the MCP server, bugs 01 to 07), then `feature/console-bugs` (bugs 08, 09, 11, 12), then `feature/logs-v2` (`deploy/install`, `deploy/setup` and production email settings). On the merge: typecheck, vitest (399), the 288 Rails tests for the changed code and the 12 affected Playwright flows pass, among them the SQL flow on a rebuilt EventStore. The full Go, Rails and Playwright suites are for the user to run. Performance testing and the real GCS run happen on `main`.
@@ -39,6 +40,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
+- **Request rates**: merge `feature/request-rates` into `main` once the user is happy, then run the full suites. One flow is fragile: `charts.spec.ts` "a series hidden from the legend stays hidden through a zoom and a re-run" fails when the dev Logs end early in the last 24 h but still number 5,000 or more, since global setup tops them up only below 5,000.
 - **Release v0.3.0** (2026-10-19, pre-release): Log files go under `logs/` in the bucket, beside `events/` (`49ce346`). Objects uploaded under the old keys aren't moved, so a bucket install must empty its Log files and `logs.duckdb` before upgrading.
 - **Release v0.2.0** (2026-10-19, pre-release): images for amd64 and arm64 on ghcr.io, built on native runners by `.github/workflows/release.yml` (also runnable by hand with a tag). `deploy/install` now always pulls a release's images (the checkout's tag, or the newest before it) and stops if a pull fails; `--build` builds from the checkout. The user is installing on GCP T2A (arm64) VMs.
 - **SolidTrace's own Logs**: on the VM, `deploy/install` and check the "SolidTrace" Project gets Logs from console, jobs, event_store, caddy and db_prepare ([03](self-logs/issues/03-vector-ships-solidtraces-logs.md)). Shippers inside the VPC send to `http://<internal-ip>:4000`, not Caddy (its certificate is for the public IP).
@@ -68,12 +70,17 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | HTTPS | 0 / 1 | [01](https/issues/01-caddy-terminates-tls.md) |
 | Upgrade Pebble and DuckDB | 3 / 0 | 03 closed as `wontfix` |
 | Phone layout | 0 / 1 | [01](phone-layout/issues/01-phone-layout.md) |
+| Request rates on Charts | 2 / 0 | on `feature/request-rates`, not merged |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
 01–16 (done) → logs v1 tickets M1-01 … M3-04
 
-## Last session (2026-10-10 to 17, logs v2)
+## Last session (2026-10-19, request rates)
+
+Built [request rates](request-rates/spec.md) with `/implement-spec`. The two tickets were built at once in worktrees, then merged into `feature/request-rates` by merger agents, which ran the Playwright flows on the dev stack. One review (standards and spec) followed, with one fixer. Notes and briefs are in `~/.cache/solid-trace/request-rates-notes/`. On the way, the dev database had missed the self-logs migration, and the merger ran `db:migrate`. The dev Project also got 20,000 more Logs over the last 24 h.
+
+## Earlier session (2026-10-10 to 17, logs v2)
 
 Planned Logs v2 with the user (Axiom as the reference) and built it from [the spec](logs-v2/spec.md) with workflow batches: a Console track in the main checkout and an EventStore track in a worktree, each unit implemented, reviewed, verified and fixed, then merged with `--no-ff`. On 2026-10-16 the user asked for less token spend: reviews became one review plus one verify, high and medium findings only, with 1 or 2 screenshots per UI unit and no visual polish (looks come later, with the user). A whole-branch review closed the build. Every unit's decisions are in the spec's Implementation decisions; leftovers in [carry-over.md](logs-v2/carry-over.md). Run notes for the orchestrator live in `~/.cache/solid-trace/logs-v2-notes/runs.md`.
 

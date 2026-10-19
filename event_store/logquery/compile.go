@@ -73,8 +73,8 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &compiler{text: source, bounds: bounds, scope: logScope(), reads: map[attrKey]bool{}}
 	q := &Query{from: bounds.From.UTC(), to: bounds.To.UTC(), text: source, tree: tree}
+	c := &compiler{text: source, bounds: bounds, scope: logScope(), reads: map[attrKey]bool{}}
 	inHead := true
 	for _, s := range tree.Stages {
 		if inHead {
@@ -89,7 +89,7 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 				c.bounds.From, c.bounds.To = q.from, q.to
 			}
 		}
-		compiled, err := c.stage(s)
+		compiled, err := c.stage(s, q)
 		if err != nil {
 			return nil, err
 		}

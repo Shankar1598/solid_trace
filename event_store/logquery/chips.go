@@ -54,8 +54,8 @@ type Summarize struct {
 	By         []GroupChip     `json:"by"`
 }
 
-// AggregateChip is one of summarize's functions: count() has no Field;
-// percentile has its percentage.
+// AggregateChip is one of summarize's functions: count(), rate() and
+// peak_rate() have no Field; percentile has its percentage.
 type AggregateChip struct {
 	Fn      string  `json:"fn"`
 	Field   string  `json:"field,omitempty"`
@@ -273,7 +273,12 @@ func chipValue(x parser.Expr) (any, bool) {
 }
 
 // builderAggregates are the functions the Builder offers in summarize.
-var builderAggregates = map[string]bool{"count": true, "dcount": true, "sum": true, "avg": true, "min": true, "max": true, "percentile": true}
+var builderAggregates = map[string]bool{
+	"count": true, "rate": true, "peak_rate": true, "dcount": true, "sum": true, "avg": true, "min": true, "max": true, "percentile": true,
+}
+
+// withoutField are the Builder's functions that take no Field.
+var withoutField = map[string]bool{"count": true, "rate": true, "peak_rate": true}
 
 // summarizeOf reads a summarize the Builder can show: unnamed functions of
 // one Field each, and by Fields or time bins.
@@ -304,7 +309,7 @@ func summarizeOf(s *parser.SummarizeStage) (*Summarize, bool) {
 			}
 			chip.Field = fieldNameOf(id)
 		}
-		if (chip.Fn == "count") != (chip.Field == "") {
+		if withoutField[chip.Fn] != (chip.Field == "") {
 			return nil, false
 		}
 		summarize.Aggregates = append(summarize.Aggregates, chip)

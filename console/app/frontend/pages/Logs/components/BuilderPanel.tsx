@@ -17,6 +17,7 @@ import {
   setSummarize,
   setTake,
   summarizeColumns,
+  WITHOUT_FIELD,
   type Aggregate,
   type AggregateFn,
   type Builder,
@@ -600,6 +601,8 @@ function ConditionStep({ field, type, values, op, onOp, value, onValue, onBack, 
 
 const FNS: PickOption[] = [
   { value: 'count', hint: 'Logs' },
+  { value: 'rate', hint: 'Logs per second' },
+  { value: 'peak_rate', hint: 'Logs in the busiest second' },
   { value: 'dcount', hint: 'distinct values' },
   { value: 'sum', hint: 'of a number' },
   { value: 'avg', hint: 'of a number' },
@@ -613,7 +616,7 @@ const PERCENTS = ['50', '75', '90', '95', '99', '99.9']
 /** Adds or edits a function: pick it, then its Field (and a percentile's percentage). */
 function AggregateEditor({ aggregate, onApply }: { aggregate?: Aggregate; onApply: (a: Aggregate) => void }) {
   const { fields } = useContext(SuggestionsContext)
-  const [fn, setFn] = useState<AggregateFn | null>(aggregate && aggregate.fn !== 'count' ? aggregate.fn : null)
+  const [fn, setFn] = useState<AggregateFn | null>(aggregate && !WITHOUT_FIELD.has(aggregate.fn) ? aggregate.fn : null)
   const [percent, setPercent] = useState(String(aggregate?.percent ?? 95))
 
   if (fn === null) {
@@ -622,7 +625,7 @@ function AggregateEditor({ aggregate, onApply }: { aggregate?: Aggregate; onAppl
         label="Function"
         options={FNS}
         chosen={aggregate ? [aggregate.fn] : undefined}
-        onPick={name => (name === 'count' ? onApply({ fn: 'count' }) : setFn(name as AggregateFn))}
+        onPick={name => (WITHOUT_FIELD.has(name as AggregateFn) ? onApply({ fn: name as AggregateFn }) : setFn(name as AggregateFn))}
       />
     )
   }
