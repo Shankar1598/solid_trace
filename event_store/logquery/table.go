@@ -116,7 +116,7 @@ func (q *Query) writeTail(c *chain, f fields) {
 			has[col.name] = true
 		}
 	}
-	for _, s := range q.tail {
+	for i, s := range q.tail {
 		switch s := s.(type) {
 		case whereStage:
 			c.add("SELECT * FROM %s WHERE %s", c.prev, writeCondition(s.predicate, f, false))
@@ -138,6 +138,9 @@ func (q *Query) writeTail(c *chain, f fields) {
 			}
 			c.add("SELECT %s, %s FROM %s", all, selectList(s.columns, f), c.prev)
 		case summarizeStage:
+			if rates := q.perSecondColumns(s, i, f); rates != "" {
+				c.add("SELECT *, %s FROM %s", rates, c.prev)
+			}
 			all := append(append([]namedValue{}, s.by...), s.aggregates...)
 			group := ""
 			if len(s.by) > 0 {
