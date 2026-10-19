@@ -10,8 +10,10 @@ x-logging: &logging
 
 # Console's image, shared by the dashboard, the background jobs and db_prepare.
 x-console: &console
-  image: solid-trace-console:latest
-  # Built by the console service, never pulled.
+  # deploy/install sets SOLIDTRACE_VERSION: a release's tag, whose images it
+  # pulls from GitHub's registry, or dev, which it builds from this checkout.
+  image: ghcr.io/shankar1598/solid-trace-console:${SOLIDTRACE_VERSION:-dev}
+  # Built by the console service or pulled by deploy/install, never by Compose.
   pull_policy: never
   network_mode: host
   environment:
@@ -63,7 +65,8 @@ services:
   # Event ingestion and storage. Ingest listens on port 4000 directly, behind
   # Caddy on 4443 with HTTPS on.
   event_store:
-    image: solid-trace-event-store:latest
+    image: ghcr.io/shankar1598/solid-trace-event-store:${SOLIDTRACE_VERSION:-dev}
+    pull_policy: never
     build: ../event_store
     network_mode: host
     environment:
