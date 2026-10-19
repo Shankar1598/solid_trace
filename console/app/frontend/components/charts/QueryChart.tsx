@@ -11,7 +11,7 @@ import {
   CHAR_PX, LABEL_PAD_PX, nameChars, optionsText, shortName, statText, tickLabel, ticksInside, timePattern, timeTicks, valueText, valueTicks, withUnit,
   type ValueOptions,
 } from '@/lib/charts/axis'
-import { binSize } from '@/lib/charts/bins'
+import { binSize, binSpan } from '@/lib/charts/bins'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
 import type { LogTable } from '@/lib/logs/table'
@@ -368,11 +368,11 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     </div>
   )
 
-  /** A point's bin or category, for the tooltip: a bin's start in local time. */
+  /** A point's bin or category, for the tooltip: a bin's span, start to end, in local time. */
   function pointLabel(x: unknown): string {
     if (!time) return String(x)
     const start = Number(x)
-    return `${format(new Date(start), pattern)}${time.partial.includes(start) ? ' · partial bin' : ''}`
+    return `${binSpan(start, time.binSeconds, pattern)}${time.partial.includes(start) ? ' · partial bin' : ''}`
   }
 }
 

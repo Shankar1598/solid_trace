@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { binSize } from './bins'
+import { binSize, binSpan } from './bins'
+
+const at = (...parts: [number, number, number, number?, number?, number?]) => new Date(...parts).getTime()
 
 describe('bin size', () => {
   it('reads in the largest unit it is a whole number of, from a second to a week', () => {
@@ -23,5 +25,22 @@ describe('bin size', () => {
   it('reads a bin under a second in milliseconds', () => {
     expect(binSize(0.5)).toBe('500ms')
     expect(binSize(1.5)).toBe('1500ms')
+  })
+})
+
+describe('bin span', () => {
+  it('reads from the bin\'s start to its end in local time, to the axis\' precision', () => {
+    expect(binSpan(at(2026, 9, 9, 19, 2), 60, 'HH:mm')).toBe('19:02–19:03')
+    expect(binSpan(at(2026, 9, 9, 19, 2, 10), 10, 'HH:mm:ss')).toBe('19:02:10–19:02:20')
+  })
+
+  it('gives the date once when the bin starts and ends on the same day', () => {
+    expect(binSpan(at(2026, 9, 9, 10), 3_600, 'MMM dd HH:mm')).toBe('Oct 09 10:00–11:00')
+    expect(binSpan(at(2026, 9, 9, 23), 3_600, 'MMM dd HH:mm')).toBe('Oct 09 23:00–Oct 10 00:00')
+  })
+
+  it('gives both days for a bin of days', () => {
+    expect(binSpan(at(2026, 9, 9), 86_400, 'MMM dd')).toBe('Oct 09–Oct 10')
+    expect(binSpan(at(2026, 9, 5), 604_800, 'MMM dd')).toBe('Oct 05–Oct 12')
   })
 })
