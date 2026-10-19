@@ -41,6 +41,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
+- **Project keys after Logs arrive** (next to build, before the next release): once a Project has Logs, the Logs Get started page (`console/app/frontend/pages/Logs/components/GetStarted.tsx`), the only place that shows the key and the `POST /api/logs` snippet, disappears, so nobody can add another Logs integration. The Project page shows only the event DSN. Keys are stored in plain text, so this is a UI gap. Start with a grilling session with the user, then a spec and tickets. Idea so far: keep the setup reachable, such as a "Send logs" link on the Logs and Project pages.
 - **Release v0.4.0** (2026-10-19, pre-release): request rates on Charts (`rate()`, `peak_rate()`, and each time Chart's bin size), merged from `feature/request-rates` (`c86ee5d`). There are no migrations or config changes. Full run on `main` (2026-10-19):
   - The Go suite passes.
   - Rails passes, 614 runs, on an unseeded test database (`db:test:prepare`). After `db:reset`, the seeds fail 9 self-logs tests.
