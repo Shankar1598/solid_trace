@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_18_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_19_150000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -102,8 +102,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_18_120000) do
   create_table "instance_settings", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "default_log_retention_days", default: 30, null: false
+    t.integer "meta_organization_id"
+    t.boolean "meta_organization_seeded", default: false, null: false
     t.boolean "sql_queries_enabled", default: true, null: false
     t.datetime "updated_at", null: false
+    t.index ["meta_organization_id"], name: "index_instance_settings_on_meta_organization_id"
   end
 
   create_table "integrations", force: :cascade do |t|
@@ -306,6 +309,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_18_120000) do
   add_foreign_key "dashboard_charts", "projects"
   add_foreign_key "dashboards", "organizations"
   add_foreign_key "dashboards", "users", column: "created_by_id", on_delete: :nullify
+  add_foreign_key "instance_settings", "organizations", column: "meta_organization_id", on_delete: :nullify
   add_foreign_key "integrations", "organizations"
   add_foreign_key "issue_fingerprints", "issues"
   add_foreign_key "issue_fingerprints", "projects"
