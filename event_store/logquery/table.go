@@ -234,10 +234,10 @@ func orderBy(keys []sortKey, f fields) string {
 // values: string, number, bool, datetime, timespan, or dynamic for values
 // whose type differs from row to row. A column of the Query's last
 // summarize, or a plain rename of one, says how to chart it: Agg is the
-// aggregate it is (count, countif, dcount, sum, avg, min, max or
-// percentile), and BinSeconds the size of the time bins it holds. Only one
-// column has BinSeconds, the table's time axis: the first that holds time
-// bins.
+// aggregate it is (count, countif, dcount, sum, avg, min, max, percentile,
+// rate or peak_rate), and BinSeconds the size of the time bins it holds.
+// Only one column has BinSeconds, the table's time axis: the first that
+// holds time bins.
 type Column struct {
 	Name       string  `json:"name"`
 	Type       string  `json:"type"`
