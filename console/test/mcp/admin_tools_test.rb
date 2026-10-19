@@ -73,7 +73,7 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert_not answer.error?, answer.text
     setup = answer.json
     assert_equal "http://#{@key.public_key}@console.test:4000/#{@shop.id}", setup["dsn"]
-    logs_url = "http://console.test:4000/api/#{@shop.id}/logs"
+    logs_url = "http://console.test:4000/api/logs"
     assert_equal({ "url" => logs_url, "key" => @key.public_key }, setup["logs"])
     assert_equal <<~CURL.chomp, setup["curl"]
       curl -X POST '#{logs_url}' \\
@@ -93,7 +93,7 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     setup = call_tool(:get_project_setup, user: @member, project: "shop").json
 
     assert_nil setup["dsn"]
-    assert_equal({ "url" => "https://ingest.example.com/api/#{@shop.id}/logs", "key" => nil }, setup["logs"])
+    assert_equal({ "url" => "https://ingest.example.com/api/logs", "key" => nil }, setup["logs"])
     assert_nil setup["curl"]
     assert_equal "This Project has no key. create_key makes one.", setup["note"]
   ensure

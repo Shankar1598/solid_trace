@@ -29,10 +29,12 @@ class Project < ApplicationRecord
   end
 
   # Where shippers and curl send this Project's Logs as JSON, on ingest
-  # reached at ingest_url (as the Logs snippets build it).
+  # reached at ingest_url (as the Logs snippets build it). The route is
+  # key-only: ingest finds the Project from the key it is sent with.
+  # logsRoute in app/frontend/lib/logs/getStarted.ts builds the same path.
   def logs_url(ingest_url)
     uri = URI(ingest_url)
-    uri.path = "#{uri.path.sub(%r{/+\z}, '')}/api/#{id}/logs"
+    uri.path = "#{uri.path.sub(%r{/+\z}, '')}/api/logs"
     uri.to_s
   end
 

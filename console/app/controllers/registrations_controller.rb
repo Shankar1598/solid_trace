@@ -11,6 +11,7 @@ class RegistrationsController < ApplicationController
   def create
     @user = User.new(user_params)
     if @user.save
+      MetaOrganization.join_first(@user)
       start_new_session_for @user
       redirect_to root_path, notice: "Welcome! You have signed up successfully."
     else

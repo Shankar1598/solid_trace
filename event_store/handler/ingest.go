@@ -91,6 +91,22 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 // POST /api/:project_id/logs
 // The key must belong to the Project in the path.
 func (h *IngestHandler) Logs(c *fiber.Ctx) error {
+	return h.ingestLogs(c, func(projectID uint32) bool {
+		pathProjectID, err := parseProjectID(c)
+		return err == nil && pathProjectID == projectID
+	})
+}
+
+// POST /api/logs
+// The Project is the one the key belongs to.
+func (h *IngestHandler) KeyOnlyLogs(c *fiber.Ctx) error {
+	return h.ingestLogs(c, func(uint32) bool { return true })
+}
+
+// ingestLogs authenticates the request's project key, refuses it unless
+// projectAllowed accepts its Project, and ingests the body as that Project's
+// Logs.
+func (h *IngestHandler) ingestLogs(c *fiber.Ctx, projectAllowed func(projectID uint32) bool) error {
 	publicKey := h.extractSentryKey(c)
 	if publicKey == "" {
 		publicKey = bearerToken(c)
@@ -103,7 +119,7 @@ func (h *IngestHandler) Logs(c *fiber.Ctx) error {
 	if err != nil {
 		return h.renderKeyError(c, err)
 	}
-	if pathProjectID, err := parseProjectID(c); err != nil || pathProjectID != projectID {
+	if !projectAllowed(projectID) {
 		return c.Status(401).JSON(fiber.Map{"error": "Project key is not for this project"})
 	}
 
