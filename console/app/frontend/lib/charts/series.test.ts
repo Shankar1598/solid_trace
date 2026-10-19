@@ -7,6 +7,8 @@ const SERVICE: TableColumn = { name: 'service', type: 'string' }
 const COUNT: TableColumn = { name: 'count_', type: 'number', agg: 'count' }
 const AVG: TableColumn = { name: 'avg_duration_ms', type: 'number', agg: 'avg' }
 const COUNTIF: TableColumn = { name: 'countif_', type: 'number', agg: 'countif' }
+const RATE: TableColumn = { name: 'rate_', type: 'number', agg: 'rate' }
+const PEAK_RATE: TableColumn = { name: 'peak_rate_', type: 'number', agg: 'peak_rate' }
 
 const at = (time: string) => new Date(time).getTime()
 
@@ -191,6 +193,12 @@ describe('filling empty bins', () => {
     const model = drawable(chartOf(table(columns, [['2026-10-09T10:05:00Z', 1, 1, 1, 1, 1, 1, 1]], { fill_gaps: true, ...range })))
 
     expect(model.points[1]).toEqual({ x: at('2026-10-09T10:00:00Z'), s0: 0, s1: 0, s2: 0, s3: null, s4: null, s5: null, s6: null })
+  })
+
+  it('fills the bins with zero rates and peak rates, as no Logs came in them', () => {
+    const model = drawable(chartOf(table([TIME, RATE, PEAK_RATE], [['2026-10-09T10:05:00Z', 0.5, 3]], { fill_gaps: true, ...range })))
+
+    expect(model.points[1]).toEqual({ x: at('2026-10-09T10:00:00Z'), s0: 0, s1: 0 })
   })
 
   it('fills a series missing from a bin the same way', () => {
@@ -440,9 +448,14 @@ describe('bars', () => {
 describe('stacking', () => {
   const stacked = (model: ChartModel) => drawable(model).panels.map(p => p.stacked)
 
-  it('stacks counts and sums of one column', () => {
+  it('stacks counts, sums and rates of one column', () => {
     expect(stacked(chartOf(table([TIME, SERVICE, COUNT], [['2026-10-09T10:00:00Z', 'api', 1]])))).toEqual([true])
     expect(stacked(chartOf(table([SERVICE, { name: 's', type: 'number', agg: 'sum' }], [['api', 1]])))).toEqual([true])
+    expect(stacked(chartOf(table([TIME, SERVICE, RATE], [['2026-10-09T10:00:00Z', 'api', 0.5]])))).toEqual([true])
+  })
+
+  it('never stacks peak rates, as groups peak in different seconds', () => {
+    expect(stacked(chartOf(table([TIME, SERVICE, PEAK_RATE], [['2026-10-09T10:00:00Z', 'api', 3]])))).toEqual([false])
   })
 
   it('never stacks values that do not add up, or two columns over one axis', () => {
@@ -472,6 +485,12 @@ describe('panels', () => {
     expect(model.panels.map(p => p.columns)).toEqual([
       ['count_', 'countif_'], ['avg_duration_ms', 'percentile_duration_ms_95', 'max_duration_ms'],
     ])
+  })
+
+  it('share one axis between a rate and a peak rate, apart from counts', () => {
+    const model = drawable(chartOf(table([TIME, COUNT, RATE, PEAK_RATE], [['2026-10-09T10:00:00Z', 30, 0.5, 3]])))
+
+    expect(model.panels.map(p => p.columns)).toEqual([['count_'], ['rate_', 'peak_rate_']])
   })
 
   it('give a renamed column, a sum or arithmetic over aggregates an axis of its own', () => {

@@ -14,9 +14,9 @@ export const MAX_BARS = 50
 const MAX_FILLED_BINS = 10_000
 
 /** Aggregates whose empty bin is a zero; the others have no value there. */
-const ZERO_WHEN_EMPTY: ReadonlySet<Agg> = new Set(['count', 'countif', 'dcount', 'sum'])
-/** Aggregates whose split values add up to the whole, so their series stack. */
-const ADDS_UP: ReadonlySet<Agg> = new Set(['count', 'countif', 'sum'])
+const ZERO_WHEN_EMPTY: ReadonlySet<Agg> = new Set(['count', 'countif', 'dcount', 'sum', 'rate', 'peak_rate'])
+/** Aggregates whose split values add up to the whole, so their series stack; groups' peak rates are in different seconds. */
+const ADDS_UP: ReadonlySet<Agg> = new Set(['count', 'countif', 'sum', 'rate'])
 
 /** The Levels, worst first: the order series of Levels stack in, as the histogram's bars do. */
 const LEVEL_ORDER = ['fatal', 'error', 'warn', 'info', 'debug', 'trace'] as const
@@ -389,12 +389,14 @@ function legendOf(series: Series[]): LegendEntry[] {
 
 /**
  * What a number column measures, so columns of one unit share an axis:
- * counts of Logs, or the values of the Field an avg, min, max or percentile
- * is named after (avg_duration_ms, percentile_duration_ms_95). Any other
- * column, a renamed one included, measures something of its own.
+ * counts of Logs, Logs per second (rate and peak_rate), or the values of the
+ * Field an avg, min, max or percentile is named after (avg_duration_ms,
+ * percentile_duration_ms_95). Any other column, a renamed one included,
+ * measures something of its own.
  */
 function unitOf(name: string, agg: Agg | undefined): string {
   if (agg === 'count' || agg === 'countif') return 'count'
+  if (agg === 'rate' || agg === 'peak_rate') return 'per second'
   const named = /^(avg|min|max|percentile)_(.+?)(_\d+(?:\.\d+)?)?$/.exec(name)
   return named && named[1] === agg ? `field ${named[2]}` : `column ${name}`
 }
