@@ -184,13 +184,13 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Configures a SolidTrace install, then runs deploy/install: the public URLs,
-# email, and where EventStore keeps Log files and the Event archive (this
+# Configures a SolidTrace install, then runs deploy/install: the public URLs and
+# HTTPS, email, and where EventStore keeps Log files and the Event archive (this
 # machine's disk or a GCS bucket). Run it again to change any of them.
 #
 #   deploy/setup
 
-TOTAL_STAGES=7
+TOTAL_STAGES=8
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$DEPLOY_DIR/.env"
@@ -231,6 +231,28 @@ write_env_quoted() {
 # container keeps the old file if a new one replaces it.
 write_config() { printf '%s\n' "$1" | as_root tee "$CONFIG_FILE" >/dev/null; }
 
+# gcp_metadata PATH prints a value from GCP's metadata server, or nothing off GCP.
+gcp_metadata() {
+  curl -fsS -m 2 -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/$1" 2>/dev/null || true
+}
+
+# public_host_problem HOST prints why Let's Encrypt can't give HOST a
+# certificate, or nothing. HOST is an IPv4 address or a domain.
+public_host_problem() {
+  local host=$1 a b
+  if [[ $host =~ ^([0-9]{1,3})\.([0-9]{1,3})\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    a=${BASH_REMATCH[1]} b=${BASH_REMATCH[2]}
+    if (( a == 10 || a == 127 || a == 0 || (a == 172 && b >= 16 && b <= 31) ||
+          (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && b >= 64 && b <= 127) )); then
+      echo "$host is a private address. Use the machine's public (external) IP."
+    fi
+  elif [[ ! $host =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]]; then
+    echo "Type an IPv4 address or a domain, with no scheme, port or path."
+  elif [[ $host == *.localhost || $host == *.local || $host == *.internal ]]; then
+    echo "$host isn't public. Use the machine's public (external) IP."
+  fi
+}
+
 # The config without the object_store block this wizard writes.
 config_without_object_store() {
   as_root awk '/^# Written by deploy\/setup/ { next }
@@ -242,25 +264,112 @@ config_without_object_store() {
 banner "SolidTrace setup"
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
-stage "Public URLs"
+stage "Public URLs and HTTPS"
 say "Links in Console's emails, and the Logs page's snippets for SDKs, use the"
 say "URLs people reach this machine at: its domain or its public IP."
-host=$(hostname -I 2>/dev/null | awk '{ print $1 }')
-note "This machine's first address is ${host:-unknown}. On a cloud VM that's the private one."
+printf '\n'
+say "With HTTPS, Caddy gets a certificate from Let's Encrypt for this machine's"
+say "public IP or domain: Console on https://<host>, ingest on https://<host>:4443."
+note "Ports 80, 443 and 4443 must be reachable from the internet. Without HTTPS,"
+note "Console is on http://<host>:3000 and ingest on http://<host>:4000."
 printf '\n'
 while :; do
-  ask_default CONSOLE_URL "Console's URL:" "http://${host:-localhost}:3000"
-  CONSOLE_URL=${CONSOLE_URL%/}
-  [[ $CONSOLE_URL =~ ^https?://[^/]+$ ]] && break
-  warn "Use http:// or https:// and a host, with a port if not 80 or 443, and no path."
-  CONSOLE_URL=""
+  ask_default HTTPS "HTTPS? Type yes or no:" yes
+  [[ $HTTPS == yes || $HTTPS == no ]] && break
+  warn "Type yes or no."
+  HTTPS=""
 done
-ask PUBLIC_INGEST_URL "Ingest's URL for SDKs (blank: Console's host at port 4000):"
+write_env HTTPS "$HTTPS"
+printf '\n'
+if [[ $HTTPS == yes ]]; then
+  external_ip=$(gcp_metadata instance/network-interfaces/0/access-configs/0/external-ip)
+  if [[ -n $external_ip ]]; then
+    note "GCP says this machine's external IP is $external_ip."
+  else
+    note "Find this machine's public IP in your cloud's console (on GCP: VM instances → External IP)."
+  fi
+  while :; do
+    if [[ -n $external_ip ]]; then
+      ask_default PUBLIC_HOST "Public IP or domain:" "$external_ip"
+    else
+      ask_required PUBLIC_HOST "Public IP or domain:"
+    fi
+    problem=$(public_host_problem "$PUBLIC_HOST")
+    [[ -z $problem ]] && break
+    warn "$problem"
+    PUBLIC_HOST=""
+  done
+  CONSOLE_URL="https://$PUBLIC_HOST"
+  PUBLIC_INGEST_URL="https://$PUBLIC_HOST:4443"
+  write_env PUBLIC_HOST "$PUBLIC_HOST"
+  write_env COMPOSE_PROFILES https
+  # Caddy sets X-Forwarded-For, so Console sees each client's IP.
+  write_env FORWARD_HEADERS true
+else
+  # One stage fewer: no firewall rules for HTTPS.
+  TOTAL_STAGES=$((TOTAL_STAGES - 1))
+  if [[ -n $(_existing PUBLIC_HOST || true) ]]; then
+    # The URLs saved with HTTPS on point at Caddy, which won't run now.
+    sed -i -E '/^(PUBLIC_HOST|CONSOLE_URL|PUBLIC_INGEST_URL)=/d' "$ENV_FILE"
+  fi
+  host=$(hostname -I 2>/dev/null | awk '{ print $1 }')
+  note "This machine's first address is ${host:-unknown}. On a cloud VM that's the private one."
+  while :; do
+    ask_default CONSOLE_URL "Console's URL:" "http://${host:-localhost}:3000"
+    CONSOLE_URL=${CONSOLE_URL%/}
+    [[ $CONSOLE_URL =~ ^https?://[^/]+$ ]] && break
+    warn "Use http:// or https:// and a host, with a port if not 80 or 443, and no path."
+    CONSOLE_URL=""
+  done
+  ask PUBLIC_INGEST_URL "Ingest's URL for SDKs (blank: Console's host at port 4000):"
+  PUBLIC_INGEST_URL=${PUBLIC_INGEST_URL%/}
+  write_env COMPOSE_PROFILES ""
+  write_env FORWARD_HEADERS false
+fi
 write_env CONSOLE_URL "$CONSOLE_URL"
-write_env PUBLIC_INGEST_URL "${PUBLIC_INGEST_URL%/}"
+write_env PUBLIC_INGEST_URL "$PUBLIC_INGEST_URL"
 pause
 
-# ── 2 ─────────────────────────────────────────────────────────────────────
+if [[ $HTTPS == yes ]]; then
+  # ── 2 ───────────────────────────────────────────────────────────────────
+  stage "A static IP and the firewall"
+  say "The certificate and every DSN name $PUBLIC_HOST, so it mustn't change: an"
+  say "ephemeral IP can, when the machine stops. And Let's Encrypt and SDKs must"
+  say "reach ports 80, 443 and 4443, while 3000 and 4000 stay closed."
+  printf '\n'
+  project=$(gcp_metadata project/project-id)
+  zone=$(gcp_metadata instance/zone); zone=${zone##*/}
+  instance=$(gcp_metadata instance/name)
+  network=$(gcp_metadata instance/network-interfaces/0/network); network=${network##*/}
+  region=${zone%-*}
+  if [[ -z $project ]]; then
+    note "Not on GCP, or its metadata server didn't answer: fill in the <...> values,"
+    note "or do the same in your cloud's console."
+  fi
+  open_url "https://shell.cloud.google.com/?show=terminal"
+  step "In Cloud Shell, run these. Skip the first if the IP is already static."
+  printf '\n%s' "$BOLD"
+  cat <<EOF
+gcloud compute addresses create solidtrace-ip --project=${project:-<project>} --region=${region:-<region>} --addresses=${external_ip:-<external IP>}
+
+gcloud compute firewall-rules create solidtrace-https --project=${project:-<project>} --network=${network:-default} --allow=tcp:80,tcp:443,tcp:4443 --target-tags=solidtrace
+
+gcloud compute instances add-tags ${instance:-<instance>} --project=${project:-<project>} --zone=${zone:-<zone>} --tags=solidtrace
+EOF
+  printf '%s\n' "$RESET"
+  step "Then delete any rule that opens port 3000 or 4000. To list the rules:"
+  printf '\n%s' "$BOLD"
+  cat <<EOF
+gcloud compute firewall-rules list --project=${project:-<project>} --format="table(name,sourceRanges.list(),allowed[].map().firewall_rule().list())"
+
+gcloud compute firewall-rules delete <name> --project=${project:-<project>}
+EOF
+  printf '%s\n' "$RESET"
+  note "Port 80 serves Let's Encrypt's check and redirects to https://."
+  pause "Press Enter once they've run"
+fi
+
+# ── 3 ─────────────────────────────────────────────────────────────────────
 stage "Email"
 say "Console emails new Issues, Monitor alerts and invitations through an SMTP"
 say "server: your email provider's, or a service such as Amazon SES or Postmark."
@@ -289,7 +398,7 @@ else
 fi
 pause
 
-# ── 3 ─────────────────────────────────────────────────────────────────────
+# ── 4 ─────────────────────────────────────────────────────────────────────
 stage "Storage"
 say "EventStore keeps each hour's Log files and the Event archive on this"
 say "machine's disk. A GCS bucket can hold them instead, for far less than disk;"
@@ -307,10 +416,10 @@ while :; do
 done
 write_env STORAGE "$STORAGE"
 # Two GCS stages fewer.
-[[ $STORAGE == gcs ]] || TOTAL_STAGES=5
+[[ $STORAGE == gcs ]] || TOTAL_STAGES=$((TOTAL_STAGES - 2))
 
 if [[ $STORAGE == gcs ]]; then
-  # ── 4 ───────────────────────────────────────────────────────────────────
+  # ── 5 ───────────────────────────────────────────────────────────────────
   stage "GCS: the bucket and a service account"
   say "EventStore gets a bucket and a service account of its own, which may"
   say "read, write and delete the bucket's objects."
@@ -341,7 +450,7 @@ EOF
   printf '%s\n' "$RESET"
   pause "Press Enter once they've run"
 
-  # ── 5 ───────────────────────────────────────────────────────────────────
+  # ── 6 ───────────────────────────────────────────────────────────────────
   stage "GCS: the HMAC key"
   say "EventStore reaches GCS through its S3 API, with an HMAC key for the"
   say "service account."
@@ -363,7 +472,7 @@ EOF
   pause
 fi
 
-# ── 6 ─────────────────────────────────────────────────────────────────────
+# ── 7 ─────────────────────────────────────────────────────────────────────
 stage "EventStore's config"
 CONFIG_CHANGED=0
 if ! as_root test -f "$CONFIG_FILE"; then
@@ -406,7 +515,7 @@ else
 fi
 pause
 
-# ── 7 ─────────────────────────────────────────────────────────────────────
+# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Start SolidTrace"
 say "deploy/install installs Docker if it's missing, then builds the images and"
 say "starts everything with these settings. The first build takes several minutes."

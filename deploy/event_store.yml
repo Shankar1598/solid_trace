@@ -1,7 +1,7 @@
 # Event Store configuration.
 # Any key here overrides the defaults in config.go.
 
-# Public ingest. EventStore listens on it directly, with no proxy in front.
+# Public ingest. EventStore listens on it directly, or behind Caddy with HTTPS on.
 ingest_port: "4000"
 # Query API for the console. Always bound to 127.0.0.1; never expose it.
 query_port: "4100"
