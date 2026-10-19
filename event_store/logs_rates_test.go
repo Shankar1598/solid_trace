@@ -171,3 +171,18 @@ func TestPeakRateNeedsBinsOfWholeSecondsAndTheLogsTime(t *testing.T) {
 		}
 	}
 }
+
+func TestTheBuilderShowsRates(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	query := `where path == "/v2/search" | summarize rate(), peak_rate() by bin_auto(time), shop`
+	want := `{"filters":[{"field":"path","op":"==","value":"/v2/search"}],"search":null,` +
+		`"summarize":{"aggregates":[{"fn":"rate"},{"fn":"peak_rate"}],"by":[{"field":"time","bin":"auto"},{"field":"shop"}]}}`
+	if got := builderChips(validateQuery(t, env, query)); got != want {
+		t.Errorf("%s\n want %s\n got  %s", query, want, got)
+	}
+	if got := builderChips(validateQuery(t, env, `summarize rate() by shop | where rate_ > 1`)); got != "null" {
+		t.Errorf("Expected no chips for a where after the summarize, got %s", got)
+	}
+}
