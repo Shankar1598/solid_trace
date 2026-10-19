@@ -65,6 +65,21 @@ test('a user in two Organizations switches from Logs, keeps it on /, and jumps b
   await page.goto('/')
   await page.waitForURL(url => url.pathname === `/${slug}/issues`)
 
+  // Picking the current one only closes the menu, without a visit.
+  const visits: string[] = []
+  const onRequest = (r: { url(): string; headers(): Record<string, string> }) => {
+    const headers = r.headers()
+    if (headers['x-inertia'] && !headers['x-inertia-partial-data']) visits.push(r.url())
+  }
+  await page.getByRole('button', { name: 'Switch Organization' }).click()
+  await expect(page.getByRole('menuitem', { name })).toHaveAttribute('aria-current', 'page')
+  page.on('request', onRequest)
+  await page.getByRole('menuitem', { name }).click()
+  await expect(page.getByRole('menu')).toBeHidden()
+  page.off('request', onRequest)
+  expect(visits).toEqual([])
+  await expect(page.getByRole('button', { name: 'Switch Organization' })).toContainText(name)
+
   // The palette's Organizations group lists only the other one, and jumps back.
   await page.keyboard.press('Control+k')
   await expect(palette(page)).toBeVisible()
