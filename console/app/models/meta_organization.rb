@@ -7,9 +7,11 @@
 module MetaOrganization
   NAME = "SolidTrace"
 
-  # Makes the Organization and its Project, whose project key is key, once:
-  # the instance settings record it, so a deleted one is not made again.
-  # Without a key, as in local development, does nothing.
+  # Makes the Organization and its Project, whose project key is key, with the
+  # oldest user, if any, as its admin. Once: the instance settings record it,
+  # so a deleted one is not made again. Its Project sets no Retention, so it
+  # has the instance's default. Without a key, as in local development, does
+  # nothing.
   def self.seed(key)
     return if key.blank?
 
@@ -21,6 +23,8 @@ module MetaOrganization
       project = organization.projects.build(name: NAME)
       project.project_keys.build(public_key: key)
       project.save!
+      oldest_user = User.order(:created_at, :id).first
+      organization.organization_users.create!(user: oldest_user, role: :admin) if oldest_user
       settings.update!(meta_organization_seeded: true, meta_organization_id: organization.id)
     end
   end

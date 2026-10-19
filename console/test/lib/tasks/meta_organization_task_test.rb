@@ -23,6 +23,25 @@ class MetaOrganizationTaskTest < ActiveSupport::TestCase
     assert_empty organization.users
   end
 
+  test "on an install with users, the oldest user is its admin" do
+    create(:user, email: "newer@example.com", created_at: 1.day.ago)
+    oldest = create(:user, email: "oldest@example.com", created_at: 1.year.ago)
+
+    seed
+
+    membership = Organization.sole.organization_users.sole
+    assert_equal oldest, membership.user
+    assert membership.admin?
+  end
+
+  test "its Project keeps the instance's default Log Retention" do
+    InstanceSetting.current.update!(default_log_retention_days: 45)
+
+    seed
+
+    assert_nil Project.sole.log_retention_days
+  end
+
   test "run again, it makes nothing more" do
     seed
     seed
