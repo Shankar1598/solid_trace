@@ -136,6 +136,10 @@ _Avoid_: notifier, integration notifier
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant
 
+**Meta Organization**:
+The Organization SolidTrace makes for itself when it is installed, holding one Project that receives SolidTrace's own Logs, with one Service for each part of SolidTrace. Its first admin is the person who set up the instance. Otherwise an ordinary Organization: deleting it, or its Project, stops SolidTrace's own Logs for good.
+_Avoid_: system organization, internal organization, admin organization
+
 **MCP server**:
 The Console endpoint where an AI agent reads and changes Projects, Logs, Dashboards, Monitors and Issues over the Model Context Protocol, acting as the user whose **API token** it presents.
 _Avoid_: agent API, bot, integration
