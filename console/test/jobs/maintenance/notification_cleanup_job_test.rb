@@ -61,7 +61,24 @@ module Maintenance
       assert_equal 3, quiet.runs.count
     end
 
+    test "deletes the message queue's rows older than 30 days, whatever their status" do
+      [ EventStoreMessage, ConsoleMessage ].each do |model|
+        old_rows = %i[processed failed pending].map { |status| queue_message(model, status, age: 31.days) }
+        new_rows = %i[processed failed pending].map { |status| queue_message(model, status, age: 29.days) }
+
+        NotificationCleanupJob.perform_now
+
+        old_rows.each { |r| assert_not model.exists?(r.id), "expected the old #{r.status} #{model} to be deleted" }
+        new_rows.each { |r| assert model.exists?(r.id), "expected the newer #{r.status} #{model} to be kept" }
+      end
+    end
+
     private
+
+    def queue_message(model, status, age:)
+      at = Time.current - age
+      model.create!(message_type: "issue_created", payload: { "issue_ids" => [ 1 ] }, status: status, created_at: at, updated_at: at)
+    end
 
     def row(status, age:, attempts: 0)
       at = Time.current - age
