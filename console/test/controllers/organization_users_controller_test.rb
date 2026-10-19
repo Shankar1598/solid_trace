@@ -24,6 +24,19 @@ class OrganizationUsersControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Grace", @organization.users.find_by!(email: "grace@example.com").name
   end
 
+  # Inertia posts JSON, which Rails also wraps under organization_user, so the page must send the member wrapper itself.
+  test "an admin invites with JSON the way the Members page posts it" do
+    sign_in_as(@admin)
+
+    post organization_users_url(org_slug: @organization.slug), params: { member: { email: "grace@example.com", name: "Grace" } }, as: :json
+    assert_redirected_to organization_users_url(org_slug: @organization.slug)
+    assert_equal "Member added successfully", flash[:notice]
+
+    post organization_users_url(org_slug: @organization.slug), params: { email: "ada@example.com", name: "Ada" }, as: :json
+    assert_response :bad_request
+    assert_nil User.find_by(email: "ada@example.com")
+  end
+
   test "an admin brings back an archived member, and is told of one already in" do
     sign_in_as(@admin)
     archived = create(:organization_user, organization: @organization, user: create(:user))
