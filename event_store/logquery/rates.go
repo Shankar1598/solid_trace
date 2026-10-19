@@ -2,6 +2,7 @@ package logquery
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -9,8 +10,9 @@ import (
 )
 
 // rate() and peak_rate() count a summarize's rows per second of its time
-// bin: the first of its by columns that bins the Logs' own time, or, without
-// one, the Query's whole range.
+// bin: the first of its by columns that bins the Logs' own time, or, with no
+// time bin at all, the Query's whole range. rate() refuses a summarize by
+// another time and none of the Logs' own, whose bins it can't size.
 //
 // rate() is a group's count over the seconds of its bin that lie in the
 // Query's range, so a bin cut by either end of the range still reads a true
@@ -22,34 +24,49 @@ import (
 // made bin by bin (Bins). A bin the bin cache keeps lies wholly in the range,
 // so its rate is its count over its size, whatever the range.
 
-// secondsColumn holds, on each row a summarize reads, the seconds of the
-// row's bin that lie in the range; secondColumn, the rows of its group in
-// its second.
+// binSecondsColumn holds, on each row a summarize reads, the seconds of the
+// row's bin that lie in the range; secondCountColumn, the rows of its group
+// in its second.
 const (
-	secondsColumn = `"#seconds"`
-	secondColumn  = `"#second"`
+	binSecondsColumn  = `"#bin_seconds"`
+	secondCountColumn = `"#second_count"`
 )
 
-// perSecond is what a summarize counts peak_rate() in: the size of its time
-// bin, 0 for none, and whether its rows have the Logs' own time.
-type perSecond struct {
-	bin     time.Duration
-	logTime bool
+// rateBasis is what a summarize's rates are counted in. bin is the size of
+// its bin of the Logs' own time, 0 for none. otherTime is whether, with
+// none, it groups by another time, whose bins rate() can't divide by.
+// logTime is whether its rows have the Logs' own time, whose seconds
+// peak_rate() counts rows in.
+type rateBasis struct {
+	bin       time.Duration
+	otherTime bool
+	logTime   bool
 }
 
-// perSecondOf is what a summarize at index at of the tail, reading rows of
-// scope s, counts per second in.
-func (q *Query) perSecondOf(s scope, by []namedValue, at int) perSecond {
-	var p perSecond
+// rateBasisOf is the rate basis of a summarize at index at of the tail by
+// these columns, reading rows of scope s.
+func (q *Query) rateBasisOf(s scope, by []namedValue, at int) rateBasis {
+	var b rateBasis
 	if _, size, ok := q.rateBin(by, at); ok {
-		p.bin = size
+		b.bin = size
+	} else {
+		b.otherTime = slices.ContainsFunc(by, func(col namedValue) bool { return col.x.typ() == timeType })
 	}
 	if col, ok := s.lookup("time"); ok {
-		p.logTime = q.isLogTime(columnRef{name: col.name, t: col.t}, at)
+		b.logTime = q.isLogTime(columnRef{name: col.name, t: col.t}, at)
 	} else {
-		p.logTime = s.logs
+		b.logTime = s.logs
 	}
-	return p
+	return b
+}
+
+// rateArgs refuses arguments to rate() or peak_rate(), which count the rows
+// a where leaves.
+func rateArgs(e *parser.CallExpr) error {
+	if len(e.Args) != 0 {
+		return errorAt(e, "%[1]s takes no arguments; filter with where first, as in where path == \"/\" | summarize %[1]s()", e.Func.Name)
+	}
+	return nil
 }
 
 // rateBin is the time bin of a summarize at index at of the tail by these
@@ -63,10 +80,10 @@ func (q *Query) rateBin(by []namedValue, at int) (namedValue, time.Duration, boo
 	return namedValue{}, 0, false
 }
 
-// perSecondColumns writes the columns a summarize at index at of the tail
-// adds to the rows it reads for its rates, as a select list after *, or ""
-// if it has no rates.
-func (q *Query) perSecondColumns(s summarizeStage, at int, f fields) string {
+// rateColumns writes the columns a summarize at index at of the tail adds to
+// the rows it reads for its rates, as a select list after *, or "" if it has
+// no rates.
+func (q *Query) rateColumns(s summarizeStage, at int, f fields) string {
 	var columns []string
 	if usesAggregate(s.aggregates, "rate") {
 		seconds := writeLiteral(Literal{Kind: parser.NumberLiteral, Number: q.to.Sub(q.from).Seconds()})
@@ -77,7 +94,7 @@ func (q *Query) perSecondColumns(s summarizeStage, at int, f fields) string {
 				writeLiteral(Literal{Kind: parser.DateTimeLiteral, Time: q.to}),
 				writeLiteral(Literal{Kind: parser.DateTimeLiteral, Time: q.from}))
 		}
-		columns = append(columns, seconds+" AS "+secondsColumn)
+		columns = append(columns, seconds+" AS "+binSecondsColumn)
 	}
 	if usesAggregate(s.aggregates, "peak_rate") {
 		var partition []string
@@ -89,7 +106,7 @@ func (q *Query) perSecondColumns(s summarizeStage, at int, f fields) string {
 			literal{Literal{Kind: parser.TimespanLiteral, Timespan: time.Second}},
 		}}
 		partition = append(partition, writeCall(second, f))
-		columns = append(columns, "count(*) OVER (PARTITION BY "+strings.Join(partition, ", ")+") AS "+secondColumn)
+		columns = append(columns, "count(*) OVER (PARTITION BY "+strings.Join(partition, ", ")+") AS "+secondCountColumn)
 	}
 	return strings.Join(columns, ", ")
 }
