@@ -33,6 +33,7 @@ func RegisterIngestRoutes(app *fiber.App, ingestHandler *IngestHandler, healthHa
 	app.Post("/api/:project_id/store", ingestHandler.Store)
 	app.Post("/api/:project_id/envelope", ingestHandler.Envelope)
 	app.Post("/api/:project_id/logs", ingestHandler.Logs)
+	app.Post("/api/logs", ingestHandler.KeyOnlyLogs)
 }
 
 // RegisterQueryRoutes mounts the routes that serve stored Events and Logs.
