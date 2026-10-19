@@ -70,7 +70,10 @@ sinks:
     auth:
       strategy: bearer
       # deploy/install writes it to deploy/.env. A deleted Project's key gets
-      # a 401, and Vector drops the request.
+      # a 401, and Vector drops the request. Read from the environment only
+      # through VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION (checked on
+      # 0.58.0), which docker-compose.yml sets; without it Vector sends the
+      # placeholder below as written and every request gets a 401.
       token: "${META_PROJECT_KEY}"
     encoding:
       codec: json
