@@ -116,7 +116,7 @@ func (q *Query) writeTail(c *chain, f fields) {
 			has[col.name] = true
 		}
 	}
-	for _, s := range q.tail {
+	for i, s := range q.tail {
 		switch s := s.(type) {
 		case whereStage:
 			c.add("SELECT * FROM %s WHERE %s", c.prev, writeCondition(s.predicate, f, false))
@@ -138,6 +138,9 @@ func (q *Query) writeTail(c *chain, f fields) {
 			}
 			c.add("SELECT %s, %s FROM %s", all, selectList(s.columns, f), c.prev)
 		case summarizeStage:
+			if rates := q.rateColumns(s, i, f); rates != "" {
+				c.add("SELECT *, %s FROM %s", rates, c.prev)
+			}
 			all := append(append([]namedValue{}, s.by...), s.aggregates...)
 			group := ""
 			if len(s.by) > 0 {
@@ -231,10 +234,10 @@ func orderBy(keys []sortKey, f fields) string {
 // values: string, number, bool, datetime, timespan, or dynamic for values
 // whose type differs from row to row. A column of the Query's last
 // summarize, or a plain rename of one, says how to chart it: Agg is the
-// aggregate it is (count, countif, dcount, sum, avg, min, max or
-// percentile), and BinSeconds the size of the time bins it holds. Only one
-// column has BinSeconds, the table's time axis: the first that holds time
-// bins.
+// aggregate it is (count, countif, dcount, sum, avg, min, max, percentile,
+// rate or peak_rate), and BinSeconds the size of the time bins it holds.
+// Only one column has BinSeconds, the table's time axis: the first that
+// holds time bins.
 type Column struct {
 	Name       string  `json:"name"`
 	Type       string  `json:"type"`

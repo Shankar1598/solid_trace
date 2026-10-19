@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { builderRow, DUMMY_LOGS, dummyLogs, last24h, openLogs, runBy, settled, streamRows } from '../support/logs'
+import { builderRow, DUMMY_LOGS, dummyLogs, last24h, openLogs, pickQuickRange, runBy, settled, streamRows } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // Charts in the Logs explorer: a Summarize draws its table as a chart over
@@ -17,6 +17,8 @@ const legend = (page: Page) => page.locator('[data-chart-series]')
 const viz = (page: Page, name: string) => page.getByRole('group', { name: 'Chart' }).getByRole('button', { name })
 /** The histogram strip over the result, which a table over time stands in for. */
 const strip = (page: Page) => page.locator('[data-histogram-strip]')
+/** The bin size a time chart reads beside its legend, such as "1m bins". */
+const binText = (page: Page) => page.locator('[data-chart-bin]')
 
 async function runQuery(page: Page, text: string) {
   await page.getByRole('button', { name: 'Query', exact: true }).click()
@@ -172,6 +174,32 @@ test('dragging across a time chart narrows the range to the bins dragged over', 
   expect(errors).toEqual([])
 })
 
+test('a time chart says its bin size, which follows a zoom and the range, and its tooltip gives the bin\'s span', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, `?${new URLSearchParams({ range: '1h', mode: 'query' })}`)
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin_auto(time)`)
+  await expect(binText(page)).toHaveText('1m bins')
+
+  const box = (await chart(page).locator('.recharts-cartesian-grid').boundingBox())!
+  const y = box.y + box.height / 2
+  await page.mouse.move(box.x + box.width / 2, y)
+  // A bin's start to its end, such as 19:02–19:03, with the date once when the range spans days.
+  await expect(page.locator('.recharts-tooltip-wrapper')).toContainText(/\d\d:\d\d–(\w{3} \d\d )?\d\d:\d\d/)
+
+  // A zoom to about a third of the hour runs the Query again with smaller bins.
+  await page.mouse.move(box.x + box.width * 0.3, y)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * 0.45, y, { steps: 5 })
+  await page.mouse.move(box.x + box.width * 0.6, y, { steps: 5 })
+  await runBy(page, () => page.mouse.up())
+  await expect(binText(page)).toHaveText(/^\d+s bins$/)
+
+  await pickQuickRange(page, '15 mins')
+  await settled(page)
+  await expect(binText(page)).toHaveText('10s bins')
+  expect(errors).toEqual([])
+})
+
 test('summarize count() shows a single number, and by service shows bars', async ({ page }) => {
   const errors = watchErrors(page)
   await openLogs(page, last24h('query'))
@@ -191,6 +219,8 @@ test('summarize count() shows a single number, and by service shows bars', async
   await expect(chart(page).locator('.recharts-bar-rectangle')).toHaveCount(4)
   await expect(viz(page, 'Bars')).toHaveAttribute('aria-pressed', 'true')
   await expect(viz(page, 'Line')).toHaveCount(0)
+  // Bars over categories have no bins to tell of.
+  await expect(binText(page)).toHaveCount(0)
 
   // Table shows a single number's cell.
   await runQuery(page, `${SOURCE}\n| summarize count()`)

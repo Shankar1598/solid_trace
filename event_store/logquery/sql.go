@@ -270,6 +270,12 @@ func writeAggregate(a aggregate, f fields) string {
 	switch a.fn {
 	case "count":
 		return "count(*)"
+	case "rate":
+		// Every row of a group is in the same bin, so min() reads the
+		// bin's seconds in range.
+		return "coalesce(count(*) / min(" + binSecondsColumn + "), 0)"
+	case "peak_rate":
+		return "coalesce(max(" + secondCountColumn + "), 0)"
 	case "countif":
 		return "count_if(" + writeValue(a.x, f) + ")"
 	case "dcount":
