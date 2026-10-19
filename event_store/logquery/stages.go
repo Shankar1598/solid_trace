@@ -80,7 +80,9 @@ func (topStage) isStage()       {}
 func (countStage) isStage()     {}
 func (distinctStage) isStage()  {}
 
-func (c *compiler) stage(s parser.Stage) (stage, error) {
+// stage compiles the next stage of q, whose tail so far says what a
+// summarize's by columns bin.
+func (c *compiler) stage(s parser.Stage, q *Query) (stage, error) {
 	switch s := s.(type) {
 	case *parser.WhereStage:
 		p, err := c.condition(s.Predicate)
@@ -94,14 +96,14 @@ func (c *compiler) stage(s parser.Stage) (stage, error) {
 		}
 		return searchStage{term: s.Term.Value}, nil
 	case *parser.ProjectStage:
-		columns, err := c.columns(s.Columns, false)
+		columns, err := c.columns(s.Columns, nil)
 		if err != nil {
 			return nil, err
 		}
 		c.scope = scope{columns: columnsOf(columns)}
 		return projectStage{columns: columns}, nil
 	case *parser.ExtendStage:
-		columns, err := c.columns(s.Columns, false)
+		columns, err := c.columns(s.Columns, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -111,17 +113,17 @@ func (c *compiler) stage(s parser.Stage) (stage, error) {
 		}
 		return extendStage{columns: columns}, nil
 	case *parser.SummarizeStage:
-		by, err := c.columns(s.By, false)
+		by, err := c.columns(s.By, nil)
 		if err != nil {
 			return nil, err
 		}
-		c.perSecond = c.query.perSecondOf(c.scope, by, len(c.query.tail))
-		aggregates, err := c.columns(s.Aggregates, true)
+		basis := q.rateBasisOf(c.scope, by, len(q.tail))
+		aggregates, err := c.columns(s.Aggregates, &basis)
 		if err != nil {
 			return nil, err
 		}
 		for i, a := range aggregates {
-			if !hasAggregate(a.x) {
+			if !hasAggregate(a.x, "") {
 				return nil, errorAt(s.Aggregates[i].X, "expected a function such as count(), dcount(x) or avg(x) before by")
 			}
 		}
@@ -164,7 +166,7 @@ func (c *compiler) stage(s parser.Stage) (stage, error) {
 		c.scope = scope{columns: []column{{name: "Count", t: numberType}}}
 		return countStage{}, nil
 	case *parser.DistinctStage:
-		columns, err := c.columns(s.Columns, false)
+		columns, err := c.columns(s.Columns, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -176,8 +178,8 @@ func (c *compiler) stage(s parser.Stage) (stage, error) {
 }
 
 // columns compiles the columns of project, extend, summarize or distinct,
-// naming those not named.
-func (c *compiler) columns(exprs []*parser.NamedExpr, aggregates bool) ([]namedValue, error) {
+// naming those not named. aggregates is as expr takes it.
+func (c *compiler) columns(exprs []*parser.NamedExpr, aggregates *rateBasis) ([]namedValue, error) {
 	columns := make([]namedValue, 0, len(exprs))
 	for i, e := range exprs {
 		x, err := c.expr(e.X, anyType, aggregates)
@@ -188,7 +190,7 @@ func (c *compiler) columns(exprs []*parser.NamedExpr, aggregates bool) ([]namedV
 		switch {
 		case e.Name != nil:
 			name = e.Name.Name
-		case aggregates:
+		case aggregates != nil:
 			name = aggregateName(x)
 		default:
 			name = fieldName(x)
@@ -218,18 +220,18 @@ func aggregateName(x expr) string {
 	return name
 }
 
-// hasAggregate reports whether x has an aggregate: of one of fns, if any are
-// given.
-func hasAggregate(x expr, fns ...string) bool {
+// hasAggregate reports whether x has an aggregate of function fn, or of any
+// function if fn is "".
+func hasAggregate(x expr, fn string) bool {
 	switch x := x.(type) {
 	case aggregate:
-		return len(fns) == 0 || slices.Contains(fns, x.fn)
+		return fn == "" || x.fn == fn
 	case arith:
-		return hasAggregate(x.x, fns...) || hasAggregate(x.y, fns...)
+		return hasAggregate(x.x, fn) || hasAggregate(x.y, fn)
 	case negative:
-		return hasAggregate(x.x, fns...)
+		return hasAggregate(x.x, fn)
 	case call:
-		return slices.ContainsFunc(x.args, func(arg expr) bool { return hasAggregate(arg, fns...) })
+		return slices.ContainsFunc(x.args, func(arg expr) bool { return hasAggregate(arg, fn) })
 	}
 	return false
 }
@@ -255,7 +257,7 @@ func columnsOf(values []namedValue) []column {
 }
 
 func (c *compiler) sortKey(k *parser.SortKey) (sortKey, error) {
-	x, err := c.expr(k.X, anyType, false)
+	x, err := c.expr(k.X, anyType, nil)
 	if err != nil {
 		return sortKey{}, err
 	}

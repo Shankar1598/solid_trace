@@ -138,7 +138,7 @@ func (q *Query) writeTail(c *chain, f fields) {
 			}
 			c.add("SELECT %s, %s FROM %s", all, selectList(s.columns, f), c.prev)
 		case summarizeStage:
-			if rates := q.perSecondColumns(s, i, f); rates != "" {
+			if rates := q.rateColumns(s, i, f); rates != "" {
 				c.add("SELECT *, %s FROM %s", rates, c.prev)
 			}
 			all := append(append([]namedValue{}, s.by...), s.aggregates...)

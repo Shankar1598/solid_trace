@@ -372,7 +372,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   function pointLabel(x: unknown): string {
     if (!time) return String(x)
     const start = Number(x)
-    return `${binSpan(start, time.binSeconds, pattern)}${time.partial.includes(start) ? ' · partial bin' : ''}`
+    return `${binSpan(start, time.binSeconds, time)}${time.partial.includes(start) ? ' · partial bin' : ''}`
   }
 }
 
