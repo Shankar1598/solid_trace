@@ -16,7 +16,7 @@ x-console: &console
   # Built by the console service or pulled by deploy/install, never by Compose.
   pull_policy: never
   network_mode: host
-  environment:
+  environment: &console-environment
     RAILS_ENV: production
     HTTP_PORT: "3000"
     TARGET_PORT: "3001"
@@ -109,8 +109,13 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  # Creates or migrates Console's tables, which EventStore also writes, then exits.
+  # Creates or migrates Console's tables, which EventStore also writes, seeds
+  # the Meta Organization once (docs/adr/0011), then exits.
   db_prepare:
     <<: *console
-    command: ["bin/rails", "db:prepare"]
+    environment:
+      <<: *console-environment
+      # Its Project's key, which deploy/install writes. Unset, nothing is seeded.
+      META_PROJECT_KEY: ${META_PROJECT_KEY:-}
+    command: ["bin/rails", "db:prepare", "meta_organization:seed"]
     restart: "no"

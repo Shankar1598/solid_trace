@@ -5,11 +5,12 @@
 #   git fetch --tags && git checkout <tag> && deploy/install   # to upgrade
 #
 # Installs Docker if it is missing (Debian and Ubuntu), starts it at boot,
-# creates the data directories, EventStore's config and Console's secret, then
+# creates the data directories, EventStore's config, Console's secret and the
+# Meta Organization's project key, then
 # starts the services, with Caddy in front if deploy/setup-gcp turned HTTPS on.
 # At a release tag it pulls that release's images from GitHub's registry; on any
 # other commit it builds them. Safe to run again: it never overwrites the config
-# or the secret.
+# or the secrets.
 
 set -euo pipefail
 
@@ -113,6 +114,17 @@ create_secret() {
   (umask 077 && echo "SECRET_KEY_BASE=$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
 }
 
+# create_meta_project_key writes the project key of the Meta Organization's
+# Project, which receives SolidTrace's own Logs (docs/adr/0011). db_prepare
+# gives the Project this key when it seeds it, and Vector sends with it.
+create_meta_project_key() {
+  if grep -qs '^META_PROJECT_KEY=.' "$ENV_FILE"; then
+    return
+  fi
+  say "Writing the Meta Organization's project key to $ENV_FILE"
+  (umask 077 && echo "META_PROJECT_KEY=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
+}
+
 # env_value KEY prints KEY's value in deploy/.env, or nothing.
 env_value() { grep -sE "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2- || true; }
 
@@ -198,6 +210,7 @@ start_docker
 create_data_dirs
 create_config
 create_secret
+create_meta_project_key
 set_version
 start_services
 wait_for Console http://127.0.0.1:3000/up
