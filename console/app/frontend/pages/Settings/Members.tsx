@@ -1,15 +1,18 @@
+import { useState } from 'react'
 import { useForm, usePage, router } from '@inertiajs/react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SharedProps, Organization } from '@/types'
-import { UserPlus, Trash2 } from 'lucide-react'
+import { copyToClipboard } from '@/lib/clipboard'
+import { UserPlus, Trash2, Link as LinkIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 const ROLES = { admin: 'Admin', member: 'Member' }
@@ -23,6 +26,9 @@ interface SettingsMembersProps {
         name: string
       }
       role: 'admin' | 'member'
+      invited: boolean
+      // Only admins get it, and only on Invited rows.
+      invite_url?: string
     }>
   }
   can_manage_members: boolean
@@ -30,6 +36,8 @@ interface SettingsMembersProps {
 
 export default function SettingsMembers({ organization, can_manage_members }: SettingsMembersProps) {
   const { current_user } = usePage<SharedProps>().props
+  // The invite link to show, when the browser wouldn't copy it.
+  const [shownLink, setShownLink] = useState<string | null>(null)
 
   const { data, setData, post, processing, errors, reset, transform } = useForm({
     email: '',
@@ -48,11 +56,20 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
     })
   }
 
-  const removeMember = (id: number) => {
-    if (confirm('Are you sure you want to remove this member?')) {
+  const removeMember = (id: number, invited: boolean) => {
+    const question = invited ? 'Are you sure you want to revoke this invite?' : 'Are you sure you want to remove this member?'
+    if (confirm(question)) {
       router.delete(`/${organization.slug}/settings/organization_users/${id}`, {
-        onError: () => toast.error('Failed to remove member')
+        onError: () => toast.error(invited ? 'Failed to revoke invite' : 'Failed to remove member')
       })
+    }
+  }
+
+  const copyInviteLink = async (url: string) => {
+    if (await copyToClipboard(url)) {
+      toast.success('Invite link copied')
+    } else {
+      setShownLink(url)
     }
   }
 
@@ -105,7 +122,7 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
                   {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
                 </div>
                 <Button type="submit" disabled={processing} className="w-full sm:w-auto sm:justify-self-start">
-                  {processing ? 'Inviting…' : 'Send invitation'}
+                  {processing ? 'Inviting…' : 'Invite'}
                 </Button>
               </form>
             </CardContent>
@@ -135,7 +152,10 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
                           {member.user.name.charAt(0).toUpperCase()}
                         </div>
                         <div>
-                          <p className="font-medium">{member.user.name}</p>
+                          <p className="font-medium flex items-center gap-2">
+                            {member.user.name}
+                            {member.invited && <Badge variant="info">Invited</Badge>}
+                          </p>
                           <p className="text-xs text-muted-foreground">{member.user.email}</p>
                         </div>
                       </div>
@@ -156,13 +176,24 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
                       )}
                     </TableCell>
                     <TableCell className="text-right">
+                      {member.invite_url && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Copy invite link for ${member.user.name}`}
+                          className="text-muted-foreground hover:text-foreground"
+                          onClick={() => copyInviteLink(member.invite_url!)}
+                        >
+                          <LinkIcon className="h-4 w-4" />
+                        </Button>
+                      )}
                       {can_manage_members && current_user?.email !== member.user.email && (
                         <Button
                           variant="ghost"
                           size="icon"
-                          aria-label={`Remove ${member.user.name}`}
+                          aria-label={member.invited ? `Revoke invite for ${member.user.name}` : `Remove ${member.user.name}`}
                           className="text-muted-foreground hover:text-destructive"
-                          onClick={() => removeMember(member.id)}
+                          onClick={() => removeMember(member.id, member.invited)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -175,6 +206,22 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
           </Table>
         </div>
       </div>
+
+      <Dialog open={shownLink !== null} onOpenChange={(open) => { if (!open) setShownLink(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Invite link</DialogTitle>
+            <DialogDescription>This browser wouldn't copy it. Copy the link below and send it to them.</DialogDescription>
+          </DialogHeader>
+          <Input
+            aria-label="Invite link"
+            readOnly
+            autoFocus
+            value={shownLink ?? ''}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        </DialogContent>
+      </Dialog>
     </SettingsLayout>
   )
 }
