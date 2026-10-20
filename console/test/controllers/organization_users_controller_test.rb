@@ -48,7 +48,8 @@ class OrganizationUsersControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "an admin sees which members are Invited, with an invite link that opens their invite" do
-    grace = MemberInvite.call(organization: @organization, inviter: @admin, email: "grace@example.com").membership.user
+    grace = MemberInvite.call(organization: @organization, inviter: @admin, email: "grace@example.com",
+      console_url: "http://www.example.com").membership.user
     sign_in_as(@admin)
 
     members = members_page
@@ -65,7 +66,8 @@ class OrganizationUsersControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "a member sees who is Invited, but gets no invite links" do
-    grace = MemberInvite.call(organization: @organization, inviter: @admin, email: "grace@example.com").membership.user
+    grace = MemberInvite.call(organization: @organization, inviter: @admin, email: "grace@example.com",
+      console_url: "http://www.example.com").membership.user
     sign_in_as(@member)
 
     row = members_page.find { |m| m["user"]["id"] == grace.id }
