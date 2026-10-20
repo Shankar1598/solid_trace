@@ -1,12 +1,13 @@
 # frozen_string_literal: true
 
 class OrganizationSerializer
-  # invite_urls_from is the Console URL that Invited members' invite_url
-  # starts with; leave it out for anyone but an admin, who alone invites.
-  def initialize(organization, include_members: false, invite_urls_from: nil)
+  # invite_base_url is the Console URL that Invited members' invite_url
+  # starts with (User#invite_url); leave it out for anyone but an admin, who
+  # alone invites.
+  def initialize(organization, include_members: false, invite_base_url: nil)
     @organization = organization
     @include_members = include_members
-    @invite_urls_from = invite_urls_from
+    @invite_base_url = invite_base_url
   end
 
   def as_json(*)
@@ -25,7 +26,9 @@ class OrganizationSerializer
           role: ou.role,
           invited: ou.user.invited?,
         }
-        member[:invite_url] = @invite_urls_from + ou.user.invite_path(@organization) if @invite_urls_from && ou.user.invited?
+        if @invite_base_url && ou.user.invited?
+          member[:invite_url] = ou.user.invite_url(@organization, console_url: @invite_base_url)
+        end
         member
       end
     end

@@ -14,7 +14,8 @@ class InvitesControllerTest < ActionDispatch::IntegrationTest
     @organization = create(:organization)
     @admin = create(:user, email: "admin@example.com")
     create(:organization_user, organization: @organization, user: @admin, role: :admin)
-    @membership = MemberInvite.call(organization: @organization, inviter: @admin, email: "grace@example.com").membership
+    @membership = MemberInvite.call(organization: @organization, inviter: @admin, email: "grace@example.com",
+      console_url: "http://www.example.com").membership
     @grace = @membership.user
   end
 
