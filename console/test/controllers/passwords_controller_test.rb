@@ -94,6 +94,15 @@ class PasswordsControllerTest < ActionDispatch::IntegrationTest
     assert_response :unauthorized
   end
 
+  test "a reset makes an Invited user an ordinary one" do
+    @user.update!(invited: true)
+
+    put password_url(@user.password_reset_token),
+      params: { password: "new-password", password_confirmation: "new-password" }, as: :json, headers: inertia
+
+    assert_not @user.reload.invited?
+  end
+
   test "a link works only until the password is reset" do
     token = @user.password_reset_token
     put password_url(token), params: { password: "new-password", password_confirmation: "new-password" }, as: :json, headers: inertia

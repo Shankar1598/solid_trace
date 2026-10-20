@@ -1,0 +1,13 @@
+Welcome to SolidTrace!
+
+Hi <%= @user.name %>,
+
+<%= @invited_by.name %> has invited you to the <%= @organization.name %> organization on SolidTrace.
+
+Set your password and sign in: <%= @invite_url %>
+
+The link works once, for seven days. If it has expired, ask an admin of <%= @organization.name %> for a new one.
+
+---
+
+If you didn't expect this invitation, please ignore this email or contact support.

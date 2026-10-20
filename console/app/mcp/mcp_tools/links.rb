@@ -28,6 +28,11 @@ module McpTools
       url(routes.project_logs_path(project, org_slug: project.organization.slug, **search))
     end
 
+    # A fresh Invite link for an Invited user to organization.
+    def invite(user, organization)
+      user.invite_url(organization, console_url: @console_url)
+    end
+
     # The Organization's Members page.
     def members(organization)
       url(routes.organization_users_path(org_slug: organization.slug))

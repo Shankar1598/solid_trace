@@ -4,7 +4,7 @@
 # link opens a form for a new password, and the new password ends every
 # session and revokes the user's API tokens, which work without it. Whether a
 # user has the email is never said. A link works for 15 minutes, and only
-# until the password changes.
+# until the password changes. Setting one ends being Invited.
 class PasswordsController < ApplicationController
   layout "auth"
   allow_unauthenticated_access

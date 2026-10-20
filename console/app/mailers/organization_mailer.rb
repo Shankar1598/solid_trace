@@ -1,13 +1,14 @@
 # frozen_string_literal: true
 
 class OrganizationMailer < ApplicationMailer
-  def invitation_email(user:, organization:, password:, invited_by:)
+  # An Invited user's invite to organization, with their Invite link to the
+  # Console at console_url (User#invite_url).
+  def invite_link_email(user:, organization:, invited_by:, console_url:)
     @user = user
     @organization = organization
-    @password = password
     @invited_by = invited_by
-    @login_url = login_url
+    @invite_url = user.invite_url(organization, console_url: console_url)
 
-    mail(to: @user.email, subject: "You've been added to #{@organization.name} on SolidTrace")
+    mail(to: @user.email, subject: "You've been invited to #{@organization.name} on SolidTrace")
   end
 end
