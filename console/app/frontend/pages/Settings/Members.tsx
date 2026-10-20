@@ -17,6 +17,12 @@ import { toast } from 'sonner'
 
 const ROLES = { admin: 'Admin', member: 'Member' }
 
+// What taking a row away says: revoking an Invited member's invite, or
+// removing a member.
+const removal = (invited: boolean) => invited
+  ? { title: 'Revoke invite', label: 'Revoke invite for', question: 'Are you sure you want to revoke this invite?', failed: 'Failed to revoke invite' }
+  : { title: 'Remove member', label: 'Remove', question: 'Are you sure you want to remove this member?', failed: 'Failed to remove member' }
+
 interface SettingsMembersProps {
   organization: Organization & {
     members?: Array<{
@@ -57,10 +63,10 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
   }
 
   const removeMember = (id: number, invited: boolean) => {
-    const question = invited ? 'Are you sure you want to revoke this invite?' : 'Are you sure you want to remove this member?'
-    if (confirm(question)) {
+    const copy = removal(invited)
+    if (confirm(copy.question)) {
       router.delete(`/${organization.slug}/settings/organization_users/${id}`, {
-        onError: () => toast.error(invited ? 'Failed to revoke invite' : 'Failed to remove member')
+        onError: () => toast.error(copy.failed)
       })
     }
   }
@@ -154,7 +160,7 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
                         <div>
                           <p className="font-medium flex items-center gap-2">
                             {member.user.name}
-                            {member.invited && <Badge variant="info">Invited</Badge>}
+                            {member.invited && <Badge variant="info" dot>Invited</Badge>}
                           </p>
                           <p className="text-xs text-muted-foreground">{member.user.email}</p>
                         </div>
@@ -181,6 +187,7 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
                           variant="ghost"
                           size="icon"
                           aria-label={`Copy invite link for ${member.user.name}`}
+                          title="Copy invite link"
                           className="text-muted-foreground hover:text-foreground"
                           onClick={() => copyInviteLink(member.invite_url!)}
                         >
@@ -191,7 +198,8 @@ export default function SettingsMembers({ organization, can_manage_members }: Se
                         <Button
                           variant="ghost"
                           size="icon"
-                          aria-label={member.invited ? `Revoke invite for ${member.user.name}` : `Remove ${member.user.name}`}
+                          aria-label={`${removal(member.invited).label} ${member.user.name}`}
+                          title={removal(member.invited).title}
                           className="text-muted-foreground hover:text-destructive"
                           onClick={() => removeMember(member.id, member.invited)}
                         >
