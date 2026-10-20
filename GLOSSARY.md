@@ -97,8 +97,12 @@ A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single 
 _Avoid_: graph, plot, visualization
 
 **Dashboard**:
-A page of **Charts** that belongs to an organization. Each chart saves a **Query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows. Any member of the organization can see, make, change and delete it.
+A page of **Charts** that belongs to an organization. Each chart saves a **Query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows, with the values of the **Dashboard filters** it names. Any member of the organization can see, make, change and delete it.
 _Avoid_: board, panel page
+
+**Dashboard filter**:
+A control in a **Dashboard**'s filter bar, a select or a search box, whose value a **Chart** uses by naming it in its **Query**, as in `where service == $service`. It narrows only the Charts that name it. With no value, it is All, and its comparisons match every **Log**.
+_Avoid_: variable, dashboard parameter, template variable
 
 **Monitor**:
 A saved **Query** on one of an organization's **Projects** that runs every few minutes and tells its **Integrations** what it finds. A Threshold monitor's Query ends in a summarize of one number per group; a group fires when its number passes the threshold and resolves when it no longer does. A Match monitor sends the **Logs** ingested since its last run that match its Query. Any member of the organization can see, make, change and delete it.
@@ -200,6 +204,7 @@ _Avoid_: API key, project key, access token
 - A **Project**'s **Retention** decides when its **Logs** are deleted
 - A **Chart** draws one **Query**'s or **SQL query**'s table; the **Logs explorer** shows it above the table
 - A **Dashboard** holds many **Charts**, each a saved **Query** on a **Project** of the Dashboard's organization
+- A **Dashboard** has an ordered list of **Dashboard filters**; each narrows the **Charts** whose **Query** names it
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
