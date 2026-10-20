@@ -1,6 +1,6 @@
 # Invite links
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 Planned with the user on 2026-10-20, after inviting a member from the Members page failed with a 400 on their install, which has no mail set up.
 
