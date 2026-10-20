@@ -51,4 +51,15 @@ class UserTest < ActiveSupport::TestCase
     assert user.authenticate("secret")
     assert_not user.authenticate("wrong")
   end
+
+  test "an Invited user made with a password stays Invited until a password is set, however it's set" do
+    user = create(:user, invited: true)
+    assert user.reload.invited?
+
+    user.update!(name: "Grace")
+    assert user.reload.invited?
+
+    user.update!(password: "new-password", password_confirmation: "new-password")
+    assert_not user.reload.invited?
+  end
 end

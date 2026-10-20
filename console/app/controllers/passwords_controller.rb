@@ -33,7 +33,7 @@ class PasswordsController < ApplicationController
   def update
     @user.errors.add(:password, :blank) if params[:password].blank?
 
-    if @user.errors.none? && @user.update(params.permit(:password, :password_confirmation).merge(invited: false))
+    if @user.errors.none? && @user.update(params.permit(:password, :password_confirmation))
       @user.sessions.destroy_all
       @user.api_tokens.delete_all
       redirect_to login_path, notice: "Password reset. Sign in with the new one."

@@ -30,7 +30,7 @@ module McpTools
 
     # A fresh Invite link for an Invited user to organization.
     def invite(user, organization)
-      url(user.invite_path(organization))
+      user.invite_url(organization, console_url: @console_url)
     end
 
     # The Organization's Members page.
