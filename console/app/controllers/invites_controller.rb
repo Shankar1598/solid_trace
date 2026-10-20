@@ -33,7 +33,7 @@ class InvitesController < ApplicationController
   def update
     @user.errors.add(:password, :blank) if params[:password].blank?
 
-    if @user.errors.none? && @user.update(params.permit(:name, :password, :password_confirmation).merge(invited: false))
+    if @user.errors.none? && @user.update(params.permit(:name, :password, :password_confirmation))
       terminate_session
       start_new_session_for @user
       redirect_to issues_path(org_slug: @organization.slug)

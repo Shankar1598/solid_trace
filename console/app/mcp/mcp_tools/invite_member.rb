@@ -14,14 +14,15 @@ module McpTools
     argument :name, { type: "string", description: "Their name, for someone new to SolidTrace. The email's name when left out." }
 
     def run
-      invite = MemberInvite.call(organization: organization, inviter: user, email: arguments[:email], name: arguments[:name])
-      raise ToolError, "Not invited: #{invite.error}." unless invite.done? || invite.already_invited?
+      invite = MemberInvite.call(organization: organization, inviter: user, email: arguments[:email], name: arguments[:name],
+        console_url: console_url)
+      raise ToolError, "Not invited: #{invite.error}." unless invite.done?
 
       member = invite.membership
       json({
         organization: organization.slug,
         member: { name: member.user.name, email: member.user.email, role: member.role },
-        outcome: invite.already_invited? ? "already_invited" : invite.outcome.to_s,
+        outcome: invite.outcome.to_s,
         emailed: invite.emailed,
         invite_link: (links.invite(member.user, organization) if member.user.invited?),
       }.compact, link: links.members(organization))
