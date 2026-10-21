@@ -4,7 +4,7 @@
 
 **Blocked by:** 06
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Preview runs the editor's draft through the preview route on the recent arrivals, or on pasted JSON Logs.
 - [ ] Each Log's before and after side by side; dropped and failed Logs say so, with the error.
