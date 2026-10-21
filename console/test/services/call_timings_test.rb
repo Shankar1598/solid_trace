@@ -15,6 +15,9 @@ class CallTimingsTest < ActiveSupport::TestCase
     @output = StringIO.new
     @previous_output = Rails.configuration.x.call_timings_output
     Rails.configuration.x.call_timings_output = @output
+    @previous_release = Rails.configuration.x.solidtrace_version, Rails.configuration.x.solidtrace_revision
+    Rails.configuration.x.solidtrace_version = "v0.8.0"
+    Rails.configuration.x.solidtrace_revision = "0123abcd"
 
     @user = create(:user)
     @acme = create(:organization, slug: "acme")
@@ -25,9 +28,10 @@ class CallTimingsTest < ActiveSupport::TestCase
 
   teardown do
     Rails.configuration.x.call_timings_output = @previous_output
+    Rails.configuration.x.solidtrace_version, Rails.configuration.x.solidtrace_revision = @previous_release
   end
 
-  test "a Query's run is a log_read line with its Query, range, rows, origin and time taken" do
+  test "a Query's run is a log_read line with its Query, range, rows, origin, time taken and the release that ran it" do
     stub_request(:post, @query_url).to_return(status: 200, body: { logs: [ { id: "a" }, { id: "b" } ] }.to_json)
 
     CallTimings::Context.set(origin: "logs#query", request_id: "req-1") do
@@ -37,7 +41,7 @@ class CallTimingsTest < ActiveSupport::TestCase
     line = sole_line
     assert_equal({
       "level" => "info", "kind" => "log_read", "outcome" => "ok", "read" => "query", "origin" => "logs#query",
-      "request_id" => "req-1", "project_id" => @shop.id, "query" => "where level == \"error\"",
+      "request_id" => "req-1", "version" => "v0.8.0", "revision" => "0123abcd", "project_id" => @shop.id, "query" => "where level == \"error\"",
       "from" => "2026-10-21T09:00:00.000Z", "to" => "2026-10-21T10:00:00.000Z", "rows" => 2,
     }, line.except("time", "message", "duration_ms"))
     assert_kind_of Numeric, line["duration_ms"]
@@ -89,7 +93,7 @@ class CallTimingsTest < ActiveSupport::TestCase
     assert_equal({
       "level" => "info", "kind" => "mcp_tool", "outcome" => "ok", "tool" => "query_logs",
       "arguments" => { "project" => "shop", "query" => "where level == \"error\"", "range" => "1h" },
-      "user_id" => @user.id, "user_email" => @user.email,
+      "user_id" => @user.id, "user_email" => @user.email, "version" => "v0.8.0", "revision" => "0123abcd",
     }, tool.except("time", "message", "duration_ms"))
     assert_match(/\AMCP tool query_logs, [\d.]+ ms\z/, tool["message"])
   end

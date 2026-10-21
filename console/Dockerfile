@@ -83,5 +83,14 @@ ENTRYPOINT ["/rails/bin/docker-entrypoint"]
 # Puma on 3001.
 ENV HTTP_PORT="3000" \
     TARGET_PORT="3001"
+
+# The release and commit the image was built from, which every call timing
+# carries (CallTimings), so a Query's line leads back to the code that ran
+# it. release.yml passes them, and deploy/install --build the commit. Last,
+# so a new commit rebuilds no other layer.
+ARG SOLIDTRACE_VERSION=dev
+ARG SOLIDTRACE_REVISION=unknown
+ENV SOLIDTRACE_VERSION=$SOLIDTRACE_VERSION \
+    SOLIDTRACE_REVISION=$SOLIDTRACE_REVISION
 EXPOSE 3000
 CMD ["./bin/thrust", "./bin/rails", "server"]
