@@ -1,6 +1,7 @@
 // Package vrl compiles VRL programs and runs them on Logs, through the Rust
 // vrl crate built as a staticlib (rust/) and called over cgo. Logs cross as
-// msgpack. Run ./build before go build or go test; see docs/adr/0012.
+// msgpack. Run ./build before go build or go test. See
+// docs/adr/0012-log-transform-runs-vrl-through-cgo.md.
 package vrl
 
 /*

@@ -37,7 +37,10 @@ impl Buf {
     fn from_vec(bytes: Vec<u8>) -> Buf {
         let boxed = bytes.into_boxed_slice();
         let len = boxed.len();
-        Buf { ptr: Box::into_raw(boxed) as *mut u8, len }
+        Buf {
+            ptr: Box::into_raw(boxed) as *mut u8,
+            len,
+        }
     }
 }
 
@@ -79,6 +82,10 @@ unsafe fn bytes<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 /// Compiles `source`. Returns the program, or null when it has errors. Writes
 /// its diagnostics (errors, or the program's warnings) to `diagnostics` as a
 /// msgpack array of maps.
+///
+/// # Safety
+/// `source` points to `len` readable bytes, and `diagnostics` to a `Buf`
+/// the caller frees with `st_vrl_buf_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn st_vrl_compile(
     source: *const u8,
@@ -170,6 +177,11 @@ fn encode_diagnostics(source: &str, list: &[Diagnostic]) -> Vec<u8> {
 /// array: `[0, log]` kept, `[1]` dropped by abort, `[2, error]` failed.
 /// Returns 0, or 1 with the error text in `outcomes` when the whole call
 /// fails.
+///
+/// # Safety
+/// `compiled` came from `st_vrl_compile` and isn't freed until this returns,
+/// `logs` points to `len` readable bytes, and `outcomes` to a `Buf` the
+/// caller frees with `st_vrl_buf_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn st_vrl_run(
     compiled: *const Compiled,
@@ -190,13 +202,15 @@ pub unsafe extern "C" fn st_vrl_run(
 }
 
 fn run(compiled: &Compiled, mut logs: &[u8]) -> Result<Vec<u8>, String> {
-    let count = rmp::decode::read_array_len(&mut logs).map_err(|e| format!("reading the Logs: {e}"))?;
+    let count =
+        rmp::decode::read_array_len(&mut logs).map_err(|e| format!("reading the Logs: {e}"))?;
     let mut out = Vec::with_capacity(logs.len() + 16);
     rmp::encode::write_array_len(&mut out, count).unwrap();
     let mut runtime = Runtime::default();
     let mut scratch = Vec::new();
     for _ in 0..count {
-        let len = rmp::decode::read_bin_len(&mut logs).map_err(|e| format!("reading the Logs: {e}"))? as usize;
+        let len = rmp::decode::read_bin_len(&mut logs)
+            .map_err(|e| format!("reading the Logs: {e}"))? as usize;
         if len > logs.len() {
             return Err("reading the Logs: a Log is cut short".to_string());
         }
@@ -205,7 +219,9 @@ fn run(compiled: &Compiled, mut logs: &[u8]) -> Result<Vec<u8>, String> {
         scratch.clear();
         // Each Log's outcome goes to scratch first, so a panic part way
         // through never leaves half an outcome in out.
-        match panic::catch_unwind(AssertUnwindSafe(|| run_one(compiled, &mut runtime, log, &mut scratch))) {
+        match panic::catch_unwind(AssertUnwindSafe(|| {
+            run_one(compiled, &mut runtime, log, &mut scratch)
+        })) {
             Ok(()) => out.extend_from_slice(&scratch),
             Err(payload) => {
                 runtime = Runtime::default(); // it may hold half-set variables
@@ -238,7 +254,10 @@ fn run_one(compiled: &Compiled, runtime: &mut Runtime, log: &[u8], out: &mut Vec
                     write_failed(out, &error);
                 }
             }
-            other => write_failed(out, &format!(". is {}, not an object", with_article(other.kind_str()))),
+            other => write_failed(
+                out,
+                &format!(". is {}, not an object", with_article(other.kind_str())),
+            ),
         },
         Err(Terminate::Abort(ExpressionError::Abort { .. })) => {
             rmp::encode::write_array_len(out, 1).unwrap();
@@ -262,10 +281,13 @@ fn with_article(kind: &str) -> String {
 }
 
 fn decode_log(mut log: &[u8]) -> Result<Value, String> {
-    let value = rmpv::decode::read_value_ref_with_max_depth(&mut log, MAX_DEPTH).map_err(|e| match e {
-        rmpv::decode::Error::DepthLimitExceeded => format!("the Log nests more than {MAX_DEPTH} levels deep"),
-        e => format!("reading the Log: {e}"),
-    })?;
+    let value =
+        rmpv::decode::read_value_ref_with_max_depth(&mut log, MAX_DEPTH).map_err(|e| match e {
+            rmpv::decode::Error::DepthLimitExceeded => {
+                format!("the Log nests more than {MAX_DEPTH} levels deep")
+            }
+            e => format!("reading the Log: {e}"),
+        })?;
     to_value(value)
 }
 
@@ -284,7 +306,9 @@ fn to_value(value: ValueRef) -> Result<Value, String> {
             None => Value::Bytes(Bytes::copy_from_slice(s.as_bytes())),
         },
         ValueRef::Binary(b) => Value::Bytes(Bytes::copy_from_slice(b)),
-        ValueRef::Array(items) => Value::Array(items.into_iter().map(to_value).collect::<Result<_, _>>()?),
+        ValueRef::Array(items) => {
+            Value::Array(items.into_iter().map(to_value).collect::<Result<_, _>>()?)
+        }
         ValueRef::Map(entries) => {
             let mut map = ObjectMap::new();
             for (key, value) in entries {
@@ -297,13 +321,19 @@ fn to_value(value: ValueRef) -> Result<Value, String> {
             }
             Value::Object(map)
         }
-        ValueRef::Ext(TIMESTAMP, b) => Value::Timestamp(timestamp(b).ok_or("the Log holds a timestamp that can't be read")?),
-        ValueRef::Ext(kind, _) => return Err(format!("the Log holds a msgpack extension of type {kind}")),
+        ValueRef::Ext(TIMESTAMP, b) => {
+            Value::Timestamp(timestamp(b).ok_or("the Log holds a timestamp that can't be read")?)
+        }
+        ValueRef::Ext(kind, _) => {
+            return Err(format!("the Log holds a msgpack extension of type {kind}"));
+        }
     })
 }
 
 fn to_float(f: f64) -> Result<Value, String> {
-    NotNan::new(f).map(Value::Float).map_err(|_| "the Log holds NaN".to_string())
+    NotNan::new(f)
+        .map(Value::Float)
+        .map_err(|_| "the Log holds NaN".to_string())
 }
 
 /// Reads msgpack's timestamp extension in its 4, 8 and 12 byte forms.
@@ -314,7 +344,10 @@ fn timestamp(b: &[u8]) -> Option<DateTime<Utc>> {
             let x = u64::from_be_bytes(b.try_into().ok()?);
             ((x & 0x3_ffff_ffff) as i64, (x >> 34) as u32)
         }
-        12 => (i64::from_be_bytes(b[4..].try_into().ok()?), u32::from_be_bytes(b[..4].try_into().ok()?)),
+        12 => (
+            i64::from_be_bytes(b[4..].try_into().ok()?),
+            u32::from_be_bytes(b[..4].try_into().ok()?),
+        ),
         _ => return None,
     };
     DateTime::from_timestamp(secs, nanos)
@@ -322,7 +355,9 @@ fn timestamp(b: &[u8]) -> Option<DateTime<Utc>> {
 
 fn encode_value(out: &mut Vec<u8>, value: &Value, depth: usize) -> Result<(), String> {
     if depth > MAX_DEPTH {
-        return Err(format!("the program nested . more than {MAX_DEPTH} levels deep"));
+        return Err(format!(
+            "the program nested . more than {MAX_DEPTH} levels deep"
+        ));
     }
     match value {
         Value::Null => rmp::encode::write_nil(out).unwrap(),
@@ -356,14 +391,22 @@ fn encode_value(out: &mut Vec<u8>, value: &Value, depth: usize) -> Result<(), St
 }
 
 /// Frees a program `st_vrl_compile` returned. Null is ignored.
+///
+/// # Safety
+/// `compiled` is null or came from `st_vrl_compile`, and isn't used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn st_vrl_program_free(compiled: *mut Compiled) {
     if !compiled.is_null() {
-        let _ = panic::catch_unwind(AssertUnwindSafe(|| drop(unsafe { Box::from_raw(compiled) })));
+        let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+            drop(unsafe { Box::from_raw(compiled) })
+        }));
     }
 }
 
 /// Frees a buffer Rust returned.
+///
+/// # Safety
+/// `buf` came from this library, and isn't used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn st_vrl_buf_free(buf: Buf) {
     if !buf.ptr.is_null() {
