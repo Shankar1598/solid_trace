@@ -1,12 +1,15 @@
 // Package normalise turns what a sender sent as a Log into a normalised Log,
 // before Log ingest stores it: the built-in fields filled, every other value an
 // Attribute under a flat dotted name with its own type, and the per-Log limits
-// applied. It is pure: the receipt time and the Project's Retention come in
-// with each call.
+// applied. What a Log transform returns is normalised by the same rules. It
+// is pure: the receipt time and the Project's Retention come in with each
+// call.
 package normalise
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -107,12 +110,49 @@ var jsonAliases = [fieldCount][]string{
 // looked up after flattening, so {"log": {"level": "info"}} fills the Level as
 // {"log.level": "info"} does.
 func JSON(object map[string]json.RawMessage, r Receipt) (models.Log, Outcome) {
+	return normaliseObject(object, jsonAliases, r)
+}
+
+// ownNames read each built-in field only under its own name.
+var ownNames = func() (aliases [fieldCount][]string) {
+	for f, name := range names {
+		aliases[f] = []string{name}
+	}
+	return aliases
+}()
+
+// Transformed normalises the object a Log transform returned for a Log, by
+// the rules JSON follows for a sender's Log, except that each built-in field
+// is read only under its own name, where the program saw it. So a program
+// that deletes .message stores a Log without one, even if the Log has a msg
+// Attribute. A value is one a Log transform returns: a string, int64,
+// float64, bool, nil, time.Time, []any or map[string]any. One that JSON
+// can't hold, such as an infinite number, is an error.
+func Transformed(object map[string]any, r Receipt) (models.Log, Outcome, error) {
+	raw := make(map[string]json.RawMessage, len(object))
+	for name, value := range object {
+		var b bytes.Buffer
+		encoder := json.NewEncoder(&b)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(value); err != nil {
+			return models.Log{}, Dropped, fmt.Errorf("%s can't be stored: %w", name, err)
+		}
+		raw[name] = b.Bytes()
+	}
+	log, outcome := normaliseObject(raw, ownNames, r)
+	return log, outcome, nil
+}
+
+// normaliseObject normalises a Log given as a JSON object, after flattening
+// it, filling each built-in field from the first of its aliases present.
+// That alias is consumed; any others present stay Attributes.
+func normaliseObject(object map[string]json.RawMessage, aliases [fieldCount][]string, r Receipt) (models.Log, Outcome) {
 	s := sent{attributes: flatten(object)}
-	for f, aliases := range jsonAliases {
-		for _, alias := range aliases {
-			if raw, ok := s.attributes[alias]; ok {
+	for f, names := range aliases {
+		for _, name := range names {
+			if raw, ok := s.attributes[name]; ok {
 				s.fields[f] = raw
-				delete(s.attributes, alias)
+				delete(s.attributes, name)
 				break
 			}
 		}
