@@ -90,3 +90,29 @@ The same 12 hits clustered in one row group (300,000 Logs, one hour):
 **Costs of the switch:**
 - If the newest hour of a range holds fewer Logs than the page, the hour before it is read in one step. This happens on a range ending just past the top of an hour, or on a page whose cursor sits near the start of an hour.
 - Such a page costs what it did before 02.
+
+### 2026-10-21 review fix: one step only after a whole hour fell short
+
+The follow-up read every hour after the first in one step (`i > 0`). With no condition, or a common one, the first hour is short only because the range's end or the cursor cuts it, so the busy hour before it was read as before 02. That was the cost the follow-up listed. `ScanLogs` now switches to one step only once an hour read over its whole hour held fewer Logs than the page still wanted. An hour the range or the cursor cuts leaves the next hour in two steps.
+
+Checked with a scratch test, not committed, kept in `~/.cache/solid-trace/log-read-speed-notes/lrs02-probe/review-fix-scratch_test.go.txt`, with a temporary switch between the ways of reading. 3 hours, each a Log file of 150,000 Logs; dev box, 2 threads, best of 3, in ms, run alone under the probe lock.
+
+A rare search over the 3 whole hours:
+
+| Query | This fix | `i > 0` | Two steps every hour |
+|---|---|---|---|
+| `contains "zebrafish"` (18 Logs) | 534 | 557 | 661 |
+| `search "zebrafish"` (18) | 830 | 825 | 967 |
+
+- Hours after the first full one are still read in one step. Here the fix and `i > 0` read the same way, so the gap between them is noise.
+
+The newest page, no Query:
+
+| Range | This fix | `i > 0` |
+|---|---|---|
+| Ends at the top of an hour (newest hour whole) | 83 | same reads |
+| Ends 100 ms past it (5 Logs in the newest hour) | 148 | 311 |
+
+- The cut page now reads the busy hour before in two steps: 148 against 311.
+- It costs about 65 ms more than a page whose newest hour is whole. That is the cut hour itself, read in two steps either way: 311 is about that plus 01's one-step hour of a 150,000-Log file.
+- A second run, with the box busier (setup 21.7 s against 18.3 s), gave 673, 558 and 865; 1,172, 1,148 and 1,544; 103; 144 and 361.
