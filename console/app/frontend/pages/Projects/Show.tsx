@@ -1,11 +1,11 @@
-import { router, useForm, usePage } from '@inertiajs/react'
+import { Link, router, useForm, usePage } from '@inertiajs/react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Project, SharedProps } from '@/types'
@@ -161,6 +161,20 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
               </CardFooter>
             )}
           </form>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Log transform</CardTitle>
+            <CardDescription>
+              A VRL program that Log processing runs on each of this project's logs before storing it, to parse, change or drop them.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href={`/${current_org.slug}/projects/${project.slug}/log_transform`} className={buttonVariants({ variant: 'outline' })}>
+              Open the Log transform
+            </Link>
+          </CardContent>
         </Card>
 
         {can_delete_project && (
