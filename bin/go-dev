@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 
 cd event_store
+vrl/build
 go build -gcflags="all=-N -l" -o bin/event_store main.go
 ./bin/event_store
