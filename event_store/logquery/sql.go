@@ -179,21 +179,24 @@ func dynamicValue(parts []string) string {
 	return fmt.Sprintf("CASE WHEN %s THEN NULL ELSE {%s} END", strings.Join(missing, " AND "), strings.Join(fields, ", "))
 }
 
+// writeTextMatch writes a text match with DuckDB's string functions, which
+// are much faster than LIKE patterns. Where case doesn't count, both sides
+// are lowercased by DuckDB's lower, as ILIKE lowercases them.
 func writeTextMatch(m textMatch, f fields) string {
-	x := writeValue(m.x, f)
-	like := " ILIKE "
-	if m.caseSensitive {
-		like = " LIKE "
+	x, term := writeValue(m.x, f), sqltext.String(m.pattern)
+	if m.op == matchRegex {
+		return "regexp_matches(" + x + ", " + term + ")"
+	}
+	if !m.caseSensitive {
+		x, term = "lower("+x+")", "lower("+term+")"
 	}
 	switch m.op {
 	case matchContains:
-		return x + like + sqltext.String("%"+escapeLike(m.pattern)+"%") + ` ESCAPE '\'`
+		return "contains(" + x + ", " + term + ")"
 	case matchStartsWith:
-		return x + like + sqltext.String(escapeLike(m.pattern)+"%") + ` ESCAPE '\'`
-	case matchEquals:
-		return x + like + sqltext.String(escapeLike(m.pattern)) + ` ESCAPE '\'`
-	default:
-		return "regexp_matches(" + x + ", " + sqltext.String(m.pattern) + ")"
+		return "starts_with(" + x + ", " + term + ")"
+	default: // matchEquals
+		return x + " = " + term
 	}
 }
 
@@ -304,22 +307,17 @@ func writeLiteral(l Literal) string {
 // writeSearch writes a case-insensitive contains over message and every
 // string Attribute.
 func writeSearch(term string, cols storage.LogColumns) string {
-	pattern := sqltext.String("%" + escapeLike(term) + "%")
-	ilike := func(column string) string {
-		return column + " ILIKE " + pattern + ` ESCAPE '\'`
+	lowered := "lower(" + sqltext.String(term) + ")"
+	contains := func(column string) string {
+		return "contains(lower(" + column + "), " + lowered + ")"
 	}
 	matches := []string{
-		ilike(cols.BuiltIn("message")),
+		contains(cols.BuiltIn("message")),
 		fmt.Sprintf("coalesce(list_bool_or(list_transform(map_values(%s), lambda v: %s)), false)",
-			cols.Map(storage.StringAttribute), ilike("v")),
+			cols.Map(storage.StringAttribute), contains("v")),
 	}
 	for _, column := range cols.Promoted(storage.StringAttribute) {
-		matches = append(matches, ilike(column))
+		matches = append(matches, contains(column))
 	}
 	return strings.Join(matches, " OR ")
-}
-
-// escapeLike escapes LIKE's wildcards in s, with backslash as the escape.
-func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
