@@ -1,4 +1,5 @@
 import { Component, Suspense, lazy, useEffect, useRef, type ReactNode } from 'react'
+import type { ProgramMark } from '@/lib/logTransform/program'
 import type { QueryProblem } from '@/lib/logs/api'
 import type { CompletionSources } from '@/lib/logs/completions'
 import type { ShortcutId } from '@/lib/shortcuts'
@@ -13,18 +14,24 @@ export interface QueryEditorProps {
   value: string
   onChange: (value: string) => void
   /** Cmd/Ctrl+Enter. */
-  onRun: () => void
-  /** A Query, coloured and completed as one, or SQL. */
-  language: 'query' | 'sql'
+  onRun?: () => void
+  /** A Query, coloured and completed as one, SQL, or a Log transform's VRL program, as plain text. */
+  language: 'query' | 'sql' | 'vrl'
   /** The text box's accessible name, such as "Query". */
   label: string
   placeholder?: string
   /** A Query's mistakes, squiggled where validate placed them. */
   problems?: QueryProblem[]
+  /** Errors and warnings already placed in the text, such as a program's from its check. */
+  marks?: ProgramMark[]
   /** What a Query's completions offer: the Fields and values of recent Logs, and its source. */
   completions?: CompletionSources
   /** The box grows with its text up to this many lines, then scrolls. */
   maxLines: number
+  /** The box is at least this many lines tall (default 2). */
+  minLines?: number
+  /** The text can be read, selected and copied, but not changed. */
+  readOnly?: boolean
   autoFocus?: boolean
   /** A shortcut that focuses it with the cursor at the end, such as / for the explorer's Query. */
   focusShortcut?: ShortcutId
@@ -35,11 +42,12 @@ export interface QueryEditorProps {
 
 /**
  * The editor for Queries and SQL in the Logs explorer, Dashboards and
- * Monitors: highlighting, completions for Queries, validate's mistakes as
- * squiggles, and Cmd/Ctrl+Enter to run. Esc leaves it.
+ * Monitors, and for a Project's Log transform program: highlighting,
+ * completions for Queries, mistakes as squiggles, and Cmd/Ctrl+Enter to run.
+ * Esc leaves it.
  */
 export function QueryEditor(props: QueryEditorProps) {
-  const invalid = (props.problems?.length ?? 0) > 0
+  const invalid = (props.problems?.length ?? 0) > 0 || (props.marks ?? []).some(m => m.severity === 'error')
   return (
     <div
       data-invalid={invalid || undefined}
@@ -76,7 +84,7 @@ class Unloaded extends Component<{ fallback: ReactNode; children: ReactNode }, {
 }
 
 /** A plain text box in the editor's place: no colours or completions, but it edits, runs and leaves the same keys. */
-function PlainEditor({ value, onChange, onRun, label, placeholder, maxLines, autoFocus, focusShortcut, describedBy }: QueryEditorProps) {
+function PlainEditor({ value, onChange, onRun, label, placeholder, maxLines, minLines = 2, autoFocus, focusShortcut, describedBy, readOnly }: QueryEditorProps) {
   const box = useRef<HTMLTextAreaElement>(null)
   // As the editor does: focused with the cursor at the end.
   const focusAtEnd = () => {
@@ -98,20 +106,21 @@ function PlainEditor({ value, onChange, onRun, label, placeholder, maxLines, aut
       onKeyDown={e => {
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault()
-          onRun()
+          onRun?.()
         } else if (e.key === 'Escape') {
           e.currentTarget.blur()
         }
       }}
       aria-label={label}
       aria-describedby={describedBy}
+      readOnly={readOnly}
       placeholder={placeholder}
       className="block w-full resize-none bg-transparent px-2 font-[inherit] outline-none [field-sizing:content] placeholder:text-muted-foreground"
       style={{
         lineHeight: `${LINE_HEIGHT}px`,
         paddingTop: PADDING_Y,
         paddingBottom: PADDING_Y,
-        minHeight: 2 * LINE_HEIGHT + 2 * PADDING_Y,
+        minHeight: minLines * LINE_HEIGHT + 2 * PADDING_Y,
         maxHeight: maxLines * LINE_HEIGHT + 2 * PADDING_Y,
       }}
     />
@@ -119,7 +128,7 @@ function PlainEditor({ value, onChange, onRun, label, placeholder, maxLines, aut
 }
 
 /** The text as it will show, in a box of the editor's size, until CodeMirror has loaded. */
-function Loading({ value, placeholder, maxLines }: QueryEditorProps) {
+function Loading({ value, placeholder, maxLines, minLines = 2 }: QueryEditorProps) {
   return (
     <pre
       aria-hidden
@@ -128,7 +137,7 @@ function Loading({ value, placeholder, maxLines }: QueryEditorProps) {
         lineHeight: `${LINE_HEIGHT}px`,
         paddingTop: PADDING_Y,
         paddingBottom: PADDING_Y,
-        minHeight: 2 * LINE_HEIGHT + 2 * PADDING_Y,
+        minHeight: minLines * LINE_HEIGHT + 2 * PADDING_Y,
         maxHeight: maxLines * LINE_HEIGHT + 2 * PADDING_Y,
       }}
     >
