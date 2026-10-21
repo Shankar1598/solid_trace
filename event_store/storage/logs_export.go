@@ -157,7 +157,7 @@ func (s *LogStore) exportOnce(projectID uint32, cutoff time.Time, order LogFileO
 	}
 	if len(staged.files) > 0 {
 		logger.L.Info("Exported a Project's Logs", "project_id", projectID, "logs", staged.logs, "files", len(staged.files),
-			"copy", copied.Round(time.Millisecond).String(), "commit", (time.Since(began) - copied).Round(time.Millisecond).String())
+			"order", order.String(), "copy", copied.Round(time.Millisecond).String(), "commit", (time.Since(began) - copied).Round(time.Millisecond).String())
 	}
 	return nil
 }
