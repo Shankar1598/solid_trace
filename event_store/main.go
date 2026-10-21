@@ -114,7 +114,7 @@ func main() {
 	eventCleanup := processing.NewCleanup(pebbleWriter, duckdbWriter, sqliteWriter, consoleSettings, &batchLock, clock.System{})
 	eventCleanup.Start()
 
-	logTransforms := logtransform.New(consoleSettings)
+	logTransforms := logtransform.New(consoleSettings, clock.System{})
 	logProcessor := logprocessing.New(pebbleWriter, logStore, logTransforms, clock.System{})
 	if err := logProcessor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Log processing", "error", err)
@@ -150,6 +150,7 @@ func main() {
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, clock.System{})
+	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
@@ -158,7 +159,7 @@ func main() {
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, healthHandler)
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, healthHandler)
 
 	// Maintenance API
 	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)

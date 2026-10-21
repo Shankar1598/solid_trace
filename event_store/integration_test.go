@@ -403,7 +403,7 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	env.LogTransforms = logtransform.New(consoleSettings)
+	env.LogTransforms = logtransform.New(consoleSettings, env.Clock)
 	env.LogProcessor = logprocessing.New(pebbleWriter, env.FlakyLogs, env.LogTransforms, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
@@ -429,7 +429,7 @@ func (env *TestEnv) open(t *testing.T) {
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
-	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, healthHandler)
+	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms), healthHandler)
 
 	env.close = func() {
 		pebbleWriter.StopWrites()
