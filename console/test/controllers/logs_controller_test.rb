@@ -147,7 +147,8 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
-  test "the explorer's Query run is timed under logs#query with the request's id" do
+  test "the explorer's Query run is timed under logs#query with the request's id, while every read is" do
+    InstanceSetting.current.update!(log_all_reads: true)
     output = StringIO.new
     previous_output = Rails.configuration.x.call_timings_output
     Rails.configuration.x.call_timings_output = output

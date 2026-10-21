@@ -13,3 +13,5 @@ Build `CallTimings` in Console: the MCP tool line from `McpTools::Base.call`, th
 2026-10-21: every line also carries `version` and `revision`, baked into Console's image by `release.yml` (tag and commit) and `deploy/install --build` (commit, via `SOLIDTRACE_REVISION` in `deploy/.env`). Checked: the tests, `bash -n deploy/install`, `docker compose config`. Not checked: an image build, a release run.
 
 2026-10-21: the commit is gone again (see the spec's Decisions); `version` stays. EventStore now logs the SQL each run ran, joined to Console's line by `request_id` (`X-Request-Id`), on `feature/log-read-sql`. Checked: the new root test, the related root tests, `storage` and `handler`, Vector's tests in Docker (`timberio/vector:0.58.0-alpine`), 271 Console runs.
+
+2026-10-21: only the MCP server's reads are timed by default; `log_all_reads` (migration `AddLogAllReadsToInstanceSettings`, `instance_settings:set LOG_ALL_READS=true`) times the rest. EventStore logs SQL only for a request with `X-Log-SQL: 1`. On `feature/log-all-reads`: 496 Console runs and the EventStore run tests, `handler` and `storage` pass.

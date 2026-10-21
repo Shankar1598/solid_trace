@@ -23,6 +23,9 @@ class CallTimingsTest < ActiveSupport::TestCase
     create(:organization_user, organization: @acme, user: @user, role: :member)
     @shop = create(:project, organization: @acme, slug: "shop")
     @query_url = "#{EventStore.base_url}/api/#{@shop.id}/logs/query"
+    # Every read is timed, not only the MCP server's; the tests below that
+    # turn it off say so.
+    InstanceSetting.current.update!(log_all_reads: true)
   end
 
   teardown do
@@ -47,8 +50,9 @@ class CallTimingsTest < ActiveSupport::TestCase
     assert_match(/\ALog read query, [\d.]+ ms\z/, line["message"])
   end
 
-  test "a read sends EventStore its request id, which EventStore logs with the read's SQL" do
-    run = stub_request(:post, @query_url).with(headers: { "X-Request-Id" => "req-1" }).to_return(status: 200, body: { logs: [] }.to_json)
+  test "a read asks EventStore to log its SQL with the read's request id" do
+    run = stub_request(:post, @query_url).with(headers: { "X-Log-SQL" => "1", "X-Request-Id" => "req-1" })
+      .to_return(status: 200, body: { logs: [] }.to_json)
 
     CallTimings::Context.set(request_id: "req-1") { EventStore.query_logs(project_id: @shop.id, query: "", from: FROM, to: TO) }
 
@@ -110,6 +114,25 @@ class CallTimingsTest < ActiveSupport::TestCase
 
     assert_equal [ "mcp_tool", "error", "warn" ], sole_line.values_at("kind", "outcome", "level")
     assert_includes sole_line["error"], "No Project nowhere"
+  end
+
+  test "with log_all_reads off, only the MCP server's reads are timed and have their SQL logged" do
+    InstanceSetting.current.update!(log_all_reads: false)
+    quiet = stub_request(:post, @query_url).with { |request| !request.headers.key?("X-Log-Sql") }
+      .to_return(status: 200, body: { logs: [] }.to_json)
+
+    CallTimings::Context.set(origin: "dashboard_charts#data") do
+      EventStore.query_logs(project_id: @shop.id, query: "", from: FROM, to: TO)
+    end
+    assert_requested quiet
+    assert_empty lines
+
+    WebMock.reset!
+    logged = stub_request(:post, @query_url).with(headers: { "X-Log-SQL" => "1" }).to_return(status: 200, body: { logs: [] }.to_json)
+    call_tool(:query_logs, user: @user, project: "shop", query: "")
+
+    assert_requested logged
+    assert_equal [ "log_read", "mcp_tool" ], lines.map { |line| line["kind"] }
   end
 
   test "a line that can't be written doesn't fail the read" do
