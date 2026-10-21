@@ -424,3 +424,21 @@ func TestALogBatchStoredOnASecondTryIsCountedAndArrivesOnce(t *testing.T) {
 		t.Errorf("Expected the Log among the recent arrivals once, got %+v", got.Results)
 	}
 }
+
+func TestAPreviewOfADraftThatDoesNotCompileGivesTheChecksErrors(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	log := `{"message": "HardWorker done: 120 ms"}`
+	program := ".x = nope(.message)"
+	got := previewProgram(t, env, program, log)
+	if len(got.Errors) != 1 || program[got.Errors[0].Start:got.Errors[0].End] != "nope" || got.Results != nil {
+		t.Errorf("Expected the check's error and no results, got %+v", got)
+	}
+
+	// An empty program is no Log transform: each Log is stored as it arrived.
+	got = previewProgram(t, env, " \n", log)
+	if len(got.Results) != 1 || got.Kept != 1 || !reflect.DeepEqual(got.Results[0].After, &got.Results[0].Before) {
+		t.Errorf("Expected the Log kept as it arrived, got %+v", got)
+	}
+}
