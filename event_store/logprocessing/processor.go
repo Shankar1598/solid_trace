@@ -60,6 +60,14 @@ type Store interface {
 	Ping() error
 }
 
+// Transform runs each Project's Log transform on its Logs before they are
+// stored. *logtransform.Transforms is the production adapter.
+type Transform interface {
+	// Apply returns a Project's Log batches as they are to be stored. A
+	// batch may come back with fewer Logs, or none.
+	Apply(projectID uint32, batches []storage.LogBatch) ([]storage.LogBatch, error)
+}
+
 // Processor is Log processing: one worker, separate from Event processing,
 // that reads each Project's Log batches from Pebble after its Log processing
 // cursor and appends their Logs to the Project's hot table, moving the cursor
@@ -74,9 +82,10 @@ type Store interface {
 //
 // Every minute it logs each Project whose Logs have waited too long.
 type Processor struct {
-	batches *storage.PebbleWriter
-	store   Store
-	clock   clock.Clock
+	batches   *storage.PebbleWriter
+	store     Store
+	transform Transform
+	clock     clock.Clock
 
 	mu      sync.Mutex
 	pending map[uint32]struct{} // Projects that may have new Log batches
@@ -96,16 +105,18 @@ type failure struct {
 	content int           // how many of the failures were content errors
 }
 
-// New constructs Log processing. It reads the time from clock.
-func New(batches *storage.PebbleWriter, store Store, clock clock.Clock) *Processor {
+// New constructs Log processing, which runs each Project's Log transform with
+// transform. It reads the time from clock.
+func New(batches *storage.PebbleWriter, store Store, transform Transform, clock clock.Clock) *Processor {
 	return &Processor{
-		batches: batches,
-		store:   store,
-		clock:   clock,
-		pending: make(map[uint32]struct{}),
-		wake:    make(chan struct{}, 1),
-		failing: make(map[uint32]*failure),
-		worker:  newWorker(),
+		batches:   batches,
+		store:     store,
+		transform: transform,
+		clock:     clock,
+		pending:   make(map[uint32]struct{}),
+		wake:      make(chan struct{}, 1),
+		failing:   make(map[uint32]*failure),
+		worker:    newWorker(),
 	}
 }
 
@@ -293,6 +304,19 @@ func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 	if len(batches) == 0 {
 		return false, nil
 	}
+	logs := 0
+	for _, batch := range batches {
+		logs += len(batch.Logs)
+	}
+	last := batches[len(batches)-1].ID
+
+	// Before the hot/late split, so promotion, the hot table, logs_late and
+	// Match monitors all see the Logs the Project's Log transform returns. A
+	// batch it leaves empty still moves the cursor.
+	batches, err = p.transform.Apply(projectID, batches)
+	if err != nil {
+		return false, fmt.Errorf("run log transform: %w", err)
+	}
 
 	now := p.clock.Now()
 	err = p.classify(p.store.AppendLogBatches(projectID, batches, now))
@@ -303,16 +327,10 @@ func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 		return false, fmt.Errorf("store logs: %w", err)
 	}
 
-	last := batches[len(batches)-1].ID
 	if err := p.batches.DeleteLogBatchesUpTo(projectID, last); err != nil {
 		// The Logs are stored and the cursor is past these batches, so they
 		// go with the next delete, or at startup.
 		logger.L.Warn("Deleting stored log batches failed", "project_id", projectID, "error", err)
-	}
-
-	logs := 0
-	for _, batch := range batches {
-		logs += len(batch.Logs)
 	}
 	return logs >= maxLogsPerCommit, nil
 }

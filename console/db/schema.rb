@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_20_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_21_090000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -146,6 +146,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_120000) do
     t.datetime "updated_at", null: false
     t.index ["project_id", "number"], name: "index_issues_on_project_id_and_number", unique: true
     t.index ["project_id", "status"], name: "index_issues_on_project_id_and_status"
+  end
+
+  create_table "log_transform_versions", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "program", default: "", null: false
+    t.integer "project_id", null: false
+    t.integer "user_id"
+    t.index ["project_id", "id"], name: "index_log_transform_versions_on_project_id_and_id"
+    t.index ["user_id"], name: "index_log_transform_versions_on_user_id"
   end
 
   create_table "monitor_integrations", force: :cascade do |t|
@@ -316,6 +325,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_120000) do
   add_foreign_key "issue_fingerprints", "projects"
   add_foreign_key "issues", "organizations_users", column: "assignee_id"
   add_foreign_key "issues", "projects"
+  add_foreign_key "log_transform_versions", "projects", on_delete: :cascade
+  add_foreign_key "log_transform_versions", "users", on_delete: :nullify
   add_foreign_key "monitor_integrations", "integrations", on_delete: :cascade
   add_foreign_key "monitor_integrations", "monitors", on_delete: :cascade
   add_foreign_key "monitor_runs", "monitors", on_delete: :cascade
