@@ -41,9 +41,17 @@ type LogStore struct {
 	events *DuckDBWriter
 
 	// writeMu lets one write to logs.duckdb run at a time: a Log processing
-	// commit or try, or a Project's export. It is held only for each of
-	// them, never across Log processing's waits.
+	// commit or try, or the commit of a Project's export. It is held only
+	// for each of them, never across Log processing's waits nor an export's
+	// COPYs.
 	writeMu sync.Mutex
+	// exportMu keeps exports from overlapping, so that one never settles
+	// another's staged files (recoverStagedFiles).
+	exportMu sync.Mutex
+	// staged, if set, is called once an export has written a Project's
+	// files, while the transaction that read their Logs is still open.
+	// Tests set it to change the Logs meanwhile.
+	staged func(projectID uint32)
 	// publishMu keeps a read from beginning while an export or a deletion
 	// commits and publishes its files, so that a read sees each Log exactly
 	// once and pins its files before a deletion can take them. A read holds

@@ -25,10 +25,11 @@ func october(day, hour, minute int) time.Time {
 }
 
 // appendLogs stores Logs as one Log batch of the Project, with Log
-// processing's clock at now.
+// processing's clock at now. Its id comes after every earlier batch's, as
+// Pebble's do.
 func appendLogs(t *testing.T, store *LogStore, now time.Time, logs ...models.Log) {
 	t.Helper()
-	if err := store.AppendLogBatches(promotionProject, []LogBatch{{ID: uuid.New(), Logs: logs}}, now); err != nil {
+	if err := store.AppendLogBatches(promotionProject, []LogBatch{{ID: uuid.Must(uuid.NewV7()), Logs: logs}}, now); err != nil {
 		t.Fatalf("AppendLogBatches: %v", err)
 	}
 }
