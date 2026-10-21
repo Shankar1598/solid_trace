@@ -47,6 +47,7 @@ module McpTools
       "Event" => [ "Event", "get_issue" ],
       "ProjectKey" => [ "key", "get_project_setup" ],
       "OrganizationUser" => [ "member", "list_members" ],
+      "LogTransformVersion" => [ "Log transform version", "get_log_transform" ],
     }.freeze
 
     class << self
