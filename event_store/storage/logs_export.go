@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -100,9 +101,32 @@ func (s *LogStore) projectsToExport(cutoff time.Time) ([]uint32, error) {
 	return projects, rows.Err()
 }
 
+// errLogsChanged says that the Logs a Project's export staged changed before
+// it committed: some went, or some were stored out of batch order.
+var errLogsChanged = errors.New("the Logs changed while their files were written")
+
 // exportProject exports a Project's Logs before cutoff: stageExport writes
-// their files, and commitExport commits them.
+// their files, and commitExport commits them. If the Logs the files hold
+// changed meanwhile, it exports them again holding writeMu throughout, as
+// the export did before it wrote files outside writeMu, so that a change
+// it can't follow never leaves Logs unexported hour after hour.
 func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
+	err := s.exportOnce(projectID, cutoff, false)
+	if !errors.Is(err, errLogsChanged) {
+		return err
+	}
+	logger.L.Warn("A Project's Logs changed while the hourly export wrote their files; exporting them again with Log processing held up",
+		"project_id", projectID, "error", err)
+	return s.exportOnce(projectID, cutoff, true)
+}
+
+// exportOnce stages a Project's files, then commits them. With locked, it
+// holds writeMu throughout, and the commit deletes every Log before cutoff.
+func (s *LogStore) exportOnce(projectID uint32, cutoff time.Time, locked bool) error {
+	if locked {
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
+	}
 	began := time.Now()
 	var staged *stagedExport
 	// settled is set once the staged files are renamed, or left for the next
@@ -123,6 +147,7 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 	if err != nil {
 		return err
 	}
+	staged.locked = locked
 	copied := time.Since(began)
 	settled, err = s.commitExport(projectID, cutoff, staged)
 	if err != nil {
@@ -137,11 +162,13 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 
 // stagedExport is what an export's first transaction wrote: its staged files,
 // how many Logs they hold, and the Project's Log processing cursor, which no
-// Log in them was stored after.
+// Log in them was stored after. locked says the export holds writeMu
+// throughout, so the files hold every Log before the cutoff.
 type stagedExport struct {
 	files  []stagedFile
 	logs   int64
 	cursor uuid.UUID
+	locked bool
 }
 
 // stagedFile is a Log file written under its staged name, with the facts of
@@ -208,11 +235,14 @@ func (s *LogStore) stageExport(projectID uint32, cutoff time.Time) (*stagedExpor
 // transaction under writeMu, then commits it and renames the files. Log
 // processing may have stored late Logs of the exported hours since the files
 // were written; they come after staged.cursor, so they stay for the next
-// export. settled reports whether the files are no longer the caller's to
-// remove: renamed, or left for the next export's recovery.
+// export. It fails with errLogsChanged if it would delete other Logs than the
+// files hold. settled reports whether the files are no longer the caller's
+// to remove: renamed, or left for the next export's recovery.
 func (s *LogStore) commitExport(projectID uint32, cutoff time.Time, staged *stagedExport) (settled bool, err error) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	if !staged.locked {
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
+	}
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -248,13 +278,18 @@ func (s *LogStore) commitExport(projectID uint32, cutoff time.Time, staged *stag
 	if err := export.dropDemotedColumns(cutoff); err != nil {
 		return false, err
 	}
-	deleted, err := export.delete(cutoff, staged.cursor)
+	upTo := &staged.cursor
+	if staged.locked {
+		upTo = nil
+	}
+	deleted, err := export.delete(cutoff, upTo)
 	if err != nil {
 		return false, err
 	}
-	// Only a deletion, such as the Project's, takes Logs out meanwhile.
+	// A deletion, such as the Project's, takes Logs out meanwhile; a Log
+	// stored out of batch order is in the files but not deleted.
 	if deleted != staged.logs {
-		return false, fmt.Errorf("the files hold %d Logs, but %d of them are still stored", staged.logs, deleted)
+		return false, fmt.Errorf("%w: the files hold %d Logs, and %d of them were deleted", errLogsChanged, staged.logs, deleted)
 	}
 
 	// No read begins between the commit and the renames, so none sees the
@@ -450,9 +485,13 @@ func (e *projectExport) lateRows(set []typedKey, from, to string) string {
 
 // delete deletes the Project's Logs before cutoff that were stored no later
 // than the batch upTo from its hot table and logs_late, and returns how many
-// it deleted. A Log stored before the batch column has no batch, and goes too.
-func (e *projectExport) delete(cutoff time.Time, upTo uuid.UUID) (int64, error) {
-	stored := fmt.Sprintf("(batch IS NULL OR batch <= CAST(%s AS UUID))", sqltext.String(upTo.String()))
+// it deleted. A Log stored before the batch column has no batch, and goes
+// too. A nil upTo deletes every Log before cutoff.
+func (e *projectExport) delete(cutoff time.Time, upTo *uuid.UUID) (int64, error) {
+	stored := "true"
+	if upTo != nil {
+		stored = fmt.Sprintf("(batch IS NULL OR batch <= CAST(%s AS UUID))", sqltext.String(upTo.String()))
+	}
 	result, err := e.conn.ExecContext(e.ctx,
 		fmt.Sprintf("DELETE FROM %s.%s WHERE project_id = ? AND time < CAST(? AS TIMESTAMP) AND %s", logsCatalog, lateTable, stored),
 		e.projectID, timestampString(cutoff))

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"slices"
@@ -94,8 +95,10 @@ func TestAProjectDeletedWhileAnExportWritesItsFilesGetsNone(t *testing.T) {
 			t.Errorf("DeleteProjectLogs: %v", err)
 		}
 	}
-	if err := store.ExportLogs(october(1, 12, 5)); err == nil {
-		t.Error("Expected the export of a Project deleted meanwhile to fail")
+	// The export finds the Logs gone, and exports again with Log processing
+	// held up, which finds none.
+	if err := store.ExportLogs(october(1, 12, 5)); err != nil {
+		t.Errorf("ExportLogs: %v", err)
 	}
 	if got := scanMessages(t, store); len(got) != 0 {
 		t.Errorf("Expected no Logs, got %v", got)
@@ -111,8 +114,31 @@ func TestAProjectDeletedWhileAnExportWritesItsFilesGetsNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
 
-	if err := store.ExportLogs(october(1, 13, 5)); err != nil {
-		t.Errorf("Expected the next export to succeed, got %v", err)
+func TestALogStoredOutOfBatchOrderIsStillExported(t *testing.T) {
+	store := newTestLogStore(t)
+	appendLogs(t, store, october(1, 10, 30),
+		messageLog(october(1, 10, 10), "in order"),
+		messageLog(october(1, 10, 20), "out of order"))
+	// As if stored after a batch with a later id than the cursor's.
+	if _, err := store.db.Exec(fmt.Sprintf(
+		"UPDATE logs.logs_hot_%d SET batch = 'ffffffff-ffff-7fff-bfff-ffffffffffff' WHERE message = 'out of order'", promotionProject)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.ExportLogs(october(1, 12, 5)); err != nil {
+		t.Fatalf("ExportLogs: %v", err)
+	}
+	if got, want := scanMessages(t, store), []string{"out of order", "in order"}; !slices.Equal(got, want) {
+		t.Errorf("Expected %v after the export, got %v", want, got)
+	}
+	assertHourFileCount(t, store, october(1, 10, 0), 1)
+	var left int
+	if err := store.db.QueryRow(fmt.Sprintf("SELECT count(*) FROM logs.logs_hot_%d", promotionProject)).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Errorf("Expected the hot table empty after the export, got %d Logs", left)
 	}
 }

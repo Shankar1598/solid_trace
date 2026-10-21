@@ -78,3 +78,16 @@ No ADR changes. ADR 0007's commit marker still holds: the manifest row is insert
 - The full Go suite is for the user.
 
 **What production will show.** After release, `Exported a Project's Logs` (`copy`, `commit`) and `Checkpointed logs DuckDB after the hourly export` (`took`) give the real split. `Log processing is behind` should stop firing at hh:01 to hh:04.
+
+### A fallback for out-of-order batches (2026-10-21)
+
+- **The risk.** A side agent pointed out that the delete relies on batch order. If a Log were ever stored with a batch above the cursor, the count check would fail at every export, and that Project's Logs would pile up in DuckDB hour after hour. The only sign would be an `Hourly Log export failed` line.
+  - A future import or backfill tool, or a bug, could store such a Log. Today's code can't.
+- **The fallback.** When the count doesn't match (`errLogsChanged`), `exportProject` warns, then exports that Project again the old way. It holds `writeMu` throughout and deletes every Log before the cutoff, with no batch condition. The worst case is now one export with the old stall.
+- **It covers Logs that went, too.** A Project deleted mid-export now exports again with nothing to export, rather than failing.
+- **Tests.**
+  - `TestALogStoredOutOfBatchOrderIsStillExported` sets a hot Log's batch above the cursor, and checks that the export succeeds and leaves the hot table empty.
+  - `TestAProjectDeletedWhileAnExportWritesItsFilesGetsNone` now expects success with no files.
+  - The storage package and 47 root export tests pass, and one probe run shows the normal path untouched.
+- **A checkpoint skipped.** A Project's deletion during the COPY makes the deletion's own `CHECKPOINT` fail with a warning: the export's open transaction can still see the dropped table. Checked one statement at a time, none of the stage step's statements block a checkpoint on their own, so Log processing's checkpoints carry on during the COPY.
+- **A Monitor** on `Hourly Log export failed` in the `solidtrace` org would still catch any other export failure. It's offered to the user, not made.
