@@ -164,7 +164,7 @@ export default function LogTransformShow({ project, program, versions, stats, ca
             {problems.length > 0 && (
               <div id="program-problems" className="space-y-2">
                 {problems.map((p, i) => (
-                  <pre key={i} className="overflow-x-auto bg-muted p-2 font-mono text-xs whitespace-pre-wrap">{p.text || p.message}</pre>
+                  <pre key={i} className="overflow-x-auto bg-muted p-2 font-mono text-xs whitespace-pre-wrap">{p.text}</pre>
                 ))}
               </div>
             )}
@@ -218,7 +218,7 @@ export default function LogTransformShow({ project, program, versions, stats, ca
                   {versions.map((version, i) => (
                     <TableRow key={version.id}>
                       <TableCell>
-                        <span title={version.saved_at}>{new Date(version.saved_at).toLocaleString()}</span>
+                        <span title={version.saved_at} className="font-mono text-xs">{new Date(version.saved_at).toLocaleString()}</span>
                         {i === 0 && <Badge variant="neutral" className="ml-2">Current</Badge>}
                         {version.program === '' && <span className="ml-2 text-xs text-muted-foreground">(empty)</span>}
                       </TableCell>
@@ -252,7 +252,12 @@ export default function LogTransformShow({ project, program, versions, stats, ca
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>
-              {viewing && `Saved ${new Date(viewing.saved_at).toLocaleString()}${viewing.saved_by ? ` by ${viewing.saved_by}` : ''}`}
+              {viewing && (
+                <>
+                  Saved <span className="font-mono">{new Date(viewing.saved_at).toLocaleString()}</span>
+                  {viewing.saved_by && ` by ${viewing.saved_by}`}
+                </>
+              )}
             </DialogTitle>
           </DialogHeader>
           <pre className="max-h-[60vh] overflow-auto bg-muted p-3 font-mono text-xs whitespace-pre-wrap">

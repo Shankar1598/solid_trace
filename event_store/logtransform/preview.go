@@ -3,7 +3,6 @@ package logtransform
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/ingest/normalise"
@@ -57,7 +56,7 @@ func (t *Transforms) Preview(projectID uint32, program string, logs []json.RawMe
 	}
 
 	preview := Preview{Results: make([]Result, len(arrivals))}
-	if strings.TrimSpace(program) == "" {
+	if empty(program) {
 		// No program: Log processing stores each Log as it arrived.
 		for i, a := range arrivals {
 			preview.Results[i] = Result{Before: a.log, After: &a.log}
