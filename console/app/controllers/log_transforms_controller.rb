@@ -10,6 +10,9 @@ class LogTransformsController < ApplicationController
   # How many of the newest versions the page lists.
   VERSIONS_SHOWN = 20
 
+  SAVED = "Log transform saved. It applies to Logs processed from now on; stored Logs don't change."
+  UNCHANGED = "That program is already the current version, so nothing was saved."
+
   before_action :set_current_org
   before_action :set_project
 
@@ -17,7 +20,32 @@ class LogTransformsController < ApplicationController
     render inertia: "LogTransform/Show", props: page_props
   end
 
+  # PATCH with program: saves it as the newest version, for admins.
+  def update
+    save(params[:program].to_s)
+  end
+
   private
+
+  # Saves program through LogTransformSave. A program that doesn't compile
+  # shows the page again with VRL's errors under program: rendered, not
+  # redirected, as a few of them overflow the session's cookie.
+  def save(program)
+    result = LogTransformSave.call(project: @project, user: current_user, program: program)
+    if result.done?
+      redirect_to page_path, notice: result.outcome == :saved ? SAVED : UNCHANGED
+    else
+      messages = result.errors.map { |error| error["text"].presence || error["message"].to_s }
+      render inertia: "LogTransform/Show", props: page_props.merge(errors: { program: messages })
+    end
+  rescue EventStore::Unavailable, EventStore::Rejected => e
+    Rails.logger.error(e.message)
+    redirect_to page_path, alert: "EventStore is unavailable, so the program couldn't be checked. Try again shortly."
+  end
+
+  def page_path
+    project_log_transform_path(@project, org_slug: @current_org.slug)
+  end
 
   def page_props
     {

@@ -92,7 +92,7 @@ Rails.application.routes.draw do
         end
       end
 
-      resource :log_transform, only: [ :show ]
+      resource :log_transform, only: [ :show, :update ]
     end
 
     scope "/settings" do

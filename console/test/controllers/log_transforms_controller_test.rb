@@ -65,6 +65,46 @@ class LogTransformsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "", page["program"]
   end
 
+  test "an admin saves a program, which becomes the current version" do
+    check = stub_request(:post, @check_url).with(body: { program: ".status = 1" })
+      .to_return(status: 200, body: { errors: [], warnings: [] }.to_json)
+    sign_in_as(@admin)
+
+    patch project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".status = 1" }
+
+    assert_redirected_to project_log_transform_url(@project, org_slug: @organization.slug)
+    assert_equal "Log transform saved. It applies to Logs processed from now on; stored Logs don't change.", flash[:notice]
+    assert_requested check
+    assert_equal ".status = 1", @project.log_transform.program
+    assert_equal @admin, @project.log_transform.user
+  end
+
+  test "a program that doesn't compile is refused with its errors" do
+    @project.log_transform_versions.create!(program: ".a = 1", user: @admin)
+    stub_request(:post, @check_url).to_return(status: 200, body: { errors: [ ERROR ], warnings: [] }.to_json)
+    sign_in_as(@admin)
+
+    patch project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".status =" },
+      headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+
+    assert_response :success
+    page = JSON.parse(response.body)["props"]
+    assert_equal({ "program" => [ ERROR["text"] ] }, page["errors"])
+    assert_equal ".a = 1", page["program"]
+    assert_equal 1, @project.log_transform_versions.count
+  end
+
+  test "a member's save is refused" do
+    check = stub_request(:post, @check_url)
+
+    patch project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".status = 1" }
+
+    assert_response :redirect
+    assert_equal "You are not authorized to perform this action.", flash[:alert]
+    assert_not_requested check
+    assert_nil @project.log_transform
+  end
+
   private
 
   def log_transform_page
