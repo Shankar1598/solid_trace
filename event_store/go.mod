@@ -1,6 +1,6 @@
 module github.com/solidtrace/event_store
 
-go 1.25.5
+go 1.27.3
 
 require (
 	cloud.google.com/go/storage v1.62.1

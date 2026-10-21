@@ -8,7 +8,7 @@
     "editor.semanticHighlighting.enabled": true, // Enable semantic highlighting
     "editor.formatOnType": true, // Enable formatting while typing
   },
-  "go.goroot": "/Users/shankar/.local/share/mise/installs/go/1.25.6",
+  "go.goroot": "/Users/shankar/.local/share/mise/installs/go/1.27",
   "go.alternateTools": {
     "go": "/Users/shankar/.local/share/mise/shims/go",
     "dlv": "/Users/shankar/.local/share/mise/shims/dlv",
