@@ -16,7 +16,7 @@ import (
 // binCachedQueries are charts made bin by bin: by an hour, a bin smaller and
 // one larger than an hour, a day, and a column binned before the
 // summarize, with aggregates of every kind that can't be added up across
-// bins, rates, and a where that drops Logs.
+// bins, rates, a where that drops Logs, and text matches.
 var binCachedQueries = []string{
 	"summarize count() by bin(time, 1h), user",
 	"summarize count(), dcount(user) by bin(time, 20m)",
@@ -25,6 +25,8 @@ var binCachedQueries = []string{
 	`where user != "nobody" | extend half = bin(time, 30m) | summarize count(), p = percentile(ms, 50) by half`,
 	`where user == "ada" | summarize count(), slowest = max(ms) by bin(time, 1h)`,
 	"summarize rate(), peak_rate() by bin(time, 1h), user",
+	`where message !contains "B" and user !startswith_cs "c" | summarize count() by bin(time, 1h), user`,
+	`search "B" | summarize count() by bin(time, 20m)`,
 }
 
 // binCacheRange is the range every bin cache test charts: from part-way
@@ -143,6 +145,10 @@ func TestTheBinCacheAnswersAsARunWithoutItAcrossExportsLateLogsRetentionAndDelet
 	}
 	if got := hits[binCachedQueries[3]]; got != 0 {
 		t.Errorf("Expected no whole day from the cache, got %d", got)
+	}
+	// A Chart filtered on text takes its hours from the cache too.
+	if got := hits[binCachedQueries[7]]; got != 27 {
+		t.Errorf("Expected a text-filtered Chart to take 27 hours from the cache, got %d", got)
 	}
 
 	// A late Log of 05:30 goes to logs_late, and one of 03:10 to a late
