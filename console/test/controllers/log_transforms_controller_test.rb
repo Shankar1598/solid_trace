@@ -146,6 +146,25 @@ class LogTransformsControllerTest < ActionDispatch::IntegrationTest
     assert_nil @project.log_transform
   end
 
+  test "any member checks a draft, getting EventStore's errors and warnings" do
+    answer = { "errors" => [ ERROR ], "warnings" => [] }
+    stub_request(:post, @check_url).with(body: { program: ".status =" }).to_return(status: 200, body: answer.to_json)
+
+    post check_project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".status =" }, as: :json
+
+    assert_response :success
+    assert_equal answer, response.parsed_body
+  end
+
+  test "a check while EventStore is unavailable answers 502" do
+    stub_request(:post, @check_url).to_raise(Errno::ECONNREFUSED)
+
+    post check_project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".a = 1" }, as: :json
+
+    assert_response :bad_gateway
+    assert_equal "EventStore is unavailable. Try again shortly.", response.parsed_body["error"]
+  end
+
   private
 
   def log_transform_page
