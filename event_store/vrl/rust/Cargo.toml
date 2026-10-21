@@ -10,7 +10,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 # No default features: the stdlib without network, environment or system
-# functions. See docs/adr/0012.
+# functions. See docs/adr/0012-log-transform-runs-vrl-through-cgo.md.
 vrl = { version = "=0.37.0", default-features = false, features = ["stdlib-base", "enable_crypto_functions"] }
 chrono = { version = "0.4", default-features = false }
 rmp = "0.8"
