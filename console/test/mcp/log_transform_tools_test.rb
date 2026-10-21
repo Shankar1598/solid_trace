@@ -79,6 +79,21 @@ class McpLogTransformToolsTest < ActiveSupport::TestCase
     }, answer.json)
   end
 
+  test "get_log_transform still gives the program and versions when EventStore doesn't answer" do
+    version = travel_to(Time.utc(2026, 10, 21, 9, 5)) { @shop.log_transform_versions.create!(program: ".a = 1", user: @admin) }
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/stats").to_raise(Errno::ECONNREFUSED)
+
+    answer = call_tool(:get_log_transform, user: @member, project: "shop")
+
+    assert_not answer.error?
+    saved = { "version" => version.id, "saved_by" => { "name" => "Ada", "email" => "ada@example.com" }, "saved_at" => "2026-10-21T09:05:00Z" }
+    assert_equal({
+      "project" => "shop", "program" => ".a = 1", **saved, "current" => true,
+      "versions" => [ saved.merge("bytes" => 6) ], "running_counts" => nil,
+      "note" => "EventStore couldn't give the running counts, so running_counts is null. Try again shortly.",
+    }, answer.json)
+  end
+
   # preview_log_transform
 
   def before(n)
