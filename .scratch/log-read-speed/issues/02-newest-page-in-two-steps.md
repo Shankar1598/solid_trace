@@ -36,7 +36,7 @@ How this differs from the spec:
 - **`list_contains`, not `IN`.** DuckDB 1.5.6 turns `id IN (…)`, and an `OR` of `id = …`, into a join after the scan. The scan then holds the list only as an optional zone-map filter (EXPLAIN ANALYZE: 125,001 rows read with every column). `list_contains` runs as a filter inside the scan, so DuckDB reads the other columns only where an id matches.
 - **Tried and dropped:** splitting step 2 into one branch for each cluster of found Logs. It halved step 2 in the hot table, but each extra `read_parquet` made Log files slower.
 
-Probe figures. Same command as 01's Comments, run alone under the probe lock. "Before" is `feature/log-read-speed` at 6cad5af (01 and 03); "after" is this branch with 03 merged. Each pair was run back to back on the dev box (2 threads, best of 3, in ms). The 300k figures are the second of two runs; the first agreed within 10%, except `shop` first, hot table (124 → 170).
+Probe figures. Same command as 01's Comments, run alone under the probe lock. "Before" is `feature/log-read-speed` at 6cad5af (01 and 03); "after" is this branch with 03 merged. Each pair was run back to back on the dev box (2 threads, best of 3, in ms). The 300k figures are the second of two runs; the first agreed within 17%.
 
 | Read | 150k hot | 150k file | 300k hot | 300k file |
 |---|---|---|---|---|
