@@ -5,6 +5,8 @@
 # Any member reads it and checks a draft; only the Organization's admins
 # save and restore, through LogTransformSave.
 class LogTransformsController < ApplicationController
+  include EventStoreProxy
+
   layout "dashboard"
 
   # How many of the newest versions the page lists.
@@ -18,6 +20,12 @@ class LogTransformsController < ApplicationController
 
   def show
     render inertia: "LogTransform/Show", props: page_props
+  end
+
+  # POST with program: EventStore's check of a draft, {errors, warnings},
+  # each with byte offsets into the program, for the editor's underlines.
+  def check
+    render json: EventStore.check_log_transform(project_id: @project.id, program: params[:program].to_s)
   end
 
   # PATCH with program: saves it as the newest version, for admins.

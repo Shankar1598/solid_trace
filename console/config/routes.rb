@@ -93,6 +93,7 @@ Rails.application.routes.draw do
       end
 
       resource :log_transform, only: [ :show, :update ] do
+        post :check
         post :restore
       end
     end
