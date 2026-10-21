@@ -271,3 +271,48 @@ func TestANewVersionAppliesOnlyToBatchesProcessedAfterIt(t *testing.T) {
 		`where isnull(version)`: {"third"},
 	}, "after three versions")
 }
+
+func TestAProgramSeesBuiltInFieldsAtTheTopAndAttributesNested(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedLogTransform(t, env, 123, `
+.seen_hour = format_timestamp!(.time, "%H")
+.seen_level = exists(.level)
+.seen_id = exists(.id)
+.seen_method = .http.method
+.seen_status_is_integer = is_integer(.status)
+.seen_tags = length!(.tags)
+.seen_a = .a
+.seen_ab = ."a.b"
+.seen_truncated = .solidtrace.truncated
+`)
+	storeLogBatch(t, env, 123, models.Log{
+		ID: uuid.Must(uuid.NewV7()), Time: time.Date(2026, 10, 2, 11, 30, 0, 0, time.UTC), Message: "no level",
+		Attributes: models.Attributes{
+			String: map[string]string{"http.method": "GET", "a": "x"},
+			Number: map[string]float64{"status": 200, "a.b": 1},
+			Bool:   map[string]bool{"solidtrace.truncated": true},
+			JSON:   map[string]string{"tags": `["a","b"]`},
+		},
+	})
+	env.ProcessLogs(t)
+
+	logs := latestLogs(t, env, 123, 10)
+	if len(logs) != 1 {
+		t.Fatalf("Expected 1 Log, got %d", len(logs))
+	}
+	seen := map[string]any{}
+	for name, value := range logs[0].Attributes {
+		if after, ok := strings.CutPrefix(name, "seen_"); ok {
+			seen[after] = value
+		}
+	}
+	want := map[string]any{
+		"hour": "11", "level": false, "id": false, "method": "GET", "status_is_integer": true,
+		"tags": 2.0, "a": "x", "ab": 1.0, "truncated": true,
+	}
+	if !reflect.DeepEqual(seen, want) {
+		t.Errorf("Expected the program to see\n%v\ngot\n%v (%v)", want, seen, transformError(logs[0]))
+	}
+}
