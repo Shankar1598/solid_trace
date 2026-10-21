@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] The version model: the newest version is current; `user_id` becomes null when that user is gone; deleting a Project deletes its versions.
 - [ ] One save service (used later by the page too) runs EventStore's check first and refuses with its errors, saving nothing; saving the same text as the current version does nothing; restoring is saving an old version's text. Only admins may save (`ProjectPolicy#update?`).
