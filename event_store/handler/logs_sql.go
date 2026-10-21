@@ -52,7 +52,8 @@ const simplerSQL = "try a shorter time range or a simpler query"
 // "timeout_seconds" optional. Only while the instance's SQL queries setting is
 // on; otherwise 403. The run stops after timeout_seconds, and after
 // sqlTimeoutSeconds whatever it asks for. Answers {"table": {"columns": [{"name", "type"}],
-// "rows": [[…]], "truncated"}, "elapsed_ms"}, at most maxTableRows rows. SQL
+// "rows": [[…]], "truncated"}, "elapsed_ms"}, at most maxTableRows rows, and
+// "notice" when the SQL matches message slowly, saying what to write instead. SQL
 // that fails answers 400 with {"error"}, DuckDB's message, as does SQL that
 // isn't one read-only SELECT, with "SQL queries are read-only: … isn't
 // allowed". A run past its timeout answers 504 with {"errors": [{"message"}]}.
@@ -98,7 +99,11 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	for i, col := range result.Columns {
 		columns[i] = logquery.Column{Name: col.Name, Type: columnType(col.Type)}
 	}
-	return run.answer(c, fiber.Map{"table": fiber.Map{"columns": columns, "rows": result.Rows, "truncated": result.Truncated}})
+	answer := fiber.Map{"table": fiber.Map{"columns": columns, "rows": result.Rows, "truncated": result.Truncated}}
+	if result.Notice != "" {
+		answer["notice"] = result.Notice
+	}
+	return run.answer(c, answer)
 }
 
 // columnType names a DuckDB type as a table's column types are named: string,
