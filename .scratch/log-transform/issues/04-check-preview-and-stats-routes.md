@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Recent arrivals: per Project, the newest Logs as they arrived (before any program), up to 100 per Service and at most 4 MB per Project, oldest first out. Log processing fills them as it reads batches.
 - [ ] Running counts per Project for the current version: processed, dropped, failed and total program time; they reset when the version changes; a version that doesn't compile reports its compile error.

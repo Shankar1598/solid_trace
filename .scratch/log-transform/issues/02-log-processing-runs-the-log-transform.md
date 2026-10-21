@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** claimed
+**Status:** resolved
 
 - [ ] Console's `log_transform_versions` table exists (migration), and EventStore's root tests can seed rows in it as `seedProject` seeds Retention. The newest row is current; no row or an empty program means none.
 - [ ] At the start of each pass over a Project, Log processing reads the current version read-only and uncached, and compiles it once per version id; a newer version replaces and frees the old one.
@@ -15,3 +15,7 @@
 - [ ] A saved version that doesn't compile stores every Log of the Project as it arrived, with `solidtrace.transform_error` naming the compile error.
 - [ ] A new version applies only to batches processed after it.
 - [ ] Root tests cover each case in the spec's Testing Decisions list that doesn't go through the routes.
+
+## Answer
+
+Built and merged (`1035274`, 2026-10-21). The `log_transform_versions` migration; `ConsoleSettings.LogTransform`; `normalise.Transformed`, sharing `normaliseObject` with `normalise.JSON`; the `logtransform` package (`Transforms.Apply`), hooked into `Processor.storeLogs` between `LogBatchesAfter` and `AppendLogBatches`. Tests: `logs_transform_test.go` (8). Decisions beyond the spec: no ingest aliases on the result; empty built-in fields are absent from `.`; whole numbers are VRL integers; `solidtrace.*` Attributes the Log arrived with can't be changed (new ones become `original.solidtrace.*`); Sentry Attributes named like a built-in field are hidden and kept; a result over 1 MB is a failure; a whitespace-only program is none. `TestLogTimeFormsAndTimesThatBecomeTheReceiptTime` is flaky on `main` too (6 of 10 failed, "within Retention: not listed"); not caused by this ticket.

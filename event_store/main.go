@@ -13,6 +13,7 @@ import (
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/logprocessing"
+	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -113,7 +114,8 @@ func main() {
 	eventCleanup := processing.NewCleanup(pebbleWriter, duckdbWriter, sqliteWriter, consoleSettings, &batchLock, clock.System{})
 	eventCleanup.Start()
 
-	logProcessor := logprocessing.New(pebbleWriter, logStore, clock.System{})
+	logTransforms := logtransform.New(consoleSettings)
+	logProcessor := logprocessing.New(pebbleWriter, logStore, logTransforms, clock.System{})
 	if err := logProcessor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Log processing", "error", err)
 	}
