@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 # One JSON line for every MCP tool call and every Log read, with how long it
-# took, and the release and commit that ran it
-# (.scratch/call-timings/spec.md). Production writes the lines to stdout,
+# took and the release that ran it (.scratch/call-timings/spec.md). EventStore
+# logs the SQL each Log read ran with the same request_id. Production writes the lines to stdout,
 # where Vector ships them to the Meta Organization's Project and their fields
 # become Attributes (docs/adr/0011); development appends them to
 # log/call_timings.log (config/initializers/call_timings.rb). A line that
@@ -84,7 +84,6 @@ module CallTimings
         user_email: user&.email,
         request_id: Context.request_id,
         version: Rails.configuration.x.solidtrace_version,
-        revision: Rails.configuration.x.solidtrace_revision,
         **fields,
       }.compact
       output.write("#{JSON.generate(line)}\n")

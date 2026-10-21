@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/storage"
 )
 
 // maxTimeoutSeconds is the longest timeout a run may ask for, a day.
@@ -15,7 +18,10 @@ const maxTimeoutSeconds = 24 * 60 * 60
 
 // run is one run of a Query, a histogram or SQL: when it began, for its
 // answer's elapsed_ms, and the context its scan stops by, which ends after
-// the request's timeout_seconds, if it has one.
+// the request's timeout_seconds, if it has one. Its end logs each SQL
+// statement the run made DuckDB run, with the X-Request-Id Console sent,
+// which Console's call timing of the run also has
+// (.scratch/call-timings/spec.md).
 //
 // Fiber gives a handler no context that ends when the client goes away, so a
 // scan without a timeout runs to its end whether or not anyone is waiting.
@@ -23,32 +29,54 @@ const maxTimeoutSeconds = 24 * 60 * 60
 // running, a scan of Log rows stops before its next hour, and the run
 // answers 504.
 type run struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	began   time.Time
-	timeout float64
+	ctx        context.Context
+	cancel     context.CancelFunc
+	began      time.Time
+	timeout    float64
+	read       string
+	projectID  string
+	requestID  string
+	statements *storage.ReadStatements
 }
 
-// startRun starts a run with a request's timeout_seconds, nil for none. If
-// the timeout isn't a positive number of seconds, at most a day, it returns
-// the answer to give instead. The caller must end the run.
-func startRun(c *fiber.Ctx, timeoutSeconds *float64) (*run, fiber.Map) {
-	r := &run{began: time.Now()}
+// startRun starts a run, a read of query, match, histogram or sql, with a
+// request's timeout_seconds, nil for none. If the timeout isn't a positive
+// number of seconds, at most a day, it returns the answer to give instead.
+// The caller must end the run.
+func startRun(c *fiber.Ctx, read string, timeoutSeconds *float64) (*run, fiber.Map) {
+	// Fiber reuses a request's buffers once its handler returns.
+	r := &run{began: time.Now(), read: read, projectID: strings.Clone(c.Params("project_id")), requestID: strings.Clone(c.Get("X-Request-Id"))}
+	ctx, statements := storage.WithReadStatements(c.UserContext())
+	r.statements = statements
 	if timeoutSeconds == nil {
-		r.ctx, r.cancel = context.WithCancel(c.UserContext())
+		r.ctx, r.cancel = context.WithCancel(ctx)
 		return r, nil
 	}
 	if *timeoutSeconds <= 0 || *timeoutSeconds > maxTimeoutSeconds {
 		return nil, fiber.Map{"error": "timeout_seconds must be a positive number of seconds, at most a day"}
 	}
 	r.timeout = *timeoutSeconds
-	r.ctx, r.cancel = context.WithTimeout(c.UserContext(), time.Duration(r.timeout*float64(time.Second)))
+	r.ctx, r.cancel = context.WithTimeout(ctx, time.Duration(r.timeout*float64(time.Second)))
 	return r, nil
 }
 
-// end ends the run's context.
+// end ends the run's context and logs each statement it ran: its SQL, how
+// long it took and its error, numbered in the order they ran.
 func (r *run) end() {
 	r.cancel()
+	statements := r.statements.List()
+	for i, statement := range statements {
+		fields := []any{
+			"kind", "log_read_sql", "read", r.read, "project_id", r.projectID, "request_id", r.requestID,
+			"statement", i + 1, "statements", len(statements),
+			"duration_ms", float64(statement.Duration.Microseconds()) / 1000, "sql", statement.SQL,
+		}
+		if statement.Err != nil {
+			logger.L.Warn("Log read SQL", append(fields, "error", statement.Err)...)
+		} else {
+			logger.L.Info("Log read SQL", fields...)
+		}
+	}
 }
 
 // timedOut reports whether the run has gone past its timeout, so that a

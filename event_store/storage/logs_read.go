@@ -95,8 +95,8 @@ func (s *LogStore) beginIngestedRead(ctx context.Context, projectID uint32, afte
 		}
 		if r.hot {
 			var oldest, newest sql.NullTime
-			err := r.conn.QueryRowContext(r.ctx, fmt.Sprintf("SELECT min(time), max(time) FROM %s.%s WHERE %s",
-				logsCatalog, hotTable(r.projectID), batchWindow(after, r.cursor))).Scan(&oldest, &newest)
+			err := queryReadRow(r.ctx, r.conn, fmt.Sprintf("SELECT min(time), max(time) FROM %s.%s WHERE %s",
+				logsCatalog, hotTable(r.projectID), batchWindow(after, r.cursor)), &oldest, &newest)
 			if err != nil {
 				return nil, err
 			}
@@ -222,8 +222,8 @@ func (r *logRead) hoursWithLogs(from, to time.Time, files map[time.Time][]logFil
 			logsCatalog, hotTable(r.projectID), timeRange(from, to)))
 	}
 	var oldest, newest sql.NullTime
-	err := r.conn.QueryRowContext(r.ctx, fmt.Sprintf("SELECT min(time), max(time) FROM (%s)", strings.Join(sources, " UNION ALL "))).
-		Scan(&oldest, &newest)
+	err := queryReadRow(r.ctx, r.conn, fmt.Sprintf("SELECT min(time), max(time) FROM (%s)", strings.Join(sources, " UNION ALL ")),
+		&oldest, &newest)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +249,7 @@ func newestFirst(hours map[time.Time]bool) []time.Time {
 // queryLogs runs a query whose rows are Logs as a hot table holds them, with
 // any promoted columns.
 func (r *logRead) queryLogs(query string) ([]models.Log, error) {
-	rows, err := r.conn.QueryContext(r.ctx, query)
+	rows, err := queryRead(r.ctx, r.conn, query)
 	if err != nil {
 		return nil, err
 	}

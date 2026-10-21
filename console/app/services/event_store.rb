@@ -295,8 +295,15 @@ class EventStore
     def post!(url, body, sql: false, headers: {}, **timeouts)
       execute!(
         sql: sql, method: :post, url: url, payload: body.to_json,
-        headers: { content_type: :json, accept: :json, **headers }, **timeouts
+        headers: { content_type: :json, accept: :json, **request_id_header, **headers }, **timeouts
       )
+    end
+
+    # The request id of the call timing a read is part of, which EventStore
+    # logs with the SQL the read ran.
+    def request_id_header
+      id = CallTimings::Context.request_id
+      id ? { "X-Request-Id" => id } : {}
     end
 
     # A Log call's GET, with params as its query string, answered as post!

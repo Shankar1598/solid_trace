@@ -2,6 +2,8 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -195,4 +197,65 @@ func mustMarshal(t *testing.T, answer map[string]json.RawMessage) []byte {
 		t.Fatalf("Encode %v: %v", answer, err)
 	}
 	return raw
+}
+
+// Each run logs every SQL statement DuckDB ran for it, with the request id
+// Console sent, so a Console call timing leads to the SQL its Query became.
+func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env)
+	setSQLQueries(t, env, true)
+
+	runs := []struct {
+		path, read string
+		body       map[string]any
+		// ran is SQL one of the run's statements must hold.
+		ran []string
+	}{
+		{"/api/123/logs/query", "query", map[string]any{"query": `where duration > 100`}, []string{"duration"}},
+		{"/api/123/logs/query", "query", map[string]any{"query": `summarize count() by service`}, []string{"count(*)", "GROUP BY"}},
+		{"/api/123/logs/query", "match", map[string]any{"query": ``, "after_batch": "00000000-0000-0000-0000-000000000000"}, []string{"logs_hot_123"}},
+		{"/api/123/logs/histogram", "histogram", map[string]any{"query": ``}, []string{"time_bucket"}},
+		{"/api/123/logs/sql", "sql", map[string]any{"sql": `SELECT count(*) FROM logs`}, []string{"CREATE TEMPORARY VIEW logs AS", "SELECT count(*) FROM logs"}},
+	}
+	for i, run := range runs {
+		logs := captureLogs(t)
+		run.body["from"], run.body["to"] = allTime.from, allTime.to
+		requestID := fmt.Sprintf("req-%d", i)
+		raw, _ := json.Marshal(run.body)
+		req, _ := http.NewRequest("POST", run.path, strings.NewReader(string(raw)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Request-Id", requestID)
+		resp, err := env.QueryApp.Test(req, 10000)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("POST %s %v: %v %v", run.path, run.body, resp, err)
+		}
+
+		var lines []string
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if strings.Contains(line, `message="Log read SQL"`) {
+				lines = append(lines, line)
+			}
+		}
+		if len(lines) == 0 {
+			t.Fatalf("%s %v: expected its SQL logged, got %q", run.path, run.body, logs.String())
+		}
+		for n, line := range lines {
+			for _, field := range []string{
+				"kind=log_read_sql", "read=" + run.read, "project_id=123", "request_id=" + requestID,
+				fmt.Sprintf("statement=%d", n+1), fmt.Sprintf("statements=%d", len(lines)), "duration_ms=", "sql=",
+			} {
+				if !strings.Contains(line, field) {
+					t.Errorf("%s %v: expected %s in %q", run.path, run.body, field, line)
+				}
+			}
+		}
+		all := strings.Join(lines, "\n")
+		for _, sql := range run.ran {
+			if !strings.Contains(all, sql) {
+				t.Errorf("%s %v: expected a statement with %q, got %q", run.path, run.body, sql, all)
+			}
+		}
+	}
 }
