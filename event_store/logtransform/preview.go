@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/ingest/normalise"
@@ -37,13 +36,6 @@ type GivenLogsError struct{ reason string }
 
 func (e *GivenLogsError) Error() string { return e.reason }
 
-// arrival is a Log as it arrived, before any program, and when SolidTrace
-// received it.
-type arrival struct {
-	log        models.Log
-	receivedAt time.Time
-}
-
 // Preview runs program on a Project's Logs as Log processing would once it
 // is saved, and stores nothing. The Logs are logs, JSON objects normalised
 // first as Log ingest normalises a sender's Logs, or the Project's recent
@@ -55,9 +47,13 @@ func (t *Transforms) Preview(projectID uint32, program string, logs []json.RawMe
 	if err != nil {
 		return Preview{}, Check{}, fmt.Errorf("read retention: %w", err)
 	}
-	arrivals, err := t.given(logs, retentionDays)
-	if err != nil {
-		return Preview{}, Check{}, err
+	var arrivals []arrival
+	if len(logs) > 0 {
+		if arrivals, err = t.given(logs, retentionDays); err != nil {
+			return Preview{}, Check{}, err
+		}
+	} else {
+		arrivals = t.arrivals.newest(projectID)
 	}
 
 	preview := Preview{Results: make([]Result, len(arrivals))}
