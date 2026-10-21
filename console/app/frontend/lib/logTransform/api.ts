@@ -1,4 +1,5 @@
 // The Log transform page's calls to Console, which passes them to EventStore.
+import { csrfToken } from '../apiTokens'
 import type { PreviewAnswer } from './preview'
 import type { ProgramCheck } from './program'
 
@@ -26,10 +27,9 @@ export async function previewProgram({ orgSlug, projectSlug, program, logs }: {
 }
 
 async function post(path: string, data: object, signal?: AbortSignal) {
-  const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? ''
   const response = await fetch(path, {
     method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
     credentials: 'same-origin',
     body: JSON.stringify(data),
     signal,
