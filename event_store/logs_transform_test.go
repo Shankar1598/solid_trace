@@ -217,3 +217,57 @@ func TestALogTheProgramFailsOnIsStoredAsItArrivedWithTheError(t *testing.T) {
 		t.Errorf("Expected the Log as it arrived, failed for leaving . a string, got %+v", got)
 	}
 }
+
+func TestAVersionThatDoesNotCompileStoresEveryLogAsItArrived(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Neither the network nor the environment is there to call.
+	seedLogTransform(t, env, 123, `.page = http_request("http://127.0.0.1:8081/api/123/logs/query")`)
+	seedLogTransform(t, env, 456, `.home = get_env_var!("HOME")`)
+	seedLogTransform(t, env, 789, `.x = `)
+	for _, projectID := range []uint32{123, 456, 789} {
+		storeLogBatch(t, env, projectID, logAt(t, "one", "2026-10-02T11:00:00Z"), logAt(t, "two", "2026-10-02T11:00:01Z"))
+	}
+	env.ProcessLogs(t)
+
+	for projectID, want := range map[uint32]string{
+		123: "error[E105]: call to undefined function",
+		456: "error[E105]: call to undefined function",
+		789: "syntax error",
+	} {
+		logs := latestLogs(t, env, projectID, 10)
+		if got := messages(logs); !slices.Equal(got, []string{"two", "one"}) {
+			t.Errorf("Project %d: expected both Logs stored, got %v", projectID, got)
+		}
+		for _, log := range logs {
+			why := transformError(log)
+			if !strings.HasPrefix(why, "the Log transform doesn't compile: ") || !strings.Contains(why, want) || len(log.Attributes) != 1 {
+				t.Errorf("Project %d: expected %q as it arrived with %q, got %+v", projectID, log.Message, want, log)
+			}
+		}
+	}
+}
+
+func TestANewVersionAppliesOnlyToBatchesProcessedAfterIt(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedLogTransform(t, env, 123, ".version = 1")
+	storeLogBatch(t, env, 123, logAt(t, "first", "2026-10-02T11:00:00Z"))
+	env.ProcessLogs(t)
+
+	seedLogTransform(t, env, 123, ".version = 2")
+	storeLogBatch(t, env, 123, logAt(t, "second", "2026-10-02T11:00:01Z"))
+	env.ProcessLogs(t)
+
+	seedLogTransform(t, env, 123, "")
+	storeLogBatch(t, env, 123, logAt(t, "third", "2026-10-02T11:00:02Z"))
+	env.ProcessLogs(t)
+
+	assertQueries(t, env, map[string][]string{
+		`where version == 1`:    {"first"},
+		`where version == 2`:    {"second"},
+		`where isnull(version)`: {"third"},
+	}, "after three versions")
+}
