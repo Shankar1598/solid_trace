@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { checkProgram } from '@/lib/logTransform/api'
 import { failuresHref, marksOf, type ProgramCheck, type ProgramMark } from '@/lib/logTransform/program'
 import type { Project, SharedProps } from '@/types'
+import { DraftPreview } from './components/DraftPreview'
 
 // How long after the last keystroke the draft is checked, as the Monitor
 // form waits before checking its Query.
@@ -57,8 +58,8 @@ type Checked = { program: string; check: ProgramCheck; marks: ProgramMark[] } | 
 
 /**
  * A Project's Log transform: the program in an editor that underlines its
- * errors as it's typed, its running counts and its last versions. Admins
- * save and restore; members read it.
+ * errors as it's typed, a preview of it, its running counts and its last
+ * versions. Admins save and restore; members read and preview it.
  */
 export default function LogTransformShow({ project, program, versions, stats, can_manage, errors }: LogTransformShowProps) {
   const { current_org } = usePage<SharedProps>().props
@@ -191,7 +192,7 @@ export default function LogTransformShow({ project, program, versions, stats, ca
           </CardFooter>
         </Card>
 
-        {/* The preview of a draft on recent arrivals goes here (ticket 07). */}
+        <DraftPreview orgSlug={current_org.slug} projectSlug={project.slug} draft={draft} />
 
         <RunningCounts stats={stats} failedHref={failuresHref(current_org.slug, project.slug)} />
 
