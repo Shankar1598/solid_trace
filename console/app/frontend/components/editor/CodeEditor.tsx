@@ -29,10 +29,10 @@ export default function CodeEditor(props: QueryEditorProps) {
   const attributes = useRef(new Compartment())
 
   useEffect(() => {
-    const { value, language, label, placeholder: hint, maxLines, describedBy } = latest.current
+    const { value, language, label, placeholder: hint, maxLines, minLines = 2, describedBy, readOnly = false } = latest.current
     const runQuery = (v: EditorView) => {
       closeCompletion(v)
-      latest.current.onRun()
+      latest.current.onRun?.()
       return true
     }
     const editor = new EditorView({
@@ -58,13 +58,15 @@ export default function CodeEditor(props: QueryEditorProps) {
           bracketMatching(),
           highlightSpecialChars(),
           EditorView.lineWrapping,
-          language === 'sql' ? sql({ dialect: PostgreSQL, upperCaseKeywords: true }) : queryLanguage,
+          language === 'sql' ? sql({ dialect: PostgreSQL, upperCaseKeywords: true }) : language === 'query' ? queryLanguage : [],
           syntaxHighlighting(highlightStyle),
-          autocompletion({
+          // A program has no completions yet.
+          language === 'vrl' ? [] : autocompletion({
             icons: false,
             optionClass: language === 'query' ? optionClass : undefined,
             override: language === 'query' ? [querySource(() => latest.current.completions ?? { fields: [] })] : undefined,
           }),
+          EditorState.readOnly.of(readOnly),
           // Out of the explorer's clipped panels.
           tooltips({ parent: document.body }),
           hint ? placeholder(hint) : [],
@@ -74,7 +76,7 @@ export default function CodeEditor(props: QueryEditorProps) {
               latest.current.onChange(update.state.doc.toString())
             }
           }),
-          editorTheme(maxLines),
+          editorTheme(maxLines, minLines),
         ],
       }),
     })
@@ -108,18 +110,20 @@ export default function CodeEditor(props: QueryEditorProps) {
     view.current?.dispatch({ effects: attributes.current.reconfigure(contentAttributes(props.label, props.describedBy)) })
   }, [props.label, props.describedBy])
 
-  // The mistakes squiggle where they are until the next run; the editor moves them along with edits.
+  // The mistakes squiggle where they are until the next run or check; the editor moves them along with edits.
   useEffect(() => {
     const editor = view.current
     if (!editor) return
-    editor.dispatch(setDiagnostics(editor.state, diagnostics(editor.state.doc.toString(), props.problems ?? [])))
-  }, [props.problems])
+    const length = editor.state.doc.length
+    const marks = (props.marks ?? []).map(m => ({ ...m, from: Math.min(m.from, length), to: Math.min(m.to, length) }))
+    editor.dispatch(setDiagnostics(editor.state, [...diagnostics(editor.state.doc.toString(), props.problems ?? []), ...marks]))
+  }, [props.problems, props.marks])
 
   return <div ref={host} className="min-w-0" />
 }
 
 /** Sized and coloured as the app is: tokens from css/globals.css, so it follows dark and light. */
-function editorTheme(maxLines: number) {
+function editorTheme(maxLines: number, minLines: number) {
   return EditorView.theme({
     '&': {
       backgroundColor: 'transparent',
@@ -135,7 +139,7 @@ function editorTheme(maxLines: number) {
     },
     '.cm-content': {
       padding: `${PADDING_Y}px 0`,
-      minHeight: `${2 * LINE_HEIGHT + 2 * PADDING_Y}px`,
+      minHeight: `${minLines * LINE_HEIGHT + 2 * PADDING_Y}px`,
       caretColor: 'var(--foreground)',
     },
     '.cm-line': { padding: '0 8px' },
@@ -146,6 +150,12 @@ function editorTheme(maxLines: number) {
     '.cm-lintRange-error': {
       backgroundImage: 'none',
       textDecoration: 'underline wavy var(--destructive)',
+      textDecorationSkipInk: 'none',
+      textUnderlineOffset: '3px',
+    },
+    '.cm-lintRange-warning': {
+      backgroundImage: 'none',
+      textDecoration: 'underline wavy var(--warning)',
       textDecorationSkipInk: 'none',
       textUnderlineOffset: '3px',
     },
@@ -182,5 +192,6 @@ function editorTheme(maxLines: number) {
     '.cm-tooltip.cm-completionInfo': { padding: '4px 8px', maxWidth: '18rem' },
     '.cm-diagnostic': { padding: '4px 8px', fontFamily: 'inherit' },
     '.cm-diagnostic-error': { borderLeft: '3px solid var(--destructive)' },
+    '.cm-diagnostic-warning': { borderLeft: '3px solid var(--warning)' },
   })
 }
