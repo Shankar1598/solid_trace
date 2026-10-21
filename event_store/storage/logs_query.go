@@ -150,7 +150,10 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, err
 		if to.Before(hourTo) {
 			hourTo = to
 		}
-		found, err := read.scanHour(scan, hour, hourFrom, hourTo, scan.Limit-len(logs))
+		// Every hour before this one had fewer Logs than the page still
+		// wanted, so they are rare: this one is read in one step, as a
+		// second would read again most of the row groups holding them.
+		found, err := read.scanHour(scan, hour, hourFrom, hourTo, scan.Limit-len(logs), i > 0)
 		if err != nil {
 			return LogScanPage{}, err
 		}
@@ -175,7 +178,11 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, err
 // hot table is close to it, so for the newest Logs of a busy hour it skips
 // all but the newest row groups. The condition isn't run again, and an hour
 // with no such Logs isn't read again.
-func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([]models.Log, error) {
+//
+// With oneStep, it reads whole Logs at once instead, as for an hour after
+// one with fewer Logs than the page wanted: their matches are rare, and a
+// second step would read again most of the row groups that hold them.
+func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int, oneStep bool) ([]models.Log, error) {
 	files := r.files[hour]
 	set := r.promotedSet(hour)
 	bounds := timeRange(from, to)
@@ -207,6 +214,12 @@ func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([
 				sel, withColumns(readFiles(files), set), where(promoted)))
 		}
 		return strings.Join(sources, "\nUNION ALL BY NAME\n")
+	}
+	if oneStep {
+		return r.queryLogs(fmt.Sprintf(`
+			SELECT * FROM (%s)
+			ORDER BY time DESC, id DESC
+			LIMIT %d`, sources("*", "* EXCLUDE (project_id)", matching), limit))
 	}
 
 	rows, err := r.conn.QueryContext(r.ctx, fmt.Sprintf(`
