@@ -428,10 +428,11 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, tipWid
     const point = entry.payload as ChartPoint
     return valued(point, shown).at(-1)?.key === s.key ? tipText(point, shown) : undefined
   }
-  // A value with gaps either side draws no line, so it gets a dot.
+  // Lines join across empty bins, so only a series' one value draws no line; it gets a dot.
+  const lones = new Set(series.filter(s => model.points.filter(p => p[s.key] != null).length === 1).map(s => s.key))
   const dotFor = (s: Series) => (props: { cx?: number; cy?: number; index?: number }) => {
     const i = props.index ?? -1
-    const lone = model.points[i]?.[s.key] != null && model.points[i - 1]?.[s.key] == null && model.points[i + 1]?.[s.key] == null
+    const lone = lones.has(s.key) && model.points[i]?.[s.key] != null
     return lone && props.cx !== undefined && props.cy !== undefined
       ? <circle key={`${s.key}-${i}`} cx={props.cx} cy={props.cy} r={4} fill={`var(--color-${s.key})`} stroke="var(--card)" strokeWidth={2} />
       : <g key={`${s.key}-${i}`} />
@@ -495,6 +496,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, tipWid
             strokeWidth={2}
             fill={`var(--color-${s.key})`}
             fillOpacity={stack ? 0.25 : 0.1}
+            connectNulls
             dot={dotFor(s)}
             activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }}
             isAnimationActive={false}
@@ -515,6 +517,7 @@ function PanelChart({ form, data, series, hidden, stacked, model, across, tipWid
           type="linear"
           stroke={`var(--color-${s.key})`}
           strokeWidth={2}
+          connectNulls
           dot={dotFor(s)}
           activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }}
           isAnimationActive={false}
