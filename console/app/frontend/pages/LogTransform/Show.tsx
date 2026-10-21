@@ -1,6 +1,6 @@
 import { Link, router, usePage } from '@inertiajs/react'
 import { AlertTriangle } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryEditor } from '@/components/QueryEditor'
@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { checkProgram } from '@/lib/logTransform/api'
-import { failuresHref, marksOf, type ProgramCheck } from '@/lib/logTransform/program'
+import { failuresHref, marksOf, type ProgramCheck, type ProgramMark } from '@/lib/logTransform/program'
 import type { Project, SharedProps } from '@/types'
 
 // How long after the last keystroke the draft is checked, as the Monitor
@@ -52,8 +52,8 @@ interface LogTransformShowProps {
   errors?: { program?: string[] }
 }
 
-/** What the check said about the draft it was given. */
-type Checked = { program: string; check: ProgramCheck } | { program: string; failed: string }
+/** What the check said about the draft it was given, with its underlines placed in that text. */
+type Checked = { program: string; check: ProgramCheck; marks: ProgramMark[] } | { program: string; failed: string }
 
 /**
  * A Project's Log transform: the program in an editor that underlines its
@@ -75,7 +75,7 @@ export default function LogTransformShow({ project, program, versions, stats, ca
     const controller = new AbortController()
     const timer = setTimeout(() => {
       checkProgram({ orgSlug, projectSlug: project.slug, program: draft, signal: controller.signal })
-        .then(check => setChecked({ program: draft, check }))
+        .then(check => setChecked({ program: draft, check, marks: marksOf(draft, check) }))
         .catch(error => {
           if (!controller.signal.aborted) setChecked({ program: draft, failed: error instanceof Error ? error.message : String(error) })
         })
@@ -86,9 +86,10 @@ export default function LogTransformShow({ project, program, versions, stats, ca
     }
   }, [draft, orgSlug, project.slug])
 
-  const check = checked && 'check' in checked && checked.program === draft ? checked.check : null
-  const marks = useMemo(() => (check ? marksOf(draft, check) : []), [check])
-  const problems = check ? [...check.errors, ...check.warnings] : []
+  // The last check's underlines and problems stay while the next is typed, the editor moving them along with edits.
+  const last = checked && 'check' in checked ? checked : null
+  const problems = last ? [...last.check.errors, ...last.check.warnings] : []
+  const hasErrors = last?.program === draft && last.check.errors.length > 0
 
   if (!current_org) return null
 
@@ -116,7 +117,6 @@ export default function LogTransformShow({ project, program, versions, stats, ca
     { label: 'Log transform' },
   ]
   const unchanged = draft === program
-  const hasErrors = (check?.errors.length ?? 0) > 0
 
   return (
     <DashboardLayout>
@@ -151,7 +151,7 @@ export default function LogTransformShow({ project, program, versions, stats, ca
               language="vrl"
               label="Program"
               placeholder={can_manage ? '.status = "ok"' : 'No program: Logs are stored as they arrive.'}
-              marks={marks}
+              marks={last?.marks}
               minLines={12}
               maxLines={30}
               readOnly={!can_manage}
