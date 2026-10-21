@@ -73,7 +73,7 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with sql, from and to"})
 	}
-	run, problem := startRun(c, sqlTimeout(req.TimeoutSeconds))
+	run, problem := startRun(c, "sql", sqlTimeout(req.TimeoutSeconds))
 	if problem != nil {
 		return c.Status(400).JSON(problem)
 	}

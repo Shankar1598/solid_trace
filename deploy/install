@@ -125,14 +125,10 @@ https_on() { [[ $(env_value COMPOSE_PROFILES) == *https* ]]; }
 
 # set_version writes SOLIDTRACE_VERSION to deploy/.env: the release whose images
 # run, the one this checkout is at or the newest before it, or dev with --build.
-# With --build it also writes SOLIDTRACE_REVISION, the checkout's commit, with
-# -dirty when it has changes, which Console's image keeps for its call timings.
 set_version() {
-  local tmp revision=
+  local tmp
   if (( BUILD )); then
     VERSION=dev
-    revision=$(git -C "$DEPLOY_DIR" rev-parse HEAD)
-    [[ -z $(git -C "$DEPLOY_DIR" status --porcelain --untracked-files=no) ]] || revision+=-dirty
   else
     VERSION=$(git -C "$DEPLOY_DIR" describe --tags --abbrev=0 --match 'v*' 2>/dev/null) ||
       die "No release tag before this commit, so no images to pull. Check out a release (git fetch --tags && git checkout <tag>), or build them: deploy/install --build"
@@ -140,9 +136,8 @@ set_version() {
       printf '\nwarning: %s\n' "This commit isn't a release, so it runs $VERSION's images, which may not match this checkout. To run this checkout's code: deploy/install --build" >&2
   fi
   tmp=$(mktemp)
-  grep -svE '^SOLIDTRACE_(VERSION|REVISION)=' "$ENV_FILE" > "$tmp" || true
+  grep -svE '^SOLIDTRACE_VERSION=' "$ENV_FILE" > "$tmp" || true
   echo "SOLIDTRACE_VERSION=$VERSION" >> "$tmp"
-  [[ -z $revision ]] || echo "SOLIDTRACE_REVISION=$revision" >> "$tmp"
   # In place, so the file keeps its owner and mode (it holds secrets).
   cat "$tmp" > "$ENV_FILE"
   rm -f "$tmp"

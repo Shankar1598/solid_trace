@@ -261,7 +261,7 @@ func (r *logRead) scanBinnedTable(scan LogTableScan, cache *binCache, from, to t
 
 // queryTable runs the table's query over the Logs of spans.
 func (r *logRead) queryTable(scan LogTableScan, spans []timeSpan) ([][]any, error) {
-	rows, err := r.conn.QueryContext(r.ctx, scan.Query(r.sourcesIn(spans, scan.Select, scan.Where)))
+	rows, err := queryRead(r.ctx, r.conn, scan.Query(r.sourcesIn(spans, scan.Select, scan.Where)))
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +277,7 @@ func (r *logRead) binsWithLiveLogs(from, to time.Time, size time.Duration) (map[
 	if r.hot {
 		sources = append(sources, fmt.Sprintf("SELECT time FROM %s.%s WHERE %s", logsCatalog, hotTable(r.projectID), timeRange(from, to)))
 	}
-	rows, err := r.conn.QueryContext(r.ctx, fmt.Sprintf(
+	rows, err := queryRead(r.ctx, r.conn, fmt.Sprintf(
 		"SELECT DISTINCT epoch_us(time_bucket(to_microseconds(%d), time, TIMESTAMP '1970-01-01')) FROM (%s)",
 		size.Microseconds(), strings.Join(sources, " UNION ALL ")))
 	if err != nil {

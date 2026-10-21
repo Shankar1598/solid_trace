@@ -226,7 +226,7 @@ type foundLogs struct {
 // newestInHour finds the newest limit of hour's Logs that meet where, reading
 // only their time and id.
 func (r *logRead) newestInHour(hour time.Time, where func(LogColumns) string, limit int) (foundLogs, error) {
-	rows, err := r.conn.QueryContext(r.ctx, fmt.Sprintf(`
+	rows, err := queryRead(r.ctx, r.conn, fmt.Sprintf(`
 		SELECT time, id FROM (%s)
 		ORDER BY time DESC, id DESC
 		LIMIT %d`, r.hourSources(hour, "time, id", where), limit))
@@ -368,7 +368,7 @@ func (s *LogStore) ScanLogsIngestedAfter(ctx context.Context, scan IngestedLogSc
 		return found, nil
 	}
 	counted := read.sources(from, to, func(LogColumns) string { return "id" }, where)
-	if err := read.conn.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM (%s)", counted)).Scan(&found.Total); err != nil {
+	if err := queryReadRow(ctx, read.conn, fmt.Sprintf("SELECT count(*) FROM (%s)", counted), &found.Total); err != nil {
 		return IngestedLogs{}, err
 	}
 	return found, nil
