@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** claimed
+**Status:** resolved
 
 - [ ] The version model: the newest version is current; `user_id` becomes null when that user is gone; deleting a Project deletes its versions.
 - [ ] One save service (used later by the page too) runs EventStore's check first and refuses with its errors, saving nothing; saving the same text as the current version does nothing; restoring is saving an old version's text. Only admins may save (`ProjectPolicy#update?`).
@@ -15,3 +15,7 @@
 - [ ] The descriptions explain the shape of `.`, `abort`, `solidtrace.transform_error`, the missing functions, that a save applies only to Logs processed after it, and link VRL's function reference. `docs/mcp.md` lists the tools.
 - [ ] Each answer ends with the Log transform page's link (the page itself comes in 06).
 - [ ] Rails tests with EventStore stubbed by WebMock: the model and service cases, the three tools, admin against member, errors passed through.
+
+## Answer
+
+Built and merged (`27e5313`, 2026-10-21). `LogTransformVersion` and `Project#log_transform`; `LogTransformSave.call(project:, user:, program:)` returning `:saved`, `:unchanged` or errors (raises `Pundit::NotAuthorizedError` for members); `EventStore#check_log_transform`, `#preview_log_transform`, `#log_transform_stats`; MCP `get_log_transform`, `preview_log_transform`, `update_log_transform` sharing `LogTransformTool`; the page route `/:org/projects/:project/log_transform` (controller in 06); `docs/mcp.md`. Decisions: a blank program saves without the check; a preview's errors are accepted from a 200 or a 400; preview answers list up to 10 distinct failure messages with counts beyond the first 20 results. 96 targeted Rails runs pass.
