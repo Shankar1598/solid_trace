@@ -38,3 +38,22 @@ Measured before building, with 03's matching in place, as the ticket asks. The p
 - In every path, both orders cost the same within the run-to-run noise (about 20%), with no direction. A text match and a map Attribute condition cost about what the text match costs alone, whichever is written first, and the `search` stage likewise.
 - Scratch check, not kept: one `count(*)` straight over a hot table of the same 300,000 Logs. DuckDB keeps both conditions in the scan's filters, in the order written. With `ILIKE` the order mattered, as the spec found: 553 ms with the text match first, 76 ms with it last. With 03's `contains(lower(message), …)`, it is 82 ms first and 68 ms last (map condition alone 34 ms, text match alone 86 ms). 03 made the match itself cheap, and most of what is left is reading `message` at all, which the order doesn't avoid. So at best the order saves about 15% of a direct scan of the hot table, and nothing that shows through the Query route's Log rows or table runs.
 - So the reorder isn't built. The probe keeps its table runs in both orders, so the gain can be checked again after 02, or after a DuckDB upgrade.
+
+### 2026-10-21 on top of 02: still little to gain
+
+The same probe, rerun twice back to back after merging 02 (`feature/log-read-speed` at 6e775b0), still with nothing reordered. The two written orders stand in for the reorder off and on. 300,000 Logs, 2 threads, ms, best of 3; Logs found in brackets, run 1 / run 2.
+
+| Read | Hot table | Log file |
+|---|---|---|
+| Log rows, `message contains "zebrafish" and shop == "s500"` | 143 / 142 (12) | 377 / 406 (12) |
+| Log rows, `shop == "s500" and message contains "zebrafish"` | 143 / 142 (12) | 404 / 377 (12) |
+| Table, text match first | 106 / 86 (12) | 213 / 203 (12) |
+| Table, text match last | 84 / 87 (12) | 196 / 227 (12) |
+| Table, `search "zebrafish" \| where shop == "s500"` | 263 / 258 (12) | 194 / 201 (12) |
+| Table, `where shop == "s500" \| search "zebrafish"` | 265 / 257 (12) | 201 / 203 (12) |
+| Table, `where shop == "s500"` alone | 40 / 37 (300) | 54 / 58 (300) |
+| Log rows, `message contains "zebrafish"` alone | 142 / 139 (12) | 375 / 356 (12) |
+| Log rows, newest page, no Query | 46 / 48 (200) | 93 / 97 (200) |
+
+- 02 shows in the newest page (about 320 to 400 ms before), but not in the order of conditions: each pair still costs the same, within noise, in Log rows and in tables, for the hot table and Log files.
+- A text match with a map condition costs what the text match costs alone, whichever is written first. So the reorder still isn't built.
