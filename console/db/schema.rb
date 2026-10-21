@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_21_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_21_180000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -102,6 +102,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_21_120000) do
   create_table "instance_settings", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "default_log_retention_days", default: 30, null: false
+    t.boolean "log_all_reads", default: false, null: false
     t.integer "meta_organization_id"
     t.boolean "meta_organization_seeded", default: false, null: false
     t.boolean "sign_up_open", default: false, null: false

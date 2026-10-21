@@ -199,8 +199,9 @@ func mustMarshal(t *testing.T, answer map[string]json.RawMessage) []byte {
 	return raw
 }
 
-// Each run logs every SQL statement DuckDB ran for it, with the request id
-// Console sent, so a Console call timing leads to the SQL its Query became.
+// Each run Console asks with X-Log-SQL logs every SQL statement DuckDB ran
+// for it, with the request id Console sent, so a Console call timing leads
+// to the SQL its Query became. A run not asked logs none.
 func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
@@ -227,6 +228,7 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 		req, _ := http.NewRequest("POST", run.path, strings.NewReader(string(raw)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", requestID)
+		req.Header.Set("X-Log-SQL", "1")
 		resp, err := env.QueryApp.Test(req, 10000)
 		if err != nil || resp.StatusCode != 200 {
 			t.Fatalf("POST %s %v: %v %v", run.path, run.body, resp, err)
@@ -257,5 +259,18 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 				t.Errorf("%s %v: expected a statement with %q, got %q", run.path, run.body, sql, all)
 			}
 		}
+	}
+}
+
+func TestARunNotAskedToLogItsSQLLogsNone(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env)
+	logs := captureLogs(t)
+
+	answerOf(t, env, "/api/123/logs/query", map[string]any{"query": `where duration > 100`, "from": allTime.from, "to": allTime.to}, 200)
+
+	if strings.Contains(logs.String(), "Log read SQL") {
+		t.Errorf("Expected no SQL logged, got %q", logs.String())
 	}
 }

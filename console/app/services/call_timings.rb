@@ -2,7 +2,10 @@
 
 # One JSON line for every MCP tool call and every Log read, with how long it
 # took and the release that ran it (.scratch/call-timings/spec.md). EventStore
-# logs the SQL each Log read ran with the same request_id. Production writes the lines to stdout,
+# logs the SQL each Log read ran with the same request_id. The MCP server's
+# reads are always timed; the rest, the explorer's, Dashboards', the chart
+# editor's and Monitors', only while the operator has turned on
+# InstanceSetting#log_all_reads, as they refresh every 15 seconds. Production writes the lines to stdout,
 # where Vector ships them to the Meta Organization's Project and their fields
 # become Attributes (docs/adr/0011); development appends them to
 # log/call_timings.log (config/initializers/call_timings.rb). A line that
@@ -11,7 +14,13 @@ module CallTimings
   # Who and what a Log read runs for, set by the controller, job or MCP tool
   # that starts it, and reset with the request or job.
   class Context < ActiveSupport::CurrentAttributes
-    attribute :origin, :request_id, :user
+    attribute :origin, :request_id, :user, :log_all_reads
+
+    # InstanceSetting#log_all_reads, read once per request or job.
+    def log_all_reads?
+      self.log_all_reads = InstanceSetting.current.log_all_reads? if log_all_reads.nil?
+      log_all_reads
+    end
   end
 
   # How each EventStore failure is told as an outcome.
@@ -43,6 +52,8 @@ module CallTimings
     # is query, histogram, sql or match, and query the Query or SQL it runs.
     # Answers what the block answers.
     def log_read(read, project_id:, query:, from: nil, to: nil)
+      return yield unless logged_read?
+
       started = now
       fields = { read: read, origin: Context.origin, project_id: project_id, query: query, from: from&.utc&.iso8601(3), to: to&.utc&.iso8601(3) }
       answer = yield
@@ -52,6 +63,12 @@ module CallTimings
       outcome = e.class.ancestors.lazy.filter_map { |kind| OUTCOMES[kind.name] }.first || "exception"
       write("log_read", "Log read #{read}", started, outcome, e.message, **fields)
       raise
+    end
+
+    # Whether the Log read running now is timed, and EventStore logs its SQL:
+    # an MCP tool's always, any other only while log_all_reads is on.
+    def logged_read?
+      Context.origin.to_s.start_with?("mcp:") || Context.log_all_reads?
     end
 
     private

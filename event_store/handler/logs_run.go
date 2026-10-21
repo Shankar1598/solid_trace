@@ -18,7 +18,8 @@ const maxTimeoutSeconds = 24 * 60 * 60
 
 // run is one run of a Query, a histogram or SQL: when it began, for its
 // answer's elapsed_ms, and the context its scan stops by, which ends after
-// the request's timeout_seconds, if it has one. Its end logs each SQL
+// the request's timeout_seconds, if it has one. When Console asks with
+// X-Log-SQL: 1, as it does for the reads it times, its end logs each SQL
 // statement the run made DuckDB run, with the X-Request-Id Console sent,
 // which Console's call timing of the run also has
 // (.scratch/call-timings/spec.md).
@@ -46,8 +47,10 @@ type run struct {
 func startRun(c *fiber.Ctx, read string, timeoutSeconds *float64) (*run, fiber.Map) {
 	// Fiber reuses a request's buffers once its handler returns.
 	r := &run{began: time.Now(), read: read, projectID: strings.Clone(c.Params("project_id")), requestID: strings.Clone(c.Get("X-Request-Id"))}
-	ctx, statements := storage.WithReadStatements(c.UserContext())
-	r.statements = statements
+	ctx := c.UserContext()
+	if c.Get("X-Log-SQL") == "1" {
+		ctx, r.statements = storage.WithReadStatements(ctx)
+	}
 	if timeoutSeconds == nil {
 		r.ctx, r.cancel = context.WithCancel(ctx)
 		return r, nil
@@ -60,10 +63,14 @@ func startRun(c *fiber.Ctx, read string, timeoutSeconds *float64) (*run, fiber.M
 	return r, nil
 }
 
-// end ends the run's context and logs each statement it ran: its SQL, how
-// long it took and its error, numbered in the order they ran.
+// end ends the run's context and, if it was asked to, logs each statement
+// it ran: its SQL, how long it took and its error, numbered in the order
+// they ran.
 func (r *run) end() {
 	r.cancel()
+	if r.statements == nil {
+		return
+	}
 	statements := r.statements.List()
 	for i, statement := range statements {
 		fields := []any{
