@@ -27,6 +27,7 @@ class InstanceSetting < ApplicationRecord
 
   validates :sql_queries_enabled, inclusion: { in: [ true, false ] }
   validates :sign_up_open, inclusion: { in: [ true, false ] }
+  validates :log_all_reads, inclusion: { in: [ true, false ] }
   validates :default_log_retention_days, numericality: { only_integer: true, greater_than: 0 }
 
   def self.current

@@ -38,6 +38,8 @@ SolidTrace keeps its own logs as Logs, in the **Meta Organization**: an Organiza
 
 Sign-up works only until the install has a user, so sign up as soon as it is running; after that, people join by Invite. To let anyone sign up, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set SIGN_UP_OPEN=true`, and `=false` to close it again.
 
+Every MCP tool call and its Log reads are timed into the Meta Organization's "SolidTrace" Project, with the SQL EventStore ran for them. To time every Log read too, the explorer's, Dashboards' and Monitors', `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set LOG_ALL_READS=true`; they refresh every 15 seconds, so it adds many Logs.
+
 With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](deploy/caddy/Caddyfile)) gets a Let's Encrypt certificate for the machine's public IP or domain: Console is on `https://<host>`, ingest on `https://<host>:4443`. Ports 80, 443 and 4443 must be open to the internet, and 3000 and 4000 closed; setup prints the GCP firewall and static-IP commands. An IP's certificate lasts 160 hours, and Caddy renews it ([ADR 0010](docs/adr/0010-caddy-terminates-tls.md)).
 
 To upgrade to a newer release: `git fetch --tags && git checkout <tag> && deploy/install`. To run `main`'s code: `git pull && deploy/install --build`. Either way it keeps the config and the secrets.
