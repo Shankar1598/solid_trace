@@ -1,1 +1,5 @@
 bin/
+# What vrl/build makes locally; the image builds its own library.
+vrl/lib/
+vrl/libhash_gen.go
+vrl/rust/target/

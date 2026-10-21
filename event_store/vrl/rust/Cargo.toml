@@ -1,0 +1,32 @@
+[package]
+name = "st_vrl"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+# No default features: the stdlib without network, environment or system
+# functions. See docs/adr/0012-log-transform-runs-vrl-through-cgo.md.
+vrl = { version = "=0.37.0", default-features = false, features = ["stdlib-base", "enable_crypto_functions"] }
+chrono = { version = "0.4", default-features = false }
+rmp = "0.8"
+rmpv = "1.3"
+
+[profile.release]
+panic = "unwind"
+lto = false
+codegen-units = 16
+debug = false
+
+# EventStore's image builds with this profile. Fat LTO costs about the same
+# memory as the release build (1.4 GB at most for one rustc), takes the
+# library from 75 MB to 31 MB and 10 MB off the binary, and runs programs
+# 4-12% faster. A change to the crate alone rebuilds in about a minute.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

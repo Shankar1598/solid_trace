@@ -39,7 +39,7 @@ func RegisterIngestRoutes(app *fiber.App, ingestHandler *IngestHandler, healthHa
 // RegisterQueryRoutes mounts the routes that serve stored Events and Logs.
 // They have no authentication, so they must only be served on the loopback
 // query listener, where the console is the only client.
-func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandler *LogsHandler, healthHandler *HealthHandler) {
+func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandler *LogsHandler, transformHandler *LogTransformHandler, healthHandler *HealthHandler) {
 	app.Get("/health", healthHandler.Health)
 
 	app.Get("/api/:project_id/events", eventsHandler.List)
@@ -54,6 +54,9 @@ func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandl
 	app.Post("/api/:project_id/logs/histogram", logsHandler.Histogram)
 	app.Post("/api/:project_id/logs/sql", logsHandler.SQL)
 	app.Post("/api/:project_id/logs/readable-sql", logsHandler.ReadableSQL)
+	app.Post("/api/:project_id/logs/transform/check", transformHandler.Check)
+	app.Post("/api/:project_id/logs/transform/preview", transformHandler.Preview)
+	app.Get("/api/:project_id/logs/transform/stats", transformHandler.Stats)
 	// As with Events, this must come before a Log's id, or fields is
 	// captured as one.
 	app.Get("/api/:project_id/logs/fields", logsHandler.Fields)
