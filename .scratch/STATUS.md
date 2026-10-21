@@ -86,6 +86,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Zone recovery | 0 / 1 | [01](zone-recovery/issues/01-disk-snapshots-and-restore.md) |
 | Log read speed | 0 / 5 | [01](log-read-speed/issues/01-probe-for-log-read-speed.md) ([spec](log-read-speed/spec.md)) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
+| EventStore performance | 0 / 2 | [01](eventstore-performance/issues/01-review-performance-findings.md) (after Log read speed), [02](eventstore-performance/issues/02-go-1-27-without-slower-json.md) Go 1.27 ([research](eventstore-performance/research/performance-ideas.md)) |
 
 **Logs path** (a ticket opens when the ones before it are done):
 01–16 (done) → logs v1 tickets M1-01 … M3-04
