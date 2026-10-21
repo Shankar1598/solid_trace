@@ -31,7 +31,7 @@ Production is arm64 (n4a, 2 vCPU) and wasn't measured; the margin is about eight
 
 ## Consequences
 
-- EventStore's builds need Rust (1.95 or later, through `mise`) and a C compiler. `event_store/vrl/build` builds the library before `go build` or `go test`; the first build takes about four minutes and 1.3 GB of memory with two jobs, and the library is 75 MB. EventStore's Docker image needs a Rust stage.
+- EventStore's builds need Rust (1.95 or later, through `mise`) and a C compiler. `event_store/vrl/build` builds the library before `go build` or `go test`; the first build takes about four minutes and 1.3 GB of memory with two jobs, and the library is 75 MB. EventStore's Docker image builds it in a Rust stage, with fat LTO (the crate's `dist` profile): for about the same memory, the library is 31 MB and the binary 10 MB smaller.
 - The build step also writes `libhash_gen.go` with the library's hash. Go's build cache keys cgo on the link flags' text, not the library, and would otherwise reuse a binary linked against an older one.
 - The link adds `-z noexecstack`: `psm`'s assembly has no GNU-stack note, which would otherwise give EventStore an executable stack.
 - A stack overflow or a failed allocation inside VRL can't be caught, and stops EventStore. A Log nested more than 64 levels deep fails before VRL sees it, and the unbounded decoders are left out.
