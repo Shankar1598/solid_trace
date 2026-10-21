@@ -20,7 +20,9 @@ const (
 
 // arrivals are each Project's recent arrivals: its newest Logs as they
 // arrived, before any program, up to arrivalsPerService of each Service and
-// about arrivalsBytes in all. The oldest go first. They are kept in memory
+// about arrivalsBytes in all. arrivalsBytes counts the Logs' data, as
+// normalise.Size measures it, not the memory Go uses to hold them. The
+// oldest go first. They are kept in memory
 // only, for previews: once stored, a Log as it arrived is gone.
 type arrivals struct {
 	mu       sync.Mutex
