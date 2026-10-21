@@ -4,7 +4,8 @@ require "test_helper"
 require "webmock/minitest"
 
 # A Project's Log transform page: any member reads the program, its versions
-# and running counts, and checks a draft; only admins save and restore.
+# and running counts, and checks and previews a draft; only admins save and
+# restore.
 # EventStore is stubbed.
 class LogTransformsControllerTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper

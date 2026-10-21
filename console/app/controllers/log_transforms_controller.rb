@@ -2,8 +2,8 @@
 
 # A Project's Log transform page: the program in an editor that EventStore's
 # check underlines as it's typed, its running counts, and its last versions.
-# Any member reads it and checks a draft; only the Organization's admins
-# save and restore, through LogTransformSave.
+# Any member reads it, and checks and previews a draft; only the
+# Organization's admins save and restore, through LogTransformSave.
 class LogTransformsController < ApplicationController
   include EventStoreProxy
 
