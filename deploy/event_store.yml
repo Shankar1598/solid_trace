@@ -56,3 +56,10 @@ parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 
 # Requests waiting to store their Event or Logs before ingest answers 503.
 # ingest_max_waiting: 10000
+
+# A directory for CPU profiles: one of 30 seconds at half a minute past each hour,
+# during the hourly export, and one at half past, keeping the newest 48. Off unless
+# set. Read one with `go tool pprof -top <file>`. It samples Go's threads only:
+# DuckDB's worker threads are missing, and the log line's process_cpu, every
+# thread's CPU over the same 30 seconds, shows how much.
+# cpu_profile_dir: /storage/profiles

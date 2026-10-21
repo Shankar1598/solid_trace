@@ -413,8 +413,8 @@ type LogTableScan struct {
 //
 // The query runs once over the whole range, as the Logs were when it began
 // (logRead), so it sees each Log exactly once and holds up no export. With
-// Bins and the bin cache on, it runs over only the bins the cache lacks
-// (scanBinnedTable). Cancelling ctx stops it.
+// Bins and the bin cache on, over a range with a file, it runs over only the
+// bins the cache lacks (scanBinnedTable). Cancelling ctx stops it.
 func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any, error) {
 	from, to := scan.From.UTC(), scan.To.UTC()
 	if !to.After(from) {
@@ -426,7 +426,11 @@ func (s *LogStore) ScanLogTable(ctx context.Context, scan LogTableScan) ([][]any
 	}
 	defer read.end()
 
-	if cache := s.bins.Load(); cache != nil && scan.Bins != nil && from.Before(to) {
+	// A bin the cache keeps holds no hot or late Log, so in a range with no
+	// file, such as the explorer's last hour, it holds no Log at all: the
+	// query works it out for nothing, and the cache is skipped, with the
+	// query of which bins hold hot or late Logs.
+	if cache := s.bins.Load(); cache != nil && scan.Bins != nil && from.Before(to) && len(read.files) > 0 {
 		return read.scanBinnedTable(scan, cache, from, to)
 	}
 	return read.queryTable(scan, []timeSpan{{from, to}})

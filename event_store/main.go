@@ -16,6 +16,7 @@ import (
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/clock"
+	"github.com/solidtrace/event_store/pkg/cpuprofile"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/processing"
 	"github.com/solidtrace/event_store/storage"
@@ -138,6 +139,16 @@ func main() {
 	logCleanup := logprocessing.NewCleanup(logStore, consoleSettings, diskLimit, clock.System{})
 	logCleanup.Start()
 
+	// CPU profiles are written only when the file names their directory.
+	var profiler *cpuprofile.Profiler
+	if cfg.CPUProfileDir != "" {
+		if profiler, err = cpuprofile.New(cfg.CPUProfileDir, clock.System{}); err != nil {
+			logger.L.Fatal("Failed to set up CPU profiles", "error", err)
+		}
+		profiler.Start()
+		logger.L.Info("Writing CPU profiles", "dir", cfg.CPUProfileDir)
+	}
+
 	ingestService := ingest.NewService(ingest.Config{
 		Events:       pebbleWriter,
 		NotifyEvents: processor.Notify,
@@ -208,4 +219,7 @@ func main() {
 	logCleanup.Stop()
 	eventCleanup.Stop()
 	archiveConsumer.Stop()
+	if profiler != nil {
+		profiler.Stop()
+	}
 }

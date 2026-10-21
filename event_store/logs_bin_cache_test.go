@@ -3,6 +3,7 @@ package main_test
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -27,6 +28,28 @@ var binCachedQueries = []string{
 	"summarize rate(), peak_rate() by bin(time, 1h), user",
 	`where message !contains "B" and user !startswith_cs "c" | summarize count() by bin(time, 1h), user`,
 	`search "B" | summarize count() by bin(time, 20m)`,
+}
+
+// binCachedHistograms are the explorer's histograms, made bin by bin as
+// those charts are: with buckets of an hour and of 20 minutes, and of the
+// size picked for the range, with no Query, a where and a text match.
+var binCachedHistograms = []histogramRequest{
+	{BucketSeconds: 3600},
+	{Query: `where user == "ada"`, BucketSeconds: 1200},
+	{Query: `search "B"`},
+}
+
+// histogramName names a histogram in failures and in the hits
+// assertSameWithAndWithoutTheBinCache returns.
+func histogramName(req histogramRequest) string {
+	return fmt.Sprintf("histogram of %q by %ds", req.Query, req.BucketSeconds)
+}
+
+// binnedHistogram is a histogram over binCacheRange.
+func binnedHistogram(t *testing.T, env *TestEnv, req histogramRequest) histogramAnswer {
+	t.Helper()
+	req.From, req.To = binCacheRange.from, binCacheRange.to
+	return histogram(t, env, req)
 }
 
 // binCacheRange is the range every bin cache test charts: from part-way
@@ -83,40 +106,54 @@ func binCacheStats(env *TestEnv) (hits, misses int64) {
 	return env.LogStore.BinCacheStats()
 }
 
-// assertSameWithAndWithoutTheBinCache runs each Query with the bin cache as
-// earlier runs left it, then without the cache, then twice with a new one,
-// and checks every run answers the same. The last run must take every bin
-// it can from the cache. It returns the bins the last run of each Query
-// took from the cache.
+// assertSameWithAndWithoutTheBinCache runs each Query and histogram with the
+// bin cache as earlier runs left it, then without the cache, then twice with
+// a new one, and checks every run answers the same. The last run must take
+// every bin it can from the cache. It returns the bins the last run of each
+// took from the cache, by Query or histogramName.
 func assertSameWithAndWithoutTheBinCache(t *testing.T, env *TestEnv, when string) map[string]int64 {
 	t.Helper()
+	// runs are the Queries' tables and the histograms, each answered as
+	// text.
+	type run struct {
+		name   string
+		answer func() string
+	}
+	var runs []run
+	for _, query := range binCachedQueries {
+		runs = append(runs, run{query, func() string { return binnedTable(t, env, query) }})
+	}
+	for _, req := range binCachedHistograms {
+		runs = append(runs, run{histogramName(req), func() string { return fmt.Sprintf("%+v", binnedHistogram(t, env, req)) }})
+	}
+
 	hits := map[string]int64{}
 	cached := map[string]string{}
-	for _, query := range binCachedQueries {
-		cached[query] = binnedTable(t, env, query)
+	for _, r := range runs {
+		cached[r.name] = r.answer()
 	}
 	env.LogStore.UseBinCache(0)
 	uncached := map[string]string{}
-	for _, query := range binCachedQueries {
-		uncached[query] = binnedTable(t, env, query)
-		if cached[query] != uncached[query] {
-			t.Errorf("%s, %s\n with the bin cache: %s\n without it:         %s", when, query, cached[query], uncached[query])
+	for _, r := range runs {
+		uncached[r.name] = r.answer()
+		if cached[r.name] != uncached[r.name] {
+			t.Errorf("%s, %s\n with the bin cache: %s\n without it:         %s", when, r.name, cached[r.name], uncached[r.name])
 		}
 	}
 	env.LogStore.UseBinCache(config.DefaultLogsBinCacheMB << 20)
-	for _, query := range binCachedQueries {
-		if got := binnedTable(t, env, query); got != uncached[query] {
-			t.Errorf("%s, %s, filling a new bin cache\n got:  %s\n want: %s", when, query, got, uncached[query])
+	for _, r := range runs {
+		if got := r.answer(); got != uncached[r.name] {
+			t.Errorf("%s, %s, filling a new bin cache\n got:  %s\n want: %s", when, r.name, got, uncached[r.name])
 		}
 		hitsBefore, missesBefore := binCacheStats(env)
-		if got := binnedTable(t, env, query); got != uncached[query] {
-			t.Errorf("%s, %s, run again\n got:  %s\n want: %s", when, query, got, uncached[query])
+		if got := r.answer(); got != uncached[r.name] {
+			t.Errorf("%s, %s, run again\n got:  %s\n want: %s", when, r.name, got, uncached[r.name])
 		}
 		hitsAfter, missesAfter := binCacheStats(env)
 		if missesAfter != missesBefore {
-			t.Errorf("%s, %s: expected a second run to miss no bin, got %d misses", when, query, missesAfter-missesBefore)
+			t.Errorf("%s, %s: expected a second run to miss no bin, got %d misses", when, r.name, missesAfter-missesBefore)
 		}
-		hits[query] = hitsAfter - hitsBefore
+		hits[r.name] = hitsAfter - hitsBefore
 	}
 	return hits
 }
@@ -149,6 +186,10 @@ func TestTheBinCacheAnswersAsARunWithoutItAcrossExportsLateLogsRetentionAndDelet
 	// A Chart filtered on text takes its hours from the cache too.
 	if got := hits[binCachedQueries[7]]; got != 27 {
 		t.Errorf("Expected a text-filtered Chart to take 27 hours from the cache, got %d", got)
+	}
+	// So does the explorer's histogram.
+	if got := hits[histogramName(binCachedHistograms[0])]; got != 27 {
+		t.Errorf("Expected an hourly histogram to take 27 hours from the cache, got %d", got)
 	}
 
 	// A late Log of 05:30 goes to logs_late, and one of 03:10 to a late

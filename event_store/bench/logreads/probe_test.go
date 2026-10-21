@@ -3,7 +3,7 @@
 // (.scratch/log-read-speed/). It builds synthetic Logs through the LogStore,
 // one hour in a hot table and the same hour as a Log file, and times each
 // Query through the Query compiler and LogStore.ScanLogs, or ScanLogTable for
-// a table, as the Query route runs it, on 2 DuckDB threads. It is skipped
+// a table, as the Query route runs it, on 2 DuckDB threads by default. It is skipped
 // unless LOGREADS_PROBE is set, and must finish in under a minute:
 //
 //	LOGREADS_PROBE=1 timeout 60 mise exec -- go test -count=1 -v ./bench/logreads/
@@ -11,7 +11,11 @@
 // LOGREADS_PROBE_LOGS sets how many Logs the hour holds, a multiple of
 // 50,000. The default, 300,000, is about as many as the dev box builds and
 // reads in the minute; reads scale with the Logs read, so times at two sizes
-// show the cost of a busier hour.
+// show the cost of a busier hour. LOGREADS_PROBE_THREADS sets how many
+// threads DuckDB reads on, 2 by default. LOGREADS_PROBE_CODEC, such as
+// lz4_raw or zstd:1 (a codec and a level), writes the Log file again with
+// that codec in place of the export's zstd at its default level, with the
+// same rows in the same row groups.
 package logreads
 
 import (
@@ -31,6 +35,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/logquery"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -65,7 +70,17 @@ func TestLogReads(t *testing.T) {
 		}
 		logs = n
 	}
-	store := buildLogs(t, logs)
+	threads := 2
+	if s := os.Getenv("LOGREADS_PROBE_THREADS"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 {
+			t.Fatal("LOGREADS_PROBE_THREADS must be a positive number")
+		}
+		threads = n
+	}
+	// The export logs how long its steps take.
+	logger.Init()
+	store := buildLogs(t, logs, threads)
 	for _, project := range []struct {
 		id    uint32
 		files int
@@ -130,16 +145,88 @@ func TestLogReads(t *testing.T) {
 			}
 		}
 	}
+
+	// The explorer's histogram of the hour, as before EventStore
+	// performance 05 without the bin cache, then filling a new one, then
+	// reopened, when the Log file's bins come from it.
+	for _, project := range []struct {
+		name string
+		id   uint32
+	}{{"hot table", hotProject}, {"Log file", fileProject}} {
+		var without time.Duration
+		for run := range runs {
+			took, found := histogramOfTheHour(t, store, project.id, false)
+			if found != logs {
+				t.Errorf("%s: the histogram counted %d Logs, want %d", project.name, found, logs)
+			}
+			if run == 0 || took < without {
+				without = took
+			}
+		}
+		store.UseBinCache(64 << 20)
+		filling, _ := histogramOfTheHour(t, store, project.id, true)
+		var reopened time.Duration
+		for run := range runs {
+			took, found := histogramOfTheHour(t, store, project.id, true)
+			if found != logs {
+				t.Errorf("%s: the histogram from the bin cache counted %d Logs, want %d", project.name, found, logs)
+			}
+			if run == 0 || took < reopened {
+				reopened = took
+			}
+		}
+		store.UseBinCache(0)
+		t.Logf("%-9s histogram: %d ms without the bin cache, %d ms filling it, %d ms reopened", project.name,
+			without.Milliseconds(), filling.Milliseconds(), reopened.Milliseconds())
+	}
+}
+
+// histogramOfTheHour runs the explorer's histogram of the hour, with no
+// Query, as the histogram route does, and returns how long it took and how
+// many Logs it counted. With bins, its bins may come from the bin cache.
+func histogramOfTheHour(t *testing.T, store *storage.LogStore, projectID uint32, bins bool) (time.Duration, int) {
+	t.Helper()
+	start := time.Now()
+	query, err := logquery.Compile("", logquery.Bounds{From: hour, To: hour.Add(time.Hour), Now: hour.Add(2 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := query.Histogram(logquery.AutoBucket(time.Hour))
+	from, to := counts.Range()
+	limit := 10_000
+	scan := storage.LogTableScan{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Where:     counts.Where,
+		Select:    counts.Select,
+		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
+	}
+	if b, ok := counts.Bins(); ok && bins {
+		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: limit}
+	}
+	rows, err := store.ScanLogTable(context.Background(), scan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	took := time.Since(start)
+	found := 0
+	for _, row := range rows {
+		n, _ := row[2].(int64)
+		found += int(n)
+	}
+	return took, found
 }
 
 // buildLogs stores the hour's Logs for both Projects and returns a LogStore
-// that reads them on 2 threads. Appending through the LogStore takes about
-// 50 µs a Log, too slow for the probe's minute, so for each Project it appends
-// the hour's first seedLogs Logs as Log processing does, then copies them in
-// SQL, shifted in time, to fill the hour. The copies keep the hot table's
-// columns and its rows in time order. fileProject's hour is then exported to
-// a Log file listed in the manifest. Setup runs on 4 threads.
-func buildLogs(t *testing.T, logs int) *storage.LogStore {
+// that reads them on threads threads. Appending through the LogStore takes
+// about 50 µs a Log, too slow for the probe's minute, so for each Project it
+// appends the hour's first seedLogs Logs as Log processing does, then copies
+// them in SQL, shifted in time, to fill the hour. The copies keep the hot
+// table's columns and its rows in time order. fileProject's hour is then
+// exported to a Log file listed in the manifest, written again with
+// LOGREADS_PROBE_CODEC if it is set. Setup runs on 4 threads.
+func buildLogs(t *testing.T, logs, threads int) *storage.LogStore {
 	t.Helper()
 	dir := t.TempDir()
 	// The hot window runs from the start of the previous hour to the start
@@ -158,15 +245,49 @@ func buildLogs(t *testing.T, logs int) *storage.LogStore {
 		t.Fatal(err)
 	}
 	exported := time.Since(start) - built
+	files, err := store.HourFiles(fileProject, hour)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("Project %d's hour has files %v, want one: %v", fileProject, files, err)
+	}
 	appendSeed(t, store, hotProject, logs, inHour)
 	events.Close()
 	copySeed(t, dir, hotProject, logs)
+	if codec := os.Getenv("LOGREADS_PROBE_CODEC"); codec != "" {
+		recompress(t, files[0], codec)
+	}
+	info, err := os.Stat(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Log file: %.1f MB, %s", float64(info.Size())/1e6, cmp.Or(os.Getenv("LOGREADS_PROBE_CODEC"), "zstd"))
 	t.Logf("%d Logs: built in %v, exported in %v, built again in %v", logs,
 		built.Round(time.Millisecond), exported.Round(time.Millisecond), (time.Since(start) - built - exported).Round(time.Millisecond))
 
-	events, store = openStore(t, dir, 2)
+	events, store = openStore(t, dir, threads)
 	t.Cleanup(events.Close)
 	return store
+}
+
+// recompress writes a Log file again with codec, a codec and an optional
+// level after a colon, keeping its rows' order and its row groups.
+func recompress(t *testing.T, file, codec string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", "?threads=4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	options := "COMPRESSION " + codec
+	if name, level, ok := strings.Cut(codec, ":"); ok {
+		options = fmt.Sprintf("COMPRESSION %s, COMPRESSION_LEVEL %s", name, level)
+	}
+	_, err = db.Exec(fmt.Sprintf("COPY (SELECT * FROM read_parquet('%s')) TO '%s.new' (FORMAT parquet, %s, ROW_GROUP_SIZE 30720)", file, file, options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(file+".new", file); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // openStore opens the probe's DuckDB in dir on the given number of threads,

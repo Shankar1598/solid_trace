@@ -109,6 +109,15 @@ func TestLogsDiskLimitComesFromTheConfigFileInGB(t *testing.T) {
 	}
 }
 
+func TestCPUProfilesAreOffUnlessTheConfigFileNamesADirectory(t *testing.T) {
+	if got := loadFrom(t, filepath.Join(t.TempDir(), "missing.yml")).CPUProfileDir; got != "" {
+		t.Errorf("Default CPU profile directory = %q, want none", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "cpu_profile_dir: /storage/profiles\n")).CPUProfileDir; got != "/storage/profiles" {
+		t.Errorf("CPU profile directory = %q, want /storage/profiles", got)
+	}
+}
+
 func TestTheBinCacheTakes64MiBUnlessTheConfigFileSays(t *testing.T) {
 	if got := loadFrom(t, filepath.Join(t.TempDir(), "missing.yml")).LogsBinCacheBytes; got != 64<<20 {
 		t.Errorf("Default bin cache = %d bytes, want 64 MiB", got)
