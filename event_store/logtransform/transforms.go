@@ -124,7 +124,7 @@ func (t *Transforms) current(projectID uint32, version storage.LogTransformVersi
 		c.free()
 		delete(t.projects, projectID)
 	}
-	if strings.TrimSpace(version.Program) == "" {
+	if empty(version.Program) {
 		return nil
 	}
 	c = &current{versionID: version.ID}
@@ -157,14 +157,9 @@ func (c *current) free() {
 func compileError(diagnostics []vrl.Diagnostic) string {
 	var errors []string
 	for _, d := range diagnostics {
-		if d.Severity != "error" && d.Severity != "bug" {
-			continue
+		if isError(d) {
+			errors = append(errors, strings.TrimSpace(problem(d).Text))
 		}
-		text := d.Formatted
-		if text == "" {
-			text = d.Message
-		}
-		errors = append(errors, strings.TrimSpace(text))
 	}
 	return "the Log transform doesn't compile: " + strings.Join(errors, "\n")
 }
