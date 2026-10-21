@@ -59,7 +59,7 @@ type Checked = { program: string; check: ProgramCheck; marks: ProgramMark[] } | 
 /**
  * A Project's Log transform: the program in an editor that underlines its
  * errors as it's typed, a preview of it, its running counts and its last
- * versions. Admins save and restore; members read and preview it.
+ * versions. Any member edits and previews a draft; admins save and restore.
  */
 export default function LogTransformShow({ project, program, versions, stats, can_manage, errors }: LogTransformShowProps) {
   const { current_org } = usePage<SharedProps>().props
@@ -154,11 +154,10 @@ export default function LogTransformShow({ project, program, versions, stats, ca
               onChange={setDraft}
               language="vrl"
               label="Program"
-              placeholder={can_manage ? '.status = "ok"' : 'No program: Logs are stored as they arrive.'}
+              placeholder={'.status = "ok"'}
               marks={last?.marks}
               minLines={12}
               maxLines={30}
-              readOnly={!can_manage}
               describedBy={problems.length > 0 ? 'program-problems' : undefined}
             />
             <CheckLine checked={checked} draft={draft} />
@@ -187,7 +186,9 @@ export default function LogTransformShow({ project, program, versions, stats, ca
                 </Button>
               </>
             ) : (
-              <p className="text-xs text-muted-foreground">Only Organization admins can save or restore the Log transform.</p>
+              <p className="text-xs text-muted-foreground">
+                Only Organization admins can save or restore the Log transform. You can change the program here to preview it.
+              </p>
             )}
           </CardFooter>
         </Card>

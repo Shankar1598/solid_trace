@@ -31,7 +31,7 @@ class LogTransformsControllerTest < ActionDispatch::IntegrationTest
     sign_in_as(@member)
   end
 
-  test "the page gives a member the program, its versions and running counts, read-only" do
+  test "the page gives a member the program, its versions and running counts, without saving" do
     old = travel_to(Time.utc(2026, 10, 20, 9)) { @project.log_transform_versions.create!(program: ".a = 1", user: @admin) }
     current = travel_to(Time.utc(2026, 10, 21, 9)) { @project.log_transform_versions.create!(program: ".a = 2", user: @admin) }
     @stats = { "version_id" => current.id, "processed" => 120, "dropped" => 3, "failed" => 2, "average_micros" => 14 }

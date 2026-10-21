@@ -8,13 +8,15 @@ import { watchErrors } from '../support/screens'
 // A Project's Log transform page: an admin opens it from the Project's
 // settings, sees a mistake underlined as they type, previews the fixed
 // program on Logs they paste, saves it, finds its Attribute on a test Log,
-// and restores the earlier version; a member reads it and previews it only. Each run makes its own Project, with a key for the
+// and restores the earlier version; a member previews a draft of their own,
+// with no Save or Restore. Each run makes its own Project, with a key for the
 // test Log and one saved version to restore, since a test Log leaves it
 // empty no more.
 
 const slug = `flow-log-transform-${Date.now()}`
 const SEEDED = '.flow_check = "seeded"'
 const FIXED = '.flow_check = "transformed"'
+const MEMBER_DRAFT = '.flow_check = "member draft"'
 
 const rails = (code: string) =>
   execFileSync('mise', ['exec', '--', 'bin/rails', 'runner', code], {
@@ -131,7 +133,7 @@ test('an admin fixes a mistake, previews and saves the fix, finds the Attribute 
 test.describe('as a member', () => {
   test.use({ storageState: { cookies: [], origins: [] } })
 
-  test('a member reads and previews the Log transform, with no Save or Restore', async ({ page }) => {
+  test('a member edits and previews a draft of the Log transform, with no Save or Restore', async ({ page }) => {
     const errors = watchErrors(page)
     await page.goto('/login')
     await page.fill('input[type=email]', MEMBER.email)
@@ -141,17 +143,20 @@ test.describe('as a member', () => {
 
     await openFromSettings(page)
     await expectEditorText(program(page), /^\.flow_check = /)
-    await expect(program(page)).not.toBeEditable()
     await expect(page.getByText('Only Organization admins can save or restore the Log transform.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: /^Restore/ })).toHaveCount(0)
     await expect(versionRows(page).first()).toBeVisible()
 
-    // A member previews the program too.
+    // A member changes the program, checked as they type, and previews their draft on a pasted Log.
+    await replaceProgram(page, MEMBER_DRAFT)
+    await expect(page.getByText('It compiles.')).toBeVisible()
     await pasteLogs(page, '{"message": "flow member preview"}')
     await previewButton(page).click()
     await expect(page.getByText('1 Log: 1 kept, 0 dropped, 0 failed.')).toBeVisible()
-    await expect(previewResults(page).getByRole('region', { name: 'After' })).toContainText(/"flow_check": "(seeded|transformed)"/)
+    await expect(previewResults(page).getByRole('region', { name: 'After' })).toContainText('"flow_check": "member draft"')
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /^Restore/ })).toHaveCount(0)
     expect(errors).toEqual([])
   })
 })
