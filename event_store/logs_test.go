@@ -73,7 +73,7 @@ func decodeLogCounts(t *testing.T, resp *http.Response) logCounts {
 // first: a run of the empty Query over every time a Log can have.
 func latestLogs(t *testing.T, env *TestEnv, projectID uint32, limit int) []listedLog {
 	t.Helper()
-	return runQuery(t, env, projectID, queryRequest{From: allTime.from, To: allTime.to, Limit: limit}).Logs
+	return runQueryPages(t, env, projectID, queryRequest{From: allTime.from, To: allTime.to, Limit: limit})
 }
 
 func TestJSONLogIsListedWithEveryFieldAfterProcessing(t *testing.T) {

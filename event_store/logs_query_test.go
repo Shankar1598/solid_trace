@@ -76,11 +76,32 @@ func runQuery(t *testing.T, env *TestEnv, projectID uint32, req queryRequest) qu
 	return page
 }
 
+// runQueryPages runs a Query for a Project and follows its next cursors, as
+// the Logs explorer does, until it has req.Limit Logs or there are no older
+// Logs. A run that spends its scan budget answers with fewer Logs and a
+// cursor, which a busy box reaches on a wide range of mostly empty hours.
+func runQueryPages(t *testing.T, env *TestEnv, projectID uint32, req queryRequest) []listedLog {
+	t.Helper()
+	limit := req.Limit
+	var logs []listedLog
+	for {
+		page := runQuery(t, env, projectID, req)
+		logs = append(logs, page.Logs...)
+		if page.NextCursor == nil || len(logs) >= limit {
+			return logs
+		}
+		if *page.NextCursor == req.Cursor {
+			t.Fatalf("Query %q gave the same cursor twice: %q", req.Query, req.Cursor)
+		}
+		req.Cursor, req.Limit = *page.NextCursor, limit-len(logs)
+	}
+}
+
 // queryMessages runs a Query over all time for Project 123 and returns the
 // messages of the Logs it matches, newest first.
 func queryMessages(t *testing.T, env *TestEnv, query string) []string {
 	t.Helper()
-	return messages(runQuery(t, env, 123, queryRequest{Query: query, From: allTime.from, To: allTime.to, Limit: 1000}).Logs)
+	return messages(runQueryPages(t, env, 123, queryRequest{Query: query, From: allTime.from, To: allTime.to, Limit: 1000}))
 }
 
 // assertQueries checks each Query's messages, newest first.
