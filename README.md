@@ -36,6 +36,8 @@ deploy/setup-gcp
 
 SolidTrace keeps its own logs as Logs, in the **Meta Organization**: an Organization and Project both called "SolidTrace", which the install creates. Its admin is the first user to sign up, or the oldest user on an install that already had users; they invite others the usual way. Vector ([`deploy/vector/vector.yaml`](deploy/vector/vector.yaml)) reads every service's output from Docker and sends it there, with each Log's Service the Compose service's name. Lines written while Vector is down, during an upgrade or reboot, are only in `docker compose logs`. Deleting the Organization or its Project turns this off for good ([ADR 0011](docs/adr/0011-meta-organization-and-vector-reads-docker-logs.md)).
 
+Sign-up works only until the install has a user, so sign up as soon as it is running; after that, people join by Invite. To let anyone sign up, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set SIGN_UP_OPEN=true`, and `=false` to close it again.
+
 With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](deploy/caddy/Caddyfile)) gets a Let's Encrypt certificate for the machine's public IP or domain: Console is on `https://<host>`, ingest on `https://<host>:4443`. Ports 80, 443 and 4443 must be open to the internet, and 3000 and 4000 closed; setup prints the GCP firewall and static-IP commands. An IP's certificate lasts 160 hours, and Caddy renews it ([ADR 0010](docs/adr/0010-caddy-terminates-tls.md)).
 
 To upgrade to a newer release: `git fetch --tags && git checkout <tag> && deploy/install`. To run `main`'s code: `git pull && deploy/install --build`. Either way it keeps the config and the secrets.

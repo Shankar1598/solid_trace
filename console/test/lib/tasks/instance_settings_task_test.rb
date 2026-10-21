@@ -38,6 +38,24 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
     assert_not InstanceSetting.current.sql_queries_enabled?
   end
 
+  test "a fresh install has sign-up closed" do
+    out = run_task("instance_settings:show")
+
+    assert_includes out, "Sign-up: closed"
+    assert_not InstanceSetting.current.sign_up_open?
+  end
+
+  test "the operator opens sign-up and closes it again" do
+    out = run_task("instance_settings:set", "SIGN_UP_OPEN" => "true")
+
+    assert InstanceSetting.current.sign_up_open?
+    assert_includes out, "Sign-up: open"
+
+    run_task("instance_settings:set", "SIGN_UP_OPEN" => "off")
+
+    assert_not InstanceSetting.current.sign_up_open?
+  end
+
   test "the operator sets the default Log Retention" do
     out = run_task("instance_settings:set", "DEFAULT_LOG_RETENTION_DAYS" => "14")
 
@@ -54,9 +72,11 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
     assert_raises(SystemExit) do
       run_task("instance_settings:set", "SQL_QUERIES_ENABLED" => "yes please", "DEFAULT_LOG_RETENTION_DAYS" => "7")
     end
+    assert_raises(SystemExit) { run_task("instance_settings:set", "SIGN_UP_OPEN" => "maybe") }
     assert_raises(SystemExit) { run_task("instance_settings:set") }
 
     assert InstanceSetting.current.sql_queries_enabled?
+    assert_not InstanceSetting.current.sign_up_open?
     assert_equal 30, InstanceSetting.current.default_log_retention_days
   end
 

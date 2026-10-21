@@ -148,6 +148,10 @@ _Avoid_: pending user, inactive user
 A link an admin copies for an **Invited** member, and shares however they like, that lets the member set a password once and signs them in to the Organization it came from. It stops working after seven days, once a password is set, or when the member is removed from that Organization.
 _Avoid_: magic link, invitation email, activation link
 
+**Sign-up**:
+Making an account without an **Invite**. It works while the install has no user, so whoever set it up can make the first account, and after that only if the operator has opened it; otherwise people join by **Invite**.
+_Avoid_: registration, self-serve sign-up
+
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant
