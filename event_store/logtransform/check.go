@@ -1,11 +1,24 @@
 package logtransform
 
 import (
+	"strings"
+
 	"github.com/solidtrace/event_store/vrl"
 )
 
 // MaxProgramBytes caps a program's size.
 const MaxProgramBytes = 64 << 10
+
+// empty reports whether program is no Log transform: an empty program, or
+// one of only white space, means none.
+func empty(program string) bool {
+	return strings.TrimSpace(program) == ""
+}
+
+// isError reports whether a diagnostic stops a program compiling.
+func isError(d vrl.Diagnostic) bool {
+	return d.Severity == "error" || d.Severity == "bug"
+}
 
 // Problem is an error or a warning in a program.
 type Problem struct {
@@ -49,7 +62,7 @@ func compile(program string) (*vrl.Program, Check) {
 	compiled, diagnostics := vrl.Compile(program)
 	for _, d := range diagnostics {
 		p := problem(d)
-		if d.Severity == "error" || d.Severity == "bug" {
+		if isError(d) {
 			check.Errors = append(check.Errors, p)
 		} else {
 			check.Warnings = append(check.Warnings, p)

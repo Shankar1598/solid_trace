@@ -3,7 +3,6 @@ package logtransform
 import (
 	"fmt"
 	"math"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -38,7 +37,7 @@ func (t *Transforms) Stats(projectID uint32) (Stats, error) {
 	if err != nil {
 		return Stats{}, fmt.Errorf("read log transform: %w", err)
 	}
-	if strings.TrimSpace(version.Program) == "" {
+	if empty(version.Program) {
 		return Stats{}, nil
 	}
 	stats := Stats{VersionID: &version.ID}
