@@ -90,8 +90,8 @@ func TestLogReads(t *testing.T) {
 		{`search "zebrafish"`, rare},
 		{`where message contains "zebrafish"`, rare},
 		{`where message contains_cs "zebrafish"`, rare / 2},
-		{`where message contains "zebrafish" and tenant == "t500"`, rare},
-		{`where tenant == "t500" and message contains "zebrafish"`, rare},
+		{`where message contains "zebrafish" and shop == "s500"`, rare},
+		{`where shop == "s500" and message contains "zebrafish"`, rare},
 	} {
 		for _, project := range []struct {
 			name string
@@ -245,11 +245,11 @@ func timeRead(t *testing.T, store *storage.LogStore, projectID uint32, text stri
 // Each Log has a message of 200 to 580 bytes, and Attributes: some promoted,
 // and some only in the maps, since the first Log fills the day's promoted set
 // with 100 keys. Every rareEvery-th Log's message holds rareTerm, in lower
-// case or upper case by turns, and all of them have tenant t500.
+// case or upper case by turns, and all of them have shop s500.
 const (
 	rareTerm  = "zebrafish"
 	rareEvery = 25_000
-	tenants   = 1000
+	shops     = 1000
 )
 
 var (
@@ -315,7 +315,7 @@ func makeLog(i, logs int) models.Log {
 		}
 		return log
 	}
-	log.Attributes.String["tenant"] = fmt.Sprintf("t%03d", i%tenants)
+	log.Attributes.String["shop"] = fmt.Sprintf("s%03d", i%shops)
 	log.Attributes.String["region"] = regions[r.IntN(len(regions))]
 	log.Attributes.String["request_id"] = fmt.Sprintf("%016x", r.Uint64())
 	return log
