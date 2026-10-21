@@ -150,7 +150,10 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, err
 		if to.Before(hourTo) {
 			hourTo = to
 		}
-		found, err := read.scanHour(scan, hour, hourFrom, hourTo, scan.Limit-len(logs))
+		// Every hour before this one had fewer Logs than the page still
+		// wanted, so they are rare: this one is read in one step, as a
+		// second would read again most of the row groups holding them.
+		found, err := read.scanHour(scan, hour, hourFrom, hourTo, scan.Limit-len(logs), i > 0)
 		if err != nil {
 			return LogScanPage{}, err
 		}
@@ -168,7 +171,18 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, err
 
 // scanHour returns up to limit of the Project's Logs of [from, to), within
 // one hour, that meet the scan's condition, newest first.
-func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([]models.Log, error) {
+//
+// It reads in two steps. The first reads only the time and id of the newest
+// limit Logs that meet the condition. The second reads those Logs whole, by
+// id, from the span of time they lie in: Log files are sorted by time, and a
+// hot table is close to it, so for the newest Logs of a busy hour it skips
+// all but the newest row groups. The condition isn't run again, and an hour
+// with no such Logs isn't read again.
+//
+// With oneStep, it reads whole Logs at once instead, as for an hour after
+// one with fewer Logs than the page wanted: their matches are rare, and a
+// second step would read again most of the row groups that hold them.
+func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int, oneStep bool) ([]models.Log, error) {
 	files := r.files[hour]
 	set := r.promotedSet(hour)
 	bounds := timeRange(from, to)
@@ -176,7 +190,7 @@ func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([
 		bounds += fmt.Sprintf(" AND (time < %[1]s OR (time = %[1]s AND id < CAST(%[2]s AS UUID)))",
 			timestampLiteral(scan.After.Time), sqltext.String(scan.After.ID.String()))
 	}
-	where := func(cols LogColumns) string {
+	matching := func(cols LogColumns) string {
 		condition := bounds
 		if scan.Where != nil {
 			if w := scan.Where(cols); w != "" {
@@ -185,22 +199,67 @@ func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([
 		}
 		return condition
 	}
-	promoted := LogColumns{set: set}
+	// sources reads the hour's Logs that meet where, with the select list
+	// sel, or lateSel for the late Logs.
+	sources := func(sel, lateSel string, where func(LogColumns) string) string {
+		promoted := LogColumns{set: set}
+		sources := []string{fmt.Sprintf("SELECT %s FROM %s.%s WHERE project_id = %d AND %s",
+			lateSel, logsCatalog, lateTable, scan.ProjectID, where(LogColumns{late: true}))}
+		if r.hot {
+			sources = append(sources, fmt.Sprintf("SELECT %s FROM (%s) WHERE %s",
+				sel, withColumns(fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(scan.ProjectID)), set), where(promoted)))
+		}
+		if len(files) > 0 {
+			sources = append(sources, fmt.Sprintf("SELECT %s FROM (%s) WHERE %s",
+				sel, withColumns(readFiles(files), set), where(promoted)))
+		}
+		return strings.Join(sources, "\nUNION ALL BY NAME\n")
+	}
+	if oneStep {
+		return r.queryLogs(fmt.Sprintf(`
+			SELECT * FROM (%s)
+			ORDER BY time DESC, id DESC
+			LIMIT %d`, sources("*", "* EXCLUDE (project_id)", matching), limit))
+	}
 
-	sources := []string{fmt.Sprintf("SELECT * EXCLUDE (project_id) FROM %s.%s WHERE project_id = %d AND %s",
-		logsCatalog, lateTable, scan.ProjectID, where(LogColumns{late: true}))}
-	if r.hot {
-		sources = append(sources, fmt.Sprintf("SELECT * FROM (%s) WHERE %s",
-			withColumns(fmt.Sprintf("SELECT * FROM %s.%s", logsCatalog, hotTable(scan.ProjectID)), set), where(promoted)))
+	rows, err := r.conn.QueryContext(r.ctx, fmt.Sprintf(`
+		SELECT time, id FROM (%s)
+		ORDER BY time DESC, id DESC
+		LIMIT %d`, sources("time, id", "time, id", matching), limit))
+	if err != nil {
+		return nil, err
 	}
-	if len(files) > 0 {
-		sources = append(sources, fmt.Sprintf("SELECT * FROM (%s) WHERE %s",
-			withColumns(readFiles(files), set), where(promoted)))
+	defer rows.Close()
+	var newest, oldest time.Time
+	var ids []string
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&oldest, &id); err != nil {
+			return nil, err
+		}
+		if ids == nil {
+			newest = oldest
+		}
+		ids = append(ids, "CAST("+sqltext.String(id.String())+" AS UUID)")
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// The span skips row groups. The ids pick the Logs with list_contains,
+	// which DuckDB runs in the scan, so it reads the other columns only
+	// where they match: an IN list becomes a join after the scan, which
+	// reads every column of the span.
+	span := fmt.Sprintf("time >= %s AND time <= %s", timestampLiteral(oldest), timestampLiteral(newest))
 	return r.queryLogs(fmt.Sprintf(`
 		SELECT * FROM (%s)
-		ORDER BY time DESC, id DESC
-		LIMIT %d`, strings.Join(sources, "\nUNION ALL BY NAME\n"), limit))
+		WHERE list_contains([%s], id)
+		ORDER BY time DESC, id DESC`,
+		sources("*", "* EXCLUDE (project_id)", func(LogColumns) string { return span }), strings.Join(ids, ", ")))
 }
 
 // IngestedLogScan asks for a Project's Logs ingested after a Log batch: those
