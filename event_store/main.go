@@ -150,6 +150,7 @@ func main() {
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, clock.System{})
+	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
@@ -158,7 +159,7 @@ func main() {
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, healthHandler)
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, healthHandler)
 
 	// Maintenance API
 	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)
