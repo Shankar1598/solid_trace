@@ -1,1 +1,4 @@
 bin/*
+vrl/lib/
+vrl/libhash_gen.go
+vrl/rust/target/
