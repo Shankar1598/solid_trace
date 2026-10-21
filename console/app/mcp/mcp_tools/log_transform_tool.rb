@@ -8,10 +8,11 @@ module McpTools
   module LogTransformTool
     extend ActiveSupport::Concern
 
-    # How a program is written and what Log processing does with it, from the
-    # spec, ticket 02's decisions and ADR 0012's left-out functions.
+    # How a program is written and what Log processing does with it: what .
+    # holds, what is stored, what a failure does and which functions are left
+    # out.
     LANGUAGE = <<~TEXT.squish
-      A Project's Log transform is a VRL program, the language of Vector's remap
+      A Project's Log transform is a VRL program, the language of Vector's transforms
       (functions: https://vector.dev/docs/reference/vrl/functions/), which Log processing runs on each of the Project's Logs before storing it.
       . is one Log as it arrived: the built-in fields at the top, .time a timestamp and .message, .level, .service,
       .environment, .trace_id and .span_id strings, each absent when the Log has none;
