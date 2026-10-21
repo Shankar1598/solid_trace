@@ -37,7 +37,7 @@ Web connectors that sign in with OAuth, such as claude.ai's and ChatGPT's, can't
 A tool acts as the token's user, with that user's rights. In each Organization it acts on, it has the role the user has there, and it can do what that role can do in Console:
 
 - **Any member** can read Logs and Issues, make and change Dashboards, Charts and Monitors, resolve, assign and comment on Issues, and make Projects.
-- **Only an Organization admin** can create, rotate and delete a Project's keys, and invite members. A member's agent is told so.
+- **Only an Organization admin** can create, rotate and delete a Project's keys, change a Project's Log transform, and invite members. A member's agent is told so.
 - Other Organizations' records are not found.
 
 The User settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
@@ -58,6 +58,9 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 - `list_fields`: the names a Query can read: the built-in fields, then the Project's Attributes, most used first, with their types. It counts Logs as they arrive, so it leaves out Attributes that only Logs sent more than about an hour late carry, and Attributes whose values are JSON, such as arrays. A Query still reads them.
 - `query_language_reference`: the whole Query language reference.
 - `run_sql`: runs a read-only [DuckDB SQL](logs/sql.md) SELECT on a Project's Logs and Events. It is listed only while the instance's SQL queries are on.
+- `get_log_transform`: a Project's Log transform, the [VRL](https://vector.dev/docs/reference/vrl/functions/) program Log processing runs on each of its Logs before storing them: the current program or an older version's, who saved it and when, the last 10 versions, and how many Logs the current version has processed, dropped and failed since EventStore started.
+- `preview_log_transform`: runs a draft program on the Project's recent arrivals, or on up to 200 Logs you give, and answers how many it kept, dropped and failed, with the first 20 Logs before and after. Nothing is stored.
+- `update_log_transform`: saves a program as the Project's Log transform, or answers VRL's errors when it doesn't compile. It applies to the Logs processed after it; Logs already stored don't change. Restore an older version by saving its program. Admins only.
 
 **Dashboards**
 
@@ -88,12 +91,12 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 - `list_members`: an Organization's members, with their emails and roles.
 - `invite_member`: invites someone by email. Admins only.
 
-Reads are marked read-only, and deletes and key rotation destructive, so a client can ask you before it runs them.
+Reads are marked read-only, and deletes, key rotation and Log transform saves destructive, so a client can ask you before it runs them.
 
 ## What Log text can do
 
 Log text is written by whoever sends Logs: your services, and anything that reaches them, such as a user's input that a service logs. When an agent reads Logs, that text reaches the agent, and it may follow instructions written in it.
 
-With your rights, an agent steered this way can change or delete Dashboards and Monitors, and, if you are an admin, rotate keys or invite someone. Clients that ask before a tool runs are your check: read what the agent wants to do before you allow it, especially after it has read Logs.
+With your rights, an agent steered this way can change or delete Dashboards and Monitors, and, if you are an admin, rotate keys, invite someone, or save a Log transform that drops or changes the Logs that arrive after it. Clients that ask before a tool runs are your check: read what the agent wants to do before you allow it, especially after it has read Logs.
 
 **With SQL queries on**, `run_sql` reads only the Project it runs on: its `logs` and `events` views, never other tables, files or URLs ([SQL queries](logs/sql.md)). An agent steered by Log text can read what you can read there, and each of its slow queries can slow down ingest for up to 10 seconds, when EventStore stops it. SQL queries are on by default; the operator can turn them off ([ADR 0003](adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md)).

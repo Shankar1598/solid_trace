@@ -91,6 +91,8 @@ Rails.application.routes.draw do
           patch :rotate
         end
       end
+
+      resource :log_transform, only: [ :show ]
     end
 
     scope "/settings" do
