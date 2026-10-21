@@ -10,7 +10,7 @@ See the [spec](../spec.md)'s Testing Decisions and Further Notes.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The probe runs in under a minute on the dev box, setup included, and is skipped unless its environment variable is set
 - [ ] It reads the hot table and the Log file through the same code paths a Query run uses
