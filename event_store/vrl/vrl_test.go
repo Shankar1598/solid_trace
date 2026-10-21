@@ -151,3 +151,65 @@ func TestRunFailsWhenTheProgramLeavesANonObject(t *testing.T) {
 		t.Errorf("outcomes = %#v, want a failure naming the string", outcomes)
 	}
 }
+
+func TestRunTurnsAPanicIntoAFailureForThatLog(t *testing.T) {
+	// encode_charset panics on bytes that aren't UTF-8, such as 0xff.
+	program := compile(t, `.out = encode_charset!(decode_base64!(.data), "utf-8")`)
+	outcomes, err := program.Run([]map[string]any{{"data": "/w=="}, {"data": "aGk="}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcomes[0].Log != nil || !strings.HasPrefix(outcomes[0].Error, "panic: ") {
+		t.Errorf("outcomes[0] = %#v, want a panic failure", outcomes[0])
+	}
+	if got := outcomes[1].Log["out"]; got != "hi" {
+		t.Errorf("outcomes[1].out = %#v, want hi", got)
+	}
+}
+
+func TestRunWorksInUTCWhateverTheHostTimeZone(t *testing.T) {
+	t.Setenv("TZ", "Asia/Kolkata")
+	program := compile(t, `.at = parse_timestamp!("2026-10-21 06:58:49", "%Y-%m-%d %H:%M:%S")`)
+	outcomes, err := program.Run([]map[string]any{{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := outcomes[0].Log["at"], time.Date(2026, 10, 21, 6, 58, 49, 0, time.UTC); got != want {
+		t.Errorf("at = %v, want %v", got, want)
+	}
+}
+
+func TestRunFailsOnlyTheLogNestedTooDeep(t *testing.T) {
+	deep := map[string]any{"leaf": true}
+	for range 70 {
+		deep = map[string]any{"a": deep}
+	}
+	program := compile(t, `.seen = true`)
+	outcomes, err := program.Run([]map[string]any{deep, {"message": "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []vrl.Outcome{{Error: "the Log nests more than 64 levels deep"}, {Log: map[string]any{"message": "hi", "seen": true}}}
+	if !reflect.DeepEqual(outcomes, want) {
+		t.Errorf("outcomes = %#v, want %#v", outcomes, want)
+	}
+}
+
+func TestRunReadsStringsThatAreNotUTF8(t *testing.T) {
+	program := compile(t, `.copy = .message`)
+	outcomes, err := program.Run([]map[string]any{{"message": "caf\xe9"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outcomes[0].Log["copy"]; got != "caf�" {
+		t.Errorf("copy = %q, want %q", got, "caf�")
+	}
+}
+
+func TestRunRefusesAFreedProgram(t *testing.T) {
+	program, _ := vrl.Compile(`.a = 1`)
+	program.Free()
+	if _, err := program.Run([]map[string]any{{}}); err == nil {
+		t.Error("Run on a freed program succeeded")
+	}
+}
