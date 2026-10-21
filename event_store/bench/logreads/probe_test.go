@@ -3,8 +3,8 @@
 // (.scratch/log-read-speed/). It builds synthetic Logs through the LogStore,
 // one hour in a hot table and the same hour as a Log file, and times each
 // Query through the Query compiler and LogStore.ScanLogs, or ScanLogTable for
-// a table, as the Query route runs it, on 2 DuckDB threads. It is skipped unless LOGREADS_PROBE is set,
-// and must finish in under a minute:
+// a table, as the Query route runs it, on 2 DuckDB threads. It is skipped
+// unless LOGREADS_PROBE is set, and must finish in under a minute:
 //
 //	LOGREADS_PROBE=1 timeout 60 mise exec -- go test -count=1 -v ./bench/logreads/
 //
@@ -82,16 +82,17 @@ func TestLogReads(t *testing.T) {
 	// Each Query is a run of Log rows over the hour, and wants the Logs it
 	// should find, as makeLog makes them.
 	rare := logs / rareEvery
+	term := `"` + rareTerm + `"`
 	for _, read := range []struct {
 		query string
 		want  int
 	}{
 		{"", pageLimit},
-		{`search "zebrafish"`, rare},
-		{`where message contains "zebrafish"`, rare},
-		{`where message contains_cs "zebrafish"`, rare / 2},
-		{`where message contains "zebrafish" and shop == "s500"`, rare},
-		{`where shop == "s500" and message contains "zebrafish"`, rare},
+		{"search " + term, rare},
+		{"where message contains " + term, rare},
+		{"where message contains_cs " + term, rare / 2},
+		{"where message contains " + term + ` and shop == "s500"`, rare},
+		{`where shop == "s500" and message contains ` + term, rare},
 	} {
 		for _, project := range []struct {
 			name string
@@ -113,10 +114,10 @@ func TestLogReads(t *testing.T) {
 		want  int
 	}{
 		{`where shop == "s500" | summarize count()`, logs / shops},
-		{`where message contains "zebrafish" and shop == "s500" | summarize count()`, rare},
-		{`where shop == "s500" and message contains "zebrafish" | summarize count()`, rare},
-		{`search "zebrafish" | where shop == "s500" | summarize count()`, rare},
-		{`where shop == "s500" | search "zebrafish" | summarize count()`, rare},
+		{"where message contains " + term + ` and shop == "s500" | summarize count()`, rare},
+		{`where shop == "s500" and message contains ` + term + " | summarize count()", rare},
+		{"search " + term + ` | where shop == "s500" | summarize count()`, rare},
+		{`where shop == "s500" | search ` + term + " | summarize count()", rare},
 	} {
 		for _, project := range []struct {
 			name string
