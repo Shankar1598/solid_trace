@@ -86,6 +86,11 @@ var names = [fieldCount]string{
 	spanID:      "span_id",
 }
 
+// IsField reports whether name is a built-in field's name.
+func IsField(name string) bool {
+	return slices.Contains(names[:], name)
+}
+
 // sent is a Log as its sender sent it, with the value given for each built-in
 // field picked out from the rest, which are its Attributes under flat names.
 type sent struct {

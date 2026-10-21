@@ -30,8 +30,8 @@ type InstanceSettings struct {
 
 // ConsoleSettings reads Console's instance settings and Projects' Retention,
 // slugs and Log transforms from Console's SQLite database, read-only: Logs
-// write no Console tables (ADR 0001). Every call reads the database, so a change in Console shows at once;
-// callers that need a cache keep their own.
+// write no Console tables (ADR 0001). Every call reads the database, so a
+// change in Console shows at once; callers that need a cache keep their own.
 type ConsoleSettings struct {
 	db *sql.DB
 }

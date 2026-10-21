@@ -124,7 +124,7 @@ func (t *Transforms) current(projectID uint32, version storage.LogTransformVersi
 		c.free()
 		delete(t.projects, projectID)
 	}
-	if strings.TrimSpace(version.Program) == "" {
+	if empty(version.Program) {
 		return nil
 	}
 	c = &current{versionID: version.ID}
@@ -157,14 +157,9 @@ func (c *current) free() {
 func compileError(diagnostics []vrl.Diagnostic) string {
 	var errors []string
 	for _, d := range diagnostics {
-		if d.Severity != "error" && d.Severity != "bug" {
-			continue
+		if isError(d) {
+			errors = append(errors, strings.TrimSpace(problem(d).Text))
 		}
-		text := d.Formatted
-		if text == "" {
-			text = d.Message
-		}
-		errors = append(errors, strings.TrimSpace(text))
 	}
 	return "the Log transform doesn't compile: " + strings.Join(errors, "\n")
 }
@@ -253,20 +248,20 @@ type outcome struct {
 func runProgram(program *vrl.Program, logs []models.Log, receipt func(i int) normalise.Receipt) []outcome {
 	out := make([]outcome, len(logs))
 	for start := 0; start < len(logs); start += logsPerRun {
-		chunk := logs[start:min(start+logsPerRun, len(logs))]
-		views := make([]map[string]any, len(chunk))
-		for i, log := range chunk {
+		part := logs[start:min(start+logsPerRun, len(logs))]
+		views := make([]map[string]any, len(part))
+		for i, log := range part {
 			views[i] = view(log)
 		}
 		results, err := program.Run(views)
 		if err != nil {
 			// Unreachable unless the bridge itself breaks. Nothing is lost.
-			results = make([]vrl.Outcome, len(chunk))
+			results = make([]vrl.Outcome, len(part))
 			for i := range results {
 				results[i].Error = err.Error()
 			}
 		}
-		for i, log := range chunk {
+		for i, log := range part {
 			out[start+i] = stored(log, results[i], receipt(start+i))
 		}
 	}
@@ -290,7 +285,7 @@ func stored(arrived models.Log, result vrl.Outcome, r normalise.Receipt) outcome
 	}
 	kept := keptNames(arrived.Attributes)
 	for _, name := range kept {
-		if !fieldNames[name] {
+		if !normalise.IsField(name) {
 			forget(result.Log, name)
 		}
 	}

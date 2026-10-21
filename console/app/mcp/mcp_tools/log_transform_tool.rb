@@ -8,14 +8,16 @@ module McpTools
   module LogTransformTool
     extend ActiveSupport::Concern
 
-    # How a program is written and what Log processing does with it, from the
-    # spec, ticket 02's decisions and ADR 0012's left-out functions.
+    # How a program is written and what Log processing does with it: what .
+    # holds, what is stored, what a failure does and which functions are left
+    # out.
     LANGUAGE = <<~TEXT.squish
-      A Project's Log transform is a VRL program, the language of Vector's remap
+      A Project's Log transform is a VRL program, the language of Vector's transforms
       (functions: https://vector.dev/docs/reference/vrl/functions/), which Log processing runs on each of the Project's Logs before storing it.
       . is one Log as it arrived: the built-in fields at the top, .time a timestamp and .message, .level, .service,
       .environment, .trace_id and .span_id strings, each absent when the Log has none;
-      and the Attributes nested by their dots, so http.method is .http.method, or ."a.b" when a shorter name a holds a value.
+      and the Attributes nested by their dots, so http.method is .http.method, or ."a.b" when a shorter name a holds a value
+      or is a built-in field's, so service.version is always ."service.version".
       Numbers, strings and bools keep their types, and an array is an array.
       A program sets, changes and deletes Fields, such as .status = parsed.status then del(.message).
       What . holds at the end is stored, flattened to dotted Attributes and checked as a sender's Log is:
@@ -44,7 +46,7 @@ module McpTools
     # The tool error for a program that doesn't compile: VRL's formatted
     # errors, one after another.
     def compile_errors!(lead, errors)
-      raise ToolError, [ lead, *errors.map { |error| error["text"].presence || error["message"].to_s } ].join("\n")
+      raise ToolError, [ lead, *errors.pluck("text") ].join("\n")
     end
 
     def log_transform_link

@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -270,6 +271,50 @@ func TestANewVersionAppliesOnlyToBatchesProcessedAfterIt(t *testing.T) {
 		`where version == 2`:    {"second"},
 		`where isnull(version)`: {"third"},
 	}, "after three versions")
+}
+
+func TestAnAttributeExtendingABuiltInFieldsNameStaysUnderItsDottedName(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// The Log has no Service, Level or trace id, but Attributes whose names
+	// extend theirs. Project 123's program looks at them, 456's sets the
+	// Service, and 789's only adds an Attribute.
+	seedLogTransform(t, env, 123, `
+.seen_service = exists(.service)
+.seen_version = ."service.version"
+.seen_level_code = ."level.code"
+`)
+	seedLogTransform(t, env, 456, `.service = "web"`)
+	seedLogTransform(t, env, 789, ".touched = true")
+	log := models.Log{
+		Time: testNow, Message: "no service",
+		Attributes: models.Attributes{
+			String: map[string]string{"service.version": "1.2"},
+			Number: map[string]float64{"level.code": 3},
+			Bool:   map[string]bool{"trace_id.sampled": true},
+		},
+	}
+	for _, projectID := range []uint32{123, 456, 789} {
+		log.ID = uuid.Must(uuid.NewV7())
+		storeLogBatch(t, env, projectID, log)
+	}
+	env.ProcessLogs(t)
+
+	stored := func(service string, added map[string]any) []listedLog {
+		attributes := map[string]any{"service.version": "1.2", "level.code": 3.0, "trace_id.sampled": true}
+		maps.Copy(attributes, added)
+		return []listedLog{{Time: testNow, Message: "no service", Service: service, Attributes: attributes}}
+	}
+	for projectID, want := range map[uint32][]listedLog{
+		123: stored("", map[string]any{"seen_service": false, "seen_version": "1.2", "seen_level_code": 3.0}),
+		456: stored("web", nil),
+		789: stored("", map[string]any{"touched": true}),
+	} {
+		if got := listedWithout(t, env, projectID); !reflect.DeepEqual(got, want) {
+			t.Errorf("Project %d: expected\n%+v\ngot\n%+v", projectID, want, got)
+		}
+	}
 }
 
 func TestAProgramSeesBuiltInFieldsAtTheTopAndAttributesNested(t *testing.T) {

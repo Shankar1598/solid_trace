@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
 )
 
@@ -15,8 +16,9 @@ import (
 // always a string; .time is a timestamp. The Attributes are nested by their
 // dots, as Vector shows them, each with its type: a JSON Attribute is an
 // array or object. An Attribute that can't nest, because a shorter name
-// already holds a value, stays at the top level under its dotted name. The
-// Log's id isn't shown, nor an Attribute named as a built-in field.
+// already holds a value or it extends a built-in field's name, stays at the
+// top level under its dotted name. The Log's id isn't shown, nor an
+// Attribute named as a built-in field.
 func view(log models.Log) map[string]any {
 	v := map[string]any{"time": log.Time, "message": log.Message}
 	for name, value := range map[string]string{
@@ -36,21 +38,12 @@ func view(log models.Log) map[string]any {
 	// before "a.b" finds it.
 	objects := make(map[string]bool) // the dotted names of objects made here
 	for _, name := range slices.Sorted(maps.Keys(values)) {
-		if !fieldNames[name] {
+		if !normalise.IsField(name) {
 			place(v, objects, name, values[name])
 		}
 	}
 	return v
 }
-
-// fieldNames are the built-in fields' names, as a program sees them.
-var fieldNames = map[string]bool{
-	"time": true, "level": true, "message": true, "service": true,
-	"environment": true, "trace_id": true, "span_id": true,
-}
-
-// reservedPrefix starts the names of Attributes SolidTrace sets.
-const reservedPrefix = "solidtrace."
 
 // keptNames are the names of a Log's Attributes that stay as they arrived,
 // whatever the program returns: those SolidTrace set, which the program sees
@@ -59,7 +52,7 @@ const reservedPrefix = "solidtrace."
 func keptNames(a models.Attributes) []string {
 	var names []string
 	add := func(name string) {
-		if strings.HasPrefix(name, reservedPrefix) || fieldNames[name] {
+		if strings.HasPrefix(name, normalise.ReservedPrefix) || normalise.IsField(name) {
 			names = append(names, name)
 		}
 	}
@@ -113,10 +106,12 @@ func copyValue[V any](from map[string]V, to *map[string]V, name string) {
 }
 
 // place puts an Attribute's value in v, nested by the dots in its name, or at
-// the top level under its whole name when it can't nest.
+// the top level under its whole name when it can't nest. A built-in field's
+// name always holds its field, so an Attribute extending it, such as
+// service.version, never nests, even when the Log has no such field.
 func place(v map[string]any, objects map[string]bool, name string, value any) {
 	keys := strings.Split(name, ".")
-	if slices.Contains(keys, "") {
+	if slices.Contains(keys, "") || normalise.IsField(keys[0]) {
 		v[name] = value
 		return
 	}
