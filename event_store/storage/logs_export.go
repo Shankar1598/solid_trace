@@ -111,7 +111,7 @@ var errLogsChanged = errors.New("the Logs changed while their files were written
 // the export did before it wrote files outside writeMu, so that a change
 // it can't follow never leaves Logs unexported hour after hour.
 func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
-	order := DefaultLogFileOrder
+	order := s.logFileOrder(projectID)
 	err := s.exportOnce(projectID, cutoff, order, false)
 	if !errors.Is(err, errLogsChanged) {
 		return err

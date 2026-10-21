@@ -98,6 +98,7 @@ func main() {
 		logger.L.Fatal("Failed to open Console settings", "error", err)
 	}
 	defer consoleSettings.Close()
+	logStore.UseLogFileOrders(consoleSettings)
 
 	// Prepare must run before the worker and the archive job start. The
 	// archive never runs inside a batch: they share batchLock.
