@@ -75,3 +75,23 @@ func (h *LogTransformHandler) Preview(c *fiber.Ctx) error {
 	}
 	return c.JSON(preview)
 }
+
+// GET /api/:project_id/logs/transform/stats
+//
+// Answers the running counts of the Project's current Log transform:
+// {"version_id", "processed", "dropped", "failed", "average_micros",
+// "compile_error"?}. version_id is null, and the counts zero, when the
+// Project has no Log transform; compile_error is there only when the
+// current version doesn't compile.
+func (h *LogTransformHandler) Stats(c *fiber.Ctx) error {
+	projectID, err := parseProjectID(c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	stats, err := h.transforms.Stats(projectID)
+	if err != nil {
+		logger.L.Error("Reading Log transform stats failed", "project_id", projectID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	return c.JSON(stats)
+}
