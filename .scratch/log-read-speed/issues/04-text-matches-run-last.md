@@ -17,3 +17,24 @@ It waits for 03 because both change the same condition writer. Measure the gain 
 - [ ] Negated `or`s with a text match give the same Logs as before
 - [ ] The existing Query, Chart and Monitor root tests pass
 - [ ] The probe's text-match and map Attribute timings in both orders, before and after, are in this ticket's Comments
+
+## Comments
+
+### 2026-10-21 little left to gain; not built
+
+Measured before building, with 03's matching in place, as the ticket asks. The probe of ticket 01 (300,000 Logs, 2 threads, ms, best of 3; Logs found in brackets) now also times a table run, `… | summarize count()` through `ScanLogTable` without the bin cache, which ticket 02 doesn't touch. Two runs of this branch, back to back with nothing reordered, so each order below is run as written:
+
+| Read | Hot table, run 1 | Hot table, run 2 | Log file, run 1 | Log file, run 2 |
+|---|---|---|---|---|
+| Log rows, `message contains "zebrafish" and shop == "s500"` | 158 (12) | 123 (12) | 349 (12) | 266 (12) |
+| Log rows, `shop == "s500" and message contains "zebrafish"` | 146 (12) | 127 (12) | 370 (12) | 252 (12) |
+| Table, text match first | 97 (12) | 88 (12) | 283 (12) | 199 (12) |
+| Table, text match last | 118 (12) | 86 (12) | 300 (12) | 192 (12) |
+| Table, `search "zebrafish" \| where shop == "s500"` | 293 (12) | 261 (12) | 298 (12) | 191 (12) |
+| Table, `where shop == "s500" \| search "zebrafish"` | 325 (12) | 266 (12) | 256 (12) | 193 (12) |
+| Table, `where shop == "s500"` alone | 41 (300) | 42 (300) | 65 (300) | 55 (300) |
+| Log rows, `message contains "zebrafish"` alone | 167 (12) | 133 (12) | 386 (12) | 248 (12) |
+
+- In every path, both orders cost the same within the run-to-run noise (about 20%), with no direction. A text match and a map Attribute condition cost about what the text match costs alone, whichever is written first, and the `search` stage likewise.
+- Scratch check, not kept: one `count(*)` straight over a hot table of the same 300,000 Logs. DuckDB keeps both conditions in the scan's filters, in the order written. With `ILIKE` the order mattered, as the spec found: 553 ms with the text match first, 76 ms with it last. With 03's `contains(lower(message), …)`, it is 82 ms first and 68 ms last (map condition alone 34 ms, text match alone 86 ms). 03 made the match itself cheap, and most of what is left is reading `message` at all, which the order doesn't avoid. So at best the order saves about 15% of a direct scan of the hot table, and nothing that shows through the Query route's Log rows or table runs.
+- So the reorder isn't built. The probe keeps its table runs in both orders, so the gain can be checked again after 02, or after a DuckDB upgrade.

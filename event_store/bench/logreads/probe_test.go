@@ -2,8 +2,8 @@
 // busy hour of a Project's Logs, for the Log read speed effort
 // (.scratch/log-read-speed/). It builds synthetic Logs through the LogStore,
 // one hour in a hot table and the same hour as a Log file, and times each
-// Query through the Query compiler and LogStore.ScanLogs, as the Query route
-// runs it, on 2 DuckDB threads. It is skipped unless LOGREADS_PROBE is set,
+// Query through the Query compiler and LogStore.ScanLogs, or ScanLogTable for
+// a table, as the Query route runs it, on 2 DuckDB threads. It is skipped unless LOGREADS_PROBE is set,
 // and must finish in under a minute:
 //
 //	LOGREADS_PROBE=1 timeout 60 mise exec -- go test -count=1 -v ./bench/logreads/
@@ -99,6 +99,31 @@ func TestLogReads(t *testing.T) {
 		}{{"hot table", hotProject}, {"Log file", fileProject}} {
 			took, found := timeRead(t, store, project.id, read.query)
 			t.Logf("%-9s %6d ms %4d Logs  %s", project.name, took.Milliseconds(), found, cmp.Or(read.query, "(newest page)"))
+			if found != read.want {
+				t.Errorf("%s, %q found %d Logs, want %d", project.name, read.query, found, read.want)
+			}
+		}
+	}
+
+	// A text match and a condition on an Attribute only in the maps, written
+	// in both orders, as Log rows and as table runs. A table run reads the
+	// Logs that pass the condition, not the newest page.
+	for _, read := range []struct {
+		query string
+		want  int
+	}{
+		{`where shop == "s500" | summarize count()`, logs / shops},
+		{`where message contains "zebrafish" and shop == "s500" | summarize count()`, rare},
+		{`where shop == "s500" and message contains "zebrafish" | summarize count()`, rare},
+		{`search "zebrafish" | where shop == "s500" | summarize count()`, rare},
+		{`where shop == "s500" | search "zebrafish" | summarize count()`, rare},
+	} {
+		for _, project := range []struct {
+			name string
+			id   uint32
+		}{{"hot table", hotProject}, {"Log file", fileProject}} {
+			took, found := timeRead(t, store, project.id, read.query)
+			t.Logf("%-9s %6d ms %4d Logs  %s", project.name, took.Milliseconds(), found, read.query)
 			if found != read.want {
 				t.Errorf("%s, %q found %d Logs, want %d", project.name, read.query, found, read.want)
 			}
@@ -210,8 +235,9 @@ func copySeed(t *testing.T, dir string, projectID uint32, logs int) {
 	}
 }
 
-// timeRead runs a Query of Log rows over the hour as the Query route does,
-// and returns its best time of a few runs and how many Logs it found.
+// timeRead runs a Query over the hour as the Query route does, and returns
+// its best time of a few runs and how many Logs it found: the Logs of a page
+// of Log rows, or the count of a table's one row.
 func timeRead(t *testing.T, store *storage.LogStore, projectID uint32, text string) (time.Duration, int) {
 	t.Helper()
 	var best time.Duration
@@ -223,23 +249,52 @@ func timeRead(t *testing.T, store *storage.LogStore, projectID uint32, text stri
 			t.Fatalf("%q: %v", text, err)
 		}
 		from, to := query.Range()
-		page, err := store.ScanLogs(context.Background(), storage.LogScan{
-			ProjectID: projectID,
-			From:      from,
-			To:        to,
-			Where:     query.Where,
-			Limit:     pageLimit,
-			Budget:    scanBudget,
-		})
-		if err != nil {
-			t.Fatalf("%q: %v", text, err)
+		if query.Table() {
+			found = countTable(t, store, projectID, query, from, to)
+		} else {
+			page, err := store.ScanLogs(context.Background(), storage.LogScan{
+				ProjectID: projectID,
+				From:      from,
+				To:        to,
+				Where:     query.Where,
+				Limit:     pageLimit,
+				Budget:    scanBudget,
+			})
+			if err != nil {
+				t.Fatalf("%q: %v", text, err)
+			}
+			found = len(page.Logs)
 		}
 		if took := time.Since(start); run == 0 || took < best {
 			best = took
 		}
-		found = len(page.Logs)
 	}
 	return best, found
+}
+
+// countTable runs a Query whose table is one count, as the Query route runs
+// a table without the bin cache, and returns the count.
+func countTable(t *testing.T, store *storage.LogStore, projectID uint32, query *logquery.Query, from, to time.Time) int {
+	t.Helper()
+	rows, err := store.ScanLogTable(context.Background(), storage.LogTableScan{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Where:     query.Where,
+		Select:    query.Select,
+		Query:     func(logs string) string { return query.TableSQL(logs, pageLimit) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || len(rows[0]) != 1 {
+		t.Fatalf("table has %d rows, want one count", len(rows))
+	}
+	n, err := strconv.Atoi(fmt.Sprint(rows[0][0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 // Each Log has a message of 200 to 580 bytes, and Attributes: some promoted,
