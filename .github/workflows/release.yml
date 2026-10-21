@@ -6,6 +6,9 @@ name: Release images
 #
 # Each architecture builds on its own native runner, as emulating arm64 makes
 # the cgo and asset builds far slower; a last job joins the two into one tag.
+# EventStore's Dockerfile builds the VRL runtime in a Rust stage, so the
+# runners need no Rust; the build cache keeps that stage's dependency layer
+# with every other layer (mode=max).
 # Run it by hand with a release's tag to rebuild that release's images.
 
 on:

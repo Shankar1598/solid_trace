@@ -231,6 +231,33 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/sql", body, sql: true, read_timeout: read_timeout(timeout_seconds))
     end
 
+    # Compiles a Log transform's program without running it: {"errors" =>
+    # [...], "warnings" => [...]}, each {"message", "code", "start", "end",
+    # "text"}, where start and end are byte offsets in the program and text
+    # is VRL's formatted diagnostic. A program over 64 KB is an error.
+    def check_log_transform(project_id:, program:)
+      post!("#{base_url}/api/#{project_id}/logs/transform/check", { program: program })
+    end
+
+    # Runs a draft program on the Project's recent arrivals, or on up to 200
+    # logs given as JSON objects, storing nothing: {"results" => [{"before",
+    # "after"} | {"before", "dropped" => true} | {"before", "error"}], "kept",
+    # "dropped", "failed"}, before and after shaped as query_logs' Logs. A
+    # draft that doesn't compile answers the check's "errors" instead.
+    def preview_log_transform(project_id:, program:, logs: nil)
+      body = { program: program }
+      body[:logs] = logs if logs
+      post!("#{base_url}/api/#{project_id}/logs/transform/preview", body)
+    end
+
+    # The running counts of the Project's current Log transform since
+    # EventStore started or the version changed: {"version_id", "processed",
+    # "dropped", "failed", "average_micros"}, with "compile_error" when the
+    # version doesn't compile.
+    def log_transform_stats(project_id:)
+      get!("#{base_url}/api/#{project_id}/logs/transform/stats", {})
+    end
+
     # Sends Logs to a Project's ingest as a shipper would, with one of its
     # keys: {"accepted", "dropped", "truncated"}. A 200 means they are stored;
     # Log processing makes them readable a moment later.

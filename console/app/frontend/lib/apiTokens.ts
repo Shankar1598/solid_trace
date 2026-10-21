@@ -56,7 +56,8 @@ export async function createApiToken(name: string): Promise<{ apiToken: ApiToken
   throw new Error(`Console answered HTTP ${response.status}. Try again.`)
 }
 
-function csrfToken(): string {
+/** The page's CSRF token, for the X-CSRF-Token header of a fetch to Console. */
+export function csrfToken(): string {
   if (typeof document === 'undefined') return ''
   return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? ''
 }

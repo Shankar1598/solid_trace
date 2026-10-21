@@ -27,6 +27,7 @@ import (
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/logprocessing"
+	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -57,6 +58,10 @@ type TestEnv struct {
 	MQReader     *storage.MessageQueueReader
 	MQPath       string
 	SQLitePath   string
+
+	// LogTransforms runs each Project's Log transform in Log processing.
+	// Restart keeps it; Reopen makes a new one.
+	LogTransforms *logtransform.Transforms
 
 	// Clock is what Log ingest and Log processing take as now. It starts at
 	// testNow and moves only when a test moves it.
@@ -121,7 +126,7 @@ func (env *TestEnv) Restart(t *testing.T) {
 		t.Fatalf("Prepare failed: %v", err)
 	}
 	env.LogProcessor.Stop()
-	env.LogProcessor = logprocessing.New(env.PebbleWriter, env.FlakyLogs, env.Clock)
+	env.LogProcessor = logprocessing.New(env.PebbleWriter, env.FlakyLogs, env.LogTransforms, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
@@ -398,7 +403,8 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	env.LogProcessor = logprocessing.New(pebbleWriter, env.FlakyLogs, env.Clock)
+	env.LogTransforms = logtransform.New(consoleSettings, env.Clock)
+	env.LogProcessor = logprocessing.New(pebbleWriter, env.FlakyLogs, env.LogTransforms, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
@@ -423,7 +429,7 @@ func (env *TestEnv) open(t *testing.T) {
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
-	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, healthHandler)
+	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms), healthHandler)
 
 	env.close = func() {
 		pebbleWriter.StopWrites()
@@ -436,6 +442,7 @@ func (env *TestEnv) open(t *testing.T) {
 		mqWriter.Close()
 		mqReader.Close()
 		projectAuth.Close()
+		env.LogTransforms.Close()
 		consoleSettings.Close()
 	}
 }

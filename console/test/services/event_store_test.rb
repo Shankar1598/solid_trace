@@ -134,6 +134,62 @@ class EventStoreTest < ActiveSupport::TestCase
     assert_equal "boom", result["chips"]["search"]
   end
 
+  VRL_ERROR = {
+    message: "call to undefined function", code: 105, start: 0, end: 12,
+    text: "error[E105]: call to undefined function\n  ┌─ :1:1\n",
+  }.freeze
+
+  test "check_log_transform answers a program's errors and warnings" do
+    stub_request(:post, "#{@base_url}/api/123/logs/transform/check")
+      .with(body: { program: "http_request(\"x\")" }.to_json)
+      .to_return(status: 200, body: { errors: [ VRL_ERROR ], warnings: [] }.to_json)
+
+    result = EventStore.check_log_transform(project_id: 123, program: "http_request(\"x\")")
+
+    assert_equal({ "errors" => [ VRL_ERROR.stringify_keys ], "warnings" => [] }, result)
+  end
+
+  test "preview_log_transform runs a draft on the recent arrivals, or on the Logs given" do
+    answer = { results: [ { before: { message: "a" }, dropped: true } ], kept: 0, dropped: 1, failed: 0 }
+    recent = stub_request(:post, "#{@base_url}/api/123/logs/transform/preview")
+      .with(body: { program: "abort" }.to_json)
+      .to_return(status: 200, body: answer.to_json)
+    given = stub_request(:post, "#{@base_url}/api/123/logs/transform/preview")
+      .with(body: { program: "abort", logs: [ { message: "a" } ] }.to_json)
+      .to_return(status: 200, body: answer.to_json)
+
+    assert_equal answer.deep_stringify_keys, EventStore.preview_log_transform(project_id: 123, program: "abort")
+    assert_equal answer.deep_stringify_keys,
+      EventStore.preview_log_transform(project_id: 123, program: "abort", logs: [ { message: "a" } ])
+    assert_requested recent
+    assert_requested given
+  end
+
+  test "preview_log_transform answers the check's errors for a draft that doesn't compile" do
+    stub_request(:post, "#{@base_url}/api/123/logs/transform/preview")
+      .to_return(status: 200, body: { errors: [ VRL_ERROR ], warnings: [] }.to_json)
+
+    result = EventStore.preview_log_transform(project_id: 123, program: "http_request(\"x\")")
+
+    assert_equal [ VRL_ERROR.stringify_keys ], result["errors"]
+  end
+
+  test "preview_log_transform raises Rejected for anything else EventStore refuses" do
+    stub_request(:post, "#{@base_url}/api/123/logs/transform/preview")
+      .to_return(status: 400, body: { error: "at most 200 logs" }.to_json)
+
+    error = assert_raises(EventStore::Rejected) { EventStore.preview_log_transform(project_id: 123, program: ".", logs: [ {} ] * 201) }
+
+    assert_equal "at most 200 logs", error.body["error"]
+  end
+
+  test "log_transform_stats answers the running counts of a Project's current version" do
+    stats = { version_id: 7, processed: 10, dropped: 2, failed: 1, average_micros: 9.5 }
+    stub_request(:get, "#{@base_url}/api/123/logs/transform/stats").to_return(status: 200, body: stats.to_json)
+
+    assert_equal stats.stringify_keys, EventStore.log_transform_stats(project_id: 123)
+  end
+
   test "get_log fetches one Log by id near its time" do
     stub_request(:get, "#{@base_url}/api/123/logs/0199a0b0-0000-7000-8000-000000000001")
       .with(query: { time: "2026-10-03T09:30:00.123Z" })
