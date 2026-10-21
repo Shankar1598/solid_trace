@@ -13,16 +13,20 @@ A Log read is a Query run (`EventStore.query_logs`), a histogram, a SQL query, o
 - **stdout, not a file of its own.** Vector already reads stdout and parses a JSON line into Attributes; a file would need rotation, ownership and a new Vector source, which ADR 0011 turned down.
 - **Every Log read**, each tagged with its `origin`, not only Dashboards and MCP.
 - **The full Query or SQL text**, and an MCP call's arguments. Only the Meta Organization's members can read them.
-- **The image's release and commit on every line** (asked for after the first build), to trace a Query back to the SQL it was built into.
+- **The image's release on every line**, but not its commit (2026-10-21): the commit doesn't rebuild a Query's SQL, which depends on the Logs stored then (each hour's sources, the Project's promoted columns, one step or two). EventStore logs the SQL it ran instead.
 
 ## The lines
 
-Both kinds: `time`, `level` (`info`, or `warn` when the call didn't succeed), `message`, `kind`, `duration_ms`, `outcome`, `error` (when not ok), `user_id`, `user_email`, `request_id` (the web request's id, which Console's own log lines carry, or the job's id). And `version` and `revision`: the release tag and git commit the Console image was built from, so a Query's line leads back to the code, EventStore's compiler included, that turned it into SQL. `release.yml` passes both as build arguments; `deploy/install --build` passes the checkout's commit (with `-dirty` when it has changes) through `deploy/.env`, and the version is `dev`. Development reads the checkout's commit.
+Both kinds: `time`, `level` (`info`, or `warn` when the call didn't succeed), `message`, `kind`, `duration_ms`, `outcome`, `error` (when not ok), `user_id`, `user_email`, `request_id` (the web request's id, which Console's own log lines carry, or the job's id). And `version`: the release tag the Console image was built from (`release.yml` passes it), or `dev`.
 
 - `kind: "mcp_tool"`: `tool`, `arguments` (flattened into dotted Attributes, ADR 0002). `outcome` is `ok`, `error` (the tool answered an error) or `exception`.
 - `kind: "log_read"`: `read` (`query`, `histogram`, `sql`, `match`), `origin` (`logs#query`, `dashboard_charts#data`, `mcp:query_logs`, `MonitorEvaluationJob`, …), `project_id`, `query`, `from`, `to`, `rows` (Logs, table rows or buckets answered). `outcome` is `ok`, `rejected`, `timed_out`, `unavailable` or `sql_off`.
 
 Timing is Console's: it includes the request to EventStore and parsing its answer.
+
+## The SQL EventStore ran
+
+Console sends each read's `request_id` as `X-Request-Id`. EventStore records every statement a run (Query, Match monitor, histogram, SQL) makes DuckDB run (`storage.WithReadStatements`), and when the run ends logs one line per statement: `message="Log read SQL"`, `kind=log_read_sql`, `read`, `project_id`, `request_id`, `statement` (1, 2, …) of `statements`, `duration_ms` (DuckDB's run of the statement) and `sql`, with `error` at `warn` when it failed. For SQL queries the statements are the `logs` view's definition, then the query. Vector makes the numbers numbers. A long statement is cut at 64 KB by Log ingest. `read` is `query`, `match` (a Match monitor's `after_batch` run), `histogram` or `sql`.
 
 ## Not now
 

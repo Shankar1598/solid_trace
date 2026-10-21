@@ -90,7 +90,12 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 		return viewSelect(projectID, cols)
 	}, nil)
 	conn := read.conn
-	if _, err := conn.ExecContext(ctx, fmt.Sprintf("CREATE TEMPORARY VIEW %s AS %s", LogsView, logs)); err != nil {
+	// Recorded, as the view is the SQL the range became.
+	view := fmt.Sprintf("CREATE TEMPORARY VIEW %s AS %s", LogsView, logs)
+	began := time.Now()
+	_, err = conn.ExecContext(ctx, view)
+	recordStatement(ctx, view, began, err)
+	if err != nil {
 		return SQLResult{}, err
 	}
 	// Only a query that reads the events view gets one, so a query that
@@ -103,7 +108,7 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 			return SQLResult{}, err
 		}
 	}
-	rows, err := conn.QueryContext(ctx, query)
+	rows, err := queryRead(ctx, conn, query)
 	if err != nil {
 		// The query may have failed for want of the events view.
 		return SQLResult{}, &SQLError{s.withEventsUnavailable(err)}

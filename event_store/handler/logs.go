@@ -93,7 +93,11 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
 	}
-	run, problem := startRun(c, req.TimeoutSeconds)
+	read := "query"
+	if req.AfterBatch != nil {
+		read = "match"
+	}
+	run, problem := startRun(c, read, req.TimeoutSeconds)
 	if problem != nil {
 		return c.Status(400).JSON(problem)
 	}
