@@ -389,6 +389,7 @@ func (env *TestEnv) open(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open Console settings: %v", err)
 	}
+	logStore.UseLogFileOrders(consoleSettings)
 
 	env.PebbleWriter = pebbleWriter
 	env.DuckDBWriter = duckdbWriter

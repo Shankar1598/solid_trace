@@ -86,6 +86,10 @@ type LogStore struct {
 
 	// bins is the bin cache, or nil when it is off (logs_bin_cache.go).
 	bins atomic.Pointer[binCache]
+
+	// orders gives each Project's Log file order, or is nil when every
+	// Project's files get the default (logs_file_order.go).
+	orders LogFileOrders
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of

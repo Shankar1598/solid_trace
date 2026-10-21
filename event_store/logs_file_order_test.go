@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -179,6 +180,172 @@ func TestAFilePromotedForTheDayPartwayOrOnlyInTheMapSortsTheSame(t *testing.T) {
 		assertListsUnchanged(t, env, projectID, want[projectID], "after the export")
 		if got := fileMessages(t, hourFile(t, env, projectID, at(12, 0))); !slices.Equal(got, wantSorted) {
 			t.Errorf("Project %d: expected the hour's file in the order\n %v\ngot\n %v", projectID, wantSorted, got)
+		}
+	}
+}
+
+// setLogFileOrder sets a Project's Log file order in Console, adding its row
+// if it has none: order is the column's JSON text, or "" for NULL.
+func setLogFileOrder(t *testing.T, sqlitePath string, projectID uint32, order string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", sqlitePath)
+	if err != nil {
+		t.Fatalf("Failed to open sqlite for seeding: %v", err)
+	}
+	defer db.Close()
+	value := sql.NullString{String: order, Valid: order != ""}
+	if _, err := db.Exec(`
+		INSERT INTO projects (id, name, organization_id, log_file_order, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET log_file_order = excluded.log_file_order`,
+		projectID, fmt.Sprintf("Project %d", projectID), value, time.Now(), time.Now()); err != nil {
+		t.Fatalf("Failed to set the Log file order of Project %d: %v", projectID, err)
+	}
+}
+
+// leveledLog is a Log of a level from a Service's log file. An empty level
+// leaves it out.
+func leveledLog(t *testing.T, message string, at time.Time, level, service, file string) string {
+	t.Helper()
+	attributes := map[string]any{"service": service, "file": file}
+	if level != "" {
+		attributes["level"] = level
+	}
+	return logJSON(t, message, at, attributes)
+}
+
+func TestAnHoursFileIsSortedByItsProjectsLogFileOrder(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	keys := map[uint32]string{456: "time_only_key", 789: "missing_key", 321: "null_key"}
+	for projectID, key := range keys {
+		seedProjectKey(t, env.SQLitePath, projectID, key)
+	}
+	setLogFileOrder(t, env.SQLitePath, 123, `["level"]`)
+	setLogFileOrder(t, env.SQLitePath, 456, `[]`)
+	setLogFileOrder(t, env.SQLitePath, 789, `["region"]`)
+	setLogFileOrder(t, env.SQLitePath, 321, "")
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	logs := []string{
+		leveledLog(t, "web a info", at(10, 1), "info", "web", "a.log"),
+		leveledLog(t, "api b error", at(10, 2), "error", "api", "b.log"),
+		leveledLog(t, "web c warn", at(10, 3), "warn", "web", "c.log"),
+		leveledLog(t, "api a info", at(10, 4), "info", "api", "a.log"),
+		leveledLog(t, "api a no level", at(10, 5), "", "api", "a.log"),
+		leveledLog(t, "web a error", at(10, 6), "error", "web", "a.log"),
+	}
+	inTime := []string{"web a info", "api b error", "web c warn", "api a info", "api a no level", "web a error"}
+	env.Clock.Set(at(10, 30))
+	postAndProcess(t, env, logs...)
+	for projectID, key := range keys {
+		postAndProcessTo(t, env, projectID, key, logs...)
+	}
+	want := map[uint32][]listedLog{}
+	for _, projectID := range []uint32{123, 456, 789, 321} {
+		want[projectID] = latestLogs(t, env, projectID, 100)
+	}
+
+	captured := captureLogs(t)
+	env.Clock.Set(at(12, 0))
+	env.ExportLogs(t)
+	for projectID, wantOrder := range map[uint32][]string{
+		123: {"api b error", "web a error", "web a info", "api a info", "web c warn", "api a no level"},
+		456: inTime,
+		789: inTime,
+		321: {"api a info", "api a no level", "api b error", "web a info", "web a error", "web c warn"},
+	} {
+		assertListsUnchanged(t, env, projectID, want[projectID], "after the export")
+		if got := fileMessages(t, hourFile(t, env, projectID, at(10, 0))); !slices.Equal(got, wantOrder) {
+			t.Errorf("Project %d: expected the hour's file in the order\n %v\ngot\n %v", projectID, wantOrder, got)
+		}
+	}
+	for _, order := range []string{`order="level, time"`, `order=time`, `order="region, time"`, `order="service, file, time"`} {
+		if !strings.Contains(captured.String(), order) {
+			t.Errorf("Expected an export's log line to name %s, got\n%s", order, captured.String())
+		}
+	}
+}
+
+func TestAChangedLogFileOrderAppliesFromTheNextExport(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	hourLogs := func(hour int, prefix string) []string {
+		return []string{
+			leveledLog(t, prefix+"web a info", at(hour, 1), "info", "web", "a.log"),
+			leveledLog(t, prefix+"api b error", at(hour, 2), "error", "api", "b.log"),
+			leveledLog(t, prefix+"web a error", at(hour, 3), "error", "web", "a.log"),
+		}
+	}
+	byDefault := func(prefix string) []string {
+		return []string{prefix + "api b error", prefix + "web a info", prefix + "web a error"}
+	}
+	byLevel := func(prefix string) []string {
+		return []string{prefix + "api b error", prefix + "web a error", prefix + "web a info"}
+	}
+
+	env.Clock.Set(at(10, 30))
+	postAndProcess(t, env, hourLogs(10, "")...)
+	env.Clock.Set(at(12, 0))
+	env.ExportLogs(t)
+	if got := fileMessages(t, hourFile(t, env, 123, at(10, 0))); !slices.Equal(got, byDefault("")) {
+		t.Errorf("Expected the first hour's file in the default order\n %v\ngot\n %v", byDefault(""), got)
+	}
+
+	// The order changes; the next export writes a new hour and a late file
+	// of the first.
+	setLogFileOrder(t, env.SQLitePath, 123, `["level"]`)
+	env.Clock.Set(at(12, 30))
+	postAndProcess(t, env, hourLogs(12, "")...)
+	postAndProcess(t, env, hourLogs(10, "late ")...)
+	want := latestLogs(t, env, 123, 100)
+	env.Clock.Set(at(14, 0))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the export")
+
+	if got := fileMessages(t, hourFile(t, env, 123, at(12, 0))); !slices.Equal(got, byLevel("")) {
+		t.Errorf("Expected the next hour's file in the new order\n %v\ngot\n %v", byLevel(""), got)
+	}
+	late := lateFile(t, env, 123, at(10, 0))
+	if got := fileMessages(t, late); !slices.Equal(got, byLevel("late ")) {
+		t.Errorf("Expected the first hour's late file in the new order\n %v\ngot\n %v", byLevel("late "), got)
+	}
+	first := filepath.Join(filepath.Dir(late), "data.parquet")
+	if got := fileMessages(t, first); !slices.Equal(got, byDefault("")) {
+		t.Errorf("Expected the first hour's file to keep its order\n %v\ngot\n %v", byDefault(""), got)
+	}
+}
+
+func TestALogFileOrderEventStoreCantReadExportsInTheDefaultOrder(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProjectKey(t, env.SQLitePath, 456, "numbers_key")
+	setLogFileOrder(t, env.SQLitePath, 123, `"level"`)
+	setLogFileOrder(t, env.SQLitePath, 456, `["level", 3]`)
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	logs := []string{
+		leveledLog(t, "web a info", at(10, 1), "info", "web", "a.log"),
+		leveledLog(t, "api b error", at(10, 2), "error", "api", "b.log"),
+		leveledLog(t, "web a error", at(10, 3), "error", "web", "a.log"),
+	}
+	env.Clock.Set(at(10, 30))
+	postAndProcess(t, env, logs...)
+	postAndProcessTo(t, env, 456, "numbers_key", logs...)
+	want := map[uint32][]listedLog{123: latestLogs(t, env, 123, 100), 456: latestLogs(t, env, 456, 100)}
+
+	captured := captureLogs(t)
+	env.Clock.Set(at(12, 0))
+	env.ExportLogs(t)
+	for _, projectID := range []uint32{123, 456} {
+		assertListsUnchanged(t, env, projectID, want[projectID], "after the export")
+		if got, want := fileMessages(t, hourFile(t, env, projectID, at(10, 0))), []string{"api b error", "web a info", "web a error"}; !slices.Equal(got, want) {
+			t.Errorf("Project %d: expected the hour's file in the default order\n %v\ngot\n %v", projectID, want, got)
+		}
+		warning := fmt.Sprintf(`level=warn message="Failed to read a Project's Log file order; exporting its Logs in the default order" project_id=%d`, projectID)
+		if !strings.Contains(captured.String(), warning) {
+			t.Errorf("Expected a warning for Project %d's Log file order, got\n%s", projectID, captured.String())
 		}
 	}
 }

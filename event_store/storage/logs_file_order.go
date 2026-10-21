@@ -1,6 +1,10 @@
 package storage
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/solidtrace/event_store/pkg/logger"
+)
 
 // LogFileOrder is a Project's Log file order: the Fields the hourly export
 // sorts each Log file by, before time and id, so that the Logs of one source
@@ -11,6 +15,33 @@ type LogFileOrder []string
 
 // DefaultLogFileOrder is the Log file order of a Project that sets none.
 var DefaultLogFileOrder = LogFileOrder{"service", "file"}
+
+// LogFileOrders gives each Project's Log file order. Console's settings are
+// the production one (ConsoleSettings.LogFileOrder).
+type LogFileOrders interface {
+	LogFileOrder(projectID uint32) (LogFileOrder, error)
+}
+
+// UseLogFileOrders has the hourly export sort each Project's files by its
+// order from orders. Without it, every Project's files get the default.
+func (s *LogStore) UseLogFileOrders(orders LogFileOrders) {
+	s.orders = orders
+}
+
+// logFileOrder is a Project's Log file order, or the default, with a warning,
+// when it can't be read: the export never fails over it.
+func (s *LogStore) logFileOrder(projectID uint32) LogFileOrder {
+	if s.orders == nil {
+		return DefaultLogFileOrder
+	}
+	order, err := s.orders.LogFileOrder(projectID)
+	if err != nil {
+		logger.L.Warn("Failed to read a Project's Log file order; exporting its Logs in the default order",
+			"project_id", projectID, "default", DefaultLogFileOrder.String(), "error", err)
+		return DefaultLogFileOrder
+	}
+	return order
+}
 
 // sortedBuiltIns are the built-in fields a Log file order can name.
 var sortedBuiltIns = map[string]bool{"service": true, "environment": true, "level": true}

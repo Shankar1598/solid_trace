@@ -4,7 +4,7 @@ EventStore can keep its Log files and its Event archive in one S3 or GCS bucket,
 
 ## What goes in the bucket
 
-- **Log files.** Each hour of a Project's Logs is written to a Parquet file by the hourly export, sorted by the Project's Log file order (`service`, then the `file` Attribute), then time, so that a Query filtered on those Fields reads only the row groups that hold their Logs. EventStore uploads each file as soon as the export publishes it, to `<prefix>logs/project=<id>/day=<date>/hour=<hour>/<file>.parquet`. The local copy stays for `local_cache_hours` after the file's hour ends. After that, DuckDB reads the file from the bucket, in place.
+- **Log files.** Each hour of a Project's Logs is written to a Parquet file by the hourly export, sorted by the Project's Log file order (by default `service`, then the `file` Attribute), then time, so that a Query filtered on those Fields reads only the row groups that hold their Logs. EventStore uploads each file as soon as the export publishes it, to `<prefix>logs/project=<id>/day=<date>/hour=<hour>/<file>.parquet`. The local copy stays for `local_cache_hours` after the file's hour ends. After that, DuckDB reads the file from the bucket, in place.
 - **The Event archive.** Each archive run writes a Parquet file for each day it archives. EventStore uploads each file after the run, to `<prefix>events/event_date=<date>/data-<run>.parquet`, and then deletes the local copy. Archived Events are always read from the bucket.
 
 Everything else stays on local disk: the Logs not yet exported, the Events not yet archived, Pebble and the databases.
