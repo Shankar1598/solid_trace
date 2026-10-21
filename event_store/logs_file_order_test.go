@@ -2,7 +2,9 @@ package main_test
 
 import (
 	"database/sql"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -68,9 +70,13 @@ func TestAnHoursFileIsSortedByServiceThenFileThenTime(t *testing.T) {
 	)
 	want := latestLogs(t, env, 123, 100)
 
+	logs := captureLogs(t)
 	env.Clock.Set(at(12, 0))
 	env.ExportLogs(t)
 	assertListsUnchanged(t, env, 123, want, "after the export")
+	if line := exportLine(logs.String()); !strings.Contains(line, `order="service, file, time"`) {
+		t.Errorf("Expected the export's log line to name the order, got %q", line)
+	}
 
 	// Logs without a service or a file come after those with one.
 	got := fileMessages(t, hourFile(t, env, 123, at(10, 0)))
@@ -81,4 +87,46 @@ func TestAnHoursFileIsSortedByServiceThenFileThenTime(t *testing.T) {
 	}; !slices.Equal(got, want) {
 		t.Errorf("Expected the hour's file in the order\n %v\ngot\n %v", want, got)
 	}
+
+	// Late Logs of the hour get a late file, sorted the same way.
+	env.Clock.Set(at(13, 30))
+	postAndProcess(t, env,
+		sourceLog(t, "late web b", at(10, 40), "web", "b.log"),
+		sourceLog(t, "late no source", at(10, 41), "", ""),
+		sourceLog(t, "late api b", at(10, 42), "api", "b.log"),
+		sourceLog(t, "late api a", at(10, 43), "api", "a.log"),
+	)
+	want = latestLogs(t, env, 123, 100)
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the late file")
+	if got, want := fileMessages(t, lateFile(t, env, 123, at(10, 0))), []string{"late api a", "late api b", "late web b", "late no source"}; !slices.Equal(got, want) {
+		t.Errorf("Expected the late file in the order\n %v\ngot\n %v", want, got)
+	}
+}
+
+// exportLine is the last "Exported a Project's Logs" line of logs.
+func exportLine(logs string) string {
+	var line string
+	for _, l := range strings.Split(logs, "\n") {
+		if strings.Contains(l, "Exported a Project's Logs") {
+			line = l
+		}
+	}
+	return line
+}
+
+// lateFile is the path of the only late file of a Project's hour.
+func lateFile(t *testing.T, env *TestEnv, projectID uint32, hour time.Time) string {
+	t.Helper()
+	files, err := env.LogStore.HourFiles(projectID, hour)
+	if err != nil || len(files) != 2 {
+		t.Fatalf("Expected a file and a late file of Project %d at %v, got %v (%v)", projectID, hour, files, err)
+	}
+	for _, file := range files {
+		if filepath.Base(file) != "data.parquet" {
+			return file
+		}
+	}
+	t.Fatalf("Expected a late file of Project %d at %v, got %v", projectID, hour, files)
+	return ""
 }
