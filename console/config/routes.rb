@@ -94,6 +94,7 @@ Rails.application.routes.draw do
 
       resource :log_transform, only: [ :show, :update ] do
         post :check
+        post :preview
         post :restore
       end
     end

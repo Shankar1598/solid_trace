@@ -6,15 +6,17 @@ import { expectEditorText, settled, streamRows } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
 // A Project's Log transform page: an admin opens it from the Project's
-// settings, sees a mistake underlined as they type, saves the fixed program,
-// finds its Attribute on a test Log, and restores the earlier version; a
-// member reads it only. Each run makes its own Project, with a key for the
+// settings, sees a mistake underlined as they type, previews the fixed
+// program on Logs they paste, saves it, finds its Attribute on a test Log,
+// and restores the earlier version; a member previews a draft of their own,
+// with no Save or Restore. Each run makes its own Project, with a key for the
 // test Log and one saved version to restore, since a test Log leaves it
 // empty no more.
 
 const slug = `flow-log-transform-${Date.now()}`
 const SEEDED = '.flow_check = "seeded"'
 const FIXED = '.flow_check = "transformed"'
+const MEMBER_DRAFT = '.flow_check = "member draft"'
 
 const rails = (code: string) =>
   execFileSync('mise', ['exec', '--', 'bin/rails', 'runner', code], {
@@ -32,6 +34,8 @@ test.afterAll(() => {
 })
 
 const program = (page: Page) => page.getByLabel('Program', { exact: true })
+const previewButton = (page: Page) => page.getByRole('button', { name: 'Preview', exact: true })
+const previewResults = (page: Page) => page.getByRole('listitem', { name: 'Preview result' })
 const versionRows = (page: Page) => page.getByRole('row').filter({ has: page.getByRole('button', { name: 'View' }) })
 
 /** Opens the Project's settings, then its Log transform page from there. */
@@ -42,6 +46,13 @@ async function openFromSettings(page: Page) {
   await expect(page.getByRole('heading', { name: 'Log transform' })).toBeVisible()
 }
 
+/** Switches the preview to run on pasted Logs, and pastes `text`. */
+async function pasteLogs(page: Page, text: string) {
+  const runOnPasted = page.getByRole('group', { name: 'Run on' }).getByRole('button', { name: 'Pasted Logs' })
+  if (await runOnPasted.getAttribute('aria-pressed') !== 'true') await runOnPasted.click()
+  await page.getByLabel('Logs to preview on').fill(text)
+}
+
 /** Replaces the program's text, as a paste would. */
 async function replaceProgram(page: Page, text: string) {
   await program(page).click()
@@ -50,7 +61,7 @@ async function replaceProgram(page: Page, text: string) {
   await expectEditorText(program(page), text)
 }
 
-test('an admin fixes a mistake, saves, finds the Attribute on a test Log, and restores the earlier version', async ({ page }) => {
+test('an admin fixes a mistake, previews and saves the fix, finds the Attribute on a test Log, and restores the earlier version', async ({ page }) => {
   const errors = watchErrors(page)
   await openFromSettings(page)
   await expectEditorText(program(page), SEEDED)
@@ -62,9 +73,27 @@ test('an admin fixes a mistake, saves, finds the Attribute on a test Log, and re
   await expect(page.getByText('1 error', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
 
+  // A paste that isn't JSON is refused on the page; a draft that doesn't compile previews as VRL's errors.
+  await pasteLogs(page, '[{"message": "flow preview one"},]')
+  await previewButton(page).click()
+  await expect(page.getByText(/^The pasted Logs aren't JSON: /)).toBeVisible()
+  await pasteLogs(page, '[{"message": "flow preview one", "service": "web"}, {"message": "flow preview two"}]')
+  await previewButton(page).click()
+  await expect(page.getByText("The program doesn't compile, so it can't be previewed.")).toBeVisible()
+
   await replaceProgram(page, FIXED)
   await expect(page.getByText('It compiles.')).toBeVisible()
   await expect(page.locator('.cm-lintRange-error')).toHaveCount(0)
+
+  // The fixed program previewed on the pasted Logs: each before and after, side by side, with the counts.
+  await previewButton(page).click()
+  await expect(page.getByText('2 Logs: 2 kept, 0 dropped, 0 failed.')).toBeVisible()
+  await expect(previewResults(page)).toHaveCount(2)
+  const one = previewResults(page).filter({ hasText: 'flow preview one' })
+  await expect(one.getByText('Kept', { exact: true })).toBeVisible()
+  await expect(one.getByRole('region', { name: 'Before' })).toContainText('"service": "web"')
+  await expect(one.getByRole('region', { name: 'Before' })).not.toContainText('flow_check')
+  await expect(one.getByRole('region', { name: 'After' })).toContainText('"flow_check": "transformed"')
 
   // Save asks first, saying stored Logs don't change.
   await page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -104,7 +133,7 @@ test('an admin fixes a mistake, saves, finds the Attribute on a test Log, and re
 test.describe('as a member', () => {
   test.use({ storageState: { cookies: [], origins: [] } })
 
-  test('a member reads the Log transform, with no Save or Restore', async ({ page }) => {
+  test('a member edits and previews a draft of the Log transform, with no Save or Restore', async ({ page }) => {
     const errors = watchErrors(page)
     await page.goto('/login')
     await page.fill('input[type=email]', MEMBER.email)
@@ -114,11 +143,20 @@ test.describe('as a member', () => {
 
     await openFromSettings(page)
     await expectEditorText(program(page), /^\.flow_check = /)
-    await expect(program(page)).not.toBeEditable()
     await expect(page.getByText('Only Organization admins can save or restore the Log transform.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: /^Restore/ })).toHaveCount(0)
     await expect(versionRows(page).first()).toBeVisible()
+
+    // A member changes the program, checked as they type, and previews their draft on a pasted Log.
+    await replaceProgram(page, MEMBER_DRAFT)
+    await expect(page.getByText('It compiles.')).toBeVisible()
+    await pasteLogs(page, '{"message": "flow member preview"}')
+    await previewButton(page).click()
+    await expect(page.getByText('1 Log: 1 kept, 0 dropped, 0 failed.')).toBeVisible()
+    await expect(previewResults(page).getByRole('region', { name: 'After' })).toContainText('"flow_check": "member draft"')
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /^Restore/ })).toHaveCount(0)
     expect(errors).toEqual([])
   })
 })

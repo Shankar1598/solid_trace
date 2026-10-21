@@ -4,7 +4,8 @@ require "test_helper"
 require "webmock/minitest"
 
 # A Project's Log transform page: any member reads the program, its versions
-# and running counts, and checks a draft; only admins save and restore.
+# and running counts, and checks and previews a draft; only admins save and
+# restore.
 # EventStore is stubbed.
 class LogTransformsControllerTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
@@ -30,7 +31,7 @@ class LogTransformsControllerTest < ActionDispatch::IntegrationTest
     sign_in_as(@member)
   end
 
-  test "the page gives a member the program, its versions and running counts, read-only" do
+  test "the page gives a member the program, its versions and running counts, without saving" do
     old = travel_to(Time.utc(2026, 10, 20, 9)) { @project.log_transform_versions.create!(program: ".a = 1", user: @admin) }
     current = travel_to(Time.utc(2026, 10, 21, 9)) { @project.log_transform_versions.create!(program: ".a = 2", user: @admin) }
     @stats = { "version_id" => current.id, "processed" => 120, "dropped" => 3, "failed" => 2, "average_micros" => 14 }
@@ -165,7 +166,56 @@ class LogTransformsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "EventStore is unavailable. Try again shortly.", response.parsed_body["error"]
   end
 
+  test "any member previews a draft on the recent arrivals, getting each Log before and after" do
+    log = { "id" => "0192", "time" => "2026-10-21T10:00:00Z", "message" => "GET /health", "attributes" => {} }
+    answer = { "results" => [ { "before" => log, "dropped" => true } ], "kept" => 0, "dropped" => 1, "failed" => 0 }
+    preview = stub_request(:post, preview_url).with(body: { program: "abort" }).to_return(status: 200, body: answer.to_json)
+
+    post preview_project_log_transform_url(@project, org_slug: @organization.slug), params: { program: "abort" }, as: :json
+
+    assert_response :success
+    assert_equal answer, response.parsed_body
+    assert_requested preview
+  end
+
+  test "a preview runs on the Logs pasted, as they were pasted" do
+    logs = [ { "message" => "one", "tags" => [ "a", nil ], "n" => 1.5 }, { "message" => "two", "nested" => { "ok" => false } } ]
+    answer = { "results" => [], "kept" => 2, "dropped" => 0, "failed" => 0 }
+    preview = stub_request(:post, preview_url).with(body: { program: ".a = 1", logs: logs }).to_return(status: 200, body: answer.to_json)
+
+    post preview_project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".a = 1", logs: logs }, as: :json
+
+    assert_response :success
+    assert_requested preview
+  end
+
+  test "a preview of a draft that doesn't compile answers the check's errors" do
+    answer = { "errors" => [ ERROR ], "warnings" => [] }
+    stub_request(:post, preview_url).to_return(status: 200, body: answer.to_json)
+
+    post preview_project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".status =" }, as: :json
+
+    assert_response :success
+    assert_equal answer, response.parsed_body
+  end
+
+  test "a preview EventStore refuses answers 400 with why, and 502 when it is unavailable" do
+    stub_request(:post, preview_url).to_return(status: 400, body: { error: "a preview takes at most 200 Logs" }.to_json)
+    post preview_project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".a = 1", logs: [ {} ] }, as: :json
+    assert_response :bad_request
+    assert_equal "a preview takes at most 200 Logs", response.parsed_body["error"]
+
+    stub_request(:post, preview_url).to_raise(Errno::ECONNREFUSED)
+    post preview_project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".a = 1" }, as: :json
+    assert_response :bad_gateway
+    assert_equal "EventStore is unavailable. Try again shortly.", response.parsed_body["error"]
+  end
+
   private
+
+  def preview_url
+    "#{EventStore.base_url}/api/#{@project.id}/logs/transform/preview"
+  end
 
   def log_transform_page
     get project_log_transform_url(@project, org_slug: @organization.slug),
