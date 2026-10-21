@@ -4,7 +4,7 @@
 
 **Blocked by:** 04, 05
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] The Project's settings page links to the Log transform page.
 - [ ] A CodeMirror editor underlines errors and warnings from the check route at their byte spans, debounced as the Query editor validates.
