@@ -49,10 +49,12 @@ git clone https://github.com/solidtrace/solid_trace.git
 cd solid_trace
 
 cd console && bundle install && bun install && cd ..
-cd event_store && go mod download && cd ..
+cd event_store && go mod download && vrl/build && cd ..
 
 cd console && bin/rails db:prepare
 ```
+
+EventStore links the Rust `vrl` crate, built as a static library, for the Log transform. Rust comes through `mise`. `event_store/vrl/build` builds the library; run it before `go build` or `go test` in `event_store/`, and again after changing `event_store/vrl/rust/`. The first build takes about four minutes.
 
 ## Run
 
