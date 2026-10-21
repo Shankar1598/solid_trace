@@ -253,20 +253,20 @@ type outcome struct {
 func runProgram(program *vrl.Program, logs []models.Log, receipt func(i int) normalise.Receipt) []outcome {
 	out := make([]outcome, len(logs))
 	for start := 0; start < len(logs); start += logsPerRun {
-		chunk := logs[start:min(start+logsPerRun, len(logs))]
-		views := make([]map[string]any, len(chunk))
-		for i, log := range chunk {
+		part := logs[start:min(start+logsPerRun, len(logs))]
+		views := make([]map[string]any, len(part))
+		for i, log := range part {
 			views[i] = view(log)
 		}
 		results, err := program.Run(views)
 		if err != nil {
 			// Unreachable unless the bridge itself breaks. Nothing is lost.
-			results = make([]vrl.Outcome, len(chunk))
+			results = make([]vrl.Outcome, len(part))
 			for i := range results {
 				results[i].Error = err.Error()
 			}
 		}
-		for i, log := range chunk {
+		for i, log := range part {
 			out[start+i] = stored(log, results[i], receipt(start+i))
 		}
 	}
