@@ -1,7 +1,9 @@
 // Package logtransform runs each Project's Log transform, the VRL program an
 // admin saves in Console, on the Project's Logs in Log processing: after
-// their Log batches are read from Pebble and before they are stored. See
-// docs/adr/0012-log-transform-runs-vrl-through-cgo.md.
+// their Log batches are read from Pebble and before they are stored. For
+// Console, it checks a program, previews a draft on the Project's recent
+// arrivals or on given Logs, and keeps the current version's running
+// counts. See docs/adr/0012-log-transform-runs-vrl-through-cgo.md.
 package logtransform
 
 import (
