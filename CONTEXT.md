@@ -65,8 +65,12 @@ The normalised Logs of one ingest request, stored in Pebble as one entry until L
 _Avoid_: chunk, payload
 
 **Log processing**:
-The EventStore module that moves stored Log batches into each Project's hot table in DuckDB, reading each Project's Log batches from its Processing cursor. Separate from Event processing; Logs are never grouped into Issues.
+The EventStore module that moves stored Log batches into each Project's hot table in DuckDB, reading each Project's Log batches from its Processing cursor and running the Project's Log transform on their Logs. Separate from Event processing; Logs are never grouped into Issues.
 _Avoid_: pipeline, indexer
+
+**Log transform**:
+A Project's one VRL program, which Log processing runs on each of the Project's Logs before storing it. It can set, change and remove Fields and drop whole Logs, and what it returns is normalised as Log ingest normalises a sender's Logs. A Log it fails on is stored as it arrived, with the error in `solidtrace.transform_error`. A change applies to the Logs processed after it; stored Logs keep what they had. Every saved version is kept, and restoring one saves it again. Any member can read it; only an admin can change it. Events never go through it.
+_Avoid_: VRL layer, pipeline, remap, derived columns, parser
 
 **Retention**:
 How many whole days a Project's Logs are kept before they are deleted: an instance default that a Project can override.
@@ -170,6 +174,7 @@ _Avoid_: API key, project key, access token
 - **Event processing** derives one **Issue** for each stored **Event**, reading each **Project**'s Events from its **Processing cursor**
 - An **EventStore** accepts **Logs** through **Log ingest**, one **Log batch** per request
 - **Log processing** moves each **Project**'s **Log batches** into DuckDB, reading them from its **Processing cursor**
+- A **Project** has one **Log transform**, which **Log processing** runs on each of its **Logs** before storing it
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
 - A **Project**'s **Retention** decides when its **Logs** are deleted
@@ -191,3 +196,4 @@ _Avoid_: API key, project key, access token
 ## Flagged ambiguities
 
 - "event store" was being used for both the Go tier and the Rails HTTP client; resolved: **EventStore** means the Go application, while the Rails client is just an adapter that talks to it.
+- "derived columns" from `message` were asked for; resolved: they are ordinary **Attributes** that a **Log transform** sets. And "editable in the dashboard" meant a Console page in the **Project**'s settings, not a **Dashboard**.
