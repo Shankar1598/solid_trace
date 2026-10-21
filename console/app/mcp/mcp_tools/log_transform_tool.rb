@@ -16,7 +16,8 @@ module McpTools
       (functions: https://vector.dev/docs/reference/vrl/functions/), which Log processing runs on each of the Project's Logs before storing it.
       . is one Log as it arrived: the built-in fields at the top, .time a timestamp and .message, .level, .service,
       .environment, .trace_id and .span_id strings, each absent when the Log has none;
-      and the Attributes nested by their dots, so http.method is .http.method, or ."a.b" when a shorter name a holds a value.
+      and the Attributes nested by their dots, so http.method is .http.method, or ."a.b" when a shorter name a holds a value
+      or is a built-in field's, so service.version is always ."service.version".
       Numbers, strings and bools keep their types, and an array is an array.
       A program sets, changes and deletes Fields, such as .status = parsed.status then del(.message).
       What . holds at the end is stored, flattened to dotted Attributes and checked as a sender's Log is:

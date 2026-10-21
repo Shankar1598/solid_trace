@@ -16,8 +16,9 @@ import (
 // always a string; .time is a timestamp. The Attributes are nested by their
 // dots, as Vector shows them, each with its type: a JSON Attribute is an
 // array or object. An Attribute that can't nest, because a shorter name
-// already holds a value, stays at the top level under its dotted name. The
-// Log's id isn't shown, nor an Attribute named as a built-in field.
+// already holds a value or it extends a built-in field's name, stays at the
+// top level under its dotted name. The Log's id isn't shown, nor an
+// Attribute named as a built-in field.
 func view(log models.Log) map[string]any {
 	v := map[string]any{"time": log.Time, "message": log.Message}
 	for name, value := range map[string]string{
@@ -105,10 +106,12 @@ func copyValue[V any](from map[string]V, to *map[string]V, name string) {
 }
 
 // place puts an Attribute's value in v, nested by the dots in its name, or at
-// the top level under its whole name when it can't nest.
+// the top level under its whole name when it can't nest. A built-in field's
+// name always holds its field, so an Attribute extending it, such as
+// service.version, never nests, even when the Log has no such field.
 func place(v map[string]any, objects map[string]bool, name string, value any) {
 	keys := strings.Split(name, ".")
-	if slices.Contains(keys, "") {
+	if slices.Contains(keys, "") || normalise.IsField(keys[0]) {
 		v[name] = value
 		return
 	}
