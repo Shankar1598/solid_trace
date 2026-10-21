@@ -45,7 +45,7 @@ module McpTools
     # The tool error for a program that doesn't compile: VRL's formatted
     # errors, one after another.
     def compile_errors!(lead, errors)
-      raise ToolError, [ lead, *errors.map { |error| error["text"].presence || error["message"].to_s } ].join("\n")
+      raise ToolError, [ lead, *errors.pluck("text") ].join("\n")
     end
 
     def log_transform_link
