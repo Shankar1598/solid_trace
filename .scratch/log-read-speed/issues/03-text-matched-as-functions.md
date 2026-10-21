@@ -12,7 +12,7 @@ Negations keep passing Logs that lack the Field. `matches regex` is unchanged. T
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Each text operator and its negation, and `search`, find the same Logs in the hot table, late Logs and Log files (root tests through the Query route) for:
   - mixed case;
