@@ -83,7 +83,7 @@ func (t *Transforms) Apply(projectID uint32, batches []storage.LogBatch) ([]stor
 	if err != nil {
 		return nil, fmt.Errorf("read retention: %w", err)
 	}
-	return run(c.program, batches, retentionDays), nil
+	return c.run(batches, retentionDays), nil
 }
 
 // current returns a Project's compiled Log transform for version, compiling
@@ -185,9 +185,9 @@ type batchedLog struct {
 	log   models.Log
 }
 
-// run runs program on the batches' Logs, a few hundred to a call, and
+// run runs the program on the batches' Logs, a few hundred to a call, and
 // returns the batches as they are to be stored.
-func run(program *vrl.Program, batches []storage.LogBatch, retentionDays int) []storage.LogBatch {
+func (c *current) run(batches []storage.LogBatch, retentionDays int) []storage.LogBatch {
 	var logs []batchedLog
 	out := make([]storage.LogBatch, len(batches))
 	receipts := make([]normalise.Receipt, len(batches))
@@ -205,7 +205,7 @@ func run(program *vrl.Program, batches []storage.LogBatch, retentionDays int) []
 		for i, l := range chunk {
 			views[i] = view(l.log)
 		}
-		outcomes, err := program.Run(views)
+		outcomes, err := c.program.Run(views)
 		if err != nil {
 			// Unreachable unless the bridge itself breaks. Nothing is lost.
 			outcomes = make([]vrl.Outcome, len(chunk))
