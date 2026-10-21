@@ -201,6 +201,32 @@ describe('filling empty bins', () => {
     expect(model.points[1]).toEqual({ x: at('2026-10-09T10:00:00Z'), s0: 0, s1: 0 })
   })
 
+  it('joins a count that comes once a minute in 30 s bins, but drops to zero where a minute is missed', () => {
+    const half: TableColumn = { ...TIME, bin_seconds: 30 }
+    const minutes = ['10:00:00', '10:01:00', '10:02:00', '10:03:00', '10:04:00', '10:06:00', '10:07:00']
+    const model = drawable(chartOf(table([half, COUNT], minutes.map(m => [`2026-10-09T${m}Z`, 1]), {
+      fill_gaps: true, from: '2026-10-09T10:00:00Z', to: '2026-10-09T10:08:00Z',
+    })))
+    const value = (time: string) => model.points.find(p => p.x === at(`2026-10-09T${time}Z`))!.s0
+
+    expect(value('10:00:30')).toBeNull()
+    expect(value('10:03:30')).toBeNull()
+    // 10:05 is missed: the two minutes from 10:04 to 10:06 are twice the usual spacing.
+    expect([value('10:04:30'), value('10:05:00'), value('10:05:30')]).toEqual([0, 0, 0])
+    // The last bin's row may be yet to come.
+    expect(value('10:07:30')).toBeNull()
+  })
+
+  it('keeps the zeros of a count with no steady rhythm', () => {
+    const half: TableColumn = { ...TIME, bin_seconds: 30 }
+    const times = ['10:00:00', '10:01:00', '10:03:30', '10:04:00', '10:06:30', '10:07:30']
+    const model = drawable(chartOf(table([half, COUNT], times.map(t => [`2026-10-09T${t}Z`, 2]), {
+      fill_gaps: true, from: '2026-10-09T10:00:00Z', to: '2026-10-09T10:08:00Z',
+    })))
+
+    expect(model.points.filter(p => p.s0 === null)).toEqual([])
+  })
+
   it('fills a series missing from a bin the same way', () => {
     const model = drawable(chartOf(table([TIME, SERVICE, COUNT], [
       ['2026-10-09T10:00:00Z', 'api', 12],
