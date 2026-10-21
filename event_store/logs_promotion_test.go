@@ -24,8 +24,8 @@ func attributesByMessage(logs []listedLog) map[string]map[string]any {
 func assertProjectQueries(t *testing.T, env *TestEnv, projectID uint32, cases map[string][]string, when string) {
 	t.Helper()
 	for query, want := range cases {
-		page := runQuery(t, env, projectID, queryRequest{Query: query, From: allTime.from, To: allTime.to, Limit: 1000})
-		if got := messages(page.Logs); !slices.Equal(got, want) {
+		logs := runQueryPages(t, env, projectID, queryRequest{Query: query, From: allTime.from, To: allTime.to, Limit: 1000})
+		if got := messages(logs); !slices.Equal(got, want) {
 			t.Errorf("%s: Project %d: %s\n want %v\n got  %v", when, projectID, query, want, got)
 		}
 	}
