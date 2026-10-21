@@ -50,7 +50,12 @@ services:
   # the host network, so Console isn't on port 80.
   console:
     <<: *console
-    build: ../console
+    build:
+      context: ../console
+      # deploy/install --build writes this checkout's commit to deploy/.env,
+      # for the call timings' revision.
+      args:
+        SOLIDTRACE_REVISION: ${SOLIDTRACE_REVISION:-unknown}
     depends_on:
       db_prepare:
         condition: service_completed_successfully

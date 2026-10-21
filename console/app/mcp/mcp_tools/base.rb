@@ -51,9 +51,13 @@ module McpTools
     }.freeze
 
     class << self
-      # The server calls a tool's class with its arguments.
+      # The server calls a tool's class with its arguments, timed
+      # (CallTimings).
       def call(server_context:, **arguments)
-        new(user: server_context[:user], console_url: server_context[:console_url], arguments: arguments).answer
+        user = server_context[:user]
+        CallTimings.mcp_tool(name_value, arguments, user) do
+          new(user: user, console_url: server_context[:console_url], arguments: arguments).answer
+        end
       end
 
       # A tool that only reads.

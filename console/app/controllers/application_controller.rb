@@ -8,6 +8,7 @@ class ApplicationController < ActionController::Base
   include CurrentOrganization
   include InertiaShare
   include Pundit::Authorization
+  include TimesCalls
 
   rescue_from Pundit::NotAuthorizedError, with: :user_not_authorized
 

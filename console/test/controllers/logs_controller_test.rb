@@ -147,6 +147,22 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
+  test "the explorer's Query run is timed under logs#query with the request's id" do
+    output = StringIO.new
+    previous_output = Rails.configuration.x.call_timings_output
+    Rails.configuration.x.call_timings_output = output
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").to_return(status: 200, body: { logs: [] }.to_json)
+
+    get query_project_logs_url(@project, org_slug: @organization.slug),
+      params: { query: "", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
+
+    assert_response :success
+    line = JSON.parse(output.string.lines.sole)
+    assert_equal [ "logs#query", response.request.request_id, @member.id ], line.values_at("origin", "request_id", "user_id")
+  ensure
+    Rails.configuration.x.call_timings_output = previous_output
+  end
+
   test "someone outside the Organization can't run a Query on its Logs" do
     sign_in_as(@outsider)
     query = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
