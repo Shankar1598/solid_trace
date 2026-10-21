@@ -10,6 +10,8 @@ class Project < ApplicationRecord
   # Rows EventStore writes for the Project (ADR 0001).
   has_one :issue_counter, class_name: "ProjectIssueCounter", dependent: :delete
   has_one :seen_cursor, class_name: "ProjectSeenCursor", dependent: :delete
+  # Rows EventStore reads for the Project (ADR 0001).
+  has_many :log_transform_versions, dependent: :delete_all
 
   before_validation :generate_slug, on: :create
 
@@ -40,6 +42,12 @@ class Project < ApplicationRecord
 
   def platform
     "ruby"
+  end
+
+  # The Project's current Log transform: its newest version, or nil before
+  # one is saved.
+  def log_transform
+    log_transform_versions.newest_first.first
   end
 
   private
