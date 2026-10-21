@@ -65,6 +65,14 @@ export default function LogTransformShow({ project, program, versions, stats, ca
   const orgSlug = current_org?.slug ?? ''
   const base = `/${orgSlug}/projects/${project.slug}/log_transform`
   const [draft, setDraft] = useState(program)
+  // A save or restore makes a new current version, whose program replaces the draft: Inertia keeps
+  // the page's state across them. A refused save makes none, so the draft stays to be fixed.
+  const currentVersion = versions[0]?.id ?? null
+  const [draftOf, setDraftOf] = useState(currentVersion)
+  if (draftOf !== currentVersion) {
+    setDraftOf(currentVersion)
+    setDraft(program)
+  }
   const [checked, setChecked] = useState<Checked | null>(null)
   const [confirming, setConfirming] = useState<{ kind: 'save' } | { kind: 'restore'; version: Version } | null>(null)
   const [viewing, setViewing] = useState<Version | null>(null)
@@ -96,12 +104,7 @@ export default function LogTransformShow({ project, program, versions, stats, ca
   const save = () => {
     setConfirming(null)
     setSaving(true)
-    router.patch(base, { program: draft }, {
-      preserveScroll: true,
-      // A refused save keeps the draft, to fix it.
-      preserveState: 'errors',
-      onFinish: () => setSaving(false),
-    })
+    router.patch(base, { program: draft }, { preserveScroll: true, onFinish: () => setSaving(false) })
   }
 
   const restore = (version: Version) => {
