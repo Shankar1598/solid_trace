@@ -53,3 +53,40 @@ Probe figures. Same command as 01's Comments, run alone under the probe lock. "B
   - An hour with no match reads only step 1.
   - Against 01's baseline (before 03), these searches are still faster. For example, `contains` in a Log file at 300k: 523 ms then, 373 now.
 - **A possible follow-up, not built:** once an hour of a scan finds fewer than its share, read the later hours in one step.
+
+### 2026-10-21 follow-up: later hours of a sparse scan in one step
+
+Once an hour has fewer Logs than the page still wants, `ScanLogs` reads the scan's later hours in one step, as before 02. The loop returns as soon as an hour fills the page, so this is every hour after the first (`i > 0`). The first hour, the one a cursor points into, still takes two steps.
+
+The probe reads one hour, so the follow-up can't change its figures. I judged it with a scratch test instead, not committed, kept in `~/.cache/solid-trace/log-read-speed-notes/lrs02-probe/scratch_test.go.txt`. It used the probe's builders: dev box, 2 threads, best of 3, in ms.
+
+A scan of 3 hours, each a Log file of 150,000 Logs, read three ways:
+
+| Read | Two steps every hour | Switch (this follow-up) | One step every hour (before 02) |
+|---|---|---|---|
+| Newest page | 86 | 85 | 200 |
+| `contains "zebrafish"` (18 Logs) | 659 | 564 | 435 |
+| `contains_cs "zebrafish"` (9) | 441 | 341 | 257 |
+| `search "zebrafish"` (18) | 943 | 820 | 686 |
+
+- The newest page doesn't slow.
+- The later hours cost about what one step does: for `contains`, about 170 ms an hour against 145.
+- Only the first hour still pays for two steps.
+
+**Why a rare match in a Log file costs more in two steps:** at 300,000 Logs, the probe's file has 10 row groups (9 of 30,720 Logs and 1 of 23,520), and all 10 hold a hit (rows 12,500 + 25,000·k). So step 2 decompresses the whole file again.
+
+The same 12 hits clustered in one row group (300,000 Logs, one hour):
+
+| Read | Two steps | One step |
+|---|---|---|
+| `contains`, hits spread over 10 row groups | 356 | 249 |
+| `contains`, hits in 1 row group | 235 to 255 | 199 |
+| `search`, hits spread | 508 | 376 |
+| `search`, hits in 1 row group | 375 to 394 | 383 |
+
+- Step 2 costs about as many row groups as hold a hit.
+- Production's hour, about 12M Logs in about 390 row groups, would have a rare search's step 2 touch only the few that hold its hits.
+
+**Costs of the switch:**
+- If the newest hour of a range holds fewer Logs than the page, the hour before it is read in one step. This happens on a range ending just past the top of an hour, or on a page whose cursor sits near the start of an hour.
+- Such a page costs what it did before 02.
