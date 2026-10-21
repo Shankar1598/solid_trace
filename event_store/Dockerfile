@@ -18,7 +18,7 @@ COPY vrl/rust/src src
 # for Cargo to rebuild the crate.
 RUN touch src/lib.rs && cargo build --profile dist --locked
 
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 ARG TARGETARCH
 
 WORKDIR /app
