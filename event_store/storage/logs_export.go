@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/pkg/sqltext"
 )
@@ -23,15 +24,20 @@ import (
 // zstd, with the promoted columns of the hour's day, late Logs' values pulled
 // out of their maps.
 //
-// Per Project, one transaction writes the files under staged names, adds
-// their rows to the manifest, deletes the Logs and drops the Project's
-// demoted columns. Only once it commits are the files renamed. Staged files
-// a crash leaves behind are settled first.
+// Per Project, a transaction that only reads writes the files under staged
+// names, outside writeMu, so that Log processing carries on meanwhile. Then a
+// second one, under writeMu, adds the files' rows to the manifest, drops the
+// Project's demoted columns and deletes the Logs the first one saw. Late Logs
+// stored meanwhile wait for the next export. Only once it commits are the
+// files renamed. Staged files a crash leaves behind are settled first.
 func (s *LogStore) ExportLogs(now time.Time) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	s.exportMu.Lock()
+	defer s.exportMu.Unlock()
 
-	if err := s.recoverStagedFiles(); err != nil {
+	s.writeMu.Lock()
+	err := s.recoverStagedFiles()
+	s.writeMu.Unlock()
+	if err != nil {
 		return fmt.Errorf("recover staged log files: %w", err)
 	}
 	cutoff, _ := HotWindow(now)
@@ -49,8 +55,14 @@ func (s *LogStore) ExportLogs(now time.Time) error {
 			}
 		}
 	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	began := time.Now()
 	if _, err := s.db.Exec("CHECKPOINT " + logsCatalog); err != nil {
 		logger.L.Warn("Checkpoint of logs DuckDB after the hourly export failed", "error", err)
+	} else {
+		logger.L.Info("Checkpointed logs DuckDB after the hourly export", "took", time.Since(began).Round(time.Millisecond).String())
 	}
 	return failed
 }
@@ -88,61 +100,161 @@ func (s *LogStore) projectsToExport(cutoff time.Time) ([]uint32, error) {
 	return projects, rows.Err()
 }
 
-// exportProject exports a Project's Logs before cutoff in one transaction.
+// exportProject exports a Project's Logs before cutoff: stageExport writes
+// their files, and commitExport commits them.
 func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
-	ctx := context.Background()
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
-		return err
-	}
-	var staged []string
-	committed, rolledBack := false, false
+	began := time.Now()
+	var staged *stagedExport
+	// settled is set once the staged files are renamed, or left for the next
+	// export's recovery.
+	settled := false
 	defer func() {
-		if committed {
+		if settled || staged == nil {
 			return
 		}
-		if !rolledBack {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
-				logger.L.Error("DuckDB rollback failed", "error", err)
-				discardConn(conn)
-			}
-		}
-		for _, file := range staged {
-			if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
-				logger.L.Warn("Failed to remove staged log file", "file", file, "error", err)
+		for _, file := range staged.files {
+			if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+				logger.L.Warn("Failed to remove staged log file", "file", file.path, "error", err)
 			}
 		}
 	}()
 
-	export, err := s.newProjectExport(ctx, conn, projectID)
+	staged, err := s.stageExport(projectID, cutoff)
 	if err != nil {
 		return err
+	}
+	copied := time.Since(began)
+	settled, err = s.commitExport(projectID, cutoff, staged)
+	if err != nil {
+		return err
+	}
+	if len(staged.files) > 0 {
+		logger.L.Info("Exported a Project's Logs", "project_id", projectID, "logs", staged.logs, "files", len(staged.files),
+			"copy", copied.Round(time.Millisecond).String(), "commit", (time.Since(began) - copied).Round(time.Millisecond).String())
+	}
+	return nil
+}
+
+// stagedExport is what an export's first transaction wrote: its staged files,
+// how many Logs they hold, and the Project's Log processing cursor, which no
+// Log in them was stored after.
+type stagedExport struct {
+	files  []stagedFile
+	logs   int64
+	cursor uuid.UUID
+}
+
+// stagedFile is a Log file written under its staged name, with the facts of
+// its manifest row.
+type stagedFile struct {
+	path  string
+	file  logFile
+	stats logFileStats
+}
+
+// stageExport writes the files of a Project's Logs before cutoff under their
+// staged names, from one snapshot of logs.duckdb, in a transaction that only
+// reads. It returns the files it wrote even when it fails.
+func (s *LogStore) stageExport(projectID uint32, cutoff time.Time) (*stagedExport, error) {
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			logger.L.Error("DuckDB rollback failed", "error", err)
+			discardConn(conn)
+		}
+	}()
+
+	staged := &stagedExport{}
+	// DuckDB fixes the transaction's view of logs.duckdb when it first reads
+	// it, so the files hold exactly the Logs stored up to this cursor.
+	if staged.cursor, err = logProcessingCursor(ctx, conn, projectID); err != nil {
+		return staged, err
+	}
+	export, err := s.newProjectExport(ctx, conn, projectID)
+	if err != nil {
+		return staged, err
 	}
 	hours, err := export.hours(cutoff)
 	if err != nil {
-		return err
+		return staged, err
 	}
 	for _, hour := range hours {
 		file, err := export.stageHour(hour)
-		if file != "" {
-			staged = append(staged, file)
+		if file.path != "" {
+			staged.files = append(staged.files, file)
 		}
 		if err != nil {
-			return fmt.Errorf("export hour %s: %w", hour.Format(time.RFC3339), err)
+			return staged, fmt.Errorf("export hour %s: %w", hour.Format(time.RFC3339), err)
 		}
+		staged.logs += file.stats.logs.Int64
+	}
+	if s.staged != nil {
+		s.staged(projectID)
+	}
+	return staged, nil
+}
+
+// commitExport adds the staged files' rows to the manifest, drops the
+// Project's demoted columns and deletes the Logs the files hold, in one
+// transaction under writeMu, then commits it and renames the files. Log
+// processing may have stored late Logs of the exported hours since the files
+// were written; they come after staged.cursor, so they stay for the next
+// export. settled reports whether the files are no longer the caller's to
+// remove: renamed, or left for the next export's recovery.
+func (s *LogStore) commitExport(projectID uint32, cutoff time.Time, staged *stagedExport) (settled bool, err error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
+		return false, err
+	}
+	defer func() {
+		if settled {
+			return
+		}
+		if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			logger.L.Error("DuckDB rollback failed", "error", err)
+			discardConn(conn)
+		}
+	}()
+
+	for _, file := range staged.files {
+		if err := insertLogFile(ctx, conn, file.file, file.stats); err != nil {
+			return false, err
+		}
+	}
+	// Log processing may have added columns since the files were written.
+	export, err := s.newProjectExport(ctx, conn, projectID)
+	if err != nil {
+		return false, err
 	}
 	// DuckDB can't commit a DELETE made before an ALTER of the same table,
 	// so the columns go first.
 	if err := export.dropDemotedColumns(cutoff); err != nil {
-		return err
+		return false, err
 	}
-	if err := export.delete(cutoff); err != nil {
-		return err
+	deleted, err := export.delete(cutoff, staged.cursor)
+	if err != nil {
+		return false, err
+	}
+	// Only a deletion, such as the Project's, takes Logs out meanwhile.
+	if deleted != staged.logs {
+		return false, fmt.Errorf("the files hold %d Logs, but %d of them are still stored", staged.logs, deleted)
 	}
 
 	// No read begins between the commit and the renames, so none sees the
@@ -153,21 +265,19 @@ func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
 		// The commit may have happened anyway, so leave the staged files
 		// for the next export's recovery to settle.
 		discardConn(conn)
-		rolledBack, staged = true, nil
-		return err
+		return true, err
 	}
-	committed = true
-	for _, file := range staged {
-		if err := publishStagedLogFile(file); err != nil {
+	for _, file := range staged.files {
+		if err := publishStagedLogFile(file.path); err != nil {
 			// Its Logs are gone from DuckDB, so the next export or startup
 			// publishes it.
-			return fmt.Errorf("publish %s: %w", file, err)
+			return true, fmt.Errorf("publish %s: %w", file.path, err)
 		}
 	}
-	if len(staged) > 0 {
+	if len(staged.files) > 0 {
 		s.notifyPublished()
 	}
-	return nil
+	return true, nil
 }
 
 // projectExport is one Project's export inside its transaction.
@@ -231,22 +341,22 @@ func (e *projectExport) hours(cutoff time.Time) ([]time.Time, error) {
 }
 
 // stageHour writes the Project's Logs of an hour, from its hot table and
-// logs_late, to the hour's next file under its staged name, adds the file's
-// row to the manifest, and returns the staged name once the file may exist.
-func (e *projectExport) stageHour(hour time.Time) (string, error) {
+// logs_late, to the hour's next file under its staged name. It returns the
+// file once it may exist, with the facts of its manifest row once it is whole.
+func (e *projectExport) stageHour(hour time.Time) (stagedFile, error) {
 	set, err := e.daySet(hour)
 	if err != nil {
-		return "", err
+		return stagedFile{}, err
 	}
 	if err := os.MkdirAll(e.files.HourDir(e.projectID, hour), 0755); err != nil {
-		return "", err
+		return stagedFile{}, err
 	}
 	name, err := nextHourFile(e.ctx, e.conn, e.projectID, hour)
 	if err != nil {
-		return "", err
+		return stagedFile{}, err
 	}
 	file := logFile{projectID: e.projectID, hour: hour, name: name}
-	staged := e.files.path(file) + stagedSuffix
+	staged := stagedFile{path: e.files.path(file) + stagedSuffix, file: file}
 
 	from, to := timestampString(hour), timestampString(hour.Add(time.Hour))
 	sources := []string{e.lateRows(set, from, to)}
@@ -258,19 +368,18 @@ func (e *projectExport) stageHour(hour time.Time) (string, error) {
 			SELECT * FROM (%s)
 			ORDER BY time, id
 		) TO %s (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 30720)`,
-		strings.Join(sources, " UNION ALL BY NAME "), sqltext.String(staged)))
+		strings.Join(sources, " UNION ALL BY NAME "), sqltext.String(staged.path)))
 	if err != nil {
 		return staged, err
 	}
 	// A committed export's files must survive a crash before their rename.
-	if err := syncFile(staged); err != nil {
+	if err := syncFile(staged.path); err != nil {
 		return staged, err
 	}
-	stats, err := readLogFileStats(e.ctx, e.conn, staged, true)
-	if err != nil {
+	if staged.stats, err = readLogFileStats(e.ctx, e.conn, staged.path, true); err != nil {
 		return staged, fmt.Errorf("read the staged file: %w", err)
 	}
-	return staged, insertLogFile(e.ctx, e.conn, file, stats)
+	return staged, nil
 }
 
 // daySet reads the promoted set of the day of t, by type then key.
@@ -339,23 +448,29 @@ func (e *projectExport) lateRows(set []typedKey, from, to string) string {
 		strings.Join(columns, ", "), logsCatalog, lateTable, e.projectID, sqltext.String(from), sqltext.String(to))
 }
 
-// delete deletes the Project's Logs before cutoff from its hot table and
-// logs_late.
-func (e *projectExport) delete(cutoff time.Time) error {
-	if _, err := e.conn.ExecContext(e.ctx,
-		fmt.Sprintf("DELETE FROM %s.%s WHERE project_id = ? AND time < CAST(? AS TIMESTAMP)", logsCatalog, lateTable),
-		e.projectID, timestampString(cutoff)); err != nil {
-		return fmt.Errorf("delete exported late logs: %w", err)
+// delete deletes the Project's Logs before cutoff that were stored no later
+// than the batch upTo from its hot table and logs_late, and returns how many
+// it deleted. A Log stored before the batch column has no batch, and goes too.
+func (e *projectExport) delete(cutoff time.Time, upTo uuid.UUID) (int64, error) {
+	stored := fmt.Sprintf("(batch IS NULL OR batch <= CAST(%s AS UUID))", sqltext.String(upTo.String()))
+	result, err := e.conn.ExecContext(e.ctx,
+		fmt.Sprintf("DELETE FROM %s.%s WHERE project_id = ? AND time < CAST(? AS TIMESTAMP) AND %s", logsCatalog, lateTable, stored),
+		e.projectID, timestampString(cutoff))
+	if err != nil {
+		return 0, fmt.Errorf("delete exported late logs: %w", err)
 	}
-	if e.hotColumns == nil {
-		return nil
+	deleted, err := result.RowsAffected()
+	if err != nil || e.hotColumns == nil {
+		return deleted, err
 	}
-	if _, err := e.conn.ExecContext(e.ctx,
-		fmt.Sprintf("DELETE FROM %s WHERE time < CAST(? AS TIMESTAMP)", e.hotTable()),
-		timestampString(cutoff)); err != nil {
-		return fmt.Errorf("delete exported logs: %w", err)
+	result, err = e.conn.ExecContext(e.ctx,
+		fmt.Sprintf("DELETE FROM %s WHERE time < CAST(? AS TIMESTAMP) AND %s", e.hotTable(), stored),
+		timestampString(cutoff))
+	if err != nil {
+		return 0, fmt.Errorf("delete exported logs: %w", err)
 	}
-	return nil
+	hot, err := result.RowsAffected()
+	return deleted + hot, err
 }
 
 // dropDemotedColumns drops each promoted column of the Project's hot table

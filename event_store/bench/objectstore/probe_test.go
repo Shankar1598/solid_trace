@@ -178,7 +178,7 @@ func generate(t *testing.T, e probeEnv) {
 				logs[i] = probeLog(g.Log(id), hour.Add(time.Duration(n)*time.Hour/logsPerHour))
 				id++
 			}
-			if err := store.AppendLogBatches(probeProject, []storage.LogBatch{{ID: uuid.New(), Logs: logs}}, hour.Add(59*time.Minute)); err != nil {
+			if err := store.AppendLogBatches(probeProject, []storage.LogBatch{{ID: uuid.Must(uuid.NewV7()), Logs: logs}}, hour.Add(59*time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 		}
