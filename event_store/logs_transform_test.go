@@ -3,6 +3,7 @@ package main_test
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,5 +150,70 @@ func TestAProgramThatChangesNothingLeavesEveryFieldAsItWas(t *testing.T) {
 	want[1].Attributes["touched"] = true
 	if got := listedWithout(t, env, 789); !reflect.DeepEqual(got, want) {
 		t.Errorf("Project 789: expected\n%+v\ngot\n%+v", want, got)
+	}
+}
+
+func TestAbortDropsALogAndABatchLeftEmptyStillMovesTheCursor(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedLogTransform(t, env, 123, `if .message == "health check" { abort }`)
+	storeLogBatch(t, env, 123, logAt(t, "health check", "2026-10-02T11:00:00Z"), logAt(t, "signed in", "2026-10-02T11:00:01Z"))
+	storeLogBatch(t, env, 123, logAt(t, "health check", "2026-10-02T11:00:02Z"), logAt(t, "health check", "2026-10-02T11:00:03Z"))
+	batches, err := env.PebbleWriter.LogBatchesAfter(123, uuid.Nil, 100)
+	if err != nil || len(batches) != 2 {
+		t.Fatalf("Expected 2 Log batches, got %d: %v", len(batches), err)
+	}
+	processLogsWithin(t, env, 10*time.Second)
+
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"signed in"}) {
+		t.Errorf("Expected only [signed in] stored, got %v", got)
+	}
+	if cursor, err := env.LogStore.LogProcessingCursor(123); err != nil || cursor != batches[1].ID {
+		t.Errorf("Expected the cursor past the batch left empty, %s, got %s (%v)", batches[1].ID, cursor, err)
+	}
+}
+
+// transformError is the solidtrace.transform_error of a listed Log.
+func transformError(log listedLog) string {
+	why, _ := log.Attributes["solidtrace.transform_error"].(string)
+	return why
+}
+
+func TestALogTheProgramFailsOnIsStoredAsItArrivedWithTheError(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedLogTransform(t, env, 123, `.number = to_int!(.message)`)
+	seedLogTransform(t, env, 456, `. = .message`)
+	long := strings.Repeat("x", 2000)
+	storeLogBatch(t, env, 123,
+		logAt(t, "42", "2026-10-02T11:00:00Z"),
+		logAt(t, "not a number", "2026-10-02T11:00:01Z"),
+		logAt(t, long, "2026-10-02T11:00:02Z"))
+	storeLogBatch(t, env, 456, logAt(t, "not an object", "2026-10-02T11:00:00Z"))
+	env.ProcessLogs(t)
+
+	if got := queryMessages(t, env, `where isnotnull(solidtrace.transform_error)`); !slices.Equal(got, []string{long, "not a number"}) {
+		t.Errorf("Expected the two Logs the program failed on, got %d: %.40v", len(got), got)
+	}
+	logs := latestLogs(t, env, 123, 10)
+	if len(logs) != 3 {
+		t.Fatalf("Expected 3 Logs, got %d", len(logs))
+	}
+	if logs[2].Attributes["number"] != 42.0 || transformError(logs[2]) != "" {
+		t.Errorf("Expected 42 parsed, got %+v", logs[2])
+	}
+	notANumber := logs[1]
+	if _, ok := notANumber.Attributes["number"]; ok || !strings.Contains(transformError(notANumber), `function call error for "to_int"`) {
+		t.Errorf("Expected the Log as it arrived with to_int's error, got %+v", notANumber)
+	}
+	if why := transformError(logs[0]); len(why) > 1024 || len(why) < 1000 || !strings.HasPrefix(why, `function call error for "to_int"`) {
+		t.Errorf("Expected to_int's error cut to 1 KB, got %d bytes: %.80q", len(why), why)
+	}
+
+	got := latestLogs(t, env, 456, 10)
+	if len(got) != 1 || got[0].Message != "not an object" || transformError(got[0]) != ". is a string, not an object" {
+		t.Errorf("Expected the Log as it arrived, failed for leaving . a string, got %+v", got)
 	}
 }
