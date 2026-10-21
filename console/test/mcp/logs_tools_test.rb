@@ -242,6 +242,23 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     end
   end
 
+  test "run_sql passes on EventStore's notice on SQL that matched message slowly, and adds none of its own" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    notice = "message ILIKE '%timeout%' is slow on Logs: contains(lower(message), 'timeout') matches the same Logs several times faster."
+    table = { columns: [ { name: "logs", type: "number" } ], rows: [ [ 3 ] ], truncated: false }
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
+      .to_return({ status: 200, body: { table: table, notice: notice, elapsed_ms: 8 }.to_json },
+                 { status: 200, body: { table: table, elapsed_ms: 8 }.to_json })
+
+    slow = call_tool(:run_sql, user: @user, project: "shop", sql: "SELECT count(*) AS logs FROM logs WHERE message ILIKE '%timeout%'")
+    fast = call_tool(:run_sql, user: @user, project: "shop", sql: "SELECT count(*) AS logs FROM logs WHERE contains(lower(message), 'timeout')")
+
+    assert_equal [ [ 3 ] ], slow.json["rows"]
+    assert_equal notice, slow.json["notice"]
+    assert_equal [ [ 3 ] ], fast.json["rows"]
+    assert_not fast.json.key?("notice")
+  end
+
   test "run_sql answers EventStore's refusals and SQL mistakes as it says them" do
     InstanceSetting.current.update!(sql_queries_enabled: true)
     parser_error = "Parser Error: syntax error at or near \"SELEC\"\n\nLINE 1: SELEC 1\n        ^"
