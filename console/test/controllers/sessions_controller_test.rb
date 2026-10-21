@@ -33,4 +33,29 @@ class SessionsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to root_url
     assert_not_nil cookies[:session_id]
   end
+
+  test "too many tries are sent back to log in, told to wait, even with the right password" do
+    SessionsController.cache_store.stub(:increment, 11) do
+      post login_url, params: { email: @user.email, password: "password123" }
+    end
+
+    assert_redirected_to login_url
+    assert_equal "Too many tries. Try again in a few minutes.", flash[:alert]
+    assert_predicate cookies[:session_id], :blank?
+  end
+
+  test "the page offers sign-up only while it is allowed" do
+    get login_url, headers: inertia
+    assert_equal false, response.parsed_body.dig("props", "sign_up_allowed")
+
+    InstanceSetting.current.update!(sign_up_open: true)
+    get login_url, headers: inertia
+    assert_equal true, response.parsed_body.dig("props", "sign_up_allowed")
+  end
+
+  private
+
+  def inertia
+    { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+  end
 end

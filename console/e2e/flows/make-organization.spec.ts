@@ -4,8 +4,9 @@ import { resolve } from 'node:path'
 import { watchErrors } from '../support/screens'
 
 // Someone who signs up is in no Organization, so they make one, become its
-// admin and land on its Issues. Each run signs up its own user and deletes
-// it, with its Organization, after.
+// admin and land on its Issues. Each run opens sign-up, which the dev
+// database's seeded users would otherwise close, signs up its own user and
+// deletes it, with its Organization, after.
 
 const stamp = Date.now()
 const email = `flow-signup-${stamp}@solidtrace.local`
@@ -15,11 +16,19 @@ const slug = `flow-org-${stamp}`
 const rails = (code: string) =>
   execFileSync('mise', ['exec', '--', 'bin/rails', 'runner', code], {
     cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
-  })
+  }).toString()
+
+let wasOpen = 'false'
 
 test.use({ storageState: { cookies: [], origins: [] } })
 
+test.beforeAll(() => {
+  wasOpen = rails('print InstanceSetting.current.sign_up_open?').trim().split('\n').pop()!
+  rails('InstanceSetting.current.update!(sign_up_open: true)')
+})
+
 test.afterAll(() => {
+  rails(`InstanceSetting.current.update!(sign_up_open: ${wasOpen === 'true'})`)
   rails(`Organization.where(slug: ${JSON.stringify(slug)}).each { |org| OrganizationUser.where(organization: org).delete_all; org.destroy! }; ` +
     `User.where(email: ${JSON.stringify(email)}).each { |user| OrganizationUser.where(user: user).delete_all; user.destroy! }`)
 })

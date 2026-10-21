@@ -26,9 +26,17 @@ class InstanceSetting < ApplicationRecord
   belongs_to :meta_organization, class_name: "Organization", optional: true
 
   validates :sql_queries_enabled, inclusion: { in: [ true, false ] }
+  validates :sign_up_open, inclusion: { in: [ true, false ] }
   validates :default_log_retention_days, numericality: { only_integer: true, greater_than: 0 }
 
   def self.current
     find_by(id: ID) || new(id: ID)
+  end
+
+  # Whether someone may sign up: while the install has no user, so whoever set
+  # it up can make the first account, or when the operator has opened sign-up.
+  # Otherwise people join by Invite.
+  def sign_up_allowed?
+    sign_up_open? || !User.exists?
   end
 end
