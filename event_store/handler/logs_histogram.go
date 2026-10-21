@@ -70,7 +70,7 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
 	}
-	run, problem := startRun(c, req.TimeoutSeconds)
+	run, problem := startRun(c, "histogram", req.TimeoutSeconds)
 	if problem != nil {
 		return c.Status(400).JSON(problem)
 	}

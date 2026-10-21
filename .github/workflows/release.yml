@@ -60,10 +60,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Find the commit
-        id: commit
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       # Pushed by digest only; the join job tags it.
       - name: Build and push
         id: build
@@ -71,11 +67,10 @@ jobs:
         with:
           context: ${{ matrix.app }}
           platforms: linux/${{ matrix.platform.arch }}
-          # Console's image keeps them for its call timings; EventStore's
-          # ignores them.
+          # Console's image keeps it for its call timings; EventStore's
+          # ignores it.
           build-args: |
             SOLIDTRACE_VERSION=${{ env.TAG }}
-            SOLIDTRACE_REVISION=${{ steps.commit.outputs.sha }}
           outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           # Links the package to this repository on GitHub.
           labels: |
