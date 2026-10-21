@@ -248,10 +248,6 @@ class EventStore
       body = { program: program }
       body[:logs] = logs if logs
       post!("#{base_url}/api/#{project_id}/logs/transform/preview", body)
-    rescue Rejected => e
-      raise unless e.body.is_a?(Hash) && e.body["errors"].present?
-
-      e.body
     end
 
     # The running counts of the Project's current Log transform since
