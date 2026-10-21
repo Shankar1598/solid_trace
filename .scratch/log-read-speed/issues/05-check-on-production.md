@@ -25,3 +25,17 @@
 Still to do: the histogram and the explorer's own first page (its `Completed 200 OK` lines; MCP reaches neither the histogram route nor `totals`), a late-in-the-hour load, and `docker stats` during a load.
 
 Found on the way: `log_read_sql`'s `duration_ms` and `statement` still arrive as strings. The VM's checkout has v0.8.0's `vector.yaml`, but Vector reads its config only at start, and `deploy/install`'s `compose up` leaves it running (up 9 hours), so the new config isn't loaded.
+
+**2026-10-21, 22:00 UTC, the Sidekiq Dashboards.** Dashboard 1 ("Sidekiq — jobs & queues", 18 Charts, 6 h) loaded at a median of 15.5 s per Chart cold (slowest 25 s), 0.1 s warm from the bin cache. Every Chart picked its Logs by an Attribute only `sidekiq_metrics.log`'s snapshots have (`isnotnull(latency_seconds)` and the like), and such rare keys sit in the maps, not promoted. On one cold hour of `tagalys` (12.8 M Logs, 10:00–11:00):
+
+| Query, one hour | ms |
+|---|---|
+| `summarize count()` | 1,247 |
+| `where file == "sidekiq_metrics.log" \| summarize count()` (15,040 Logs) | 107 |
+| `where isnotnull(latency_seconds) \| summarize count()` | 1,461 |
+| `where message contains "INFO: done:" \| summarize count()` | 4,251 |
+| `where file == "sidekiq.log" and message contains "INFO: done:" \| summarize count()` (Dashboard 2's filter) | 2,029 |
+| Chart 8 as it was (12:00–13:00) | 881 |
+| Chart 8 with `file == "sidekiq_metrics.log" and` first (11:00–12:00) | 161 |
+
+With the user's go-ahead, all 18 of Dashboard 1's Charts now start `where file == "sidekiq_metrics.log" and …`, and its description says why. All 18 over a cold 13:00–19:00, run 5–8 at a time through `get_chart_data` (the MCP server turns more away): median 2,135 ms, slowest 2,937 ms. Dashboard 2 already filters on `file`; what's left is its `message contains`, for the Log transform (log-transform 08) to turn into an Attribute.
