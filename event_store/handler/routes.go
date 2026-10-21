@@ -55,6 +55,7 @@ func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandl
 	app.Post("/api/:project_id/logs/sql", logsHandler.SQL)
 	app.Post("/api/:project_id/logs/readable-sql", logsHandler.ReadableSQL)
 	app.Post("/api/:project_id/logs/transform/check", transformHandler.Check)
+	app.Post("/api/:project_id/logs/transform/preview", transformHandler.Preview)
 	// As with Events, this must come before a Log's id, or fields is
 	// captured as one.
 	app.Get("/api/:project_id/logs/fields", logsHandler.Fields)

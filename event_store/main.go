@@ -114,7 +114,7 @@ func main() {
 	eventCleanup := processing.NewCleanup(pebbleWriter, duckdbWriter, sqliteWriter, consoleSettings, &batchLock, clock.System{})
 	eventCleanup.Start()
 
-	logTransforms := logtransform.New(consoleSettings)
+	logTransforms := logtransform.New(consoleSettings, clock.System{})
 	logProcessor := logprocessing.New(pebbleWriter, logStore, logTransforms, clock.System{})
 	if err := logProcessor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Log processing", "error", err)
