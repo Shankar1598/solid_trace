@@ -3,8 +3,11 @@
 // fetch a file over SSH and read it with go tool pprof
 // (.scratch/eventstore-performance/issues/04-cpu-profiles-on-production.md).
 //
-// Time DuckDB spends on its own threads shows as runtime._ExternalCode, as
-// Go can't read C++ frames; time in Go, cgo calls included, shows by function.
+// A profile samples only Go's threads: a query's time in DuckDB shows as
+// runtime.cgocall under the Go function that ran it, for the thread that
+// called DuckDB, and DuckDB's own worker threads aren't sampled at all. So
+// each profile's log line also gives the process's CPU time over the same
+// window, every thread's; what the profile lacks of it is DuckDB's workers.
 package cpuprofile
 
 import (
@@ -14,6 +17,7 @@ import (
 	"runtime/pprof"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -106,6 +110,7 @@ func (p *Profiler) profile(now time.Time) error {
 		os.Remove(name)
 		return err
 	}
+	began, cpuBefore := time.Now(), processCPU()
 	timer := time.NewTimer(p.length)
 	select {
 	case <-p.stop:
@@ -113,11 +118,23 @@ func (p *Profiler) profile(now time.Time) error {
 	}
 	timer.Stop()
 	pprof.StopCPUProfile()
+	took, cpu := time.Since(began), processCPU()-cpuBefore
 	if err := file.Close(); err != nil {
 		return err
 	}
-	logger.L.Info("Wrote a CPU profile", "file", name)
+	logger.L.Info("Wrote a CPU profile", "file", name,
+		"took", took.Round(time.Millisecond).String(), "process_cpu", cpu.Round(time.Millisecond).String())
 	return p.prune()
+}
+
+// processCPU is the CPU time the process has used so far, user and system,
+// on every thread, DuckDB's included.
+func processCPU() time.Duration {
+	var usage syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+		return 0
+	}
+	return time.Duration(usage.Utime.Nano() + usage.Stime.Nano())
 }
 
 // prune removes all but the newest p.keep profiles, which sort by name.

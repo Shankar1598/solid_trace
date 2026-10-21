@@ -27,7 +27,11 @@
 - A profile that can't start, for example because another is running, is skipped and logged.
 - `deploy/event_store.yml` documents the key, commented out.
 
-**What a profile can show.** DuckDB's own C++ threads appear as `runtime._ExternalCode`, because Go can't read their frames. A profile therefore splits CPU between DuckDB, and Go by function: JSON, msgpack, VRL calls and GC. That split is what ideas 2, 6, 11, 12 and 13 need.
+**What a profile can show.**
+- **Go's threads only.** A query's time in DuckDB shows as `runtime.cgocall` under the Go function that ran it, for the calling thread. DuckDB's own worker threads aren't sampled at all.
+  - Checked with a 4-thread DuckDB query: the profile held exactly one thread's worth of samples, all in `runtime.cgocall`.
+- **`process_cpu`.** Each profile's `Wrote a CPU profile` log line gives the CPU time every thread used over the same window (`getrusage`). DuckDB's workers are about `process_cpu` minus the profile's total samples.
+- **What that's enough for.** Go's share by function (JSON, msgpack, VRL calls, GC) against DuckDB's, which is what ideas 2, 6, 11, 12 and 13 need.
 
 **Tests.** The `pkg/cpuprofile` tests cover:
 - the schedule;
