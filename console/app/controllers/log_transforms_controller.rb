@@ -25,6 +25,11 @@ class LogTransformsController < ApplicationController
     save(params[:program].to_s)
   end
 
+  # POST with version_id: saves that version's program again as the newest.
+  def restore
+    save(@project.log_transform_versions.find(params[:version_id]).program)
+  end
+
   private
 
   # Saves program through LogTransformSave. A program that doesn't compile

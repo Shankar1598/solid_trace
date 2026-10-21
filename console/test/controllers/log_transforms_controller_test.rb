@@ -105,6 +105,47 @@ class LogTransformsControllerTest < ActionDispatch::IntegrationTest
     assert_nil @project.log_transform
   end
 
+  test "an admin restores an earlier version, which saves it again as the newest" do
+    old = @project.log_transform_versions.create!(program: ".a = 1", user: @member)
+    @project.log_transform_versions.create!(program: ".a = 2", user: @admin)
+    stub_request(:post, @check_url).with(body: { program: ".a = 1" }).to_return(status: 200, body: { errors: [], warnings: [] }.to_json)
+    sign_in_as(@admin)
+
+    post restore_project_log_transform_url(@project, org_slug: @organization.slug), params: { version_id: old.id }
+
+    assert_redirected_to project_log_transform_url(@project, org_slug: @organization.slug)
+    assert_equal 3, @project.log_transform_versions.count
+    assert_equal ".a = 1", @project.log_transform.program
+    assert_equal @admin, @project.log_transform.user
+  end
+
+  test "a member's restore is refused, and another Project's version can't be restored" do
+    old = @project.log_transform_versions.create!(program: ".a = 1", user: @admin)
+    @project.log_transform_versions.create!(program: ".a = 2", user: @admin)
+
+    post restore_project_log_transform_url(@project, org_slug: @organization.slug), params: { version_id: old.id }
+
+    assert_equal "You are not authorized to perform this action.", flash[:alert]
+    assert_equal ".a = 2", @project.log_transform.program
+
+    theirs = create(:project, organization: @organization).log_transform_versions.create!(program: ".b = 1")
+    sign_in_as(@admin)
+    post restore_project_log_transform_url(@project, org_slug: @organization.slug), params: { version_id: theirs.id }
+    assert_response :not_found
+    assert_equal 2, @project.log_transform_versions.count
+  end
+
+  test "a save while EventStore is unavailable saves nothing and says so" do
+    stub_request(:post, @check_url).to_raise(Errno::ECONNREFUSED)
+    sign_in_as(@admin)
+
+    patch project_log_transform_url(@project, org_slug: @organization.slug), params: { program: ".status = 1" }
+
+    assert_redirected_to project_log_transform_url(@project, org_slug: @organization.slug)
+    assert_equal "EventStore is unavailable, so the program couldn't be checked. Try again shortly.", flash[:alert]
+    assert_nil @project.log_transform
+  end
+
   private
 
   def log_transform_page
