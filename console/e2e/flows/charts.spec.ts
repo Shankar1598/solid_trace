@@ -410,3 +410,14 @@ test('day bins a day range covers in part are drawn in full, with a note', async
   await expect(page.locator('[data-chart-legend]')).not.toContainText('partial')
   expect(errors).toEqual([])
 })
+
+test('a line joins its values across empty bins', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, last24h('query'))
+  // Minute bins over a day leave most bins empty, and max() has no value in an empty bin.
+  await runQuery(page, `${SOURCE}\n| summarize max(duration_ms) by bin(time, 1m), service`)
+  const paths = await chart(page).locator('path.recharts-line-curve').evaluateAll(lines => lines.map(l => l.getAttribute('d') ?? ''))
+  expect(paths.length).toBeGreaterThan(1)
+  for (const d of paths) expect(d.match(/M/g)).toHaveLength(1)
+  expect(errors).toEqual([])
+})

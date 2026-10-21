@@ -138,9 +138,10 @@ export function binsTime(query: string): boolean {
  * The chart a table makes:
  * - a time series when it has the last summarize's time bin column: number
  *   columns are series, and string and bool columns split them. Every bin
- *   from the first to the last has a point, so a line breaks where a bin has
- *   no row; when the table says such a bin has no Logs, a count there is
- *   zero, so a count over no Logs at all is a flat zero;
+ *   from the first to the last has a point, and a line joins across a bin
+ *   with no row; when the table says such a bin has no Logs, a count there is
+ *   zero (unless joinRhythms joins it), so a count over no Logs at all is a
+ *   flat zero;
  * - bars when it is a summarize with no time bin: a bar per value of its
  *   first string column, split by the others;
  * - a stat when it is one row of one number;
@@ -168,7 +169,7 @@ export function chartOf(table: LogTable): ChartModel {
       return typeof time === 'string' ? new Date(time).getTime() : null
     }, measures, splits)
     if (!pivot) return { kind: 'none' }
-    const drawn = keepSeries(pivot, table, measures, splits, filled)
+    const { reported, ...drawn } = keepSeries(pivot, table, measures, splits, filled)
     if (drawn.series.length === 0) return { kind: 'none' }
     const times = [...pivot.xs.keys()].map(Number).sort((a, b) => a - b)
     const from = table.from ? new Date(table.from) : new Date(times[0])
@@ -179,6 +180,7 @@ export function chartOf(table: LogTable): ChartModel {
     if (filled) layBins(drawn, step, Math.floor(from.getTime() / step) * step, Math.ceil(to.getTime() / step) * step - step, true)
     else if (times.length > 0) layBins(drawn, step, times[0], times[times.length - 1], false)
     drawn.points.sort((a, b) => (a.x as number) - (b.x as number))
+    if (filled) joinRhythms(drawn, reported, step)
     const edges = [drawn.points[0]?.x as number, drawn.points[drawn.points.length - 1]?.x as number]
     const partial = [...new Set(edges)].filter(x => x !== undefined && (x < from.getTime() || x + step > to.getTime()))
     return { kind: 'time', binSeconds, from, to, partial, ...drawn }
@@ -189,7 +191,7 @@ export function chartOf(table: LogTable): ChartModel {
   const [category, ...rest] = splits
   const pivot = pivotRows(table, i => splitName(columns[category].name, cell(rows[i][category])), measures, rest)
   if (!pivot) return { kind: 'none' }
-  const drawn = keepSeries(pivot, table, measures, rest, false)
+  const { reported: _, ...drawn } = keepSeries(pivot, table, measures, rest, false)
   if (drawn.series.length === 0) return { kind: 'none' }
   // The bars with the largest totals, largest first; Levels and numbers keep their own order.
   const omittedCategories = Math.max(0, drawn.points.length - MAX_BARS)
@@ -283,7 +285,7 @@ function pivotRows(
  */
 function keepSeries(
   pivot: Pivot, { columns, rows, truncated }: LogTable, measures: number[], splits: number[], filled: boolean,
-): SeriesSet {
+): SeriesSet & { reported: Map<string, Set<number | string>> } {
   const drawn = measures.slice(0, MAX_SERIES)
   const source = (combo: string, m: number) => `${combo}\u0000${m}`
   const totals = new Map<string, number>()
@@ -356,6 +358,8 @@ function keepSeries(
     for (const s of series) point[s.key] = at.has(s.source) ? at.get(s.source)! : emptyValue(s, filled)
     return point
   })
+  // The xs each series has a row at, which the empty bins between are told from.
+  const reported = new Map(series.map(s => [s.key, new Set([...pivot.xs].filter(([, at]) => at.has(s.source)).map(([x]) => x))]))
 
   const panels = units.map((unit): Panel => {
     const agg = unit.length === 1 ? columns[unit[0]].agg : undefined
@@ -377,6 +381,7 @@ function keepSeries(
     panels,
     legend: legendOf(drawnSeries),
     cutAt: truncated ? rows.length : null,
+    reported,
   }
 }
 
@@ -517,6 +522,42 @@ function layBins(drawn: SeriesSet, step: number, first: number, last: number, fi
     for (const s of drawn.series) point[s.key] = emptyValue(s, filled)
     drawn.points.push(point)
   }
+}
+
+/**
+ * Joins a counting series across the empty bins between its rows when it
+ * comes on a rhythm slower than its bins, such as a Log a minute in 30 s
+ * bins, so its line doesn't drop to zero and back between every two. An
+ * empty stretch at least twice its usual spacing stays zero, as a row was
+ * missed there; so do the empty bins of a series with no steady rhythm.
+ */
+function joinRhythms(drawn: SeriesSet, reported: Map<string, Set<number | string>>, step: number) {
+  for (const s of drawn.series) {
+    if (!s.agg || !ZERO_WHEN_EMPTY.has(s.agg)) continue
+    const rows = drawn.points.map(p => p.x as number).filter(x => reported.get(s.key)!.has(x))
+    const usual = rhythmOf(rows.slice(1).map((x, i) => Math.round((x - rows[i]) / step)))
+    if (usual < 2) continue
+    let next = 0
+    for (const p of drawn.points) {
+      const x = p.x as number
+      while (next < rows.length && rows[next] < x) next++
+      if (rows[next] === x) continue
+      const [before, after] = [rows[next - 1], rows[next]]
+      const joined = before !== undefined && after !== undefined
+        ? (after - before) / step < 2 * usual
+        : (before === undefined ? after - x : x - before) / step < usual
+      if (joined) p[s.key] = null
+    }
+  }
+}
+
+/** The bins a series' rows usually come apart by, when most spacings agree; 1 otherwise. */
+function rhythmOf(spacings: number[]): number {
+  if (spacings.length < 4) return 1
+  const counts = new Map<number, number>()
+  for (const d of spacings) counts.set(d, (counts.get(d) ?? 0) + 1)
+  const [usual, times] = [...counts].reduce((a, b) => (b[1] > a[1] ? b : a))
+  return times * 2 >= spacings.length ? usual : 1
 }
 
 /**
