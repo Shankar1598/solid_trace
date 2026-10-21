@@ -79,6 +79,64 @@ class McpLogTransformToolsTest < ActiveSupport::TestCase
     }, answer.json)
   end
 
+  # preview_log_transform
+
+  def before(n)
+    { "id" => "0199a8b2-6a1e-7c3d-9f00-#{n.to_s.rjust(12, '0')}", "time" => "2026-10-21T08:59:00Z",
+      "service" => "sidekiq", "message" => "job #{n} done: 0.5 sec", "attributes" => {} }
+  end
+
+  def kept(n)
+    { "before" => before(n), "after" => before(n).except("message").merge("attributes" => { "duration" => 0.5 }) }
+  end
+
+  test "a member's preview_log_transform runs a draft on the recent arrivals, answering each Log's before and after" do
+    results = [ kept(1), { "before" => before(2), "dropped" => true }, { "before" => before(3), "error" => "function call error" } ]
+    preview = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/preview")
+      .with(body: { program: "abort" }.to_json)
+      .to_return(status: 200, body: { results: results, kept: 1, dropped: 1, failed: 1 }.to_json)
+
+    answer = call_tool(:preview_log_transform, user: @member, project: "shop", program: "abort")
+
+    assert_not answer.error?
+    assert_equal({ "project" => "shop", "logs" => 3, "kept" => 1, "dropped" => 1, "failed" => 1, "results" => results }, answer.json)
+    assert_equal PAGE, answer.link
+    assert_requested preview
+  end
+
+  test "preview_log_transform runs the draft on the Logs given" do
+    logs = [ { "message" => "job done: 0.5 sec", "service" => "sidekiq" } ]
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/preview")
+      .with(body: { program: ".a = 1", logs: logs }.to_json)
+      .to_return(status: 200, body: { results: [ kept(1) ], kept: 1, dropped: 0, failed: 0 }.to_json)
+
+    answer = call_tool(:preview_log_transform, user: @member, project: "shop", program: ".a = 1", logs: logs)
+
+    assert_equal [ kept(1) ], answer.json["results"]
+  end
+
+  test "preview_log_transform answers the first 20 Logs in full, and each error with how many Logs it failed" do
+    results = (1..20).map { |n| kept(n) } +
+      (21..24).map { |n| { "before" => before(n), "error" => "no match" } } + [ { "before" => before(25), "error" => "not an object" } ]
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/preview")
+      .to_return(status: 200, body: { results: results, kept: 20, dropped: 0, failed: 5 }.to_json)
+
+    answer = call_tool(:preview_log_transform, user: @member, project: "shop", program: ".a = 1")
+
+    assert_equal [ 25, results.first(20) ], answer.json.values_at("logs", "results")
+    assert_equal [ { "error" => "no match", "logs" => 4 }, { "error" => "not an object", "logs" => 1 } ], answer.json["failures"]
+  end
+
+  test "preview_log_transform answers VRL's errors for a draft that doesn't compile" do
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/preview")
+      .to_return(status: 200, body: { errors: [ ERROR ], warnings: [] }.to_json)
+
+    answer = call_tool(:preview_log_transform, user: @member, project: "shop", program: "http_request(\"x\")")
+
+    assert answer.error?
+    assert_equal "The program doesn't compile.\n#{ERROR['text']}", answer.text
+  end
+
   # update_log_transform
 
   test "an admin's update_log_transform saves a program that compiles, saying stored Logs don't change" do

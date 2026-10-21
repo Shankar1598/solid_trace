@@ -14,6 +14,7 @@ module McpServer
     McpTools::QueryLanguageReference,
     McpTools::RunSql,
     McpTools::GetLogTransform,
+    McpTools::PreviewLogTransform,
     McpTools::UpdateLogTransform,
     McpTools::ListDashboards,
     McpTools::GetDashboard,
