@@ -16,7 +16,7 @@ import (
 // dots, as Vector shows them, each with its type: a JSON Attribute is an
 // array or object. An Attribute that can't nest, because a shorter name
 // already holds a value, stays at the top level under its dotted name. The
-// Log's id isn't shown.
+// Log's id isn't shown, nor an Attribute named as a built-in field.
 func view(log models.Log) map[string]any {
 	v := map[string]any{"time": log.Time, "message": log.Message}
 	for name, value := range map[string]string{
@@ -36,9 +36,80 @@ func view(log models.Log) map[string]any {
 	// before "a.b" finds it.
 	objects := make(map[string]bool) // the dotted names of objects made here
 	for _, name := range slices.Sorted(maps.Keys(values)) {
-		place(v, objects, name, values[name])
+		if !fieldNames[name] {
+			place(v, objects, name, values[name])
+		}
 	}
 	return v
+}
+
+// fieldNames are the built-in fields' names, as a program sees them.
+var fieldNames = map[string]bool{
+	"time": true, "level": true, "message": true, "service": true,
+	"environment": true, "trace_id": true, "span_id": true,
+}
+
+// reservedPrefix starts the names of Attributes SolidTrace sets.
+const reservedPrefix = "solidtrace."
+
+// keptNames are the names of a Log's Attributes that stay as they arrived,
+// whatever the program returns: those SolidTrace set, which the program sees
+// but can't change, and any named as a built-in field, which only a Sentry
+// record can have and the program can't see.
+func keptNames(a models.Attributes) []string {
+	var names []string
+	add := func(name string) {
+		if strings.HasPrefix(name, reservedPrefix) || fieldNames[name] {
+			names = append(names, name)
+		}
+	}
+	for name := range a.String {
+		add(name)
+	}
+	for name := range a.Number {
+		add(name)
+	}
+	for name := range a.Bool {
+		add(name)
+	}
+	for name := range a.JSON {
+		add(name)
+	}
+	return names
+}
+
+// forget deletes an Attribute from what a program returned, whether it is at
+// the top level under its whole name or nested by its dots.
+func forget(object map[string]any, name string) {
+	delete(object, name)
+	keys := strings.Split(name, ".")
+	for _, key := range keys[:len(keys)-1] {
+		inner, ok := object[key].(map[string]any)
+		if !ok {
+			return
+		}
+		object = inner
+	}
+	delete(object, keys[len(keys)-1])
+}
+
+// keep gives to the Attribute name as from has it.
+func keep(from models.Attributes, to *models.Attributes, name string) {
+	copyValue(from.String, &to.String, name)
+	copyValue(from.Number, &to.Number, name)
+	copyValue(from.Bool, &to.Bool, name)
+	copyValue(from.JSON, &to.JSON, name)
+}
+
+func copyValue[V any](from map[string]V, to *map[string]V, name string) {
+	value, ok := from[name]
+	if !ok {
+		return
+	}
+	if *to == nil {
+		*to = make(map[string]V)
+	}
+	(*to)[name] = value
 }
 
 // place puts an Attribute's value in v, nested by the dots in its name, or at
