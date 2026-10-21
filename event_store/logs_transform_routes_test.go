@@ -1,13 +1,17 @@
 package main_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
+	"net/http"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/event_store/models"
 )
@@ -295,5 +299,128 @@ func TestTheRecentArrivalsKeepAtMost4MBOfAProjectsLogs(t *testing.T) {
 	}
 	if !slices.Equal(heads, []string{"4", "3", "2", "1"}) || got.Dropped != 4 {
 		t.Errorf("Expected the newest four Logs of about 900 KB, got %v", heads)
+	}
+}
+
+// transformStats is the stats route's answer.
+type transformStats struct {
+	VersionID     *int64  `json:"version_id"`
+	Processed     int     `json:"processed"`
+	Dropped       int     `json:"dropped"`
+	Failed        int     `json:"failed"`
+	AverageMicros float64 `json:"average_micros"`
+	CompileError  *string `json:"compile_error"`
+}
+
+// statsOf reads the running counts of Project 123's Log transform through
+// the stats route.
+func statsOf(t *testing.T, env *TestEnv) transformStats {
+	t.Helper()
+	req, _ := http.NewRequest("GET", "/api/123/logs/transform/stats", nil)
+	resp, err := env.QueryApp.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("GET stats failed: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("Stats expected 200, got %d: %s", resp.StatusCode, raw)
+	}
+	var stats transformStats
+	if err := json.Unmarshal(raw, &stats); err != nil {
+		t.Fatalf("Decode stats %q: %v", raw, err)
+	}
+	return stats
+}
+
+// currentVersion is the id of Project 123's current Log transform version.
+func currentVersion(t *testing.T, env *TestEnv) int64 {
+	t.Helper()
+	db, err := sql.Open("sqlite3", env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Failed to open sqlite: %v", err)
+	}
+	defer db.Close()
+	var id int64
+	if err := db.QueryRow("SELECT max(id) FROM log_transform_versions WHERE project_id = 123").Scan(&id); err != nil {
+		t.Fatalf("Read current version: %v", err)
+	}
+	return id
+}
+
+func TestStatsCountTheCurrentVersionsLogsAndResetOnANewVersion(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	if got := statsOf(t, env); got != (transformStats{}) {
+		t.Errorf("Expected no version and no counts without a Log transform, got %+v", got)
+	}
+
+	seedLogTransform(t, env, 123, "if .message == \"noise\" { abort }\n"+jobLine)
+	first := currentVersion(t, env)
+	storeLogBatch(t, env, 123, logAt(t, "HardWorker done: 120 ms", "2026-10-02T11:00:00Z"), logAt(t, "noise", "2026-10-02T11:00:01Z"))
+	env.ProcessLogs(t)
+	storeLogBatch(t, env, 123, logAt(t, "noise", "2026-10-02T11:00:02Z"), logAt(t, "not a job line", "2026-10-02T11:00:03Z"),
+		logAt(t, "SlowWorker fail: 900 ms", "2026-10-02T11:00:04Z"))
+	env.ProcessLogs(t)
+	got := statsOf(t, env)
+	if got.VersionID == nil || *got.VersionID != first || got.Processed != 5 || got.Dropped != 2 || got.Failed != 1 || got.CompileError != nil {
+		t.Errorf("Expected version %d with 5 processed, 2 dropped and 1 failed, got %+v", first, got)
+	}
+	if got.AverageMicros <= 0 {
+		t.Errorf("Expected the average time the program took, got %v", got.AverageMicros)
+	}
+
+	seedLogTransform(t, env, 123, ".v = 2")
+	second := currentVersion(t, env)
+	if got := statsOf(t, env); got.VersionID == nil || *got.VersionID != second || got.Processed != 0 || got.AverageMicros != 0 {
+		t.Errorf("Expected the counts reset for version %d before it runs, got %+v", second, got)
+	}
+	storeLogBatch(t, env, 123, logAt(t, "after", "2026-10-02T11:00:05Z"))
+	env.ProcessLogs(t)
+	if got := statsOf(t, env); got.VersionID == nil || *got.VersionID != second || got.Processed != 1 || got.Dropped != 0 || got.Failed != 0 {
+		t.Errorf("Expected version %d with 1 processed, got %+v", second, got)
+	}
+
+	seedLogTransform(t, env, 123, "")
+	if got := statsOf(t, env); got != (transformStats{}) {
+		t.Errorf("Expected no version and no counts with an empty program, got %+v", got)
+	}
+}
+
+func TestStatsReportAVersionThatDoesNotCompile(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedLogTransform(t, env, 123, ".x = ")
+	got := statsOf(t, env)
+	if got.CompileError == nil || !strings.Contains(*got.CompileError, "syntax error") || got.Processed != 0 {
+		t.Errorf("Expected the compile error before any Log, got %+v", got)
+	}
+	storeLogBatch(t, env, 123, logAt(t, "one", "2026-10-02T11:00:00Z"), logAt(t, "two", "2026-10-02T11:00:01Z"))
+	env.ProcessLogs(t)
+	got = statsOf(t, env)
+	if got.CompileError == nil || !strings.Contains(*got.CompileError, "syntax error") || got.Processed != 2 || got.Failed != 2 {
+		t.Errorf("Expected the compile error with both Logs failed, got %+v", got)
+	}
+}
+
+func TestALogBatchStoredOnASecondTryIsCountedAndArrivesOnce(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedLogTransform(t, env, 123, jobLine)
+	env.FlakyLogs.fail(diskFull, 123)
+	storeLogBatch(t, env, 123, logAt(t, "HardWorker done: 120 ms", "2026-10-02T11:00:00Z"))
+	tries := env.FlakyLogs.attempts.Load()
+	done := startLogProcessing(env)
+	waitFor(t, 5*time.Second, "Log processing to retry", func() bool { return env.FlakyLogs.attempts.Load() >= tries+3 })
+	env.FlakyLogs.recover()
+	caughtUpWithin(t, env, done, 10*time.Second)
+
+	if got := statsOf(t, env); got.Processed != 1 {
+		t.Errorf("Expected the Log counted once, got %+v", got)
+	}
+	if got := previewProgram(t, env, ".n = 1"); len(got.Results) != 1 {
+		t.Errorf("Expected the Log among the recent arrivals once, got %+v", got.Results)
 	}
 }

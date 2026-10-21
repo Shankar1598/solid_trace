@@ -55,6 +55,7 @@ type current struct {
 	program   *vrl.Program // nil when it doesn't compile
 	// compileError says why it doesn't compile, as errorAttribute holds it.
 	compileError string
+	counts       counts
 }
 
 // New returns Transforms that read each Project's Log transform from
@@ -77,14 +78,16 @@ func New(console Console, clock clock.Clock) *Transforms {
 // arrivals, as they arrived.
 func (t *Transforms) Apply(projectID uint32, batches []storage.LogBatch) ([]storage.LogBatch, error) {
 	fresh := t.arrivals.freshFrom(projectID, batches)
-	out, err := t.apply(projectID, batches)
+	out, err := t.apply(projectID, batches, fresh)
 	if err == nil {
 		t.arrivals.add(projectID, batches[fresh:])
 	}
 	return out, err
 }
 
-func (t *Transforms) apply(projectID uint32, batches []storage.LogBatch) ([]storage.LogBatch, error) {
+// apply is Apply, counting the Logs of batches from fresh on in the running
+// counts.
+func (t *Transforms) apply(projectID uint32, batches []storage.LogBatch, fresh int) ([]storage.LogBatch, error) {
 	version, err := t.console.LogTransform(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("read log transform: %w", err)
@@ -94,13 +97,15 @@ func (t *Transforms) apply(projectID uint32, batches []storage.LogBatch) ([]stor
 		return batches, nil
 	}
 	if c.program == nil {
+		failed := int64(logCount(batches[fresh:]))
+		c.counts.add(tally{processed: failed, failed: failed})
 		return failAll(batches, c.compileError), nil
 	}
 	retentionDays, err := t.console.LogRetentionDays(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("read retention: %w", err)
 	}
-	return c.run(batches, retentionDays), nil
+	return c.run(batches, fresh, retentionDays), nil
 }
 
 // current returns a Project's compiled Log transform for version, compiling
@@ -197,8 +202,8 @@ func cut(s string, max int) string {
 }
 
 // run runs the program on the batches' Logs, and returns the batches as
-// they are to be stored.
-func (c *current) run(batches []storage.LogBatch, retentionDays int) []storage.LogBatch {
+// they are to be stored. It counts the Logs of batches from fresh on.
+func (c *current) run(batches []storage.LogBatch, fresh int, retentionDays int) []storage.LogBatch {
 	var logs []models.Log
 	var batchOf []int // the index of each Log's batch
 	out := make([]storage.LogBatch, len(batches))
@@ -212,11 +217,22 @@ func (c *current) run(batches []storage.LogBatch, retentionDays int) []storage.L
 		}
 	}
 
+	started := time.Now()
 	outcomes := runProgram(c.program, logs, func(i int) normalise.Receipt { return receipts[batchOf[i]] })
+	took := time.Since(started)
+
+	var counted tally
 	for i, o := range outcomes {
 		if !o.dropped {
 			out[batchOf[i]].Logs = append(out[batchOf[i]].Logs, o.log)
 		}
+		if batchOf[i] >= fresh {
+			counted.add(o)
+		}
+	}
+	if counted.processed > 0 {
+		counted.took = took * time.Duration(counted.processed) / time.Duration(len(logs))
+		c.counts.add(counted)
 	}
 	return out
 }
