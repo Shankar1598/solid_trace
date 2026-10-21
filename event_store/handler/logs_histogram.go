@@ -95,14 +95,21 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 
 	counts := query.Histogram(bucket)
 	from, to := counts.Range()
-	raw, err := h.logs.ScanLogTable(run.ctx, storage.LogTableScan{
+	limit := len(starts) * len(histogramLevels)
+	scan := storage.LogTableScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
 		Where:     counts.Where,
 		Select:    counts.Select,
-		Query:     func(logs string) string { return counts.TableSQL(logs, len(starts)*len(histogramLevels)) },
-	})
+		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
+	}
+	// As a Chart's, the buckets whose Logs are all in files may come from
+	// the bin cache.
+	if b, ok := counts.Bins(); ok {
+		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: limit}
+	}
+	raw, err := h.logs.ScanLogTable(run.ctx, scan)
 	if err != nil {
 		if run.timedOut() {
 			return run.stopped(c, shorterRange)
