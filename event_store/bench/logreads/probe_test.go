@@ -145,6 +145,77 @@ func TestLogReads(t *testing.T) {
 			}
 		}
 	}
+
+	// The explorer's histogram of the hour, as before EventStore
+	// performance 05 without the bin cache, then filling a new one, then
+	// reopened, when the Log file's bins come from it.
+	for _, project := range []struct {
+		name string
+		id   uint32
+	}{{"hot table", hotProject}, {"Log file", fileProject}} {
+		var without time.Duration
+		for run := range runs {
+			took, found := histogramOfTheHour(t, store, project.id, false)
+			if found != logs {
+				t.Errorf("%s: the histogram counted %d Logs, want %d", project.name, found, logs)
+			}
+			if run == 0 || took < without {
+				without = took
+			}
+		}
+		store.UseBinCache(64 << 20)
+		filling, _ := histogramOfTheHour(t, store, project.id, true)
+		var reopened time.Duration
+		for run := range runs {
+			took, found := histogramOfTheHour(t, store, project.id, true)
+			if found != logs {
+				t.Errorf("%s: the histogram from the bin cache counted %d Logs, want %d", project.name, found, logs)
+			}
+			if run == 0 || took < reopened {
+				reopened = took
+			}
+		}
+		store.UseBinCache(0)
+		t.Logf("%-9s histogram: %d ms without the bin cache, %d ms filling it, %d ms reopened", project.name,
+			without.Milliseconds(), filling.Milliseconds(), reopened.Milliseconds())
+	}
+}
+
+// histogramOfTheHour runs the explorer's histogram of the hour, with no
+// Query, as the histogram route does, and returns how long it took and how
+// many Logs it counted. With bins, its bins may come from the bin cache.
+func histogramOfTheHour(t *testing.T, store *storage.LogStore, projectID uint32, bins bool) (time.Duration, int) {
+	t.Helper()
+	start := time.Now()
+	query, err := logquery.Compile("", logquery.Bounds{From: hour, To: hour.Add(time.Hour), Now: hour.Add(2 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := query.Histogram(logquery.AutoBucket(time.Hour))
+	from, to := counts.Range()
+	limit := 10_000
+	scan := storage.LogTableScan{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Where:     counts.Where,
+		Select:    counts.Select,
+		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
+	}
+	if b, ok := counts.Bins(); ok && bins {
+		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: limit}
+	}
+	rows, err := store.ScanLogTable(context.Background(), scan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	took := time.Since(start)
+	found := 0
+	for _, row := range rows {
+		n, _ := row[2].(int64)
+		found += int(n)
+	}
+	return took, found
 }
 
 // buildLogs stores the hour's Logs for both Projects and returns a LogStore
