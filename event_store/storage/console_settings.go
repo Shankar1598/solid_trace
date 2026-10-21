@@ -28,9 +28,9 @@ type InstanceSettings struct {
 	DefaultLogRetentionDays int
 }
 
-// ConsoleSettings reads Console's instance settings and Projects' Retention
-// and slugs from Console's SQLite database, read-only: Logs write no Console tables (ADR
-// 0001). Every call reads the database, so a change in Console shows at once;
+// ConsoleSettings reads Console's instance settings and Projects' Retention,
+// slugs and Log transforms from Console's SQLite database, read-only: Logs
+// write no Console tables (ADR 0001). Every call reads the database, so a change in Console shows at once;
 // callers that need a cache keep their own.
 type ConsoleSettings struct {
 	db *sql.DB
@@ -137,4 +137,27 @@ func (s *ConsoleSettings) ProjectLogRetention() (map[uint32]int, error) {
 		retention[projectID] = max(days, 0)
 	}
 	return retention, rows.Err()
+}
+
+// LogTransformVersion is a saved version of a Project's Log transform.
+type LogTransformVersion struct {
+	// ID is the version's id in Console's log_transform_versions table, or 0
+	// when the Project has never saved one.
+	ID int64
+	// Program is the VRL program. An empty one means no Log transform.
+	Program string
+}
+
+// LogTransform returns a Project's current Log transform: the newest version
+// Console saved, or the zero version when there is none.
+func (s *ConsoleSettings) LogTransform(projectID uint32) (LogTransformVersion, error) {
+	var version LogTransformVersion
+	err := s.db.QueryRow(
+		"SELECT id, program FROM log_transform_versions WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+		projectID,
+	).Scan(&version.ID, &version.Program)
+	if errors.Is(err, sql.ErrNoRows) {
+		return LogTransformVersion{}, nil
+	}
+	return version, err
 }
