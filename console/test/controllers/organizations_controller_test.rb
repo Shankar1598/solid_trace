@@ -39,6 +39,7 @@ class OrganizationsControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "signing up leads to making an Organization, with the welcome kept" do
+    InstanceSetting.current.update!(sign_up_open: true)
     post registration_url, params: { user: { name: "Grace", email: "grace@example.com", password: "password", password_confirmation: "password" } }
     follow_redirect!
 
