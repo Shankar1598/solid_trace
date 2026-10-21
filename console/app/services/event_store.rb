@@ -123,7 +123,9 @@ class EventStore
       body[:limit] = limit if limit
       body[:totals] = true if totals
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
-      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
+      CallTimings.log_read("query", project_id: project_id, query: query, from: from, to: to) do
+        post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
+      end
     end
 
     # A Match monitor's run: the Logs of a Project's Log batches after
@@ -139,7 +141,9 @@ class EventStore
       body = { query: query, after_batch: after_batch.to_s }
       body[:limit] = limit if limit
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
-      post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
+      CallTimings.log_read("match", project_id: project_id, query: query) do
+        post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
+      end
     end
 
     # What EventStore said in an error body it answered: the message of each
@@ -179,7 +183,9 @@ class EventStore
       body = { query: query, from: utc(from), to: utc(to) }
       body[:bucket_seconds] = bucket_seconds if bucket_seconds
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
-      post!("#{base_url}/api/#{project_id}/logs/histogram", body, read_timeout: read_timeout(timeout_seconds))
+      CallTimings.log_read("histogram", project_id: project_id, query: query, from: from, to: to) do
+        post!("#{base_url}/api/#{project_id}/logs/histogram", body, read_timeout: read_timeout(timeout_seconds))
+      end
     end
 
     # Checks a Query without running it: {"errors" => [...], "chips" => Hash | nil,
@@ -225,10 +231,12 @@ class EventStore
     # Query's run. Raises SQLQueriesOff while SQL queries are off.
     # timeout_seconds works as in query_logs.
     def run_logs_sql(project_id:, sql:, from:, to:, timeout_seconds: nil)
-      refuse_sql_unless_enabled!
-      body = { sql: sql, from: utc(from), to: utc(to) }
-      body[:timeout_seconds] = timeout_seconds if timeout_seconds
-      post!("#{base_url}/api/#{project_id}/logs/sql", body, sql: true, read_timeout: read_timeout(timeout_seconds))
+      CallTimings.log_read("sql", project_id: project_id, query: sql, from: from, to: to) do
+        refuse_sql_unless_enabled!
+        body = { sql: sql, from: utc(from), to: utc(to) }
+        body[:timeout_seconds] = timeout_seconds if timeout_seconds
+        post!("#{base_url}/api/#{project_id}/logs/sql", body, sql: true, read_timeout: read_timeout(timeout_seconds))
+      end
     end
 
     # Compiles a Log transform's program without running it: {"errors" =>

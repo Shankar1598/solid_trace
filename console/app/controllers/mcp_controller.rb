@@ -5,6 +5,8 @@
 # Each request gets its own server and stateless transport, which answer it
 # with one JSON response, so no stream holds a Puma thread.
 class McpController < ActionController::API
+  include TimesCalls
+
   before_action :authenticate_token!
 
   def create
