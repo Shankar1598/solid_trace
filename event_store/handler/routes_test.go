@@ -14,6 +14,7 @@ import (
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
+	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -75,7 +76,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore, sqlOn{}, clock.System{}), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore, sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
 }
@@ -155,11 +156,12 @@ func TestLogQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 	}
 	run := `{"query": "", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`
 	for path, body := range map[string]string{
-		"/api/1/logs/query":        run,
-		"/api/1/logs/validate":     `{"query": ""}`,
-		"/api/1/logs/histogram":    run,
-		"/api/1/logs/sql":          `{"sql": "SELECT 1", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`,
-		"/api/1/logs/readable-sql": run,
+		"/api/1/logs/query":           run,
+		"/api/1/logs/validate":        `{"query": ""}`,
+		"/api/1/logs/histogram":       run,
+		"/api/1/logs/sql":             `{"sql": "SELECT 1", "from": "2026-10-02T00:00:00Z", "to": "2026-10-03T00:00:00Z"}`,
+		"/api/1/logs/readable-sql":    run,
+		"/api/1/logs/transform/check": `{"program": ".a = 1"}`,
 	} {
 		if status := post(apps.ingest, path, body); status != fiber.StatusNotFound {
 			t.Errorf("ingest app %s: expected 404, got %d", path, status)

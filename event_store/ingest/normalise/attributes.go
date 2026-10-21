@@ -190,9 +190,9 @@ func (n *normaliser) limitAttributes() {
 	}
 }
 
-// size is about how many bytes a Log holds: its built-in fields, and its
+// Size is about how many bytes a Log holds: its built-in fields, and its
 // Attributes' names and values.
-func size(log models.Log) int {
+func Size(log models.Log) int {
 	total := len(log.Level) + len(log.Message) + len(log.Service) + len(log.Environment) + len(log.TraceID) + len(log.SpanID)
 	for name, value := range log.Attributes.String {
 		total += len(name) + len(value)

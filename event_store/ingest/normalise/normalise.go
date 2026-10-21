@@ -205,7 +205,7 @@ func normaliseSent(s sent, r Receipt) (models.Log, Outcome) {
 	}
 
 	n.limitAttributes()
-	if size(n.log) > maxLogBytes {
+	if Size(n.log) > maxLogBytes {
 		return models.Log{}, Dropped
 	}
 	if n.truncated {
