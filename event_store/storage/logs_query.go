@@ -237,10 +237,14 @@ func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([
 		return nil, nil
 	}
 
+	// The span skips row groups. The ids pick the Logs with list_contains,
+	// which DuckDB runs in the scan, so it reads the other columns only
+	// where they match: an IN list becomes a join after the scan, which
+	// reads every column of the span.
 	span := fmt.Sprintf("time >= %s AND time <= %s", timestampLiteral(oldest), timestampLiteral(newest))
 	return r.queryLogs(fmt.Sprintf(`
 		SELECT * FROM (%s)
-		WHERE id IN (%s)
+		WHERE list_contains([%s], id)
 		ORDER BY time DESC, id DESC`,
 		sources("*", "* EXCLUDE (project_id)", func(LogColumns) string { return span }), strings.Join(ids, ", ")))
 }
