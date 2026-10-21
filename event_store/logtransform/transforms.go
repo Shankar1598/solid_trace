@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/storage"
 	"github.com/solidtrace/event_store/vrl"
 )
@@ -40,6 +41,7 @@ const logsPerRun = 500
 // version once. It is safe for concurrent use.
 type Transforms struct {
 	console Console
+	clock   clock.Clock
 
 	mu       sync.Mutex
 	projects map[uint32]*current // by Project, only those with a program
@@ -53,9 +55,10 @@ type current struct {
 	compileError string
 }
 
-// New returns Transforms that read each Project's Log transform from console.
-func New(console Console) *Transforms {
-	return &Transforms{console: console, projects: make(map[uint32]*current)}
+// New returns Transforms that read each Project's Log transform from
+// console. clock is when a preview's given Logs are received.
+func New(console Console, clock clock.Clock) *Transforms {
+	return &Transforms{console: console, clock: clock, projects: make(map[uint32]*current)}
 }
 
 // Apply runs a Project's current Log transform on the Logs of its Log batches,
@@ -179,44 +182,60 @@ func cut(s string, max int) string {
 	return s[:end]
 }
 
-// batchedLog is a Log and the index of its batch.
-type batchedLog struct {
-	batch int
-	log   models.Log
-}
-
-// run runs the program on the batches' Logs, a few hundred to a call, and
-// returns the batches as they are to be stored.
+// run runs the program on the batches' Logs, and returns the batches as
+// they are to be stored.
 func (c *current) run(batches []storage.LogBatch, retentionDays int) []storage.LogBatch {
-	var logs []batchedLog
+	var logs []models.Log
+	var batchOf []int // the index of each Log's batch
 	out := make([]storage.LogBatch, len(batches))
 	receipts := make([]normalise.Receipt, len(batches))
 	for i, batch := range batches {
 		out[i].ID = batch.ID
 		receipts[i] = normalise.Receipt{At: receivedAt(batch.ID), RetentionDays: retentionDays}
 		for _, log := range batch.Logs {
-			logs = append(logs, batchedLog{i, log})
+			logs = append(logs, log)
+			batchOf = append(batchOf, i)
 		}
 	}
 
+	outcomes := runProgram(c.program, logs, func(i int) normalise.Receipt { return receipts[batchOf[i]] })
+	for i, o := range outcomes {
+		if !o.dropped {
+			out[batchOf[i]].Logs = append(out[batchOf[i]].Logs, o.log)
+		}
+	}
+	return out
+}
+
+// outcome is what running a program on a Log comes to: the Log to store,
+// unless the program dropped it. When the program failed on the Log, err
+// says why, and the Log is as it arrived, with err in errorAttribute.
+type outcome struct {
+	log     models.Log
+	dropped bool
+	err     string
+}
+
+// runProgram runs program on logs, a few hundred to a call, and returns
+// what each comes to. receipt is how the i'th Log was received.
+func runProgram(program *vrl.Program, logs []models.Log, receipt func(i int) normalise.Receipt) []outcome {
+	out := make([]outcome, len(logs))
 	for start := 0; start < len(logs); start += logsPerRun {
 		chunk := logs[start:min(start+logsPerRun, len(logs))]
 		views := make([]map[string]any, len(chunk))
-		for i, l := range chunk {
-			views[i] = view(l.log)
+		for i, log := range chunk {
+			views[i] = view(log)
 		}
-		outcomes, err := c.program.Run(views)
+		results, err := program.Run(views)
 		if err != nil {
 			// Unreachable unless the bridge itself breaks. Nothing is lost.
-			outcomes = make([]vrl.Outcome, len(chunk))
-			for i := range outcomes {
-				outcomes[i].Error = err.Error()
+			results = make([]vrl.Outcome, len(chunk))
+			for i := range results {
+				results[i].Error = err.Error()
 			}
 		}
-		for i, l := range chunk {
-			if log, ok := stored(l.log, outcomes[i], receipts[l.batch]); ok {
-				out[l.batch].Logs = append(out[l.batch].Logs, log)
-			}
+		for i, log := range chunk {
+			out[start+i] = stored(log, results[i], receipt(start+i))
 		}
 	}
 	return out
@@ -228,31 +247,36 @@ func receivedAt(batchID uuid.UUID) time.Time {
 	return time.Unix(sec, nsec).UTC()
 }
 
-// stored is the Log to store for a Log that arrived as arrived, after the
-// program's outcome, or false when the program dropped it.
-func stored(arrived models.Log, outcome vrl.Outcome, r normalise.Receipt) (models.Log, bool) {
+// stored is what a Log that arrived as arrived comes to after the program's
+// result.
+func stored(arrived models.Log, result vrl.Outcome, r normalise.Receipt) outcome {
 	switch {
-	case outcome.Dropped:
-		return models.Log{}, false
-	case outcome.Error != "":
-		return failed(arrived, outcome.Error), true
+	case result.Dropped:
+		return outcome{dropped: true}
+	case result.Error != "":
+		return failure(arrived, result.Error)
 	}
 	kept := keptNames(arrived.Attributes)
 	for _, name := range kept {
 		if !fieldNames[name] {
-			forget(outcome.Log, name)
+			forget(result.Log, name)
 		}
 	}
-	log, normalised, err := normalise.Transformed(outcome.Log, r)
+	log, normalised, err := normalise.Transformed(result.Log, r)
 	switch {
 	case err != nil:
-		return failed(arrived, err.Error()), true
+		return failure(arrived, err.Error())
 	case normalised == normalise.Dropped:
-		return failed(arrived, "the Log the program returned is over 1 MB"), true
+		return failure(arrived, "the Log the program returned is over 1 MB")
 	}
 	log.ID = arrived.ID
 	for _, name := range kept {
 		keep(arrived.Attributes, &log.Attributes, name)
 	}
-	return log, true
+	return outcome{log: log}
+}
+
+// failure is what a Log the program failed on comes to.
+func failure(arrived models.Log, why string) outcome {
+	return outcome{log: failed(arrived, why), err: cut(why, maxErrorBytes)}
 }
