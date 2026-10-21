@@ -53,3 +53,17 @@ Production is now 2 vCPU with 15 GiB (was 7.7 GiB), and SSH works, so ideas 10 a
 | — | DuckDB `memory_limit` (6000MB on production) | **Ask** | The VM doubled its memory. 50% (8GB) leaves the page cache for the last 24 h of Log files. A deploy config change, not code. |
 
 Filed: [03](03-export-outside-the-write-lock.md) (built and resolved on `feature/export-outside-write-lock`; no ADR changes), [04](04-cpu-profiles-on-production.md) (profiles) and [05](05-histogram-through-the-bin-cache.md) (histogram through the bin cache), both `ready-for-agent`. The "Ask" rows wait for the user.
+
+### The user's calls on the "Ask" rows (2026-10-21)
+
+- **Idea 2, threads: left at 8.**
+  - The user first chose 4 (2 per CPU). Measured first, on 2 pinned CPUs, 4 threads did no better than 8:
+    - the export took 5.5–5.6 s at 4 threads against 5.6–5.8 s at 8;
+    - the median wait of appends running beside it was 51–53 ms against 52–53 ms;
+    - the read probe (`bench/logreads`, now with `LOGREADS_PROBE_THREADS`) was within noise at 8 and 4.
+  - Only 2 threads helped: 4.8–5.2 s and 36–39 ms. But that costs cold bucket reads about four times, from about 2.6 s to 10 s for a cold 7-day chart, estimated from ADR 0008's probe.
+  - With those figures the user kept 8. Revisit with ticket 04's profiles, or with DuckDB 2.0's async I/O.
+- **Idea 3, counts at ingest: later**, after 05 and 04.
+- **Idea 5, `lz4_raw`: probe it first**, as [06](06-lz4-raw-log-files-probe.md).
+- **Idea 6, checkpoint threshold: after 04's profiles.**
+- **DuckDB `memory_limit`:** the user leans to 50% of the VM, 8GB, so the page cache keeps the rest. It's a deploy config change for the user.
