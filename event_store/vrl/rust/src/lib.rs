@@ -7,12 +7,24 @@ use std::any::Any;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Once;
 
-use vrl::compiler::{self, Function, Program, TimeZone};
+use chrono::{DateTime, Utc};
+use rmpv::ValueRef;
+use vrl::compiler::runtime::{Runtime, Terminate};
+use vrl::compiler::{self, ExpressionError, Function, Program, TargetValue, TimeZone};
 use vrl::diagnostic::{Diagnostic, Formatter, Severity};
+use vrl::prelude::{Bytes, NotNan};
+use vrl::value::{KeyString, ObjectMap, Secrets, Value};
 
 /// Functions left out by name: they have no cap on what they write, so a small
 /// Log could make them exhaust memory.
 const LEFT_OUT: &[&str] = &["decode_gzip", "decode_zlib", "decode_zstd", "decode_snappy"];
+
+/// How deep a Log may nest. Deeper Logs fail rather than risk overflowing
+/// the stack, which no panic handler can catch.
+const MAX_DEPTH: usize = 64;
+
+/// The msgpack timestamp extension type, as Go writes time.Time.
+const TIMESTAMP: i8 = -1;
 
 /// A byte buffer Rust allocated and Go hands back to `st_vrl_buf_free`.
 #[repr(C)]
@@ -151,6 +163,196 @@ fn encode_diagnostics(source: &str, list: &[Diagnostic]) -> Vec<u8> {
         rmp::encode::write_str(w, formatted.trim()).unwrap();
     }
     out
+}
+
+/// Runs a program on Logs. `logs` is a msgpack array of bin, each one Log's
+/// msgpack map. Writes one outcome per Log to `outcomes`, as a msgpack
+/// array: `[0, log]` kept, `[1]` dropped by abort, `[2, error]` failed.
+/// Returns 0, or 1 with the error text in `outcomes` when the whole call
+/// fails.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn st_vrl_run(
+    compiled: *const Compiled,
+    logs: *const u8,
+    len: usize,
+    outcomes: *mut Buf,
+) -> i32 {
+    quiet_panics();
+    let compiled = unsafe { &*compiled };
+    let logs = unsafe { bytes(logs, len) };
+    let (status, out) = match panic::catch_unwind(AssertUnwindSafe(|| run(compiled, logs))) {
+        Ok(Ok(out)) => (0, out),
+        Ok(Err(error)) => (1, error.into_bytes()),
+        Err(payload) => (1, panic_text(payload).into_bytes()),
+    };
+    unsafe { *outcomes = Buf::from_vec(out) };
+    status
+}
+
+fn run(compiled: &Compiled, mut logs: &[u8]) -> Result<Vec<u8>, String> {
+    let count = rmp::decode::read_array_len(&mut logs).map_err(|e| format!("reading the Logs: {e}"))?;
+    let mut out = Vec::with_capacity(logs.len() + 16);
+    rmp::encode::write_array_len(&mut out, count).unwrap();
+    let mut runtime = Runtime::default();
+    let mut scratch = Vec::new();
+    for _ in 0..count {
+        let len = rmp::decode::read_bin_len(&mut logs).map_err(|e| format!("reading the Logs: {e}"))? as usize;
+        if len > logs.len() {
+            return Err("reading the Logs: a Log is cut short".to_string());
+        }
+        let (log, rest) = logs.split_at(len);
+        logs = rest;
+        scratch.clear();
+        // Each Log's outcome goes to scratch first, so a panic part way
+        // through never leaves half an outcome in out.
+        match panic::catch_unwind(AssertUnwindSafe(|| run_one(compiled, &mut runtime, log, &mut scratch))) {
+            Ok(()) => out.extend_from_slice(&scratch),
+            Err(payload) => {
+                runtime = Runtime::default(); // it may hold half-set variables
+                write_failed(&mut out, &panic_text(payload));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn run_one(compiled: &Compiled, runtime: &mut Runtime, log: &[u8], out: &mut Vec<u8>) {
+    let value = match decode_log(log) {
+        Ok(value) => value,
+        Err(error) => return write_failed(out, &error),
+    };
+    let mut target = TargetValue {
+        value,
+        metadata: Value::Object(ObjectMap::new()),
+        secrets: Secrets::default(),
+    };
+    let result = runtime.resolve(&mut target, &compiled.program, &compiled.timezone);
+    runtime.clear();
+    match result {
+        Ok(_) => match &target.value {
+            Value::Object(_) => {
+                rmp::encode::write_array_len(out, 2).unwrap();
+                rmp::encode::write_pfix(out, 0).unwrap();
+                if let Err(error) = encode_value(out, &target.value, 0) {
+                    out.clear();
+                    write_failed(out, &error);
+                }
+            }
+            other => write_failed(out, &format!(". is {}, not an object", with_article(other.kind_str()))),
+        },
+        Err(Terminate::Abort(ExpressionError::Abort { .. })) => {
+            rmp::encode::write_array_len(out, 1).unwrap();
+            rmp::encode::write_pfix(out, 1).unwrap();
+        }
+        Err(error) => write_failed(out, &error.to_string()),
+    }
+}
+
+fn write_failed(out: &mut Vec<u8>, error: &str) {
+    rmp::encode::write_array_len(out, 2).unwrap();
+    rmp::encode::write_pfix(out, 2).unwrap();
+    rmp::encode::write_str(out, error).unwrap();
+}
+
+fn with_article(kind: &str) -> String {
+    match kind.as_bytes().first() {
+        Some(b'a' | b'e' | b'i' | b'o' | b'u') => format!("an {kind}"),
+        _ => format!("a {kind}"),
+    }
+}
+
+fn decode_log(mut log: &[u8]) -> Result<Value, String> {
+    let value = rmpv::decode::read_value_ref_with_max_depth(&mut log, MAX_DEPTH).map_err(|e| match e {
+        rmpv::decode::Error::DepthLimitExceeded => format!("the Log nests more than {MAX_DEPTH} levels deep"),
+        e => format!("reading the Log: {e}"),
+    })?;
+    to_value(value)
+}
+
+fn to_value(value: ValueRef) -> Result<Value, String> {
+    Ok(match value {
+        ValueRef::Nil => Value::Null,
+        ValueRef::Boolean(b) => Value::Boolean(b),
+        ValueRef::Integer(n) => match n.as_i64() {
+            Some(n) => Value::Integer(n),
+            None => return Err(format!("the Log holds {n}, too large for an integer")),
+        },
+        ValueRef::F32(f) => to_float(f as f64)?,
+        ValueRef::F64(f) => to_float(f)?,
+        ValueRef::String(s) => match s.as_str() {
+            Some(s) => Value::from(s),
+            None => Value::Bytes(Bytes::copy_from_slice(s.as_bytes())),
+        },
+        ValueRef::Binary(b) => Value::Bytes(Bytes::copy_from_slice(b)),
+        ValueRef::Array(items) => Value::Array(items.into_iter().map(to_value).collect::<Result<_, _>>()?),
+        ValueRef::Map(entries) => {
+            let mut map = ObjectMap::new();
+            for (key, value) in entries {
+                let key = match &key {
+                    ValueRef::String(s) => s.as_str(),
+                    _ => None,
+                };
+                let key = key.ok_or("the Log has a key that isn't a string")?;
+                map.insert(KeyString::from(key), to_value(value)?);
+            }
+            Value::Object(map)
+        }
+        ValueRef::Ext(TIMESTAMP, b) => Value::Timestamp(timestamp(b).ok_or("the Log holds a timestamp that can't be read")?),
+        ValueRef::Ext(kind, _) => return Err(format!("the Log holds a msgpack extension of type {kind}")),
+    })
+}
+
+fn to_float(f: f64) -> Result<Value, String> {
+    NotNan::new(f).map(Value::Float).map_err(|_| "the Log holds NaN".to_string())
+}
+
+/// Reads msgpack's timestamp extension in its 4, 8 and 12 byte forms.
+fn timestamp(b: &[u8]) -> Option<DateTime<Utc>> {
+    let (secs, nanos) = match b.len() {
+        4 => (u32::from_be_bytes(b.try_into().ok()?) as i64, 0),
+        8 => {
+            let x = u64::from_be_bytes(b.try_into().ok()?);
+            ((x & 0x3_ffff_ffff) as i64, (x >> 34) as u32)
+        }
+        12 => (i64::from_be_bytes(b[4..].try_into().ok()?), u32::from_be_bytes(b[..4].try_into().ok()?)),
+        _ => return None,
+    };
+    DateTime::from_timestamp(secs, nanos)
+}
+
+fn encode_value(out: &mut Vec<u8>, value: &Value, depth: usize) -> Result<(), String> {
+    if depth > MAX_DEPTH {
+        return Err(format!("the program nested . more than {MAX_DEPTH} levels deep"));
+    }
+    match value {
+        Value::Null => rmp::encode::write_nil(out).unwrap(),
+        Value::Boolean(b) => rmp::encode::write_bool(out, *b).unwrap(),
+        // Always int64 and float64, which Go decodes as such.
+        Value::Integer(n) => rmp::encode::write_i64(out, *n).unwrap(),
+        Value::Float(f) => rmp::encode::write_f64(out, f.into_inner()).unwrap(),
+        Value::String(s) => rmp::encode::write_str(out, s).unwrap(),
+        Value::Bytes(b) => rmp::encode::write_str(out, &String::from_utf8_lossy(b)).unwrap(),
+        Value::Regex(r) => rmp::encode::write_str(out, r.as_str()).unwrap(),
+        Value::Timestamp(t) => {
+            rmp::encode::write_ext_meta(out, 12, TIMESTAMP).unwrap();
+            out.extend_from_slice(&t.timestamp_subsec_nanos().to_be_bytes());
+            out.extend_from_slice(&t.timestamp().to_be_bytes());
+        }
+        Value::Object(map) => {
+            rmp::encode::write_map_len(out, map.len() as u32).unwrap();
+            for (key, value) in map {
+                rmp::encode::write_str(out, key).unwrap();
+                encode_value(out, value, depth + 1)?;
+            }
+        }
+        Value::Array(items) => {
+            rmp::encode::write_array_len(out, items.len() as u32).unwrap();
+            for item in items {
+                encode_value(out, item, depth + 1)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Frees a program `st_vrl_compile` returned. Null is ignored.

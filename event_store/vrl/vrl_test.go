@@ -1,8 +1,10 @@
 package vrl_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/event_store/vrl"
 )
@@ -76,5 +78,76 @@ func TestCompileKeepsWarningsWithTheProgram(t *testing.T) {
 	program.Free()
 	if len(diagnostics) != 1 || diagnostics[0].Severity != "warning" {
 		t.Errorf("diagnostics = %+v, want one warning", diagnostics)
+	}
+}
+
+// sidekiqProgram is the spec's probe program: it parses a sidekiq.log job
+// line into four Attributes and deletes the message.
+const sidekiqProgram = `
+parsed, err = parse_regex(.message, r'^\S+ (?P<pid>\d+) TID-(?P<tid>\S+) (?P<worker>\S+) JID-(?P<jid>\S+) INFO: (?P<status>start|done|fail)(?:: (?P<duration>[\d.]+) sec)?')
+if err == null {
+  .sidekiq.worker = parsed.worker
+  .sidekiq.jid = parsed.jid
+  .sidekiq.status = parsed.status
+  .sidekiq.duration = to_float(parsed.duration) ?? null
+  del(.message)
+}
+`
+
+func TestRunReturnsTheLogsTheProgramChanged(t *testing.T) {
+	program := compile(t, sidekiqProgram)
+	at := time.Date(2026, 10, 21, 6, 58, 49, 598_000_000, time.UTC)
+	outcomes, err := program.Run([]map[string]any{
+		{"time": at, "level": "info", "message": "2026-10-21T06:58:49.598Z 9515 TID-gmxjgddu8 AnalyticsEventProcessorWorker JID-fb60f1964d1872965850d482 INFO: done: 0.575 sec", "file": "sidekiq.log", "count": int64(3)},
+		{"time": at, "message": "Booting Sidekiq 7.2.4", "file": "sidekiq.log"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []vrl.Outcome{
+		{Log: map[string]any{"time": at, "level": "info", "file": "sidekiq.log", "count": int64(3), "sidekiq": map[string]any{
+			"worker": "AnalyticsEventProcessorWorker", "jid": "fb60f1964d1872965850d482", "status": "done", "duration": 0.575,
+		}}},
+		{Log: map[string]any{"time": at, "message": "Booting Sidekiq 7.2.4", "file": "sidekiq.log"}},
+	}
+	if !reflect.DeepEqual(outcomes, want) {
+		t.Errorf("outcomes =\n%#v\nwant\n%#v", outcomes, want)
+	}
+}
+
+func TestRunDropsTheLogsTheProgramAborts(t *testing.T) {
+	program := compile(t, `if .level == "debug" { abort }`)
+	outcomes, err := program.Run([]map[string]any{{"level": "debug"}, {"level": "info"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []vrl.Outcome{{Dropped: true}, {Log: map[string]any{"level": "info"}}}
+	if !reflect.DeepEqual(outcomes, want) {
+		t.Errorf("outcomes = %#v, want %#v", outcomes, want)
+	}
+}
+
+func TestRunFailsTheLogsTheProgramErrsOn(t *testing.T) {
+	program := compile(t, `.parsed = parse_json!(.message)`)
+	outcomes, err := program.Run([]map[string]any{{"message": "not json"}, {"message": `{"a":1}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcomes[0].Log != nil || outcomes[0].Dropped || !strings.Contains(outcomes[0].Error, "function call error for \"parse_json\"") {
+		t.Errorf("outcomes[0] = %#v, want a parse_json failure", outcomes[0])
+	}
+	if got := outcomes[1].Log["parsed"]; !reflect.DeepEqual(got, map[string]any{"a": int64(1)}) {
+		t.Errorf("outcomes[1].parsed = %#v, want {a: 1}", got)
+	}
+}
+
+func TestRunFailsWhenTheProgramLeavesANonObject(t *testing.T) {
+	program := compile(t, `. = "gone"`)
+	outcomes, err := program.Run([]map[string]any{{"message": "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcomes[0].Log != nil || outcomes[0].Error != ". is a string, not an object" {
+		t.Errorf("outcomes = %#v, want a failure naming the string", outcomes)
 	}
 }
