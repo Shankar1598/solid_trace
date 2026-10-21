@@ -9,7 +9,7 @@ An hour with fewer Logs than the remaining limit is read as today. The page's Lo
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Logs at the same time as a page's last Log, spread across the hot table, late Logs and a Log file in one hour, are split across pages by id, with none skipped or repeated (root test through the Query route)
 - [ ] An hour with fewer Logs than the limit lists them all, with no cursor
