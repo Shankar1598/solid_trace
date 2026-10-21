@@ -13,6 +13,7 @@ module McpServer
     McpTools::ListFields,
     McpTools::QueryLanguageReference,
     McpTools::RunSql,
+    McpTools::UpdateLogTransform,
     McpTools::ListDashboards,
     McpTools::GetDashboard,
     McpTools::CreateDashboard,
