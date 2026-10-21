@@ -237,6 +237,12 @@ func stored(arrived models.Log, outcome vrl.Outcome, r normalise.Receipt) (model
 	case outcome.Error != "":
 		return failed(arrived, outcome.Error), true
 	}
+	kept := keptNames(arrived.Attributes)
+	for _, name := range kept {
+		if !fieldNames[name] {
+			forget(outcome.Log, name)
+		}
+	}
 	log, normalised, err := normalise.Transformed(outcome.Log, r)
 	switch {
 	case err != nil:
@@ -245,5 +251,8 @@ func stored(arrived models.Log, outcome vrl.Outcome, r normalise.Receipt) (model
 		return failed(arrived, "the Log the program returned is over 1 MB"), true
 	}
 	log.ID = arrived.ID
+	for _, name := range kept {
+		keep(arrived.Attributes, &log.Attributes, name)
+	}
 	return log, true
 }
