@@ -49,6 +49,10 @@ type Config struct {
 	// archive, or nil when everything stays on local disk.
 	ObjectStore *ObjectStore
 
+	// CPUProfileDir is where EventStore writes a CPU profile twice an hour
+	// (pkg/cpuprofile), or "" for none.
+	CPUProfileDir string
+
 	Debug bool
 }
 
@@ -119,6 +123,7 @@ type fileConfig struct {
 	DuckDBExtensionDir  *string        `yaml:"duckdb_extension_directory"`
 	StorageTiers        *[]StorageTier `yaml:"storage_tiers"`
 	ObjectStore         yaml.Node      `yaml:"object_store"`
+	CPUProfileDir       *string        `yaml:"cpu_profile_dir"`
 	Debug               *bool          `yaml:"debug"`
 }
 
@@ -249,6 +254,9 @@ func applyFileConfig(cfg *Config, path string) error {
 			return fmt.Errorf("object_store: %w", err)
 		}
 		cfg.ObjectStore = store
+	}
+	if config.CPUProfileDir != nil {
+		cfg.CPUProfileDir = *config.CPUProfileDir
 	}
 	if config.Debug != nil {
 		cfg.Debug = *config.Debug
