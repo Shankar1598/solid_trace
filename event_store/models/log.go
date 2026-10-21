@@ -1,7 +1,9 @@
 package models
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,21 +37,39 @@ type Attributes struct {
 	JSON map[string]string `msgpack:"j,omitempty"`
 }
 
-// MarshalJSON writes the Attributes as one JSON object, each value with its
-// own type, so a reader can't tell which map holds it.
-func (a Attributes) MarshalJSON() ([]byte, error) {
-	merged := make(map[string]any, len(a.String)+len(a.Number)+len(a.Bool)+len(a.JSON))
-	for name, value := range a.String {
-		merged[name] = value
+// MarshalJSONTo writes the Attributes as one JSON object, each value with its
+// own type, so a reader can't tell which map holds it. Names are sorted, as
+// encoding/json sorts a map's keys. It writes straight to the encoder, so
+// that a page of Logs builds no map per Log; json.Marshal calls it too.
+func (a Attributes) MarshalJSONTo(enc *jsontext.Encoder) error {
+	names := make([]string, 0, len(a.String)+len(a.Number)+len(a.Bool)+len(a.JSON))
+	names = slices.AppendSeq(names, maps.Keys(a.String))
+	names = slices.AppendSeq(names, maps.Keys(a.Number))
+	names = slices.AppendSeq(names, maps.Keys(a.Bool))
+	names = slices.AppendSeq(names, maps.Keys(a.JSON))
+	slices.Sort(names)
+
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return err
 	}
-	for name, value := range a.Number {
-		merged[name] = value
+	for _, name := range slices.Compact(names) {
+		if err := enc.WriteToken(jsontext.String(name)); err != nil {
+			return err
+		}
+		var err error
+		// A name is in one map; were it in more, the last one here wins.
+		if value, ok := a.JSON[name]; ok {
+			err = enc.WriteValue(jsontext.Value(value))
+		} else if value, ok := a.Bool[name]; ok {
+			err = enc.WriteToken(jsontext.Bool(value))
+		} else if value, ok := a.Number[name]; ok {
+			err = enc.WriteToken(jsontext.Float(value))
+		} else {
+			err = enc.WriteToken(jsontext.String(a.String[name]))
+		}
+		if err != nil {
+			return err
+		}
 	}
-	for name, value := range a.Bool {
-		merged[name] = value
-	}
-	for name, value := range a.JSON {
-		merged[name] = json.RawMessage(value)
-	}
-	return json.Marshal(merged)
+	return enc.WriteToken(jsontext.EndObject)
 }

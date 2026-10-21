@@ -26,6 +26,6 @@ A CPU profile on production (idea 10) would turn the report's estimates into fig
 - [ ] Each change taken is its own ticket in this directory, with a probe's before and after figures (under a minute each, like `event_store/bench/logreads/`)
 - [ ] An ADR for any change that alters a recorded decision (threads in ADR 0008, the hot table and files in ADRs 0004 and 0005)
 
-**Blocked by:** Log read speed merged into `main`.
+**Blocked by:** None (Log read speed was merged into `main` on 2026-10-21).
 
 ## Comments

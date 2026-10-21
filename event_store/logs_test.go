@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,6 +193,105 @@ func TestNDJSONLinesAreLogsAndBadLinesDropped(t *testing.T) {
 
 	if got, want := messages(latestLogs(t, env, 123, 10)), []string{"four", "three", "two", "one"}; !slices.Equal(got, want) {
 		t.Errorf("Expected %v, got %v", want, got)
+	}
+}
+
+// onlyLog processes a Project's Logs and returns the one Log listed.
+func onlyLog(t *testing.T, env *TestEnv) listedLog {
+	t.Helper()
+	env.ProcessLogs(t)
+	logs := latestLogs(t, env, 123, 10)
+	if len(logs) != 1 {
+		t.Fatalf("Expected 1 Log, got %d", len(logs))
+	}
+	return logs[0]
+}
+
+func TestADuplicatedNameInALogKeepsItsLastValue(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// An array, so that the body is first checked as one JSON value.
+	counts := postLogs(t, env, "application/json", `[{
+		"message": "first", "message": "last",
+		"time": "2026-10-02T11:00:01Z",
+		"user": "ada", "user": "grace",
+		"http": {"status": 200, "status": 404}
+	}]`)
+	if want := (logCounts{Accepted: 1}); counts != want {
+		t.Fatalf("Expected %+v, got %+v", want, counts)
+	}
+
+	got := onlyLog(t, env)
+	if got.Message != "last" {
+		t.Errorf("Expected the message last, got %q", got.Message)
+	}
+	if want := map[string]any{"user": "grace", "http.status": 404.0}; !reflect.DeepEqual(got.Attributes, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got.Attributes)
+	}
+}
+
+func TestInvalidUTF8InALogIsStoredAsTheReplacementCharacter(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	counts := postLogs(t, env, "application/json", "[{"+
+		"\"message\": \"bad \xff byte\", \"time\": \"2026-10-02T11:00:01Z\","+
+		"\"user\": \"\xfe\", \"n\xffame\": 1"+
+		"}]")
+	if want := (logCounts{Accepted: 1}); counts != want {
+		t.Fatalf("Expected %+v, got %+v", want, counts)
+	}
+
+	got := onlyLog(t, env)
+	if want := "bad \uFFFD byte"; got.Message != want {
+		t.Errorf("Expected the message %q, got %q", want, got.Message)
+	}
+	if want := map[string]any{"user": "\uFFFD", "n\uFFFDame": 1.0}; !reflect.DeepEqual(got.Attributes, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got.Attributes)
+	}
+}
+
+func TestNumbersADoubleCannotHoldExactlyAreStoredAsText(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	counts := postLogs(t, env, "application/json", `{
+		"message": "m", "time": "2026-10-02T11:00:01Z",
+		"past_range": 1e400,
+		"long_whole": 123456789012345678901234567890,
+		"exact_whole": 9007199254740992000
+	}`)
+	if want := (logCounts{Accepted: 1}); counts != want {
+		t.Fatalf("Expected %+v, got %+v", want, counts)
+	}
+
+	want := map[string]any{
+		"past_range":  "1e400",
+		"long_whole":  "123456789012345678901234567890",
+		"exact_whole": 9007199254740992000.0,
+	}
+	if got := onlyLog(t, env); !reflect.DeepEqual(got.Attributes, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got.Attributes)
+	}
+}
+
+func TestALogNestedPastTheJSONDepthLimitIsDropped(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	nested := func(depth int) string {
+		return strings.Repeat("[", depth) + strings.Repeat("]", depth)
+	}
+	body := `{"message": "too deep", "time": "2026-10-02T11:00:01Z", "a": ` + nested(10_001) + "}\n" +
+		`{"message": "deep enough", "time": "2026-10-02T11:00:02Z", "a": ` + nested(100) + "}\n"
+	counts := postLogs(t, env, "application/x-ndjson", body)
+	if want := (logCounts{Accepted: 1, Dropped: 1}); counts != want {
+		t.Fatalf("Expected %+v, got %+v", want, counts)
+	}
+
+	if got := onlyLog(t, env); got.Message != "deep enough" {
+		t.Errorf("Expected the Log deep enough, got %q", got.Message)
 	}
 }
 

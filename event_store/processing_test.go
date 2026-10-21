@@ -277,6 +277,27 @@ func TestTimestampFallsBackToReceiveTime(t *testing.T) {
 	}
 }
 
+func TestEventWithDuplicateNamesAndInvalidUTF8IsProcessedWithTheLastValue(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postEvent(t, env, "{\"message\":\"first\",\"message\":\"last\",\"tags\":{\"region\":\"bad \xff byte\"}}")
+	env.Process(t)
+
+	events := listEvents(t, env)
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 Event, got %d", len(events))
+	}
+	if got, want := events[0].Tags["region"], "bad \uFFFD byte"; got != want {
+		t.Errorf("Expected the tag %q, got %q", want, got)
+	}
+	var title string
+	sqliteQuery(t, env, &title, "SELECT title FROM issues WHERE project_id = 123")
+	if title != "last" {
+		t.Errorf("Expected the Issue titled last, got %q", title)
+	}
+}
+
 func TestResolvedIssueReopensOnANewEvent(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
