@@ -84,6 +84,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Request rates on Charts | 2 / 0 | merged into `main`, v0.4.0 |
 | Log transform | 7 / 1 | [08](log-transform/issues/08-tagalys-sidekiq-program.md) (human, after a release) |
 | Zone recovery | 0 / 1 | [01](zone-recovery/issues/01-disk-snapshots-and-restore.md) |
+| Log read speed | 0 / 5 | [01](log-read-speed/issues/01-probe-for-log-read-speed.md) ([spec](log-read-speed/spec.md)) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
