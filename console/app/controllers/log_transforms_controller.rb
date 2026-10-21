@@ -57,7 +57,7 @@ class LogTransformsController < ApplicationController
     if result.done?
       redirect_to page_path, notice: result.outcome == :saved ? SAVED : UNCHANGED
     else
-      messages = result.errors.map { |error| error["text"].presence || error["message"].to_s }
+      messages = result.errors.pluck("text")
       render inertia: "LogTransform/Show", props: page_props.merge(errors: { program: messages })
     end
   rescue EventStore::Unavailable, EventStore::Rejected => e

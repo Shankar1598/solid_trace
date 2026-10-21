@@ -103,7 +103,7 @@ function PreviewAnswerView({ answer, stale, shown, onShowMore }: {
         {staleLine}
         <p className="text-sm font-medium text-destructive">The program doesn't compile, so it can't be previewed.</p>
         {answer.check.errors.map((p, i) => (
-          <pre key={i} className="overflow-x-auto bg-muted p-2 font-mono text-xs whitespace-pre-wrap">{p.text || p.message}</pre>
+          <pre key={i} className="overflow-x-auto bg-muted p-2 font-mono text-xs whitespace-pre-wrap">{p.text}</pre>
         ))}
       </div>
     )

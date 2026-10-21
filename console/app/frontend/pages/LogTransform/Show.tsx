@@ -164,7 +164,7 @@ export default function LogTransformShow({ project, program, versions, stats, ca
             {problems.length > 0 && (
               <div id="program-problems" className="space-y-2">
                 {problems.map((p, i) => (
-                  <pre key={i} className="overflow-x-auto bg-muted p-2 font-mono text-xs whitespace-pre-wrap">{p.text || p.message}</pre>
+                  <pre key={i} className="overflow-x-auto bg-muted p-2 font-mono text-xs whitespace-pre-wrap">{p.text}</pre>
                 ))}
               </div>
             )}
