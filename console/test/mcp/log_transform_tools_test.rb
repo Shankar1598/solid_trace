@@ -25,6 +25,60 @@ class McpLogTransformToolsTest < ActiveSupport::TestCase
     @check_url = "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/check"
   end
 
+  # get_log_transform
+
+  test "get_log_transform gives the current program, who saved it and when, the last 10 versions and the running counts" do
+    gone = create(:user, name: "Gone")
+    versions = (1..12).map do |n|
+      travel_to(Time.utc(2026, 10, 21, 9, n)) { @shop.log_transform_versions.create!(program: ".n = #{n}", user: n == 11 ? gone : @admin) }
+    end
+    gone.destroy!
+    stats = { "version_id" => versions.last.id, "processed" => 120, "dropped" => 3, "failed" => 2, "average_micros" => 8.5 }
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/stats").to_return(status: 200, body: stats.to_json)
+
+    answer = call_tool(:get_log_transform, user: @member, project: "shop")
+
+    assert_not answer.error?
+    ada = { "name" => "Ada", "email" => "ada@example.com" }
+    assert_equal({
+      "project" => "shop", "program" => ".n = 12", "version" => versions.last.id, "saved_by" => ada,
+      "saved_at" => "2026-10-21T09:12:00Z", "current" => true, "running_counts" => stats,
+    }, answer.json.except("versions"))
+    assert_equal versions.last(10).reverse.map(&:id), answer.json["versions"].pluck("version")
+    assert_equal({ "version" => versions[10].id, "saved_by" => nil, "saved_at" => "2026-10-21T09:11:00Z", "bytes" => 7 },
+      answer.json["versions"].second)
+    assert_equal PAGE, answer.link
+  end
+
+  test "get_log_transform gives an older version's program, and not another Project's" do
+    old = @shop.log_transform_versions.create!(program: ".a = 1", user: @admin)
+    @shop.log_transform_versions.create!(program: ".a = 2", user: @admin)
+    theirs = create(:project, organization: @acme, slug: "theirs").log_transform_versions.create!(program: ".b = 1")
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/stats")
+      .to_return(status: 200, body: { version_id: 0, processed: 0, dropped: 0, failed: 0, average_micros: 0 }.to_json)
+
+    answer = call_tool(:get_log_transform, user: @member, project: "shop", version: old.id)
+
+    assert_equal [ ".a = 1", old.id, false ], answer.json.values_at("program", "version", "current")
+
+    missing = call_tool(:get_log_transform, user: @member, project: "shop", version: theirs.id)
+    assert missing.error?
+    assert_equal "No such Log transform version. get_log_transform lists them.", missing.text
+  end
+
+  test "get_log_transform says when a Project has no Log transform, and passes on a compile error" do
+    stats = { "version_id" => 0, "processed" => 0, "dropped" => 0, "failed" => 0, "average_micros" => 0,
+              "compile_error" => "error[E105]: call to undefined function" }
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/stats").to_return(status: 200, body: stats.to_json)
+
+    answer = call_tool(:get_log_transform, user: @member, project: "shop")
+
+    assert_equal({
+      "project" => "shop", "program" => "", "note" => "The Project has no Log transform: its Logs are stored as they arrive.",
+      "versions" => [], "running_counts" => stats,
+    }, answer.json)
+  end
+
   # update_log_transform
 
   test "an admin's update_log_transform saves a program that compiles, saying stored Logs don't change" do
