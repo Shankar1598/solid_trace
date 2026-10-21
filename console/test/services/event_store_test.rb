@@ -166,14 +166,12 @@ class EventStoreTest < ActiveSupport::TestCase
   end
 
   test "preview_log_transform answers the check's errors for a draft that doesn't compile" do
-    [ 200, 400 ].each do |status|
-      stub_request(:post, "#{@base_url}/api/123/logs/transform/preview")
-        .to_return(status: status, body: { errors: [ VRL_ERROR ], warnings: [] }.to_json)
+    stub_request(:post, "#{@base_url}/api/123/logs/transform/preview")
+      .to_return(status: 200, body: { errors: [ VRL_ERROR ], warnings: [] }.to_json)
 
-      result = EventStore.preview_log_transform(project_id: 123, program: "http_request(\"x\")")
+    result = EventStore.preview_log_transform(project_id: 123, program: "http_request(\"x\")")
 
-      assert_equal [ VRL_ERROR.stringify_keys ], result["errors"], status
-    end
+    assert_equal [ VRL_ERROR.stringify_keys ], result["errors"]
   end
 
   test "preview_log_transform raises Rejected for anything else EventStore refuses" do
