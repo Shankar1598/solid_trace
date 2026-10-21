@@ -14,15 +14,15 @@ Negations keep passing Logs that lack the Field. `matches regex` is unchanged. T
 
 **Status:** resolved
 
-- [ ] Each text operator and its negation, and `search`, find the same Logs in the hot table, late Logs and Log files (root tests through the Query route) for:
+- [x] Each text operator and its negation, and `search`, find the same Logs in the hot table, late Logs and Log files (root tests through the Query route) for:
   - mixed case;
   - non-ASCII text whose case differs (such as `ÉCOLE` and `école`);
   - terms with `%`, `_` and `\`;
   - Logs lacking the Field.
-- [ ] A text-filtered summarize gives the same table, and a cached Chart's bins the same counts, as before
-- [ ] The readable SQL of a Query with text matches runs in SQL mode and gives the Query's Logs
-- [ ] The existing Query, Chart, bin cache and Monitor root tests pass
-- [ ] The probe's `search`, `contains` and `contains_cs` timings, before and after, are in this ticket's Comments
+- [x] A text-filtered summarize gives the same table, and a cached Chart's bins the same counts, as before
+- [x] The readable SQL of a Query with text matches runs in SQL mode and gives the Query's Logs
+- [x] The existing Query, Chart, bin cache and Monitor root tests pass
+- [x] The probe's `search`, `contains` and `contains_cs` timings, before and after, are in this ticket's Comments
 
 ## Comments
 

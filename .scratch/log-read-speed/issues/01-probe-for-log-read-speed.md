@@ -12,10 +12,10 @@ See the [spec](../spec.md)'s Testing Decisions and Further Notes.
 
 **Status:** resolved
 
-- [ ] The probe runs in under a minute on the dev box, setup included, and is skipped unless its environment variable is set
-- [ ] It reads the hot table and the Log file through the same code paths a Query run uses
-- [ ] Each timing is the best of a few runs, printed with the number of Logs it found
-- [ ] Today's figures are recorded in this ticket's Comments as the baseline for 02 to 04
+- [x] The probe runs in under a minute on the dev box, setup included, and is skipped unless its environment variable is set
+- [x] It reads the hot table and the Log file through the same code paths a Query run uses
+- [x] Each timing is the best of a few runs, printed with the number of Logs it found
+- [x] Today's figures are recorded in this ticket's Comments as the baseline for 02 to 04
 
 ## Comments
 

@@ -3,10 +3,10 @@
 **Status:** ready-for-agent
 
 **Tickets:**
-- [01](issues/01-probe-for-log-read-speed.md): probe.
-- [02](issues/02-newest-page-in-two-steps.md): newest page in two steps.
-- [03](issues/03-text-matched-as-functions.md): text matched as functions.
-- [04](issues/04-text-matches-run-last.md): text matches last.
+- [01](issues/01-probe-for-log-read-speed.md): probe, resolved.
+- [02](issues/02-newest-page-in-two-steps.md): newest page in two steps, resolved.
+- [03](issues/03-text-matched-as-functions.md): text matched as functions, resolved.
+- [04](issues/04-text-matches-run-last.md): text matches last, `wontfix`.
 - [05](issues/05-check-on-production.md): check on production, `ready-for-human`.
 
 Planned with the user on 2026-10-21, after opening the Logs explorer on the `tagalys` Project held both of the production VM's CPUs at 100%. The user asked whether the first page could read only Log ids from DuckDB and fetch the 200 Logs it shows from Pebble, and whether conditions on `message` could run after every other condition. Pebble can't serve Logs, but both ideas carry over to DuckDB. Probes on the dev box found a third, larger cost: how a Query matches text.
@@ -152,3 +152,12 @@ Nothing changes in Console, in the API's answers, or in the Query language.
   - Cutting the unpacking means changing how `message` is stored or indexed, which is out of scope here.
 - `ILIKE` without `ESCAPE` was 1,297 to 1,438 ms, so dropping only the `ESCAPE` isn't enough. DuckDB rewrites `LIKE '%x%'` to `contains` only in simpler cases than ours.
 - If a later DuckDB evaluates scan filters adaptively, "text matches last" becomes redundant but harmless.
+
+## Comments
+
+**2026-10-21, built on `feature/log-read-speed`.** Where the build departs from this spec:
+- **The bin cache key is a hash of the SQL written** (`logquery/bins.go`), not of the Query alone, so bins cached before 03 are worked out again, with the same counts. The cache lives in memory and a release restarts EventStore, so nothing stale is served.
+- **02's second step picks the Logs the first found by id** (`list_contains`, which DuckDB runs in the scan), within the span of time they lie in, rather than running the condition again with `time >=` the cutoff. Running the condition again doubled a rare search's cost.
+- **Once a whole hour of a scan has fewer Logs than the page still wants, the scan's older hours are read in one step, as before.** Their matches are rare, and a second step would read most of their row groups again. An hour cut by the range's end or the cursor doesn't count. 02's Comments have the figures.
+- **04 was closed as `wontfix` with the user.** On top of 02 and 03, both orders of a text match and another condition cost the same through the Query route, so the reorder wasn't built. The probe still times both orders.
+- The probe reads 300,000 Logs, not 1.5M, to finish in under a minute.
