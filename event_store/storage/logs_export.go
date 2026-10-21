@@ -21,9 +21,9 @@ import (
 // and logs_late into that hour's files, then checkpoints logs.duckdb.
 //
 // An hour not yet exported gets data.parquet; an hour already exported gets
-// its next late file. Each file is sorted by time, in row groups of 30,720,
-// zstd, with the promoted columns of the hour's day, late Logs' values pulled
-// out of their maps.
+// its next late file. Each file is sorted by the Project's Log file order,
+// then time, in row groups of 30,720, zstd, with the promoted columns of the
+// hour's day, late Logs' values pulled out of their maps.
 //
 // Per Project, a transaction that only reads writes the files under staged
 // names, outside writeMu, so that Log processing carries on meanwhile. Then a
