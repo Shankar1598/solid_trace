@@ -1,6 +1,6 @@
 # 06: Probe Log file codecs: lz4_raw and zstd levels
 
-**Status:** claimed
+**Status:** needs-info
 
 **What to do:** Idea 5 of [performance-ideas.md](../research/performance-ideas.md). The user chose "probe it first" in [ticket 01](01-review-performance-findings.md), and asked to compare `lz4_raw`, zstd at its lowest level, and today's zstd. Measure each codec's file size and read times for the same hour, then let the user decide whether the export changes codec.
 
@@ -50,3 +50,32 @@
 - The 24 hours kept on local disk grow from about 14 to 23 GB.
 - A month in the bucket grows from about 430 to 710 GB.
 - Production's Logs compress to about 50 bytes each at zstd 3, against 183 for the probe's. So the real ratio needs a real file to check.
+
+### On a production hour (2026-10-21, with the user's OK)
+
+- **The file:** tagalys's hour 15 of 2026-10-21, copied over SSH. 604 MB, 14.7M Logs, 478 row groups, 104 columns.
+  - `message` is 372 MB of it, compressed from 3.1 GB; `id` is another 175 MB.
+- **The slice:** its first 2M Logs, written with each codec, then timed with the Query language's SQL on 2 pinned CPUs and 2 DuckDB threads, best of 3.
+  - `contains` is `contains(lower(message), …)`, and `contains_cs` is `contains(message, …)`.
+- **Afterwards:** the copy and the slices were deleted; only the timings are kept (`~/.cache/solid-trace/prod-hour-codec/reads2.txt`).
+
+| Codec | 2M Logs | Size vs today | Write | `contains` | `contains_cs` | Newest 200 | Read all of `message` |
+|---|---|---|---|---|---|---|---|
+| zstd 3 (today) | 89.6 MB | — | 3.9 s | 616 ms | 222 ms | 140 ms | 272 ms |
+| zstd 1 | 91.2 MB | +2% | 3.5 s | 594 ms (−4%) | 208 ms | 129 ms | 278 ms |
+| zstd -5 | 141.3 MB | +58% | 3.5 s | 529 ms (−14%) | 190 ms | 111 ms | 239 ms |
+| `lz4_raw` | 150.9 MB | +68% | 3.5 s | 475 ms (−23%) | 137 ms (−38%) | 95 ms (−32%) | 187 ms (−31%) |
+| zstd -131072 (lowest) | 551.0 MB | +515% | 3.7 s | 481 ms | 119 ms | 78 ms | 167 ms |
+
+- **zstd 1:** writes about 10% faster, for 2% bigger files; reads don't change.
+- **`lz4_raw`:** the default search, `contains`, which is case-insensitive, gains only 23%, as `lower()` costs more than decompressing. Files grow by 68%:
+  - a production hour, from 604 MB to about 1 GB;
+  - the 24 hours on local disk, from about 14.5 to 24 GB;
+  - a month in the bucket, from about 435 to 730 GB.
+
+**Recommendation: keep zstd 3.**
+- A 23% gain on case-insensitive searches over files doesn't pay for 68% more disk and bucket, and the explorer's default load reads no files.
+- If searches over older hours become the slow path, a skip index (idea 7) would gain far more on rare terms.
+- zstd 1 is a fair small change if the export's CPU ever matters. It saves about 10% of writing, for 2% bigger files.
+
+Waiting on the user's call.
