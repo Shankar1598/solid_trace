@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
 )
 
@@ -36,21 +37,12 @@ func view(log models.Log) map[string]any {
 	// before "a.b" finds it.
 	objects := make(map[string]bool) // the dotted names of objects made here
 	for _, name := range slices.Sorted(maps.Keys(values)) {
-		if !fieldNames[name] {
+		if !normalise.IsField(name) {
 			place(v, objects, name, values[name])
 		}
 	}
 	return v
 }
-
-// fieldNames are the built-in fields' names, as a program sees them.
-var fieldNames = map[string]bool{
-	"time": true, "level": true, "message": true, "service": true,
-	"environment": true, "trace_id": true, "span_id": true,
-}
-
-// reservedPrefix starts the names of Attributes SolidTrace sets.
-const reservedPrefix = "solidtrace."
 
 // keptNames are the names of a Log's Attributes that stay as they arrived,
 // whatever the program returns: those SolidTrace set, which the program sees
@@ -59,7 +51,7 @@ const reservedPrefix = "solidtrace."
 func keptNames(a models.Attributes) []string {
 	var names []string
 	add := func(name string) {
-		if strings.HasPrefix(name, reservedPrefix) || fieldNames[name] {
+		if strings.HasPrefix(name, normalise.ReservedPrefix) || normalise.IsField(name) {
 			names = append(names, name)
 		}
 	}

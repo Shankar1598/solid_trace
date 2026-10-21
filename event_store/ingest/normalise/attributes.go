@@ -73,15 +73,15 @@ func isNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
-// reservedPrefix starts the names of Attributes SolidTrace sets.
-const reservedPrefix = "solidtrace."
+// ReservedPrefix starts the names of Attributes SolidTrace sets.
+const ReservedPrefix = "solidtrace."
 
 // truncatedAttribute marks a Log that a limit cut.
-const truncatedAttribute = reservedPrefix + "truncated"
+const truncatedAttribute = ReservedPrefix + "truncated"
 
 // unreserved renames a sender's Attribute out of SolidTrace's reserved names.
 func unreserved(name string) string {
-	if strings.HasPrefix(name, reservedPrefix) {
+	if strings.HasPrefix(name, ReservedPrefix) {
 		return "original." + name
 	}
 	return name

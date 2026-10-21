@@ -290,7 +290,7 @@ func stored(arrived models.Log, result vrl.Outcome, r normalise.Receipt) outcome
 	}
 	kept := keptNames(arrived.Attributes)
 	for _, name := range kept {
-		if !fieldNames[name] {
+		if !normalise.IsField(name) {
 			forget(result.Log, name)
 		}
 	}
