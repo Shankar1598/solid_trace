@@ -3,6 +3,7 @@ package processing
 import (
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -290,11 +291,26 @@ func (p *Processor) processBatch(projectID uint32) (full bool, err error) {
 	return full, nil
 }
 
+// parseEvent parses an Event's JSON as encoding/json does. The v2 API parses
+// into a map in about half the time, but rejects duplicate names and invalid
+// UTF-8, which encoding/json accepts. So an Event it rejects is parsed again
+// by encoding/json, which keeps a name's last value and replaces an invalid
+// byte, as before.
+func parseEvent(raw []byte) (map[string]interface{}, error) {
+	var payload map[string]interface{}
+	if jsonv2.Unmarshal(raw, &payload) == nil {
+		return payload, nil
+	}
+	payload = nil
+	err := json.Unmarshal(raw, &payload)
+	return payload, err
+}
+
 // issueWork derives an Event's DuckDB row from its raw payload, finding or
 // creating its Issue and reopening the Issue if it is resolved.
 func (p *Processor) issueWork(event models.Event) (models.Event, error) {
-	var payload map[string]interface{}
-	if err := json.Unmarshal(event.RawJSON, &payload); err != nil {
+	payload, err := parseEvent(event.RawJSON)
+	if err != nil {
 		return models.Event{}, contentError{fmt.Errorf("parse event: %w", err)}
 	}
 	if payload == nil {
