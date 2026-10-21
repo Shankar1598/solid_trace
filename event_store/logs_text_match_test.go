@@ -8,11 +8,11 @@ import (
 )
 
 // textLog is a Log whose text differs in case from another's, isn't ASCII,
-// or holds LIKE's wildcards. An empty note or tag is one the Log lacks.
-type textLog struct{ message, note, tag string }
+// or holds LIKE's wildcards. An empty note or street is one the Log lacks.
+type textLog struct{ message, note, street string }
 
 // textLogs are listed newest first. Each but two has its message as its
-// note; tagged holds its text only in tag.
+// note; elsewhere holds its text only in street.
 var textLogs = []textLog{
 	{"Disk FULL", "Disk FULL", ""},
 	{"disk full", "", ""},
@@ -26,7 +26,7 @@ var textLogs = []textLog{
 	{"userXid", "userXid", ""},
 	{`C:\tmp`, `C:\tmp`, ""},
 	{"C:tmp", "C:tmp", ""},
-	{"tagged", "", "ÜBER STRAßE"},
+	{"elsewhere", "", "ÜBER STRAßE"},
 }
 
 // postTextLogs sends textLogs as one request, a minute apart, the last of
@@ -39,8 +39,8 @@ func postTextLogs(t *testing.T, env *TestEnv, start time.Time) {
 		if l.note != "" {
 			attributes["note"] = l.note
 		}
-		if l.tag != "" {
-			attributes["tag"] = l.tag
+		if l.street != "" {
+			attributes["street"] = l.street
 		}
 		logs[i] = logJSON(t, l.message, start.Add(time.Duration(len(textLogs)-i)*time.Minute), attributes)
 	}
@@ -86,13 +86,12 @@ func TestTextMatchesFindTheSameLogsInTheHotTableLateLogsAndFiles(t *testing.T) {
 
 	// At 11:30 the hot window is 10:00 to 12:00, so hour 10's Logs are hot
 	// and yesterday's late.
-	today := time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)
 	yesterday := time.Date(2026, 10, 1, 15, 0, 0, 0, time.UTC)
-	env.Clock.Set(today.Add(90 * time.Minute))
-	postTextLogs(t, env, today)
+	env.Clock.Set(onTestDay(11, 30))
+	postTextLogs(t, env, onTestDay(10, 0))
 	postTextLogs(t, env, yesterday)
 
-	logs := map[string][]string{
+	wants := map[string][]string{
 		`where message contains "disk FULL"`:       {"Disk FULL", "disk full"},
 		`where message contains "école"`:           {"ÉCOLE", "école"},
 		`where message contains "ÉCOLE"`:           {"ÉCOLE", "école"},
@@ -133,12 +132,12 @@ func TestTextMatchesFindTheSameLogsInTheHotTableLateLogsAndFiles(t *testing.T) {
 		`where note !~ "100% OFF"`:                 allTextLogsBut("100% off"),
 		`search "disk"`:                            {"Disk FULL", "disk full"},
 		`search "ÉCOLE"`:                           {"ÉCOLE", "école"},
-		`search "straße"`:                          {"Straße", "tagged"},
-		`search "über"`:                            {"tagged"},
+		`search "straße"`:                          {"Straße", "elsewhere"},
+		`search "über"`:                            {"elsewhere"},
 		`search "100%"`:                            {"100% off"},
 		`search "_"`:                               {"user_id"},
 		`search "\\"`:                              {`C:\tmp`},
-		`where note !contains "o" | search "STRA"`: {"Straße", "STRASSE", "tagged"},
+		`where note !contains "o" | search "STRA"`: {"Straße", "STRASSE", "elsewhere"},
 	}
 	tables := map[string]tableCase{
 		`summarize n = count(), full = countif(message contains "FULL"), cs = countif(message contains_cs "FULL"), pct = countif(note startswith "100%"), eq = countif(note =~ "ÉCOLE"), nofull = countif(note !contains "full")`: {
@@ -150,7 +149,7 @@ func TestTextMatchesFindTheSameLogsInTheHotTableLateLogsAndFiles(t *testing.T) {
 	check := func(from time.Time, when string) {
 		t.Helper()
 		to := from.Add(time.Hour)
-		for query, want := range logs {
+		for query, want := range wants {
 			got := messages(runQueryPages(t, env, 123, queryRequest{Query: query, From: from, To: to, Limit: 1000}))
 			if !slices.Equal(got, want) {
 				t.Errorf("%s: %s\n want %v\n got  %v", when, query, want, got)
@@ -161,14 +160,14 @@ func TestTextMatchesFindTheSameLogsInTheHotTableLateLogsAndFiles(t *testing.T) {
 		}
 		assertTablesIn(t, env, tables, from, to, when)
 	}
-	check(today, "in the hot table")
+	check(onTestDay(10, 0), "in the hot table")
 	check(yesterday, "in late Logs")
 
 	// At 12:05 the export moves both hours to files.
-	env.Clock.Set(today.Add(125 * time.Minute))
+	env.Clock.Set(onTestDay(12, 5))
 	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, today, 1)
+	assertHourFiles(t, env, 123, onTestDay(10, 0), 1)
 	assertHourFiles(t, env, 123, yesterday, 1)
-	check(today, "in a file")
+	check(onTestDay(10, 0), "in a file")
 	check(yesterday, "in a file of late Logs")
 }

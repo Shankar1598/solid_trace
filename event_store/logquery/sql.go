@@ -195,9 +195,10 @@ func writeTextMatch(m textMatch, f fields) string {
 		return "contains(" + x + ", " + term + ")"
 	case matchStartsWith:
 		return "starts_with(" + x + ", " + term + ")"
-	default: // matchEquals
+	case matchEquals:
 		return x + " = " + term
 	}
+	panic(fmt.Sprintf("logquery: unknown text match %d", m.op))
 }
 
 func writeCall(c call, f fields) string {
