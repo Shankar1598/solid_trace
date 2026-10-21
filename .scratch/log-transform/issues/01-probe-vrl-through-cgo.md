@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] A narrow Go interface: compile a program into a compiled program or diagnostics (severity, code, message, labels with byte start and end, VRL's formatted text), and run a compiled program on a slice of Logs in one call, returning one outcome per Log: the returned value, dropped by `abort`, or failed with the error text.
 - [ ] The crate is built without default features: the stdlib, but no network, environment or system functions. A program calling `http_request` or `get_env_var` gets VRL's undefined-function compile error.
