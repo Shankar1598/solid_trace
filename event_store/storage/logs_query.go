@@ -169,12 +169,12 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, err
 // scanHour returns up to limit of the Project's Logs of [from, to), within
 // one hour, that meet the scan's condition, newest first.
 //
-// It reads in two steps. The first reads only the time of the Logs that
-// meet the condition, and finds how far back the newest limit of them
-// reach. The second reads whole Logs only from there: Log files are sorted
-// by time, and a hot table is close to it, so it skips all but their newest
-// row groups. Logs at that time but past limit by id are read too, and the
-// ORDER BY leaves them out. An hour with no such Logs isn't read again.
+// It reads in two steps. The first reads only the time and id of the newest
+// limit Logs that meet the condition. The second reads those Logs whole, by
+// id, from the span of time they lie in: Log files are sorted by time, and a
+// hot table is close to it, so for the newest Logs of a busy hour it skips
+// all but the newest row groups. The condition isn't run again, and an hour
+// with no such Logs isn't read again.
 func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([]models.Log, error) {
 	files := r.files[hour]
 	set := r.promotedSet(hour)
@@ -183,18 +183,18 @@ func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([
 		bounds += fmt.Sprintf(" AND (time < %[1]s OR (time = %[1]s AND id < CAST(%[2]s AS UUID)))",
 			timestampLiteral(scan.After.Time), sqltext.String(scan.After.ID.String()))
 	}
-	// sources reads the hour's Logs within bounds that meet the condition,
-	// with the select list sel, or lateSel for the late Logs.
-	sources := func(sel, lateSel, bounds string) string {
-		where := func(cols LogColumns) string {
-			condition := bounds
-			if scan.Where != nil {
-				if w := scan.Where(cols); w != "" {
-					condition += " AND (" + w + ")"
-				}
+	matching := func(cols LogColumns) string {
+		condition := bounds
+		if scan.Where != nil {
+			if w := scan.Where(cols); w != "" {
+				condition += " AND (" + w + ")"
 			}
-			return condition
 		}
+		return condition
+	}
+	// sources reads the hour's Logs that meet where, with the select list
+	// sel, or lateSel for the late Logs.
+	sources := func(sel, lateSel string, where func(LogColumns) string) string {
 		promoted := LogColumns{set: set}
 		sources := []string{fmt.Sprintf("SELECT %s FROM %s.%s WHERE project_id = %d AND %s",
 			lateSel, logsCatalog, lateTable, scan.ProjectID, where(LogColumns{late: true}))}
@@ -209,24 +209,40 @@ func (r *logRead) scanHour(scan LogScan, hour, from, to time.Time, limit int) ([
 		return strings.Join(sources, "\nUNION ALL BY NAME\n")
 	}
 
-	var found int
-	var since sql.NullTime
-	err := r.conn.QueryRowContext(r.ctx, fmt.Sprintf(`
-		SELECT count(*), min(time) FROM (
-			SELECT time FROM (%s)
-			ORDER BY time DESC
-			LIMIT %d)`, sources("time", "time", bounds), limit)).Scan(&found, &since)
+	rows, err := r.conn.QueryContext(r.ctx, fmt.Sprintf(`
+		SELECT time, id FROM (%s)
+		ORDER BY time DESC, id DESC
+		LIMIT %d`, sources("time, id", "time, id", matching), limit))
 	if err != nil {
 		return nil, err
 	}
-	if found == 0 {
+	defer rows.Close()
+	var newest, oldest time.Time
+	var ids []string
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&oldest, &id); err != nil {
+			return nil, err
+		}
+		if ids == nil {
+			newest = oldest
+		}
+		ids = append(ids, "CAST("+sqltext.String(id.String())+" AS UUID)")
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(ids) == 0 {
 		return nil, nil
 	}
-	bounds += " AND time >= " + timestampLiteral(since.Time)
+
+	span := fmt.Sprintf("time >= %s AND time <= %s", timestampLiteral(oldest), timestampLiteral(newest))
 	return r.queryLogs(fmt.Sprintf(`
 		SELECT * FROM (%s)
-		ORDER BY time DESC, id DESC
-		LIMIT %d`, sources("*", "* EXCLUDE (project_id)", bounds), limit))
+		WHERE id IN (%s)
+		ORDER BY time DESC, id DESC`,
+		sources("*", "* EXCLUDE (project_id)", func(LogColumns) string { return span }), strings.Join(ids, ", ")))
 }
 
 // IngestedLogScan asks for a Project's Logs ingested after a Log batch: those
