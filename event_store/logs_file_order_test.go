@@ -130,3 +130,55 @@ func lateFile(t *testing.T, env *TestEnv, projectID uint32, hour time.Time) stri
 	t.Fatalf("Expected a late file of Project %d at %v, got %v", projectID, hour, files)
 	return ""
 }
+
+func TestAFilePromotedForTheDayPartwayOrOnlyInTheMapSortsTheSame(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProjectKey(t, env.SQLitePath, 456, "partway_key")
+	seedProjectKey(t, env.SQLitePath, 789, "map_only_key")
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	sources := []string{
+		sourceLog(t, "web a 1", at(12, 1), "web", "a.log"),
+		sourceLog(t, "api b 1", at(12, 2), "api", "b.log"),
+		sourceLog(t, "no source", at(12, 3), "", ""),
+		sourceLog(t, "api a 1", at(12, 4), "api", "a.log"),
+		sourceLog(t, "no service, a", at(12, 5), "", "a.log"),
+		sourceLog(t, "web a 2", at(12, 6), "web", "a.log"),
+	}
+	sorted := []string{"api a 1", "api b 1", "web a 1", "web a 2", "no service, a", "no source"}
+
+	// Project 123's day starts with these Logs, so file is promoted for
+	// the day.
+	env.Clock.Set(at(12, 30))
+	// Project 456's day has a file before its first hot Log: a late Log's,
+	// with file in its map. So its set, made by the hot Logs, promotes file
+	// partway.
+	postAndProcessTo(t, env, 456, "partway_key", sourceLog(t, "late", at(10, 30), "", "a.log"))
+	env.ExportLogs(t)
+	assertHourFiles(t, env, 456, at(10, 0), 1)
+	// Project 789's day starts with a Log that fills its set, so file stays
+	// in the map.
+	postAndProcessTo(t, env, 789, "map_only_key", logJSON(t, "full", at(12, 0), numberedKeys("k", 100, "v")))
+
+	postAndProcess(t, env, sources...)
+	postAndProcessTo(t, env, 456, "partway_key", sources...)
+	postAndProcessTo(t, env, 789, "map_only_key", sources...)
+	want := map[uint32][]listedLog{}
+	for _, projectID := range []uint32{123, 456, 789} {
+		want[projectID] = latestLogs(t, env, projectID, 100)
+	}
+
+	env.Clock.Set(at(14, 0))
+	env.ExportLogs(t)
+	for projectID, wantSorted := range map[uint32][]string{
+		123: sorted,
+		456: sorted,
+		789: {"api a 1", "api b 1", "web a 1", "web a 2", "no service, a", "full", "no source"},
+	} {
+		assertListsUnchanged(t, env, projectID, want[projectID], "after the export")
+		if got := fileMessages(t, hourFile(t, env, projectID, at(12, 0))); !slices.Equal(got, wantSorted) {
+			t.Errorf("Project %d: expected the hour's file in the order\n %v\ngot\n %v", projectID, wantSorted, got)
+		}
+	}
+}
