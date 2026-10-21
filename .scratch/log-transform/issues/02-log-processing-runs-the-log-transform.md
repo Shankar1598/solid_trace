@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Console's `log_transform_versions` table exists (migration), and EventStore's root tests can seed rows in it as `seedProject` seeds Retention. The newest row is current; no row or an empty program means none.
 - [ ] At the start of each pass over a Project, Log processing reads the current version read-only and uncached, and compiles it once per version id; a newer version replaces and frees the old one.

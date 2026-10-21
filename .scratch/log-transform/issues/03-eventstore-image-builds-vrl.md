@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] The Dockerfile gains a Rust stage (Rust 1.95 or later) whose staticlib the Go stage links; the final image needs no Rust.
 - [ ] The image builds locally on the dev box, and the binary in it starts and compiles a VRL program.

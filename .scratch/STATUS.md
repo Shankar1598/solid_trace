@@ -81,7 +81,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 | Upgrade Pebble and DuckDB | 3 / 0 | 03 closed as `wontfix` |
 | Phone layout | 0 / 1 | [01](phone-layout/issues/01-phone-layout.md) |
 | Request rates on Charts | 2 / 0 | merged into `main`, v0.4.0 |
-| Log transform | 0 / 8 | [01](log-transform/issues/01-probe-vrl-through-cgo.md) |
+| Log transform | 1 / 7 | [02](log-transform/issues/02-log-processing-runs-the-log-transform.md), [03](log-transform/issues/03-eventstore-image-builds-vrl.md) |
 | Logging-old | closed (wontfix) | replaced by the logs map; reference only |
 
 **Logs path** (a ticket opens when the ones before it are done):
