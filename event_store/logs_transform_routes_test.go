@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/solidtrace/event_store/models"
 )
 
 // problem is an error or a warning the check route reports in a program.
@@ -223,5 +225,75 @@ func TestAPreviewTakesUpTo200JSONObjects(t *testing.T) {
 		if status, raw := postPreview(t, env, ".n = 1", logs...); status != 400 {
 			t.Errorf("%s: expected 400, got %d: %s", name, status, raw)
 		}
+	}
+}
+
+// serviceLog is a Log of a Service with a message.
+func serviceLog(t *testing.T, service, message string) models.Log {
+	t.Helper()
+	log := logAt(t, message, "2026-10-02T11:00:00Z")
+	log.Service = service
+	return log
+}
+
+func TestAPreviewRunsOnTheNewest100LogsOfEachServiceAsTheyArrived(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedLogTransform(t, env, 123, ".stored = true")
+	storeLogBatch(t, env, 123, serviceLog(t, "sidekiq", "quiet"))
+	env.ProcessLogs(t)
+	var busy []models.Log
+	for i := range 150 {
+		busy = append(busy, serviceLog(t, "indexer", fmt.Sprintf("busy %d", i)))
+	}
+	storeLogBatch(t, env, 123, busy[:70]...)
+	storeLogBatch(t, env, 123, busy[70:]...)
+	env.ProcessLogs(t)
+
+	got := previewProgram(t, env, ".seen = true")
+	var want []string
+	for i := 149; i >= 50; i-- {
+		want = append(want, fmt.Sprintf("busy %d", i))
+	}
+	want = append(want, "quiet")
+	var befores []string
+	for _, result := range got.Results {
+		befores = append(befores, result.Before.Message)
+		if len(result.Before.Attributes) != 0 || result.After == nil || result.After.Attributes["seen"] != true || result.After.Attributes["stored"] != nil {
+			t.Fatalf("Expected each Log as it arrived, before the saved program, and after the draft, got %+v", result)
+		}
+	}
+	if !slices.Equal(befores, want) || got.Kept != 101 {
+		t.Errorf("Expected the newest 100 indexer Logs and the sidekiq one, newest first, got %d kept of %v", got.Kept, befores)
+	}
+
+	env.ProcessLogs(t)
+	if stored := latestLogs(t, env, 123, 1000); len(stored) != 151 {
+		t.Errorf("Expected the 151 Logs Log processing stored and none from the preview, got %d", len(stored))
+	}
+	if other := previewProgram(t, env, ".seen = true"); len(other.Results) != 101 {
+		t.Errorf("Expected a second preview on the same Logs, got %d", len(other.Results))
+	}
+}
+
+func TestTheRecentArrivalsKeepAtMost4MBOfAProjectsLogs(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	var big []models.Log
+	for i := range 5 {
+		big = append(big, serviceLog(t, "web", fmt.Sprintf("%d %s", i, strings.Repeat("x", 900<<10))))
+	}
+	storeLogBatch(t, env, 123, big...)
+	env.ProcessLogs(t)
+
+	got := previewProgram(t, env, "abort")
+	var heads []string
+	for _, result := range got.Results {
+		heads = append(heads, result.Before.Message[:1])
+	}
+	if !slices.Equal(heads, []string{"4", "3", "2", "1"}) || got.Dropped != 4 {
+		t.Errorf("Expected the newest four Logs of about 900 KB, got %v", heads)
 	}
 }

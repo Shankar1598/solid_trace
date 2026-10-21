@@ -45,6 +45,8 @@ type Transforms struct {
 
 	mu       sync.Mutex
 	projects map[uint32]*current // by Project, only those with a program
+
+	arrivals arrivals
 }
 
 // current is a Project's current Log transform, compiled.
@@ -70,7 +72,19 @@ func New(console Console, clock clock.Clock) *Transforms {
 // Log, and keeps the Log's id. A Log the program fails on, or every Log when
 // the version doesn't compile, is kept as it arrived, with the error in
 // solidtrace.transform_error. Only reading Console's database fails Apply.
+//
+// Apply adds the Logs of batches it hasn't seen to the Project's recent
+// arrivals, as they arrived.
 func (t *Transforms) Apply(projectID uint32, batches []storage.LogBatch) ([]storage.LogBatch, error) {
+	fresh := t.arrivals.freshFrom(projectID, batches)
+	out, err := t.apply(projectID, batches)
+	if err == nil {
+		t.arrivals.add(projectID, batches[fresh:])
+	}
+	return out, err
+}
+
+func (t *Transforms) apply(projectID uint32, batches []storage.LogBatch) ([]storage.LogBatch, error) {
 	version, err := t.console.LogTransform(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("read log transform: %w", err)
