@@ -5,7 +5,25 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-export default function Register() {
+// The sign-up form, or, when sign-up is closed, why: people then join by
+// Invite.
+export default function Register({ closed }: { closed?: string }) {
+  if (closed !== undefined) {
+    return (
+      <AuthLayout title="Sign-up is closed" description={closed}>
+        <div className="text-center text-sm">
+          <Link href="/login" className="underline">
+            Log in
+          </Link>
+        </div>
+      </AuthLayout>
+    )
+  }
+
+  return <RegisterForm />
+}
+
+function RegisterForm() {
   const { data, setData, post, processing, errors, transform } = useForm({
     name: '',
     email: '',

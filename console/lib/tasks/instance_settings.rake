@@ -5,6 +5,7 @@
 namespace :instance_settings do
   print_settings = lambda do |settings|
     puts "SQL queries: #{settings.sql_queries_enabled? ? "on" : "off"}"
+    puts "Sign-up: #{settings.sign_up_open? ? "open" : "closed: people join by Invite, but the first user can always sign up"}"
     puts "Default Log Retention: #{settings.default_log_retention_days} days"
     puts
     puts InstanceSetting::SQL_QUERIES_DESCRIPTION
@@ -15,26 +16,27 @@ namespace :instance_settings do
     print_settings.call(InstanceSetting.current)
   end
 
-  desc "Change the instance settings: SQL_QUERIES_ENABLED=true|false and/or DEFAULT_LOG_RETENTION_DAYS=<whole days>. " \
-    "Read what SQL queries allow first (instance_settings:show)"
+  desc "Change the instance settings: SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false and/or " \
+    "DEFAULT_LOG_RETENTION_DAYS=<whole days>. Read what SQL queries allow first (instance_settings:show)"
   task set: :environment do
     changes = {}
 
-    if ENV.key?("SQL_QUERIES_ENABLED")
-      value = ENV["SQL_QUERIES_ENABLED"].to_s.strip.downcase
-      changes[:sql_queries_enabled] =
-        case value
-        when "true", "on" then true
-        when "false", "off" then false
-        else abort "SQL_QUERIES_ENABLED must be true or false, not #{ENV["SQL_QUERIES_ENABLED"].inspect}"
-        end
+    boolean = lambda do |name|
+      case ENV[name].to_s.strip.downcase
+      when "true", "on" then true
+      when "false", "off" then false
+      else abort "#{name} must be true or false, not #{ENV[name].inspect}"
+      end
     end
+
+    changes[:sql_queries_enabled] = boolean.call("SQL_QUERIES_ENABLED") if ENV.key?("SQL_QUERIES_ENABLED")
+    changes[:sign_up_open] = boolean.call("SIGN_UP_OPEN") if ENV.key?("SIGN_UP_OPEN")
 
     if ENV.key?("DEFAULT_LOG_RETENTION_DAYS")
       changes[:default_log_retention_days] = ENV["DEFAULT_LOG_RETENTION_DAYS"]
     end
 
-    abort "Nothing to change. Give SQL_QUERIES_ENABLED=true|false and/or DEFAULT_LOG_RETENTION_DAYS=<whole days>." if changes.empty?
+    abort "Nothing to change. Give SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false and/or DEFAULT_LOG_RETENTION_DAYS=<whole days>." if changes.empty?
 
     settings = InstanceSetting.current
     abort "Not changed: #{settings.errors.full_messages.to_sentence}" unless settings.update(changes)
