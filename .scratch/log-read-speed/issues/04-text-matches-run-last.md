@@ -6,7 +6,7 @@ It waits for 03 because both change the same condition writer. Measure the gain 
 
 **Blocked by:** 01, 03.
 
-**Status:** ready-for-agent
+**Status:** wontfix
 
 - [ ] The same Query, written with its conditions in each order, lists the same Logs (root tests through the Query route). The conditions are:
   - a text match on `message`;
@@ -57,3 +57,5 @@ The same probe, rerun twice back to back after merging 02 (`feature/log-read-spe
 
 - 02 shows in the newest page (about 320 to 400 ms before), but not in the order of conditions: each pair still costs the same, within noise, in Log rows and in tables, for the hot table and Log files.
 - A text match with a map condition costs what the text match costs alone, whichever is written first. So the reorder still isn't built.
+
+**2026-10-21, closed as `wontfix` with the user.** On top of 02 and 03, both written orders cost the same through the Query route, in Log rows and table runs, in the hot table and Log files (figures above). The reorder wasn't built. The probe keeps timing both orders, so a DuckDB upgrade can recheck it.
