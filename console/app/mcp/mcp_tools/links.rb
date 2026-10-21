@@ -20,6 +20,12 @@ module McpTools
       url(routes.project_path(project, org_slug: project.organization.slug))
     end
 
+    # A Project's Log transform page: its program, versions and running
+    # counts.
+    def log_transform(project)
+      url(routes.project_log_transform_path(project, org_slug: project.organization.slug))
+    end
+
     # The Logs explorer on a Project, with a Query or SQL and a TimeRange, as
     # lib/logs/explorerState.ts reads its URL. viz is how a table is drawn
     # (line, area, bars or table); the explorer picks when it's nil.
