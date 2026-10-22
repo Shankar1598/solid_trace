@@ -13,6 +13,16 @@ class SeedsTest < ActiveSupport::TestCase
     assert User.exists?(email: "admin@solidtrace.local")
   end
 
+  test "the seeded admin is the instance admin, and the member isn't, even when seeded before" do
+    load_seeds("development")
+    User.update_all(instance_admin: false)
+
+    load_seeds("development")
+
+    assert User.find_by!(email: "admin@solidtrace.local").instance_admin?
+    assert_not User.find_by!(email: "member@solidtrace.local").instance_admin?
+  end
+
   test "in production it makes nothing" do
     load_seeds("production")
 

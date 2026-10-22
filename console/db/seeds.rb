@@ -14,7 +14,10 @@ admin = User.find_or_create_by!(email: "admin@solidtrace.local") do |u|
   u.password = "password123"
   u.password_confirmation = "password123"
 end
-member = User.find_or_create_by!(email: "member@solidtrace.local") do |u|
+# The admin changes the install's settings, such as email, as the first user
+# to sign up would.
+admin.update!(instance_admin: true)
+member =User.find_or_create_by!(email: "member@solidtrace.local") do |u|
   u.name = "Member User"
   u.password = "password123"
   u.password_confirmation = "password123"

@@ -3,7 +3,7 @@
 require "test_helper"
 require "rake"
 
-# The operator's side of the instance settings: there is no UI for them.
+# The operator's side of the instance settings that have no UI yet.
 class InstanceSettingsTaskTest < ActiveSupport::TestCase
   setup do
     Rails.application.load_tasks unless Rake::Task.task_defined?("instance_settings:set")

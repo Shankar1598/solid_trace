@@ -65,19 +65,10 @@ Rails.application.configure do
   # Set this to true and configure the email server for immediate delivery to raise delivery errors.
   # config.action_mailer.raise_delivery_errors = false
 
-  # Links in emails point at Console's public URL. deploy/setup-gcp writes it, and
-  # the SMTP settings below, to deploy/.env.
+  # Links in emails point at Console's public URL, which deploy/setup-gcp writes
+  # to deploy/.env. The SMTP server and the sender are instance settings, which
+  # an instance admin sets on the Email settings page (ApplicationMailer).
   config.action_mailer.default_url_options = { host: console_url.host, port: console_url.port, protocol: console_url.scheme }
-
-  if ENV["SMTP_ADDRESS"].present?
-    config.action_mailer.smtp_settings = {
-      address: ENV["SMTP_ADDRESS"],
-      port: (ENV["SMTP_PORT"].presence || 587).to_i,
-      user_name: ENV["SMTP_USERNAME"].presence,
-      password: ENV["SMTP_PASSWORD"].presence,
-      authentication: (:plain if ENV["SMTP_USERNAME"].present?),
-    }.compact
-  end
 
   # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
   # the I18n.default_locale when a translation cannot be found).

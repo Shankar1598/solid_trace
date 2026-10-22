@@ -5,6 +5,8 @@ export interface User {
   name: string
   email: string
   created_at?: string
+  /** Whether they change the install's settings, such as email; only on current_user. */
+  instance_admin?: boolean
 }
 
 export interface Organization {

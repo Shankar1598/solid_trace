@@ -38,6 +38,7 @@ A tool acts as the token's user, with that user's rights. In each Organization i
 
 - **Any member** can read Logs and Issues, make and change Dashboards, Charts and Monitors, resolve, assign and comment on Issues, and make Projects.
 - **Only an Organization admin** can create, rotate and delete a Project's keys, change a Project's Log transform, and invite members. A member's agent is told so.
+- **Only an instance admin** can read and change the install's email settings, which apply to every Organization, and send a test email. `whoami` says whether you are one.
 - Other Organizations' records are not found.
 
 The User settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
@@ -90,6 +91,12 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 - `create_key`, `rotate_key`, `delete_key`: a Project's keys. Admins only.
 - `list_members`: an Organization's members, with their emails and roles.
 - `invite_member`: invites someone by email. Admins only.
+
+**Install**
+
+- `get_email_settings`: the SMTP server and sender the install sends every Organization's email with, whether a password is saved and readable, and whether email is set up or what's missing. The password is never answered. Instance admins only.
+- `update_email_settings`: changes the settings given, and sets or clears the password. A password given here passes through the agent's context; typing it on Console's Email settings page keeps it out. Instance admins only.
+- `send_test_email`: sends a test email at once, to you or an address given, and answers the SMTP server's error when it fails. Instance admins only.
 
 Reads are marked read-only, and deletes, key rotation and Log transform saves destructive, so a client can ask you before it runs them.
 

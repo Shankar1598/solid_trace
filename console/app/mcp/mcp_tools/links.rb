@@ -12,6 +12,11 @@ module McpTools
       url(routes.user_settings_path)
     end
 
+    # Settings → Email, the install's, shown under organization.
+    def email_settings(organization)
+      url(routes.email_settings_path(org_slug: organization.slug))
+    end
+
     def projects(organization)
       url(routes.projects_path(org_slug: organization.slug))
     end
