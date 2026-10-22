@@ -17,6 +17,7 @@ class ProjectsController < ApplicationController
     render inertia: "Projects/Show", props: {
       project: ProjectSerializer.new(@project, include_keys: true, ingest_url: public_ingest_url).as_json,
       default_log_retention_days: InstanceSetting.current.default_log_retention_days,
+      default_log_file_order: Project::DEFAULT_LOG_FILE_ORDER,
       can_manage_project: policy(@project).update?,
       can_delete_project: policy(@project).destroy?,
       can_manage_keys: policy(ProjectKey.new(project: @project)).create?,
@@ -63,6 +64,7 @@ class ProjectsController < ApplicationController
   end
 
   def project_params
-    params.require(:project).permit(:name, :platform, :log_retention_days)
+    # log_file_order is nil for the default, or a list of Field names.
+    params.require(:project).permit(:name, :platform, :log_retention_days, :log_file_order, log_file_order: [])
   end
 end
