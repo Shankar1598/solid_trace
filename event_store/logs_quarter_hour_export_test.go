@@ -207,11 +207,11 @@ func TestALogOfAnExportedQuarterHourGoesToTheHoursLateFileAtTheNextRun(t *testin
 	if got, want := fileMessages(t, hourFileNamed(t, env, 123, at(10, 0), "data-15.parquet")), []string{"10:16", "10:17"}; !slices.Equal(got, want) {
 		t.Errorf("Expected data-15.parquet to hold %v, got %v", want, got)
 	}
-	// The log line says which span each file holds.
+	// The export's message says which span each file holds.
 	line := exportLine(logs.String())
 	for _, file := range []string{"hour=10/data-15.parquet (10:15-10:30)", "hour=10/late-1.parquet (10:00-10:15)"} {
 		if !strings.Contains(line, file) {
-			t.Errorf("Expected the export's log line to name %q, got %q", file, line)
+			t.Errorf("Expected the export's message to name %q, got %q", file, line)
 		}
 	}
 

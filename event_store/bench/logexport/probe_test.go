@@ -1,4 +1,4 @@
-// Package logexport is a probe of how long the hourly export holds Log
+// Package logexport is a probe of how long the Log export holds Log
 // processing up, for the EventStore performance effort
 // (.scratch/eventstore-performance/). It builds synthetic Logs through the
 // LogStore, a busy hour to export and a busier hour after it, then runs the export
