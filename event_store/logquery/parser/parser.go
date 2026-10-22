@@ -294,6 +294,9 @@ func (p *parser) sortKey(after Token) (*SortKey, error) {
 // count parses the whole number of rows after take or top.
 func (p *parser) count(keyword Token) (*BasicLit, error) {
 	tok, ok := p.next()
+	if ok && tok.Kind == TokenParam {
+		return nil, (&Param{Name: tok.Value, NameSpan: tok.Span}).Misplaced()
+	}
 	if !ok || tok.Kind != TokenNumber {
 		return nil, p.errorf(keyword.Span, "%s needs a number of rows, as in %s 10", keyword.Value, keyword.Value)
 	}

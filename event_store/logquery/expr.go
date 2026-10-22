@@ -299,7 +299,7 @@ func (c *compiler) misplaced(p *parser.Param) *Error {
 	if c.inNot {
 		return errorAt(p, "$%s can't go inside not(…), where All would keep nothing; exclude with != instead", p.Name)
 	}
-	return errorAt(p, "$%s only goes in a where, compared with ==, !=, =~, !~, contains or startswith, or in search $%s", p.Name, p.Name)
+	return p.Misplaced()
 }
 
 // name compiles a name: a column, a built-in field or an Attribute.
