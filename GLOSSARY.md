@@ -169,15 +169,19 @@ A link an admin copies for an **Invited** member, and shares however they like, 
 _Avoid_: magic link, invitation email, activation link
 
 **Sign-up**:
-Making an account without an **Invite**. It works while the install has no user, so whoever set it up can make the first account, and after that only if the operator has opened it; otherwise people join by **Invite**.
+Making an account without an **Invite**. It works while the install has no user, so whoever set it up can make the first account, which is the **Instance admin**, and after that only if the operator has opened it; otherwise people join by **Invite**.
 _Avoid_: registration, self-serve sign-up
+
+**Instance admin**:
+A user who changes the install's settings that apply to every **Organization**, such as email. The first user to sign up is one, or on an install that already had users, the oldest; the operator grants or removes it from the command line. Being an Organization's admin isn't enough.
+_Avoid_: superuser, super admin, site admin, root
 
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant
 
 **Meta Organization**:
-The Organization SolidTrace makes for itself when it is installed, holding one Project that receives SolidTrace's own Logs, with one Service for each part of SolidTrace. Its first admin is the person who set up the instance. Otherwise an ordinary Organization: deleting it, or its Project, stops SolidTrace's own Logs for good.
+The Organization SolidTrace makes for itself when it is installed, holding one Project that receives SolidTrace's own Logs, with one Service for each part of SolidTrace. Its first admin is the person who set up the instance, who is also the **Instance admin**. Otherwise an ordinary Organization: deleting it, or its Project, stops SolidTrace's own Logs for good.
 _Avoid_: system organization, internal organization, admin organization
 
 **MCP server**:
@@ -207,6 +211,7 @@ _Avoid_: API key, project key, access token
 - **Log processing**'s **Log export** moves each **Project**'s **Logs** to the **Log file store**, a quarter-hour or an hour at a time, and the **Bin cache** keeps the **Chart** bins whose Logs are all there
 - An **Invite** to an **Organization** makes someone without a password an **Invited** member, whom an **Invite link** lets set a password
 - An **MCP server** call acts as the user of its **API token**, with what that user's role allows in the organization it acts on
+- An **Instance admin** sets the install's email, which every **Organization**'s mail is sent with
 
 ## Example dialogue
 

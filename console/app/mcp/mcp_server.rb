@@ -42,7 +42,10 @@ module McpServer
     McpTools::RotateKey,
     McpTools::DeleteKey,
     McpTools::ListMembers,
-    McpTools::InviteMember
+    McpTools::InviteMember,
+    McpTools::GetEmailSettings,
+    McpTools::UpdateEmailSettings,
+    McpTools::SendTestEmail
   ].freeze
 
   INSTRUCTIONS = <<~TEXT
@@ -54,6 +57,7 @@ module McpServer
     To read less, filter with == or in on the Project's log_file_order (list_projects); query_language_reference's Reading less says how.
     get_log_transform shows the program that shapes a Project's Logs before they're stored.
     Dashboards, Monitors and Issues each have list_ and get_ tools, and tools to make and change them; get_issue's trace_logs finds an Event's Logs.
+    An instance admin (whoami says) reads and changes the install's email settings with get_email_settings and update_email_settings.
     An answer ends with a link to the Console page that shows it, for the user to open.
   TEXT
 

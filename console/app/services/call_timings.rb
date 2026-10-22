@@ -34,9 +34,12 @@ module CallTimings
   class << self
     # Times an MCP tool call, the block, as the user who made it: the line
     # has its tool and arguments, and the Log reads it makes have origin
-    # mcp:<tool>. Answers what the block answers.
+    # mcp:<tool>. Arguments such as a password are filtered as request
+    # parameters are (config/initializers/filter_parameter_logging.rb).
+    # Answers what the block answers.
     def mcp_tool(tool, arguments, user)
       started = now
+      arguments = ActiveSupport::ParameterFilter.new(Rails.application.config.filter_parameters).filter(arguments)
       response = Context.set(origin: "mcp:#{tool}", user: user) { yield }
       error = response.error? ? response.content.filter_map { |part| part[:text] }.join("\n") : nil
       write("mcp_tool", "MCP tool #{tool}", started, error ? "error" : "ok", error,
