@@ -1,6 +1,6 @@
 # 02: A Dashboard's filter bar
 
-**Status:** ready-for-agent
+**Status:** claimed
 **Spec:** [spec.md](../spec.md)
 **Blocked by:** 01
 

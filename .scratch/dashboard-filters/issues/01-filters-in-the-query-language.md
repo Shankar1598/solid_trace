@@ -1,6 +1,6 @@
 # 01: Filters in the Query language
 
-**Status:** claimed
+**Status:** resolved
 **Spec:** [spec.md](../spec.md)
 
 **What to build:** `$name` in a Query, filled in by EventStore from the request's `parameters` when it compiles, as the spec's "In a Query" says. Nothing in the Console UI changes yet, beyond the Query editor colouring `$name`.
@@ -35,3 +35,12 @@
 - [ ] A Rails test that `query_logs` sends `parameters`.
 
 ## Comments
+
+- 2026-10-22 (orchestrator): built on `dashboard-filters/01-filters-in-the-query-language`, merged at `b21d917`. Decisions the code took:
+  - `logquery.Compile(source, bounds, values map[string][]string)`: the values are a third argument, not a `Bounds` field.
+  - A filter goes on either side of `==`, `!=`, `=~`, `!~`, and only on the right of `contains`/`startswith` and their forms. `$a == $b` is an error.
+  - All is a true condition: `x or <All>` is true, not "as if the `or` side were absent". All-only where stages are dropped from head and tail.
+  - Chips: a filter value is `{"filter": "<name>"}`; `search $q` gives `search_filter: "q"` and `search: null`. Validate's `parameters` is `[]` on errors.
+  - The frontend `Validation`/`Chips` types don't have `parameters` or `search_filter` yet (02 and 04 add what they read).
+  - `problemSpans.ts` keeps `$` in its word pattern so a squiggle covers `$name` whole.
+  - Tests: `event_store/logs_parameters_test.go` (7 root tests).
