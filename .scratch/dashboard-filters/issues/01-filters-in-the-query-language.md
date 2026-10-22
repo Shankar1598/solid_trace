@@ -17,7 +17,7 @@
 - [ ] `event_store/handler/logs.go`: `queryRequest` takes `parameters` and passes them to `compile`. More than 100 values for a name, or a value over 1,000 bytes, is a 400. Validate answers `parameters`, the names the Query uses. Histogram and readable SQL compile with none (All).
 - [ ] Console: `EventStore.query_logs(…, parameters: nil)` sends them when present. `ChartRuns.run_chart` takes `parameters:` and passes them on (02 sends real values).
 - [ ] Browser: `lib/logs/queryLexer.ts` gains a `parameter` token kind, coloured in the Query editor. A `parametersOf(text)` helper lists the names a Query uses, in order, each once. It is lexer-based, since the browser never parses Queries.
-- [ ] Docs: a "Dashboard filters" section in `docs/logs/query-language.md` and its MCP copy, `console/app/mcp/docs/query-language.md`. ADR 0012 and CONTEXT.md's **Dashboard filter** are written with the spec.
+- [ ] Docs: a "Dashboard filters" section in `docs/logs/query-language.md` and its MCP copy, `console/app/mcp/docs/query-language.md`. ADR 0014 and GLOSSARY.md's **Dashboard filter** are written with the spec.
 
 ## Tests
 

@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 
-Planned with the user on 2026-10-21, like Axiom's dashboard filters. Tickets: [01](issues/01-filters-in-the-query-language.md), [02](issues/02-dashboard-filter-bar.md), [03](issues/03-select-of-a-fields-values.md), [04](issues/04-filters-in-the-builder.md), [05](issues/05-mcp-tools-and-monitors.md). Decided in [ADR 0012](../../docs/adr/0012-dashboard-filters-are-query-parameters.md).
+Planned with the user on 2026-10-21, like Axiom's dashboard filters. Tickets: [01](issues/01-filters-in-the-query-language.md), [02](issues/02-dashboard-filter-bar.md), [03](issues/03-select-of-a-fields-values.md), [04](issues/04-filters-in-the-builder.md), [05](issues/05-mcp-tools-and-monitors.md). Decided in [ADR 0014](../../docs/adr/0014-dashboard-filters-are-query-parameters.md).
 
 ## Problem Statement
 
@@ -125,7 +125,7 @@ The values live in the URL, so a link shares exactly what you see. In the Chart 
 
 ### Docs and domain
 
-- CONTEXT.md gains **Dashboard filter**. ADR 0012 records why filters are Query parameters that EventStore fills in.
+- GLOSSARY.md gains **Dashboard filter**. ADR 0014 records why filters are Query parameters that EventStore fills in.
 
 ## Testing Decisions
 
@@ -180,7 +180,7 @@ The values live in the URL, so a link shares exactly what you see. In the Chart 
   - Values live in the URL with All as the default.
   - The MCP tools are in this effort.
   - SQL Charts are later, in their own effort.
-- **Rejected alternatives**, in ADR 0012:
+- **Rejected alternatives**, in ADR 0014:
   - a tick box per Chart with the field bound to the filter, which needs the same field name in every Project and always filters first;
   - Console splicing values into the Query text, which can't place errors, read chips or drop a comparison without a parser;
   - Axiom's `declare query_parameters` with a hand-written `isempty()` All case.
