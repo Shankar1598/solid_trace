@@ -31,7 +31,7 @@ const logsCatalog = "logs"
 // A DuckDB transaction can write only one attached database, so everything
 // Log processing commits together lives here.
 //
-// The hourly export moves Logs out to files under files.Dir, which the Log
+// The Log export moves Logs out to files under files.Dir, which the Log
 // file manifest lists (logs_manifest.go).
 type LogStore struct {
 	db    *sql.DB
