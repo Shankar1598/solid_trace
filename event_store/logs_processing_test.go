@@ -282,3 +282,48 @@ func TestTheBacklogLineNamesAProjectWhoseLogsWaitTooLong(t *testing.T) {
 	env.FlakyLogs.recover()
 	caughtUpWithin(t, env, done, 10*time.Second)
 }
+
+// commitLines returns the lines of output that count a Project's commits.
+func commitLines(output string, projectID string) []string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Log processing commits") && strings.Contains(line, "project_id="+projectID+" ") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func TestTheCommitsLineCountsAProjectsCommitsBatchesAndLogsEachMinute(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	output := captureLogs(t)
+
+	// Two commits within a minute: two Logs in one batch, then one.
+	postLogs(t, env, "application/json", `[{"message": "one"}, {"message": "two"}]`)
+	processLogsWithin(t, env, 5*time.Second)
+	postLogs(t, env, "application/json", `{"message": "three"}`)
+	processLogsWithin(t, env, 5*time.Second)
+	if lines := commitLines(output.String(), "123"); len(lines) != 0 {
+		t.Errorf("Expected no commits line within the minute, got %q", lines)
+	}
+
+	env.Clock.Set(env.Clock.Now().Add(time.Minute))
+	processLogsWithin(t, env, 5*time.Second)
+	lines := commitLines(output.String(), "123")
+	if len(lines) != 1 {
+		t.Fatalf("Expected one commits line after a minute, got %q", lines)
+	}
+	for _, want := range []string{"kind=log_commits", "seconds=60 ", "commits=2 ", "batches=2 ", "logs=3 ", "took_ms=", "slowest_ms="} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("Expected the commits line to have %s, got %q", want, lines[0])
+		}
+	}
+
+	// The next minute counts afresh, and a Project with no commits gets no line.
+	env.Clock.Set(env.Clock.Now().Add(time.Minute))
+	processLogsWithin(t, env, 5*time.Second)
+	if lines := commitLines(output.String(), "123"); len(lines) != 1 {
+		t.Errorf("Expected no commits line for a minute with no commits, got %q", lines[1:])
+	}
+}

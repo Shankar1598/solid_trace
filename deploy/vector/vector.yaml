@@ -54,6 +54,14 @@ transforms:
             log.statement = to_int(log.statement) ?? log.statement
             log.statements = to_int(log.statements) ?? log.statements
             log.duration_ms = to_float(log.duration_ms) ?? log.duration_ms
+          } else if log.kind == "log_commits" {
+            log.project_id = to_int(log.project_id) ?? log.project_id
+            log.seconds = to_float(log.seconds) ?? log.seconds
+            log.commits = to_int(log.commits) ?? log.commits
+            log.batches = to_int(log.batches) ?? log.batches
+            log.logs = to_int(log.logs) ?? log.logs
+            log.took_ms = to_float(log.took_ms) ?? log.took_ms
+            log.slowest_ms = to_float(log.slowest_ms) ?? log.slowest_ms
           }
         } else {
           # Anything else, such as Puma's start-up lines or a backtrace.
@@ -150,6 +158,37 @@ tests:
                 "statements": 2,
                 "duration_ms": 2.942,
                 "sql": "WITH logs AS (\nSELECT \"id\", \"attrs_string.user\" FROM logs.logs_hot_123 WHERE time >= CAST('2026-10-02 00:00:00' AS TIMESTAMP)\n)",
+                "service": "event_store",
+                "container": "solid-trace-event_store-1"
+              })
+
+  - name: an EventStore Log processing commits line, its numbers numbers
+    inputs:
+      - insert_at: lines
+        type: vrl
+        source: |
+          .message = "timestamp=2026-10-22T19:00:00.123Z level=info message=\"Log processing commits\" kind=log_commits project_id=123 seconds=60.002 commits=58 batches=412 logs=213004 took_ms=5321.408 slowest_ms=2310.5 "
+          .timestamp = t'2026-10-22T19:00:00.125Z'
+          .container_name = "solid-trace-event_store-1"
+          .label = {"com.docker.compose.project": "solid-trace", "com.docker.compose.service": "event_store"}
+          .stream = "stderr"
+    outputs:
+      - extract_from: lines
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(., {
+                "timestamp": "2026-10-22T19:00:00.123Z",
+                "level": "info",
+                "message": "Log processing commits",
+                "kind": "log_commits",
+                "project_id": 123,
+                "seconds": 60.002,
+                "commits": 58,
+                "batches": 412,
+                "logs": 213004,
+                "took_ms": 5321.408,
+                "slowest_ms": 2310.5,
                 "service": "event_store",
                 "container": "solid-trace-event_store-1"
               })

@@ -80,7 +80,8 @@ type Transform interface {
 // clears and skips nothing. Logs that fail on their content are retried, then
 // tried apart, and a Log that fails on its own is skipped and logged.
 //
-// Every minute it logs each Project whose Logs have waited too long.
+// Every minute it logs each Project whose Logs have waited too long, and what
+// each Project's commits stored.
 type Processor struct {
 	batches   *storage.PebbleWriter
 	store     Store
@@ -94,6 +95,7 @@ type Processor struct {
 	// Used only by the worker.
 	failing          map[uint32]*failure // Projects whose Logs failed to store
 	lastBacklogCheck time.Time
+	commits          map[uint32]*commitCounts // each Project's commits since the last backlog check
 
 	*worker
 }
@@ -103,6 +105,16 @@ type failure struct {
 	retryAt time.Time     // when to try the Project again
 	backoff time.Duration // the wait after the next failure
 	content int           // how many of the failures were content errors
+}
+
+// commitCounts is what a Project's commits stored since the last backlog
+// check.
+type commitCounts struct {
+	commits int           // transactions that stored Logs
+	batches int           // Log batches they stored, one per ingest request
+	logs    int           // Logs in those batches, before the Log transform
+	took    time.Duration // time spent storing them, the commits included
+	slowest time.Duration // the longest of those
 }
 
 // New constructs Log processing, which runs each Project's Log transform with
@@ -116,6 +128,7 @@ func New(batches *storage.PebbleWriter, store Store, transform Transform, clock 
 		pending:   make(map[uint32]struct{}),
 		wake:      make(chan struct{}, 1),
 		failing:   make(map[uint32]*failure),
+		commits:   make(map[uint32]*commitCounts),
 		worker:    newWorker(),
 	}
 }
@@ -319,6 +332,7 @@ func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 	}
 
 	now := p.clock.Now()
+	began := time.Now()
 	err = p.classify(p.store.AppendLogBatches(projectID, batches, now))
 	if failed := p.failing[projectID]; isContentError(err) && failed != nil && failed.content >= contentRetries {
 		err = p.storeApart(projectID, batches, now)
@@ -326,6 +340,7 @@ func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("store logs: %w", err)
 	}
+	p.countCommit(projectID, len(batches), logs, time.Since(began))
 
 	if err := p.batches.DeleteLogBatchesUpTo(projectID, last); err != nil {
 		// The Logs are stored and the cursor is past these batches, so they
@@ -459,16 +474,54 @@ func batchesOf(logs []batchedLog) []storage.LogBatch {
 	return batches
 }
 
-// checkBacklog runs logBacklog at most once per backlogInterval by the
-// clock. It is called from the processing loop, which also runs while
-// Projects wait to be retried, so a failing worker still reports.
+// countCommit adds a commit that stored a Project's batches, holding logs
+// Logs, in took, to the Project's commits since the last backlog check.
+func (p *Processor) countCommit(projectID uint32, batches, logs int, took time.Duration) {
+	c := p.commits[projectID]
+	if c == nil {
+		c = &commitCounts{}
+		p.commits[projectID] = c
+	}
+	c.commits++
+	c.batches += batches
+	c.logs += logs
+	c.took += took
+	c.slowest = max(c.slowest, took)
+}
+
+// checkBacklog runs logBacklog and logCommits at most once per
+// backlogInterval by the clock. It is called from the processing loop, which
+// also runs while Projects wait to be retried, so a failing worker still
+// reports.
 func (p *Processor) checkBacklog() {
 	now := p.clock.Now()
 	if now.Sub(p.lastBacklogCheck) < backlogInterval {
 		return
 	}
+	if !p.lastBacklogCheck.IsZero() {
+		p.logCommits(now.Sub(p.lastBacklogCheck))
+	}
+	clear(p.commits)
 	p.lastBacklogCheck = now
 	p.logBacklog(now)
+}
+
+// logCommits logs, for each Project that stored Logs over window, since the
+// last backlog check, how many commits stored how many Log batches and Logs,
+// and how long they took. From these a reader works out commits a second and
+// Logs a commit.
+func (p *Processor) logCommits(window time.Duration) {
+	for projectID, c := range p.commits {
+		logger.L.Info("Log processing commits",
+			"kind", "log_commits",
+			"project_id", projectID,
+			"seconds", window.Seconds(),
+			"commits", c.commits,
+			"batches", c.batches,
+			"logs", c.logs,
+			"took_ms", float64(c.took.Microseconds())/1000,
+			"slowest_ms", float64(c.slowest.Microseconds())/1000)
+	}
 }
 
 // logBacklog logs each Project whose oldest Log batch was written more than
