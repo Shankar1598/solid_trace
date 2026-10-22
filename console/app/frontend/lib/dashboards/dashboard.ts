@@ -5,7 +5,8 @@
 import type { AutoRefresh } from '../autoRefresh'
 import type { ChartForm } from '../charts/series'
 import { searchOf, stateFromSearch, type Viz } from '../logs/explorerState'
-import { parametersOf } from '../logs/queryLexer'
+import type { QueryProblem } from '../logs/api'
+import { parametersOf, tokenize } from '../logs/queryLexer'
 import { isSpan, type TimeRange } from '../timeRange'
 
 export type DashboardViz = 'line' | 'area' | 'bar' | 'stat' | 'table'
@@ -136,6 +137,41 @@ export function filterValuesOfSearch(search: string, filters: DashboardFilter[])
 export function parametersOfChart(query: string, filters: DashboardFilter[], values: FilterValues): FilterValues {
   const named = new Set(parametersOf(query))
   return filterValues(filters.filter(f => named.has(f.name)), values)
+}
+
+/**
+ * A problem at each $name in a chart's Query that names, among parameters
+ * (the names validate found), a filter the Dashboard lacks: the chart editor
+ * won't save it. Lines and columns count from 1, columns in characters, as
+ * validate's do.
+ */
+export function unknownFilterProblems(query: string, parameters: string[], filters: DashboardFilter[]): QueryProblem[] {
+  const known = new Set(filters.map(f => f.name))
+  const unknown = new Set(parameters.filter(name => !known.has(name)))
+  const names = filters.map(f => f.name).join(', ')
+  const messageOf = (name: string) =>
+    `$${name} isn't one of this Dashboard's filters${names === '' ? '; it has none' : ` (${names})`}.`
+  const problems: QueryProblem[] = []
+  const placed = new Set<string>()
+  for (const token of tokenize(query)) {
+    const name = token.text.slice(1)
+    if (token.kind !== 'parameter' || !unknown.has(name)) continue
+    const from = placeOf(query, token.from)
+    const to = placeOf(query, token.to)
+    problems.push({ message: messageOf(name), line: from.line, column: from.column, end_line: to.line, end_column: to.column })
+    placed.add(name)
+  }
+  // A name validate found that the browser's lexer didn't still stops a save.
+  for (const name of unknown) {
+    if (!placed.has(name)) problems.push({ message: messageOf(name), line: 1, column: 1, end_line: 1, end_column: 1 })
+  }
+  return problems
+}
+
+/** An offset into text as a line and a column from 1, the column in characters. */
+function placeOf(text: string, offset: number): { line: number; column: number } {
+  const lines = text.slice(0, offset).split('\n')
+  return { line: lines.length, column: [...lines[lines.length - 1]].length + 1 }
 }
 
 /** The names a chart's Query uses that aren't the Dashboard's filters, which run as All. */
