@@ -167,6 +167,51 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 7, project_page["project"]["log_retention_days"]
   end
 
+  test "the Project page shows the default Log file order while none is set" do
+    page = project_page
+
+    assert_nil page["project"]["log_file_order"]
+    assert_equal [ "service", "file" ], page["default_log_file_order"]
+  end
+
+  test "an admin sets a Project's Log file order, resets it to the default and sets time only" do
+    sign_in_as(@admin)
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json,
+      params: { project: { log_file_order: [ "service", "http.route" ] } }
+    assert_redirected_to project_url(@project, org_slug: @organization.slug)
+    assert_equal [ "service", "http.route" ], project_page["project"]["log_file_order"]
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json, params: { project: { log_file_order: nil } }
+    assert_nil project_page["project"]["log_file_order"]
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json, params: { project: { log_file_order: [] } }
+    assert_equal [], project_page["project"]["log_file_order"]
+  end
+
+  test "a Log file order the Project can't sort by shows its error and keeps the order" do
+    sign_in_as(@admin)
+    @project.update!(log_file_order: [ "level" ])
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json,
+      params: { project: { log_file_order: [ "service", "message" ] } }
+
+    page = project_page
+    assert_equal [ "can't name message: only service, environment, level and Attributes sort a Log file" ],
+      Array(page["errors"]["log_file_order"])
+    assert_equal [ "level" ], page["project"]["log_file_order"]
+  end
+
+  test "a member can't change a Project's Log file order" do
+    @project.update!(log_file_order: [ "level" ])
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json, params: { project: { log_file_order: [] } }
+
+    assert_response :redirect
+    assert_equal "You are not authorized to perform this action.", flash[:alert]
+    assert_equal [ "level" ], project_page["project"]["log_file_order"]
+  end
+
   test "an admin deletes a Project and its Issues" do
     issue = create(:issue, project: @project)
     sign_in_as(@admin)
