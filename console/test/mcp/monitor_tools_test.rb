@@ -118,6 +118,20 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_not LogMonitor.exists?(name: "Errors")
   end
 
+  test "create_monitor and update_monitor refuse a Query naming a Dashboard filter" do
+    stub_monitor_query_check(@shop, parameters: %w[service])
+    refusal = "Not saved: Query can't name a filter. Filters ($service) work only on Dashboard Charts."
+    query = @monitor.query
+
+    made = call_tool(:create_monitor, user: @user, project: "shop", name: "Filtered", kind: "match", query: "['shop'] | where service == $service")
+    assert_equal refusal, made.text
+    assert_not LogMonitor.exists?(name: "Filtered")
+
+    changed = call_tool(:update_monitor, user: @user, monitor: @monitor.id, query: "['shop'] | where service == $service | summarize count()")
+    assert_equal refusal, changed.text
+    assert_equal query, @monitor.reload.query
+  end
+
   test "another Organization's Integration is refused, and nothing is saved" do
     made = call_tool(:create_monitor, user: @user, project: "shop", name: "Errors", kind: "threshold", query: @monitor.query,
       operator: ">", threshold: 1, integration_ids: [ @slack.id, @their_integration.id ])
