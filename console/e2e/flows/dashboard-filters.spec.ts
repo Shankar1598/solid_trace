@@ -248,7 +248,7 @@ test('a select of a field\'s values lists the dev Project\'s services when opene
   await page.keyboard.press('Escape')
 
   // A value from a link that isn't among the values still shows as chosen.
-  await page.goto(`${path}?range=1h&v_service=gone`)
+  await page.goto(`${path}?from=${from.toISOString()}&to=${to.toISOString()}&v_service=gone`)
   await chartsRan(page, 1)
   await expect(service).toHaveText(/Service: gone/)
   await service.click()
