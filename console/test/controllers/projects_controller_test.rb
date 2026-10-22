@@ -174,6 +174,29 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "service", "file" ], page["default_log_file_order"]
   end
 
+  test "the Project page offers its string Attributes of the last day for the Log file order, after it opens" do
+    travel_to Time.utc(2026, 10, 22, 12, 0, 0) do
+      fields = stub_request(:get, "#{EventStore.base_url}/api/#{@project.id}/logs/fields")
+        .with(query: { from: "2026-10-21T12:00:00.000Z", to: "2026-10-22T12:00:00.000Z" })
+        .to_return(status: 200, body: {
+          built_in: [ { name: "time", type: "datetime" } ],
+          attributes: [ { name: "file", type: "string", logs: 9 }, { name: "status", type: "number", logs: 5 },
+                        { name: "http.route", type: "string", logs: 3 }, { name: "status", type: "string", logs: 1 } ],
+          truncated: false,
+        }.to_json)
+
+      assert_not project_page.key?("log_file_order_attributes")
+      assert_not_requested fields
+      assert_equal [ "file", "http.route", "status" ], project_page_prop("log_file_order_attributes")
+    end
+  end
+
+  test "the Project page offers no Attributes for the Log file order while EventStore can't answer" do
+    stub_request(:get, %r{/api/#{@project.id}/logs/fields}).to_timeout
+
+    assert_equal [], project_page_prop("log_file_order_attributes")
+  end
+
   test "an admin sets a Project's Log file order, resets it to the default and sets time only" do
     sign_in_as(@admin)
 
@@ -254,5 +277,15 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
       headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
     assert_response :success
     JSON.parse(response.body)["props"]
+  end
+
+  # A prop the Project page loads after it opens, as Inertia asks for a deferred one.
+  def project_page_prop(name)
+    get project_url(@project, org_slug: @organization.slug), headers: {
+      "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest,
+      "X-Inertia-Partial-Component" => "Projects/Show", "X-Inertia-Partial-Data" => name,
+    }
+    assert_response :success
+    JSON.parse(response.body)["props"].fetch(name)
   end
 end
