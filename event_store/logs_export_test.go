@@ -284,6 +284,15 @@ func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T)
 	assertQueries(t, env, queries, "with k095 demoted today")
 	want := latestLogs(t, env, 123, 100)
 
+	// The quarter-hour runs before 01:00 keep yesterday's last hour, and
+	// with it the demoted columns.
+	for _, minute := range []int{15, 30, 45} {
+		env.Clock.Set(at(2, 0, minute))
+		env.ExportLogs(t)
+		assertListsUnchanged(t, env, 123, want, fmt.Sprintf("after the export at 00:%d", minute))
+		assertQueries(t, env, queries, fmt.Sprintf("after the export at 00:%d", minute))
+	}
+
 	// The export at 01:00 deletes yesterday's last hour.
 	env.Clock.Set(at(2, 1, 0))
 	env.ExportLogs(t)

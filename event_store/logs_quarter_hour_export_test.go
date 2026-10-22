@@ -291,3 +291,165 @@ func TestStagedQuarterHourFilesACrashLeavesAreSettledAsAnHoursAre(t *testing.T) 
 		t.Errorf("Expected data-00.parquet to hold %v, got %v", want, got)
 	}
 }
+
+func TestAQuietProjectsLogTwentyMinutesLateIsInItsHoursDataFile(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(10, 29))
+	postAndProcess(t, env, logJSON(t, "on time 10:05", at(10, 5), map[string]any{"user": "ada"}))
+
+	// At 10:45 the hot window starts at 10:30, so a Log of 10:25 is late:
+	// it waits in logs_late, and isn't counted. One of 10:44 is hot.
+	env.Clock.Set(at(10, 45))
+	postAndProcess(t, env,
+		logJSON(t, "late 10:25", at(10, 25), map[string]any{"user": "bob"}),
+		logJSON(t, "on time 10:44", at(10, 44), map[string]any{"user": "cy"}))
+	assertAttributes(t, getFields(t, env, 123, at(10, 0), at(11, 0), ""),
+		[]attributeCount{{Name: "user", Type: "string", Logs: 2}}, "with the late Log in logs_late")
+	queries := map[string][]string{
+		`where user == "bob"`: {"late 10:25"},
+		`where user != "bob"`: {"on time 10:44", "on time 10:05"},
+	}
+	assertQueries(t, env, queries, "before the export")
+	want := latestLogs(t, env, 123, 100)
+
+	// The quarter-hour runs leave the quiet Project's hour 10 alone.
+	for _, run := range []time.Time{at(11, 0), at(11, 15), at(11, 30), at(11, 45)} {
+		env.Clock.Set(run)
+		env.ExportLogs(t)
+		assertHourFileNames(t, env, 123, at(10, 0))
+	}
+
+	// The hour's export takes the late Log into data.parquet, sorted with
+	// the hour's other Logs, and writes no late file.
+	env.Clock.Set(at(12, 0))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the hour's export")
+	assertQueries(t, env, queries, "after the hour's export")
+	assertHourFileNames(t, env, 123, at(10, 0), "data.parquet")
+	if got, want := fileMessages(t, hourFileNamed(t, env, 123, at(10, 0), "data.parquet")), []string{"on time 10:05", "late 10:25", "on time 10:44"}; !slices.Equal(got, want) {
+		t.Errorf("Expected data.parquet to hold %v, got %v", want, got)
+	}
+}
+
+// assertBeforeCutoffAllInFiles checks that every Log a Project lists in
+// [hour, cutoff) is in a file of the hour, so none is left in the hot table
+// or logs_late.
+func assertBeforeCutoffAllInFiles(t *testing.T, env *TestEnv, hour, cutoff time.Time, when string) {
+	t.Helper()
+	listed := messages(runQueryPages(t, env, 123, queryRequest{From: hour, To: cutoff, Limit: 1000}))
+	files, err := env.LogStore.HourFiles(123, hour)
+	if err != nil {
+		t.Fatalf("List files of %v: %v", hour, err)
+	}
+	var inFiles []string
+	for _, file := range files {
+		inFiles = append(inFiles, fileMessages(t, file)...)
+	}
+	slices.Sort(listed)
+	slices.Sort(inFiles)
+	if !slices.Equal(listed, inFiles) {
+		t.Errorf("%s: expected the Logs before %s, %v, all in files, got %v in files", when, cutoff.Format("15:04"), listed, inFiles)
+	}
+}
+
+func TestABusyProjectsHotTableHoldsNoLogBeforeTheQuarterCutoffAfterARun(t *testing.T) {
+	env := setupBusyTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(10, 29))
+	postAndProcess(t, env,
+		logJSON(t, "10:01", at(10, 1), nil), logJSON(t, "10:02", at(10, 2), nil),
+		logJSON(t, "10:16", at(10, 16), nil), logJSON(t, "10:17", at(10, 17), nil))
+	env.Clock.Set(at(10, 30))
+	env.ExportLogs(t)
+	assertBeforeCutoffAllInFiles(t, env, at(10, 0), at(10, 15), "after the run at 10:30")
+
+	// Sent after the run at 10:30: a Log of 10:14, before the window, and
+	// Logs of the quarter-hour 10:15 and after, inside it. Just before the
+	// run at 10:45, a Log of 10:29, still inside it.
+	env.Clock.Set(at(10, 31))
+	postAndProcess(t, env,
+		logJSON(t, "10:14", at(10, 14), nil), logJSON(t, "10:20", at(10, 20), nil),
+		logJSON(t, "10:32", at(10, 32), nil))
+	env.Clock.Set(at(10, 44))
+	postAndProcess(t, env, logJSON(t, "10:29", at(10, 29), nil))
+	want := latestLogs(t, env, 123, 100)
+	env.Clock.Set(at(10, 45))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the run at 10:45")
+	assertBeforeCutoffAllInFiles(t, env, at(10, 0), at(10, 30), "after the run at 10:45")
+	assertHourFileNames(t, env, 123, at(10, 0), "data-00.parquet", "data-15.parquet", "late-1.parquet")
+	if got, want := fileMessages(t, hourFileNamed(t, env, 123, at(10, 0), "data-15.parquet")), []string{"10:16", "10:17", "10:20", "10:29"}; !slices.Equal(got, want) {
+		t.Errorf("Expected data-15.parquet to hold %v, got %v", want, got)
+	}
+
+	// Between runs too: a Log of 10:25 sent at 10:46 isn't stored hot, so
+	// it isn't counted, and the next run writes it to a late file.
+	env.Clock.Set(at(10, 46))
+	postAndProcess(t, env, logJSON(t, "10:25", at(10, 25), map[string]any{"user": "ada"}))
+	assertAttributes(t, getFields(t, env, 123, at(10, 0), at(11, 0), ""), nil, "with a Log of 10:25 sent at 10:46")
+	want = latestLogs(t, env, 123, 100)
+	env.Clock.Set(at(11, 0))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the run at 11:00")
+	assertBeforeCutoffAllInFiles(t, env, at(10, 0), at(10, 45), "after the run at 11:00")
+	assertHourFileNames(t, env, 123, at(10, 0), "data-00.parquet", "data-15.parquet", "data-30.parquet", "late-1.parquet", "late-2.parquet")
+}
+
+func TestAfterAGapDelayedLogsGoToTheirRangesOwnFileOrALateFile(t *testing.T) {
+	env := setupBusyTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	env.Clock.Set(at(10, 29))
+	postAndProcess(t, env,
+		logJSON(t, "10:01", at(10, 1), nil), logJSON(t, "10:02", at(10, 2), nil),
+		logJSON(t, "10:16", at(10, 16), nil), logJSON(t, "10:17", at(10, 17), nil))
+	env.Clock.Set(at(10, 30))
+	env.ExportLogs(t)
+	assertHourFileNames(t, env, 123, at(10, 0), "data-00.parquet")
+
+	// Nothing arrives from 10:30 to 11:31, as when a shipper falls behind,
+	// and the export doesn't run. Then the delayed Logs come, more than 15
+	// to 30 minutes late, with Logs sent on time.
+	env.Clock.Set(at(11, 31))
+	postAndProcess(t, env,
+		logJSON(t, "10:05", at(10, 5), map[string]any{"user": "ada"}),
+		logJSON(t, "10:20", at(10, 20), map[string]any{"user": "bob"}),
+		logJSON(t, "10:35", at(10, 35), nil),
+		logJSON(t, "10:50", at(10, 50), nil),
+		logJSON(t, "11:05", at(11, 5), map[string]any{"user": "cy"}),
+		logJSON(t, "11:31", at(11, 31), nil))
+	queries := map[string][]string{
+		`where user == "ada"`: {"10:05"},
+		`where user == "bob"`: {"10:20"},
+		`where user == "cy"`:  {"11:05"},
+	}
+	assertQueries(t, env, queries, "before the run at 11:45")
+	want := latestLogs(t, env, 123, 100)
+
+	// A range with a file gets a late file; each range without one gets
+	// its own file, with the hot Logs it holds.
+	env.Clock.Set(at(11, 45))
+	env.ExportLogs(t)
+	assertListsUnchanged(t, env, 123, want, "after the run at 11:45")
+	assertQueries(t, env, queries, "after the run at 11:45")
+	assertBeforeCutoffAllInFiles(t, env, at(10, 0), at(11, 0), "after the run at 11:45")
+	assertBeforeCutoffAllInFiles(t, env, at(11, 0), at(11, 30), "after the run at 11:45")
+	assertHourFileNames(t, env, 123, at(10, 0), "data-00.parquet", "data-15.parquet", "data-30.parquet", "data-45.parquet", "late-1.parquet")
+	assertHourFileNames(t, env, 123, at(11, 0), "data-00.parquet")
+	for name, want := range map[string][]string{
+		"data-15.parquet": {"10:16", "10:17", "10:20"},
+		"data-30.parquet": {"10:35"},
+		"data-45.parquet": {"10:50"},
+		"late-1.parquet":  {"10:05"},
+	} {
+		if got := fileMessages(t, hourFileNamed(t, env, 123, at(10, 0), name)); !slices.Equal(got, want) {
+			t.Errorf("Expected %s to hold %v, got %v", name, want, got)
+		}
+	}
+}
