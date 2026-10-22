@@ -45,6 +45,24 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}", answer.link
   end
 
+  test "get_dashboard lists the Dashboard's filters in the bar's order: name, label, kind, multiple and options" do
+    @dashboard.update!(filters: [
+      { name: "service", label: "Service", kind: "select", multiple: true, options: { from: "field", project_id: @shop.id, field: "service" } },
+      { name: "level", kind: "select", options: { from: "list", items: [ { label: "Errors", value: "error" }, { value: "warn" } ] } },
+      { name: "q", kind: "search" },
+    ])
+
+    answer = call_tool(:get_dashboard, user: @user, dashboard: @dashboard.id)
+
+    assert_equal [
+      { "name" => "service", "label" => "Service", "kind" => "select", "multiple" => true,
+        "options" => { "from" => "field", "project_id" => @shop.id, "field" => "service" } },
+      { "name" => "level", "label" => "level", "kind" => "select", "multiple" => false,
+        "options" => { "from" => "list", "items" => [ { "label" => "Errors", "value" => "error" }, { "label" => "warn", "value" => "warn" } ] } },
+      { "name" => "q", "label" => "q", "kind" => "search" },
+    ], answer.json["filters"]
+  end
+
   test "create_dashboard makes a Dashboard by the user, linking to it" do
     answer = call_tool(:create_dashboard, user: @user, name: "Errors", description: "What failed", default_range: "7d", auto_refresh: "5m")
 
@@ -65,6 +83,32 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert call_tool(:create_dashboard, user: @user, name: "Errors", auto_refresh: "10s").error?
   end
 
+  test "create_dashboard takes filters, validated as the Dashboard page's are" do
+    filters = [
+      { name: "level", label: "Level", kind: "select", multiple: true, options: { from: "list", items: [ { value: "error" }, { value: "warn" } ] } },
+      { name: "service", kind: "select", options: { from: "field", project_id: @shop.id, field: "service" } },
+      { name: "q", kind: "search" },
+    ]
+
+    answer = call_tool(:create_dashboard, user: @user, name: "Errors", filters: filters)
+
+    assert_not answer.error?
+    made = @acme.dashboards.find_by!(name: "Errors")
+    assert_equal %w[level service q], made.filter_names
+    assert_equal [ "Level", true, [ "error", "warn" ] ], [ made.filters[0]["label"], made.filters[0]["multiple"], made.filters[0]["options"]["items"].pluck("value") ]
+    assert_equal({ "from" => "field", "project_id" => @shop.id, "field" => "service" }, made.filters[1]["options"])
+    assert_equal made.filters, answer.json["filters"]
+
+    refused = call_tool(:create_dashboard, user: @user, name: "Bad filters", filters: [
+      { name: "Service", kind: "select", options: { from: "field", project_id: @their_project.id, field: "service" } },
+      { name: "q", kind: "search", multiple: true },
+    ])
+    assert_equal "Not saved: Filters[0] name must be lowercase letters, digits and _, starting with a letter or _, at most 40 characters; " \
+                 "Filters[0] options project must be a Project of the Dashboard's Organization; Filters[1] multiple is for selects only.",
+      refused.text
+    assert_not Dashboard.exists?(name: "Bad filters")
+  end
+
   test "update_dashboard changes only the fields given" do
     @dashboard.update!(description: "Orders")
 
@@ -78,6 +122,24 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
     assert_match(/Give at least one of name/, call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id).text)
     assert_equal "Not saved: Name can't be blank.", call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id, name: "").text
+  end
+
+  test "update_dashboard replaces the filters with the whole list given, keeping them when the list is invalid" do
+    @dashboard.update!(name: "Checkout", filters: [ { name: "q", kind: "search" } ])
+    level = { name: "level", kind: "select", options: { from: "list", items: [ { value: "error" } ] } }
+
+    answer = call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id, filters: [ level, { name: "q", kind: "search" } ])
+
+    assert_not answer.error?
+    assert_equal %w[level q], @dashboard.reload.filter_names
+    assert_equal %w[level q], answer.json["filters"].pluck("name")
+
+    refused = call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id, filters: [ level, level ])
+    assert_equal "Not saved: Filters[1] name is already a filter's name.", refused.text
+    assert_equal %w[level q], @dashboard.reload.filter_names
+
+    assert_not call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id, filters: []).error?
+    assert_equal [ [], "Checkout" ], [ @dashboard.reload.filters, @dashboard.name ]
   end
 
   test "delete_dashboard deletes the Dashboard and its Charts, linking to the Dashboards page" do
