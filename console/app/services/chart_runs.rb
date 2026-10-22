@@ -39,11 +39,13 @@ class ChartRuns
     # EventStore stops after EventStoreProxy::RUN_TIMEOUT_SECONDS: EventStore's
     # answer, whose "table" is the table. A Dashboard's charts, the chart
     # editor's and a Monitor's preview and the MCP server's chart tools run
-    # through it. Raises NotATable for a Query that answers Logs, and Busy
+    # through it. parameters are the values of the Dashboard filters the
+    # Query names. Raises NotATable for a Query that answers Logs, and Busy
     # past the limit.
-    def run_chart(project, query, from:, to:)
+    def run_chart(project, query, from:, to:, parameters: nil)
       answer = hold do
-        EventStore.query_logs(project_id: project.id, query: query, from: from, to: to, timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS)
+        EventStore.query_logs(project_id: project.id, query: query, from: from, to: to,
+                              timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: parameters)
       end
       raise NotATable unless answer.is_a?(Hash) && answer["table"].is_a?(Hash)
 
