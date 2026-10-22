@@ -126,6 +126,7 @@ _Avoid_: archive, cold storage, data lake
 
 **Late Log**:
 A **Log** whose time is outside the hot window when **Log processing** stores it. The window starts at the quarter-hour that ended 15 minutes ago, where the **Log export**'s next run cuts off, and ends at the next hour, so the hot table only holds Logs of quarter-hours not yet exported, and a Log sent more than 15 to 30 minutes after its time is late. A late Log waits in a shared table until the next Log export writes it to its hour's or quarter-hour's file, or to a **Late file** if that file is written. It isn't counted for Attribute popularity, and can't add a key to its day's promoted set. On production every Log arrives within a minute; after an outage or a shipper's backlog, the delayed Logs are late Logs.
+_Avoid_: out-of-order Log, stale Log
 
 **Late file**:
 A Log file holding the **Logs** of an hour or quarter-hour that already had its file when they came: the hour's next `late-<n>.parquet`, written by the next **Log export**, one per hour each time. It is sorted and has its day's promoted columns, like the hour's other files.
