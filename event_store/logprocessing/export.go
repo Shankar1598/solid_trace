@@ -5,10 +5,11 @@ import (
 
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/storage"
 )
 
 // exportEvery is how often the Log export runs: at each quarter-hour start.
-const exportEvery = 15 * time.Minute
+const exportEvery = storage.QuarterHour
 
 // retryExportAfter is how soon a failed Log export runs again.
 const retryExportAfter = time.Minute
