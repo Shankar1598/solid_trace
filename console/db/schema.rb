@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_22_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_22_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -92,6 +92,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_090000) do
     t.integer "created_by_id"
     t.string "default_range", default: "1h", null: false
     t.text "description"
+    t.json "filters", default: [], null: false
     t.string "name", null: false
     t.integer "organization_id", null: false
     t.datetime "updated_at", null: false
