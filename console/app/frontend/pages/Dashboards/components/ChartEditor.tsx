@@ -10,7 +10,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   DASHBOARD_VIZES, newChartQuery, titleOfQuery, withSource,
-  type ChartOptions, type DashboardChart, type DashboardViz,
+  type ChartOptions, type DashboardChart, type DashboardViz, type FilterValues,
 } from '@/lib/dashboards/dashboard'
 import { fetchChartPreview } from '@/lib/dashboards/api'
 import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
@@ -30,10 +30,10 @@ type Mode = 'builder' | 'query'
 /**
  * Adds a chart, or edits one: its Project, its Query in the Builder or the
  * Query editor (checked through validate), its title, viz and options, with
- * a preview of its chart over the Dashboard's range as it changes. Saving
- * posts through Inertia, which reloads the Dashboard.
+ * a preview of its chart over the Dashboard's range and filter values as it
+ * changes. Saving posts through Inertia, which reloads the Dashboard.
  */
-export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search, onClose }: {
+export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, values, search, onClose }: {
   /** The chart edited, or null for a new one. */
   chart: DashboardChart | null
   projects: ProjectOption[]
@@ -41,7 +41,9 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
   dashboardId: number
   /** The times the Dashboard's charts ran over, which the preview runs over too. */
   ran: { from: Date; to: Date }
-  /** The Dashboard's URL search, so it keeps its range after saving. */
+  /** The filter bar's values, which the preview runs with. */
+  values: FilterValues
+  /** The Dashboard's URL search, so it keeps its range and filter values after saving. */
   search: string
   onClose: () => void
 }) {
@@ -93,7 +95,9 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, search
           return
         }
         // Run as a chart's data is, with its timeout: a run abandoned for the next edit still holds a Console thread.
-        const answer = await fetchChartPreview({ orgSlug, dashboardId, projectId: project.id, query, from: ran.from, to: ran.to, signal: controller.signal })
+        const answer = await fetchChartPreview({
+          orgSlug, dashboardId, projectId: project.id, query, from: ran.from, to: ran.to, parameters: values, signal: controller.signal,
+        })
         setPreview({ status: 'done', table: answer.table, elapsedMs: answer.elapsedMs })
       } catch (error) {
         if (controller.signal.aborted) return
