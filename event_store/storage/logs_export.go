@@ -492,27 +492,41 @@ func (f plannedFile) condition() string {
 }
 
 // plan works out the Project's cutoff, the quarter cutoff if it is busy,
-// else the hour cutoff, and lists the
-// files of its Logs before the cutoff, oldest hour first. A quiet Project's
-// cutoff moves on towards the quarter cutoff through each hour after the hour
-// cutoff that goes by quarter-hours, so that it keeps going by them. An hour
-// before such an hour had its Logs exported when the Project was busy.
+// else the hour cutoff, and lists the files of its Logs before the cutoff,
+// oldest hour first. A quiet Project's cutoff moves on towards the quarter
+// cutoff through each hour after the hour cutoff that goes by quarter-hours,
+// so that it keeps going by them. An hour before such an hour had its Logs
+// exported when the Project was busy.
 func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFile, time.Time, error) {
 	busy, err := e.busy(cutoffs.quarter, busyLogs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	// The names of each hour's files, read from the manifest once.
+	hours := make(map[int64]map[string]bool)
+	hourNames := func(hour time.Time) (map[string]bool, error) {
+		names, ok := hours[hour.Unix()]
+		if !ok {
+			var err error
+			if names, err = hourFileNames(e.ctx, e.conn, e.projectID, hour); err != nil {
+				return nil, err
+			}
+			hours[hour.Unix()] = names
+		}
+		return names, nil
+	}
 	cutoff := cutoffs.hour
 	if busy {
 		cutoff = cutoffs.quarter
-	}
-	for hour := cutoffs.hour; !busy && hour.Before(cutoffs.quarter); hour = hour.Add(time.Hour) {
-		names, err := hourFileNames(e.ctx, e.conn, e.projectID, hour)
-		if err != nil {
-			return nil, time.Time{}, err
-		}
-		if byQuarterHours(names) {
-			cutoff = earliestTime(cutoffs.quarter, hour.Add(time.Hour))
+	} else {
+		for hour := cutoffs.hour; hour.Before(cutoffs.quarter); hour = hour.Add(time.Hour) {
+			names, err := hourNames(hour)
+			if err != nil {
+				return nil, time.Time{}, err
+			}
+			if byQuarterHours(names) {
+				cutoff = earliestTime(cutoffs.quarter, hour.Add(time.Hour))
+			}
 		}
 	}
 
@@ -527,7 +541,7 @@ func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFi
 		for n < len(quarters) && quarters[n].Truncate(time.Hour).Equal(hour) {
 			n++
 		}
-		names, err := hourFileNames(e.ctx, e.conn, e.projectID, hour)
+		names, err := hourNames(hour)
 		if err != nil {
 			return nil, time.Time{}, err
 		}
@@ -544,24 +558,25 @@ func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFi
 // per quarter-hour that has none. The Logs of the spans that have their file
 // go to the hour's next late file.
 func (e *projectExport) planHour(hour time.Time, quarters []time.Time, names map[string]bool, busy bool, cutoff time.Time) []plannedFile {
-	var files, late []plannedFile
-	file := func(name string, from, to time.Time) plannedFile {
-		return plannedFile{file: logFile{projectID: e.projectID, hour: hour, name: name}, spans: []timeSpan{{from, to}}}
+	var files []plannedFile
+	var late []timeSpan
+	file := func(name string, span timeSpan) plannedFile {
+		return plannedFile{file: logFile{projectID: e.projectID, hour: hour, name: name}, spans: []timeSpan{span}}
 	}
 	switch {
 	case byQuarterHours(names) || (busy && len(names) == 0):
 		for _, q := range quarters {
-			f := file(quarterFile(q), q, q.Add(QuarterHour))
-			if names[f.file.name] {
-				late = append(late, f)
+			span := timeSpan{q, q.Add(QuarterHour)}
+			if name := quarterFile(q); names[name] {
+				late = append(late, span)
 			} else {
-				files = append(files, f)
+				files = append(files, file(name, span))
 			}
 		}
 	case len(names) == 0:
-		files = append(files, file(hourDataFile, hour, hour.Add(time.Hour)))
+		files = append(files, file(hourDataFile, timeSpan{hour, hour.Add(time.Hour)}))
 	default:
-		late = append(late, file("", hour, earliestTime(hour.Add(time.Hour), cutoff)))
+		late = append(late, timeSpan{hour, earliestTime(hour.Add(time.Hour), cutoff)})
 	}
 	if len(late) == 0 {
 		return files
@@ -571,8 +586,7 @@ func (e *projectExport) planHour(hour time.Time, quarters []time.Time, names map
 		last = max(last, lateFileNumber(name))
 	}
 	lateFile := plannedFile{file: logFile{projectID: e.projectID, hour: hour, name: fmt.Sprintf("%s%d%s", lateFilePrefix, last+1, parquetSuffix)}}
-	for _, f := range late {
-		span := f.spans[0]
+	for _, span := range late {
 		if n := len(lateFile.spans); n > 0 && lateFile.spans[n-1].to.Equal(span.from) {
 			lateFile.spans[n-1].to = span.to
 		} else {
