@@ -68,11 +68,38 @@ class DashboardTest < ActiveSupport::TestCase
     assert_includes errors["filters[3].options[1].value"], "is already an option's value"
   end
 
-  test "a select's options from a field aren't taken yet" do
-    @dashboard.filters = [ select("service", { "from" => "field", "project_id" => 1, "field" => "service" }) ]
+  test "a select's options can be a field of a Project of the Dashboard's Organization" do
+    project = create(:project, organization: @dashboard.organization)
+    @dashboard.update!(filters: [
+      select("service", { "from" => "field", "project_id" => project.id.to_s, "field" => " service ", "items" => [] }, multiple: true)
+    ])
+
+    assert_equal [
+      { "name" => "service", "label" => "service", "kind" => "select", "multiple" => true,
+        "options" => { "from" => "field", "project_id" => project.id, "field" => "service" } }
+    ], @dashboard.reload.filters
+  end
+
+  test "a field is at most 200 characters and not time, in a Project of the Dashboard's Organization" do
+    project = create(:project, organization: @dashboard.organization)
+    @dashboard.filters = [
+      select("blank", field(project.id, " ")),
+      select("long", field(project.id, "x" * 201)),
+      select("time", field(project.id, "time")),
+      select("foreign", field(create(:project).id, "service")),
+      select("none", field(nil, "service")),
+      select("odd", field("first", "service")),
+      select("query", { "from" => "query" }),
+      select("fine", field(project.id, "x" * 200))
+    ]
 
     assert_not @dashboard.valid?
-    assert_includes @dashboard.errors[:"filters[0].options"], "must be a fixed list"
+    errors = @dashboard.errors.to_hash.transform_keys(&:to_s)
+    assert_equal %w[filters[0].options.field filters[1].options.field filters[2].options.field filters[3].options.project_id
+      filters[4].options.project_id filters[5].options.project_id filters[6].options], errors.keys
+    assert_includes errors["filters[2].options.field"], "can't be time"
+    assert_includes errors["filters[3].options.project_id"], "must be a Project of the Dashboard's Organization"
+    assert_includes errors["filters[6].options"], "must be a fixed list or a field"
   end
 
   test "a Dashboard has at most 20 filters, and each is an object" do
@@ -101,5 +128,9 @@ class DashboardTest < ActiveSupport::TestCase
 
   def list(*values)
     { "from" => "list", "items" => values.map { |value| { "label" => value, "value" => value } } }
+  end
+
+  def field(project_id, name)
+    { "from" => "field", "project_id" => project_id, "field" => name }
   end
 end

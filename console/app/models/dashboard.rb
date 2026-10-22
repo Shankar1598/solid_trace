@@ -15,6 +15,7 @@ class Dashboard < ApplicationRecord
   MAX_FILTER_LABEL = 100
   MAX_OPTIONS = 200
   MAX_OPTION_TEXT = 200
+  MAX_FIELD_NAME = 200
 
   belongs_to :organization
   belongs_to :created_by, class_name: "User", optional: true
@@ -63,13 +64,22 @@ class Dashboard < ApplicationRecord
   end
 
   # A fixed list is {from: "list", items: [{label, value}]}, an empty label
-  # being the value.
+  # being the value. A field's values are {from: "field", project_id, field}:
+  # that field's most common values in that Project.
   def normalize_filter_options(options)
-    return options unless options.is_a?(Hash) && options.stringify_keys["from"] == "list"
+    return options unless options.is_a?(Hash)
 
-    items = options.stringify_keys["items"]
-    items = items.map { |item| item.is_a?(Hash) ? normalize_option(item.stringify_keys) : item } if items.is_a?(Array)
-    { "from" => "list", "items" => items }
+    given = options.stringify_keys
+    case given["from"]
+    when "list"
+      items = given["items"]
+      items = items.map { |item| item.is_a?(Hash) ? normalize_option(item.stringify_keys) : item } if items.is_a?(Array)
+      { "from" => "list", "items" => items }
+    when "field"
+      project_id = Integer(given["project_id"].to_s, 10, exception: false) || given["project_id"]
+      { "from" => "field", "project_id" => project_id, "field" => given["field"].to_s.strip }
+    else options
+    end
   end
 
   def normalize_option(item)
@@ -106,7 +116,8 @@ class Dashboard < ApplicationRecord
 
   def filter_options_valid(options, at)
     return errors.add(at.to_sym, "can't be blank") if options.nil?
-    return errors.add(at.to_sym, "must be a fixed list") unless options.is_a?(Hash) && options["from"] == "list"
+    return field_options_valid(options, at) if options.is_a?(Hash) && options["from"] == "field"
+    return errors.add(at.to_sym, "must be a fixed list or a field") unless options.is_a?(Hash) && options["from"] == "list"
 
     items = options["items"]
     return errors.add(at.to_sym, "must have 1 to #{MAX_OPTIONS} options") unless items.is_a?(Array) && items.size.between?(1, MAX_OPTIONS)
@@ -124,5 +135,20 @@ class Dashboard < ApplicationRecord
         errors.add(:"#{at}[#{j}].value", "is already an option's value")
       end
     end
+  end
+
+  def field_options_valid(options, at)
+    field = options["field"]
+    if field.empty?
+      errors.add(:"#{at}.field", "can't be blank")
+    elsif field.length > MAX_FIELD_NAME
+      errors.add(:"#{at}.field", "is too long (at most #{MAX_FIELD_NAME} characters)")
+    elsif field == "time"
+      errors.add(:"#{at}.field", "can't be time")
+    end
+    project_id = options["project_id"]
+    return if project_id.is_a?(Integer) && organization&.projects&.exists?(id: project_id)
+
+    errors.add(:"#{at}.project_id", "must be a Project of the Dashboard's Organization")
   end
 end

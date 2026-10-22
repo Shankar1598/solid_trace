@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page, type Response } from '@playwright/test'
 import { ORG } from '../support/data'
+import { pickQuickRange } from '../support/logs'
 import { shoot, useTheme, watchErrors } from '../support/screens'
 
 // Dashboard filters: a member adds a select, a multiple select and a search
@@ -162,6 +163,98 @@ test('a member filters a Dashboard\'s charts from its filter bar, and the URL ke
   await expect(page.getByRole('textbox', { name: 'Find' })).toHaveCount(0)
   await expect(card(page, 'Found')).toContainText("$q isn't one of this Dashboard's filters")
   await expect(page).toHaveURL(/v_levels=error&v_levels=warn/)
+
+  await page.getByRole('button', { name: 'Dashboard settings' }).click()
+  await page.getByRole('button', { name: 'Delete dashboard' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await expect(page.getByRole('heading', { name: 'Dashboards', exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('a select of a field\'s values lists the dev Project\'s services when opened, and picking one filters a chart', async ({ page }) => {
+  test.setTimeout(120_000)
+  await useTheme(page, test.info())
+  const errors = watchErrors(page)
+  const name = `Field filter flow ${Date.now()}`
+  const loads: URL[] = []
+  page.on('request', request => { if (/\/filters\/service\/values\?/.test(request.url())) loads.push(new URL(request.url())) })
+
+  await page.goto(`/${ORG}/dashboards`)
+  await page.getByRole('button', { name: 'New dashboard' }).first().click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByRole('button', { name: 'Create dashboard' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  const path = new URL(page.url()).pathname
+  const to = new Date(Math.floor(Date.now() / 60_000) * 60_000)
+  const from = new Date(to.getTime() - 24 * 3600_000)
+  await page.goto(`${path}?from=${from.toISOString()}&to=${to.toISOString()}`)
+
+  // A select whose options are the dev Project's services.
+  await page.getByRole('button', { name: 'Filters', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await addFilter(dialog, 1, { name: 'service', label: 'Service' })
+  await dialog.getByRole('group', { name: 'Filter 1 takes options from' }).getByRole('button', { name: 'From a field' }).click()
+  await choose(page, dialog.getByRole('combobox', { name: 'Filter 1 Project' }), 'SolidTrace Project')
+  await dialog.getByLabel('Filter 1 field').fill('service')
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(dialog).toHaveCount(0)
+
+  await addStatChart(page, 'Service count', `${SOURCE}\n| where service == $service\n| summarize count()`)
+  await chartsRan(page, 1)
+  const all = await numberOf(page, 'Service count')
+  expect(all).toBeGreaterThan(0)
+  // The Dashboard opened without loading the values.
+  expect(loads).toHaveLength(0)
+
+  // Opening the dropdown loads them, over the range shown.
+  const service = page.locator('[data-filter-bar]').getByLabel('Service', { exact: true })
+  await expect(service).toHaveText(/Service: All/)
+  await service.click()
+  for (const value of ['api', 'worker', 'billing', 'web']) await expect(page.getByRole('option', { name: new RegExp(`^${value}`) })).toBeVisible()
+  expect(loads).toHaveLength(1)
+  expect(loads[0].searchParams.get('from')).toBe(from.toISOString())
+  expect(loads[0].searchParams.get('to')).toBe(to.toISOString())
+  await shoot(page, 'dashboard-filters-field-values')
+
+  // Typing narrows them.
+  const narrow = page.getByLabel("Narrow Service's values")
+  await narrow.fill('bil')
+  await expect(page.getByRole('option')).toHaveCount(1)
+  await expect(page.getByRole('option', { name: /^billing/ })).toBeVisible()
+  await narrow.fill('')
+
+  // Picking one filters the chart that names it.
+  const ran = page.waitForResponse(r => isData(r) && new URL(r.url()).searchParams.get('v_service') === 'api')
+  await page.getByRole('option', { name: /^api/ }).click()
+  await ran
+  await chartsRan(page, 1)
+  await expect(page).toHaveURL(/[?&]v_service=api(&|$)/)
+  await expect(service).toHaveText(/Service: api/)
+  await expect.poll(() => numberOf(page, 'Service count')).not.toBe(all)
+  const apiOnly = await numberOf(page, 'Service count')
+  expect(apiOnly).toBeGreaterThan(0)
+  expect(apiOnly).toBeLessThan(all)
+
+  // Opened again over the same range it loads nothing; after the range changed, it loads again.
+  await service.click()
+  await expect(page.getByRole('option', { name: /^api/ })).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('Escape')
+  expect(loads).toHaveLength(1)
+  await pickQuickRange(page, '2 days')
+  await chartsRan(page, 1)
+  await service.click()
+  await expect.poll(() => loads.length).toBe(2)
+  await expect(page.getByRole('option', { name: /^worker/ })).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  // A value from a link that isn't among the values still shows as chosen.
+  await page.goto(`${path}?range=1h&v_service=gone`)
+  await chartsRan(page, 1)
+  await expect(service).toHaveText(/Service: gone/)
+  await service.click()
+  await expect(page.getByRole('option', { name: 'gone', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('option', { name: /^api/ })).toBeVisible()
+  await page.keyboard.press('Escape')
 
   await page.getByRole('button', { name: 'Dashboard settings' }).click()
   await page.getByRole('button', { name: 'Delete dashboard' }).click()

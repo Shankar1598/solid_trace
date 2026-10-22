@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  chosenText, explorerHref, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
+  chosenText, explorerHref, fieldOptions, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
   parametersOfChart, rangeOfSearch, searchOfRange, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
   withSource,
   type DashboardFilter,
@@ -81,6 +81,24 @@ describe('a Dashboard\'s filter values', () => {
     expect(chosenText(LEVEL, ['error', 'gone'])).toBe('Error, gone')
     expect(chosenText(LEVEL, ['error', 'warn', 'info'])).toBe('3 values')
     expect(chosenText(Q, ['time out'])).toBe('time out')
+  })
+})
+
+describe('a select of a field\'s values', () => {
+  const SERVICE: DashboardFilter = {
+    name: 'service', label: 'service', kind: 'select', multiple: true, options: { from: 'field', project_id: 1, field: 'service' },
+  }
+
+  it('reads in the bar as the values themselves', () => {
+    expect(chosenText(SERVICE, ['api', 'web'])).toBe('api, web')
+  })
+
+  it('offers the values loaded, most common first, after chosen values that aren\'t among them', () => {
+    const loaded = [{ value: 'api', count: 12 }, { value: 'web', count: 3 }]
+    expect(fieldOptions(loaded, ['web', 'gone'])).toEqual([{ value: 'gone', count: null }, ...loaded])
+    // An empty value is All, which the select offers first anyway.
+    expect(fieldOptions([{ value: '', count: 9 }, ...loaded], [])).toEqual(loaded)
+    expect(fieldOptions([], ['gone'])).toEqual([{ value: 'gone', count: null }])
   })
 })
 
