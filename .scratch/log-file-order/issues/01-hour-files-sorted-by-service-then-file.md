@@ -10,14 +10,18 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] An hour of Logs from two Services and three log files is written grouped by `service`, then `file`, then time; reading the file in its own row order shows that order
-- [ ] Logs without a `service` or `file` sort after those that have one
-- [ ] `file` promoted for the day, promoted partway and only in the map each sort the same
-- [ ] An hour's late file is sorted the same way
-- [ ] The same Logs list the same before and after the export, newest first, every field and Attribute alike
-- [ ] The export's log line names the order
-- [ ] CONTEXT.md and `docs/logs/` updated
+- [x] An hour of Logs from two Services and three log files is written grouped by `service`, then `file`, then time; reading the file in its own row order shows that order
+- [x] Logs without a `service` or `file` sort after those that have one
+- [x] `file` promoted for the day, promoted partway and only in the map each sort the same
+- [x] An hour's late file is sorted the same way
+- [x] The same Logs list the same before and after the export, newest first, every field and Attribute alike
+- [x] The export's log line names the order
+- [x] CONTEXT.md and `docs/logs/` updated
 
 Tests go in EventStore's root tests, beside `TestLogsListTheSameBeforeAndAfterTheHourlyExport` and `TestLateLogsOfAnExportedHourGetLateFilesAndListTheSame`. They check what can be seen (the file's row order, the Logs a Query lists, the log line), never the SQL the export runs.
+
+## Comments
+
+**2026-10-22, built on `feature/log-file-order` (merge `cbfbf66`).** `storage.LogFileOrder` with `DefaultLogFileOrder` (`service, file`); `orderBy` reads each Field through `LogColumns`, as reads do (column, `coalesce` when promoted partway, map value), `NULLS LAST`, then `time, id`. `daySet` returns a `PromotedSet`. The log line gains `order="service, file, time"`. Root tests `TestAnHoursFileIsSortedByServiceThenFileThenTime` and `TestAFilePromotedForTheDayPartwayOrOnlyInTheMapSortsTheSame` (in `logs_file_order_test.go`), with the export, manifest, bucket, bin cache and Retention root tests and `./storage/`.

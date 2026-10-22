@@ -10,10 +10,14 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Model: a fourth Field, a repeated Field and each refused built-in Field are refused with a message; NULL and `[]` are valid
-- [ ] Controller: an admin's update saves the order; a member who can't edit Retention can't change it
-- [ ] The page shows the default when no order is set, and "Reset to default" and "Time only" save NULL and `[]`
-- [ ] A new Playwright flow adds, removes and resets Fields and sees a validation error (prior art: `project-keys.spec.ts`, `project-delete.spec.ts`)
-- [ ] `list_projects` shows the order
+- [x] Model: a fourth Field, a repeated Field and each refused built-in Field are refused with a message; NULL and `[]` are valid
+- [x] Controller: an admin's update saves the order; a member who can't edit Retention can't change it
+- [x] The page shows the default when no order is set, and "Reset to default" and "Time only" save NULL and `[]`
+- [x] A new Playwright flow adds, removes and resets Fields and sees a validation error (prior art: `project-keys.spec.ts`, `project-delete.spec.ts`)
+- [x] `list_projects` shows the order
+
+## Comments
+
+**2026-10-22, built on `feature/log-file-order` (merges `6705e2f`, review fixes `3199eba`).** `Project` validates the order (Attribute names: not empty, at most 256 bytes, UTF-8, no NUL, as ingest and promotion take them, since the Query language quotes any name; `_time` refused as the alias of `time`) and has `log_file_order_in_force`. The page's `LogFileOrderCard` edits a draft saved with "Save"; "Reset to default" and "Time only" save at once; a fourth Field or a repeat isn't added and the card says why. The Attributes offered are the Project's string Fields of the last 24 h (as `list_fields`), a deferred prop sent only to those who may edit. The built-in Fields come from the controller. `list_projects` shows the order in force. Tests: model, controller, `test/mcp`, vitest, and the flow `e2e/flows/project-log-file-order.spec.ts` (3 tests, with `project-keys` and `project-delete`: 7 passed).

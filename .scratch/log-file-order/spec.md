@@ -1,6 +1,6 @@
 # Log files sorted by the Fields Queries filter on
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 Planned with the user on 2026-10-22, after Dashboard 1 ("Sidekiq — jobs & queues") took 15.5 s a Chart on its first 6 h load on `tagalys`. Each Chart reads only `sidekiq_metrics.log`, about 0.1% of the Project's 13 M Logs an hour, but every hour's Log file holds its Logs in time order, so the Logs of one log file are spread through every row group and DuckDB reads them all. The user asked how Axiom and Better Stack (ClickHouse) avoid this; ClickHouse keeps each table sorted by a key of its own. The user chose `service, file, time` as the default order, changeable in the Project's settings.
 

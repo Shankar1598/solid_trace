@@ -9,12 +9,16 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] With no setting, the export writes 01's default order
-- [ ] A setting of `["level"]`, of `[]` and of an Attribute the Logs don't have each writes the order it names
-- [ ] A changed setting applies to the next export; the earlier hour's file keeps its order, and an hour's late file uses the order in force when it's written
-- [ ] A setting EventStore can't read exports in the default order and logs a warning
-- [ ] Queries list the same Logs before and after the export whatever the order
+- [x] With no setting, the export writes 01's default order
+- [x] A setting of `["level"]`, of `[]` and of an Attribute the Logs don't have each writes the order it names
+- [x] A changed setting applies to the next export; the earlier hour's file keeps its order, and an hour's late file uses the order in force when it's written
+- [x] A setting EventStore can't read exports in the default order and logs a warning
+- [x] Queries list the same Logs before and after the export whatever the order
 
 Tests go in EventStore's root tests, writing the Project's setting to Console's test database as the Retention tests do. They need the Console migration run on the test database first.
+
+## Comments
+
+**2026-10-22, built on `feature/log-file-order` (merge `2b0d9c2`).** Migration `AddLogFileOrderToProjects` (nullable `json`). `ConsoleSettings.LogFileOrder`, given to the store with `LogStore.UseLogFileOrders`; the export reads it once per Project per export, and an unreadable value logs "Failed to read a Project's Log file order; exporting its Logs in the default order". After the review (`3199eba`), a value Console would refuse (over 3 names, a repeat, `time`, `_time`, `id`, `message`, `trace_id`, `span_id`) is unreadable too, and JSON `null` reads as the default without a warning. Root tests `TestAnHoursFileIsSortedByItsProjectsLogFileOrder`, `TestAChangedLogFileOrderAppliesFromTheNextExport`, `TestALogFileOrderEventStoreCantReadExportsInTheDefaultOrder`.
