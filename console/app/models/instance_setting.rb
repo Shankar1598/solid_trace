@@ -25,6 +25,9 @@ class InstanceSetting < ApplicationRecord
   # The Meta Organization (ADR 0011), until it is deleted.
   belongs_to :meta_organization, class_name: "Organization", optional: true
 
+  # Encrypted with keys derived from SECRET_KEY_BASE (ADR 0015).
+  encrypts :smtp_password
+
   validates :sql_queries_enabled, inclusion: { in: [ true, false ] }
   validates :sign_up_open, inclusion: { in: [ true, false ] }
   validates :log_all_reads, inclusion: { in: [ true, false ] }
