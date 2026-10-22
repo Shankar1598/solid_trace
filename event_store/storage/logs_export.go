@@ -486,8 +486,9 @@ func (f plannedFile) condition() string {
 // plan works out the Project's cutoff, the quarter cutoff if it holds at
 // least busyLogs hot Logs before it, else the hour cutoff, and lists the
 // files of its Logs before the cutoff, oldest hour first. A quiet Project's
-// cutoff moves on to the quarter cutoff through the hours that go by
-// quarter-hours, so that they keep going by them.
+// cutoff moves on towards the quarter cutoff through each hour after the hour
+// cutoff that goes by quarter-hours, so that it keeps going by them. An hour
+// before such an hour had its Logs exported when the Project was busy.
 func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFile, time.Time, error) {
 	busy, err := e.busy(cutoffs.quarter, busyLogs)
 	if err != nil {
@@ -497,15 +498,14 @@ func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFi
 	if busy {
 		cutoff = cutoffs.quarter
 	}
-	for cutoff.Before(cutoffs.quarter) {
-		names, err := hourFileNames(e.ctx, e.conn, e.projectID, cutoff)
+	for hour := cutoffs.hour; !busy && hour.Before(cutoffs.quarter); hour = hour.Add(time.Hour) {
+		names, err := hourFileNames(e.ctx, e.conn, e.projectID, hour)
 		if err != nil {
 			return nil, time.Time{}, err
 		}
-		if !byQuarterHours(names) {
-			break
+		if byQuarterHours(names) {
+			cutoff = earliestTime(cutoffs.quarter, hour.Add(time.Hour))
 		}
-		cutoff = earliestTime(cutoffs.quarter, cutoff.Add(time.Hour))
 	}
 
 	quarters, err := e.quarters(cutoff)
