@@ -202,7 +202,7 @@ module McpTools
     # or a Monitor's Project changes. EventStore refuses a Query whose source
     # names another Project's Logs.
     def with_source(query, slug)
-      query.sub(SOURCE) { "['#{slug.gsub('\\') { '\\\\' }.gsub("'") { "\\'" }}']" }
+      query.sub(SOURCE) { ChartRuns.bracketed(slug) }
     end
 
     # The range, from and to arguments as a TimeRange.
