@@ -32,6 +32,9 @@ const (
 	// TokenDateTime is datetime(…), a point in time. Its Value is what the
 	// parentheses hold, unquoted.
 	TokenDateTime
+	// TokenParam is a Dashboard filter, $ and its name, such as $service.
+	// Its Value is the name, without the $.
+	TokenParam
 
 	TokenAnd // the keyword and
 	TokenOr  // the keyword or
@@ -145,6 +148,8 @@ func (s *scanner) token() Token {
 	rest := s.source[start:]
 	r := s.peek()
 	switch {
+	case r == '$':
+		return s.param()
 	case isIdentStart(r):
 		return s.identifier()
 	case isDigit(r):
@@ -191,6 +196,20 @@ func (s *scanner) identifier() Token {
 		kind = TokenOr
 	}
 	return Token{Kind: kind, Span: newSpan(start, s.pos), Value: value}
+}
+
+// param scans a Dashboard filter, $name. The name is read as an identifier
+// is.
+func (s *scanner) param() Token {
+	start := s.pos
+	s.pos++
+	if s.pos >= len(s.source) || !isIdentStart(s.peek()) {
+		return errorToken(newSpan(start, s.pos), "expected a filter's name after $, such as $service")
+	}
+	for s.pos < len(s.source) && isIdentPart(s.peek()) {
+		s.pos += utf8.RuneLen(s.peek())
+	}
+	return Token{Kind: TokenParam, Span: newSpan(start, s.pos), Value: s.source[start+1 : s.pos]}
 }
 
 // dateTime scans the parentheses of datetime(…), whose text is a time
@@ -352,12 +371,14 @@ func unquote(source string, start int) (string, int, string) {
 	return "", len(source), "unterminated string"
 }
 
+// isIdentStart reports whether r can start a name. $ can't, as it starts a
+// Dashboard filter; a Field whose name starts with $ is written ['$type'].
 func isIdentStart(r rune) bool {
-	return r == '_' || r == '$' || unicode.IsLetter(r)
+	return r == '_' || unicode.IsLetter(r)
 }
 
 func isIdentPart(r rune) bool {
-	return isIdentStart(r) || unicode.IsDigit(r)
+	return isIdentStart(r) || r == '$' || unicode.IsDigit(r)
 }
 
 func isDigit(r rune) bool {

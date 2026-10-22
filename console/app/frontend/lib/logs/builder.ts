@@ -286,7 +286,8 @@ export function canFilter(value: unknown): value is ChipValue {
 
 // Names the language reads as words, not Fields.
 const RESERVED = new Set(['and', 'or', 'not', 'true', 'false'])
-const PLAIN_PART = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+// $ goes in a name but starts a Dashboard filter, so a name starting with $ is quoted.
+const PLAIN_PART = /^[A-Za-z_][A-Za-z0-9_$]*$/
 
 /** A Field's name: bare when it's plain (dotted parts and all), else ['quoted']. */
 export function nameText(name: string): string {

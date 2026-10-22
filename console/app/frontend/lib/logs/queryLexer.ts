@@ -15,6 +15,7 @@ export type TokenKind =
   | 'number'
   | 'timespan' // 5m, 100ms
   | 'literal' // true, false, datetime(…)
+  | 'parameter' // $name, a Dashboard filter
   | 'comment' // // to the end of the line
   | 'pipe'
   | 'punctuation'
@@ -41,7 +42,8 @@ export function startState(): LexState {
 
 const SYMBOLS = ['==', '!=', '=~', '!~', '<=', '>=', '<', '>', '=', '+', '-', '*', '/', '%']
 const PUNCTUATION = new Set([',', '(', ')', '[', ']', '.'])
-const IDENT_START = /[\p{L}_$]/u
+// $ goes in a name but doesn't start one: it starts a Dashboard filter.
+const IDENT_START = /[\p{L}_]/u
 const IDENT_PART = /[\p{L}\p{N}_$]/u
 
 /**
@@ -73,6 +75,10 @@ export function readToken(line: string, pos: number, state: LexState): { kind: T
     return word('name', line[close] === ']' ? close + 1 : close)
   }
   if (/[0-9]/.test(c)) return word(...number(line, pos))
+  if (c === '$') {
+    if (!IDENT_START.test(line[pos + 1] ?? '')) return word('invalid', pos + 1)
+    return word('parameter', identEnd(line, pos + 1))
+  }
   if (IDENT_START.test(c)) return identifier(line, pos, state)
   // !contains, !in, !startswith_cs: one operator.
   if (c === '!' && IDENT_START.test(line[pos + 1] ?? '')) {
@@ -100,6 +106,18 @@ export function tokenize(text: string): Token[] {
     offset += line.length + 1
   }
   return tokens
+}
+
+/**
+ * The Dashboard filters a Query names, as $name: their names without the $,
+ * in order of first use, each once.
+ */
+export function parametersOf(text: string): string[] {
+  const names = new Set<string>()
+  for (const token of tokenize(text)) {
+    if (token.kind === 'parameter') names.add(token.text.slice(1))
+  }
+  return [...names]
 }
 
 function identifier(line: string, pos: number, state: LexState): { kind: TokenKind; end: number } {
