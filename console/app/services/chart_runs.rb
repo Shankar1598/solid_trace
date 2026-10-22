@@ -85,13 +85,14 @@ class ChartRuns
       [ threads - SPARE_THREADS, 1 ].max
     end
 
-    private
-      # A name as a Query writes it in brackets, such as ['o\'brien'].
-      def bracketed(name)
-        escaped = name.gsub("\\") { "\\\\" }.gsub("\n") { "\\n" }.gsub("\t") { "\\t" }.gsub("\r") { "\\r" }.gsub("'") { "\\'" }
-        "['#{escaped}']"
-      end
+    # A name as a Query writes it in brackets, such as ['o\'brien']: a Field,
+    # or a Project's slug as a Query's source.
+    def bracketed(name)
+      escaped = name.gsub("\\") { "\\\\" }.gsub("\n") { "\\n" }.gsub("\t") { "\\t" }.gsub("\r") { "\\r" }.gsub("'") { "\\'" }
+      "['#{escaped}']"
+    end
 
+    private
       def take
         @lock.synchronize do
           next false if @running >= limit
