@@ -76,7 +76,7 @@ class Project < ApplicationRecord
   private
 
   # log_file_order is nil for the default, or a JSON array of up to three
-  # Field names, which EventStore sorts each hour's Log file by.
+  # Field names, which EventStore sorts each Log file by.
   def log_file_order_sorts
     order = log_file_order
     return if order.nil?
