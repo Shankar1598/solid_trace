@@ -25,7 +25,7 @@ import (
 //     hour and name. The export inserts it in the transaction that deletes
 //     the file's Logs from DuckDB, so a row marks a committed export. The
 //     key is unique because an export names a file after every name its hour
-//     has in either table (nextHourFile).
+//     has in either table (hourFileNames).
 //   - log_file_deletions has a tombstone per file whose row Retention,
 //     Project deletion or the disk limit deleted while its bytes may still
 //     be on disk. Each deleter then deletes the bytes of every tombstoned
@@ -159,13 +159,17 @@ func (f LogFiles) parsePath(path string) (logFile, bool) {
 }
 
 // sortLogFiles sorts files by hour, then in the order each hour's were
-// written: data.parquet, then late files by number.
+// written: data.parquet or the quarter-hours' files by minute, then late
+// files by number.
 func sortLogFiles(files []logFile) {
 	slices.SortFunc(files, func(a, b logFile) int {
+		aMinute, _ := quarterFileMinute(a.name)
+		bMinute, _ := quarterFileMinute(b.name)
 		return cmp.Or(
 			a.hour.Compare(b.hour),
 			cmp.Compare(a.projectID, b.projectID),
 			cmp.Compare(lateFileNumber(a.name), lateFileNumber(b.name)),
+			cmp.Compare(aMinute, bMinute),
 			cmp.Compare(a.name, b.name),
 		)
 	})
@@ -269,35 +273,28 @@ func (s *LogStore) HourFiles(projectID uint32, t time.Time) ([]string, error) {
 	return paths, nil
 }
 
-// nextHourFile is the name the next file of a Project's hour gets:
-// data.parquet if the hour has never had a file, else the next late file. A
-// tombstoned file's name counts, so its bytes are never mistaken for a new
-// file's.
-func nextHourFile(ctx context.Context, db sqlRunner, projectID uint32, hour time.Time) (string, error) {
+// hourFileNames are the names a Project's hour has in the manifest,
+// tombstones included, so that a tombstoned file's bytes are never mistaken
+// for a new file's.
+func hourFileNames(ctx context.Context, db sqlRunner, projectID uint32, hour time.Time) (map[string]bool, error) {
 	where := "project_id = ? AND day = CAST(? AS DATE) AND hour = ?"
 	args := []any{projectID, dayString(LogDay(hour)), hour.UTC().Hour()}
 	rows, err := db.QueryContext(ctx,
 		"SELECT name FROM logs.log_files WHERE "+where+" UNION ALL SELECT name FROM logs.log_file_deletions WHERE "+where,
 		append(args, args...)...)
 	if err != nil {
-		return "", fmt.Errorf("list names of the hour's files: %w", err)
+		return nil, fmt.Errorf("list names of the hour's files: %w", err)
 	}
 	defer rows.Close()
-	used, last := false, 0
+	names := map[string]bool{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return "", err
+			return nil, err
 		}
-		used, last = true, max(last, lateFileNumber(name))
+		names[name] = true
 	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	if !used {
-		return hourDataFile, nil
-	}
-	return fmt.Sprintf("%s%d%s", lateFilePrefix, last+1, parquetSuffix), nil
+	return names, rows.Err()
 }
 
 // logFileStats is what the manifest records of a file's contents. Only its
