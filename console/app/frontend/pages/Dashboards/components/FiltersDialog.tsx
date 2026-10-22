@@ -172,7 +172,7 @@ export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }:
                   <>
                     <div className="flex flex-wrap items-center gap-3">
                       <Segmented
-                        size="sm" label={`Filter ${n} options from`} value={draft.from} options={SOURCES}
+                        size="sm" label={`Filter ${n} takes options from`} value={draft.from} options={SOURCES}
                         onChange={from => change(draft.key, { from })}
                       />
                       <label className="flex items-center gap-2">
