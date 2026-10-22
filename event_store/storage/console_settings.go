@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -160,4 +161,29 @@ func (s *ConsoleSettings) LogTransform(projectID uint32) (LogTransformVersion, e
 		return LogTransformVersion{}, nil
 	}
 	return version, err
+}
+
+// LogFileOrder returns a Project's Log file order: its own, else the default
+// for a Project with none (NULL or the JSON null) or that Console doesn't
+// know. A value Console's validations would refuse is an error.
+func (s *ConsoleSettings) LogFileOrder(projectID uint32) (LogFileOrder, error) {
+	var value sql.NullString
+	err := s.db.QueryRow("SELECT log_file_order FROM projects WHERE id = ?", projectID).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !value.Valid {
+		return DefaultLogFileOrder, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var order LogFileOrder
+	if err := json.Unmarshal([]byte(value.String), &order); err != nil {
+		return nil, fmt.Errorf("project %d has a Log file order that isn't a JSON array of names: %q", projectID, value.String)
+	}
+	if order == nil { // the JSON null, which Console reads as nil
+		return DefaultLogFileOrder, nil
+	}
+	if err := order.check(); err != nil {
+		return nil, fmt.Errorf("project %d has a Log file order Console would refuse: %w", projectID, err)
+	}
+	return order, nil
 }

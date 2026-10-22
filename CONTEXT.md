@@ -117,8 +117,12 @@ The two states of a **Threshold monitor**'s group: firing while its number passe
 _Avoid_: alerting, triggered, breached, open
 
 **Log file store**:
-Where EventStore keeps a **Project**'s Log files, the hourly Parquet files its hourly export writes once an hour's **Logs** leave the hot table: the local disk, or an S3 or GCS bucket with a local copy kept for a while. A manifest in DuckDB lists each file and where it is, so reads never list folders or the bucket.
+Where EventStore keeps a **Project**'s Log files, the hourly Parquet files its hourly export writes once an hour's **Logs** leave the hot table: the local disk, or an S3 or GCS bucket with a local copy kept for a while. Each file is sorted by the Project's **Log file order**, then time. A manifest in DuckDB lists each file and where it is, so reads never list folders or the bucket.
 _Avoid_: archive, cold storage, data lake
+
+**Log file order**:
+The Fields the hourly export sorts each of a **Project**'s Log files by, before time. Each Project sets its own in Console; by default it is `service`, then the `file` Attribute, and none means time only. A change applies from the next hourly export. The Logs of one Service's log file then sit together in a few row groups, so a **Query** filtered on those Fields reads only those. A Log without a Field of the order comes after those with it. Queries answer the same whatever the order; only how much they read changes.
+_Avoid_: sort key, sort order, clustering key, partition key
 
 **Bin cache**:
 EventStore's memory of a **Chart**'s time bins whose Logs are all in the **Log file store**, so a Chart run again, as a **Dashboard** refreshes, reads only the bins it lacks. A bin is kept under the Project, the Query, its size and start, and the generations of the Log files it covers, so a bin whose Logs have changed is never used again.

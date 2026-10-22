@@ -9,6 +9,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Project, SharedProps } from '@/types'
+import { LogFileOrderCard } from './components/LogFileOrderCard'
 import { AlertTriangle, Check, Copy, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -16,12 +17,18 @@ import { toast } from 'sonner'
 interface ProjectsShowProps {
   project: Project
   default_log_retention_days: number
+  default_log_file_order: string[]
+  log_file_order_built_ins: string[]
+  /** The Project's string Attributes, loaded once the page shows. */
+  log_file_order_attributes?: string[]
   can_manage_project: boolean
   can_manage_keys: boolean
   can_delete_project: boolean
 }
 
-export default function ProjectsShow({ project, default_log_retention_days, can_manage_project, can_manage_keys, can_delete_project }: ProjectsShowProps) {
+export default function ProjectsShow({
+  project, default_log_retention_days, default_log_file_order, log_file_order_built_ins, log_file_order_attributes, can_manage_project, can_manage_keys, can_delete_project,
+}: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -162,6 +169,15 @@ export default function ProjectsShow({ project, default_log_retention_days, can_
             )}
           </form>
         </Card>
+
+        <LogFileOrderCard
+          url={`/${current_org.slug}/projects/${project.slug}`}
+          order={project.log_file_order ?? null}
+          defaultOrder={default_log_file_order}
+          builtIns={log_file_order_built_ins}
+          attributes={log_file_order_attributes}
+          canManage={can_manage_project}
+        />
 
         <Card>
           <CardHeader>

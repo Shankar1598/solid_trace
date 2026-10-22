@@ -21,9 +21,9 @@ import (
 // and logs_late into that hour's files, then checkpoints logs.duckdb.
 //
 // An hour not yet exported gets data.parquet; an hour already exported gets
-// its next late file. Each file is sorted by time, in row groups of 30,720,
-// zstd, with the promoted columns of the hour's day, late Logs' values pulled
-// out of their maps.
+// its next late file. Each file is sorted by the Project's Log file order,
+// then time, in row groups of 30,720, zstd, with the promoted columns of the
+// hour's day, late Logs' values pulled out of their maps.
 //
 // Per Project, a transaction that only reads writes the files under staged
 // names, outside writeMu, so that Log processing carries on meanwhile. Then a
@@ -111,18 +111,20 @@ var errLogsChanged = errors.New("the Logs changed while their files were written
 // the export did before it wrote files outside writeMu, so that a change
 // it can't follow never leaves Logs unexported hour after hour.
 func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
-	err := s.exportOnce(projectID, cutoff, false)
+	order := s.logFileOrder(projectID)
+	err := s.exportOnce(projectID, cutoff, order, false)
 	if !errors.Is(err, errLogsChanged) {
 		return err
 	}
 	logger.L.Warn("A Project's Logs changed while the hourly export wrote their files; exporting them again with Log processing held up",
 		"project_id", projectID, "error", err)
-	return s.exportOnce(projectID, cutoff, true)
+	return s.exportOnce(projectID, cutoff, order, true)
 }
 
-// exportOnce stages a Project's files, then commits them. With locked, it
-// holds writeMu throughout, and the commit deletes every Log before cutoff.
-func (s *LogStore) exportOnce(projectID uint32, cutoff time.Time, locked bool) error {
+// exportOnce stages a Project's files, sorted by order, then commits them.
+// With locked, it holds writeMu throughout, and the commit deletes every Log
+// before cutoff.
+func (s *LogStore) exportOnce(projectID uint32, cutoff time.Time, order LogFileOrder, locked bool) error {
 	if locked {
 		s.writeMu.Lock()
 		defer s.writeMu.Unlock()
@@ -143,7 +145,7 @@ func (s *LogStore) exportOnce(projectID uint32, cutoff time.Time, locked bool) e
 		}
 	}()
 
-	staged, err := s.stageExport(projectID, cutoff)
+	staged, err := s.stageExport(projectID, cutoff, order)
 	if err != nil {
 		return err
 	}
@@ -155,7 +157,7 @@ func (s *LogStore) exportOnce(projectID uint32, cutoff time.Time, locked bool) e
 	}
 	if len(staged.files) > 0 {
 		logger.L.Info("Exported a Project's Logs", "project_id", projectID, "logs", staged.logs, "files", len(staged.files),
-			"copy", copied.Round(time.Millisecond).String(), "commit", (time.Since(began) - copied).Round(time.Millisecond).String())
+			"order", order.String(), "copy", copied.Round(time.Millisecond).String(), "commit", (time.Since(began) - copied).Round(time.Millisecond).String())
 	}
 	return nil
 }
@@ -180,9 +182,10 @@ type stagedFile struct {
 }
 
 // stageExport writes the files of a Project's Logs before cutoff under their
-// staged names, from one snapshot of logs.duckdb, in a transaction that only
-// reads. It returns the files it wrote even when it fails.
-func (s *LogStore) stageExport(projectID uint32, cutoff time.Time) (*stagedExport, error) {
+// staged names, sorted by order, from one snapshot of logs.duckdb, in a
+// transaction that only reads. It returns the files it wrote even when it
+// fails.
+func (s *LogStore) stageExport(projectID uint32, cutoff time.Time, order LogFileOrder) (*stagedExport, error) {
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -206,7 +209,7 @@ func (s *LogStore) stageExport(projectID uint32, cutoff time.Time) (*stagedExpor
 	if staged.cursor, err = logProcessingCursor(ctx, conn, projectID); err != nil {
 		return staged, err
 	}
-	export, err := s.newProjectExport(ctx, conn, projectID)
+	export, err := s.newProjectExport(ctx, conn, projectID, order)
 	if err != nil {
 		return staged, err
 	}
@@ -269,7 +272,8 @@ func (s *LogStore) commitExport(projectID uint32, cutoff time.Time, staged *stag
 		}
 	}
 	// Log processing may have added columns since the files were written.
-	export, err := s.newProjectExport(ctx, conn, projectID)
+	// This export stages no files, so it needs no order.
+	export, err := s.newProjectExport(ctx, conn, projectID, nil)
 	if err != nil {
 		return false, err
 	}
@@ -323,10 +327,12 @@ type projectExport struct {
 	projectID uint32
 	// hotColumns are the hot table's columns, or nil if it has none.
 	hotColumns map[string]bool
+	// order is the Log file order the staged files are sorted by.
+	order LogFileOrder
 }
 
-func (s *LogStore) newProjectExport(ctx context.Context, conn *sql.Conn, projectID uint32) (*projectExport, error) {
-	e := &projectExport{ctx: ctx, conn: conn, files: s.files, projectID: projectID}
+func (s *LogStore) newProjectExport(ctx context.Context, conn *sql.Conn, projectID uint32, order LogFileOrder) (*projectExport, error) {
+	e := &projectExport{ctx: ctx, conn: conn, files: s.files, projectID: projectID, order: order}
 	var exists bool
 	err := conn.QueryRowContext(ctx,
 		"SELECT count(*) > 0 FROM duckdb_tables() WHERE database_name = ? AND schema_name = 'main' AND table_name = ?",
@@ -401,9 +407,9 @@ func (e *projectExport) stageHour(hour time.Time) (stagedFile, error) {
 	_, err = e.conn.ExecContext(e.ctx, fmt.Sprintf(`
 		COPY (
 			SELECT * FROM (%s)
-			ORDER BY time, id
+			ORDER BY %s
 		) TO %s (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 30720)`,
-		strings.Join(sources, " UNION ALL BY NAME "), sqltext.String(staged.path)))
+		strings.Join(sources, " UNION ALL BY NAME "), e.order.orderBy(set), sqltext.String(staged.path)))
 	if err != nil {
 		return staged, err
 	}
@@ -417,25 +423,25 @@ func (e *projectExport) stageHour(hour time.Time) (stagedFile, error) {
 	return staged, nil
 }
 
-// daySet reads the promoted set of the day of t, by type then key.
-func (e *projectExport) daySet(t time.Time) ([]typedKey, error) {
+// daySet reads the promoted set of the day of t.
+func (e *projectExport) daySet(t time.Time) (PromotedSet, error) {
+	day := LogDay(t)
 	rows, err := e.conn.QueryContext(e.ctx,
-		"SELECT type, key FROM logs.log_promoted_sets WHERE project_id = ? AND day = CAST(? AS DATE)",
-		e.projectID, dayString(LogDay(t)))
+		"SELECT type, key, partway FROM logs.log_promoted_sets WHERE project_id = ? AND day = CAST(? AS DATE)",
+		e.projectID, dayString(day))
 	if err != nil {
-		return nil, fmt.Errorf("read promoted set: %w", err)
+		return PromotedSet{}, fmt.Errorf("read promoted set: %w", err)
 	}
 	defer rows.Close()
-	var keys []typedKey
+	var keys []PromotedKey
 	for rows.Next() {
-		var key typedKey
-		if err := rows.Scan(&key.Type, &key.Key); err != nil {
-			return nil, err
+		var key PromotedKey
+		if err := rows.Scan(&key.Type, &key.Key, &key.Partway); err != nil {
+			return PromotedSet{}, err
 		}
 		keys = append(keys, key)
 	}
-	slices.SortFunc(keys, typedKey.compare)
-	return keys, rows.Err()
+	return newPromotedSet(day, keys), rows.Err()
 }
 
 // fixedColumns are the fixed columns but the maps, to select as they are.
@@ -443,14 +449,14 @@ const fixedColumns = "id, time, level, message, service, environment, trace_id, 
 
 // hotRows selects the hot table's Logs of [from, to) with the promoted
 // columns of set. Their values are in those columns already.
-func (e *projectExport) hotRows(set []typedKey, from, to string) string {
+func (e *projectExport) hotRows(set PromotedSet, from, to string) string {
 	columns := []string{fixedColumns, "attrs_string, attrs_number, attrs_bool, attrs_json"}
-	for _, key := range set {
-		column := sqltext.Identifier(key.column())
-		if !e.hotColumns[key.column()] {
+	for _, key := range set.Keys {
+		column := sqltext.Identifier(key.Column())
+		if !e.hotColumns[key.Column()] {
 			column = fmt.Sprintf("CAST(NULL AS %s)", key.Type.columnType())
 		}
-		columns = append(columns, column+" AS "+sqltext.Identifier(key.column()))
+		columns = append(columns, column+" AS "+sqltext.Identifier(key.Column()))
 	}
 	return fmt.Sprintf("SELECT %s FROM %s WHERE time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP)",
 		strings.Join(columns, ", "), e.hotTable(), sqltext.String(from), sqltext.String(to))
@@ -458,11 +464,11 @@ func (e *projectExport) hotRows(set []typedKey, from, to string) string {
 
 // lateRows selects the Project's late Logs of [from, to) with the promoted
 // columns of set, each value pulled out of its map into its column.
-func (e *projectExport) lateRows(set []typedKey, from, to string) string {
+func (e *projectExport) lateRows(set PromotedSet, from, to string) string {
 	columns := []string{fixedColumns}
 	for _, t := range []AttributeType{StringAttribute, NumberAttribute, BoolAttribute, JSONAttribute} {
 		var keys []string
-		for _, key := range set {
+		for _, key := range set.Keys {
 			if key.Type == t {
 				keys = append(keys, sqltext.String(key.Key))
 			}
@@ -475,9 +481,9 @@ func (e *projectExport) lateRows(set []typedKey, from, to string) string {
 			"CAST(map_from_entries(list_filter(map_entries(%[1]s), lambda e: NOT list_contains([%[2]s], e.key))) AS %[3]s) AS %[1]s",
 			t.Map(), strings.Join(keys, ", "), t.mapType()))
 	}
-	for _, key := range set {
+	for _, key := range set.Keys {
 		columns = append(columns, fmt.Sprintf("CAST(map_extract_value(%s, %s) AS %s) AS %s",
-			key.Type.Map(), sqltext.String(key.Key), key.Type.columnType(), sqltext.Identifier(key.column())))
+			key.Type.Map(), sqltext.String(key.Key), key.Type.columnType(), sqltext.Identifier(key.Column())))
 	}
 	return fmt.Sprintf("SELECT %s FROM %s.%s WHERE project_id = %d AND time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP)",
 		strings.Join(columns, ", "), logsCatalog, lateTable, e.projectID, sqltext.String(from), sqltext.String(to))
@@ -524,8 +530,8 @@ func (e *projectExport) dropDemotedColumns(cutoff time.Time) error {
 	kept := make(map[string]bool)
 	keep := func(day time.Time) error {
 		set, err := e.daySet(day)
-		for _, key := range set {
-			kept[key.column()] = true
+		for _, key := range set.Keys {
+			kept[key.Column()] = true
 		}
 		return err
 	}
