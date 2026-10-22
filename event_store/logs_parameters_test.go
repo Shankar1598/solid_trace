@@ -278,3 +278,57 @@ func TestARunRefusesTooManyOrTooLongValues(t *testing.T) {
 	}
 	queryWith(t, env, `where service == $service | search $q`, filters{"service": many[:100], "q": {long[:1000]}})
 }
+
+// binnedTableWith runs a Query over binCacheRange with Dashboard filter
+// values, and returns its table as EventStore answered it, and the bins the
+// run took from the bin cache and missed.
+func binnedTableWith(t *testing.T, env *TestEnv, query string, values filters) (table string, hits, misses int64) {
+	t.Helper()
+	hitsBefore, missesBefore := binCacheStats(env)
+	status, raw := postQueryApp(t, env, "/api/123/logs/query", queryRequest{
+		Query: query, From: binCacheRange.from, To: binCacheRange.to, Parameters: values,
+	})
+	if status != 200 {
+		t.Fatalf("Query %q expected 200, got %d: %s", query, status, raw)
+	}
+	var answer map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &answer); err != nil || answer["table"] == nil {
+		t.Fatalf("Query %q expected a table, got %s (%v)", query, raw, err)
+	}
+	hitsAfter, missesAfter := binCacheStats(env)
+	return string(answer["table"]), hitsAfter - hitsBefore, missesAfter - missesBefore
+}
+
+func TestEachSetOfFilterValuesHasItsOwnBinsAndAllSharesTheQuerysWithout(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	postChartLogs(t, env)
+	env.ExportLogs(t)
+
+	query := `where user == $user | summarize count() by bin(time, 1h)`
+	ada, _, adaMisses := binnedTableWith(t, env, query, filters{"user": {"ada"}})
+	if adaMisses == 0 {
+		t.Fatalf("Expected ada's first run to fill the bin cache")
+	}
+	if _, hits, misses := binnedTableWith(t, env, query, filters{"user": {"ada"}}); hits != adaMisses || misses != 0 {
+		t.Errorf("Expected ada's second run to take its %d bins from the cache, got %d hits and %d misses", adaMisses, hits, misses)
+	}
+	bob, hits, misses := binnedTableWith(t, env, query, filters{"user": {"bob"}})
+	if hits != 0 || misses != adaMisses || bob == ada {
+		t.Errorf("Expected bob's run to miss %d bins of its own, got %d hits and %d misses, and a table of its own", adaMisses, hits, misses)
+	}
+
+	// All takes the bins the Query without the comparison filled.
+	without, _, withoutMisses := binnedTableWith(t, env, `summarize count() by bin(time, 1h)`, nil)
+	all, hits, misses := binnedTableWith(t, env, query, nil)
+	if hits != withoutMisses || misses != 0 || all != without {
+		t.Errorf("Expected All to take the %d bins of the Query without the comparison, got %d hits and %d misses", withoutMisses, hits, misses)
+	}
+
+	env.LogStore.UseBinCache(0)
+	for user, cached := range map[string]string{"ada": ada, "bob": bob} {
+		if uncached, _, _ := binnedTableWith(t, env, query, filters{"user": {user}}); uncached != cached {
+			t.Errorf("%s for %s\n from the bin cache: %s\n without it:         %s", query, user, cached, uncached)
+		}
+	}
+}
