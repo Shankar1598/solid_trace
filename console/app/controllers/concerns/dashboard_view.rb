@@ -22,14 +22,4 @@ module DashboardView
   def filter_keys
     Rack::Utils.parse_query(request.query_string).select { |key, _| key.start_with?("v_") }.transform_values { |values| Array(values) }
   end
-
-  # The values of the Dashboard's filters in given, {name => value or
-  # [values]}, as EventStore's parameters. Names the Dashboard lacks and
-  # empty values are left out, so EventStore runs those filters as All.
-  def parameters_of(dashboard, given)
-    dashboard.filter_names.each_with_object({}) do |name, parameters|
-      values = Array(given[name]).map(&:to_s).reject(&:empty?)
-      parameters[name] = values if values.any?
-    end
-  end
 end

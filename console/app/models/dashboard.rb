@@ -37,6 +37,17 @@ class Dashboard < ApplicationRecord
     filters.map { |filter| filter["name"] }
   end
 
+  # The values of its filters in given, {name => value or [values]}, as
+  # EventStore's parameters, in the filters' order. Names it lacks and empty
+  # values are left out, so EventStore runs those filters as All.
+  def parameters(given)
+    given = given.to_h.stringify_keys
+    filter_names.each_with_object({}) do |name, parameters|
+      values = Array(given[name]).map(&:to_s).reject(&:empty?)
+      parameters[name] = values if values.any?
+    end
+  end
+
   private
 
   # Each filter is {name, label, kind} and, for a select, multiple and
