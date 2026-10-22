@@ -10,7 +10,7 @@ module McpTools
                 "Attributes, most used first, each with its type (string, number or bool) and logs, how many Logs had it " \
                 "on the UTC days the range touches. A name whose values have two types is listed once for each, and a " \
                 "Query's value picks which it matches: status == 200 reads the numbers, status == \"200\" the strings. " \
-                "The counts come from Logs as they arrive: a Log sent more than about an hour after its time isn't counted, " \
+                "The counts come from Logs as they arrive: a Log sent more than about 15 minutes after its time may not be counted, " \
                 "and Attributes whose values are JSON, such as arrays, aren't listed. A Query still reads both."
     read_only!
     takes_project
