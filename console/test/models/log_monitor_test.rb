@@ -193,6 +193,21 @@ class LogMonitorTest < ActiveSupport::TestCase
     assert_nil monitor.ingest_cursor
   end
 
+  test "a Monitor's Query can't name a Dashboard filter, whichever its kind, and runs nothing" do
+    stub_monitor_query_check(@project, parameters: %w[service q])
+    refusal = [ "can't name a filter. Filters ($service, $q) work only on Dashboard Charts" ]
+
+    threshold = build(:monitor, project: @project, query: "['shop']\n| where service == $service\n| search $q\n| summarize count()")
+    match = build(:monitor, :match, project: @project, query: "['shop'] | where service == $service | search $q")
+
+    assert_not threshold.valid?
+    assert_equal refusal, threshold.errors[:query]
+    assert_not match.valid?
+    assert_equal refusal, match.errors[:query]
+    assert_nil match.ingest_cursor
+    assert_not_requested(:post, %r{/logs/query})
+  end
+
   test "renaming a Monitor asks EventStore nothing; changing its Query checks it again" do
     monitor = create(:monitor, project: @project)
     WebMock::RequestRegistry.instance.reset!

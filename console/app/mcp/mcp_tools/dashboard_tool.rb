@@ -11,6 +11,41 @@ module McpTools
     DASHBOARD = { type: "integer", description: "The Dashboard's id. list_dashboards lists them." }.freeze
     CHART = { type: "integer", description: "The Chart's id, on the Dashboard. get_dashboard lists them." }.freeze
 
+    # A Dashboard filter as the Dashboard keeps it, which get_dashboard
+    # answers and the Dashboard validates.
+    FILTER = {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "What a Query writes after $ to use the filter, as $service: lowercase letters, digits and _, starting with " \
+                       "a letter or _, at most 40 characters, unique on the Dashboard. " \
+                       "Keep a saved filter's name, since Charts name it.",
+        },
+        label: { type: "string", description: "What the filter bar shows, at most #{Dashboard::MAX_FILTER_LABEL} characters. The name when empty." },
+        kind: {
+          type: "string", enum: %w[select search],
+          description: "select: a pick from options. search: a text box, for search $q or message contains $q.",
+        },
+        multiple: { type: "boolean", description: "Whether a select takes several values, false when not given. Not for a search." },
+        options: {
+          type: "object",
+          description: "A select's options, in one of two shapes; not for a search. A fixed list, " \
+                       "{\"from\": \"list\", \"items\": [{\"label\": \"Errors\", \"value\": \"error\"}, {\"value\": \"warn\"}]}: " \
+                       "1 to #{Dashboard::MAX_OPTIONS} items, each value not empty and unique, label and value at most " \
+                       "#{Dashboard::MAX_OPTION_TEXT} characters, an empty label being the value. Or a field's values, " \
+                       "{\"from\": \"field\", \"project_id\": 3, \"field\": \"service\"}: the 100 most common values of a field other " \
+                       "than time, in a Project of the Organization (list_projects gives the ids), over the range the Dashboard shows.",
+          properties: {
+            from: { type: "string", enum: %w[list field] },
+            items: { type: "array", items: { type: "object", properties: { label: { type: "string" }, value: { type: "string" } } } },
+            project_id: { type: "integer" },
+            field: { type: "string" },
+          },
+        },
+      },
+    }.freeze
+
     DASHBOARD_FIELDS = {
       name: { type: "string", description: "The Dashboard's name, at most 200 characters." },
       description: { type: "string", description: "What the Dashboard shows, at most 2000 characters." },
@@ -19,6 +54,15 @@ module McpTools
         description: "The range the Dashboard shows until someone picks another: a span back from now such as 15m, 1h, 24h or 7d. 1h when made.",
       },
       auto_refresh: { type: "string", enum: Dashboard::AUTO_REFRESH, description: "How often the open page runs its Charts again. 15s when made." },
+      filters: {
+        type: "array",
+        items: FILTER,
+        description: "The Dashboard's filters, the controls of the bar under its header, in the bar's order, at most " \
+                     "#{Dashboard::MAX_FILTERS}. A Chart uses a filter by naming it in its Query as $name, such as " \
+                     "where service == $service, and runs it with the values picked, or as All, as if the comparison weren't there, " \
+                     "when none is; query_language_reference's Dashboard filters says where $name can go. The list given replaces " \
+                     "the Dashboard's filters whole, so give every filter to keep; [] removes them all. None when made.",
+      },
     }.freeze
 
     CHART_FIELDS = {
@@ -27,7 +71,8 @@ module McpTools
         type: "string",
         description: "The Query the Chart runs on its Project over the Dashboard's range. It must answer a table, so end it with " \
                      "summarize, count or project, such as: where level == \"error\" | summarize count() by bin_auto(time). " \
-                     "A Query with mistakes is not saved.",
+                     "It uses the Dashboard's filters by naming them as $name, such as where service == $service. " \
+                     "A Query with mistakes, or naming a filter the Dashboard lacks, is not saved.",
       },
       viz: {
         type: "string",
@@ -95,8 +140,9 @@ module McpTools
 
     # Saves a Chart whose fields are valid. A new Chart, or one whose Query or
     # Project changed, is saved only when EventStore finds no mistakes in its
-    # Query on its Project, as the chart editor checks before it saves. The
-    # check compiles the Query and runs nothing.
+    # Query on its Project, and the Query names only the Dashboard's filters,
+    # as the chart editor checks before it saves. The check compiles the
+    # Query and runs nothing.
     def save_chart!(chart)
       chart.validate!
       if chart.new_record? || chart.query_changed? || chart.project_id_changed?
@@ -105,8 +151,19 @@ module McpTools
           EventStore.mistakes(validation).each { |mistake| chart.errors.add(:query, mistake) }
           raise ActiveRecord::RecordInvalid, chart
         end
+        unknown = Array(validation["parameters"]) - dashboard.filter_names
+        if unknown.any?
+          chart.errors.add(:query, "names #{unknown.map { |name| "$#{name}" }.to_sentence}, which #{not_its_filters(unknown)}")
+          raise ActiveRecord::RecordInvalid, chart
+        end
       end
       chart.save!
+    end
+
+    # What a refusal of names the Dashboard has no filters of says of them,
+    # listing its filters: "isn't one of this Dashboard's filters (level, q)".
+    def not_its_filters(names)
+      "#{names.one? ? "isn't one" : "aren't any"} of this Dashboard's filters (#{dashboard.filter_names.join(', ').presence || 'it has none'})"
     end
 
     # A Dashboard with its Charts, in the order the page reads them.
