@@ -52,6 +52,16 @@ class InstanceSetting < ApplicationRecord
     sign_up_open? || !User.exists?
   end
 
+  # Changes the email settings as the Email settings page and the MCP server
+  # do: only those given change, a blank password keeps the saved one, and
+  # clear_password removes it.
+  def update_email(changes, clear_password: false)
+    changes = changes.to_h.symbolize_keys.slice(:smtp_address, :smtp_port, :smtp_username, :smtp_password, :mail_from)
+    changes.delete(:smtp_password) if changes[:smtp_password].blank?
+    changes[:smtp_password] = nil if clear_password
+    update(changes)
+  end
+
   # Why Console can't send email with these settings, or nil when it can.
   def email_problem
     if smtp_address.blank?
