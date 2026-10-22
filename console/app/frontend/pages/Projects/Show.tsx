@@ -18,6 +18,7 @@ interface ProjectsShowProps {
   project: Project
   default_log_retention_days: number
   default_log_file_order: string[]
+  log_file_order_built_ins: string[]
   /** The Project's string Attributes, loaded once the page shows. */
   log_file_order_attributes?: string[]
   can_manage_project: boolean
@@ -26,7 +27,7 @@ interface ProjectsShowProps {
 }
 
 export default function ProjectsShow({
-  project, default_log_retention_days, default_log_file_order, log_file_order_attributes, can_manage_project, can_manage_keys, can_delete_project,
+  project, default_log_retention_days, default_log_file_order, log_file_order_built_ins, log_file_order_attributes, can_manage_project, can_manage_keys, can_delete_project,
 }: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -173,6 +174,7 @@ export default function ProjectsShow({
           url={`/${current_org.slug}/projects/${project.slug}`}
           order={project.log_file_order ?? null}
           defaultOrder={default_log_file_order}
+          builtIns={log_file_order_built_ins}
           attributes={log_file_order_attributes}
           canManage={can_manage_project}
         />
