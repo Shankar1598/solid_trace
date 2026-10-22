@@ -56,7 +56,7 @@ Then update:
   - It's a check, not the sandbox the ADR calls for. That's acceptable now because `SET`, statements that run during parsing, and `query()` are already refused.
   - A DuckDB upgrade should look for new kinds of table reference, new table functions and new replacement scans.
   - Update the Consequences: the `logs` view is now a limit.
-- **The SQL query entry in `CONTEXT.md`,** which says the view is "not a limit on what the SQL can read".
+- **The SQL query entry in `GLOSSARY.md`,** which says the view is "not a limit on what the SQL can read".
 - **The setting's description** (`InstanceSetting::SQL_QUERIES_DESCRIPTION`). What's left: slow queries can starve ingest, and every member can read every Log in their own Organization's Projects. It stays off by default.
 - **`docs/logs/sql.md` and `docs/mcp.md`:** what SQL can read.
 - **MCP 12.** With file paths and URLs refused, SQL can't reach a web address at all. Say so in that ticket, or close it.
@@ -120,5 +120,5 @@ The read-only check now also allows only what is known to be safe (`LogStore.che
 - Changed tests: the read-only test read `logs.log_key_counts` through SQL, and now reads it through `AttributeCounts`. The autoload check moved to `storage.TestDuckDBLoadsNoExtensionByItself`, as SQL can't call `current_setting` any more.
 - The Playwright flow `logs-v1-sql.spec.ts` now shows the refusal reaching the user: it runs `SELECT count(*) FROM logs.log_key_counts`, which it used to expect to work. Not run: the dev stack's EventStore runs an older binary, and the peer session asked that it not be restarted.
 
-**Docs:** ADR 0003 has an amendment and new Consequences. Also updated: `CONTEXT.md`'s SQL query entry, `InstanceSetting::SQL_QUERIES_DESCRIPTION` (with its test), `run_sql`'s description, `docs/logs/sql.md` (what's refused, and a section on the `events` view), `docs/mcp.md`, `docs/logs/object-store.md`, and a comment on MCP 12.
+**Docs:** ADR 0003 has an amendment and new Consequences. Also updated: `GLOSSARY.md`'s SQL query entry, `InstanceSetting::SQL_QUERIES_DESCRIPTION` (with its test), `run_sql`'s description, `docs/logs/sql.md` (what's refused, and a section on the `events` view), `docs/mcp.md`, `docs/logs/object-store.md`, and a comment on MCP 12.
 

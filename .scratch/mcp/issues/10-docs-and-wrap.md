@@ -15,7 +15,7 @@
 
 Link it from the README and from the User settings tokens section.
 
-**`CONTEXT.md`:** add **API token** and **MCP server** to the glossary, if they weren't added at set-up.
+**`GLOSSARY.md`:** add **API token** and **MCP server** to the glossary, if they weren't added at set-up.
 
 **End to end on the dev stack**, each run under a minute:
 1. Make a token in the UI.
@@ -37,7 +37,7 @@ The looks pass was merged in first (`d3de5fa`). The reset pages, the API tokens 
 **Docs** (`b605b97`, and the lows below):
 - `docs/mcp.md` covers connecting from Claude Code and Cursor, whom a tool acts as and with what rights, how long a token works (bugs 02's reset revokes all of them), every tool in a line, and what Log text can steer an agent to do, wider with SQL on and wider again with a bucket.
 - The README links to it. The User settings tokens section links to it at `github.com/solidtrace/solid_trace`, the repository the README's clone command names. Console links to no other docs, so there was nothing to follow.
-- `CONTEXT.md` already had **API token** and **MCP server** from set-up.
+- `GLOSSARY.md` already had **API token** and **MCP server** from set-up.
 
 **Playwright:** all 77 flows pass on `feature/mcp` (7.2 min), including api-tokens, user-settings, password-reset, project-keys and logs-v1-sql. Two needed changes first, both in the flows:
 - logs-v1-sql: a one-value SELECT shows as a Number since the looks pass, so the flow opens the Table to read the column.

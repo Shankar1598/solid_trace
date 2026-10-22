@@ -6,7 +6,7 @@
 - The COPY's row group size (30,720) and compression don't change, and an hour's late files are sorted the same way.
 - The "Exported a Project's Logs" log line gains the order it used.
 - Nothing on the read side changes. The comments that say Log files are sorted by time (`ExportLogs`'s and any others) are corrected.
-- CONTEXT.md gains **Log file order**, and the Log file store's description there and the export's in `docs/logs/` say Log files are sorted by it, then time.
+- GLOSSARY.md gains **Log file order**, and the Log file store's description there and the export's in `docs/logs/` say Log files are sorted by it, then time.
 
 **Blocked by:** None (can start immediately)
 
@@ -18,7 +18,7 @@
 - [x] An hour's late file is sorted the same way
 - [x] The same Logs list the same before and after the export, newest first, every field and Attribute alike
 - [x] The export's log line names the order
-- [x] CONTEXT.md and `docs/logs/` updated
+- [x] GLOSSARY.md and `docs/logs/` updated
 
 Tests go in EventStore's root tests, beside `TestLogsListTheSameBeforeAndAfterTheHourlyExport` and `TestLateLogsOfAnExportedHourGetLateFilesAndListTheSame`. They check what can be seen (the file's row order, the Logs a Query lists, the log line), never the SQL the export runs.
 

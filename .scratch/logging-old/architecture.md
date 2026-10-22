@@ -168,7 +168,7 @@ shadcn components to add with the repo's registry style (`base-lyra`, Base UI, h
 
 ## Process artifacts (done with this document)
 
-- `CONTEXT.md`: add **Log** ("A timestamped record with a message, a level and attributes, accepted by EventStore through Log ingest." _Avoid_: log line, log event), **Log ingest**, **Field** (a catalogued attribute key with an inferred kind), **Query** (a KQL-Lite pipeline executed by EventStore over a project's Logs), **Saved Query**, **Dashboard**, **Element**, **Monitor**; change Event's avoid-list to `_Avoid_: message` and record the Event/Log boundary under Flagged ambiguities.
+- `GLOSSARY.md`: add **Log** ("A timestamped record with a message, a level and attributes, accepted by EventStore through Log ingest." _Avoid_: log line, log event), **Log ingest**, **Field** (a catalogued attribute key with an inferred kind), **Query** (a KQL-Lite pipeline executed by EventStore over a project's Logs), **Saved Query**, **Dashboard**, **Element**, **Monitor**; change Event's avoid-list to `_Avoid_: message` and record the Event/Log boundary under Flagged ambiguities.
 - ADRs in `docs/adr/`: `0001-logs-in-eventstore-duckdb-bypassing-pebble.md`, `0002-typed-attribute-maps-with-field-catalog.md`, `0003-kql-lite-transpiled-to-duckdb-in-go.md`, `0004-parquet-manifest-instead-of-glob-view.md`, `0005-rails-proxies-all-log-reads.md`.
 - `.scratch/logging/spec.md` (to-spec template) and `.scratch/logging/issues/NN-*.md` (to-tickets template, `Status: ready-for-agent`) from the milestone list below.
 

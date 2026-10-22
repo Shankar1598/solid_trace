@@ -7,13 +7,13 @@ Map: [SolidTrace Logs](../map.md)
 
 ## Question
 
-What is the domain model for logs: which fields every Log has (time, level, message, service, environment, trace and span ids …) versus free-form attributes; how nested JSON and arrays are addressed; whether Logs are scoped by Project or by a new concept such as Axiom's Dataset; and which glossary terms enter `CONTEXT.md`.
+What is the domain model for logs: which fields every Log has (time, level, message, service, environment, trace and span ids …) versus free-form attributes; how nested JSON and arrays are addressed; whether Logs are scoped by Project or by a new concept such as Axiom's Dataset; and which glossary terms enter `GLOSSARY.md`.
 
 Input from [How should the Logs explorer be laid out?](06-logs-explorer-layout.md) (2026-10-02): the chosen layout shows each log's level, `service` and message on every line and puts summary numbers (error rate, p95 duration) beside the histogram. Which of these are built-in fields of a Log, and which are only conventions, is this ticket's call.
 
 ## Answer
 
-Resolved 2026-10-02 (grilling). Glossary terms added to `CONTEXT.md`: **Log**, **Attribute**, **Field**, **Level**, **Service**. The Project scoping and flat Attribute namespace are recorded in [ADR 0002](../../../docs/adr/0002-logs-scoped-by-project-flat-attributes.md).
+Resolved 2026-10-02 (grilling). Glossary terms added to `GLOSSARY.md`: **Log**, **Attribute**, **Field**, **Level**, **Service**. The Project scoping and flat Attribute namespace are recorded in [ADR 0002](../../../docs/adr/0002-logs-scoped-by-project-flat-attributes.md).
 
 - **Scope:** a Log belongs to a Project and is submitted with the Project's existing keys. There is no Dataset concept. Logs are never grouped into Issues. Logs within one Project are told apart by `service`. Axiom-style ingest maps its dataset name to a Project.
 - **Built-in fields (seven):** `time`, `level`, `message`, `service`, `environment`, `trace_id`, `span_id`. Every other value is an Attribute. `host`, `release` and `duration_ms` are only conventions. The explorer's summary shows p95 duration only when `duration_ms` exists; otherwise it shows the log count and per-level counts.

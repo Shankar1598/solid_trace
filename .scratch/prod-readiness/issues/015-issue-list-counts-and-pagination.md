@@ -84,4 +84,4 @@ No backfill, because the data is disposable.
 > - Beyond the brief: on a startup replay, the rows DuckDB held past the cursor are checked one by one (`DuckDBWriter.HotUUIDsBetween`), so a row skipped for bad content before a crash isn't counted. Code review found that gap.
 > - The Issue page's events pagination total also reads `times_seen`, so the page makes no EventStore count call.
 > - The Priority sort option was removed from `Issues/Index.tsx`, because the server ignores it. The time-range picker and the `environment` filter are untouched.
-> - Not done: a `CONTEXT.md` entry for the seen cursor, next to **Processing cursor**.
+> - Not done: a `GLOSSARY.md` entry for the seen cursor, next to **Processing cursor**.

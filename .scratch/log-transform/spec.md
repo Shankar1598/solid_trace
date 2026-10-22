@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 
-Planned with the user on 2026-10-21. It started when Dashboard 1 on the `tagalys` Project pegged the production VM's CPU and took 5 s to load: four of its Charts found `sidekiq.log` job lines by searching `message`. The design was settled in one grilling session; the terms are in `CONTEXT.md` (**Log transform**).
+Planned with the user on 2026-10-21. It started when Dashboard 1 on the `tagalys` Project pegged the production VM's CPU and took 5 s to load: four of its Charts found `sidekiq.log` job lines by searching `message`. The design was settled in one grilling session; the terms are in `GLOSSARY.md` (**Log transform**).
 
 ## Problem Statement
 

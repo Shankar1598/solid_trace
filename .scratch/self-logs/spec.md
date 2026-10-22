@@ -1,6 +1,6 @@
 # SolidTrace's own Logs
 
-Planned with the user on 2026-10-19. The decisions are in [ADR 0011](../../docs/adr/0011-meta-organization-and-vector-reads-docker-logs.md). Terms are in [CONTEXT.md](../../CONTEXT.md): see **Meta Organization**.
+Planned with the user on 2026-10-19. The decisions are in [ADR 0011](../../docs/adr/0011-meta-organization-and-vector-reads-docker-logs.md). Terms are in [GLOSSARY.md](../../GLOSSARY.md): see **Meta Organization**.
 
 ## What we're building
 

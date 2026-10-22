@@ -23,7 +23,7 @@ Input (2026-10-02, from [the reduced-scale benchmark](09-benchmark-storage-layou
 
 ## Answer
 
-Resolved again 2026-10-02 (grilling, after [ticket 14](14-benchmark-storage-design-on-1-5-5.md) reopened it). [ADR 0005](../../../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md) supersedes [ADR 0004](../../../docs/adr/0004-logs-hot-table-and-hourly-parquet.md). Glossary: **Retention** added to `CONTEXT.md`; **Attribute** amended for large whole numbers; **SQL query** amended for the scoped `logs` view. The first resolution's answer is in this file's history (`f604ab4`); the comments below record each decision of the second pass.
+Resolved again 2026-10-02 (grilling, after [ticket 14](14-benchmark-storage-design-on-1-5-5.md) reopened it). [ADR 0005](../../../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md) supersedes [ADR 0004](../../../docs/adr/0004-logs-hot-table-and-hourly-parquet.md). Glossary: **Retention** added to `GLOSSARY.md`; **Attribute** amended for large whole numbers; **SQL query** amended for the scoped `logs` view. The first resolution's answer is in this file's history (`f604ab4`); the comments below record each decision of the second pass.
 
 **Engine**
 - DuckDB 1.5.6 (duckdb-go `v2.10506.0`, bundled), moved in [Move EventStore back to DuckDB 1.5.5](../../upgrade-pebble-duckdb/issues/02-duckdb-2-0-0-release.md). The design uses only 1.5 features; 2.0 and a re-check of VARIANT are v2 fog.

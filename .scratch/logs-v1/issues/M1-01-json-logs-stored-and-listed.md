@@ -20,7 +20,7 @@ Scope limits, so later tickets have room:
 - [x] A query-app operation returns the latest N Logs of a Project with every built-in field and Attribute.
 - [x] A controllable clock is the one new substitution point in the EventStore test environment; tests drive Log processing with an explicit "process until caught up" step.
 - [x] Tests: each body form; Bearer and `sentry_key` auth; the Project-mismatch `401`; a `200` followed by a restart before processing still yields the Logs; a crash between the DuckDB commit and the Pebble delete yields no duplicates; Event ingest and processing are unaffected.
-- [x] `CONTEXT.md` gains **Log ingest** and **Log processing**, defined like their Event counterparts, and **Processing cursor** is widened to cover Log processing.
+- [x] `GLOSSARY.md` gains **Log ingest** and **Log processing**, defined like their Event counterparts, and **Processing cursor** is widened to cover Log processing.
 
 ## Comments
 
@@ -68,7 +68,7 @@ Choices the ticket left open:
 - **One appender per transaction, not a long-lived one.** `AppendLogBatches` opens the hot table's appender inside the transaction and closes it before COMMIT, as Event processing does. That satisfies "reopened after any ALTER TABLE" trivially. M1-07 can open it after its ALTERs in the same transaction. If M1-10 shows the per-commit open cost matters, a long-lived appender per table can replace it.
 - **Minimal error handling.** If a Project's commit fails, the error is logged, the Project stays pending with its cursor unmoved, the other Projects carry on, and the worker retries on the next wake or 1 s tick. `ProcessUntilCaughtUp` returns the first failure. There is no backoff, no content/store classification and no skipping: a poison Log retries every second forever. M1-06 replaces this.
 - **No lock with the export yet.** Log processing has no lock. M1-08 needs one, shared with the hourly export, as `batchLock` is for Event processing and the archive.
-- **Glossary.** `CONTEXT.md` also gained **Log batch** (the spec uses the term) and two Relationships lines. The EventStore entry is unchanged.
+- **Glossary.** `GLOSSARY.md` also gained **Log batch** (the spec uses the term) and two Relationships lines. The EventStore entry is unchanged.
 
 Deviations: none from the spec.
 

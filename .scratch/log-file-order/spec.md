@@ -71,7 +71,7 @@ An admin changes the order on the Project's settings page, choosing up to three 
 - For each staged hour file, the export sorts by the order's Fields, each as the hour's day reads it (its built-in column; its promoted column if the day's set has it; `coalesce(column, map value)` if promoted partway; else its map value), with NULLs last, then `time, id`. The COPY, its row group size (30,720) and its compression don't change. The same order is used for an hour's late files.
 - The export's "Exported a Project's Logs" log line gains the order it used.
 - Nothing on the read side changes. Reads already never depend on a file's row order: the newest page's second step reads by id from the span its first step found, and DuckDB skips row groups by minimum and maximum whatever the order. The comment that says "Log files are sorted by time" is corrected.
-- Docs: the Log file store's description in CONTEXT.md and the export's description in `docs/logs/` say Log files are sorted by the Project's Log file order, then time. CONTEXT.md gains **Log file order**.
+- Docs: the Log file store's description in GLOSSARY.md and the export's description in `docs/logs/` say Log files are sorted by the Project's Log file order, then time. GLOSSARY.md gains **Log file order**.
 
 ## Testing Decisions
 

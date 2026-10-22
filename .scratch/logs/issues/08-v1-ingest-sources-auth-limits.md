@@ -17,7 +17,7 @@ Input (2026-10-02, from [What is a Log?](07-log-domain-model.md)): each source m
 
 ## Answer
 
-Resolved 2026-10-02 (grilling). Glossary: the `solidtrace.` reserved prefix added to **Field** in `CONTEXT.md`. No ADR: dropping OTLP from v1 is additive to reverse.
+Resolved 2026-10-02 (grilling). Glossary: the `solidtrace.` reserved prefix added to **Field** in `GLOSSARY.md`. No ADR: dropping OTLP from v1 is additive to reverse.
 
 **Sources (v1)**
 - **Sentry `log` envelope items** on the existing `/api/{project_id}/envelope` route. They are no longer dropped.

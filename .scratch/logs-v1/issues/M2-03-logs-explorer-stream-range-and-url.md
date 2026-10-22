@@ -14,7 +14,7 @@
 - [x] Run errors replace the result area; a Cancel button shows while a Query runs.
 - [x] vitest is set up in Console (new). URL ⇄ explorer-state logic lives in plain modules, tested without rendering: relative and absolute ranges, mode and Query text, one history entry per run and none per keystroke.
 - [x] Console request tests (WebMock stubbing EventStore): only Organization members open the explorer; the Project and time range are passed through to EventStore.
-- [x] `CONTEXT.md` gains **Logs explorer**: the Console page where a Project's Logs are searched and read.
+- [x] `GLOSSARY.md` gains **Logs explorer**: the Console page where a Project's Logs are searched and read.
 
 ## Comments
 

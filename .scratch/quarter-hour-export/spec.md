@@ -66,7 +66,7 @@ Which Logs count as late doesn't change: a Log that arrives after its quarter-ho
 
 **Domain words and docs**
 
-- CONTEXT.md: the **Hourly export** becomes the **Log export** (with _Avoid_: hourly export for what now runs every quarter-hour), and the **Log file store**, **Late file** and **Log file order** entries say an hour's Logs are in one file, or in a file per quarter-hour for a busy Project, plus late files. A **Quarter-hour file** term may be needed.
+- GLOSSARY.md: the **Hourly export** becomes the **Log export** (with _Avoid_: hourly export for what now runs every quarter-hour), and the **Log file store**, **Late file** and **Log file order** entries say an hour's Logs are in one file, or in a file per quarter-hour for a busy Project, plus late files. A **Quarter-hour file** term may be needed.
 - A new ADR records the decision, superseding the "exported every hour, one file per Project per hour" lines of ADR 0005, and saying why the hot window was kept and why quiet Projects stay hourly. ADR 0007's and 0008's hour-based keys stand.
 - `docs/logs/object-store.md`, the export's doc comments ("hour h-2"), its log messages ("Hourly Log export failed"), the cleanup timer's comment, and the Console text that says "hours exported" (the Log file order card, `list_projects`) are updated. `list_fields`'s "a Log sent more than about an hour after its time isn't counted" stays true.
 

@@ -45,7 +45,7 @@ With two or more Organizations, the sidebar header opens a dropdown of the user'
 - **The sidebar header is a dropdown with two or more Organizations.** It uses the existing dropdown menu component. Each item shows the Organization's name, with a check mark on the current one, and links to where the switch lands. With one Organization the header renders as it does today.
 - **A palette source for Organizations.** A new "Organizations" group lists the user's other Organizations, each going to its Issues.
 - **Make an Organization is not in the selector.** Its page and wording stay as they are.
-- **Glossary.** `CONTEXT.md` defines **Organization**: a user can belong to several and works in one at a time.
+- **Glossary.** `GLOSSARY.md` defines **Organization**: a user can belong to several and works in one at a time.
 
 ## Testing Decisions
 

@@ -225,7 +225,7 @@ In EventStore, the Event count honours the same filters as the Event listing, in
 ## Further Notes
 
 - **Monitors (Logs v2):** the Logs map (`.scratch/logs/map.md`) lists "Monitors, reusing the existing Integrations and notification pipeline". This module is that pipeline. Keeping kinds open (story 35) means a *monitor triggered* kind can be added later without touching batching, rate limit or outcome handling. Nothing in this spec decides anything about Monitors.
-- **Glossary gap:** `CONTEXT.md` defines **Integration** but not the outbox row (**Notification**) or the module (**Integration notification**). Add both via `domain-modeling` when implementation settles the names. Note that "notification kind" deliberately avoids the word "event".
+- **Glossary gap:** `GLOSSARY.md` defines **Integration** but not the outbox row (**Notification**) or the module (**Integration notification**). Add both via `domain-modeling` when implementation settles the names. Note that "notification kind" deliberately avoids the word "event".
 - **Settings default mismatch:** the model treats a missing threshold setting as *on*, while the New and Edit pages treat it as *off*. This means the fixed threshold rule will start firing for Integrations whose admins believe it is off. That default belongs to candidate #5, but consider fixing it first, or at least checking stored settings before deploying this change.
 - **Delivery timing:** threshold and assignment notifications move from immediate to outbox delivery. They gain the initial delay (10 seconds) and share the per-Integration rate limit. This is intended (stories 6–7).
 

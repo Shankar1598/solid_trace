@@ -17,7 +17,7 @@ This is the prefactor the other tickets build on:
 - **Thin triggers:** the processor job and the per-Issue trigger job contain no rules; they call the module.
 - **Threshold and assignment keep today's behaviour for now.** They are reached through the module's entry points but still delivered on their current paths, so nothing regresses before tickets 04 and 05.
 - **Removed:** the test-only `notify(issue)` entry point.
-- **Glossary:** **Notification** (the outbox row) and **Integration notification** (the module) are added to `CONTEXT.md` via `domain-modeling`. "Notification kind" deliberately avoids the word "event".
+- **Glossary:** **Notification** (the outbox row) and **Integration notification** (the module) are added to `GLOSSARY.md` via `domain-modeling`. "Notification kind" deliberately avoids the word "event".
 
 See spec: "Console: the Integration notification module" and "Testing Decisions" (user stories 6, 8, 9, 21, 22, 28–32, 35).
 
@@ -37,4 +37,4 @@ See spec: "Console: the Integration notification module" and "Testing Decisions"
 - [x] Assignment and threshold notifications still go out as they do today
 - [x] Tests drive the module's three entry points and observe outbox rows, WebMock requests, ActionMailer deliveries and enqueued jobs (`travel_to` for timing). No constructor stubs, no stubbing the Issue's Event collection.
 - [x] The current notifier and processor job tests are superseded by these tests
-- [x] `CONTEXT.md` defines Notification and Integration notification
+- [x] `GLOSSARY.md` defines Notification and Integration notification

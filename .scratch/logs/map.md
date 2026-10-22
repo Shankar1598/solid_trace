@@ -17,7 +17,7 @@ A spec for SolidTrace Logs v1 (plus a separate v2 spec for the full vision) and 
 - **Prior material is reference only.** The 2026-09-13 design was made without this map; none of its decisions stand until a ticket here makes them. Old spec, architecture and tickets: `.scratch/logging-old/`. Its research and codebase surveys (not re-verified): `.scratch/logging-old/research/`. Partial code, ADRs 0001–0005 and old glossary terms: branch `backup/logging-v0`.
 - **Production readiness:** gaps in `.scratch/prod-readiness/review.md` are open for discussion; when the logs work depends on one, discuss it and bring it into scope rather than treating it as someone else's work.
 - **Rails tables (decided 2026-10-01):** logs add no new Go writes to Rails tables; they only read Project keys (review §8).
-- **Skills:** grilling tickets call `grilling` and `domain-modeling` (glossary terms go into `CONTEXT.md` as they resolve; hard-to-reverse choices become ADRs in `docs/adr/`). Prototype tickets call `prototype`. Research tickets run as subagents calling `research`, with findings on a `research/<name>` branch and a pointer from the ticket.
+- **Skills:** grilling tickets call `grilling` and `domain-modeling` (glossary terms go into `GLOSSARY.md` as they resolve; hard-to-reverse choices become ADRs in `docs/adr/`). Prototype tickets call `prototype`. Research tickets run as subagents calling `research`, with findings on a `research/<name>` branch and a pointer from the ticket.
 
 ## Decisions so far
 

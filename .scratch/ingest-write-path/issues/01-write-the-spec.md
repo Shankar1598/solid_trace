@@ -69,7 +69,7 @@ Settled on 2026-09-27 (round 3):
   - Consequences:
     - Round 1's placement of the waiting-request counter no longer matters.
     - The §5 race goes away, because a single reader creates Issues.
-    - The `CONTEXT.md` definition of **Event ingest** ("owns the full Issue lifecycle at ingest time") must change.
+    - The `GLOSSARY.md` definition of **Event ingest** ("owns the full Issue lifecycle at ingest time") must change.
 - **Rails messages are sent at least once.** They are sent after the DuckDB commit and before the cursor moves. A crash between the two can resend them, so a duplicate "new Issue" notification is accepted.
 - **An Event the reader can never process** is retried 3 times, then skipped and logged with its key. The raw JSON stays in Pebble. Transient SQLite or DuckDB errors keep the cursor and retry.
 - **The backlog is made visible, not capped.** The reader logs how far behind each Project's cursor is. `/health` or metrics can show it later.
@@ -100,7 +100,7 @@ Settled on 2026-09-27 (round 4):
     - Processing cursors in Pebble, with the startup fast-forward.
     - Moves the Issue work out of the request, and uses the UUIDv7 time as the timestamp fallback.
     - DuckDB append, Rails messages sent at least once, skip after 3 retries, and a log line showing the backlog.
-    - Removes `duckdbChan` and `DuckDBIngester`, and updates `CONTEXT.md`.
+    - Removes `duckdbChan` and `DuckDBIngester`, and updates `GLOSSARY.md`.
     - Blocked by 02.
   - **The side findings** go to prod-readiness as `needs-triage` tickets 013 (re-archiving overwrites `data.parquet`) and 014 (Rails messages stuck in `processing` are never retried).
 - **Glossary.**

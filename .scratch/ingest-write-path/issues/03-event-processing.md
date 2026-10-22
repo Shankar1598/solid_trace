@@ -12,7 +12,7 @@ Blocked by: 02
 - `event_store/main.go`
 - `event_store/config/config.go`, `deploy/event_store.yml`
 - `event_store/integration_test.go`
-- `CONTEXT.md`
+- `GLOSSARY.md`
 
 ## What to build
 
@@ -48,7 +48,7 @@ Blocked by: 02
    4. Stop the archive consumer.
    5. Close the stores.
 7. **Remove** `pipeline/duckdb_ingester.go`, `duckdbChan`, and the `duckdb_channel_size` and `duckdb_flush_timeout` settings.
-8. **`CONTEXT.md`.**
+8. **`GLOSSARY.md`.**
    - Redefine **Event ingest**.
    - Add **Event processing** and **Processing cursor**.
    - Point **IssueRepository** at Event processing.
@@ -82,7 +82,7 @@ Move the Issue-work cases from `ingest/service_test.go` to this seam. Keep the e
 - Every case above passes under `go test ./...`, with no sleeps in the pipeline tests.
 - `main.go` has no ingest channels.
 - `deploy/event_store.yml` and `config.go` have no removed settings.
-- `CONTEXT.md` is updated.
+- `GLOSSARY.md` is updated.
 
 ## Comments
 

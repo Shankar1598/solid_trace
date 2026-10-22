@@ -13,7 +13,7 @@ Input (2026-10-02, from [What is a Log?](07-log-domain-model.md)): Fields are se
 
 ## Answer
 
-Resolved 2026-10-02 (grilling). Glossary: **Query** and **SQL query** added to `CONTEXT.md`. The unrestricted, opt-in SQL decision is [ADR 0003](../../../docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
+Resolved 2026-10-02 (grilling). Glossary: **Query** and **SQL query** added to `GLOSSARY.md`. The unrestricted, opt-in SQL decision is [ADR 0003](../../../docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
 
 **Two ways to query in v1**
 - **The query language:** KQL-style and unbranded (never called APL or KQL). Where KQL and APL differ, KQL's published semantics win. Pasted Axiom queries often work, but that is not promised.

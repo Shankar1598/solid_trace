@@ -245,7 +245,7 @@ From [How should the Logs explorer be laid out?](../logs/issues/06-logs-explorer
 - **Errors:** compile errors under the Query box with line and column, keeping the last good result; run errors replace the result area; a Cancel button while a Query runs.
 - **Libraries:** the implementer researches and chooses the virtualised list, histogram approach and inspector drawer, compatible with shadcn (base-ui) and the existing React 19, Inertia 2 and Tailwind stack. Requirements: smooth with 10,000 lines; the inspector overlays the stream. Trap from the prototype: base-ui's `DropdownMenuLabel` throws outside a `DropdownMenuGroup`.
 
-### Glossary (`CONTEXT.md`)
+### Glossary (`GLOSSARY.md`)
 
 - New **Log ingest** and **Log processing**, defined like **Event ingest** and **Event processing**; **Processing cursor** widened to cover Log processing.
 - New **Logs explorer**: the Console page where a Project's Logs are searched and read. **Builder**, **Query** and **SQL query** already describe its modes.

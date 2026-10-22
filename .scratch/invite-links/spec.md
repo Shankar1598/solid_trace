@@ -12,7 +12,7 @@ The 400 comes from the page posting `{ email, name }` while `OrganizationUsersCo
 
 ## Solution
 
-Inviting someone new makes them an **Invited** member (see `CONTEXT.md`): a user who has never set a password. Their row on the Members page carries an "Invited" badge, and admins get a copy button that copies an **Invite link** to the clipboard. The admin shares it however they like. Opening it asks for a password (and their name), then signs them in to that Organization. When SMTP is set up, the invite also emails the link. No password is ever emailed.
+Inviting someone new makes them an **Invited** member (see `GLOSSARY.md`): a user who has never set a password. Their row on the Members page carries an "Invited" badge, and admins get a copy button that copies an **Invite link** to the clipboard. The admin shares it however they like. Opening it asks for a password (and their name), then signs them in to that Organization. When SMTP is set up, the invite also emails the link. No password is ever emailed.
 
 Someone who already has a password is added at once, as today, and gets no link.
 
@@ -47,7 +47,7 @@ Someone who already has a password is added at once, as today, and gets no link.
 - **Messages.** Someone new: "Ravi invited. Copy their invite link from the table." without mail, or "Ravi invited and emailed their invite link." with it. An existing user: "Grace added" / "Grace reactivated". Already Invited here: "Already invited. Copy their link from the table." Already a member (with a password): today's message. The form's button reads "Invite".
 - **Mail only when it can be sent.** One check says whether mail is set up: in production, when `SMTP_ADDRESS` is set; always in development and test. `MemberInvite` sends the invitation only then, and `Result#emailed` says whether it did. `OrganizationMailer#invitation_email` carries the invite link, not a password, and both templates drop the credentials block.
 - **MCP `invite_member`** returns `invite_link` for someone new or still Invited, and `emailed` as now. Its description stops promising an email with a password.
-- **Glossary.** `CONTEXT.md` defines **Invite**, **Invited** and **Invite link**, and avoids "magic link".
+- **Glossary.** `GLOSSARY.md` defines **Invite**, **Invited** and **Invite link**, and avoids "magic link".
 
 ## Testing Decisions
 

@@ -2,7 +2,7 @@
 
 Updated: 2026-10-22
 
-SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [CONTEXT.md](../CONTEXT.md).
+SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [GLOSSARY.md](../GLOSSARY.md).
 
 **Stage:** 0.1 prototype, not a production release. The goal is to build it and see the end result. Production hardening is deferred until after the prototype.
 
@@ -151,7 +151,7 @@ Wrote the logs v1 tickets with `/to-tickets` and resolved [logs 13](logs/issues/
 
 [Logs 10](logs/issues/10-storage-architecture-and-retention.md) resolved again (grilling); [ADR 0005](../docs/adr/0005-logs-per-project-hot-tables-promote-at-ingest.md) supersedes ADR 0004, and ADR 0003 gains a note.
 - **Decided:** one hot table per Project with key-named promoted columns (up to 100 (type, key) pairs, at ingest); popularity counted by the Log processor per Project per UTC day of `time`; lazy daily re-rank on the first Log of a day; demoted columns dropped at the 01:00 export; a shared MAP-only `logs_late` for out-of-window Logs; the compiler learns columns only from the promoted-set table.
-- **SQL mode's `logs` view** now covers the bar's Project and time range (a convenience, not a boundary). **SQL query** in `CONTEXT.md` is amended; tickets 11 and 12 carry pointer comments.
+- **SQL mode's `logs` view** now covers the bar's Project and time range (a convenience, not a boundary). **SQL query** in `GLOSSARY.md` is amended; tickets 11 and 12 carry pointer comments.
 - Reasoned, not benchmarked. The first-milestone load test covers per-Project tables, the daily switch and checkpoints at full scale.
 - The map's last two v1 fog patches became tickets and were resolved the same session: [15](logs/issues/15-how-log-queries-run.md) (no per-query timeouts; routing, cancel and caps left to the implementer) and [16](logs/issues/16-explorer-building-blocks.md) (non-Log results as a table only, URL state with SQL never run on load, stream paging, summary line, local time, libraries left to the implementer). Ticket 13 is now the only open logs ticket.
 
@@ -166,7 +166,7 @@ Worked in the main checkout, now on `feature/logging`; all worktrees were remove
 
 ## Earlier session (2026-10-02, logs 12 query modes)
 
-[Logs 12](logs/issues/12-query-builder-ux.md) is resolved (prototype). The user chose a `Builder | Query | SQL` switch. The Builder is filter chips + search only. Query → Builder works only when the Builder can show the Query, otherwise it offers to discard. SQL starts from the compiled SQL and is one-way. **Builder** added to `CONTEXT.md`.
+[Logs 12](logs/issues/12-query-builder-ux.md) is resolved (prototype). The user chose a `Builder | Query | SQL` switch. The Builder is filter chips + search only. Query → Builder works only when the Builder can show the Query, otherwise it offers to discard. SQL starts from the compiled SQL and is one-way. **Builder** added to `GLOSSARY.md`.
 - Prototype: branch `prototype/logs-query-modes` (`7d19a45`), worktree `.claude/worktrees/logs-query-modes`. Its `storage/sqlite/development` is a symlink to the main checkout's dev databases, which now hold the `db:seed` data (`admin@solidtrace.local` / `password123`).
 
 ## Earlier session (2026-10-02, logs 09 benchmark)

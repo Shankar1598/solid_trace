@@ -75,7 +75,7 @@ For an SDK, a `200` now means the Event is stored.
 34. As a SolidTrace maintainer, I want the processing cursor stored in Pebble, not DuckDB, so that DuckDB is only used for analytical queries.
 35. As a SolidTrace maintainer, I want startup to note the newest Event DuckDB already holds past each processing cursor, so that a crash never causes a batch to be appended twice.
 36. As a SolidTrace maintainer, I want the integration tests to drive Event processing step by step instead of sleeping, so that they are deterministic.
-37. As a SolidTrace maintainer, I want `CONTEXT.md` to describe Event ingest and Event processing as they are, so that the glossary matches the code.
+37. As a SolidTrace maintainer, I want `GLOSSARY.md` to describe Event ingest and Event processing as they are, so that the glossary matches the code.
 38. As a SolidTrace maintainer, I want the accepted gap in new-Issue notification written down, so that it can be fixed deliberately later.
 
 ## Implementation Decisions
@@ -160,7 +160,7 @@ For an SDK, a `200` now means the Event is stored.
 - Settings `pebble_batch_size`, `pebble_flush_timeout`, `pebble_channel_size`, `duckdb_channel_size` and `duckdb_flush_timeout`.
 - The request-side Issue work and its tests. The rules move to Event processing.
 
-### Glossary (`CONTEXT.md`)
+### Glossary (`GLOSSARY.md`)
 
 - **Event ingest** is redefined: the EventStore module that authenticates an incoming payload, stores it as an Event in Pebble and acknowledges it.
 - New term **Event processing**: the EventStore module that turns stored Events into Issues, indexes them in DuckDB and tells the Console. It owns the Issue lifecycle: classification, find-or-create and reopen-on-resolved.

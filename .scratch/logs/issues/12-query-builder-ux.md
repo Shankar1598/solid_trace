@@ -24,7 +24,7 @@ Built 2026-10-02 on ticket 06's chosen layout (variant D). Captured on the throw
 
 ## Answer
 
-Resolved 2026-10-02 (prototype). The user chose **variant B**, with its Summarize row removed. Glossary: **Builder** added to `CONTEXT.md`.
+Resolved 2026-10-02 (prototype). The user chose **variant B**, with its Summarize row removed. Glossary: **Builder** added to `GLOSSARY.md`.
 
 - **Three modes:** a segmented `Builder | Query | SQL` switch at the start of the bar, after the Project and time-range selects. The explorer opens in Builder. With the instance's SQL setting off, the switch shows only `Builder | Query`.
 - **The Builder is filters only:** filter chips (`field = value` / `field ≠ value`) and the search box, exactly as ticket 06 laid them out. It has no Summarize, group-by or sort controls; anything else is written in Query mode. So the Builder can show a Query only if every stage is a `where field ==|!= literal` or a single `search`.

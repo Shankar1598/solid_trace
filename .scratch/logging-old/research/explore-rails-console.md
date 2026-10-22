@@ -44,7 +44,7 @@ The Console is a Rails 8.1 + Inertia/React app where every user-facing page is a
 - **path**: /home/shankar/Personal/solid_trace/console/config/ci.rb; **role**: bin/ci pipeline: setup, rubocop, bundler-audit, importmap audit, brakeman, `bin/rails test`, `bin/rails test:system`, seed replant.
 - **path**: /home/shankar/Personal/solid_trace/event_store/storage/message_queue_reader.go; **role**: Go side of the Rails->Go outbox: FetchPendingMessages(messageType, limit) over `console_messages`, status ints 0..3 matching the Rails enum, msgpack+zstd unpack. Any new Rails->Go log command is a new message_type consumed here.
 - **path**: /home/shankar/Personal/solid_trace/event_store/pipeline/archive_consumer.go; **role**: Go consumer loop template: 5s ticker, batchSize 10, switch on message type (`archive_events`), marks processed/failed back in SQLite.
-- **path**: /home/shankar/Personal/solid_trace/CONTEXT.md; **role**: Domain vocabulary doc (Console / EventStore / Event / Issue / Integration / Project) that explicitly says 'Event ... _Avoid_: log line, message' — logging terminology must be added here per docs/agents/domain.md before coding.
+- **path**: /home/shankar/Personal/solid_trace/GLOSSARY.md; **role**: Domain vocabulary doc (Console / EventStore / Event / Issue / Integration / Project) that explicitly says 'Event ... _Avoid_: log line, message' — logging terminology must be added here per docs/agents/domain.md before coding.
 
 ## Reusable pieces
 
@@ -78,7 +78,7 @@ The Console is a Rails 8.1 + Inertia/React app where every user-facing page is a
 - UI is shadcn in the Base UI (`@base-ui/react`) `base-lyra` style with hugeicons inside ui primitives, while page-level code uses lucide-react icons; class merging via `cn()` from @/lib/utils; dates via date-fns (`format`, `formatDistanceToNow`); numbers via Intl.NumberFormat compact; tables use the shadcn Table primitives with uppercase tracking-wider muted headers.
 - Theming is CSS-variable based (oklch) in app/frontend/css/globals.css with a `.dark` class toggled by ModeToggle + an inline localStorage script in the dashboard layout — do not hardcode colors, use bg-card/text-muted-foreground/--chart-N.
 - Tests: Minitest, one file per class under test/{controllers,models,jobs,services,mailers,lib,system}, FactoryBot factories in test/factories (fixtures are disabled), `include IntegrationTestHelper` + `sign_in_as(@user)` for controller tests, WebMock for the Go HTTP boundary, ActiveJob::TestHelper + assert_enqueued_with for jobs. Run through bin/ci.
-- Domain/terminology changes are expected to be recorded in CONTEXT.md (and ADRs in docs/adr/) per AGENTS.md; feature issues live as markdown under .scratch/<feature-slug>/.
+- Domain/terminology changes are expected to be recorded in GLOSSARY.md (and ADRs in docs/adr/) per AGENTS.md; feature issues live as markdown under .scratch/<feature-slug>/.
 
 ## Pitfalls
 
@@ -111,4 +111,4 @@ The Console is a Rails 8.1 + Inertia/React app where every user-facing page is a
 - Should the repeated `set_organization` be extracted into a shared `OrganizationScoped` concern (and real Pundit policies added) as part of this feature, or left as-is to match existing style?
 - Retention/archival policy for logs (Parquet partitions, TTL per project, storage quota) and who schedules it — is it another ConsoleMessage command to Go, and does it need a settings UI?
 - Ingest path for logs: a new Go endpoint (OTLP/HTTP JSON/Vector-compatible) authenticated by the existing Sentry public key in project_keys, or new log-specific keys/tokens with their own Rails UI?
-- Terminology: CONTEXT.md currently reserves 'Event' for Sentry payloads and explicitly avoids 'log line'. New nouns (LogRecord? LogStream? Dataset?) should be agreed and written into CONTEXT.md before implementation.
+- Terminology: GLOSSARY.md currently reserves 'Event' for Sentry payloads and explicitly avoids 'log line'. New nouns (LogRecord? LogStream? Dataset?) should be agreed and written into GLOSSARY.md before implementation.

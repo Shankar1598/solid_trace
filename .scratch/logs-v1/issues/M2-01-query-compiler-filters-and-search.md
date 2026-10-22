@@ -48,7 +48,7 @@ What was built:
 - **Tests:** `logs_query_test.go`. The test helper `latestLogs` now runs the empty Query over 2000–2100, so every earlier Log test reads through the compiler. `handler/routes_test.go` checks that the new POST routes are on the query app only.
 
 Choices the ticket left open:
-- **Chips** require every stage to be `where <Field> ==|!= <literal>` (one comparison per stage; parentheses around it are fine) and at most one `search`. `and` inside one `where` gives no chips, following CONTEXT.md's Builder strictly.
+- **Chips** require every stage to be `where <Field> ==|!= <literal>` (one comparison per stage; parentheses around it are fine) and at most one `search`. `and` inside one `where` gives no chips, following GLOSSARY.md's Builder strictly.
 - **Cancel:** the scan checks `ctx` between hours and runs DuckDB queries with it. But the handlers pass `c.UserContext()`, and fasthttp gives no signal when a client disconnects, so a cancelled run in the browser doesn't stop the server's scan. It ends at `limit` Logs or the end of the range. Stopping on disconnect would need a cancel endpoint or a different server. Left for M2-03 to decide if it matters.
 - **Caps:** 1,000 Logs per page and no cap on the range. An empty hour costs nothing because only hours with files or unexported Logs are scanned.
 - **Fetch by id** takes an optional `time` hint because a UUIDv7 says when a Log was received, not its `time`. Without the hint it opens every file of the Project.
