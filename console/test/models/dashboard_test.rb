@@ -86,6 +86,7 @@ class DashboardTest < ActiveSupport::TestCase
       select("blank", field(project.id, " ")),
       select("long", field(project.id, "x" * 201)),
       select("time", field(project.id, "time")),
+      select("_time", field(project.id, "_time")),
       select("foreign", field(create(:project).id, "service")),
       select("none", field(nil, "service")),
       select("odd", field("first", "service")),
@@ -95,11 +96,12 @@ class DashboardTest < ActiveSupport::TestCase
 
     assert_not @dashboard.valid?
     errors = @dashboard.errors.to_hash.transform_keys(&:to_s)
-    assert_equal %w[filters[0].options.field filters[1].options.field filters[2].options.field filters[3].options.project_id
-      filters[4].options.project_id filters[5].options.project_id filters[6].options], errors.keys
+    assert_equal %w[filters[0].options.field filters[1].options.field filters[2].options.field filters[3].options.field
+      filters[4].options.project_id filters[5].options.project_id filters[6].options.project_id filters[7].options], errors.keys
     assert_includes errors["filters[2].options.field"], "can't be time"
-    assert_includes errors["filters[3].options.project_id"], "must be a Project of the Dashboard's Organization"
-    assert_includes errors["filters[6].options"], "must be a fixed list or a field"
+    assert_includes errors["filters[3].options.field"], "can't be time"
+    assert_includes errors["filters[4].options.project_id"], "must be a Project of the Dashboard's Organization"
+    assert_includes errors["filters[7].options"], "must be a fixed list or a field"
   end
 
   test "a Dashboard has at most 20 filters, and each is an object" do
