@@ -174,7 +174,7 @@ A value is text. Compared with a built-in field, it is text. Compared with an At
 
 A filter goes on either side of `==`, `!=`, `=~` and `!~`, after `contains`, `startswith` and their `!` and `_cs` forms, and after `search`. Anywhere else it's an error: in `project`, `extend`, `summarize` or `sort`, in an `in (…)` list, in an order comparison such as `>`, after `matches regex`, and inside `not(…)`, where All would keep nothing. To leave a value out, use `!=`.
 
-Only a Dashboard's Charts fill filters in. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have.
+Only a Dashboard's Charts fill filters in, on the Dashboard page or through the MCP server's `get_chart_data`. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have. A Monitor's Query can't name a filter.
 
 ## Not in the language
 

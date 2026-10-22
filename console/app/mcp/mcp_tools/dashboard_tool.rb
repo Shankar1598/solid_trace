@@ -27,10 +27,10 @@ module McpTools
           type: "string", enum: %w[select search],
           description: "select: a pick from options. search: a text box, for search $q or message contains $q.",
         },
-        multiple: { type: "boolean", description: "Whether a select takes several values. false when not given; a search has none." },
+        multiple: { type: "boolean", description: "Whether a select takes several values, false when not given. Not for a search." },
         options: {
           type: "object",
-          description: "A select's options, which a search has none of, in one of two shapes. A fixed list, " \
+          description: "A select's options, in one of two shapes; not for a search. A fixed list, " \
                        "{\"from\": \"list\", \"items\": [{\"label\": \"Errors\", \"value\": \"error\"}, {\"value\": \"warn\"}]}: " \
                        "1 to #{Dashboard::MAX_OPTIONS} items, each value not empty and unique, label and value at most " \
                        "#{Dashboard::MAX_OPTION_TEXT} characters, an empty label being the value. Or a field's values, " \

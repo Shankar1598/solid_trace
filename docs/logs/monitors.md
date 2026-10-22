@@ -7,6 +7,8 @@ There are two kinds:
 - A **Threshold monitor** compares a number with a threshold, such as "more than 50 errors in the last 5 minutes". It is **firing** while the number passes the threshold and **ok** otherwise.
 - A **Match monitor** sends a message when new Logs match its Query, such as "any Log from billing with level fatal".
 
+A Monitor's Query can't name a [Dashboard filter](query-language.md#dashboard-filters), such as `$service`: only a Dashboard's Charts fill filters in, so saving refuses it.
+
 ## Threshold monitors
 
 The Query must end in a `summarize` with one number per row, or in `count`:
