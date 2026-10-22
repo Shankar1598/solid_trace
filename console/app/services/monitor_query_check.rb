@@ -3,9 +3,12 @@
 # Checks, when a Monitor is saved, that EventStore can run its Query the way
 # its kind needs, and adds to the Monitor's errors on :query when it can't.
 #
-# - Threshold: validate says the Query has no mistakes and ends in a
-#   summarize (or count), and a dry run over the Monitor's range gives a
-#   table with exactly one number column and no time bins.
+# - Either kind: validate says the Query has no mistakes and names no
+#   Dashboard filter ($service), which only a Dashboard's Charts fill in; a
+#   Monitor would run it as All, a value nobody chose.
+# - Threshold: the Query ends in a summarize (or count), and a dry run over
+#   the Monitor's range gives a table with exactly one number column and no
+#   time bins.
 # - Match: arming it (after_batch "") checks the Query returns Logs, and
 #   gives the ingest_cursor its runs start from, which the Monitor keeps when
 #   it has to start again (#arm?).
@@ -23,7 +26,13 @@ class MonitorQueryCheck
   end
 
   def call
-    @monitor.kind_threshold? ? check_threshold : check_match
+    validation = EventStore.validate_logs_query(project_id: @monitor.project_id, query: @monitor.query)
+    return query_errors(validation) if Array(validation["errors"]).any?
+
+    filters = Array(validation["parameters"])
+    return add("can't name a filter. Filters (#{filters.map { |name| "$#{name}" }.join(', ')}) work only on Dashboard Charts") if filters.any?
+
+    @monitor.kind_threshold? ? check_threshold(validation) : check_match
   rescue EventStore::Rejected => e
     query_errors(e.body)
   rescue EventStore::TimedOut => e
@@ -35,9 +44,7 @@ class MonitorQueryCheck
 
   private
 
-  def check_threshold
-    validation = EventStore.validate_logs_query(project_id: @monitor.project_id, query: @monitor.query)
-    return query_errors(validation) if Array(validation["errors"]).any?
+  def check_threshold(validation)
     return add(SUMMARIZE) unless ends_in_summarize?(Array(validation["stages"]).last)
 
     from, to = @monitor.window(@now)
