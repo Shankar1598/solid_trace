@@ -20,4 +20,6 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      RAILS_ENV=test bin/rails db:test:prepare && bin/rails test
      ```
 
+If Vite stops with `ENOSPC` on a `watch`, the inotify watch limit is used up, not the disk. Restart Vite with `CHOKIDAR_USEPOLLING=1` set, and it polls instead of watching.
+
 Before tagging, record each suite's result (exit, time, counts) in the release's entry in `.scratch/STATUS.md`.
