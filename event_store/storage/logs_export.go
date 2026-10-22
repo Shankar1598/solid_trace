@@ -20,6 +20,8 @@ const (
 	// QuarterHour is the span of a busy Project's quarter-hour files, and
 	// how often the Log export runs: at each quarter-hour start.
 	QuarterHour = 15 * time.Minute
+	// quarterMinutes is QuarterHour in minutes.
+	quarterMinutes = int(QuarterHour / time.Minute)
 	// exportWait is how long after a quarter-hour ends the export takes a
 	// busy Project's Logs of it.
 	exportWait = 15 * time.Minute
@@ -418,8 +420,8 @@ func (e *projectExport) quarters(cutoff time.Time) ([]time.Time, error) {
 		args = append(args, timestampString(cutoff))
 	}
 	rows, err := e.conn.QueryContext(e.ctx, fmt.Sprintf(
-		"SELECT DISTINCT date_trunc('hour', time) + to_minutes(CAST(minute(time) // 15 * 15 AS BIGINT)) AS quarter FROM (%s) ORDER BY quarter",
-		strings.Join(sources, " UNION ALL ")), args...)
+		"SELECT DISTINCT date_trunc('hour', time) + to_minutes(CAST(minute(time) // %[1]d * %[1]d AS BIGINT)) AS quarter FROM (%[2]s) ORDER BY quarter",
+		quarterMinutes, strings.Join(sources, " UNION ALL ")), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list quarter-hours to export: %w", err)
 	}
