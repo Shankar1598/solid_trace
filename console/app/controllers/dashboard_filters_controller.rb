@@ -15,10 +15,10 @@ class DashboardFiltersController < ApplicationController
   # while its Project is the Organization's.
   def values
     dashboard = @current_org.dashboards.find(params[:dashboard_id])
-    options = dashboard.filters.find { |filter| filter["name"] == params[:name] }&.dig("options")
-    raise ActiveRecord::RecordNotFound unless options.is_a?(Hash) && options["from"] == "field"
+    project_id, field = dashboard.field_select(params[:name])
+    raise ActiveRecord::RecordNotFound unless field
 
-    project = @current_org.projects.find(options["project_id"])
-    render json: { values: ChartRuns.field_values(project, options["field"], from: @from, to: @to) }
+    project = @current_org.projects.find(project_id)
+    render json: { values: ChartRuns.field_values(project, field, from: @from, to: @to) }
   end
 end
