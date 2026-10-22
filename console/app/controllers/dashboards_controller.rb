@@ -91,7 +91,7 @@ class DashboardsController < ApplicationController
   def dashboard_params
     params.require(:dashboard).permit(
       :name, :description, :default_range, :auto_refresh,
-      filters: [ :name, :label, :kind, :multiple, { options: [ :from, { items: %i[label value] } ] } ],
+      filters: [ :name, :label, :kind, :multiple, { options: [ :from, :project_id, :field, { items: %i[label value] } ] } ],
     ).to_h
   end
 end
