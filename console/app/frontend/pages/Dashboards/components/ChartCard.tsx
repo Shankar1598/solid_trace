@@ -6,7 +6,9 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { fetchChartData } from '@/lib/dashboards/api'
-import { explorerHref, type DashboardChart } from '@/lib/dashboards/dashboard'
+import {
+  explorerHref, parametersOfChart, unknownFilters, type DashboardChart, type DashboardFilter, type FilterValues,
+} from '@/lib/dashboards/dashboard'
 import { isAbort, type FetchQueue } from '@/lib/dashboards/fetchQueue'
 import { elapsedText } from '@/lib/logs/runLine'
 import type { TimeRange } from '@/lib/timeRange'
@@ -22,12 +24,16 @@ export interface DashboardRun {
 }
 
 /**
- * A chart of the Dashboard: its title, its run over the Dashboard's range,
- * drawn as its viz, and a menu to open it in the explorer, edit, duplicate
- * or delete it. A failed run shows its error here. In Edit mode the title
- * is the handle that drags the card.
+ * A chart of the Dashboard: its title, its run over the Dashboard's range
+ * with the values of the filters its Query names, drawn as its viz, and a
+ * menu to open it in the explorer, edit, duplicate or delete it. A failed run
+ * shows its error here, and a name that isn't one of the Dashboard's filters
+ * is said above the chart. In Edit mode the title is the handle that drags
+ * the card.
  */
-export function ChartCard({ chart, project, showProject, orgSlug, run, range, queue, editing, onRunning, onEdit, onDuplicate, onDelete }: {
+export function ChartCard({
+  chart, project, showProject, orgSlug, run, range, filters, values, queue, editing, onRunning, onEdit, onDuplicate, onDelete,
+}: {
   chart: DashboardChart
   project: ProjectOption | undefined
   /** Whether the header names the chart's Project: only when the Dashboard's charts read more than one. */
@@ -36,6 +42,9 @@ export function ChartCard({ chart, project, showProject, orgSlug, run, range, qu
   run: DashboardRun
   /** The range shown, for Open in explorer. */
   range: TimeRange
+  filters: DashboardFilter[]
+  /** The filter bar's values; the chart sends those of the filters it names. */
+  values: FilterValues
   queue: FetchQueue
   editing: boolean
   onRunning: (id: number, running: boolean) => void
@@ -44,13 +53,19 @@ export function ChartCard({ chart, project, showProject, orgSlug, run, range, qu
   onDelete: () => void
 }) {
   const [answer, setAnswer] = useState<ChartRun>({ status: 'running' })
+  const parameters = parametersOfChart(chart.query, filters, values)
+  // Changes only when the values of this chart's own filters do.
+  const parametersKey = JSON.stringify(parameters)
+  const unknown = unknownFilters(chart.query, filters)
 
   useEffect(() => {
     let live = true
     const key = String(chart.id)
     setAnswer({ status: 'running' })
     onRunning(chart.id, true)
-    queue.run(key, signal => fetchChartData({ orgSlug, dashboardId: chart.dashboard_id, chartId: chart.id, from: run.from, to: run.to, signal }))
+    queue.run(key, signal => fetchChartData({
+      orgSlug, dashboardId: chart.dashboard_id, chartId: chart.id, from: run.from, to: run.to, parameters, signal,
+    }))
       .then(({ table, elapsedMs }) => live && setAnswer({ status: 'done', table, elapsedMs }))
       .catch(error => live && setAnswer(isAbort(error) ? { status: 'cancelled' } : { status: 'error', message: error.message }))
       .finally(() => live && onRunning(chart.id, false))
@@ -59,8 +74,9 @@ export function ChartCard({ chart, project, showProject, orgSlug, run, range, qu
       queue.cancel(key)
       onRunning(chart.id, false)
     }
-    // A run per Refresh or range, and again when the chart is saved.
-  }, [run, chart.id, chart.updated_at])
+    // A run per Refresh or range, again when the chart is saved, and when
+    // one of its filters changes.
+  }, [run, chart.id, chart.updated_at, parametersKey])
 
   return (
     <div className="flex h-full flex-col overflow-hidden border bg-card" data-chart-card={chart.title}>
@@ -91,6 +107,11 @@ export function ChartCard({ chart, project, showProject, orgSlug, run, range, qu
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {unknown.length > 0 && (
+        <p className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground">
+          {unknown.map(name => `$${name}`).join(', ')} {unknown.length === 1 ? "isn't one of this Dashboard's filters" : "aren't this Dashboard's filters"}, so the chart runs {unknown.length === 1 ? 'it' : 'them'} as All.
+        </p>
+      )}
       <div className="min-h-0 flex-1 overflow-auto">
         <ChartBody run={answer} viz={chart.viz} options={chart.options} />
       </div>

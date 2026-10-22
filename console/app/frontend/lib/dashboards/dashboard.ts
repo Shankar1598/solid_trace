@@ -1,10 +1,11 @@
 // A Dashboard and its charts as the pages know them, and the plain logic
-// around them: the range a page shows, how a chart's viz maps to the
-// explorer's chart forms, a chart's link to the explorer, and the places a
-// grid change moves charts to.
+// around them: the range and filter values a page shows, how a chart's viz
+// maps to the explorer's chart forms, a chart's link to the explorer, and the
+// places a grid change moves charts to.
 import type { AutoRefresh } from '../autoRefresh'
 import type { ChartForm } from '../charts/series'
 import { searchOf, stateFromSearch, type Viz } from '../logs/explorerState'
+import { parametersOf } from '../logs/queryLexer'
 import { isSpan, type TimeRange } from '../timeRange'
 
 export type DashboardViz = 'line' | 'area' | 'bar' | 'stat' | 'table'
@@ -42,12 +43,31 @@ export interface Dashboard {
   /** A span back from now, such as `1h`. */
   default_range: string
   auto_refresh: AutoRefresh
+  /** The filter bar's controls, in order. */
+  filters: DashboardFilter[]
   chart_count: number
   created_by: string | null
   created_at: string
   updated_at: string
   charts?: DashboardChart[]
 }
+
+// Types rather than interfaces, so a list of filters is Inertia form data.
+export type FilterOption = { label: string; value: string }
+
+/** A select's options: a fixed list. */
+export type FilterOptions = { from: 'list'; items: FilterOption[] }
+
+/**
+ * One of a Dashboard's filters, which a chart's Query names as `$name`: a
+ * select of one value or several, or a search box. Its label is never empty.
+ */
+export type DashboardFilter =
+  | { name: string; label: string; kind: 'select'; multiple: boolean; options: FilterOptions }
+  | { name: string; label: string; kind: 'search' }
+
+/** The values chosen in a Dashboard's filters, by name. A filter left out is All. */
+export type FilterValues = Record<string, string[]>
 
 /** A chart's place on the 12-column grid. */
 export interface Place {
@@ -67,8 +87,12 @@ export function rangeOfSearch(search: string, defaultRange: string): TimeRange {
   return { kind: 'relative', span: isSpan(defaultRange) ? defaultRange : '1h' }
 }
 
-/** A range as a Dashboard's URL search: relative stays relative. */
-export function searchOfRange(range: TimeRange): string {
+/**
+ * A range, and the filters' values beside it, as a Dashboard's URL search:
+ * relative stays relative, and each value is a `v_<name>` key, repeated for
+ * several values.
+ */
+export function searchOfRange(range: TimeRange, values: FilterValues = {}): string {
   const params = new URLSearchParams()
   if (range.kind === 'relative') {
     params.set('range', range.span)
@@ -76,7 +100,71 @@ export function searchOfRange(range: TimeRange): string {
     params.set('from', range.from.toISOString())
     params.set('to', range.to.toISOString())
   }
+  appendValues(params, values)
   return `?${params}`
+}
+
+/** Each value as a `v_<name>` key. */
+export function appendValues(params: URLSearchParams, values: FilterValues) {
+  for (const [name, list] of Object.entries(values)) {
+    for (const value of list) params.append(`v_${name}`, value)
+  }
+}
+
+/**
+ * The values of a Dashboard's filters, in the filters' order, from values by
+ * name: names that aren't its filters and All (no value, or empty) are left
+ * out, and a filter that takes one value keeps the first.
+ */
+export function filterValues(filters: DashboardFilter[], given: Record<string, readonly string[] | undefined>): FilterValues {
+  const values: FilterValues = {}
+  for (const filter of filters) {
+    const list = (given[filter.name] ?? []).filter(value => value !== '')
+    const kept = filter.kind === 'select' && filter.multiple ? list : list.slice(0, 1)
+    if (kept.length > 0) values[filter.name] = kept
+  }
+  return values
+}
+
+/** The values a Dashboard's URL holds for its filters. */
+export function filterValuesOfSearch(search: string, filters: DashboardFilter[]): FilterValues {
+  const params = new URLSearchParams(search)
+  return filterValues(filters, Object.fromEntries(filters.map(f => [f.name, params.getAll(`v_${f.name}`)])))
+}
+
+/** The values a chart's Query runs with: those of the Dashboard's filters it names that aren't All. */
+export function parametersOfChart(query: string, filters: DashboardFilter[], values: FilterValues): FilterValues {
+  const named = new Set(parametersOf(query))
+  return filterValues(filters.filter(f => named.has(f.name)), values)
+}
+
+/** The names a chart's Query uses that aren't the Dashboard's filters, which run as All. */
+export function unknownFilters(query: string, filters: DashboardFilter[]): string[] {
+  const known = new Set(filters.map(f => f.name))
+  return parametersOf(query).filter(name => !known.has(name))
+}
+
+/** What a filter holds, as its bar reads it: All, up to two values by their labels, or a count. */
+export function chosenText(filter: DashboardFilter, values: readonly string[]): string {
+  if (values.length === 0) return 'All'
+  if (values.length > 2) return `${values.length} values`
+  const labels = new Map(filter.kind === 'select' ? filter.options.items.map(o => [o.value, o.label]) : [])
+  return values.map(value => labels.get(value) ?? value).join(', ')
+}
+
+const LABELLED_OPTION = /^(.*?)\s+=\s+(.*)$/
+
+/** A select's options typed one per line, each a value or `Label = value`; blank lines go. */
+export function optionsOfText(text: string): FilterOption[] {
+  return text.split('\n').map(line => line.trim()).filter(line => line !== '').map(line => {
+    const labelled = LABELLED_OPTION.exec(line)
+    return labelled ? { label: labelled[1], value: labelled[2] } : { label: line, value: line }
+  })
+}
+
+/** Options as optionsOfText reads them. */
+export function textOfOptions(items: FilterOption[]): string {
+  return items.map(o => (o.label === o.value ? o.value : `${o.label} = ${o.value}`)).join('\n')
 }
 
 /** The chart form a viz draws, or the table alone. */
