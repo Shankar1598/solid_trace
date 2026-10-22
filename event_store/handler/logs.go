@@ -59,16 +59,44 @@ type queryRequest struct {
 	AfterBatch json.RawMessage `json:"after_batch"`
 	// Totals asks for a time chart's totals with its table (see table).
 	Totals bool `json:"totals"`
+	// Parameters are the values of the Dashboard filters the Query names,
+	// by name. A filter without values is All.
+	Parameters map[string][]string `json:"parameters"`
+}
+
+// The most values a run takes for one Dashboard filter, and the longest
+// value, in bytes.
+const (
+	maxParameterValues      = 100
+	maxParameterValueLength = 1000
+)
+
+// parametersProblem says what is wrong with a run's Dashboard filter
+// values, if anything.
+func parametersProblem(parameters map[string][]string) fiber.Map {
+	for name, values := range parameters {
+		if len(values) > maxParameterValues {
+			return fiber.Map{"error": fmt.Sprintf("parameters: %s has more than %d values", name, maxParameterValues)}
+		}
+		for _, v := range values {
+			if len(v) > maxParameterValueLength {
+				return fiber.Map{"error": fmt.Sprintf("parameters: a value of %s is longer than %d bytes", name, maxParameterValueLength)}
+			}
+		}
+	}
+	return nil
 }
 
 // POST /api/:project_id/logs/query
 //
 // Runs a Query over a Project's Logs of [from, to): {"query", "from", "to"}
 // (RFC 3339), with "limit" (default 200, at most 1,000), "cursor" (a
-// previous page's next_cursor), "timeout_seconds" and "totals" optional. A
-// Query of Log rows answers {"logs": […], "next_cursor"}, newest first;
-// next_cursor is null once there are no older Logs, or take's number of Logs
-// has been given.
+// previous page's next_cursor), "timeout_seconds", "totals" and "parameters"
+// optional. "parameters" fills in the Dashboard filters the Query names,
+// {"<name>": ["<value>", …]}, with at most 100 values of at most 1,000 bytes
+// each; a filter it leaves out is All. A Query of Log rows answers
+// {"logs": […], "next_cursor"}, newest first; next_cursor is null once there
+// are no older Logs, or take's number of Logs has been given.
 // A run that has read for ScanBudget answers with what it has found, fewer
 // than limit Logs or none, and a next_cursor to go on from. A Query that
 // returns a table, one with project, extend, summarize, a sort other than
@@ -92,6 +120,9 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	var req queryRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
+	}
+	if problem := parametersProblem(req.Parameters); problem != nil {
+		return c.Status(400).JSON(problem)
 	}
 	read := "query"
 	if req.AfterBatch != nil {
@@ -119,7 +150,7 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid cursor"})
 		}
 	}
-	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()}, req.Parameters)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
@@ -202,7 +233,7 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 	if !ok {
 		return c.Status(400).JSON(fiber.Map{"error": "limit must be a positive whole number"})
 	}
-	query, err := h.compile(projectID, req.Query, logquery.Bounds{Now: h.clock.Now()})
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{Now: h.clock.Now()}, nil)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
@@ -350,12 +381,13 @@ func (h *LogsHandler) tableFailed(c *fiber.Ctx, run *run, projectID uint32, err 
 // POST /api/:project_id/logs/validate
 //
 // Checks a Query, {"query"}, without running it. Answers {"errors": […],
-// "source", "chips", "stages"}: each error with its message and the line and
-// column (from 1, in characters) where it starts and ends; the name the Query
-// gives its source, such as a Project's slug, else null, even when it names
-// another Project; chips when the Builder can show the Query, else null; and,
-// when it has no errors, where each stage is and whether it is a leading
-// filter the Builder can show (logquery.Stage).
+// "source", "chips", "stages", "parameters"}: each error with its message and
+// the line and column (from 1, in characters) where it starts and ends; the
+// name the Query gives its source, such as a Project's slug, else null, even
+// when it names another Project; chips when the Builder can show the Query,
+// else null; and, when it has no errors, where each stage is and whether it
+// is a leading filter the Builder can show (logquery.Stage), and the
+// Dashboard filters the Query names, in order of first use.
 func (h *LogsHandler) Validate(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -371,19 +403,27 @@ func (h *LogsHandler) Validate(c *fiber.Ctx) error {
 	if name := logquery.SourceOf(req.Query); name != "" {
 		source = &name
 	}
-	query, err := h.compile(projectID, req.Query, logquery.Bounds{Now: h.clock.Now()})
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{Now: h.clock.Now()}, nil)
 	if err != nil {
-		return c.JSON(fiber.Map{"errors": queryErrors(req.Query, err), "source": source, "chips": nil, "stages": []logquery.Stage{}})
+		return c.JSON(fiber.Map{
+			"errors": queryErrors(req.Query, err), "source": source, "chips": nil, "stages": []logquery.Stage{}, "parameters": []string{},
+		})
 	}
-	return c.JSON(fiber.Map{"errors": []logquery.Problem{}, "source": source, "chips": query.Chips(), "stages": query.Stages()})
+	parameters := query.Parameters()
+	if parameters == nil {
+		parameters = []string{}
+	}
+	return c.JSON(fiber.Map{
+		"errors": []logquery.Problem{}, "source": source, "chips": query.Chips(), "stages": query.Stages(), "parameters": parameters,
+	})
 }
 
 // compile compiles a Query for a Project: a source naming Logs other than
 // the Project's is a mistake like any other. When Console's database can't
 // be read the source goes unchecked, as the Query reads the Project's Logs
 // whatever it names.
-func (h *LogsHandler) compile(projectID uint32, text string, bounds logquery.Bounds) (*logquery.Query, error) {
-	query, err := logquery.Compile(text, bounds)
+func (h *LogsHandler) compile(projectID uint32, text string, bounds logquery.Bounds, values map[string][]string) (*logquery.Query, error) {
+	query, err := logquery.Compile(text, bounds, values)
 	if err != nil {
 		return nil, err
 	}

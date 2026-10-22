@@ -50,6 +50,13 @@ type Query struct {
 	spans []parser.Span
 	// tree is the Query's syntax tree, which the Builder is read from.
 	tree *parser.Query
+	// heads is how many of the text's stages are the head's. A stage that
+	// keeps every row, as a where on a Dashboard filter set to All does, is
+	// left out of head and tail.
+	heads int
+	// parameters are the Dashboard filters the Query names, in order of
+	// first use.
+	parameters []string
 
 	from, to time.Time
 	// table is set when the Query returns a table rather than Log rows.
@@ -66,15 +73,18 @@ type Query struct {
 	shape shape
 }
 
-// Compile parses and checks a Query's text for the given bounds. The error,
-// if any, is an *Error with the span of the first mistake.
-func Compile(source string, bounds Bounds) (*Query, error) {
+// Compile parses and checks a Query's text for the given bounds, filling in
+// each Dashboard filter it names, $name, with values[name]. A filter with no
+// values, or only empty ones, is All: its comparisons drop out, so that the
+// Query compiles as if they weren't there. The error, if any, is an *Error
+// with the span of the first mistake.
+func Compile(source string, bounds Bounds, values map[string][]string) (*Query, error) {
 	tree, err := parser.Parse(source)
 	if err != nil {
 		return nil, err
 	}
 	q := &Query{from: bounds.From.UTC(), to: bounds.To.UTC(), text: source, tree: tree}
-	c := &compiler{text: source, bounds: bounds, scope: logScope(), reads: map[attrKey]bool{}}
+	c := &compiler{text: source, bounds: bounds, values: values, scope: logScope(), reads: map[attrKey]bool{}}
 	inHead := true
 	for _, s := range tree.Stages {
 		if inHead {
@@ -93,18 +103,31 @@ func Compile(source string, bounds Bounds) (*Query, error) {
 		if err != nil {
 			return nil, err
 		}
+		q.spans = append(q.spans, s.Span())
+		if inHead {
+			q.heads++
+		}
+		if w, ok := compiled.(whereStage); ok && w.predicate == (always{}) {
+			continue
+		}
 		if inHead {
 			q.head = append(q.head, compiled)
 		} else {
 			q.tail = append(q.tail, compiled)
 		}
-		q.spans = append(q.spans, s.Span())
 	}
 	if inHead {
 		q.narrow()
 	}
+	q.parameters = c.parameters
 	q.finish(c)
 	return q, nil
+}
+
+// Parameters are the names of the Dashboard filters the Query names, in
+// order of first use.
+func (q *Query) Parameters() []string {
+	return q.parameters
 }
 
 // Range is the time range the Query reads: the request's, narrowed by any
@@ -140,7 +163,13 @@ func errorAt(node parser.Node, format string, args ...any) *Error {
 type compiler struct {
 	text   string
 	bounds Bounds
-	scope  scope
+	// values are the Dashboard filters' values, by name; parameters the
+	// filters the Query names, in order.
+	values     map[string][]string
+	parameters []string
+	// inNot is set inside not(…), where a filter can't go.
+	inNot bool
+	scope scope
 	// tail is set once past the leading filter stages.
 	tail bool
 	// reads are the Attributes, by type, the tail reads from Logs; names
@@ -159,6 +188,18 @@ func (c *compiler) read(t storage.AttributeType, key string) {
 	if !c.reads[k] {
 		c.reads[k] = true
 		c.readOrder = append(c.readOrder, k)
+	}
+}
+
+// mark returns a function that forgets what the compiler has noted since of
+// the Attributes the Query names and the tail reads.
+func (c *compiler) mark() (forget func()) {
+	reads, names := len(c.readOrder), len(c.names)
+	return func() {
+		for _, k := range c.readOrder[reads:] {
+			delete(c.reads, k)
+		}
+		c.readOrder, c.names = c.readOrder[:reads], c.names[:names]
 	}
 }
 
