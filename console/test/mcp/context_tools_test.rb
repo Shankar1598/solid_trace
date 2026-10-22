@@ -21,7 +21,7 @@ class McpContextToolsTest < ActiveSupport::TestCase
     answer = call_tool(:whoami, user: @user)
 
     assert_not answer.error?
-    assert_equal({ "user" => { "name" => "Ada", "email" => "ada@example.com" },
+    assert_equal({ "user" => { "name" => "Ada", "email" => "ada@example.com", "instance_admin" => false },
                    "organizations" => [ { "slug" => "acme", "name" => "Acme", "role" => "admin" },
                                         { "slug" => "beta", "name" => "Beta", "role" => "member" } ] }, answer.json)
     assert_equal "http://console.test/user_settings", answer.link
