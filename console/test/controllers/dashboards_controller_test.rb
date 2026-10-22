@@ -120,6 +120,21 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [], @dashboard.reload.filters
   end
 
+  test "a member saves a select of a field's values in one of the Organization's Projects, and not another's" do
+    filter = { name: "service", label: "", kind: "select", multiple: false, options: { from: "field", project_id: @project.id, field: "service" } }
+    patch dashboard_url(@dashboard, org_slug: @organization.slug), params: { dashboard: { filters: [ filter ] } }, as: :json
+
+    assert_response :success
+    assert_equal({ "from" => "field", "project_id" => @project.id, "field" => "service" }, response.parsed_body["filters"].first["options"])
+
+    filter[:options][:project_id] = @foreign_project.id
+    patch dashboard_url(@dashboard, org_slug: @organization.slug), params: { dashboard: { filters: [ filter ] } }, as: :json
+
+    assert_response :unprocessable_content
+    assert_equal [ "must be a Project of the Dashboard's Organization" ], response.parsed_body["errors"]["filters[0].options.project_id"]
+    assert_equal @project.id, @dashboard.reload.filters.first["options"]["project_id"]
+  end
+
   test "a save keeps the range and filter values the page showed, several values as a repeated key" do
     shown = "range=6h&v_service=api&v_service=web&v_q=time+out"
 
