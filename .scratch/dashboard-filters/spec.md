@@ -1,6 +1,6 @@
 # Dashboard filters
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 Planned with the user on 2026-10-21, like Axiom's dashboard filters. Tickets: [01](issues/01-filters-in-the-query-language.md), [02](issues/02-dashboard-filter-bar.md), [03](issues/03-select-of-a-fields-values.md), [04](issues/04-filters-in-the-builder.md), [05](issues/05-mcp-tools-and-monitors.md). Decided in [ADR 0014](../../docs/adr/0014-dashboard-filters-are-query-parameters.md).
 
