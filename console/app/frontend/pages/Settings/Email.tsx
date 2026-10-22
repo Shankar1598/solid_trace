@@ -172,7 +172,7 @@ export default function SettingsEmail({ settings }: { settings: EmailSettings })
             <CardHeader>
               <CardTitle>Send a test email</CardTitle>
               <CardDescription>
-                Sent at once with the saved settings, so the SMTP server's error, if any, shows here.
+                Sent at once with the saved settings, so you see the SMTP server's error if it fails.
               </CardDescription>
             </CardHeader>
             <CardContent className="pb-2">
