@@ -121,7 +121,7 @@ Where EventStore keeps a **Project**'s Log files, the hourly Parquet files its h
 _Avoid_: archive, cold storage, data lake
 
 **Log file order**:
-The Fields the hourly export sorts each of a **Project**'s Log files by, before time. Each Project sets its own in Console; by default it is `service`, then the `file` Attribute, and none means time only. A change applies from the next hourly export. The Logs of one source then sit together in a few row groups, so a **Query** filtered on those Fields reads only those. A Log without a Field of the order comes after those with it. Queries answer the same whatever the order; only how much they read changes.
+The Fields the hourly export sorts each of a **Project**'s Log files by, before time. Each Project sets its own in Console; by default it is `service`, then the `file` Attribute, and none means time only. A change applies from the next hourly export. The Logs of one Service's log file then sit together in a few row groups, so a **Query** filtered on those Fields reads only those. A Log without a Field of the order comes after those with it. Queries answer the same whatever the order; only how much they read changes.
 _Avoid_: sort key, sort order, clustering key, partition key
 
 **Bin cache**:
