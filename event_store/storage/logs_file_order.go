@@ -8,7 +8,7 @@ import (
 	"github.com/solidtrace/event_store/pkg/logger"
 )
 
-// LogFileOrder is a Project's Log file order: the Fields the hourly export
+// LogFileOrder is a Project's Log file order: the Fields the Log export
 // sorts each Log file by, before time and id, so that the Logs of one Service's
 // log file sit together in a few row groups. Each is a built-in field (service,
 // environment or level) or an Attribute, read as a string. Empty means time
@@ -24,7 +24,7 @@ type LogFileOrders interface {
 	LogFileOrder(projectID uint32) (LogFileOrder, error)
 }
 
-// UseLogFileOrders has the hourly export sort each Project's files by its
+// UseLogFileOrders has the Log export sort each Project's files by its
 // order from orders. Without it, every Project's files get the default.
 func (s *LogStore) UseLogFileOrders(orders LogFileOrders) {
 	s.orders = orders

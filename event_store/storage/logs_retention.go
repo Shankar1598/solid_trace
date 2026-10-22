@@ -69,7 +69,7 @@ func (s *LogStore) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 			projectID, timestampString(day)); err != nil {
 			return fmt.Errorf("delete late logs: %w", err)
 		}
-		// Only when the hourly export has been failing for a day can the
+		// Only when the Log export has been failing for a day can the
 		// hot table hold Logs this old.
 		hot, err := hotTableExists(ctx, conn, projectID)
 		if err != nil || !hot {
