@@ -104,6 +104,10 @@ Rails.application.routes.draw do
       resources :organization_users, only: [ :index, :create, :update, :destroy ]
       resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
       resource :user, only: [ :show, :update ], controller: "user_settings"
+      # The install's email, for instance admins (EmailSettingsController).
+      resource :email_settings, only: [ :show, :update ], path: "email", controller: "email_settings" do
+        post :send_test, path: "test"
+      end
     end
     get "settings", to: redirect("/%{org_slug}/settings/organization")
   end
