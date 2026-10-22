@@ -80,7 +80,7 @@ function SearchControl({ filter, value, onChange }: { filter: SearchFilter; valu
 
   return (
     <InputGroup className="h-8 w-60">
-      <InputGroupAddon><InputGroupText>{filter.label}:</InputGroupText></InputGroupAddon>
+      <InputGroupAddon><InputGroupText className="font-normal text-muted-foreground">{filter.label}:</InputGroupText></InputGroupAddon>
       <InputGroupInput
         aria-label={filter.label}
         placeholder="All"
