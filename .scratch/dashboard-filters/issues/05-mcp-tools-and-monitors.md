@@ -1,6 +1,6 @@
 # 05: MCP tools, and Monitors
 
-**Status:** ready-for-agent
+**Status:** claimed
 **Spec:** [spec.md](../spec.md)
 **Blocked by:** 03
 
