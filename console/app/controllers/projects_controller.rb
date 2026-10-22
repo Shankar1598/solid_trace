@@ -18,6 +18,8 @@ class ProjectsController < ApplicationController
       project: ProjectSerializer.new(@project, include_keys: true, ingest_url: public_ingest_url).as_json,
       default_log_retention_days: InstanceSetting.current.default_log_retention_days,
       default_log_file_order: Project::DEFAULT_LOG_FILE_ORDER,
+      # Loaded once the page shows, so EventStore never holds the page up.
+      log_file_order_attributes: InertiaRails.defer { string_attribute_names },
       can_manage_project: policy(@project).update?,
       can_delete_project: policy(@project).destroy?,
       can_manage_keys: policy(ProjectKey.new(project: @project)).create?,
@@ -61,6 +63,18 @@ class ProjectsController < ApplicationController
 
   def set_project
     @project = @current_org.projects.find_by!(slug: params[:slug])
+  end
+
+  # The names of the Project's string Attributes of the last day, most Logs
+  # first, which a Log file order sorts by, or none while EventStore can't
+  # answer.
+  def string_attribute_names
+    now = Time.current
+    fields = EventStore.logs_fields(project_id: @project.id, from: now - 1.day, to: now)
+    Array(fields["attributes"]).select { |field| field["type"] == "string" }.map { |field| field["name"] }.uniq
+  rescue EventStore::Unavailable, EventStore::Rejected => e
+    Rails.logger.error(e.message)
+    []
   end
 
   def project_params
