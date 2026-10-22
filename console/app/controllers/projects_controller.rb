@@ -14,16 +14,20 @@ class ProjectsController < ApplicationController
   end
 
   def show
-    render inertia: "Projects/Show", props: {
+    can_manage_project = policy(@project).update?
+    props = {
       project: ProjectSerializer.new(@project, include_keys: true, ingest_url: public_ingest_url).as_json,
       default_log_retention_days: InstanceSetting.current.default_log_retention_days,
       default_log_file_order: Project::DEFAULT_LOG_FILE_ORDER,
-      # Loaded once the page shows, so EventStore never holds the page up.
-      log_file_order_attributes: InertiaRails.defer { string_attribute_names },
-      can_manage_project: policy(@project).update?,
+      log_file_order_built_ins: Project::LOG_FILE_ORDER_BUILT_INS,
+      can_manage_project: can_manage_project,
       can_delete_project: policy(@project).destroy?,
       can_manage_keys: policy(ProjectKey.new(project: @project)).create?,
     }
+    # Only those who can change the Log file order are offered Attributes for
+    # it, loaded once the page shows, so EventStore never holds the page up.
+    props[:log_file_order_attributes] = InertiaRails.defer { string_attribute_names } if can_manage_project
+    render inertia: "Projects/Show", props: props
   end
 
   def new
