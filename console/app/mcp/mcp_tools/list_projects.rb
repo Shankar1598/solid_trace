@@ -4,8 +4,8 @@ module McpTools
   # An Organization's Projects, as its Project pickers list them.
   class ListProjects < Base
     description "Lists an Organization's Projects: the slug other tools take, the name, " \
-                "log_retention_days, how many days back its Logs go, and log_file_order, the Fields each Log file " \
-                "is sorted by before time, so a Query filtered on them reads less ([] is time only). Only an admin " \
+                "log_retention_days, how many days back its Logs go, and log_file_order, the Fields its Log files are " \
+                "sorted by before time ([] is time only), so a Query filtered on them reads less. Only an admin " \
                 "changes the order, on the Project's settings page."
     read_only!
     takes_organization

@@ -49,7 +49,7 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 **Context**
 
 - `whoami`: you, the Organizations you belong to, and your role in each.
-- `list_projects`: an Organization's Projects, with their slugs and how many days their Logs are kept.
+- `list_projects`: an Organization's Projects, with their slugs, how many days their Logs are kept, and the Log file order their Log files are sorted by, which a Query filtered on those Fields reads less of.
 
 **Logs**
 

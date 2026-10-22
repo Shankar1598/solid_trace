@@ -219,6 +219,16 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert same, "Copy docs/logs/query-language.md to console/app/mcp/docs/query-language.md."
   end
 
+  test "the server and the tools that run or save a Query point agents at the Log file order and Reading less" do
+    assert_includes McpServer::INSTRUCTIONS, "log_file_order"
+    [ McpTools::QueryLogs, McpTools::AddChart, McpTools::CreateMonitor ].each do |tool|
+      [ "log_file_order", "Reading less" ].each { |part| assert_includes tool.description_value, part, tool.name }
+    end
+    assert_includes McpTools::ListProjects.description_value, "log_file_order, the Fields its Log files are sorted by"
+    assert_includes McpTools::RunSql.description_value, "A condition on an Attribute reads every Log of the range"
+    assert_includes Rails.root.join("app/mcp/docs/query-language.md").read, "## Reading less"
+  end
+
   # run_sql
 
   test "run_sql runs SQL on the Project's logs view with the SQL timeout, answering at most 100 rows, linking to SQL mode" do

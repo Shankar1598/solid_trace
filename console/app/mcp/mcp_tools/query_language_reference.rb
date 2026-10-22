@@ -8,7 +8,8 @@ module McpTools
     DOC = Rails.root.join("app/mcp/docs/query-language.md")
 
     description "Answers the whole reference of the Query language query_logs, Charts and Monitors run: its stages, " \
-                "operators, aggregates and functions, how Fields' types are matched, and how a table is charted."
+                "operators, aggregates and functions, how Fields' types are matched, how a table is charted, and how to " \
+                "write a Query that reads less."
     read_only!
 
     def run

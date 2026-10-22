@@ -153,6 +153,17 @@ A chart draws at most 8 series, the ones with the largest totals, and the legend
 
 **Add to dashboard.** Beside the switch, Add to dashboard saves the Project, the Query that ran and the chart's form to a new or existing Dashboard. It is there for a Query's table, not for Logs or for SQL. Create monitor, beside it, starts a Monitor from the same Query and range: see [Monitors](monitors.md).
 
+## Reading less
+
+The newest Logs are in the hot table, read in full: a busy Project's last 15 to 30 minutes. Older Logs are in Log files, one an hour or one a quarter-hour, each sorted by the Project's `log_file_order` (from `list_projects`; `service`, then `file`, by default), then time.
+
+- **Filter on the Log file order's Fields** with `==` or `in`, such as `where file == "sidekiq.log"`, to skip the rest of each file. The first Field skips most. A later Field skips well when the Fields before it have few values, so on a Project with one Service, `file` alone is enough.
+- **Filter on a top Attribute rather than `message`.** A day's 100 most used Attributes, the top of `list_fields`, each have a column, which a condition reads alone. `message` is the widest Field: `where job_status == "fail"` reads far less than `where message contains "INFO: fail:"`. Pair a `message` match with a Log file order condition.
+- **Use `where`, not `search`**, which reads `message` and every string Attribute.
+- **Keep the range short.** A read opens only the files of the hours it touches, and a Dashboard refresh reads again only the bins still in the hot table.
+
+In SQL, `attrs_string['name']` reads a map built for the view, so a condition on an Attribute reads every Log of the range. For a filtered count or chart, write a Query.
+
 ## Not in the language
 
 `has`, `join`, `mv-expand`, `parse`, `evaluate`, `project-away` and series and geo functions aren't supported.
