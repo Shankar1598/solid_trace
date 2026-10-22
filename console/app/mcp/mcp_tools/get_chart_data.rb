@@ -41,7 +41,7 @@ module McpTools
     def filter_values
       given = (arguments[:filters] || {}).transform_keys(&:to_s)
       unknown = given.keys - dashboard.filter_names
-      raise ToolError, "#{unknown.to_sentence} #{unknown.one? ? "isn't one" : "aren't any"} of #{filters_listed}." if unknown.any?
+      raise ToolError, "#{unknown.to_sentence} #{not_its_filters(unknown)}." if unknown.any?
 
       dashboard.parameters(given)
     end

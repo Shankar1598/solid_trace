@@ -241,6 +241,34 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_requested api_check, times: 1
   end
 
+  test "add_chart and update_chart refuse a Query naming a filter the Dashboard lacks, naming its filters" do
+    @dashboard.update!(filters: [ { name: "level", kind: "select", options: { from: "list", items: [ { value: "error" } ] } },
+                                  { name: "q", kind: "search" } ])
+    query = @chart.query
+
+    stub_query_check(@shop, parameters: %w[level nope])
+    added = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Typo",
+      query: "where level == $level and service == $nope | summarize count()")
+    assert_equal "Not saved: Query names $nope, which isn't one of this Dashboard's filters (level, q).", added.text
+    assert_equal [ @chart ], @dashboard.charts.reload
+
+    stub_query_check(@shop, parameters: %w[nope q other])
+    changed = call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id,
+      query: "where service == $nope and host == $other | search $q | summarize count()")
+    assert_equal "Not saved: Query names $nope and $other, which aren't any of this Dashboard's filters (level, q).", changed.text
+    assert_equal query, @chart.reload.query
+
+    stub_query_check(@shop, parameters: %w[q level])
+    assert_not call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id,
+      query: "search $q | where level == $level | summarize count()").error?
+    assert_equal "search $q | where level == $level | summarize count()", @chart.reload.query
+
+    @dashboard.update!(filters: [])
+    stub_query_check(@shop, parameters: %w[level])
+    assert_equal "Not saved: Query names $level, which isn't one of this Dashboard's filters (it has none).",
+      call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "None", query: "where level == $level | count").text
+  end
+
   test "delete_chart deletes the Chart, linking to the Dashboard" do
     answer = call_tool(:delete_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id)
 
@@ -381,10 +409,11 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
   private
 
-  # Answers EventStore's check of a Query on project, with mistakes or none.
-  def stub_query_check(project, mistakes: [])
+  # Answers EventStore's check of a Query on project, with mistakes or none,
+  # and the names of the filters the Query names.
+  def stub_query_check(project, mistakes: [], parameters: [])
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/validate")
-      .to_return(status: 200, body: { errors: mistakes, source: nil, chips: nil, stages: [] }.to_json)
+      .to_return(status: 200, body: { errors: mistakes, source: nil, chips: nil, stages: [], parameters: parameters }.to_json)
   end
 
   def holding_every_chart_run(left = ChartRuns.limit, &block)
