@@ -15,6 +15,7 @@ import {
   parseValue,
   editableText,
   search,
+  searchByFilter,
   setFilter,
   setSort,
   setSummarize,
@@ -77,6 +78,27 @@ describe('the Query text of a Builder', () => {
     expect(stagesOf(builder)).toBe(
       'where status == 500\n| where status != "500"\n| where ratio == -0.25\n| where cached == false',
     )
+  })
+
+  it('writes a Dashboard filter as a chip\'s value as $name, with == and != and the text operators', () => {
+    const builder: Builder = {
+      filters: [
+        { field: 'level', op: '==', value: { filter: 'level' } },
+        { field: 'service', op: '!=', value: { filter: 'service' } },
+        { field: 'message', op: 'contains', value: { filter: 'q' } },
+        { field: 'path', op: '!startswith', value: { filter: 'prefix' } },
+      ],
+      search: '',
+    }
+
+    expect(stagesOf(builder)).toBe(
+      'where level == $level\n| where service != $service\n| where message contains $q\n| where path !startswith $prefix',
+    )
+  })
+
+  it('writes a search filter as search $name, in place of the search text', () => {
+    expect(stagesOf({ filters: [{ field: 'level', op: '==', value: 'error' }], search: '', searchFilter: 'q' }))
+      .toBe('where level == "error"\n| search $q')
   })
 
   it('escapes quotes, backslashes and line breaks in strings', () => {
@@ -146,6 +168,28 @@ describe('a Builder read back from validate', () => {
 
   it('has an empty search box when validate gives no search', () => {
     expect(builderOf({ filters: [], search: null })).toEqual(EMPTY_BUILDER)
+    expect(builderOf({ filters: [], search: null, search_filter: null })).toEqual(EMPTY_BUILDER)
+  })
+
+  it('takes Dashboard filters as chips\' values and as the search, as validate gives them', () => {
+    const builder = builderOf({
+      filters: [
+        { field: 'level', op: '==', value: { filter: 'level' } },
+        { field: 'message', op: 'contains', value: { filter: 'text' } },
+      ],
+      search: null,
+      search_filter: 'q',
+    })
+
+    expect(builder).toEqual({
+      filters: [
+        { field: 'level', op: '==', value: { filter: 'level' } },
+        { field: 'message', op: 'contains', value: { filter: 'text' } },
+      ],
+      search: '',
+      searchFilter: 'q',
+    })
+    expect(stagesOf(builder)).toBe('where level == $level\n| where message contains $text\n| search $q')
   })
 })
 
@@ -168,6 +212,14 @@ describe('editing chips', () => {
 
   it('removes a chip, keeping the rest and the search', () => {
     expect(removeFilter(builder, 0)).toEqual({ filters: [{ field: 'level', op: '!=', value: 'debug' }], search: 'boom' })
+  })
+
+  it('sets the search to a search filter, or back to text', () => {
+    const filtered = searchByFilter(builder, 'q')
+
+    expect(stagesOf(filtered)).toBe('where service == "api"\n| where level != "debug"\n| search $q')
+    expect(stagesOf(search(filtered, 'timeout'))).toBe('where service == "api"\n| where level != "debug"\n| search "timeout"')
+    expect(search(filtered, '')).toEqual({ filters: builder.filters, search: '' })
   })
 
   it('sets the search', () => {
