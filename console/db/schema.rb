@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_22_180000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_22_180200) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -310,6 +310,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_180000) do
   create_table "users", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "email"
+    t.boolean "instance_admin", default: false, null: false
     t.boolean "invited", default: false, null: false
     t.string "name"
     t.string "password_digest"

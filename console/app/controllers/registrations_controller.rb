@@ -16,7 +16,8 @@ class RegistrationsController < ApplicationController
   end
 
   def create
-    @user = User.new(user_params)
+    # Whoever signs up first set up the install, so they change its settings.
+    @user = User.new(user_params.merge(instance_admin: !User.exists?))
     if @user.save
       MetaOrganization.join_first(@user)
       start_new_session_for @user
