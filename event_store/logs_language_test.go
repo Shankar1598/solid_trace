@@ -15,11 +15,11 @@ func languageAt(hour, minute int) time.Time {
 }
 
 // seedLanguageLogs stores five Logs, newest first ed, cy, bob, ada and di
-// (the day before), with the clock at 11:30, so all but di are in the hot
-// table.
+// (the day before), each hour's while the hot window takes it, so all but di
+// are in the hot table. It leaves the clock at 11:30.
 func seedLanguageLogs(t *testing.T, env *TestEnv) {
 	t.Helper()
-	env.Clock.Set(languageAt(11, 30))
+	env.Clock.Set(languageAt(10, 29))
 	postAndProcess(t, env,
 		logJSON(t, "ada", languageAt(10, 10), map[string]any{
 			"status": 200, "user": "ada", "duration": 120, "path": "/api/users", "service": "api"}),
@@ -29,9 +29,13 @@ func seedLanguageLogs(t *testing.T, env *TestEnv) {
 			"user": "cy", "level": "error", "duration": 300, "path": "/api/orders", "note": "", "service": "api"}),
 		logJSON(t, "di", languageAt(10, 40).AddDate(0, 0, -1), map[string]any{
 			"status": 500, "user": "di", "duration": 50, "service": "worker"}),
+	)
+	env.Clock.Set(languageAt(11, 29))
+	postAndProcess(t, env,
 		logJSON(t, "ed", languageAt(11, 10), map[string]any{
 			"status": 404, "user": "ed", "level": "error", "duration": 900, "note": "Disk FULL", "path": "/API/users", "service": "api"}),
 	)
+	env.Clock.Set(languageAt(11, 30))
 }
 
 // exportLanguageLogs moves hour 10 and the day before to files, and adds fy,
@@ -105,7 +109,7 @@ func TestContainsFindsTextInArrays(t *testing.T) {
 	defer env.Cleanup()
 	setSQLQueries(t, env, true)
 
-	env.Clock.Set(languageAt(11, 30))
+	env.Clock.Set(languageAt(10, 29))
 	postAndProcess(t, env,
 		logJSON(t, "tagged", languageAt(10, 10), map[string]any{"tags": []any{"Checkout", "db"}}),
 		logJSON(t, "named", languageAt(10, 20), map[string]any{"tags": "checkout"}),

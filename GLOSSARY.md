@@ -124,6 +124,9 @@ _Avoid_: hourly export
 Where EventStore keeps a **Project**'s Log files, the Parquet files its **Log export** writes once **Logs** leave the hot table: one file for each hour, or, for a busy Project, one for each quarter-hour, plus the hour's **Late files**. They are on the local disk, or in an S3 or GCS bucket with a local copy kept for a while. Each file is sorted by the Project's **Log file order**, then time. A manifest in DuckDB lists each file and where it is, so reads never list folders or the bucket.
 _Avoid_: archive, cold storage, data lake
 
+**Late Log**:
+A **Log** whose time is outside the hot window when **Log processing** stores it. The window starts at the quarter-hour that ended 15 minutes ago, where the **Log export**'s next run cuts off, and ends at the next hour, so the hot table only holds Logs of quarter-hours not yet exported, and a Log sent more than 15 to 30 minutes after its time is late. A late Log waits in a shared table until the next Log export writes it to its hour's or quarter-hour's file, or to a **Late file** if that file is written. It isn't counted for Attribute popularity, and can't add a key to its day's promoted set. On production every Log arrives within a minute; after an outage or a shipper's backlog, the delayed Logs are late Logs.
+
 **Late file**:
 A Log file holding the **Logs** of an hour or quarter-hour that already had its file when they came: the hour's next `late-<n>.parquet`, written by the next **Log export**, one per hour each time. It is sorted and has its day's promoted columns, like the hour's other files.
 _Avoid_: patch file, delta file

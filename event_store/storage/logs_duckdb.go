@@ -225,11 +225,13 @@ func addBatchColumns(db *sql.DB) error {
 const lateTable = "logs_late"
 
 // HotWindow is the span of time whose Logs Log processing appends to a
-// Project's hot table at now: from the start of the previous hour to the
-// start of the next. A Log outside it is late, and goes to logs_late.
+// Project's hot table at now: from the quarter cutoff of the export at now to
+// the start of the next hour. So a hot table only ever holds Logs of
+// quarter-hours not yet exported. A Log outside it is late, and goes to
+// logs_late.
 func HotWindow(now time.Time) (from, to time.Time) {
-	hour := now.UTC().Truncate(time.Hour)
-	return hour.Add(-time.Hour), hour.Add(time.Hour)
+	cutoffs := exportCutoffsAt(now)
+	return cutoffs.quarter, cutoffs.next
 }
 
 // hotTableFixedColumns are the names of hotTableColumns, in order.
