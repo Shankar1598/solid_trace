@@ -41,6 +41,17 @@ class DashboardFiltersControllerTest < ActionDispatch::IntegrationTest
       { "value" => "true", "count" => 1 } ], response.parsed_body["values"]
   end
 
+  test "values of the same text are one value, counting the Logs of each, most common first" do
+    stub_values("['storefront'] | where isnotnull(['service']) | summarize count() by ['service'] | sort by count_ desc | take 100",
+      [ [ "api", 4 ], [ "500", 3 ], [ true, 2 ], [ 500, 2 ], [ "true", 1 ] ])
+
+    get values_url("service"), params: @range
+
+    assert_response :success
+    assert_equal [ { "value" => "500", "count" => 5 }, { "value" => "api", "count" => 4 }, { "value" => "true", "count" => 3 } ],
+      response.parsed_body["values"]
+  end
+
   test "the Project's slug and the field are escaped in their brackets" do
     @project.update_column(:slug, "it's")
     @dashboard.update!(filters: [ { name: "odd", kind: "select", options: { from: "field", project_id: @project.id, field: "o'brien\\path\tx" } } ])
