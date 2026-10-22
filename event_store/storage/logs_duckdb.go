@@ -31,7 +31,7 @@ const logsCatalog = "logs"
 // A DuckDB transaction can write only one attached database, so everything
 // Log processing commits together lives here.
 //
-// The hourly export moves Logs out to files under files.Dir, which the Log
+// The Log export moves Logs out to files under files.Dir, which the Log
 // file manifest lists (logs_manifest.go).
 type LogStore struct {
 	db    *sql.DB
@@ -90,6 +90,11 @@ type LogStore struct {
 	// orders gives each Project's Log file order, or is nil when every
 	// Project's files get the default (logs_file_order.go).
 	orders LogFileOrders
+
+	// busyProjectLogs is how many hot Logs before the quarter cutoff make a
+	// Project busy, so that the export writes its quarter-hours to their
+	// own files (logs_export.go).
+	busyProjectLogs int64
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
@@ -141,7 +146,8 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if err := addBatchColumns(events.db); err != nil {
 		return nil, fmt.Errorf("add the batch column to the log tables: %w", err)
 	}
-	store := &LogStore{db: events.db, events: events, files: LogFiles{Dir: filesDir}, pins: map[string]int{}, published: make(chan struct{}, 1)}
+	store := &LogStore{db: events.db, events: events, files: LogFiles{Dir: filesDir}, pins: map[string]int{}, published: make(chan struct{}, 1),
+		busyProjectLogs: BusyProjectLogs}
 	if err := store.backfillManifest(); err != nil {
 		return nil, fmt.Errorf("list the log files on disk in the manifest: %w", err)
 	}
