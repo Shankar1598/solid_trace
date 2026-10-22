@@ -1,12 +1,12 @@
 // Calls to Console for Dashboards that the pages make with fetch rather than
 // an Inertia visit: a chart's data, which the fetch queue runs, the chart
-// editor's preview, and the explorer's Add to dashboard and the grid's layout,
+// editor's preview, a field select's values, and the explorer's Add to dashboard and the grid's layout,
 // which stay on the page.
 import { RunError, runFailure, type TableAnswer } from '../logs/api'
 import { elapsedOf } from '../logs/runLine'
 import type { LogTable } from '../logs/table'
 import {
-  appendValues, type ChartOptions, type Dashboard, type DashboardChart, type DashboardViz, type FilterValues, type Place,
+  appendValues, type ChartOptions, type Dashboard, type DashboardChart, type DashboardViz, type FieldValue, type FilterValues, type Place,
 } from './dashboard'
 
 /**
@@ -19,6 +19,20 @@ export async function fetchChartData({ orgSlug, dashboardId, chartId, from, to, 
   const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
   appendValues(params, parameters)
   return tableOf(await call(`/${orgSlug}/dashboards/${dashboardId}/charts/${chartId}/data?${params}`, { signal }))
+}
+
+/**
+ * A select of a field's values: the field's 100 most common values in the
+ * filter's Project over [from, to), most common first, run as a chart is.
+ */
+export async function fetchFilterValues({ orgSlug, dashboardId, name, from, to, signal }: {
+  orgSlug: string; dashboardId: number; name: string; from: Date; to: Date; signal?: AbortSignal
+}): Promise<FieldValue[]> {
+  const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
+  const response = await call(`/${orgSlug}/dashboards/${dashboardId}/filters/${name}/values?${params}`, { signal })
+  const body = await response.json().catch(() => null)
+  if (response.ok && Array.isArray(body?.values)) return body.values as FieldValue[]
+  throw runFailure(body, response.status)
 }
 
 export interface PreviewRun {

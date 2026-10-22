@@ -55,8 +55,14 @@ export interface Dashboard {
 // Types rather than interfaces, so a list of filters is Inertia form data.
 export type FilterOption = { label: string; value: string }
 
-/** A select's options: a fixed list. */
-export type FilterOptions = { from: 'list'; items: FilterOption[] }
+/**
+ * A select's options: a fixed list, or a field's most common values in one
+ * of the Organization's Projects, over the range the Dashboard shows.
+ */
+export type FilterOptions = { from: 'list'; items: FilterOption[] } | { from: 'field'; project_id: number; field: string }
+
+/** One of a field's values, and how many Logs hold it; null for a chosen value that wasn't loaded. */
+export type FieldValue = { value: string; count: number | null }
 
 /**
  * One of a Dashboard's filters, which a chart's Query names as `$name`: a
@@ -148,8 +154,19 @@ export function unknownFilters(query: string, filters: DashboardFilter[]): strin
 export function chosenText(filter: DashboardFilter, values: readonly string[]): string {
   if (values.length === 0) return 'All'
   if (values.length > 2) return `${values.length} values`
-  const labels = new Map(filter.kind === 'select' ? filter.options.items.map(o => [o.value, o.label]) : [])
+  const labels = new Map(filter.kind === 'select' && filter.options.from === 'list' ? filter.options.items.map(o => [o.value, o.label]) : [])
   return values.map(value => labels.get(value) ?? value).join(', ')
+}
+
+/**
+ * What a select of a field's values offers: the values loaded, most common
+ * first, after the chosen values that aren't among them, so a value from a
+ * link still shows as chosen. An empty value is All, so it isn't one.
+ */
+export function fieldOptions(loaded: FieldValue[], chosen: readonly string[]): FieldValue[] {
+  const known = new Set(loaded.map(v => v.value))
+  const missing = chosen.filter(value => !known.has(value)).map(value => ({ value, count: null }))
+  return [...missing, ...loaded.filter(v => v.value !== '')]
 }
 
 const LABELLED_OPTION = /^(.*?)\s+=\s+(.*)$/

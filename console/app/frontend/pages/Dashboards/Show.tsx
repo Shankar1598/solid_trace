@@ -159,7 +159,10 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           </Button>
         </>}
       />
-      <FilterBar filters={dashboard.filters} values={values} onChange={pickValues} onEdit={() => setFiltersOpen(true)} />
+      <FilterBar
+        filters={dashboard.filters} values={values} orgSlug={orgSlug} dashboardId={dashboard.id} shown={run}
+        onChange={pickValues} onEdit={() => setFiltersOpen(true)}
+      />
       <div className="flex flex-col gap-3">
         {editing && <p className="text-xs text-muted-foreground">Drag a chart by its title, or resize it from its bottom-right corner. Each change is saved.</p>}
 
@@ -232,7 +235,9 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
       </AlertDialog>
 
       {settings && <DashboardSettings dashboard={dashboard} orgSlug={orgSlug} search={search} onClose={() => setSettings(false)} />}
-      {filtersOpen && <FiltersDialog dashboard={dashboard} orgSlug={orgSlug} search={search} onClose={() => setFiltersOpen(false)} />}
+      {filtersOpen && (
+        <FiltersDialog dashboard={dashboard} projects={projects} orgSlug={orgSlug} search={search} onClose={() => setFiltersOpen(false)} />
+      )}
     </DashboardLayout>
   )
 }
