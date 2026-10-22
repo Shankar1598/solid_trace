@@ -15,6 +15,7 @@ describe('switching from Query to Builder', () => {
       errors: [],
       chips: { filters: [{ field: 'service', op: '==', value: 'api' }], search: 'timeout' },
       stages: [stage(1, 1, 1, 23, true, true), stage(1, 26, 1, 42, true, true)],
+      parameters: [],
     }
 
     expect(toBuilder('where service == "api" | search "timeout"', validation)).toEqual({
@@ -30,6 +31,7 @@ describe('switching from Query to Builder', () => {
       errors: [],
       chips: null,
       stages: [stage(2, 3, 2, 25, true, true), stage(3, 3, 3, 23, true), stage(4, 3, 4, 31, false)],
+      parameters: [],
     }
 
     expect(toBuilder(query, validation)).toEqual({
@@ -45,6 +47,7 @@ describe('switching from Query to Builder', () => {
       errors: [],
       chips: null,
       stages: [stage(1, 1, 1, 11, true, true), stage(1, 14, 1, 24, true)],
+      parameters: [],
     }
 
     expect(toBuilder('search "😀" | search "b"', validation)).toMatchObject({ stages: ['search "b"'] })
@@ -53,7 +56,7 @@ describe('switching from Query to Builder', () => {
   it('asks with the mistakes when the Query has some', () => {
     const problem = { message: 'unknown stage "bogus"', line: 1, column: 21, end_line: 1, end_column: 26 }
 
-    expect(toBuilder('where user == "x" | bogus', { errors: [problem], source: null, chips: null, stages: [] })).toEqual({
+    expect(toBuilder('where user == "x" | bogus', { errors: [problem], source: null, chips: null, stages: [], parameters: [] })).toEqual({
       kind: 'ask',
       stages: [],
       problems: [problem],
@@ -107,15 +110,15 @@ describe('Group by and Chart this in Query mode', () => {
   const chips = { filters: [{ field: 'service', op: '==' as const, value: 'api' }], search: null }
 
   it('writes the Query the Builder would after the edit', () => {
-    const validation: Validation = { source: 'my-api', errors: [], chips, stages: [stage(2, 3, 2, 25, true, true)] }
+    const validation: Validation = { source: 'my-api', errors: [], chips, stages: [stage(2, 3, 2, 25, true, true)], parameters: [] }
 
     expect(editAsBuilder(validation, 'my-api', b => groupBy(b, 'level')))
       .toBe('[\'my-api\']\n| where service == "api"\n| summarize count() by bin_auto(time), level')
   })
 
   it('gives nothing for a Query the Builder can\'t show, or one with mistakes', () => {
-    const unshowable: Validation = { source: null, errors: [], chips: null, stages: [stage(1, 1, 1, 30, false)] }
-    const wrong: Validation = { source: null, errors: [{ message: 'no', line: 1, column: 1, end_line: 1, end_column: 2 }], chips, stages: [] }
+    const unshowable: Validation = { source: null, errors: [], chips: null, stages: [stage(1, 1, 1, 30, false)], parameters: [] }
+    const wrong: Validation = { source: null, errors: [{ message: 'no', line: 1, column: 1, end_line: 1, end_column: 2 }], chips, stages: [], parameters: [] }
 
     expect(editAsBuilder(unshowable, 'my-api', b => groupBy(b, 'level'))).toBeNull()
     expect(editAsBuilder(wrong, 'my-api', b => groupBy(b, 'level'))).toBeNull()
