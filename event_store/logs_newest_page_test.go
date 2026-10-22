@@ -19,17 +19,16 @@ func onTestDay(hour, minute int) time.Time {
 // table. late may also hold Logs before hour 10, and hot Logs of hour 11.
 func seedHourInEverySource(t *testing.T, env *TestEnv, file, late, hot []string) {
 	t.Helper()
-	// At 11:30 the hot window is 10:00 to 12:00; at 12:05 the export takes
-	// hour 10 to a file, and the window is 11:00 to 13:00.
-	env.Clock.Set(onTestDay(11, 30))
-	postAndProcess(t, env, file...)
+	// At 10:29 the hot window is 10:00 to 11:00; at 12:05 the export takes
+	// hour 10 to a file, and the window is 11:45 to 13:00.
+	postWhileHot(t, env, file...)
 	env.Clock.Set(onTestDay(12, 5))
 	env.ExportLogs(t)
 	assertHourFiles(t, env, 123, onTestDay(10, 0), 1)
 	postAndProcess(t, env, late...)
 	// The clock steps back, so hour 10 is in the hot window again.
+	postWhileHot(t, env, hot...)
 	env.Clock.Set(onTestDay(11, 30))
-	postAndProcess(t, env, hot...)
 }
 
 // assertPagesOfEverySize checks that a Query over all time, paged with every
@@ -105,8 +104,8 @@ func TestPagesOfTheNewestLogsContinueInsideAnHourAndAcrossHours(t *testing.T) {
 			want = append(want, message)
 		}
 	}
+	postWhileHot(t, env, logs...)
 	env.Clock.Set(onTestDay(12, 55))
-	postAndProcess(t, env, logs...)
 	env.ExportLogs(t)
 	assertHourFiles(t, env, 123, onTestDay(10, 0), 1)
 
@@ -179,8 +178,7 @@ func TestPagesThatSpendTheirBudgetAnswerWhatTheyFoundAndACursor(t *testing.T) {
 
 	// Hour 12 has 1 Log and hour 11 has 3, in the hot table; hour 10 has 2,
 	// in a file.
-	env.Clock.Set(onTestDay(12, 30))
-	postAndProcess(t, env,
+	postWhileHot(t, env,
 		logJSON(t, "12:10", onTestDay(12, 10), nil),
 		logJSON(t, "11:30", onTestDay(11, 30), nil),
 		logJSON(t, "11:20", onTestDay(11, 20), nil),
@@ -188,6 +186,7 @@ func TestPagesThatSpendTheirBudgetAnswerWhatTheyFoundAndACursor(t *testing.T) {
 		logJSON(t, "10:30", onTestDay(10, 30), nil),
 		logJSON(t, "10:20", onTestDay(10, 20), nil),
 	)
+	env.Clock.Set(onTestDay(12, 30))
 	env.ExportLogs(t)
 
 	// Every scan spends its budget on its first hour.

@@ -192,6 +192,33 @@ func postAndProcess(t *testing.T, env *TestEnv, logs ...string) {
 	env.ProcessLogs(t)
 }
 
+// postWhileHot sends Logs with the clock at 29 minutes past each one's hour,
+// when the hot window still starts at the hour, so that every Log of the
+// current hour or after it is hot. A run of Logs of one hour is one request.
+// It leaves the clock at the last Log's hour.
+func postWhileHot(t *testing.T, env *TestEnv, logs ...string) {
+	t.Helper()
+	hourOf := func(log string) time.Time {
+		var object struct {
+			Time time.Time `json:"time"`
+		}
+		if err := json.Unmarshal([]byte(log), &object); err != nil {
+			t.Fatalf("Decode Log %q: %v", log, err)
+		}
+		return object.Time.UTC().Truncate(time.Hour)
+	}
+	for len(logs) > 0 {
+		hour := hourOf(logs[0])
+		n := 1
+		for n < len(logs) && hourOf(logs[n]).Equal(hour) {
+			n++
+		}
+		env.Clock.Set(hour.Add(29 * time.Minute))
+		postAndProcess(t, env, logs[:n]...)
+		logs = logs[n:]
+	}
+}
+
 func TestLogsOfANewDayAfterAFullSetAreFoundByTheirKeys(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
@@ -276,7 +303,7 @@ func TestAKeyFirstSeenPartwayThroughADayFindsTheLogsBeforeAndAfter(t *testing.T)
 
 	// A late Log carries cart, which the set doesn't have, and goes to hour
 	// 10's file with cart in its map.
-	env.Clock.Set(at(12, 30))
+	env.Clock.Set(at(12, 29))
 	postAndProcess(t, env, logJSON(t, "older", at(10, 30), map[string]any{"user": "bo", "cart": 1}))
 	env.ExportLogs(t)
 	assertHourFiles(t, env, 123, at(10, 0), 1)
@@ -482,7 +509,7 @@ func TestLateLogsStoredBeforeTheirDaysSetAreFoundByTheKeysItPromotes(t *testing.
 
 	// Yesterday's first Log is late, and waits in logs_late while a hot Log
 	// makes yesterday's set, with user.
-	env.Clock.Set(yesterdayAt(15, 30))
+	env.Clock.Set(yesterdayAt(15, 29))
 	postAndProcess(t, env, logJSON(t, "yan", yesterdayAt(13, 10), map[string]any{"user": "yan"}))
 	postAndProcess(t, env, logJSON(t, "zed", yesterdayAt(15, 10), map[string]any{"user": "zed"}))
 	assertEveryReadFinds(t, env, []fieldValue{
@@ -493,10 +520,10 @@ func TestLateLogsStoredBeforeTheirDaysSetAreFoundByTheKeysItPromotes(t *testing.
 		"zed": {"user": "zed"},
 	}, "with yesterday's late Log beside its set")
 
-	// Today's first Log is late too, and the export at 12:30 writes it to
+	// Today's first Log is late too, and the export at 12:29 writes it to
 	// hour 10's file before today has a set. Another late Log of hour 10
 	// waits for a late file.
-	env.Clock.Set(at(12, 30))
+	env.Clock.Set(at(12, 29))
 	postAndProcess(t, env, logJSON(t, "ada", at(10, 10), map[string]any{"user": "ada", "plan": "pro"}))
 	env.ExportLogs(t)
 	assertHourFiles(t, env, 123, at(10, 0), 1)
@@ -551,9 +578,9 @@ func TestALateFileOfADayReRankedLaterIsFoundByTheKeysTheReRankPromotes(t *testin
 		postAndProcess(t, env, logJSON(t, fmt.Sprintf("common %d", i), yesterdayAt(15, i+1), numberedKeys("x", 10, "c")))
 	}
 
-	// Today's first Log is late, and the export at 12:30 writes it to hour
+	// Today's first Log is late, and the export at 12:29 writes it to hour
 	// 10's file before the re-rank. Then a hot Log re-ranks.
-	env.Clock.Set(at(12, 30))
+	env.Clock.Set(at(12, 29))
 	postAndProcess(t, env, logJSON(t, "ada", at(10, 10), map[string]any{"x000": "ada", "k000": "ada"}))
 	env.ExportLogs(t)
 	postAndProcess(t, env, logJSON(t, "cy", at(12, 10), map[string]any{"x000": "cy", "k000": "cy"}))

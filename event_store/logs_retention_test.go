@@ -152,9 +152,9 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 		id  uint32
 		key string
 	}{{123, "test_public_key"}, {456, "other_public_key"}} {
-		env.Clock.Set(at(10, 30))
+		env.Clock.Set(at(10, 29))
 		postAndProcessTo(t, env, p.id, p.key, logJSON(t, "exported", at(10, 10), map[string]any{"user": "ada"}))
-		env.Clock.Set(at(12, 30))
+		env.Clock.Set(at(12, 29))
 		postAndProcessTo(t, env, p.id, p.key,
 			logJSON(t, "hot", at(12, 10), map[string]any{"user": "bob"}),
 			logJSON(t, "late", at(9, 0), map[string]any{"user": "cy"}))

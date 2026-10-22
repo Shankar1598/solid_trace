@@ -138,9 +138,10 @@ func TestALogOfAnExportedQuarterHourGoesToTheHoursLateFileAtTheNextRun(t *testin
 	env.ExportLogs(t)
 	assertHourFileNames(t, env, 123, at(10, 0), "data-00.parquet")
 
-	// While the hot window is 09:00 to 11:00, a Log of 10:05 sent at 10:35
-	// is stored hot, though its quarter-hour has its file. A Log of the
-	// current quarter-hour, sent on time, stays hot through the next run.
+	// The hot window starts at the quarter cutoff, 10:15 at 10:35, so a Log
+	// of 10:05 sent then is late: it waits in logs_late, and isn't counted.
+	// A Log of the current quarter-hour, sent on time, is hot and counted,
+	// and stays hot through the next run.
 	env.Clock.Set(at(10, 35))
 	postAndProcess(t, env,
 		logJSON(t, "late 10:05", at(10, 5), map[string]any{"user": "cy"}),
@@ -151,6 +152,8 @@ func TestALogOfAnExportedQuarterHourGoesToTheHoursLateFileAtTheNextRun(t *testin
 		`where user == "di"`:  {"on time 10:34"},
 	}
 	assertQueries(t, env, queries, "before the run at 10:45")
+	assertAttributes(t, getFields(t, env, 123, at(10, 0), at(11, 0), ""),
+		[]attributeCount{{Name: "user", Type: "string", Logs: 4}}, "with the late Log in logs_late")
 	want := latestLogs(t, env, 123, 100)
 
 	logs := captureLogs(t)
