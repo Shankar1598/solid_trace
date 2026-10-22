@@ -185,8 +185,9 @@ finish() {
 # ──────────────────────────────────────────────────────────────────────────
 
 # Configures a SolidTrace install, then runs deploy/install: the public URLs and
-# HTTPS, email, and where EventStore keeps Log files and the Event archive (this
-# machine's disk or a GCS bucket). Run it again to change any of them.
+# HTTPS, and where EventStore keeps Log files and the Event archive (this
+# machine's disk or a GCS bucket). Run it again to change any of them. Email is
+# set up in Console, on the Email settings page.
 #
 #   deploy/setup-gcp
 
@@ -401,28 +402,12 @@ fi
 stage "Email"
 say "Console emails new Issues, Monitor alerts and invitations through an SMTP"
 say "server: your email provider's, or a service such as Amazon SES or Postmark."
-say "Its SMTP settings list the host, port, username and password."
-printf '\n'
-if confirm "Send email from this install?"; then
-  ask_required SMTP_ADDRESS "SMTP host (like smtp.example.com):"
-  ask_default SMTP_PORT "SMTP port:" 587
-  ask SMTP_USERNAME "SMTP username (blank if none):"
-  if [[ -n $SMTP_USERNAME ]]; then
-    ask_required SMTP_PASSWORD "SMTP password:" secret
-  else
-    SMTP_PASSWORD=""
-  fi
-  note "The sender must be an address or domain your provider lets you send from."
-  ask_required MAIL_FROM "Send from (like SolidTrace <alerts@example.com>):"
-  write_env SMTP_ADDRESS "$SMTP_ADDRESS"
-  write_env SMTP_PORT "$SMTP_PORT"
-  write_env SMTP_USERNAME "$SMTP_USERNAME"
-  write_env_quoted SMTP_PASSWORD "$SMTP_PASSWORD"
-  write_env_quoted MAIL_FROM "$MAIL_FROM"
-else
-  SMTP_ADDRESS=""
-  write_env SMTP_ADDRESS ""
-  note "Console won't send email. Run deploy/setup-gcp again to add it."
+say "Set it up in Console once it's running: sign in as the first user, an"
+say "instance admin, and open Settings, then Email. It sends a test email too."
+if [[ -n $(_existing SMTP_ADDRESS || true) ]]; then
+  printf '\n'
+  note "Console no longer reads the SMTP_* and MAIL_FROM lines in $ENV_FILE."
+  note "Copy them into the Email settings page, then delete them."
 fi
 pause
 
@@ -590,12 +575,6 @@ if (( RUN_INSTALL )); then
   "$DEPLOY_DIR/install"
   if [[ -n $was_running ]] && (( CONFIG_CHANGED )); then
     compose restart event_store
-  fi
-  if [[ -n $SMTP_ADDRESS ]] && confirm "Send a test email?"; then
-    ask_required TEST_EMAIL_TO "To:"
-    compose exec -T console bin/rails runner \
-      'ApplicationMailer.new.mail(to: ARGV[0], subject: "SolidTrace test email", body: "SolidTrace can send email.").deliver' \
-      "$TEST_EMAIL_TO" && printf '  %s✓ sent%s to %s\n' "$GREEN" "$RESET" "$TEST_EMAIL_TO"
   fi
 fi
 
