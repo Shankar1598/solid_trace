@@ -84,10 +84,10 @@ func TestTextMatchesFindTheSameLogsInTheHotTableLateLogsAndFiles(t *testing.T) {
 	defer env.Cleanup()
 	setSQLQueries(t, env, true)
 
-	// At 11:30 the hot window is 10:00 to 12:00, so hour 10's Logs are hot
+	// At 10:29 the hot window is 10:00 to 11:00, so hour 10's Logs are hot
 	// and yesterday's late.
 	yesterday := time.Date(2026, 10, 1, 15, 0, 0, 0, time.UTC)
-	env.Clock.Set(onTestDay(11, 30))
+	env.Clock.Set(onTestDay(10, 29))
 	postTextLogs(t, env, onTestDay(10, 0))
 	postTextLogs(t, env, yesterday)
 

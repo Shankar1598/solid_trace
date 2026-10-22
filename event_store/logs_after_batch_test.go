@@ -86,6 +86,8 @@ func TestAMatchMonitorReadsTheLogsIngestedSinceItsLastRun(t *testing.T) {
 	defer env.Cleanup()
 
 	at := func(minute int) time.Time { return testNow.Add(time.Duration(minute) * time.Minute) }
+	// At 11:59 the hot window is 11:30 to 12:00, so every Log is hot.
+	env.Clock.Set(at(-1))
 
 	// Armed before Log processing has stored anything for the Project, a
 	// Monitor goes from the nil batch, and reads everything stored after.
@@ -134,7 +136,7 @@ func TestAMatchMonitorReadsLateLogsWhateverTheirTimeAndTheRange(t *testing.T) {
 
 	today := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	yesterday := func(hour, minute int) time.Time { return today(hour, minute).AddDate(0, 0, -1) }
-	env.Clock.Set(today(12, 30))
+	env.Clock.Set(today(12, 29))
 	monitor := armMonitor(t, env, "")
 	// The last quarter hour, as a Threshold monitor reads: it holds none
 	// of the late Logs, and a run after a batch reads them all the same.
@@ -169,15 +171,14 @@ func TestTheLogsIngestedAfterABatchAreTheSameBeforeAndAfterTheExport(t *testing.
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	env.Clock.Set(at(11, 30))
+	env.Clock.Set(at(10, 29))
 	// A Log of hour 10 stored before the Monitor is armed goes to the same
 	// file as those after, and is never read.
 	postAndProcess(t, env, logJSON(t, "before", at(10, 5), map[string]any{"user": "ada"}))
 	armed := armMonitor(t, env, "").cursor
-	postAndProcess(t, env,
-		logJSON(t, "ten", at(10, 40), map[string]any{"user": "ada", "status": 500}),
-		logJSON(t, "eleven", at(11, 20), map[string]any{"user": "bob"}),
-	)
+	postAndProcess(t, env, logJSON(t, "ten", at(10, 40), map[string]any{"user": "ada", "status": 500}))
+	env.Clock.Set(at(11, 29))
+	postAndProcess(t, env, logJSON(t, "eleven", at(11, 20), map[string]any{"user": "bob"}))
 	postAndProcess(t, env, logJSON(t, "late", at(9, 0).AddDate(0, 0, -1), map[string]any{"user": "ada"}))
 
 	queries := map[string][]string{
@@ -212,6 +213,8 @@ func TestTheLogsIngestedAfterABatchAreTheSameBeforeAndAfterTheExport(t *testing.
 func TestNoLogIsMissedOrReadTwiceWhenRequestsStoreTheirBatchesOutOfOrder(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
+	// At 11:59 the hot window is 11:30 to 12:00, so every Log is hot.
+	env.Clock.Set(testNow.Add(-time.Minute))
 	monitor := armMonitor(t, env, "")
 
 	// Two requests at once: the first is normalised first, so its Log has
@@ -456,7 +459,7 @@ func TestAnInstallFromBeforeTheBatchColumnKeepsItsLogsAndArmsMonitors(t *testing
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	env.Clock.Set(at(12, 30))
+	env.Clock.Set(at(12, 29))
 	postAndProcess(t, env,
 		logJSON(t, "ten", at(10, 10), map[string]any{"user": "ada", "status": 200}),
 		logJSON(t, "yesterday", testNow.AddDate(0, 0, -1), map[string]any{"user": "old"}),
