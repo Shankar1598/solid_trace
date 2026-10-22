@@ -47,7 +47,7 @@ func assertHourFileCount(t *testing.T, store *LogStore, hour time.Time, want int
 
 func TestLogsStoredWhileAnExportWritesItsFilesStayForTheNextExport(t *testing.T) {
 	store := newTestLogStore(t)
-	appendLogs(t, store, october(1, 10, 30),
+	appendLogs(t, store, october(1, 10, 29),
 		messageLog(october(1, 10, 10), "hot"),
 		messageLog(october(1, 8, 10), "late"))
 	want := []string{"hot", "late"}
@@ -85,7 +85,7 @@ func TestLogsStoredWhileAnExportWritesItsFilesStayForTheNextExport(t *testing.T)
 
 func TestAProjectDeletedWhileAnExportWritesItsFilesGetsNone(t *testing.T) {
 	store := newTestLogStore(t)
-	appendLogs(t, store, october(1, 10, 30),
+	appendLogs(t, store, october(1, 10, 29),
 		messageLog(october(1, 10, 10), "hot"),
 		messageLog(october(1, 8, 10), "late"))
 
@@ -118,7 +118,7 @@ func TestAProjectDeletedWhileAnExportWritesItsFilesGetsNone(t *testing.T) {
 
 func TestALogStoredOutOfBatchOrderIsStillExported(t *testing.T) {
 	store := newTestLogStore(t)
-	appendLogs(t, store, october(1, 10, 30),
+	appendLogs(t, store, october(1, 10, 29),
 		messageLog(october(1, 10, 10), "in order"),
 		messageLog(october(1, 10, 20), "out of order"))
 	// As if stored after a batch with a later id than the cursor's.

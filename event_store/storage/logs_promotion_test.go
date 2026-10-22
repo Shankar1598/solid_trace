@@ -182,7 +182,7 @@ func TestANewDayAfterAFullSetTakesTheKeysMostLogsCarriedTheDayBefore(t *testing.
 }
 
 func TestANewDaysKeysArePartwayOnlyIfItsFilesOrHotLogsMayHoldThemInTheirMaps(t *testing.T) {
-	now := october(2, 12, 30)
+	now := october(2, 12, 29)
 	late := func(t *testing.T, store *LogStore) {
 		appendLogs(t, store, now, stringLog(october(2, 10, 10), map[string]string{"user": "ada", "plan": "pro"}))
 	}

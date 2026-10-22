@@ -1,5 +1,5 @@
 // A Project's Log file order, as its settings page shows and edits it: null
-// for the default, or the Fields each hour's Log file is sorted by before
+// for the default, or the Fields each Log file is sorted by before
 // time ([] is time only). Console's Project model checks an order on save.
 
 /** How many Fields a Log file order can name, as the Project model allows. */

@@ -61,8 +61,8 @@ func TestALongReadHoldsUpNeitherLogProcessingNorOtherReads(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	// The hot window is 11:00 to 13:00, so the hourly export moves the
-	// first Log to a file.
+	// The hot window is 11:45 to 13:00, so the Log export moves the first
+	// Log to a file.
 	postAndProcess(t, env,
 		logJSON(t, "exported", testNow.Add(-150*time.Minute), nil),
 		logJSON(t, "hot", testNow.Add(-10*time.Minute), nil),
@@ -71,7 +71,7 @@ func TestALongReadHoldsUpNeitherLogProcessingNorOtherReads(t *testing.T) {
 	cancel, longRead := startLongRead(t, env)
 	defer cancel()
 
-	// The hourly export starts while it runs.
+	// The Log export starts while it runs.
 	exported := make(chan error, 1)
 	go func() { exported <- env.LogStore.ExportLogs(env.Clock.Now()) }()
 	time.Sleep(300 * time.Millisecond)
@@ -122,7 +122,7 @@ func TestALongReadHoldsUpNeitherLogProcessingNorOtherReads(t *testing.T) {
 		t.Fatal("Expected the cancelled read to stop")
 	}
 	if err := <-exported; err != nil {
-		t.Fatalf("Hourly export failed: %v", err)
+		t.Fatalf("Log export failed: %v", err)
 	}
 	if got, err := listLatest(env); err != nil || !slices.Equal(got, want) {
 		t.Errorf("Expected %v after the export, got %v (%v)", want, got, err)

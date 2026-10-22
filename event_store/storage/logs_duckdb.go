@@ -31,7 +31,7 @@ const logsCatalog = "logs"
 // A DuckDB transaction can write only one attached database, so everything
 // Log processing commits together lives here.
 //
-// The hourly export moves Logs out to files under files.Dir, which the Log
+// The Log export moves Logs out to files under files.Dir, which the Log
 // file manifest lists (logs_manifest.go).
 type LogStore struct {
 	db    *sql.DB
@@ -90,6 +90,11 @@ type LogStore struct {
 	// orders gives each Project's Log file order, or is nil when every
 	// Project's files get the default (logs_file_order.go).
 	orders LogFileOrders
+
+	// busyProjectLogs is how many hot Logs of the quarter-hour before the
+	// quarter cutoff make a Project busy, so that the export writes its
+	// quarter-hours to their own files (logs_export.go).
+	busyProjectLogs int64
 }
 
 // NewLogStore attaches the logs.duckdb at path to the DuckDB instance of
@@ -141,7 +146,8 @@ func NewLogStore(events *DuckDBWriter, path, filesDir string) (*LogStore, error)
 	if err := addBatchColumns(events.db); err != nil {
 		return nil, fmt.Errorf("add the batch column to the log tables: %w", err)
 	}
-	store := &LogStore{db: events.db, events: events, files: LogFiles{Dir: filesDir}, pins: map[string]int{}, published: make(chan struct{}, 1)}
+	store := &LogStore{db: events.db, events: events, files: LogFiles{Dir: filesDir}, pins: map[string]int{}, published: make(chan struct{}, 1),
+		busyProjectLogs: BusyProjectLogs}
 	if err := store.backfillManifest(); err != nil {
 		return nil, fmt.Errorf("list the log files on disk in the manifest: %w", err)
 	}
@@ -219,11 +225,13 @@ func addBatchColumns(db *sql.DB) error {
 const lateTable = "logs_late"
 
 // HotWindow is the span of time whose Logs Log processing appends to a
-// Project's hot table at now: from the start of the previous hour to the
-// start of the next. A Log outside it is late, and goes to logs_late.
+// Project's hot table at now: from the quarter cutoff of the export at now to
+// the start of the next hour. So a hot table only ever holds Logs of
+// quarter-hours not yet exported. A Log outside it is late, and goes to
+// logs_late.
 func HotWindow(now time.Time) (from, to time.Time) {
-	hour := now.UTC().Truncate(time.Hour)
-	return hour.Add(-time.Hour), hour.Add(time.Hour)
+	cutoffs := exportCutoffsAt(now)
+	return cutoffs.quarter, cutoffs.next
 }
 
 // hotTableFixedColumns are the names of hotTableColumns, in order.

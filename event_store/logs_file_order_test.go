@@ -56,7 +56,7 @@ func TestAnHoursFileIsSortedByServiceThenFileThenTime(t *testing.T) {
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	env.Clock.Set(at(10, 30))
+	env.Clock.Set(at(10, 29))
 	postAndProcess(t, env,
 		serviceFileLog(t, "web a 1", at(10, 1), "web", "a.log"),
 		serviceFileLog(t, "api b 1", at(10, 2), "api", "b.log"),
@@ -151,7 +151,7 @@ func TestAFilePromotedForTheDayPartwayOrOnlyInTheMapSortsTheSame(t *testing.T) {
 
 	// Project 123's day starts with these Logs, so file is promoted for
 	// the day.
-	env.Clock.Set(at(12, 30))
+	env.Clock.Set(at(12, 29))
 	// Project 456's day has a file before its first hot Log: a late Log's,
 	// with file in its map. So its set, made by the hot Logs, promotes file
 	// partway.
@@ -235,7 +235,7 @@ func TestAnHoursFileIsSortedByItsProjectsLogFileOrder(t *testing.T) {
 		leveledLog(t, "web a error", at(10, 6), "error", "web", "a.log"),
 	}
 	inTime := []string{"web a info", "api b error", "web c warn", "api a info", "api a no level", "web a error"}
-	env.Clock.Set(at(10, 30))
+	env.Clock.Set(at(10, 29))
 	postAndProcess(t, env, logs...)
 	for projectID, key := range keys {
 		postAndProcessTo(t, env, projectID, key, logs...)
@@ -285,7 +285,7 @@ func TestAChangedLogFileOrderAppliesFromTheNextExport(t *testing.T) {
 		return []string{prefix + "api b error", prefix + "web a error", prefix + "web a info"}
 	}
 
-	env.Clock.Set(at(10, 30))
+	env.Clock.Set(at(10, 29))
 	postAndProcess(t, env, hourLogs(10, "")...)
 	env.Clock.Set(at(12, 0))
 	env.ExportLogs(t)
@@ -296,7 +296,7 @@ func TestAChangedLogFileOrderAppliesFromTheNextExport(t *testing.T) {
 	// The order changes; the next export writes a new hour and a late file
 	// of the first.
 	setLogFileOrder(t, env.SQLitePath, 123, `["level"]`)
-	env.Clock.Set(at(12, 30))
+	env.Clock.Set(at(12, 29))
 	postAndProcess(t, env, hourLogs(12, "")...)
 	postAndProcess(t, env, hourLogs(10, "late ")...)
 	want := latestLogs(t, env, 123, 100)
@@ -349,7 +349,7 @@ func TestALogFileOrderEventStoreCantReadExportsInTheDefaultOrder(t *testing.T) {
 		leveledLog(t, "api b error", at(10, 2), "error", "api", "b.log"),
 		leveledLog(t, "web a error", at(10, 3), "error", "web", "a.log"),
 	}
-	env.Clock.Set(at(10, 30))
+	env.Clock.Set(at(10, 29))
 	want := map[uint32][]listedLog{}
 	for _, projectID := range projects {
 		if projectID == 123 {
