@@ -1,6 +1,6 @@
 # 01: Filters in the Query language
 
-**Status:** ready-for-agent
+**Status:** claimed
 **Spec:** [spec.md](../spec.md)
 
 **What to build:** `$name` in a Query, filled in by EventStore from the request's `parameters` when it compiles, as the spec's "In a Query" says. Nothing in the Console UI changes yet, beyond the Query editor colouring `$name`.
