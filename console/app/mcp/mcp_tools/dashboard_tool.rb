@@ -153,6 +153,11 @@ module McpTools
       chart.save!
     end
 
+    # The Dashboard's filters, as a refusal of a name it lacks lists them.
+    def filters_listed
+      "this Dashboard's filters (#{dashboard.filter_names.join(', ').presence || 'it has none'})"
+    end
+
     # A Dashboard with its Charts, in the order the page reads them.
     def dashboard_json(dashboard)
       charts = dashboard.charts.includes(:project).to_a

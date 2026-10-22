@@ -301,7 +301,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
       assert_not answer.error?
       assert_equal({ "chart" => @chart.id, "title" => "Requests", "viz" => "line",
-                     "from" => "2026-10-02T10:00:00.000Z", "to" => "2026-10-03T10:00:00.000Z",
+                     "from" => "2026-10-02T10:00:00.000Z", "to" => "2026-10-03T10:00:00.000Z", "filters" => {},
                      "columns" => [ { "name" => "time", "type" => "datetime", "bin_seconds" => 3600 },
                                     { "name" => "count_", "type" => "number", "agg" => "count" } ],
                      "rows" => [ [ "2026-10-03T09:00:00Z", 12 ] ] }, answer.json)
@@ -323,6 +323,39 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal rows.first(100), answer.json["rows"]
     assert_equal "50 more: narrow the Query.", answer.json["more"]
     assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}?from=2026-10-03T09%3A00%3A00.000Z&to=2026-10-03T10%3A00%3A00.000Z", answer.link
+  end
+
+  test "get_chart_data runs the Chart with the filter values given as EventStore's parameters, saying which it ran with" do
+    @dashboard.update!(filters: [
+      { name: "service", kind: "select", multiple: true, options: { from: "list", items: [ { value: "api" }, { value: "web" } ] } },
+      { name: "level", kind: "select", options: { from: "list", items: [ { value: "error" } ] } },
+      { name: "q", kind: "search" },
+    ])
+    @chart.update!(query: "where service == $service and level == $level | search $q | summarize count()")
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+      .with(body: { query: @chart.query, from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
+                    timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: { service: [ "api", "web" ], level: [ "error" ] } }.to_json)
+      .to_return(status: 200, body: { table: { columns: [ { name: "count_", type: "number" } ], rows: [ [ 7 ] ] } }.to_json)
+
+    answer = call_tool(:get_chart_data, user: @user, dashboard: @dashboard.id, chart: @chart.id,
+      from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", filters: { level: "error", service: [ "api", "web" ], q: "" })
+
+    assert_not answer.error?
+    assert_requested run
+    assert_equal [ { "service" => [ "api", "web" ], "level" => [ "error" ] }, [ [ 7 ] ] ], answer.json.values_at("filters", "rows")
+    assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}?from=2026-10-03T09%3A00%3A00.000Z&to=2026-10-03T10%3A00%3A00.000Z" \
+                 "&v_service=api&v_service=web&v_level=error", answer.link
+  end
+
+  test "get_chart_data refuses a filter the Dashboard lacks, naming its filters" do
+    @dashboard.update!(filters: [ { name: "q", kind: "search" } ])
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+
+    answer = call_tool(:get_chart_data, user: @user, dashboard: @dashboard.id, chart: @chart.id, filters: { servce: "api" })
+
+    assert answer.error?
+    assert_equal "servce isn't one of this Dashboard's filters (q).", answer.text
+    assert_not_requested run
   end
 
   test "get_chart_data refuses a Chart whose Query answers Logs, saying to end it with summarize" do
