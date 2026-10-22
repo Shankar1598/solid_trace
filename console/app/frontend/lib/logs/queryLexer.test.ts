@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readToken, startState, tokenize, type TokenKind } from './queryLexer'
+import { parametersOf, readToken, startState, tokenize, type TokenKind } from './queryLexer'
 
 const kinds = (text: string) => tokenize(text).map(t => [t.text, t.kind] as [string, TokenKind])
 
@@ -63,5 +63,30 @@ describe('colouring a Query', () => {
       steps++
     }
     expect(steps).toBeLessThan(20)
+  })
+
+  it('reads $name as a Dashboard filter, and a Field named $type in brackets', () => {
+    expect(kinds(`where service == $service | search $q`)).toEqual([
+      ['where', 'stage'], ['service', 'field'], ['==', 'operator'], ['$service', 'parameter'], ['|', 'pipe'],
+      ['search', 'stage'], ['$q', 'parameter'],
+    ])
+    expect(kinds(`where ['$type'] == $type`)).toEqual([
+      ['where', 'stage'], ["['$type']", 'name'], ['==', 'operator'], ['$type', 'parameter'],
+    ])
+    // $ is still part of a name, but no longer starts one.
+    expect(kinds('a$b $ $1')).toEqual([['a$b', 'field'], ['$', 'invalid'], ['$', 'invalid'], ['1', 'number']])
+  })
+})
+
+describe('the Dashboard filters a Query names', () => {
+  it('lists each name once, in order of first use', () => {
+    expect(parametersOf('where service == $service\n| where env != $env or service =~ $service\n| search $q')).toEqual([
+      'service', 'env', 'q',
+    ])
+  })
+
+  it('leaves out $ in strings, bracketed names and comments', () => {
+    expect(parametersOf(`where message == "$a" and ['$b'] == 1 // $c\n| where level == $level`)).toEqual(['level'])
+    expect(parametersOf('where level == "error"')).toEqual([])
   })
 })

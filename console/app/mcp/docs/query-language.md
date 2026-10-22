@@ -17,7 +17,7 @@ You can start a Query with `logs |`, but you don't have to. A dataset name in br
 A **Field** is a built-in field or an Attribute.
 
 - **Built-in fields:** `time`, `level`, `message`, `service`, `environment`, `trace_id` and `span_id`. `time` is a datetime and the others are strings. `_time` is another name for `time`.
-- **Attributes:** any other name, such as `status` or `http.method`. A dotted name is one Attribute, because nested names are flattened when Logs arrive. Quote a name that isn't a plain word: `['user agent']`.
+- **Attributes:** any other name, such as `status` or `http.method`. A dotted name is one Attribute, because nested names are flattened when Logs arrive. Quote a name that isn't a plain word, or that starts with `$`: `['user agent']`, `['$type']`.
 
 An Attribute's values keep their own types, so one Log can hold `status` as the number `200` and another as the string `"200"`. In a comparison, the value you write decides which of these it reads:
 
@@ -152,6 +152,29 @@ A chart draws at most 8 series, the ones with the largest totals, and the legend
 **Zoom.** Drag across two or more bins of a chart over time to narrow the time range to them. A click does nothing.
 
 **Add to dashboard.** Beside the switch, Add to dashboard saves the Project, the Query that ran and the chart's form to a new or existing Dashboard. It is there for a Query's table, not for Logs or for SQL. Create monitor, beside it, starts a Monitor from the same Query and range: see [Monitors](monitors.md).
+
+## Dashboard filters
+
+A Chart on a Dashboard uses the Dashboard's filters by naming them in its Query as `$name`:
+
+```
+where service == $service and level == $level
+| summarize count() by bin_auto(time)
+```
+
+`$name` stands for the filter's values:
+
+- **One value** works as if it were written there as a string: picking `api` makes `service == $service` mean `service == "api"`.
+- **Several values:** `==`, `=~`, `contains` and `startswith` match any of them, and `!=`, `!~`, `!contains` and `!startswith` match none of them.
+- **All**, a filter with no value, makes its comparison true, as if it weren't there. Every Dashboard opens with its filters on All.
+
+A value is text. Compared with a built-in field, it is text. Compared with an Attribute, it matches the text or the number or bool the text reads as, so `status == $status` with `500` matches both `500` and `"500"`. Compared with a number column after `summarize` or `extend`, it is a number, and a value that isn't one matches nothing.
+
+`search $q` searches for any of the filter's values, and keeps every Log while the filter is All.
+
+A filter goes on either side of `==`, `!=`, `=~` and `!~`, after `contains`, `startswith` and their `!` and `_cs` forms, and after `search`. Anywhere else it's an error: in `project`, `extend`, `summarize` or `sort`, in an `in (…)` list, in an order comparison such as `>`, after `matches regex`, and inside `not(…)`, where All would keep nothing. To leave a value out, use `!=`.
+
+Only a Dashboard's Charts fill filters in. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have.
 
 ## Not in the language
 

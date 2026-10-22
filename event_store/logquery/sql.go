@@ -31,7 +31,7 @@ func (q *Query) Where(cols storage.LogColumns) string {
 		case whereStage:
 			conditions = append(conditions, writeCondition(s.predicate, cols, false))
 		case searchStage:
-			conditions = append(conditions, writeSearch(s.term, cols))
+			conditions = append(conditions, writeSearch(s.terms, cols))
 		}
 	}
 	if len(conditions) == 0 {
@@ -305,20 +305,23 @@ func writeLiteral(l Literal) string {
 	}
 }
 
-// writeSearch writes a case-insensitive contains over message and every
-// string Attribute.
-func writeSearch(term string, cols storage.LogColumns) string {
-	lowered := "lower(" + sqltext.String(term) + ")"
-	contains := func(column string) string {
-		return "contains(lower(" + column + "), " + lowered + ")"
-	}
-	matches := []string{
-		contains(cols.BuiltIn("message")),
-		fmt.Sprintf("coalesce(list_bool_or(list_transform(map_values(%s), lambda v: %s)), false)",
-			cols.Map(storage.StringAttribute), contains("v")),
-	}
-	for _, column := range cols.Promoted(storage.StringAttribute) {
-		matches = append(matches, contains(column))
+// writeSearch writes a case-insensitive contains of any of terms over
+// message and every string Attribute.
+func writeSearch(terms []string, cols storage.LogColumns) string {
+	var matches []string
+	for _, term := range terms {
+		lowered := "lower(" + sqltext.String(term) + ")"
+		contains := func(column string) string {
+			return "contains(lower(" + column + "), " + lowered + ")"
+		}
+		matches = append(matches,
+			contains(cols.BuiltIn("message")),
+			fmt.Sprintf("coalesce(list_bool_or(list_transform(map_values(%s), lambda v: %s)), false)",
+				cols.Map(storage.StringAttribute), contains("v")),
+		)
+		for _, column := range cols.Promoted(storage.StringAttribute) {
+			matches = append(matches, contains(column))
+		}
 	}
 	return strings.Join(matches, " OR ")
 }

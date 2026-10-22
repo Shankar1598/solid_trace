@@ -55,6 +55,21 @@ class ChartRunsTest < ActiveSupport::TestCase
     assert_equal 41, answer["elapsed_ms"]
   end
 
+  test "a chart run passes the Dashboard filters' values on to EventStore" do
+    project = create(:project)
+    table = { "columns" => [ { "name" => "count_", "type" => "number" } ], "rows" => [ [ 3 ] ], "truncated" => false }
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/query")
+      .with(body: { query: "where service == $service | summarize count()", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
+                    timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: { service: [ "api" ] } }.to_json)
+      .to_return(status: 200, body: { table: table }.to_json)
+
+    answer = ChartRuns.run_chart(project, "where service == $service | summarize count()",
+                                 from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10), parameters: { "service" => [ "api" ] })
+
+    assert_requested run
+    assert_equal table, answer["table"]
+  end
+
   test "a chart run whose Query answers Logs is refused as no table" do
     project = create(:project)
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/query").to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)

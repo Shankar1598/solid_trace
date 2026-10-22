@@ -187,7 +187,7 @@ func TestLogReads(t *testing.T) {
 func histogramOfTheHour(t *testing.T, store *storage.LogStore, projectID uint32, bins bool) (time.Duration, int) {
 	t.Helper()
 	start := time.Now()
-	query, err := logquery.Compile("", logquery.Bounds{From: hour, To: hour.Add(time.Hour), Now: hour.Add(2 * time.Hour)})
+	query, err := logquery.Compile("", logquery.Bounds{From: hour, To: hour.Add(time.Hour), Now: hour.Add(2 * time.Hour)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func timeRead(t *testing.T, store *storage.LogStore, projectID uint32, text stri
 	found := 0
 	for run := range runs {
 		start := time.Now()
-		query, err := logquery.Compile(text, logquery.Bounds{From: hour, To: hour.Add(time.Hour), Now: hour.Add(2 * time.Hour)})
+		query, err := logquery.Compile(text, logquery.Bounds{From: hour, To: hour.Add(time.Hour), Now: hour.Add(2 * time.Hour)}, nil)
 		if err != nil {
 			t.Fatalf("%q: %v", text, err)
 		}

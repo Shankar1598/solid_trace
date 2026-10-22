@@ -25,7 +25,7 @@ func (q *Query) ReadableSQL() string {
 		case whereStage:
 			c.add("SELECT * FROM %s WHERE %s", c.prev, writeCondition(s.predicate, cols, false))
 		case searchStage:
-			c.add("SELECT * FROM %s WHERE %s", c.prev, writeSearch(s.term, cols))
+			c.add("SELECT * FROM %s WHERE %s", c.prev, writeSearch(s.terms, cols))
 		}
 	}
 

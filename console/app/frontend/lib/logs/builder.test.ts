@@ -102,6 +102,9 @@ describe('the Query text of a Builder', () => {
         { field: 'and', op: '==', value: 'x' },
         { field: 'flags.true', op: '==', value: 'x' },
         { field: 'a..b', op: '==', value: 'x' },
+        { field: '$type', op: '==', value: 'x' },
+        { field: 'meta.$id', op: '==', value: 'x' },
+        { field: 'price$', op: '==', value: 'x' },
       ],
       search: '',
     }
@@ -113,6 +116,10 @@ describe('the Query text of a Builder', () => {
       "where ['and'] == \"x\"",
       "where ['flags.true'] == \"x\"",
       "where ['a..b'] == \"x\"",
+      // $ starts a Dashboard filter, so a name can't start with it.
+      "where ['$type'] == \"x\"",
+      "where ['meta.$id'] == \"x\"",
+      'where price$ == "x"',
     ])
   })
 })
