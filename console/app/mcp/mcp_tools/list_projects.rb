@@ -11,13 +11,7 @@ module McpTools
     takes_organization
 
     def run
-      projects = organization.projects.order(:name)
-
-      default = InstanceSetting.current.default_log_retention_days
-      listed = projects.map do |project|
-        ProjectOptionSerializer.new(project, default_log_retention_days: default).as_json
-          .merge(log_file_order: project.log_file_order || Project::DEFAULT_LOG_FILE_ORDER)
-      end
+      listed = ProjectOptionSerializer.list(organization.projects.order(:name), include_log_file_order: true)
 
       json({ organization: organization.slug, projects: listed },
         link: links.projects(organization))

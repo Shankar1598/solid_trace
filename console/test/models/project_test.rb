@@ -56,6 +56,9 @@ class ProjectTest < ActiveSupport::TestCase
   test "a Project's Log file order is the default when unset, and time only when empty" do
     assert build(:project, log_file_order: nil).valid?
     assert build(:project, log_file_order: []).valid?
+    assert_equal [ "service", "file" ], build(:project, log_file_order: nil).log_file_order_in_force
+    assert_equal [], build(:project, log_file_order: []).log_file_order_in_force
+    assert_equal [ "level" ], build(:project, log_file_order: [ "level" ]).log_file_order_in_force
   end
 
   test "a Log file order names service, environment, level or Attributes, up to three" do
