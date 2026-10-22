@@ -4,7 +4,7 @@ EventStore can keep its Log files and its Event archive in one S3 or GCS bucket,
 
 ## What goes in the bucket
 
-- **Log files.** Each hour of a Project's Logs is written to a Parquet file by the hourly export, sorted by the Project's Log file order (by default `service`, then the `file` Attribute), then time, so that a Query filtered on those Fields reads only the row groups that hold their Logs. EventStore uploads each file as soon as the export publishes it, to `<prefix>logs/project=<id>/day=<date>/hour=<hour>/<file>.parquet`. The local copy stays for `local_cache_hours` after the file's hour ends. After that, DuckDB reads the file from the bucket, in place.
+- **Log files.** Each hour of a Project's Logs is written to a Parquet file by the Log export once the next hour has ended, or, for a busy Project (one whose quarter-hour that ended 15 minutes ago holds 122,880 Logs or more), each quarter-hour to its own file 15 minutes after it ends. Logs that come after their hour's or quarter-hour's file go to the hour's next late file. Each file is sorted by the Project's Log file order (by default `service`, then the `file` Attribute), then time, so that a Query filtered on those Fields reads only the row groups that hold their Logs. EventStore uploads each file as soon as the export publishes it, to `<prefix>logs/project=<id>/day=<date>/hour=<hour>/<file>.parquet`. A quarter-hour's file is `data-<mm>.parquet` in its hour's folder, and counts as a file of that hour everywhere. The local copy stays for `local_cache_hours` after the file's hour ends. After that, DuckDB reads the file from the bucket, in place.
 - **The Event archive.** Each archive run writes a Parquet file for each day it archives. EventStore uploads each file after the run, to `<prefix>events/event_date=<date>/data-<run>.parquet`, and then deletes the local copy. Archived Events are always read from the bucket.
 
 Everything else stays on local disk: the Logs not yet exported, the Events not yet archived, Pebble and the databases.
@@ -44,7 +44,7 @@ Other settings that matter with a bucket:
 Every Cleanup pass deletes the local copies of Log files that are uploaded and whose hour ended `local_cache_hours` ago or more. It never deletes a copy that a read is using. A read uses a file's local copy while there is one, and otherwise reads the file from the bucket.
 
 - A higher value keeps recent charts fast and makes fewer requests to the bucket, but uses more disk.
-- `0` reads every exported hour from the bucket right after its upload.
+- `0` reads every exported file from the bucket right after its upload.
 - A lower value takes effect at the next Cleanup. A higher value doesn't bring back copies already deleted.
 - A Log fetched by its id without its time is looked for in local files only. Otherwise every file in the bucket would be read.
 
@@ -157,7 +157,7 @@ Other stores with S3's API, such as Cloudflare R2, also use `kind: s3`, with the
    duckdb_extension_directory: /home/you/.cache/solid-trace/duckdb_extensions
    ```
 
-   With `local_cache_hours: 0`, every exported hour is read from MinIO right after its upload.
+   With `local_cache_hours: 0`, every exported file is read from MinIO right after its upload.
 
 4. Start EventStore with MinIO's user and password, or a MinIO access key, in `SOLIDTRACE_OBJECT_STORE_KEY_ID` and `SOLIDTRACE_OBJECT_STORE_SECRET`.
 
@@ -170,7 +170,7 @@ SOLIDTRACE_TEST_S3_ENDPOINT=http://127.0.0.1:9000 SOLIDTRACE_TEST_S3_BUCKET=soli
 
 ## The bin cache
 
-`logs_bin_cache_mb` (default `64`, `0` turns it off) is the memory, in MiB, that keeps charts' time bins of exported hours. When a chart runs again, for example on a Dashboard that refreshes, it reads only the bins it doesn't have yet and the hours not yet exported. It works with or without a bucket, and saves the most with one, because a cached hour sends no requests to the bucket. Late Logs and Retention drop the bins of the hours they change. A Query with `ago()` or `now()` in its text never uses the cache, so pick the time range in the explorer's bar instead.
+`logs_bin_cache_mb` (default `64`, `0` turns it off) is the memory, in MiB, that keeps charts' time bins whose Logs are all exported. When a chart runs again, for example on a Dashboard that refreshes, it reads only the bins it doesn't have yet and the Logs not yet exported. It works with or without a bucket, and saves the most with one, because a cached bin sends no requests to the bucket. Late Logs, a busy Project's next quarter-hour and Retention drop the bins of the hours they change. A Query with `ago()` or `now()` in its text never uses the cache, so pick the time range in the explorer's bar instead.
 
 ## DuckDB with a bucket
 

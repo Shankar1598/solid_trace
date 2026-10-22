@@ -113,7 +113,7 @@ func wideRow(l wideLayout, lg Log) []driver.Value {
 }
 
 // TestWideColumns measures promoting every key at ingest (up to 1000 per
-// Project) against MAP-only, on the hot table, the hourly export and the
+// Project) against MAP-only, on the hot table, the Log export and the
 // Parquet footers. Under a minute; LOGSBENCH_PROBE=1 -v.
 func TestWideColumns(t *testing.T) {
 	if os.Getenv("LOGSBENCH_PROBE") == "" {
@@ -311,7 +311,7 @@ func queryNamed(name string) Query {
 	panic("no query " + name)
 }
 
-// TestWideColumnLimits times ingest and the hourly export with the first
+// TestWideColumnLimits times ingest and the Log export with the first
 // 100 and 250 keys promoted, against MAP-only. Under a minute.
 func TestWideColumnLimits(t *testing.T) {
 	if os.Getenv("LOGSBENCH_PROBE") == "" {

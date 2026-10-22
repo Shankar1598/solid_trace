@@ -123,7 +123,7 @@ func main() {
 	}
 	logProcessor.Start()
 
-	logExport := logprocessing.NewHourlyExport(logStore, clock.System{})
+	logExport := logprocessing.NewLogExport(logStore, clock.System{})
 	logExport.Start()
 
 	// Without a bucket nothing is uploaded, and the worker never starts.

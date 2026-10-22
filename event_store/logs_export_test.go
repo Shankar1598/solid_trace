@@ -16,14 +16,14 @@ func TestLateAndFutureLogsAreListedAndFoundByTheirKeys(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	// The hot window is 11:00 to 13:00.
+	// The hot window is 12:15 to 13:00.
 	now := testNow.Add(30 * time.Minute)
 	env.Clock.Set(now)
 	yesterday := testNow.AddDate(0, 0, -1)
 	postAndProcess(t, env,
 		logJSON(t, "yesterday", yesterday, map[string]any{"user": "ada", "status": 200}),
-		logJSON(t, "before the window", time.Date(2026, 10, 2, 10, 59, 59, 0, time.UTC), map[string]any{"user": "bob"}),
-		logJSON(t, "first in the window", time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC), map[string]any{"user": "cy"}),
+		logJSON(t, "before the window", time.Date(2026, 10, 2, 12, 14, 59, 0, time.UTC), map[string]any{"user": "bob"}),
+		logJSON(t, "first in the window", time.Date(2026, 10, 2, 12, 15, 0, 0, time.UTC), map[string]any{"user": "cy"}),
 		logJSON(t, "next hour", time.Date(2026, 10, 2, 13, 10, 0, 0, time.UTC), map[string]any{"user": "di"}),
 	)
 
@@ -36,8 +36,8 @@ func TestLateAndFutureLogsAreListedAndFoundByTheirKeys(t *testing.T) {
 	}
 
 	// Only the Log in the hot window promotes its keys, but each Log is
-	// found by them, in logs_late and once the export at 13:00 moves the
-	// Logs before 11:00 to files with their day's set.
+	// found by them, in logs_late and once the export at 14:00 moves the
+	// Logs before 13:00 to files with their day's set.
 	queries := map[string][]string{
 		`where user == "ada"`: {"yesterday"},
 		`where user == "bob"`: {"before the window"},
@@ -47,9 +47,9 @@ func TestLateAndFutureLogsAreListedAndFoundByTheirKeys(t *testing.T) {
 		`where user != "cy"`:  {"next hour", "before the window", "yesterday"},
 	}
 	assertQueries(t, env, queries, "with late and future Logs")
-	env.Clock.Set(time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC))
+	env.Clock.Set(time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC))
 	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC), 1)
+	assertHourFiles(t, env, 123, time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC), 1)
 	assertQueries(t, env, queries, "after the export")
 
 	// A Project whose only Log is late lists it too.
@@ -92,14 +92,16 @@ func TestLogsListTheSameBeforeAndAfterTheHourlyExport(t *testing.T) {
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 
-	// At 11:30 the hot window is 10:00 to 12:00.
-	env.Clock.Set(at(11, 30))
+	// Each Log is sent while the hot window takes it: at 10:29 the window
+	// is 10:00 to 11:00, and at 11:29 11:00 to 12:00.
+	env.Clock.Set(at(10, 29))
+	postAndProcess(t, env, logJSON(t, "ten past ten", at(10, 10), map[string]any{"user": "ada", "status": 200, "cached": true}))
+	env.Clock.Set(at(11, 29))
 	postAndProcess(t, env,
-		logJSON(t, "ten past ten", at(10, 10), map[string]any{"user": "ada", "status": 200, "cached": true}),
 		logJSON(t, "ten past eleven", at(11, 10), map[string]any{"user": "bob", "roles": []any{"a"}}),
 		logJSON(t, "yesterday", testNow.AddDate(0, 0, -1), map[string]any{"user": "old"}),
 	)
-	// At 12:05 the window has moved on to 11:00 to 13:00, so a Log of 10:20
+	// At 12:05 the window has moved on to 11:45 to 13:00, so a Log of 10:20
 	// is late, and its hour hasn't been exported yet. So is one of 13:01.
 	env.Clock.Set(at(12, 5))
 	postAndProcess(t, env,
@@ -180,8 +182,7 @@ func TestACrashBetweenStagingAndRenameLeavesNoHalfWrittenFileAndLosesNoLog(t *te
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	env.Clock.Set(time.Date(2026, 10, 2, 11, 30, 0, 0, time.UTC))
-	postAndProcess(t, env,
+	postWhileHot(t, env,
 		logJSON(t, "ten past ten", time.Date(2026, 10, 2, 10, 10, 0, 0, time.UTC), map[string]any{"user": "ada"}),
 		logJSON(t, "eleven", time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC), map[string]any{"user": "bob"}),
 	)
@@ -224,7 +225,7 @@ func TestLateLogsOfAnExportedHourGetLateFilesAndListTheSame(t *testing.T) {
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	env.Clock.Set(at(10, 30))
+	env.Clock.Set(at(10, 29))
 	postAndProcess(t, env, logJSON(t, "ten past ten", at(10, 10), map[string]any{"user": "ada", "status": 200}))
 	env.Clock.Set(at(12, 0))
 	env.ExportLogs(t)
@@ -264,7 +265,7 @@ func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T)
 
 	// Yesterday's set fills with k000…k099, then most Logs carry k000…k089
 	// and x000…x009, so today's set demotes k090…k099.
-	env.Clock.Set(at(1, 23, 30))
+	env.Clock.Set(at(1, 23, 29))
 	postAndProcess(t, env, logJSON(t, "first", at(1, 23, 10), numberedKeys("k", 100, "v")))
 	common := numberedKeys("k", 90, "v")
 	for name, value := range numberedKeys("x", 10, 1) {
@@ -282,6 +283,15 @@ func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T)
 	}
 	assertQueries(t, env, queries, "with k095 demoted today")
 	want := latestLogs(t, env, 123, 100)
+
+	// The quarter-hour runs before 01:00 keep yesterday's last hour, and
+	// with it the demoted columns.
+	for _, minute := range []int{15, 30, 45} {
+		env.Clock.Set(at(2, 0, minute))
+		env.ExportLogs(t)
+		assertListsUnchanged(t, env, 123, want, fmt.Sprintf("after the export at 00:%d", minute))
+		assertQueries(t, env, queries, fmt.Sprintf("after the export at 00:%d", minute))
+	}
 
 	// The export at 01:00 deletes yesterday's last hour.
 	env.Clock.Set(at(2, 1, 0))
@@ -311,6 +321,63 @@ func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T)
 	env.ExportLogs(t)
 	assertListsUnchanged(t, env, 123, want, "after the next exports")
 	assertQueries(t, env, queries, "after the next exports")
+	env.Reopen(t)
+	assertListsUnchanged(t, env, 123, want, "after a restart")
+	assertQueries(t, env, queries, "after a restart")
+}
+
+func TestABusyProjectsDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T) {
+	env := setupBusyTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 10, day, hour, minute, 0, 0, time.UTC) }
+	// Yesterday's set fills with k000…k099, then most Logs carry k000…k089
+	// and x000…x009, so today's set demotes k090…k099. The Project sends 2
+	// Logs a quarter-hour, enough to be busy, from 23:00 to 00:59, and each
+	// run from 23:15 to 01:15 takes the quarter-hour that ended 15 minutes
+	// before it.
+	common := numberedKeys("k", 90, "v")
+	for name, value := range numberedKeys("x", 10, 1) {
+		common[name] = value
+	}
+	queries := map[string][]string{}
+	for run := at(1, 23, 15); !run.After(at(2, 1, 15)); run = run.Add(15 * time.Minute) {
+		if quarter := run.Add(-15 * time.Minute); quarter.Before(at(2, 1, 0)) {
+			env.Clock.Set(quarter.Add(3 * time.Minute))
+			for _, sent := range []time.Time{quarter.Add(time.Minute), quarter.Add(2 * time.Minute)} {
+				message, attributes := "today "+sent.Format("15:04"), map[string]any{"k095": "v", "x000": 7}
+				switch {
+				case sent.Equal(at(1, 23, 1)):
+					message, attributes = "first", numberedKeys("k", 100, "v")
+				case sent.Day() == 1:
+					message, attributes = "yesterday "+sent.Format("15:04"), common
+				}
+				postAndProcess(t, env, logJSON(t, message, sent, attributes))
+				if sent.Day() == 1 {
+					queries[`where k001 == "v"`] = append([]string{message}, queries[`where k001 == "v"`]...)
+				} else {
+					queries[`where x000 == 7`] = append([]string{message}, queries[`where x000 == 7`]...)
+				}
+				if attributes["k095"] == "v" {
+					queries[`where k095 == "v"`] = append([]string{message}, queries[`where k095 == "v"`]...)
+				}
+			}
+		}
+		want := latestLogs(t, env, 123, 100)
+		env.Clock.Set(run)
+		env.ExportLogs(t)
+		when := "after the run at " + run.Format("15:04")
+		assertListsUnchanged(t, env, 123, want, when)
+		assertQueries(t, env, queries, when)
+	}
+
+	quarterFiles := []string{"data-00.parquet", "data-15.parquet", "data-30.parquet", "data-45.parquet"}
+	assertHourFileNames(t, env, 123, at(1, 23, 0), quarterFiles...)
+	assertHourFileNames(t, env, 123, at(2, 0, 0), quarterFiles...)
+	want := latestLogs(t, env, 123, 100)
+	if got, want := attributesByMessage(want)["first"], numberedKeys("k", 100, "v"); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected the first Log's 100 Attributes back, got %v", got)
+	}
 	env.Reopen(t)
 	assertListsUnchanged(t, env, 123, want, "after a restart")
 	assertQueries(t, env, queries, "after a restart")

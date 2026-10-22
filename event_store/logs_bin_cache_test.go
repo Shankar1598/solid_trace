@@ -70,13 +70,22 @@ func chartLog(t *testing.T, at time.Time, user string, ms int) string {
 }
 
 // postChartLogs sends Logs from 20:00 on October 1st to 12:30 on the 2nd,
-// at the clock's time.
+// at noon, those of 11:00 earlier, while the hot window takes them: so the
+// Logs of 11:00 and 12:00 are hot, and the others late.
 func postChartLogs(t *testing.T, env *TestEnv) {
 	t.Helper()
-	var logs []string
+	var eleven, logs []string
 	for at, i := chartAt(1, 20, 5), 0; at.Before(chartAt(2, 12, 40)); at, i = at.Add(25*time.Minute), i+1 {
-		logs = append(logs, chartLog(t, at, []string{"ada", "bob", "cy"}[i%3], 10*(i%7)))
+		log := chartLog(t, at, []string{"ada", "bob", "cy"}[i%3], 10*(i%7))
+		if at.Truncate(time.Hour).Equal(chartAt(2, 11, 0)) {
+			eleven = append(eleven, log)
+		} else {
+			logs = append(logs, log)
+		}
 	}
+	env.Clock.Set(chartAt(2, 11, 29))
+	postAndProcess(t, env, eleven...)
+	env.Clock.Set(testNow)
 	postAndProcess(t, env, logs...)
 }
 

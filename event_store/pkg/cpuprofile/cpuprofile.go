@@ -33,8 +33,8 @@ const (
 	prefix, suffix = "cpu-", ".pprof"
 )
 
-// offsets are when each hour's profiles start: during the hourly export, and
-// half an hour later, in steady ingest.
+// offsets are when each hour's profiles start: during the Log export at the
+// hour start, when quiet Projects' hours go too, and half an hour later.
 var offsets = []time.Duration{30 * time.Second, 30*time.Minute + 30*time.Second}
 
 // Profiler writes a profile of length at each offset past the hour, by its

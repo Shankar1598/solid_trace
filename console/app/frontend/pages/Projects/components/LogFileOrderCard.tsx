@@ -22,7 +22,7 @@ interface LogFileOrderCardProps {
 }
 
 /**
- * A Project's Log file order: the Fields each hour's Log file is sorted by
+ * A Project's Log file order: the Fields each Log file is sorted by
  * before time. Admins add and remove Fields and save them, or save the
  * default or time only at once; other members see it read-only.
  */
@@ -64,7 +64,7 @@ export function LogFileOrderCard({ url, order, defaultOrder, builtIns, attribute
         <CardHeader>
           <CardTitle>Log file order</CardTitle>
           <CardDescription>
-            The Fields each hour's Log file is sorted by, before time, so a Query filtered on them reads less.
+            The Fields each Log file is sorted by, before time, so a Query filtered on them reads less.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 pb-6">
@@ -113,7 +113,7 @@ export function LogFileOrderCard({ url, order, defaultOrder, builtIns, attribute
           )}
           {error && <p className="text-sm font-medium text-destructive">{error}</p>}
           <p className="text-xs text-muted-foreground">
-            A change applies to hours exported after it; Log files already written keep their order.
+            A change applies to Logs exported after it; Log files already written keep their order.
             It helps most for Fields that have a column of their own, which a Project's busiest Attributes get.
             Each Field added makes reads over a narrow time span read a little more.
             {!canManage && ' Only organization admins can change this.'}
