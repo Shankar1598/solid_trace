@@ -38,6 +38,8 @@ type SQLResult struct {
 	Rows    [][]any
 	// Truncated is set when the query returned more rows than were read.
 	Truncated bool
+	// Notice is advice on writing the query faster (sqlNotice), or "".
+	Notice string
 }
 
 // SQLError is a SQL query's own failure, such as a mistake in it, as opposed
@@ -56,7 +58,8 @@ func (e *SQLError) Unwrap() error { return e.Err }
 // limit rows. SQL that isn't one SELECT, that calls a function that changes
 // something (checkReadOnly), or that reads anything but the two views
 // (checkScope), is refused before any of it runs. If the query is refused
-// or itself fails, the error is a *SQLError.
+// or itself fails, the error is a *SQLError. A query that matches message
+// slowly still runs, and its result's Notice says how to write it faster.
 //
 // The views are temporary views on the read's own connection, which is
 // closed afterwards, so nothing the query leaves on it (temporary objects,
@@ -118,7 +121,7 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 	if err != nil {
 		return SQLResult{}, &SQLError{err}
 	}
-	result := SQLResult{Columns: make([]SQLColumn, len(types))}
+	result := SQLResult{Columns: make([]SQLColumn, len(types)), Notice: sqlNotice(statement)}
 	for i, t := range types {
 		result.Columns[i] = SQLColumn{Name: t.Name(), Type: t.DatabaseTypeName()}
 	}

@@ -88,6 +88,19 @@ The `events` view holds the Project's Events of the time range in the explorer's
 | `environment`, `server_name`, `release`, `level` | `VARCHAR` | As the SDK sent them. |
 | `tags` | `MAP(VARCHAR, VARCHAR)` | The Event's tags. |
 
+## Matching text
+
+`message` is most of what a Log stores, so how you match it decides how fast a query is. DuckDB's string functions are several times faster than `ILIKE`:
+
+| Instead of | Write |
+| --- | --- |
+| `message ILIKE '%timeout%'` | `contains(lower(message), 'timeout')` |
+| `message NOT ILIKE '%timeout%'` | `NOT contains(lower(message), 'timeout')` |
+| `message LIKE '%timeout%' ESCAPE '\'` | `contains(message, 'timeout')` |
+| `message ILIKE '%user_42%'` | `regexp_matches(message, '(?i)user.42')` |
+
+A plain `LIKE '%timeout%'` and a pattern without a leading `%`, such as `ILIKE 'GET %'`, are already fast. When a query matches `message` slowly, it still runs, and its answer carries a `notice` saying what to write instead. `run_sql` passes it on to MCP clients; the explorer doesn't show it yet.
+
 ## Results
 
 - Results show at most 10,000 rows. A result that has more is marked as cut off.

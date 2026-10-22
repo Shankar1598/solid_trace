@@ -167,6 +167,90 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 7, project_page["project"]["log_retention_days"]
   end
 
+  test "the Project page shows the default Log file order while none is set" do
+    page = project_page
+
+    assert_nil page["project"]["log_file_order"]
+    assert_equal [ "service", "file" ], page["default_log_file_order"]
+    assert_equal [ "service", "environment", "level" ], page["log_file_order_built_ins"]
+  end
+
+  test "the Project page offers an admin its string Attributes of the last day for the Log file order, after it opens" do
+    sign_in_as(@admin)
+    travel_to Time.utc(2026, 10, 22, 12, 0, 0) do
+      fields = stub_request(:get, "#{EventStore.base_url}/api/#{@project.id}/logs/fields")
+        .with(query: { from: "2026-10-21T12:00:00.000Z", to: "2026-10-22T12:00:00.000Z" })
+        .to_return(status: 200, body: {
+          built_in: [ { name: "time", type: "datetime" } ],
+          attributes: [ { name: "file", type: "string", logs: 9 }, { name: "status", type: "number", logs: 5 },
+                        { name: "http.route", type: "string", logs: 3 }, { name: "status", type: "string", logs: 1 } ],
+          truncated: false,
+        }.to_json)
+
+      assert_not project_page.key?("log_file_order_attributes")
+      assert_not_requested fields
+      assert_equal [ "file", "http.route", "status" ], project_page_prop("log_file_order_attributes")
+    end
+  end
+
+  test "the Project page offers no Attributes for the Log file order while EventStore can't answer" do
+    sign_in_as(@admin)
+    stub_request(:get, %r{/api/#{@project.id}/logs/fields}).to_timeout
+
+    assert_equal [], project_page_prop("log_file_order_attributes")
+  end
+
+  test "the Project page asks EventStore for no Attributes for a member, who can't change the Log file order" do
+    fields = stub_request(:get, %r{/api/#{@project.id}/logs/fields})
+
+    get project_url(@project, org_slug: @organization.slug), headers: {
+      "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest,
+      "X-Inertia-Partial-Component" => "Projects/Show", "X-Inertia-Partial-Data" => "log_file_order_attributes",
+    }
+
+    assert_response :success
+    assert_not JSON.parse(response.body)["props"].key?("log_file_order_attributes")
+    assert_not_requested fields
+  end
+
+  test "an admin sets a Project's Log file order, resets it to the default and sets time only" do
+    sign_in_as(@admin)
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json,
+      params: { project: { log_file_order: [ "service", "http.route" ] } }
+    assert_redirected_to project_url(@project, org_slug: @organization.slug)
+    assert_equal [ "service", "http.route" ], project_page["project"]["log_file_order"]
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json, params: { project: { log_file_order: nil } }
+    assert_nil project_page["project"]["log_file_order"]
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json, params: { project: { log_file_order: [] } }
+    assert_equal [], project_page["project"]["log_file_order"]
+  end
+
+  test "a Log file order the Project can't sort by shows its error and keeps the order" do
+    sign_in_as(@admin)
+    @project.update!(log_file_order: [ "level" ])
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json,
+      params: { project: { log_file_order: [ "service", "message" ] } }
+
+    page = project_page
+    assert_equal [ "can't name message: only service, environment, level and Attributes sort a Log file" ],
+      Array(page["errors"]["log_file_order"])
+    assert_equal [ "level" ], page["project"]["log_file_order"]
+  end
+
+  test "a member can't change a Project's Log file order" do
+    @project.update!(log_file_order: [ "level" ])
+
+    patch project_url(@project, org_slug: @organization.slug), as: :json, params: { project: { log_file_order: [] } }
+
+    assert_response :redirect
+    assert_equal "You are not authorized to perform this action.", flash[:alert]
+    assert_equal [ "level" ], project_page["project"]["log_file_order"]
+  end
+
   test "an admin deletes a Project and its Issues" do
     issue = create(:issue, project: @project)
     sign_in_as(@admin)
@@ -209,5 +293,15 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
       headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
     assert_response :success
     JSON.parse(response.body)["props"]
+  end
+
+  # A prop the Project page loads after it opens, as Inertia asks for a deferred one.
+  def project_page_prop(name)
+    get project_url(@project, org_slug: @organization.slug), headers: {
+      "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest,
+      "X-Inertia-Partial-Component" => "Projects/Show", "X-Inertia-Partial-Data" => name,
+    }
+    assert_response :success
+    JSON.parse(response.body)["props"].fetch(name)
   end
 end

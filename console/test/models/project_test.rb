@@ -53,6 +53,63 @@ class ProjectTest < ActiveSupport::TestCase
     assert project.update(log_retention_days: 7)
   end
 
+  test "a Project's Log file order is the default when unset, and time only when empty" do
+    assert build(:project, log_file_order: nil).valid?
+    assert build(:project, log_file_order: []).valid?
+    assert_equal [ "service", "file" ], build(:project, log_file_order: nil).log_file_order_in_force
+    assert_equal [], build(:project, log_file_order: []).log_file_order_in_force
+    assert_equal [ "level" ], build(:project, log_file_order: [ "level" ]).log_file_order_in_force
+  end
+
+  test "a Log file order names service, environment, level or Attributes, up to three" do
+    assert build(:project, log_file_order: [ "service", "file" ]).valid?
+    assert build(:project, log_file_order: [ "environment", "level", "http.route" ]).valid?
+    assert build(:project, log_file_order: [ "user agent" ]).valid?, "a Query reads any Attribute name, quoted"
+  end
+
+  test "a Log file order of a fourth Field is refused" do
+    project = build(:project, log_file_order: [ "service", "file", "level", "environment" ])
+
+    assert_not project.valid?
+    assert_equal [ "can have at most 3 Fields" ], project.errors[:log_file_order]
+  end
+
+  test "a Log file order naming a Field twice is refused" do
+    project = build(:project, log_file_order: [ "service", "file", "service" ])
+
+    assert_not project.valid?
+    assert_equal [ "names service twice" ], project.errors[:log_file_order]
+  end
+
+  test "a Log file order can't name time, id, message, trace_id or span_id" do
+    %w[time _time id message trace_id span_id].each do |field|
+      project = build(:project, log_file_order: [ "service", field ])
+
+      assert_not project.valid?, "#{field} should be refused"
+      assert_equal [ "can't name #{field}: only service, environment, level and Attributes sort a Log file" ],
+        project.errors[:log_file_order]
+    end
+  end
+
+  test "a Log file order of a name no Log can have as an Attribute is refused" do
+    [ "", "a\u0000b", "a" * 257 ].each do |name|
+      project = build(:project, log_file_order: [ name ])
+
+      assert_not project.valid?, "#{name.inspect} should be refused"
+      assert project.errors[:log_file_order].present?
+    end
+    assert build(:project, log_file_order: [ "a" * 256 ]).valid?
+  end
+
+  test "a Log file order must be a list of names" do
+    [ "service", { "service" => 1 }, [ 1 ], [ nil ] ].each do |order|
+      project = build(:project, log_file_order: order)
+
+      assert_not project.valid?, "#{order.inspect} should be refused"
+      assert_equal [ "must be a list of Field names" ], project.errors[:log_file_order]
+    end
+  end
+
   test "to_param uses slug" do
     project = create(:project, slug: "my-project")
 

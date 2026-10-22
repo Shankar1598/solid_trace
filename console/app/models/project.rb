@@ -19,6 +19,23 @@ class Project < ApplicationRecord
   validate :slug_reachable, on: :create
   # Whole days; nil means the instance default (InstanceSetting).
   validates :log_retention_days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
+  validate :log_file_order_sorts
+
+  # The Log file order of a Project whose log_file_order is nil. EventStore
+  # has the same default (storage.DefaultLogFileOrder).
+  DEFAULT_LOG_FILE_ORDER = %w[service file].freeze
+  # EventStore has the same limit (storage.maxLogFileOrder).
+  MAX_LOG_FILE_ORDER = 3
+  # The built-in Fields a Log file order can name. Any other name is an
+  # Attribute, as the Query language reads it, unless it's another built-in
+  # Field or the time alias _time: time and id always end the order, and
+  # message, trace_id and span_id are near unique, so they group nothing.
+  # EventStore has the same lists (storage.sortedBuiltIns and
+  # storage.unsortedFields).
+  LOG_FILE_ORDER_BUILT_INS = %w[service environment level].freeze
+  UNSORTED_FIELDS = %w[time _time id message trace_id span_id].freeze
+  # Ingest drops an Attribute whose name is longer (maxNameBytes).
+  MAX_ATTRIBUTE_NAME_BYTES = 256
 
   # A new Project with its first key, so SDKs and shippers can send to it at
   # once, as Console makes one.
@@ -44,6 +61,12 @@ class Project < ApplicationRecord
     "ruby"
   end
 
+  # The Log file order EventStore sorts the Project's Log files by: its own,
+  # or the default while it sets none.
+  def log_file_order_in_force
+    log_file_order.nil? ? DEFAULT_LOG_FILE_ORDER : log_file_order
+  end
+
   # The Project's current Log transform: its newest version, or nil before
   # one is saved.
   def log_transform
@@ -51,6 +74,33 @@ class Project < ApplicationRecord
   end
 
   private
+
+  # log_file_order is nil for the default, or a JSON array of up to three
+  # Field names, which EventStore sorts each hour's Log file by.
+  def log_file_order_sorts
+    order = log_file_order
+    return if order.nil?
+    unless order.is_a?(Array) && order.all?(String)
+      return errors.add(:log_file_order, "must be a list of Field names")
+    end
+
+    if order.size > MAX_LOG_FILE_ORDER
+      errors.add(:log_file_order, "can have at most #{MAX_LOG_FILE_ORDER} Fields")
+    elsif (field = order.find { |name| UNSORTED_FIELDS.include?(name) })
+      errors.add(:log_file_order, "can't name #{field}: only #{LOG_FILE_ORDER_BUILT_INS.join(', ')} and Attributes sort a Log file")
+    elsif (name = order.find { |n| !attribute_name?(n) && !LOG_FILE_ORDER_BUILT_INS.include?(n) })
+      errors.add(:log_file_order, "names #{name.inspect}, which no Log can have as an Attribute")
+    elsif (field = order.detect { |n| order.count(n) > 1 })
+      errors.add(:log_file_order, "names #{field} twice")
+    end
+  end
+
+  # A name a Log can have as an Attribute: ingest keeps names up to
+  # MAX_ATTRIBUTE_NAME_BYTES, and EventStore can't make a column of one with
+  # a NUL or invalid UTF-8. A Query reads any such name, quoted as ['name'].
+  def attribute_name?(name)
+    !name.empty? && name.bytesize <= MAX_ATTRIBUTE_NAME_BYTES && name.valid_encoding? && !name.include?("\u0000")
+  end
 
   def generate_slug
     self.slug ||= name.to_s.parameterize

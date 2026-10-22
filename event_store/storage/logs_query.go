@@ -181,9 +181,10 @@ func (s *LogStore) ScanLogs(ctx context.Context, scan LogScan) (LogScanPage, err
 // It reads in two steps. The first (newestInHour) reads only the time and id
 // of the newest limit Logs that meet the condition. The second (hourLogsByID)
 // reads those Logs whole, by id, from the span of time they lie in: Log files
-// are sorted by time, and a hot table is close to it, so for the newest Logs
-// of a busy hour it skips all but the newest row groups. The condition isn't
-// run again, and an hour with no such Logs isn't read again.
+// are sorted by their Project's Log file order, then time, and a hot table is
+// close to time order, so for the newest Logs of a busy hour it skips all but
+// the newest row groups of each run of the order. The condition isn't run
+// again, and an hour with no such Logs isn't read again.
 //
 // With oneStep, it reads whole Logs at once instead, as ScanLogs asks once a
 // whole hour held fewer Logs than the page still wanted: such Logs are rare,
