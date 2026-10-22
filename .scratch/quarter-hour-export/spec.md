@@ -1,6 +1,6 @@
 # Busy Projects' Logs exported every quarter-hour
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 Planned with the user on 2026-10-22, after the Log file order ([spec](../log-file-order/spec.md)). Sorted Log files let a Query filtered on `service` or `file` skip row groups, but the hot table can't be kept sorted: it fills in arrival order, and it holds the current hour and the previous one, so up to two hours of a 6 h Dashboard read it whole. The user chose to export more often, every 15 minutes, so that less of every range is in the hot table. Code map from main at `a0562f8`: `~/.cache/solid-trace/export-15m-notes/code-map.md`.
 

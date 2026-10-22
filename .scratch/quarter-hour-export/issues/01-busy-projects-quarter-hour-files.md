@@ -13,16 +13,20 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A busy Project's quarter-hours are written to `data-00` … `data-45` by the runs 15 minutes after each ends, and its Logs list the same before and after each run
-- [ ] A quiet Project, in the same runs, gets `data.parquet` once its hour reaches the hour cutoff
-- [ ] A Log of an exported quarter-hour, arriving inside the hot window, is in the hour's late file after the next run, found by its key's promoted column
-- [ ] An hour whose first quarters went out on their own keeps going by quarter-hours after the Project turns quiet
-- [ ] A run after an hour's gap writes each missed quarter-hour's file
-- [ ] Staged quarter-hour files left by a crash are settled as staged hour files are
-- [ ] The timer runs at each quarter-hour start, at start-up and a minute after a failure (a `logprocessing` test with `clock.Manual`)
-- [ ] The existing export, bin cache, bucket, manifest, Retention, after-batch, file order and newest page root tests pass unchanged
-- [ ] ADR, GLOSSARY.md and `docs/logs/` updated
+- [x] A busy Project's quarter-hours are written to `data-00` … `data-45` by the runs 15 minutes after each ends, and its Logs list the same before and after each run
+- [x] A quiet Project, in the same runs, gets `data.parquet` once its hour reaches the hour cutoff
+- [x] A Log of an exported quarter-hour, arriving inside the hot window, is in the hour's late file after the next run, found by its key's promoted column
+- [x] An hour whose first quarters went out on their own keeps going by quarter-hours after the Project turns quiet
+- [x] A run after an hour's gap writes each missed quarter-hour's file
+- [x] Staged quarter-hour files left by a crash are settled as staged hour files are
+- [x] The timer runs at each quarter-hour start, at start-up and a minute after a failure (a `logprocessing` test with `clock.Manual`)
+- [x] The existing export, bin cache, bucket, manifest, Retention, after-batch, file order and newest page root tests pass unchanged
+- [x] ADR, GLOSSARY.md and `docs/logs/` updated
 
 Tests go in EventStore's root tests beside `logs_export_test.go`, with the busy threshold lowered for the test's LogStore. They check what can be seen (an hour's files and their names, a file's rows, the Logs a Query lists, the log line), never the SQL the export runs.
+
+## Comments
+
+**2026-10-22, built on `feature/quarter-hour-export` (merge `acf7b1e`, review fixes `9e445f8`).** The export plans each file as a name and the spans of its hour it holds (`stageFile`). `LogExport` runs at start-up, at each quarter-hour start (waiting from the run's start, so a long run is followed by one at once) and a minute after a failure; `clock.Manual` gained `After` and `BlockUntilTimers` for its test, `logprocessing`'s first. A busy Project's hour with no file goes by quarter-hours, even an old hour holding only late Logs; a quiet Project's cutoff moves past every hour that already went by quarter-hours. After review, by the user's choice, a Project is busy when its last quarter-hour before the quarter cutoff, not its whole hot table, holds at least 122,880 Logs, so a quarter file holds about a row group and a Project of ~70k Logs an hour no longer turns busy at the :00 runs; spec, ADR 0013 and GLOSSARY.md say the same. The export's message lists each file's key and span. ADR 0013 records the quarter-hour export. Tests: `logs_quarter_hour_export_test.go` and `logprocessing/export_test.go`, with the existing export, bin cache, bucket, manifest, Retention, after-batch, file order and newest page tests.
