@@ -16,10 +16,11 @@ module ChartRunning
 
   private
 
-  # A Query run on a Project over @from to @to, answered as the explorer's
-  # run is. A Query that answers Logs rather than a table can't be charted.
-  def run_chart(project, query)
-    render json: ChartRuns.run_chart(project, query, from: @from, to: @to)
+  # A Query run on a Project over @from to @to, with the values of the
+  # Dashboard filters it names, answered as the explorer's run is. A Query
+  # that answers Logs rather than a table can't be charted.
+  def run_chart(project, query, parameters: nil)
+    render json: ChartRuns.run_chart(project, query, from: @from, to: @to, parameters: parameters)
   end
 
   def not_a_table(error)
