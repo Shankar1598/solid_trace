@@ -154,7 +154,7 @@ class Dashboard < ApplicationRecord
       errors.add(:"#{at}.field", "can't be blank")
     elsif field.length > MAX_FIELD_NAME
       errors.add(:"#{at}.field", "is too long (at most #{MAX_FIELD_NAME} characters)")
-    elsif field == "time"
+    elsif %w[time _time].include?(field)
       errors.add(:"#{at}.field", "can't be time")
     end
     project_id = options["project_id"]
