@@ -209,11 +209,10 @@ func (s *LogStore) stageExport(projectID uint32, cutoff time.Time, order LogFile
 	if staged.cursor, err = logProcessingCursor(ctx, conn, projectID); err != nil {
 		return staged, err
 	}
-	export, err := s.newProjectExport(ctx, conn, projectID)
+	export, err := s.newProjectExport(ctx, conn, projectID, order)
 	if err != nil {
 		return staged, err
 	}
-	export.order = order
 	hours, err := export.hours(cutoff)
 	if err != nil {
 		return staged, err
@@ -273,7 +272,8 @@ func (s *LogStore) commitExport(projectID uint32, cutoff time.Time, staged *stag
 		}
 	}
 	// Log processing may have added columns since the files were written.
-	export, err := s.newProjectExport(ctx, conn, projectID)
+	// This export stages no files, so it needs no order.
+	export, err := s.newProjectExport(ctx, conn, projectID, nil)
 	if err != nil {
 		return false, err
 	}
@@ -331,8 +331,8 @@ type projectExport struct {
 	order LogFileOrder
 }
 
-func (s *LogStore) newProjectExport(ctx context.Context, conn *sql.Conn, projectID uint32) (*projectExport, error) {
-	e := &projectExport{ctx: ctx, conn: conn, files: s.files, projectID: projectID}
+func (s *LogStore) newProjectExport(ctx context.Context, conn *sql.Conn, projectID uint32, order LogFileOrder) (*projectExport, error) {
+	e := &projectExport{ctx: ctx, conn: conn, files: s.files, projectID: projectID, order: order}
 	var exists bool
 	err := conn.QueryRowContext(ctx,
 		"SELECT count(*) > 0 FROM duckdb_tables() WHERE database_name = ? AND schema_name = 'main' AND table_name = ?",

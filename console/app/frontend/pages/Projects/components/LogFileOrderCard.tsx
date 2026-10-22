@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { addField, offeredFields, orderSummary } from '@/lib/logFileOrder'
+import { addField, offeredFields, orderSummary, whyNotAdded } from '@/lib/logFileOrder'
 import { X } from 'lucide-react'
 import { useState } from 'react'
 
@@ -14,6 +14,8 @@ interface LogFileOrderCardProps {
   /** The Project's order: null for the default, [] for time only. */
   order: string[] | null
   defaultOrder: string[]
+  /** The built-in Fields an order can name. */
+  builtIns: string[]
   /** The Project's string Attributes to offer, once loaded. */
   attributes?: string[]
   canManage: boolean
@@ -24,10 +26,12 @@ interface LogFileOrderCardProps {
  * before time. Admins add and remove Fields and save them, or save the
  * default or time only at once; other members see it read-only.
  */
-export function LogFileOrderCard({ url, order, defaultOrder, attributes = [], canManage }: LogFileOrderCardProps) {
+export function LogFileOrderCard({ url, order, defaultOrder, builtIns, attributes = [], canManage }: LogFileOrderCardProps) {
   // null while the draft is the Project's default.
   const [draft, setDraft] = useState<string[] | null>(order)
   const [typed, setTyped] = useState('')
+  // Why the typed name wasn't added, shown beside the input.
+  const [refused, setRefused] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const fields = draft ?? defaultOrder
@@ -47,6 +51,9 @@ export function LogFileOrderCard({ url, order, defaultOrder, attributes = [], ca
   }
 
   const add = () => {
+    const why = whyNotAdded(fields, typed)
+    setRefused(why)
+    if (why) return
     setDraft(addField(fields, typed))
     setTyped('')
   }
@@ -72,6 +79,7 @@ export function LogFileOrderCard({ url, order, defaultOrder, attributes = [], ca
                       <button
                         type="button"
                         aria-label={`Remove ${field}`}
+                        title={`Remove ${field}`}
                         onClick={() => setDraft(fields.filter((_, j) => j !== i))}
                       >
                         <X />
@@ -90,16 +98,17 @@ export function LogFileOrderCard({ url, order, defaultOrder, attributes = [], ca
                   id="logFileOrderField"
                   list="logFileOrderFields"
                   value={typed}
-                  onChange={(e) => setTyped(e.target.value)}
+                  onChange={(e) => { setTyped(e.target.value); setRefused(null) }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
                   placeholder="service, environment, level or an Attribute"
                   className="font-mono text-xs"
                 />
                 <datalist id="logFileOrderFields">
-                  {offeredFields(fields, attributes).map(name => <option key={name} value={name} />)}
+                  {offeredFields(fields, builtIns, attributes).map(name => <option key={name} value={name} />)}
                 </datalist>
                 <Button type="button" variant="outline" onClick={add} disabled={typed.trim() === ''}>Add</Button>
               </div>
+              {refused && <p className="text-sm text-destructive">{refused}</p>}
             </div>
           )}
           {error && <p className="text-sm font-medium text-destructive">{error}</p>}

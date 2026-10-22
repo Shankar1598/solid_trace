@@ -24,11 +24,14 @@ class Project < ApplicationRecord
   # The Log file order of a Project whose log_file_order is nil. EventStore
   # has the same default (storage.DefaultLogFileOrder).
   DEFAULT_LOG_FILE_ORDER = %w[service file].freeze
+  # EventStore has the same limit (storage.maxLogFileOrder).
   MAX_LOG_FILE_ORDER = 3
   # The built-in Fields a Log file order can name. Any other name is an
   # Attribute, as the Query language reads it, unless it's another built-in
   # Field or the time alias _time: time and id always end the order, and
   # message, trace_id and span_id are near unique, so they group nothing.
+  # EventStore has the same lists (storage.sortedBuiltIns and
+  # storage.unsortedFields).
   LOG_FILE_ORDER_BUILT_INS = %w[service environment level].freeze
   UNSORTED_FIELDS = %w[time _time id message trace_id span_id].freeze
   # Ingest drops an Attribute whose name is longer (maxNameBytes).
@@ -56,6 +59,12 @@ class Project < ApplicationRecord
 
   def platform
     "ruby"
+  end
+
+  # The Log file order EventStore sorts the Project's Log files by: its own,
+  # or the default while it sets none.
+  def log_file_order_in_force
+    log_file_order.nil? ? DEFAULT_LOG_FILE_ORDER : log_file_order
   end
 
   # The Project's current Log transform: its newest version, or nil before
