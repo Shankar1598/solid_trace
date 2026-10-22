@@ -562,25 +562,26 @@ func (c *compiler) predicate(e parser.Expr) (expr, error) {
 	return c.condition(e)
 }
 
-// filterOps are the operators a Dashboard filter can be compared with.
+// filterOps are the operators a Dashboard filter can be compared with, each
+// set to whether the filter can go on either side of it.
 var filterOps = map[parser.TokenKind]bool{
 	parser.TokenEq: true, parser.TokenNE: true, parser.TokenEqCI: true, parser.TokenNECI: true,
-	parser.TokenContains: true, parser.TokenNotContains: true, parser.TokenContainsCS: true, parser.TokenNotContainsCS: true,
-	parser.TokenStartsWith: true, parser.TokenNotStartsWith: true, parser.TokenStartsWithCS: true, parser.TokenNotStartsWithCS: true,
+	parser.TokenContains: false, parser.TokenNotContains: false, parser.TokenContainsCS: false, parser.TokenNotContainsCS: false,
+	parser.TokenStartsWith: false, parser.TokenNotStartsWith: false, parser.TokenStartsWithCS: false, parser.TokenNotStartsWithCS: false,
 }
 
 // filterSides splits a comparison with a Dashboard filter into the filter and
 // what it is compared with. The filter is on the right, or on either side of
 // ==, !=, =~ and !~.
 func filterSides(e *parser.BinaryExpr) (*parser.Param, parser.Expr, bool) {
-	if !filterOps[e.Op] {
+	eitherSide, ok := filterOps[e.Op]
+	if !ok {
 		return nil, nil, false
 	}
 	if p, ok := e.Y.(*parser.Param); ok {
 		return p, e.X, true
 	}
-	symmetric := e.Op == parser.TokenEq || e.Op == parser.TokenNE || e.Op == parser.TokenEqCI || e.Op == parser.TokenNECI
-	if p, ok := e.X.(*parser.Param); ok && symmetric {
+	if p, ok := e.X.(*parser.Param); ok && eitherSide {
 		return p, e.Y, true
 	}
 	return nil, nil, false
@@ -636,7 +637,7 @@ func (c *compiler) filter(e *parser.BinaryExpr, p *parser.Param, side parser.Exp
 			m = compare{x: x, op: op, y: literal{valueAs(x.typ(), v)}}
 		}
 		if untyped(x) && (!isText || text.op == matchEquals) {
-			for _, l := range readsAs(v) {
+			if l, ok := readsAs(v); ok {
 				y, err := c.expr(side, l.valueType(), nil)
 				if err != nil {
 					return nil, err
@@ -681,23 +682,21 @@ func untyped(x expr) bool {
 }
 
 // readsAs is the number or bool a filter's text value reads as, if any.
-func readsAs(v string) []Literal {
+func readsAs(v string) (Literal, bool) {
 	if n, err := strconv.ParseFloat(v, 64); err == nil && !math.IsInf(n, 0) && !math.IsNaN(n) {
-		return []Literal{{Kind: parser.NumberLiteral, Number: n}}
+		return Literal{Kind: parser.NumberLiteral, Number: n}, true
 	}
 	if v == "true" || v == "false" {
-		return []Literal{{Kind: parser.BoolLiteral, Bool: v == "true"}}
+		return Literal{Kind: parser.BoolLiteral, Bool: v == "true"}, true
 	}
-	return nil
+	return Literal{}, false
 }
 
 // valueAs is a filter's text value as a value of type t, when it reads as
 // one, or else as text.
 func valueAs(t valueType, v string) Literal {
-	for _, l := range readsAs(v) {
-		if l.valueType() == t {
-			return l
-		}
+	if l, ok := readsAs(v); ok && l.valueType() == t {
+		return l
 	}
 	return Literal{Kind: parser.StringLiteral, String: v}
 }
