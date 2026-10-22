@@ -14,7 +14,8 @@ module McpTools
       read-only, and reads only those two views: anything but one SELECT, and any table, file, URL or table function
       but range, generate_series and unnest, is refused. Match text in message with contains(lower(message), 'x') or
       starts_with, not ILIKE, which is several times slower; an answer that matched slowly carries a notice saying
-      what to write instead. query_logs does most things more simply.
+      what to write instead. A condition on an Attribute reads every Log of the range, where query_logs reads only the
+      matching parts of each Log file; query_logs does most things more simply.
     TEXT
     read_only!
     needs_sql_queries!

@@ -21,6 +21,7 @@ module McpTools
       with a cursor for older ones. Any other stage, such as summarize, project, extend, top, count or distinct,
       answers a table, of which you get #{Table::SHAPE}.
       list_fields lists the Project's Fields, and query_language_reference gives the whole language.
+      #{READING_LESS}
     TEXT
     read_only!
     takes_project

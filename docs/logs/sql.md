@@ -101,6 +101,10 @@ The `events` view holds the Project's Events of the time range in the explorer's
 
 A plain `LIKE '%timeout%'` and a pattern without a leading `%`, such as `ILIKE 'GET %'`, are already fast. When a query matches `message` slowly, it still runs, and its answer carries a `notice` saying what to write instead. `run_sql` passes it on to MCP clients; the explorer doesn't show it yet.
 
+## Filtering on Attributes
+
+`attrs_string['name']` reads a map built for the view, so a condition on an Attribute, such as `attrs_string['file'] = 'sidekiq.log'`, reads every Log of the range. A Query reads only the matching parts of each Log file, as its Log file order sorts them: see [Reading less](query-language.md#reading-less).
+
 ## Results
 
 - Results show at most 10,000 rows. A result that has more is marked as cut off.
