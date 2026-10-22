@@ -16,7 +16,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { saveLayout } from '@/lib/dashboards/api'
 import {
-  GRID_COLUMNS, filterValues, filterValuesOfSearch, movedPlaces, rangeOfSearch, searchOfRange,
+  GRID_COLUMNS, filterValues, filterValuesOfSearch, movedPlaces, rangeOfSearch, searchOfRangeAndValues,
   type AutoRefresh, type Dashboard, type DashboardChart, type FilterValues, type Place,
 } from '@/lib/dashboards/dashboard'
 import { createFetchQueue } from '@/lib/dashboards/fetchQueue'
@@ -70,19 +70,19 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   const [picked, setPicked] = useState<FilterValues>(() => filterValuesOfSearch(window.location.search, dashboard.filters))
   // Only the values of the filters the Dashboard has now: a removed filter's go.
   const values = useMemo(() => filterValues(dashboard.filters, picked), [dashboard.filters, picked])
-  const search = searchOfRange(range, values)
+  const search = searchOfRangeAndValues(range, values)
 
   const rerun = useCallback((r: TimeRange) => setRun(prev => ({ ...resolveRange(r, new Date()), n: prev.n + 1 })), [])
   const pickRange = (next: TimeRange) => {
     setRange(next)
-    router.replace({ url: basePath + searchOfRange(next, values), preserveState: true, preserveScroll: true })
+    router.replace({ url: basePath + searchOfRangeAndValues(next, values), preserveState: true, preserveScroll: true })
     rerun(next)
   }
   // The charts that name the filter run again when their values change; the run stays.
   const pickValues = (name: string, next: string[]) => {
     const nextValues = filterValues(dashboard.filters, { ...values, [name]: next })
     setPicked(nextValues)
-    router.replace({ url: basePath + searchOfRange(range, nextValues), preserveState: true, preserveScroll: true })
+    router.replace({ url: basePath + searchOfRangeAndValues(range, nextValues), preserveState: true, preserveScroll: true })
   }
 
   // Auto-refresh runs a relative range again, counting from when the last run
@@ -119,7 +119,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
 
   const copyLink = (kind: LinkKind) => {
     const shown: TimeRange = kind === 'shown' && range.kind === 'relative' ? { kind: 'absolute', from: run.from, to: run.to } : range
-    copyText(window.location.origin + basePath + searchOfRange(shown, values), 'Link')
+    copyText(window.location.origin + basePath + searchOfRangeAndValues(shown, values), 'Link')
   }
 
   const setAutoRefresh = (value: AutoRefresh) => router.patch(`${basePath}${search}`, { dashboard: { auto_refresh: value } }, { preserveScroll: true, preserveState: true })
