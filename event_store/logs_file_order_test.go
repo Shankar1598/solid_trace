@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// sourceLog is a Log sent from a Service's log file. An empty service or
+// serviceFileLog is a Log sent from a Service's log file. An empty service or
 // file leaves that Field out.
-func sourceLog(t *testing.T, message string, at time.Time, service, file string) string {
+func serviceFileLog(t *testing.T, message string, at time.Time, service, file string) string {
 	t.Helper()
 	attributes := map[string]any{}
 	if service != "" {
@@ -58,16 +58,16 @@ func TestAnHoursFileIsSortedByServiceThenFileThenTime(t *testing.T) {
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	env.Clock.Set(at(10, 30))
 	postAndProcess(t, env,
-		sourceLog(t, "web a 1", at(10, 1), "web", "a.log"),
-		sourceLog(t, "api b 1", at(10, 2), "api", "b.log"),
-		sourceLog(t, "web c 1", at(10, 3), "web", "c.log"),
-		sourceLog(t, "api a 1", at(10, 4), "api", "a.log"),
-		sourceLog(t, "no service, a", at(10, 5), "", "a.log"),
-		sourceLog(t, "api, no file", at(10, 6), "api", ""),
-		sourceLog(t, "web a 2", at(10, 7), "web", "a.log"),
-		sourceLog(t, "api b 2", at(10, 8), "api", "b.log"),
-		sourceLog(t, "no source", at(10, 9), "", ""),
-		sourceLog(t, "api a 2", at(10, 10), "api", "a.log"),
+		serviceFileLog(t, "web a 1", at(10, 1), "web", "a.log"),
+		serviceFileLog(t, "api b 1", at(10, 2), "api", "b.log"),
+		serviceFileLog(t, "web c 1", at(10, 3), "web", "c.log"),
+		serviceFileLog(t, "api a 1", at(10, 4), "api", "a.log"),
+		serviceFileLog(t, "no service, a", at(10, 5), "", "a.log"),
+		serviceFileLog(t, "api, no file", at(10, 6), "api", ""),
+		serviceFileLog(t, "web a 2", at(10, 7), "web", "a.log"),
+		serviceFileLog(t, "api b 2", at(10, 8), "api", "b.log"),
+		serviceFileLog(t, "no service or file", at(10, 9), "", ""),
+		serviceFileLog(t, "api a 2", at(10, 10), "api", "a.log"),
 	)
 	want := latestLogs(t, env, 123, 100)
 
@@ -84,7 +84,7 @@ func TestAnHoursFileIsSortedByServiceThenFileThenTime(t *testing.T) {
 	if want := []string{
 		"api a 1", "api a 2", "api b 1", "api b 2", "api, no file",
 		"web a 1", "web a 2", "web c 1",
-		"no service, a", "no source",
+		"no service, a", "no service or file",
 	}; !slices.Equal(got, want) {
 		t.Errorf("Expected the hour's file in the order\n %v\ngot\n %v", want, got)
 	}
@@ -92,15 +92,15 @@ func TestAnHoursFileIsSortedByServiceThenFileThenTime(t *testing.T) {
 	// Late Logs of the hour get a late file, sorted the same way.
 	env.Clock.Set(at(13, 30))
 	postAndProcess(t, env,
-		sourceLog(t, "late web b", at(10, 40), "web", "b.log"),
-		sourceLog(t, "late no source", at(10, 41), "", ""),
-		sourceLog(t, "late api b", at(10, 42), "api", "b.log"),
-		sourceLog(t, "late api a", at(10, 43), "api", "a.log"),
+		serviceFileLog(t, "late web b", at(10, 40), "web", "b.log"),
+		serviceFileLog(t, "late, no service or file", at(10, 41), "", ""),
+		serviceFileLog(t, "late api b", at(10, 42), "api", "b.log"),
+		serviceFileLog(t, "late api a", at(10, 43), "api", "a.log"),
 	)
 	want = latestLogs(t, env, 123, 100)
 	env.ExportLogs(t)
 	assertListsUnchanged(t, env, 123, want, "after the late file")
-	if got, want := fileMessages(t, lateFile(t, env, 123, at(10, 0))), []string{"late api a", "late api b", "late web b", "late no source"}; !slices.Equal(got, want) {
+	if got, want := fileMessages(t, lateFile(t, env, 123, at(10, 0))), []string{"late api a", "late api b", "late web b", "late, no service or file"}; !slices.Equal(got, want) {
 		t.Errorf("Expected the late file in the order\n %v\ngot\n %v", want, got)
 	}
 }
@@ -139,15 +139,15 @@ func TestAFilePromotedForTheDayPartwayOrOnlyInTheMapSortsTheSame(t *testing.T) {
 	seedProjectKey(t, env.SQLitePath, 789, "map_only_key")
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	sources := []string{
-		sourceLog(t, "web a 1", at(12, 1), "web", "a.log"),
-		sourceLog(t, "api b 1", at(12, 2), "api", "b.log"),
-		sourceLog(t, "no source", at(12, 3), "", ""),
-		sourceLog(t, "api a 1", at(12, 4), "api", "a.log"),
-		sourceLog(t, "no service, a", at(12, 5), "", "a.log"),
-		sourceLog(t, "web a 2", at(12, 6), "web", "a.log"),
+	serviceFileLogs := []string{
+		serviceFileLog(t, "web a 1", at(12, 1), "web", "a.log"),
+		serviceFileLog(t, "api b 1", at(12, 2), "api", "b.log"),
+		serviceFileLog(t, "no service or file", at(12, 3), "", ""),
+		serviceFileLog(t, "api a 1", at(12, 4), "api", "a.log"),
+		serviceFileLog(t, "no service, a", at(12, 5), "", "a.log"),
+		serviceFileLog(t, "web a 2", at(12, 6), "web", "a.log"),
 	}
-	sorted := []string{"api a 1", "api b 1", "web a 1", "web a 2", "no service, a", "no source"}
+	sorted := []string{"api a 1", "api b 1", "web a 1", "web a 2", "no service, a", "no service or file"}
 
 	// Project 123's day starts with these Logs, so file is promoted for
 	// the day.
@@ -155,16 +155,16 @@ func TestAFilePromotedForTheDayPartwayOrOnlyInTheMapSortsTheSame(t *testing.T) {
 	// Project 456's day has a file before its first hot Log: a late Log's,
 	// with file in its map. So its set, made by the hot Logs, promotes file
 	// partway.
-	postAndProcessTo(t, env, 456, "partway_key", sourceLog(t, "late", at(10, 30), "", "a.log"))
+	postAndProcessTo(t, env, 456, "partway_key", serviceFileLog(t, "late", at(10, 30), "", "a.log"))
 	env.ExportLogs(t)
 	assertHourFiles(t, env, 456, at(10, 0), 1)
 	// Project 789's day starts with a Log that fills its set, so file stays
 	// in the map.
 	postAndProcessTo(t, env, 789, "map_only_key", logJSON(t, "full", at(12, 0), numberedKeys("k", 100, "v")))
 
-	postAndProcess(t, env, sources...)
-	postAndProcessTo(t, env, 456, "partway_key", sources...)
-	postAndProcessTo(t, env, 789, "map_only_key", sources...)
+	postAndProcess(t, env, serviceFileLogs...)
+	postAndProcessTo(t, env, 456, "partway_key", serviceFileLogs...)
+	postAndProcessTo(t, env, 789, "map_only_key", serviceFileLogs...)
 	want := map[uint32][]listedLog{}
 	for _, projectID := range []uint32{123, 456, 789} {
 		want[projectID] = latestLogs(t, env, projectID, 100)
@@ -175,7 +175,7 @@ func TestAFilePromotedForTheDayPartwayOrOnlyInTheMapSortsTheSame(t *testing.T) {
 	for projectID, wantSorted := range map[uint32][]string{
 		123: sorted,
 		456: sorted,
-		789: {"api a 1", "api b 1", "web a 1", "web a 2", "no service, a", "full", "no source"},
+		789: {"api a 1", "api b 1", "web a 1", "web a 2", "no service, a", "full", "no service or file"},
 	} {
 		assertListsUnchanged(t, env, projectID, want[projectID], "after the export")
 		if got := fileMessages(t, hourFile(t, env, projectID, at(12, 0))); !slices.Equal(got, wantSorted) {
@@ -320,9 +320,28 @@ func TestAChangedLogFileOrderAppliesFromTheNextExport(t *testing.T) {
 func TestALogFileOrderEventStoreCantReadExportsInTheDefaultOrder(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
-	seedProjectKey(t, env.SQLitePath, 456, "numbers_key")
-	setLogFileOrder(t, env.SQLitePath, 123, `"level"`)
-	setLogFileOrder(t, env.SQLitePath, 456, `["level", 3]`)
+	// Orders written by hand that Console would refuse, by Project.
+	unreadable := map[uint32]string{
+		123: `"level"`,
+		456: `["level", 3]`,
+		457: `["level", "service", "environment", "file"]`,
+		458: `["level", "level"]`,
+	}
+	for i, field := range []string{"time", "_time", "id", "message", "trace_id", "span_id"} {
+		unreadable[uint32(460+i)] = fmt.Sprintf(`["level", %q]`, field)
+	}
+	// The JSON null reads as no order, as Console reads it.
+	const nullOrder = 470
+	projects := []uint32{nullOrder}
+	for projectID, order := range unreadable {
+		if projectID != 123 {
+			seedProjectKey(t, env.SQLitePath, projectID, fmt.Sprintf("key_%d", projectID))
+		}
+		setLogFileOrder(t, env.SQLitePath, projectID, order)
+		projects = append(projects, projectID)
+	}
+	seedProjectKey(t, env.SQLitePath, nullOrder, fmt.Sprintf("key_%d", nullOrder))
+	setLogFileOrder(t, env.SQLitePath, nullOrder, `null`)
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	logs := []string{
@@ -331,21 +350,27 @@ func TestALogFileOrderEventStoreCantReadExportsInTheDefaultOrder(t *testing.T) {
 		leveledLog(t, "web a error", at(10, 3), "error", "web", "a.log"),
 	}
 	env.Clock.Set(at(10, 30))
-	postAndProcess(t, env, logs...)
-	postAndProcessTo(t, env, 456, "numbers_key", logs...)
-	want := map[uint32][]listedLog{123: latestLogs(t, env, 123, 100), 456: latestLogs(t, env, 456, 100)}
+	want := map[uint32][]listedLog{}
+	for _, projectID := range projects {
+		if projectID == 123 {
+			postAndProcess(t, env, logs...)
+		} else {
+			postAndProcessTo(t, env, projectID, fmt.Sprintf("key_%d", projectID), logs...)
+		}
+		want[projectID] = latestLogs(t, env, projectID, 100)
+	}
 
 	captured := captureLogs(t)
 	env.Clock.Set(at(12, 0))
 	env.ExportLogs(t)
-	for _, projectID := range []uint32{123, 456} {
+	for _, projectID := range projects {
 		assertListsUnchanged(t, env, projectID, want[projectID], "after the export")
 		if got, want := fileMessages(t, hourFile(t, env, projectID, at(10, 0))), []string{"api b error", "web a info", "web a error"}; !slices.Equal(got, want) {
 			t.Errorf("Project %d: expected the hour's file in the default order\n %v\ngot\n %v", projectID, want, got)
 		}
 		warning := fmt.Sprintf(`level=warn message="Failed to read a Project's Log file order; exporting its Logs in the default order" project_id=%d`, projectID)
-		if !strings.Contains(captured.String(), warning) {
-			t.Errorf("Expected a warning for Project %d's Log file order, got\n%s", projectID, captured.String())
+		if warned := strings.Contains(captured.String(), warning); warned != (projectID != nullOrder) {
+			t.Errorf("Project %d (order %s): expected a warning %v, got\n%s", projectID, unreadable[projectID], projectID != nullOrder, captured.String())
 		}
 	}
 }
