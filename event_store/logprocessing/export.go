@@ -22,7 +22,8 @@ type Exporter interface {
 
 // LogExport is the timer inside EventStore that runs the Log export at each
 // quarter-hour start by its clock, and once when it starts, to catch up on
-// the quarter-hours it missed while EventStore was down. A failed export runs
+// the quarter-hours it missed while EventStore was down. A run that lasts past
+// the next quarter-hour start is followed by one at once. A failed export runs
 // again a minute later; the Logs it didn't move wait in DuckDB meanwhile.
 type LogExport struct {
 	store Exporter
@@ -49,11 +50,13 @@ func (e *LogExport) Stop() {
 func (e *LogExport) run() {
 	for {
 		wait := retryExportAfter
-		if err := e.store.ExportLogs(e.clock.Now()); err != nil {
+		start := e.clock.Now()
+		if err := e.store.ExportLogs(start); err != nil {
 			logger.L.Error("Log export failed, retrying", "error", err, "retry_in", wait)
 		} else {
-			now := e.clock.Now()
-			wait = now.Truncate(exportEvery).Add(exportEvery).Sub(now)
+			// The next run is at the quarter-hour start after this run's
+			// start, or at once if a long run has passed it.
+			wait = start.Truncate(exportEvery).Add(exportEvery).Sub(e.clock.Now())
 		}
 		select {
 		case <-e.stop:

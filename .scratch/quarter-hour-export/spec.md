@@ -12,7 +12,7 @@ The hourly export is also one large job: on production, `tagalys`'s hour takes 1
 
 ## Solution
 
-Every 15 minutes, the export moves a busy Project's quarter-hours that ended at least 15 minutes ago into their own Log files, sorted by its Log file order, as the hourly export does for whole hours. The hot table of a busy Project then holds its last 15 to 30 minutes, not one to two hours. A quiet Project, whose hot table holds too few Logs to gain from it, keeps one Log file per hour, exported as today.
+Every 15 minutes, the export moves a busy Project's quarter-hours that ended at least 15 minutes ago into their own Log files, sorted by its Log file order, as the hourly export does for whole hours. The hot table of a busy Project then holds its last 15 to 30 minutes, not one to two hours. A quiet Project, whose quarter-hours hold too few Logs to gain from it, keeps one Log file per hour, exported as today.
 
 The hot window shrinks with it, to start at the quarter cutoff, so the hot table only ever holds Logs whose quarter-hour isn't exported yet, as today it holds only hours not yet exported. A Log that arrives more than 15 to 30 minutes after its time is a late Log: it waits in `logs_late`, and the next export writes it to a late file of its hour, with its values in the day's promoted columns, as late Logs are now. Queries answer the same; only how much they read changes.
 
@@ -29,7 +29,7 @@ The hot window shrinks with it, to start at the quarter cutoff, so the hot table
 9. As an operator, I want the export of a busy Project to be four smaller jobs an hour, not one large one, so that Log processing is held up for about a second at a time, not several.
 10. As an operator, I want a quarter-hour's export to sort in memory where today's hour spills to disk, so that the export's total cost doesn't grow.
 11. As an operator, I want a quiet Project to keep one Log file per hour, so that its file count, its bucket objects and the cold reads of its long ranges don't grow fourfold.
-12. As an operator, I want the line between busy and quiet to be one that only matters for speed (a hot table holding at least one DuckDB row group of a Project's Logs), so that I never have to tune it.
+12. As an operator, I want the line between busy and quiet to be one that only matters for speed (a quarter-hour holding at least one DuckDB row group of a Project's Logs), so that I never have to tune it.
 13. As an operator, I want the export's log line to say which quarter-hours or hour it wrote, so that I can see the new timing in production.
 14. As an operator, I want the export to catch up on the quarter-hours it missed while EventStore was down, as the hourly export catches up on hours, so that a restart loses nothing and writes the same files.
 15. As an operator, I want a failed quarter-hour export to retry a minute later, as the hourly export does, so that one failure costs a minute, not 15.
@@ -48,7 +48,7 @@ The hot window shrinks with it, to start at the quarter cutoff, so the hot table
 
 - The export's timer runs at each quarter-hour start (:00, :15, :30, :45) by its clock, once when EventStore starts, and a minute after a failure. Today it runs at each hour start.
 - Each run has two cutoffs: the **quarter cutoff**, the run's quarter-hour start minus 15 minutes (at 11:15 it is 11:00, so the quarter-hours up to 10:45–11:00, which ended 15 minutes ago, are taken), and the **hour cutoff**, the start of the previous hour (today's cutoff).
-- A Project is **busy** at a run when its hot table holds at least 122,880 Logs (one DuckDB row group) before the quarter cutoff. Below that, a filter reads one row group of the hot table anyway, so there is nothing to skip. A busy Project's Logs before the quarter cutoff are exported; a quiet Project's Logs before the hour cutoff are exported, as today. The threshold is one value on the LogStore, which root tests lower.
+- A Project is **busy** at a run when its hot table holds at least 122,880 Logs (one DuckDB row group) of the quarter-hour before the quarter cutoff, so that a quarter-hour file holds about a row group. Below that, a filter reads one row group of the hot table anyway, so there is nothing to skip. Only that quarter-hour counts: at a :00 run a quiet Project's hot table holds 1.75 hours before the quarter cutoff, which would make a Project of about 70,000 Logs an hour busy at :00 alone and cut its hour into quarter-hour files of about 17,000 Logs. A busy Project's Logs before the quarter cutoff are exported; a quiet Project's Logs before the hour cutoff are exported, as today. The threshold is one value on the LogStore, which root tests lower.
 - Late Logs (`logs_late`) are exported at every run, by the same rules, as today.
 
 **The hot window starts at the quarter cutoff**

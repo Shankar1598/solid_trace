@@ -77,8 +77,9 @@ type TestEnv struct {
 	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
 	// it; 0 turns it off.
 	BinCacheBytes int64
-	// BusyProjectLogs, if set, is how many hot Logs before the quarter
-	// cutoff make a Project busy, in place of storage.BusyProjectLogs.
+	// BusyProjectLogs, if set, is how many hot Logs of the quarter-hour
+	// before the quarter cutoff make a Project busy, in place of
+	// storage.BusyProjectLogs.
 	BusyProjectLogs int64
 
 	dir   string // holds Pebble and DuckDB
