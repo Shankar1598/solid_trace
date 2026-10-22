@@ -109,6 +109,15 @@ class CallTimingsTest < ActiveSupport::TestCase
     assert_match(/\AMCP tool query_logs, [\d.]+ ms\z/, tool["message"])
   end
 
+  test "an MCP tool call's secret arguments, such as the SMTP password, are filtered from its line" do
+    @user.update!(instance_admin: true)
+
+    call_tool(:update_email_settings, user: @user, smtp_username: "apikey", smtp_password: "s3cret-pass")
+
+    assert_equal({ "smtp_username" => "apikey", "smtp_password" => "[FILTERED]" }, sole_line["arguments"])
+    assert_not_includes @output.string, "s3cret-pass"
+  end
+
   test "a tool's error answer is an error outcome with its text" do
     call_tool(:query_logs, user: @user, project: "nowhere", query: "")
 

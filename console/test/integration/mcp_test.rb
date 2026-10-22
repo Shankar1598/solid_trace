@@ -60,7 +60,7 @@ class McpTest < ActionDispatch::IntegrationTest
     assert_not result["isError"]
     body, link = result["content"].sole["text"].split("\nConsole: ")
     answer = JSON.parse(body)
-    assert_equal({ "name" => "Ada", "email" => "ada@example.com" }, answer["user"])
+    assert_equal({ "name" => "Ada", "email" => "ada@example.com", "instance_admin" => false }, answer["user"])
     assert_equal [ { "slug" => "acme", "name" => "Acme", "role" => "admin" },
                    { "slug" => "beta", "name" => "Beta", "role" => "member" } ], answer["organizations"]
     assert_equal "http://www.example.com/user_settings", link
