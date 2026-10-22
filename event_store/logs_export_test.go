@@ -325,3 +325,60 @@ func TestDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T)
 	assertListsUnchanged(t, env, 123, want, "after a restart")
 	assertQueries(t, env, queries, "after a restart")
 }
+
+func TestABusyProjectsDemotedColumnsAreDroppedAt0100AndTheirValuesStillReadBack(t *testing.T) {
+	env := setupBusyTestEnv(t)
+	defer env.Cleanup()
+
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 10, day, hour, minute, 0, 0, time.UTC) }
+	// Yesterday's set fills with k000…k099, then most Logs carry k000…k089
+	// and x000…x009, so today's set demotes k090…k099. The Project sends 2
+	// Logs a quarter-hour, enough to be busy, from 23:00 to 00:59, and each
+	// run from 23:15 to 01:15 takes the quarter-hour that ended 15 minutes
+	// before it.
+	common := numberedKeys("k", 90, "v")
+	for name, value := range numberedKeys("x", 10, 1) {
+		common[name] = value
+	}
+	queries := map[string][]string{}
+	for run := at(1, 23, 15); !run.After(at(2, 1, 15)); run = run.Add(15 * time.Minute) {
+		if quarter := run.Add(-15 * time.Minute); quarter.Before(at(2, 1, 0)) {
+			env.Clock.Set(quarter.Add(3 * time.Minute))
+			for _, sent := range []time.Time{quarter.Add(time.Minute), quarter.Add(2 * time.Minute)} {
+				message, attributes := "today "+sent.Format("15:04"), map[string]any{"k095": "v", "x000": 7}
+				switch {
+				case sent.Equal(at(1, 23, 1)):
+					message, attributes = "first", numberedKeys("k", 100, "v")
+				case sent.Day() == 1:
+					message, attributes = "yesterday "+sent.Format("15:04"), common
+				}
+				postAndProcess(t, env, logJSON(t, message, sent, attributes))
+				if sent.Day() == 1 {
+					queries[`where k001 == "v"`] = append([]string{message}, queries[`where k001 == "v"`]...)
+				} else {
+					queries[`where x000 == 7`] = append([]string{message}, queries[`where x000 == 7`]...)
+				}
+				if attributes["k095"] == "v" {
+					queries[`where k095 == "v"`] = append([]string{message}, queries[`where k095 == "v"`]...)
+				}
+			}
+		}
+		want := latestLogs(t, env, 123, 100)
+		env.Clock.Set(run)
+		env.ExportLogs(t)
+		when := "after the run at " + run.Format("15:04")
+		assertListsUnchanged(t, env, 123, want, when)
+		assertQueries(t, env, queries, when)
+	}
+
+	quarterFiles := []string{"data-00.parquet", "data-15.parquet", "data-30.parquet", "data-45.parquet"}
+	assertHourFileNames(t, env, 123, at(1, 23, 0), quarterFiles...)
+	assertHourFileNames(t, env, 123, at(2, 0, 0), quarterFiles...)
+	want := latestLogs(t, env, 123, 100)
+	if got, want := attributesByMessage(want)["first"], numberedKeys("k", 100, "v"); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected the first Log's 100 Attributes back, got %v", got)
+	}
+	env.Reopen(t)
+	assertListsUnchanged(t, env, 123, want, "after a restart")
+	assertQueries(t, env, queries, "after a restart")
+}

@@ -20,19 +20,22 @@ const (
 	// QuarterHour is the span of a busy Project's quarter-hour files, and
 	// how often the Log export runs: at each quarter-hour start.
 	QuarterHour = 15 * time.Minute
+	// quarterMinutes is QuarterHour in minutes.
+	quarterMinutes = int(QuarterHour / time.Minute)
 	// exportWait is how long after a quarter-hour ends the export takes a
 	// busy Project's Logs of it.
 	exportWait = 15 * time.Minute
-	// BusyProjectLogs is how many hot Logs before the quarter cutoff make a
-	// Project busy: one DuckDB row group. A filter reads a row group of the
-	// hot table whole anyway, so a Project with fewer gains nothing from
-	// files a quarter-hour long.
+	// BusyProjectLogs is how many hot Logs of the quarter-hour before the
+	// quarter cutoff make a Project busy: one DuckDB row group, so that a
+	// quarter-hour file holds about a row group. A filter reads a row group
+	// of the hot table whole anyway, so a Project with fewer gains nothing
+	// from files a quarter-hour long.
 	BusyProjectLogs = 122_880
 )
 
-// UseBusyProjectLogs sets how many hot Logs before the quarter cutoff make a
-// Project busy, BusyProjectLogs unless a test lowers it. It must be called
-// before the first export.
+// UseBusyProjectLogs sets how many hot Logs of the quarter-hour before the
+// quarter cutoff make a Project busy, BusyProjectLogs unless a test lowers
+// it. It must be called before the first export.
 func (s *LogStore) UseBusyProjectLogs(logs int64) {
 	s.busyProjectLogs = logs
 }
@@ -417,8 +420,8 @@ func (e *projectExport) quarters(cutoff time.Time) ([]time.Time, error) {
 		args = append(args, timestampString(cutoff))
 	}
 	rows, err := e.conn.QueryContext(e.ctx, fmt.Sprintf(
-		"SELECT DISTINCT date_trunc('hour', time) + to_minutes(CAST(minute(time) // 15 * 15 AS BIGINT)) AS quarter FROM (%s) ORDER BY quarter",
-		strings.Join(sources, " UNION ALL ")), args...)
+		"SELECT DISTINCT date_trunc('hour', time) + to_minutes(CAST(minute(time) // %[1]d * %[1]d AS BIGINT)) AS quarter FROM (%[2]s) ORDER BY quarter",
+		quarterMinutes, strings.Join(sources, " UNION ALL ")), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list quarter-hours to export: %w", err)
 	}
@@ -435,14 +438,16 @@ func (e *projectExport) quarters(cutoff time.Time) ([]time.Time, error) {
 }
 
 // busy reports whether the Project's hot table holds at least busyLogs Logs
-// before the quarter cutoff.
+// of the quarter-hour before the quarter cutoff, so that a quarter-hour file
+// holds about a row group. A quiet Project's hot table holds more than an
+// hour at a :00 run, which must not make it busy.
 func (e *projectExport) busy(quarterCutoff time.Time, busyLogs int64) (bool, error) {
 	if e.hotColumns == nil {
 		return false, nil
 	}
 	var logs int64
-	err := e.conn.QueryRowContext(e.ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE time < CAST(? AS TIMESTAMP)", e.hotTable()),
-		timestampString(quarterCutoff)).Scan(&logs)
+	err := e.conn.QueryRowContext(e.ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE time >= CAST(? AS TIMESTAMP) AND time < CAST(? AS TIMESTAMP)", e.hotTable()),
+		timestampString(quarterCutoff.Add(-QuarterHour)), timestampString(quarterCutoff)).Scan(&logs)
 	if err != nil {
 		return false, fmt.Errorf("count hot logs: %w", err)
 	}
@@ -486,28 +491,42 @@ func (f plannedFile) condition() string {
 	return "(" + strings.Join(terms, " OR ") + ")"
 }
 
-// plan works out the Project's cutoff, the quarter cutoff if it holds at
-// least busyLogs hot Logs before it, else the hour cutoff, and lists the
-// files of its Logs before the cutoff, oldest hour first. A quiet Project's
-// cutoff moves on towards the quarter cutoff through each hour after the hour
-// cutoff that goes by quarter-hours, so that it keeps going by them. An hour
-// before such an hour had its Logs exported when the Project was busy.
+// plan works out the Project's cutoff, the quarter cutoff if it is busy,
+// else the hour cutoff, and lists the files of its Logs before the cutoff,
+// oldest hour first. A quiet Project's cutoff moves on towards the quarter
+// cutoff through each hour after the hour cutoff that goes by quarter-hours,
+// so that it keeps going by them. An hour before such an hour had its Logs
+// exported when the Project was busy.
 func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFile, time.Time, error) {
 	busy, err := e.busy(cutoffs.quarter, busyLogs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	// The names of each hour's files, read from the manifest once.
+	hours := make(map[int64]map[string]bool)
+	hourNames := func(hour time.Time) (map[string]bool, error) {
+		names, ok := hours[hour.Unix()]
+		if !ok {
+			var err error
+			if names, err = hourFileNames(e.ctx, e.conn, e.projectID, hour); err != nil {
+				return nil, err
+			}
+			hours[hour.Unix()] = names
+		}
+		return names, nil
+	}
 	cutoff := cutoffs.hour
 	if busy {
 		cutoff = cutoffs.quarter
-	}
-	for hour := cutoffs.hour; !busy && hour.Before(cutoffs.quarter); hour = hour.Add(time.Hour) {
-		names, err := hourFileNames(e.ctx, e.conn, e.projectID, hour)
-		if err != nil {
-			return nil, time.Time{}, err
-		}
-		if byQuarterHours(names) {
-			cutoff = earliestTime(cutoffs.quarter, hour.Add(time.Hour))
+	} else {
+		for hour := cutoffs.hour; hour.Before(cutoffs.quarter); hour = hour.Add(time.Hour) {
+			names, err := hourNames(hour)
+			if err != nil {
+				return nil, time.Time{}, err
+			}
+			if byQuarterHours(names) {
+				cutoff = earliestTime(cutoffs.quarter, hour.Add(time.Hour))
+			}
 		}
 	}
 
@@ -522,7 +541,7 @@ func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFi
 		for n < len(quarters) && quarters[n].Truncate(time.Hour).Equal(hour) {
 			n++
 		}
-		names, err := hourFileNames(e.ctx, e.conn, e.projectID, hour)
+		names, err := hourNames(hour)
 		if err != nil {
 			return nil, time.Time{}, err
 		}
@@ -539,24 +558,25 @@ func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFi
 // per quarter-hour that has none. The Logs of the spans that have their file
 // go to the hour's next late file.
 func (e *projectExport) planHour(hour time.Time, quarters []time.Time, names map[string]bool, busy bool, cutoff time.Time) []plannedFile {
-	var files, late []plannedFile
-	file := func(name string, from, to time.Time) plannedFile {
-		return plannedFile{file: logFile{projectID: e.projectID, hour: hour, name: name}, spans: []timeSpan{{from, to}}}
+	var files []plannedFile
+	var late []timeSpan
+	file := func(name string, span timeSpan) plannedFile {
+		return plannedFile{file: logFile{projectID: e.projectID, hour: hour, name: name}, spans: []timeSpan{span}}
 	}
 	switch {
 	case byQuarterHours(names) || (busy && len(names) == 0):
 		for _, q := range quarters {
-			f := file(quarterFile(q), q, q.Add(QuarterHour))
-			if names[f.file.name] {
-				late = append(late, f)
+			span := timeSpan{q, q.Add(QuarterHour)}
+			if name := quarterFile(q); names[name] {
+				late = append(late, span)
 			} else {
-				files = append(files, f)
+				files = append(files, file(name, span))
 			}
 		}
 	case len(names) == 0:
-		files = append(files, file(hourDataFile, hour, hour.Add(time.Hour)))
+		files = append(files, file(hourDataFile, timeSpan{hour, hour.Add(time.Hour)}))
 	default:
-		late = append(late, file("", hour, earliestTime(hour.Add(time.Hour), cutoff)))
+		late = append(late, timeSpan{hour, earliestTime(hour.Add(time.Hour), cutoff)})
 	}
 	if len(late) == 0 {
 		return files
@@ -566,8 +586,7 @@ func (e *projectExport) planHour(hour time.Time, quarters []time.Time, names map
 		last = max(last, lateFileNumber(name))
 	}
 	lateFile := plannedFile{file: logFile{projectID: e.projectID, hour: hour, name: fmt.Sprintf("%s%d%s", lateFilePrefix, last+1, parquetSuffix)}}
-	for _, f := range late {
-		span := f.spans[0]
+	for _, span := range late {
 		if n := len(lateFile.spans); n > 0 && lateFile.spans[n-1].to.Equal(span.from) {
 			lateFile.spans[n-1].to = span.to
 		} else {

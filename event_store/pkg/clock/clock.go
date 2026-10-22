@@ -30,10 +30,10 @@ func (System) After(d time.Duration) <-chan time.Time { return time.After(d) }
 type Manual struct {
 	mu  sync.Mutex
 	now time.Time
-	// timers are the waits from After not yet ended, and changed is
+	// timers are the waits from After not yet ended, and waitBegan is
 	// signalled whenever one begins.
-	timers  []manualTimer
-	changed *sync.Cond
+	timers    []manualTimer
+	waitBegan *sync.Cond
 }
 
 // manualTimer is a wait from After, which ends once the clock reaches at.
@@ -44,7 +44,9 @@ type manualTimer struct {
 
 // NewManual returns a Manual clock that reads now.
 func NewManual(now time.Time) *Manual {
-	return &Manual{now: now}
+	c := &Manual{now: now}
+	c.waitBegan = sync.NewCond(&c.mu)
+	return c
 }
 
 func (c *Manual) Now() time.Time {
@@ -64,7 +66,7 @@ func (c *Manual) After(d time.Duration) <-chan time.Time {
 		return ch
 	}
 	c.timers = append(c.timers, manualTimer{at: c.now.Add(d), c: ch})
-	c.cond().Broadcast()
+	c.waitBegan.Broadcast()
 	return ch
 }
 
@@ -74,7 +76,7 @@ func (c *Manual) BlockUntilTimers(n int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for len(c.timers) < n {
-		c.cond().Wait()
+		c.waitBegan.Wait()
 	}
 }
 
@@ -105,12 +107,4 @@ func (c *Manual) fire() {
 		timer.c <- c.now
 	}
 	c.timers = waiting
-}
-
-// cond is changed, made on first use. c.mu must be held.
-func (c *Manual) cond() *sync.Cond {
-	if c.changed == nil {
-		c.changed = sync.NewCond(&c.mu)
-	}
-	return c.changed
 }
