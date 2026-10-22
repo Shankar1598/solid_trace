@@ -13,3 +13,7 @@ The five canonical triage roles, used as-is, recorded as a `Status:` line in eac
 ### Domain docs
 
 Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Tests
+
+The full suites before a release: Go and Playwright in parallel, then Rails once Go is done. See `docs/agents/testing.md`.
