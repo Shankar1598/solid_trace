@@ -16,6 +16,7 @@ class DashboardSerializer
       description: @dashboard.description,
       default_range: @dashboard.default_range,
       auto_refresh: @dashboard.auto_refresh,
+      filters: @dashboard.filters,
       chart_count: @chart_count || @dashboard.charts.size,
       created_by: @dashboard.created_by&.name,
       created_at: @dashboard.created_at.iso8601,

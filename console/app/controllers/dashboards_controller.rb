@@ -4,6 +4,8 @@
 # them. The pages post through Inertia and are redirected; the explorer's Add
 # to dashboard posts JSON and gets JSON back.
 class DashboardsController < ApplicationController
+  include DashboardView
+
   layout "dashboard"
 
   before_action :set_current_org
@@ -42,10 +44,10 @@ class DashboardsController < ApplicationController
   def update
     respond_to do |format|
       if @dashboard.update(dashboard_params)
-        format.html { redirect_to dashboard_path(@dashboard, org_slug: @current_org.slug, **range_params), notice: "Dashboard saved." }
+        format.html { redirect_to dashboard_page(@dashboard), notice: "Dashboard saved." }
         format.json { render json: DashboardSerializer.new(@dashboard).as_json }
       else
-        format.html { redirect_to dashboard_path(@dashboard, org_slug: @current_org.slug, **range_params), inertia: { errors: @dashboard.errors.to_hash } }
+        format.html { redirect_to dashboard_page(@dashboard), inertia: { errors: @dashboard.errors.to_hash } }
         format.json { render json: { errors: @dashboard.errors.to_hash }, status: :unprocessable_content }
       end
     end
@@ -85,12 +87,11 @@ class DashboardsController < ApplicationController
     @dashboard = @current_org.dashboards.find(params[:id])
   end
 
+  # filters, when given, is the whole list, which replaces the saved one.
   def dashboard_params
-    params.require(:dashboard).permit(:name, :description, :default_range, :auto_refresh)
-  end
-
-  # The range the page was showing, so a save keeps it.
-  def range_params
-    params.permit(:range, :from, :to).to_h.symbolize_keys
+    params.require(:dashboard).permit(
+      :name, :description, :default_range, :auto_refresh,
+      filters: [ :name, :label, :kind, :multiple, { options: [ :from, { items: %i[label value] } ] } ],
+    ).to_h
   end
 end
