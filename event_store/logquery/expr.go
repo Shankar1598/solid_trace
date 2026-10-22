@@ -203,6 +203,11 @@ type isEmpty struct{ x expr }
 // All. A where whose condition is always drops out of the Query.
 type always struct{}
 
+func isAlways(x expr) bool {
+	_, ok := x.(always)
+	return ok
+}
+
 type and struct{ x, y expr }
 type or struct{ x, y expr }
 type not struct{ x expr }
@@ -538,16 +543,14 @@ func (c *compiler) predicate(e parser.Expr) (expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			_, xAll := x.(always)
-			_, yAll := y.(always)
 			switch {
-			case e.Op == parser.TokenOr && (xAll || yAll):
+			case e.Op == parser.TokenOr && (isAlways(x) || isAlways(y)):
 				return always{}, nil
 			case e.Op == parser.TokenOr:
 				return or{x, y}, nil
-			case xAll:
+			case isAlways(x):
 				return y, nil
-			case yAll:
+			case isAlways(y):
 				return x, nil
 			}
 			return and{x, y}, nil

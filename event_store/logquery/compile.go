@@ -107,7 +107,7 @@ func Compile(source string, bounds Bounds, values map[string][]string) (*Query, 
 		if inHead {
 			q.heads++
 		}
-		if w, ok := compiled.(whereStage); ok && w.predicate == (always{}) {
+		if w, ok := compiled.(whereStage); ok && isAlways(w.predicate) {
 			continue
 		}
 		if inHead {
