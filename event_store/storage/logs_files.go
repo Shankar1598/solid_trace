@@ -34,7 +34,7 @@ const (
 	hourDataFile      = "data.parquet"
 	quarterFilePrefix = "data-"
 	lateFilePrefix    = "late-"
-	parquetSuffix  = ".parquet"
+	parquetSuffix     = ".parquet"
 	// stagedSuffix marks a Log file whose export may not have committed.
 	stagedSuffix = ".tmp"
 )
