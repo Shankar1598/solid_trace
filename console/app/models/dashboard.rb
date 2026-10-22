@@ -16,6 +16,10 @@ class Dashboard < ApplicationRecord
   MAX_OPTIONS = 200
   MAX_OPTION_TEXT = 200
   MAX_FIELD_NAME = 200
+  # A page's query string holds each filter's values under this and the
+  # filter's name, the key repeated for several values:
+  # ?range=1h&v_service=api&v_service=web. A filter missing from it is All.
+  FILTER_KEY_PREFIX = "v_"
 
   belongs_to :organization
   belongs_to :created_by, class_name: "User", optional: true
@@ -27,6 +31,20 @@ class Dashboard < ApplicationRecord
   validates :auto_refresh, inclusion: { in: AUTO_REFRESH, message: "must be off, 15s, 30s, 1m or 5m" }
   before_validation :normalize_filters
   validate :filters_valid
+
+  # The filter values a page's query string holds, {name => [values]}, for
+  # any name. Rails' params keep only the last of a repeated key, so the
+  # query string is read whole.
+  def self.filter_values_in(query_string)
+    Rack::Utils.parse_query(query_string).each_with_object({}) do |(key, values), found|
+      found[key.delete_prefix(FILTER_KEY_PREFIX)] = Array(values) if key.start_with?(FILTER_KEY_PREFIX)
+    end
+  end
+
+  # Filter values, {name => [values]}, as the keys of a page's query string.
+  def self.filter_link_params(values)
+    values.transform_keys { |name| "#{FILTER_KEY_PREFIX}#{name}" }
+  end
 
   # The row under every chart, where a new chart goes.
   def bottom
@@ -40,12 +58,19 @@ class Dashboard < ApplicationRecord
   # The values of its filters in given, {name => value or [values]}, as
   # EventStore's parameters, in the filters' order. Names it lacks and empty
   # values are left out, so EventStore runs those filters as All.
-  def parameters(given)
+  def filter_values(given)
     given = given.to_h.stringify_keys
-    filter_names.each_with_object({}) do |name, parameters|
+    filter_names.each_with_object({}) do |name, found|
       values = Array(given[name]).map(&:to_s).reject(&:empty?)
-      parameters[name] = values if values.any?
+      found[name] = values if values.any?
     end
+  end
+
+  # The Project id and field of its filter name when that filter is a select
+  # of a field's values, or nil.
+  def field_select(name)
+    options = filters.find { |filter| filter["name"] == name }&.dig("options")
+    [ options["project_id"], options["field"] ] if options.is_a?(Hash) && options["from"] == "field"
   end
 
   private
@@ -154,7 +179,7 @@ class Dashboard < ApplicationRecord
       errors.add(:"#{at}.field", "can't be blank")
     elsif field.length > MAX_FIELD_NAME
       errors.add(:"#{at}.field", "is too long (at most #{MAX_FIELD_NAME} characters)")
-    elsif field == "time"
+    elsif %w[time _time].include?(field)
       errors.add(:"#{at}.field", "can't be time")
     end
     project_id = options["project_id"]

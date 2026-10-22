@@ -1,5 +1,7 @@
 package parser
 
+import "fmt"
+
 // Node is a node of a Query's syntax tree.
 type Node interface {
 	Span() Span
@@ -86,6 +88,11 @@ func (p *Param) expr() {}
 
 func (p *Param) Span() Span {
 	return p.NameSpan
+}
+
+// Misplaced is the mistake of a Dashboard filter where it can't go.
+func (p *Param) Misplaced() *Error {
+	return &Error{Span: p.NameSpan, Message: fmt.Sprintf("$%s only goes in a where, compared with ==, !=, =~, !~, contains or startswith, or in search $%s", p.Name, p.Name)}
 }
 
 // LiteralKind is the type of a BasicLit.

@@ -9,7 +9,7 @@ import {
   aggregateText,
   editableText,
   groupText,
-  isFilterValue,
+  isFilterReference,
   parseValue,
   removeAggregate,
   search,
@@ -26,7 +26,7 @@ import {
   type Chip,
   type ChipValue,
   type FilterOp,
-  type FilterValue,
+  type FilterReference,
   type Group,
   type SortKey,
   type Summarize,
@@ -398,8 +398,8 @@ function NativeSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   )
 }
 
-function ValueText({ value }: { value: ChipValue | FilterValue }) {
-  if (isFilterValue(value)) return <span className={FILTER_TEXT}>${value.filter}</span>
+function ValueText({ value }: { value: ChipValue | FilterReference }) {
+  if (isFilterReference(value)) return <span className={FILTER_TEXT}>${value.filter}</span>
   return typeof value === 'string'
     ? <span className={STRING_TEXT}>"{value}"</span>
     : <span className={LITERAL_TEXT}>{String(value)}</span>
@@ -419,7 +419,7 @@ function FilterText({ chip }: { chip: Chip }) {
       </>
     )
   }
-  return <>{chip.field} <span className={MUTED_TEXT}>{chip.op}</span> <ValueText value={chip.value as ChipValue | FilterValue} /></>
+  return <>{chip.field} <span className={MUTED_TEXT}>{chip.op}</span> <ValueText value={chip.value as ChipValue | FilterReference} /></>
 }
 
 function filterLabel(chip: Chip): string {
@@ -432,7 +432,7 @@ function filterLabel(chip: Chip): string {
     case '!in':
       return `${chip.field} ${chip.op} (${(Array.isArray(chip.value) ? chip.value : []).map(v => valueText(v)).join(', ')})`
     default:
-      if (isFilterValue(chip.value)) return `${chip.field} ${chip.op} $${chip.value.filter}`
+      if (isFilterReference(chip.value)) return `${chip.field} ${chip.op} $${chip.value.filter}`
       return `${chip.field} ${chip.op} ${typeof chip.value === 'string' ? `"${chip.value}"` : valueText(chip.value as ChipValue)}`
   }
 }
@@ -489,10 +489,14 @@ function filterNamed(text: string, filters: DashboardFilter[]): string | null {
   return name !== undefined && filters.some(f => f.name === name) ? name : null
 }
 
+/** Dashboard filters as picks, each its $name with its label, under their heading. */
+const filterPicks = (filters: DashboardFilter[]): PickOption[] =>
+  filters.map(f => ({ value: `$${f.name}`, hint: f.label, group: 'Dashboard filters' }))
+
 /** The text a filter's value is edited as: a list comma-separated, a Dashboard filter as $name. */
 function filterValueText(chip: Chip | undefined): string {
   if (!chip || chip.value === null) return ''
-  if (isFilterValue(chip.value)) return `$${chip.value.filter}`
+  if (isFilterReference(chip.value)) return `$${chip.value.filter}`
   if (Array.isArray(chip.value)) return chip.value.map(editableText).join(', ')
   return isTextOp(chip.op) ? String(chip.value) : editableText(chip.value)
 }
@@ -591,7 +595,7 @@ function ConditionStep({ field, type, values, filters, op, onOp, value, onValue,
   // The Dashboard's filters come first, each under its heading, where the operator takes one.
   const offered = takesFilter(op) ? filters : []
   const options: PickOption[] = offered.length === 0 ? seen : [
-    ...offered.map(f => ({ value: `$${f.name}`, hint: f.label, group: 'Dashboard filters' })),
+    ...filterPicks(offered),
     ...seen.map(o => ({ ...o, group: 'Seen in recent Logs' })),
   ]
   const known = options.map(o => o.value)
@@ -770,7 +774,7 @@ function MoreEditor({ kinds, columns, onSearch, onSort, onLimit }: {
 function SearchStep({ text: initial, onBack, onApply }: { text?: string; onBack?: () => void; onApply: (text: string) => void }) {
   const { filters } = useContext(SuggestionsContext)
   const [text, setText] = useState(initial ?? '')
-  const options = filters.filter(f => f.kind === 'search').map(f => ({ value: `$${f.name}`, hint: f.label, group: 'Dashboard filters' }))
+  const options = filterPicks(filters.filter(f => f.kind === 'search'))
   const shown = narrow(options, options.some(o => o.value === text.trim()) ? '' : text)
   const { active, setActive, onKeyDown } = useHighlight(shown, -1, o => onApply(o.value))
   return (

@@ -160,11 +160,11 @@ export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }:
                   />
                   <Segmented size="sm" label={`Filter ${n} kind`} value={draft.kind} options={KINDS} onChange={kind => change(draft.key, { kind })} />
                   <div className="ml-auto flex gap-1">
-                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Move filter ${n} up`}
+                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Move filter ${n} up`} title={`Move filter ${n} up`}
                       disabled={index === 0} onClick={() => move(index, -1)}><ArrowUp className="h-3.5 w-3.5" /></Button>
-                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Move filter ${n} down`}
+                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Move filter ${n} down`} title={`Move filter ${n} down`}
                       disabled={index === drafts.length - 1} onClick={() => move(index, 1)}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Remove filter ${n}`}
+                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Remove filter ${n}`} title={`Remove filter ${n}`}
                       onClick={() => askOrRemove(draft)}><Trash2 className="h-3.5 w-3.5" /></Button>
                   </div>
                 </div>

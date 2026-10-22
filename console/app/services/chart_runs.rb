@@ -54,14 +54,17 @@ class ChartRuns
 
     # The 100 most common values of a field in a Project's Logs from from to
     # to, most common first, as one chart run: [{value:, count:}], each value
-    # as its text, a number as written and a bool as true or false. A Dashboard
-    # filter's select of a field's values lists them.
+    # as its text, a number as written and a bool as true or false. Values of
+    # the same text, such as 500 and "500", are one value counting the Logs of
+    # each. A Dashboard filter's select of a field's values lists them.
     def field_values(project, field, from:, to:)
       name = bracketed(field)
       query = "#{bracketed(project.slug)} | where isnotnull(#{name}) | summarize count() by #{name} | sort by count_ desc | take 100"
-      run_chart(project, query, from: from, to: to)["table"]["rows"].map do |value, count|
-        { value: value.is_a?(String) ? value : value.to_json, count: count }
+      counts = Hash.new(0)
+      run_chart(project, query, from: from, to: to)["table"]["rows"].each do |value, count|
+        counts[value.is_a?(String) ? value : value.to_json] += count
       end
+      counts.sort_by.with_index { |(_, count), i| [ -count, i ] }.map { |value, count| { value: value, count: count } }
     end
 
     # Runs the block as one chart run, or raises Busy when as many are
@@ -82,13 +85,14 @@ class ChartRuns
       [ threads - SPARE_THREADS, 1 ].max
     end
 
-    private
-      # A name as a Query writes it in brackets, such as ['o\'brien'].
-      def bracketed(name)
-        escaped = name.gsub("\\") { "\\\\" }.gsub("\n") { "\\n" }.gsub("\t") { "\\t" }.gsub("\r") { "\\r" }.gsub("'") { "\\'" }
-        "['#{escaped}']"
-      end
+    # A name as a Query writes it in brackets, such as ['o\'brien']: a Field,
+    # or a Project's slug as a Query's source.
+    def bracketed(name)
+      escaped = name.gsub("\\") { "\\\\" }.gsub("\n") { "\\n" }.gsub("\t") { "\\t" }.gsub("\r") { "\\r" }.gsub("'") { "\\'" }
+      "['#{escaped}']"
+    end
 
+    private
       def take
         @lock.synchronize do
           next false if @running >= limit

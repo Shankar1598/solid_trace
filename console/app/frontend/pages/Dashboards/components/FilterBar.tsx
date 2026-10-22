@@ -5,8 +5,9 @@ import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, 
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText } from '@/components/ui/input-group'
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger } from '@/components/ui/select'
 import { fetchFilterValues } from '@/lib/dashboards/api'
+import { cn } from '@/lib/utils'
 import {
-  chosenText, fieldOptions, type DashboardFilter, type FieldValue, type FilterOption, type FilterValues,
+  chosenText, fieldSelectValues, type DashboardFilter, type FieldValue, type FilterOption, type FilterValues,
 } from '@/lib/dashboards/dashboard'
 
 type SelectFilter = Extract<DashboardFilter, { kind: 'select' }>
@@ -57,42 +58,47 @@ export function FilterBar({ filters, values, orgSlug, dashboardId, shown, onChan
   )
 }
 
+/**
+ * A select's value and onValueChange, with All as ALL, for one value or for
+ * several. Of several, All is ticked while nothing else is; ticking it clears
+ * the others.
+ */
+function choiceOf(values: string[], onChange: (values: string[]) => void) {
+  return {
+    one: { value: values[0] ?? ALL, onValueChange: (next: string | null) => onChange(next ? [next] : []) },
+    several: {
+      value: values.length > 0 ? values : [ALL],
+      onValueChange: (next: string[]) => onChange(next.includes(ALL) && values.length > 0 ? [] : next.filter(value => value !== ALL)),
+    },
+  }
+}
+
+/** A select's trigger text: the filter's label, then what is chosen. */
+function ChosenLabel({ filter, values }: { filter: SelectFilter; values: string[] }) {
+  return <span className="truncate"><span className="text-muted-foreground">{filter.label}:</span> {chosenText(filter, values)}</span>
+}
+
 /** A select of a fixed list: All at the top, then its options, one value or several. */
 function SelectControl({ filter, items: options, values, onChange }: {
   filter: SelectFilter; items: FilterOption[]; values: string[]; onChange: (values: string[]) => void
 }) {
-  const trigger = (
-    <SelectTrigger size="sm" className="h-8 max-w-72" aria-label={filter.label}>
-      <span className="truncate"><span className="text-muted-foreground">{filter.label}:</span> {chosenText(filter, values)}</span>
-    </SelectTrigger>
-  )
-  const items = (
-    <SelectContent>
-      <SelectItem value={ALL}>All</SelectItem>
-      <SelectSeparator />
-      {options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
-    </SelectContent>
+  const choice = choiceOf(values, onChange)
+  const parts = (
+    <>
+      <SelectTrigger size="sm" className="h-8 max-w-72" aria-label={filter.label}>
+        <ChosenLabel filter={filter} values={values} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>All</SelectItem>
+        <SelectSeparator />
+        {options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+      </SelectContent>
+    </>
   )
 
-  if (!filter.multiple) {
-    return (
-      <Select value={values[0] ?? ALL} onValueChange={next => onChange(next ? [next] : [])}>
-        {trigger}
-        {items}
-      </Select>
-    )
-  }
-  // All is ticked while nothing else is; ticking it clears the others.
-  return (
-    <Select
-      multiple
-      value={values.length > 0 ? values : [ALL]}
-      onValueChange={next => onChange(next.includes(ALL) && values.length > 0 ? [] : next.filter(value => value !== ALL))}
-    >
-      {trigger}
-      {items}
-    </Select>
-  )
+  return filter.multiple
+    ? <Select multiple {...choice.several}>{parts}</Select>
+    : <Select {...choice.one}>{parts}</Select>
 }
 
 /** A field select's values as its dropdown last loaded them, and whether a load is running or failed. */
@@ -136,7 +142,8 @@ function FieldSelectControl({ filter, values, shown, load, onChange }: {
     )
   }
 
-  const options = fieldOptions(loaded?.values ?? [], values)
+  const choice = choiceOf(values, onChange)
+  const options = fieldSelectValues(loaded?.values ?? [], values)
   const counts = new Map(options.map(o => [o.value, o.count]))
   const shared = {
     items: [ALL, ...options.map(o => o.value)],
@@ -150,7 +157,7 @@ function FieldSelectControl({ filter, values, shown, load, onChange }: {
         aria-label={filter.label}
         className="border-input dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 flex h-8 w-fit max-w-72 items-center gap-1.5 border bg-transparent py-2 pr-2 pl-2.5 text-xs whitespace-nowrap outline-none focus-visible:ring-1"
       >
-        <span className="truncate"><span className="text-muted-foreground">{filter.label}:</span> {chosenText(filter, values)}</span>
+        <ChosenLabel filter={filter} values={values} />
       </ComboboxTrigger>
       <ComboboxContent className="min-w-64">
         <ComboboxInput showTrigger={false} placeholder="Narrow the values" aria-label={`Narrow ${filter.label}'s values`} />
@@ -163,8 +170,8 @@ function FieldSelectControl({ filter, values, shown, load, onChange }: {
         <ComboboxList>
           {(value: string) => (
             <ComboboxItem key={value} value={value}>
-              <span className="truncate">{labelOf(value)}</span>
-              {counts.get(value) != null && <span className="ml-auto pl-4 text-muted-foreground tabular-nums">{counts.get(value)!.toLocaleString()}</span>}
+              <span className={cn('truncate', value !== ALL && 'font-mono')}>{labelOf(value)}</span>
+              {counts.get(value) != null && <span className="ml-auto pl-4 font-mono text-muted-foreground tabular-nums">{counts.get(value)!.toLocaleString()}</span>}
             </ComboboxItem>
           )}
         </ComboboxList>
@@ -172,24 +179,9 @@ function FieldSelectControl({ filter, values, shown, load, onChange }: {
     </>
   )
 
-  if (!filter.multiple) {
-    return (
-      <Combobox {...shared} value={values[0] ?? ALL} onValueChange={next => onChange(next ? [next] : [])}>
-        {parts}
-      </Combobox>
-    )
-  }
-  // All is ticked while nothing else is; ticking it clears the others.
-  return (
-    <Combobox
-      {...shared}
-      multiple
-      value={values.length > 0 ? values : [ALL]}
-      onValueChange={next => onChange(next.includes(ALL) && values.length > 0 ? [] : next.filter(value => value !== ALL))}
-    >
-      {parts}
-    </Combobox>
-  )
+  return filter.multiple
+    ? <Combobox {...shared} multiple {...choice.several}>{parts}</Combobox>
+    : <Combobox {...shared} {...choice.one}>{parts}</Combobox>
 }
 
 /** A search box: its text runs on Enter, and clearing it is All. */
@@ -209,7 +201,7 @@ function SearchControl({ filter, value, onChange }: { filter: SearchFilter; valu
       />
       {value && (
         <InputGroupAddon align="inline-end">
-          <InputGroupButton aria-label={`Clear ${filter.label}`} onClick={() => onChange('')}><X /></InputGroupButton>
+          <InputGroupButton aria-label={`Clear ${filter.label}`} title={`Clear ${filter.label}`} onClick={() => onChange('')}><X /></InputGroupButton>
         </InputGroupAddon>
       )}
     </InputGroup>
