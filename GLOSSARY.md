@@ -117,7 +117,7 @@ The two states of a **Threshold monitor**'s group: firing while its number passe
 _Avoid_: alerting, triggered, breached, open
 
 **Log export**:
-The **Log processing** timer that moves **Logs** out of the hot table into the **Log file store**, at each quarter-hour start. A busy **Project**, whose hot table holds at least one row group of Logs (122,880) from before the quarter-hour that ended 15 minutes ago, has each quarter-hour written to its own file then; a quiet Project has each hour written to one file once the next hour has ended. An hour whose first quarter-hours went out on their own keeps going by quarter-hours.
+The **Log processing** timer that moves **Logs** out of the hot table into the **Log file store**, at each quarter-hour start. A busy **Project**, whose hot table holds at least one row group of Logs (122,880) of the quarter-hour that ended 15 minutes ago, has each quarter-hour written to its own file then; a quiet Project has each hour written to one file once the next hour has ended. An hour whose first quarter-hours went out on their own keeps going by quarter-hours.
 _Avoid_: hourly export
 
 **Log file store**:

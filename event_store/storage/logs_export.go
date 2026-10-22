@@ -23,16 +23,17 @@ const (
 	// exportWait is how long after a quarter-hour ends the export takes a
 	// busy Project's Logs of it.
 	exportWait = 15 * time.Minute
-	// BusyProjectLogs is how many hot Logs before the quarter cutoff make a
-	// Project busy: one DuckDB row group. A filter reads a row group of the
-	// hot table whole anyway, so a Project with fewer gains nothing from
-	// files a quarter-hour long.
+	// BusyProjectLogs is how many hot Logs of the quarter-hour before the
+	// quarter cutoff make a Project busy: one DuckDB row group, so that a
+	// quarter-hour file holds about a row group. A filter reads a row group
+	// of the hot table whole anyway, so a Project with fewer gains nothing
+	// from files a quarter-hour long.
 	BusyProjectLogs = 122_880
 )
 
-// UseBusyProjectLogs sets how many hot Logs before the quarter cutoff make a
-// Project busy, BusyProjectLogs unless a test lowers it. It must be called
-// before the first export.
+// UseBusyProjectLogs sets how many hot Logs of the quarter-hour before the
+// quarter cutoff make a Project busy, BusyProjectLogs unless a test lowers
+// it. It must be called before the first export.
 func (s *LogStore) UseBusyProjectLogs(logs int64) {
 	s.busyProjectLogs = logs
 }
@@ -435,14 +436,16 @@ func (e *projectExport) quarters(cutoff time.Time) ([]time.Time, error) {
 }
 
 // busy reports whether the Project's hot table holds at least busyLogs Logs
-// before the quarter cutoff.
+// of the quarter-hour before the quarter cutoff, so that a quarter-hour file
+// holds about a row group. A quiet Project's hot table holds more than an
+// hour at a :00 run, which must not make it busy.
 func (e *projectExport) busy(quarterCutoff time.Time, busyLogs int64) (bool, error) {
 	if e.hotColumns == nil {
 		return false, nil
 	}
 	var logs int64
-	err := e.conn.QueryRowContext(e.ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE time < CAST(? AS TIMESTAMP)", e.hotTable()),
-		timestampString(quarterCutoff)).Scan(&logs)
+	err := e.conn.QueryRowContext(e.ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE time >= CAST(? AS TIMESTAMP) AND time < CAST(? AS TIMESTAMP)", e.hotTable()),
+		timestampString(quarterCutoff.Add(-QuarterHour)), timestampString(quarterCutoff)).Scan(&logs)
 	if err != nil {
 		return false, fmt.Errorf("count hot logs: %w", err)
 	}
@@ -486,8 +489,8 @@ func (f plannedFile) condition() string {
 	return "(" + strings.Join(terms, " OR ") + ")"
 }
 
-// plan works out the Project's cutoff, the quarter cutoff if it holds at
-// least busyLogs hot Logs before it, else the hour cutoff, and lists the
+// plan works out the Project's cutoff, the quarter cutoff if it is busy,
+// else the hour cutoff, and lists the
 // files of its Logs before the cutoff, oldest hour first. A quiet Project's
 // cutoff moves on towards the quarter cutoff through each hour after the hour
 // cutoff that goes by quarter-hours, so that it keeps going by them. An hour

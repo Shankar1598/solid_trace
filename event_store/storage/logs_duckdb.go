@@ -91,9 +91,9 @@ type LogStore struct {
 	// Project's files get the default (logs_file_order.go).
 	orders LogFileOrders
 
-	// busyProjectLogs is how many hot Logs before the quarter cutoff make a
-	// Project busy, so that the export writes its quarter-hours to their
-	// own files (logs_export.go).
+	// busyProjectLogs is how many hot Logs of the quarter-hour before the
+	// quarter cutoff make a Project busy, so that the export writes its
+	// quarter-hours to their own files (logs_export.go).
 	busyProjectLogs int64
 }
 
