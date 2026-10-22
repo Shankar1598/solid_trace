@@ -14,7 +14,7 @@ The hourly export is also one large job: on production, `tagalys`'s hour takes 1
 
 Every 15 minutes, the export moves a busy Project's quarter-hours that ended at least 15 minutes ago into their own Log files, sorted by its Log file order, as the hourly export does for whole hours. The hot table of a busy Project then holds its last 15 to 30 minutes, not one to two hours. A quiet Project, whose hot table holds too few Logs to gain from it, keeps one Log file per hour, exported as today.
 
-Which Logs count as late doesn't change: a Log that arrives after its quarter-hour was exported, but still inside the hot window, goes to the hot table as now, is promoted and counted as now, and the next export writes it to a late file of its hour. Queries answer the same; only how much they read changes.
+The hot window shrinks with it, to start at the quarter cutoff, so the hot table only ever holds Logs whose quarter-hour isn't exported yet, as today it holds only hours not yet exported. A Log that arrives more than 15 to 30 minutes after its time is a late Log: it waits in `logs_late`, and the next export writes it to a late file of its hour, with its values in the day's promoted columns, as late Logs are now. Queries answer the same; only how much they read changes.
 
 ## User Stories
 
@@ -24,8 +24,8 @@ Which Logs count as late doesn't change: a Log that arrives after its quarter-ho
 4. As a member, I want a Query to list the same Logs, in the same order, before and after a quarter-hour is exported, so that I never have to think about when the export runs.
 5. As a member, I want more of a Dashboard's bins to come from the bin cache, since bins become cacheable once their quarter-hour is exported, so that a refresh reads less.
 6. As a member using a Monitor on one source of a busy Project, I want its runs over the last 15 to 30 minutes to read a small hot table, so that Monitors cost less of the VM.
-7. As a member, I want a Log that arrives a few minutes late to be found by the same Attribute columns as its neighbours, so that a slow shipper doesn't hide Logs from a filter.
-8. As a member, I want `list_fields` to count a Log sent up to an hour after its time, as it does now, so that a Field's popularity doesn't depend on the export.
+7. As a member, I want a late Log to be found by the same Attribute columns as its neighbours once its Log file is written, as now, so that a slow shipper doesn't hide Logs from a filter.
+8. As a member, I want `list_fields` to count every Log that arrives within 15 minutes of its time, which on production is all of them, so that a Field's popularity still reflects the Project's Logs.
 9. As an operator, I want the export of a busy Project to be four smaller jobs an hour, not one large one, so that Log processing is held up for about a second at a time, not several.
 10. As an operator, I want a quarter-hour's export to sort in memory where today's hour spills to disk, so that the export's total cost doesn't grow.
 11. As an operator, I want a quiet Project to keep one Log file per hour, so that its file count, its bucket objects and the cold reads of its long ranges don't grow fourfold.
@@ -47,14 +47,16 @@ Which Logs count as late doesn't change: a Log that arrives after its quarter-ho
 **When the export runs, and what it takes**
 
 - The export's timer runs at each quarter-hour start (:00, :15, :30, :45) by its clock, once when EventStore starts, and a minute after a failure. Today it runs at each hour start.
-- Each run has two cutoffs: the **quarter cutoff**, the run's quarter-hour start minus 15 minutes (at 11:15 it is 11:00, so the quarter-hours up to 10:45–11:00, which ended 15 minutes ago, are taken), and the **hour cutoff**, the start of the hot window as today (`HotWindow`'s `from`).
+- Each run has two cutoffs: the **quarter cutoff**, the run's quarter-hour start minus 15 minutes (at 11:15 it is 11:00, so the quarter-hours up to 10:45–11:00, which ended 15 minutes ago, are taken), and the **hour cutoff**, the start of the previous hour (today's cutoff).
 - A Project is **busy** at a run when its hot table holds at least 122,880 Logs (one DuckDB row group) before the quarter cutoff. Below that, a filter reads one row group of the hot table anyway, so there is nothing to skip. A busy Project's Logs before the quarter cutoff are exported; a quiet Project's Logs before the hour cutoff are exported, as today. The threshold is one value on the LogStore, which root tests lower.
 - Late Logs (`logs_late`) are exported at every run, by the same rules, as today.
 
-**The hot window stays as it is**
+**The hot window starts at the quarter cutoff**
 
-- The ingest split (`HotWindow`, the current hour and the previous one), promotion and the counting of Attribute keys don't change. A Log whose quarter-hour has been exported but whose hour is still in the hot window goes to the hot table, gets its promoted columns, and is written by the next run to a late file of its hour. Shrinking the hot window instead would store more Logs MAP-only in `logs_late`, unpromoted and uncounted.
-- Demoted columns are still dropped at the first export after the hot window has left the previous day (01:00 UTC). The code that works this out from the cutoff and a hard-coded two hours works it out from the hot window, so it no longer depends on when the export runs.
+- `HotWindow` becomes [quarter cutoff, start of the next hour): at 11:15 to 11:29 it starts at 11:00. Log processing's split by it doesn't change: a Log inside goes to the hot table, a Log outside to `logs_late`. So a busy Project's hot table only holds Logs of quarter-hours not yet exported, and an export never finds a hot Log of a range that already has its file.
+- A quiet Project's hot table still holds its whole unexported hours, since a Log that arrives on time is stored hot and stays until its hour is exported; only a Log arriving more than 15 to 30 minutes after its time goes to `logs_late`, and the hour's export takes it into `data.parquet`, as it takes late Logs now.
+- Promotion and the counting of Attribute keys still happen as Log processing stores hot Logs, every second, not at the export. Late Logs are still neither counted nor able to add a key to their day's promoted set; their values for keys already in the set go into the columns when their Log file is written, as now. On production every Log arrives within a minute of its time (Further Notes), so the smaller window changes no count there; it matters when EventStore or a shipper falls more than 15 minutes behind.
+- Demoted columns are still dropped at the export that deletes the previous day's last hour from the hot tables (01:00 UTC, when quiet Projects' 23:00 hour goes). The code that works this out from the cutoff and a hard-coded two hours (the old window's width) works it out from the hour cutoff, so it doesn't move with the quarter cutoff.
 
 **Log files and their names**
 
@@ -67,8 +69,8 @@ Which Logs count as late doesn't change: a Log that arrives after its quarter-ho
 **Domain words and docs**
 
 - GLOSSARY.md: the **Hourly export** becomes the **Log export** (with _Avoid_: hourly export for what now runs every quarter-hour), and the **Log file store**, **Late file** and **Log file order** entries say an hour's Logs are in one file, or in a file per quarter-hour for a busy Project, plus late files. A **Quarter-hour file** term may be needed.
-- A new ADR records the decision, superseding the "exported every hour, one file per Project per hour" lines of ADR 0005, and saying why the hot window was kept and why quiet Projects stay hourly. ADR 0007's and 0008's hour-based keys stand.
-- `docs/logs/object-store.md`, the export's doc comments ("hour h-2"), its log messages ("Hourly Log export failed"), the cleanup timer's comment, and the Console text that says "hours exported" (the Log file order card, `list_projects`) are updated. `list_fields`'s "a Log sent more than about an hour after its time isn't counted" stays true.
+- A new ADR records the decision, superseding the "exported every hour, one file per Project per hour" lines of ADR 0005, and saying why the hot window follows the quarter cutoff and why quiet Projects stay hourly. ADR 0007's and 0008's hour-based keys stand.
+- `docs/logs/object-store.md`, the export's doc comments ("hour h-2"), its log messages ("Hourly Log export failed"), the cleanup timer's comment, and the Console text that says "hours exported" (the Log file order card, `list_projects`) are updated. `list_fields`'s "a Log sent more than about an hour after its time isn't counted" becomes about 15 minutes.
 
 **Production effect, expected**
 
@@ -81,7 +83,8 @@ Which Logs count as late doesn't change: a Log that arrives after its quarter-ho
 - **The seam: EventStore's root tests**, beside `logs_export_test.go` and `logs_file_order_test.go`, with the busy threshold lowered for the test's LogStore. They cover:
   - A busy Project's quarter-hours are written to `data-00` … `data-45` at the runs 15 minutes after each ends; its hot table then holds only Logs after the quarter cutoff; the Logs list the same before and after each run.
   - A quiet Project, in the same runs, gets `data.parquet` once its hour leaves the hot window, as today.
-  - A Log arriving after its quarter-hour was exported, inside the hot window, is promoted (found by its key's column), counted, and written to the hour's late file by the next run; one arriving after the hot window goes to `logs_late` and a late file, as today.
+  - A Log arriving after its quarter-hour was exported goes to `logs_late`, and the next run writes it to the hour's late file, found by its key's promoted column; a Log of the current quarter-hour arriving on time is hot.
+  - A quiet Project's Log arriving 20 minutes after its time, before its hour is exported, goes to `logs_late` and is in the hour's `data.parquet` after the hour's export.
   - An hour whose first quarters went out on their own keeps going by quarter-hours after the Project turns quiet.
   - A run after a gap (EventStore down for an hour) writes each missed quarter-hour's file.
   - Demoted columns are still dropped at 01:00 UTC and their values still read back.
@@ -91,7 +94,7 @@ Which Logs count as late doesn't change: a Log that arrives after its quarter-ho
 
 ## Out of Scope
 
-- Changing the hot window, what counts as a late Log, promotion or Attribute counting.
+- Changing promotion or Attribute counting, or counting late Logs.
 - Sorting the hot table, or keeping a sorted copy of it.
 - A setting for the interval, the wait or the busy threshold.
 - Changing the manifest's key, the folder layout or the bin cache's keys. Each quarter-hour's export changes its hour's generations, so the cached bins of that hour's earlier quarters are dropped up to three times; those bins weren't cacheable at all before.
@@ -101,3 +104,5 @@ Which Logs count as late doesn't change: a Log that arrives after its quarter-ho
 ## Further Notes
 
 Production, 2026-10-21 20:00 to 2026-10-22 06:00 UTC, from EventStore's own Logs (`solidtrace`): `tagalys` (Project 3) exports took 1 min 53 s to 2 min 32 s to copy and 2.5 to 6.0 s to commit, for 11.7 to 15.5 M Logs; `solidtrace` (Project 2) took 99 to 191 ms for 11 to 14 k Logs; each checkpoint took 1 to 304 ms. The probe of 2026-10-21 wrote a `tagalys` hour while spilling about 5 GB at 4 GB of memory.
+
+How late Logs arrive, from each Log's id (a UUIDv7 made when ingest receives it) against its time: all 13,432,425 of `tagalys`'s Logs of 03:00 to 04:00 on 2026-10-22, and all 282,269 of `solidtrace`'s over the 24 hours to 06:22, arrived within a minute. This doesn't count Log processing falling behind after ingest.
