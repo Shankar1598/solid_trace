@@ -11,6 +11,41 @@ module McpTools
     DASHBOARD = { type: "integer", description: "The Dashboard's id. list_dashboards lists them." }.freeze
     CHART = { type: "integer", description: "The Chart's id, on the Dashboard. get_dashboard lists them." }.freeze
 
+    # A Dashboard filter as the Dashboard keeps it, which get_dashboard
+    # answers and the Dashboard validates.
+    FILTER = {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "What a Query writes after $ to use the filter, as $service: lowercase letters, digits and _, starting with " \
+                       "a letter or _, at most 40 characters, unique on the Dashboard. " \
+                       "Keep a saved filter's name, since Charts name it.",
+        },
+        label: { type: "string", description: "What the filter bar shows, at most #{Dashboard::MAX_FILTER_LABEL} characters. The name when empty." },
+        kind: {
+          type: "string", enum: %w[select search],
+          description: "select: a pick from options. search: a text box, for search $q or message contains $q.",
+        },
+        multiple: { type: "boolean", description: "Whether a select takes several values. false when not given; a search has none." },
+        options: {
+          type: "object",
+          description: "A select's options, which a search has none of, in one of two shapes. A fixed list, " \
+                       "{\"from\": \"list\", \"items\": [{\"label\": \"Errors\", \"value\": \"error\"}, {\"value\": \"warn\"}]}: " \
+                       "1 to #{Dashboard::MAX_OPTIONS} items, each value not empty and unique, label and value at most " \
+                       "#{Dashboard::MAX_OPTION_TEXT} characters, an empty label being the value. Or a field's values, " \
+                       "{\"from\": \"field\", \"project_id\": 3, \"field\": \"service\"}: the 100 most common values of a field other " \
+                       "than time, in a Project of the Organization (list_projects gives the ids), over the range the Dashboard shows.",
+          properties: {
+            from: { type: "string", enum: %w[list field] },
+            items: { type: "array", items: { type: "object", properties: { label: { type: "string" }, value: { type: "string" } } } },
+            project_id: { type: "integer" },
+            field: { type: "string" },
+          },
+        },
+      },
+    }.freeze
+
     DASHBOARD_FIELDS = {
       name: { type: "string", description: "The Dashboard's name, at most 200 characters." },
       description: { type: "string", description: "What the Dashboard shows, at most 2000 characters." },
@@ -19,6 +54,15 @@ module McpTools
         description: "The range the Dashboard shows until someone picks another: a span back from now such as 15m, 1h, 24h or 7d. 1h when made.",
       },
       auto_refresh: { type: "string", enum: Dashboard::AUTO_REFRESH, description: "How often the open page runs its Charts again. 15s when made." },
+      filters: {
+        type: "array",
+        items: FILTER,
+        description: "The Dashboard's filters, the controls of the bar under its header, in the bar's order, at most " \
+                     "#{Dashboard::MAX_FILTERS}. A Chart uses a filter by naming it in its Query as $name, such as " \
+                     "where service == $service, and runs it with the values picked, or as All, as if the comparison weren't there, " \
+                     "when none is; query_language_reference's Dashboard filters says where $name can go. The list given replaces " \
+                     "the Dashboard's filters whole, so give every filter to keep; [] removes them all. None when made.",
+      },
     }.freeze
 
     CHART_FIELDS = {
