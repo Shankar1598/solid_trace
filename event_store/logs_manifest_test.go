@@ -72,7 +72,7 @@ func TestAnInstallFromBeforeTheManifestKeepsItsLogsAndItsStagedFilesAreSettled(t
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	ten := at(10, 0)
-	env.Clock.Set(at(10, 30))
+	env.Clock.Set(at(10, 29))
 	postAndProcess(t, env,
 		logJSON(t, "ten past ten", at(10, 10), map[string]any{"user": "ada", "status": 200}),
 		logJSON(t, "yesterday", testNow.AddDate(0, 0, -1), map[string]any{"user": "old"}),
@@ -82,7 +82,7 @@ func TestAnInstallFromBeforeTheManifestKeepsItsLogsAndItsStagedFilesAreSettled(t
 
 	// A late Log of hour 10 waits for its late file, and one of 12:10 is
 	// hot.
-	env.Clock.Set(at(12, 30))
+	env.Clock.Set(at(12, 29))
 	postAndProcess(t, env,
 		logJSON(t, "late ten", at(10, 40), map[string]any{"user": "bob", "status": 500}),
 		logJSON(t, "ten past twelve", at(12, 10), map[string]any{"user": "cy"}),
@@ -294,8 +294,7 @@ func TestAnUpgradeKeepsTheLogFilesItCannotRead(t *testing.T) {
 
 	seedProject(t, env.SQLitePath, 123, 7)
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	env.Clock.Set(at(10, 30))
-	postAndProcess(t, env,
+	postWhileHot(t, env,
 		logJSON(t, "ten past nine", at(9, 10), nil),
 		logJSON(t, "ten past ten", at(10, 10), nil),
 	)

@@ -19,7 +19,7 @@ export interface Project {
   slug: string
   platform?: string
   log_retention_days?: number | null
-  /** The Fields each hour's Log file is sorted by before time; null for the default, [] for time only. */
+  /** The Fields each Log file is sorted by before time; null for the default, [] for time only. */
   log_file_order?: string[] | null
   created_at: string
   issues_count?: number

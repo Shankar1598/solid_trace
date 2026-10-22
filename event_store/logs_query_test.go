@@ -121,15 +121,19 @@ func TestEachOperatorFindsLogsInTheHotTableFilesAndLateLogs(t *testing.T) {
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	yesterday := time.Date(2026, 10, 1, 15, 0, 0, 0, time.UTC)
 
-	// At 11:30 the hot window is 10:00 to 12:00.
-	env.Clock.Set(at(11, 30))
+	// At 10:29 the hot window is 10:00 to 11:00, and at 11:29 11:00 to 12:00.
+	env.Clock.Set(at(10, 29))
 	postAndProcess(t, env,
 		logJSON(t, "ada", at(10, 10), map[string]any{"status": 200, "user": "ada", "cached": true}),
 		logJSON(t, "bob", at(10, 20), map[string]any{"status": "200", "user": "bob"}),
 		logJSON(t, "cy", at(10, 30), map[string]any{"user": "cy", "level": "error"}),
 		logJSON(t, "di", yesterday, map[string]any{"status": 200, "user": "di"}),
+	)
+	env.Clock.Set(at(11, 29))
+	postAndProcess(t, env,
 		logJSON(t, "ed", at(11, 10), map[string]any{"status": 404, "user": "ed", "level": "error", "note": "Disk FULL"}),
 	)
+	env.Clock.Set(at(11, 30))
 	cases := map[string][]string{
 		``:                                             {"ed", "cy", "bob", "ada", "di"},
 		`logs`:                                         {"ed", "cy", "bob", "ada", "di"},
@@ -210,13 +214,16 @@ func TestPagesContinueFromTheCursorAcrossHoursAndSources(t *testing.T) {
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	env.Clock.Set(at(11, 30))
 	// Three Logs share one time, so pages split them by id.
+	env.Clock.Set(at(10, 29))
 	postAndProcess(t, env,
 		logJSON(t, "a", at(10, 5), nil),
 		logJSON(t, "b", at(10, 15), nil),
 		logJSON(t, "c", at(10, 15), nil),
 		logJSON(t, "d", at(10, 15), nil),
+	)
+	env.Clock.Set(at(11, 29))
+	postAndProcess(t, env,
 		logJSON(t, "e", at(11, 0), nil),
 		logJSON(t, "f", at(11, 20), map[string]any{"skip": true}),
 		logJSON(t, "g", at(11, 25), nil),
@@ -307,7 +314,10 @@ func TestASearchAnswersWhatItFoundOnceItsBudgetIsSpentAndPagesOn(t *testing.T) {
 		logs = append(logs, logJSON(t, fmt.Sprintf("hour %d", h), testNow.Add(-time.Duration(h)*time.Hour+time.Minute),
 			map[string]any{"rare": h == 1 || h == 5}))
 	}
+	// At 11:29 the hot window is 11:00 to 12:00, so hour 1's Log is hot.
+	env.Clock.Set(testNow.Add(-31 * time.Minute))
 	postAndProcess(t, env, logs...)
+	env.Clock.Set(testNow)
 	env.ExportLogs(t)
 
 	// Every scan spends its budget on its first hour.
@@ -598,11 +608,10 @@ func TestALogIsFetchedByIDWhereverItIsStored(t *testing.T) {
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	env.Clock.Set(at(11, 30))
-	postAndProcess(t, env,
-		logJSON(t, "exported", at(10, 10), map[string]any{"user": "ada", "status": 200}),
-		logJSON(t, "hot", at(11, 10), map[string]any{"user": "bob"}),
-	)
+	env.Clock.Set(at(10, 29))
+	postAndProcess(t, env, logJSON(t, "exported", at(10, 10), map[string]any{"user": "ada", "status": 200}))
+	env.Clock.Set(at(11, 29))
+	postAndProcess(t, env, logJSON(t, "hot", at(11, 10), map[string]any{"user": "bob"}))
 	env.Clock.Set(at(12, 5))
 	env.ExportLogs(t)
 	postAndProcess(t, env, logJSON(t, "late", at(10, 20), map[string]any{"user": "cy", "cached": true}))

@@ -95,6 +95,7 @@ func TestTheLogsViewCoversTheProjectAndRangeAcrossHotFilesAndLateLogs(t *testing
 	setSQLQueries(t, env, true)
 	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
 	seedLanguageLogs(t, env)
+	env.Clock.Set(languageAt(10, 29))
 	postAndProcessTo(t, env, 456, "other_public_key", logJSON(t, "other", languageAt(10, 35), map[string]any{"duration": 1}))
 	exportLanguageLogs(t, env) // ada, bob, cy and di in files, ed hot, fy late
 

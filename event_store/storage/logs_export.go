@@ -40,16 +40,19 @@ func (s *LogStore) UseBusyProjectLogs(logs int64) {
 // exportCutoffs are the cutoffs of the export at now. The quarter cutoff is
 // now's quarter-hour start minus exportWait: at 11:15 it is 11:00, so the
 // quarter-hours up to 10:45 to 11:00 are taken. The hour cutoff is the start
-// of the previous hour, before which every Log is exported.
+// of the previous hour, before which every Log is exported. Next is the start
+// of the next hour, where the hot window ends.
 type exportCutoffs struct {
-	quarter, hour time.Time
+	quarter, hour, next time.Time
 }
 
 func exportCutoffsAt(now time.Time) exportCutoffs {
 	now = now.UTC()
+	hour := now.Truncate(time.Hour)
 	return exportCutoffs{
 		quarter: now.Truncate(QuarterHour).Add(-exportWait),
-		hour:    now.Truncate(time.Hour).Add(-time.Hour),
+		hour:    hour.Add(-time.Hour),
+		next:    hour.Add(time.Hour),
 	}
 }
 
@@ -328,7 +331,7 @@ func (s *LogStore) commitExport(projectID uint32, cutoffs exportCutoffs, staged 
 	}
 	// DuckDB can't commit a DELETE made before an ALTER of the same table,
 	// so the columns go first.
-	if err := export.dropDemotedColumns(cutoffs.hour); err != nil {
+	if err := export.dropDemotedColumns(cutoffs); err != nil {
 		return false, err
 	}
 	upTo := &staged.cursor
@@ -709,12 +712,13 @@ func (e *projectExport) delete(cutoff time.Time, upTo *uuid.UUID) (int64, error)
 }
 
 // dropDemotedColumns drops each promoted column of the Project's hot table
-// that the sets of the days it keeps after cutoff, the hour cutoff, don't
-// have, nor the sets of the days of the two hours from it. Those are the keys
-// the day's set demoted, so the drop happens at the export that deletes a
-// quiet Project's last hour of the previous day, 01:00 UTC, whatever the
-// quarter cutoff. Log processing adds a column back if a set needs it.
-func (e *projectExport) dropDemotedColumns(cutoff time.Time) error {
+// that the sets of the days it can hold after the export don't have: the days
+// from the hour cutoff, before which a quiet Project's Logs go, to the end of
+// the hot window. Those are the keys the day's set demoted, so the drop
+// happens at the export that deletes a quiet Project's last hour of the
+// previous day, 01:00 UTC, whatever the quarter cutoff. Log processing adds a
+// column back if a set needs it.
+func (e *projectExport) dropDemotedColumns(cutoffs exportCutoffs) error {
 	if e.hotColumns == nil {
 		return nil
 	}
@@ -726,10 +730,10 @@ func (e *projectExport) dropDemotedColumns(cutoff time.Time) error {
 		}
 		return err
 	}
-	if err := keep(cutoff); err != nil {
+	if err := keep(cutoffs.hour); err != nil {
 		return err
 	}
-	if err := keep(cutoff.Add(2*time.Hour - time.Nanosecond)); err != nil {
+	if err := keep(cutoffs.next.Add(-time.Nanosecond)); err != nil {
 		return err
 	}
 	demoted := func() []string {
@@ -748,7 +752,7 @@ func (e *projectExport) dropDemotedColumns(cutoff time.Time) error {
 	// Only near midnight can the table keep another day's Logs.
 	rows, err := e.conn.QueryContext(e.ctx, fmt.Sprintf(
 		"SELECT DISTINCT CAST(time AS DATE) FROM %s WHERE time >= CAST(? AS TIMESTAMP)", e.hotTable()),
-		timestampString(cutoff))
+		timestampString(cutoffs.hour))
 	if err != nil {
 		return fmt.Errorf("list days in hot table: %w", err)
 	}
