@@ -32,13 +32,9 @@ x-console: &console
     # Where SDKs and shippers reach ingest, for the Logs page's snippets.
     # Unset, they show this host at port 4000.
     PUBLIC_INGEST_URL: ${PUBLIC_INGEST_URL:-}
-    # Email, from deploy/setup-gcp. Without SMTP_ADDRESS, emails aren't sent.
+    # Console's public URL, from deploy/setup-gcp, for links in emails. The SMTP
+    # server is set on Console's Email settings page.
     CONSOLE_URL: ${CONSOLE_URL:-}
-    MAIL_FROM: ${MAIL_FROM:-}
-    SMTP_ADDRESS: ${SMTP_ADDRESS:-}
-    SMTP_PORT: ${SMTP_PORT:-}
-    SMTP_USERNAME: ${SMTP_USERNAME:-}
-    SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   volumes:
     - ./data/storage:/storage
   restart: unless-stopped
