@@ -99,7 +99,7 @@ export function rangeOfSearch(search: string, defaultRange: string): TimeRange {
  * relative stays relative, and each value is a `v_<name>` key, repeated for
  * several values.
  */
-export function searchOfRange(range: TimeRange, values: FilterValues = {}): string {
+export function searchOfRangeAndValues(range: TimeRange, values: FilterValues = {}): string {
   const params = new URLSearchParams()
   if (range.kind === 'relative') {
     params.set('range', range.span)
@@ -155,8 +155,7 @@ export function unknownFilterProblems(query: string, parameters: string[], filte
   const known = new Set(filters.map(f => f.name))
   const unknown = new Set(parameters.filter(name => !known.has(name)))
   const names = filters.map(f => f.name).join(', ')
-  const messageOf = (name: string) =>
-    `$${name} isn't one of this Dashboard's filters${names === '' ? '; it has none' : ` (${names})`}.`
+  const messageOf = (name: string) => `${notItsFilters([name])}${names === '' ? '; it has none' : ` (${names})`}.`
   const problems: QueryProblem[] = []
   const placed = new Set<string>()
   for (const token of tokenize(query)) {
@@ -186,6 +185,12 @@ export function unknownFilters(query: string, filters: DashboardFilter[]): strin
   return parametersOf(query).filter(name => !known.has(name))
 }
 
+/** Names that aren't the Dashboard's filters, saying so: `$a isn't one of this Dashboard's filters`. */
+export function notItsFilters(names: string[]): string {
+  const listed = names.map(name => `$${name}`).join(', ')
+  return names.length === 1 ? `${listed} isn't one of this Dashboard's filters` : `${listed} aren't this Dashboard's filters`
+}
+
 /** What a filter holds, as its bar reads it: All, up to two values by their labels, or a count. */
 export function chosenText(filter: DashboardFilter, values: readonly string[]): string {
   if (values.length === 0) return 'All'
@@ -199,7 +204,7 @@ export function chosenText(filter: DashboardFilter, values: readonly string[]): 
  * first, after the chosen values that aren't among them, so a value from a
  * link still shows as chosen. An empty value is All, so it isn't one.
  */
-export function fieldOptions(loaded: FieldValue[], chosen: readonly string[]): FieldValue[] {
+export function fieldSelectValues(loaded: FieldValue[], chosen: readonly string[]): FieldValue[] {
   const known = new Set(loaded.map(v => v.value))
   const missing = chosen.filter(value => !known.has(value)).map(value => ({ value, count: null }))
   return [...missing, ...loaded.filter(v => v.value !== '')]

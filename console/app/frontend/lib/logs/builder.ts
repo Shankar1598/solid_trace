@@ -11,7 +11,7 @@ export type FilterOp =
   | 'in' | '!in' | 'exists' | 'missing'
 
 /** A chip's value that is one of a Dashboard's filters, written `$name`. */
-export interface FilterValue {
+export interface FilterReference {
   filter: string
 }
 
@@ -23,10 +23,10 @@ export interface FilterValue {
 export interface Chip {
   field: string
   op: FilterOp
-  value: ChipValue | FilterValue | ChipValue[] | null
+  value: ChipValue | FilterReference | ChipValue[] | null
 }
 
-export function isFilterValue(value: Chip['value']): value is FilterValue {
+export function isFilterReference(value: Chip['value']): value is FilterReference {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
@@ -108,7 +108,7 @@ function sourceText(slug: string): string {
 /** One chip as its where stage, such as `where service == "api"`, or `where service == $service`. */
 export function filterText(chip: Chip): string {
   const field = nameText(chip.field)
-  if (isFilterValue(chip.value)) return `where ${field} ${chip.op} $${chip.value.filter}`
+  if (isFilterReference(chip.value)) return `where ${field} ${chip.op} $${chip.value.filter}`
   switch (chip.op) {
     case 'exists':
       return `where isnotnull(${field})`

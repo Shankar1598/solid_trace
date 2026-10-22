@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  chosenText, explorerHref, fieldOptions, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
-  parametersOfChart, rangeOfSearch, searchOfRange, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
+  chosenText, explorerHref, fieldSelectValues, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
+  parametersOfChart, rangeOfSearch, searchOfRangeAndValues, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
   withSource,
   type DashboardFilter,
 } from './dashboard'
@@ -25,8 +25,8 @@ describe('a Dashboard\'s range', () => {
 
   it('round-trips through the URL', () => {
     const range = { kind: 'absolute' as const, from: new Date('2026-10-03T09:00:00Z'), to: new Date('2026-10-03T10:00:00Z') }
-    expect(rangeOfSearch(searchOfRange(range), '1h')).toEqual(range)
-    expect(searchOfRange({ kind: 'relative', span: '7d' })).toBe('?range=7d')
+    expect(rangeOfSearch(searchOfRangeAndValues(range), '1h')).toEqual(range)
+    expect(searchOfRangeAndValues({ kind: 'relative', span: '7d' })).toBe('?range=7d')
   })
 })
 
@@ -42,7 +42,7 @@ describe('a Dashboard\'s filter values', () => {
   })
 
   it('are written beside the range, and round-trip through the URL', () => {
-    const search = searchOfRange({ kind: 'relative', span: '6h' }, { level: ['error', 'warn'], q: ['time out'] })
+    const search = searchOfRangeAndValues({ kind: 'relative', span: '6h' }, { level: ['error', 'warn'], q: ['time out'] })
     expect(search).toBe('?range=6h&v_level=error&v_level=warn&v_q=time+out')
     expect(rangeOfSearch(search, '1h')).toEqual({ kind: 'relative', span: '6h' })
     expect(filterValuesOfSearch(search, FILTERS)).toEqual({ level: ['error', 'warn'], q: ['time out'] })
@@ -95,10 +95,10 @@ describe('a select of a field\'s values', () => {
 
   it('offers the values loaded, most common first, after chosen values that aren\'t among them', () => {
     const loaded = [{ value: 'api', count: 12 }, { value: 'web', count: 3 }]
-    expect(fieldOptions(loaded, ['web', 'gone'])).toEqual([{ value: 'gone', count: null }, ...loaded])
+    expect(fieldSelectValues(loaded, ['web', 'gone'])).toEqual([{ value: 'gone', count: null }, ...loaded])
     // An empty value is All, which the select offers first anyway.
-    expect(fieldOptions([{ value: '', count: 9 }, ...loaded], [])).toEqual(loaded)
-    expect(fieldOptions([], ['gone'])).toEqual([{ value: 'gone', count: null }])
+    expect(fieldSelectValues([{ value: '', count: 9 }, ...loaded], [])).toEqual(loaded)
+    expect(fieldSelectValues([], ['gone'])).toEqual([{ value: 'gone', count: null }])
   })
 })
 

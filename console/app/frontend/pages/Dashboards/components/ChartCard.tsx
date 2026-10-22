@@ -7,7 +7,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { fetchChartData } from '@/lib/dashboards/api'
 import {
-  explorerHref, parametersOfChart, unknownFilters, type DashboardChart, type DashboardFilter, type FilterValues,
+  explorerHref, notItsFilters, parametersOfChart, unknownFilters, type DashboardChart, type DashboardFilter, type FilterValues,
 } from '@/lib/dashboards/dashboard'
 import { isAbort, type FetchQueue } from '@/lib/dashboards/fetchQueue'
 import { elapsedText } from '@/lib/logs/runLine'
@@ -109,7 +109,7 @@ export function ChartCard({
       </div>
       {unknown.length > 0 && (
         <p className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground">
-          {unknown.map(name => `$${name}`).join(', ')} {unknown.length === 1 ? "isn't one of this Dashboard's filters" : "aren't this Dashboard's filters"}, so the chart runs {unknown.length === 1 ? 'it' : 'them'} as All.
+          {notItsFilters(unknown)}, so the chart runs {unknown.length === 1 ? 'it' : 'them'} as All.
         </p>
       )}
       <div className="min-h-0 flex-1 overflow-auto">

@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger } fro
 import { fetchFilterValues } from '@/lib/dashboards/api'
 import { cn } from '@/lib/utils'
 import {
-  chosenText, fieldOptions, type DashboardFilter, type FieldValue, type FilterOption, type FilterValues,
+  chosenText, fieldSelectValues, type DashboardFilter, type FieldValue, type FilterOption, type FilterValues,
 } from '@/lib/dashboards/dashboard'
 
 type SelectFilter = Extract<DashboardFilter, { kind: 'select' }>
@@ -143,7 +143,7 @@ function FieldSelectControl({ filter, values, shown, load, onChange }: {
   }
 
   const choice = choiceOf(values, onChange)
-  const options = fieldOptions(loaded?.values ?? [], values)
+  const options = fieldSelectValues(loaded?.values ?? [], values)
   const counts = new Map(options.map(o => [o.value, o.count]))
   const shared = {
     items: [ALL, ...options.map(o => o.value)],
