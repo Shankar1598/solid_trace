@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -198,6 +199,10 @@ const (
 // isEmpty is true for a missing value or an empty string.
 type isEmpty struct{ x expr }
 
+// always is true for every row: a comparison with a Dashboard filter set to
+// All. A where whose condition is always drops out of the Query.
+type always struct{}
+
 type and struct{ x, y expr }
 type or struct{ x, y expr }
 type not struct{ x expr }
@@ -236,6 +241,7 @@ func (e literal) typ() valueType     { return e.valueType() }
 func (compare) typ() valueType       { return boolType }
 func (textMatch) typ() valueType     { return boolType }
 func (isEmpty) typ() valueType       { return boolType }
+func (always) typ() valueType        { return boolType }
 func (and) typ() valueType           { return boolType }
 func (or) typ() valueType            { return boolType }
 func (not) typ() valueType           { return boolType }
@@ -277,8 +283,18 @@ func (c *compiler) expr(e parser.Expr, want valueType, aggregates *rateBasis) (e
 		return c.call(e, want, aggregates)
 	case *parser.ListExpr:
 		return nil, errorAt(e, "a list only follows in or !in")
+	case *parser.Param:
+		return nil, c.misplaced(e)
 	}
 	return nil, errorAt(e, "unexpected expression")
+}
+
+// misplaced is the mistake of a Dashboard filter where it can't go.
+func (c *compiler) misplaced(p *parser.Param) *Error {
+	if c.inNot {
+		return errorAt(p, "$%s can't go inside not(…), where All would keep nothing; exclude with != instead", p.Name)
+	}
+	return errorAt(p, "$%s only goes in a where, compared with ==, !=, =~, !~, contains or startswith, or in search $%s", p.Name, p.Name)
 }
 
 // name compiles a name: a column, a built-in field or an Attribute.
@@ -409,13 +425,25 @@ var compareOps = map[parser.TokenKind]compareOp{
 	parser.TokenLT: opLT, parser.TokenLE: opLE, parser.TokenGT: opGT, parser.TokenGE: opGE,
 }
 
-// textOps are the operators that test a string against a pattern: what they
-// test, whether case counts, and whether they are negated.
-var textOps = map[parser.TokenKind]struct {
+// textOp is an operator that tests a string against a pattern: what it
+// tests, whether case counts, and whether it is negated.
+type textOp struct {
 	op            matchOp
 	caseSensitive bool
 	negated       bool
-}{
+}
+
+// match is x tested against pattern.
+func (t textOp) match(x expr, pattern string) expr {
+	var m expr = textMatch{op: t.op, x: x, pattern: pattern, caseSensitive: t.caseSensitive}
+	if t.negated {
+		return not{m}
+	}
+	return m
+}
+
+// textOps are the operators that test a string against a pattern.
+var textOps = map[parser.TokenKind]textOp{
 	parser.TokenContains:        {matchContains, false, false},
 	parser.TokenNotContains:     {matchContains, false, true},
 	parser.TokenContainsCS:      {matchContains, true, false},
@@ -453,33 +481,222 @@ func (c *compiler) binary(e *parser.BinaryExpr, aggregates *rateBasis) (expr, er
 		return c.compare(e, op, aggregates)
 	}
 	if text, ok := textOps[e.Op]; ok {
-		x, err := c.expr(e.X, stringType, aggregates)
+		x, err := c.textOperand(e.X, e.OpSpan, text, aggregates)
 		if err != nil {
 			return nil, err
 		}
-		if x.typ() != stringType {
-			return nil, errorAt(e.X, "expected a string on the left of %s, not a %s", c.source(e.OpSpan), x.typ())
+		if p, ok := e.Y.(*parser.Param); ok {
+			return nil, c.misplaced(p)
 		}
 		lit, ok := e.Y.(*parser.BasicLit)
 		if !ok || lit.Kind != parser.StringLiteral {
 			return nil, errorAt(e.Y, "expected a quoted string after %s", c.source(e.OpSpan))
-		}
-		if ref, ok := x.(fieldRef); ok && !ref.builtIn && text.op == matchContains {
-			c.read(storage.JSONAttribute, ref.name)
-			x = attributeText{name: ref.name}
 		}
 		if text.op == matchRegex {
 			if _, err := regexp.Compile(lit.Value); err != nil {
 				return nil, errorAt(lit, "invalid regular expression: %s", strings.TrimPrefix(err.Error(), "error parsing regexp: "))
 			}
 		}
-		var match expr = textMatch{op: text.op, x: x, pattern: lit.Value, caseSensitive: text.caseSensitive}
-		if text.negated {
-			match = not{match}
-		}
-		return match, nil
+		return text.match(x, lit.Value), nil
 	}
 	return nil, &Error{Span: e.OpSpan, Message: "unsupported operator"}
+}
+
+// textOperand compiles the string a text operator tests. contains reads an
+// Attribute as text, arrays and deep nesting as JSON.
+func (c *compiler) textOperand(e parser.Expr, opSpan parser.Span, text textOp, aggregates *rateBasis) (expr, error) {
+	x, err := c.expr(e, stringType, aggregates)
+	if err != nil {
+		return nil, err
+	}
+	if x.typ() != stringType {
+		return nil, errorAt(e, "expected a string on the left of %s, not a %s", c.source(opSpan), x.typ())
+	}
+	if ref, ok := x.(fieldRef); ok && !ref.builtIn && text.op == matchContains {
+		c.read(storage.JSONAttribute, ref.name)
+		x = attributeText{name: ref.name}
+	}
+	return x, nil
+}
+
+// predicate compiles a where's condition, in which a Dashboard filter may be
+// compared with ==, !=, =~, !~ and the text operators but matches regex,
+// joined by and and or. A comparison with a filter set to All is always, and
+// and and or fold it away.
+func (c *compiler) predicate(e parser.Expr) (expr, error) {
+	switch e := e.(type) {
+	case *parser.ParenExpr:
+		return c.predicate(e.X)
+	case *parser.BinaryExpr:
+		switch e.Op {
+		case parser.TokenAnd, parser.TokenOr:
+			x, err := c.predicate(e.X)
+			if err != nil {
+				return nil, err
+			}
+			y, err := c.predicate(e.Y)
+			if err != nil {
+				return nil, err
+			}
+			_, xAll := x.(always)
+			_, yAll := y.(always)
+			switch {
+			case e.Op == parser.TokenOr && (xAll || yAll):
+				return always{}, nil
+			case e.Op == parser.TokenOr:
+				return or{x, y}, nil
+			case xAll:
+				return y, nil
+			case yAll:
+				return x, nil
+			}
+			return and{x, y}, nil
+		}
+		if p, side, ok := filterSides(e); ok {
+			return c.filter(e, p, side)
+		}
+	}
+	return c.condition(e)
+}
+
+// filterOps are the operators a Dashboard filter can be compared with.
+var filterOps = map[parser.TokenKind]bool{
+	parser.TokenEq: true, parser.TokenNE: true, parser.TokenEqCI: true, parser.TokenNECI: true,
+	parser.TokenContains: true, parser.TokenNotContains: true, parser.TokenContainsCS: true, parser.TokenNotContainsCS: true,
+	parser.TokenStartsWith: true, parser.TokenNotStartsWith: true, parser.TokenStartsWithCS: true, parser.TokenNotStartsWithCS: true,
+}
+
+// filterSides splits a comparison with a Dashboard filter into the filter and
+// what it is compared with. The filter is on the right, or on either side of
+// ==, !=, =~ and !~.
+func filterSides(e *parser.BinaryExpr) (*parser.Param, parser.Expr, bool) {
+	if !filterOps[e.Op] {
+		return nil, nil, false
+	}
+	if p, ok := e.Y.(*parser.Param); ok {
+		return p, e.X, true
+	}
+	symmetric := e.Op == parser.TokenEq || e.Op == parser.TokenNE || e.Op == parser.TokenEqCI || e.Op == parser.TokenNECI
+	if p, ok := e.X.(*parser.Param); ok && symmetric {
+		return p, e.Y, true
+	}
+	return nil, nil, false
+}
+
+// filter compiles side <op> $name, a comparison with a Dashboard filter. One
+// value compares as if written there as a string; with several, a positive
+// operator matches any of them and a negated one none. With none, the
+// comparison is always, and what compiling side noted is forgotten, so that
+// the Query compiles as if the comparison weren't there.
+//
+// A value is text. Compared with an Attribute, or a column of no fixed
+// type, it matches the text or the number or bool it reads as; with a
+// column of another type, the value it reads as, or else nothing.
+func (c *compiler) filter(e *parser.BinaryExpr, p *parser.Param, side parser.Expr) (expr, error) {
+	if _, ok := side.(*parser.Param); ok {
+		return nil, errorAt(p, "compare $%s with a field, as in service == $%s", p.Name, p.Name)
+	}
+	values := c.valuesOf(p)
+	forget := c.mark()
+	text, isText := textOps[e.Op]
+	var x expr
+	var err error
+	if isText {
+		x, err = c.textOperand(side, e.OpSpan, text, nil)
+	} else {
+		x, err = c.expr(side, stringType, nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		forget()
+		return always{}, nil
+	}
+	negated := e.Op == parser.TokenNE || text.negated
+	op := opEq
+	if negated {
+		op = opNE
+	}
+	join := func(m, alt expr) expr {
+		if negated {
+			return and{m, alt}
+		}
+		return or{m, alt}
+	}
+	var all expr
+	for _, v := range values {
+		var m expr
+		if isText {
+			m = text.match(x, v)
+		} else {
+			m = compare{x: x, op: op, y: literal{valueAs(x.typ(), v)}}
+		}
+		if untyped(x) && (!isText || text.op == matchEquals) {
+			for _, l := range readsAs(v) {
+				y, err := c.expr(side, l.valueType(), nil)
+				if err != nil {
+					return nil, err
+				}
+				m = join(m, compare{x: y, op: op, y: literal{l}})
+			}
+		}
+		if all == nil {
+			all = m
+		} else {
+			all = join(all, m)
+		}
+	}
+	return all, nil
+}
+
+// valuesOf notes that the Query names the Dashboard filter p, and returns
+// its values, leaving out empty ones: none for All.
+func (c *compiler) valuesOf(p *parser.Param) []string {
+	if !slices.Contains(c.parameters, p.Name) {
+		c.parameters = append(c.parameters, p.Name)
+	}
+	var values []string
+	for _, v := range c.values[p.Name] {
+		if v != "" {
+			values = append(values, v)
+		}
+	}
+	return values
+}
+
+// untyped reports whether x, read as a string, is a value of no fixed type:
+// an Attribute, or a dynamic column.
+func untyped(x expr) bool {
+	switch x := x.(type) {
+	case fieldRef:
+		return !x.builtIn
+	case partOf:
+		return true
+	}
+	return false
+}
+
+// readsAs is the number or bool a filter's text value reads as, if any.
+func readsAs(v string) []Literal {
+	if n, err := strconv.ParseFloat(v, 64); err == nil && !math.IsInf(n, 0) && !math.IsNaN(n) {
+		return []Literal{{Kind: parser.NumberLiteral, Number: n}}
+	}
+	if v == "true" || v == "false" {
+		return []Literal{{Kind: parser.BoolLiteral, Bool: v == "true"}}
+	}
+	return nil
+}
+
+// valueAs is a filter's text value as a value of type t, when it reads as
+// one, or else as text.
+func valueAs(t valueType, v string) Literal {
+	for _, l := range readsAs(v) {
+		if l.valueType() == t {
+			return l
+		}
+	}
+	return Literal{Kind: parser.StringLiteral, String: v}
 }
 
 // source quotes the Query's text at span, for messages.
@@ -637,7 +854,10 @@ func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates *rateBasi
 		if err := arity(1, "one condition"); err != nil {
 			return nil, err
 		}
+		inNot := c.inNot
+		c.inNot = true
 		x, err := c.condition(e.Args[0])
+		c.inNot = inNot
 		if err != nil {
 			return nil, err
 		}
