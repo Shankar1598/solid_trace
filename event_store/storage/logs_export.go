@@ -213,17 +213,17 @@ func (s *LogStore) stageExport(projectID uint32, cutoff time.Time, order LogFile
 	if err != nil {
 		return staged, err
 	}
-	hours, err := export.hours(cutoff)
+	files, err := export.plan(cutoff)
 	if err != nil {
 		return staged, err
 	}
-	for _, hour := range hours {
-		file, err := export.stageHour(hour)
+	for _, planned := range files {
+		file, err := export.stageFile(planned)
 		if file.path != "" {
 			staged.files = append(staged.files, file)
 		}
 		if err != nil {
-			return staged, fmt.Errorf("export hour %s: %w", hour.Format(time.RFC3339), err)
+			return staged, fmt.Errorf("export %s: %w", planned, err)
 		}
 		staged.logs += file.stats.logs.Int64
 	}
@@ -381,28 +381,71 @@ func (e *projectExport) hours(cutoff time.Time) ([]time.Time, error) {
 	return hours, rows.Err()
 }
 
-// stageHour writes the Project's Logs of an hour, from its hot table and
-// logs_late, to the hour's next file under its staged name. It returns the
+// plannedFile is a file an export is to write: its name in its hour, and the
+// spans of the hour whose Logs it holds.
+type plannedFile struct {
+	file  logFile
+	spans []timeSpan
+}
+
+// String is the file's key and the spans it holds, as the export logs it.
+func (f plannedFile) String() string {
+	spans := make([]string, len(f.spans))
+	for i, span := range f.spans {
+		spans[i] = span.from.UTC().Format("15:04") + "-" + span.to.UTC().Format("15:04")
+	}
+	return f.file.key() + " (" + strings.Join(spans, ", ") + ")"
+}
+
+// condition is a SQL condition on time that holds for the file's spans.
+func (f plannedFile) condition() string {
+	terms := make([]string, len(f.spans))
+	for i, span := range f.spans {
+		terms[i] = fmt.Sprintf("(time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP))",
+			sqltext.String(timestampString(span.from)), sqltext.String(timestampString(span.to)))
+	}
+	return "(" + strings.Join(terms, " OR ") + ")"
+}
+
+// plan lists the files of the Project's Logs before cutoff, oldest first:
+// each hour's next file, holding the whole hour.
+func (e *projectExport) plan(cutoff time.Time) ([]plannedFile, error) {
+	hours, err := e.hours(cutoff)
+	if err != nil {
+		return nil, err
+	}
+	var files []plannedFile
+	for _, hour := range hours {
+		name, err := nextHourFile(e.ctx, e.conn, e.projectID, hour)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, plannedFile{
+			file:  logFile{projectID: e.projectID, hour: hour, name: name},
+			spans: []timeSpan{{hour, hour.Add(time.Hour)}},
+		})
+	}
+	return files, nil
+}
+
+// stageFile writes the Project's Logs of a planned file's spans, from its hot
+// table and logs_late, to the file under its staged name. It returns the
 // file once it may exist, with the facts of its manifest row once it is whole.
-func (e *projectExport) stageHour(hour time.Time) (stagedFile, error) {
-	set, err := e.daySet(hour)
+func (e *projectExport) stageFile(planned plannedFile) (stagedFile, error) {
+	file := planned.file
+	set, err := e.daySet(file.hour)
 	if err != nil {
 		return stagedFile{}, err
 	}
-	if err := os.MkdirAll(e.files.HourDir(e.projectID, hour), 0755); err != nil {
+	if err := os.MkdirAll(e.files.HourDir(e.projectID, file.hour), 0755); err != nil {
 		return stagedFile{}, err
 	}
-	name, err := nextHourFile(e.ctx, e.conn, e.projectID, hour)
-	if err != nil {
-		return stagedFile{}, err
-	}
-	file := logFile{projectID: e.projectID, hour: hour, name: name}
 	staged := stagedFile{path: e.files.path(file) + stagedSuffix, file: file}
 
-	from, to := timestampString(hour), timestampString(hour.Add(time.Hour))
-	sources := []string{e.lateRows(set, from, to)}
+	where := planned.condition()
+	sources := []string{e.lateRows(set, where)}
 	if e.hotColumns != nil {
-		sources = append(sources, e.hotRows(set, from, to))
+		sources = append(sources, e.hotRows(set, where))
 	}
 	_, err = e.conn.ExecContext(e.ctx, fmt.Sprintf(`
 		COPY (
@@ -447,9 +490,10 @@ func (e *projectExport) daySet(t time.Time) (PromotedSet, error) {
 // fixedColumns are the fixed columns but the maps, to select as they are.
 const fixedColumns = "id, time, level, message, service, environment, trace_id, span_id, batch"
 
-// hotRows selects the hot table's Logs of [from, to) with the promoted
-// columns of set. Their values are in those columns already.
-func (e *projectExport) hotRows(set PromotedSet, from, to string) string {
+// hotRows selects the hot table's Logs for which the condition on time
+// holds, with the promoted columns of set. Their values are in those columns
+// already.
+func (e *projectExport) hotRows(set PromotedSet, where string) string {
 	columns := []string{fixedColumns, "attrs_string, attrs_number, attrs_bool, attrs_json"}
 	for _, key := range set.Keys {
 		column := sqltext.Identifier(key.Column())
@@ -458,13 +502,13 @@ func (e *projectExport) hotRows(set PromotedSet, from, to string) string {
 		}
 		columns = append(columns, column+" AS "+sqltext.Identifier(key.Column()))
 	}
-	return fmt.Sprintf("SELECT %s FROM %s WHERE time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP)",
-		strings.Join(columns, ", "), e.hotTable(), sqltext.String(from), sqltext.String(to))
+	return fmt.Sprintf("SELECT %s FROM %s WHERE %s", strings.Join(columns, ", "), e.hotTable(), where)
 }
 
-// lateRows selects the Project's late Logs of [from, to) with the promoted
-// columns of set, each value pulled out of its map into its column.
-func (e *projectExport) lateRows(set PromotedSet, from, to string) string {
+// lateRows selects the Project's late Logs for which the condition on time
+// holds, with the promoted columns of set, each value pulled out of its map
+// into its column.
+func (e *projectExport) lateRows(set PromotedSet, where string) string {
 	columns := []string{fixedColumns}
 	for _, t := range []AttributeType{StringAttribute, NumberAttribute, BoolAttribute, JSONAttribute} {
 		var keys []string
@@ -485,8 +529,8 @@ func (e *projectExport) lateRows(set PromotedSet, from, to string) string {
 		columns = append(columns, fmt.Sprintf("CAST(map_extract_value(%s, %s) AS %s) AS %s",
 			key.Type.Map(), sqltext.String(key.Key), key.Type.columnType(), sqltext.Identifier(key.Column())))
 	}
-	return fmt.Sprintf("SELECT %s FROM %s.%s WHERE project_id = %d AND time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP)",
-		strings.Join(columns, ", "), logsCatalog, lateTable, e.projectID, sqltext.String(from), sqltext.String(to))
+	return fmt.Sprintf("SELECT %s FROM %s.%s WHERE project_id = %d AND %s",
+		strings.Join(columns, ", "), logsCatalog, lateTable, e.projectID, where)
 }
 
 // delete deletes the Project's Logs before cutoff that were stored no later
