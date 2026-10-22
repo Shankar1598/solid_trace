@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
-# The install's settings: one record, set by the operator with
-# `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake) or
-# `InstanceSetting.current.update!(...)` in a Rails console. There's no UI:
-# Console has no instance-admin role. Until the operator first sets something
-# there's no row and the column defaults apply.
+# The install's settings: one record. Instance admins set email (the SMTP
+# server and the sender) on the Email settings page or over the MCP server.
+# The operator sets the others with `bin/rails instance_settings:set`
+# (lib/tasks/instance_settings.rake) or `InstanceSetting.current.update!(...)`
+# in a Rails console; they have no UI yet. Until something is first set there's
+# no row and the column defaults apply.
 #
 # EventStore reads this table read-only, and assumes the same defaults when the
 # row is missing (event_store/storage/console_settings.go).

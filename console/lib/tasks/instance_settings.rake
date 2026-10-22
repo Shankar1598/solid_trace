@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# The operator's commands for the instance settings (InstanceSetting). There is
-# no UI for them: Console has no instance-admin role.
+# The operator's commands for the instance settings (InstanceSetting) that have
+# no UI yet. Instance admins set email in Console (instance_admins.rake).
 namespace :instance_settings do
   print_settings = lambda do |settings|
     puts "SQL queries: #{settings.sql_queries_enabled? ? "on" : "off"}"
