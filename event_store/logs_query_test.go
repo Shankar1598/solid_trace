@@ -393,6 +393,8 @@ type validation struct {
 	// Chips is the Builder's chips as JSON, or null.
 	Chips  json.RawMessage  `json:"chips"`
 	Stages []validatedStage `json:"stages"`
+	// Parameters are the Dashboard filters the Query names.
+	Parameters []string `json:"parameters"`
 }
 
 // validatedStage is where validate places one stage, and what it says of it.
@@ -413,12 +415,13 @@ func builderChips(v validation) string {
 		return "null"
 	}
 	shown := struct {
-		Filters   []logquery.Chip     `json:"filters"`
-		Search    *string             `json:"search"`
-		Summarize *logquery.Summarize `json:"summarize,omitempty"`
-		Sort      []logquery.SortChip `json:"sort,omitempty"`
-		Take      *int                `json:"take,omitempty"`
-	}{chips.Filters, chips.Search, chips.Summarize, chips.Sort, chips.Take}
+		Filters      []logquery.Chip     `json:"filters"`
+		Search       *string             `json:"search"`
+		SearchFilter *string             `json:"search_filter,omitempty"`
+		Summarize    *logquery.Summarize `json:"summarize,omitempty"`
+		Sort         []logquery.SortChip `json:"sort,omitempty"`
+		Take         *int                `json:"take,omitempty"`
+	}{chips.Filters, chips.Search, chips.SearchFilter, chips.Summarize, chips.Sort, chips.Take}
 	var out strings.Builder
 	encoder := json.NewEncoder(&out)
 	encoder.SetEscapeHTML(false)
