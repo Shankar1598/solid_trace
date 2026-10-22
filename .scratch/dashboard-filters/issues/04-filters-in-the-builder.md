@@ -1,6 +1,6 @@
 # 04: Filters in the Chart editor's Builder
 
-**Status:** ready-for-agent
+**Status:** claimed
 **Spec:** [spec.md](../spec.md)
 **Blocked by:** 02
 

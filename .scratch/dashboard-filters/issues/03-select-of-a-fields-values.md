@@ -1,6 +1,6 @@
 # 03: Selects of a field's values
 
-**Status:** ready-for-agent
+**Status:** claimed
 **Spec:** [spec.md](../spec.md)
 **Blocked by:** 02
 
