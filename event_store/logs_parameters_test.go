@@ -183,6 +183,8 @@ func TestFiltersGoOnlyInComparisonsAndSearch(t *testing.T) {
 		`extend x = $s`:                 {Message: misplaced("s"), Line: 1, Column: 12, EndLine: 1, EndColumn: 14},
 		`summarize count() by $s`:       {Message: misplaced("s"), Line: 1, Column: 22, EndLine: 1, EndColumn: 24},
 		`sort by $s`:                    {Message: misplaced("s"), Line: 1, Column: 9, EndLine: 1, EndColumn: 11},
+		`take $n`:                       {Message: misplaced("n"), Line: 1, Column: 6, EndLine: 1, EndColumn: 8},
+		`top $n by status`:              {Message: misplaced("n"), Line: 1, Column: 5, EndLine: 1, EndColumn: 7},
 		`where status in ($s)`:          {Message: misplaced("s"), Line: 1, Column: 18, EndLine: 1, EndColumn: 20},
 		`where duration > $d`:           {Message: misplaced("d"), Line: 1, Column: 18, EndLine: 1, EndColumn: 20},
 		`where user matches regex $r`:   {Message: misplaced("r"), Line: 1, Column: 26, EndLine: 1, EndColumn: 28},
