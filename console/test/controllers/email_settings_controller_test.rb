@@ -10,7 +10,7 @@ class EmailSettingsControllerTest < ActionDispatch::IntegrationTest
 
   # An SMTP server that refuses to sign in.
   class RefusingSmtp
-    def initialize(_settings) = nil
+    def initialize(_settings); end
 
     def deliver!(_mail)
       raise Net::SMTPAuthenticationError, "535 5.7.8 Authentication credentials invalid"
