@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { router } from '@inertiajs/react'
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -6,11 +6,13 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Segmented } from '@/components/ui/segmented'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  optionsOfText, textOfOptions, type Dashboard, type DashboardChart, type DashboardFilter,
+  optionsOfText, textOfOptions, type Dashboard, type DashboardChart, type DashboardFilter, type FilterOptions,
 } from '@/lib/dashboards/dashboard'
 import { parametersOf } from '@/lib/logs/queryLexer'
+import type { ProjectOption } from '../../Logs/components/BuilderPanel'
 
 /** A filter as the dialog edits it; saved filters keep their names. */
 interface Draft {
@@ -20,27 +22,46 @@ interface Draft {
   label: string
   kind: DashboardFilter['kind']
   multiple: boolean
-  /** The options as typed, one per line. */
+  /** Where a select's options come from. */
+  from: FilterOptions['from']
+  /** A fixed list's options as typed, one per line. */
   options: string
+  /** A field select's Project and field. */
+  projectId: number | null
+  field: string
 }
 
 const KINDS = [{ value: 'select' as const, label: 'Select' }, { value: 'search' as const, label: 'Search box' }]
+const SOURCES = [{ value: 'list' as const, label: 'Fixed list' }, { value: 'field' as const, label: 'From a field' }]
 
-const draftOf = (filter: DashboardFilter, key: number): Draft => ({
-  key,
-  saved: true,
-  name: filter.name,
-  label: filter.label === filter.name ? '' : filter.label,
-  kind: filter.kind,
-  multiple: filter.kind === 'select' && filter.multiple,
-  options: filter.kind === 'select' ? textOfOptions(filter.options.items) : '',
-})
+const draftOf = (filter: DashboardFilter, key: number): Draft => {
+  const options = filter.kind === 'select' ? filter.options : null
+  return {
+    key,
+    saved: true,
+    name: filter.name,
+    label: filter.label === filter.name ? '' : filter.label,
+    kind: filter.kind,
+    multiple: filter.kind === 'select' && filter.multiple,
+    from: options?.from ?? 'list',
+    options: options?.from === 'list' ? textOfOptions(options.items) : '',
+    projectId: options?.from === 'field' ? options.project_id : null,
+    field: options?.from === 'field' ? options.field : '',
+  }
+}
+
+const optionsOf = (draft: Draft): FilterOptions => draft.from === 'field'
+  ? { from: 'field', project_id: draft.projectId ?? 0, field: draft.field }
+  : { from: 'list', items: optionsOfText(draft.options) }
 
 const filterOf = (draft: Draft): DashboardFilter => draft.kind === 'search'
   ? { name: draft.name.trim(), label: draft.label, kind: 'search' }
-  : { name: draft.name.trim(), label: draft.label, kind: 'select', multiple: draft.multiple, options: { from: 'list', items: optionsOfText(draft.options) } }
+  : { name: draft.name.trim(), label: draft.label, kind: 'select', multiple: draft.multiple, options: optionsOf(draft) }
 
-const FIELDS: Record<string, string> = { '': 'The filter', name: 'Name', label: 'Label', kind: 'Kind', multiple: 'Several values', options: 'Options' }
+const FIELDS: Record<string, string> = {
+  '': 'The filter', name: 'Name', label: 'Label', kind: 'Kind', multiple: 'Several values', options: 'Options',
+  'options.project_id': 'Project', 'options.field': 'Field',
+}
 
 /** A refusal of one filter's field, as `name` or `options[1].value`, as a sentence. */
 function errorText(field: string, message: string): string {
@@ -54,8 +75,10 @@ function errorText(field: string, message: string): string {
  * one list. A Query names a filter as `$name`, so a saved filter's name can't
  * change; removing a filter that charts name asks first.
  */
-export function FiltersDialog({ dashboard, orgSlug, search, onClose }: {
+export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }: {
   dashboard: Dashboard & { charts: DashboardChart[] }
+  /** The Organization's Projects, one of which a select's field is read from. */
+  projects: ProjectOption[]
   orgSlug: string
   /** The Dashboard's URL search, so it keeps its range and filter values after saving. */
   search: string
@@ -66,6 +89,7 @@ export function FiltersDialog({ dashboard, orgSlug, search, onClose }: {
   const [removing, setRemoving] = useState<number | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const projectItems = useMemo(() => projects.map(p => ({ value: String(p.id), label: p.name })), [projects])
 
   const change = (key: number, patch: Partial<Draft>) => setDrafts(ds => ds.map(d => (d.key === key ? { ...d, ...patch } : d)))
   const move = (index: number, by: number) => setDrafts(ds => {
@@ -75,7 +99,10 @@ export function FiltersDialog({ dashboard, orgSlug, search, onClose }: {
     return next
   })
   const add = () => {
-    setDrafts(ds => [...ds, { key: nextKey, saved: false, name: '', label: '', kind: 'select', multiple: false, options: '' }])
+    setDrafts(ds => [...ds, {
+      key: nextKey, saved: false, name: '', label: '', kind: 'select', multiple: false,
+      from: 'list', options: '', projectId: projects[0]?.id ?? null, field: '',
+    }])
     setNextKey(k => k + 1)
   }
   const remove = (key: number) => {
@@ -143,15 +170,44 @@ export function FiltersDialog({ dashboard, orgSlug, search, onClose }: {
                 </div>
                 {draft.kind === 'select' && (
                   <>
-                    <label className="flex items-center gap-2">
-                      <Checkbox checked={draft.multiple} onCheckedChange={checked => change(draft.key, { multiple: checked === true })} />
-                      Several values
-                    </label>
-                    <Textarea
-                      aria-label={`Filter ${n} options`} rows={3} className="font-mono" value={draft.options}
-                      placeholder={'error\nWarning = warn'} onChange={e => change(draft.key, { options: e.target.value })}
-                    />
-                    <p className="text-muted-foreground">Options, one per line: a value, or a label and its value as <code>Label = value</code>.</p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Segmented
+                        size="sm" label={`Filter ${n} takes options from`} value={draft.from} options={SOURCES}
+                        onChange={from => change(draft.key, { from })}
+                      />
+                      <label className="flex items-center gap-2">
+                        <Checkbox checked={draft.multiple} onCheckedChange={checked => change(draft.key, { multiple: checked === true })} />
+                        Several values
+                      </label>
+                    </div>
+                    {draft.from === 'list' ? (
+                      <>
+                        <Textarea
+                          aria-label={`Filter ${n} options`} rows={3} className="font-mono" value={draft.options}
+                          placeholder={'error\nWarning = warn'} onChange={e => change(draft.key, { options: e.target.value })}
+                        />
+                        <p className="text-muted-foreground">Options, one per line: a value, or a label and its value as <code>Label = value</code>.</p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Select
+                            value={draft.projectId === null ? null : String(draft.projectId)} items={projectItems}
+                            onValueChange={value => value && change(draft.key, { projectId: Number(value) })}
+                          >
+                            <SelectTrigger size="sm" aria-label={`Filter ${n} Project`} className="min-w-44"><SelectValue placeholder="Project" /></SelectTrigger>
+                            <SelectContent>
+                              {projectItems.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            aria-label={`Filter ${n} field`} className="h-7 w-56 font-mono" placeholder="service" value={draft.field}
+                            onChange={e => change(draft.key, { field: e.target.value })}
+                          />
+                        </div>
+                        <p className="text-muted-foreground">Options: the field&apos;s 100 most common values in the Project, over the range the Dashboard shows.</p>
+                      </>
+                    )}
                   </>
                 )}
                 {naming.length > 0 && (
