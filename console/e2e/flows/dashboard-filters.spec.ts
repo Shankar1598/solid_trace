@@ -262,3 +262,89 @@ test('a select of a field\'s values lists the dev Project\'s services when opene
   await expect(page.getByRole('heading', { name: 'Dashboards', exact: true })).toBeVisible()
   expect(errors).toEqual([])
 })
+
+test('a member makes a chart in the Builder with a filter as a chip\'s value, and can\'t save a Query naming one the Dashboard lacks', async ({ page }) => {
+  test.setTimeout(120_000)
+  await useTheme(page, test.info())
+  const errors = watchErrors(page)
+  const name = `Builder filters flow ${Date.now()}`
+
+  await page.goto(`/${ORG}/dashboards`)
+  await page.getByRole('button', { name: 'New dashboard' }).first().click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByRole('button', { name: 'Create dashboard' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  const to = new Date(Math.floor(Date.now() / 60_000) * 60_000)
+  const from = new Date(to.getTime() - 24 * 3600_000)
+  await page.goto(`${new URL(page.url()).pathname}?from=${from.toISOString()}&to=${to.toISOString()}`)
+
+  await page.getByRole('button', { name: 'Filters', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await addFilter(dialog, 1, { name: 'level', label: 'Level', options: LEVELS })
+  await addFilter(dialog, 2, { name: 'q', label: 'Find', kind: 'Search box' })
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(dialog).toHaveCount(0)
+  await addStatChart(page, 'Total', `${SOURCE}\n| summarize count()`)
+
+  // In the Builder, the level chip's value is the level filter, and the search is the q filter.
+  await page.getByRole('button', { name: 'Add chart' }).click()
+  const editor = page.getByRole('dialog')
+  await choose(page, editor.getByRole('combobox', { name: 'Project' }).first(), 'SolidTrace Project')
+  await expect(editor.locator('[data-chart-preview]').getByRole('figure')).toBeVisible()
+  await editor.getByRole('button', { name: 'Remove bin_auto(time)' }).click()
+  await editor.getByRole('button', { name: 'Add a filter' }).click()
+  await page.getByLabel('Filter on a Field…').fill('level')
+  await page.getByRole('option', { name: /^level\b/ }).first().click()
+  await shoot(page, 'dashboard-filters-builder-picker')
+  await page.getByRole('option', { name: /^\$level/ }).click()
+  await expect(editor.getByRole('button', { name: 'level == $level', exact: true })).toBeVisible()
+  const previewed = page.waitForRequest(r => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/charts/preview') &&
+    r.postDataJSON()?.query === `${SOURCE}\n| where level == $level\n| search $q\n| summarize count()`)
+  await editor.getByRole('button', { name: 'Add a search, sort or limit' }).click()
+  await page.getByRole('option', { name: /^search/ }).click()
+  await page.getByRole('option', { name: /^\$q/ }).click()
+  await expect(editor.getByRole('button', { name: 'Remove search $q' })).toBeVisible()
+  await previewed
+  await shoot(page, 'dashboard-filters-builder-chip')
+  await editor.getByLabel('Title').fill('Level chip')
+  await editor.getByRole('group', { name: 'Viz' }).getByRole('button', { name: 'Stat' }).click()
+  await editor.getByRole('button', { name: 'Add chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await chartsRan(page, 2)
+  const all = await numberOf(page, 'Total')
+  await expect.poll(() => numberOf(page, 'Level chip')).toBe(all)
+
+  // The saved chart follows the bar.
+  const ran = page.waitForResponse(r => isData(r) && new URL(r.url()).searchParams.get('v_level') === 'error')
+  await choose(page, page.getByRole('combobox', { name: 'Level', exact: true }), 'error')
+  await ran
+  await chartsRan(page, 2)
+  await expect.poll(() => numberOf(page, 'Level chip')).not.toBe(all)
+  const errorsOnly = await numberOf(page, 'Level chip')
+  expect(errorsOnly).toBeGreaterThan(0)
+  expect(errorsOnly).toBeLessThan(all)
+
+  // Opened again, the Builder reads the filter chip and the search filter back.
+  await page.getByRole('button', { name: 'Menu for Level chip' }).click()
+  await page.getByRole('menuitem', { name: 'Edit' }).click()
+  await expect(editor.getByRole('button', { name: 'level == $level', exact: true })).toBeVisible()
+  await expect(editor.getByRole('button', { name: 'Remove search $q' })).toBeVisible()
+  await editor.getByRole('button', { name: 'Cancel' }).click()
+  await expect(editor).toHaveCount(0)
+
+  // A Query naming a filter the Dashboard lacks can't be saved.
+  await page.getByRole('button', { name: 'Add chart' }).click()
+  await choose(page, editor.getByRole('combobox', { name: 'Project' }).first(), 'SolidTrace Project')
+  await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
+  await editor.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| where level == $nope\n| summarize count()`)
+  await expect(editor.getByText("Line 2, column 18: $nope isn't one of this Dashboard's filters (level, q).").first()).toBeVisible()
+  await expect(editor.getByRole('button', { name: 'Add chart' })).toBeDisabled()
+  await editor.getByRole('button', { name: 'Cancel' }).click()
+  await expect(cards(page)).toHaveCount(2)
+
+  await page.getByRole('button', { name: 'Dashboard settings' }).click()
+  await page.getByRole('button', { name: 'Delete dashboard' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await expect(page.getByRole('heading', { name: 'Dashboards', exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+})
