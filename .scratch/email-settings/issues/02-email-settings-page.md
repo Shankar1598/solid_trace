@@ -1,6 +1,6 @@
 # 02: Email settings page
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Spec:** [spec.md](../spec.md)
 **Blocked by:** 01
 

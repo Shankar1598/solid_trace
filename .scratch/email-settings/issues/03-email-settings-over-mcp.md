@@ -1,6 +1,6 @@
 # 03: Email settings over MCP
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Spec:** [spec.md](../spec.md)
 **Blocked by:** 01
 

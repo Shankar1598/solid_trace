@@ -1,6 +1,6 @@
 # 01: Email settings live in the database
 
-**Status:** ready-for-agent
+**Status:** resolved
 **Spec:** [spec.md](../spec.md)
 
 **What to build:** SMTP settings and the sender kept on `InstanceSetting`, with the password encrypted. `ApplicationMailer` reads them at send time. Instance admins exist. The env vars and `setup-gcp`'s email stage go.
