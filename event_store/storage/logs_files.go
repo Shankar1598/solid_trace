@@ -71,7 +71,7 @@ func quarterFileMinute(name string) (int, bool) {
 		return 0, false
 	}
 	minute, err := strconv.Atoi(mm)
-	if err != nil || minute%15 != 0 || minute > 45 {
+	if err != nil || minute%quarterMinutes != 0 || time.Duration(minute)*time.Minute >= time.Hour {
 		return 0, false
 	}
 	return minute, true
