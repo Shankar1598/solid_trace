@@ -40,7 +40,8 @@ type Projects interface {
 
 const (
 	// cleanupAfterHour is how long after each hour start the cleanup runs,
-	// so that it follows the hourly export.
+	// so that it follows the Log export at the hour start, the one that
+	// writes quiet Projects' hours.
 	cleanupAfterHour = 5 * time.Minute
 	// retryCleanupAfter is how soon a failed cleanup runs again.
 	retryCleanupAfter = time.Minute

@@ -77,6 +77,9 @@ type TestEnv struct {
 	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
 	// it; 0 turns it off.
 	BinCacheBytes int64
+	// BusyProjectLogs, if set, is how many hot Logs before the quarter
+	// cutoff make a Project busy, in place of storage.BusyProjectLogs.
+	BusyProjectLogs int64
 
 	dir   string // holds Pebble and DuckDB
 	close func()
@@ -98,12 +101,13 @@ func (env *TestEnv) ProcessLogs(t *testing.T) {
 	}
 }
 
-// ExportLogs runs the hourly export as it runs at the start of the clock's
-// hour: every Log of hour h-2 and earlier moves to files.
+// ExportLogs runs the Log export as it runs at the start of the clock's
+// quarter-hour: a busy Project's Logs before the quarter cutoff, and every
+// other Project's before the start of the previous hour, move to files.
 func (env *TestEnv) ExportLogs(t *testing.T) {
 	t.Helper()
 	if err := env.LogStore.ExportLogs(env.Clock.Now()); err != nil {
-		t.Fatalf("Hourly Log export failed: %v", err)
+		t.Fatalf("Log export failed: %v", err)
 	}
 }
 
@@ -363,6 +367,9 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
 	}
 	logStore.UseBinCache(env.BinCacheBytes)
+	if env.BusyProjectLogs > 0 {
+		logStore.UseBusyProjectLogs(env.BusyProjectLogs)
+	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)
 	if err != nil {

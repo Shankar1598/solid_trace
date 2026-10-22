@@ -18,7 +18,7 @@ type Config struct {
 	PebblePath      string
 	DuckDBPath      string
 	LogsDuckDBPath  string // logs.duckdb, attached to the DuckDB of DuckDBPath
-	LogsParquetPath string // Where the hourly export writes Log files
+	LogsParquetPath string // Where the Log export writes Log files
 	// LogsDiskLimitBytes caps the Log files of every Project together; the
 	// oldest hours are deleted past it. 0 caps them at half the disk that
 	// holds them (storage.NewLogDiskLimit).

@@ -14,9 +14,13 @@ import (
 //
 //	<Dir>/project=<id>/day=<YYYY-MM-DD>/hour=<HH>/
 //
-// holding the hour's data.parquet, written by the hourly export, and then
-// late-1.parquet, late-2.parquet … for Logs of that hour that came late.
-// Every Log in an hour's files has a time inside that hour.
+// holding the hour's data.parquet, written by the Log export once the hour
+// leaves the hot table, or, for a busy Project, data-00.parquet,
+// data-15.parquet, data-30.parquet and data-45.parquet, each written once its
+// quarter-hour does, and then late-1.parquet, late-2.parquet … for Logs of
+// that hour that came after its file. Every Log in an hour's files has a time
+// inside that hour, and every Log in a quarter-hour's file a time inside that
+// quarter-hour.
 //
 // A file is written under a staged name, <name>.tmp, and renamed only once
 // the export that wrote it has committed. The manifest (logs_manifest.go)
@@ -27,9 +31,10 @@ type LogFiles struct {
 }
 
 const (
-	hourDataFile   = "data.parquet"
-	lateFilePrefix = "late-"
-	parquetSuffix  = ".parquet"
+	hourDataFile      = "data.parquet"
+	quarterFilePrefix = "data-"
+	lateFilePrefix    = "late-"
+	parquetSuffix     = ".parquet"
 	// stagedSuffix marks a Log file whose export may not have committed.
 	stagedSuffix = ".tmp"
 )
@@ -47,6 +52,29 @@ func (f LogFiles) DayDir(projectID uint32, t time.Time) string {
 // HourDir is the folder of a Project's exported Logs of the UTC hour of t.
 func (f LogFiles) HourDir(projectID uint32, t time.Time) string {
 	return filepath.Join(f.DayDir(projectID, t), fmt.Sprintf("hour=%02d", t.UTC().Hour()))
+}
+
+// quarterFile is the name of the file of the quarter-hour that starts at q.
+func quarterFile(q time.Time) string {
+	return fmt.Sprintf("%s%02d%s", quarterFilePrefix, q.UTC().Minute(), parquetSuffix)
+}
+
+// quarterFileMinute is mm for data-<mm>.parquet, the minute its quarter-hour
+// starts, and false for any other name.
+func quarterFileMinute(name string) (int, bool) {
+	mm, ok := strings.CutPrefix(name, quarterFilePrefix)
+	if !ok {
+		return 0, false
+	}
+	mm, ok = strings.CutSuffix(mm, parquetSuffix)
+	if !ok || len(mm) != 2 {
+		return 0, false
+	}
+	minute, err := strconv.Atoi(mm)
+	if err != nil || minute%15 != 0 || minute > 45 {
+		return 0, false
+	}
+	return minute, true
 }
 
 // lateFileNumber is n for late-<n>.parquet, and 0 for any other name.

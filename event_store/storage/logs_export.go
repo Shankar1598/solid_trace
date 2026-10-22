@@ -16,13 +16,55 @@ import (
 	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
-// ExportLogs is the hourly export at now: for each Project, it moves every Log
-// of the hours before the hot window, h-2 and earlier, out of its hot table
-// and logs_late into that hour's files, then checkpoints logs.duckdb.
+const (
+	// QuarterHour is the span of a busy Project's quarter-hour files, and
+	// how often the Log export runs: at each quarter-hour start.
+	QuarterHour = 15 * time.Minute
+	// exportWait is how long after a quarter-hour ends the export takes a
+	// busy Project's Logs of it.
+	exportWait = 15 * time.Minute
+	// BusyProjectLogs is how many hot Logs before the quarter cutoff make a
+	// Project busy: one DuckDB row group. A filter reads a row group of the
+	// hot table whole anyway, so a Project with fewer gains nothing from
+	// files a quarter-hour long.
+	BusyProjectLogs = 122_880
+)
+
+// UseBusyProjectLogs sets how many hot Logs before the quarter cutoff make a
+// Project busy, BusyProjectLogs unless a test lowers it. It must be called
+// before the first export.
+func (s *LogStore) UseBusyProjectLogs(logs int64) {
+	s.busyProjectLogs = logs
+}
+
+// exportCutoffs are the cutoffs of the export at now. The quarter cutoff is
+// now's quarter-hour start minus exportWait: at 11:15 it is 11:00, so the
+// quarter-hours up to 10:45 to 11:00 are taken. The hour cutoff is the start
+// of the previous hour, before which every Log is exported.
+type exportCutoffs struct {
+	quarter, hour time.Time
+}
+
+func exportCutoffsAt(now time.Time) exportCutoffs {
+	now = now.UTC()
+	return exportCutoffs{
+		quarter: now.Truncate(QuarterHour).Add(-exportWait),
+		hour:    now.Truncate(time.Hour).Add(-time.Hour),
+	}
+}
+
+// ExportLogs is the Log export at now: for each Project, it moves the Logs
+// before its cutoff out of its hot table and logs_late into files, then
+// checkpoints logs.duckdb. A busy Project's cutoff is the quarter cutoff, a
+// quiet Project's the hour cutoff (exportCutoffs).
 //
-// An hour not yet exported gets data.parquet; an hour already exported gets
-// its next late file. Each file is sorted by the Project's Log file order,
-// then time, in row groups of 30,720, zstd, with the promoted columns of the
+// A busy Project's quarter-hour not yet exported gets its own file,
+// data-<mm>.parquet; a quiet Project's hour not yet exported gets
+// data.parquet. An hour whose first quarter-hours went out on their own keeps
+// going by quarter-hours, so it never has both. Logs of a quarter-hour or an
+// hour that already has its file go to the hour's next late file, one per
+// hour per export. Each file is sorted by the Project's Log file order, then
+// time, in row groups of 30,720, zstd, with the promoted columns of the
 // hour's day, late Logs' values pulled out of their maps.
 //
 // Per Project, a transaction that only reads writes the files under staged
@@ -41,16 +83,16 @@ func (s *LogStore) ExportLogs(now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("recover staged log files: %w", err)
 	}
-	cutoff, _ := HotWindow(now)
-	projects, err := s.projectsToExport(cutoff)
+	cutoffs := exportCutoffsAt(now)
+	projects, err := s.projectsToExport(cutoffs.quarter)
 	if err != nil {
 		return err
 	}
 	var failed error
 	for _, projectID := range projects {
-		if err := s.exportProject(projectID, cutoff); err != nil {
+		if err := s.exportProject(projectID, cutoffs); err != nil {
 			// The Logs stay where they are, and the next export takes them.
-			logger.L.Error("Hourly Log export failed", "project_id", projectID, "error", err)
+			logger.L.Error("Log export failed", "project_id", projectID, "error", err)
 			if failed == nil {
 				failed = fmt.Errorf("export logs of project %d: %w", projectID, err)
 			}
@@ -61,9 +103,9 @@ func (s *LogStore) ExportLogs(now time.Time) error {
 	defer s.writeMu.Unlock()
 	began := time.Now()
 	if _, err := s.db.Exec("CHECKPOINT " + logsCatalog); err != nil {
-		logger.L.Warn("Checkpoint of logs DuckDB after the hourly export failed", "error", err)
+		logger.L.Warn("Checkpoint of logs DuckDB after the Log export failed", "error", err)
 	} else {
-		logger.L.Info("Checkpointed logs DuckDB after the hourly export", "took", time.Since(began).Round(time.Millisecond).String())
+		logger.L.Info("Checkpointed logs DuckDB after the Log export", "took", time.Since(began).Round(time.Millisecond).String())
 	}
 	return failed
 }
@@ -77,7 +119,7 @@ func (t AttributeType) mapType() string {
 }
 
 // projectsToExport lists the Projects with a hot table, and those with late
-// Logs before cutoff.
+// Logs before cutoff, the quarter cutoff.
 func (s *LogStore) projectsToExport(cutoff time.Time) ([]uint32, error) {
 	rows, err := s.db.Query(`
 		SELECT CAST(substr(table_name, length('logs_hot_') + 1) AS UINTEGER)
@@ -105,26 +147,26 @@ func (s *LogStore) projectsToExport(cutoff time.Time) ([]uint32, error) {
 // it committed: some went, or some were stored out of batch order.
 var errLogsChanged = errors.New("the Logs changed while their files were written")
 
-// exportProject exports a Project's Logs before cutoff: stageExport writes
-// their files, and commitExport commits them. If the Logs the files hold
-// changed meanwhile, it exports them again holding writeMu throughout, as
-// the export did before it wrote files outside writeMu, so that a change
-// it can't follow never leaves Logs unexported hour after hour.
-func (s *LogStore) exportProject(projectID uint32, cutoff time.Time) error {
+// exportProject exports a Project's Logs before its cutoff: stageExport
+// writes their files, and commitExport commits them. If the Logs the files
+// hold changed meanwhile, it exports them again holding writeMu throughout,
+// as the export did before it wrote files outside writeMu, so that a change
+// it can't follow never leaves Logs unexported run after run.
+func (s *LogStore) exportProject(projectID uint32, cutoffs exportCutoffs) error {
 	order := s.logFileOrder(projectID)
-	err := s.exportOnce(projectID, cutoff, order, false)
+	err := s.exportOnce(projectID, cutoffs, order, false)
 	if !errors.Is(err, errLogsChanged) {
 		return err
 	}
-	logger.L.Warn("A Project's Logs changed while the hourly export wrote their files; exporting them again with Log processing held up",
+	logger.L.Warn("A Project's Logs changed while the Log export wrote their files; exporting them again with Log processing held up",
 		"project_id", projectID, "error", err)
-	return s.exportOnce(projectID, cutoff, order, true)
+	return s.exportOnce(projectID, cutoffs, order, true)
 }
 
 // exportOnce stages a Project's files, sorted by order, then commits them.
 // With locked, it holds writeMu throughout, and the commit deletes every Log
-// before cutoff.
-func (s *LogStore) exportOnce(projectID uint32, cutoff time.Time, order LogFileOrder, locked bool) error {
+// before the Project's cutoff.
+func (s *LogStore) exportOnce(projectID uint32, cutoffs exportCutoffs, order LogFileOrder, locked bool) error {
 	if locked {
 		s.writeMu.Lock()
 		defer s.writeMu.Unlock()
@@ -145,30 +187,36 @@ func (s *LogStore) exportOnce(projectID uint32, cutoff time.Time, order LogFileO
 		}
 	}()
 
-	staged, err := s.stageExport(projectID, cutoff, order)
+	staged, err := s.stageExport(projectID, cutoffs, order)
 	if err != nil {
 		return err
 	}
 	staged.locked = locked
 	copied := time.Since(began)
-	settled, err = s.commitExport(projectID, cutoff, staged)
+	settled, err = s.commitExport(projectID, cutoffs, staged)
 	if err != nil {
 		return err
 	}
 	if len(staged.files) > 0 {
-		logger.L.Info("Exported a Project's Logs", "project_id", projectID, "logs", staged.logs, "files", len(staged.files),
+		files := make([]string, len(staged.files))
+		for i, file := range staged.files {
+			files[i] = file.planned.String()
+		}
+		logger.L.Info("Exported a Project's Logs", "project_id", projectID, "logs", staged.logs, "files", strings.Join(files, "; "),
 			"order", order.String(), "copy", copied.Round(time.Millisecond).String(), "commit", (time.Since(began) - copied).Round(time.Millisecond).String())
 	}
 	return nil
 }
 
 // stagedExport is what an export's first transaction wrote: its staged files,
-// how many Logs they hold, and the Project's Log processing cursor, which no
-// Log in them was stored after. locked says the export holds writeMu
-// throughout, so the files hold every Log before the cutoff.
+// how many Logs they hold, the Project's cutoff, and the Project's Log
+// processing cursor, which no Log in them was stored after. locked says the
+// export holds writeMu throughout, so the files hold every Log before the
+// cutoff.
 type stagedExport struct {
 	files  []stagedFile
 	logs   int64
+	cutoff time.Time
 	cursor uuid.UUID
 	locked bool
 }
@@ -176,16 +224,17 @@ type stagedExport struct {
 // stagedFile is a Log file written under its staged name, with the facts of
 // its manifest row.
 type stagedFile struct {
-	path  string
-	file  logFile
-	stats logFileStats
+	path    string
+	file    logFile
+	planned plannedFile
+	stats   logFileStats
 }
 
-// stageExport writes the files of a Project's Logs before cutoff under their
-// staged names, sorted by order, from one snapshot of logs.duckdb, in a
+// stageExport writes the files of a Project's Logs before its cutoff under
+// their staged names, sorted by order, from one snapshot of logs.duckdb, in a
 // transaction that only reads. It returns the files it wrote even when it
 // fails.
-func (s *LogStore) stageExport(projectID uint32, cutoff time.Time, order LogFileOrder) (*stagedExport, error) {
+func (s *LogStore) stageExport(projectID uint32, cutoffs exportCutoffs, order LogFileOrder) (*stagedExport, error) {
 	ctx := context.Background()
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -213,17 +262,17 @@ func (s *LogStore) stageExport(projectID uint32, cutoff time.Time, order LogFile
 	if err != nil {
 		return staged, err
 	}
-	hours, err := export.hours(cutoff)
-	if err != nil {
+	var files []plannedFile
+	if files, staged.cutoff, err = export.plan(cutoffs, s.busyProjectLogs); err != nil {
 		return staged, err
 	}
-	for _, hour := range hours {
-		file, err := export.stageHour(hour)
+	for _, planned := range files {
+		file, err := export.stageFile(planned)
 		if file.path != "" {
 			staged.files = append(staged.files, file)
 		}
 		if err != nil {
-			return staged, fmt.Errorf("export hour %s: %w", hour.Format(time.RFC3339), err)
+			return staged, fmt.Errorf("export %s: %w", planned, err)
 		}
 		staged.logs += file.stats.logs.Int64
 	}
@@ -236,12 +285,12 @@ func (s *LogStore) stageExport(projectID uint32, cutoff time.Time, order LogFile
 // commitExport adds the staged files' rows to the manifest, drops the
 // Project's demoted columns and deletes the Logs the files hold, in one
 // transaction under writeMu, then commits it and renames the files. Log
-// processing may have stored late Logs of the exported hours since the files
-// were written; they come after staged.cursor, so they stay for the next
-// export. It fails with errLogsChanged if it would delete other Logs than the
-// files hold. settled reports whether the files are no longer the caller's
-// to remove: renamed, or left for the next export's recovery.
-func (s *LogStore) commitExport(projectID uint32, cutoff time.Time, staged *stagedExport) (settled bool, err error) {
+// processing may have stored Logs of the exported spans since the files were
+// written; they come after staged.cursor, so they stay for the next export.
+// It fails with errLogsChanged if it would delete other Logs than the files
+// hold. settled reports whether the files are no longer the caller's to
+// remove: renamed, or left for the next export's recovery.
+func (s *LogStore) commitExport(projectID uint32, cutoffs exportCutoffs, staged *stagedExport) (settled bool, err error) {
 	if !staged.locked {
 		s.writeMu.Lock()
 		defer s.writeMu.Unlock()
@@ -279,14 +328,14 @@ func (s *LogStore) commitExport(projectID uint32, cutoff time.Time, staged *stag
 	}
 	// DuckDB can't commit a DELETE made before an ALTER of the same table,
 	// so the columns go first.
-	if err := export.dropDemotedColumns(cutoff); err != nil {
+	if err := export.dropDemotedColumns(cutoffs.hour); err != nil {
 		return false, err
 	}
 	upTo := &staged.cursor
 	if staged.locked {
 		upTo = nil
 	}
-	deleted, err := export.delete(cutoff, upTo)
+	deleted, err := export.delete(staged.cutoff, upTo)
 	if err != nil {
 		return false, err
 	}
@@ -355,8 +404,9 @@ func (e *projectExport) hotTable() string {
 	return logsCatalog + "." + hotTable(e.projectID)
 }
 
-// hours lists the hours of the Project's Logs before cutoff, oldest first.
-func (e *projectExport) hours(cutoff time.Time) ([]time.Time, error) {
+// quarters lists the quarter-hours of the Project's Logs before cutoff,
+// oldest first.
+func (e *projectExport) quarters(cutoff time.Time) ([]time.Time, error) {
 	sources := []string{fmt.Sprintf("SELECT time FROM %s.%s WHERE project_id = %d AND time < CAST(? AS TIMESTAMP)", logsCatalog, lateTable, e.projectID)}
 	args := []any{timestampString(cutoff)}
 	if e.hotColumns != nil {
@@ -364,45 +414,184 @@ func (e *projectExport) hours(cutoff time.Time) ([]time.Time, error) {
 		args = append(args, timestampString(cutoff))
 	}
 	rows, err := e.conn.QueryContext(e.ctx, fmt.Sprintf(
-		"SELECT DISTINCT date_trunc('hour', time) AS hour FROM (%s) ORDER BY hour",
+		"SELECT DISTINCT date_trunc('hour', time) + to_minutes(CAST(minute(time) // 15 * 15 AS BIGINT)) AS quarter FROM (%s) ORDER BY quarter",
 		strings.Join(sources, " UNION ALL ")), args...)
 	if err != nil {
-		return nil, fmt.Errorf("list hours to export: %w", err)
+		return nil, fmt.Errorf("list quarter-hours to export: %w", err)
 	}
 	defer rows.Close()
-	var hours []time.Time
+	var quarters []time.Time
 	for rows.Next() {
-		var hour time.Time
-		if err := rows.Scan(&hour); err != nil {
+		var quarter time.Time
+		if err := rows.Scan(&quarter); err != nil {
 			return nil, err
 		}
-		hours = append(hours, hour.UTC())
+		quarters = append(quarters, quarter.UTC())
 	}
-	return hours, rows.Err()
+	return quarters, rows.Err()
 }
 
-// stageHour writes the Project's Logs of an hour, from its hot table and
-// logs_late, to the hour's next file under its staged name. It returns the
-// file once it may exist, with the facts of its manifest row once it is whole.
-func (e *projectExport) stageHour(hour time.Time) (stagedFile, error) {
-	set, err := e.daySet(hour)
+// busy reports whether the Project's hot table holds at least busyLogs Logs
+// before the quarter cutoff.
+func (e *projectExport) busy(quarterCutoff time.Time, busyLogs int64) (bool, error) {
+	if e.hotColumns == nil {
+		return false, nil
+	}
+	var logs int64
+	err := e.conn.QueryRowContext(e.ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE time < CAST(? AS TIMESTAMP)", e.hotTable()),
+		timestampString(quarterCutoff)).Scan(&logs)
 	if err != nil {
-		return stagedFile{}, err
+		return false, fmt.Errorf("count hot logs: %w", err)
 	}
-	if err := os.MkdirAll(e.files.HourDir(e.projectID, hour), 0755); err != nil {
-		return stagedFile{}, err
-	}
-	name, err := nextHourFile(e.ctx, e.conn, e.projectID, hour)
-	if err != nil {
-		return stagedFile{}, err
-	}
-	file := logFile{projectID: e.projectID, hour: hour, name: name}
-	staged := stagedFile{path: e.files.path(file) + stagedSuffix, file: file}
+	return logs >= busyLogs, nil
+}
 
-	from, to := timestampString(hour), timestampString(hour.Add(time.Hour))
-	sources := []string{e.lateRows(set, from, to)}
+// byQuarterHours reports whether an hour with these file names goes by
+// quarter-hours: its first file was a quarter-hour's.
+func byQuarterHours(names map[string]bool) bool {
+	for name := range names {
+		if _, ok := quarterFileMinute(name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// plannedFile is a file an export is to write: its name in its hour, and the
+// spans of the hour whose Logs it holds.
+type plannedFile struct {
+	file  logFile
+	spans []timeSpan
+}
+
+// String is the file's key and the spans it holds, as the export logs it.
+func (f plannedFile) String() string {
+	spans := make([]string, len(f.spans))
+	for i, span := range f.spans {
+		spans[i] = span.from.UTC().Format("15:04") + "-" + span.to.UTC().Format("15:04")
+	}
+	return f.file.key() + " (" + strings.Join(spans, ", ") + ")"
+}
+
+// condition is a SQL condition on time that holds for the file's spans.
+func (f plannedFile) condition() string {
+	terms := make([]string, len(f.spans))
+	for i, span := range f.spans {
+		terms[i] = fmt.Sprintf("(time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP))",
+			sqltext.String(timestampString(span.from)), sqltext.String(timestampString(span.to)))
+	}
+	return "(" + strings.Join(terms, " OR ") + ")"
+}
+
+// plan works out the Project's cutoff, the quarter cutoff if it holds at
+// least busyLogs hot Logs before it, else the hour cutoff, and lists the
+// files of its Logs before the cutoff, oldest hour first. A quiet Project's
+// cutoff moves on towards the quarter cutoff through each hour after the hour
+// cutoff that goes by quarter-hours, so that it keeps going by them. An hour
+// before such an hour had its Logs exported when the Project was busy.
+func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFile, time.Time, error) {
+	busy, err := e.busy(cutoffs.quarter, busyLogs)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	cutoff := cutoffs.hour
+	if busy {
+		cutoff = cutoffs.quarter
+	}
+	for hour := cutoffs.hour; !busy && hour.Before(cutoffs.quarter); hour = hour.Add(time.Hour) {
+		names, err := hourFileNames(e.ctx, e.conn, e.projectID, hour)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		if byQuarterHours(names) {
+			cutoff = earliestTime(cutoffs.quarter, hour.Add(time.Hour))
+		}
+	}
+
+	quarters, err := e.quarters(cutoff)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	var files []plannedFile
+	for len(quarters) > 0 {
+		hour := quarters[0].Truncate(time.Hour)
+		n := 1
+		for n < len(quarters) && quarters[n].Truncate(time.Hour).Equal(hour) {
+			n++
+		}
+		names, err := hourFileNames(e.ctx, e.conn, e.projectID, hour)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		files = append(files, e.planHour(hour, quarters[:n], names, busy, cutoff)...)
+		quarters = quarters[n:]
+	}
+	return files, cutoff, nil
+}
+
+// planHour lists the files of an hour's Logs before cutoff, given the
+// quarter-hours that have Logs and the names the hour has. An hour exported
+// whole gets data.parquet, unless it has a file already; an hour going by
+// quarter-hours, or any hour of a busy Project without a file, gets a file
+// per quarter-hour that has none. The Logs of the spans that have their file
+// go to the hour's next late file.
+func (e *projectExport) planHour(hour time.Time, quarters []time.Time, names map[string]bool, busy bool, cutoff time.Time) []plannedFile {
+	var files, late []plannedFile
+	file := func(name string, from, to time.Time) plannedFile {
+		return plannedFile{file: logFile{projectID: e.projectID, hour: hour, name: name}, spans: []timeSpan{{from, to}}}
+	}
+	switch {
+	case byQuarterHours(names) || (busy && len(names) == 0):
+		for _, q := range quarters {
+			f := file(quarterFile(q), q, q.Add(QuarterHour))
+			if names[f.file.name] {
+				late = append(late, f)
+			} else {
+				files = append(files, f)
+			}
+		}
+	case len(names) == 0:
+		files = append(files, file(hourDataFile, hour, hour.Add(time.Hour)))
+	default:
+		late = append(late, file("", hour, earliestTime(hour.Add(time.Hour), cutoff)))
+	}
+	if len(late) == 0 {
+		return files
+	}
+	last := 0
+	for name := range names {
+		last = max(last, lateFileNumber(name))
+	}
+	lateFile := plannedFile{file: logFile{projectID: e.projectID, hour: hour, name: fmt.Sprintf("%s%d%s", lateFilePrefix, last+1, parquetSuffix)}}
+	for _, f := range late {
+		span := f.spans[0]
+		if n := len(lateFile.spans); n > 0 && lateFile.spans[n-1].to.Equal(span.from) {
+			lateFile.spans[n-1].to = span.to
+		} else {
+			lateFile.spans = append(lateFile.spans, span)
+		}
+	}
+	return append(files, lateFile)
+}
+
+// stageFile writes the Project's Logs of a planned file's spans, from its hot
+// table and logs_late, to the file under its staged name. It returns the
+// file once it may exist, with the facts of its manifest row once it is whole.
+func (e *projectExport) stageFile(planned plannedFile) (stagedFile, error) {
+	file := planned.file
+	set, err := e.daySet(file.hour)
+	if err != nil {
+		return stagedFile{}, err
+	}
+	if err := os.MkdirAll(e.files.HourDir(e.projectID, file.hour), 0755); err != nil {
+		return stagedFile{}, err
+	}
+	staged := stagedFile{path: e.files.path(file) + stagedSuffix, file: file, planned: planned}
+
+	where := planned.condition()
+	sources := []string{e.lateRows(set, where)}
 	if e.hotColumns != nil {
-		sources = append(sources, e.hotRows(set, from, to))
+		sources = append(sources, e.hotRows(set, where))
 	}
 	_, err = e.conn.ExecContext(e.ctx, fmt.Sprintf(`
 		COPY (
@@ -447,9 +636,10 @@ func (e *projectExport) daySet(t time.Time) (PromotedSet, error) {
 // fixedColumns are the fixed columns but the maps, to select as they are.
 const fixedColumns = "id, time, level, message, service, environment, trace_id, span_id, batch"
 
-// hotRows selects the hot table's Logs of [from, to) with the promoted
-// columns of set. Their values are in those columns already.
-func (e *projectExport) hotRows(set PromotedSet, from, to string) string {
+// hotRows selects the hot table's Logs for which the condition on time
+// holds, with the promoted columns of set. Their values are in those columns
+// already.
+func (e *projectExport) hotRows(set PromotedSet, where string) string {
 	columns := []string{fixedColumns, "attrs_string, attrs_number, attrs_bool, attrs_json"}
 	for _, key := range set.Keys {
 		column := sqltext.Identifier(key.Column())
@@ -458,13 +648,13 @@ func (e *projectExport) hotRows(set PromotedSet, from, to string) string {
 		}
 		columns = append(columns, column+" AS "+sqltext.Identifier(key.Column()))
 	}
-	return fmt.Sprintf("SELECT %s FROM %s WHERE time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP)",
-		strings.Join(columns, ", "), e.hotTable(), sqltext.String(from), sqltext.String(to))
+	return fmt.Sprintf("SELECT %s FROM %s WHERE %s", strings.Join(columns, ", "), e.hotTable(), where)
 }
 
-// lateRows selects the Project's late Logs of [from, to) with the promoted
-// columns of set, each value pulled out of its map into its column.
-func (e *projectExport) lateRows(set PromotedSet, from, to string) string {
+// lateRows selects the Project's late Logs for which the condition on time
+// holds, with the promoted columns of set, each value pulled out of its map
+// into its column.
+func (e *projectExport) lateRows(set PromotedSet, where string) string {
 	columns := []string{fixedColumns}
 	for _, t := range []AttributeType{StringAttribute, NumberAttribute, BoolAttribute, JSONAttribute} {
 		var keys []string
@@ -485,8 +675,8 @@ func (e *projectExport) lateRows(set PromotedSet, from, to string) string {
 		columns = append(columns, fmt.Sprintf("CAST(map_extract_value(%s, %s) AS %s) AS %s",
 			key.Type.Map(), sqltext.String(key.Key), key.Type.columnType(), sqltext.Identifier(key.Column())))
 	}
-	return fmt.Sprintf("SELECT %s FROM %s.%s WHERE project_id = %d AND time >= CAST(%s AS TIMESTAMP) AND time < CAST(%s AS TIMESTAMP)",
-		strings.Join(columns, ", "), logsCatalog, lateTable, e.projectID, sqltext.String(from), sqltext.String(to))
+	return fmt.Sprintf("SELECT %s FROM %s.%s WHERE project_id = %d AND %s",
+		strings.Join(columns, ", "), logsCatalog, lateTable, e.projectID, where)
 }
 
 // delete deletes the Project's Logs before cutoff that were stored no later
@@ -519,10 +709,11 @@ func (e *projectExport) delete(cutoff time.Time, upTo *uuid.UUID) (int64, error)
 }
 
 // dropDemotedColumns drops each promoted column of the Project's hot table
-// that the sets of the days it keeps after cutoff don't have, nor the sets of the
-// days of the hot window from cutoff. Those are the keys the day's set
-// demoted, so the drop happens at the export that deletes the previous day's
-// last hour, 01:00 UTC. Log processing adds a column back if a set needs it.
+// that the sets of the days it keeps after cutoff, the hour cutoff, don't
+// have, nor the sets of the days of the two hours from it. Those are the keys
+// the day's set demoted, so the drop happens at the export that deletes a
+// quiet Project's last hour of the previous day, 01:00 UTC, whatever the
+// quarter cutoff. Log processing adds a column back if a set needs it.
 func (e *projectExport) dropDemotedColumns(cutoff time.Time) error {
 	if e.hotColumns == nil {
 		return nil
