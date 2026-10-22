@@ -71,7 +71,8 @@ module McpTools
         type: "string",
         description: "The Query the Chart runs on its Project over the Dashboard's range. It must answer a table, so end it with " \
                      "summarize, count or project, such as: where level == \"error\" | summarize count() by bin_auto(time). " \
-                     "A Query with mistakes is not saved.",
+                     "It uses the Dashboard's filters by naming them as $name, such as where service == $service. " \
+                     "A Query with mistakes, or naming a filter the Dashboard lacks, is not saved.",
       },
       viz: {
         type: "string",
@@ -139,8 +140,9 @@ module McpTools
 
     # Saves a Chart whose fields are valid. A new Chart, or one whose Query or
     # Project changed, is saved only when EventStore finds no mistakes in its
-    # Query on its Project, as the chart editor checks before it saves. The
-    # check compiles the Query and runs nothing.
+    # Query on its Project, and the Query names only the Dashboard's filters,
+    # as the chart editor checks before it saves. The check compiles the
+    # Query and runs nothing.
     def save_chart!(chart)
       chart.validate!
       if chart.new_record? || chart.query_changed? || chart.project_id_changed?
@@ -149,13 +151,19 @@ module McpTools
           EventStore.mistakes(validation).each { |mistake| chart.errors.add(:query, mistake) }
           raise ActiveRecord::RecordInvalid, chart
         end
+        unknown = Array(validation["parameters"]) - dashboard.filter_names
+        if unknown.any?
+          chart.errors.add(:query, "names #{unknown.map { |name| "$#{name}" }.to_sentence}, which #{not_its_filters(unknown)}")
+          raise ActiveRecord::RecordInvalid, chart
+        end
       end
       chart.save!
     end
 
-    # The Dashboard's filters, as a refusal of a name it lacks lists them.
-    def filters_listed
-      "this Dashboard's filters (#{dashboard.filter_names.join(', ').presence || 'it has none'})"
+    # What a refusal of names the Dashboard has no filters of says of them,
+    # listing its filters: "isn't one of this Dashboard's filters (level, q)".
+    def not_its_filters(names)
+      "#{names.one? ? "isn't one" : "aren't any"} of this Dashboard's filters (#{dashboard.filter_names.join(', ').presence || 'it has none'})"
     end
 
     # A Dashboard with its Charts, in the order the page reads them.
