@@ -49,7 +49,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     @dashboard.update!(filters: [
       { name: "service", label: "Service", kind: "select", multiple: true, options: { from: "field", project_id: @shop.id, field: "service" } },
       { name: "level", kind: "select", options: { from: "list", items: [ { label: "Errors", value: "error" }, { value: "warn" } ] } },
-      { name: "q", kind: "search" },
+      { name: "q", kind: "search" }
     ])
 
     answer = call_tool(:get_dashboard, user: @user, dashboard: @dashboard.id)
@@ -59,7 +59,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
         "options" => { "from" => "field", "project_id" => @shop.id, "field" => "service" } },
       { "name" => "level", "label" => "level", "kind" => "select", "multiple" => false,
         "options" => { "from" => "list", "items" => [ { "label" => "Errors", "value" => "error" }, { "label" => "warn", "value" => "warn" } ] } },
-      { "name" => "q", "label" => "q", "kind" => "search" },
+      { "name" => "q", "label" => "q", "kind" => "search" }
     ], answer.json["filters"]
   end
 
@@ -87,7 +87,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     filters = [
       { name: "level", label: "Level", kind: "select", multiple: true, options: { from: "list", items: [ { value: "error" }, { value: "warn" } ] } },
       { name: "service", kind: "select", options: { from: "field", project_id: @shop.id, field: "service" } },
-      { name: "q", kind: "search" },
+      { name: "q", kind: "search" }
     ]
 
     answer = call_tool(:create_dashboard, user: @user, name: "Errors", filters: filters)
@@ -101,7 +101,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
     refused = call_tool(:create_dashboard, user: @user, name: "Bad filters", filters: [
       { name: "Service", kind: "select", options: { from: "field", project_id: @their_project.id, field: "service" } },
-      { name: "q", kind: "search", multiple: true },
+      { name: "q", kind: "search", multiple: true }
     ])
     assert_equal "Not saved: Filters[0] name must be lowercase letters, digits and _, starting with a letter or _, at most 40 characters; " \
                  "Filters[0] options project must be a Project of the Dashboard's Organization; Filters[1] multiple is for selects only.",
@@ -357,7 +357,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     @dashboard.update!(filters: [
       { name: "service", kind: "select", multiple: true, options: { from: "list", items: [ { value: "api" }, { value: "web" } ] } },
       { name: "level", kind: "select", options: { from: "list", items: [ { value: "error" } ] } },
-      { name: "q", kind: "search" },
+      { name: "q", kind: "search" }
     ])
     @chart.update!(query: "where service == $service and level == $level | search $q | summarize count()")
     run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
