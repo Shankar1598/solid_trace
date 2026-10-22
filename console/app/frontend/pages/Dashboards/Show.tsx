@@ -211,6 +211,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           projects={projects}
           orgSlug={orgSlug}
           dashboardId={dashboard.id}
+          filters={dashboard.filters}
           ran={run}
           values={values}
           search={search}

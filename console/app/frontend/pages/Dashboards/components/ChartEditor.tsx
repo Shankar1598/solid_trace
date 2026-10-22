@@ -9,8 +9,8 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
-  DASHBOARD_VIZES, newChartQuery, titleOfQuery, withSource,
-  type ChartOptions, type DashboardChart, type DashboardViz, type FilterValues,
+  DASHBOARD_VIZES, newChartQuery, titleOfQuery, unknownFilterProblems, withSource,
+  type ChartOptions, type DashboardChart, type DashboardFilter, type DashboardViz, type FilterValues,
 } from '@/lib/dashboards/dashboard'
 import { fetchChartPreview } from '@/lib/dashboards/api'
 import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
@@ -31,14 +31,17 @@ type Mode = 'builder' | 'query'
  * Adds a chart, or edits one: its Project, its Query in the Builder or the
  * Query editor (checked through validate), its title, viz and options, with
  * a preview of its chart over the Dashboard's range and filter values as it
- * changes. Saving posts through Inertia, which reloads the Dashboard.
+ * changes. A Query naming a filter the Dashboard lacks can't be saved.
+ * Saving posts through Inertia, which reloads the Dashboard.
  */
-export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, values, search, onClose }: {
+export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ran, values, search, onClose }: {
   /** The chart edited, or null for a new one. */
   chart: DashboardChart | null
   projects: ProjectOption[]
   orgSlug: string
   dashboardId: number
+  /** The Dashboard's filters, which the Builder offers and the Query may name. */
+  filters: DashboardFilter[]
   /** The times the Dashboard's charts ran over, which the preview runs over too. */
   ran: { from: Date; to: Date }
   /** The filter bar's values, which the preview runs with. */
@@ -56,6 +59,8 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, values
   const [viz, setViz] = useState<DashboardViz>(chart?.viz ?? 'line')
   const [options, setOptions] = useState<ChartOptions>(chart?.options ?? {})
   const [problems, setProblems] = useState<QueryProblem[]>([])
+  // The Query names a filter the Dashboard lacks, which keeps Save off.
+  const [namesUnknown, setNamesUnknown] = useState(false)
   const [preview, setPreview] = useState<ChartRun>({ status: 'running' })
   const [notice, setNotice] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -77,6 +82,15 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, values
     // Once, for the Query the editor opened with.
   }, [])
 
+  // The Query's problems: validate's mistakes, then each name that isn't one of the Dashboard's filters.
+  const check = async (signal?: AbortSignal) => {
+    const { errors, parameters } = await validateQuery({ orgSlug, projectSlug: project.slug, query, signal })
+    const unknown = unknownFilterProblems(query, parameters, filters)
+    setProblems([...errors, ...unknown])
+    setNamesUnknown(unknown.length > 0)
+    return [...errors, ...unknown]
+  }
+
   // The preview: the Query checked, then run over the Dashboard's range, a moment after the last change.
   const previewRun = useRef<AbortController | null>(null)
   useEffect(() => {
@@ -87,8 +101,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, values
     setPreview({ status: 'running' })
     const timer = setTimeout(async () => {
       try {
-        const { errors } = await validateQuery({ orgSlug, projectSlug: project.slug, query, signal: controller.signal })
-        setProblems(errors)
+        const errors = await check(controller.signal)
         if (errors.length > 0) {
           const p = errors[0]
           setPreview({ status: 'error', message: `Line ${p.line}, column ${p.column}: ${p.message}` })
@@ -144,8 +157,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, values
     setSaving(true)
     setErrors({})
     try {
-      const { errors: mistakes } = await validateQuery({ orgSlug, projectSlug: project.slug, query })
-      setProblems(mistakes)
+      const mistakes = await check()
       if (mistakes.length > 0) {
         setSaving(false)
         setMode('query')
@@ -234,6 +246,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, values
                   }}
                   fields={NO_FIELDS}
                   valuesOf={noValues}
+                  filters={filters}
                   onChange={changeBuilder}
                 />
               ) : (
@@ -292,7 +305,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, ran, values
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} disabled={saving}>{chart ? 'Save chart' : 'Add chart'}</Button>
+          <Button onClick={save} disabled={saving || namesUnknown}>{chart ? 'Save chart' : 'Add chart'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
