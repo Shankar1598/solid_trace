@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   chosenText, explorerHref, fieldOptions, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
-  parametersOfChart, rangeOfSearch, searchOfRange, textOfOptions, titleOfQuery, unknownFilters, vizOfForm, withSource,
+  parametersOfChart, rangeOfSearch, searchOfRange, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
+  withSource,
   type DashboardFilter,
 } from './dashboard'
 
@@ -58,6 +59,20 @@ describe('a Dashboard\'s filter values', () => {
   it('a chart\'s Query may name filters the Dashboard lacks, which run as All', () => {
     expect(unknownFilters('where level == $level and env == $nope | search $q2', FILTERS)).toEqual(['nope', 'q2'])
     expect(unknownFilters('where level == $level', FILTERS)).toEqual([])
+  })
+
+  it('a chart editor\'s problems: each place its Query names a filter the Dashboard lacks', () => {
+    const query = "['shop']\n| where m == \"🙂\" or e == $nope and level == $level\n| search $nope"
+    const message = "$nope isn't one of this Dashboard's filters (level, env, q)."
+
+    expect(unknownFilterProblems(query, ['nope', 'level'], FILTERS)).toEqual([
+      { message, line: 2, column: 26, end_line: 2, end_column: 31 },
+      { message, line: 3, column: 10, end_line: 3, end_column: 15 },
+    ])
+    expect(unknownFilterProblems(query, ['nope', 'level'], [])).toContainEqual(
+      { message: "$level isn't one of this Dashboard's filters; it has none.", line: 2, column: 45, end_line: 2, end_column: 51 },
+    )
+    expect(unknownFilterProblems("['shop'] | where level == $level", ['level'], FILTERS)).toEqual([])
   })
 
   it('read in the bar as their labels, up to two, else a count', () => {
