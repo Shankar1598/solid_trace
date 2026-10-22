@@ -3,17 +3,18 @@
 require "webmock/minitest"
 
 # Stubs EventStore as a Monitor's Query check on save sees it: validate finds
-# no mistakes and places the last stage at the Query's last line, a
-# Threshold monitor's dry run answers a table of +columns+, and arming a
-# Match monitor answers +ingest_cursor+. Tests that run Monitors stub
-# logs/query again after saving, so their own answers win.
+# no mistakes, places the last stage at the Query's last line and says the
+# Query names the Dashboard filters +parameters+, a Threshold monitor's dry
+# run answers a table of +columns+, and arming a Match monitor answers
+# +ingest_cursor+. Tests that run Monitors stub logs/query again after
+# saving, so their own answers win.
 module MonitorTestHelper
   NIL_CURSOR = "00000000-0000-0000-0000-000000000000"
   COUNT_COLUMN = { "name" => "count_", "type" => "number", "agg" => "count" }.freeze
 
-  def stub_monitor_query_check(project, columns: [ COUNT_COLUMN ], ingest_cursor: NIL_CURSOR)
+  def stub_monitor_query_check(project, columns: [ COUNT_COLUMN ], ingest_cursor: NIL_CURSOR, parameters: [])
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/validate").to_return do |request|
-      { status: 200, body: { errors: [], stages: [ last_stage(JSON.parse(request.body)["query"]) ] }.to_json }
+      { status: 200, body: { errors: [], stages: [ last_stage(JSON.parse(request.body)["query"]) ], parameters: parameters }.to_json }
     end
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/query")
       .with(body: hash_including("from", "to"))
