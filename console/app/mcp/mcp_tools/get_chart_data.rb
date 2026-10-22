@@ -43,7 +43,7 @@ module McpTools
       unknown = given.keys - dashboard.filter_names
       raise ToolError, "#{unknown.to_sentence} #{not_its_filters(unknown)}." if unknown.any?
 
-      dashboard.parameters(given)
+      dashboard.filter_values(given)
     end
 
     # The range given, or the Dashboard's default range, as the page first

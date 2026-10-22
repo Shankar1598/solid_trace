@@ -39,12 +39,11 @@ class DashboardChartsController < ApplicationController
     save(copy, notice: "Chart duplicated.", status: :created)
   end
 
-  # GET with from and to (ISO 8601), and v_<name> for each filter the Query
-  # names that isn't All: the chart's Query run over that range with those
-  # values.
+  # GET with from and to (ISO 8601), and the page's keys for each filter the
+  # Query names that isn't All (Dashboard.filter_values_in): the chart's
+  # Query run over that range with those values.
   def data
-    values = filter_keys.transform_keys { |key| key.delete_prefix("v_") }
-    run_chart(@current_org.projects.find(@chart.project_id), @chart.query, parameters: @dashboard.parameters(values))
+    run_chart(@current_org.projects.find(@chart.project_id), @chart.query, parameters: @dashboard.filter_values(shown_filter_values))
   end
 
   # POST with project_id, query, from, to and parameters, {name => [values]}
@@ -52,7 +51,7 @@ class DashboardChartsController < ApplicationController
   # run as a chart's is, with its timeout and in its cap.
   def preview
     given = params[:parameters].respond_to?(:to_unsafe_h) ? params[:parameters].to_unsafe_h : {}
-    run_chart(@current_org.projects.find(params[:project_id]), params[:query].to_s, parameters: @dashboard.parameters(given))
+    run_chart(@current_org.projects.find(params[:project_id]), params[:query].to_s, parameters: @dashboard.filter_values(given))
   end
 
   private

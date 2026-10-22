@@ -49,10 +49,9 @@ module McpTools
     end
 
     # A Dashboard, over its default range or the TimeRange given, with the
-    # filter values given, {name => [values]}, as the page's v_<name> keys,
-    # repeated for several values.
+    # filter values given, {name => [values]}, in the page's query string.
     def dashboard(dashboard, range: nil, values: {})
-      search = (range ? range.link_params : {}).merge(values.transform_keys { |name| "v_#{name}" })
+      search = (range ? range.link_params : {}).merge(Dashboard.filter_link_params(values))
       path = routes.dashboard_path(dashboard, org_slug: dashboard.organization.slug)
       url(search.empty? ? path : "#{path}?#{Rack::Utils.build_query(search)}")
     end
