@@ -140,17 +140,23 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 }
 
 // countByLevel runs counts, a Query's Histogram, over the Logs, as a table
-// of at most limit rows.
+// of at most limit rows. As a Chart's, its buckets of hours that have ended
+// may come from the bin cache.
 func (h *LogsHandler) countByLevel(run *run, projectID uint32, counts *logquery.Query, limit int) ([]storage.LevelCount, error) {
 	from, to := counts.Range()
-	raw, err := h.clickHouse.ScanLogTable(run.ctx, storage.TableScan{
+	scan := storage.TableScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
 		Where:     func(cols storage.ClickHouseColumns) string { return counts.Where(cols) },
 		Select:    func(cols storage.ClickHouseColumns) string { return counts.Select(cols) },
 		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
-	})
+		Now:       h.clock.Now(),
+	}
+	if b, ok := counts.Bins(); ok {
+		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: limit}
+	}
+	raw, err := h.clickHouse.ScanLogTable(run.ctx, scan)
 	if err != nil {
 		return nil, err
 	}

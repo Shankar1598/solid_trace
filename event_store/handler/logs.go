@@ -282,8 +282,8 @@ func limitOf(requested int) (limit int, ok bool) {
 // no row; from and to are the range the Query read, the request's as a
 // leading where on time narrows it.
 //
-// A chart's table made bin by bin takes the bins of Logs all in files from
-// the bin cache, when it has them (logquery.Query.Bins).
+// A chart's table made bin by bin takes the bins of hours that have ended
+// from the bin cache, when it has them (logquery.Query.Bins).
 //
 // With totals asked for, the table of a time chart, a Query whose last stage
 // is a summarize by a time bin, also has "totals": {"columns", "rows",
@@ -326,6 +326,10 @@ func (h *LogsHandler) scanTable(run *run, projectID uint32, query *logquery.Quer
 		Where:     func(cols storage.ClickHouseColumns) string { return query.Where(cols) },
 		Select:    func(cols storage.ClickHouseColumns) string { return query.Select(cols) },
 		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
+		Now:       h.clock.Now(),
+	}
+	if b, ok := query.Bins(); ok && bins {
+		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: maxTableRows + 1}
 	}
 	raw, err := h.clickHouse.ScanLogTable(run.ctx, scan)
 	if err != nil {
