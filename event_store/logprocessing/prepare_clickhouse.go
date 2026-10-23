@@ -8,9 +8,9 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// ClickHouseStore is logs.duckdb as prepare-clickhouse readies it.
-// *storage.LogStore is the production adapter.
-type ClickHouseStore interface {
+// PrepareStore is the DuckDB LogStore, logs.duckdb, as prepare-clickhouse
+// readies it. *storage.LogStore is the production adapter.
+type PrepareStore interface {
 	// PrepareForClickHouse files every Log stored, finishes deletions,
 	// uploads every file and writes the prepared files and the marker to
 	// the prepared folder dir.
@@ -23,7 +23,7 @@ type ClickHouseStore interface {
 // processes every Log batch waiting in Pebble with processor, whose worker
 // isn't running, then has store file, upload and write out everything else.
 // alreadyPrepared reports a marker found, when it does nothing.
-func PrepareClickHouse(ctx context.Context, processor *Processor, store ClickHouseStore, dir, release string) (alreadyPrepared bool, err error) {
+func PrepareClickHouse(ctx context.Context, processor *Processor, store PrepareStore, dir, release string) (alreadyPrepared bool, err error) {
 	marker, err := storage.ReadClickHouseMarker(dir)
 	if err != nil {
 		return false, err
