@@ -40,6 +40,7 @@ var clickHouseMigrations = []clickHouseMigration{
 	eventsTableMigration,
 	logMinuteCountsMigration,
 	oldLogFilesMigration,
+	logIngestCountsMigration,
 }
 
 // clickHousePingTimeout bounds a health check of ClickHouse.
