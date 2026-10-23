@@ -81,6 +81,44 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "k3y-base-v4lue"
   end
 
+  test "saving changes SQL queries, the default Retention and log-all-reads, and the page shows them" do
+    sign_in_as(@instance_admin)
+
+    save(sql_queries_enabled: false, default_log_retention_days: "7", log_all_reads: true)
+
+    assert_redirected_to instance_settings_url(org_slug: @organization.slug)
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ false, 7, true ], response.parsed_body.dig("props", "settings", "editable")
+      .values_at("sql_queries_enabled", "default_log_retention_days", "log_all_reads")
+  end
+
+  test "a Retention below one day, or not a whole number, comes back as a form error and saves nothing" do
+    sign_in_as(@instance_admin)
+
+    [ "0", "1.5", "seven" ].each do |days|
+      save(default_log_retention_days: days, log_all_reads: true)
+
+      assert_redirected_to instance_settings_url(org_slug: @organization.slug)
+      get instance_settings_url(org_slug: @organization.slug), headers: inertia
+      assert response.parsed_body.dig("props", "errors", "default_log_retention_days").present?, days
+      assert_equal 30, InstanceSetting.current.default_log_retention_days
+      assert_not InstanceSetting.current.log_all_reads?
+    end
+  end
+
+  test "an update carrying Sign-up or any other setting changes nothing but the three" do
+    sign_in_as(@instance_admin)
+
+    save(sign_up_open: true, smtp_address: "evil.example.com", meta_organization_seeded: true, log_all_reads: true)
+
+    settings = InstanceSetting.current
+    assert settings.log_all_reads?
+    assert_not settings.sign_up_open?
+    assert_nil settings.smtp_address
+    assert_not settings.meta_organization_seeded?
+  end
+
   private
 
   def console_rows

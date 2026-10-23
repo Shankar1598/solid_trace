@@ -1,16 +1,23 @@
 # frozen_string_literal: true
 
 # The install's settings: one record. Instance admins set email (the SMTP
-# server and the sender) on the Email settings page or over the MCP server.
-# The operator sets the others with `bin/rails instance_settings:set`
-# (lib/tasks/instance_settings.rake) or `InstanceSetting.current.update!(...)`
-# in a Rails console; they have no UI yet. Until something is first set there's
-# no row and the column defaults apply.
+# server and the sender) on the Email settings page or over the MCP server,
+# and the settings that apply at once (EDITABLE: SQL queries, the default
+# Retention, log-all-reads) on Settings → Instance or over the MCP server.
+# Sign-up has no UI on purpose: opening it lets anyone who can reach Console
+# make an account, so it changes only from a shell on the server, with
+# `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
+# stolen instance admin session or API token can't open the install. Until
+# something is first set there's no row and the column defaults apply.
 #
 # EventStore reads this table read-only, and assumes the same defaults when the
 # row is missing (event_store/storage/console_settings.go).
 class InstanceSetting < ApplicationRecord
   ID = 1
+
+  # The settings that apply at once, so instance admins change them on
+  # Settings → Instance and over the MCP server.
+  EDITABLE = %i[sql_queries_enabled default_log_retention_days log_all_reads].freeze
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
@@ -51,6 +58,12 @@ class InstanceSetting < ApplicationRecord
   # Otherwise people join by Invite.
   def sign_up_allowed?
     sign_up_open? || !User.exists?
+  end
+
+  # Changes the settings that apply at once, as Settings → Instance and the MCP
+  # server do: only those given change, and any other key is ignored.
+  def update_editable(changes)
+    update(changes.to_h.symbolize_keys.slice(*EDITABLE))
   end
 
   # Changes the email settings as the Email settings page and the MCP server
