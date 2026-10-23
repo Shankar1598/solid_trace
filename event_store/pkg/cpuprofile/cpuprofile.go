@@ -3,11 +3,11 @@
 // fetch a file over SSH and read it with go tool pprof
 // (.scratch/eventstore-performance/issues/04-cpu-profiles-on-production.md).
 //
-// A profile samples only Go's threads: a query's time in DuckDB shows as
-// runtime.cgocall under the Go function that ran it, for the thread that
-// called DuckDB, and DuckDB's own worker threads aren't sampled at all. So
-// each profile's log line also gives the process's CPU time over the same
-// window, every thread's; what the profile lacks of it is DuckDB's workers.
+// A profile samples only Go's threads: the Log transform's time in VRL shows
+// as runtime.cgocall under the Go function that ran it, and a query's work
+// is ClickHouse's, in its own process, so it isn't here at all. Each
+// profile's log line also gives the process's CPU time over the same window,
+// every thread's.
 package cpuprofile
 
 import (
@@ -33,8 +33,8 @@ const (
 	prefix, suffix = "cpu-", ".pprof"
 )
 
-// offsets are when each hour's profiles start: during the Log export at the
-// hour start, when quiet Projects' hours go too, and half an hour later.
+// offsets are when each hour's profiles start: just after the hour starts,
+// and half an hour later.
 var offsets = []time.Duration{30 * time.Second, 30*time.Minute + 30*time.Second}
 
 // Profiler writes a profile of length at each offset past the hour, by its
@@ -128,7 +128,7 @@ func (p *Profiler) profile(now time.Time) error {
 }
 
 // processCPU is the CPU time the process has used so far, user and system,
-// on every thread, DuckDB's included.
+// on every thread.
 func processCPU() time.Duration {
 	var usage syscall.Rusage
 	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {

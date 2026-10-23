@@ -13,15 +13,13 @@ type Pinger interface {
 // HealthHandler handles health check endpoints
 type HealthHandler struct {
 	pebble     *storage.PebbleWriter
-	duckdb     *storage.DuckDBWriter
 	clickhouse Pinger
 }
 
 // NewHealthHandler creates a new health handler
-func NewHealthHandler(pebble *storage.PebbleWriter, duckdb *storage.DuckDBWriter, clickhouse Pinger) *HealthHandler {
+func NewHealthHandler(pebble *storage.PebbleWriter, clickhouse Pinger) *HealthHandler {
 	return &HealthHandler{
 		pebble:     pebble,
-		duckdb:     duckdb,
 		clickhouse: clickhouse,
 	}
 }
@@ -34,20 +32,12 @@ func (h *HealthHandler) Health(c *fiber.Ctx) error {
 
 	checks := fiber.Map{
 		"pebble":     "ok",
-		"duckdb":     "ok",
 		"clickhouse": "ok",
 	}
 
 	// Check Pebble
 	if err := h.pebble.Ping(); err != nil {
 		checks["pebble"] = err.Error()
-		status = "unhealthy"
-		httpStatus = 503
-	}
-
-	// Check DuckDB
-	if err := h.duckdb.Ping(); err != nil {
-		checks["duckdb"] = err.Error()
 		status = "unhealthy"
 		httpStatus = 503
 	}

@@ -16,29 +16,26 @@ clickhouse:
   # storage policy when object_store below is set.
   config_dir: /storage/clickhouse/conf.d
 pebble_path: /storage/pebble/production/events
-duckdb_path: /storage/duckdb/production/events.duckdb
-# Logs' hot tables, attached to the same DuckDB. Default: logs.duckdb next to duckdb_path.
-# logs_duckdb_path: /storage/duckdb/production/logs.duckdb
-# Logs' hourly Parquet files, on local disk. Default: logs_parquet next to duckdb_path.
-# logs_parquet_path: /storage/duckdb/production/logs_parquet
+# The Log file store: the Log files a DuckDB release wrote, read in place until
+# Retention deletes them. ClickHouse reads them through Compose's /logs_parquet
+# mount of the same folder. EventStore won't start while logs.duckdb, beside it,
+# holds Logs that the last DuckDB release's prepare-clickhouse didn't prepare;
+# deploy/install runs it.
+logs_parquet_path: /storage/duckdb/production/logs_parquet
 # The most of ClickHouse's local disk, in GB, every Project's Logs may take together;
 # past it the oldest days move to the object_store's bucket, or are deleted without
 # one. Default: half the size of ClickHouse's local disk, read when EventStore starts.
 # logs_disk_limit_gb: 800
-# The memory, in MiB, that keeps charts' time bins of exported hours, so a chart run
-# again reads only the bins it lacks. 0 turns it off. Default: 64.
+# The memory, in MiB, that keeps charts' time bins of hours that have ended, so a
+# chart run again reads only the bins it lacks. 0 turns it off. Default: 64.
 # logs_bin_cache_mb: 64
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 
-# Store DuckDB parquet archives on slower storage. With an object_store, each
-# Event archive file stays here only until it is uploaded.
-parquet_storage_path: /storage_cold/duckdb/production/events_parquet
-
-# A bucket for Log files and the Event archive, read by DuckDB through httpfs.
-# Without this block everything stays on local disk. The bucket's key comes from
-# the SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET
-# environment variables; for GCS, an HMAC key. docs/logs/object-store.md has
+# A bucket that ClickHouse moves older Logs to, and that holds the Log files a
+# DuckDB release uploaded. Without this block everything stays on local disk.
+# The bucket's key comes from the SOLIDTRACE_OBJECT_STORE_KEY_ID and
+# SOLIDTRACE_OBJECT_STORE_SECRET environment variables; for GCS, an HMAC key. docs/logs/object-store.md has
 # every key and how to set up the bucket.
 # object_store:
 #   kind: gcs                  # s3 or gcs; gcs uses its S3 interop API
@@ -47,7 +44,7 @@ parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 #   region: us-east-1          # needed for AWS S3; gcs defaults to auto
 #   endpoint: http://127.0.0.1:9000   # MinIO, R2 and others; set for you for gcs
 #   local_cache_hours: 24      # hours Logs stay on ClickHouse's local disk before they move to the bucket; 0 allowed
-# MinIO on a development machine, with every exported hour read from it at once:
+# MinIO on a development machine, with every Log moved to it at once:
 # object_store:
 #   kind: s3
 #   bucket: solidtrace-dev
@@ -55,21 +52,13 @@ parquet_storage_path: /storage_cold/duckdb/production/events_parquet
 #   region: us-east-1
 #   endpoint: http://127.0.0.1:9000
 #   local_cache_hours: 0
-# Where DuckDB's httpfs extension is, as <version>/<platform>/httpfs.duckdb_extension.
-# The Docker image puts it in the default; DuckDB never downloads extensions itself.
-# duckdb_extension_directory: /usr/local/lib/solidtrace/duckdb_extensions
-
-# DuckDB memory and spill-to-disk settings. deploy/install sets the memory
-# limit to half the machine's memory; DuckDB's own default is 80%.
-# duckdb_temp_directory: /storage_local/duckdb/tmp
-# duckdb_memory_limit: 16GB
 
 # Requests waiting to store their Event or Logs before ingest answers 503.
 # ingest_max_waiting: 10000
 
 # A directory for CPU profiles: one of 30 seconds at half a minute past each hour,
-# during the Log export at the hour start, and one at half past, keeping the newest
-# 48. Off unless set. Read one with `go tool pprof -top <file>`. It samples Go's threads only:
-# DuckDB's worker threads are missing, and the log line's process_cpu, every
-# thread's CPU over the same 30 seconds, shows how much.
+# and one at half past, keeping the newest 48. Off unless set. Read one with
+# `go tool pprof -top <file>`. It samples EventStore's Go threads only: queries run
+# in ClickHouse's own process. The log line's process_cpu is every thread's CPU
+# over the same 30 seconds.
 # cpu_profile_dir: /storage/profiles
