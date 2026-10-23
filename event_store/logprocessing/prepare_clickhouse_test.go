@@ -531,6 +531,45 @@ func TestPrepareFailsAndWritesNoMarkerWhenAFileFailsToUpload(t *testing.T) {
 	}
 }
 
+// downStore is logs.duckdb gone: every write fails, and so does a ping.
+type downStore struct{}
+
+var errDown = errors.New("disk I/O error")
+
+func (downStore) LogProcessingCursor(uint32) (uuid.UUID, error) { return uuid.Nil, nil }
+func (downStore) LogProcessingCursors() ([]uuid.UUID, error)    { return nil, nil }
+func (downStore) AppendLogBatches(uint32, []storage.LogBatch, time.Time) error {
+	return errDown
+}
+func (downStore) TryLogBatches(uint32, []storage.LogBatch, time.Time) error { return errDown }
+func (downStore) Ping() error                                            { return errDown }
+
+// preparing records whether prepare-clickhouse went on to file the Logs.
+type preparing struct{ called bool }
+
+func (p *preparing) PrepareForClickHouse(context.Context, string, string, time.Time) error {
+	p.called = true
+	return nil
+}
+
+// An offline run ends: Log processing gives up on Logs that keep failing to
+// store, where the worker would retry them for good.
+func TestPrepareStopsWhenLogsKeepFailingToStore(t *testing.T) {
+	in := newInstall(t)
+	in.post(1, october(5, 10, 20), logAt(october(5, 10, 20), "hot"))
+	processor := New(in.batches, downStore{}, keepEveryLog{}, clock.NewManual(october(5, 10, 30)))
+	store := &preparing{}
+
+	_, err := PrepareClickHouse(context.Background(), processor, store, in.preparedDir(), "v1.0.0")
+
+	if !errors.Is(err, errDown) {
+		t.Errorf("Expected the store's error, got %v", err)
+	}
+	if store.called {
+		t.Error("Expected nothing filed after Log processing failed")
+	}
+}
+
 // The promoted sets, key counts and Log processing cursors the ClickHouse
 // release loads are those the stores hold once every Log batch waiting is
 // stored.

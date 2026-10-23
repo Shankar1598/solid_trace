@@ -34,7 +34,7 @@ func PrepareClickHouse(ctx context.Context, processor *Processor, store ClickHou
 	if err := processor.Prepare(); err != nil {
 		return false, err
 	}
-	if err := processor.ProcessUntilCaughtUp(); err != nil {
+	if err := processor.ProcessAll(); err != nil {
 		return false, fmt.Errorf("process the Log batches waiting: %w", err)
 	}
 	return false, store.PrepareForClickHouse(ctx, dir, release, processor.clock.Now())
