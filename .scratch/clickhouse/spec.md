@@ -147,7 +147,7 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
 ### Reads
 
 - **The Query compiler emits ClickHouse SQL**, one dialect. The language, its meaning and its answers don't change. In particular:
-  - Attribute reads use JSON paths, and comparisons and aggregates use the path's typed subcolumns, never the bare `Dynamic` path, which throws on a path holding mixed types. `== 200` reads `.:Float64`, `== "200"` reads `.:String`, and `== true` reads `.:Bool`. A missing path reads as NULL, so `==`, `!=` and `not` all fail to match, as now.
+  - Attribute reads use JSON paths, and comparisons and aggregates use the path's typed subcolumns, never the bare `Dynamic` path, which throws on a path holding mixed types. `== 200` reads `.:Float64`, `== "200"` reads `.:String`, and `== true` reads `.:Bool`. A missing path reads as NULL, so `==` fails to match and `!=` matches (through `IS DISTINCT FROM`), as now.
   - `tostring` is `coalesce(.:String, toString(.:Float64), toString(.:Bool))`, and `tonumber` is `coalesce(.:Float64, toFloat64OrNull(.:String))`. An Attribute is present if its path isn't NULL or `attrs_json` has its key.
   - Text matching uses ClickHouse's `lower`/`position`/`startsWith`/`match` equivalents, keeping today's semantics: `contains` is a case-insensitive substring and `contains_cs` a case-sensitive one.
   - `search` reads `message` and `search_text`, never key names. That took 390–576 ms on the quarter-hour, against 760–980 ms for an `or` over every path.
@@ -185,6 +185,7 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
 - **The disk limit** (`logs_disk_limit_gb`) keeps its meaning:
   - With a bucket, `move_factor` moves parts to the bucket first. If ClickHouse's local data is still over the limit, the oldest (Project, day) partitions are dropped and an error is logged, since the bucket must be failing.
   - Without a bucket, the oldest partitions are dropped.
+  - Old Log files' local copies count toward the limit too. A local copy whose object is in the bucket is deleted first; without a bucket, the oldest old days go before the oldest partitions.
 
 ### Events
 
@@ -251,7 +252,7 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
 
   The S3 adapter stays while old Log files need deleting.
 - **Console:**
-  - the Log file order card, the `log_file_order` column (by migration) and its MCP field in `list_projects`;
+  - the Log file order card and its MCP field in `list_projects`. The `log_file_order` column stays, ignored, so a rollback to the DuckDB release still works; [12](issues/12-remove-the-old-log-file-path.md) drops it;
   - `EventStoreArchiveJob` and its schedule;
   - the DuckDB error parser.
 

@@ -9,5 +9,6 @@
 - [ ] On production, no old Log file rows are left, and the bucket's `logs/` prefix is empty.
 - [ ] The old Log file module, its tables (dropped by a migration step) and its tests are gone. So are `logs_parquet_path` and the Log file store mount in compose.
 - [ ] EventStore with a marker but no loaded state, or with `logs.duckdb`, refuses to start and names the release to go through.
+- [ ] A Console migration drops `projects.log_file_order`, which the ClickHouse release ignores but keeps so a rollback to the DuckDB release works.
 - [ ] ADR 0016 and GLOSSARY.md drop the Log file store.
 - [ ] Targeted tests only.
