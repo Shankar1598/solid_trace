@@ -15,7 +15,7 @@ import (
 )
 
 // prepare-clickhouse readies an install of the last DuckDB release for the
-// ClickHouse release (.scratch/clickhouse/spec.md, "Cutover"). With the
+// ClickHouse release (the ClickHouse effort's spec, "Cutover"). With the
 // stack stopped, it leaves every Log in a Log file, every file in the bucket
 // if there is one, and writes what the ClickHouse release loads as the
 // prepared files, then the marker, to the prepared folder:
