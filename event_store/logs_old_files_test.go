@@ -483,6 +483,133 @@ func TestFieldsOfOldDaysCountWhatTheDuckDBReleaseCounted(t *testing.T) {
 	}, "Project 3's second day")
 }
 
+// oldFilesLeft lists the old Log files left in env's Log file store and in
+// its bucket, as "local <key>" and "bucket <key>".
+func oldFilesLeft(t *testing.T, env *TestEnv) []string {
+	t.Helper()
+	var left []string
+	root := env.OldLogFiles.LocalDir
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		left = append(left, "local "+filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	objects, err := storage.NewObjectStore(env.OldLogFiles.Bucket).List(context.Background(), "logs/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, object := range objects {
+		left = append(left, "bucket "+strings.TrimPrefix(object.Key, "logs/"))
+	}
+	slices.Sort(left)
+	return left
+}
+
+// hourCounts is a Chart's table of a Project's Logs by hour over the
+// fixture's days.
+func hourCounts(t *testing.T, env *TestEnv, projectID uint32) string {
+	t.Helper()
+	return tableOf(t, env, projectID, `summarize count() by bin(time, 1h)`,
+		time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+}
+
+func TestRetentionDeletesOldLogFilesPastIt(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+	})
+	defer env.Cleanup()
+	postAfterTheSwitch(t, env)
+
+	// The Chart's bins of old hours are kept, so the second run reads
+	// none.
+	env.Clock.Set(time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC))
+	before := hourCounts(t, env, 3)
+	hits, _ := env.ClickHouseLogs.BinCacheStats()
+	if again := hourCounts(t, env, 3); again != before {
+		t.Fatalf("Expected the same table again, got %s, then %s", before, again)
+	}
+	if hitsAgain, _ := env.ClickHouseLogs.BinCacheStats(); hitsAgain-hits != 48 {
+		t.Fatalf("Expected the second run to take all 48 hours from the bin cache, got %d", hitsAgain-hits)
+	}
+	// Retention passing with nothing past it deletes nothing.
+	env.DeleteLogsPastRetention(t)
+	allFiles := oldFilesLeft(t, env)
+	if len(allFiles) != 14 {
+		t.Fatalf("Expected the fixture's 6 local copies and 8 objects, got %v", allFiles)
+	}
+
+	// Half an hour past midnight on 1 November, 30 days back is 2 October:
+	// the 1st goes.
+	env.Clock.Set(time.Date(2026, 11, 1, 0, 30, 0, 0, time.UTC))
+	env.DeleteLogsPastRetention(t)
+
+	assertDeleted := func(when string) {
+		t.Helper()
+		assertProjectQueries(t, env, 3, map[string][]string{
+			``: {"order paid", "order placed", "order placed", "order paid", "order placed"},
+		}, when)
+		assertProjectQueries(t, env, 2, map[string][]string{
+			``: {"GET /", "GET /", "GET /health"},
+		}, when)
+		first := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+		assertAttributes(t, getFields(t, env, 3, first, first.Add(24*time.Hour), ""), nil, when+": Project 3's Fields of the 1st")
+		if after := hourCounts(t, env, 3); after == before || strings.Contains(after, "2026-10-01") {
+			t.Errorf("%s: expected the Chart without the 1st's hours, got %s", when, after)
+		}
+		want := []string{
+			"bucket project=2/day=2026-10-02/hour=00/data.parquet",
+			"bucket project=3/day=2026-10-02/hour=00/data.parquet",
+			"local project=2/day=2026-10-02/hour=00/data.parquet",
+			"local project=3/day=2026-10-02/hour=00/data.parquet",
+		}
+		if left := oldFilesLeft(t, env); !slices.Equal(left, want) {
+			t.Errorf("%s: expected the 2nd's files left, got %v", when, left)
+		}
+	}
+	assertDeleted("after Retention")
+	env.Reopen(t)
+	assertDeleted("after a restart")
+	env.DeleteLogsPastRetention(t)
+	assertDeleted("after another pass")
+}
+
+func TestADeletedProjectsOldLogFilesAreDeleted(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+	})
+	defer env.Cleanup()
+	project3 := runQueryPages(t, env, 3, queryRequest{From: allTime.from, To: allTime.to, Limit: 100})
+
+	consoleExec(t, env, "DELETE FROM projects WHERE id = 2")
+	env.DeleteLogsPastRetention(t)
+
+	assertDeleted := func(when string) {
+		t.Helper()
+		if got := latestLogs(t, env, 2, 10); len(got) != 0 {
+			t.Errorf("%s: expected the deleted Project to have no Logs, got %v", when, messages(got))
+		}
+		day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+		assertAttributes(t, getFields(t, env, 2, day, day.Add(48*time.Hour), ""), nil, when+": the deleted Project's Fields")
+		for _, file := range oldFilesLeft(t, env) {
+			if strings.Contains(file, "project=2/") {
+				t.Errorf("%s: expected none of the deleted Project's files left, got %s", when, file)
+			}
+		}
+		assertListsUnchanged(t, env, 3, project3, when)
+	}
+	assertDeleted("after the pass")
+	env.Reopen(t)
+	assertDeleted("after a restart")
+}
+
 func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
 		answers := map[string]string{}
