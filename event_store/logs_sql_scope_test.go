@@ -15,7 +15,7 @@ func seedTwoProjects(t *testing.T, env *TestEnv) {
 	t.Helper()
 	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
 	seedLanguageLogs(t, env)
-	exportLanguageLogs(t, env)
+	postLateLanguageLog(t, env)
 	postAndProcessTo(t, env, 456, "other_public_key", logJSON(t, "other", languageAt(10, 35), map[string]any{"secret": "456's"}))
 	postEventTo(t, env, 123, "test_public_key", fmt.Sprintf(`{"message":"mine","timestamp":%q}`, languageAt(10, 15).Format(time.RFC3339)))
 	postEventTo(t, env, 456, "other_public_key", fmt.Sprintf(`{"message":"theirs","timestamp":%q}`, languageAt(10, 25).Format(time.RFC3339)))

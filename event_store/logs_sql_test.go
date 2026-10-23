@@ -97,7 +97,7 @@ func TestTheLogsViewCoversTheProjectAndRangeAcrossHotFilesAndLateLogs(t *testing
 	seedLanguageLogs(t, env)
 	env.Clock.Set(languageAt(10, 29))
 	postAndProcessTo(t, env, 456, "other_public_key", logJSON(t, "other", languageAt(10, 35), map[string]any{"duration": 1}))
-	exportLanguageLogs(t, env) // ada, bob, cy and di in files, ed hot, fy late
+	postLateLanguageLog(t, env) // ada, bob, cy and di in files, ed hot, fy late
 
 	query := `SELECT project_id, message, attrs_number['duration'] AS duration, attrs_string['user'] AS user,
 		attrs_bool, attrs_json FROM logs ORDER BY time`
@@ -155,7 +155,7 @@ func TestReadableSQLRunThroughRunSQLReturnsTheQuerysRows(t *testing.T) {
 	defer env.Cleanup()
 	setSQLQueries(t, env, true)
 	seedLanguageLogs(t, env)
-	exportLanguageLogs(t, env) // ada, bob, cy and di in files, ed hot, fy late
+	postLateLanguageLog(t, env) // ada, bob, cy and di in files, ed hot, fy late
 
 	logRows := []string{
 		``,
