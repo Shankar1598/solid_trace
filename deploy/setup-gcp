@@ -185,8 +185,7 @@ finish() {
 # ──────────────────────────────────────────────────────────────────────────
 
 # Configures a SolidTrace install, then runs deploy/install: the public URLs and
-# HTTPS, and where EventStore keeps Log files and the Event archive (this
-# machine's disk or a GCS bucket). Run it again to change any of them. Email is
+# HTTPS, and where older Logs go (this machine's disk or a GCS bucket). Run it again to change any of them. Email is
 # set up in Console, on the Email settings page.
 #
 #   deploy/setup-gcp
@@ -413,9 +412,9 @@ pause
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
 stage "Storage"
-say "EventStore keeps each hour's Log files and the Event archive on this"
-say "machine's disk. A GCS bucket can hold them instead, for far less than disk;"
-say "recent data and the databases stay on disk either way."
+say "EventStore keeps Logs and Events on this machine's disk. A GCS bucket can"
+say "hold Logs older than a day instead, for far less than disk; recent Logs,"
+say "Events and the databases stay on disk either way."
 note "docs/logs/object-store.md says what goes in the bucket."
 printf '\n'
 say "  local  This machine's disk"
@@ -441,7 +440,7 @@ if [[ $STORAGE == gcs ]]; then
 
   # ── 5 ───────────────────────────────────────────────────────────────────
   stage "GCS: the bucket"
-  say "EventStore gets a bucket of its own for Log files and the Event archive."
+  say "EventStore gets a bucket of its own for older Logs."
   printf '\n'
   if [[ -n $project ]]; then
     note "GCP says this machine is in project $project."
@@ -527,7 +526,7 @@ if [[ $STORAGE == gcs ]]; then
   printf '\n%s' "$BOLD"
   sed 's/^/    /' <<<"$block"
   printf '%s\n' "$RESET"
-  note "Its other keys keep their defaults: prefix solidtrace/, local copies kept 24 hours."
+  note "Its other keys keep their defaults: prefix solidtrace/, Logs moved after 24 hours."
   printf '\n'
   if confirm "Write it?"; then
     write_config "$(config_without_object_store)
@@ -540,9 +539,8 @@ $block"
     SKIPPED+=("The object_store block in $CONFIG_FILE")
   fi
 elif grep -q '^object_store:' "$CONFIG_FILE"; then
-  warn "$CONFIG_FILE has an object_store block. Without it, files whose only"
-  warn "copy is in the bucket aren't read any more: their Log hours fail and"
-  warn "Event reads leave those archived Events out."
+  warn "$CONFIG_FILE has an object_store block. Logs already moved to the"
+  warn "bucket stay there, and can't be read without it."
   if confirm "Remove it, and keep everything on this machine's disk?"; then
     write_config "$(config_without_object_store)"
     CONFIG_CHANGED=1
