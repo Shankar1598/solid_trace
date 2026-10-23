@@ -6,8 +6,8 @@ import { watchErrors } from '../support/screens'
 
 // Settings → Instance: the seeded admin, an instance admin, changes
 // log-all-reads and the default Retention, and sees them after a reload.
-// Sign-up is read-only, and Console's environment shows with secrets only as
-// set or not. A member who isn't an instance admin sees no Instance link. The
+// Sign-up is read-only, and Console's environment and EventStore's config
+// (from its GET /config) show with secrets only as set or not. A member who isn't an instance admin sees no Instance link. The
 // settings are put back as they were after.
 
 const rails = (code: string) =>
@@ -57,6 +57,12 @@ test('an instance admin changes log-all-reads and the default Retention, and see
   const consoleGroup = page.getByRole('region', { name: 'Console' })
   await expect(consoleGroup.getByTestId('setting-EVENT_STORE_URL')).toHaveText(/^http/)
   await expect(consoleGroup.getByTestId('setting-SECRET_KEY_BASE')).toHaveText(/^(Set|Not set)$/)
+
+  const eventStoreGroup = page.getByRole('region', { name: 'EventStore' })
+  await expect(eventStoreGroup.getByText('clickhouse.address', { exact: true })).toBeVisible()
+  await expect(eventStoreGroup.getByTestId('setting-clickhouse.address')).toHaveText(/^[\w.-]+:\d+$/)
+  await expect(eventStoreGroup.getByTestId('setting-logs_disk_limit_gb')).toContainText(' bytes)')
+  await expect(eventStoreGroup.getByTestId('setting-SOLIDTRACE_CLICKHOUSE_PASSWORD')).toHaveText(/^(Set|Not set)$/)
 
   expect(errors).toEqual([])
 })
