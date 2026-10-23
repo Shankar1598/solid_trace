@@ -50,7 +50,7 @@ func startLongRead(t *testing.T, env *TestEnv) (context.CancelFunc, <-chan error
 	done := make(chan error, 1)
 	go func() {
 		_, err := env.SQL.RunSQL(ctx, 123, allTime.from, allTime.to,
-			"SELECT count() FROM logs, numbers(1000000000000)", 10)
+			"SELECT count() FROM logs, numbers(1000000000000) AS n", 10)
 		done <- err
 	}()
 	time.Sleep(300 * time.Millisecond)
