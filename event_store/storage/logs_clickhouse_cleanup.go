@@ -160,42 +160,48 @@ func (s *ClickHouseLogs) dropPartitions(ctx context.Context, partitions []logPar
 	return nil
 }
 
-// LogDayUse is how much local disk a Project's UTC day of Logs takes, with
-// what is counted from them.
+// LogDayUse is how much local disk a Project's UTC day of Logs takes.
 type LogDayUse struct {
 	ProjectID uint32
 	Day       time.Time
 	Bytes     int64
 }
 
-// logDay is a Project's day of Logs on local disk, with its partitions.
+// logDay is a Project's day of Logs on local disk, with its partitions of
+// every Log table.
 type logDay struct {
 	LogDayUse
 	partitions []logPartition
 }
 
 // localLogDays groups partitions by Project and day, oldest day first and
-// then by Project, leaving out days with nothing on local disk.
-func localLogDays(partitions []logPartition) []logDay {
+// then by Project, leaving out the days whose Logs are wholly in the bucket.
+// A day's size is that of its Logs alone: what is counted from them takes
+// far less, and stays on local disk.
+func localLogDays(partitions []logPartition) ([]logDay, int64) {
 	byDay := map[projectDay]*logDay{}
 	for _, p := range partitions {
 		key := projectDay{p.projectID, p.day}
 		if byDay[key] == nil {
 			byDay[key] = &logDay{LogDayUse: LogDayUse{ProjectID: p.projectID, Day: p.day}}
 		}
-		byDay[key].Bytes += p.localBytes
+		if p.table == "logs" {
+			byDay[key].Bytes += p.localBytes
+		}
 		byDay[key].partitions = append(byDay[key].partitions, p)
 	}
 	var days []logDay
+	var total int64
 	for _, day := range byDay {
 		if day.Bytes > 0 {
 			days = append(days, *day)
+			total += day.Bytes
 		}
 	}
 	slices.SortFunc(days, func(a, b logDay) int {
 		return cmp.Or(a.Day.Compare(b.Day), cmp.Compare(a.ProjectID, b.ProjectID))
 	})
-	return days
+	return days, total
 }
 
 // LogDiskUse returns how much local disk each Project's day of Logs takes,
@@ -207,15 +213,21 @@ func (s *ClickHouseLogs) LogDiskUse() ([]LogDayUse, error) {
 	if err != nil {
 		return nil, err
 	}
+	days, _ := localLogDays(partitions)
 	var use []LogDayUse
-	for _, day := range localLogDays(partitions) {
+	for _, day := range days {
 		use = append(use, day.LogDayUse)
 	}
 	return use, nil
 }
 
-// EnforceDiskLimit keeps the Logs on local disk, with what is counted from
-// them, within limit, by deleting the oldest days of any Project.
+// EnforceDiskLimit keeps the Logs on local disk within limit.
+//
+// With a bucket, it first moves the oldest days of any Project there, as
+// they would move once local_cache_hours old. If the Logs on local disk are
+// still past the limit, the bucket must be failing: it deletes the oldest
+// days, and logs each as an error. Without a bucket, it deletes the oldest
+// days. A day's Logs go with what is counted from them.
 func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit) error {
 	if limit.Bytes <= 0 {
 		return fmt.Errorf("no Log disk limit: %d bytes", limit.Bytes)
@@ -226,21 +238,62 @@ func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit) error {
 	if err != nil {
 		return err
 	}
-	days := localLogDays(partitions)
-	var total int64
-	for _, day := range days {
-		total += day.Bytes
+	days, total := localLogDays(partitions)
+	if total <= limit.Bytes {
+		return nil
+	}
+	if s.bucket {
+		s.moveForTheDiskLimit(ctx, days, total, limit.Bytes)
+		// Measured again: a move may have failed, or the TTL moved parts
+		// meanwhile.
+		if partitions, err = s.logPartitions(ctx); err != nil {
+			return err
+		}
+		days, total = localLogDays(partitions)
 	}
 	for _, day := range days {
 		if total <= limit.Bytes {
 			break
 		}
-		logger.L.Info("Deleting the oldest day of Logs past the disk limit",
-			"project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "bytes", day.Bytes, "limit", limit.Bytes)
+		args := []any{"project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "bytes", day.Bytes, "limit", limit.Bytes}
+		if s.bucket {
+			logger.L.Error("Deleting the oldest day of Logs past the disk limit, as it didn't move to the bucket", args...)
+		} else {
+			logger.L.Info("Deleting the oldest day of Logs past the disk limit", args...)
+		}
 		if err := s.dropPartitions(ctx, day.partitions); err != nil {
 			return err
 		}
 		total -= day.Bytes
 	}
 	return nil
+}
+
+// moveForTheDiskLimit moves the Logs of the oldest days on local disk to the
+// bucket until those left there take no more than maxBytes. A move that
+// fails is logged, and the next day is tried.
+func (s *ClickHouseLogs) moveForTheDiskLimit(ctx context.Context, days []logDay, total, maxBytes int64) {
+	moved, failed := 0, 0
+	for _, day := range days {
+		if total <= maxBytes {
+			break
+		}
+		for _, p := range day.partitions {
+			if p.table != "logs" || p.localBytes == 0 {
+				continue
+			}
+			err := s.conn.Exec(ctx, fmt.Sprintf("ALTER TABLE logs MOVE PARTITION ID '%s' TO VOLUME '%s'", p.id, ClickHouseBucketVolume))
+			if err != nil {
+				failed++
+				logger.L.Error("Moving a day of Logs to the bucket for the disk limit failed",
+					"project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "error", err)
+				continue
+			}
+			moved++
+		}
+		total -= day.Bytes
+	}
+	if moved > 0 {
+		logger.L.Info("Moved the oldest days of Logs past the disk limit to the bucket", "days", moved, "failed", failed, "limit", maxBytes)
+	}
 }
