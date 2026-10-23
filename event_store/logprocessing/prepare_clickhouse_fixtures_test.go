@@ -17,8 +17,8 @@ import (
 )
 
 // The fixture set: an install prepared by prepare-clickhouse, committed for
-// the ClickHouse release's tests (ticket 09), which read old Log files in
-// place from it. Regenerate it with
+// the ClickHouse release's tests (the ClickHouse effort's ticket 09), which
+// read old Log files in place from it. Regenerate it with
 //
 //	go test ./logprocessing -run TestTheCommittedFixtureSetIsWhatPrepareWrites -update-fixtures
 //
