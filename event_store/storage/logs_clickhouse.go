@@ -25,7 +25,8 @@ const logsDedupWindow = 10000
 
 // logsTableMigration makes the logs table, every Project's Logs, and the key
 // counts table, how many Logs of each Project's day carried each Attribute.
-var logsTableMigration = clickHouseMigration{version: 1, statements: []string{
+// Its version's hundreds are the ticket that added it (03).
+var logsTableMigration = clickHouseMigration{version: 301, statements: []string{
 	// Partitioned so that no part mixes Projects or days, and sorted by
 	// Service and the file Attribute, so that a filter on them reads only
 	// their Logs whatever the range.

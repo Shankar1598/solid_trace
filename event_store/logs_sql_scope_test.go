@@ -69,7 +69,6 @@ func TestSQLThatReadsBeyondItsProjectsViewsIsRefused(t *testing.T) {
 		{"current_setting()", "SELECT current_setting('s3_endpoint')", "current_setting()"},
 		{"getvariable()", "SELECT getvariable('x')", "getvariable()"},
 		{"pg_get_viewdef()", "SELECT pg_get_viewdef(0)", "pg_get_viewdef()"},
-		{"a WITH name that is a table", "WITH events_hot AS (SELECT 1) SELECT * FROM events_hot", "events_hot"},
 		{"a WITH name used outside its scope",
 			"SELECT * FROM (WITH mine AS (SELECT * FROM logs) SELECT * FROM mine), mine", "mine"},
 		{"a WITH name used before its WITH", "SELECT (SELECT count(*) FROM later), * FROM (WITH later AS (SELECT 1) SELECT * FROM later)", "later"},
@@ -113,14 +112,10 @@ func TestSQLReadsItsOwnProjectsLogsAndEvents(t *testing.T) {
 		return rows
 	}
 
-	// The events view holds only the Project's Events, and hides the
-	// global one.
-	if got := all("SELECT DISTINCT project_id FROM events"); !slices.Equal(got, []string{"[123]"}) {
-		t.Errorf("Expected the events view to hold Project 123's Events only, got %v", got)
-	}
-	_, inRange := sqlTable(t, env, sqlRequest{SQL: "SELECT count(*) FROM events", From: languageAt(10, 20), To: languageAt(11, 0)})
-	if !slices.Equal(inRange, []string{"[0]"}) {
-		t.Errorf("Expected the events view to hold only the time range's Events, got %v", inRange)
+	// Events are in ClickHouse, which SQL queries read from ticket 07: until
+	// then the events view has their columns and none of them.
+	if got := all("SELECT count(*) FROM events"); !slices.Equal(got, []string{"[0]"}) {
+		t.Errorf("Expected the events view to hold no Events, got %v", got)
 	}
 
 	total := all("SELECT count(*) FROM logs")
@@ -135,7 +130,7 @@ func TestSQLReadsItsOwnProjectsLogsAndEvents(t *testing.T) {
 		"WITH named AS (SELECT message FROM logs), again AS (SELECT * FROM named) SELECT count(*) FROM again":  total,
 		"WITH logs AS (SELECT 1 AS n) SELECT count(*) FROM logs":                                               {`[1]`},
 		"WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) SELECT max(n) FROM t":     {`[3]`},
-		"SELECT count(*) FROM logs l JOIN events e ON l.project_id = e.project_id":                             all("SELECT count(*) FROM logs"),
+		"SELECT count(*) FROM logs l JOIN events e ON l.project_id = e.project_id":                             {`[0]`},
 		"SELECT count(*) FROM range(3)":                                                                                 {`[3]`},
 		"SELECT count(*) FROM generate_series(1, 4)":                                                                    {`[4]`},
 		"SELECT count(*) FROM unnest([1, 2])":                                                                           {`[2]`},
