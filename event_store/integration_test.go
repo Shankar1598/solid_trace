@@ -30,6 +30,7 @@ import (
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pipeline"
+	"github.com/solidtrace/event_store/pkg/clickhousetest"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/pkg/msgpacker"
@@ -43,7 +44,11 @@ type TestEnv struct {
 	PebbleWriter *storage.PebbleWriter
 	EventWriter  *recordingEventWriter
 	DuckDBWriter *storage.DuckDBWriter
-	SQLiteWriter *storage.SQLiteWriter
+	// ClickHouse is EventStore's database on the dev ClickHouse: the test
+	// package's own (clickhousetest), emptied for each test. Reopen keeps it.
+	ClickHouse       *storage.ClickHouse
+	ClickHouseConfig config.ClickHouse
+	SQLiteWriter     *storage.SQLiteWriter
 	Issues       *flakyIssueRepository
 	Processor    *processing.Processor
 	BatchLock    *sync.Mutex
@@ -307,14 +312,16 @@ func setupTestEnv(t *testing.T) *TestEnv {
 func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 	logger.Init()
 	resetTestDB(t)
+	clickhousetest.Empty(t)
 
 	env := &TestEnv{
-		dir:         t.TempDir(),
-		SQLitePath:  "../storage/sqlite/test/solid_trace.sqlite3",
-		MQPath:      "../storage/sqlite/test/message_queue.sqlite3",
-		BatchLock:   &sync.Mutex{},
-		EventWriter: &recordingEventWriter{},
-		Clock:       clock.NewManual(testNow),
+		dir:              t.TempDir(),
+		SQLitePath:       "../storage/sqlite/test/solid_trace.sqlite3",
+		MQPath:           "../storage/sqlite/test/message_queue.sqlite3",
+		BatchLock:        &sync.Mutex{},
+		EventWriter:      &recordingEventWriter{},
+		Clock:            clock.NewManual(testNow),
+		ClickHouseConfig: clickhousetest.Config(),
 
 		BinCacheBytes: config.DefaultLogsBinCacheMB << 20,
 	}
@@ -354,6 +361,11 @@ func (env *TestEnv) open(t *testing.T) {
 		}
 	} else if err := duckdbWriter.UseLocalEventArchiveOnly(); err != nil {
 		t.Fatalf("Failed to keep the Event archive on local disk only: %v", err)
+	}
+
+	clickHouse, err := storage.OpenClickHouse(env.ClickHouseConfig, env.BucketConfig)
+	if err != nil {
+		t.Fatalf("Failed to open ClickHouse: %v", err)
 	}
 
 	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"), filepath.Join(env.dir, "logs_parquet"))
@@ -401,6 +413,7 @@ func (env *TestEnv) open(t *testing.T) {
 
 	env.PebbleWriter = pebbleWriter
 	env.DuckDBWriter = duckdbWriter
+	env.ClickHouse = clickHouse
 	env.LogStore = logStore
 	env.FlakyLogs = &flakyLogStore{LogStore: logStore}
 	env.SQLiteWriter = sqliteWriter
@@ -434,7 +447,7 @@ func (env *TestEnv) open(t *testing.T) {
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, env.Clock)
 	env.LogsHandler = logsHandler
-	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
@@ -447,6 +460,7 @@ func (env *TestEnv) open(t *testing.T) {
 
 		pebbleWriter.Close()
 		duckdbWriter.Close()
+		clickHouse.Close()
 		sqliteWriter.Close()
 		mqWriter.Close()
 		mqReader.Close()
