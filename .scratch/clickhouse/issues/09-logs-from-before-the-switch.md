@@ -4,7 +4,7 @@
 
 **Blocked by:** 05, 08
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **Starting:** with `logs.duckdb` and no marker, EventStore refuses to start and names the command. With a marker, it loads the prepared files into ClickHouse once: the old Log files, the old promoted sets, the key counts, and the cursors into Pebble. It records the switch time.
 - [x] **Reads** whose range reaches before the switch time also read that range's old files:
