@@ -16,6 +16,7 @@ import (
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/pkg/sqltext"
 )
 
 type DuckDBWriter struct {
@@ -74,6 +75,34 @@ type QueryParams struct {
 	SortDesc            bool
 }
 
+// configureDuckDB applies to db the settings of every DuckDB instance that
+// EventStore opens. tempDir is where DuckDB spills and memoryLimit its memory
+// limit, each left to DuckDB if "".
+func configureDuckDB(db *sql.DB, tempDir, memoryLimit string) error {
+	// DuckDB never installs or loads an extension by itself, so a SQL query
+	// can't bring in one whose functions change things (ADR 0003). The ones
+	// built in are loaded already, and UseBucket loads httpfs by name.
+	settings := []string{
+		"SET GLOBAL autoinstall_known_extensions = false",
+		"SET GLOBAL autoload_known_extensions = false",
+	}
+	if tempDir != "" {
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			return err
+		}
+		settings = append(settings, "SET temp_directory = "+sqltext.String(tempDir))
+	}
+	if memoryLimit != "" {
+		settings = append(settings, "SET memory_limit = "+sqltext.String(memoryLimit))
+	}
+	for _, setting := range settings {
+		if _, err := db.Exec(setting); err != nil {
+			return fmt.Errorf("%s: %w", setting, err)
+		}
+	}
+	return nil
+}
+
 func NewDuckDBWriter(dbPath, parquetPath, tempDir, memoryLimit string) (*DuckDBWriter, error) {
 	// Ensure directories exist
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -82,41 +111,13 @@ func NewDuckDBWriter(dbPath, parquetPath, tempDir, memoryLimit string) (*DuckDBW
 	if err := os.MkdirAll(parquetPath, 0755); err != nil {
 		return nil, err
 	}
-	if tempDir != "" {
-		if err := os.MkdirAll(tempDir, 0755); err != nil {
-			return nil, err
-		}
-	}
 
 	db, err := sql.Open("duckdb", dbPath)
 	if err != nil {
 		return nil, err
 	}
-
-	// DuckDB never installs or loads an extension by itself, so a SQL query
-	// can't bring in one whose functions change things (ADR 0003). The ones
-	// built in are loaded already, and UseBucket loads httpfs by name.
-	for _, setting := range []string{
-		"SET GLOBAL autoinstall_known_extensions = false",
-		"SET GLOBAL autoload_known_extensions = false",
-	} {
-		if _, err := db.Exec(setting); err != nil {
-			return nil, fmt.Errorf("%s: %w", setting, err)
-		}
-	}
-
-	if tempDir != "" {
-		_, err = db.Exec(fmt.Sprintf("SET temp_directory='%s'", tempDir))
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if memoryLimit != "" {
-		_, err = db.Exec(fmt.Sprintf("SET memory_limit='%s'", memoryLimit))
-		if err != nil {
-			return nil, err
-		}
+	if err := configureDuckDB(db, tempDir, memoryLimit); err != nil {
+		return nil, err
 	}
 
 	// Create hot table for recent events

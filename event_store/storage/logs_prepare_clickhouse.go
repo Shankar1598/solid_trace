@@ -85,32 +85,16 @@ func ForgetClickHousePrepared(dir string) error {
 
 // NewLogsDuckDB is a DuckDB instance for a LogStore alone: in memory, with
 // none of events.duckdb's tables, so that prepare-clickhouse attaches
-// logs.duckdb to it and never opens events.duckdb. tempDir is where DuckDB
-// spills, if not "".
+// logs.duckdb to it and never opens events.duckdb. It has NewDuckDBWriter's
+// settings (configureDuckDB).
 func NewLogsDuckDB(tempDir, memoryLimit string) (*DuckDBWriter, error) {
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		return nil, err
 	}
-	settings := []string{
-		"SET GLOBAL autoinstall_known_extensions = false",
-		"SET GLOBAL autoload_known_extensions = false",
-	}
-	if tempDir != "" {
-		if err := os.MkdirAll(tempDir, 0755); err != nil {
-			db.Close()
-			return nil, err
-		}
-		settings = append(settings, "SET temp_directory = "+sqltext.String(tempDir))
-	}
-	if memoryLimit != "" {
-		settings = append(settings, "SET memory_limit = "+sqltext.String(memoryLimit))
-	}
-	for _, setting := range settings {
-		if _, err := db.Exec(setting); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("%s: %w", setting, err)
-		}
+	if err := configureDuckDB(db, tempDir, memoryLimit); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return &DuckDBWriter{db: db}, nil
 }
