@@ -464,7 +464,7 @@ func (env *TestEnv) open(t *testing.T) {
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
-	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms), healthHandler)
+	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms), healthHandler, handler.NewConfigHandler(&config.Config{}, 0))
 
 	env.close = func() {
 		pebbleWriter.StopWrites()
