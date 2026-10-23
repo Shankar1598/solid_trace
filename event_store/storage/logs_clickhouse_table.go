@@ -49,10 +49,11 @@ func (s *ClickHouseLogs) ScanLogTable(ctx context.Context, scan TableScan) ([][]
 	if !to.After(from) {
 		to = from
 	}
+	ctx = s.old.withBucketKey(ctx)
 	if cache := s.bins.Load(); cache != nil && scan.Bins != nil && from.Before(to) {
 		return s.scanBinnedTable(ctx, scan, cache, from, to)
 	}
-	return s.queryTable(ctx, scan.Query(tableSource(scan, []timeSpan{{from, to}})))
+	return s.queryTable(ctx, scan.Query(s.tableSource(scan, []timeSpan{{from, to}})))
 }
 
 // timeSpan is the time range [from, to).
@@ -61,14 +62,20 @@ type timeSpan struct {
 }
 
 // tableSource is the query that reads a table's Logs of spans, which are in
-// time order and apart.
-func tableSource(scan TableScan, spans []timeSpan) string {
+// time order and apart: those in logs, and those in the old Log files.
+func (s *ClickHouseLogs) tableSource(scan TableScan, spans []timeSpan) string {
+	conditions := []string{fmt.Sprintf("project_id = %d", scan.ProjectID), timeSpans(spans)}
+	source := fmt.Sprintf("SELECT %s FROM logs %s", scan.Select(ClickHouseColumns{}), whereClause(conditions, filterOf(scan.Where)))
+	return source + s.old.tableSources(scan, spans)
+}
+
+// timeSpans is the condition that time is in one of spans.
+func timeSpans(spans []timeSpan) string {
 	inSpans := make([]string, len(spans))
 	for i, span := range spans {
 		inSpans[i] = fmt.Sprintf("(time >= %s AND time < %s)", chsql.Time(span.from), chsql.Time(span.to))
 	}
-	conditions := []string{fmt.Sprintf("project_id = %d", scan.ProjectID), "(" + strings.Join(inSpans, " OR ") + ")"}
-	return fmt.Sprintf("SELECT %s FROM logs %s", scan.Select(ClickHouseColumns{}), whereClause(conditions, filterOf(scan.Where)))
+	return "(" + strings.Join(inSpans, " OR ") + ")"
 }
 
 // queryTable runs a query and reads its rows, as ScanLogTable returns them,
@@ -242,7 +249,7 @@ func (s *ClickHouseLogs) scanBinnedTable(ctx context.Context, scan TableScan, ca
 		first = first.Add(size)
 	}
 	if to.Sub(from)/size > maxCachedBins {
-		return s.queryTable(ctx, scan.Query(tableSource(scan, whole)))
+		return s.queryTable(ctx, scan.Query(s.tableSource(scan, whole)))
 	}
 	// The keys are read before the query runs: a bin worked out from Logs
 	// inserted after its key was read is kept under a key no run reads
@@ -262,7 +269,7 @@ func (s *ClickHouseLogs) scanBinnedTable(ctx context.Context, scan TableScan, ca
 	}
 	if len(bins) == 0 {
 		// No hour of the range has ended, as in the explorer's last hour.
-		return s.queryTable(ctx, scan.Query(tableSource(scan, whole)))
+		return s.queryTable(ctx, scan.Query(s.tableSource(scan, whole)))
 	}
 
 	// What the cache lacks is worked out in one query, in spans between
@@ -284,7 +291,7 @@ func (s *ClickHouseLogs) scanBinnedTable(ctx context.Context, scan TableScan, ca
 	var rows [][]any
 	if len(spans) > 0 {
 		var err error
-		if rows, err = s.queryTable(ctx, scan.Query(tableSource(scan, spans))); err != nil {
+		if rows, err = s.queryTable(ctx, scan.Query(s.tableSource(scan, spans))); err != nil {
 			return nil, err
 		}
 	}

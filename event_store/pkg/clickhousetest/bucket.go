@@ -66,6 +66,35 @@ func Bucket(t testing.TB) *config.ObjectStore {
 	return bucket
 }
 
+// S3StandIn is the object_store of the S3 stand-in that Bucket uses, with
+// no prefix, or skips the test without one. Unlike Bucket, it leaves the dev
+// ClickHouse's storage policies alone.
+func S3StandIn(t testing.TB) *config.ObjectStore {
+	t.Helper()
+	return s3StandIn(t)
+}
+
+// UserFiles is the directory the dev ClickHouse reads files from with
+// file(), its user_files_path: SOLIDTRACE_TEST_CLICKHOUSE_USER_FILES, or the
+// main checkout's storage/duckdb/development/logs_parquet, which
+// bin/clickhouse-dev mounts there. A file at <UserFiles>/a/b is file('a/b')
+// to it. It skips the test when the directory is missing.
+func UserFiles(t testing.TB) string {
+	t.Helper()
+	dir := os.Getenv("SOLIDTRACE_TEST_CLICKHOUSE_USER_FILES")
+	if dir == "" {
+		devDir, err := devDir()
+		if err != nil {
+			t.Skipf("can't find the dev ClickHouse's user files: %v", err)
+		}
+		dir = filepath.Join(filepath.Dir(devDir), "duckdb", "development", "logs_parquet")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Skipf("the dev ClickHouse's user files aren't on this machine: %v", err)
+	}
+	return dir
+}
+
 // s3StandIn is the object_store of the S3 stand-in, or skips the test.
 func s3StandIn(t testing.TB) *config.ObjectStore {
 	t.Helper()

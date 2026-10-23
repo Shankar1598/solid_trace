@@ -92,7 +92,10 @@ func (s *ClickHouseLogs) LogProjects() ([]uint32, error) {
 	if err != nil {
 		return nil, err
 	}
-	var projects []uint32
+	projects, err := s.old.projects(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range partitions {
 		projects = append(projects, p.projectID)
 	}
@@ -101,17 +104,19 @@ func (s *ClickHouseLogs) LogProjects() ([]uint32, error) {
 }
 
 // DeleteLogDaysBefore deletes a Project's Logs of every UTC day before that
-// of day, with their counts.
+// of day, with their counts, and its old Log files of those days.
 func (s *ClickHouseLogs) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
 	day = LogDay(day)
-	return s.dropLogDays(func(p logPartition) bool { return p.projectID == projectID && p.day.Before(day) })
+	dropped := s.dropLogDays(func(p logPartition) bool { return p.projectID == projectID && p.day.Before(day) })
+	return errors.Join(dropped, s.deleteOldDays(projectID, func(d time.Time) bool { return d.Before(day) }))
 }
 
-// DeleteProjectLogs deletes every Log of a Project, with their counts. Its
-// Processing cursor, in Pebble, stays, so that a Log batch it already stored
-// is never stored again.
+// DeleteProjectLogs deletes every Log of a Project, with their counts and
+// its old Log files. Its Processing cursor, in Pebble, stays, so that a Log
+// batch it already stored is never stored again.
 func (s *ClickHouseLogs) DeleteProjectLogs(projectID uint32) error {
-	return s.dropLogDays(func(p logPartition) bool { return p.projectID == projectID })
+	dropped := s.dropLogDays(func(p logPartition) bool { return p.projectID == projectID })
+	return errors.Join(dropped, s.deleteOldDays(projectID, func(time.Time) bool { return true }))
 }
 
 // dropLogDays drops the partitions of the Log tables that drop selects.

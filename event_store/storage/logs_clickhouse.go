@@ -100,6 +100,10 @@ type ClickHouseLogs struct {
 	// generations of (Project, hour)s (logs_clickhouse_table.go).
 	bins        atomic.Pointer[binCache]
 	generations generations
+
+	// old is the Log files from before the switch, read with the logs
+	// table, or nil when there are none (logs_old_files.go).
+	old *oldLogFiles
 }
 
 type projectDay struct {
