@@ -14,3 +14,10 @@ go test ./logprocessing -run TestTheCommittedFixtureSetIsWhatPrepareWrites -upda
 
 then copy this folder over. The prepared files' format and what the set holds
 are in the Answer of `.scratch/clickhouse/issues/08-prepare-clickhouse-command.md`.
+
+`order placed`'s id, `01a0f6e8-ff60-7000-9000-000000000001`, was edited in by
+hand (in `logs.ndjson`, both copies of its `data-00.parquet`, and that file's
+`bytes` in `prepared/log_files.parquet`). Its file's `id` statistics are then
+in byte order but not in ClickHouse's UUID order, as real UUIDv7 ids are, which
+ClickHouse rejects when a filter on `id` reads them as UUIDs. Edit it in again
+after regenerating.
