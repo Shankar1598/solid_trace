@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -350,4 +352,56 @@ func TestAnUpgradeKeepsTheLogFilesItCannotRead(t *testing.T) {
 	env.DeleteLogsPastRetention(t)
 	assertGone(t, filepath.Dir(nine), "by Retention")
 	assertGone(t, filepath.Dir(ten), "by Retention")
+}
+
+// assertHourFiles checks how many files the compiler would read for a
+// Project's hour.
+func assertHourFiles(t *testing.T, env *TestEnv, projectID uint32, hour time.Time, want int) {
+	t.Helper()
+	files, err := env.LogStore.HourFiles(projectID, hour)
+	if err != nil {
+		t.Fatalf("List files of %v: %v", hour, err)
+	}
+	if len(files) != want {
+		t.Errorf("Expected %d files for %v, got %v", want, hour, files)
+	}
+}
+
+// unpublishLogFiles renames every Log file back to its staged name, as an
+// export leaves its files when it stops between its commit and its renames.
+func unpublishLogFiles(t *testing.T, env *TestEnv) {
+	t.Helper()
+	err := filepath.Walk(filepath.Join(env.dir, "logs_parquet"), func(path string, info os.FileInfo, err error) error {
+		if err != nil || !strings.HasSuffix(path, ".parquet") {
+			return err
+		}
+		return os.Rename(path, path+".tmp")
+	})
+	if err != nil {
+		t.Fatalf("Unpublish Log files: %v", err)
+	}
+}
+
+// copyFiles copies each existing file in names from one folder to another.
+func copyFiles(t *testing.T, from, to string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		src, err := os.Open(filepath.Join(from, name))
+		if os.IsNotExist(err) {
+			os.Remove(filepath.Join(to, name))
+			continue
+		}
+		if err != nil {
+			t.Fatalf("Open %s: %v", name, err)
+		}
+		dst, err := os.Create(filepath.Join(to, name))
+		if err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+		if _, err := io.Copy(dst, src); err != nil {
+			t.Fatalf("Copy %s: %v", name, err)
+		}
+		src.Close()
+		dst.Close()
+	}
 }
