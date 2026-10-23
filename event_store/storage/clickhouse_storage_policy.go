@@ -61,6 +61,9 @@ func ClickHouseStorageConfig(bucket *config.ObjectStore) []byte {
 		XMLName xml.Name `xml:"clickhouse"`
 		Disks   *disks   `xml:"storage_configuration>disks"`
 		Volume  *volume  `xml:"storage_configuration>policies>solidtrace>volumes>bucket"`
+		// The share of the local disk left free below which ClickHouse
+		// moves the largest parts to the bucket, whatever their age.
+		MoveFactor string `xml:"storage_configuration>policies>solidtrace>move_factor,omitempty"`
 	}
 
 	out := root{}
@@ -83,6 +86,8 @@ func ClickHouseStorageConfig(bucket *config.ObjectStore) []byte {
 		}
 		// After the local volume, whose priority is 1.
 		out.Volume = &volume{Disk: "bucket_cache", Priority: 2}
+		// ClickHouse's default with two volumes, written to be seen.
+		out.MoveFactor = "0.1"
 	}
 	body, err := xml.MarshalIndent(out, "", "  ")
 	if err != nil {
