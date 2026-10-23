@@ -155,14 +155,14 @@ A chart draws at most 8 series, the ones with the largest totals, and the legend
 
 ## Reading less
 
-The newest Logs are in the hot table, read in full: a busy Project's last 15 to 30 minutes. Older Logs are in Log files, one an hour or one a quarter-hour, each sorted by the Project's `log_file_order` (from `list_projects`; `service`, then `file`, by default), then time.
+Every Project's Logs are sorted by `service`, then by the `file` Attribute, then by time.
 
-- **Filter on the Log file order's Fields** with `==` or `in`, such as `where file == "sidekiq.log"`, to skip the rest of each file. The first Field skips most. A later Field skips well when the Fields before it have few values, so on a Project with one Service, `file` alone is enough.
-- **Filter on a top Attribute rather than `message`.** A day's 100 most used Attributes, the top of `list_fields`, each have a column, which a condition reads alone. `message` is the widest Field: `where job_status == "fail"` reads far less than `where message contains "INFO: fail:"`. Pair a `message` match with a Log file order condition.
+- **Filter on `service` and `file`** with `==` or `in`, such as `where file == "sidekiq.log"`, to read only those Logs, whatever the range. `service` skips most. `file` skips well too, alone, when the Project has few Services.
+- **Filter on an Attribute rather than `message`.** Each Attribute is kept apart from the others, so a condition on one reads it alone. `message` is the widest Field: `where job_status == "fail"` reads far less than `where message contains "INFO: fail:"`. Pair a `message` match with a `service` or `file` condition.
 - **Use `where`, not `search`**, which reads `message` and every string Attribute.
-- **Keep the range short.** A read opens only the files of the hours it touches, and a Dashboard refresh reads again only the bins still in the hot table.
+- **Keep the range short.** A read skips the days outside it, and a Dashboard refresh reads again only the bins of hours that haven't ended or have new Logs.
 
-In SQL, `attrs_string['name']` reads a map built for the view, so a condition on an Attribute reads every Log of the range. For a filtered count or chart, write a Query.
+In SQL, the same holds: a condition on `service` and `file` reads less, and `attributes.name.:String` reads that Attribute alone.
 
 ## Not in the language
 
