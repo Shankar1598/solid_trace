@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
-import { List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Check, ChevronsUpDown } from 'lucide-react'
+import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Check, ChevronsUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { navSection, orgSwitchUrl } from '@/lib/nav'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -33,6 +33,7 @@ export function Sidebar({ className }: SidebarProps) {
 
   const section = navSection(url)
   const navItems = [
+    { label: 'Overview', href: `/${current_org.slug}/overview`, icon: Gauge, active: section === 'overview' },
     { label: 'Issues', href: `/${current_org.slug}/issues`, icon: List, active: section === 'issues' },
     { label: 'Logs', href: `/${current_org.slug}/logs`, icon: ScrollText, active: section === 'logs' },
     { label: 'Dashboards', href: `/${current_org.slug}/dashboards`, icon: LayoutDashboard, active: section === 'dashboards' },
