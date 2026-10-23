@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 // Retention, Project deletion and the disk limit delete Logs a (Project, day)
@@ -159,7 +160,87 @@ func (s *ClickHouseLogs) dropPartitions(ctx context.Context, partitions []logPar
 	return nil
 }
 
-// EnforceDiskLimit keeps the Logs on local disk within limit.
+// LogDayUse is how much local disk a Project's UTC day of Logs takes, with
+// what is counted from them.
+type LogDayUse struct {
+	ProjectID uint32
+	Day       time.Time
+	Bytes     int64
+}
+
+// logDay is a Project's day of Logs on local disk, with its partitions.
+type logDay struct {
+	LogDayUse
+	partitions []logPartition
+}
+
+// localLogDays groups partitions by Project and day, oldest day first and
+// then by Project, leaving out days with nothing on local disk.
+func localLogDays(partitions []logPartition) []logDay {
+	byDay := map[projectDay]*logDay{}
+	for _, p := range partitions {
+		key := projectDay{p.projectID, p.day}
+		if byDay[key] == nil {
+			byDay[key] = &logDay{LogDayUse: LogDayUse{ProjectID: p.projectID, Day: p.day}}
+		}
+		byDay[key].Bytes += p.localBytes
+		byDay[key].partitions = append(byDay[key].partitions, p)
+	}
+	var days []logDay
+	for _, day := range byDay {
+		if day.Bytes > 0 {
+			days = append(days, *day)
+		}
+	}
+	slices.SortFunc(days, func(a, b logDay) int {
+		return cmp.Or(a.Day.Compare(b.Day), cmp.Compare(a.ProjectID, b.ProjectID))
+	})
+	return days
+}
+
+// LogDiskUse returns how much local disk each Project's day of Logs takes,
+// oldest day first; a day wholly in the bucket is left out.
+func (s *ClickHouseLogs) LogDiskUse() ([]LogDayUse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	partitions, err := s.logPartitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var use []LogDayUse
+	for _, day := range localLogDays(partitions) {
+		use = append(use, day.LogDayUse)
+	}
+	return use, nil
+}
+
+// EnforceDiskLimit keeps the Logs on local disk, with what is counted from
+// them, within limit, by deleting the oldest days of any Project.
 func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit) error {
-	return nil // the disk limit's slice replaces this
+	if limit.Bytes <= 0 {
+		return fmt.Errorf("no Log disk limit: %d bytes", limit.Bytes)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	partitions, err := s.logPartitions(ctx)
+	if err != nil {
+		return err
+	}
+	days := localLogDays(partitions)
+	var total int64
+	for _, day := range days {
+		total += day.Bytes
+	}
+	for _, day := range days {
+		if total <= limit.Bytes {
+			break
+		}
+		logger.L.Info("Deleting the oldest day of Logs past the disk limit",
+			"project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "bytes", day.Bytes, "limit", limit.Bytes)
+		if err := s.dropPartitions(ctx, day.partitions); err != nil {
+			return err
+		}
+		total -= day.Bytes
+	}
+	return nil
 }
