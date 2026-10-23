@@ -216,6 +216,8 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 	}
 	runs := []run{
 		{"/api/123/logs/query", "query", map[string]any{"query": `where duration > 100`}, []string{"duration"}},
+		// The message is read only for the Logs the other tests keep.
+		{"/api/123/logs/query", "query", map[string]any{"query": `where duration > 100 and message contains "e"`}, []string{"PREWHERE"}},
 		{"/api/123/logs/query", "match", map[string]any{"query": ``, "after_batch": "00000000-0000-0000-0000-000000000000"}, []string{"toUInt128(batch)"}},
 		{"/api/123/logs/query", "query", map[string]any{"query": `summarize count() by service`}, []string{"count()", "GROUP BY"}},
 		{"/api/123/logs/histogram", "histogram", map[string]any{"query": `where level == "error"`}, []string{"toStartOfInterval"}},

@@ -21,8 +21,9 @@ type TableScan struct {
 	ProjectID uint32
 	// From and To are the time range, [From, To).
 	From, To time.Time
-	// Where returns the SQL condition a Log must meet; "" keeps every Log.
-	Where func(ClickHouseColumns) string
+	// Where, if set, returns the SQL condition a Log must meet. An empty
+	// Filter keeps every Log.
+	Where func(ClickHouseColumns) Filter
 	// Select returns the select list the Logs are read with.
 	Select func(ClickHouseColumns) string
 	// Query returns the query that works the table out from logs, the
@@ -67,12 +68,7 @@ func tableSource(scan TableScan, spans []timeSpan) string {
 		inSpans[i] = fmt.Sprintf("(time >= %s AND time < %s)", chsql.Time(span.from), chsql.Time(span.to))
 	}
 	conditions := []string{fmt.Sprintf("project_id = %d", scan.ProjectID), "(" + strings.Join(inSpans, " OR ") + ")"}
-	if scan.Where != nil {
-		if w := scan.Where(ClickHouseColumns{}); w != "" {
-			conditions = append(conditions, "("+w+")")
-		}
-	}
-	return fmt.Sprintf("SELECT %s FROM logs WHERE %s", scan.Select(ClickHouseColumns{}), strings.Join(conditions, " AND "))
+	return fmt.Sprintf("SELECT %s FROM logs %s", scan.Select(ClickHouseColumns{}), whereClause(conditions, filterOf(scan.Where)))
 }
 
 // queryTable runs a query and reads its rows, as ScanLogTable returns them,
