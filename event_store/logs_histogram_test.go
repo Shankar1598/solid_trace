@@ -95,7 +95,7 @@ func TestHistogramCountsLogsPerBucketAndLevelWithEmptyBuckets(t *testing.T) {
 		"11:30:00 0 map[]",
 	}, 4, map[string]int{"error": 2, "none": 2})
 
-	exportLanguageLogs(t, env) // hour 10 to files, and fy late at 10:45
+	postLateLanguageLog(t, env) // hour 10 to files, and fy late at 10:45
 	check("across files and a late Log", "", []string{
 		"10:00:00 2 map[none:2]",
 		"10:30:00 2 map[error:1 none:1]",
@@ -153,7 +153,7 @@ func TestHistogramCountsTheLogsARunReturns(t *testing.T) {
 		}
 	}
 	check("in the hot table")
-	exportLanguageLogs(t, env)
+	postLateLanguageLog(t, env)
 	check("across files and a late Log")
 }
 
