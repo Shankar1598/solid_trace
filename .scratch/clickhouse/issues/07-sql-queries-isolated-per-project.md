@@ -4,7 +4,7 @@
 
 **Blocked by:** 04, 06
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **Each Project has an SQL user**, made when first needed:
   - row policies on `logs` and `events` limit it to its Project, and to the explorer's range through settings the policies read;
