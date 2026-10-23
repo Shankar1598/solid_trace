@@ -7,9 +7,11 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/solidtrace/event_store/pkg/clickhousetest"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -283,6 +285,23 @@ func enforceLogDiskLimit(t *testing.T, env *TestEnv, bytes int64) {
 	t.Helper()
 	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: bytes}); err != nil {
 		t.Fatalf("Enforcing the Log disk limit failed: %v", err)
+	}
+}
+
+func TestTheDefaultDiskLimitIsHalfOfClickHousesLocalDisk(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(clickhousetest.DataDir(t), &fs); err != nil {
+		t.Fatalf("statfs: %v", err)
+	}
+	disk := int64(fs.Blocks) * int64(fs.Bsize)
+	if limit, err := env.ClickHouseLogs.DiskLimit(0); err != nil || limit.Bytes != disk/2 {
+		t.Errorf("Expected the default limit to be half of ClickHouse's %d-byte disk, got %d, %v", disk, limit.Bytes, err)
+	}
+	if limit, err := env.ClickHouseLogs.DiskLimit(800_000_000_000); err != nil || limit.Bytes != 800_000_000_000 {
+		t.Errorf("Expected a configured limit to win, got %d, %v", limit.Bytes, err)
 	}
 }
 

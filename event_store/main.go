@@ -117,7 +117,8 @@ func main() {
 	}
 	logProcessor.Start()
 
-	diskLimit, err := storage.NewLogDiskLimit(cfg.LogsDiskLimitBytes, cfg.LogsParquetPath)
+	// Retention and deleted Projects once a day, the disk limit hourly.
+	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
 	if err != nil {
 		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
 	}

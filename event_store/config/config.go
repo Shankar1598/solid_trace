@@ -21,9 +21,10 @@ type Config struct {
 	DuckDBPath      string
 	LogsDuckDBPath  string // logs.duckdb, attached to the DuckDB of DuckDBPath
 	LogsParquetPath string // Where the Log export writes Log files
-	// LogsDiskLimitBytes caps the Log files of every Project together; the
-	// oldest hours are deleted past it. 0 caps them at half the disk that
-	// holds them (storage.NewLogDiskLimit).
+	// LogsDiskLimitBytes caps the Logs of every Project together on
+	// ClickHouse's local disk; past it, the oldest days move to the bucket,
+	// or are deleted without one. 0 caps them at half of that disk
+	// (storage.ClickHouseLogs.DiskLimit).
 	LogsDiskLimitBytes int64
 	// LogsBinCacheBytes is the memory the bin cache keeps charts' bins in;
 	// 0 turns it off.

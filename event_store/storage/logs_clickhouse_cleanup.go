@@ -160,6 +160,41 @@ func (s *ClickHouseLogs) dropPartitions(ctx context.Context, partitions []logPar
 	return nil
 }
 
+// defaultDiskShare is the share of ClickHouse's local disk that Logs may
+// take when no limit is configured. Logs are the largest thing on the disk,
+// but Events, Pebble and the system share it; half leaves them room to
+// grow, and doesn't move when they do.
+const defaultDiskShare = 50 // percent
+
+// LogDiskLimit caps how much local disk all Projects' Logs take together.
+type LogDiskLimit struct {
+	// Bytes is the cap, more than 0.
+	Bytes int64
+}
+
+// DiskLimit is the disk limit: configured bytes if more than 0, else
+// defaultDiskShare of the size of ClickHouse's local disk, read now.
+func (s *ClickHouseLogs) DiskLimit(configured int64) (LogDiskLimit, error) {
+	if configured > 0 {
+		return LogDiskLimit{Bytes: configured}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	var size int64
+	err := s.conn.QueryRow(ctx, `
+		SELECT toInt64(sum(total_space)) FROM system.disks
+		WHERE NOT is_remote AND name IN (
+			SELECT arrayJoin(disks) FROM system.storage_policies
+			WHERE policy_name = (SELECT storage_policy FROM system.tables WHERE database = currentDatabase() AND name = 'logs'))`).Scan(&size)
+	if err != nil {
+		return LogDiskLimit{}, fmt.Errorf("read the size of ClickHouse's local disk: %w", err)
+	}
+	if size <= 0 {
+		return LogDiskLimit{}, errors.New("read the size of ClickHouse's local disk: the logs table has no local disk")
+	}
+	return LogDiskLimit{Bytes: size * defaultDiskShare / 100}, nil
+}
+
 // LogDayUse is how much local disk a Project's UTC day of Logs takes.
 type LogDayUse struct {
 	ProjectID uint32

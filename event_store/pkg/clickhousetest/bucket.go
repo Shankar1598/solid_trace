@@ -113,6 +113,31 @@ func devConfDir() (string, error) {
 	if dir := os.Getenv("SOLIDTRACE_TEST_CLICKHOUSE_CONF_D"); dir != "" {
 		return dir, nil
 	}
+	dir, err := devDir()
+	return filepath.Join(dir, "conf.d"), err
+}
+
+// DataDir is the directory bin/clickhouse-dev keeps the dev ClickHouse's
+// data in, its local disk: SOLIDTRACE_TEST_CLICKHOUSE_DATA, or the main
+// checkout's storage/clickhouse/data. It skips the test when it's missing.
+func DataDir(t testing.TB) string {
+	t.Helper()
+	dir := os.Getenv("SOLIDTRACE_TEST_CLICKHOUSE_DATA")
+	if dir == "" {
+		devDir, err := devDir()
+		if err != nil {
+			t.Skipf("can't find the dev ClickHouse's data: %v", err)
+		}
+		dir = filepath.Join(devDir, "data")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Skipf("the dev ClickHouse's data isn't on this machine: %v", err)
+	}
+	return dir
+}
+
+// devDir is bin/clickhouse-dev's storage/clickhouse in the main checkout.
+func devDir() (string, error) {
 	// This file is <checkout>/event_store/pkg/clickhousetest/bucket.go.
 	_, self, _, _ := runtime.Caller(0)
 	checkout := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(self))))
@@ -121,7 +146,7 @@ func devConfDir() (string, error) {
 		return "", err
 	}
 	main := filepath.Dir(strings.TrimSpace(string(out)))
-	return filepath.Join(main, "storage", "clickhouse", "conf.d"), nil
+	return filepath.Join(main, "storage", "clickhouse"), nil
 }
 
 // bucketPolicyConfig is BucketPolicy's config, as EventStore's own policy
