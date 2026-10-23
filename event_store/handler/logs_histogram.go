@@ -94,12 +94,26 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	}
 
 	var counted []storage.LevelCount
+	limit := len(starts) * len(histogramLevels)
+	from, to := query.Range()
 	if !query.Filters() && bucket%time.Minute == 0 {
-		// Every Log counts, by minute: the counts kept by minute serve.
-		from, to := query.Range()
-		counted, err = h.clickHouse.CountLogsByLevel(run.ctx, projectID, from, to, bucket)
+		// Every Log counts, by minute: the counts kept by minute serve,
+		// except for the Logs from before the switch, which only their Log
+		// files hold. The buckets up to their end are counted from the
+		// Logs, as a Chart's are, so their ended hours come from the bin
+		// cache.
+		split := from
+		if end, ok := h.clickHouse.OldLogsEnd(projectID, from, to); ok {
+			split = earliestTime(bucketEnd(end, bucket), to)
+			counted, err = h.countByLevel(run, projectID, query.Histogram(bucket), from, split, limit)
+		}
+		if err == nil && split.Before(to) {
+			var byMinute []storage.LevelCount
+			byMinute, err = h.clickHouse.CountLogsByLevel(run.ctx, projectID, split, to, bucket)
+			counted = append(counted, byMinute...)
+		}
 	} else {
-		counted, err = h.countByLevel(run, projectID, query.Histogram(bucket), len(starts)*len(histogramLevels))
+		counted, err = h.countByLevel(run, projectID, query.Histogram(bucket), from, to, limit)
 	}
 	if err != nil {
 		if run.timedOut() {
@@ -139,11 +153,10 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	})
 }
 
-// countByLevel runs counts, a Query's Histogram, over the Logs, as a table
-// of at most limit rows. As a Chart's, its buckets of hours that have ended
-// may come from the bin cache.
-func (h *LogsHandler) countByLevel(run *run, projectID uint32, counts *logquery.Query, limit int) ([]storage.LevelCount, error) {
-	from, to := counts.Range()
+// countByLevel runs counts, a Query's Histogram, over the Logs of [from,
+// to), as a table of at most limit rows. As a Chart's, its buckets of hours
+// that have ended may come from the bin cache.
+func (h *LogsHandler) countByLevel(run *run, projectID uint32, counts *logquery.Query, from, to time.Time, limit int) ([]storage.LevelCount, error) {
 	scan := storage.TableScan{
 		ProjectID: projectID,
 		From:      from,
@@ -168,6 +181,24 @@ func (h *LogsHandler) countByLevel(run *run, projectID uint32, counts *logquery.
 		counted[i] = storage.LevelCount{Bucket: start, Level: level, Logs: n}
 	}
 	return counted, nil
+}
+
+// bucketEnd is the first start of a bucket of size bucket, counted from the
+// epoch, at or after t.
+func bucketEnd(t time.Time, bucket time.Duration) time.Time {
+	size, at := bucket.Microseconds(), t.UnixMicro()
+	end := at - ((at%size)+size)%size
+	if end < at {
+		end += size
+	}
+	return time.UnixMicro(end).UTC()
+}
+
+func earliestTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }
 
 // bucketStarts are the starts of the buckets of size bucket, counted from the
