@@ -74,6 +74,12 @@ module CallTimings
       Context.origin.to_s.start_with?("mcp:") || Context.log_all_reads?
     end
 
+    # Who the call or read running now is for: an MCP tool's user, or the
+    # signed-in user.
+    def user
+      Context.user || Current.user
+    end
+
     private
 
     def now
@@ -87,7 +93,7 @@ module CallTimings
       (answer["logs"] || answer.dig("table", "rows") || answer["buckets"])&.size
     end
 
-    def write(kind, message, started, outcome, error, user: Context.user || Current.user, **fields)
+    def write(kind, message, started, outcome, error, user: self.user, **fields)
       output = Rails.configuration.x.call_timings_output
       return unless output
 
@@ -102,6 +108,7 @@ module CallTimings
         error: error,
         user_id: user&.id,
         user_email: user&.email,
+        user_name: user&.name,
         request_id: Context.request_id,
         version: Rails.configuration.x.solidtrace_version,
         **fields,

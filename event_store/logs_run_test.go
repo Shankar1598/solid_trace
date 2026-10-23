@@ -200,8 +200,8 @@ func mustMarshal(t *testing.T, answer map[string]json.RawMessage) []byte {
 }
 
 // Each run Console asks with X-Log-SQL logs every SQL statement DuckDB ran
-// for it, with the request id Console sent, so a Console call timing leads
-// to the SQL its Query became. A run not asked logs none.
+// for it, with the request id and user Console sent, so a Console call
+// timing leads to the SQL its Query became. A run not asked logs none.
 func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
@@ -229,6 +229,8 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", requestID)
 		req.Header.Set("X-Log-SQL", "1")
+		req.Header.Set("X-User-Email", "ana@example.com")
+		req.Header.Set("X-User-Name", "Ana%20Mar%C3%ADa")
 		resp, err := env.QueryApp.Test(req, 10000)
 		if err != nil || resp.StatusCode != 200 {
 			t.Fatalf("POST %s %v: %v %v", run.path, run.body, resp, err)
@@ -247,6 +249,7 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 			for _, field := range []string{
 				"kind=log_read_sql", "read=" + run.read, "project_id=123", "request_id=" + requestID,
 				fmt.Sprintf("statement=%d", n+1), fmt.Sprintf("statements=%d", len(lines)), "duration_ms=", "sql=",
+				"user_email=ana@example.com", `user_name="Ana María"`,
 			} {
 				if !strings.Contains(line, field) {
 					t.Errorf("%s %v: expected %s in %q", run.path, run.body, field, line)
