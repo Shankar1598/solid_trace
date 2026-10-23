@@ -45,19 +45,19 @@ test('SQL mode opens with the readable SQL, runs on Run, and asks before discard
   expect(counts.length).toBeGreaterThan(1)
   expect(counts.reduce((sum, n) => sum + Number(n.replace(/,/g, '')), 0)).toBe(all)
 
-  // A mistake in the SQL says what DuckDB said, its caret under the mistake.
-  await box.fill('SELECT nope FROM logs')
+  // A mistake in the SQL says what ClickHouse said, a caret under where it failed.
+  await box.fill("SELECT message FROM logs WHER level = 'error'")
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   const error = page.getByRole('alert')
-  await expect(error).toContainText('Referenced column "nope" not found')
-  await expectCaretUnder(error, 'nope')
+  await expect(error).toContainText('Syntax error: failed at position 31 (level)')
+  await expectCaretUnder(error, 'level')
 
   // Leaving with edits asks: Stay keeps the SQL, Discard returns to the Builder.
   await page.getByRole('button', { name: 'Builder', exact: true }).click()
   await expect(page.getByText(/SQL can't be turned back into a Query/)).toBeVisible()
   await page.getByRole('button', { name: 'Stay in SQL' }).click()
   await expect(page.getByText(/SQL can't be turned back into a Query/)).toHaveCount(0)
-  await expectEditorText(box, 'SELECT nope FROM logs')
+  await expectEditorText(box, "SELECT message FROM logs WHER level = 'error'")
 
   await page.getByRole('button', { name: 'Builder', exact: true }).click()
   await page.getByRole('button', { name: 'Discard and switch' }).click()
@@ -104,7 +104,7 @@ test('leaving SQL for the Builder drops a Query typed in Query mode that never r
   expect(errors).toEqual([])
 })
 
-test('SQL that would change anything or read beyond its Project is refused, and a SELECT still runs', async ({ page }) => {
+test('SQL that would change anything or read beyond its Project\'s logs and events is refused, and a SELECT still runs', async ({ page }) => {
   // The refused SQL answers 400.
   const errors = watchErrors(page, [failedLoad(400)])
   await openLogs(page, last24h())
@@ -112,18 +112,19 @@ test('SQL that would change anything or read beyond its Project is refused, and 
   const box = page.getByLabel('SQL', { exact: true })
   await expectEditorText(box, /FROM logs/i)
 
-  await box.fill('DROP TABLE logs.log_key_counts')
+  // The database refuses it, as the Project's SQL user has no grant for it.
+  await box.fill('DROP TABLE log_key_counts')
   await page.getByRole('button', { name: 'Run', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText("SQL queries are read-only: DROP isn't allowed")
+  await expect(page.getByRole('alert')).toContainText('Not enough privileges')
+  await expect(page.getByRole('alert')).toContainText('DROP TABLE ON solidtrace.log_key_counts')
 
-  // SQL reads only the Project's logs and events views, not the tables behind them.
-  await box.fill('SELECT count(*) FROM logs.log_key_counts')
+  // SQL reads only the Project's logs and events, not EventStore's other tables.
+  await box.fill('SELECT count(*) FROM log_key_counts')
   await page.getByRole('button', { name: 'Run', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText(
-    "SQL queries can read only the logs and events views: logs.log_key_counts isn't allowed",
-  )
+  await expect(page.getByRole('alert')).toContainText('Not enough privileges')
+  await expect(page.getByRole('alert')).toContainText('SELECT ON solidtrace.log_key_counts')
 
-  // A SELECT of the logs view still runs.
+  // A SELECT of logs still runs.
   await box.fill('SELECT count(*) AS log_count FROM logs')
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   await settled(page)
@@ -140,15 +141,15 @@ test('on a phone a SQL error keeps its caret under the mistake', async ({ page }
   await openLogs(page, last24h())
   await page.getByRole('button', { name: 'SQL', exact: true }).click()
   // Longer than a phone is wide.
-  await page.getByLabel('SQL', { exact: true }).fill('SELECT service, level, count(*) AS n FROM logs WHERE nope = 1 GROUP BY service, level')
+  await page.getByLabel('SQL', { exact: true }).fill("SELECT service, count() AS n FROM logs WHER environment = 'production' GROUP BY service ORDER BY n DESC")
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   const error = page.getByRole('alert')
-  await expect(error).toContainText('Referenced column "nope" not found')
-  await expectCaretUnder(error, 'nope')
+  await expect(error).toContainText('Syntax error: failed at position 45 (environment)')
+  await expectCaretUnder(error, 'environment')
   expect(errors).toEqual([])
 })
 
-/** DuckDB's ^ is drawn on the line under its LINE, in the column where `word` starts. */
+/** The ^ is drawn on the line under the SQL's LINE, in the column where `word` starts. */
 async function expectCaretUnder(error: Locator, word: string) {
   const at = await error.evaluate((el, word) => {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
