@@ -2,7 +2,13 @@ package logprocessing
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"errors"
+	"fmt"
+	"io/fs"
+	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -335,6 +341,65 @@ func TestPrepareFilesEveryLogWhateverTheCutoffs(t *testing.T) {
 	in.mustPrepare(october(5, 10, 45), "v1.0.0")
 
 	in.assertEveryLogFiled()
+}
+
+// snapshot is every file under the install's prepared folder, Log files and
+// bucket, each with its size, time and a digest of its bytes.
+func (in *install) snapshot() map[string]string {
+	in.t.Helper()
+	files := map[string]string{}
+	for _, root := range []string{in.preparedDir(), in.logFilesDir(), filepath.Join(in.dir, "bucket")} {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			files[path] = fmt.Sprintf("%d bytes at %v, %x", info.Size(), info.ModTime(), sha256.Sum256(data))
+			return nil
+		})
+		if err != nil {
+			in.t.Fatalf("snapshot %s: %v", root, err)
+		}
+	}
+	return files
+}
+
+func TestPrepareWritesTheMarkerLastAndASecondRunDoesNothing(t *testing.T) {
+	in := newInstall(t)
+	in.post(1, october(5, 10, 20), logAt(october(5, 10, 20), "hot"))
+
+	if already, err := in.prepare(october(5, 10, 30), "v1.0.0"); err != nil || already {
+		t.Fatalf("Expected the first run to prepare the install, got already prepared %v, %v", already, err)
+	}
+	marker, err := storage.ReadClickHouseMarker(in.preparedDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (storage.ClickHouseMarker{Release: "v1.0.0", PreparedAt: october(5, 10, 30)}); marker == nil || *marker != want {
+		t.Fatalf("Expected the marker %+v, got %+v", want, marker)
+	}
+
+	before := in.snapshot()
+	// Only a DuckDB release started again could store this.
+	in.post(1, october(5, 10, 40), logAt(october(5, 10, 40), "after"))
+	if already, err := in.prepare(october(5, 11, 0), "v1.0.1"); err != nil || !already {
+		t.Fatalf("Expected the second run to find the marker, got already prepared %v, %v", already, err)
+	}
+
+	if after := in.snapshot(); !maps.Equal(after, before) {
+		t.Errorf("Expected the second run to change no file, before:\n%v\nafter:\n%v", before, after)
+	}
+	in.lastWaitingBatch(1) // still waiting
 }
 
 // The promoted sets, key counts and Log processing cursors the ClickHouse
