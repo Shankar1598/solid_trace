@@ -4,10 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/solidtrace/event_store/storage"
 )
 
 // seedProject adds a Project's row to the Console database, with its own
@@ -246,5 +249,80 @@ func TestAnEmptyProjectsTableDeletesNoProjectsLogs(t *testing.T) {
 	env.DeleteLogsPastRetention(t)
 	if got := messages(latestLogs(t, env, 123, 10)); len(got) != 0 {
 		t.Errorf("Expected the deleted Project's Logs gone, got %v", got)
+	}
+}
+
+// localDiskUse is how much local disk each Project's day of Logs takes, by
+// "<Project> <day>", and all of them.
+func localDiskUse(t *testing.T, env *TestEnv) (map[string]int64, int64) {
+	t.Helper()
+	days, err := env.ClickHouseLogs.LogDiskUse()
+	if err != nil {
+		t.Fatalf("Reading the Logs' disk use failed: %v", err)
+	}
+	use := map[string]int64{}
+	var total int64
+	for _, day := range days {
+		use[fmt.Sprintf("%d %s", day.ProjectID, day.Day.Format(time.DateOnly))] = day.Bytes
+		total += day.Bytes
+	}
+	return use, total
+}
+
+// enforceLogDiskLimit keeps the Logs on local disk within bytes.
+func enforceLogDiskLimit(t *testing.T, env *TestEnv, bytes int64) {
+	t.Helper()
+	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: bytes}); err != nil {
+		t.Fatalf("Enforcing the Log disk limit failed: %v", err)
+	}
+}
+
+func TestTheDiskLimitDropsTheOldestDaysOfAnyProjectFirst(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedProject(t, env.SQLitePath, 456, 0)
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	at := func(day, hour int) time.Time { return time.Date(2026, 10, day, hour, 10, 0, 0, time.UTC) }
+	postAt(t, env, 456, "other_public_key", "456 September 30th", time.Date(2026, 9, 30, 23, 10, 0, 0, time.UTC))
+	postAt(t, env, 123, "test_public_key", "123 October 1st", at(1, 8))
+	postAt(t, env, 456, "other_public_key", "456 October 1st", at(1, 9))
+	// One insert a day, so that no merge changes a day's size meanwhile.
+	env.Clock.Set(at(2, 11))
+	postAndProcessTo(t, env, 123, "test_public_key",
+		logJSON(t, "123 October 2nd", at(2, 10), map[string]any{"user": "ada"}),
+		logJSON(t, "123 October 2nd again", at(2, 11), map[string]any{"user": "bob"}))
+
+	use, total := localDiskUse(t, env)
+	if len(use) != 4 {
+		t.Fatalf("Expected four Project days on local disk, got %v", use)
+	}
+	assertMessages := func(projectID uint32, when string, want ...string) {
+		t.Helper()
+		if got := messages(latestLogs(t, env, projectID, 10)); !slices.Equal(got, want) {
+			t.Errorf("Expected Project %d to keep %v %s, got %v", projectID, want, when, got)
+		}
+	}
+
+	enforceLogDiskLimit(t, env, total)
+	assertMessages(456, "at the limit", "456 October 1st", "456 September 30th")
+	assertMessages(123, "at the limit", "123 October 2nd again", "123 October 2nd", "123 October 1st")
+
+	// The oldest day goes, whichever Project's it is.
+	enforceLogDiskLimit(t, env, total-1)
+	assertMessages(456, "past the limit by a byte", "456 October 1st")
+	assertMessages(123, "past the limit by a byte", "123 October 2nd again", "123 October 2nd", "123 October 1st")
+	assertCounted(t, env, 456, 1, "past the limit by a byte")
+
+	// Of a day's Projects, the first goes first.
+	enforceLogDiskLimit(t, env, use["123 2026-10-02"])
+	assertMessages(456, "with room for one day")
+	assertMessages(123, "with room for one day", "123 October 2nd again", "123 October 2nd")
+	assertCounted(t, env, 456, 0, "with room for one day")
+	assertCounted(t, env, 123, 2, "with room for one day")
+	if after, _ := localDiskUse(t, env); !maps.Equal(after, map[string]int64{"123 2026-10-02": use["123 2026-10-02"]}) {
+		t.Errorf("Expected only October 2nd of Project 123 on local disk, got %v", after)
 	}
 }
