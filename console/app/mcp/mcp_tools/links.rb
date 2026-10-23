@@ -17,6 +17,11 @@ module McpTools
       url(routes.email_settings_path(org_slug: organization.slug))
     end
 
+    # The Overview over a range of Overview::RANGES, Today's without one.
+    def overview(organization, range = Overview::DEFAULT_RANGE)
+      url(routes.overview_path(org_slug: organization.slug, range: range == Overview::DEFAULT_RANGE ? nil : range))
+    end
+
     def projects(organization)
       url(routes.projects_path(org_slug: organization.slug))
     end

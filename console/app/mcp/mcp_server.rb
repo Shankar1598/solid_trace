@@ -8,6 +8,7 @@ module McpServer
   TOOLS = [
     McpTools::Whoami,
     McpTools::ListProjects,
+    McpTools::GetOverview,
     McpTools::QueryLogs,
     McpTools::GetLog,
     McpTools::ListFields,
@@ -53,6 +54,7 @@ module McpServer
     You act as the user whose API token you sent, with their role in each Organization.
     Tools take an Organization's slug, which you can leave out when you belong to one, and a Project's slug.
     whoami lists your Organizations, and list_projects an Organization's Projects.
+    get_overview answers how much an Organization's Projects sent and store, and how fast, over today, 7 or 30 days.
     query_logs runs a Query on a Project's Logs; list_fields lists the names a Query reads, and query_language_reference explains the language.
     To read less, filter with == or in on service and file, which every Project's Logs are sorted by; query_language_reference's Reading less says how.
     get_log_transform shows the program that shapes a Project's Logs before they're stored.
