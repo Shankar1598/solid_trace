@@ -468,7 +468,7 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
-	env.LogCleanup = logprocessing.NewCleanup(logStore, consoleSettings, storage.LogDiskLimit{}, env.Clock)
+	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, consoleSettings, storage.LogDiskLimit{}, env.Clock)
 
 	// Setup Handler
 	env.EventWriter.setWriter(pebbleWriter)
@@ -505,6 +505,21 @@ func (env *TestEnv) open(t *testing.T) {
 		env.LogTransforms.Close()
 		consoleSettings.Close()
 	}
+}
+
+// testExtensionDirectory holds httpfs, which DuckDB loads with a bucket:
+// SOLIDTRACE_TEST_DUCKDB_EXTENSION_DIRECTORY, or the dev box's
+// ~/.cache/solid-trace/duckdb_extensions.
+func testExtensionDirectory(t *testing.T) string {
+	t.Helper()
+	if dir := os.Getenv("SOLIDTRACE_TEST_DUCKDB_EXTENSION_DIRECTORY"); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(home, ".cache", "solid-trace", "duckdb_extensions")
 }
 
 // Cleanup closes every store.

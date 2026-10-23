@@ -2,15 +2,12 @@ package main_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/solidtrace/event_store/storage"
 )
 
 // seedProject adds a Project's row to the Console database, with its own
@@ -64,11 +61,39 @@ func TestALogOlderThanItsProjectsRetentionGetsItsReceiptTime(t *testing.T) {
 }
 
 // postAt sends one Log to a Project at its own time, with the clock at that
-// time, so that it is a hot Log and promotes its keys for its day.
+// time, with its message as its user Attribute.
 func postAt(t *testing.T, env *TestEnv, projectID uint32, key, message string, at time.Time) {
 	t.Helper()
 	env.Clock.Set(at)
 	postAndProcessTo(t, env, projectID, key, logJSON(t, message, at, map[string]any{"user": message}))
+}
+
+// countedRange is a range that holds every Log the Retention and disk limit
+// tests send, in whole days.
+var countedRange = struct{ from, to time.Time }{
+	from: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+	to:   time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC),
+}
+
+// assertCounted checks that a Project's histogram over countedRange counts
+// want Logs, and that its Fields count want Logs with the user Attribute.
+func assertCounted(t *testing.T, env *TestEnv, projectID uint32, want int, when string) {
+	t.Helper()
+	path := fmt.Sprintf("/api/%d/logs/histogram", projectID)
+	status, raw := postQueryApp(t, env, path, histogramRequest{From: countedRange.from, To: countedRange.to, BucketSeconds: 86400})
+	var answer histogramAnswer
+	if err := json.Unmarshal(raw, &answer); status != 200 || err != nil {
+		t.Fatalf("Histogram of Project %d expected 200, got %d: %s", projectID, status, raw)
+	}
+	if answer.Count != want {
+		t.Errorf("Expected Project %d's histogram to count %d Logs %s, got %d", projectID, want, when, answer.Count)
+	}
+	var wantFields []attributeCount
+	if want > 0 {
+		wantFields = []attributeCount{{"user", "string", int64(want)}}
+	}
+	assertAttributes(t, getFields(t, env, projectID, countedRange.from, countedRange.to, ""), wantFields,
+		fmt.Sprintf("Project %d's Fields %s", projectID, when))
 }
 
 func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
@@ -92,19 +117,20 @@ func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
 	// At noon on 2 October, 30 days back is noon on 2 September: that day
 	// still holds Logs within Retention, so only the days before it go.
 	env.Clock.Set(testNow)
-	env.ExportLogs(t)
 	env.DeleteLogsPastRetention(t)
 
-	assertMessages := func(projectID uint32, want ...string) {
+	assertMessages := func(projectID uint32, when string, want ...string) {
 		t.Helper()
 		if got := messages(latestLogs(t, env, projectID, 10)); !slices.Equal(got, want) {
-			t.Errorf("Expected Project %d to keep %v, got %v", projectID, want, got)
+			t.Errorf("Expected Project %d to keep %v %s, got %v", projectID, want, when, got)
 		}
 	}
-	// The days kept keep their promoted sets, so their Logs are still found
-	// by the keys the sets promoted.
-	assertFound := func(when string) {
+	// The days kept keep their counts: the histogram and the Fields count
+	// their Logs alone.
+	assertKept := func(when string) {
 		t.Helper()
+		assertMessages(123, when, "yesterday", "first day within 30")
+		assertMessages(456, when, "first day within 7")
 		assertProjectQueries(t, env, 123, map[string][]string{
 			`where user == "last day past 30"`:    {},
 			`where user == "first day within 30"`: {"first day within 30"},
@@ -114,14 +140,15 @@ func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
 			`where user == "last day past 7"`:    {},
 			`where user == "first day within 7"`: {"first day within 7"},
 		}, when)
+		assertCounted(t, env, 123, 2, when)
+		assertCounted(t, env, 456, 1, when)
 	}
-	assertMessages(123, "yesterday", "first day within 30")
-	assertMessages(456, "first day within 7")
-	assertFound("after Retention")
+	assertKept("after Retention")
 
 	env.Reopen(t)
-	assertMessages(123, "yesterday", "first day within 30")
-	assertFound("after a restart")
+	assertKept("after a restart")
+	env.DeleteLogsPastRetention(t)
+	assertKept("after another pass")
 }
 
 // consoleExec changes the Console database as Console would.
@@ -145,30 +172,23 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 	seedProject(t, env.SQLitePath, 456, 0)
 	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
 
-	// Each Project gets a Log in a file, one in its hot table and a late
-	// one.
-	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
+	// Each Project gets Logs of two days, one of them late.
+	at := func(day, hour int) time.Time { return time.Date(2026, 10, day, hour, 10, 0, 0, time.UTC) }
 	for _, p := range []struct {
 		id  uint32
 		key string
 	}{{123, "test_public_key"}, {456, "other_public_key"}} {
-		env.Clock.Set(at(10, 29))
-		postAndProcessTo(t, env, p.id, p.key, logJSON(t, "exported", at(10, 10), map[string]any{"user": "ada"}))
-		env.Clock.Set(at(12, 29))
+		env.Clock.Set(at(1, 10))
+		postAndProcessTo(t, env, p.id, p.key, logJSON(t, "yesterday", at(1, 10), map[string]any{"user": "ada"}))
+		env.Clock.Set(at(2, 12))
 		postAndProcessTo(t, env, p.id, p.key,
-			logJSON(t, "hot", at(12, 10), map[string]any{"user": "bob"}),
-			logJSON(t, "late", at(9, 0), map[string]any{"user": "cy"}))
+			logJSON(t, "today", at(2, 12), map[string]any{"user": "bob"}),
+			logJSON(t, "late", at(1, 9), map[string]any{"user": "cy"}))
 	}
-	env.ExportLogs(t)
 	want := latestLogs(t, env, 123, 10)
-	if got := messages(want); !slices.Equal(got, []string{"hot", "exported", "late"}) {
+	if got := messages(want); !slices.Equal(got, []string{"today", "yesterday", "late"}) {
 		t.Fatalf("Unexpected Logs of Project 123: %v", got)
 	}
-	// The folder of a Project's files: project=<id>.
-	projectDir := func(projectID uint32) string {
-		return filepath.Dir(filepath.Dir(filepath.Dir(hourFile(t, env, projectID, at(10, 10)))))
-	}
-	deletedDir, keptDir := projectDir(456), projectDir(123)
 
 	// Project 123 loses its last key, and Project 456 is deleted.
 	consoleExec(t, env, "DELETE FROM project_keys WHERE project_id = 123")
@@ -180,20 +200,27 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 		if got := latestLogs(t, env, 456, 10); len(got) != 0 {
 			t.Errorf("Expected the deleted Project to have no Logs %s, got %v", when, messages(got))
 		}
+		if got := getFields(t, env, 456, countedRange.from, countedRange.to, ""); len(got.Attributes) != 0 {
+			t.Errorf("Expected the deleted Project to have no Fields %s, got %v", when, got.Attributes)
+		}
+		status, raw := postQueryApp(t, env, "/api/456/logs/histogram",
+			histogramRequest{From: countedRange.from, To: countedRange.to, BucketSeconds: 86400})
+		var answer histogramAnswer
+		if err := json.Unmarshal(raw, &answer); status != 200 || err != nil {
+			t.Fatalf("Histogram of Project 456 expected 200, got %d: %s", status, raw)
+		}
+		if answer.Count != 0 {
+			t.Errorf("Expected the deleted Project's histogram to count nothing %s, got %d", when, answer.Count)
+		}
 		assertListsUnchanged(t, env, 123, want, when)
-		// Project 123 keeps its promoted set, so its Logs are still found by
-		// the key it promoted.
 		assertProjectQueries(t, env, 123, map[string][]string{
-			`where user == "ada"`: {"exported"},
-			`where user == "bob"`: {"hot"},
+			`where user == "ada"`: {"yesterday"},
+			`where user == "bob"`: {"today"},
 			`where user == "cy"`:  {"late"},
 		}, when)
+		assertCounted(t, env, 123, 3, when)
 	}
 	assertDeleted("after the pass")
-	assertGone(t, deletedDir, "with its Project")
-	if _, err := os.Stat(keptDir); err != nil {
-		t.Errorf("Expected Project 123 to keep its files, got %v", err)
-	}
 	env.Reopen(t)
 	assertDeleted("after a restart")
 	env.DeleteLogsPastRetention(t)
@@ -220,92 +247,4 @@ func TestAnEmptyProjectsTableDeletesNoProjectsLogs(t *testing.T) {
 	if got := messages(latestLogs(t, env, 123, 10)); len(got) != 0 {
 		t.Errorf("Expected the deleted Project's Logs gone, got %v", got)
 	}
-}
-
-// hourBytes is the size of a Project's files of an hour.
-func hourBytes(t *testing.T, env *TestEnv, projectID uint32, hour time.Time) int64 {
-	t.Helper()
-	files, err := env.LogStore.HourFiles(projectID, hour)
-	if err != nil || len(files) == 0 {
-		t.Fatalf("Expected files for Project %d's hour %v, got %v, %v", projectID, hour, files, err)
-	}
-	var size int64
-	for _, file := range files {
-		info, err := os.Stat(file)
-		if err != nil {
-			t.Fatalf("Stat %s: %v", file, err)
-		}
-		size += info.Size()
-	}
-	return size
-}
-
-// enforceLogDiskLimit deletes the oldest Log files until they take at most
-// bytes.
-func enforceLogDiskLimit(t *testing.T, env *TestEnv, bytes int64) {
-	t.Helper()
-	if err := env.LogStore.EnforceDiskLimit(storage.LogDiskLimit{Bytes: bytes}); err != nil {
-		t.Fatalf("Enforcing the Log disk limit failed: %v", err)
-	}
-}
-
-func TestTheDiskLimitDeletesTheOldestHoursOfAnyProjectFirst(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-
-	seedProject(t, env.SQLitePath, 123, 0)
-	seedProject(t, env.SQLitePath, 456, 0)
-	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
-
-	at := func(day, hour int) time.Time { return time.Date(2026, 10, day, hour, 10, 0, 0, time.UTC) }
-	postAt(t, env, 456, "other_public_key", "456 yesterday 23:10", at(1, 23))
-	postAt(t, env, 123, "test_public_key", "123 08:10", at(2, 8))
-	postAt(t, env, 456, "other_public_key", "456 09:10", at(2, 9))
-	postAt(t, env, 123, "test_public_key", "123 10:10", at(2, 10))
-	postAt(t, env, 123, "test_public_key", "123 12:10", at(2, 12)) // stays in the hot table
-	env.Clock.Set(at(2, 12))
-	env.ExportLogs(t)
-
-	assertMessages := func(projectID uint32, when string, want ...string) {
-		t.Helper()
-		if got := messages(latestLogs(t, env, projectID, 10)); !slices.Equal(got, want) {
-			t.Errorf("Expected Project %d to keep %v %s, got %v", projectID, want, when, got)
-		}
-	}
-	oldest := hourBytes(t, env, 456, at(1, 23))
-	total := oldest + hourBytes(t, env, 123, at(2, 8)) + hourBytes(t, env, 456, at(2, 9)) + hourBytes(t, env, 123, at(2, 10))
-	files := map[string]string{
-		"456 yesterday 23:00": hourFile(t, env, 456, at(1, 23)),
-		"123 08:00":           hourFile(t, env, 123, at(2, 8)),
-		"456 09:00":           hourFile(t, env, 456, at(2, 9)),
-		"123 10:00":           hourFile(t, env, 123, at(2, 10)),
-	}
-	// assertOnDisk checks that the files of the hours in kept are still on
-	// disk, and that the other hours' folders are gone.
-	assertOnDisk := func(when string, kept ...string) {
-		t.Helper()
-		for hour, file := range files {
-			if slices.Contains(kept, hour) {
-				if _, err := os.Stat(file); err != nil {
-					t.Errorf("Expected the file of %s kept on disk %s, got %v", hour, when, err)
-				}
-			} else {
-				assertGone(t, filepath.Dir(file), when)
-			}
-		}
-	}
-
-	enforceLogDiskLimit(t, env, total)
-	assertMessages(456, "at the limit", "456 09:10", "456 yesterday 23:10")
-	assertOnDisk("at the limit", "456 yesterday 23:00", "123 08:00", "456 09:00", "123 10:00")
-
-	enforceLogDiskLimit(t, env, total-1)
-	assertMessages(456, "past the limit by a byte", "456 09:10")
-	assertMessages(123, "past the limit by a byte", "123 12:10", "123 10:10", "123 08:10")
-	assertOnDisk("past the limit by a byte", "123 08:00", "456 09:00", "123 10:00")
-
-	enforceLogDiskLimit(t, env, hourBytes(t, env, 123, at(2, 10)))
-	assertMessages(456, "with room for one hour")
-	assertMessages(123, "with room for one hour", "123 12:10", "123 10:10")
-	assertOnDisk("with room for one hour", "123 10:00")
 }
