@@ -775,6 +775,57 @@ func setPromoted[V any](m map[string]V, keys []string, values []*V) {
 	}
 }
 
+// logByID returns a Project's old Log with the given id, if its old files
+// hold one, as LogByID does logs: with at, the Log's own time, it reads only
+// the files of at's day. Else it reads those of the days around the id's
+// time, and then every file with a local copy, as the DuckDB release did:
+// reading all of the bucket's would read every old Log.
+func (o *oldLogFiles) logByID(s *ClickHouseLogs, ctx context.Context, projectID uint32, id uuid.UUID, at *time.Time) (models.Log, bool, error) {
+	onDays := func(from, to time.Time) func(oldLogFile) bool {
+		return func(file oldLogFile) bool { return !file.day.Before(LogDay(from)) && !file.day.After(LogDay(to)) }
+	}
+	var tries []func(oldLogFile) bool
+	if at != nil {
+		tries = append(tries, onDays(*at, *at))
+	} else {
+		arrived := time.Unix(id.Time().UnixTime()).UTC()
+		around := onDays(arrived.Add(-time.Hour), arrived.Add(time.Hour))
+		tries = append(tries, around, func(file oldLogFile) bool { return file.local && !around(file) })
+	}
+	match := []string{"id = " + chsql.UUID(id)}
+	for _, keep := range tries {
+		sources := o.sources(projectID, keep)
+		if len(sources) == 0 {
+			continue
+		}
+		logs, err := o.queryLogs(s, ctx, sources, match, nil, "LIMIT 1")
+		if err != nil || len(logs) > 0 {
+			return firstLog(logs), len(logs) > 0, err
+		}
+	}
+	return models.Log{}, false, nil
+}
+
+// keyCounts is what the read of key counts adds for the old days' counts,
+// which prepare-clickhouse wrote, after UNION ALL; its arguments are
+// keyCountsArgs.
+func (o *oldLogFiles) keyCounts() string {
+	if o == nil {
+		return ""
+	}
+	return `
+			UNION ALL
+			SELECT key, type, logs FROM old_log_key_counts
+			WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)`
+}
+
+func (o *oldLogFiles) keyCountsArgs(projectID uint32, first, last time.Time) []any {
+	if o == nil {
+		return nil
+	}
+	return []any{projectID, dayString(first), dayString(last)}
+}
+
 // mergeNewestFirst merges two lists of Logs, each newest first, into one,
 // newest first, of at most limit Logs.
 func mergeNewestFirst(a, b []models.Log, limit int) []models.Log {

@@ -432,6 +432,57 @@ func TestHistogramsOverOldHoursAndTheSwitchCountWhatClickHouseWould(t *testing.T
 	assertSameAnswers(t, got, want)
 }
 
+func TestAnOldLogIsFoundByItsIDAsClickHouseWouldFindIt(t *testing.T) {
+	logs := fixtureLogs(t)
+	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
+		answers := map[string]string{}
+		get := func(name, path string) {
+			status, raw := getQuery(t, env, path)
+			answers[name] = fmt.Sprintf("%d %s", status, raw)
+		}
+		for _, log := range logs {
+			path := fmt.Sprintf("/api/%d/logs/%s", log.ProjectID, log.ID)
+			name := fmt.Sprintf("%q (%s)", log.Message, log.Time.Format(time.RFC3339))
+			get(name+" by id", path)
+			get(name+" by id and time", path+"?time="+log.Time.Format(time.RFC3339Nano))
+			get(name+" by id and an hour before", path+"?time="+log.Time.Add(-time.Hour).Format(time.RFC3339Nano))
+			get(name+" by id in another Project", fmt.Sprintf("/api/%d/logs/%s", 5-log.ProjectID, log.ID))
+		}
+		return answers
+	})
+	assertSameAnswers(t, got, want)
+	name := fmt.Sprintf("%q (%s) by id", logs[0].Message, logs[0].Time.Format(time.RFC3339))
+	if found := want[name]; !strings.HasPrefix(found, "200 ") || !strings.Contains(found, logs[0].ID.String()) {
+		t.Errorf("Expected the Log found by its id, got %s", found)
+	}
+}
+
+func TestFieldsOfOldDaysCountWhatTheDuckDBReleaseCounted(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+	})
+	defer env.Cleanup()
+	first, second := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+
+	// The DuckDB release never counted a late Log, such as the 10:05 one.
+	assertAttributes(t, getFields(t, env, 3, first, second, ""), []attributeCount{
+		{"user", "string", 4}, {"duration_ms", "number", 2}, {"plan", "string", 2}, {"cached", "bool", 1},
+	}, "Project 3's first day")
+	assertAttributes(t, getFields(t, env, 2, first, second.Add(time.Hour), ""), []attributeCount{
+		{"path", "string", 4},
+	}, "Project 2's two days")
+
+	// Logs inserted since the switch count with them, late ones too.
+	postAfterTheSwitch(t, env)
+	assertAttributes(t, getFields(t, env, 3, first, second, ""), []attributeCount{
+		{"user", "string", 5}, {"duration_ms", "number", 3}, {"plan", "string", 3}, {"cached", "bool", 1},
+	}, "Project 3's first day, with a late Log")
+	assertAttributes(t, getFields(t, env, 3, second, second.Add(24*time.Hour), ""), []attributeCount{
+		{"user", "string", 5}, {"cached", "bool", 3}, {"duration_ms", "number", 2}, {"plan", "string", 2},
+	}, "Project 3's second day")
+}
+
 func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
 		answers := map[string]string{}
