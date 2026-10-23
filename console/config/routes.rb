@@ -33,6 +33,7 @@ Rails.application.routes.draw do
   resources :organizations, only: [ :new, :create ]
 
   scope "/:org_slug" do
+    get "overview", to: "overview#show", as: :overview
     resources :issues, only: [ :index ] do
       collection do
         patch :status, action: :update_status
