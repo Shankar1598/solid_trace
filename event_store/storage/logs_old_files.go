@@ -572,21 +572,28 @@ func inSpans(spans ...timeSpan) func(oldLogFile) bool {
 // hive-partitioned, but their parts aren't columns.
 const oldFileSettings = " SETTINGS use_hive_partitioning = 0, s3_ignore_file_doesnt_exist = 1, input_format_parquet_allow_missing_columns = 1"
 
-// table is the table function that reads a source's files. Each is read
-// with the columns of its day's set, and a column a file lacks reads NULL.
-// The paths are a glob of the keys, which reads the files that exist and
-// lists nothing.
+// table is the subquery that reads a source's files. Each is read with the
+// columns of its day's set, and a column a file lacks reads NULL. The paths
+// are a glob of the keys, which reads the files that exist and lists nothing.
+//
+// id and batch are read as their 16 bytes and made UUIDs after: DuckDB wrote
+// their statistics in byte order, which ClickHouse's UUID order doesn't
+// keep, so a filter on them as UUIDs fails the file's statistics check.
+// _path, the file a Log is in, is passed on.
 func (o *oldLogFiles) table(src oldSource) string {
 	glob := "{" + strings.Join(src.keys, ",") + "}"
 	structure := chsql.String(oldFileStructure(src.set))
+	var files string
 	if src.local {
-		return fmt.Sprintf("file(%s, 'Parquet', %s)", chsql.String(path.Join(o.cfg.ClickHouseDir, glob)), structure)
+		files = fmt.Sprintf("file(%s, 'Parquet', %s)", chsql.String(path.Join(o.cfg.ClickHouseDir, glob)), structure)
+	} else {
+		key := "NOSIGN"
+		if o.cfg.Bucket.KeyID != "" {
+			key = "{old_files_key_id:String}, {old_files_secret:String}"
+		}
+		files = fmt.Sprintf("s3(%s, %s, 'Parquet', %s)", chsql.String(oldBucketURL(o.cfg.Bucket)+glob), key, structure)
 	}
-	key := "NOSIGN"
-	if o.cfg.Bucket.KeyID != "" {
-		key = "{old_files_key_id:String}, {old_files_secret:String}"
-	}
-	return fmt.Sprintf("s3(%s, %s, 'Parquet', %s)", chsql.String(oldBucketURL(o.cfg.Bucket)+glob), key, structure)
+	return "(SELECT * REPLACE (toUUID(UUIDNumToString(id)) AS id, toUUIDOrNull(UUIDNumToString(batch)) AS batch), _path FROM " + files + ")"
 }
 
 // withBucketKey is ctx carrying the bucket's key for table's s3(), as
@@ -615,13 +622,14 @@ func oldBucketURL(bucket *config.ObjectStore) string {
 }
 
 // oldFileStructure is the columns an old Log file of a day is read with:
-// the fixed ones, then the day's promoted columns.
+// the fixed ones, then the day's promoted columns. id and batch are their
+// 16 bytes, which table makes UUIDs.
 func oldFileStructure(set []oldPromotedKey) string {
 	columns := []string{
-		"id UUID", "time DateTime64(6, 'UTC')",
+		"id FixedString(16)", "time DateTime64(6, 'UTC')",
 		"level Nullable(String)", "message Nullable(String)", "service Nullable(String)",
 		"environment Nullable(String)", "trace_id Nullable(String)", "span_id Nullable(String)",
-		"batch Nullable(UUID)",
+		"batch Nullable(FixedString(16))",
 		"attrs_string Map(String, String)", "attrs_number Map(String, Float64)",
 		"attrs_bool Map(String, Bool)", "attrs_json Map(String, String)",
 	}
