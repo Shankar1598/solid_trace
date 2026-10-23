@@ -93,18 +93,14 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
 
-	counts := query.Histogram(bucket)
-	from, to := counts.Range()
-	limit := len(starts) * len(histogramLevels)
-	scan := storage.TableScan{
-		ProjectID: projectID,
-		From:      from,
-		To:        to,
-		Where:     func(cols storage.ClickHouseColumns) string { return counts.Where(cols) },
-		Select:    func(cols storage.ClickHouseColumns) string { return counts.Select(cols) },
-		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
+	var counted []storage.LevelCount
+	if !query.Filters() && bucket%time.Minute == 0 {
+		// Every Log counts, by minute: the counts kept by minute serve.
+		from, to := query.Range()
+		counted, err = h.clickHouse.CountLogsByLevel(run.ctx, projectID, from, to, bucket)
+	} else {
+		counted, err = h.countByLevel(run, projectID, query.Histogram(bucket), len(starts)*len(histogramLevels))
 	}
-	raw, err := h.clickHouse.ScanLogTable(run.ctx, scan)
 	if err != nil {
 		if run.timedOut() {
 			return run.stopped(c, shorterRange)
@@ -120,15 +116,13 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		index[start.UnixMilli()] = i
 	}
 	total, levels := int64(0), newLevelCounts()
-	for _, row := range raw {
-		start, _ := row[0].(time.Time)
-		level, _ := row[1].(string)
+	for _, count := range counted {
+		level := count.Level
 		if level == "" {
 			level = "none"
 		}
-		count, _ := row[2].(uint64)
-		n := int64(count)
-		i, ok := index[start.UnixMilli()]
+		n := int64(count.Logs)
+		i, ok := index[count.Bucket.UnixMilli()]
 		if !ok {
 			continue
 		}
@@ -143,6 +137,31 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		"count":          total,
 		"levels":         levels,
 	})
+}
+
+// countByLevel runs counts, a Query's Histogram, over the Logs, as a table
+// of at most limit rows.
+func (h *LogsHandler) countByLevel(run *run, projectID uint32, counts *logquery.Query, limit int) ([]storage.LevelCount, error) {
+	from, to := counts.Range()
+	raw, err := h.clickHouse.ScanLogTable(run.ctx, storage.TableScan{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Where:     func(cols storage.ClickHouseColumns) string { return counts.Where(cols) },
+		Select:    func(cols storage.ClickHouseColumns) string { return counts.Select(cols) },
+		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
+	})
+	if err != nil {
+		return nil, err
+	}
+	counted := make([]storage.LevelCount, len(raw))
+	for i, row := range raw {
+		start, _ := row[0].(time.Time)
+		level, _ := row[1].(string)
+		n, _ := row[2].(uint64)
+		counted[i] = storage.LevelCount{Bucket: start, Level: level, Logs: n}
+	}
+	return counted, nil
 }
 
 // bucketStarts are the starts of the buckets of size bucket, counted from the
