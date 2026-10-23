@@ -24,6 +24,8 @@ CONFIG_FILE="$DEPLOY_DIR/config/event_store.yml"
 ENV_FILE="$DEPLOY_DIR/.env"
 # The user Console's image runs as (console/Dockerfile).
 CONSOLE_UID=1000
+# The user ClickHouse's image runs as.
+CLICKHOUSE_UID=101
 
 say() { printf '\n== %s\n' "$*"; }
 die() { printf '\nerror: %s\n' "$*" >&2; exit 1; }
@@ -88,6 +90,8 @@ check_old_paths() {
 create_data_dirs() {
   say "Creating $DATA_DIR"
   as_root install -d -m 0755 -o "$CONSOLE_UID" -g "$CONSOLE_UID" "$DATA_DIR/storage" "$DATA_DIR/storage_cold"
+  # ClickHouse's data. Compose stops its image from chowning it.
+  as_root install -d -m 0750 -o "$CLICKHOUSE_UID" -g "$CLICKHOUSE_UID" "$DATA_DIR/clickhouse"
   # Caddy's certificates. Its image runs as root.
   as_root install -d -m 0700 "$DATA_DIR/caddy"
 }
@@ -116,6 +120,16 @@ ensure_env_secret() {
   fi
   say "$3"
   (umask 077 && echo "$1=$(od -An -N"$2" -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
+}
+
+# ensure_env_value NAME VALUE MESSAGE appends NAME=VALUE to deploy/.env,
+# unless it already has a value, which an operator may have changed.
+ensure_env_value() {
+  if grep -qs "^$1=." "$ENV_FILE"; then
+    return
+  fi
+  say "$3"
+  (umask 077 && echo "$1=$2" >>"$ENV_FILE")
 }
 
 # env_value KEY prints KEY's value in deploy/.env, or nothing.
@@ -211,6 +225,12 @@ ensure_env_secret SECRET_KEY_BASE 64 "Writing Console's secret to $ENV_FILE"
 # SolidTrace's own Logs (docs/adr/0011). db_prepare gives the Project this key
 # when it seeds it, and Vector sends with it.
 ensure_env_secret META_PROJECT_KEY 16 "Writing the Meta Organization's project key to $ENV_FILE"
+# EventStore's password on ClickHouse, which reads it from the environment too.
+ensure_env_secret SOLIDTRACE_CLICKHOUSE_PASSWORD 24 "Writing ClickHouse's password to $ENV_FILE"
+# ClickHouse's memory: half of RAM, as DuckDB gets.
+ensure_env_value SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES \
+  "$(awk '/^MemTotal:/ { printf "%.0f", $2 * 1024 / 2 }' /proc/meminfo)" \
+  "Giving ClickHouse half of this machine's memory in $ENV_FILE"
 set_version
 start_services
 wait_for Console http://127.0.0.1:3000/up
