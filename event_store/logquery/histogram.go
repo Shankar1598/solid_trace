@@ -22,6 +22,12 @@ func (q *Query) Histogram(bucket time.Duration) *Query {
 	return h
 }
 
+// Filters reports whether the Query has leading filters, where or search
+// stages: a histogram counts only the Logs that pass them.
+func (q *Query) Filters() bool {
+	return len(q.head) > 0
+}
+
 // AutoBucket is the bucket size a histogram of a time range has when none is
 // asked for: as bin_auto picks, at most about 100 buckets.
 func AutoBucket(span time.Duration) time.Duration {

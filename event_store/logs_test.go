@@ -478,11 +478,14 @@ func TestLogsAcknowledgedBeforeARestartAreListedAfterIt(t *testing.T) {
 }
 
 // assertStoredOnce checks that Project 123 lists each of want once, newest
-// first, and that its Fields count each Log's user once.
+// first, and that its histogram and Fields count each Log once.
 func assertStoredOnce(t *testing.T, env *TestEnv, want []string, when string) {
 	t.Helper()
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, want) {
 		t.Errorf("%s: expected each Log once, %v, got %v", when, want, got)
+	}
+	if got := histogram(t, env, histogramRequest{From: testNow.Add(-24 * time.Hour), To: testNow, BucketSeconds: 3600}); got.Count != len(want) {
+		t.Errorf("%s: expected the histogram to count each Log once, %d, got %d", when, len(want), got.Count)
 	}
 	fields := getFields(t, env, 123, testNow.Add(-24*time.Hour), testNow, "")
 	assertAttributes(t, fields, []attributeCount{{"user", "string", int64(len(want))}}, when)

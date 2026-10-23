@@ -219,6 +219,8 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 		{"/api/123/logs/query", "match", map[string]any{"query": ``, "after_batch": "00000000-0000-0000-0000-000000000000"}, []string{"toUInt128(batch)"}},
 		{"/api/123/logs/query", "query", map[string]any{"query": `summarize count() by service`}, []string{"count()", "GROUP BY"}},
 		{"/api/123/logs/histogram", "histogram", map[string]any{"query": `where level == "error"`}, []string{"toStartOfInterval"}},
+		// With no filter, the histogram reads the counts kept by minute.
+		{"/api/123/logs/histogram", "histogram", map[string]any{"query": ``}, []string{"log_minute_counts"}},
 	}
 	if sqlOnClickHouse {
 		runs = append(runs, run{"/api/123/logs/sql", "sql", map[string]any{"sql": `SELECT count(*) FROM logs`}, []string{"CREATE TEMPORARY VIEW logs AS", "SELECT count(*) FROM logs"}})
