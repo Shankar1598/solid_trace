@@ -56,10 +56,18 @@ type TestEnv struct {
 	ClickHouseLogs *storage.ClickHouseLogs
 	// FlakyLogs is ClickHouseLogs as Log processing sees it, which a test
 	// can break.
-	FlakyLogs    *flakyLogStore
-	LogProcessor *logprocessing.Processor
-	LogCleanup   *logprocessing.Cleanup
-	LogsHandler  *handler.LogsHandler
+	FlakyLogs *flakyLogStore
+	// IngestService is Log ingest, whose Ingest counts a test writes with
+	// FlushIngestCounts, to FlakyIngestCounts, ClickHouseLogs as ingest
+	// sees it, which a test can break.
+	IngestService     *ingest.Service
+	FlakyIngestCounts *flakyIngestCounts
+	// IngestMaxWaiting is ingest's wait limit, 100 unless a test changes
+	// it: 0 turns every request away as overloaded.
+	IngestMaxWaiting int
+	LogProcessor     *logprocessing.Processor
+	LogCleanup       *logprocessing.Cleanup
+	LogsHandler      *handler.LogsHandler
 	// SQL runs SQL queries, each as its Project's SQL user, within
 	// SQLLimits, storage's defaults unless a test changes them.
 	SQL        *storage.ClickHouseSQL
@@ -364,8 +372,9 @@ func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 		Clock:            clock.NewManual(testNow),
 		ClickHouseConfig: clickhousetest.Config(),
 
-		BinCacheBytes: config.DefaultLogsBinCacheMB << 20,
-		SQLLimits:     storage.DefaultSQLLimits(),
+		BinCacheBytes:    config.DefaultLogsBinCacheMB << 20,
+		SQLLimits:        storage.DefaultSQLLimits(),
+		IngestMaxWaiting: 100,
 	}
 	if configure != nil {
 		configure(env)
@@ -428,6 +437,7 @@ func (env *TestEnv) open(t *testing.T) {
 	env.ClickHouse = clickHouse
 	env.ClickHouseLogs = clickHouseLogs
 	env.FlakyLogs = &flakyLogStore{ClickHouseLogs: env.ClickHouseLogs}
+	env.FlakyIngestCounts = &flakyIngestCounts{ClickHouseLogs: env.ClickHouseLogs}
 	env.SQLiteWriter = sqliteWriter
 	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
 	env.MQWriter = mqWriter
@@ -454,8 +464,10 @@ func (env *TestEnv) open(t *testing.T) {
 		NotifyLogs:   func(projectID uint32) { env.LogProcessor.Notify(projectID) },
 		Clock:        env.Clock,
 		Retention:    consoleSettings,
-		MaxWaiting:   100,
+		MaxWaiting:   env.IngestMaxWaiting,
+		IngestCounts: env.FlakyIngestCounts,
 	})
+	env.IngestService = ingestService
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
 	logsHandler := handler.NewLogsHandler(env.ClickHouseLogs, env.SQL, consoleSettings, env.Clock)
@@ -464,7 +476,8 @@ func (env *TestEnv) open(t *testing.T) {
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
-	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms), healthHandler)
+	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
+		handler.NewOverviewHandler(handler.OverviewConfig{Logs: env.ClickHouseLogs, Clock: env.Clock}), healthHandler)
 
 	env.close = func() {
 		pebbleWriter.StopWrites()
@@ -479,6 +492,39 @@ func (env *TestEnv) open(t *testing.T) {
 		env.LogTransforms.Close()
 		consoleSettings.Close()
 	}
+}
+
+// FlushIngestCounts writes the Ingest counts of the seconds that have ended
+// by the clock, as ingest's flusher does about once a second.
+func (env *TestEnv) FlushIngestCounts(t *testing.T) {
+	t.Helper()
+	if err := env.IngestService.FlushIngestCounts(); err != nil {
+		t.Fatalf("Writing Ingest counts failed: %v", err)
+	}
+}
+
+// flakyIngestCounts is ClickHouseLogs as ingest's flusher writes to it,
+// except that a write failAfterWrite set up fails once it has stored its
+// rows.
+type flakyIngestCounts struct {
+	*storage.ClickHouseLogs
+	failNext atomic.Bool
+}
+
+// failAfterWrite makes the next write fail once it has stored its rows, as
+// when ClickHouse's answer is lost.
+func (c *flakyIngestCounts) failAfterWrite() {
+	c.failNext.Store(true)
+}
+
+func (c *flakyIngestCounts) WriteIngestCounts(token string, counts []models.IngestCount) error {
+	if err := c.ClickHouseLogs.WriteIngestCounts(token, counts); err != nil {
+		return err
+	}
+	if c.failNext.Swap(false) {
+		return connectionLost
+	}
+	return nil
 }
 
 // Cleanup closes every store.
