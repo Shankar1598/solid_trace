@@ -32,13 +32,23 @@ func release() string {
 // prepareClickHouse runs prepare-clickhouse (logprocessing.PrepareClickHouse)
 // and returns the process's exit code. It opens logs.duckdb on a DuckDB of
 // its own, so that events.duckdb is never opened, and Pebble only for its
-// Log batches.
+// Log batches. Once the install has a marker, it opens nothing.
 func prepareClickHouse(cfg *config.Config) int {
 	fail := func(message string, err error) int {
 		logger.L.Error(message, "error", err)
 		return 1
 	}
 	const stopped = "; prepare-clickhouse runs with the stack stopped"
+
+	dir := storage.PreparedDir(cfg.LogsDuckDBPath)
+	marker, err := storage.ReadClickHouseMarker(dir)
+	if err != nil {
+		return fail("Failed to read the marker of an earlier prepare-clickhouse", err)
+	}
+	if marker != nil {
+		logger.L.Info("The install was prepared for the ClickHouse release already; nothing to do", "dir", dir, "release", marker.Release, "prepared_at", marker.PreparedAt)
+		return 0
+	}
 
 	batches, err := storage.NewPebbleWriter(cfg)
 	if err != nil {
@@ -76,14 +86,9 @@ func prepareClickHouse(cfg *config.Config) int {
 	defer consoleSettings.Close()
 	logStore.UseLogFileOrders(consoleSettings)
 
-	dir := storage.PreparedDir(cfg.LogsDuckDBPath)
 	processor := logprocessing.New(batches, logStore, logtransform.New(consoleSettings, clock.System{}), clock.System{})
-	alreadyPrepared, err := logprocessing.PrepareClickHouse(context.Background(), processor, logStore, dir, release())
-	if err != nil {
+	if _, err := logprocessing.PrepareClickHouse(context.Background(), processor, logStore, dir, release()); err != nil {
 		return fail("prepare-clickhouse failed, so the install isn't ready for the ClickHouse release: fix the cause and run it again", err)
-	}
-	if alreadyPrepared {
-		logger.L.Info("The install was prepared for the ClickHouse release already; nothing to do", "dir", dir)
 	}
 	return 0
 }
