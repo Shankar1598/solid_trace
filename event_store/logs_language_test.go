@@ -45,11 +45,6 @@ func postLateLanguageLog(t *testing.T, env *TestEnv) {
 		"status": 200, "user": "fy", "duration": 10, "path": "/api/users/7", "service": "api"}))
 }
 
-// Until SQL mode moves to ClickHouse, in ticket 07, the root tests skip
-// their checks of a Query's Readable SQL run in SQL mode. This turns them
-// back on.
-const sqlOnClickHouse = false // 07
-
 func TestWhereComparesMatchesAndTestsFields(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
@@ -124,9 +119,6 @@ func TestContainsFindsTextInArrays(t *testing.T) {
 	}
 	assertQueries(t, env, cases, "once stored")
 	for query, want := range cases {
-		if !sqlOnClickHouse {
-			break
-		}
 		_, rows := sqlTable(t, env, sqlRequest{SQL: readableSQL(t, env, query), From: allTime.from, To: allTime.to})
 		if len(rows) != len(want) {
 			t.Errorf("Readable SQL of %s: expected %d rows, got %v", query, len(want), rows)
