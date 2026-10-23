@@ -8,12 +8,10 @@ module McpTools
     private
 
     # The settings as Settings → Instance shows them (InstanceSettingsAnswer),
-    # linking to that page in the user's first Organization, as it's under
-    # one.
+    # linking to that page.
     def settings_answer(settings = InstanceSetting.current)
-      organization = user.organizations_by_name.first
       json(InstanceSettingsAnswer.new(settings, console_url: console_url).as_json,
-        link: (links.instance_settings(organization) if organization))
+        link: instance_page_link(:instance_settings))
     end
   end
 end

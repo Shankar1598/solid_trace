@@ -9,12 +9,10 @@ module McpTools
   module EmailSettingsTool
     private
 
-    # The settings as Settings → Email shows them, linking to that page in the
-    # user's first Organization, as it's under one.
+    # The settings as Settings → Email shows them, linking to that page.
     def settings_answer(settings = InstanceSetting.current)
       shown = EmailSettingsSerializer.new(settings).as_json
-      organization = user.organizations_by_name.first
-      json(shown.merge(set_up: shown[:problem].nil?), link: (links.email_settings(organization) if organization))
+      json(shown.merge(set_up: shown[:problem].nil?), link: instance_page_link(:email_settings))
     end
   end
 end
