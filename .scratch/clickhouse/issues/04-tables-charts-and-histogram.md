@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **The rest of the compiler emits ClickHouse SQL.** This covers the table stages, the CTE chain, `bin`/`bin_auto` with `toStartOfInterval` and the same origin, `rate()` and `peak_rate()`, totals and Chart hints. It also covers the aggregates: `count_if`, `dcount` as `uniq`, and the quantile function 01 chose. Any root test whose expected value changes for an aggregate is listed in this ticket's Answer for the user.
 - [x] **The histogram MV:** counts by Project, minute and level. The histogram reads it with no condition and bins of a minute or more, and through `ScanLogTable` otherwise.
