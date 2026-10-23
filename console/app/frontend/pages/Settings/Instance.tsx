@@ -186,7 +186,7 @@ function RestartGroupTable({ group }: { group: RestartGroup }) {
                 <code className="text-xs text-muted-foreground">{setting.source}</code>
               </dt>
               <dd className="flex flex-wrap items-center gap-2 break-all">
-                <span data-testid={`setting-${setting.source}`}>{display(setting)}</span>
+                <span className="font-mono" data-testid={`setting-${setting.source}`}>{display(setting)}</span>
                 {setting.default && <span className="text-xs text-muted-foreground">default</span>}
               </dd>
             </div>
