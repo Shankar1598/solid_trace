@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/config"
@@ -49,12 +49,16 @@ type TestEnv struct {
 	ClickHouse       *storage.ClickHouse
 	ClickHouseConfig config.ClickHouse
 	SQLiteWriter     *storage.SQLiteWriter
-	Issues       *flakyIssueRepository
-	Processor    *processing.Processor
-	BatchLock    *sync.Mutex
-	LogStore     *storage.LogStore
-	// FlakyLogs is LogStore as Log processing sees it, which a test can
-	// break.
+	Issues           *flakyIssueRepository
+	Processor        *processing.Processor
+	BatchLock        *sync.Mutex
+	LogStore         *storage.LogStore
+	// ClickHouseLogs is the Logs in ClickHouse, which Log processing
+	// inserts into and Log rows are read from. LogStore is DuckDB's, which
+	// tables still read.
+	ClickHouseLogs *storage.ClickHouseLogs
+	// FlakyLogs is ClickHouseLogs as Log processing sees it, which a test
+	// can break.
 	FlakyLogs    *flakyLogStore
 	LogProcessor *logprocessing.Processor
 	LogCleanup   *logprocessing.Cleanup
@@ -161,22 +165,35 @@ func (r *flakyIssueRepository) FindIssueByFingerprint(projectID uint32, fingerpr
 	return r.SQLiteWriter.FindIssueByFingerprint(projectID, fingerprint)
 }
 
-// flakyLogStore is the real logs.duckdb as Log processing uses it, except
-// while a test breaks it: then committing Logs fails with the test's error,
-// for every Project or only some, and while it is down, every call fails.
+// flakyLogStore is the real ClickHouse logs table as Log processing uses it,
+// except while a test breaks it: then inserting Logs fails with the test's
+// error, for every Project or only some, and while it is down, every call
+// fails. It can also let inserts through and then fail them, as when
+// ClickHouse takes an insert but its answer is lost, or EventStore crashes
+// before it hears it.
 type flakyLogStore struct {
-	*storage.LogStore
-	// attempts counts cursor reads: each try at a Project's Logs starts
-	// with one, failed or not.
+	*storage.ClickHouseLogs
+	// attempts counts inserts tried, failed or not: each try at a
+	// Project's Logs makes one.
 	attempts atomic.Int32
 
 	mu       sync.Mutex
 	storeErr error
 	projects []uint32 // the Projects whose Logs fail; all if empty
 	down     bool
+	// afterInsert fails the next inserts, once they have stored their Logs,
+	// with its error, and then calls its then, if set.
+	afterInsert []insertFailure
 }
 
-// fail makes committing the Logs of projects, or of every Project, fail with
+// insertFailure fails an insert that has stored its Logs with err, and then
+// calls then, if set.
+type insertFailure struct {
+	err  error
+	then func()
+}
+
+// fail makes inserting the Logs of projects, or of every Project, fail with
 // err. Trying Logs without storing them still works, as on a full disk.
 func (s *flakyLogStore) fail(err error, projects ...uint32) {
 	s.mu.Lock()
@@ -184,12 +201,23 @@ func (s *flakyLogStore) fail(err error, projects ...uint32) {
 	s.storeErr, s.projects = err, projects
 }
 
-// goDown makes every call fail, as when DuckDB doesn't answer at all.
+// failAfterInsert makes the next insert fail with err once it has stored its
+// Logs, and then calls then, if set.
+func (s *flakyLogStore) failAfterInsert(err error, then func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.afterInsert = append(s.afterInsert, insertFailure{err, then})
+}
+
+// goDown makes every call fail, as when ClickHouse doesn't answer at all.
 func (s *flakyLogStore) goDown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.storeErr, s.projects, s.down = errors.New("database connection lost"), nil, true
+	s.storeErr, s.projects, s.down = connectionLost, nil, true
 }
+
+// connectionLost is how an insert fails when ClickHouse is gone.
+var connectionLost = &clickhouse.Exception{Code: 210, Name: "DB::NetException", Message: "Connection reset by peer"}
 
 // recover ends every failure.
 func (s *flakyLogStore) recover() {
@@ -213,33 +241,48 @@ func (s *flakyLogStore) isDown() bool {
 	return s.down
 }
 
-func (s *flakyLogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
-	s.attempts.Add(1)
-	if s.isDown() {
-		return uuid.Nil, errors.New("database connection lost")
+// nextAfterInsert takes the failure the next insert gets once it has stored
+// its Logs, if any.
+func (s *flakyLogStore) nextAfterInsert() (insertFailure, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.afterInsert) == 0 {
+		return insertFailure{}, false
 	}
-	return s.LogStore.LogProcessingCursor(projectID)
+	next := s.afterInsert[0]
+	s.afterInsert = s.afterInsert[1:]
+	return next, true
 }
 
-func (s *flakyLogStore) AppendLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error {
+func (s *flakyLogStore) InsertLogBatches(projectID uint32, insert storage.LogInsert) error {
+	s.attempts.Add(1)
 	if err := s.failure(projectID); err != nil {
 		return err
 	}
-	return s.LogStore.AppendLogBatches(projectID, batches, now)
+	if err := s.ClickHouseLogs.InsertLogBatches(projectID, insert); err != nil {
+		return err
+	}
+	if failure, ok := s.nextAfterInsert(); ok {
+		if failure.then != nil {
+			failure.then()
+		}
+		return failure.err
+	}
+	return nil
 }
 
-func (s *flakyLogStore) TryLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error {
+func (s *flakyLogStore) TryLogBatches(projectID uint32, batches []storage.LogBatch) error {
 	if s.isDown() {
-		return errors.New("database connection lost")
+		return connectionLost
 	}
-	return s.LogStore.TryLogBatches(projectID, batches, now)
+	return s.ClickHouseLogs.TryLogBatches(projectID, batches)
 }
 
 func (s *flakyLogStore) Ping() error {
 	if s.isDown() {
-		return errors.New("database connection lost")
+		return connectionLost
 	}
-	return s.LogStore.Ping()
+	return s.ClickHouseLogs.Ping()
 }
 
 func resetTestDB(t *testing.T) {
@@ -415,7 +458,8 @@ func (env *TestEnv) open(t *testing.T) {
 	env.DuckDBWriter = duckdbWriter
 	env.ClickHouse = clickHouse
 	env.LogStore = logStore
-	env.FlakyLogs = &flakyLogStore{LogStore: logStore}
+	env.ClickHouseLogs = storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+	env.FlakyLogs = &flakyLogStore{ClickHouseLogs: env.ClickHouseLogs}
 	env.SQLiteWriter = sqliteWriter
 	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
 	env.MQWriter = mqWriter
@@ -445,7 +489,7 @@ func (env *TestEnv) open(t *testing.T) {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
-	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, env.Clock)
+	logsHandler := handler.NewLogsHandler(env.ClickHouseLogs, logStore, consoleSettings, env.Clock)
 	env.LogsHandler = logsHandler
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
 

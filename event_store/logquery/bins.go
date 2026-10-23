@@ -50,7 +50,7 @@ func (q *Query) Bins() (Bins, bool) {
 	keyed := *q
 	keyed.from, keyed.to = time.Time{}, time.Time{}
 	sum := sha256.New()
-	for _, part := range []string{q.Where(storage.LogColumns{}), q.Select(storage.LogColumns{}), keyed.TableSQL("", 0)} {
+	for _, part := range []string{q.Where(storage.ClickHouseColumns{}), q.Select(storage.LogColumns{}), keyed.TableSQL("", 0)} {
 		sum.Write([]byte(part))
 		sum.Write([]byte{0})
 	}

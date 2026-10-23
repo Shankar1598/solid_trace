@@ -39,12 +39,14 @@ func main() {
 	}
 	defer duckdbWriter.Close()
 
-	// Nothing reads or writes ClickHouse yet; /health pings it.
+	// Log processing inserts Logs into ClickHouse, and Log rows, single
+	// Logs, Match monitors and Fields read them there; /health pings it.
 	clickHouse, err := storage.OpenClickHouse(cfg.ClickHouse, cfg.ObjectStore)
 	if err != nil {
 		logger.L.Fatal("Failed to open ClickHouse", "error", err)
 	}
 	defer clickHouse.Close()
+	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
 
 	// The Log files and the Event archive share the bucket, if one is set.
 	// Nothing here waits on the bucket, so ingest starts while it is down:
@@ -125,14 +127,11 @@ func main() {
 	eventCleanup.Start()
 
 	logTransforms := logtransform.New(consoleSettings, clock.System{})
-	logProcessor := logprocessing.New(pebbleWriter, logStore, logTransforms, clock.System{})
+	logProcessor := logprocessing.New(pebbleWriter, clickHouseLogs, logTransforms, clock.System{})
 	if err := logProcessor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Log processing", "error", err)
 	}
 	logProcessor.Start()
-
-	logExport := logprocessing.NewLogExport(logStore, clock.System{})
-	logExport.Start()
 
 	// Without a bucket nothing is uploaded, and the worker never starts.
 	logUploads := logprocessing.NewLogUploads(logStore, clock.System{})
@@ -169,7 +168,7 @@ func main() {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
-	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, clock.System{})
+	logsHandler := handler.NewLogsHandler(clickHouseLogs, logStore, consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
 
@@ -223,7 +222,6 @@ func main() {
 	// Then the stores close through the defers above.
 	processor.Stop()
 	logProcessor.Stop()
-	logExport.Stop()
 	logUploads.Stop()
 	logCleanup.Stop()
 	eventCleanup.Stop()
