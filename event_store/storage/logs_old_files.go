@@ -1109,6 +1109,110 @@ func (o *oldLogFiles) deleteLocalCopy(key string) error {
 	return nil
 }
 
+// oldLocalDay is a Project's day of old Log files with local copies, for
+// the disk limit.
+type oldLocalDay struct {
+	projectDay
+	// bytes is how much disk the day's local copies take.
+	bytes  int64
+	copies []oldLocalCopy
+}
+
+// oldLocalCopy is an old Log file's local copy.
+type oldLocalCopy struct {
+	key   string
+	bytes int64
+	// remote is whether the bucket has the file too.
+	remote bool
+}
+
+// localDays lists the Projects' days of old Log files with local copies,
+// oldest day first and then by Project, with how much disk the copies take,
+// read now.
+func (o *oldLogFiles) localDays() ([]oldLocalDay, int64) {
+	if o == nil || o.cfg.LocalDir == "" {
+		return nil, 0
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	byDay := map[projectDay]*oldLocalDay{}
+	var total int64
+	for projectID, files := range o.state.files {
+		for _, file := range files {
+			if !file.local {
+				continue
+			}
+			info, err := os.Stat(filepath.Join(o.cfg.LocalDir, filepath.FromSlash(file.key)))
+			if err != nil {
+				continue // gone: it takes nothing
+			}
+			key := projectDay{projectID, file.day}
+			if byDay[key] == nil {
+				byDay[key] = &oldLocalDay{projectDay: key}
+			}
+			byDay[key].bytes += info.Size()
+			byDay[key].copies = append(byDay[key].copies, oldLocalCopy{key: file.key, bytes: info.Size(), remote: file.remote})
+			total += info.Size()
+		}
+	}
+	days := make([]oldLocalDay, 0, len(byDay))
+	for _, day := range byDay {
+		days = append(days, *day)
+	}
+	slices.SortFunc(days, func(a, b oldLocalDay) int {
+		return cmp.Or(a.day.Compare(b.day), cmp.Compare(a.projectID, b.projectID))
+	})
+	return days, total
+}
+
+// freeLocalCopies deletes the local copies of the oldest days' old Log
+// files that the bucket has, which reads then read there, until the Logs on
+// local disk take no more than maxBytes. They take total now; it returns how
+// much they take after. A copy that isn't deleted is logged, and the next
+// tried. Without a bucket, it deletes none.
+func (o *oldLogFiles) freeLocalCopies(days []oldLocalDay, total, maxBytes int64) int64 {
+	if o == nil || o.objects == nil {
+		return total
+	}
+	freed, failed := 0, 0
+	for _, day := range days {
+		for _, local := range day.copies {
+			if total <= maxBytes {
+				break
+			}
+			if !local.remote {
+				continue
+			}
+			o.readFromBucket(day.projectID, local.key)
+			if err := o.deleteLocalCopy(local.key); err != nil {
+				failed++
+				logger.L.Error("Deleting the local copy of an old Log file for the disk limit failed", "project_id", day.projectID, "key", local.key, "error", err)
+				continue
+			}
+			total -= local.bytes
+			freed++
+		}
+	}
+	if freed > 0 || failed > 0 {
+		logger.L.Info("Deleted the local copies of the oldest old Log files, which the bucket has, for the disk limit", "files", freed, "failed", failed, "limit", maxBytes)
+	}
+	return total
+}
+
+// readFromBucket makes reads read a Project's old file from the bucket, not
+// its local copy.
+func (o *oldLogFiles) readFromBucket(projectID uint32, key string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	files := slices.Clone(o.state.files[projectID])
+	for i := range files {
+		if files[i].key == key {
+			files[i].local = false
+		}
+	}
+	o.state.files[projectID] = files
+}
+
 // mergeNewestFirst merges two lists of Logs, each newest first, into one,
 // newest first, of at most limit Logs.
 func mergeNewestFirst(a, b []models.Log, limit int) []models.Log {
