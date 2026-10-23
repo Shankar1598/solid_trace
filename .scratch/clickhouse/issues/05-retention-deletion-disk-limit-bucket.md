@@ -4,7 +4,7 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **Retention's daily pass** drops each Project's `logs`, MV and key-count partitions of days past its Retention (the Project's, or the instance default), and bumps those hours' generations.
 - [x] **Cleanup's pass for deleted Projects** drops all of their Log partitions and bumps their generations. Events follow in 06.
