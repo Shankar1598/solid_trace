@@ -336,6 +336,59 @@ var fixtureRanges = []struct {
 	{"up to the switch", allTime.from, switchTime},
 }
 
+// tableOf runs a Query that returns a table for a Project over [from, to),
+// and returns its columns and rows as JSON.
+func tableOf(t *testing.T, env *TestEnv, projectID uint32, query string, from, to time.Time) string {
+	t.Helper()
+	status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/logs/query", projectID), queryRequest{Query: query, From: from, To: to})
+	var answer tableAnswer
+	if status != 200 || json.Unmarshal(raw, &answer) != nil || answer.Table == nil {
+		t.Fatalf("Query %q expected 200 with a table, got %d: %s", query, status, raw)
+	}
+	table, _ := json.Marshal(answer.Table)
+	return string(table)
+}
+
+// tableQueries are Queries of tables over the fixture's Projects.
+var tableQueries = []string{
+	`summarize count()`,
+	`summarize count() by user`,
+	`summarize count() by bin(time, 1h)`,
+	`summarize count() by bin(time, 15m), level`,
+	`summarize avg(duration_ms), max(duration_ms), count() by plan`,
+	`where plan == "pro" | summarize count() by user`,
+	`summarize dcount(user), dcount(plan)`,
+	`summarize count() by cached`,
+	`search "order" | summarize count() by service`,
+	`where isnotnull(tags) | summarize count() by tostring(tags)`,
+	`project message, user, plan, duration_ms, cached, tags`,
+	`extend who = toupper(user), n = strlen(plan) | summarize count() by who, n`,
+	`summarize count() by path`,
+	`where path != "/" | top 2 by time`,
+}
+
+func TestTablesOverOldHoursAndTheSwitchAnswerAsClickHouseWould(t *testing.T) {
+	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
+		answers := map[string]string{}
+		for _, projectID := range fixtureProjects {
+			for _, r := range fixtureRanges {
+				for _, query := range tableQueries {
+					// Twice: the second run takes the bins of ended hours
+					// from the bin cache.
+					for _, run := range []string{"first", "again"} {
+						answers[fmt.Sprintf("Project %d, %s, %s run: %s", projectID, r.name, run, query)] = tableOf(t, env, projectID, query, r.from, r.to)
+					}
+				}
+			}
+		}
+		return answers
+	})
+	assertSameAnswers(t, got, want)
+	if counted := want["Project 3, all time, first run: summarize count()"]; !strings.Contains(counted, "[11]") {
+		t.Errorf("Expected Project 3's 7 old Logs and 4 new ones counted, got %s", counted)
+	}
+}
+
 func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
 		answers := map[string]string{}
