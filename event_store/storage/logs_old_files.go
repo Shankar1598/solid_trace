@@ -180,6 +180,9 @@ func (s *ClickHouseLogs) UseOldLogFiles(cfg OldLogFiles) error {
 	if old.state, err = old.readState(ctx); err != nil {
 		return err
 	}
+	if unread := old.state.inBucket(); unread > 0 && cfg.Bucket == nil {
+		logger.L.Warn("Old Log files in a bucket that is no longer configured aren't read", "files", unread)
+	}
 	if len(old.state.files) > 0 {
 		s.old = old
 	}
@@ -399,6 +402,19 @@ type oldState struct {
 	sets  map[projectDay][]oldPromotedKey
 }
 
+// inBucket counts the files with no local copy.
+func (state oldState) inBucket() int {
+	n := 0
+	for _, files := range state.files {
+		for _, file := range files {
+			if !file.local {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // readState reads the old tables.
 func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 	state := oldState{files: map[uint32][]oldLogFile{}, sets: map[projectDay][]oldPromotedKey{}}
@@ -473,7 +489,8 @@ func (o *oldLogFiles) sources(projectID uint32, keep func(oldLogFile) bool) []ol
 	defer o.mu.RUnlock()
 	var files []oldLogFile
 	for _, file := range o.state.files[projectID] {
-		if keep(file) {
+		// A file only in a bucket no longer configured can't be read.
+		if keep(file) && (file.local || o.cfg.Bucket != nil) {
 			files = append(files, file)
 		}
 	}
@@ -624,7 +641,7 @@ func (src oldSource) columns() ClickHouseColumns {
 	return ClickHouseColumns{old: &oldDay{set: src.set}}
 }
 
-// oldWhere is the WHERE of a read of a source: conditions, and the Logs
+// where is the WHERE of a read of a source: conditions, and the Logs
 // where keeps, written for the source's day.
 func (src oldSource) where(conditions []string, where func(ClickHouseColumns) Filter) string {
 	if where != nil {
@@ -673,7 +690,7 @@ func (s *ClickHouseLogs) OldLogsEnd(projectID uint32, from, to time.Time) (time.
 	return newest.Add(time.Microsecond), ok
 }
 
-// oldLogColumns are the columns old Logs are read whole with, in every
+// logColumns are the columns old Logs are read whole with, in every
 // source alike: the fixed ones, then the day's promoted keys and values of
 // each type as arrays, since each day has its own.
 func (src oldSource) logColumns() string {
@@ -1081,4 +1098,3 @@ func mergeNewestFirst(a, b []models.Log, limit int) []models.Log {
 func newerFirst(a, b models.Log) int {
 	return cmp.Or(b.Time.Compare(a.Time), bytes.Compare(b.ID[:], a.ID[:]))
 }
-
