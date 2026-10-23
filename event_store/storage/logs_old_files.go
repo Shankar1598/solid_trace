@@ -732,13 +732,13 @@ func (o *oldLogFiles) tableSources(scan TableScan, spans []timeSpan) string {
 
 // scanLogs returns up to limit of a Project's old Logs of [from, to) that
 // meet conditions and where, newest first.
-func (o *oldLogFiles) scanLogs(s *ClickHouseLogs, ctx context.Context, projectID uint32, from, to time.Time, conditions []string, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, error) {
+func (o *oldLogFiles) scanLogs(ctx context.Context, projectID uint32, from, to time.Time, conditions []string, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, error) {
 	sources := o.sources(projectID, inSpans(timeSpan{from, to}))
 	if len(sources) == 0 || limit <= 0 {
 		return nil, nil
 	}
 	conditions = append(conditions, timeSpans([]timeSpan{{from, to}}))
-	return o.newestLogs(s, ctx, sources, conditions, where, limit)
+	return o.newestLogs(ctx, sources, conditions, where, limit)
 }
 
 // newestLogs returns up to limit of the Logs of sources that meet
@@ -748,11 +748,11 @@ func (o *oldLogFiles) scanLogs(s *ClickHouseLogs, ctx context.Context, projectID
 // from the files that hold them. A read of whole Logs in order would read
 // every column of every Log in range: ClickHouse reads lazily only from its
 // own tables.
-func (o *oldLogFiles) newestLogs(s *ClickHouseLogs, ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, limit int) (logs []models.Log, err error) {
+func (o *oldLogFiles) newestLogs(ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, limit int) (logs []models.Log, err error) {
 	order := fmt.Sprintf("ORDER BY %s LIMIT %d", logsNewestFirst, limit)
 	query := "SELECT time, id, _path FROM (" + o.union(sources, func(oldSource) string { return "time, id, _path" }, conditions, where) + ") " + order
 	began := time.Now()
-	rows, err := s.conn.Query(o.withBucketKey(ctx), query)
+	rows, err := o.conn.Query(o.withBucketKey(ctx), query)
 	if err != nil {
 		recordStatement(ctx, query, began, err)
 		return nil, err
@@ -796,7 +796,7 @@ func (o *oldLogFiles) newestLogs(s *ClickHouseLogs, ctx context.Context, sources
 		}
 	}
 	conditions = append(slices.Clone(conditions), timeSpans([]timeSpan{{first, end}}), "id IN ("+strings.Join(ids, ", ")+")")
-	return o.queryLogs(s, ctx, holding, conditions, where, order)
+	return o.queryLogs(ctx, holding, conditions, where, order)
 }
 
 // union is the Logs of sources that meet conditions and where, each read
@@ -811,11 +811,11 @@ func (o *oldLogFiles) union(sources []oldSource, columns func(oldSource) string,
 
 // queryLogs reads the Logs of sources that meet conditions and where,
 // whole, with tail after them: an order and a limit.
-func (o *oldLogFiles) queryLogs(s *ClickHouseLogs, ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, tail string) (logs []models.Log, err error) {
+func (o *oldLogFiles) queryLogs(ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, tail string) (logs []models.Log, err error) {
 	query := "SELECT * FROM (" + o.union(sources, oldSource.logColumns, conditions, where) + ") " + tail
 	began := time.Now()
 	defer func() { recordStatement(ctx, query, began, err) }()
-	rows, err := s.conn.Query(o.withBucketKey(ctx), query)
+	rows, err := o.conn.Query(o.withBucketKey(ctx), query)
 	if err != nil {
 		return nil, err
 	}
@@ -877,7 +877,7 @@ func setPromoted[V any](m map[string]V, keys []string, values []*V) {
 // batches in (after, upTo] that meet where, newest first, and how many there
 // are, past limit too. Only files whose last batch is after after are read:
 // those of the last runs before the switch.
-func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, projectID uint32, after, upTo uuid.UUID, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, int, error) {
+func (o *oldLogFiles) ingestedAfter(ctx context.Context, projectID uint32, after, upTo uuid.UUID, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, int, error) {
 	sources := o.sources(projectID, func(file oldLogFile) bool {
 		return file.batchMax != nil && bytes.Compare(file.batchMax[:], after[:]) > 0
 	})
@@ -891,7 +891,7 @@ func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, proj
 	var logs []models.Log
 	if limit > 0 {
 		var err error
-		if logs, err = o.newestLogs(s, ctx, sources, conditions, where, limit); err != nil {
+		if logs, err = o.newestLogs(ctx, sources, conditions, where, limit); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -900,7 +900,7 @@ func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, proj
 	}
 	var total uint64
 	query := "SELECT count() FROM (" + o.union(sources, func(oldSource) string { return "1" }, conditions, where) + ")"
-	err := s.queryRow(o.withBucketKey(ctx), query, &total)
+	err := queryRow(o.withBucketKey(ctx), o.conn, query, &total)
 	return logs, int(total), err
 }
 
@@ -909,7 +909,7 @@ func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, proj
 // the files of at's day. Else it reads those of the days around the id's
 // time, and then every file with a local copy, as the DuckDB release did:
 // reading all of the bucket's would read every old Log.
-func (o *oldLogFiles) logByID(s *ClickHouseLogs, ctx context.Context, projectID uint32, id uuid.UUID, at *time.Time) (models.Log, bool, error) {
+func (o *oldLogFiles) logByID(ctx context.Context, projectID uint32, id uuid.UUID, at *time.Time) (models.Log, bool, error) {
 	onDays := func(from, to time.Time) func(oldLogFile) bool {
 		return func(file oldLogFile) bool { return !file.day.Before(LogDay(from)) && !file.day.After(LogDay(to)) }
 	}
@@ -927,7 +927,7 @@ func (o *oldLogFiles) logByID(s *ClickHouseLogs, ctx context.Context, projectID 
 		if len(sources) == 0 {
 			continue
 		}
-		logs, err := o.queryLogs(s, ctx, sources, match, nil, "LIMIT 1")
+		logs, err := o.queryLogs(ctx, sources, match, nil, "LIMIT 1")
 		if err != nil || len(logs) > 0 {
 			return firstLog(logs), len(logs) > 0, err
 		}
