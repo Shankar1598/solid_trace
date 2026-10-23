@@ -41,7 +41,6 @@ type TestEnv struct {
 	QueryApp     *fiber.App
 	PebbleWriter *storage.PebbleWriter
 	EventWriter  *recordingEventWriter
-	DuckDBWriter *storage.DuckDBWriter
 	// ClickHouse is EventStore's database on the dev ClickHouse: the test
 	// package's own (clickhousetest), emptied for each test. Reopen keeps it.
 	ClickHouse       *storage.ClickHouse
@@ -51,10 +50,9 @@ type TestEnv struct {
 	Processor        *processing.Processor
 	EventCleanup     *processing.Cleanup
 	BatchLock        *sync.Mutex
-	LogStore         *storage.LogStore
 	// ClickHouseLogs is the Logs in ClickHouse, which Log processing
 	// inserts into and Log rows, tables and histograms are read from, with
-	// its bin cache. LogStore is DuckDB's, which SQL still reads.
+	// its bin cache.
 	ClickHouseLogs *storage.ClickHouseLogs
 	// FlakyLogs is ClickHouseLogs as Log processing sees it, which a test
 	// can break.
@@ -79,7 +77,7 @@ type TestEnv struct {
 	Clock *clock.Manual
 
 	// BucketConfig, if set, is the object_store: the logs table's parts
-	// move to its bucket (logs_bucket_test.go), and DuckDB reads it.
+	// move to its bucket (logs_bucket_test.go).
 	BucketConfig *config.ObjectStore
 	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
 	// it; 0 turns it off.
@@ -89,7 +87,7 @@ type TestEnv struct {
 	// directory, which hold none (usePreparedFixture sets them).
 	OldLogFiles storage.OldLogFiles
 
-	dir   string // holds Pebble and DuckDB
+	dir   string // holds Pebble, SQLite and the Logs from before the switch
 	close func()
 }
 
@@ -387,23 +385,13 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create Pebble: %v", err)
 	}
 
-	duckdbWriter, err := storage.NewDuckDBWriter(filepath.Join(env.dir, "duckdb.db"), "", "")
-	if err != nil {
-		t.Fatalf("Failed to create DuckDB: %v", err)
-	}
-
-	if env.BucketConfig != nil {
-		if err := duckdbWriter.UseBucket(env.BucketConfig, testExtensionDirectory(t)); err != nil {
-			t.Fatalf("Failed to let DuckDB read the bucket: %v", err)
-		}
-	}
 	clickHouse, err := storage.OpenClickHouse(env.ClickHouseConfig, env.BucketConfig)
 	if err != nil {
 		t.Fatalf("Failed to open ClickHouse: %v", err)
 	}
 	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
 	clickHouseLogs.UseBinCache(env.BinCacheBytes)
-	// Before logs.duckdb is made, and before Log processing, as in main.
+	// Before Log processing, as in main.
 	old := env.OldLogFiles
 	if old.LogsDuckDB == "" {
 		old = storage.OldLogFiles{
@@ -414,14 +402,6 @@ func (env *TestEnv) open(t *testing.T) {
 	}
 	if err := clickHouseLogs.UseOldLogFiles(old); err != nil {
 		t.Fatalf("Failed to ready the Logs from before the switch: %v", err)
-	}
-
-	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"), filepath.Join(env.dir, "logs_parquet"))
-	if err != nil {
-		t.Fatalf("Failed to attach logs DuckDB: %v", err)
-	}
-	if err := logStore.UseLocalDiskOnly(); err != nil {
-		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
 	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)
@@ -444,12 +424,9 @@ func (env *TestEnv) open(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open Console settings: %v", err)
 	}
-	logStore.UseLogFileOrders(consoleSettings)
 
 	env.PebbleWriter = pebbleWriter
-	env.DuckDBWriter = duckdbWriter
 	env.ClickHouse = clickHouse
-	env.LogStore = logStore
 	env.ClickHouseLogs = clickHouseLogs
 	env.FlakyLogs = &flakyLogStore{ClickHouseLogs: env.ClickHouseLogs}
 	env.SQLiteWriter = sqliteWriter
@@ -484,7 +461,7 @@ func (env *TestEnv) open(t *testing.T) {
 	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
 	logsHandler := handler.NewLogsHandler(env.ClickHouseLogs, env.SQL, consoleSettings, env.Clock)
 	env.LogsHandler = logsHandler
-	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
@@ -496,7 +473,6 @@ func (env *TestEnv) open(t *testing.T) {
 		env.LogProcessor.Stop()
 
 		pebbleWriter.Close()
-		duckdbWriter.Close()
 		clickHouse.Close()
 		sqliteWriter.Close()
 		mqWriter.Close()
@@ -504,21 +480,6 @@ func (env *TestEnv) open(t *testing.T) {
 		env.LogTransforms.Close()
 		consoleSettings.Close()
 	}
-}
-
-// testExtensionDirectory holds httpfs, which DuckDB loads with a bucket:
-// SOLIDTRACE_TEST_DUCKDB_EXTENSION_DIRECTORY, or the dev box's
-// ~/.cache/solid-trace/duckdb_extensions.
-func testExtensionDirectory(t *testing.T) string {
-	t.Helper()
-	if dir := os.Getenv("SOLIDTRACE_TEST_DUCKDB_EXTENSION_DIRECTORY"); dir != "" {
-		return dir
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return filepath.Join(home, ".cache", "solid-trace", "duckdb_extensions")
 }
 
 // Cleanup closes every store.

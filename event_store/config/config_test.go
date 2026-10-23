@@ -61,35 +61,77 @@ func TestConfigWithTheOldIngestSocketIngestsOnTCPPort4000(t *testing.T) {
 	}
 }
 
-func TestLogsDuckDBIsNextToEventsDuckDBByDefault(t *testing.T) {
+// EventStore no longer opens DuckDB, but a config from a DuckDB release
+// still loads. Each DuckDB key gets a warning, so the operator knows it does
+// nothing now.
+func TestTheDuckDBKeysAreIgnoredWithAWarningEach(t *testing.T) {
+	keys := []string{"duckdb_path", "logs_duckdb_path", "parquet_storage_path", "duckdb_temp_directory", "duckdb_memory_limit", "duckdb_extension_directory"}
+	cfg, err := config.LoadFile(writeConfig(t, `
+duckdb_path: /storage/duckdb/production/events.duckdb
+logs_duckdb_path: /storage/duckdb/production/logs.duckdb
+parquet_storage_path: /storage_cold/duckdb/production/events_parquet
+duckdb_temp_directory: /storage_local/duckdb/tmp
+duckdb_memory_limit: 7GB
+duckdb_extension_directory: /usr/local/lib/solidtrace/duckdb_extensions
+`))
+	if err != nil {
+		t.Fatalf("A DuckDB release's config failed to load: %v", err)
+	}
+	if len(cfg.Warnings) != len(keys) {
+		t.Errorf("Expected a warning for each of %v, got %q", keys, cfg.Warnings)
+	}
+	for _, key := range keys {
+		warned := false
+		for _, warning := range cfg.Warnings {
+			warned = warned || strings.HasPrefix(warning, key+" ")
+		}
+		if !warned {
+			t.Errorf("Expected a warning about %s, got %q", key, cfg.Warnings)
+		}
+	}
+}
+
+func TestTheDeployConfigLoadsWithNoWarning(t *testing.T) {
 	cfg := loadFrom(t, "../../deploy/event_store.yml")
 
-	if want := "/storage/duckdb/production/logs.duckdb"; cfg.LogsDuckDBPath != want {
-		t.Errorf("logs DuckDB path = %q, want %q", cfg.LogsDuckDBPath, want)
+	if len(cfg.Warnings) != 0 {
+		t.Errorf("Expected no warnings, got %q", cfg.Warnings)
 	}
 }
 
-func TestLogsDuckDBPathComesFromTheConfigFile(t *testing.T) {
-	cfg := loadFrom(t, writeConfig(t, "duckdb_path: /data/events.duckdb\nlogs_duckdb_path: /fast/logs.duckdb\n"))
-
-	if want := "/fast/logs.duckdb"; cfg.LogsDuckDBPath != want {
-		t.Errorf("logs DuckDB path = %q, want %q", cfg.LogsDuckDBPath, want)
+// The start looks for the DuckDB release's logs.duckdb, which it won't start
+// on unprepared, and the Log files written before the switch, which are read
+// until Retention deletes them, where that release kept them.
+func TestTheDuckDBReleasesLogsAreLookedForWhereItKeptThem(t *testing.T) {
+	cases := []struct {
+		name, yaml        string
+		logsDuckDB, files string
+	}{
+		{"the deploy config", "", "/storage/duckdb/production/logs.duckdb", "/storage/duckdb/production/logs_parquet"},
+		{"no config file", "missing", "../storage/duckdb/development/logs.duckdb", "../storage/duckdb/development/logs_parquet"},
+		{"a DuckDB release's config", "duckdb_path: /data/events.duckdb\n", "/data/logs.duckdb", "/data/logs_parquet"},
+		{"logs_duckdb_path", "duckdb_path: /data/events.duckdb\nlogs_duckdb_path: /fast/logs.duckdb\n", "/fast/logs.duckdb", "/data/logs_parquet"},
+		{"logs_parquet_path", "logs_parquet_path: /fast/logs_parquet\n", "/fast/logs.duckdb", "/fast/logs_parquet"},
+		{"logs_parquet_path and duckdb_path", "duckdb_path: /data/events.duckdb\nlogs_parquet_path: /fast/logs_parquet\n", "/data/logs.duckdb", "/fast/logs_parquet"},
 	}
-}
-
-func TestLogFilesAreNextToEventsDuckDBByDefault(t *testing.T) {
-	cfg := loadFrom(t, "../../deploy/event_store.yml")
-
-	if want := "/storage/duckdb/production/logs_parquet"; cfg.LogsParquetPath != want {
-		t.Errorf("Log files path = %q, want %q", cfg.LogsParquetPath, want)
-	}
-}
-
-func TestLogFilesPathComesFromTheConfigFile(t *testing.T) {
-	cfg := loadFrom(t, writeConfig(t, "duckdb_path: /data/events.duckdb\nlogs_parquet_path: /fast/logs_parquet\n"))
-
-	if want := "/fast/logs_parquet"; cfg.LogsParquetPath != want {
-		t.Errorf("Log files path = %q, want %q", cfg.LogsParquetPath, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := "../../deploy/event_store.yml"
+			switch c.yaml {
+			case "":
+			case "missing":
+				path = filepath.Join(t.TempDir(), "missing.yml")
+			default:
+				path = writeConfig(t, c.yaml)
+			}
+			cfg := loadFrom(t, path)
+			if cfg.LogsDuckDBPath != c.logsDuckDB {
+				t.Errorf("logs.duckdb = %q, want %q", cfg.LogsDuckDBPath, c.logsDuckDB)
+			}
+			if cfg.LogsParquetPath != c.files {
+				t.Errorf("Log files = %q, want %q", cfg.LogsParquetPath, c.files)
+			}
+		})
 	}
 }
 
@@ -221,22 +263,6 @@ func TestABadObjectStoreFailsToLoadSayingWhatIsWrong(t *testing.T) {
 				t.Errorf("error = %v, want one saying %q", err, c.want)
 			}
 		})
-	}
-}
-
-func TestDuckDBExtensionsAreWhereTheImagePutsThemByDefault(t *testing.T) {
-	cfg := loadFrom(t, "../../deploy/event_store.yml")
-
-	if want := "/usr/local/lib/solidtrace/duckdb_extensions"; cfg.DuckDBExtensionDirectory != want {
-		t.Errorf("DuckDB extension directory = %q, want %q", cfg.DuckDBExtensionDirectory, want)
-	}
-}
-
-func TestDuckDBExtensionDirectoryComesFromTheConfigFile(t *testing.T) {
-	cfg := loadFrom(t, writeConfig(t, "duckdb_extension_directory: /home/dev/.cache/duckdb_extensions\n"))
-
-	if want := "/home/dev/.cache/duckdb_extensions"; cfg.DuckDBExtensionDirectory != want {
-		t.Errorf("DuckDB extension directory = %q, want %q", cfg.DuckDBExtensionDirectory, want)
 	}
 }
 

@@ -134,25 +134,6 @@ func testObjectStore(t *testing.T, store ObjectStore, read func(key string) stri
 	}
 }
 
-func TestAFolderObjectStorePutsListsAndDeletesFiles(t *testing.T) {
-	dir := t.TempDir()
-	store := NewDirStore(dir)
-	testObjectStore(t, store, func(key string) string {
-		data, err := os.ReadFile(store.URL(key))
-		if err != nil {
-			t.Fatalf("read %s: %v", key, err)
-		}
-		return string(data)
-	})
-	if got, want := store.URL("project=1/data.parquet"), filepath.Join(dir, "project=1", "data.parquet"); got != want {
-		t.Errorf("Expected the URL %s, got %s", want, got)
-	}
-	empty := NewDirStore(filepath.Join(dir, "never-made"))
-	if objects, err := empty.List(context.Background(), ""); err != nil || len(objects) != 0 {
-		t.Errorf("Expected a folder not made yet to list nothing, got %v (%v)", objects, err)
-	}
-}
-
 func TestAnObjectStoreOnMinIOPutsListsAndDeletesObjects(t *testing.T) {
 	store := minIOStore(t, minIOConfig(t))
 	testObjectStore(t, store, func(key string) string {
@@ -195,17 +176,6 @@ func TestDeletingFromAMissingBucketOnMinIOIsAnError(t *testing.T) {
 	cfg.Bucket = "solidtrace-no-such-bucket"
 	if err := NewObjectStore(cfg).Delete(context.Background(), "project=1/day=2026-10-01/hour=07/data.parquet"); err == nil {
 		t.Error("Expected a delete from a missing bucket to fail, as it deleted nothing")
-	}
-}
-
-func TestAnObjectStoresURLIsWhereDuckDBReadsIt(t *testing.T) {
-	cfg := &config.ObjectStore{Kind: config.ObjectStoreGCS, Bucket: "acme", Prefix: "solidtrace/", Region: "auto", Endpoint: config.GCSEndpoint}
-	if got, want := NewObjectStore(cfg).URL("project=1/day=2026-10-01/hour=07/data.parquet"), "s3://acme/solidtrace/project=1/day=2026-10-01/hour=07/data.parquet"; got != want {
-		t.Errorf("Expected %s, got %s", want, got)
-	}
-	cfg.Prefix = ""
-	if got, want := NewObjectStore(cfg).URL("events/1.parquet"), "s3://acme/events/1.parquet"; got != want {
-		t.Errorf("Expected %s, got %s", want, got)
 	}
 }
 

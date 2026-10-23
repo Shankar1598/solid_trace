@@ -15,12 +15,17 @@ import (
 )
 
 type Config struct {
-	Port            string
-	QueryPort       string // Query API port, always bound to 127.0.0.1
-	PebblePath      string
-	DuckDBPath      string
-	LogsDuckDBPath  string // logs.duckdb, attached to the DuckDB of DuckDBPath
-	LogsParquetPath string // Where the Log export writes Log files
+	Port       string
+	QueryPort  string // Query API port, always bound to 127.0.0.1
+	PebblePath string
+	// LogsDuckDBPath is where a DuckDB release kept its logs.duckdb. EventStore
+	// never opens it: it won't start while one is there that
+	// prepare-clickhouse didn't prepare, and reads what it prepared from
+	// prepared/ beside it.
+	LogsDuckDBPath string
+	// LogsParquetPath is the Log file store: the Log files a DuckDB release
+	// wrote, read in place until Retention deletes them.
+	LogsParquetPath string
 	// LogsDiskLimitBytes caps the Logs of every Project together on
 	// ClickHouse's local disk; past it, the oldest days move to the bucket,
 	// or are deleted without one. 0 caps them at half of that disk
@@ -28,28 +33,19 @@ type Config struct {
 	LogsDiskLimitBytes int64
 	// LogsBinCacheBytes is the memory the bin cache keeps charts' bins in;
 	// 0 turns it off.
-	LogsBinCacheBytes  int64
-	ParquetStoragePath string // Unused: the Event archive's, before Events moved to ClickHouse
-	SQLitePath         string // Rails SQLite for project key auth and issues
-	MessageQueuePath   string // Separate SQLite for event_store_messages
+	LogsBinCacheBytes int64
+	SQLitePath        string // Rails SQLite for project key auth and issues
+	MessageQueuePath  string // Separate SQLite for event_store_messages
 
 	// IngestMaxWaiting caps the requests waiting to store their Event.
 	// Past it, ingest answers 503.
 	IngestMaxWaiting int
 
-	DuckDBTempDirectory string
-	DuckDBMemoryLimit   string
-	// DuckDBExtensionDirectory holds the DuckDB extensions EventStore loads,
-	// such as httpfs for an ObjectStore. The Docker image fills the default
-	// at build time. With an ObjectStore, DuckDB never downloads an extension
-	// itself; without one, DuckDB's defaults stand, so an SQL query that
-	// needs a known extension may still install it.
-	DuckDBExtensionDirectory string
-
 	StorageTiers []StorageTier
 
-	// ObjectStore is the bucket that keeps Log files, or nil when
-	// everything stays on local disk.
+	// ObjectStore is the bucket that older Logs move to, and that holds the
+	// Log files of a DuckDB release, or nil when everything stays on local
+	// disk.
 	ObjectStore *ObjectStore
 
 	// ClickHouse is the server EventStore keeps Logs and Events in.
@@ -60,11 +56,11 @@ type Config struct {
 	CPUProfileDir string
 
 	Debug bool
-}
 
-// DefaultDuckDBExtensionDirectory is where the Docker image puts DuckDB's
-// extensions, as <version>/<platform>/<name>.duckdb_extension.
-const DefaultDuckDBExtensionDirectory = "/usr/local/lib/solidtrace/duckdb_extensions"
+	// Warnings are about keys of the file that do nothing now, for the start
+	// to log.
+	Warnings []string
+}
 
 // DefaultLogsBinCacheMB is the bin cache's size, in MiB, unless the file says.
 const DefaultLogsBinCacheMB = 64
@@ -141,27 +137,36 @@ type objectStoreFile struct {
 }
 
 type fileConfig struct {
-	IngestPort          *string        `yaml:"ingest_port"`
-	QueryPort           *string        `yaml:"query_port"`
-	PebblePath          *string        `yaml:"pebble_path"`
-	DuckDBPath          *string        `yaml:"duckdb_path"`
-	LogsDuckDBPath      *string        `yaml:"logs_duckdb_path"`
-	LogsParquetPath     *string        `yaml:"logs_parquet_path"`
-	LogsDiskLimitGB     *int64         `yaml:"logs_disk_limit_gb"`
-	LogsBinCacheMB      *int64         `yaml:"logs_bin_cache_mb"`
-	ParquetStoragePath  *string        `yaml:"parquet_storage_path"`
-	SQLitePath          *string        `yaml:"sqlite_path"`
-	MessageQueuePath    *string        `yaml:"message_queue_path"`
-	IngestMaxWaiting    *int           `yaml:"ingest_max_waiting"`
-	DuckDBTempDirectory *string        `yaml:"duckdb_temp_directory"`
-	DuckDBMemoryLimit   *string        `yaml:"duckdb_memory_limit"`
-	DuckDBExtensionDir  *string        `yaml:"duckdb_extension_directory"`
-	StorageTiers        *[]StorageTier `yaml:"storage_tiers"`
-	ObjectStore         yaml.Node      `yaml:"object_store"`
-	ClickHouse          yaml.Node      `yaml:"clickhouse"`
-	CPUProfileDir       *string        `yaml:"cpu_profile_dir"`
-	Debug               *bool          `yaml:"debug"`
+	IngestPort       *string        `yaml:"ingest_port"`
+	QueryPort        *string        `yaml:"query_port"`
+	PebblePath       *string        `yaml:"pebble_path"`
+	LogsParquetPath  *string        `yaml:"logs_parquet_path"`
+	LogsDiskLimitGB  *int64         `yaml:"logs_disk_limit_gb"`
+	LogsBinCacheMB   *int64         `yaml:"logs_bin_cache_mb"`
+	SQLitePath       *string        `yaml:"sqlite_path"`
+	MessageQueuePath *string        `yaml:"message_queue_path"`
+	IngestMaxWaiting *int           `yaml:"ingest_max_waiting"`
+	StorageTiers     *[]StorageTier `yaml:"storage_tiers"`
+	ObjectStore      yaml.Node      `yaml:"object_store"`
+	ClickHouse       yaml.Node      `yaml:"clickhouse"`
+	CPUProfileDir    *string        `yaml:"cpu_profile_dir"`
+	Debug            *bool          `yaml:"debug"`
+
+	// A DuckDB release's keys. EventStore no longer uses DuckDB, so they
+	// load with a warning. duckdb_path and logs_duckdb_path still say
+	// where that release's logs.duckdb and Log files are.
+	DuckDBPath          *string `yaml:"duckdb_path"`
+	LogsDuckDBPath      *string `yaml:"logs_duckdb_path"`
+	ParquetStoragePath  *string `yaml:"parquet_storage_path"`
+	DuckDBTempDirectory *string `yaml:"duckdb_temp_directory"`
+	DuckDBMemoryLimit   *string `yaml:"duckdb_memory_limit"`
+	DuckDBExtensionDir  *string `yaml:"duckdb_extension_directory"`
 }
+
+// duckDBDir is where a DuckDB release kept its databases and Log files
+// unless its config said otherwise: the development one, beside the other
+// stores.
+const duckDBDir = "../storage/duckdb/development"
 
 // Load reads the config from the file EVENT_STORE_CONFIG names, or
 // event_store.yml, over the defaults. It exits if the file can't be read or
@@ -182,20 +187,16 @@ func Load() *Config {
 // missing file gives the defaults.
 func LoadFile(path string) (*Config, error) {
 	cfg := &Config{
-		Port:               "4000",
-		QueryPort:          "4100",
-		PebblePath:         "../storage/pebble/development/events",
-		DuckDBPath:         "../storage/duckdb/development/events.duckdb",
-		ParquetStoragePath: "../storage/duckdb/development/events_parquet",
-		SQLitePath:         "../storage/sqlite/development/solid_trace.sqlite3",
-		MessageQueuePath:   "../storage/sqlite/development/message_queue.sqlite3",
+		Port:             "4000",
+		QueryPort:        "4100",
+		PebblePath:       "../storage/pebble/development/events",
+		LogsDuckDBPath:   duckDBDir + "/logs.duckdb",
+		LogsParquetPath:  duckDBDir + "/logs_parquet",
+		SQLitePath:       "../storage/sqlite/development/solid_trace.sqlite3",
+		MessageQueuePath: "../storage/sqlite/development/message_queue.sqlite3",
 
 		IngestMaxWaiting:  10000,
 		LogsBinCacheBytes: DefaultLogsBinCacheMB << 20,
-
-		DuckDBTempDirectory:      "",
-		DuckDBMemoryLimit:        "",
-		DuckDBExtensionDirectory: DefaultDuckDBExtensionDirectory,
 
 		// bin/clickhouse-dev's server. ConfigDir is relative to
 		// event_store/, as the paths above are; in the Docker image, whose
@@ -214,13 +215,6 @@ func LoadFile(path string) (*Config, error) {
 	if err := applyFileConfig(cfg, path); err != nil {
 		return nil, err
 	}
-	if cfg.LogsDuckDBPath == "" {
-		cfg.LogsDuckDBPath = filepath.Join(filepath.Dir(cfg.DuckDBPath), "logs.duckdb")
-	}
-	if cfg.LogsParquetPath == "" {
-		cfg.LogsParquetPath = filepath.Join(filepath.Dir(cfg.DuckDBPath), "logs_parquet")
-	}
-
 	return cfg, nil
 }
 
@@ -247,15 +241,7 @@ func applyFileConfig(cfg *Config, path string) error {
 	if config.PebblePath != nil && *config.PebblePath != "" {
 		cfg.PebblePath = *config.PebblePath
 	}
-	if config.DuckDBPath != nil && *config.DuckDBPath != "" {
-		cfg.DuckDBPath = *config.DuckDBPath
-	}
-	if config.LogsDuckDBPath != nil && *config.LogsDuckDBPath != "" {
-		cfg.LogsDuckDBPath = *config.LogsDuckDBPath
-	}
-	if config.LogsParquetPath != nil && *config.LogsParquetPath != "" {
-		cfg.LogsParquetPath = *config.LogsParquetPath
-	}
+	duckDBReleasesLogs(cfg, &config)
 	if config.LogsDiskLimitGB != nil {
 		if *config.LogsDiskLimitGB <= 0 {
 			return fmt.Errorf("logs_disk_limit_gb must be positive, got %d", *config.LogsDiskLimitGB)
@@ -268,9 +254,6 @@ func applyFileConfig(cfg *Config, path string) error {
 		}
 		cfg.LogsBinCacheBytes = *config.LogsBinCacheMB << 20
 	}
-	if config.ParquetStoragePath != nil && *config.ParquetStoragePath != "" {
-		cfg.ParquetStoragePath = *config.ParquetStoragePath
-	}
 	if config.SQLitePath != nil && *config.SQLitePath != "" {
 		cfg.SQLitePath = *config.SQLitePath
 	}
@@ -282,15 +265,6 @@ func applyFileConfig(cfg *Config, path string) error {
 			return fmt.Errorf("ingest_max_waiting must be positive, got %d", *config.IngestMaxWaiting)
 		}
 		cfg.IngestMaxWaiting = *config.IngestMaxWaiting
-	}
-	if config.DuckDBTempDirectory != nil {
-		cfg.DuckDBTempDirectory = *config.DuckDBTempDirectory
-	}
-	if config.DuckDBMemoryLimit != nil {
-		cfg.DuckDBMemoryLimit = *config.DuckDBMemoryLimit
-	}
-	if config.DuckDBExtensionDir != nil && *config.DuckDBExtensionDir != "" {
-		cfg.DuckDBExtensionDirectory = *config.DuckDBExtensionDir
 	}
 	if config.StorageTiers != nil {
 		cfg.StorageTiers = *config.StorageTiers
@@ -315,6 +289,51 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 
 	return nil
+}
+
+// duckDBReleasesLogs works out where a DuckDB release kept logs.duckdb and
+// the Log files, and warns of each DuckDB key in the file.
+//
+// The Log files are at logs_parquet_path, else beside duckdb_path, as that
+// release had them. logs.duckdb is at logs_duckdb_path, else beside
+// duckdb_path, else beside the Log files, where a config with neither key
+// keeps them both.
+func duckDBReleasesLogs(cfg *Config, file *fileConfig) {
+	given := func(value *string) bool { return value != nil && *value != "" }
+	dir := duckDBDir
+	if given(file.DuckDBPath) {
+		dir = filepath.Dir(*file.DuckDBPath)
+	}
+	cfg.LogsParquetPath = filepath.Join(dir, "logs_parquet")
+	if given(file.LogsParquetPath) {
+		cfg.LogsParquetPath = *file.LogsParquetPath
+		if !given(file.DuckDBPath) {
+			dir = filepath.Dir(cfg.LogsParquetPath)
+		}
+	}
+	cfg.LogsDuckDBPath = filepath.Join(dir, "logs.duckdb")
+	if given(file.LogsDuckDBPath) {
+		cfg.LogsDuckDBPath = *file.LogsDuckDBPath
+	}
+
+	const locates = " is used only to find a DuckDB release's logs.duckdb, which EventStore won't start on until prepare-clickhouse has prepared it, and its Log files, which are read until Retention deletes them: Logs and Events are in ClickHouse now"
+	const ignored = " is ignored: EventStore no longer uses DuckDB, and Logs and Events are in ClickHouse. Remove it from the config"
+	for _, key := range []struct {
+		name  string
+		value *string
+		why   string
+	}{
+		{"duckdb_path", file.DuckDBPath, locates},
+		{"logs_duckdb_path", file.LogsDuckDBPath, locates},
+		{"parquet_storage_path", file.ParquetStoragePath, ignored},
+		{"duckdb_temp_directory", file.DuckDBTempDirectory, ignored},
+		{"duckdb_memory_limit", file.DuckDBMemoryLimit, ignored},
+		{"duckdb_extension_directory", file.DuckDBExtensionDir, ignored},
+	} {
+		if key.value != nil {
+			cfg.Warnings = append(cfg.Warnings, key.name+key.why)
+		}
+	}
 }
 
 // plainName is a ClickHouse identifier that needs no quoting.
