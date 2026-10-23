@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/solidtrace/event_store/config"
+	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 // ClickHouseStoragePolicy is the storage policy EventStore's tables use. Its
@@ -97,6 +99,48 @@ func clickHouseBucketEndpoint(bucket *config.ObjectStore) string {
 		return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket.Bucket, bucket.Region, key)
 	}
 	return bucket.Endpoint + "/" + bucket.Bucket + "/" + key
+}
+
+// logsBucketTTL is the logs table's TTL with a bucket: a part moves to the
+// bucket volume once its newest Log is localCacheHours old. It is written as
+// ClickHouse writes it back in system.tables.
+func logsBucketTTL(localCacheHours int) string {
+	return fmt.Sprintf("toDateTime(time) + toIntervalHour(%d) TO VOLUME '%s'", localCacheHours, ClickHouseBucketVolume)
+}
+
+// useBucket sets the logs table's TTL for bucket: with one, parts move to it
+// after its local_cache_hours; with none, they stay on local disk. It alters
+// the table only when its TTL differs, since ClickHouse then works out every
+// part's TTL again.
+//
+// Parts move there earlier too: ClickHouse moves the largest once its local
+// disk is 90% full (the policy's move_factor, 0.1 by default), and the disk
+// limit moves the oldest days (EnforceDiskLimit).
+func (ch *ClickHouse) useBucket(ctx context.Context, bucket *config.ObjectStore) error {
+	var engine string
+	if err := ch.conn.QueryRow(ctx,
+		"SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = 'logs'").Scan(&engine); err != nil {
+		return fmt.Errorf("reading the logs table's TTL: %w", err)
+	}
+	var have, want string
+	if _, rest, ok := strings.Cut(engine, " TTL "); ok {
+		have, _, _ = strings.Cut(rest, " SETTINGS ")
+	}
+	if bucket != nil {
+		want = logsBucketTTL(bucket.LocalCacheHours)
+	}
+	if have == want {
+		return nil
+	}
+	alter := "ALTER TABLE logs MODIFY TTL " + want
+	if want == "" {
+		alter = "ALTER TABLE logs REMOVE TTL"
+	}
+	if err := ch.conn.Exec(ctx, alter); err != nil {
+		return fmt.Errorf("setting when the logs table's parts move to the bucket: %w", err)
+	}
+	logger.L.Info("Set when the logs table's parts move to the bucket", "was", have, "now", want)
+	return nil
 }
 
 // useStoragePolicy writes the storage policy's config for bucket in dir,

@@ -82,8 +82,14 @@ var countedRange = struct{ from, to time.Time }{
 // want Logs, and that its Fields count want Logs with the user Attribute.
 func assertCounted(t *testing.T, env *TestEnv, projectID uint32, want int, when string) {
 	t.Helper()
+	assertCountedIn(t, env, projectID, countedRange.from, countedRange.to, want, when)
+}
+
+// assertCountedIn is assertCounted over [from, to), whole days.
+func assertCountedIn(t *testing.T, env *TestEnv, projectID uint32, from, to time.Time, want int, when string) {
+	t.Helper()
 	path := fmt.Sprintf("/api/%d/logs/histogram", projectID)
-	status, raw := postQueryApp(t, env, path, histogramRequest{From: countedRange.from, To: countedRange.to, BucketSeconds: 86400})
+	status, raw := postQueryApp(t, env, path, histogramRequest{From: from, To: to, BucketSeconds: 86400})
 	var answer histogramAnswer
 	if err := json.Unmarshal(raw, &answer); status != 200 || err != nil {
 		t.Fatalf("Histogram of Project %d expected 200, got %d: %s", projectID, status, raw)
@@ -91,12 +97,15 @@ func assertCounted(t *testing.T, env *TestEnv, projectID uint32, want int, when 
 	if answer.Count != want {
 		t.Errorf("Expected Project %d's histogram to count %d Logs %s, got %d", projectID, want, when, answer.Count)
 	}
-	var wantFields []attributeCount
-	if want > 0 {
-		wantFields = []attributeCount{{"user", "string", int64(want)}}
+	var users int64
+	for _, field := range getFields(t, env, projectID, from, to, "").Attributes {
+		if field.Name == "user" {
+			users = field.Logs
+		}
 	}
-	assertAttributes(t, getFields(t, env, projectID, countedRange.from, countedRange.to, ""), wantFields,
-		fmt.Sprintf("Project %d's Fields %s", projectID, when))
+	if users != int64(want) {
+		t.Errorf("Expected Project %d's Fields to count %d Logs with user %s, got %d", projectID, want, when, users)
+	}
 }
 
 func TestRetentionDeletesEachProjectsDaysPastItsOwnRetention(t *testing.T) {
