@@ -144,7 +144,7 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		From:      from,
 		To:        to,
 		After:     after,
-		Where:     func(cols storage.ClickHouseColumns) storage.Filter { return query.Filter(cols) },
+		Where:     func(cols storage.LogColumns) storage.Filter { return query.Filter(cols) },
 		Limit:     limit,
 		Budget:    h.ScanBudget,
 	})
@@ -228,7 +228,7 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 		found, err = h.clickHouse.ScanLogsIngestedAfter(run.ctx, storage.IngestedLogScan{
 			ProjectID: projectID,
 			After:     after,
-			Where:     func(cols storage.ClickHouseColumns) storage.Filter { return query.Filter(cols) },
+			Where:     func(cols storage.LogColumns) storage.Filter { return query.Filter(cols) },
 			Limit:     limit,
 		})
 	}
@@ -322,8 +322,8 @@ func (h *LogsHandler) scanTable(run *run, projectID uint32, query *logquery.Quer
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
-		Where:     func(cols storage.ClickHouseColumns) storage.Filter { return query.Filter(cols) },
-		Select:    func(cols storage.ClickHouseColumns) string { return query.Select(cols) },
+		Where:     func(cols storage.LogColumns) storage.Filter { return query.Filter(cols) },
+		Select:    func(cols storage.LogColumns) string { return query.Select(cols) },
 		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
 		Now:       h.clock.Now(),
 	}

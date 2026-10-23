@@ -251,6 +251,20 @@ func (w *PebbleWriter) SetLogProcessingCursor(projectID uint32, cursor uuid.UUID
 	return w.db.Set(logProcessingCursorKey(projectID), cursor[:], pebble.NoSync)
 }
 
+// SetLogProcessingCursors moves several Projects' Log processing cursors at
+// once, synced, so that they are on disk before what follows records that
+// they moved, as loading the prepared cursors records its marker.
+func (w *PebbleWriter) SetLogProcessingCursors(cursors map[uint32]uuid.UUID) error {
+	batch := w.db.NewBatch()
+	defer batch.Close()
+	for projectID, cursor := range cursors {
+		if err := batch.Set(logProcessingCursorKey(projectID), cursor[:], nil); err != nil {
+			return err
+		}
+	}
+	return batch.Commit(pebble.Sync)
+}
+
 // LogProcessingCursors returns the Log processing cursor of every Project
 // that has one.
 func (w *PebbleWriter) LogProcessingCursors() ([]uuid.UUID, error) {

@@ -11,6 +11,14 @@ class ProjectTest < ActiveSupport::TestCase
     assert_equal "my-project", project.slug
   end
 
+  # The DuckDB release reads projects.log_file_order, so the column stays
+  # for a rollback to it, though every Project's Logs are sorted by Service
+  # and file now.
+  test "the Log file order's column stays for a rollback, but a Project doesn't read it" do
+    assert_includes Project.connection.columns(:projects).map(&:name), "log_file_order"
+    assert_not create(:project).has_attribute?(:log_file_order)
+  end
+
   test "a Project needs a name" do
     project = build(:project, name: "", slug: nil)
 

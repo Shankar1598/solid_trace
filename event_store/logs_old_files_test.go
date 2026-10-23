@@ -38,9 +38,8 @@ func startOn(t *testing.T, dir string) error {
 	}
 	defer clickHouse.Close()
 	return storage.NewClickHouseLogs(clickHouse, pebble).UseOldLogFiles(storage.OldLogFiles{
-		LogsDuckDB:  filepath.Join(dir, "logs.duckdb"),
-		PreparedDir: filepath.Join(dir, "prepared"),
-		LocalDir:    filepath.Join(dir, "logs_parquet"),
+		LogsDuckDB: filepath.Join(dir, "logs.duckdb"),
+		LocalDir:   filepath.Join(dir, "logs_parquet"),
 	})
 }
 
@@ -70,13 +69,25 @@ func TestAStoreWithoutDuckDBDataStartsAndStartsAgain(t *testing.T) {
 	if err := startOn(t, dir); err != nil {
 		t.Fatalf("Expected a new store to start, got %v", err)
 	}
-	// A logs.duckdb made after a start with no DuckDB data, as this
-	// release's builds before DuckDB went did, doesn't stop the next start.
-	if err := os.WriteFile(filepath.Join(dir, "logs.duckdb"), []byte("made by this release"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	if err := startOn(t, dir); err != nil {
 		t.Fatalf("Expected it to start again, got %v", err)
+	}
+}
+
+func TestDuckDBDataThatAppearsAfterAStartWithoutAnyStopsTheNextStart(t *testing.T) {
+	logger.Init()
+	clickhousetest.Empty(t)
+	dir := t.TempDir()
+	if err := startOn(t, dir); err != nil {
+		t.Fatalf("Expected a new store to start, got %v", err)
+	}
+
+	// The DuckDB release ran on the store since, as after a rollback.
+	if err := os.WriteFile(filepath.Join(dir, "logs.duckdb"), []byte("the DuckDB release's Logs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := startOn(t, dir); err == nil || !strings.Contains(err.Error(), "prepare-clickhouse") {
+		t.Fatalf("Expected the start to stop and name prepare-clickhouse, got %v", err)
 	}
 }
 
@@ -140,7 +151,7 @@ func TestEachMarkerIsLoadedOnceReplacingTheLastOnesFiles(t *testing.T) {
 
 	// A marker of another run, after a rollback, is loaded in place of the
 	// last one's files: what it prepared is read, once.
-	writeMarker(t, env.OldLogFiles.PreparedDir, switchTime.Add(time.Hour))
+	writeMarker(t, filepath.Join(env.dir, "prepared"), switchTime.Add(time.Hour))
 	env.Reopen(t)
 	assertAttributes(t, getFields(t, env, 3, first, second, ""), firstDay, "the 1st, prepared again")
 	assertAttributes(t, getFields(t, env, 3, second, second.Add(time.Hour), ""), secondDay, "the 2nd, prepared again")
@@ -268,7 +279,6 @@ func usePreparedFixture(t *testing.T, env *TestEnv) {
 
 	env.OldLogFiles = storage.OldLogFiles{
 		LogsDuckDB:    filepath.Join(env.dir, "logs.duckdb"),
-		PreparedDir:   filepath.Join(env.dir, "prepared"),
 		LocalDir:      local,
 		ClickHouseDir: inStore,
 		Bucket:        &bucket,
@@ -567,6 +577,10 @@ func oldFilesLeft(t *testing.T, env *TestEnv) []string {
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
+	if env.OldLogFiles.Bucket == nil {
+		slices.Sort(left)
+		return left
+	}
 	objects, err := storage.NewObjectStore(env.OldLogFiles.Bucket).List(context.Background(), "logs/")
 	if err != nil {
 		t.Fatal(err)
@@ -744,6 +758,27 @@ func TestAKeyPromotedAfterAFileWasWrittenReadsAsMissingInIt(t *testing.T) {
 	}
 }
 
+func TestAnOldFileWhoseLocalCopyIsGoneIsReadFromTheBucket(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+		// As an operator might have deleted it, the local copy of Project
+		// 3's first hour of the 2nd is gone; its object is in the bucket.
+		if err := os.Remove(filepath.Join(env.OldLogFiles.LocalDir, "project=3", "day=2026-10-02", "hour=00", "data.parquet")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	defer env.Cleanup()
+
+	assertProjectQueries(t, env, 3, map[string][]string{
+		``:                    {"order paid", "order placed", "plan changed", "plan chosen", "order shipped", "order paid", "order placed"},
+		`where user == "fay"`: {"order paid", "order placed"},
+	}, "with a local copy gone")
+	if table := tableOf(t, env, 3, `summarize count()`, allTime.from, allTime.to); !strings.Contains(table, `"rows":[[7]]`) {
+		t.Errorf("Expected all 7 old Logs counted, got %s", table)
+	}
+}
+
 func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
 		answers := map[string]string{}
@@ -764,4 +799,124 @@ func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	if all := want["Project 3, all time, pages of 1000: "]; !strings.Contains(all, "order refunded") || !strings.Contains(all, "plan chosen") {
 		t.Errorf("Expected the fixture's Logs and the late Log of an old hour, got %s", all)
 	}
+}
+
+// timedLogs lists a Project's Logs, newest first, each as its time and
+// message.
+func timedLogs(t *testing.T, env *TestEnv, projectID uint32) []string {
+	t.Helper()
+	var listed []string
+	for _, log := range latestLogs(t, env, projectID, 100) {
+		listed = append(listed, log.Time.Format("2006-01-02 15:04 ")+log.Message)
+	}
+	return listed
+}
+
+// fixtureLocalBytes is how much disk the fixture's local copies take.
+func fixtureLocalBytes(t *testing.T) int64 {
+	t.Helper()
+	var total int64
+	err := filepath.WalkDir(filepath.Join(preparedFixture, "logs_parquet"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		info, err := entry.Info()
+		if err == nil {
+			total += info.Size()
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return total
+}
+
+func TestTheDiskLimitDeletesTheLocalCopiesOfOldFilesTheBucketHasFirst(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+	})
+	defer env.Cleanup()
+	postAfterTheSwitch(t, env)
+	listed := map[uint32][]string{}
+	for _, projectID := range fixtureProjects {
+		listed[projectID] = timedLogs(t, env, projectID)
+	}
+	assertListed := func(when string) {
+		t.Helper()
+		for _, projectID := range fixtureProjects {
+			if got := timedLogs(t, env, projectID); !slices.Equal(got, listed[projectID]) {
+				t.Errorf("%s: expected Project %d's Logs unchanged\n want %v\n got  %v", when, projectID, listed[projectID], got)
+			}
+		}
+	}
+	allFiles := oldFilesLeft(t, env)
+	_, total := localDiskUse(t, env)
+
+	// The local copy of the oldest day's file goes, Project 2's of the 1st:
+	// it is read from the bucket.
+	enforceLogDiskLimit(t, env, total-1)
+	assertListed("past the limit by a byte")
+	want := slices.DeleteFunc(slices.Clone(allFiles), func(file string) bool {
+		return file == "local project=2/day=2026-10-01/hour=10/data.parquet"
+	})
+	if left := oldFilesLeft(t, env); !slices.Equal(left, want) {
+		t.Errorf("Expected only Project 2's local copy of the 1st gone\n want %v\n got  %v", want, left)
+	}
+
+	// With no room for any, every local copy goes, and no Log.
+	enforceLogDiskLimit(t, env, total-fixtureLocalBytes(t))
+	assertListed("with no room for the local copies")
+	want = slices.DeleteFunc(slices.Clone(allFiles), func(file string) bool { return strings.HasPrefix(file, "local ") })
+	if left := oldFilesLeft(t, env); !slices.Equal(left, want) {
+		t.Errorf("Expected the bucket's objects alone left\n want %v\n got  %v", want, left)
+	}
+	env.Reopen(t)
+	assertListed("after a restart")
+}
+
+func TestWithoutABucketTheDiskLimitDeletesTheOldestOldDaysBeforeTheOldestPartitions(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+		env.OldLogFiles.Bucket = nil
+	})
+	defer env.Cleanup()
+	postAfterTheSwitch(t, env)
+	project2, project3 := timedLogs(t, env, 2), timedLogs(t, env, 3)
+	_, total := localDiskUse(t, env)
+
+	// The oldest day of old files goes, Project 2's 1st, and not the
+	// partition of its Log of the 1st stored since the switch.
+	enforceLogDiskLimit(t, env, total-1)
+	want := slices.DeleteFunc(slices.Clone(project2), func(log string) bool { return log == "2026-10-01 10:04 GET /health" })
+	if got := timedLogs(t, env, 2); len(want) != len(project2)-1 || !slices.Equal(got, want) {
+		t.Errorf("Expected Project 2's old Log of the 1st gone\n want %v\n got  %v", want, got)
+	}
+	if got := timedLogs(t, env, 3); !slices.Equal(got, project3) {
+		t.Errorf("Expected Project 3's Logs unchanged\n want %v\n got  %v", project3, got)
+	}
+
+	// With no room for old files, they all go, and then the oldest
+	// partition.
+	enforceLogDiskLimit(t, env, total-fixtureLocalBytes(t)-1)
+	assertGone := func(when string) {
+		t.Helper()
+		if got, want := timedLogs(t, env, 2), []string{"2026-10-02 00:40 GET /"}; !slices.Equal(got, want) {
+			t.Errorf("%s: expected Project 2's Log of the 2nd since the switch alone\n want %v\n got  %v", when, want, got)
+		}
+		want := []string{"2026-10-02 01:10 order paid", "2026-10-02 00:45 order placed", "2026-10-02 00:29 order placed", "2026-10-01 10:30 order refunded"}
+		if got := timedLogs(t, env, 3); !slices.Equal(got, want) {
+			t.Errorf("%s: expected Project 3's Logs since the switch alone\n want %v\n got  %v", when, want, got)
+		}
+		for _, file := range oldFilesLeft(t, env) {
+			if strings.HasPrefix(file, "local ") {
+				t.Errorf("%s: expected no local copy left, got %s", when, file)
+			}
+		}
+	}
+	assertGone("with no room for old files")
+	env.Reopen(t)
+	assertGone("after a restart")
 }

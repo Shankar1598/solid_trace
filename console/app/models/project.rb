@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 class Project < ApplicationRecord
+  # The DuckDB release's Log file order. Every Project's Logs are sorted by
+  # Service and file now, but the column stays so that a rollback to that
+  # release still works, until the old Log file path goes (ticket 12 of
+  # .scratch/clickhouse).
+  self.ignored_columns += [ "log_file_order" ]
+
   belongs_to :organization
   has_many :issues, dependent: :destroy
   has_many :issue_fingerprints, dependent: :destroy

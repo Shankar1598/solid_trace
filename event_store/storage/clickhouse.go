@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -192,3 +193,18 @@ func (ch *ClickHouse) HasBucket() bool { return ch.bucket }
 func (ch *ClickHouse) Database() string { return ch.database }
 
 func (ch *ClickHouse) Close() error { return ch.conn.Close() }
+
+// ClickHouse's error codes that EventStore tells apart.
+const (
+	chTimeoutExceeded      = 159 // TIMEOUT_EXCEEDED
+	chUnknownUser          = 192 // UNKNOWN_USER
+	chAuthenticationFailed = 516 // AUTHENTICATION_FAILED
+)
+
+// clickHouseException is the exception err is, or wraps, when ClickHouse
+// refused a statement, rather than not answering it.
+func clickHouseException(err error) (*clickhouse.Exception, bool) {
+	var exception *clickhouse.Exception
+	ok := errors.As(err, &exception)
+	return exception, ok
+}

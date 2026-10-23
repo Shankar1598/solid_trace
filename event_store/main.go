@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -52,10 +51,13 @@ func main() {
 	// the start on DuckDB data it didn't prepare. It runs before Log
 	// processing, which reads the Processing cursors it loads.
 	if err := clickHouseLogs.UseOldLogFiles(storage.OldLogFiles{
-		LogsDuckDB:  cfg.LogsDuckDBPath,
-		PreparedDir: filepath.Join(filepath.Dir(cfg.LogsDuckDBPath), "prepared"),
-		LocalDir:    cfg.LogsParquetPath,
-		Bucket:      cfg.ObjectStore,
+		LogsDuckDB: cfg.LogsDuckDBPath,
+		// Compose mounts logs_parquet_path at ClickHouse's user_files_path,
+		// where deploy/install finds it, and bin/clickhouse-dev the
+		// development store, so ClickHouseDir is "": file() reads each file
+		// by its path in the store.
+		LocalDir: cfg.LogsParquetPath,
+		Bucket:   cfg.ObjectStore,
 	}); err != nil {
 		logger.L.Fatal("Failed to ready the Logs from before the switch to ClickHouse", "error", err)
 	}
@@ -112,7 +114,8 @@ func main() {
 		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
 	}
 	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
-	logCleanup := logprocessing.NewCleanup(clickHouseLogs, consoleSettings, diskLimit, clock.System{})
+	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
+	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, consoleSettings, diskLimit, clock.System{})
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
@@ -136,7 +139,7 @@ func main() {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
-	logsHandler := handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), consoleSettings, clock.System{})
+	logsHandler := handler.NewLogsHandler(clickHouseLogs, sqlQueries, consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 

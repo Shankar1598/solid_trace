@@ -121,8 +121,10 @@ services:
       # EventStore writes it (clickhouse.config_dir); ClickHouse reloads it.
       - ./data/storage/clickhouse/conf.d:/etc/clickhouse-server/conf.d:ro
       - ./data/clickhouse:/var/lib/clickhouse
-      # The Log file store, for Log files written before the switch.
-      - ./data/storage/duckdb/production/logs_parquet:/logs_parquet:ro
+      # The Log file store, for Log files written before the switch, at
+      # ClickHouse's user_files_path: event_store.yml's logs_parquet_path,
+      # which deploy/install finds on this machine.
+      - ${SOLIDTRACE_LOG_FILE_STORE:-./data/storage/duckdb/production/logs_parquet}:/logs_parquet:ro
     healthcheck:
       test: ["CMD", "clickhouse", "client", "--port", "4200", "--query", "SELECT 1"]
       interval: 5s
