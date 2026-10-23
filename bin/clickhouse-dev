@@ -62,7 +62,9 @@ fi
 
 if [[ -z $running_image ]]; then
   # conf.d holds the bucket volume EventStore writes for an object_store
-  # (clickhouse.config_dir). Old Log files are read from logs_parquet.
+  # (clickhouse.config_dir), which reads the bucket's key from the
+  # SOLIDTRACE_OBJECT_STORE_* variables set when the container started.
+  # Old Log files are read from logs_parquet.
   mkdir -p "$dir/data" "$dir/conf.d" "$main/storage/duckdb/development/logs_parquet"
   echo "Starting $NAME ($IMAGE), data in $dir"
   # The host's network, as in Compose, so it listens on loopback only. As
@@ -73,6 +75,7 @@ if [[ -z $running_image ]]; then
     --env CLICKHOUSE_SKIP_USER_SETUP=1 \
     --env SOLIDTRACE_CLICKHOUSE_PASSWORD= \
     --env SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES="$MEMORY_BYTES" \
+    --env SOLIDTRACE_OBJECT_STORE_KEY_ID --env SOLIDTRACE_OBJECT_STORE_SECRET \
     --volume "$dir/etc/config.d:/etc/clickhouse-server/config.d:ro" \
     --volume "$dir/etc/users.d:/etc/clickhouse-server/users.d:ro" \
     --volume "$dir/conf.d:/etc/clickhouse-server/conf.d:ro" \
