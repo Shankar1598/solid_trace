@@ -115,9 +115,7 @@ func TestARunPastItsTimeoutIsStoppedOnTheServer(t *testing.T) {
 
 	// Runs of a Query and histograms hand their timeout to their scan: one
 	// of a microsecond has ended before the scan takes a connection. That a
-	// scan stops while DuckDB runs it is storage's test
-	// (TestAScanPastItsContextIsStoppedPartWayAndItsConnectionStillReads),
-	// and that a run of Log rows stops part-way, the test below.
+	// run of Log rows stops part-way is the test below.
 	// A run after a batch reads no time range, so it isn't told to shorten
 	// one.
 	shorter, ingested := "try a shorter time range", "too many Logs were ingested since the last run"

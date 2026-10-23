@@ -768,9 +768,9 @@ func postAndProcess(t *testing.T, env *TestEnv, logs ...string) {
 	env.ProcessLogs(t)
 }
 
-// postWhileHot sends Logs with the clock at 29 minutes past each one's hour,
-// as DuckDB's hot window once needed. A run of Logs of one hour is one
-// request. It leaves the clock at the last Log's hour.
+// postWhileHot sends Logs with the clock at 29 minutes past each one's hour.
+// A run of Logs of one hour is one request. It leaves the clock at the last
+// Log's hour.
 func postWhileHot(t *testing.T, env *TestEnv, logs ...string) {
 	t.Helper()
 	hourOf := func(log string) time.Time {

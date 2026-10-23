@@ -15,8 +15,7 @@ func onTestDay(hour, minute int) time.Time {
 }
 
 // seedHourInThreeInserts stores Logs of hour 10 on testNow's day in three
-// inserts, sent at three times, as DuckDB once kept them in a Log file, as
-// late Logs and in the hot table: file at 10:29, late at 12:05, and hot at
+// inserts, sent at three times: file at 10:29, late at 12:05, and hot at
 // 10:29 again. late may also hold Logs before hour 10, and hot Logs of hour
 // 11.
 func seedHourInThreeInserts(t *testing.T, env *TestEnv, file, late, hot []string) {
