@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "webmock/minitest"
 
 # The instance settings tools: the install's settings as Settings → Instance
 # shows them, and the three that apply at once, which only an instance admin
@@ -10,7 +11,17 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
   include McpTestHelper
 
   setup do
-    @acme = create(:organization, name: "Acme", slug: "acme")
+    # EventStore's config, with its ClickHouse password set and no bucket.
+    stub_request(:get, %r{/config\z}).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+      body: { "ingest_port" => "4000", "query_port" => "4100", "pebble_path" => "/storage/pebble",
+        "message_queue_path" => "/storage/mq.sqlite3", "sqlite_path" => "/storage/console.sqlite3",
+        "logs_parquet_path" => "/storage/logs_parquet",
+        "logs_disk_limit" => { "configured_bytes" => 0, "effective_bytes" => 50_000_000_000 },
+        "logs_bin_cache_bytes" => 64 << 20, "ingest_max_waiting" => 10_000,
+        "clickhouse" => { "address" => "clickhouse:9000", "database" => "solidtrace", "user" => "solidtrace",
+          "password_set" => true, "config_dir" => "" },
+        "object_store" => nil, "cpu_profile_dir" => "", "debug" => false, "defaults" => [] }.to_json)
+    @acme =create(:organization, name: "Acme", slug: "acme")
     @instance_admin = create(:user, name: "Grace", email: "grace@example.com", instance_admin: true)
     create(:organization_user, organization: @acme, user: @instance_admin, role: :admin)
     @org_admin = create(:user, name: "Ada", email: "ada@example.com")

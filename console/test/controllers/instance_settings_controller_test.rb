@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "webmock/minitest"
 
 # Settings → Instance: the install's settings. Those that apply at once (SQL
 # queries, the default Retention, log-all-reads) change here; Sign-up and
@@ -9,7 +10,26 @@ require "test_helper"
 class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
 
+  # EventStore's GET /config: the config it loaded at start, with a bucket,
+  # every secret set, and the disk limit left at half of ClickHouse's disk.
+  EVENT_STORE_CONFIG = {
+    "ingest_port" => "4000", "query_port" => "4100",
+    "pebble_path" => "/storage/pebble", "message_queue_path" => "/storage/sqlite/message_queue.sqlite3",
+    "sqlite_path" => "/storage/sqlite/solid_trace.sqlite3", "logs_parquet_path" => "/storage/duckdb/logs_parquet",
+    "logs_disk_limit" => { "configured_bytes" => 0, "effective_bytes" => 53_687_091_200 },
+    "logs_bin_cache_bytes" => 64 << 20, "ingest_max_waiting" => 10_000,
+    "clickhouse" => { "address" => "clickhouse:9000", "database" => "solidtrace", "user" => "solidtrace",
+      "password_set" => true, "config_dir" => "/storage/clickhouse/conf.d" },
+    "object_store" => { "kind" => "gcs", "bucket" => "acme-logs", "prefix" => "solidtrace/", "region" => "auto",
+      "endpoint" => "https://storage.googleapis.com", "local_cache_hours" => 24, "key_id_set" => true, "secret_set" => true },
+    "cpu_profile_dir" => "", "debug" => false,
+    "defaults" => [ "ingest_port", "query_port", "logs_disk_limit_gb", "logs_bin_cache_mb", "ingest_max_waiting",
+      "clickhouse.database", "clickhouse.user", "cpu_profile_dir", "debug" ],
+  }.freeze
+
   setup do
+    stub_request(:get, %r{/config\z}).to_return(status: 200, body: EVENT_STORE_CONFIG.to_json,
+      headers: { "Content-Type" => "application/json" })
     @organization = create(:organization)
     @instance_admin = create(:user, instance_admin: true)
     @organization.organization_users.create!(user: @instance_admin, role: :admin)
@@ -81,6 +101,66 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "k3y-base-v4lue"
   end
 
+  test "an instance admin sees EventStore's config as it loaded it, each row naming its event_store.yml key" do
+    sign_in_as(@instance_admin)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+
+    rows = event_store_group["settings"]
+    assert_equal [ "ingest_port", "query_port", "clickhouse.address", "clickhouse.database", "clickhouse.user",
+      "SOLIDTRACE_CLICKHOUSE_PASSWORD", "clickhouse.config_dir", "pebble_path", "message_queue_path", "sqlite_path",
+      "logs_parquet_path", "logs_disk_limit_gb", "logs_bin_cache_mb", "ingest_max_waiting", "object_store.kind",
+      "object_store.bucket", "object_store.prefix", "object_store.region", "object_store.endpoint",
+      "object_store.local_cache_hours", "SOLIDTRACE_OBJECT_STORE_KEY_ID", "SOLIDTRACE_OBJECT_STORE_SECRET",
+      "cpu_profile_dir", "debug" ], rows.pluck("source")
+    rows = rows.index_by { |row| row["source"] }
+    assert_equal({ "label" => "ClickHouse address", "source" => "clickhouse.address", "value" => "clickhouse:9000",
+      "default" => false, "secret" => false }, rows["clickhouse.address"])
+    assert_equal [ "solidtrace", true ], rows["clickhouse.user"].values_at("value", "default")
+    assert_equal [ "Half of ClickHouse's disk: 53.7 GB (53687091200 bytes)", true ],
+      rows["logs_disk_limit_gb"].values_at("value", "default")
+    assert_equal "64 MiB", rows["logs_bin_cache_mb"]["value"]
+    assert_equal [ 10_000, true ], rows["ingest_max_waiting"].values_at("value", "default")
+    assert_equal [ "acme-logs", false ], rows["object_store.bucket"].values_at("value", "default")
+    assert_equal 24, rows["object_store.local_cache_hours"]["value"]
+    assert_nil rows["cpu_profile_dir"]["value"]
+    assert_equal [ false, true ], rows["debug"].values_at("value", "default")
+    %w[SOLIDTRACE_CLICKHOUSE_PASSWORD SOLIDTRACE_OBJECT_STORE_KEY_ID SOLIDTRACE_OBJECT_STORE_SECRET].each do |source|
+      assert_equal [ true, false, true ], rows[source].values_at("value", "default", "secret"), source
+    end
+  end
+
+  test "a disk limit given in the file shows its bytes, and no bucket shows as none" do
+    stub_request(:get, %r{/config\z}).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+      body: EVENT_STORE_CONFIG.merge(
+        "logs_disk_limit" => { "configured_bytes" => 100_000_000_000, "effective_bytes" => 100_000_000_000 },
+        "object_store" => nil, "defaults" => EVENT_STORE_CONFIG["defaults"] - [ "logs_disk_limit_gb" ] + [ "object_store" ],
+      ).to_json)
+    sign_in_as(@instance_admin)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+
+    rows = event_store_group["settings"].index_by { |row| row["source"] }
+    assert_equal [ "100 GB (100000000000 bytes)", false ], rows["logs_disk_limit_gb"].values_at("value", "default")
+    assert_equal({ "label" => "Bucket", "source" => "object_store", "value" => "None, Logs stay on local disk",
+      "default" => true, "secret" => false }, rows["object_store"])
+    assert_empty rows.keys.grep(/\Aobject_store\.|OBJECT_STORE/)
+  end
+
+  test "with EventStore unreachable, the page still renders and the EventStore group says it's unavailable" do
+    stub_request(:get, %r{/config\z}).to_raise(Errno::ECONNREFUSED)
+    sign_in_as(@instance_admin)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+
+    assert_response :success
+    group = event_store_group
+    assert_nil group["settings"]
+    assert_match(/\ACouldn't read EventStore's config: .*refused/i, group["unavailable"])
+    assert_equal 30, response.parsed_body.dig("props", "settings", "editable", "default_log_retention_days")
+    assert console_rows.present?
+  end
+
   test "saving changes SQL queries, the default Retention and log-all-reads, and the page shows them" do
     sign_in_as(@instance_admin)
 
@@ -120,6 +200,10 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
   end
 
   private
+
+  def event_store_group
+    response.parsed_body.dig("props", "settings", "restart_to_change").find { |group| group["name"] == "EventStore" }
+  end
 
   def console_rows
     response.parsed_body.dig("props", "settings", "restart_to_change")

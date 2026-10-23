@@ -36,7 +36,17 @@ class InstanceSettingsAnswer
       },
       restart_to_change: [
         { name: "Console", settings: ConsoleEnvironment.new(console_url: @console_url, env: @env).settings },
+        event_store_group
       ],
     }
+  end
+
+  private
+
+  # EventStore's config as it loaded it at start, or why it can't be read.
+  def event_store_group
+    { name: "EventStore", settings: EventStoreConfig.new(EventStore.config).settings }
+  rescue EventStore::Unavailable => e
+    { name: "EventStore", unavailable: "Couldn't read EventStore's config: #{e.message}" }
   end
 end
