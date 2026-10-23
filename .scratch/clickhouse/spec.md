@@ -327,6 +327,6 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
 - From 26.7, S3 credentials are no longer inherited by SQL queries by default, which suits the SQL users.
 - 26.4 to 26.8 list 57 breaking changes; the probe reads them for anything that touches this design.
 
-**Zone recovery** ([01](../zone-recovery/issues/01-disk-snapshots-and-restore.md)): ClickHouse keeps the metadata of its bucket parts on local disk. A disk snapshot must cover ClickHouse's data directory, since the bucket alone can't be restored from.
+**Zone recovery** ([01](../zone-recovery/issues/01-disk-snapshots-and-restore.md)): ClickHouse keeps the metadata of its bucket parts on local disk. A disk snapshot must cover ClickHouse's data directory, since the bucket alone can't be restored from. A snapshot can also point at bucket files ClickHouse deleted after it (merges, late Logs, dropped days), so a restore needs GCS soft delete to bring those back. **To fix for HA (2026-10-23, the user):** make the bucket a real backup, e.g. ClickHouse `BACKUP` of `logs`/`events` to `backups/` plus Console's SQLite; left for now, see [zone recovery 01](../zone-recovery/issues/01-disk-snapshots-and-restore.md)'s Comments.
 
 **Dev box:** 9.5 GB of its 88 GB disk is free. The probe and the test database must stay small: one quarter-hour, then deleted.
