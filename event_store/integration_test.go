@@ -74,19 +74,12 @@ type TestEnv struct {
 	// testNow and moves only when a test moves it.
 	Clock *clock.Manual
 
-	// Bucket keeps the Log files too, if set, each local copy for
-	// LocalCacheHours (logs_bucket_test.go). BucketConfig, if set, is the
-	// object_store that DuckDB reads the bucket through.
-	Bucket          storage.ObjectStore
-	BucketConfig    *config.ObjectStore
-	LocalCacheHours int
+	// BucketConfig, if set, is the object_store: the logs table's parts
+	// move to its bucket (logs_bucket_test.go), and DuckDB reads it.
+	BucketConfig *config.ObjectStore
 	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
 	// it; 0 turns it off.
 	BinCacheBytes int64
-	// BusyProjectLogs, if set, is how many hot Logs of the quarter-hour
-	// before the quarter cutoff make a Project busy, in place of
-	// storage.BusyProjectLogs.
-	BusyProjectLogs int64
 
 	dir   string // holds Pebble and DuckDB
 	close func()
@@ -105,16 +98,6 @@ func (env *TestEnv) ProcessLogs(t *testing.T) {
 	t.Helper()
 	if err := env.LogProcessor.ProcessUntilCaughtUp(); err != nil {
 		t.Fatalf("Log processing failed: %v", err)
-	}
-}
-
-// ExportLogs runs the Log export as it runs at the start of the clock's
-// quarter-hour: a busy Project's Logs before the quarter cutoff, and every
-// other Project's before the start of the previous hour, move to files.
-func (env *TestEnv) ExportLogs(t *testing.T) {
-	t.Helper()
-	if err := env.LogStore.ExportLogs(env.Clock.Now()); err != nil {
-		t.Fatalf("Log export failed: %v", err)
 	}
 }
 
@@ -414,15 +397,8 @@ func (env *TestEnv) open(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to attach logs DuckDB: %v", err)
 	}
-	if env.Bucket != nil {
-		if err := logStore.UseObjectStore(env.Bucket, env.LocalCacheHours); err != nil {
-			t.Fatalf("Failed to keep Log files in the bucket: %v", err)
-		}
-	} else if err := logStore.UseLocalDiskOnly(); err != nil {
+	if err := logStore.UseLocalDiskOnly(); err != nil {
 		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
-	}
-	if env.BusyProjectLogs > 0 {
-		logStore.UseBusyProjectLogs(env.BusyProjectLogs)
 	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)
