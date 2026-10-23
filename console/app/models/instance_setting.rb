@@ -14,12 +14,13 @@ class InstanceSetting < ApplicationRecord
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
-    SQL queries let every member of every Organization run raw DuckDB SQL from the Logs explorer and the MCP server.
-    They are read-only: anything but one SELECT is refused, so they can't change data, settings or files.
-    They read only the logs and events views of the Project they run on: tables, files, URLs and the catalogue are refused.
-    But they are not sandboxed, so turning them on lets any member:
+    SQL queries let every member of every Organization run ClickHouse SQL from the Logs explorer and the MCP server.
+    Each runs as its Project's read-only database user, which sees only that Project's logs and events tables.
+    The database refuses the rest: other Projects, other tables, system tables, files, URLs, the bucket and any change.
+    A query stops after 10 seconds or 1 GiB of memory, and can't raise its limits.
+    So turning them on lets any member:
       - read every Log and Event of their own Organization's Projects
-      - starve ingest with slow queries
+      - slow ingest down for up to 10 seconds a query
     They are on by default. Turn them off if you don't trust every member of every Organization not to slow the install down.
   TEXT
 

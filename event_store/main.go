@@ -147,7 +147,7 @@ func main() {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
-	logsHandler := handler.NewLogsHandler(clickHouseLogs, logStore, consoleSettings, clock.System{})
+	logsHandler := handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
 
