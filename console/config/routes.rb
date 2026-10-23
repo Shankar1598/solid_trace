@@ -113,6 +113,8 @@ Rails.application.routes.draw do
       resource :email_settings, only: [ :show, :update ], path: "email", controller: "email_settings" do
         post :send_test, path: "test"
       end
+      # The install's settings, for instance admins (InstanceSettingsController).
+      resource :instance_settings, only: [ :show, :update ], path: "instance", controller: "instance_settings"
     end
     get "settings", to: redirect("/%{org_slug}/settings/organization")
   end
