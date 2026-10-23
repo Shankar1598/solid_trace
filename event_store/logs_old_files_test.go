@@ -756,6 +756,27 @@ func TestAKeyPromotedAfterAFileWasWrittenReadsAsMissingInIt(t *testing.T) {
 	}
 }
 
+func TestAnOldFileWhoseLocalCopyIsGoneIsReadFromTheBucket(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+		// As an operator might have deleted it, the local copy of Project
+		// 3's first hour of the 2nd is gone; its object is in the bucket.
+		if err := os.Remove(filepath.Join(env.OldLogFiles.LocalDir, "project=3", "day=2026-10-02", "hour=00", "data.parquet")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	defer env.Cleanup()
+
+	assertProjectQueries(t, env, 3, map[string][]string{
+		``:                    {"order paid", "order placed", "plan changed", "plan chosen", "order shipped", "order paid", "order placed"},
+		`where user == "fay"`: {"order paid", "order placed"},
+	}, "with a local copy gone")
+	if table := tableOf(t, env, 3, `summarize count()`, allTime.from, allTime.to); !strings.Contains(table, `"rows":[[7]]`) {
+		t.Errorf("Expected all 7 old Logs counted, got %s", table)
+	}
+}
+
 func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
 		answers := map[string]string{}

@@ -132,10 +132,21 @@ env_value() { grep -sE "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2- || true; }
 
 https_on() { [[ $(env_value COMPOSE_PROFILES) == *https* ]]; }
 
+# set_env_value NAME VALUE writes NAME=VALUE to deploy/.env, replacing its
+# value: for what each run works out afresh.
+set_env_value() {
+  local tmp
+  tmp=$(mktemp)
+  grep -svE "^$1=" "$ENV_FILE" > "$tmp" || true
+  echo "$1=$2" >> "$tmp"
+  # In place, so the file keeps its owner and mode (it holds secrets).
+  cat "$tmp" > "$ENV_FILE"
+  rm -f "$tmp"
+}
+
 # set_version writes SOLIDTRACE_VERSION to deploy/.env: the release whose images
 # run, the one this checkout is at or the newest before it, or dev with --build.
 set_version() {
-  local tmp
   if (( BUILD )); then
     VERSION=dev
   else
@@ -144,12 +155,7 @@ set_version() {
     [[ $VERSION == "$(git -C "$DEPLOY_DIR" describe --tags --exact-match 2>/dev/null)" ]] ||
       printf '\nwarning: %s\n' "This commit isn't a release, so it runs $VERSION's images, which may not match this checkout. To run this checkout's code: deploy/install --build" >&2
   fi
-  tmp=$(mktemp)
-  grep -svE '^SOLIDTRACE_VERSION=' "$ENV_FILE" > "$tmp" || true
-  echo "SOLIDTRACE_VERSION=$VERSION" >> "$tmp"
-  # In place, so the file keeps its owner and mode (it holds secrets).
-  cat "$tmp" > "$ENV_FILE"
-  rm -f "$tmp"
+  set_env_value SOLIDTRACE_VERSION "$VERSION"
 }
 
 # pull_images pulls a release's images, and stops if any isn't there.
@@ -173,6 +179,27 @@ host_path() {
     /storage_cold/*) echo "$DATA_DIR/storage_cold/${1#/storage_cold/}" ;;
     *) echo "$1" ;;
   esac
+}
+
+# log_file_store prints where the Log file store is, as EventStore's container
+# sees it and as EventStore finds it: logs_parquet_path, else logs_parquet
+# beside duckdb_path, as the DuckDB releases' config had it.
+log_file_store() {
+  local files duckdb
+  files=$(config_value logs_parquet_path)
+  if [[ -z $files ]]; then
+    duckdb=$(config_value duckdb_path)
+    files="$(dirname "${duckdb:-/storage/duckdb/production/events.duckdb}")/logs_parquet"
+  fi
+  echo "$files"
+}
+
+# set_log_file_store writes SOLIDTRACE_LOG_FILE_STORE to deploy/.env: where the
+# Log file store is on this machine, which Compose mounts read-only at
+# ClickHouse's user_files_path, /logs_parquet. EventStore's file() reads name
+# the files by their path in the store, so ClickHouse finds them there.
+set_log_file_store() {
+  set_env_value SOLIDTRACE_LOG_FILE_STORE "$(host_path "$(log_file_store)")"
 }
 
 # prepare_release prints the newest release before the one to run that ships
@@ -300,6 +327,7 @@ ensure_env_value SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES \
   "$(awk '/^MemTotal:/ { printf "%.0f", $2 * 1024 / 2 }' /proc/meminfo)" \
   "Giving ClickHouse half of this machine's memory in $ENV_FILE"
 set_version
+set_log_file_store
 prepare_duckdb_logs
 start_services
 wait_for Console http://127.0.0.1:3000/up

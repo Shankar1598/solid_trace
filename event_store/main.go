@@ -54,8 +54,12 @@ func main() {
 	if err := clickHouseLogs.UseOldLogFiles(storage.OldLogFiles{
 		LogsDuckDB:  cfg.LogsDuckDBPath,
 		PreparedDir: filepath.Join(filepath.Dir(cfg.LogsDuckDBPath), "prepared"),
-		LocalDir:    cfg.LogsParquetPath,
-		Bucket:      cfg.ObjectStore,
+		// Compose mounts logs_parquet_path at ClickHouse's user_files_path,
+		// where deploy/install finds it, and bin/clickhouse-dev the
+		// development store, so ClickHouseDir is "": file() reads each file
+		// by its path in the store.
+		LocalDir: cfg.LogsParquetPath,
+		Bucket:   cfg.ObjectStore,
 	}); err != nil {
 		logger.L.Fatal("Failed to ready the Logs from before the switch to ClickHouse", "error", err)
 	}

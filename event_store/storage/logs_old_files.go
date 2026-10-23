@@ -379,8 +379,11 @@ type oldLogFile struct {
 	// when the DuckDB release couldn't read it.
 	from, to time.Time
 	// local is whether a copy is in the Log file store: then it is read
-	// there, and else from the bucket.
+	// there, and else from the bucket. A copy the manifest lists but that
+	// was gone at start doesn't count, if the bucket has the file.
 	local bool
+	// remote is whether the bucket has the file.
+	remote bool
 	// batchMax is the last Log batch it holds Logs of, or nil for a file
 	// from before the batch column.
 	batchMax *uuid.UUID
@@ -422,12 +425,13 @@ func (state oldState) inBucket() int {
 // readState reads the old tables.
 func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 	state := oldState{files: map[uint32][]oldLogFile{}, sets: map[projectDay][]oldPromotedKey{}}
-	rows, err := o.conn.Query(ctx, `SELECT project_id, day, hour, key, min_time, max_time, local, batch_max
+	rows, err := o.conn.Query(ctx, `SELECT project_id, day, hour, key, min_time, max_time, local, remote, batch_max
 		FROM old_log_files ORDER BY project_id, day, hour, name`)
 	if err != nil {
 		return state, fmt.Errorf("read the old Log files: %w", err)
 	}
 	defer rows.Close()
+	lost := 0
 	for rows.Next() {
 		var (
 			projectID  uint32
@@ -435,11 +439,18 @@ func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 			hour       uint8
 			minT, maxT *time.Time
 		)
-		if err := rows.Scan(&projectID, &file.day, &hour, &file.key, &minT, &maxT, &file.local, &file.batchMax); err != nil {
+		if err := rows.Scan(&projectID, &file.day, &hour, &file.key, &minT, &maxT, &file.local, &file.remote, &file.batchMax); err != nil {
 			return state, err
 		}
 		if !oldKeyPattern.MatchString(file.key) {
 			return state, fmt.Errorf("old Log file %q isn't named as prepare-clickhouse names them", file.key)
+		}
+		if file.local && !o.hasLocalCopy(file.key) {
+			// Read from the bucket, if it has the file: file() would skip
+			// it.
+			if file.local = false; !file.remote {
+				lost++
+			}
 		}
 		file.day = LogDay(file.day)
 		file.from = file.day.Add(time.Duration(hour) * time.Hour)
@@ -451,6 +462,9 @@ func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return state, err
+	}
+	if lost > 0 {
+		logger.L.Warn("Old Log files with no local copy left and none in the bucket aren't read", "files", lost, "dir", o.cfg.LocalDir)
 	}
 
 	sets, err := o.conn.Query(ctx, `SELECT project_id, day, type, key, column_name, partway
@@ -475,6 +489,16 @@ func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 	return state, sets.Err()
 }
 
+// hasLocalCopy reports whether an old file's copy is in the Log file store,
+// or may be: true when the store isn't known.
+func (o *oldLogFiles) hasLocalCopy(key string) bool {
+	if o.cfg.LocalDir == "" {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(o.cfg.LocalDir, filepath.FromSlash(key)))
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
 // oldSource is old Log files of one Project's day that one table function
 // reads: all on local disk, or all in the bucket.
 type oldSource struct {
@@ -494,7 +518,7 @@ func (o *oldLogFiles) sources(projectID uint32, keep func(oldLogFile) bool) []ol
 	var files []oldLogFile
 	for _, file := range o.state.files[projectID] {
 		// A file only in a bucket no longer configured can't be read.
-		if keep(file) && (file.local || o.cfg.Bucket != nil) {
+		if keep(file) && (file.local || (file.remote && o.cfg.Bucket != nil)) {
 			files = append(files, file)
 		}
 	}
