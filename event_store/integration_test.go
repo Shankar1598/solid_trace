@@ -443,7 +443,8 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
-	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, consoleSettings, storage.LogDiskLimit{}, env.Clock)
+	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
+	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, consoleSettings, storage.LogDiskLimit{}, env.Clock)
 
 	// Setup Handler
 	env.EventWriter.setWriter(pebbleWriter)
@@ -458,7 +459,6 @@ func (env *TestEnv) open(t *testing.T) {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
-	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
 	logsHandler := handler.NewLogsHandler(env.ClickHouseLogs, env.SQL, consoleSettings, env.Clock)
 	env.LogsHandler = logsHandler
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)

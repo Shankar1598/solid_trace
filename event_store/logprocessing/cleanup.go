@@ -26,6 +26,12 @@ type CleanupStore interface {
 	EnforceDiskLimit(limit storage.LogDiskLimit) error
 }
 
+// SQLUsers holds the Projects' SQL users: *storage.ClickHouseSQL.
+type SQLUsers interface {
+	// DropProjectUser drops a Project's SQL user, if it has one.
+	DropProjectUser(projectID uint32) error
+}
+
 // Projects tells which Projects exist, and the Retention of each.
 // *storage.ConsoleSettings, which reads Console's projects table, is the
 // production adapter.
@@ -50,6 +56,7 @@ const (
 // later.
 type Cleanup struct {
 	store     CleanupStore
+	sqlUsers  SQLUsers
 	projects  Projects
 	diskLimit storage.LogDiskLimit
 	clock     clock.Clock
@@ -57,10 +64,11 @@ type Cleanup struct {
 	*worker
 }
 
-// NewCleanup constructs the Log cleanup. It reads the time from clock.
-func NewCleanup(store CleanupStore, projects Projects, diskLimit storage.LogDiskLimit, clock clock.Clock) *Cleanup {
+// NewCleanup constructs the Log cleanup, which drops a deleted Project's SQL
+// user with its Logs. It reads the time from clock.
+func NewCleanup(store CleanupStore, sqlUsers SQLUsers, projects Projects, diskLimit storage.LogDiskLimit, clock clock.Clock) *Cleanup {
 	return &Cleanup{
-		store: store, projects: projects, diskLimit: diskLimit, clock: clock,
+		store: store, sqlUsers: sqlUsers, projects: projects, diskLimit: diskLimit, clock: clock,
 		worker: newWorker(),
 	}
 }
@@ -147,7 +155,7 @@ func (c *Cleanup) DeleteLogsPastRetention(now time.Time) error {
 		switch {
 		case !exists:
 			logger.L.Info("Deleting the Logs of a deleted Project", "project_id", projectID)
-			err = c.store.DeleteProjectLogs(projectID)
+			err = errors.Join(c.store.DeleteProjectLogs(projectID), c.sqlUsers.DropProjectUser(projectID))
 		case days < 1:
 			logger.L.Error("Keeping the Logs of a Project with no valid Retention", "project_id", projectID)
 			continue
