@@ -14,7 +14,7 @@ import (
 // The deletes the Event cleanup runs for a deleted Project: each takes that
 // Project's rows and leaves every other Project's.
 
-func TestDeleteProjectEventsDeletesOnlyThatProjectsEventsAndCursor(t *testing.T) {
+func TestDeleteProjectEventsDeletesOnlyThatProjectsEventsCursorAndRange(t *testing.T) {
 	logger.Init()
 	writer, err := NewPebbleWriter(&config.Config{PebblePath: filepath.Join(t.TempDir(), "pebble")})
 	if err != nil {
@@ -29,6 +29,9 @@ func TestDeleteProjectEventsDeletesOnlyThatProjectsEventsAndCursor(t *testing.T)
 		}
 		if err := writer.SetProcessingCursor(projectID, event.EventUUID); err != nil {
 			t.Fatalf("SetProcessingCursor: %v", err)
+		}
+		if err := writer.RecordEventRange(EventRange{ProjectID: projectID, After: event.EventUUID, Through: event.EventUUID}); err != nil {
+			t.Fatalf("RecordEventRange: %v", err)
 		}
 	}
 
@@ -49,6 +52,9 @@ func TestDeleteProjectEventsDeletesOnlyThatProjectsEventsAndCursor(t *testing.T)
 	if cursor, _ := writer.ProcessingCursor(5); cursor != "" {
 		t.Errorf("project 5 still has cursor %q", cursor)
 	}
+	if r, ok, _ := writer.RecordedEventRange(5); ok {
+		t.Errorf("project 5 still has range %+v", r)
+	}
 	for _, projectID := range []uint32{4, 6} {
 		if events, _ := writer.EventsAfter(projectID, "", 10); len(events) != 1 {
 			t.Errorf("project %d has %d events, want 1", projectID, len(events))
@@ -56,33 +62,13 @@ func TestDeleteProjectEventsDeletesOnlyThatProjectsEventsAndCursor(t *testing.T)
 		if cursor, _ := writer.ProcessingCursor(projectID); cursor == "" {
 			t.Errorf("project %d lost its cursor", projectID)
 		}
+		if _, ok, _ := writer.RecordedEventRange(projectID); !ok {
+			t.Errorf("project %d lost its range", projectID)
+		}
 	}
 
 	if err := writer.DeleteProjectEvents(0); err == nil {
 		t.Error("DeleteProjectEvents(0) deleted the processing cursors' prefix")
-	}
-}
-
-func TestDeleteProjectHotEventsDeletesOnlyThatProjectsRows(t *testing.T) {
-	writer := newTestDuckDB(t)
-	at := time.Now().UTC()
-	if err := writer.WriteBatch([]models.Event{
-		{EventUUID: "a", ProjectID: 5, IssueFingerprintID: 1, Timestamp: at},
-		{EventUUID: "b", ProjectID: 5, IssueFingerprintID: 1, Timestamp: at},
-		{EventUUID: "c", ProjectID: 6, IssueFingerprintID: 2, Timestamp: at},
-	}); err != nil {
-		t.Fatalf("WriteBatch: %v", err)
-	}
-
-	if err := writer.DeleteProjectHotEvents(5); err != nil {
-		t.Fatalf("DeleteProjectHotEvents: %v", err)
-	}
-
-	if newest, _ := writer.NewestHotUUIDAfter(5, ""); newest != "" {
-		t.Errorf("project 5 still has hot row %q", newest)
-	}
-	if newest, _ := writer.NewestHotUUIDAfter(6, ""); newest != "c" {
-		t.Errorf("project 6's newest hot row = %q, want c", newest)
 	}
 }
 

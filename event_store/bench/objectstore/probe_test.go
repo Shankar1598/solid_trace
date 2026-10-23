@@ -158,7 +158,7 @@ func generate(t *testing.T, e probeEnv) {
 		t.Fatal(err)
 	}
 	began := time.Now()
-	events, err := storage.NewDuckDBWriter(filepath.Join(e.dir, "events.duckdb"), filepath.Join(e.dir, "events_parquet"), "", "")
+	events, err := storage.NewDuckDBWriter(filepath.Join(e.dir, "events.duckdb"), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

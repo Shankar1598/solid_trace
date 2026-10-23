@@ -27,7 +27,9 @@ type clickHouseMigration struct {
 
 // clickHouseMigrations are the steps, in version order. Append a step; never
 // change one that has shipped.
-var clickHouseMigrations = []clickHouseMigration{}
+var clickHouseMigrations = []clickHouseMigration{
+	eventsTableMigration,
+}
 
 // clickHousePingTimeout bounds a health check of ClickHouse.
 const clickHousePingTimeout = 3 * time.Second
