@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -824,6 +825,137 @@ func (o *oldLogFiles) keyCountsArgs(projectID uint32, first, last time.Time) []a
 		return nil
 	}
 	return []any{projectID, dayString(first), dayString(last)}
+}
+
+// projects lists the Projects that have old Log files.
+func (o *oldLogFiles) projects(ctx context.Context) ([]uint32, error) {
+	if o == nil {
+		return nil, nil
+	}
+	rows, err := o.conn.Query(ctx, "SELECT DISTINCT project_id FROM old_log_files")
+	if err != nil {
+		return nil, fmt.Errorf("list the Projects with old Log files: %w", err)
+	}
+	defer rows.Close()
+	var projects []uint32
+	for rows.Next() {
+		var projectID uint32
+		if err := rows.Scan(&projectID); err != nil {
+			return nil, err
+		}
+		projects = append(projects, projectID)
+	}
+	return projects, rows.Err()
+}
+
+// oldTables are the old tables that hold a Project's days.
+var oldTables = []string{"old_log_files", "old_log_promoted_sets", "old_log_key_counts"}
+
+// deleteOldDays deletes a Project's old Log files of the days drop selects,
+// as their table lists them: first from reads, changing the generations of
+// those days' hours; then their objects and local copies; then their rows.
+// A file that isn't deleted keeps its row, so the next pass deletes it.
+func (s *ClickHouseLogs) deleteOldDays(projectID uint32, drop func(day time.Time) bool) error {
+	o := s.old
+	if o == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	rows, err := o.conn.Query(ctx, "SELECT day, key, remote FROM old_log_files WHERE project_id = ?", projectID)
+	if err != nil {
+		return fmt.Errorf("list Project %d's old Log files: %w", projectID, err)
+	}
+	type file struct {
+		key    string
+		remote bool
+	}
+	var files []file
+	days := map[time.Time]bool{}
+	for rows.Next() {
+		var (
+			day time.Time
+			f   file
+		)
+		if err := rows.Scan(&day, &f.key, &f.remote); err != nil {
+			rows.Close()
+			return err
+		}
+		if day = LogDay(day); drop(day) {
+			files = append(files, f)
+			days[day] = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(days) == 0 {
+		return nil
+	}
+
+	o.forget(projectID, days)
+	for day := range days {
+		s.generations.bumpDay(projectID, day)
+	}
+
+	var failed []error
+	for _, f := range files {
+		if f.remote {
+			if o.objects == nil {
+				logger.L.Warn("An old Log file is in a bucket that is no longer configured, and stays there", "project_id", projectID, "key", f.key)
+			} else if err := o.objects.Delete(ctx, logObjectPrefix+f.key); err != nil {
+				failed = append(failed, err)
+			}
+		}
+		if err := o.deleteLocalCopy(f.key); err != nil {
+			failed = append(failed, err)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("delete Project %d's old Log files: %w", projectID, errors.Join(failed...))
+	}
+
+	dayList := make([]string, 0, len(days))
+	for _, day := range slices.SortedFunc(maps.Keys(days), time.Time.Compare) {
+		dayList = append(dayList, "toDate('"+dayString(day)+"')")
+	}
+	for _, table := range oldTables {
+		query := fmt.Sprintf("DELETE FROM %s WHERE project_id = %d AND day IN (%s)", table, projectID, strings.Join(dayList, ", "))
+		if err := o.conn.Exec(ctx, query); err != nil {
+			return fmt.Errorf("delete Project %d's rows of old days from %s: %w", projectID, table, err)
+		}
+	}
+	logger.L.Info("Deleted old Log files", "project_id", projectID, "days", len(days), "files", len(files))
+	return nil
+}
+
+// forget stops reads reading a Project's old files of days.
+func (o *oldLogFiles) forget(projectID uint32, days map[time.Time]bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.state.files[projectID] = slices.DeleteFunc(slices.Clone(o.state.files[projectID]), func(f oldLogFile) bool { return days[f.day] })
+	for day := range days {
+		delete(o.state.sets, projectDay{projectID, day})
+	}
+}
+
+// deleteLocalCopy deletes an old file's copy in the Log file store, if it
+// has one, and the folders of its hour and day once they are empty.
+func (o *oldLogFiles) deleteLocalCopy(key string) error {
+	if o.cfg.LocalDir == "" {
+		return nil
+	}
+	path := filepath.Join(o.cfg.LocalDir, filepath.FromSlash(key))
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	for dir, up := filepath.Dir(path), 0; up < 3; dir, up = filepath.Dir(dir), up+1 {
+		if os.Remove(dir) != nil {
+			break // not empty, or gone
+		}
+	}
+	return nil
 }
 
 // mergeNewestFirst merges two lists of Logs, each newest first, into one,
