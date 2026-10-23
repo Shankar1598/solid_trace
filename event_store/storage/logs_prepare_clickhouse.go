@@ -69,6 +69,20 @@ func ReadClickHouseMarker(dir string) (*ClickHouseMarker, error) {
 	return &marker, nil
 }
 
+// ForgetClickHousePrepared removes the marker from the prepared folder dir, if
+// it has one, for the DuckDB release to call when it starts: the Logs it then
+// stores aren't in the prepared files, so prepare-clickhouse must run again.
+func ForgetClickHousePrepared(dir string) error {
+	err := os.Remove(filepath.Join(dir, markerFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err == nil {
+		logger.L.Warn("Removed the marker of an earlier prepare-clickhouse, as this release stores Logs in DuckDB again: run prepare-clickhouse again before the ClickHouse release", "dir", dir)
+	}
+	return err
+}
+
 // NewLogsDuckDB is a DuckDB instance for a LogStore alone: in memory, with
 // none of events.duckdb's tables, so that prepare-clickhouse attaches
 // logs.duckdb to it and never opens events.duckdb. tempDir is where DuckDB
