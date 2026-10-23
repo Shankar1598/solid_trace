@@ -5,6 +5,16 @@
 ingest_port: "4000"
 # Query API for the console. Always bound to 127.0.0.1; never expose it.
 query_port: "4100"
+# The ClickHouse server beside EventStore (Compose's clickhouse service, with
+# deploy/clickhouse's config). EventStore's password comes from
+# SOLIDTRACE_CLICKHOUSE_PASSWORD, which deploy/install writes to deploy/.env.
+clickhouse:
+  address: 127.0.0.1:4200
+  database: solidtrace
+  user: solidtrace
+  # ClickHouse's conf.d, where EventStore adds a bucket volume to the tables'
+  # storage policy when object_store below is set.
+  config_dir: /storage/clickhouse/conf.d
 pebble_path: /storage/pebble/production/events
 duckdb_path: /storage/duckdb/production/events.duckdb
 # Logs' hot tables, attached to the same DuckDB. Default: logs.duckdb next to duckdb_path.

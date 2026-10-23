@@ -256,3 +256,65 @@ func TestAnObjectStoreErrorGivesTheLineInTheFile(t *testing.T) {
 		})
 	}
 }
+
+func TestWithNoConfigFileEventStoreUsesTheDevClickHouse(t *testing.T) {
+	t.Setenv("SOLIDTRACE_CLICKHOUSE_PASSWORD", "")
+	cfg := loadFrom(t, filepath.Join(t.TempDir(), "missing.yml"))
+
+	// bin/clickhouse-dev's server, whose solidtrace user has no password.
+	want := config.ClickHouse{
+		Address: "127.0.0.1:4200", Database: "solidtrace", User: "solidtrace",
+		ConfigDir: "../storage/clickhouse/conf.d",
+	}
+	if cfg.ClickHouse != want {
+		t.Errorf("clickhouse = %+v, want %+v", cfg.ClickHouse, want)
+	}
+}
+
+func TestTheDeployConfigReachesComposesClickHouseWithTheGeneratedPassword(t *testing.T) {
+	t.Setenv("SOLIDTRACE_CLICKHOUSE_PASSWORD", "from-deploy-install")
+	cfg := loadFrom(t, "../../deploy/event_store.yml")
+
+	want := config.ClickHouse{
+		Address: "127.0.0.1:4200", Database: "solidtrace", User: "solidtrace",
+		Password: "from-deploy-install", ConfigDir: "/storage/clickhouse/conf.d",
+	}
+	if cfg.ClickHouse != want {
+		t.Errorf("clickhouse = %+v, want %+v", cfg.ClickHouse, want)
+	}
+}
+
+func TestTheClickHouseBlockTakesItsKeysFromTheFile(t *testing.T) {
+	t.Setenv("SOLIDTRACE_CLICKHOUSE_PASSWORD", "secret")
+	cfg := loadFrom(t, writeConfig(t, `clickhouse:
+  address: 10.0.0.5:9000
+  database: logs_2
+  user: event_store
+  config_dir: /etc/clickhouse-server/conf.d
+`))
+
+	want := config.ClickHouse{
+		Address: "10.0.0.5:9000", Database: "logs_2", User: "event_store",
+		Password: "secret", ConfigDir: "/etc/clickhouse-server/conf.d",
+	}
+	if cfg.ClickHouse != want {
+		t.Errorf("clickhouse = %+v, want %+v", cfg.ClickHouse, want)
+	}
+}
+
+func TestABadClickHouseBlockFailsToLoadSayingWhatIsWrong(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"a misspelt key", "clickhouse:\n  adress: 127.0.0.1:4200\n", "line 2: field adress not found"},
+		{"an address with no port", "clickhouse:\n  address: localhost\n", `clickhouse: address must be a host and port, such as 127.0.0.1:4200, got "localhost"`},
+		{"a database that isn't a plain name", "clickhouse:\n  database: solid-trace\n", `clickhouse: database must be letters, digits and _, not starting with a digit, got "solid-trace"`},
+		{"no user", "clickhouse:\n  user: \"\"\n", "clickhouse: user can't be empty"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := config.LoadFile(writeConfig(t, c.yaml))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want one saying %q", err, c.want)
+			}
+		})
+	}
+}
