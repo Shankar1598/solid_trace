@@ -68,7 +68,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     <SettingsLayout>
       <PageHeader
         title="Instance"
-        description="How this install is set up. They apply to the whole install: every Organization."
+        description="How this install is set up, for every Organization."
       />
       <div className="space-y-6">
         <Card>
