@@ -718,6 +718,31 @@ func TestAMatchMonitorReadsTheLogsStoredBeforeTheSwitchSinceItsLastRun(t *testin
 	}
 }
 
+func TestAKeyPromotedAfterAFileWasWrittenReadsAsMissingInIt(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+	})
+	defer env.Cleanup()
+	// The fixture's files all have their day's columns. As if region had
+	// been promoted on the 1st after every file was written, the day's set
+	// gets a column no file has.
+	if err := env.ClickHouse.Conn().Exec(context.Background(),
+		"INSERT INTO old_log_promoted_sets (project_id, day, type, key, column_name, partway) VALUES (3, '2026-10-01', 'string', 'region', 'attrs_string.region', false)"); err != nil {
+		t.Fatal(err)
+	}
+	env.Reopen(t)
+
+	assertProjectQueries(t, env, 3, map[string][]string{
+		`where region == "eu"`:    {},
+		`where isnotnull(region)`: {},
+		`where isnull(region)`:    {"order paid", "order placed", "plan changed", "plan chosen", "order shipped", "order paid", "order placed"},
+	}, "with region promoted")
+	if table := tableOf(t, env, 3, `summarize count() by region`, allTime.from, allTime.to); !strings.Contains(table, `"rows":[[null,7]]`) {
+		t.Errorf("Expected all 7 Logs counted without a region, got %s", table)
+	}
+}
+
 func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
 		answers := map[string]string{}
