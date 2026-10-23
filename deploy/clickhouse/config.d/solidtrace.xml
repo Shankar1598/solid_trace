@@ -21,7 +21,7 @@
     <errorlog remove="1"/>
   </logger>
 
-  <!-- From deploy/install: half of RAM, as DuckDB had. 0 is ClickHouse's own
+  <!-- From deploy/install: half of RAM. 0 is ClickHouse's own
        default, 90% of RAM. Never a container memory limit: under one, 26.8
        returns freed pages at once and scans run about 1.9x slower. -->
   <max_server_memory_usage from_env="SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES"/>
