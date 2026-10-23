@@ -171,6 +171,20 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_match(/\ACouldn't read EventStore's config: .*timed out after \d+s/i, event_store_group["unavailable"])
   end
 
+  test "with an EventStore answer missing parts of its config, the EventStore group says it can't read it" do
+    stub_request(:get, %r{/config\z}).to_return(status: 200, body: { "ingest_port" => "4000" }.to_json,
+      headers: { "Content-Type" => "application/json" })
+    sign_in_as(@instance_admin)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+
+    assert_response :success
+    group = event_store_group
+    assert_nil group["settings"]
+    assert_match(/\ACouldn't read EventStore's config: /, group["unavailable"])
+    assert console_rows.present?
+  end
+
   test "saving changes SQL queries, the default Retention and log-all-reads, and the page shows them" do
     sign_in_as(@instance_admin)
 
