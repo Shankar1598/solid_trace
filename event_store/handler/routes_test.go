@@ -16,6 +16,7 @@ import (
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clickhousetest"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
@@ -70,13 +71,20 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 		t.Fatalf("DuckDB WriteBatch failed: %v", err)
 	}
 
+	clickHouse, err := storage.OpenClickHouse(clickhousetest.Config(), nil)
+	if err != nil {
+		t.Fatalf("Failed to open ClickHouse: %v", err)
+	}
+	t.Cleanup(func() { clickHouse.Close() })
+	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, answers{})
 
 	ingestApp := fiber.New()
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(nil, logStore, sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(clickHouseLogs, logStore, sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
 }
