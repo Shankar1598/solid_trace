@@ -1,5 +1,7 @@
 # Log files are listed in a manifest in logs.duckdb
 
+Status: superseded by [ADR 0016](0016-logs-and-events-in-clickhouse.md) (Logs and Events in ClickHouse). No new Log files are written; the manifest of those written before the switch is loaded into ClickHouse, which reads them until Retention deletes them.
+
 Which Log files exist is recorded in `log_files`, a table in `logs.duckdb`, and not found by listing folders, even when every file is on local disk. The hourly export inserts a file's row in the transaction that deletes the file's Logs from DuckDB, so the row is the export's commit marker: at startup a staged file with a row is renamed, and one without is deleted. Reads, Retention, Project deletion and the disk limit go only by rows. We chose this because Log files are moving to a bucket, where a listing is slow and can't commit with DuckDB; because a read then takes its files from the same DuckDB snapshot as its hot table, so a Log is never in both or in neither; and because facts about each file (its size and time range, and later the highest Log batch it holds) are wanted without reading its footer.
 
 ## Considered options
