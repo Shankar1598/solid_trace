@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -92,6 +93,11 @@ type ClickHouseLogs struct {
 	// inserts. Log processing is the only writer, so they stay right.
 	countsMu sync.Mutex
 	counts   map[projectDay]map[typedKey]int64
+
+	// bins is the bin cache, or nil when it is off, and generations its
+	// generations of (Project, hour)s (logs_clickhouse_table.go).
+	bins        atomic.Pointer[binCache]
+	generations generations
 }
 
 type projectDay struct {
@@ -181,7 +187,11 @@ func (s *ClickHouseLogs) InsertLogBatches(projectID uint32, insert LogInsert) er
 	if rows == 0 {
 		return nil
 	}
-	if err := s.insertLogs(ctx, "logs", projectID, insert.Batches); err != nil {
+	err := s.insertLogs(ctx, "logs", projectID, insert.Batches)
+	// Whether or not ClickHouse answered, the Logs may be in logs now, so
+	// no bin of their hours the bin cache kept is taken again.
+	s.generations.bump(projectID, insert.Batches)
+	if err != nil {
 		return fmt.Errorf("insert logs: %w", err)
 	}
 	if err := s.insertKeyCounts(ctx, projectID, insert); err != nil {

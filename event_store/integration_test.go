@@ -421,7 +421,6 @@ func (env *TestEnv) open(t *testing.T) {
 	} else if err := logStore.UseLocalDiskOnly(); err != nil {
 		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
 	}
-	logStore.UseBinCache(env.BinCacheBytes)
 	if env.BusyProjectLogs > 0 {
 		logStore.UseBusyProjectLogs(env.BusyProjectLogs)
 	}
@@ -453,6 +452,7 @@ func (env *TestEnv) open(t *testing.T) {
 	env.ClickHouse = clickHouse
 	env.LogStore = logStore
 	env.ClickHouseLogs = storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+	env.ClickHouseLogs.UseBinCache(env.BinCacheBytes)
 	env.FlakyLogs = &flakyLogStore{ClickHouseLogs: env.ClickHouseLogs}
 	env.SQLiteWriter = sqliteWriter
 	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
