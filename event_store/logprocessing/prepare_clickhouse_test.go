@@ -542,7 +542,7 @@ func (downStore) AppendLogBatches(uint32, []storage.LogBatch, time.Time) error {
 	return errDown
 }
 func (downStore) TryLogBatches(uint32, []storage.LogBatch, time.Time) error { return errDown }
-func (downStore) Ping() error                                            { return errDown }
+func (downStore) Ping() error                                               { return errDown }
 
 // preparing records whether prepare-clickhouse went on to file the Logs.
 type preparing struct{ called bool }
