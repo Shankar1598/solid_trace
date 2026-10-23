@@ -15,6 +15,9 @@ import (
 type ClickHouse struct {
 	conn     driver.Conn
 	database string
+	// address is the server's, where SQL queries connect as their
+	// Projects' users (ClickHouseSQL).
+	address string
 }
 
 // clickHouseMigration is one step of making EventStore's tables. Its
@@ -58,7 +61,7 @@ func OpenClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHo
 	if err != nil {
 		return nil, err
 	}
-	ch := &ClickHouse{conn: conn, database: cfg.Database}
+	ch := &ClickHouse{conn: conn, database: cfg.Database, address: cfg.Address}
 	if cfg.ConfigDir != "" {
 		if err := ch.useStoragePolicy(ctx, cfg.ConfigDir, bucket); err != nil {
 			conn.Close()

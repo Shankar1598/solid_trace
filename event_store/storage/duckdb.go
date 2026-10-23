@@ -59,20 +59,6 @@ func NewDuckDBWriter(dbPath, tempDir, memoryLimit string) (*DuckDBWriter, error)
 		return nil, err
 	}
 
-	// SQL mode's events view reads this one, which has the events table's
-	// columns and no rows, until SQL queries run on ClickHouse (ticket 07).
-	if _, err := db.Exec(`
-		CREATE OR REPLACE VIEW events AS
-		SELECT CAST(NULL AS VARCHAR) AS uuid, CAST(NULL AS BIGINT) AS project_id,
-			CAST(NULL AS BIGINT) AS issue_fingerprint_id, CAST(NULL AS TIMESTAMP) AS timestamp,
-			CAST(NULL AS VARCHAR) AS environment, CAST(NULL AS VARCHAR) AS server_name,
-			CAST(NULL AS VARCHAR) AS release, CAST(NULL AS VARCHAR) AS level,
-			CAST(NULL AS MAP(VARCHAR, VARCHAR)) AS tags
-		WHERE false
-	`); err != nil {
-		return nil, err
-	}
-
 	return &DuckDBWriter{db: db}, nil
 }
 
