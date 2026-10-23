@@ -22,8 +22,8 @@ import (
 // Project's Logs and what is counted from them.
 var logDayTables = []string{"logs", "log_minute_counts", "log_key_counts"}
 
-// cleanupTimeout bounds one pass's statements: listing the partitions, and
-// dropping or moving one.
+// cleanupTimeout bounds a deletion, or a pass of the disk limit, whose moves
+// of days to the bucket can take minutes each.
 const cleanupTimeout = 30 * time.Minute
 
 // logPartition is a table's partition of one Project's UTC day.
@@ -125,23 +125,20 @@ func (s *ClickHouseLogs) dropLogDays(drop func(logPartition) bool) error {
 	return s.dropPartitions(ctx, slices.DeleteFunc(partitions, func(p logPartition) bool { return !drop(p) }))
 }
 
-// dropPartitions drops partitions of the Log tables. Then, whether or not
-// every drop succeeded, it changes the generations of their days' hours, so
-// that no bin the bin cache kept of them is taken again, and forgets their
-// days' key counts kept in memory.
+// dropPartitions drops partitions of the Log tables, oldest day first. Then,
+// whether or not every drop succeeded, it changes the generations of their
+// days' hours, so that no bin the bin cache kept of them is taken again, and
+// forgets their days' key counts kept in memory.
 //
-// countsMu is held throughout, so that no insert counts a day's keys while
-// its counts are dropped.
+// The key counts' partitions go last, under countsMu, so that no insert
+// counts a day's keys from the counts in memory while they are dropped.
 func (s *ClickHouseLogs) dropPartitions(ctx context.Context, partitions []logPartition) error {
 	if len(partitions) == 0 {
 		return nil
 	}
-	s.countsMu.Lock()
-	defer s.countsMu.Unlock()
 	days := map[projectDay]bool{}
 	defer func() {
 		for day := range days {
-			delete(s.counts, day)
 			s.generations.bumpDay(day.projectID, day.day)
 		}
 	}()
@@ -151,10 +148,32 @@ func (s *ClickHouseLogs) dropPartitions(ctx context.Context, partitions []logPar
 	slices.SortFunc(partitions, func(a, b logPartition) int {
 		return cmp.Or(a.day.Compare(b.day), cmp.Compare(a.projectID, b.projectID), cmp.Compare(a.table, b.table))
 	})
-	for _, p := range partitions {
+	drop := func(p logPartition) error {
 		days[projectDay{p.projectID, p.day}] = true
 		if err := s.conn.Exec(ctx, fmt.Sprintf("ALTER TABLE %s DROP PARTITION ID '%s'", p.table, p.id)); err != nil {
 			return fmt.Errorf("drop Project %d's %s of %s: %w", p.projectID, p.day.Format(time.DateOnly), p.table, err)
+		}
+		return nil
+	}
+	var counts []logPartition
+	for _, p := range partitions {
+		if p.table == "log_key_counts" {
+			counts = append(counts, p)
+		} else if err := drop(p); err != nil {
+			return err
+		}
+	}
+
+	s.countsMu.Lock()
+	defer s.countsMu.Unlock()
+	defer func() {
+		for day := range days {
+			delete(s.counts, day)
+		}
+	}()
+	for _, p := range counts {
+		if err := drop(p); err != nil {
+			return err
 		}
 	}
 	return nil
