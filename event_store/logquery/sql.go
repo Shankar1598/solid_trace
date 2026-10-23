@@ -431,8 +431,8 @@ func writeToNumber(x expr, f fields) string {
 // writeAggregate writes one of summarize's functions. Over no rows, or no
 // values, sum, avg, min, max and percentile are NULL, as SQL has them, rather
 // than ClickHouse's 0 or 1970: their -OrNull forms. dcount counts the
-// values present; percentile is the t-digest's, as approx_quantile was
-// DuckDB's.
+// values present, approximately past some thousands; percentile is a
+// t-digest's estimate.
 func writeAggregate(a aggregate, f fields) string {
 	switch a.fn {
 	case "count":

@@ -1,14 +1,15 @@
 // Package logquery compiles Queries, SolidTrace's KQL-style query language
-// for Logs, to DuckDB SQL. It is the single path from a Query to SQL.
+// for Logs, to ClickHouse SQL. It is the single path from a Query to SQL.
 //
 // Compiling runs in three steps, each in its own files:
 //   - package parser turns the text into a syntax tree;
 //   - Compile (this file, expr.go and stages.go) checks the tree against the
 //     language's stages, functions, Fields and types, and turns it into a
 //     Query of typed stages;
-//   - the SQL emitter (sql.go) writes a Query as SQL: its leading filters
-//     against one source of Logs, whose columns storage.LogColumns describes,
-//     and the rest as a chain of stages over the Logs that pass them.
+//   - the SQL emitter (sql.go and table.go) writes a Query as SQL: its
+//     leading filters against the logs table, whose columns
+//     storage.ClickHouseColumns describes, and the rest as a chain of stages
+//     over the Logs that pass them.
 //
 // What the Builder shows (chips.go) is read off a compiled Query's syntax
 // tree.

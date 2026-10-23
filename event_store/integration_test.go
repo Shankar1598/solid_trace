@@ -53,8 +53,8 @@ type TestEnv struct {
 	BatchLock        *sync.Mutex
 	LogStore         *storage.LogStore
 	// ClickHouseLogs is the Logs in ClickHouse, which Log processing
-	// inserts into and Log rows are read from. LogStore is DuckDB's, which
-	// tables still read.
+	// inserts into and Log rows, tables and histograms are read from, with
+	// its bin cache. LogStore is DuckDB's, which SQL still reads.
 	ClickHouseLogs *storage.ClickHouseLogs
 	// FlakyLogs is ClickHouseLogs as Log processing sees it, which a test
 	// can break.
