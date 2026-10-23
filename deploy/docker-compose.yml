@@ -23,6 +23,9 @@ x-console: &console
     # Without HTTPS, Thruster faces clients directly, so it ignores X-Forwarded-*
     # headers they send. With HTTPS, deploy/setup-gcp sets it to true: Caddy sets them.
     FORWARD_HEADERS: ${FORWARD_HEADERS:-false}
+    # Console writes its own line per request, with its user (RequestLog), so
+    # Thruster writes none.
+    LOG_REQUESTS: "false"
     # Optional: only Sentry's DSN is in the credentials.
     RAILS_MASTER_KEY: ${RAILS_MASTER_KEY:-}
     SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run deploy/install, which writes it to deploy/.env}

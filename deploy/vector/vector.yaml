@@ -35,10 +35,11 @@ transforms:
 
       json, err = parse_json(line)
       if err == null && is_object(json) {
-        # Caddy and Thruster. EventStore reads their time, level and msg.
+        # Caddy, and Console's request lines and call timings. EventStore
+        # reads their time, level and msg or message.
         log = object!(json)
       } else if match(line, r'^(DEBUG|INFO|WARN|ERROR|FATAL|ANY) ') {
-        # Rails: INFO [request-id] message
+        # Rails: INFO message
         parts = parse_regex!(line, r'(?s)^(?P<level>[A-Z]+) (?P<message>.*)$')
         log.level = parts.level
         log.message = parts.message

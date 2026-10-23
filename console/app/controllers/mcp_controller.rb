@@ -36,6 +36,11 @@ class McpController < ActionController::API
       status: :method_not_allowed
   end
 
+  # The token's user, for the request's log line (RequestLog).
+  def current_user
+    @token&.user
+  end
+
   private
 
   def authenticate_token!
