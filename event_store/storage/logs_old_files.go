@@ -614,15 +614,6 @@ func (src oldSource) columns() ClickHouseColumns {
 	return ClickHouseColumns{old: &oldDay{set: src.set}}
 }
 
-// timeSpans is the condition that time is in one of spans.
-func timeSpans(spans []timeSpan) string {
-	inSpans := make([]string, len(spans))
-	for i, span := range spans {
-		inSpans[i] = fmt.Sprintf("(time >= %s AND time < %s)", chsql.Time(span.from), chsql.Time(span.to))
-	}
-	return "(" + strings.Join(inSpans, " OR ") + ")"
-}
-
 // oldWhere is the WHERE of a read of a source: conditions, and the Logs
 // where keeps, written for the source's day.
 func (src oldSource) where(conditions []string, where func(ClickHouseColumns) Filter) string {
@@ -681,6 +672,18 @@ func (src oldSource) logColumns() string {
 			fmt.Sprintf("CAST([%s] AS Array(Nullable(%s))) AS promoted_values_%d", strings.Join(values, ", "), attributeTypes[t], i))
 	}
 	return strings.Join(list, ", ")
+}
+
+// tableSources is what a table's source query over spans adds for the old
+// files: each source's Logs read with the table's select list, after
+// UNION ALL, or "" when no old file overlaps the spans.
+func (o *oldLogFiles) tableSources(scan TableScan, spans []timeSpan) string {
+	var union strings.Builder
+	for _, src := range o.sources(scan.ProjectID, inSpans(spans...)) {
+		fmt.Fprintf(&union, "\nUNION ALL\n(SELECT %s FROM %s %s%s)",
+			scan.Select(src.columns()), o.table(src), src.where([]string{timeSpans(spans)}, scan.Where), oldFileSettings)
+	}
+	return union.String()
 }
 
 // scanLogs returns up to limit of a Project's old Logs of [from, to) that
