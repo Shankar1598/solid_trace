@@ -140,7 +140,7 @@ services:
   # deploy/setup-gcp, which sets COMPOSE_PROFILES=https. It runs as root, so it can
   # bind ports 80 and 443.
   caddy:
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.7-alpine
     profiles: [https]
     network_mode: host
     environment:
