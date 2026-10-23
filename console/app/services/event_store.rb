@@ -300,11 +300,16 @@ class EventStore
     end
 
     # For a read CallTimings times, asks EventStore to log the SQL it runs,
-    # with the request id of the read's call timing.
+    # with the request id and user of the read's call timing. The name is
+    # percent-encoded, as a header can't hold every character a name can.
     def call_timing_headers
       return {} unless CallTimings.logged_read?
 
-      { "X-Log-SQL" => "1", "X-Request-Id" => CallTimings::Context.request_id }.compact
+      user = CallTimings.user
+      {
+        "X-Log-SQL" => "1", "X-Request-Id" => CallTimings::Context.request_id,
+        "X-User-Email" => user&.email, "X-User-Name" => user&.name&.then { |name| ERB::Util.url_encode(name) },
+      }.compact
     end
 
     # A Log call's GET, with params as its query string, answered as post!

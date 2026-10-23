@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +22,8 @@ const maxTimeoutSeconds = 24 * 60 * 60
 // the request's timeout_seconds, if it has one. When Console asks with
 // X-Log-SQL: 1, as it does for the reads it times, its end logs each SQL
 // statement the run made DuckDB run, with the X-Request-Id Console sent,
-// which Console's call timing of the run also has
+// which Console's call timing of the run also has, and the user it ran for,
+// X-User-Email and X-User-Name, percent-encoded
 // (.scratch/call-timings/spec.md).
 //
 // Fiber gives a handler no context that ends when the client goes away, so a
@@ -37,6 +39,8 @@ type run struct {
 	read       string
 	projectID  string
 	requestID  string
+	userEmail  string
+	userName   string
 	statements *storage.ReadStatements
 }
 
@@ -50,6 +54,11 @@ func startRun(c *fiber.Ctx, read string, timeoutSeconds *float64) (*run, fiber.M
 	ctx := c.UserContext()
 	if c.Get("X-Log-SQL") == "1" {
 		ctx, r.statements = storage.WithReadStatements(ctx)
+		r.userEmail = strings.Clone(c.Get("X-User-Email"))
+		r.userName = strings.Clone(c.Get("X-User-Name"))
+		if name, err := url.PathUnescape(r.userName); err == nil {
+			r.userName = name
+		}
 	}
 	if timeoutSeconds == nil {
 		r.ctx, r.cancel = context.WithCancel(ctx)
@@ -64,8 +73,8 @@ func startRun(c *fiber.Ctx, read string, timeoutSeconds *float64) (*run, fiber.M
 }
 
 // end ends the run's context and, if it was asked to, logs each statement
-// it ran: its SQL, how long it took and its error, numbered in the order
-// they ran.
+// it ran: its SQL, how long it took, its error and who it ran for, numbered
+// in the order they ran.
 func (r *run) end() {
 	r.cancel()
 	if r.statements == nil {
@@ -77,6 +86,12 @@ func (r *run) end() {
 			"kind", "log_read_sql", "read", r.read, "project_id", r.projectID, "request_id", r.requestID,
 			"statement", i + 1, "statements", len(statements),
 			"duration_ms", float64(statement.Duration.Microseconds()) / 1000, "sql", statement.SQL,
+		}
+		if r.userEmail != "" {
+			fields = append(fields, "user_email", r.userEmail)
+		}
+		if r.userName != "" {
+			fields = append(fields, "user_name", r.userName)
 		}
 		if statement.Err != nil {
 			logger.L.Warn("Log read SQL", append(fields, "error", statement.Err)...)
