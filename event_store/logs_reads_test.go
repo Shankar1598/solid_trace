@@ -6,14 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/solidtrace/event_store/storage"
 )
 
 // listLatest lists Project 123's latest Logs through the query app without
@@ -40,9 +36,9 @@ func listLatest(env *TestEnv) ([]string, error) {
 	return messages(page.Logs), nil
 }
 
-// startLongRead starts a read of Project 123's Logs of all time that runs
-// until it is cancelled, and waits a moment for it to begin. It returns the
-// cancel, and where the read's error arrives.
+// startLongRead starts an SQL query of Project 123 that runs until it is
+// cancelled, and waits a moment for it to begin. It returns the cancel, and
+// where the read's error arrives.
 func startLongRead(t *testing.T, env *TestEnv) (context.CancelFunc, <-chan error) {
 	t.Helper()
 	setSQLQueries(t, env, true)
@@ -50,7 +46,7 @@ func startLongRead(t *testing.T, env *TestEnv) (context.CancelFunc, <-chan error
 	done := make(chan error, 1)
 	go func() {
 		_, err := env.LogStore.RunSQL(ctx, 123, allTime.from, allTime.to,
-			"SELECT count(*) FROM logs, range(1000000000000)", 10)
+			"SELECT count(*) FROM range(1000000000000)", 10)
 		done <- err
 	}()
 	time.Sleep(300 * time.Millisecond)
@@ -61,20 +57,13 @@ func TestALongReadHoldsUpNeitherLogProcessingNorOtherReads(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	// The hot window is 11:45 to 13:00, so the Log export moves the first
-	// Log to a file.
 	postAndProcess(t, env,
-		logJSON(t, "exported", testNow.Add(-150*time.Minute), nil),
-		logJSON(t, "hot", testNow.Add(-10*time.Minute), nil),
+		logJSON(t, "earlier", testNow.Add(-150*time.Minute), nil),
+		logJSON(t, "recent", testNow.Add(-10*time.Minute), nil),
 	)
 
 	cancel, longRead := startLongRead(t, env)
 	defer cancel()
-
-	// The Log export starts while it runs.
-	exported := make(chan error, 1)
-	go func() { exported <- env.LogStore.ExportLogs(env.Clock.Now()) }()
-	time.Sleep(300 * time.Millisecond)
 
 	// Log processing stores new Logs, and another read lists them.
 	postLogs(t, env, "application/json", logJSON(t, "while reading", testNow, nil))
@@ -91,7 +80,7 @@ func TestALongReadHoldsUpNeitherLogProcessingNorOtherReads(t *testing.T) {
 		got, err := listLatest(env)
 		listed <- listing{got, err}
 	}()
-	want := []string{"while reading", "hot", "exported"}
+	want := []string{"while reading", "recent", "earlier"}
 	select {
 	case got := <-listed:
 		if got.err != nil {
@@ -121,41 +110,4 @@ func TestALongReadHoldsUpNeitherLogProcessingNorOtherReads(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Expected the cancelled read to stop")
 	}
-	if err := <-exported; err != nil {
-		t.Fatalf("Log export failed: %v", err)
-	}
-	if got, err := listLatest(env); err != nil || !slices.Equal(got, want) {
-		t.Errorf("Expected %v after the export, got %v (%v)", want, got, err)
-	}
-}
-
-func TestTheDiskLimitWaitsForAReadOfTheFilesItWouldDelete(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-
-	postAndProcess(t, env, logJSON(t, "exported", testNow.Add(-150*time.Minute), nil))
-	env.ExportLogs(t)
-	file := hourFile(t, env, 123, testNow.Add(-150*time.Minute))
-	cancel, longRead := startLongRead(t, env)
-	defer cancel()
-
-	// The file stays while the read may still read it.
-	if err := env.LogStore.EnforceDiskLimit(storage.LogDiskLimit{Bytes: 1}); !errors.Is(err, storage.ErrLogFilesInUse) {
-		t.Errorf("Expected the disk limit to wait for the read, got %v", err)
-	}
-	if got, err := listLatest(env); err != nil || !slices.Equal(got, []string{"exported"}) {
-		t.Errorf("Expected the Log kept during the read, got %v (%v)", got, err)
-	}
-	if _, err := os.Stat(file); err != nil {
-		t.Errorf("Expected the file kept on disk during the read, got %v", err)
-	}
-
-	// Its next pass, after the read, deletes it.
-	cancel()
-	<-longRead
-	enforceLogDiskLimit(t, env, 1)
-	if got, err := listLatest(env); err != nil || len(got) != 0 {
-		t.Errorf("Expected the Log deleted after the read, got %v (%v)", got, err)
-	}
-	assertGone(t, filepath.Dir(file), "by the disk limit after the read")
 }

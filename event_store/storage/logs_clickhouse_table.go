@@ -129,8 +129,8 @@ func plainValue(v reflect.Value) any {
 // A bin's rows are worked out from its Logs alone (logquery.Query.Bins), and
 // are keyed by the Project, the Query, the bins' size, the bin's start and
 // the generations of the hours it covers. A (Project, hour)'s generation
-// changes once Log processing has inserted Logs of that hour, so a bin from
-// before is never taken again; it leaves the cache as the least recently
+// changes once Log processing has inserted Logs of that hour, or its day's
+// Logs are deleted, so a bin from before is never taken again; it leaves the cache as the least recently
 // used. Generations are in memory too, so a restart empties both together.
 //
 // A bin of an hour that hasn't ended isn't kept: Logs still arrive in it, and
@@ -180,7 +180,8 @@ type projectHour struct {
 }
 
 // generations are the bin cache's generations of (Project, hour)s: 0 until
-// Logs are inserted into the hour, then changed on each insert.
+// Logs are inserted into the hour, then changed on each insert, and when
+// Retention, Project deletion or the disk limit deletes the hour's day.
 type generations struct {
 	mu   sync.Mutex
 	byID map[projectHour]uint64
@@ -202,6 +203,19 @@ func (g *generations) bump(projectID uint32, batches []LogBatch) {
 	}
 	for hour := range hours {
 		g.byID[hour]++
+	}
+}
+
+// bumpDay changes the generation of each hour of a Project's UTC day, as
+// when its Logs are deleted.
+func (g *generations) bumpDay(projectID uint32, day time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.byID == nil {
+		g.byID = map[projectHour]uint64{}
+	}
+	for hour := LogDay(day); hour.Before(LogDay(day).AddDate(0, 0, 1)); hour = hour.Add(time.Hour) {
+		g.byID[projectHour{projectID, hour.Unix()}]++
 	}
 }
 
