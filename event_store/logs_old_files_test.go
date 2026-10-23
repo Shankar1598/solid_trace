@@ -38,9 +38,8 @@ func startOn(t *testing.T, dir string) error {
 	}
 	defer clickHouse.Close()
 	return storage.NewClickHouseLogs(clickHouse, pebble).UseOldLogFiles(storage.OldLogFiles{
-		LogsDuckDB:  filepath.Join(dir, "logs.duckdb"),
-		PreparedDir: filepath.Join(dir, "prepared"),
-		LocalDir:    filepath.Join(dir, "logs_parquet"),
+		LogsDuckDB: filepath.Join(dir, "logs.duckdb"),
+		LocalDir:   filepath.Join(dir, "logs_parquet"),
 	})
 }
 
@@ -152,7 +151,7 @@ func TestEachMarkerIsLoadedOnceReplacingTheLastOnesFiles(t *testing.T) {
 
 	// A marker of another run, after a rollback, is loaded in place of the
 	// last one's files: what it prepared is read, once.
-	writeMarker(t, env.OldLogFiles.PreparedDir, switchTime.Add(time.Hour))
+	writeMarker(t, filepath.Join(env.dir, "prepared"), switchTime.Add(time.Hour))
 	env.Reopen(t)
 	assertAttributes(t, getFields(t, env, 3, first, second, ""), firstDay, "the 1st, prepared again")
 	assertAttributes(t, getFields(t, env, 3, second, second.Add(time.Hour), ""), secondDay, "the 2nd, prepared again")
@@ -280,7 +279,6 @@ func usePreparedFixture(t *testing.T, env *TestEnv) {
 
 	env.OldLogFiles = storage.OldLogFiles{
 		LogsDuckDB:    filepath.Join(env.dir, "logs.duckdb"),
-		PreparedDir:   filepath.Join(env.dir, "prepared"),
 		LocalDir:      local,
 		ClickHouseDir: inStore,
 		Bucket:        &bucket,
@@ -583,7 +581,7 @@ func oldFilesLeft(t *testing.T, env *TestEnv) []string {
 		slices.Sort(left)
 		return left
 	}
-	objects, err :=storage.NewObjectStore(env.OldLogFiles.Bucket).List(context.Background(), "logs/")
+	objects, err := storage.NewObjectStore(env.OldLogFiles.Bucket).List(context.Background(), "logs/")
 	if err != nil {
 		t.Fatal(err)
 	}

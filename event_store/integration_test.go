@@ -395,9 +395,8 @@ func (env *TestEnv) open(t *testing.T) {
 	old := env.OldLogFiles
 	if old.LogsDuckDB == "" {
 		old = storage.OldLogFiles{
-			LogsDuckDB:  filepath.Join(env.dir, "logs.duckdb"),
-			PreparedDir: filepath.Join(env.dir, "prepared"),
-			LocalDir:    filepath.Join(env.dir, "logs_parquet"),
+			LogsDuckDB: filepath.Join(env.dir, "logs.duckdb"),
+			LocalDir:   filepath.Join(env.dir, "logs_parquet"),
 		}
 	}
 	if err := clickHouseLogs.UseOldLogFiles(old); err != nil {

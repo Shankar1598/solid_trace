@@ -23,9 +23,9 @@ type TableScan struct {
 	From, To time.Time
 	// Where, if set, returns the SQL condition a Log must meet. An empty
 	// Filter keeps every Log.
-	Where func(ClickHouseColumns) Filter
+	Where func(LogColumns) Filter
 	// Select returns the select list the Logs are read with.
-	Select func(ClickHouseColumns) string
+	Select func(LogColumns) string
 	// Query returns the query that works the table out from logs, the
 	// query that reads the Logs.
 	Query func(logs string) string

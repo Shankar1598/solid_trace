@@ -98,11 +98,9 @@ var oldLogFilesMigration = clickHouseMigration{version: 901, statements: []strin
 // OldLogFiles says where an install's Logs from before the switch are.
 type OldLogFiles struct {
 	// LogsDuckDB is the DuckDB release's logs.duckdb. Found with no marker,
-	// it stops the start: its Logs haven't been prepared.
+	// it stops the start: its Logs haven't been prepared. prepare-clickhouse
+	// writes the prepared files and the marker to prepared/, beside it.
 	LogsDuckDB string
-	// PreparedDir is where prepare-clickhouse wrote the prepared files and
-	// the marker: prepared/, next to logs.duckdb.
-	PreparedDir string
 	// LocalDir is the Log file store, where the local copies are
 	// (logs_parquet_path).
 	LocalDir string
@@ -125,6 +123,15 @@ type oldLogFilesMarker struct {
 // ClickHouse keeps.
 func (m oldLogFilesMarker) same(other oldLogFilesMarker) bool {
 	return m.Release == other.Release && m.PreparedAt.Truncate(time.Microsecond).Equal(other.PreparedAt.Truncate(time.Microsecond))
+}
+
+// preparedDir is where prepare-clickhouse writes the prepared files and the
+// marker: prepared/, beside logs.duckdb.
+func (cfg OldLogFiles) preparedDir() string {
+	if cfg.LogsDuckDB == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(cfg.LogsDuckDB), "prepared")
 }
 
 // oldLogFilesMarkerFile is the marker's name in the prepared folder. The
@@ -150,7 +157,7 @@ func (s *ClickHouseLogs) UseOldLogFiles(cfg OldLogFiles) error {
 		old.objects = NewObjectStore(cfg.Bucket)
 	}
 
-	marker, err := readOldLogFilesMarker(cfg.PreparedDir)
+	marker, err := readOldLogFilesMarker(cfg.preparedDir())
 	if err != nil {
 		return err
 	}
@@ -165,14 +172,14 @@ func (s *ClickHouseLogs) UseOldLogFiles(cfg OldLogFiles) error {
 	switch {
 	case marker != nil && (loaded == nil || !loaded.same(*marker)):
 		if err := old.load(ctx, s.pebble, *marker); err != nil {
-			return fmt.Errorf("load the Logs from before the switch, prepared in %s: %w", cfg.PreparedDir, err)
+			return fmt.Errorf("load the Logs from before the switch, prepared in %s: %w", cfg.preparedDir(), err)
 		}
 	case marker == nil && duckDB:
 		// Never prepared, or the DuckDB release ran since, which removes
 		// the marker, as after a rollback: whatever an earlier start
 		// recorded, the DuckDB release's Logs may hold some not yet read.
 		return fmt.Errorf("%s holds the DuckDB release's Logs, and %s has no marker that they were prepared for ClickHouse: %w",
-			cfg.LogsDuckDB, cfg.PreparedDir, errUnprepared)
+			cfg.LogsDuckDB, cfg.preparedDir(), errUnprepared)
 	case !recorded:
 		if err := old.recordMarker(ctx, nil); err != nil {
 			return err
@@ -293,7 +300,7 @@ const preparedData = "format(Parquet, base64Decode({prepared:String}))"
 
 // withPrepared is ctx carrying a prepared file for preparedData.
 func (o *oldLogFiles) withPrepared(ctx context.Context, file string) (context.Context, error) {
-	raw, err := os.ReadFile(filepath.Join(o.cfg.PreparedDir, file))
+	raw, err := os.ReadFile(filepath.Join(o.cfg.preparedDir(), file))
 	if err != nil {
 		return nil, err
 	}
@@ -624,15 +631,20 @@ func oldFileStructure(set []oldPromotedKey) string {
 	return strings.Join(columns, ", ")
 }
 
-// oldDay is how a day's old files keep each Field, for ClickHouseColumns:
-// a promoted key in its column, coalesced with its map when it was
-// promoted partway through the day, any other in its map. The built-in
-// fields read as the logs table's do: service and message never NULL.
+// oldDay is how a day's old files keep each Field, its LogColumns: a
+// promoted key in its column, coalesced with its map when it was promoted
+// partway through the day, any other in its map, and arrays and objects in
+// attrs_json, as the logs table has them. The built-in fields read as the
+// logs table's do: service and message never NULL. No column holds file.
 type oldDay struct {
 	set []oldPromotedKey
 }
 
-func (d *oldDay) builtIn(name string) string {
+func (d oldDay) Column(name string) string { return chsql.Identifier(name) }
+
+func (d oldDay) StringColumn(string) (string, bool) { return "", false }
+
+func (d oldDay) BuiltIn(name string) string {
 	switch name {
 	case "service", "message":
 		return "ifNull(" + chsql.Identifier(name) + ", '')"
@@ -640,7 +652,10 @@ func (d *oldDay) builtIn(name string) string {
 	return chsql.Identifier(name)
 }
 
-func (d *oldDay) attribute(t AttributeType, key string) string {
+func (d oldDay) Attribute(t AttributeType, key string) string {
+	if t == JSONAttribute {
+		return jsonAttribute("attrs_json", key)
+	}
 	m := "attrs_" + string(t)
 	inMap := "if(mapContains(" + m + ", " + chsql.String(key) + "), " + m + "[" + chsql.String(key) + "], NULL)"
 	for _, promoted := range d.set {
@@ -657,7 +672,7 @@ func (d *oldDay) attribute(t AttributeType, key string) string {
 
 // searchText is every string Attribute's value, joined by \0: the map's
 // and the promoted columns'.
-func (d *oldDay) searchText() string {
+func (d oldDay) SearchText() string {
 	parts := []string{"arrayStringConcat(mapValues(attrs_string), '\\0')"}
 	for _, promoted := range d.set {
 		if promoted.typ == StringAttribute {
@@ -668,13 +683,13 @@ func (d *oldDay) searchText() string {
 }
 
 // columns is how the source's files keep each Field.
-func (src oldSource) columns() ClickHouseColumns {
-	return ClickHouseColumns{old: &oldDay{set: src.set}}
+func (src oldSource) columns() LogColumns {
+	return oldDay{set: src.set}
 }
 
 // where is the WHERE of a read of a source: conditions, and the Logs
 // where keeps, written for the source's day.
-func (src oldSource) where(conditions []string, where func(ClickHouseColumns) Filter) string {
+func (src oldSource) where(conditions []string, where func(LogColumns) Filter) string {
 	if where != nil {
 		filter := where(src.columns())
 		for _, part := range []string{filter.Rest, filter.Message} {
@@ -755,7 +770,7 @@ func (o *oldLogFiles) tableSources(scan TableScan, spans []timeSpan) string {
 
 // scanLogs returns up to limit of a Project's old Logs of [from, to) that
 // meet conditions and where, newest first.
-func (o *oldLogFiles) scanLogs(ctx context.Context, projectID uint32, from, to time.Time, conditions []string, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, error) {
+func (o *oldLogFiles) scanLogs(ctx context.Context, projectID uint32, from, to time.Time, conditions []string, where func(LogColumns) Filter, limit int) ([]models.Log, error) {
 	sources := o.sources(projectID, inSpans(timeSpan{from, to}))
 	if len(sources) == 0 || limit <= 0 {
 		return nil, nil
@@ -771,7 +786,7 @@ func (o *oldLogFiles) scanLogs(ctx context.Context, projectID uint32, from, to t
 // from the files that hold them. A read of whole Logs in order would read
 // every column of every Log in range: ClickHouse reads lazily only from its
 // own tables.
-func (o *oldLogFiles) newestLogs(ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, limit int) (logs []models.Log, err error) {
+func (o *oldLogFiles) newestLogs(ctx context.Context, sources []oldSource, conditions []string, where func(LogColumns) Filter, limit int) (logs []models.Log, err error) {
 	order := fmt.Sprintf("ORDER BY %s LIMIT %d", logsNewestFirst, limit)
 	query := "SELECT time, id, _path FROM (" + o.union(sources, func(oldSource) string { return "time, id, _path" }, conditions, where) + ") " + order
 	began := time.Now()
@@ -824,7 +839,7 @@ func (o *oldLogFiles) newestLogs(ctx context.Context, sources []oldSource, condi
 
 // union is the Logs of sources that meet conditions and where, each read
 // with the columns columns gives, after UNION ALL.
-func (o *oldLogFiles) union(sources []oldSource, columns func(oldSource) string, conditions []string, where func(ClickHouseColumns) Filter) string {
+func (o *oldLogFiles) union(sources []oldSource, columns func(oldSource) string, conditions []string, where func(LogColumns) Filter) string {
 	selects := make([]string, len(sources))
 	for i, src := range sources {
 		selects[i] = fmt.Sprintf("(SELECT %s FROM %s %s%s)", columns(src), o.table(src), src.where(conditions, where), oldFileSettings)
@@ -834,7 +849,7 @@ func (o *oldLogFiles) union(sources []oldSource, columns func(oldSource) string,
 
 // queryLogs reads the Logs of sources that meet conditions and where,
 // whole, with tail after them: an order and a limit.
-func (o *oldLogFiles) queryLogs(ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, tail string) (logs []models.Log, err error) {
+func (o *oldLogFiles) queryLogs(ctx context.Context, sources []oldSource, conditions []string, where func(LogColumns) Filter, tail string) (logs []models.Log, err error) {
 	query := "SELECT * FROM (" + o.union(sources, oldSource.logColumns, conditions, where) + ") " + tail
 	began := time.Now()
 	defer func() { recordStatement(ctx, query, began, err) }()
@@ -900,7 +915,7 @@ func setPromoted[V any](m map[string]V, keys []string, values []*V) {
 // batches in (after, upTo] that meet where, newest first, and how many there
 // are, past limit too. Only files whose last batch is after after are read:
 // those of the last runs before the switch.
-func (o *oldLogFiles) ingestedAfter(ctx context.Context, projectID uint32, after, upTo uuid.UUID, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, int, error) {
+func (o *oldLogFiles) ingestedAfter(ctx context.Context, projectID uint32, after, upTo uuid.UUID, where func(LogColumns) Filter, limit int) ([]models.Log, int, error) {
 	sources := o.sources(projectID, func(file oldLogFile) bool {
 		return file.batchMax != nil && bytes.Compare(file.batchMax[:], after[:]) > 0
 	})
@@ -958,24 +973,17 @@ func (o *oldLogFiles) logByID(ctx context.Context, projectID uint32, id uuid.UUI
 	return models.Log{}, false, nil
 }
 
-// keyCounts is what the read of key counts adds for the old days' counts,
-// which prepare-clickhouse wrote, after UNION ALL; its arguments are
-// keyCountsArgs.
-func (o *oldLogFiles) keyCounts() string {
+// keyCounts is what the read of a Project's key counts of the days first
+// to last adds for the old days' counts, which prepare-clickhouse wrote,
+// after UNION ALL, and its arguments.
+func (o *oldLogFiles) keyCounts(projectID uint32, first, last time.Time) (string, []any) {
 	if o == nil {
-		return ""
+		return "", nil
 	}
 	return `
 			UNION ALL
 			SELECT key, type, logs FROM old_log_key_counts
-			WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)`
-}
-
-func (o *oldLogFiles) keyCountsArgs(projectID uint32, first, last time.Time) []any {
-	if o == nil {
-		return nil
-	}
-	return []any{projectID, dayString(first), dayString(last)}
+			WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)`, []any{projectID, dayString(first), dayString(last)}
 }
 
 // projects lists the Projects that have old Log files.
