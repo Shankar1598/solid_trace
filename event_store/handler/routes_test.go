@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -79,7 +80,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, clickHouse), handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, clickHouse), handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler, handler.NewConfigHandler(servedConfig, servedDiskLimit))
 
 	return testApps{ingest: ingestApp, query: queryApp}
 }
@@ -177,6 +178,114 @@ func TestLogQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 		if status := post(apps.query, path, body); status != fiber.StatusOK {
 			t.Errorf("query app %s: expected 200, got %d", path, status)
 		}
+	}
+}
+
+// servedConfig is the config the test query apps say EventStore loaded at
+// start, with every secret set. Its disk limit is left at the default, half
+// of ClickHouse's disk, which servedDiskLimit says came to 50 GB.
+var servedConfig = &config.Config{
+	Port:              "4000",
+	QueryPort:         "4100",
+	PebblePath:        "/storage/pebble",
+	LogsDuckDBPath:    "/storage/duckdb/logs.duckdb",
+	LogsParquetPath:   "/storage/duckdb/logs_parquet",
+	LogsBinCacheBytes: 64 << 20,
+	SQLitePath:        "/storage/sqlite/solid_trace.sqlite3",
+	MessageQueuePath:  "/storage/sqlite/message_queue.sqlite3",
+	IngestMaxWaiting:  10000,
+	StorageTiers:      []config.StorageTier{{Kind: "local", Locator: "/storage/tier"}},
+	CPUProfileDir:     "/storage/profiles",
+	Debug:             true,
+	Warnings:          []string{"duckdb_path is used only to find a DuckDB release's logs.duckdb"},
+	ObjectStore: &config.ObjectStore{
+		Kind: "gcs", Bucket: "acme-logs", Prefix: "solidtrace/", Region: "auto",
+		Endpoint: "https://storage.googleapis.com", LocalCacheHours: 24,
+		KeyID: "GOOG1EKEYIDVALUE", Secret: "s3cr3t-bucket-value",
+	},
+	ClickHouse: config.ClickHouse{
+		Address: "127.0.0.1:4200", Database: "solidtrace", User: "solidtrace",
+		Password: "cl1ckh0use-pw-value", ConfigDir: "/storage/clickhouse/conf.d",
+		StoragePolicy: "test_policy",
+	},
+}
+
+const servedDiskLimit = 50_000_000_000
+
+func TestConfigAnswersTheLoadedConfigWithoutSecrets(t *testing.T) {
+	apps := newTestApps(t)
+
+	if resp := get(t, apps.ingest, "/config"); resp.StatusCode != fiber.StatusNotFound {
+		t.Errorf("ingest app: expected 404, got %d", resp.StatusCode)
+	}
+	resp := get(t, apps.query, "/config")
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("query app: expected 200, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unreadable answer %s: %v", body, err)
+	}
+	want := map[string]any{
+		"ingest_port":        "4000",
+		"query_port":         "4100",
+		"pebble_path":        "/storage/pebble",
+		"message_queue_path": "/storage/sqlite/message_queue.sqlite3",
+		"sqlite_path":        "/storage/sqlite/solid_trace.sqlite3",
+		"logs_parquet_path":  "/storage/duckdb/logs_parquet",
+		"logs_disk_limit": map[string]any{
+			"configured_bytes": float64(0),
+			"effective_bytes":  float64(50_000_000_000),
+		},
+		"logs_bin_cache_bytes": float64(64 << 20),
+		"ingest_max_waiting":   float64(10000),
+		"clickhouse": map[string]any{
+			"address": "127.0.0.1:4200", "database": "solidtrace", "user": "solidtrace",
+			"password_set": true, "config_dir": "/storage/clickhouse/conf.d",
+		},
+		"object_store": map[string]any{
+			"kind": "gcs", "bucket": "acme-logs", "prefix": "solidtrace/", "region": "auto",
+			"endpoint": "https://storage.googleapis.com", "local_cache_hours": float64(24),
+			"key_id_set": true, "secret_set": true,
+		},
+		"cpu_profile_dir": "/storage/profiles",
+		"debug":           true,
+	}
+	gotJSON, _ := json.MarshalIndent(got, "", "  ")
+	wantJSON, _ := json.MarshalIndent(want, "", "  ")
+	if string(gotJSON) != string(wantJSON) {
+		t.Errorf("answer:\n%s\nwant:\n%s", gotJSON, wantJSON)
+	}
+	for _, secret := range []string{"cl1ckh0use-pw-value", "GOOG1EKEYIDVALUE", "s3cr3t-bucket-value"} {
+		if strings.Contains(string(body), secret) {
+			t.Errorf("the answer holds a secret's value %q", secret)
+		}
+	}
+}
+
+func TestConfigAnswersNoBucketAsNullAndAnUnsetPasswordAsUnset(t *testing.T) {
+	cfg := *servedConfig
+	cfg.ObjectStore = nil
+	cfg.ClickHouse.Password = ""
+	app := fiber.New()
+	app.Get("/config", handler.NewConfigHandler(&cfg, 1).Config)
+
+	body, _ := io.ReadAll(get(t, app, "/config").Body)
+	var got struct {
+		ClickHouse struct {
+			PasswordSet bool `json:"password_set"`
+		} `json:"clickhouse"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unreadable answer %s: %v", body, err)
+	}
+	if !strings.Contains(string(body), `"object_store":null`) {
+		t.Errorf("expected object_store null, got %s", body)
+	}
+	if got.ClickHouse.PasswordSet {
+		t.Errorf("expected password_set false, got %s", body)
 	}
 }
 
