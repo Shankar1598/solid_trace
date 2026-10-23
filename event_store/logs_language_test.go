@@ -470,6 +470,9 @@ func TestScalarFunctionsAndSortsInTables(t *testing.T) {
 		`sort by message asc | project message, isslow = duration > 200, hasnote = isnotempty(note)`: {"message,isslow,hasnote",
 			[]string{`["ada",false,false]`, `["bob",false,false]`, `["cy",true,false]`, `["di",false,false]`, `["ed",true,true]`}, false},
 		`extend message = toupper(message) | where duration > 200 | project message`: {"message", []string{`["CY"]`, `["ED"]`}, false},
+		// Each column is worked out from the stage before, never from a
+		// column of the same name the stage makes.
+		`where message == "bob" | project a = user, user = message, message = a`: {"a,user,message", []string{`["Bob","bob",null]`}, false},
 		`summarize first = min(time), last = max(time), quietest = min(message)`: {"first,last,quietest",
 			[]string{`["2026-10-01T10:40:00Z","2026-10-02T11:10:00Z","ada"]`}, false},
 	}, "once stored")
