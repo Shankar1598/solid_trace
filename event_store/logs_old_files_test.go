@@ -676,6 +676,48 @@ func TestADeletedProjectsOldLogFilesAreDeleted(t *testing.T) {
 	assertDeleted("after a restart")
 }
 
+// ingestedAfter runs a Query of a Project's Logs ingested after a Log
+// batch, as a Match monitor does.
+func ingestedAfter(t *testing.T, env *TestEnv, projectID uint32, query, afterBatch string, limit int) ingestedPage {
+	t.Helper()
+	answer := answerOf(t, env, fmt.Sprintf("/api/%d/logs/query", projectID),
+		map[string]any{"query": query, "after_batch": afterBatch, "limit": limit}, 200)
+	var page ingestedPage
+	if err := json.Unmarshal(mustMarshal(t, answer), &page); err != nil {
+		t.Fatalf("Decode %s: %v", mustMarshal(t, answer), err)
+	}
+	return page
+}
+
+func TestAMatchMonitorReadsTheLogsStoredBeforeTheSwitchSinceItsLastRun(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+	})
+	defer env.Cleanup()
+	// The last Log batch the DuckDB release stored for Project 3.
+	const preparedCursor = "01a0fa00-edc0-705e-aa45-8bd4afaf37fd"
+
+	// The Monitor last ran before the switch, after the batch of the 1st's
+	// first two Logs: it reads the Logs of the batches stored since.
+	page := ingestedAfter(t, env, 3, ``, "01a0f6eb-be80-779f-a5aa-16f24fd08419", 100)
+	want := []string{"order paid", "order placed", "plan changed", "plan chosen", "order shipped"}
+	if got := messages(page.Logs); !slices.Equal(got, want) || page.Total != 5 || page.IngestCursor != preparedCursor {
+		t.Errorf("Expected %v of 5 up to %s, got %v of %d up to %s", want, preparedCursor, got, page.Total, page.IngestCursor)
+	}
+	page = ingestedAfter(t, env, 3, `where plan == "free" or user == "fay"`, "01a0f6eb-be80-779f-a5aa-16f24fd08419", 2)
+	if got := messages(page.Logs); !slices.Equal(got, []string{"order paid", "order placed"}) || page.Total != 3 {
+		t.Errorf("Expected the newest 2 of 3 matching Logs, got %v of %d", got, page.Total)
+	}
+
+	// Its next run reads the Logs stored after the switch only.
+	postAfterTheSwitch(t, env)
+	page = ingestedAfter(t, env, 3, ``, preparedCursor, 100)
+	if got := messages(page.Logs); !slices.Equal(got, []string{"order paid", "order placed", "order placed", "order refunded"}) {
+		t.Errorf("Expected the 4 Logs stored after the switch, got %v", got)
+	}
+}
+
 func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
 		answers := map[string]string{}
