@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -48,6 +49,20 @@ func main() {
 	defer clickHouse.Close()
 	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
 	clickHouseLogs.UseBinCache(cfg.LogsBinCacheBytes)
+
+	// The Logs from before the switch, in the DuckDB release's Log files,
+	// are read in place. This loads what prepare-clickhouse wrote, and stops
+	// the start on DuckDB data it didn't prepare. It runs before logs.duckdb
+	// is opened, which makes one, and before Log processing, which reads the
+	// Processing cursors it loads.
+	if err := clickHouseLogs.UseOldLogFiles(storage.OldLogFiles{
+		LogsDuckDB:  cfg.LogsDuckDBPath,
+		PreparedDir: filepath.Join(filepath.Dir(cfg.LogsDuckDBPath), "prepared"),
+		LocalDir:    cfg.LogsParquetPath,
+		Bucket:      cfg.ObjectStore,
+	}); err != nil {
+		logger.L.Fatal("Failed to ready the Logs from before the switch to ClickHouse", "error", err)
+	}
 
 	// The Log files are kept in the bucket, if one is set. Nothing here waits
 	// on the bucket, so ingest starts while it is down.

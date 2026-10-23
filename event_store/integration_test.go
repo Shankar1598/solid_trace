@@ -80,6 +80,10 @@ type TestEnv struct {
 	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
 	// it; 0 turns it off.
 	BinCacheBytes int64
+	// OldLogFiles is where the Logs from before the switch are: by default
+	// logs.duckdb, prepared/ and logs_parquet/ in the environment's
+	// directory, which hold none (usePreparedFixture sets them).
+	OldLogFiles storage.OldLogFiles
 
 	dir   string // holds Pebble and DuckDB
 	close func()
@@ -392,6 +396,20 @@ func (env *TestEnv) open(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open ClickHouse: %v", err)
 	}
+	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+	clickHouseLogs.UseBinCache(env.BinCacheBytes)
+	// Before logs.duckdb is made, and before Log processing, as in main.
+	old := env.OldLogFiles
+	if old.LogsDuckDB == "" {
+		old = storage.OldLogFiles{
+			LogsDuckDB:  filepath.Join(env.dir, "logs.duckdb"),
+			PreparedDir: filepath.Join(env.dir, "prepared"),
+			LocalDir:    filepath.Join(env.dir, "logs_parquet"),
+		}
+	}
+	if err := clickHouseLogs.UseOldLogFiles(old); err != nil {
+		t.Fatalf("Failed to ready the Logs from before the switch: %v", err)
+	}
 
 	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"), filepath.Join(env.dir, "logs_parquet"))
 	if err != nil {
@@ -427,8 +445,7 @@ func (env *TestEnv) open(t *testing.T) {
 	env.DuckDBWriter = duckdbWriter
 	env.ClickHouse = clickHouse
 	env.LogStore = logStore
-	env.ClickHouseLogs = storage.NewClickHouseLogs(clickHouse, pebbleWriter)
-	env.ClickHouseLogs.UseBinCache(env.BinCacheBytes)
+	env.ClickHouseLogs = clickHouseLogs
 	env.FlakyLogs = &flakyLogStore{ClickHouseLogs: env.ClickHouseLogs}
 	env.SQLiteWriter = sqliteWriter
 	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
