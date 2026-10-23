@@ -7,7 +7,7 @@ require "test_helper"
 # so every task must be listed under each environment that runs it.
 class RecurringTest < ActiveSupport::TestCase
   FILE = Rails.root.join("config/recurring.yml")
-  TASKS = %i[event_store_message_processor event_store_archive monitor_scheduler maintenance_notification_cleanup].freeze
+  TASKS = %i[event_store_message_processor monitor_scheduler maintenance_notification_cleanup].freeze
 
   test "development and production both run every task, each on a schedule" do
     %w[development production].each do |env|

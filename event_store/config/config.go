@@ -28,7 +28,7 @@ type Config struct {
 	// LogsBinCacheBytes is the memory the bin cache keeps charts' bins in;
 	// 0 turns it off.
 	LogsBinCacheBytes  int64
-	ParquetStoragePath string // Path for archived Parquet files
+	ParquetStoragePath string // Unused: the Event archive's, before Events moved to ClickHouse
 	SQLitePath         string // Rails SQLite for project key auth and issues
 	MessageQueuePath   string // Separate SQLite for event_store_messages
 
@@ -47,8 +47,8 @@ type Config struct {
 
 	StorageTiers []StorageTier
 
-	// ObjectStore is the bucket that keeps Log files and the Event
-	// archive, or nil when everything stays on local disk.
+	// ObjectStore is the bucket that keeps Log files, or nil when
+	// everything stays on local disk.
 	ObjectStore *ObjectStore
 
 	// ClickHouse is the server EventStore keeps Logs and Events in.
@@ -91,8 +91,7 @@ type ObjectStore struct {
 	// given.
 	Endpoint string
 	// LocalCacheHours is how long a Log file's local copy is kept after it
-	// is uploaded; 0 deletes it once uploaded. The Event archive keeps no
-	// local copy.
+	// is uploaded; 0 deletes it once uploaded.
 	LocalCacheHours int
 	// KeyID and Secret come from SOLIDTRACE_OBJECT_STORE_KEY_ID and
 	// SOLIDTRACE_OBJECT_STORE_SECRET, never from the file.
