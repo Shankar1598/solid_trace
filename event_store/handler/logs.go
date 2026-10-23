@@ -34,10 +34,9 @@ const (
 type LogsHandler struct {
 	// clickHouse holds the Logs: Log rows, tables, the histogram, single
 	// Logs, the Logs ingested after a batch and the Fields are read from it.
-	// logs is DuckDB's LogStore, which SQL still reads until it moves to
-	// ClickHouse too.
+	// sql runs SQL queries on it, each as its Project's SQL user.
 	clickHouse *storage.ClickHouseLogs
-	logs       *storage.LogStore
+	sql        *storage.ClickHouseSQL
 	settings   ConsoleSettings
 	clock      clock.Clock
 	// ScanBudget is how long a run of Log rows reads before it answers with
@@ -45,11 +44,11 @@ type LogsHandler struct {
 	ScanBudget time.Duration
 }
 
-// NewLogsHandler serves the Logs in clickHouse and logs; settings say whether
-// SQL runs and what each Project's Logs are named in Queries; clock is the
-// time ago() and now() read.
-func NewLogsHandler(clickHouse *storage.ClickHouseLogs, logs *storage.LogStore, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
-	return &LogsHandler{clickHouse: clickHouse, logs: logs, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
+// NewLogsHandler serves the Logs in clickHouse, and SQL queries through sql;
+// settings say whether SQL runs and what each Project's Logs are named in
+// Queries; clock is the time ago() and now() read.
+func NewLogsHandler(clickHouse *storage.ClickHouseLogs, sql *storage.ClickHouseSQL, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
+	return &LogsHandler{clickHouse: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
 }
 
 // queryRequest is the body of a run.

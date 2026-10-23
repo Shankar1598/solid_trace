@@ -54,11 +54,6 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	}
 	t.Cleanup(duckdbWriter.Close)
 
-	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(tmpDir, "logs.duckdb"), filepath.Join(tmpDir, "logs_parquet"))
-	if err != nil {
-		t.Fatalf("Failed to attach logs DuckDB: %v", err)
-	}
-
 	clickhousetest.Empty(t)
 	clickHouse, err := storage.OpenClickHouse(clickhousetest.Config(), nil)
 	if err != nil {
@@ -90,7 +85,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, clickHouse), handler.NewLogsHandler(clickHouseLogs, logStore, sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, clickHouse), handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
 }

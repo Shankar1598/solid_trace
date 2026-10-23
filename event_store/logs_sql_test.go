@@ -89,7 +89,7 @@ func TestRunSQLRunsByDefaultAndIsRefusedWhileTheSettingIsOff(t *testing.T) {
 	}
 }
 
-func TestTheLogsViewCoversTheProjectAndRangeAcrossHotFilesAndLateLogs(t *testing.T) {
+func TestSQLsLogsHoldTheProjectsLogsOfTheExplorersRange(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	setSQLQueries(t, env, true)
@@ -97,35 +97,35 @@ func TestTheLogsViewCoversTheProjectAndRangeAcrossHotFilesAndLateLogs(t *testing
 	seedLanguageLogs(t, env)
 	env.Clock.Set(languageAt(10, 29))
 	postAndProcessTo(t, env, 456, "other_public_key", logJSON(t, "other", languageAt(10, 35), map[string]any{"duration": 1}))
-	postLateLanguageLog(t, env) // ada, bob, cy and di in files, ed hot, fy late
+	postLateLanguageLog(t, env) // fy, late
 
-	query := `SELECT project_id, message, attrs_number['duration'] AS duration, attrs_string['user'] AS user,
-		attrs_bool, attrs_json FROM logs ORDER BY time`
+	query := `SELECT project_id, message, attributes.duration.:Float64 AS duration, attributes.user.:String AS user
+		FROM logs ORDER BY time`
 	cases := []struct {
 		from, to time.Time
 		want     []string
 	}{
 		{allTime.from, allTime.to, []string{
-			`[123,"di",50,"di",{},{}]`,
-			`[123,"ada",120,"ada",{},{}]`,
-			`[123,"bob",80.5,"Bob",{},{}]`,
-			`[123,"cy",300,"cy",{},{}]`,
-			`[123,"fy",10,"fy",{},{}]`,
-			`[123,"ed",900,"ed",{},{}]`,
+			`[123,"di",50,"di"]`,
+			`[123,"ada",120,"ada"]`,
+			`[123,"bob",80.5,"Bob"]`,
+			`[123,"cy",300,"cy"]`,
+			`[123,"fy",10,"fy"]`,
+			`[123,"ed",900,"ed"]`,
 		}},
 		{languageAt(10, 30), languageAt(11, 30), []string{
-			`[123,"cy",300,"cy",{},{}]`,
-			`[123,"fy",10,"fy",{},{}]`,
-			`[123,"ed",900,"ed",{},{}]`,
+			`[123,"cy",300,"cy"]`,
+			`[123,"fy",10,"fy"]`,
+			`[123,"ed",900,"ed"]`,
 		}},
 		{languageAt(10, 30), languageAt(11, 10), []string{
-			`[123,"cy",300,"cy",{},{}]`,
-			`[123,"fy",10,"fy",{},{}]`,
+			`[123,"cy",300,"cy"]`,
+			`[123,"fy",10,"fy"]`,
 		}},
 	}
 	for _, c := range cases {
 		columns, rows := sqlTable(t, env, sqlRequest{SQL: query, From: c.from, To: c.to})
-		if got := strings.Join(columns, ","); got != "project_id,message,duration,user,attrs_bool,attrs_json" {
+		if got := strings.Join(columns, ","); got != "project_id,message,duration,user" {
 			t.Errorf("Expected the selected columns, got %s", got)
 		}
 		if !slices.Equal(rows, c.want) {
