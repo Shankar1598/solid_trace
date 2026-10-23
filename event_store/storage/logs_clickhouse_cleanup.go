@@ -111,12 +111,15 @@ func (s *ClickHouseLogs) DeleteLogDaysBefore(projectID uint32, day time.Time) er
 	return errors.Join(dropped, s.deleteOldDays(projectID, func(d time.Time) bool { return d.Before(day) }))
 }
 
-// DeleteProjectLogs deletes every Log of a Project, with their counts and
-// its old Log files. Its Processing cursor, in Pebble, stays, so that a Log
-// batch it already stored is never stored again.
+// DeleteProjectLogs deletes every Log of a Project, with their counts, its
+// old Log files and its SQL user. Its Processing cursor, in Pebble, stays, so
+// that a Log batch it already stored is never stored again.
 func (s *ClickHouseLogs) DeleteProjectLogs(projectID uint32) error {
 	dropped := s.dropLogDays(func(p logPartition) bool { return p.projectID == projectID })
-	return errors.Join(dropped, s.deleteOldDays(projectID, func(time.Time) bool { return true }))
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	return errors.Join(dropped, s.deleteOldDays(projectID, func(time.Time) bool { return true }),
+		dropSQLUser(ctx, s.conn, s.database, projectID))
 }
 
 // dropLogDays drops the partitions of the Log tables that drop selects.

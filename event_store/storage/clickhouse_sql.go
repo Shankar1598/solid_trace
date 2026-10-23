@@ -17,6 +17,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/chcol"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/solidtrace/event_store/pkg/chsql"
@@ -276,7 +277,27 @@ func (s *ClickHouseSQL) forget(projectID uint32) {
 // server's, not a database's.
 func (s *ClickHouseSQL) profileName() string { return s.ch.database + "_sql" }
 func (s *ClickHouseSQL) userName(projectID uint32) string {
-	return fmt.Sprintf("%s_sql_%d", s.ch.database, projectID)
+	return sqlUserName(s.ch.database, projectID)
+}
+
+func sqlUserName(database string, projectID uint32) string {
+	return fmt.Sprintf("%s_sql_%d", database, projectID)
+}
+
+// dropSQLUser drops a Project's SQL user of database, if it has one: its
+// row policies, then the user. Project deletion drops it with the Project's
+// Logs. Should SQL run for the Project again, the run makes it afresh.
+func dropSQLUser(ctx context.Context, conn driver.Conn, database string, projectID uint32) error {
+	user, db := chsql.Identifier(sqlUserName(database, projectID)), chsql.Identifier(database)
+	for _, statement := range []string{
+		fmt.Sprintf("DROP ROW POLICY IF EXISTS %s ON %s.logs, %s ON %s.events", user, db, user, db),
+		fmt.Sprintf("DROP USER IF EXISTS %s", user),
+	} {
+		if err := conn.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("drop Project %d's SQL user: %w", projectID, err)
+		}
+	}
+	return nil
 }
 
 // profileStatement makes the SQL users' settings profile: read-only, each
