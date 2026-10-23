@@ -1,5 +1,7 @@
 # Logs: busy Projects' quarter-hours exported to their own files
 
+Status: superseded by [ADR 0016](0016-logs-and-events-in-clickhouse.md) (Logs and Events in ClickHouse): there is no Log export.
+
 Supersedes the "holding the current and previous hour, then exported every hour …, one file per Project per hour" and the "before the previous hour or at or after the next one" lines of [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md).
 
 The Log export runs at each quarter-hour start (:00, :15, :30, :45), once when EventStore starts, and a minute after a failure. Each run has a **quarter cutoff**, its quarter-hour start minus 15 minutes, and an **hour cutoff**, the start of the previous hour. A Project is **busy** at a run when its hot table holds at least 122,880 Logs (one DuckDB row group) of the quarter-hour before the quarter cutoff, so that a quarter-hour file holds about a row group; its Logs before the quarter cutoff are exported, each quarter-hour to its own `data-<mm>.parquet` (`mm` being 00, 15, 30 or 45). A quiet Project's Logs before the hour cutoff are exported, each hour to `data.parquet`, as before. Late Logs go out at every run by the same rules. Logs of a quarter-hour or hour that already has its file go to the hour's next `late-<n>.parquet`, at most one per hour per run. An hour whose first quarter-hours went out on their own keeps going by quarter-hours after the Project turns quiet, so an hour never has both `data.parquet` and `data-<mm>.parquet`.
