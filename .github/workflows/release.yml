@@ -68,7 +68,7 @@ jobs:
           context: ${{ matrix.app }}
           platforms: linux/${{ matrix.platform.arch }}
           # Console's image keeps it for its call timings; EventStore's
-          # ignores it.
+          # names it in prepare-clickhouse's marker.
           build-args: |
             SOLIDTRACE_VERSION=${{ env.TAG }}
           outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true

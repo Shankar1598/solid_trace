@@ -45,8 +45,26 @@ func (s *LogStore) UseBusyProjectLogs(logs int64) {
 // quarter-hours up to 10:45 to 11:00 are taken. The hour cutoff is the start
 // of the previous hour, before which every Log is exported. Next is the start
 // of the next hour, where the hot window ends.
+//
+// every, set only by prepare-clickhouse, exports every Log whatever its time:
+// the busy rule still decides which hours go by quarter-hours, but not how far
+// the export goes.
 type exportCutoffs struct {
 	quarter, hour, next time.Time
+	every               bool
+}
+
+// endOfLogTime is after every Log's time: Log ingest keeps a Log's time
+// within minutes of its receipt.
+var endOfLogTime = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// projectsCutoff is the time before which a Project's late Logs make
+// projectsToExport list it.
+func (c exportCutoffs) projectsCutoff() time.Time {
+	if c.every {
+		return endOfLogTime
+	}
+	return c.quarter
 }
 
 func exportCutoffsAt(now time.Time) exportCutoffs {
@@ -80,6 +98,18 @@ func exportCutoffsAt(now time.Time) exportCutoffs {
 // stored meanwhile wait for the next export. Only once it commits are the
 // files renamed. Staged files a crash leaves behind are settled first.
 func (s *LogStore) ExportLogs(now time.Time) error {
+	return s.exportLogs(exportCutoffsAt(now))
+}
+
+// exportEveryLog is the Log export at now, but it exports every Log in the
+// hot tables and logs_late, whatever its time (exportCutoffs.every).
+func (s *LogStore) exportEveryLog(now time.Time) error {
+	cutoffs := exportCutoffsAt(now)
+	cutoffs.every = true
+	return s.exportLogs(cutoffs)
+}
+
+func (s *LogStore) exportLogs(cutoffs exportCutoffs) error {
 	s.exportMu.Lock()
 	defer s.exportMu.Unlock()
 
@@ -89,8 +119,7 @@ func (s *LogStore) ExportLogs(now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("recover staged log files: %w", err)
 	}
-	cutoffs := exportCutoffsAt(now)
-	projects, err := s.projectsToExport(cutoffs.quarter)
+	projects, err := s.projectsToExport(cutoffs.projectsCutoff())
 	if err != nil {
 		return err
 	}
@@ -125,7 +154,7 @@ func (t AttributeType) mapType() string {
 }
 
 // projectsToExport lists the Projects with a hot table, and those with late
-// Logs before cutoff, the quarter cutoff.
+// Logs before cutoff (exportCutoffs.projectsCutoff).
 func (s *LogStore) projectsToExport(cutoff time.Time) ([]uint32, error) {
 	rows, err := s.db.Query(`
 		SELECT CAST(substr(table_name, length('logs_hot_') + 1) AS UINTEGER)
@@ -528,6 +557,9 @@ func (e *projectExport) plan(cutoffs exportCutoffs, busyLogs int64) ([]plannedFi
 				cutoff = earliestTime(cutoffs.quarter, hour.Add(time.Hour))
 			}
 		}
+	}
+	if cutoffs.every {
+		cutoff = endOfLogTime
 	}
 
 	quarters, err := e.quarters(cutoff)
