@@ -29,11 +29,9 @@ import (
 	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/models"
-	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/clickhousetest"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
-	"github.com/solidtrace/event_store/pkg/msgpacker"
 	"github.com/solidtrace/event_store/processing"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -49,10 +47,11 @@ type TestEnv struct {
 	ClickHouse       *storage.ClickHouse
 	ClickHouseConfig config.ClickHouse
 	SQLiteWriter     *storage.SQLiteWriter
-	Issues       *flakyIssueRepository
-	Processor    *processing.Processor
-	BatchLock    *sync.Mutex
-	LogStore     *storage.LogStore
+	Issues           *flakyIssueRepository
+	Processor        *processing.Processor
+	EventCleanup     *processing.Cleanup
+	BatchLock        *sync.Mutex
+	LogStore         *storage.LogStore
 	// FlakyLogs is LogStore as Log processing sees it, which a test can
 	// break.
 	FlakyLogs    *flakyLogStore
@@ -60,7 +59,6 @@ type TestEnv struct {
 	LogCleanup   *logprocessing.Cleanup
 	LogsHandler  *handler.LogsHandler
 	MQWriter     *storage.MessageQueueWriter
-	MQReader     *storage.MessageQueueReader
 	MQPath       string
 	SQLitePath   string
 
@@ -73,8 +71,7 @@ type TestEnv struct {
 	Clock *clock.Manual
 
 	// Bucket keeps the Log files too, if set, each local copy for
-	// LocalCacheHours (logs_bucket_test.go), and the Event archive
-	// (event_archive_bucket_test.go). BucketConfig, if set, is the
+	// LocalCacheHours (logs_bucket_test.go). BucketConfig, if set, is the
 	// object_store that DuckDB reads the bucket through.
 	Bucket          storage.ObjectStore
 	BucketConfig    *config.ObjectStore
@@ -131,7 +128,7 @@ func (env *TestEnv) DeleteLogsPastRetention(t *testing.T) {
 func (env *TestEnv) Restart(t *testing.T) {
 	t.Helper()
 	env.Processor.Stop()
-	env.Processor = processing.New(env.PebbleWriter, env.DuckDBWriter, env.MQWriter, env.Issues, env.BatchLock)
+	env.Processor = processing.New(env.PebbleWriter, env.ClickHouse, env.MQWriter, env.Issues, env.BatchLock)
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
@@ -146,11 +143,23 @@ func (env *TestEnv) Restart(t *testing.T) {
 var testNow = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
 // flakyIssueRepository is the real SQLite IssueRepository, except that its
-// next failFinds lookups fail, as when SQLite is busy.
+// next failFinds lookups fail, as when SQLite is busy, and that recording seen
+// counts fails while failSeen is set.
 type flakyIssueRepository struct {
 	*storage.SQLiteWriter
 	failFinds atomic.Int32
 	finds     atomic.Int32
+
+	failSeen     atomic.Bool
+	seenFailures atomic.Int32
+}
+
+func (r *flakyIssueRepository) RecordSeenEvents(projectID uint32, events []models.Event, throughUUID string) error {
+	if r.failSeen.Load() {
+		r.seenFailures.Add(1)
+		return errors.New("database is locked")
+	}
+	return r.SQLiteWriter.RecordSeenEvents(projectID, events, throughUUID)
 }
 
 func (r *flakyIssueRepository) FindIssueByFingerprint(projectID uint32, fingerprint string) (int64, int64, int, bool, error) {
@@ -343,7 +352,7 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create Pebble: %v", err)
 	}
 
-	duckdbWriter, err := storage.NewDuckDBWriter(filepath.Join(env.dir, "duckdb.db"), filepath.Join(env.dir, "parquet"), "", "")
+	duckdbWriter, err := storage.NewDuckDBWriter(filepath.Join(env.dir, "duckdb.db"), "", "")
 	if err != nil {
 		t.Fatalf("Failed to create DuckDB: %v", err)
 	}
@@ -353,16 +362,6 @@ func (env *TestEnv) open(t *testing.T) {
 			t.Fatalf("Failed to let DuckDB read the bucket: %v", err)
 		}
 	}
-	// As in main, nothing waits on the bucket here: a test lists the Event
-	// archive in it as the archive consumer does (EnsureEventsView).
-	if env.Bucket != nil {
-		if err := duckdbWriter.UseEventArchiveBucket(env.Bucket); err != nil {
-			t.Fatalf("Failed to keep the Event archive in the bucket: %v", err)
-		}
-	} else if err := duckdbWriter.UseLocalEventArchiveOnly(); err != nil {
-		t.Fatalf("Failed to keep the Event archive on local disk only: %v", err)
-	}
-
 	clickHouse, err := storage.OpenClickHouse(env.ClickHouseConfig, env.BucketConfig)
 	if err != nil {
 		t.Fatalf("Failed to open ClickHouse: %v", err)
@@ -394,11 +393,6 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create MQ Writer: %v", err)
 	}
 
-	mqReader, err := storage.NewMessageQueueReader(env.MQPath)
-	if err != nil {
-		t.Fatalf("Failed to create MQ Reader: %v", err)
-	}
-
 	// Initialize Auth
 	projectAuth, err := auth.NewProjectAuth(env.SQLitePath)
 	if err != nil {
@@ -419,12 +413,12 @@ func (env *TestEnv) open(t *testing.T) {
 	env.SQLiteWriter = sqliteWriter
 	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
 	env.MQWriter = mqWriter
-	env.MQReader = mqReader
 
-	env.Processor = processing.New(pebbleWriter, duckdbWriter, mqWriter, env.Issues, env.BatchLock)
+	env.Processor = processing.New(pebbleWriter, clickHouse, mqWriter, env.Issues, env.BatchLock)
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
+	env.EventCleanup = processing.NewCleanup(pebbleWriter, clickHouse, sqliteWriter, consoleSettings, env.BatchLock, env.Clock)
 	env.LogTransforms = logtransform.New(consoleSettings, env.Clock)
 	env.LogProcessor = logprocessing.New(pebbleWriter, env.FlakyLogs, env.LogTransforms, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
@@ -444,7 +438,7 @@ func (env *TestEnv) open(t *testing.T) {
 		MaxWaiting:   100,
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
-	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
+	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
 	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, env.Clock)
 	env.LogsHandler = logsHandler
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
@@ -463,7 +457,6 @@ func (env *TestEnv) open(t *testing.T) {
 		clickHouse.Close()
 		sqliteWriter.Close()
 		mqWriter.Close()
-		mqReader.Close()
 		projectAuth.Close()
 		env.LogTransforms.Close()
 		consoleSettings.Close()
@@ -511,13 +504,13 @@ func TestStoreIngestion(t *testing.T) {
 	params := storage.QueryParams{
 		ProjectID: 123,
 	}
-	events, err := env.DuckDBWriter.QueryEvents(params)
+	events, err := env.ClickHouse.QueryEvents(params)
 	if err != nil {
-		t.Fatalf("DuckDB Query failed: %v", err)
+		t.Fatalf("Query Events failed: %v", err)
 	}
 
 	if len(events) != 1 {
-		t.Fatalf("Expected 1 event in DuckDB, got %d", len(events))
+		t.Fatalf("Expected 1 Event stored, got %d", len(events))
 	}
 
 	persistedEvent := events[0]
@@ -584,9 +577,9 @@ func TestEnvelopeIngestion(t *testing.T) {
 	params := storage.QueryParams{
 		ProjectID: 123,
 	}
-	events, err := env.DuckDBWriter.QueryEvents(params)
+	events, err := env.ClickHouse.QueryEvents(params)
 	if err != nil {
-		t.Fatalf("DuckDB Query failed: %v", err)
+		t.Fatalf("Query Events failed: %v", err)
 	}
 
 	// We might have events from other tests if running in parallel?
@@ -611,8 +604,8 @@ func TestQueryEndpoints(t *testing.T) {
 	env.App.Test(req, 2000)
 	env.Process(t)
 
-	// Get the generated event UUID from DuckDB
-	events, _ := env.DuckDBWriter.QueryEvents(storage.QueryParams{ProjectID: 123})
+	// Get the generated event UUID from ClickHouse
+	events, _ := env.ClickHouse.QueryEvents(storage.QueryParams{ProjectID: 123})
 	if len(events) == 0 {
 		t.Fatal("Setup failed: no events seeded")
 	}
@@ -752,106 +745,4 @@ func getSampleEventJSON() []byte {
 	}
 	b, _ := json.Marshal(event)
 	return b
-}
-
-func TestArchiveEvents(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-
-	// 1. Seed events for "yesterday"
-	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
-	event := models.Event{
-		EventUUID:          "8a6c475493954601ab7f3b599b2578ca",
-		ProjectID:          123,
-		IssueFingerprintID: 1,
-		Timestamp:          yesterday.Add(1 * time.Hour), // Yesterday + 1h
-		Environment:        "production",
-		ServerName:         "web-1",
-		Release:            "v123",
-		Level:              "error",
-		Tags:               map[string]string{"foo": "bar"},
-	}
-
-	if err := env.DuckDBWriter.WriteBatch([]models.Event{event}); err != nil {
-		t.Fatalf("Failed to seed event: %v", err)
-	}
-
-	// 2. Insert Archive Message (mimic Rails)
-	// We need to pack the payload roughly how Rails would (msgpack)
-	// Using our packer to simulate it
-	archivePayload := map[string]string{
-		"date": yesterday.Format("2006-01-02"),
-	}
-	packer := msgpacker.New(msgpacker.ModeRaw)
-	packedPayload, err := packer.Pack(archivePayload)
-	if err != nil {
-		t.Fatalf("Failed to pack payload: %v", err)
-	}
-
-	// Direct sqlite insert
-	mqDB, err := sql.Open("sqlite3", env.MQPath)
-	if err != nil {
-		t.Fatalf("Failed to open MQ DB: %v", err)
-	}
-	defer mqDB.Close()
-
-	now := time.Now().Format("2006-01-02 15:04:05.000000")
-	_, err = mqDB.Exec(`
-		INSERT INTO console_messages (message_type, payload, status, attempts, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, "archive_events", packedPayload, storage.StatusPending, 0, now, now)
-	if err != nil {
-		t.Fatalf("Failed to insert console message: %v", err)
-	}
-
-	// 3. Start Consumer
-	consumer := pipeline.NewArchiveConsumer(env.MQReader, env.DuckDBWriter, env.BatchLock)
-	go consumer.Run()
-	defer consumer.Stop()
-
-	// 4. Wait for processing (poll status)
-	deadline := time.Now().Add(10 * time.Second)
-	var status int
-	for time.Now().Before(deadline) {
-		err := mqDB.QueryRow("SELECT status FROM console_messages WHERE message_type = ?", "archive_events").Scan(&status)
-		if err != nil {
-			t.Fatalf("Failed to query status: %v", err)
-		}
-
-		if status == storage.StatusProcessed {
-			break
-		}
-		if status == storage.StatusFailed {
-			var errMsg string
-			mqDB.QueryRow("SELECT error_message FROM console_messages WHERE message_type = ?", "archive_events").Scan(&errMsg)
-			t.Fatalf("Message processing failed: %s", errMsg)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if status != storage.StatusProcessed {
-		t.Fatalf("Timed out waiting for message processing, status: %d", status)
-	}
-
-	// 5. Verify Archival
-	// Events should be moved from hot table to parquet.
-	// Since we can't easily check parquet file content here without reading it back (which QueryEvents does),
-	// let's verify QueryEvents returns 1 event (it reads primarily from parquet if archived).
-	// Also check that event is NOT in hot table?
-	// But first, QueryEvents.
-
-	// Need to force view recreation or ensure it picks up changes?
-	// ArchiveEventsUpTo calls recreateEventsView.
-
-	params := storage.QueryParams{
-		ProjectID: 123,
-	}
-	events, err := env.DuckDBWriter.QueryEvents(params)
-	if err != nil {
-		t.Fatalf("DuckDB Query failed: %v", err)
-	}
-
-	if len(events) != 1 {
-		t.Fatalf("Expected 1 event after archive, got %d", len(events))
-	}
 }

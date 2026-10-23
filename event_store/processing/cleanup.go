@@ -18,10 +18,11 @@ type CleanupEvents interface {
 	DeleteProjectEvents(projectID uint32) error
 }
 
-// CleanupIndex is the Events' index: *storage.DuckDBWriter.
+// CleanupIndex holds the Events' rows that Event reads read:
+// *storage.ClickHouse.
 type CleanupIndex interface {
-	// DeleteProjectHotEvents deletes a Project's rows from events_hot.
-	DeleteProjectHotEvents(projectID uint32) error
+	// DeleteProjectEventRows deletes a Project's rows from the events table.
+	DeleteProjectEventRows(projectID uint32) error
 }
 
 // CleanupIssues holds the Issue rows Event processing writes in Console's
@@ -54,8 +55,8 @@ type Cleanup struct {
 	projects Projects
 	clock    clock.Clock
 
-	// batchLock is Event processing's and the archive job's: holding it keeps
-	// both out while a Project's rows go.
+	// batchLock is Event processing's: holding it keeps it out while a
+	// Project's rows go.
 	batchLock sync.Locker
 
 	stop     chan struct{}
@@ -108,13 +109,10 @@ func (c *Cleanup) run() {
 
 // DeleteEventsOfDeletedProjects is one pass. For each Project with Events
 // whose row is gone from Console's projects table, it deletes the Project's
-// rows in events_hot, then any Issue rows Event processing wrote for it after
-// Console deleted it, and last its Events and processing cursor. The Events
-// go last because they are how the next pass finds the Project, should a step
-// fail.
-//
-// The Project's rows in the Event archive stay: each archive file holds a
-// date's rows of every Project, and the rows carry no payload.
+// rows in ClickHouse's events table, then any Issue rows Event processing
+// wrote for it after Console deleted it, and last its Events, processing
+// cursor and recorded range in Pebble. The Events go last because they are
+// how the next pass finds the Project, should a step fail.
 //
 // A projects table with no rows deletes nothing: it is far likelier to be a
 // reset or restored Console database than every Project deleted.
@@ -150,8 +148,8 @@ func (c *Cleanup) deleteProject(projectID uint32) error {
 	c.batchLock.Lock()
 	defer c.batchLock.Unlock()
 
-	if err := c.index.DeleteProjectHotEvents(projectID); err != nil {
-		return fmt.Errorf("delete hot rows: %w", err)
+	if err := c.index.DeleteProjectEventRows(projectID); err != nil {
+		return fmt.Errorf("delete event rows: %w", err)
 	}
 	if err := c.issues.DeleteProjectIssues(projectID); err != nil {
 		return fmt.Errorf("delete issues: %w", err)
