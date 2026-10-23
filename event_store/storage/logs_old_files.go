@@ -687,13 +687,12 @@ func (o *oldLogFiles) span(projectID uint32, from, to time.Time) (oldest, newest
 	return oldest, newest, ok
 }
 
-// OldLogsEnd returns the end of the Logs from before the switch that a
-// Project's old Log files may hold in [from, to), and false if none of them
-// overlaps it. Counts kept since the switch, such as the histogram's by
-// minute, hold Logs after it only.
-func (s *ClickHouseLogs) OldLogsEnd(projectID uint32, from, to time.Time) (time.Time, bool) {
-	from, to = storableRange(from, to)
-	_, newest, ok := s.old.span(projectID, from, to)
+// end returns the end of the Logs from before the switch that a Project's
+// old Log files may hold in [from, to), and false if none of them overlaps
+// it. Counts kept since the switch, such as the histogram's by minute, hold
+// Logs after it only.
+func (o *oldLogFiles) end(projectID uint32, from, to time.Time) (time.Time, bool) {
+	_, newest, ok := o.span(projectID, from, to)
 	return newest.Add(time.Microsecond), ok
 }
 

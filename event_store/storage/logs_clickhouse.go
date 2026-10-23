@@ -402,23 +402,20 @@ func (s *ClickHouseLogs) dayCounts(ctx context.Context, projectID uint32, day ti
 // clickHouseStoreFailureCodes are the codes of ClickHouse's errors that are
 // failures of the store, not of what was stored: they clear by themselves.
 var clickHouseStoreFailureCodes = map[int32]bool{
-	159: true, // TIMEOUT_EXCEEDED
-	202: true, // TOO_MANY_SIMULTANEOUS_QUERIES
-	209: true, // SOCKET_TIMEOUT
-	210: true, // NETWORK_ERROR
-	236: true, // ABORTED
-	241: true, // MEMORY_LIMIT_EXCEEDED
-	243: true, // NOT_ENOUGH_SPACE
-	252: true, // TOO_MANY_PARTS
-	394: true, // QUERY_WAS_CANCELLED
+	chTimeoutExceeded: true,
+	202:               true, // TOO_MANY_SIMULTANEOUS_QUERIES
+	209:               true, // SOCKET_TIMEOUT
+	210:               true, // NETWORK_ERROR
+	236:               true, // ABORTED
+	241:               true, // MEMORY_LIMIT_EXCEEDED
+	243:               true, // NOT_ENOUGH_SPACE
+	252:               true, // TOO_MANY_PARTS
+	394:               true, // QUERY_WAS_CANCELLED
 }
 
 // StoreFailure reports whether err says the store failed, rather than what
 // was stored: ClickHouse is short of memory or disk, too busy, or gone.
 func StoreFailure(err error) bool {
-	var exception *clickhouse.Exception
-	if errors.As(err, &exception) {
-		return clickHouseStoreFailureCodes[exception.Code]
-	}
-	return false
+	exception, ok := clickHouseException(err)
+	return ok && clickHouseStoreFailureCodes[exception.Code]
 }
