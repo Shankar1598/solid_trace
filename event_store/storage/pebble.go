@@ -281,18 +281,72 @@ func (w *PebbleWriter) ProcessingCursor(projectID uint32) (string, error) {
 }
 
 // SetProcessingCursor records the UUID of the last Event that Event processing
-// handled for a Project. It is written with NoSync: a power loss can roll it
-// back, which only makes Event processing handle some Events again.
+// handled for a Project, and deletes its recorded Event range, in one batch.
+// It is written with NoSync: a power loss can roll both back, which only makes
+// Event processing handle the range again, and ClickHouse drops its insert.
 func (w *PebbleWriter) SetProcessingCursor(projectID uint32, eventUUID string) error {
 	cursor, err := uuid.Parse(eventUUID)
 	if err != nil {
 		return err
 	}
-	return w.db.Set(processingCursorKey(projectID), cursor[:], pebble.NoSync)
+	batch := w.db.NewBatch()
+	defer batch.Close()
+	if err := batch.Set(processingCursorKey(projectID), cursor[:], nil); err != nil {
+		return err
+	}
+	if err := batch.Delete(eventRangeKey(projectID), nil); err != nil {
+		return err
+	}
+	return batch.Commit(pebble.NoSync)
 }
 
-// DeleteProjectEvents deletes every Event of a Project and its processing
-// cursor, in one batch. The Events go as one range deletion, whose space
+// eventRangeKey is the reserved Project id 0, "eventrange/", then the Project
+// id. It sorts apart from the cursors and the Log batches.
+func eventRangeKey(projectID uint32) []byte {
+	key := append(eventKeyPrefix(0), "eventrange/"...)
+	return binary.BigEndian.AppendUint32(key, projectID)
+}
+
+// RecordEventRange records the range of a Project's Events that Event
+// processing is about to insert into ClickHouse, until SetProcessingCursor
+// moves the cursor past it. It is synced, so that after a crash the same
+// range is inserted again, with the same token.
+func (w *PebbleWriter) RecordEventRange(r EventRange) error {
+	through, err := uuid.Parse(r.Through)
+	if err != nil {
+		return err
+	}
+	value := through[:]
+	if r.After != "" {
+		after, err := uuid.Parse(r.After)
+		if err != nil {
+			return err
+		}
+		value = append(value, after[:]...)
+	}
+	return w.db.Set(eventRangeKey(r.ProjectID), value, pebble.Sync)
+}
+
+// RecordedEventRange returns the Project's recorded Event range, if it has
+// one.
+func (w *PebbleWriter) RecordedEventRange(projectID uint32) (EventRange, bool, error) {
+	value, err := w.get(eventRangeKey(projectID))
+	if err != nil || value == nil {
+		return EventRange{}, false, err
+	}
+	r := EventRange{ProjectID: projectID}
+	if len(value) != 16 && len(value) != 32 {
+		return EventRange{}, false, fmt.Errorf("event range of project %d: %d bytes", projectID, len(value))
+	}
+	r.Through = uuid.UUID(value[:16]).String()
+	if len(value) == 32 {
+		r.After = uuid.UUID(value[16:]).String()
+	}
+	return r, true, nil
+}
+
+// DeleteProjectEvents deletes every Event of a Project, its processing
+// cursor and its recorded Event range, in one batch. The Events go as one range deletion, whose space
 // Pebble frees as it compacts. Project id 0, which holds the cursors, is
 // refused.
 func (w *PebbleWriter) DeleteProjectEvents(projectID uint32) error {
@@ -310,6 +364,9 @@ func (w *PebbleWriter) DeleteProjectEvents(projectID uint32) error {
 		return err
 	}
 	if err := batch.Delete(processingCursorKey(projectID), nil); err != nil {
+		return err
+	}
+	if err := batch.Delete(eventRangeKey(projectID), nil); err != nil {
 		return err
 	}
 	return batch.Commit(pebble.Sync)

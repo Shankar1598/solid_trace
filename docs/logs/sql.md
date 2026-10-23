@@ -1,42 +1,47 @@
-# SQL queries and the `logs` view
+# SQL queries and the `logs` table
 
-On an instance whose operator has turned SQL queries on, the Logs explorer has a SQL mode. In it you write a raw [DuckDB SQL](https://duckdb.org/docs/sql/introduction) SELECT, and it runs as you wrote it. SQL mode opens with the SQL of your current Query, so you can start from something that works.
+On an instance whose operator has turned SQL queries on, the Logs explorer has a SQL mode. In it you write a [ClickHouse SQL](https://clickhouse.com/docs/sql-reference) SELECT, and it runs as you wrote it. SQL mode opens with the SQL of your current Query, so you can start from something that works.
 
 - SQL runs only when you press Run (or Ctrl+Enter). Changing the time range waits for Run too.
-- A query that runs for more than 10 seconds is stopped, with "the run was stopped after 10 s". DuckDB gives a query every thread it has, so the limit keeps a slow one from holding up ingest. EventStore stops SQL at 10 seconds whatever it is asked, from the explorer or the MCP server.
 - The explorer's URL holds your SQL, so you can share it. Opening a link with SQL never runs it: whoever opens the link presses Run.
 - SQL can't be turned back into a Query. Leaving SQL mode drops your SQL and returns to the Query it started from. If you changed the SQL, the explorer asks first.
 - The histogram and the Builder's chips are hidden in SQL mode.
 
-SQL queries are read-only. A query must be one SELECT, which may start with `WITH` or `FROM`; `DESCRIBE`, `SHOW` and `SUMMARIZE` work too. Anything else is refused before it runs, with "SQL queries are read-only: … isn't allowed":
+## What SQL can read
 
-- statements that change something, such as `DROP`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `COPY`, `ATTACH`, `SET`, `PRAGMA`, `CALL`, and `EXPLAIN` too;
-- more than one statement, and `PIVOT` without an `IN` list, which DuckDB runs as more than one;
-- the functions that change something from a SELECT: `query`, `query_table`, `json_execute_serialized_sql`, `enable_logging`, `disable_logging`, `truncate_duckdb_logs`, `write_log`, `enable_profiling`, `disable_profiling`, `enable_peg_parser`, `disable_peg_parser`, `checkpoint`, `force_checkpoint`, `nextval` and `setseed`.
+Each Project's SQL runs as that Project's own read-only database user. The database, not a check of your SQL's text, decides what it can read:
 
-DuckDB's extensions load only as EventStore needs them, so a function from any other extension isn't found.
+- the `logs` table, which shows the Project's Logs of the time range in the explorer's bar, and no others;
+- the `events` table, which shows the Project's Events of that range, and no others.
 
-SQL queries read only the Project you run them on: the `logs` view and the `events` view, named as they are, without a schema or database. Anything else they read is refused before it runs, with "SQL queries can read only the logs and events views: … isn't allowed":
+The database refuses anything else, whatever the SQL says: another Project's rows, the other tables that EventStore keeps, the server's system tables and `information_schema`, files, URLs, the bucket, other servers, and the table functions that read them (`file`, `url`, `s3`, `remote` and the rest). It refuses any statement that changes something, such as `INSERT`, `ALTER`, `DROP` or `CREATE`, and any change to a setting but the range. The refusal is the database's own message, such as "Not enough privileges" or "Cannot modify … in readonly mode".
 
-- any other table or view, such as the tables that store Logs, and a qualified name such as `main.logs`;
-- a file path or URL in `FROM`, such as `FROM 'x.parquet'` or `FROM 's3://…'`;
-- every table function but `range`, `generate_series` and `unnest`, which read nothing: the file readers such as `read_parquet`, `read_csv` and `glob`, and the catalogue's such as `duckdb_tables`;
-- `SHOW TABLES`, `SHOW ALL TABLES`, `information_schema` and `pg_catalog`, and `DESCRIBE`, `SHOW` or `SUMMARIZE` of anything but the two views or a query of them;
-- the functions that read settings or the catalogue: `current_setting`, `getvariable`, `pg_get_viewdef` and `pg_get_constraintdef`;
-- a `WITH` part named as a table or view in the database, `events` included, or with a name that isn't a plain identifier, such as a file path.
+Logs sent before the switch to ClickHouse, which are still read from their old Log files, aren't in `logs`. Queries read them until Retention deletes them.
 
-`WITH` parts, subqueries, joins, `VALUES`, `PIVOT` and `UNPIVOT` over the two views work.
+### The range
 
-SQL queries are on by default, and the operator can turn them off (`bin/rails instance_settings:set SQL_QUERIES_ENABLED=false`). They can't change data, settings or files, or read beyond their Project, but a slow one can slow down ingest for up to 10 seconds. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
-
-## The `logs` view
-
-Read Logs from the `logs` view, not from the tables that store them. The view keeps the same columns when storage changes, so your SQL keeps working.
-
-The view holds the Logs of the Project and time range in the explorer's bar, and no others. It is all of the Project's Logs your SQL can read.
+The range is a convenience, not a limit. `logs` and `events` read it from two settings, `SQL_from` and `SQL_to`, which the explorer sets from its bar. Your SQL may set them itself, in UTC, to read more of the Project:
 
 ```sql
-SELECT service, count(*) AS logs
+SELECT toStartOfDay(time) AS day, count() AS logs
+FROM logs
+GROUP BY day
+ORDER BY day
+SETTINGS SQL_from = '2026-10-01 00:00:00', SQL_to = '2026-10-08 00:00:00'
+```
+
+It still reads only the Project's rows.
+
+### Limits
+
+A query stops after 10 seconds, or when it needs more than 1 GiB of memory, and uses at most half of the server's CPUs. The limits are the database user's, so a query can't raise them with `SETTINGS`. They keep a slow query from holding up ingest or other members' runs for long. The explorer and the MCP server may ask for a shorter time; EventStore stops SQL at 10 seconds whatever it is asked.
+
+SQL queries are on by default, and the operator can turn them off (`bin/rails instance_settings:set SQL_QUERIES_ENABLED=false`). With them on, any member can read all of their own Organization's Projects' Logs and Events, and a slow query can slow down ingest for up to 10 seconds. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
+
+## The `logs` table
+
+```sql
+SELECT service, count() AS logs
 FROM logs
 WHERE level = 'error'
 GROUP BY service
@@ -45,80 +50,74 @@ ORDER BY logs DESC
 
 | Column | Type | Holds |
 | --- | --- | --- |
-| `project_id` | `UINTEGER` | The Project's id. It is the same in every row. |
+| `project_id` | `UInt32` | The Project's id. It is the same in every row. |
 | `id` | `UUID` | The Log's id. |
-| `time` | `TIMESTAMP` | The Log's time, in UTC. |
-| `level` | `VARCHAR` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or NULL when the Log has no Level. |
-| `message` | `VARCHAR` | The message. |
-| `service` | `VARCHAR` | The Service, or NULL. |
-| `environment` | `VARCHAR` | The environment, or NULL. |
-| `trace_id` | `VARCHAR` | The trace id, or NULL. |
-| `span_id` | `VARCHAR` | The span id, or NULL. |
-| `attrs_string` | `MAP(VARCHAR, VARCHAR)` | The Log's string Attributes, by name. |
-| `attrs_number` | `MAP(VARCHAR, DOUBLE)` | Its number Attributes. |
-| `attrs_bool` | `MAP(VARCHAR, BOOLEAN)` | Its true/false Attributes. |
-| `attrs_json` | `MAP(VARCHAR, VARCHAR)` | Its arrays and deeply nested objects, as JSON text. |
+| `time` | `DateTime64(6, 'UTC')` | The Log's time. |
+| `level` | `LowCardinality(Nullable(String))` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or NULL when the Log has no Level. |
+| `service` | `LowCardinality(String)` | The Service, or `''`. |
+| `environment` | `LowCardinality(Nullable(String))` | The environment, or NULL. |
+| `message` | `String` | The message. |
+| `trace_id`, `span_id` | `Nullable(String)` | The trace and span ids, or NULL. |
+| `batch` | `UUID` | The Log batch the Log arrived in. |
+| `file` | `LowCardinality(String)` | The `file` Attribute when it is a string, else `''`. The Attribute is in `attributes` too. |
+| `attributes` | `JSON` | Every string, number and true/false Attribute, at its name. |
+| `attrs_json` | `Map(LowCardinality(String), String)` | Array and object Attributes, as JSON text. |
+| `search_text` | `String` | Every string Attribute's value, joined by `\0`. `SELECT *` leaves it out; name it to read it. |
+
+Rows are stored sorted by Project, Service, `file` and time, so a condition on `service` or `file` reads only those Logs.
 
 ## Attributes
 
-Every Attribute is in the map for the type of its value. A dotted name such as `http.method` is one key, because nested names are flattened when Logs arrive. Read a value with `map['key']`. It is NULL when the Log doesn't have that Attribute with that type:
+Read an Attribute from `attributes` by its name, with the type you want: `.:String`, `.:Float64` (every number) or `.:Bool`. A dotted name such as `http.method` is a path, as nested names are flattened when Logs arrive. A value is NULL when the Log doesn't have that Attribute with that type:
 
 ```sql
-SELECT time, message, attrs_number['http.status'] AS status
+SELECT time, message, attributes.http.status.:Float64 AS status
 FROM logs
-WHERE attrs_string['http.method'] = 'POST'
+WHERE attributes.http.method.:String = 'POST'
 ORDER BY time DESC
 LIMIT 100
 ```
 
-An Attribute keeps the type of each value, so one Log can hold `status` in `attrs_number` and another in `attrs_string`. To read either, use `coalesce(attrs_string['status'], CAST(attrs_number['status'] AS VARCHAR))`. A whole number too large to hold exactly is kept as a string.
+Quote a name that isn't a plain identifier with backticks: ``attributes.`content-type`.:String``. An Attribute keeps the type of each value, so one Log can hold `status` as a number and another as a string. To read either, use `coalesce(attributes.status.:String, toString(attributes.status.:Float64))`. Compare and aggregate the typed reads, not `attributes.status` itself: a path that holds more than one type can't be compared with a value. A whole number too large to hold exactly is kept as a string.
 
-`map_keys(attrs_string)` lists a Log's string Attribute names. Read JSON values with DuckDB's JSON functions, such as `json_extract(attrs_json['tags'], '$[0]')`.
+Read an array or object Attribute's JSON text from `attrs_json`, with ClickHouse's JSON functions, such as `JSONExtractString(attrs_json['tags'], 1)`. `mapKeys(attrs_json)` lists those names, and `JSONAllPaths(attributes)` the rest.
 
-## The `events` view
+## The `events` table
 
-The `events` view holds the Project's Events of the time range in the explorer's bar, and no others. Join it with `logs` to see Logs beside Events.
+The `events` table holds the Project's Events of the range. Join it with `logs` to see Logs beside Events.
 
 | Column | Type | Holds |
 | --- | --- | --- |
-| `uuid` | `VARCHAR` | The Event's id. |
-| `project_id` | `BIGINT` | The Project's id. It is the same in every row. |
-| `issue_fingerprint_id` | `BIGINT` | The Issue the Event belongs to. |
-| `timestamp` | `TIMESTAMP` | The Event's time, in UTC. |
-| `environment`, `server_name`, `release`, `level` | `VARCHAR` | As the SDK sent them. |
-| `tags` | `MAP(VARCHAR, VARCHAR)` | The Event's tags. |
+| `uuid` | `UUID` | The Event's id. |
+| `project_id` | `UInt32` | The Project's id. It is the same in every row. |
+| `issue_fingerprint_id` | `Int64` | The Issue the Event belongs to. |
+| `timestamp` | `DateTime64(6, 'UTC')` | The Event's time. |
+| `environment`, `server_name`, `release`, `level` | `LowCardinality(String)` | As the SDK sent them, or `''`. |
+| `tags` | `Map(String, String)` | The Event's tags. |
 
 ## Matching text
 
-`message` is most of what a Log stores, so how you match it decides how fast a query is. DuckDB's string functions are several times faster than `ILIKE`:
-
-| Instead of | Write |
+| To match | Write |
 | --- | --- |
-| `message ILIKE '%timeout%'` | `contains(lower(message), 'timeout')` |
-| `message NOT ILIKE '%timeout%'` | `NOT contains(lower(message), 'timeout')` |
-| `message LIKE '%timeout%' ESCAPE '\'` | `contains(message, 'timeout')` |
-| `message ILIKE '%user_42%'` | `regexp_matches(message, '(?i)user.42')` |
-
-A plain `LIKE '%timeout%'` and a pattern without a leading `%`, such as `ILIKE 'GET %'`, are already fast. When a query matches `message` slowly, it still runs, and its answer carries a `notice` saying what to write instead. `run_sql` passes it on to MCP clients; the explorer doesn't show it yet.
-
-## Filtering on Attributes
-
-`attrs_string['name']` reads a map built for the view, so a condition on an Attribute, such as `attrs_string['file'] = 'sidekiq.log'`, reads every Log of the range. A Query reads only the matching parts of each Log file, as its Log file order sorts them: see [Reading less](query-language.md#reading-less).
+| text anywhere, any case | `positionCaseInsensitive(message, 'timeout') > 0`, or `message ILIKE '%timeout%'` |
+| text anywhere, this case | `position(message, 'timeout') > 0`, or `message LIKE '%timeout%'` |
+| the start | `startsWith(message, 'GET ')` |
+| a regular expression | `match(message, '(?i)user.42')` |
+| text in any string Attribute | `positionCaseInsensitive(search_text, 'timeout') > 0` |
 
 ## Results
 
 - Results show at most 10,000 rows. A result that has more is marked as cut off.
 - Times are shown in UTC.
-- A JSON value, map, list or struct is shown as JSON.
-- If the SQL fails or is refused, you see why: DuckDB's error message, or what isn't allowed.
-- A query has no time limit. Cancelling it in the explorer stops the wait, but the server may still finish the query.
-- A query reads the Logs as they were when it started, in one transaction. A long query holds up nothing else, but Log files it may read are only deleted (by Retention or the disk limit) after it ends.
+- A JSON value, map, array or tuple is shown as JSON.
+- If the SQL fails or is refused, you see why: ClickHouse's message. When the SQL doesn't parse, the explorer shows the line where it failed with a caret under the spot.
+- Cancelling a query in the explorer stops the wait, but the server may still run the query to its 10 seconds.
 
 ## From a Query to SQL
 
-SQL mode opens with your Query written as SQL against the `logs` view. Each stage of the Query becomes one `WITH` step (`stage1`, `stage2` and so on). The SQL returns the same rows as the Query:
+SQL mode opens with your Query written as SQL against the `logs` table. Each stage of the Query becomes one `WITH` step (`stage1`, `stage2` and so on). The SQL returns the same rows as the Query:
 
-- A Query that lists Logs returns the view's rows, newest first.
-- A Query that returns a table returns its columns. A column whose values have no single type, such as an Attribute grouped in `by` or chosen in `project`, comes back as JSON.
+- A Query that lists Logs returns the table's rows, newest first.
+- A Query that returns a table returns its columns. A column whose values have no single type, such as an Attribute grouped in `by` or chosen in `project`, comes back as a `Dynamic` holding each value as its type. An array or object comes back as its JSON text.
 
-A few columns are named `"#order"`. They carry the order of a sort into the steps after it, because SQL doesn't keep row order from one step to the next.
+A few columns are named `` `#order` ``. They carry the order of a sort into the steps after it, because SQL doesn't keep row order from one step to the next.

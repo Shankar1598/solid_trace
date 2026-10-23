@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/config"
@@ -29,10 +29,9 @@ import (
 	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/models"
-	"github.com/solidtrace/event_store/pipeline"
+	"github.com/solidtrace/event_store/pkg/clickhousetest"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
-	"github.com/solidtrace/event_store/pkg/msgpacker"
 	"github.com/solidtrace/event_store/processing"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -42,22 +41,32 @@ type TestEnv struct {
 	QueryApp     *fiber.App
 	PebbleWriter *storage.PebbleWriter
 	EventWriter  *recordingEventWriter
-	DuckDBWriter *storage.DuckDBWriter
-	SQLiteWriter *storage.SQLiteWriter
-	Issues       *flakyIssueRepository
-	Processor    *processing.Processor
-	BatchLock    *sync.Mutex
-	LogStore     *storage.LogStore
-	// FlakyLogs is LogStore as Log processing sees it, which a test can
-	// break.
+	// ClickHouse is EventStore's database on the dev ClickHouse: the test
+	// package's own (clickhousetest), emptied for each test. Reopen keeps it.
+	ClickHouse       *storage.ClickHouse
+	ClickHouseConfig config.ClickHouse
+	SQLiteWriter     *storage.SQLiteWriter
+	Issues           *flakyIssueRepository
+	Processor        *processing.Processor
+	EventCleanup     *processing.Cleanup
+	BatchLock        *sync.Mutex
+	// ClickHouseLogs is the Logs in ClickHouse, which Log processing
+	// inserts into and Log rows, tables and histograms are read from, with
+	// its bin cache.
+	ClickHouseLogs *storage.ClickHouseLogs
+	// FlakyLogs is ClickHouseLogs as Log processing sees it, which a test
+	// can break.
 	FlakyLogs    *flakyLogStore
 	LogProcessor *logprocessing.Processor
 	LogCleanup   *logprocessing.Cleanup
 	LogsHandler  *handler.LogsHandler
-	MQWriter     *storage.MessageQueueWriter
-	MQReader     *storage.MessageQueueReader
-	MQPath       string
-	SQLitePath   string
+	// SQL runs SQL queries, each as its Project's SQL user, within
+	// SQLLimits, storage's defaults unless a test changes them.
+	SQL        *storage.ClickHouseSQL
+	SQLLimits  storage.SQLLimits
+	MQWriter   *storage.MessageQueueWriter
+	MQPath     string
+	SQLitePath string
 
 	// LogTransforms runs each Project's Log transform in Log processing.
 	// Restart keeps it; Reopen makes a new one.
@@ -67,22 +76,18 @@ type TestEnv struct {
 	// testNow and moves only when a test moves it.
 	Clock *clock.Manual
 
-	// Bucket keeps the Log files too, if set, each local copy for
-	// LocalCacheHours (logs_bucket_test.go), and the Event archive
-	// (event_archive_bucket_test.go). BucketConfig, if set, is the
-	// object_store that DuckDB reads the bucket through.
-	Bucket          storage.ObjectStore
-	BucketConfig    *config.ObjectStore
-	LocalCacheHours int
+	// BucketConfig, if set, is the object_store: the logs table's parts
+	// move to its bucket (logs_bucket_test.go).
+	BucketConfig *config.ObjectStore
 	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
 	// it; 0 turns it off.
 	BinCacheBytes int64
-	// BusyProjectLogs, if set, is how many hot Logs of the quarter-hour
-	// before the quarter cutoff make a Project busy, in place of
-	// storage.BusyProjectLogs.
-	BusyProjectLogs int64
+	// OldLogFiles is where the Logs from before the switch are: by default
+	// logs.duckdb, prepared/ and logs_parquet/ in the environment's
+	// directory, which hold none (usePreparedFixture sets them).
+	OldLogFiles storage.OldLogFiles
 
-	dir   string // holds Pebble and DuckDB
+	dir   string // holds Pebble, SQLite and the Logs from before the switch
 	close func()
 }
 
@@ -102,16 +107,6 @@ func (env *TestEnv) ProcessLogs(t *testing.T) {
 	}
 }
 
-// ExportLogs runs the Log export as it runs at the start of the clock's
-// quarter-hour: a busy Project's Logs before the quarter cutoff, and every
-// other Project's before the start of the previous hour, move to files.
-func (env *TestEnv) ExportLogs(t *testing.T) {
-	t.Helper()
-	if err := env.LogStore.ExportLogs(env.Clock.Now()); err != nil {
-		t.Fatalf("Log export failed: %v", err)
-	}
-}
-
 // DeleteLogsPastRetention runs the daily pass at the clock's time: each Project's
 // Logs past its Retention, and every Log of a deleted Project, are deleted.
 func (env *TestEnv) DeleteLogsPastRetention(t *testing.T) {
@@ -126,7 +121,7 @@ func (env *TestEnv) DeleteLogsPastRetention(t *testing.T) {
 func (env *TestEnv) Restart(t *testing.T) {
 	t.Helper()
 	env.Processor.Stop()
-	env.Processor = processing.New(env.PebbleWriter, env.DuckDBWriter, env.MQWriter, env.Issues, env.BatchLock)
+	env.Processor = processing.New(env.PebbleWriter, env.ClickHouse, env.MQWriter, env.Issues, env.BatchLock)
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
@@ -141,11 +136,23 @@ func (env *TestEnv) Restart(t *testing.T) {
 var testNow = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
 // flakyIssueRepository is the real SQLite IssueRepository, except that its
-// next failFinds lookups fail, as when SQLite is busy.
+// next failFinds lookups fail, as when SQLite is busy, and that recording seen
+// counts fails while failSeen is set.
 type flakyIssueRepository struct {
 	*storage.SQLiteWriter
 	failFinds atomic.Int32
 	finds     atomic.Int32
+
+	failSeen     atomic.Bool
+	seenFailures atomic.Int32
+}
+
+func (r *flakyIssueRepository) RecordSeenEvents(projectID uint32, events []models.Event, throughUUID string) error {
+	if r.failSeen.Load() {
+		r.seenFailures.Add(1)
+		return errors.New("database is locked")
+	}
+	return r.SQLiteWriter.RecordSeenEvents(projectID, events, throughUUID)
 }
 
 func (r *flakyIssueRepository) FindIssueByFingerprint(projectID uint32, fingerprint string) (int64, int64, int, bool, error) {
@@ -156,22 +163,35 @@ func (r *flakyIssueRepository) FindIssueByFingerprint(projectID uint32, fingerpr
 	return r.SQLiteWriter.FindIssueByFingerprint(projectID, fingerprint)
 }
 
-// flakyLogStore is the real logs.duckdb as Log processing uses it, except
-// while a test breaks it: then committing Logs fails with the test's error,
-// for every Project or only some, and while it is down, every call fails.
+// flakyLogStore is the real ClickHouse logs table as Log processing uses it,
+// except while a test breaks it: then inserting Logs fails with the test's
+// error, for every Project or only some, and while it is down, every call
+// fails. It can also let inserts through and then fail them, as when
+// ClickHouse takes an insert but its answer is lost, or EventStore crashes
+// before it hears it.
 type flakyLogStore struct {
-	*storage.LogStore
-	// attempts counts cursor reads: each try at a Project's Logs starts
-	// with one, failed or not.
+	*storage.ClickHouseLogs
+	// attempts counts inserts tried, failed or not: each try at a
+	// Project's Logs makes one.
 	attempts atomic.Int32
 
 	mu       sync.Mutex
 	storeErr error
 	projects []uint32 // the Projects whose Logs fail; all if empty
 	down     bool
+	// afterInsert fails the next inserts, once they have stored their Logs,
+	// with its error, and then calls its then, if set.
+	afterInsert []insertFailure
 }
 
-// fail makes committing the Logs of projects, or of every Project, fail with
+// insertFailure fails an insert that has stored its Logs with err, and then
+// calls then, if set.
+type insertFailure struct {
+	err  error
+	then func()
+}
+
+// fail makes inserting the Logs of projects, or of every Project, fail with
 // err. Trying Logs without storing them still works, as on a full disk.
 func (s *flakyLogStore) fail(err error, projects ...uint32) {
 	s.mu.Lock()
@@ -179,12 +199,23 @@ func (s *flakyLogStore) fail(err error, projects ...uint32) {
 	s.storeErr, s.projects = err, projects
 }
 
-// goDown makes every call fail, as when DuckDB doesn't answer at all.
+// failAfterInsert makes the next insert fail with err once it has stored its
+// Logs, and then calls then, if set.
+func (s *flakyLogStore) failAfterInsert(err error, then func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.afterInsert = append(s.afterInsert, insertFailure{err, then})
+}
+
+// goDown makes every call fail, as when ClickHouse doesn't answer at all.
 func (s *flakyLogStore) goDown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.storeErr, s.projects, s.down = errors.New("database connection lost"), nil, true
+	s.storeErr, s.projects, s.down = connectionLost, nil, true
 }
+
+// connectionLost is how an insert fails when ClickHouse is gone.
+var connectionLost = &clickhouse.Exception{Code: 210, Name: "DB::NetException", Message: "Connection reset by peer"}
 
 // recover ends every failure.
 func (s *flakyLogStore) recover() {
@@ -208,33 +239,48 @@ func (s *flakyLogStore) isDown() bool {
 	return s.down
 }
 
-func (s *flakyLogStore) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
-	s.attempts.Add(1)
-	if s.isDown() {
-		return uuid.Nil, errors.New("database connection lost")
+// nextAfterInsert takes the failure the next insert gets once it has stored
+// its Logs, if any.
+func (s *flakyLogStore) nextAfterInsert() (insertFailure, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.afterInsert) == 0 {
+		return insertFailure{}, false
 	}
-	return s.LogStore.LogProcessingCursor(projectID)
+	next := s.afterInsert[0]
+	s.afterInsert = s.afterInsert[1:]
+	return next, true
 }
 
-func (s *flakyLogStore) AppendLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error {
+func (s *flakyLogStore) InsertLogBatches(projectID uint32, insert storage.LogInsert) error {
+	s.attempts.Add(1)
 	if err := s.failure(projectID); err != nil {
 		return err
 	}
-	return s.LogStore.AppendLogBatches(projectID, batches, now)
+	if err := s.ClickHouseLogs.InsertLogBatches(projectID, insert); err != nil {
+		return err
+	}
+	if failure, ok := s.nextAfterInsert(); ok {
+		if failure.then != nil {
+			failure.then()
+		}
+		return failure.err
+	}
+	return nil
 }
 
-func (s *flakyLogStore) TryLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error {
+func (s *flakyLogStore) TryLogBatches(projectID uint32, batches []storage.LogBatch) error {
 	if s.isDown() {
-		return errors.New("database connection lost")
+		return connectionLost
 	}
-	return s.LogStore.TryLogBatches(projectID, batches, now)
+	return s.ClickHouseLogs.TryLogBatches(projectID, batches)
 }
 
 func (s *flakyLogStore) Ping() error {
 	if s.isDown() {
-		return errors.New("database connection lost")
+		return connectionLost
 	}
-	return s.LogStore.Ping()
+	return s.ClickHouseLogs.Ping()
 }
 
 func resetTestDB(t *testing.T) {
@@ -307,16 +353,19 @@ func setupTestEnv(t *testing.T) *TestEnv {
 func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 	logger.Init()
 	resetTestDB(t)
+	clickhousetest.Empty(t)
 
 	env := &TestEnv{
-		dir:         t.TempDir(),
-		SQLitePath:  "../storage/sqlite/test/solid_trace.sqlite3",
-		MQPath:      "../storage/sqlite/test/message_queue.sqlite3",
-		BatchLock:   &sync.Mutex{},
-		EventWriter: &recordingEventWriter{},
-		Clock:       clock.NewManual(testNow),
+		dir:              t.TempDir(),
+		SQLitePath:       "../storage/sqlite/test/solid_trace.sqlite3",
+		MQPath:           "../storage/sqlite/test/message_queue.sqlite3",
+		BatchLock:        &sync.Mutex{},
+		EventWriter:      &recordingEventWriter{},
+		Clock:            clock.NewManual(testNow),
+		ClickHouseConfig: clickhousetest.Config(),
 
 		BinCacheBytes: config.DefaultLogsBinCacheMB << 20,
+		SQLLimits:     storage.DefaultSQLLimits(),
 	}
 	if configure != nil {
 		configure(env)
@@ -336,40 +385,22 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create Pebble: %v", err)
 	}
 
-	duckdbWriter, err := storage.NewDuckDBWriter(filepath.Join(env.dir, "duckdb.db"), filepath.Join(env.dir, "parquet"), "", "")
+	clickHouse, err := storage.OpenClickHouse(env.ClickHouseConfig, env.BucketConfig)
 	if err != nil {
-		t.Fatalf("Failed to create DuckDB: %v", err)
+		t.Fatalf("Failed to open ClickHouse: %v", err)
 	}
-
-	if env.BucketConfig != nil {
-		if err := duckdbWriter.UseBucket(env.BucketConfig, testExtensionDirectory(t)); err != nil {
-			t.Fatalf("Failed to let DuckDB read the bucket: %v", err)
+	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+	clickHouseLogs.UseBinCache(env.BinCacheBytes)
+	// Before Log processing, as in main.
+	old := env.OldLogFiles
+	if old.LogsDuckDB == "" {
+		old = storage.OldLogFiles{
+			LogsDuckDB: filepath.Join(env.dir, "logs.duckdb"),
+			LocalDir:   filepath.Join(env.dir, "logs_parquet"),
 		}
 	}
-	// As in main, nothing waits on the bucket here: a test lists the Event
-	// archive in it as the archive consumer does (EnsureEventsView).
-	if env.Bucket != nil {
-		if err := duckdbWriter.UseEventArchiveBucket(env.Bucket); err != nil {
-			t.Fatalf("Failed to keep the Event archive in the bucket: %v", err)
-		}
-	} else if err := duckdbWriter.UseLocalEventArchiveOnly(); err != nil {
-		t.Fatalf("Failed to keep the Event archive on local disk only: %v", err)
-	}
-
-	logStore, err := storage.NewLogStore(duckdbWriter, filepath.Join(env.dir, "logs.duckdb"), filepath.Join(env.dir, "logs_parquet"))
-	if err != nil {
-		t.Fatalf("Failed to attach logs DuckDB: %v", err)
-	}
-	if env.Bucket != nil {
-		if err := logStore.UseObjectStore(env.Bucket, env.LocalCacheHours); err != nil {
-			t.Fatalf("Failed to keep Log files in the bucket: %v", err)
-		}
-	} else if err := logStore.UseLocalDiskOnly(); err != nil {
-		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
-	}
-	logStore.UseBinCache(env.BinCacheBytes)
-	if env.BusyProjectLogs > 0 {
-		logStore.UseBusyProjectLogs(env.BusyProjectLogs)
+	if err := clickHouseLogs.UseOldLogFiles(old); err != nil {
+		t.Fatalf("Failed to ready the Logs from before the switch: %v", err)
 	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(env.SQLitePath)
@@ -382,11 +413,6 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create MQ Writer: %v", err)
 	}
 
-	mqReader, err := storage.NewMessageQueueReader(env.MQPath)
-	if err != nil {
-		t.Fatalf("Failed to create MQ Reader: %v", err)
-	}
-
 	// Initialize Auth
 	projectAuth, err := auth.NewProjectAuth(env.SQLitePath)
 	if err != nil {
@@ -397,27 +423,27 @@ func (env *TestEnv) open(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open Console settings: %v", err)
 	}
-	logStore.UseLogFileOrders(consoleSettings)
 
 	env.PebbleWriter = pebbleWriter
-	env.DuckDBWriter = duckdbWriter
-	env.LogStore = logStore
-	env.FlakyLogs = &flakyLogStore{LogStore: logStore}
+	env.ClickHouse = clickHouse
+	env.ClickHouseLogs = clickHouseLogs
+	env.FlakyLogs = &flakyLogStore{ClickHouseLogs: env.ClickHouseLogs}
 	env.SQLiteWriter = sqliteWriter
 	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
 	env.MQWriter = mqWriter
-	env.MQReader = mqReader
 
-	env.Processor = processing.New(pebbleWriter, duckdbWriter, mqWriter, env.Issues, env.BatchLock)
+	env.Processor = processing.New(pebbleWriter, clickHouse, mqWriter, env.Issues, env.BatchLock)
 	if err := env.Processor.Prepare(); err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
+	env.EventCleanup = processing.NewCleanup(pebbleWriter, clickHouse, sqliteWriter, consoleSettings, env.BatchLock, env.Clock)
 	env.LogTransforms = logtransform.New(consoleSettings, env.Clock)
 	env.LogProcessor = logprocessing.New(pebbleWriter, env.FlakyLogs, env.LogTransforms, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
-	env.LogCleanup = logprocessing.NewCleanup(logStore, consoleSettings, storage.LogDiskLimit{}, env.Clock)
+	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
+	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, consoleSettings, storage.LogDiskLimit{}, env.Clock)
 
 	// Setup Handler
 	env.EventWriter.setWriter(pebbleWriter)
@@ -431,10 +457,10 @@ func (env *TestEnv) open(t *testing.T) {
 		MaxWaiting:   100,
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
-	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
-	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, env.Clock)
+	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
+	logsHandler := handler.NewLogsHandler(env.ClickHouseLogs, env.SQL, consoleSettings, env.Clock)
 	env.LogsHandler = logsHandler
-	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
@@ -446,10 +472,9 @@ func (env *TestEnv) open(t *testing.T) {
 		env.LogProcessor.Stop()
 
 		pebbleWriter.Close()
-		duckdbWriter.Close()
+		clickHouse.Close()
 		sqliteWriter.Close()
 		mqWriter.Close()
-		mqReader.Close()
 		projectAuth.Close()
 		env.LogTransforms.Close()
 		consoleSettings.Close()
@@ -497,13 +522,13 @@ func TestStoreIngestion(t *testing.T) {
 	params := storage.QueryParams{
 		ProjectID: 123,
 	}
-	events, err := env.DuckDBWriter.QueryEvents(params)
+	events, err := env.ClickHouse.QueryEvents(params)
 	if err != nil {
-		t.Fatalf("DuckDB Query failed: %v", err)
+		t.Fatalf("Query Events failed: %v", err)
 	}
 
 	if len(events) != 1 {
-		t.Fatalf("Expected 1 event in DuckDB, got %d", len(events))
+		t.Fatalf("Expected 1 Event stored, got %d", len(events))
 	}
 
 	persistedEvent := events[0]
@@ -570,9 +595,9 @@ func TestEnvelopeIngestion(t *testing.T) {
 	params := storage.QueryParams{
 		ProjectID: 123,
 	}
-	events, err := env.DuckDBWriter.QueryEvents(params)
+	events, err := env.ClickHouse.QueryEvents(params)
 	if err != nil {
-		t.Fatalf("DuckDB Query failed: %v", err)
+		t.Fatalf("Query Events failed: %v", err)
 	}
 
 	// We might have events from other tests if running in parallel?
@@ -597,8 +622,8 @@ func TestQueryEndpoints(t *testing.T) {
 	env.App.Test(req, 2000)
 	env.Process(t)
 
-	// Get the generated event UUID from DuckDB
-	events, _ := env.DuckDBWriter.QueryEvents(storage.QueryParams{ProjectID: 123})
+	// Get the generated event UUID from ClickHouse
+	events, _ := env.ClickHouse.QueryEvents(storage.QueryParams{ProjectID: 123})
 	if len(events) == 0 {
 		t.Fatal("Setup failed: no events seeded")
 	}
@@ -738,106 +763,4 @@ func getSampleEventJSON() []byte {
 	}
 	b, _ := json.Marshal(event)
 	return b
-}
-
-func TestArchiveEvents(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-
-	// 1. Seed events for "yesterday"
-	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
-	event := models.Event{
-		EventUUID:          "8a6c475493954601ab7f3b599b2578ca",
-		ProjectID:          123,
-		IssueFingerprintID: 1,
-		Timestamp:          yesterday.Add(1 * time.Hour), // Yesterday + 1h
-		Environment:        "production",
-		ServerName:         "web-1",
-		Release:            "v123",
-		Level:              "error",
-		Tags:               map[string]string{"foo": "bar"},
-	}
-
-	if err := env.DuckDBWriter.WriteBatch([]models.Event{event}); err != nil {
-		t.Fatalf("Failed to seed event: %v", err)
-	}
-
-	// 2. Insert Archive Message (mimic Rails)
-	// We need to pack the payload roughly how Rails would (msgpack)
-	// Using our packer to simulate it
-	archivePayload := map[string]string{
-		"date": yesterday.Format("2006-01-02"),
-	}
-	packer := msgpacker.New(msgpacker.ModeRaw)
-	packedPayload, err := packer.Pack(archivePayload)
-	if err != nil {
-		t.Fatalf("Failed to pack payload: %v", err)
-	}
-
-	// Direct sqlite insert
-	mqDB, err := sql.Open("sqlite3", env.MQPath)
-	if err != nil {
-		t.Fatalf("Failed to open MQ DB: %v", err)
-	}
-	defer mqDB.Close()
-
-	now := time.Now().Format("2006-01-02 15:04:05.000000")
-	_, err = mqDB.Exec(`
-		INSERT INTO console_messages (message_type, payload, status, attempts, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, "archive_events", packedPayload, storage.StatusPending, 0, now, now)
-	if err != nil {
-		t.Fatalf("Failed to insert console message: %v", err)
-	}
-
-	// 3. Start Consumer
-	consumer := pipeline.NewArchiveConsumer(env.MQReader, env.DuckDBWriter, env.BatchLock)
-	go consumer.Run()
-	defer consumer.Stop()
-
-	// 4. Wait for processing (poll status)
-	deadline := time.Now().Add(10 * time.Second)
-	var status int
-	for time.Now().Before(deadline) {
-		err := mqDB.QueryRow("SELECT status FROM console_messages WHERE message_type = ?", "archive_events").Scan(&status)
-		if err != nil {
-			t.Fatalf("Failed to query status: %v", err)
-		}
-
-		if status == storage.StatusProcessed {
-			break
-		}
-		if status == storage.StatusFailed {
-			var errMsg string
-			mqDB.QueryRow("SELECT error_message FROM console_messages WHERE message_type = ?", "archive_events").Scan(&errMsg)
-			t.Fatalf("Message processing failed: %s", errMsg)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if status != storage.StatusProcessed {
-		t.Fatalf("Timed out waiting for message processing, status: %d", status)
-	}
-
-	// 5. Verify Archival
-	// Events should be moved from hot table to parquet.
-	// Since we can't easily check parquet file content here without reading it back (which QueryEvents does),
-	// let's verify QueryEvents returns 1 event (it reads primarily from parquet if archived).
-	// Also check that event is NOT in hot table?
-	// But first, QueryEvents.
-
-	// Need to force view recreation or ensure it picks up changes?
-	// ArchiveEventsUpTo calls recreateEventsView.
-
-	params := storage.QueryParams{
-		ProjectID: 123,
-	}
-	events, err := env.DuckDBWriter.QueryEvents(params)
-	if err != nil {
-		t.Fatalf("DuckDB Query failed: %v", err)
-	}
-
-	if len(events) != 1 {
-		t.Fatalf("Expected 1 event after archive, got %d", len(events))
-	}
 }

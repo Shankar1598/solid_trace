@@ -17,10 +17,6 @@ tasks: &tasks
     class: EventStoreMessageProcessorJob
     schedule: every second
 
-  event_store_archive:
-    class: Maintenance::EventStoreArchiveJob
-    schedule: at 2am every day
-
   monitor_scheduler:
     class: MonitorSchedulerJob
     schedule: every minute

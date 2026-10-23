@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/solidtrace/event_store/logquery/parser"
+	"github.com/solidtrace/event_store/pkg/chsql"
 )
 
 // rate() and peak_rate() count a summarize's rows per second of its time
@@ -28,8 +29,8 @@ import (
 // row's bin that lie in the range; secondCountColumn, the rows of its group
 // in its second.
 const (
-	binSecondsColumn  = `"#bin_seconds"`
-	secondCountColumn = `"#second_count"`
+	binSecondsColumn  = "#bin_seconds"
+	secondCountColumn = "#second_count"
 )
 
 // rateBasis is what a summarize's rates are counted in. bin is the size of
@@ -81,20 +82,20 @@ func (q *Query) rateBin(by []namedValue, at int) (namedValue, time.Duration, boo
 }
 
 // rateColumns writes the columns a summarize at index at of the tail adds to
-// the rows it reads for its rates, as a select list after *, or "" if it has
-// no rates.
+// the rows it reads for its rates, whose fields f reads, as a select list
+// after *, or "" if it has no rates.
 func (q *Query) rateColumns(s summarizeStage, at int, f fields) string {
 	var columns []string
 	if usesAggregate(s.aggregates, "rate") {
 		seconds := writeLiteral(Literal{Kind: parser.NumberLiteral, Number: q.to.Sub(q.from).Seconds()})
 		if bin, size, ok := q.rateBin(s.by, at); ok {
 			start := writeValue(bin.x, f)
-			seconds = fmt.Sprintf("(epoch_us(least(%[1]s + %[2]s, %[3]s)) - epoch_us(greatest(%[1]s, %[4]s))) / 1000000",
-				start, writeLiteral(Literal{Kind: parser.TimespanLiteral, Timespan: size}),
-				writeLiteral(Literal{Kind: parser.DateTimeLiteral, Time: q.to}),
-				writeLiteral(Literal{Kind: parser.DateTimeLiteral, Time: q.from}))
+			end := fmt.Sprintf("least(%s + %s, %s)", start, writeLiteral(Literal{Kind: parser.TimespanLiteral, Timespan: size}),
+				writeLiteral(Literal{Kind: parser.DateTimeLiteral, Time: q.to}))
+			begin := fmt.Sprintf("greatest(%s, %s)", start, writeLiteral(Literal{Kind: parser.DateTimeLiteral, Time: q.from}))
+			seconds = fmt.Sprintf("(toUnixTimestamp64Micro(%s) - toUnixTimestamp64Micro(%s)) / 1000000", end, begin)
 		}
-		columns = append(columns, seconds+" AS "+binSecondsColumn)
+		columns = append(columns, seconds+" AS "+chsql.Identifier(binSecondsColumn))
 	}
 	if usesAggregate(s.aggregates, "peak_rate") {
 		var partition []string
@@ -106,7 +107,7 @@ func (q *Query) rateColumns(s summarizeStage, at int, f fields) string {
 			literal{Literal{Kind: parser.TimespanLiteral, Timespan: time.Second}},
 		}}
 		partition = append(partition, writeCall(second, f))
-		columns = append(columns, "count(*) OVER (PARTITION BY "+strings.Join(partition, ", ")+") AS "+secondCountColumn)
+		columns = append(columns, "count() OVER (PARTITION BY "+strings.Join(partition, ", ")+") AS "+chsql.Identifier(secondCountColumn))
 	}
 	return strings.Join(columns, ", ")
 }

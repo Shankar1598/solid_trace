@@ -32,18 +32,23 @@ const (
 // LogsHandler serves stored Logs on the query app: it runs and validates
 // Queries, fetches single Logs, and runs SQL while the instance allows it.
 type LogsHandler struct {
-	logs     *storage.LogStore
-	settings ConsoleSettings
-	clock    clock.Clock
+	// clickHouse holds the Logs: Log rows, tables, the histogram, single
+	// Logs, the Logs ingested after a batch and the Fields are read from it.
+	// sql runs SQL queries on it, each as its Project's SQL user.
+	clickHouse *storage.ClickHouseLogs
+	sql        *storage.ClickHouseSQL
+	settings   ConsoleSettings
+	clock      clock.Clock
 	// ScanBudget is how long a run of Log rows reads before it answers with
 	// what it has found and a next_cursor.
 	ScanBudget time.Duration
 }
 
-// NewLogsHandler serves logs; settings say whether SQL runs and what each
-// Project's Logs are named in Queries; clock is the time ago() and now() read.
-func NewLogsHandler(logs *storage.LogStore, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
-	return &LogsHandler{logs: logs, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
+// NewLogsHandler serves the Logs in clickHouse, and SQL queries through sql;
+// settings say whether SQL runs and what each Project's Logs are named in
+// Queries; clock is the time ago() and now() read.
+func NewLogsHandler(clickHouse *storage.ClickHouseLogs, sql *storage.ClickHouseSQL, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
+	return &LogsHandler{clickHouse: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
 }
 
 // queryRequest is the body of a run.
@@ -134,12 +139,12 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if left >= 0 {
 		limit = min(limit, left)
 	}
-	page, err := h.logs.ScanLogs(run.ctx, storage.LogScan{
+	page, err := h.clickHouse.ScanLogs(run.ctx, storage.LogScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
 		After:     after,
-		Where:     query.Where,
+		Where:     func(cols storage.LogColumns) storage.Filter { return query.Filter(cols) },
 		Limit:     limit,
 		Budget:    h.ScanBudget,
 	})
@@ -218,12 +223,12 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 	var found storage.IngestedLogs
 	if afterBatch == "" {
 		found.Logs = []models.Log{}
-		found.Cursor, err = h.logs.LogProcessingCursor(projectID)
+		found.Cursor, err = h.clickHouse.LogProcessingCursor(projectID)
 	} else {
-		found, err = h.logs.ScanLogsIngestedAfter(run.ctx, storage.IngestedLogScan{
+		found, err = h.clickHouse.ScanLogsIngestedAfter(run.ctx, storage.IngestedLogScan{
 			ProjectID: projectID,
 			After:     after,
-			Where:     query.Where,
+			Where:     func(cols storage.LogColumns) storage.Filter { return query.Filter(cols) },
 			Limit:     limit,
 		})
 	}
@@ -276,8 +281,8 @@ func limitOf(requested int) (limit int, ok bool) {
 // no row; from and to are the range the Query read, the request's as a
 // leading where on time narrows it.
 //
-// A chart's table made bin by bin takes the bins of Logs all in files from
-// the bin cache, when it has them (logquery.Query.Bins).
+// A chart's table made bin by bin takes the bins of hours that have ended
+// from the bin cache, when it has them (logquery.Query.Bins).
 //
 // With totals asked for, the table of a time chart, a Query whose last stage
 // is a summarize by a time bin, also has "totals": {"columns", "rows",
@@ -313,18 +318,19 @@ func (h *LogsHandler) table(c *fiber.Ctx, run *run, projectID uint32, query *log
 // and whether there were more. With bins, a table made bin by bin may take
 // bins from the bin cache.
 func (h *LogsHandler) scanTable(run *run, projectID uint32, query *logquery.Query, from, to time.Time, bins bool) ([][]any, bool, error) {
-	scan := storage.LogTableScan{
+	scan := storage.TableScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
-		Where:     query.Where,
-		Select:    query.Select,
+		Where:     func(cols storage.LogColumns) storage.Filter { return query.Filter(cols) },
+		Select:    func(cols storage.LogColumns) string { return query.Select(cols) },
 		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
+		Now:       h.clock.Now(),
 	}
 	if b, ok := query.Bins(); ok && bins {
 		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: maxTableRows + 1}
 	}
-	raw, err := h.logs.ScanLogTable(run.ctx, scan)
+	raw, err := h.clickHouse.ScanLogTable(run.ctx, scan)
 	if err != nil {
 		return nil, false, err
 	}
@@ -401,7 +407,7 @@ func (h *LogsHandler) compile(projectID uint32, text string, bounds logquery.Bou
 // GET /api/:project_id/logs/:log_id?time=<RFC 3339>
 //
 // Returns one of a Project's Logs by id. With time, the Log's own time, only
-// that hour's files are searched; without it, every file.
+// that day is read; without it, the days around its id's time, then every day.
 func (h *LogsHandler) Get(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -419,7 +425,7 @@ func (h *LogsHandler) Get(c *fiber.Ctx) error {
 		}
 		at = &t
 	}
-	log, found, err := h.logs.LogByID(c.UserContext(), projectID, id, at)
+	log, found, err := h.clickHouse.LogByID(c.UserContext(), projectID, id, at)
 	if err != nil {
 		logger.L.Error("Log fetch failed", "project_id", projectID, "log_id", id, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})

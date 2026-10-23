@@ -3,6 +3,8 @@
 cd console
 rails test
 
-cd ../event_store
+cd ..
+bin/clickhouse-dev || exit 1
+cd event_store
 vrl/build
 go test ./...
