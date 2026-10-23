@@ -46,7 +46,8 @@ module McpServer
     McpTools::GetEmailSettings,
     McpTools::UpdateEmailSettings,
     McpTools::SendTestEmail,
-    McpTools::GetInstanceSettings
+    McpTools::GetInstanceSettings,
+    McpTools::UpdateInstanceSettings
   ].freeze
 
   INSTRUCTIONS = <<~TEXT

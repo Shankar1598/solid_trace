@@ -36,6 +36,22 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/settings/instance", answer.link
   end
 
+  test "update_instance_settings changes the settings given, and answers the settings" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, sql_queries_enabled: false,
+      default_log_retention_days: 7, log_all_reads: true)
+
+    assert_not answer.error?, answer.text
+    settings = InstanceSetting.current
+    assert_equal [ false, 7, true ], [ settings.sql_queries_enabled, settings.default_log_retention_days, settings.log_all_reads ]
+    assert_equal [ false, 7, true ],
+      answer.json["editable"].values_at("sql_queries_enabled", "default_log_retention_days", "log_all_reads")
+    assert_equal "http://console.test/acme/settings/instance", answer.link
+
+    call_tool(:update_instance_settings, user: @instance_admin, log_all_reads: false)
+    settings = InstanceSetting.current
+    assert_equal [ false, 7, false ], [ settings.sql_queries_enabled, settings.default_log_retention_days, settings.log_all_reads ]
+  end
+
   private
 
   def with_env(values)
