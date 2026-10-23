@@ -199,7 +199,7 @@ func mustMarshal(t *testing.T, answer map[string]json.RawMessage) []byte {
 	return raw
 }
 
-// Each run Console asks with X-Log-SQL logs every SQL statement DuckDB ran
+// Each run Console asks with X-Log-SQL logs every SQL statement it ran
 // for it, with the request id Console sent, so a Console call timing leads
 // to the SQL its Query became. A run not asked logs none.
 func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
@@ -208,17 +208,23 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 	seedLanguageLogs(t, env)
 	setSQLQueries(t, env, true)
 
-	runs := []struct {
+	type run struct {
 		path, read string
 		body       map[string]any
 		// ran is SQL one of the run's statements must hold.
 		ran []string
-	}{
+	}
+	runs := []run{
 		{"/api/123/logs/query", "query", map[string]any{"query": `where duration > 100`}, []string{"duration"}},
-		{"/api/123/logs/query", "query", map[string]any{"query": `summarize count() by service`}, []string{"count(*)", "GROUP BY"}},
-		{"/api/123/logs/query", "match", map[string]any{"query": ``, "after_batch": "00000000-0000-0000-0000-000000000000"}, []string{"logs_hot_123"}},
-		{"/api/123/logs/histogram", "histogram", map[string]any{"query": ``}, []string{"time_bucket"}},
-		{"/api/123/logs/sql", "sql", map[string]any{"sql": `SELECT count(*) FROM logs`}, []string{"CREATE TEMPORARY VIEW logs AS", "SELECT count(*) FROM logs"}},
+		{"/api/123/logs/query", "match", map[string]any{"query": ``, "after_batch": "00000000-0000-0000-0000-000000000000"}, []string{"toUInt128(batch)"}},
+	}
+	if tablesOnClickHouse {
+		runs = append(runs,
+			run{"/api/123/logs/query", "query", map[string]any{"query": `summarize count() by service`}, []string{"count(*)", "GROUP BY"}},
+			run{"/api/123/logs/histogram", "histogram", map[string]any{"query": ``}, []string{"time_bucket"}})
+	}
+	if sqlOnClickHouse {
+		runs = append(runs, run{"/api/123/logs/sql", "sql", map[string]any{"sql": `SELECT count(*) FROM logs`}, []string{"CREATE TEMPORARY VIEW logs AS", "SELECT count(*) FROM logs"}})
 	}
 	for i, run := range runs {
 		logs := captureLogs(t)

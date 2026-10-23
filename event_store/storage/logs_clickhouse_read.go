@@ -185,21 +185,22 @@ func storableRange(from, to time.Time) (time.Time, time.Time) {
 // only the parts' metadata.
 func (s *ClickHouseLogs) timeSpan(ctx context.Context, projectID uint32, from, to time.Time) (oldest, newest time.Time, ok bool, err error) {
 	var count uint64
-	err = s.conn.QueryRow(ctx, fmt.Sprintf(`
-		SELECT count(), min(time), max(time) FROM logs
+	err = s.queryRow(ctx, fmt.Sprintf(`SELECT count(), min(time), max(time) FROM logs
 		WHERE project_id = %d AND toDate(time) >= toDate(%s) AND toDate(time) <= toDate(%s)`,
-		projectID, chsql.Time(from), chsql.Time(to.Add(-time.Microsecond)))).Scan(&count, &oldest, &newest)
+		projectID, chsql.Time(from), chsql.Time(to.Add(-time.Microsecond))), &count, &oldest, &newest)
 	return oldest.UTC(), newest.UTC(), count > 0, err
 }
 
-// queryLogs runs a query of logSelectList's columns and reads its Logs.
-func (s *ClickHouseLogs) queryLogs(ctx context.Context, query string) ([]models.Log, error) {
+// queryLogs runs a query of logSelectList's columns and reads its Logs,
+// recording it in ctx's ReadStatements once they are read.
+func (s *ClickHouseLogs) queryLogs(ctx context.Context, query string) (logs []models.Log, err error) {
+	began := time.Now()
+	defer func() { recordStatement(ctx, query, began, err) }()
 	rows, err := s.conn.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var logs []models.Log
 	for rows.Next() {
 		log, err := scanLog(rows)
 		if err != nil {
@@ -208,6 +209,15 @@ func (s *ClickHouseLogs) queryLogs(ctx context.Context, query string) ([]models.
 		logs = append(logs, log)
 	}
 	return logs, rows.Err()
+}
+
+// queryRow runs a query of one row into dest, recording it in ctx's
+// ReadStatements.
+func (s *ClickHouseLogs) queryRow(ctx context.Context, query string, dest ...any) error {
+	began := time.Now()
+	err := s.conn.QueryRow(ctx, query).Scan(dest...)
+	recordStatement(ctx, query, began, err)
+	return err
 }
 
 // scanLog reads a row of logSelectList's columns as a Log.
@@ -322,7 +332,7 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 		return found, nil
 	}
 	var total uint64
-	if err := s.conn.QueryRow(ctx, "SELECT count() FROM logs WHERE "+where).Scan(&total); err != nil {
+	if err := s.queryRow(ctx, "SELECT count() FROM logs WHERE "+where, &total); err != nil {
 		return IngestedLogs{}, err
 	}
 	found.Total = int(total)
