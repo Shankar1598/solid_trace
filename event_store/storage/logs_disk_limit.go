@@ -15,19 +15,6 @@ import (
 	"github.com/solidtrace/event_store/pkg/logger"
 )
 
-// defaultDiskShare is the share of the disk holding the Log files that they
-// may take when no limit is configured. Logs are the largest thing on the
-// disk, but Pebble, the Event databases and their archive, the hot tables and
-// the system share it; half leaves them room to grow, and doesn't move when
-// they do.
-const defaultDiskShare = 50 // percent
-
-// LogDiskLimit caps how much disk all Projects' Log files take together.
-type LogDiskLimit struct {
-	// Bytes is the cap, more than 0.
-	Bytes int64
-}
-
 // NewLogDiskLimit is the disk limit for the Log files in dir: configured
 // bytes if more than 0, else defaultDiskShare of the size of the disk that
 // holds dir, read once now.
