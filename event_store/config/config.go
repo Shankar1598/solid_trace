@@ -3,10 +3,12 @@ package config
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -48,6 +50,9 @@ type Config struct {
 	// ObjectStore is the bucket that keeps Log files and the Event
 	// archive, or nil when everything stays on local disk.
 	ObjectStore *ObjectStore
+
+	// ClickHouse is the server EventStore keeps Logs and Events in.
+	ClickHouse ClickHouse
 
 	// CPUProfileDir is where EventStore writes a CPU profile twice an hour
 	// (pkg/cpuprofile), or "" for none.
@@ -95,6 +100,31 @@ type ObjectStore struct {
 	Secret string
 }
 
+// ClickHouse is the clickhouse block: how EventStore reaches its ClickHouse
+// server, which runs beside it (deploy/clickhouse, bin/clickhouse-dev).
+type ClickHouse struct {
+	// Address is the server's native protocol, host:port.
+	Address string
+	// Database is EventStore's database, which it makes at start.
+	Database string
+	User     string
+	// Password comes from SOLIDTRACE_CLICKHOUSE_PASSWORD, never from the
+	// file. deploy/install generates it; bin/clickhouse-dev's has none.
+	Password string
+	// ConfigDir is the directory ClickHouse reads as its conf.d, where
+	// EventStore writes the storage policy's bucket volume from
+	// object_store. Empty, EventStore leaves the policy as it is.
+	ConfigDir string
+}
+
+// clickHouseFile is the clickhouse block as written in the file.
+type clickHouseFile struct {
+	Address   *string `yaml:"address"`
+	Database  *string `yaml:"database"`
+	User      *string `yaml:"user"`
+	ConfigDir *string `yaml:"config_dir"`
+}
+
 // objectStoreFile is the object_store block as written in the file.
 type objectStoreFile struct {
 	Kind            string  `yaml:"kind"`
@@ -123,6 +153,7 @@ type fileConfig struct {
 	DuckDBExtensionDir  *string        `yaml:"duckdb_extension_directory"`
 	StorageTiers        *[]StorageTier `yaml:"storage_tiers"`
 	ObjectStore         yaml.Node      `yaml:"object_store"`
+	ClickHouse          yaml.Node      `yaml:"clickhouse"`
 	CPUProfileDir       *string        `yaml:"cpu_profile_dir"`
 	Debug               *bool          `yaml:"debug"`
 }
@@ -160,6 +191,17 @@ func LoadFile(path string) (*Config, error) {
 		DuckDBTempDirectory:      "",
 		DuckDBMemoryLimit:        "",
 		DuckDBExtensionDirectory: DefaultDuckDBExtensionDirectory,
+
+		// bin/clickhouse-dev's server. ConfigDir is relative to
+		// event_store/, as the paths above are; in the Docker image, whose
+		// working directory is /app, it is /storage/clickhouse/conf.d.
+		ClickHouse: ClickHouse{
+			Address:   "127.0.0.1:4200",
+			Database:  "solidtrace",
+			User:      "solidtrace",
+			Password:  os.Getenv("SOLIDTRACE_CLICKHOUSE_PASSWORD"),
+			ConfigDir: "../storage/clickhouse/conf.d",
+		},
 
 		Debug: false,
 	}
@@ -255,6 +297,11 @@ func applyFileConfig(cfg *Config, path string) error {
 		}
 		cfg.ObjectStore = store
 	}
+	if config.ClickHouse.Kind != 0 {
+		if err := clickHouse(&cfg.ClickHouse, &config.ClickHouse); err != nil {
+			return fmt.Errorf("clickhouse: %w", err)
+		}
+	}
 	if config.CPUProfileDir != nil {
 		cfg.CPUProfileDir = *config.CPUProfileDir
 	}
@@ -262,6 +309,46 @@ func applyFileConfig(cfg *Config, path string) error {
 		cfg.Debug = *config.Debug
 	}
 
+	return nil
+}
+
+// plainName is a ClickHouse identifier that needs no quoting.
+var plainName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// clickHouse reads and checks the clickhouse block over ch's defaults. An
+// empty block leaves them.
+func clickHouse(ch *ClickHouse, node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
+		return nil
+	}
+	if err := onlyKnownKeys(node, clickHouseFile{}); err != nil {
+		return err
+	}
+	var file clickHouseFile
+	if err := node.Decode(&file); err != nil {
+		return err
+	}
+	if file.Address != nil {
+		ch.Address = *file.Address
+	}
+	if file.Database != nil {
+		ch.Database = *file.Database
+	}
+	if file.User != nil {
+		ch.User = *file.User
+	}
+	if file.ConfigDir != nil {
+		ch.ConfigDir = *file.ConfigDir
+	}
+	if _, port, err := net.SplitHostPort(ch.Address); err != nil || port == "" {
+		return fmt.Errorf("address must be a host and port, such as 127.0.0.1:4200, got %q", ch.Address)
+	}
+	if !plainName.MatchString(ch.Database) {
+		return fmt.Errorf("database must be letters, digits and _, not starting with a digit, got %q", ch.Database)
+	}
+	if ch.User == "" {
+		return fmt.Errorf("user can't be empty")
+	}
 	return nil
 }
 
