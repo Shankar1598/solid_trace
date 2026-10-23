@@ -14,19 +14,16 @@ func onTestDay(hour, minute int) time.Time {
 	return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC)
 }
 
-// seedHourInEverySource stores Logs of hour 10 on testNow's day in each of
-// its sources: file in a Log file, late as late Logs, and hot in the hot
-// table. late may also hold Logs before hour 10, and hot Logs of hour 11.
-func seedHourInEverySource(t *testing.T, env *TestEnv, file, late, hot []string) {
+// seedHourInThreeInserts stores Logs of hour 10 on testNow's day in three
+// inserts, sent at three times, as DuckDB once kept them in a Log file, as
+// late Logs and in the hot table: file at 10:29, late at 12:05, and hot at
+// 10:29 again. late may also hold Logs before hour 10, and hot Logs of hour
+// 11.
+func seedHourInThreeInserts(t *testing.T, env *TestEnv, file, late, hot []string) {
 	t.Helper()
-	// At 10:29 the hot window is 10:00 to 11:00; at 12:05 the export takes
-	// hour 10 to a file, and the window is 11:45 to 13:00.
 	postWhileHot(t, env, file...)
 	env.Clock.Set(onTestDay(12, 5))
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, onTestDay(10, 0), 1)
 	postAndProcess(t, env, late...)
-	// The clock steps back, so hour 10 is in the hot window again.
 	postWhileHot(t, env, hot...)
 	env.Clock.Set(onTestDay(11, 30))
 }
@@ -50,15 +47,15 @@ func assertPagesOfEverySize(t *testing.T, env *TestEnv, query string, want []str
 	}
 }
 
-func TestLogsAtAPagesLastTimeAreSplitByIDAcrossTheHotTableLateLogsAndAFile(t *testing.T) {
+func TestLogsAtAPagesLastTimeAreSplitByIDAcrossInserts(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
 	tie := onTestDay(10, 15)
 	// Each request's Logs get ids in the order sent, and each request's
-	// after the last: so at the tie, the hot table's Logs come first, then
-	// the late Logs, then the file's.
-	seedHourInEverySource(t, env,
+	// after the last: so at the tie, the last insert's Logs come first, then
+	// the second's, then the first's.
+	seedHourInThreeInserts(t, env,
 		[]string{
 			logJSON(t, "file old", onTestDay(10, 5), nil),
 			logJSON(t, "file tie 1", tie, nil),
@@ -94,8 +91,7 @@ func TestPagesOfTheNewestLogsContinueInsideAnHourAndAcrossHours(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	// Hour 12 has 3 Logs and hour 11 has 5, in the hot table; hour 10 has 4,
-	// in a file.
+	// Hour 12 has 3 Logs, hour 11 has 5 and hour 10 has 4.
 	var logs, want []string
 	for _, hour := range []struct{ hour, count int }{{12, 3}, {11, 5}, {10, 4}} {
 		for i := range hour.count {
@@ -106,8 +102,6 @@ func TestPagesOfTheNewestLogsContinueInsideAnHourAndAcrossHours(t *testing.T) {
 	}
 	postWhileHot(t, env, logs...)
 	env.Clock.Set(onTestDay(12, 55))
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, onTestDay(10, 0), 1)
 
 	assertPagesOfEverySize(t, env, "", want)
 
@@ -132,11 +126,11 @@ func TestAConditionInSmallPagesListsTheSameLogsAsFilteringThemAll(t *testing.T) 
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	// In each source, the Logs the conditions keep are older than those
+	// In each insert, the Logs the conditions keep are older than those
 	// they drop, so a page of the newest Logs would hold none of them.
 	keep := map[string]any{"keep": true}
 	drop := map[string]any{"keep": false}
-	seedHourInEverySource(t, env,
+	seedHourInThreeInserts(t, env,
 		[]string{
 			logJSON(t, "keep file 1", onTestDay(10, 2), keep),
 			logJSON(t, "keep file 2", onTestDay(10, 3), keep),
@@ -176,8 +170,7 @@ func TestPagesThatSpendTheirBudgetAnswerWhatTheyFoundAndACursor(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	// Hour 12 has 1 Log and hour 11 has 3, in the hot table; hour 10 has 2,
-	// in a file.
+	// Hour 12 has 1 Log, hour 11 has 3 and hour 10 has 2.
 	postWhileHot(t, env,
 		logJSON(t, "12:10", onTestDay(12, 10), nil),
 		logJSON(t, "11:30", onTestDay(11, 30), nil),
@@ -187,7 +180,6 @@ func TestPagesThatSpendTheirBudgetAnswerWhatTheyFoundAndACursor(t *testing.T) {
 		logJSON(t, "10:20", onTestDay(10, 20), nil),
 	)
 	env.Clock.Set(onTestDay(12, 30))
-	env.ExportLogs(t)
 
 	// Every scan spends its budget on its first hour.
 	env.LogsHandler.ScanBudget = time.Nanosecond

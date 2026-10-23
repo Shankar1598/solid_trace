@@ -32,18 +32,24 @@ const (
 // LogsHandler serves stored Logs on the query app: it runs and validates
 // Queries, fetches single Logs, and runs SQL while the instance allows it.
 type LogsHandler struct {
-	logs     *storage.LogStore
-	settings ConsoleSettings
-	clock    clock.Clock
+	// clickHouse holds the Logs: Log rows, single Logs, the Logs ingested
+	// after a batch and the Fields are read from it. logs is DuckDB's
+	// LogStore, which tables, the histogram and SQL still read until they
+	// move to ClickHouse too.
+	clickHouse *storage.ClickHouseLogs
+	logs       *storage.LogStore
+	settings   ConsoleSettings
+	clock      clock.Clock
 	// ScanBudget is how long a run of Log rows reads before it answers with
 	// what it has found and a next_cursor.
 	ScanBudget time.Duration
 }
 
-// NewLogsHandler serves logs; settings say whether SQL runs and what each
-// Project's Logs are named in Queries; clock is the time ago() and now() read.
-func NewLogsHandler(logs *storage.LogStore, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
-	return &LogsHandler{logs: logs, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
+// NewLogsHandler serves the Logs in clickHouse and logs; settings say whether
+// SQL runs and what each Project's Logs are named in Queries; clock is the
+// time ago() and now() read.
+func NewLogsHandler(clickHouse *storage.ClickHouseLogs, logs *storage.LogStore, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
+	return &LogsHandler{clickHouse: clickHouse, logs: logs, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
 }
 
 // queryRequest is the body of a run.
@@ -134,12 +140,12 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	if left >= 0 {
 		limit = min(limit, left)
 	}
-	page, err := h.logs.ScanLogs(run.ctx, storage.LogScan{
+	page, err := h.clickHouse.ScanLogs(run.ctx, storage.LogScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
 		After:     after,
-		Where:     query.Where,
+		Where:     func(cols storage.ClickHouseColumns) string { return query.Where(cols) },
 		Limit:     limit,
 		Budget:    h.ScanBudget,
 	})
@@ -218,12 +224,12 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 	var found storage.IngestedLogs
 	if afterBatch == "" {
 		found.Logs = []models.Log{}
-		found.Cursor, err = h.logs.LogProcessingCursor(projectID)
+		found.Cursor, err = h.clickHouse.LogProcessingCursor(projectID)
 	} else {
-		found, err = h.logs.ScanLogsIngestedAfter(run.ctx, storage.IngestedLogScan{
+		found, err = h.clickHouse.ScanLogsIngestedAfter(run.ctx, storage.IngestedLogScan{
 			ProjectID: projectID,
 			After:     after,
-			Where:     query.Where,
+			Where:     func(cols storage.ClickHouseColumns) string { return query.Where(cols) },
 			Limit:     limit,
 		})
 	}
@@ -317,7 +323,7 @@ func (h *LogsHandler) scanTable(run *run, projectID uint32, query *logquery.Quer
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
-		Where:     query.Where,
+		Where:     func(cols storage.LogColumns) string { return query.Where(cols) },
 		Select:    query.Select,
 		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
 	}
@@ -401,7 +407,7 @@ func (h *LogsHandler) compile(projectID uint32, text string, bounds logquery.Bou
 // GET /api/:project_id/logs/:log_id?time=<RFC 3339>
 //
 // Returns one of a Project's Logs by id. With time, the Log's own time, only
-// that hour's files are searched; without it, every file.
+// that day is read; without it, the days around its id's time, then every day.
 func (h *LogsHandler) Get(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -419,7 +425,7 @@ func (h *LogsHandler) Get(c *fiber.Ctx) error {
 		}
 		at = &t
 	}
-	log, found, err := h.logs.LogByID(c.UserContext(), projectID, id, at)
+	log, found, err := h.clickHouse.LogByID(c.UserContext(), projectID, id, at)
 	if err != nil {
 		logger.L.Error("Log fetch failed", "project_id", projectID, "log_id", id, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
