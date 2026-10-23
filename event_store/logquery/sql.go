@@ -60,6 +60,76 @@ func (q *Query) Where(cols Columns) string {
 	return "(" + strings.Join(conditions, ") AND (") + ")"
 }
 
+// Filter writes the Query's head as Where does, in two parts: the tests that
+// read message, search among them, and the rest. A read can test the rest
+// first, and read message only for the Logs that pass them: left to itself,
+// ClickHouse 26.8 may read all of message first.
+func (q *Query) Filter(cols Columns) storage.Filter {
+	var rest, message []string
+	for _, s := range q.head {
+		switch s := s.(type) {
+		case whereStage:
+			for _, test := range conjuncts(s.predicate) {
+				if readsMessage(test) {
+					message = append(message, writeCondition(test, cols, false))
+				} else {
+					rest = append(rest, writeCondition(test, cols, false))
+				}
+			}
+		case searchStage:
+			message = append(message, writeSearch(s.term, cols))
+		}
+	}
+	all := func(conditions []string) string {
+		if len(conditions) == 0 {
+			return ""
+		}
+		return "(" + strings.Join(conditions, ") AND (") + ")"
+	}
+	return storage.Filter{Rest: all(rest), Message: all(message)}
+}
+
+// conjuncts are the conditions all of which p is: those it ands.
+func conjuncts(p expr) []expr {
+	if p, ok := p.(and); ok {
+		return append(conjuncts(p.x), conjuncts(p.y)...)
+	}
+	return []expr{p}
+}
+
+// readsMessage reports whether x reads a Log's message.
+func readsMessage(x expr) bool {
+	switch x := x.(type) {
+	case fieldRef:
+		return x.builtIn && x.name == "message"
+	case partOf:
+		return readsMessage(x.x)
+	case compare:
+		return readsMessage(x.x) || readsMessage(x.y)
+	case textMatch:
+		return readsMessage(x.x)
+	case isEmpty:
+		return readsMessage(x.x)
+	case and:
+		return readsMessage(x.x) || readsMessage(x.y)
+	case or:
+		return readsMessage(x.x) || readsMessage(x.y)
+	case not:
+		return readsMessage(x.x)
+	case arith:
+		return readsMessage(x.x) || readsMessage(x.y)
+	case negative:
+		return readsMessage(x.x)
+	case call:
+		for _, arg := range x.args {
+			if readsMessage(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // writeCondition writes a condition, or its negation when negate is set, for
 // a WHERE clause. Negations are pushed down to the tests, and each negated
 // test is written true or false for every row, so that SQL's NULLs never

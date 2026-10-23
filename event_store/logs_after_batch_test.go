@@ -175,6 +175,9 @@ func TestTheLogsIngestedAfterABatchAreFilteredWhateverTheirTime(t *testing.T) {
 		``:                    {"eleven", "ten", "late"},
 		`where user == "ada"`: {"ten", "late"},
 		`where status >= 500`: {"ten"},
+		// The message is read only for the Logs the rest keep.
+		`where user == "ada" and message startswith "t"`: {"ten"},
+		`where user == "ada" | search "LATE"`:            {"late"},
 	}
 	read := func(query string) ingestedPage { return runAfterBatch(t, env, query, armed, nil) }
 	want := map[string]ingestedPage{}
