@@ -50,13 +50,13 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 **Context**
 
 - `whoami`: you, the Organizations you belong to, and your role in each.
-- `list_projects`: an Organization's Projects, with their slugs, how many days their Logs are kept, and the Log file order their Log files are sorted by, which a Query filtered on those Fields reads less of.
+- `list_projects`: an Organization's Projects, with their slugs and how many days their Logs are kept.
 
 **Logs**
 
 - `query_logs`: runs a [Query](logs/query-language.md) on a Project's Logs. Logs come back one line each, 50 a page by default and at most 200, with a cursor for the next page; a summarize comes back as a table of at most 100 rows.
 - `get_log`: one Log, whole, with every Attribute.
-- `list_fields`: the names a Query can read: the built-in fields, then the Project's Attributes, most used first, with their types. It counts Logs as they arrive, so it leaves out Attributes that only Logs sent more than about 15 minutes late carry, and Attributes whose values are JSON, such as arrays. A Query still reads them.
+- `list_fields`: the names a Query can read: the built-in fields, then the Project's Attributes, most used first, with their types. It counts every Log as it is stored, but leaves out Attributes whose values are JSON, such as arrays. A Query still reads them.
 - `query_language_reference`: the whole Query language reference.
 - `run_sql`: runs a [ClickHouse SQL](logs/sql.md) SELECT on a Project's `logs` and `events` tables, as the Project's read-only database user. It is listed only while the instance's SQL queries are on.
 - `get_log_transform`: a Project's Log transform, the [VRL](https://vector.dev/docs/reference/vrl/functions/) program Log processing runs on each of its Logs before storing them: the current program or an older version's, who saved it and when, the last 10 versions, and how many Logs the current version has processed, dropped and failed since EventStore started.

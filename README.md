@@ -4,7 +4,7 @@ A self-hosted error tracking tool with lightweight architecture and strong UX.
 
 ## Why?
 
-Self-hosting Sentry means managing multiple databases and services. SolidTrace does the same job with two services and embedded databases (SQLite, DuckDB, Pebble).
+Self-hosting Sentry means managing multiple databases and services. SolidTrace does the same job with two services, the embedded databases SQLite and Pebble, and one ClickHouse server beside them.
 
 For low to medium scale application, Vertical scaling is often a better solution than scaling horizontally with multiple services. Less moving parts, less maintenance.
 
@@ -18,7 +18,7 @@ Two services:
   - Built with Rails, React, Inertia.js, Tailwind CSS.
   - Uses SQLite for relational data
 - **EventStore** — Go service. Ingests and processes events.
-  - Uses Pebble for event ingest and DuckDB for analytical queries.
+  - Uses Pebble for ingest, and a ClickHouse server beside it for Logs, Events and the queries on them ([ADR 0016](docs/adr/0016-logs-and-events-in-clickhouse.md)).
 
 ## Install on a VM
 
@@ -30,7 +30,7 @@ cd solid_trace
 deploy/setup-gcp
 ```
 
-`deploy/setup-gcp` asks, stage by stage, whether to use HTTPS and for Console's and ingest's public URLs, and whether Log files and the Event archive go in a GCS bucket, with the `gcloud` commands that create the bucket and its HMAC key. It writes the answers to `deploy/.env` and `deploy/config/event_store.yml`, then runs `deploy/install`. Run it again to change any of them. Email is set up in Console once it is running: the first user to sign up is an instance admin, who sets the SMTP server and the sender on Settings → Email and sends a test email from there. Console encrypts the SMTP password with keys derived from its secret ([ADR 0015](docs/adr/0015-email-settings-in-console-encrypted-with-secret-key-base.md)). It no longer reads `SMTP_*` and `MAIL_FROM` from `deploy/.env`: an install that set them there sends no email until an instance admin copies them into the page; then delete those lines.
+`deploy/setup-gcp` asks, stage by stage, whether to use HTTPS and for Console's and ingest's public URLs, and whether older Logs go in a GCS bucket, with the `gcloud` commands that create the bucket and its HMAC key. It writes the answers to `deploy/.env` and `deploy/config/event_store.yml`, then runs `deploy/install`. Run it again to change any of them. Email is set up in Console once it is running: the first user to sign up is an instance admin, who sets the SMTP server and the sender on Settings → Email and sends a test email from there. Console encrypts the SMTP password with keys derived from its secret ([ADR 0015](docs/adr/0015-email-settings-in-console-encrypted-with-secret-key-base.md)). It no longer reads `SMTP_*` and `MAIL_FROM` from `deploy/.env`: an install that set them there sends no email until an instance admin copies them into the page; then delete those lines.
 
 `deploy/install` installs Docker if it is missing, creates `deploy/data/` for data and EventStore's config (from the template `deploy/event_store.yml`) if there is none, writes Console's secret to `deploy/.env`, then starts the services with `deploy/docker-compose.yml`. It pulls a release's images from GitHub's registry (`ghcr.io/shankar1598/solid-trace-console` and `-event-store`, for amd64 and arm64, so x86 VMs and Arm ones such as GCP's T2A both work), which each published release builds (`.github/workflows/release.yml`): the release the checkout is at, or on any other commit, `main` included, the newest release before it. `deploy/install --build` builds them from the checkout instead, which takes several minutes; EventStore's alone takes about ten on two cores, as it compiles the Log transform's Rust library. Run on its own, it installs with the defaults: no email, everything on local disk. Console is on port `3000`, ingest on `4000`. The services restart on failure and at boot, and their logs rotate.
 
@@ -43,6 +43,8 @@ Every MCP tool call and its Log reads are timed into the Meta Organization's "So
 With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](deploy/caddy/Caddyfile)) gets a Let's Encrypt certificate for the machine's public IP or domain: Console is on `https://<host>`, ingest on `https://<host>:4443`. Ports 80, 443 and 4443 must be open to the internet, and 3000 and 4000 closed; setup prints the GCP firewall and static-IP commands. An IP's certificate lasts 160 hours, and Caddy renews it ([ADR 0010](docs/adr/0010-caddy-terminates-tls.md)).
 
 To upgrade to a newer release: `git fetch --tags && git checkout <tag> && deploy/install`. To run `main`'s code: `git pull && deploy/install --build`. Either way it keeps the config and the secrets.
+
+Upgrading from a release that kept Logs in DuckDB, `deploy/install` first stops the services and runs the last such release's `prepare-clickhouse`, which readies its Logs for ClickHouse; EventStore won't start on DuckDB Logs that weren't prepared. The Logs from before the upgrade stay in their Log files, on disk or in the bucket, and are read in place until Retention deletes them; nothing is copied. Events from before it aren't moved. Once the upgrade has started, `logs.duckdb` and `events.duckdb` in `deploy/data/storage/duckdb/production/` can be deleted; keep `logs_parquet/` beside them. The config's DuckDB keys are ignored, each with a warning at start.
 
 Everything the install keeps is in `deploy/`, which git ignores: `.env` (the secrets), `config/` and `data/`. Back up those three. `git clean -x` would delete them.
 
@@ -119,7 +121,7 @@ Benchmarks run on MacBook Pro M3 (11-core, 18GB RAM) with ~8KB event payloads.
 
 ### Tiered storage (S3 / GCS)
 
-Log files and the Event archive can already go in an S3 or GCS bucket: see [docs/logs/object-store.md](docs/logs/object-store.md). Tiering Pebble's Events is not built yet. The goal is to keep recent events on local disk and move older ones to cheaper storage.
+Older Logs can already go in an S3 or GCS bucket: see [docs/logs/object-store.md](docs/logs/object-store.md). Tiering Pebble's Events is not built yet. The goal is to keep recent events on local disk and move older ones to cheaper storage.
 
 Pebble's support is limited. It can put almost all data on one remote store (S3, GCS, or an HDD path) and keep only recent writes local. It cannot chain tiers (SSD → HDD → S3) or tier by event age, so those would need to be built in the EventStore.
 
