@@ -402,6 +402,135 @@ func TestPrepareWritesTheMarkerLastAndASecondRunDoesNothing(t *testing.T) {
 	in.lastWaitingBatch(1) // still waiting
 }
 
+// localFile is where a Log file of a Project's hour is on local disk.
+func (in *install) localFile(projectID uint32, hour time.Time, name string) string {
+	return filepath.Join(in.logFilesDir(), fmt.Sprintf("project=%d", projectID), "day="+hour.Format(time.DateOnly),
+		fmt.Sprintf("hour=%02d", hour.Hour()), name)
+}
+
+// object is where a Log file of a Project's hour is in the fake bucket.
+func (in *install) object(projectID uint32, hour time.Time, name string) string {
+	return in.bucket.URL(fmt.Sprintf("logs/project=%d/day=%s/hour=%02d/%s", projectID, hour.Format(time.DateOnly), hour.Hour(), name))
+}
+
+func exists(t *testing.T, path string) bool {
+	t.Helper()
+	_, err := os.Stat(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	return err == nil
+}
+
+// Retention leaves a file's bytes on disk when it can't delete them: they are
+// deleted before the switch, which knows nothing of the DuckDB release's
+// pending deletions.
+func TestPrepareFinishesTheDeletionsOfLocalFiles(t *testing.T) {
+	in := newInstall(t)
+	const retained, deleted = 1, 3
+	hour := october(4, 12, 0)
+	in.post(deleted, october(4, 12, 1), logAt(october(4, 12, 0), "past Retention"))
+	in.post(retained, october(5, 10, 20), logAt(october(5, 10, 20), "kept"))
+	in.run(october(4, 12, 2), func(r *running) {
+		r.process()
+		r.clock.Set(october(4, 14, 0))
+		r.export()
+
+		folder := filepath.Dir(in.localFile(deleted, hour, "data.parquet"))
+		if err := os.Chmod(folder, 0555); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.store.DeleteLogDaysBefore(deleted, october(5, 0, 0)); err == nil {
+			t.Fatal("Expected Retention to fail to delete the file's bytes")
+		}
+		if err := os.Chmod(folder, 0755); err != nil {
+			t.Fatal(err)
+		}
+	})
+	delete(in.posted, deleted)
+
+	in.mustPrepare(october(5, 10, 30), "v1.0.0")
+
+	if exists(t, in.localFile(deleted, hour, "data.parquet")) {
+		t.Error("Expected the file Retention deleted to be gone")
+	}
+	in.assertEveryLogFiled()
+}
+
+// failingPuts is a bucket in a local folder whose uploads fail.
+type failingPuts struct{ storage.ObjectStore }
+
+func (failingPuts) Put(context.Context, string, string) error {
+	return errors.New("the bucket is unavailable")
+}
+
+// With a bucket, every file is uploaded, and the objects of files Retention
+// deleted are deleted.
+func TestPrepareUploadsEveryFileAndDeletesTheObjectsOfDeletedFiles(t *testing.T) {
+	in := newInstall(t).withBucket(1)
+	const retained, deleted = 1, 3
+	in.post(deleted, october(4, 12, 1), logAt(october(4, 12, 0), "past Retention"))
+	in.post(retained, october(4, 12, 1), logAt(october(4, 12, 0), "uploaded and evicted"))
+	in.run(october(4, 12, 2), func(r *running) {
+		r.process()
+		r.clock.Set(october(4, 14, 0))
+		r.export()
+		if err := r.store.UploadLogFiles(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		r.clock.Set(october(5, 9, 0))
+		if err := r.store.EvictLogFiles(r.clock.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.store.DeleteLogDaysBefore(deleted, october(5, 0, 0)); err != nil {
+			t.Fatal(err)
+		}
+		in.post(retained, october(5, 9, 0), logAt(october(5, 7, 30), "exported, not uploaded"))
+		r.process()
+		r.clock.Set(october(5, 9, 15))
+		r.export()
+		in.post(retained, october(5, 9, 20), logAt(october(5, 9, 20), "hot"))
+		r.process()
+	})
+	delete(in.posted, deleted)
+	in.post(retained, october(5, 9, 25), logAt(october(5, 9, 25), "waiting"))
+	if !exists(t, in.object(deleted, october(4, 12, 0), "data.parquet")) {
+		t.Fatal("Expected the deleted file's object to wait for the disk limit's pass")
+	}
+
+	in.mustPrepare(october(5, 9, 30), "v1.0.0")
+
+	if exists(t, in.object(deleted, october(4, 12, 0), "data.parquet")) {
+		t.Error("Expected the deleted file's object to be gone")
+	}
+	rows := in.prepared("log_files.parquet", "key, remote")
+	if len(rows) != 3 {
+		t.Errorf("Expected three files, got %v", rows)
+	}
+	for _, row := range rows {
+		key, remote, _ := strings.Cut(row, "|")
+		if remote != "true" || !exists(t, in.bucket.URL("logs/"+key)) {
+			t.Errorf("Expected %s uploaded, got remote %s", key, remote)
+		}
+	}
+	in.assertEveryLogFiled()
+}
+
+func TestPrepareFailsAndWritesNoMarkerWhenAFileFailsToUpload(t *testing.T) {
+	in := newInstall(t)
+	in.bucket, in.localCacheHours = failingPuts{storage.NewDirStore(filepath.Join(in.dir, "bucket"))}, 24
+	in.post(1, october(5, 10, 20), logAt(october(5, 10, 20), "hot"))
+
+	_, err := in.prepare(october(5, 10, 30), "v1.0.0")
+
+	if err == nil || !strings.Contains(err.Error(), "bucket") {
+		t.Errorf("Expected an error that names the bucket, got %v", err)
+	}
+	if marker, _ := storage.ReadClickHouseMarker(in.preparedDir()); marker != nil {
+		t.Errorf("Expected no marker, got %+v", marker)
+	}
+}
+
 // The promoted sets, key counts and Log processing cursors the ClickHouse
 // release loads are those the stores hold once every Log batch waiting is
 // stored.

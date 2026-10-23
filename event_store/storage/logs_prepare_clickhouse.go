@@ -106,10 +106,21 @@ func NewLogsDuckDB(tempDir, memoryLimit string) (*DuckDBWriter, error) {
 // use the store meanwhile: the stack is stopped. It
 //  1. exports every Log in the hot tables and logs_late to Log files,
 //     whatever the busy rule and the cutoffs say;
-//  2. writes the prepared files, then the marker, to the prepared folder dir.
+//  2. finishes the deletions of Log files that Retention, Project deletion
+//     or the disk limit left pending;
+//  3. uploads every Log file not yet in the bucket, if there is one;
+//  4. writes the prepared files, then the marker, to the prepared folder dir.
+//
+// It fails, writing no marker, if any of it is left undone.
 func (s *LogStore) PrepareForClickHouse(ctx context.Context, dir, release string, now time.Time) error {
 	if err := s.exportEveryLog(now); err != nil {
 		return fmt.Errorf("export every Log to Log files: %w", err)
+	}
+	if err := s.finishDeletions(); err != nil {
+		return fmt.Errorf("finish the deletions of Log files: %w", err)
+	}
+	if err := s.UploadLogFiles(ctx); err != nil {
+		return fmt.Errorf("upload every Log file to the bucket, where the ClickHouse release reads them: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -118,6 +129,31 @@ func (s *LogStore) PrepareForClickHouse(ctx context.Context, dir, release string
 		return err
 	}
 	return writeMarker(dir, ClickHouseMarker{Release: release, PreparedAt: now.UTC()})
+}
+
+// finishDeletions deletes the local bytes and, with a bucket, the objects of
+// every file whose row Retention, Project deletion or the disk limit deleted,
+// then their tombstones. No read runs, so no file is pinned. It fails if a
+// tombstone is left, as when the bucket fails to delete an object.
+func (s *LogStore) finishDeletions() error {
+	s.writeMu.Lock()
+	_, err := s.deleteTombstonedFiles()
+	s.writeMu.Unlock()
+	if err != nil {
+		return err
+	}
+	// It logs an object that fails to delete, and leaves its tombstone.
+	if err := s.deleteTombstonedObjects(); err != nil {
+		return err
+	}
+	var left int
+	if err := s.db.QueryRow("SELECT count(*) FROM logs.log_file_deletions").Scan(&left); err != nil {
+		return err
+	}
+	if left > 0 {
+		return fmt.Errorf("%d deleted Log files are still in the bucket, as deleting their objects failed (see the error logged above)", left)
+	}
+	return nil
 }
 
 // preparedFiles are the prepared files, by name, each the query of its rows.
