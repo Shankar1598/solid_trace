@@ -153,9 +153,6 @@ func TestTextMatchesFindTheSameLogsOnTimeAndLate(t *testing.T) {
 			if !slices.Equal(got, want) {
 				t.Errorf("%s: %s\n want %v\n got  %v", when, query, want, got)
 			}
-			if !sqlOnClickHouse {
-				continue
-			}
 			if got := sqlMessages(t, env, query, from, to); !slices.Equal(got, want) {
 				t.Errorf("%s, readable SQL: %s\n want %v\n got  %v", when, query, want, got)
 			}

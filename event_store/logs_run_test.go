@@ -99,9 +99,10 @@ func TestARunPastItsTimeoutIsStoppedOnTheServer(t *testing.T) {
 	seedLanguageLogs(t, env)
 	setSQLQueries(t, env, true)
 
-	// SQL that would run for minutes. The handler answers only once DuckDB
-	// has returned, so a quick 504 means the query itself was stopped.
-	slow := `SELECT sum(hash(i)) FROM range(1000000000000) t(i)`
+	// SQL that would run for hours. The handler answers only once
+	// ClickHouse has returned, so a quick 504 means the query itself was
+	// stopped.
+	slow := `SELECT sum(cityHash64(number)) FROM numbers(1000000000000)`
 	began := time.Now()
 	answer := answerOf(t, env, "/api/123/logs/sql", map[string]any{
 		"sql": slow, "from": allTime.from, "to": allTime.to, "timeout_seconds": 0.25}, 504)
@@ -223,9 +224,8 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 		{"/api/123/logs/histogram", "histogram", map[string]any{"query": `where level == "error"`}, []string{"toStartOfInterval"}},
 		// With no filter, the histogram reads the counts kept by minute.
 		{"/api/123/logs/histogram", "histogram", map[string]any{"query": ``}, []string{"log_minute_counts"}},
-	}
-	if sqlOnClickHouse {
-		runs = append(runs, run{"/api/123/logs/sql", "sql", map[string]any{"sql": `SELECT count(*) FROM logs`}, []string{"CREATE TEMPORARY VIEW logs AS", "SELECT count(*) FROM logs"}})
+		// SQL logs the SQL as written.
+		{"/api/123/logs/sql", "sql", map[string]any{"sql": `SELECT count(*) FROM logs`}, []string{"SELECT count(*) FROM logs"}},
 	}
 	for i, run := range runs {
 		logs := captureLogs(t)

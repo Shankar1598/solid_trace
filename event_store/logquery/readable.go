@@ -18,7 +18,8 @@ const readableLogs = "logs"
 // one CTE per stage, every Attribute read from attributes or attrs_json. Run
 // in SQL mode over the same Project and range, it returns the Query's rows:
 // a Query of Log rows gives the table's rows, newest first; a table gives its
-// columns, a value of no fixed type as JSON text.
+// columns, a value of no fixed type as a Dynamic holding it, an array or
+// object as its JSON text.
 //
 // It reads no range of its own, since SQL mode reads only the run's; a where
 // on time stays in it. Unlike a run, a table isn't cut at a number of rows.
@@ -45,28 +46,36 @@ func (q *Query) ReadableSQL() string {
 	q.writeTail(c, on)
 	last := on(c.prev)
 	list := make([]string, len(q.output))
+	// A Dynamic can't be a sort key, so a table in no order of its own is
+	// sorted by its columns' values as the last step holds them.
+	keys := make([]string, len(q.output))
 	for i, col := range q.output {
 		value := writeValue(col.x, last)
+		keys[i] = value
 		if col.x.typ() == dynamicType {
-			value = dynamicJSON(col.x, last)
+			value = dynamicSQLValue(col.x, last)
 		}
 		list[i] = value + " AS " + chsql.Identifier(col.name)
+	}
+	order := c.order(last)
+	if order == "ALL" {
+		order = strings.Join(keys, ", ")
 	}
 	ctes := make([]string, len(c.ctes))
 	for i, cte := range c.ctes {
 		ctes[i] = cte.name + " AS (\n  " + cte.sql + "\n)"
 	}
 	return "WITH\n" + strings.Join(ctes, ",\n") + fmt.Sprintf("\nSELECT %s\nFROM %s\nORDER BY %s",
-		strings.Join(list, ", "), c.prev, c.order(last))
+		strings.Join(list, ", "), c.prev, order)
 }
 
-// dynamicJSON writes a value of no fixed type as JSON text: the value of its
-// type it holds, or NULL.
-func dynamicJSON(x expr, f fields) string {
+// dynamicSQLValue writes a value of no fixed type as a Dynamic: the value of its
+// type it holds, an array or object as its JSON text, or NULL.
+func dynamicSQLValue(x expr, f fields) string {
 	part := partsOf(x, f)
 	var cases []string
 	for _, t := range dynamicParts[:len(dynamicParts)-1] {
-		cases = append(cases, "isNotNull("+part(t)+"), toJSONString("+part(t)+")")
+		cases = append(cases, "isNotNull("+part(t)+"), "+part(t)+"::Dynamic")
 	}
-	return "multiIf(" + strings.Join(cases, ", ") + ", " + part(storage.JSONAttribute) + ")"
+	return "multiIf(" + strings.Join(cases, ", ") + ", " + part(storage.JSONAttribute) + "::Dynamic)"
 }

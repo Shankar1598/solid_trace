@@ -97,13 +97,14 @@ class LogsController < ApplicationController
   end
 
   # GET with query, from and to (ISO 8601): the Query as readable SQL against
-  # the logs view, to seed SQL mode. Refused while SQL queries are off.
+  # the logs table, to seed SQL mode. Refused while SQL queries are off.
   def readable_sql
     render json: EventStore.readable_logs_sql(project_id: @project.id, query: params[:query].to_s, from: @from, to: @to)
   end
 
-  # POST with sql, from and to (ISO 8601): runs the SQL as written against
-  # the logs view of the Project and range, answering a table. Only a POST,
+  # POST with sql, from and to (ISO 8601): runs the SQL as written, as the
+  # Project's SQL user, which sees the Project's rows of the range, answering
+  # a table. Only a POST,
   # so a link can't run SQL as whoever opens it, and refused while SQL
   # queries are off.
   def sql

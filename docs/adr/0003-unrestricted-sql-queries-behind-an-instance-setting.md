@@ -37,11 +37,23 @@ This is a check, the kind of AST allow-list this record warned about, not the st
 
 With SQL reading only its own Project (the amendment above) and stopped after 10 seconds, whatever it asks for, so that a slow query holds DuckDB's threads from ingest for no longer, the setting is on by default. The column default changed, and EventStore's default for a missing row with it ([ADR 0001](0001-eventstore-writes-console-tables.md)). An install whose operator set the setting keeps what was set. The operator can still turn SQL off. This record's title and opening describe the setting as it began.
 
+## Amended: SQL queries are ClickHouse SQL, isolated by the database (2026-10-23)
+
+Logs and Events moved to a ClickHouse server ([spec](../../.scratch/clickhouse/spec.md); ADR 0016 records the move). ClickHouse has real users, so SQL queries now get the structural isolation this record said DuckDB couldn't give, and the checks of the amendments above go: the read-only parse, the allow-list of what SQL may read, and the slow-match notice that read the same parse. SQL is ClickHouse SQL, run as written.
+
+- **Each Project has a SQL user,** a ClickHouse user that EventStore makes the first time a process runs that Project's SQL, with a random password that only the process holds. EventStore connects as it and sends the SQL unchanged. Credentials were chosen over impersonation (`EXECUTE AS`), which would mean writing the user's SQL into a statement of EventStore's own.
+- **Row policies** on `logs` and `events` show it only its Project's rows, in the explorer's range, which they read from two settings, `SQL_from` and `SQL_to`. The range is a convenience: a query may set them itself and still sees only its Project.
+- **Its settings profile** makes it read-only (`readonly = 1`) and fixes its limits: 10 seconds, 1 GiB of memory and of spill to disk, half the CPUs and 100,000 result rows. Read-only, it can change no setting but the range, so it can't raise them. EventStore stops its own wait at the same 10 seconds.
+- **Its only grants** are SELECT on `logs` and `events`. ClickHouse wants a grant for every other table, for system tables (`select_from_system_db_requires_grant` is on), and for each table function that reads something (`file`, `url`, `s3`, `remote` and the rest), so all of them are refused, as are other users (`EXECUTE AS` needs IMPERSONATE). The table functions that read nothing, such as `numbers`, and the system tables ClickHouse shows filtered by grants, such as `system.tables`, still work.
+- **Errors** are ClickHouse's messages, a syntax error's with its position, which the explorer marks.
+
+The setting stays, and stays on by default. With it on, a member can read every Log and Event of their own Organization's Projects, and a slow query can take CPU from ingest for up to 10 seconds. A ClickHouse upgrade should check that new table functions and system tables still need a grant. Root tests try each way out (`logs_sql_scope_test.go`, `logs_sql_readonly_test.go`).
+
 ## Consequences
 
-- Users query a stable `logs` view, not the storage tables, so storage layout changes don't break their SQL.
-- Since [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) the `logs` view shows only the explorer's Project and time range. Since the amendment above it is a limit too: with the `events` view, it is all SQL can read.
-- If the check ever proves not enough, the fix is the structural sandbox.
-- On an install with an `object_store` bucket ([ADR 0008](0008-log-parquet-in-a-bucket.md)), the views read the bucket through the instance's DuckDB secret, which every connection shares. SQL itself can't name an `s3://` URL since the amendment on reading only its own Project, so it reads none of the bucket but its Project's views. httpfs is still kept to S3 URLs (the amendment on web addresses), as a second guard.
+- Users query the `logs` and `events` tables. Since the amendment above, their columns are the tables' own, and SQL written for the DuckDB views doesn't run.
+- Since [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) `logs` shows only the explorer's Project and time range. Since the amendment above, the database keeps SQL to its Project; the range is a default it may widen.
+- The isolation is ClickHouse's grants, row policies and settings constraints, not a check of the SQL's text. A bug in them is ClickHouse's to fix, and the root tests would show it.
+- On an install with an `object_store` bucket ([ADR 0008](0008-log-parquet-in-a-bucket.md)), ClickHouse moves parts to the bucket through its own disk. SQL can't reach the bucket but through its Project's rows: `s3()` needs a grant it doesn't have.
 
 Source: [What query language(s) do users write?](../../.scratch/logs/issues/11-query-language.md).
