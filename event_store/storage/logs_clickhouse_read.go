@@ -391,15 +391,17 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 		chsql.UUIDOrder("batch") + " <= " + chsql.UUIDOrder(chsql.UUID(cursor)),
 	}
 	where := whereClause(conditions, filterOf(scan.Where))
+	old, oldTotal, err := s.old.ingestedAfter(s, ctx, scan.ProjectID, scan.After, cursor, scan.Where, scan.Limit)
+	if err != nil {
+		return IngestedLogs{}, err
+	}
 	if scan.Limit > 0 {
 		logs, err := s.queryLogs(ctx, fmt.Sprintf("SELECT %s FROM logs %s ORDER BY %s LIMIT %d",
 			logSelectList, where, logsNewestFirst, scan.Limit))
 		if err != nil {
 			return IngestedLogs{}, err
 		}
-		if logs != nil {
-			found.Logs = logs
-		}
+		found.Logs = mergeNewestFirst(logs, old, scan.Limit)
 	}
 	if found.Total = len(found.Logs); found.Total < scan.Limit {
 		return found, nil
@@ -408,7 +410,7 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 	if err := s.queryRow(ctx, "SELECT count() FROM logs "+where, &total); err != nil {
 		return IngestedLogs{}, err
 	}
-	found.Total = int(total)
+	found.Total = int(total) + oldTotal
 	return found, nil
 }
 

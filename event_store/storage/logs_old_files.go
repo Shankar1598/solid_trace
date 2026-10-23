@@ -368,6 +368,9 @@ type oldLogFile struct {
 	// local is whether a copy is in the Log file store: then it is read
 	// there, and else from the bucket.
 	local bool
+	// batchMax is the last Log batch it holds Logs of, or nil for a file
+	// from before the batch column.
+	batchMax *uuid.UUID
 }
 
 // oldPromotedKey is an Attribute key promoted on a day: its values are in
@@ -393,7 +396,7 @@ type oldState struct {
 // readState reads the old tables.
 func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 	state := oldState{files: map[uint32][]oldLogFile{}, sets: map[projectDay][]oldPromotedKey{}}
-	rows, err := o.conn.Query(ctx, `SELECT project_id, day, hour, key, min_time, max_time, local
+	rows, err := o.conn.Query(ctx, `SELECT project_id, day, hour, key, min_time, max_time, local, batch_max
 		FROM old_log_files ORDER BY project_id, day, hour, name`)
 	if err != nil {
 		return state, fmt.Errorf("read the old Log files: %w", err)
@@ -406,7 +409,7 @@ func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 			hour       uint8
 			minT, maxT *time.Time
 		)
-		if err := rows.Scan(&projectID, &file.day, &hour, &file.key, &minT, &maxT, &file.local); err != nil {
+		if err := rows.Scan(&projectID, &file.day, &hour, &file.key, &minT, &maxT, &file.local, &file.batchMax); err != nil {
 			return state, err
 		}
 		if !oldKeyPattern.MatchString(file.key) {
@@ -708,14 +711,20 @@ func (o *oldLogFiles) scanLogs(s *ClickHouseLogs, ctx context.Context, projectID
 	return o.queryLogs(s, ctx, sources, conditions, where, fmt.Sprintf("ORDER BY %s LIMIT %d", logsNewestFirst, limit))
 }
 
+// union is the Logs of sources that meet conditions and where, each read
+// with the columns columns gives, after UNION ALL.
+func (o *oldLogFiles) union(sources []oldSource, columns func(oldSource) string, conditions []string, where func(ClickHouseColumns) Filter) string {
+	selects := make([]string, len(sources))
+	for i, src := range sources {
+		selects[i] = fmt.Sprintf("(SELECT %s FROM %s %s%s)", columns(src), o.table(src), src.where(conditions, where), oldFileSettings)
+	}
+	return strings.Join(selects, "\nUNION ALL\n")
+}
+
 // queryLogs reads the Logs of sources that meet conditions and where,
 // whole, with tail after them: an order and a limit.
 func (o *oldLogFiles) queryLogs(s *ClickHouseLogs, ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, tail string) (logs []models.Log, err error) {
-	selects := make([]string, len(sources))
-	for i, src := range sources {
-		selects[i] = fmt.Sprintf("(SELECT %s FROM %s %s%s)", src.logColumns(), o.table(src), src.where(conditions, where), oldFileSettings)
-	}
-	query := "SELECT * FROM (" + strings.Join(selects, "\nUNION ALL\n") + ") " + tail
+	query := "SELECT * FROM (" + o.union(sources, oldSource.logColumns, conditions, where) + ") " + tail
 	began := time.Now()
 	defer func() { recordStatement(ctx, query, began, err) }()
 	rows, err := s.conn.Query(o.withBucketKey(ctx), query)
@@ -774,6 +783,37 @@ func setPromoted[V any](m map[string]V, keys []string, values []*V) {
 			m[key] = *values[i]
 		}
 	}
+}
+
+// ingestedAfter returns up to limit of a Project's old Logs of the Log
+// batches in (after, upTo] that meet where, newest first, and how many there
+// are, past limit too. Only files whose last batch is after after are read:
+// those of the last runs before the switch.
+func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, projectID uint32, after, upTo uuid.UUID, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, int, error) {
+	sources := o.sources(projectID, func(file oldLogFile) bool {
+		return file.batchMax != nil && bytes.Compare(file.batchMax[:], after[:]) > 0
+	})
+	if len(sources) == 0 {
+		return nil, 0, nil
+	}
+	conditions := []string{
+		chsql.UUIDOrder("batch") + " > " + chsql.UUIDOrder(chsql.UUID(after)),
+		chsql.UUIDOrder("batch") + " <= " + chsql.UUIDOrder(chsql.UUID(upTo)),
+	}
+	var logs []models.Log
+	if limit > 0 {
+		var err error
+		if logs, err = o.queryLogs(s, ctx, sources, conditions, where, fmt.Sprintf("ORDER BY %s LIMIT %d", logsNewestFirst, limit)); err != nil {
+			return nil, 0, err
+		}
+	}
+	if len(logs) < limit {
+		return logs, len(logs), nil
+	}
+	var total uint64
+	query := "SELECT count() FROM (" + o.union(sources, func(oldSource) string { return "1" }, conditions, where) + ")"
+	err := s.queryRow(o.withBucketKey(ctx), query, &total)
+	return logs, int(total), err
 }
 
 // logByID returns a Project's old Log with the given id, if its old files
