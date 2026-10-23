@@ -1,22 +1,45 @@
 // Calls to Console for Dashboards that the pages make with fetch rather than
 // an Inertia visit: a chart's data, which the fetch queue runs, the chart
-// editor's preview, and the explorer's Add to dashboard and the grid's layout,
+// editor's preview, a field select's values, and the explorer's Add to dashboard and the grid's layout,
 // which stay on the page.
 import { RunError, runFailure, type TableAnswer } from '../logs/api'
 import { elapsedOf } from '../logs/runLine'
 import type { LogTable } from '../logs/table'
-import type { ChartOptions, Dashboard, DashboardChart, DashboardViz, Place } from './dashboard'
+import {
+  appendValues, type ChartOptions, type Dashboard, type DashboardChart, type DashboardViz, type FieldValue, type FilterValues, type Place,
+} from './dashboard'
 
-/** A chart's saved Query run over [from, to): its table. The Query is read on the server, never sent. */
-export async function fetchChartData({ orgSlug, dashboardId, chartId, from, to, signal }: {
-  orgSlug: string; dashboardId: number; chartId: number; from: Date; to: Date; signal?: AbortSignal
+/**
+ * A chart's saved Query run over [from, to) with the values of the filters it
+ * names, as `v_<name>` keys: its table. The Query is read on the server, never sent.
+ */
+export async function fetchChartData({ orgSlug, dashboardId, chartId, from, to, parameters = {}, signal }: {
+  orgSlug: string; dashboardId: number; chartId: number; from: Date; to: Date; parameters?: FilterValues; signal?: AbortSignal
 }): Promise<TableAnswer> {
   const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
+  appendValues(params, parameters)
   return tableOf(await call(`/${orgSlug}/dashboards/${dashboardId}/charts/${chartId}/data?${params}`, { signal }))
 }
 
+/**
+ * A select of a field's values: the field's 100 most common values in the
+ * filter's Project over [from, to), most common first, run as a chart is.
+ */
+export async function fetchFilterValues({ orgSlug, dashboardId, name, from, to, signal }: {
+  orgSlug: string; dashboardId: number; name: string; from: Date; to: Date; signal?: AbortSignal
+}): Promise<FieldValue[]> {
+  const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
+  const response = await call(`/${orgSlug}/dashboards/${dashboardId}/filters/${name}/values?${params}`, { signal })
+  const body = await response.json().catch(() => null)
+  if (response.ok && Array.isArray(body?.values)) return body.values as FieldValue[]
+  throw runFailure(body, response.status)
+}
+
 export interface PreviewRun {
-  projectId: number; query: string; from: Date; to: Date; signal?: AbortSignal
+  projectId: number; query: string; from: Date; to: Date
+  /** The filter bar's values, for the chart editor's preview. */
+  parameters?: FilterValues
+  signal?: AbortSignal
 }
 
 /** The chart editor's preview, through fetchPreview. */
@@ -29,12 +52,12 @@ export async function fetchChartPreview({ orgSlug, dashboardId, ...run }: { orgS
  * timeout and within Console's cap on chart runs. The Query goes in the body. The chart editor's
  * and the Monitor form's preview endpoints answer it.
  */
-export async function fetchPreview(url: string, { projectId, query, from, to, signal }: PreviewRun): Promise<TableAnswer> {
+export async function fetchPreview(url: string, { projectId, query, from, to, parameters, signal }: PreviewRun): Promise<TableAnswer> {
   return tableOf(await call(url, {
     method: 'POST',
     signal,
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
-    body: JSON.stringify({ project_id: projectId, query, from: from.toISOString(), to: to.toISOString() }),
+    body: JSON.stringify({ project_id: projectId, query, from: from.toISOString(), to: to.toISOString(), parameters }),
   }))
 }
 

@@ -92,6 +92,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_180200) do
     t.integer "created_by_id"
     t.string "default_range", default: "1h", null: false
     t.text "description"
+    t.json "filters", default: [], null: false
     t.string "name", null: false
     t.integer "organization_id", null: false
     t.datetime "updated_at", null: false

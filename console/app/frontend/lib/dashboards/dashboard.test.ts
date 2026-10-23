@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
-  explorerHref, formOfViz, movedPlaces, newChartQuery, rangeOfSearch, searchOfRange, titleOfQuery, vizOfForm, withSource,
+  chosenText, explorerHref, fieldSelectValues, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
+  parametersOfChart, rangeOfSearch, searchOfRangeAndValues, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
+  withSource,
+  type DashboardFilter,
 } from './dashboard'
+
+const LEVEL: DashboardFilter = {
+  name: 'level', label: 'Level', kind: 'select', multiple: true,
+  options: { from: 'list', items: [{ label: 'Error', value: 'error' }, { label: 'Warn', value: 'warn' }, { label: 'Info', value: 'info' }] },
+}
+const ENV: DashboardFilter = { name: 'env', label: 'env', kind: 'select', multiple: false, options: { from: 'list', items: [{ label: 'prod', value: 'prod' }] } }
+const Q: DashboardFilter = { name: 'q', label: 'Search', kind: 'search' }
+const FILTERS = [LEVEL, ENV, Q]
 
 describe('a Dashboard\'s range', () => {
   it('is the URL\'s, relative or absolute, else the default range', () => {
@@ -14,8 +25,94 @@ describe('a Dashboard\'s range', () => {
 
   it('round-trips through the URL', () => {
     const range = { kind: 'absolute' as const, from: new Date('2026-10-03T09:00:00Z'), to: new Date('2026-10-03T10:00:00Z') }
-    expect(rangeOfSearch(searchOfRange(range), '1h')).toEqual(range)
-    expect(searchOfRange({ kind: 'relative', span: '7d' })).toBe('?range=7d')
+    expect(rangeOfSearch(searchOfRangeAndValues(range), '1h')).toEqual(range)
+    expect(searchOfRangeAndValues({ kind: 'relative', span: '7d' })).toBe('?range=7d')
+  })
+})
+
+describe('a Dashboard\'s filter values', () => {
+  it('are read from v_ keys beside the range, a repeated key as several values', () => {
+    const values = filterValuesOfSearch('?range=1h&v_q=time+out&v_level=error&v_level=warn&v_nope=x', FILTERS)
+    expect(values).toEqual({ level: ['error', 'warn'], q: ['time out'] })
+  })
+
+  it('leave out All, and keep one value for a filter that takes one', () => {
+    expect(filterValuesOfSearch('?v_level=&v_env=prod&v_env=dev&v_q=', FILTERS)).toEqual({ env: ['prod'] })
+    expect(filterValues(FILTERS, { q: ['x'], env: [], level: ['info'], gone: ['y'] })).toEqual({ level: ['info'], q: ['x'] })
+  })
+
+  it('are written beside the range, and round-trip through the URL', () => {
+    const search = searchOfRangeAndValues({ kind: 'relative', span: '6h' }, { level: ['error', 'warn'], q: ['time out'] })
+    expect(search).toBe('?range=6h&v_level=error&v_level=warn&v_q=time+out')
+    expect(rangeOfSearch(search, '1h')).toEqual({ kind: 'relative', span: '6h' })
+    expect(filterValuesOfSearch(search, FILTERS)).toEqual({ level: ['error', 'warn'], q: ['time out'] })
+  })
+
+  it('a chart sends are those of the Dashboard\'s filters its Query names', () => {
+    const values = { level: ['error'], env: ['prod'], q: ['x'] }
+    expect(parametersOfChart('where level == $level\n| where message == "$q"', FILTERS, values)).toEqual({ level: ['error'] })
+    expect(parametersOfChart('where env == $env and service == $nope | search $q', FILTERS, values)).toEqual({ env: ['prod'], q: ['x'] })
+    expect(parametersOfChart('where env == $env', FILTERS, {})).toEqual({})
+    expect(parametersOfChart('summarize count()', FILTERS, values)).toEqual({})
+  })
+
+  it('a chart\'s Query may name filters the Dashboard lacks, which run as All', () => {
+    expect(unknownFilters('where level == $level and env == $nope | search $q2', FILTERS)).toEqual(['nope', 'q2'])
+    expect(unknownFilters('where level == $level', FILTERS)).toEqual([])
+  })
+
+  it('a chart editor\'s problems: each place its Query names a filter the Dashboard lacks', () => {
+    const query = "['shop']\n| where m == \"🙂\" or e == $nope and level == $level\n| search $nope"
+    const message = "$nope isn't one of this Dashboard's filters (level, env, q)."
+
+    expect(unknownFilterProblems(query, ['nope', 'level'], FILTERS)).toEqual([
+      { message, line: 2, column: 26, end_line: 2, end_column: 31 },
+      { message, line: 3, column: 10, end_line: 3, end_column: 15 },
+    ])
+    expect(unknownFilterProblems(query, ['nope', 'level'], [])).toContainEqual(
+      { message: "$level isn't one of this Dashboard's filters; it has none.", line: 2, column: 45, end_line: 2, end_column: 51 },
+    )
+    expect(unknownFilterProblems("['shop'] | where level == $level", ['level'], FILTERS)).toEqual([])
+  })
+
+  it('read in the bar as their labels, up to two, else a count', () => {
+    expect(chosenText(LEVEL, [])).toBe('All')
+    expect(chosenText(LEVEL, ['error'])).toBe('Error')
+    expect(chosenText(LEVEL, ['error', 'gone'])).toBe('Error, gone')
+    expect(chosenText(LEVEL, ['error', 'warn', 'info'])).toBe('3 values')
+    expect(chosenText(Q, ['time out'])).toBe('time out')
+  })
+})
+
+describe('a select of a field\'s values', () => {
+  const SERVICE: DashboardFilter = {
+    name: 'service', label: 'service', kind: 'select', multiple: true, options: { from: 'field', project_id: 1, field: 'service' },
+  }
+
+  it('reads in the bar as the values themselves', () => {
+    expect(chosenText(SERVICE, ['api', 'web'])).toBe('api, web')
+  })
+
+  it('offers the values loaded, most common first, after chosen values that aren\'t among them', () => {
+    const loaded = [{ value: 'api', count: 12 }, { value: 'web', count: 3 }]
+    expect(fieldSelectValues(loaded, ['web', 'gone'])).toEqual([{ value: 'gone', count: null }, ...loaded])
+    // An empty value is All, which the select offers first anyway.
+    expect(fieldSelectValues([{ value: '', count: 9 }, ...loaded], [])).toEqual(loaded)
+    expect(fieldSelectValues([], ['gone'])).toEqual([{ value: 'gone', count: null }])
+  })
+})
+
+describe('a select\'s options typed as text', () => {
+  it('are one per line, a value or Label = value', () => {
+    expect(optionsOfText('error\n Warning = warn \n\ninfo\n')).toEqual([
+      { label: 'error', value: 'error' }, { label: 'Warning', value: 'warn' }, { label: 'info', value: 'info' },
+    ])
+  })
+
+  it('round-trip, a label that is its value written once', () => {
+    const items = [{ label: 'error', value: 'error' }, { label: 'Warning', value: 'warn' }]
+    expect(textOfOptions(items)).toBe('error\nWarning = warn')
+    expect(optionsOfText(textOfOptions(items))).toEqual(items)
   })
 })
 

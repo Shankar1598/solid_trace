@@ -53,10 +53,12 @@ module McpTools
       url(routes.dashboards_path(org_slug: organization.slug))
     end
 
-    # A Dashboard, over its default range or the TimeRange given.
-    def dashboard(dashboard, range: nil)
-      search = range ? range.link_params : {}
-      url(routes.dashboard_path(dashboard, org_slug: dashboard.organization.slug, **search))
+    # A Dashboard, over its default range or the TimeRange given, with the
+    # filter values given, {name => [values]}, in the page's query string.
+    def dashboard(dashboard, range: nil, values: {})
+      search = (range ? range.link_params : {}).merge(Dashboard.filter_link_params(values))
+      path = routes.dashboard_path(dashboard, org_slug: dashboard.organization.slug)
+      url(search.empty? ? path : "#{path}?#{Rack::Utils.build_query(search)}")
     end
 
     def monitor(monitor)

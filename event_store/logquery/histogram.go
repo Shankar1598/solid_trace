@@ -13,7 +13,7 @@ import (
 // the Logs a table is worked out from.
 func (q *Query) Histogram(bucket time.Duration) *Query {
 	text := fmt.Sprintf("summarize count() by bin(time, %dms), level", bucket.Milliseconds())
-	h, err := Compile(text, Bounds{From: q.from, To: q.to})
+	h, err := Compile(text, Bounds{From: q.from, To: q.to}, nil)
 	if err != nil {
 		panic("logquery: histogram: " + err.Error())
 	}

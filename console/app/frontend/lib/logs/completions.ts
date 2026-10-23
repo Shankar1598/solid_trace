@@ -65,7 +65,8 @@ function completions(text: string, pos: number, sources: CompletionSources, expl
   const tokens = tokenize(before)
   const last = tokens.at(-1)
 
-  if (last && last.to === pos && last.kind === 'comment') return null
+  // Nothing to offer in a comment, or for a Dashboard filter's name.
+  if (last && last.to === pos && (last.kind === 'comment' || last.kind === 'parameter')) return null
   // Within a string: only a compared value, quote and all.
   if (last && last.to === pos && last.kind === 'string' && !closed(last.text)) {
     return values(tokens.slice(0, -1), last.from, sources)
@@ -258,7 +259,7 @@ const SORT_ORDERS: QueryCompletion[] = [
 
 /** Whether a token ends an operand, so an operator or keyword comes next. */
 function operandEnds(token: Token): boolean {
-  return ['field', 'name', 'string', 'number', 'timespan', 'literal'].includes(token.kind) || token.text === ')'
+  return ['field', 'name', 'string', 'number', 'timespan', 'literal', 'parameter'].includes(token.kind) || token.text === ')'
 }
 
 /** How many parentheses are open at the end of `tokens`. */
@@ -276,7 +277,7 @@ function depth(tokens: Token[]): number {
  * with its !, or the symbols of an operator such as == or !.
  */
 function typedWord(before: string): string {
-  return /!?[\p{L}_$][\p{L}\p{N}_$.]*$/u.exec(before)?.[0] ?? /[=!<>~]+$/.exec(before)?.[0] ?? ''
+  return /!?[\p{L}_][\p{L}\p{N}_$.]*$/u.exec(before)?.[0] ?? /[=!<>~]+$/.exec(before)?.[0] ?? ''
 }
 
 /** Whether a string token has its closing quote. */

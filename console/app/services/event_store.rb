@@ -116,13 +116,16 @@ class EventStore
     # by columns, with its aggregates over the whole range. With
     # timeout_seconds, EventStore stops the run after that long and this
     # raises TimedOut; Console waits a little longer, so EventStore's answer
-    # comes first.
-    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil, totals: false, timeout_seconds: nil)
+    # comes first. parameters are the values of the Dashboard filters the
+    # Query names, { name => [value, ...] }; EventStore runs any it lacks as
+    # All.
+    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil, totals: false, timeout_seconds: nil, parameters: nil)
       body = { query: query, from: utc(from), to: utc(to) }
       body[:cursor] = cursor if cursor.present?
       body[:limit] = limit if limit
       body[:totals] = true if totals
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
+      body[:parameters] = parameters if parameters.present?
       CallTimings.log_read("query", project_id: project_id, query: query, from: from, to: to) do
         post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
       end

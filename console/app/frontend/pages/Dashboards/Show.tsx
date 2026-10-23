@@ -16,8 +16,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { saveLayout } from '@/lib/dashboards/api'
 import {
-  GRID_COLUMNS, movedPlaces, rangeOfSearch, searchOfRange,
-  type AutoRefresh, type Dashboard, type DashboardChart, type Place,
+  GRID_COLUMNS, filterValues, filterValuesOfSearch, movedPlaces, rangeOfSearch, searchOfRangeAndValues,
+  type AutoRefresh, type Dashboard, type DashboardChart, type FilterValues, type Place,
 } from '@/lib/dashboards/dashboard'
 import { createFetchQueue } from '@/lib/dashboards/fetchQueue'
 import type { LinkKind } from '@/lib/logs/explorerState'
@@ -29,6 +29,8 @@ import { TagMenuProvider } from '../Logs/components/TagMenu'
 import { ChartCard, type DashboardRun } from './components/ChartCard'
 import { ChartEditor } from './components/ChartEditor'
 import { DashboardSettings } from './components/DashboardSettings'
+import { FilterBar } from './components/FilterBar'
+import { FiltersDialog } from './components/FiltersDialog'
 
 /** A grid row's height and the gap between cards, in px. */
 const ROW_PX = 64
@@ -45,10 +47,12 @@ const layoutOf = (charts: DashboardChart[]): LayoutItem[] => charts.map(c => ({ 
 
 /**
  * A Dashboard: its charts on a grid, each run over the range in the URL (the
- * Dashboard's default range until another is picked), at most a few at once.
- * Refresh runs them again, as auto-refresh does on a relative range. Edit
- * lets the cards be dragged by their titles and resized from their corners;
- * each move is saved.
+ * Dashboard's default range until another is picked) with the values of the
+ * filters it names, at most a few at once. The values sit in the URL beside
+ * the range; changing one runs again only the charts that name its filter.
+ * Refresh runs them all again, as auto-refresh does on a relative range.
+ * Edit lets the cards be dragged by their titles and resized from their
+ * corners; each move is saved.
  */
 export default function DashboardsShow({ dashboard, projects }: DashboardsShowProps) {
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
@@ -62,13 +66,23 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   const [editor, setEditor] = useState<{ chart: DashboardChart | null } | null>(null)
   const [deleting, setDeleting] = useState<DashboardChart | null>(null)
   const [settings, setSettings] = useState(false)
-  const search = searchOfRange(range)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [picked, setPicked] = useState<FilterValues>(() => filterValuesOfSearch(window.location.search, dashboard.filters))
+  // Only the values of the filters the Dashboard has now: a removed filter's go.
+  const values = useMemo(() => filterValues(dashboard.filters, picked), [dashboard.filters, picked])
+  const search = searchOfRangeAndValues(range, values)
 
   const rerun = useCallback((r: TimeRange) => setRun(prev => ({ ...resolveRange(r, new Date()), n: prev.n + 1 })), [])
   const pickRange = (next: TimeRange) => {
     setRange(next)
-    router.replace({ url: basePath + searchOfRange(next), preserveState: true, preserveScroll: true })
+    router.replace({ url: basePath + searchOfRangeAndValues(next, values), preserveState: true, preserveScroll: true })
     rerun(next)
+  }
+  // The charts that name the filter run again when their values change; the run stays.
+  const pickValues = (name: string, next: string[]) => {
+    const nextValues = filterValues(dashboard.filters, { ...values, [name]: next })
+    setPicked(nextValues)
+    router.replace({ url: basePath + searchOfRangeAndValues(range, nextValues), preserveState: true, preserveScroll: true })
   }
 
   // Auto-refresh runs a relative range again, counting from when the last run
@@ -105,7 +119,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
 
   const copyLink = (kind: LinkKind) => {
     const shown: TimeRange = kind === 'shown' && range.kind === 'relative' ? { kind: 'absolute', from: run.from, to: run.to } : range
-    copyText(window.location.origin + basePath + searchOfRange(shown), 'Link')
+    copyText(window.location.origin + basePath + searchOfRangeAndValues(shown, values), 'Link')
   }
 
   const setAutoRefresh = (value: AutoRefresh) => router.patch(`${basePath}${search}`, { dashboard: { auto_refresh: value } }, { preserveScroll: true, preserveState: true })
@@ -145,6 +159,10 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           </Button>
         </>}
       />
+      <FilterBar
+        filters={dashboard.filters} values={values} orgSlug={orgSlug} dashboardId={dashboard.id} shown={run}
+        onChange={pickValues} onEdit={() => setFiltersOpen(true)}
+      />
       <div className="flex flex-col gap-3">
         {editing && <p className="text-xs text-muted-foreground">Drag a chart by its title, or resize it from its bottom-right corner. Each change is saved.</p>}
 
@@ -173,6 +191,8 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                       orgSlug={orgSlug}
                       run={run}
                       range={range}
+                      filters={dashboard.filters}
+                      values={values}
                       queue={queue}
                       editing={editing}
                       onRunning={onRunning}
@@ -194,7 +214,9 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           projects={projects}
           orgSlug={orgSlug}
           dashboardId={dashboard.id}
+          filters={dashboard.filters}
           ran={run}
+          values={values}
           search={search}
           onClose={() => setEditor(null)}
         />
@@ -214,6 +236,9 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
       </AlertDialog>
 
       {settings && <DashboardSettings dashboard={dashboard} orgSlug={orgSlug} search={search} onClose={() => setSettings(false)} />}
+      {filtersOpen && (
+        <FiltersDialog dashboard={dashboard} projects={projects} orgSlug={orgSlug} search={search} onClose={() => setFiltersOpen(false)} />
+      )}
     </DashboardLayout>
   )
 }

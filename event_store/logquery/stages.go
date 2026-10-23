@@ -20,9 +20,9 @@ type whereStage struct {
 }
 
 // searchStage keeps the Logs whose message or any string Attribute contains
-// term, ignoring case.
+// one of terms, ignoring case.
 type searchStage struct {
-	term string
+	terms []string
 }
 
 // namedValue is a column a stage makes: its name and value.
@@ -85,7 +85,7 @@ func (distinctStage) isStage()  {}
 func (c *compiler) stage(s parser.Stage, q *Query) (stage, error) {
 	switch s := s.(type) {
 	case *parser.WhereStage:
-		p, err := c.condition(s.Predicate)
+		p, err := c.predicate(s.Predicate)
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +94,17 @@ func (c *compiler) stage(s parser.Stage, q *Query) (stage, error) {
 		if c.tail {
 			return nil, errorAt(s, "search only comes before other stages; after them, use where … contains")
 		}
-		return searchStage{term: s.Term.Value}, nil
+		switch term := s.Term.(type) {
+		case *parser.Param:
+			// search $q keeps every Log while the filter is All.
+			if terms := c.valuesOf(term); len(terms) > 0 {
+				return searchStage{terms: terms}, nil
+			}
+			return whereStage{predicate: always{}}, nil
+		case *parser.BasicLit:
+			return searchStage{terms: []string{term.Value}}, nil
+		}
+		return nil, errorAt(s.Term, "unexpected expression")
 	case *parser.ProjectStage:
 		columns, err := c.columns(s.Columns, nil)
 		if err != nil {

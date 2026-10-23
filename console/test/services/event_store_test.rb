@@ -72,6 +72,39 @@ class EventStoreTest < ActiveSupport::TestCase
     assert_equal "def", page["next_cursor"]
   end
 
+  test "query_logs sends the values of the Dashboard filters a Query names as parameters" do
+    run = stub_request(:post, "#{@base_url}/api/123/logs/query")
+      .with(body: {
+        query: "where service == $service | search $q",
+        from: "2026-10-03T09:00:00.000Z",
+        to: "2026-10-03T10:00:00.000Z",
+        parameters: { service: [ "api", "web" ], q: [ "timeout" ] },
+      }.to_json)
+      .to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+
+    EventStore.query_logs(
+      project_id: 123,
+      query: "where service == $service | search $q",
+      from: Time.utc(2026, 10, 3, 9),
+      to: Time.utc(2026, 10, 3, 10),
+      parameters: { "service" => [ "api", "web" ], "q" => [ "timeout" ] }
+    )
+
+    assert_requested run
+  end
+
+  test "query_logs sends no parameters when there are none" do
+    run = stub_request(:post, "#{@base_url}/api/123/logs/query")
+      .with(body: { query: "where service == $service", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z" }.to_json)
+      .to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+
+    [ nil, {} ].each do |parameters|
+      EventStore.query_logs(project_id: 123, query: "where service == $service", from: Time.utc(2026, 10, 3, 9), to: Time.utc(2026, 10, 3, 10), parameters: parameters)
+    end
+
+    assert_requested run, times: 2
+  end
+
   test "query_logs raises Rejected with EventStore's errors for a Query with mistakes" do
     errors = [ { message: "unknown stage", line: 1, column: 1, end_line: 1, end_column: 4 } ]
     stub_request(:post, "#{@base_url}/api/123/logs/query")

@@ -88,7 +88,7 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	if starts == nil {
 		return c.Status(400).JSON(fiber.Map{"error": "bucket_seconds is too small for the range: at most 10,000 buckets"})
 	}
-	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()}, nil)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}

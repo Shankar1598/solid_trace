@@ -147,7 +147,7 @@ func (h *LogsHandler) ReadableSQL(c *fiber.Ctx) error {
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
-	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()})
+	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()}, nil)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}

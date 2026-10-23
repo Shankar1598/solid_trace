@@ -169,6 +169,8 @@ export interface Validation {
   chips: Chips | null
   /** Each stage of a Query without mistakes; none otherwise. */
   stages: QueryStage[]
+  /** The Dashboard filters the Query names, without $, in order of first use; none when it has mistakes. */
+  parameters: string[]
 }
 
 /** Checks a Query without running it; the Builder reads its chips from here. */

@@ -6,7 +6,7 @@ module McpTools
   class CreateDashboard < Base
     include DashboardTool
 
-    description "Makes a Dashboard in an Organization, with no Charts. add_chart adds them."
+    description "Makes a Dashboard in an Organization, with no Charts and the filters given. add_chart adds Charts."
     writes!
     takes_organization
     takes_dashboard_fields required: %i[name]

@@ -52,6 +52,11 @@ Rails.application.routes.draw do
           get :data
         end
       end
+      resources :filters, only: [], controller: "dashboard_filters", param: :name do
+        member do
+          get :values
+        end
+      end
     end
     resources :monitors do
       collection do

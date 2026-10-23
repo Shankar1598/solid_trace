@@ -21,6 +21,8 @@ type queryRequest struct {
 	To     time.Time `json:"to"`
 	Limit  int       `json:"limit,omitempty"`
 	Cursor string    `json:"cursor,omitempty"`
+	// Parameters are the values of the Dashboard filters the Query names.
+	Parameters map[string][]string `json:"parameters,omitempty"`
 }
 
 // queryPage is a run's answer.
@@ -372,6 +374,8 @@ type validation struct {
 	// Chips is the Builder's chips as JSON, or null.
 	Chips  json.RawMessage  `json:"chips"`
 	Stages []validatedStage `json:"stages"`
+	// Parameters are the Dashboard filters the Query names.
+	Parameters []string `json:"parameters"`
 }
 
 // validatedStage is where validate places one stage, and what it says of it.
@@ -392,12 +396,13 @@ func builderChips(v validation) string {
 		return "null"
 	}
 	shown := struct {
-		Filters   []logquery.Chip     `json:"filters"`
-		Search    *string             `json:"search"`
-		Summarize *logquery.Summarize `json:"summarize,omitempty"`
-		Sort      []logquery.SortChip `json:"sort,omitempty"`
-		Take      *int                `json:"take,omitempty"`
-	}{chips.Filters, chips.Search, chips.Summarize, chips.Sort, chips.Take}
+		Filters      []logquery.Chip     `json:"filters"`
+		Search       *string             `json:"search"`
+		SearchFilter *string             `json:"search_filter,omitempty"`
+		Summarize    *logquery.Summarize `json:"summarize,omitempty"`
+		Sort         []logquery.SortChip `json:"sort,omitempty"`
+		Take         *int                `json:"take,omitempty"`
+	}{chips.Filters, chips.Search, chips.SearchFilter, chips.Summarize, chips.Sort, chips.Take}
 	var out strings.Builder
 	encoder := json.NewEncoder(&out)
 	encoder.SetEscapeHTML(false)
@@ -496,7 +501,7 @@ func TestValidateGivesChipsForBuilderQueriesAndPlacesMistakes(t *testing.T) {
 		`where level == "x" |`:                  {Message: "expected a stage, such as where, got the end of the Query", Line: 1, Column: 21, EndLine: 1, EndColumn: 21},
 		`where status == other`:                 {Message: "expected a value: a string, a number, true or false", Line: 1, Column: 17, EndLine: 1, EndColumn: 22},
 		`where status`:                          {Message: `expected a condition, such as level == "error"`, Line: 1, Column: 7, EndLine: 1, EndColumn: 13},
-		`search timeout`:                        {Message: `search needs a quoted string, such as search "timeout"`, Line: 1, Column: 8, EndLine: 1, EndColumn: 15},
+		`search timeout`:                        {Message: `search needs a quoted string or a filter, such as search "timeout" or search $q`, Line: 1, Column: 8, EndLine: 1, EndColumn: 15},
 	}
 	for query, want := range mistakes {
 		v := validateQuery(t, env, query)

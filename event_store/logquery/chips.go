@@ -31,6 +31,9 @@ type Chips struct {
 	Filters []Chip `json:"filters"`
 	// Search is the search box's text, or nil for none.
 	Search *string `json:"search"`
+	// SearchFilter is the Dashboard filter the search box is, as in
+	// search $q, or nil for none.
+	SearchFilter *string `json:"search_filter"`
 	// Summarize is nil when the Query has none.
 	Summarize *Summarize `json:"summarize"`
 	Sort      []SortChip `json:"sort"`
@@ -40,11 +43,17 @@ type Chips struct {
 
 // Chip is one filter: a Field, an operator and a value. Value keeps its
 // type: a string, a number or a bool; a list of them for in and !in; nil
-// for exists and missing, which are isnotnull(field) and isnull(field).
+// for exists and missing, which are isnotnull(field) and isnull(field); a
+// FilterValue for a Dashboard filter.
 type Chip struct {
 	Field string `json:"field"`
 	Op    string `json:"op"`
 	Value any    `json:"value"`
+}
+
+// FilterValue is a chip's value that is a Dashboard filter, $name.
+type FilterValue struct {
+	Filter string `json:"filter"`
 }
 
 // Summarize is a summarize the Builder can show: functions of one Field
@@ -109,7 +118,7 @@ func (q *Query) Stages() []Stage {
 	_, shown := q.readBuilder()
 	stages := make([]Stage, 0, len(q.spans))
 	for i, span := range q.spans {
-		st := Stage{Filter: i < len(q.head), Builder: shown[i]}
+		st := Stage{Filter: i < q.heads, Builder: shown[i]}
 		// A stage's span starts at its pipe; the stage starts at its keyword.
 		text := q.text[span.Start:span.End]
 		start := span.Start + len(text) - len(strings.TrimLeft(text, "| \t\r\n"))
@@ -143,9 +152,15 @@ func (q *Query) readBuilder() (*Chips, []bool) {
 				chips.Filters = append(chips.Filters, chip)
 			}
 		case *parser.SearchStage:
-			if shown[i] = chips.Search == nil && at == inFilters; shown[i] {
-				term := s.Term.Value
-				chips.Search = &term
+			if shown[i] = chips.Search == nil && chips.SearchFilter == nil && at == inFilters; shown[i] {
+				switch term := s.Term.(type) {
+				case *parser.Param:
+					name := term.Name
+					chips.SearchFilter = &name
+				case *parser.BasicLit:
+					text := term.Value
+					chips.Search = &text
+				}
 			}
 		case *parser.SummarizeStage:
 			summarize, ok := summarizeOf(s)
@@ -193,8 +208,14 @@ func chipOf(p parser.Expr) (Chip, bool) {
 			return Chip{Field: field, Op: op, Value: value}, ok
 		}
 		if op, ok := textChipOps[p.Op]; ok {
+			if param, ok := p.Y.(*parser.Param); ok {
+				return Chip{Field: field, Op: op, Value: FilterValue{Filter: param.Name}}, true
+			}
 			lit, ok := p.Y.(*parser.BasicLit)
-			return Chip{Field: field, Op: op, Value: lit.Value}, ok && lit.Kind == parser.StringLiteral
+			if !ok || lit.Kind != parser.StringLiteral {
+				return Chip{}, false
+			}
+			return Chip{Field: field, Op: op, Value: lit.Value}, true
 		}
 		if p.Op == parser.TokenIn || p.Op == parser.TokenNotIn {
 			list := p.Y.(*parser.ListExpr)
@@ -245,8 +266,11 @@ func fieldNameOf(id *parser.Ident) string {
 }
 
 // chipValue reads a value written in the Query: a string, a number (a
-// negative one too) or a bool.
+// negative one too), a bool, or a Dashboard filter.
 func chipValue(x parser.Expr) (any, bool) {
+	if param, ok := x.(*parser.Param); ok {
+		return FilterValue{Filter: param.Name}, true
+	}
 	negative := false
 	if u, ok := x.(*parser.UnaryExpr); ok && u.Op == parser.TokenMinus {
 		negative, x = true, u.X

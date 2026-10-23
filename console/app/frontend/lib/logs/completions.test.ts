@@ -119,6 +119,7 @@ describe('operators', () => {
 
   it('give and and or after a whole condition, once a space follows it', () => {
     expect(labels(`['my-api'] | where level == "error" `)).toEqual(['and', 'or'])
+    expect(labels(`['my-api'] | where level == $level `)).toEqual(['and', 'or'])
     expect(at(`['my-api'] | where level == "error"`)).toBeNull()
     expect(at("['my-api'] | summarize count()")).toBeNull()
   })
@@ -167,6 +168,12 @@ describe('where nothing is offered', () => {
     // The editor narrows the list to what is typed; countif still starts with count.
     expect(labels("['my-api'] | summarize count")).toContain('countif')
     expect(labels("['my-api'] | where", SOURCES, true)).toContain('where')
+  })
+
+  it('on a Dashboard filter being typed', () => {
+    expect(at("['my-api'] | where service == $se")).toBeNull()
+    expect(at("['my-api'] | where $se")).toBeNull()
+    expect(at("['my-api'] | search $")).toBeNull()
   })
 
   it('reads only the text before the cursor', () => {

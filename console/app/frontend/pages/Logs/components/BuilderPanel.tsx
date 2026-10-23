@@ -9,9 +9,11 @@ import {
   aggregateText,
   editableText,
   groupText,
+  isFilterReference,
   parseValue,
   removeAggregate,
   search,
+  searchByFilter,
   setFilter,
   setSort,
   setSummarize,
@@ -24,17 +26,19 @@ import {
   type Chip,
   type ChipValue,
   type FilterOp,
+  type FilterReference,
   type Group,
   type SortKey,
   type Summarize,
 } from '@/lib/logs/builder'
+import type { DashboardFilter } from '@/lib/dashboards/dashboard'
 import type { FieldInfo } from '@/lib/logs/columns'
 import { fieldOptions, listFragment, listParts, narrow, toggleListValue, valueOptions, type PickOption } from '@/lib/logs/pick'
 import type { ShortcutId } from '@/lib/shortcuts'
 import { cn } from '@/lib/utils'
 import { MenuList, OptionList, PickList, useHighlight } from './PickList'
 import { valueText } from './TagMenu'
-import { LITERAL_TEXT, MUTED_TEXT, STRING_TEXT } from './valueStyle'
+import { FILTER_TEXT, LITERAL_TEXT, MUTED_TEXT, STRING_TEXT } from './valueStyle'
 
 export interface ProjectOption {
   id: number
@@ -54,18 +58,25 @@ interface BuilderPanelProps {
   fields: FieldInfo[]
   /** A Field's common values in recent Logs, to suggest. */
   valuesOf: (field: string) => ChipValue[]
+  /**
+   * The Dashboard's filters, which a chip's value and the search can be, as
+   * `$name`. The Chart editor passes them; elsewhere there are none.
+   */
+  filters?: DashboardFilter[]
   /** A changed Builder, which runs at once. */
   onChange: (builder: Builder) => void
 }
 
 const EMPTY_SUMMARIZE: Summarize = { aggregates: [], by: [] }
+const NO_FILTERS: DashboardFilter[] = []
 
 /** What the editors suggest. */
 interface Suggestions {
   fields: FieldInfo[]
   valuesOf: (field: string) => ChipValue[]
+  filters: DashboardFilter[]
 }
-const SuggestionsContext = createContext<Suggestions>({ fields: [], valuesOf: () => [] })
+const SuggestionsContext = createContext<Suggestions>({ fields: [], valuesOf: () => [], filters: NO_FILTERS })
 
 /** Offered for what's typed into a Field list, when no Field seen is just that. */
 const TYPED_FIELD = { hint: 'not seen' }
@@ -76,15 +87,21 @@ const TYPED_FIELD = { hint: 'not seen' }
  * row there once More has added it. Each + adds a clause in steps (pick a
  * Field, then say how) and clicking one edits it; every change runs the Query.
  */
-export function BuilderPanel({ builder, project, projects, onProject, fields, valuesOf, onChange }: BuilderPanelProps) {
+export function BuilderPanel({ builder, project, projects, onProject, fields, valuesOf, filters = NO_FILTERS, onChange }: BuilderPanelProps) {
   const summarize = builder.summarize ?? EMPTY_SUMMARIZE
   const changeSummarize = (next: Summarize) => onChange(setSummarize(builder, next))
   const sortColumns = builder.summarize ? summarizeColumns(builder.summarize) : null
+  const searching = builder.search !== '' || builder.searchFilter !== undefined
   // What More can still add: once added, each has a row of its own.
-  const more = MORE.filter(k => (k === 'search' ? builder.search === '' : k === 'sort' ? !builder.sort : builder.take === undefined))
+  const more = MORE.filter(k => (k === 'search' ? !searching : k === 'sort' ? !builder.sort : builder.take === undefined))
+  // The search's text, where $name of a search filter makes the search that filter.
+  const applySearch = (text: string) => {
+    const name = filterNamed(text, filters.filter(f => f.kind === 'search'))
+    onChange(name ? searchByFilter(builder, name) : search(builder, text))
+  }
 
   return (
-    <SuggestionsContext.Provider value={{ fields, valuesOf }}>
+    <SuggestionsContext.Provider value={{ fields, valuesOf, filters }}>
     <div className="px-3 py-2 text-xs">
       <div className="ml-1 border-l pl-4">
         <Row label="Project">
@@ -146,14 +163,21 @@ export function BuilderPanel({ builder, project, projects, onProject, fields, va
           </span>
         </Row>
 
-        {builder.search !== '' && (
+        {searching && (
           <Row label="Search">
             <Clause
-              title={`search "${builder.search}"`}
+              title={builder.searchFilter ? `search $${builder.searchFilter}` : `search "${builder.search}"`}
               onRemove={() => onChange(search(builder, ''))}
-              editor={close => <SearchStep text={builder.search} onApply={text => { close(); onChange(search(builder, text)) }} />}
+              editor={close => (
+                <SearchStep
+                  text={builder.searchFilter ? `$${builder.searchFilter}` : builder.search}
+                  onApply={text => { close(); applySearch(text) }}
+                />
+              )}
             >
-              <span className={STRING_TEXT}>"{builder.search}"</span>
+              {builder.searchFilter
+                ? <span className={FILTER_TEXT}>${builder.searchFilter}</span>
+                : <span className={STRING_TEXT}>"{builder.search}"</span>}
             </Clause>
           </Row>
         )}
@@ -197,7 +221,7 @@ export function BuilderPanel({ builder, project, projects, onProject, fields, va
               <MoreEditor
                 kinds={more}
                 columns={sortColumns}
-                onSearch={text => { close(); onChange(search(builder, text)) }}
+                onSearch={text => { close(); applySearch(text) }}
                 onSort={key => { close(); onChange(setSort(builder, [key])) }}
                 onLimit={n => { close(); onChange(setTake(builder, n)) }}
               />
@@ -374,7 +398,8 @@ function NativeSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   )
 }
 
-function ValueText({ value }: { value: ChipValue }) {
+function ValueText({ value }: { value: ChipValue | FilterReference }) {
+  if (isFilterReference(value)) return <span className={FILTER_TEXT}>${value.filter}</span>
   return typeof value === 'string'
     ? <span className={STRING_TEXT}>"{value}"</span>
     : <span className={LITERAL_TEXT}>{String(value)}</span>
@@ -394,7 +419,7 @@ function FilterText({ chip }: { chip: Chip }) {
       </>
     )
   }
-  return <>{chip.field} <span className={MUTED_TEXT}>{chip.op}</span> <ValueText value={chip.value as ChipValue} /></>
+  return <>{chip.field} <span className={MUTED_TEXT}>{chip.op}</span> <ValueText value={chip.value as ChipValue | FilterReference} /></>
 }
 
 function filterLabel(chip: Chip): string {
@@ -407,6 +432,7 @@ function filterLabel(chip: Chip): string {
     case '!in':
       return `${chip.field} ${chip.op} (${(Array.isArray(chip.value) ? chip.value : []).map(v => valueText(v)).join(', ')})`
     default:
+      if (isFilterReference(chip.value)) return `${chip.field} ${chip.op} $${chip.value.filter}`
       return `${chip.field} ${chip.op} ${typeof chip.value === 'string' ? `"${chip.value}"` : valueText(chip.value as ChipValue)}`
   }
 }
@@ -450,17 +476,36 @@ const OP_GROUPS: { label: string; ops: { op: FilterOp; label: string }[] }[] = [
 
 const isTextOp = (op: FilterOp) => op.includes('contains') || op.includes('startswith')
 const isListOp = (op: FilterOp) => op === 'in' || op === '!in'
+/** The operators a Dashboard filter can be the value of. */
+const takesFilter = (op: FilterOp) => op === '==' || op === '!=' || isTextOp(op)
 
-/** The text a filter's value is edited as: a list comma-separated. */
+/**
+ * The Dashboard filter a value typed as `$name` is, or null. With the
+ * Dashboard's filters given, typing a filter's $name, or picking it, makes
+ * that filter the value; for ==, "$name" in quotes is still text.
+ */
+function filterNamed(text: string, filters: DashboardFilter[]): string | null {
+  const name = /^\$(\w+)$/.exec(text.trim())?.[1]
+  return name !== undefined && filters.some(f => f.name === name) ? name : null
+}
+
+/** Dashboard filters as picks, each its $name with its label, under their heading. */
+const filterPicks = (filters: DashboardFilter[]): PickOption[] =>
+  filters.map(f => ({ value: `$${f.name}`, hint: f.label, group: 'Dashboard filters' }))
+
+/** The text a filter's value is edited as: a list comma-separated, a Dashboard filter as $name. */
 function filterValueText(chip: Chip | undefined): string {
   if (!chip || chip.value === null) return ''
+  if (isFilterReference(chip.value)) return `$${chip.value.filter}`
   if (Array.isArray(chip.value)) return chip.value.map(editableText).join(', ')
   return isTextOp(chip.op) ? String(chip.value) : editableText(chip.value)
 }
 
 /** The filter the editor holds, or null while it's incomplete. */
-function filterOf(field: string, op: FilterOp, value: string): Chip | null {
+function filterOf(field: string, op: FilterOp, value: string, filters: DashboardFilter[]): Chip | null {
   if (op === 'exists' || op === 'missing') return { field, op, value: null }
+  const named = filterNamed(value, filters)
+  if (named !== null) return takesFilter(op) ? { field, op, value: { filter: named } } : null
   if (isListOp(op)) {
     const values = listParts(value).map(parseValue)
     return values.length > 0 ? { field, op, value: values } : null
@@ -470,8 +515,11 @@ function filterOf(field: string, op: FilterOp, value: string): Chip | null {
 }
 
 /** A word on how the filter matches, where it may not be what was meant. */
-function filterNote(field: string, type: string | undefined, op: FilterOp, value: string): string | null {
+function filterNote(field: string, type: string | undefined, op: FilterOp, value: string, filters: DashboardFilter[]): string | null {
   if (op === 'exists' || op === 'missing') return null
+  if (filterNamed(value, filters) !== null) {
+    return takesFilter(op) ? 'Matches every Log while the filter is All.' : 'A filter goes with ==, != and the text operators.'
+  }
   if (op === 'contains' || op === '!contains') return 'Ignores case.'
   if (isTextOp(op)) return null
   const values = (isListOp(op) ? listParts(value) : [value]).filter(v => v.trim() !== '').map(parseValue)
@@ -489,7 +537,7 @@ function filterNote(field: string, type: string | undefined, op: FilterOp, value
 
 /** Adds or edits a filter: pick the Field, then the operator and value. */
 function FilterEditor({ chip, onApply }: { chip?: Chip; onApply: (chip: Chip) => void }) {
-  const { fields, valuesOf } = useContext(SuggestionsContext)
+  const { fields, valuesOf, filters } = useContext(SuggestionsContext)
   const [field, setField] = useState(chip?.field ?? '')
   const [picking, setPicking] = useState(!chip)
   const [op, setOp] = useState<FilterOp>(chip?.op ?? '==')
@@ -516,6 +564,7 @@ function FilterEditor({ chip, onApply }: { chip?: Chip; onApply: (chip: Chip) =>
       field={field}
       type={fields.find(f => f.name === field)?.type}
       values={valuesOf(field)}
+      filters={filters}
       op={op}
       onOp={setOp}
       value={value}
@@ -526,10 +575,11 @@ function FilterEditor({ chip, onApply }: { chip?: Chip; onApply: (chip: Chip) =>
   )
 }
 
-function ConditionStep({ field, type, values, op, onOp, value, onValue, onBack, onApply }: {
+function ConditionStep({ field, type, values, filters, op, onOp, value, onValue, onBack, onApply }: {
   field: string
   type: string | undefined
   values: ChipValue[]
+  filters: DashboardFilter[]
   op: FilterOp
   onOp: (op: FilterOp) => void
   value: string
@@ -541,17 +591,23 @@ function ConditionStep({ field, type, values, op, onOp, value, onValue, onBack, 
   const list = isListOp(op)
   const typed = valueOptions(values, isTextOp(op))
   // A type on every value says nothing when they all share it.
-  const options = new Set(typed.map(o => o.hint)).size > 1 ? typed : typed.map(o => ({ ...o, hint: undefined }))
+  const seen = new Set(typed.map(o => o.hint)).size > 1 ? typed : typed.map(o => ({ ...o, hint: undefined }))
+  // The Dashboard's filters come first, each under its heading, where the operator takes one.
+  const offered = takesFilter(op) ? filters : []
+  const options: PickOption[] = offered.length === 0 ? seen : [
+    ...filterPicks(offered),
+    ...seen.map(o => ({ ...o, group: 'Seen in recent Logs' })),
+  ]
   const known = options.map(o => o.value)
   // A value picked shows the others still; a value being typed narrows them.
   const shown = list ? narrow(options, listFragment(value, known)) : narrow(options, known.includes(value.trim()) ? '' : value)
   const { active, setActive, onKeyDown } = useHighlight(shown, -1, o => pick(o))
-  const next = filterOf(field, op, value)
+  const next = filterOf(field, op, value, filters)
 
   // A value applies the filter, as one click should; in a list it's added or taken out.
   function pick(o: PickOption) {
     if (!list) {
-      const chip = filterOf(field, op, o.value)
+      const chip = filterOf(field, op, o.value, filters)
       if (chip) onApply(chip)
       return
     }
@@ -562,7 +618,7 @@ function ConditionStep({ field, type, values, op, onOp, value, onValue, onBack, 
   return (
     <>
       <StepHeader onBack={onBack} hint={type}>{field}</StepHeader>
-      <StepForm onSubmit={() => next && onApply(next)} disabled={!next} note={filterNote(field, type, op, value)}>
+      <StepForm onSubmit={() => next && onApply(next)} disabled={!next} note={filterNote(field, type, op, value, filters)}>
         <NativeSelect aria-label="Operator" value={op} onChange={e => onOp(e.target.value as FilterOp)} autoFocus={!needsValue}>
           {OP_GROUPS.map(g => (
             <optgroup key={g.label} label={g.label}>
@@ -583,7 +639,7 @@ function ConditionStep({ field, type, values, op, onOp, value, onValue, onBack, 
         )}
         {needsValue && shown.length > 0 && (
           <div className="-mx-2 -mb-2 border-t">
-            <p className="caps-label px-2 pt-2">Seen in recent Logs</p>
+            {offered.length === 0 && <p className="caps-label px-2 pt-2">Seen in recent Logs</p>}
             <OptionList
               options={shown}
               active={active}
@@ -711,14 +767,27 @@ function MoreEditor({ kinds, columns, onSearch, onSort, onLimit }: {
   return <MenuList label="Add" options={kinds.map(k => options[k])} onPick={value => setKind(value as More)} />
 }
 
-/** Searches the message and every string Attribute, ignoring case: the search stage. */
+/**
+ * Searches the message and every string Attribute, ignoring case: the search
+ * stage. Its text can be one of the Dashboard's search filters, as $q.
+ */
 function SearchStep({ text: initial, onBack, onApply }: { text?: string; onBack?: () => void; onApply: (text: string) => void }) {
+  const { filters } = useContext(SuggestionsContext)
   const [text, setText] = useState(initial ?? '')
+  const options = filterPicks(filters.filter(f => f.kind === 'search'))
+  const shown = narrow(options, options.some(o => o.value === text.trim()) ? '' : text)
+  const { active, setActive, onKeyDown } = useHighlight(shown, -1, o => onApply(o.value))
   return (
     <>
       <StepHeader onBack={onBack}>search</StepHeader>
       <StepForm onSubmit={() => onApply(text)} disabled={text.trim() === ''} note="Finds the text in the message or any text Attribute, ignoring case.">
-        <input autoFocus aria-label="Text" value={text} onChange={e => setText(e.target.value)} placeholder="Text to find…" className={INPUT} />
+        <input autoFocus aria-label="Text" value={text} onChange={e => { setText(e.target.value); setActive(-1) }} onKeyDown={onKeyDown}
+          placeholder="Text to find…" className={INPUT} />
+        {shown.length > 0 && (
+          <div className="-mx-2 -mb-2 border-t">
+            <OptionList options={shown} active={active} onActive={setActive} onPick={o => onApply(o.value)} chosen={[text.trim()]} className="max-h-44" />
+          </div>
+        )}
       </StepForm>
     </>
   )

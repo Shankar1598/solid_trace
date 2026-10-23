@@ -91,6 +91,66 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "Checkout v2", "The checkout path", "7d", "1m" ], [ @dashboard.name, @dashboard.description, @dashboard.default_range, @dashboard.auto_refresh ]
   end
 
+  test "a member saves a Dashboard's filters as the whole list, and its page carries them" do
+    filters = [
+      { name: "level", label: "Level", kind: "select", multiple: true, options: { from: "list", items: [ { label: "Error", value: "error" } ] } },
+      { name: "q", label: "", kind: "search" }
+    ]
+    patch dashboard_url(@dashboard, org_slug: @organization.slug), params: { dashboard: { filters: filters } }, as: :json
+
+    assert_response :success
+    saved = [
+      { "name" => "level", "label" => "Level", "kind" => "select", "multiple" => true, "options" => { "from" => "list", "items" => [ { "label" => "Error", "value" => "error" } ] } },
+      { "name" => "q", "label" => "q", "kind" => "search" }
+    ]
+    assert_equal saved, response.parsed_body["filters"]
+    assert_equal saved, inertia_page(dashboard_url(@dashboard, org_slug: @organization.slug), "Dashboards/Show")["dashboard"]["filters"]
+
+    patch dashboard_url(@dashboard, org_slug: @organization.slug), params: { dashboard: { filters: [] } }, as: :json
+    assert_response :success
+    assert_equal [], @dashboard.reload.filters
+  end
+
+  test "a Dashboard's filters with a mistake are refused, naming the filter" do
+    patch dashboard_url(@dashboard, org_slug: @organization.slug),
+      params: { dashboard: { filters: [ { name: "level", kind: "search" }, { name: "level", kind: "search" } ] } }, as: :json
+
+    assert_response :unprocessable_content
+    assert_equal [ "is already a filter's name" ], response.parsed_body["errors"]["filters[1].name"]
+    assert_equal [], @dashboard.reload.filters
+  end
+
+  test "a member saves a select of a field's values in one of the Organization's Projects, and not another's" do
+    filter = { name: "service", label: "", kind: "select", multiple: false, options: { from: "field", project_id: @project.id, field: "service" } }
+    patch dashboard_url(@dashboard, org_slug: @organization.slug), params: { dashboard: { filters: [ filter ] } }, as: :json
+
+    assert_response :success
+    assert_equal({ "from" => "field", "project_id" => @project.id, "field" => "service" }, response.parsed_body["filters"].first["options"])
+
+    filter[:options][:project_id] = @foreign_project.id
+    patch dashboard_url(@dashboard, org_slug: @organization.slug), params: { dashboard: { filters: [ filter ] } }, as: :json
+
+    assert_response :unprocessable_content
+    assert_equal [ "must be a Project of the Dashboard's Organization" ], response.parsed_body["errors"]["filters[0].options.project_id"]
+    assert_equal @project.id, @dashboard.reload.filters.first["options"]["project_id"]
+  end
+
+  test "a save keeps the range and filter values the page showed, several values as a repeated key" do
+    shown = "range=6h&v_service=api&v_service=web&v_q=time+out"
+
+    patch "#{dashboard_url(@dashboard, org_slug: @organization.slug)}?#{shown}", params: { dashboard: { name: "Checkout v2" } }
+    assert_redirected_to "#{dashboard_url(@dashboard, org_slug: @organization.slug)}?#{shown}"
+
+    patch "#{dashboard_url(@dashboard, org_slug: @organization.slug)}?#{shown}", params: { dashboard: { name: " " } }
+    assert_redirected_to "#{dashboard_url(@dashboard, org_slug: @organization.slug)}?#{shown}"
+
+    patch "#{dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug)}?#{shown}", params: { chart: { title: "All requests" } }
+    assert_redirected_to "#{dashboard_url(@dashboard, org_slug: @organization.slug)}?#{shown}"
+
+    delete "#{dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug)}?#{shown}"
+    assert_redirected_to "#{dashboard_url(@dashboard, org_slug: @organization.slug)}?#{shown}"
+  end
+
   test "a member deletes a Dashboard and its charts" do
     delete dashboard_url(@dashboard, org_slug: @organization.slug)
 
@@ -208,6 +268,30 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 41, response.parsed_body["elapsed_ms"]
   end
 
+  test "a chart's data runs with the values of the Dashboard's filters given as v_ keys, a repeated key as a list" do
+    @dashboard.update!(filters: [
+      { name: "level", kind: "select", multiple: true, options: { from: "list", items: [ { value: "error" }, { value: "warn" } ] } },
+      { name: "q", kind: "search" },
+      { name: "env", kind: "search" }
+    ])
+    table = { columns: [ { name: "count_", type: "number", agg: "count" } ], rows: [ [ 3 ] ], truncated: false }
+    run = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+      .with(body: {
+        query: @chart.query,
+        from: "2026-10-03T09:00:00.000Z",
+        to: "2026-10-03T10:00:00.000Z",
+        timeout_seconds: DashboardChartsController::RUN_TIMEOUT_SECONDS,
+        parameters: { level: [ "error", "warn" ], q: [ "time out" ] },
+      }.to_json)
+      .to_return(status: 200, body: { table: table }.to_json)
+
+    get "#{data_dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug)}?#{@range.to_query}" \
+      "&v_q=time+out&v_level=error&v_level=warn&v_env=&v_nope=x"
+
+    assert_response :success
+    assert_requested run
+  end
+
   test "a chart's data answers EventStore's errors for a Query with mistakes" do
     errors = [ { message: "unknown stage \"nope\"", line: 1, column: 1, end_line: 1, end_column: 5 } ]
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").to_return(status: 400, body: { errors: errors }.to_json)
@@ -266,6 +350,28 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal [ [ 7 ] ], response.parsed_body["table"]["rows"]
     assert_equal 9, response.parsed_body["elapsed_ms"]
+  end
+
+  test "the editor's preview runs with the bar's values of the Dashboard's filters, given as parameters" do
+    @dashboard.update!(filters: [ { name: "level", kind: "select", options: { from: "list", items: [ { value: "error" } ] } }, { name: "q", kind: "search" } ])
+    table = { columns: [ { name: "count_", type: "number", agg: "count" } ], rows: [ [ 2 ] ], truncated: false }
+    run = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+      .with(body: {
+        query: "source storefront | where level == $level | count",
+        from: "2026-10-03T09:00:00.000Z",
+        to: "2026-10-03T10:00:00.000Z",
+        timeout_seconds: DashboardChartsController::RUN_TIMEOUT_SECONDS,
+        parameters: { level: [ "error" ], q: [ "time out" ] },
+      }.to_json)
+      .to_return(status: 200, body: { table: table }.to_json)
+
+    post preview_dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: {
+      project_id: @project.id, query: "source storefront | where level == $level | count",
+      parameters: { q: "time out", level: [ "error" ], nope: [ "x" ] }, **@range,
+    }, as: :json
+
+    assert_response :success
+    assert_requested run
   end
 
   test "the editor's preview finds no Project of another Organization, and runs nothing" do
