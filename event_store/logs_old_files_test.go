@@ -389,6 +389,49 @@ func TestTablesOverOldHoursAndTheSwitchAnswerAsClickHouseWould(t *testing.T) {
 	}
 }
 
+// histogramOf is a Project's histogram, as JSON with only its buckets that
+// count any Logs.
+func histogramOf(t *testing.T, env *TestEnv, projectID uint32, req histogramRequest) string {
+	t.Helper()
+	status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/logs/histogram", projectID), req)
+	var answer histogramAnswer
+	if status != 200 || json.Unmarshal(raw, &answer) != nil {
+		t.Fatalf("Histogram of %q expected 200, got %d: %s", req.Query, status, raw)
+	}
+	counted, _ := json.Marshal(map[string]any{"buckets": bucketsOf(answer), "count": answer.Count, "levels": answer.Levels, "bucket_seconds": answer.BucketSeconds})
+	return string(counted)
+}
+
+func TestHistogramsOverOldHoursAndTheSwitchCountWhatClickHouseWould(t *testing.T) {
+	day := func(d, hour, minute int) time.Time { return time.Date(2026, 10, d, hour, minute, 0, 0, time.UTC) }
+	requests := []histogramRequest{
+		// Every Log, by minute or more: counted by minute after the old
+		// files, and from them and logs before.
+		{From: day(1, 9, 0), To: day(2, 2, 0), BucketSeconds: 60},
+		{From: day(1, 0, 0), To: day(3, 0, 0), BucketSeconds: 3600},
+		{From: day(1, 10, 0), To: day(2, 1, 30), BucketSeconds: 900},
+		{From: day(1, 10, 2), To: day(2, 0, 50)},
+		{From: switchTime, To: day(2, 3, 0), BucketSeconds: 300},
+		// Some Logs, or buckets of seconds: from the Logs themselves.
+		{Query: `where user == "hal" or plan == "pro"`, From: day(1, 0, 0), To: day(3, 0, 0), BucketSeconds: 3600},
+		{Query: `search "order"`, From: day(1, 10, 0), To: day(2, 1, 30), BucketSeconds: 600},
+		{From: day(1, 10, 0), To: day(1, 10, 30), BucketSeconds: 30},
+	}
+	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
+		answers := map[string]string{}
+		for _, projectID := range fixtureProjects {
+			for _, req := range requests {
+				for _, run := range []string{"first", "again"} {
+					name := fmt.Sprintf("Project %d, %s run: %q from %s to %s by %ds", projectID, run, req.Query, req.From.Format(time.RFC3339), req.To.Format(time.RFC3339), req.BucketSeconds)
+					answers[name] = histogramOf(t, env, projectID, req)
+				}
+			}
+		}
+		return answers
+	})
+	assertSameAnswers(t, got, want)
+}
+
 func TestPagesOverOldHoursAndTheSwitchListTheLogsClickHouseWould(t *testing.T) {
 	got, want := oldAndNewAnswers(t, func(env *TestEnv) map[string]string {
 		answers := map[string]string{}
