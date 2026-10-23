@@ -4,7 +4,7 @@
 
 **Blocked by:** 03, 04, 05, 06, 07, 09
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **EventStore:**
   - duckdb-go leaves `go.mod`;
