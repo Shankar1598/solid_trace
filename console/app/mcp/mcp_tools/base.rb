@@ -222,6 +222,13 @@ module McpTools
       raise ToolError, "Only an Organization admin can #{doing}."
     end
 
+    # Raises a tool error unless the user is an instance admin, who alone
+    # reads or changes the install's settings (ADR 0015). doing says what was
+    # refused, such as "send a test email".
+    def require_instance_admin!(doing)
+      raise ToolError, "Only an instance admin can #{doing}." unless user.instance_admin?
+    end
+
     def policy(record)
       Pundit.policy!(user, record)
     end
