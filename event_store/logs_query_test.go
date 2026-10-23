@@ -116,14 +116,13 @@ func assertQueries(t *testing.T, env *TestEnv, cases map[string][]string, when s
 	}
 }
 
-func TestEachOperatorFindsLogsInTheHotTableFilesAndLateLogs(t *testing.T) {
+func TestEachOperatorFindsLogsWhateverTheirTime(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	yesterday := time.Date(2026, 10, 1, 15, 0, 0, 0, time.UTC)
 
-	// At 10:29 the hot window is 10:00 to 11:00, and at 11:29 11:00 to 12:00.
 	env.Clock.Set(at(10, 29))
 	postAndProcess(t, env,
 		logJSON(t, "ada", at(10, 10), map[string]any{"status": 200, "user": "ada", "cached": true}),
@@ -162,15 +161,10 @@ func TestEachOperatorFindsLogsInTheHotTableFilesAndLateLogs(t *testing.T) {
 		`search "o"`:                                               {"bob"},
 		`where status == 200 | search "ADA"`:                       {"ada"},
 	}
-	assertQueries(t, env, cases, "all in the hot table and logs_late")
+	assertQueries(t, env, cases, "once stored")
 
-	// At 12:05 the window is 11:00 to 13:00: the export moves hour 10 and
-	// yesterday's Log to files, and a Log of 10:40 arriving now is late and
-	// stays in logs_late beside hour 10's file.
+	// A Log of 10:40 arrives at 12:05.
 	env.Clock.Set(at(12, 5))
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, at(10, 0), 1)
-	assertQueries(t, env, cases, "after the export")
 
 	postAndProcess(t, env, logJSON(t, "fy", at(10, 40), map[string]any{"status": 200, "user": "fy", "note": "full again"}))
 	cases[``] = []string{"ed", "fy", "cy", "bob", "ada", "di"}
@@ -182,16 +176,16 @@ func TestEachOperatorFindsLogsInTheHotTableFilesAndLateLogs(t *testing.T) {
 	cases[`where level != 5`] = cases[``]
 	cases[`where not(level == "error" or user == "bob")`] = []string{"fy", "ada", "di"}
 	cases[`search "full"`] = []string{"ed", "fy"}
-	assertQueries(t, env, cases, "with a late Log beside the files")
+	assertQueries(t, env, cases, "with a late Log")
 
-	// zone joins the day's set partway through the day.
+	// zone is a key no Log had before.
 	postAndProcess(t, env, logJSON(t, "gus", at(12, 1), map[string]any{"zone": "z", "user": "gus"}))
 	assertQueries(t, env, map[string][]string{
 		`where zone == "z"`:   {"gus"},
 		`where zone != "z"`:   {"ed", "fy", "cy", "bob", "ada", "di"},
 		`search "z"`:          {"gus"},
 		`where user == "gus"`: {"gus"},
-	}, "with a key promoted partway through the day")
+	}, "with a new key")
 }
 
 // pageThrough runs a Query page by page until no next cursor is left, and
@@ -211,7 +205,7 @@ func pageThrough(t *testing.T, env *TestEnv, req queryRequest) [][]string {
 	return nil
 }
 
-func TestPagesContinueFromTheCursorAcrossHoursAndSources(t *testing.T) {
+func TestPagesContinueFromTheCursorAcrossHoursAndInserts(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
@@ -231,7 +225,6 @@ func TestPagesContinueFromTheCursorAcrossHoursAndSources(t *testing.T) {
 		logJSON(t, "g", at(11, 25), nil),
 	)
 	env.Clock.Set(at(12, 5))
-	env.ExportLogs(t) // hour 10 to a file
 	postAndProcess(t, env, logJSON(t, "late", at(10, 10), nil))
 
 	all := queryMessages(t, env, "")
@@ -286,19 +279,15 @@ func TestARareSearchFindsItsLogsNewestFirstAcrossDays(t *testing.T) {
 			expected = append(expected, message)
 		}
 		postAndProcess(t, env, logJSON(t, message, now, attributes))
-		if now.Minute() == 30 && h%5 == 0 {
-			env.ExportLogs(t)
-		}
 	}
 	slices.Reverse(expected)
 
 	if got := queryMessages(t, env, `search "Needle"`); !slices.Equal(got, expected) {
 		t.Errorf("Expected %v, got %v", expected, got)
 	}
-	env.Clock.Set(start.Add(50 * time.Hour))
-	env.ExportLogs(t)
+	env.Reopen(t)
 	if got := queryMessages(t, env, `search "Needle"`); !slices.Equal(got, expected) {
-		t.Errorf("After every hour is exported, expected %v, got %v", expected, got)
+		t.Errorf("After a restart, expected %v, got %v", expected, got)
 	}
 	page := runQuery(t, env, 123, queryRequest{Query: `search "needle"`, From: allTime.from, To: allTime.to, Limit: 2})
 	if got := messages(page.Logs); !slices.Equal(got, expected[:2]) || page.NextCursor == nil {
@@ -316,11 +305,9 @@ func TestASearchAnswersWhatItFoundOnceItsBudgetIsSpentAndPagesOn(t *testing.T) {
 		logs = append(logs, logJSON(t, fmt.Sprintf("hour %d", h), testNow.Add(-time.Duration(h)*time.Hour+time.Minute),
 			map[string]any{"rare": h == 1 || h == 5}))
 	}
-	// At 11:29 the hot window is 11:00 to 12:00, so hour 1's Log is hot.
 	env.Clock.Set(testNow.Add(-31 * time.Minute))
 	postAndProcess(t, env, logs...)
 	env.Clock.Set(testNow)
-	env.ExportLogs(t)
 
 	// Every scan spends its budget on its first hour.
 	env.LogsHandler.ScanBudget = time.Nanosecond
@@ -340,14 +327,14 @@ func TestASearchAnswersWhatItFoundOnceItsBudgetIsSpentAndPagesOn(t *testing.T) {
 	}
 }
 
-func TestQueriesAgreeAcrossPromotionTheDailySetAndDemotion(t *testing.T) {
+func TestQueriesAgreeAcrossDaysWithManyKeys(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
 	day1 := testNow
 	day2 := testNow.AddDate(0, 0, 1)
 
-	// Day 1's set fills with k000…k099, so extra stays in the maps.
+	// Day 1 has a Log with 100 keys, k000…k099, and one with extra.
 	env.Clock.Set(day1)
 	postAndProcess(t, env, logJSON(t, "full", day1, numberedKeys("k", 100, "a")))
 	postAndProcess(t, env, logJSON(t, "extra on day 1", day1.Add(time.Minute), map[string]any{"extra": "x", "k000": "a"}))
@@ -361,8 +348,7 @@ func TestQueriesAgreeAcrossPromotionTheDailySetAndDemotion(t *testing.T) {
 	}
 	assertQueries(t, env, cases, "on day 1")
 
-	// Day 2's set is day 1's most common keys, extra among them, so a key of
-	// day 1's set leaves it, and its column goes at the export after 01:00.
+	// Day 2 has a Log with some of day 1's keys.
 	env.Clock.Set(day2)
 	postAndProcess(t, env, logJSON(t, "day 2", day2, map[string]any{"extra": "x", "k099": "a", "k000": "b"}))
 	cases[`where extra == "x"`] = []string{"day 2", "extra on day 1"}
@@ -372,19 +358,14 @@ func TestQueriesAgreeAcrossPromotionTheDailySetAndDemotion(t *testing.T) {
 	cases[`search "x"`] = []string{"day 2", "extra on day 1"}
 	assertQueries(t, env, cases, "on day 2")
 
-	env.ExportLogs(t) // day 1's hours, dropping its demoted columns
-	assertQueries(t, env, cases, "after day 1 is exported")
-
-	// A late Log of day 1 holds every Attribute in the maps.
+	// A late Log of day 1.
 	postAndProcess(t, env, logJSON(t, "late on day 1", day1.Add(2*time.Minute), map[string]any{"region": "eu", "k099": "a"}))
 	cases[`where region == "eu"`] = []string{"late on day 1"}
 	cases[`where k099 == "a"`] = []string{"day 2", "late on day 1", "full"}
 	assertQueries(t, env, cases, "with a late Log of day 1")
 
-	env.Clock.Set(day2.Add(3 * time.Hour))
-	env.ExportLogs(t)
 	env.Reopen(t)
-	assertQueries(t, env, cases, "after day 2's hour is exported and a restart")
+	assertQueries(t, env, cases, "after a restart")
 }
 
 // validation is validate's answer.
@@ -608,21 +589,23 @@ func fetchLog(t *testing.T, env *TestEnv, projectID uint32, id string, at *time.
 	return resp.StatusCode, log
 }
 
-func TestALogIsFetchedByIDWhereverItIsStored(t *testing.T) {
+func TestALogIsFetchedByIDWithOrWithoutItsTime(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	env.Clock.Set(at(10, 29))
-	postAndProcess(t, env, logJSON(t, "exported", at(10, 10), map[string]any{"user": "ada", "status": 200}))
+	postAndProcess(t, env, logJSON(t, "ten", at(10, 10), map[string]any{"user": "ada", "status": 200}))
 	env.Clock.Set(at(11, 29))
-	postAndProcess(t, env, logJSON(t, "hot", at(11, 10), map[string]any{"user": "bob"}))
+	postAndProcess(t, env, logJSON(t, "eleven", at(11, 10), map[string]any{"user": "bob"}))
+	// A Log that comes two hours after its time, and one three days after,
+	// far from the time in its id.
 	env.Clock.Set(at(12, 5))
-	env.ExportLogs(t)
 	postAndProcess(t, env, logJSON(t, "late", at(10, 20), map[string]any{"user": "cy", "cached": true}))
+	postAndProcess(t, env, logJSON(t, "days late", at(10, 30).AddDate(0, 0, -3), map[string]any{"user": "di"}))
 
 	logs := latestLogs(t, env, 123, 10)
-	if len(logs) != 3 {
+	if len(logs) != 4 {
 		t.Fatalf("Expected 3 Logs, got %v", messages(logs))
 	}
 	for _, want := range logs {

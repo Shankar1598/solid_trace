@@ -6,7 +6,8 @@ module InertiaShare
   included do
     inertia_share do
       {
-        current_user: current_user&.as_json(only: [ :id, :name, :email ]),
+        # instance_admin shows Settings → Email.
+        current_user: current_user&.as_json(only: [ :id, :name, :email, :instance_admin ]),
         current_org: @current_org&.as_json(only: [ :id, :name, :slug ]),
         # For the Organization selector and the command palette.
         organizations: @current_org && current_user.organizations_by_name.map { |o| { name: o.name, slug: o.slug } },

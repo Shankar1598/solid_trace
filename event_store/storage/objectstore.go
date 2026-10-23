@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -30,8 +28,6 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 	// List returns the objects whose keys begin with prefix, by key.
 	List(ctx context.Context, prefix string) ([]StoredObject, error)
-	// URL is where DuckDB reads key's object from.
-	URL(key string) string
 }
 
 // StoredObject is one object of an ObjectStore.
@@ -143,7 +139,7 @@ func (s *s3Store) Put(ctx context.Context, key, localPath string) error {
 		ContentLength: aws.Int64(info.Size()),
 	})
 	if err != nil {
-		return fmt.Errorf("upload %s to %s: %w", localPath, s.URL(key), err)
+		return fmt.Errorf("upload %s to %s: %w", localPath, s.location(key), err)
 	}
 	return nil
 }
@@ -155,7 +151,7 @@ func (s *s3Store) Delete(ctx context.Context, key string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)})
 	if err != nil && !isNotFound(err) {
 		// S3 answers 204 for a missing key, GCS 404.
-		return fmt.Errorf("delete %s: %w", s.URL(key), err)
+		return fmt.Errorf("delete %s: %w", s.location(key), err)
 	}
 	return nil
 }
@@ -189,7 +185,8 @@ func (s *s3Store) List(ctx context.Context, prefix string) ([]StoredObject, erro
 	return objects, nil
 }
 
-func (s *s3Store) URL(key string) string {
+// location names key's object in errors, as s3://<bucket>/<prefix><key>.
+func (s *s3Store) location(key string) string {
 	return "s3://" + s.bucket + "/" + s.prefix + key
 }
 
@@ -210,93 +207,4 @@ func checkObjectKey(key string) error {
 		return fmt.Errorf("object key %q isn't a relative path such as project=1/day=2026-10-01/hour=07/data.parquet", key)
 	}
 	return nil
-}
-
-// NewDirStore returns an ObjectStore kept in a local folder, for tests. Its
-// URLs are local paths, which DuckDB reads without httpfs.
-func NewDirStore(dir string) ObjectStore {
-	return &dirStore{dir: dir}
-}
-
-// dirStore is an ObjectStore in a local folder: each object is a file at its
-// key below the folder.
-type dirStore struct {
-	dir string
-}
-
-func (d *dirStore) Put(_ context.Context, key, localPath string) error {
-	if err := checkObjectKey(key); err != nil {
-		return err
-	}
-	path := d.URL(key)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	src, err := os.Open(localPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	// Written aside and renamed, so a reader never sees half an object.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".put-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := io.Copy(tmp, src); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
-}
-
-func (d *dirStore) Delete(_ context.Context, key string) error {
-	if err := checkObjectKey(key); err != nil {
-		return err
-	}
-	if err := os.Remove(d.URL(key)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return nil
-}
-
-func (d *dirStore) List(_ context.Context, prefix string) ([]StoredObject, error) {
-	objects := []StoredObject{}
-	err := filepath.WalkDir(d.dir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) && path == d.dir {
-				return fs.SkipAll
-			}
-			return err
-		}
-		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".put-") {
-			return nil
-		}
-		rel, err := filepath.Rel(d.dir, path)
-		if err != nil {
-			return err
-		}
-		key := filepath.ToSlash(rel)
-		if !strings.HasPrefix(key, prefix) {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		objects = append(objects, StoredObject{Key: key, Size: info.Size()})
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	slices.SortFunc(objects, func(a, b StoredObject) int { return strings.Compare(a.Key, b.Key) })
-	return objects, nil
-}
-
-func (d *dirStore) URL(key string) string {
-	return filepath.Join(d.dir, filepath.FromSlash(key))
 }

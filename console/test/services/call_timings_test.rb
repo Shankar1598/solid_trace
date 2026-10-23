@@ -50,11 +50,15 @@ class CallTimingsTest < ActiveSupport::TestCase
     assert_match(/\ALog read query, [\d.]+ ms\z/, line["message"])
   end
 
-  test "a read asks EventStore to log its SQL with the read's request id" do
-    run = stub_request(:post, @query_url).with(headers: { "X-Log-SQL" => "1", "X-Request-Id" => "req-1" })
-      .to_return(status: 200, body: { logs: [] }.to_json)
+  test "a read asks EventStore to log its SQL with the read's request id and user, the name percent-encoded" do
+    @user.update!(name: "Ana María")
+    run = stub_request(:post, @query_url).with(headers: {
+      "X-Log-SQL" => "1", "X-Request-Id" => "req-1", "X-User-Email" => @user.email, "X-User-Name" => "Ana%20Mar%C3%ADa",
+    }).to_return(status: 200, body: { logs: [] }.to_json)
 
-    CallTimings::Context.set(request_id: "req-1") { EventStore.query_logs(project_id: @shop.id, query: "", from: FROM, to: TO) }
+    CallTimings::Context.set(request_id: "req-1", user: @user) do
+      EventStore.query_logs(project_id: @shop.id, query: "", from: FROM, to: TO)
+    end
 
     assert_requested run
   end
@@ -100,13 +104,23 @@ class CallTimingsTest < ActiveSupport::TestCase
     call_tool(:query_logs, user: @user, project: "shop", query: "where level == \"error\"", range: "1h")
 
     read, tool = lines
-    assert_equal [ "log_read", "mcp:query_logs", @user.id, @user.email ], read.values_at("kind", "origin", "user_id", "user_email")
+    assert_equal [ "log_read", "mcp:query_logs", @user.id, @user.email, @user.name ],
+      read.values_at("kind", "origin", "user_id", "user_email", "user_name")
     assert_equal({
       "level" => "info", "kind" => "mcp_tool", "outcome" => "ok", "tool" => "query_logs",
       "arguments" => { "project" => "shop", "query" => "where level == \"error\"", "range" => "1h" },
-      "user_id" => @user.id, "user_email" => @user.email, "version" => "v0.8.0",
+      "user_id" => @user.id, "user_email" => @user.email, "user_name" => @user.name, "version" => "v0.8.0",
     }, tool.except("time", "message", "duration_ms"))
     assert_match(/\AMCP tool query_logs, [\d.]+ ms\z/, tool["message"])
+  end
+
+  test "an MCP tool call's secret arguments, such as the SMTP password, are filtered from its line" do
+    @user.update!(instance_admin: true)
+
+    call_tool(:update_email_settings, user: @user, smtp_username: "apikey", smtp_password: "s3cret-pass")
+
+    assert_equal({ "smtp_username" => "apikey", "smtp_password" => "[FILTERED]" }, sole_line["arguments"])
+    assert_not_includes @output.string, "s3cret-pass"
   end
 
   test "a tool's error answer is an error outcome with its text" do

@@ -101,7 +101,7 @@ export function runFailure(body: { errors?: unknown; error?: unknown } | null, s
   return new RunError(typeof body?.error === 'string' ? body.error : `The Query failed (HTTP ${status}).`)
 }
 
-/** The Query as readable SQL against the logs view of [from, to), to seed SQL mode. */
+/** The Query as readable SQL against the logs table of [from, to), to seed SQL mode. */
 export async function fetchReadableSql({ orgSlug, projectSlug, query, from, to, signal }: {
   orgSlug: string; projectSlug: string; query: string; from: Date; to: Date; signal?: AbortSignal
 }): Promise<string> {
@@ -113,8 +113,8 @@ export async function fetchReadableSql({ orgSlug, projectSlug, query, from, to, 
 }
 
 /**
- * Runs SQL as written against the logs view of the Project and [from, to),
- * answering a table. A POST with the page's CSRF token, so only the page runs
+ * Runs SQL as written, as the Project's SQL user, whose logs and events
+ * tables show the Project's rows of [from, to), answering a table. A POST with the page's CSRF token, so only the page runs
  * SQL, never a link.
  */
 export async function runSql({ orgSlug, projectSlug, sql, from, to, signal }: {

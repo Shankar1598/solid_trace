@@ -79,13 +79,12 @@ func sqlMessages(t *testing.T, env *TestEnv, query string, from, to time.Time) [
 	return got
 }
 
-func TestTextMatchesFindTheSameLogsInTheHotTableLateLogsAndFiles(t *testing.T) {
+func TestTextMatchesFindTheSameLogsOnTimeAndLate(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	setSQLQueries(t, env, true)
 
-	// At 10:29 the hot window is 10:00 to 11:00, so hour 10's Logs are hot
-	// and yesterday's late.
+	// At 10:29, hour 10's Logs come on time and yesterday's late.
 	yesterday := time.Date(2026, 10, 1, 15, 0, 0, 0, time.UTC)
 	env.Clock.Set(onTestDay(10, 29))
 	postTextLogs(t, env, onTestDay(10, 0))
@@ -160,14 +159,10 @@ func TestTextMatchesFindTheSameLogsInTheHotTableLateLogsAndFiles(t *testing.T) {
 		}
 		assertTablesIn(t, env, tables, from, to, when)
 	}
-	check(onTestDay(10, 0), "in the hot table")
-	check(yesterday, "in late Logs")
+	check(onTestDay(10, 0), "on time")
+	check(yesterday, "a day late")
 
-	// At 12:05 the export moves both hours to files.
-	env.Clock.Set(onTestDay(12, 5))
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, onTestDay(10, 0), 1)
-	assertHourFiles(t, env, 123, yesterday, 1)
-	check(onTestDay(10, 0), "in a file")
-	check(yesterday, "in a file of late Logs")
+	env.Reopen(t)
+	check(onTestDay(10, 0), "on time, after a restart")
+	check(yesterday, "a day late, after a restart")
 }

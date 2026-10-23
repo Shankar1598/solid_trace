@@ -12,7 +12,7 @@ module EventStoreProxy
 
   # How long a SQL query may take before EventStore stops it, from the
   # explorer or the MCP server. EventStore stops SQL by then whatever it is
-  # asked: DuckDB gives a query all its threads, so a slow one holds up ingest.
+  # asked: its SQL users' limit, so a slow one holds up ingest no longer.
   SQL_TIMEOUT_SECONDS = 10
 
   included do

@@ -34,9 +34,12 @@ module CallTimings
   class << self
     # Times an MCP tool call, the block, as the user who made it: the line
     # has its tool and arguments, and the Log reads it makes have origin
-    # mcp:<tool>. Answers what the block answers.
+    # mcp:<tool>. Arguments such as a password are filtered as request
+    # parameters are (config/initializers/filter_parameter_logging.rb).
+    # Answers what the block answers.
     def mcp_tool(tool, arguments, user)
       started = now
+      arguments = ActiveSupport::ParameterFilter.new(Rails.application.config.filter_parameters).filter(arguments)
       response = Context.set(origin: "mcp:#{tool}", user: user) { yield }
       error = response.error? ? response.content.filter_map { |part| part[:text] }.join("\n") : nil
       write("mcp_tool", "MCP tool #{tool}", started, error ? "error" : "ok", error,
@@ -71,6 +74,12 @@ module CallTimings
       Context.origin.to_s.start_with?("mcp:") || Context.log_all_reads?
     end
 
+    # Who the call or read running now is for: an MCP tool's user, or the
+    # signed-in user.
+    def user
+      Context.user || Current.user
+    end
+
     private
 
     def now
@@ -84,7 +93,7 @@ module CallTimings
       (answer["logs"] || answer.dig("table", "rows") || answer["buckets"])&.size
     end
 
-    def write(kind, message, started, outcome, error, user: Context.user || Current.user, **fields)
+    def write(kind, message, started, outcome, error, user: self.user, **fields)
       output = Rails.configuration.x.call_timings_output
       return unless output
 
@@ -99,6 +108,7 @@ module CallTimings
         error: error,
         user_id: user&.id,
         user_email: user&.email,
+        user_name: user&.name,
         request_id: Context.request_id,
         version: Rails.configuration.x.solidtrace_version,
         **fields,

@@ -36,24 +36,8 @@ COPY --from=vrl /vrl/target/dist/libst_vrl.a vrl/lib/linux_${TARGETARCH}/libst_v
 
 COPY . .
 
-# Build binary. DuckDB, SQLite and the VRL runtime are cgo libraries.
+# Build binary. SQLite and the VRL runtime are cgo libraries.
 RUN CGO_ENABLED=1 go build -o event_store .
-
-# DuckDB's httpfs extension, which reads Log files from an object_store
-# bucket. With an object_store, EventStore loads it from this directory and
-# never lets DuckDB download an extension itself. The version is DuckDB's in
-# duckdb-go (go.mod); change both together (a storage test checks they match).
-# DuckDB checks the file's signature when it loads it.
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS extensions
-ARG TARGETARCH
-ARG DUCKDB_VERSION=v1.5.6
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-RUN dir=/usr/local/lib/solidtrace/duckdb_extensions/${DUCKDB_VERSION}/linux_${TARGETARCH} \
-    && mkdir -p "$dir" \
-    && curl -fsSL -o /tmp/httpfs.gz "https://extensions.duckdb.org/${DUCKDB_VERSION}/linux_${TARGETARCH}/httpfs.duckdb_extension.gz" \
-    && gunzip -c /tmp/httpfs.gz > "$dir/httpfs.duckdb_extension" \
-    && rm /tmp/httpfs.gz
 
 # Final stage
 FROM debian:bookworm-slim
@@ -66,8 +50,12 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=extensions /usr/local/lib/solidtrace/duckdb_extensions /usr/local/lib/solidtrace/duckdb_extensions
 COPY --from=builder /app/event_store .
+
+# The release, which prepare-clickhouse's marker names. The release workflow
+# sets it to the tag.
+ARG SOLIDTRACE_VERSION=dev
+ENV SOLIDTRACE_VERSION=$SOLIDTRACE_VERSION
 
 EXPOSE 4000
 

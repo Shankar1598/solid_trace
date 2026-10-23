@@ -5,6 +5,8 @@ export interface User {
   name: string
   email: string
   created_at?: string
+  /** Whether they change the install's settings, such as email; only on current_user. */
+  instance_admin?: boolean
 }
 
 export interface Organization {
@@ -19,8 +21,6 @@ export interface Project {
   slug: string
   platform?: string
   log_retention_days?: number | null
-  /** The Fields each Log file is sorted by before time; null for the default, [] for time only. */
-  log_file_order?: string[] | null
   created_at: string
   issues_count?: number
   keys?: ProjectKey[]

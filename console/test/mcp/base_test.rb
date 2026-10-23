@@ -188,8 +188,8 @@ class McpBaseTest < ActiveSupport::TestCase
       -> { Pundit.authorize(user, project, :update?) } => "Only an Organization admin can do this.",
       -> { raise EventStore::Rejected.new({ "errors" => [ { "message" => "unknown stage wher", "line" => 2, "column" => 3 } ] }) } =>
         "line 2, column 3: unknown stage wher",
-      -> { raise EventStore::Rejected.new({ "error" => "SQL queries are read-only: DROP isn't allowed" }) } =>
-        "SQL queries are read-only: DROP isn't allowed",
+      -> { raise EventStore::Rejected.new({ "error" => "Cannot execute query in readonly mode." }) } =>
+        "Cannot execute query in readonly mode.",
       -> { raise EventStore::SQLQueriesOff } => "SQL queries are turned off on this instance.",
       -> { raise ChartRuns::Busy } => "Console is busy running other Queries and charts. Run this again in a moment.",
       -> { raise ChartRuns::NotATable } => "This Query answers Logs, not a table. End it with summarize, count or project to chart it.",

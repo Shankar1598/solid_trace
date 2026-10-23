@@ -221,7 +221,7 @@ class EventStore
       get!("#{base_url}/api/#{project_id}/logs/fields", params)
     end
 
-    # A Query printed as readable SQL against the logs view of a Project's
+    # A Query printed as readable SQL against the logs table of a Project's
     # [from, to): {"sql" => String}. It runs nothing, but seeds SQL mode, so
     # it is refused like Run SQL while SQL queries are off.
     def readable_logs_sql(project_id:, query:, from:, to:)
@@ -229,7 +229,8 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/readable-sql", { query: query, from: utc(from), to: utc(to) }, sql: true)
     end
 
-    # Runs SQL as written against the logs view of a Project's [from, to):
+    # Runs SQL as written, as the Project's SQL user, whose logs and events
+    # tables show the Project's rows of [from, to):
     # {"table" => {"columns", "rows", "truncated"}}, shaped like a tabular
     # Query's run. Raises SQLQueriesOff while SQL queries are off.
     # timeout_seconds works as in query_logs.
@@ -303,11 +304,16 @@ class EventStore
     end
 
     # For a read CallTimings times, asks EventStore to log the SQL it runs,
-    # with the request id of the read's call timing.
+    # with the request id and user of the read's call timing. The name is
+    # percent-encoded, as a header can't hold every character a name can.
     def call_timing_headers
       return {} unless CallTimings.logged_read?
 
-      { "X-Log-SQL" => "1", "X-Request-Id" => CallTimings::Context.request_id }.compact
+      user = CallTimings.user
+      {
+        "X-Log-SQL" => "1", "X-Request-Id" => CallTimings::Context.request_id,
+        "X-User-Email" => user&.email, "X-User-Name" => user&.name&.then { |name| ERB::Util.url_encode(name) },
+      }.compact
     end
 
     # A Log call's GET, with params as its query string, answered as post!

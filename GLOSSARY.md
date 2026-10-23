@@ -21,11 +21,11 @@ The EventStore module that authenticates an incoming payload, stores it as an Ev
 _Avoid_: handler logic, endpoint glue
 
 **Event processing**:
-The EventStore module that turns stored Events into Issues, indexes them in DuckDB and tells the Console. Owns the Issue lifecycle: classification, find-or-create, and reopen-on-resolved.
+The EventStore module that turns stored Events into Issues, stores their rows in ClickHouse and tells the Console. Owns the Issue lifecycle: classification, find-or-create, and reopen-on-resolved.
 _Avoid_: pipeline, ingester
 
 **Processing cursor**:
-A Project's position in its stored Events or Log batches, up to which Event processing or Log processing has handled them. Event processing keeps its cursor in Pebble; Log processing keeps its cursor in `logs.duckdb`, committed together with the Logs it covers.
+A Project's position in its stored Events or Log batches, up to which Event processing or Log processing has handled them. Both keep their cursors in Pebble, with the range they are inserting into ClickHouse, so a range inserted again after a crash is stored once.
 _Avoid_: offset, checkpoint
 
 **IssueRepository**:
@@ -61,12 +61,12 @@ The EventStore module that authenticates incoming Logs, normalises them, stores 
 _Avoid_: shipper endpoint, collector
 
 **Log batch**:
-The normalised Logs of one ingest request, stored in Pebble as one entry until Log processing has moved them to DuckDB.
+The normalised Logs of one ingest request, stored in Pebble as one entry until Log processing has moved them to ClickHouse.
 _Avoid_: chunk, payload
 
 **Log processing**:
-The EventStore module that moves stored Log batches into each Project's hot table in DuckDB, reading each Project's Log batches from its Processing cursor and running the Project's Log transform on their Logs. Separate from Event processing; Logs are never grouped into Issues.
-_Avoid_: pipeline, indexer
+The EventStore module that moves stored Log batches into ClickHouse about once a second, reading each Project's Log batches from its Processing cursor and running the Project's Log transform on their Logs. A Log is in its final place once stored, whatever its time. Separate from Event processing; Logs are never grouped into Issues.
+_Avoid_: pipeline, indexer, Log export, hot table, late Log
 
 **Log transform**:
 A Project's one VRL program, which Log processing runs on each of the Project's Logs before storing it. It can set, change and remove Fields and drop whole Logs, and what it returns is normalised as Log ingest normalises a sender's Logs. A Log it fails on is stored as it arrived, with the error in `solidtrace.transform_error`. A change applies to the Logs processed after it; stored Logs keep what they had. Every saved version is kept, and restoring one saves it again. Any member can read it; only an admin can change it. Events never go through it.
@@ -81,7 +81,7 @@ A request for Logs written in SolidTrace's KQL-style query language. It always r
 _Avoid_: APL, KQL, search
 
 **SQL query**:
-Raw DuckDB SQL a user runs directly, only on installs that have turned it on. Its `logs` and `events` views show the Project and time range chosen outside the text, and are all it can read: other tables, files and URLs are refused.
+ClickHouse SQL a user runs directly, on installs that leave it on. It runs as its Project's own database user, so it reads only that Project's Logs and Events, in the `logs` and `events` tables, starting from the time range chosen outside the text; other tables, files and URLs are refused, and it stops at fixed limits of time and memory.
 _Avoid_: raw query, advanced query
 
 **Logs explorer**:
@@ -120,28 +120,12 @@ _Avoid_: log alert, match rule
 The two states of a **Threshold monitor**'s group: firing while its number passes the threshold, or while the table is empty when the Monitor alerts on no data, and ok otherwise. Going from ok to firing sends a monitor firing **Notification** and going back sends monitor resolved; a group that stays firing sends nothing more. Turning the Monitor off, deleting it or making it a **Match monitor** resolves its firing groups.
 _Avoid_: alerting, triggered, breached, open
 
-**Log export**:
-The **Log processing** timer that moves **Logs** out of the hot table into the **Log file store**, at each quarter-hour start. A busy **Project**, whose hot table holds at least one row group of Logs (122,880) of the quarter-hour that ended 15 minutes ago, has each quarter-hour written to its own file then; a quiet Project has each hour written to one file once the next hour has ended. An hour whose first quarter-hours went out on their own keeps going by quarter-hours.
-_Avoid_: hourly export
-
 **Log file store**:
-Where EventStore keeps a **Project**'s Log files, the Parquet files its **Log export** writes once **Logs** leave the hot table: one file for each hour, or, for a busy Project, one for each quarter-hour, plus the hour's **Late files**. They are on the local disk, or in an S3 or GCS bucket with a local copy kept for a while. Each file is sorted by the Project's **Log file order**, then time. A manifest in DuckDB lists each file and where it is, so reads never list folders or the bucket.
-_Avoid_: archive, cold storage, data lake
-
-**Late Log**:
-A **Log** whose time is outside the hot window when **Log processing** stores it. The window starts at the quarter-hour that ended 15 minutes ago, where the **Log export**'s next run cuts off, and ends at the next hour, so the hot table only holds Logs of quarter-hours not yet exported, and a Log sent more than 15 to 30 minutes after its time is late. A late Log waits in a shared table until the next Log export writes it to its hour's or quarter-hour's file, or to a **Late file** if that file is written. It isn't counted for Attribute popularity, and can't add a key to its day's promoted set. On production every Log arrives within a minute; after an outage or a shipper's backlog, the delayed Logs are late Logs.
-_Avoid_: out-of-order Log, stale Log
-
-**Late file**:
-A Log file holding the **Logs** of an hour or quarter-hour that already had its file when they came: the hour's next `late-<n>.parquet`, written by the next **Log export**, one per hour each time. It is sorted and has its day's promoted columns, like the hour's other files.
-_Avoid_: patch file, delta file
-
-**Log file order**:
-The Fields the **Log export** sorts each of a **Project**'s Log files by, before time. Each Project sets its own in Console; by default it is `service`, then the `file` Attribute, and none means time only. A change applies from the next Log export. The Logs of one Service's log file then sit together in a few row groups, so a **Query** filtered on those Fields reads only those. A Log without a Field of the order comes after those with it. Queries answer the same whatever the order; only how much they read changes.
-_Avoid_: sort key, sort order, clustering key, partition key
+Where the Log files of the DuckDB releases are: the Parquet files that held a **Project**'s **Logs** stored before the switch to ClickHouse, on the local disk, in the bucket, or both. They are read in place, alongside the Logs stored since, until **Retention** deletes them; no new Log files are written.
+_Avoid_: archive, cold storage, data lake, Late file, Log file order
 
 **Bin cache**:
-EventStore's memory of a **Chart**'s time bins whose Logs are all in the **Log file store**, so a Chart run again, as a **Dashboard** refreshes, reads only the bins it lacks. A bin is kept under the Project, the Query, its size and start, and the generations of the Log files it covers, so a bin whose Logs have changed is never used again.
+EventStore's memory of a **Chart**'s time bins of hours that have ended, so a Chart run again, as a **Dashboard** refreshes, reads only the bins it lacks. A bin is kept under the Project, the Query, its size and start, and the generation of each hour it covers, which changes whenever Logs of that hour are stored or deleted, so a bin whose Logs have changed is never used again.
 _Avoid_: query cache, result cache
 
 **Integration**:
@@ -173,15 +157,19 @@ A link an admin copies for an **Invited** member, and shares however they like, 
 _Avoid_: magic link, invitation email, activation link
 
 **Sign-up**:
-Making an account without an **Invite**. It works while the install has no user, so whoever set it up can make the first account, and after that only if the operator has opened it; otherwise people join by **Invite**.
+Making an account without an **Invite**. It works while the install has no user, so whoever set it up can make the first account, which is the **Instance admin**, and after that only if the operator has opened it; otherwise people join by **Invite**.
 _Avoid_: registration, self-serve sign-up
+
+**Instance admin**:
+A user who changes the install's settings that apply to every **Organization**, such as email. The first user to sign up is one, or on an install that already had users, the oldest; the operator grants or removes it from the command line. Being an Organization's admin isn't enough.
+_Avoid_: superuser, super admin, site admin, root
 
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization.
 _Avoid_: app, tenant
 
 **Meta Organization**:
-The Organization SolidTrace makes for itself when it is installed, holding one Project that receives SolidTrace's own Logs, with one Service for each part of SolidTrace. Its first admin is the person who set up the instance. Otherwise an ordinary Organization: deleting it, or its Project, stops SolidTrace's own Logs for good.
+The Organization SolidTrace makes for itself when it is installed, holding one Project that receives SolidTrace's own Logs, with one Service for each part of SolidTrace. Its first admin is the person who set up the instance, who is also the **Instance admin**. Otherwise an ordinary Organization: deleting it, or its Project, stops SolidTrace's own Logs for good.
 _Avoid_: system organization, internal organization, admin organization
 
 **MCP server**:
@@ -197,7 +185,7 @@ _Avoid_: API key, project key, access token
 - An **EventStore** accepts an **Event** through **Event ingest**
 - **Event processing** derives one **Issue** for each stored **Event**, reading each **Project**'s Events from its **Processing cursor**
 - An **EventStore** accepts **Logs** through **Log ingest**, one **Log batch** per request
-- **Log processing** moves each **Project**'s **Log batches** into DuckDB, reading them from its **Processing cursor**
+- **Log processing** moves each **Project**'s **Log batches** into ClickHouse, reading them from its **Processing cursor**
 - A **Project** has one **Log transform**, which **Log processing** runs on each of its **Logs** before storing it
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
@@ -209,9 +197,11 @@ _Avoid_: API key, project key, access token
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
 - A **Threshold monitor**'s groups are **firing** or **ok**; a **Match monitor** reads the **Logs** of each new **Log batch**
-- **Log processing**'s **Log export** moves each **Project**'s **Logs** to the **Log file store**, a quarter-hour or an hour at a time, and the **Bin cache** keeps the **Chart** bins whose Logs are all there
+- The **Bin cache** keeps a **Chart**'s bins of hours that have ended, until **Log processing** or **Retention** changes their Logs
+- The **Log file store** holds a **Project**'s **Logs** stored before the switch to ClickHouse, read with those stored since until **Retention** deletes them
 - An **Invite** to an **Organization** makes someone without a password an **Invited** member, whom an **Invite link** lets set a password
 - An **MCP server** call acts as the user of its **API token**, with what that user's role allows in the organization it acts on
+- An **Instance admin** sets the install's email, which every **Organization**'s mail is sent with
 
 ## Example dialogue
 

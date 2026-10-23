@@ -180,6 +180,12 @@ GEM
       launchy (>= 2.2, < 4)
     lint_roller (1.1.0)
     logger (1.7.0)
+    lograge (0.15.1)
+      actionpack (>= 4)
+      activesupport (>= 4)
+      logger
+      railties (>= 4)
+      request_store (~> 1.0)
     loofah (2.25.0)
       crass (~> 1.0.2)
       nokogiri (>= 1.12.0)
@@ -308,6 +314,8 @@ GEM
     regexp_parser (2.11.3)
     reline (0.6.3)
       io-console (~> 0.5)
+    request_store (1.7.0)
+      rack (>= 1.4)
     rest-client (2.1.0)
       http-accept (>= 1.7.0, < 2.0)
       http-cookie (>= 1.0.2, < 2.0)
@@ -468,6 +476,7 @@ DEPENDENCIES
   jbuilder
   kamal
   letter_opener
+  lograge (~> 0.15)
   mcp (~> 1.8)
   minitest (< 7.0)
   minitest-mock

@@ -1,6 +1,6 @@
 # Logs: Pebble first, a one-hour hot table, then hourly per-Project Parquet with typed MAP Attributes
 
-Status: superseded by [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) (promotion at ingest, per-Project hot tables).
+Status: superseded by [ADR 0005](0005-logs-per-project-hot-tables-promote-at-ingest.md) (promotion at ingest, per-Project hot tables), and since by [ADR 0016](0016-logs-and-events-in-clickhouse.md) (Logs and Events in ClickHouse).
 
 Logs are written to Pebble before the `200`, then to a hot DuckDB table in its own `logs.duckdb` that holds only the current and previous hour, then exported every hour to zstd Parquet on local disk, one file per Project per hour (`project=<id>/day=<d>/hour=<h>/`). Attributes live in four typed MAP columns (string, DOUBLE, bool, JSON text for arrays), and each Parquet file also promotes its most common keys to typed columns of their own. Retention and the disk limit delete whole folders. We chose this because a DuckDB file never shrinks, so only file-per-Project-per-period storage lets per-Project retention free disk; because hourly rather than daily files put the last 24 hours, the explorer's busiest range, in Parquet where promoted columns make common-key searches take seconds on 4 vCPU; and because typed MAPs were up to 5× faster than JSON text for Attribute queries and match the query language's non-coercing `==`.
 

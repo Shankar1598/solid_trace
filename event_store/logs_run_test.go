@@ -99,9 +99,10 @@ func TestARunPastItsTimeoutIsStoppedOnTheServer(t *testing.T) {
 	seedLanguageLogs(t, env)
 	setSQLQueries(t, env, true)
 
-	// SQL that would run for minutes. The handler answers only once DuckDB
-	// has returned, so a quick 504 means the query itself was stopped.
-	slow := `SELECT sum(hash(i)) FROM range(1000000000000) t(i)`
+	// SQL that would run for hours. The handler answers only once
+	// ClickHouse has returned, so a quick 504 means the query itself was
+	// stopped.
+	slow := `SELECT sum(cityHash64(number)) FROM numbers(1000000000000)`
 	began := time.Now()
 	answer := answerOf(t, env, "/api/123/logs/sql", map[string]any{
 		"sql": slow, "from": allTime.from, "to": allTime.to, "timeout_seconds": 0.25}, 504)
@@ -114,9 +115,7 @@ func TestARunPastItsTimeoutIsStoppedOnTheServer(t *testing.T) {
 
 	// Runs of a Query and histograms hand their timeout to their scan: one
 	// of a microsecond has ended before the scan takes a connection. That a
-	// scan stops while DuckDB runs it is storage's test
-	// (TestAScanPastItsContextIsStoppedPartWayAndItsConnectionStillReads),
-	// and that a run of Log rows stops part-way, the test below.
+	// run of Log rows stops part-way is the test below.
 	// A run after a batch reads no time range, so it isn't told to shorten
 	// one.
 	shorter, ingested := "try a shorter time range", "too many Logs were ingested since the last run"
@@ -199,26 +198,32 @@ func mustMarshal(t *testing.T, answer map[string]json.RawMessage) []byte {
 	return raw
 }
 
-// Each run Console asks with X-Log-SQL logs every SQL statement DuckDB ran
-// for it, with the request id Console sent, so a Console call timing leads
-// to the SQL its Query became. A run not asked logs none.
+// Each run Console asks with X-Log-SQL logs every SQL statement it ran
+// for it, with the request id and user Console sent, so a Console call
+// timing leads to the SQL its Query became. A run not asked logs none.
 func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	seedLanguageLogs(t, env)
 	setSQLQueries(t, env, true)
 
-	runs := []struct {
+	type run struct {
 		path, read string
 		body       map[string]any
 		// ran is SQL one of the run's statements must hold.
 		ran []string
-	}{
+	}
+	runs := []run{
 		{"/api/123/logs/query", "query", map[string]any{"query": `where duration > 100`}, []string{"duration"}},
-		{"/api/123/logs/query", "query", map[string]any{"query": `summarize count() by service`}, []string{"count(*)", "GROUP BY"}},
-		{"/api/123/logs/query", "match", map[string]any{"query": ``, "after_batch": "00000000-0000-0000-0000-000000000000"}, []string{"logs_hot_123"}},
-		{"/api/123/logs/histogram", "histogram", map[string]any{"query": ``}, []string{"time_bucket"}},
-		{"/api/123/logs/sql", "sql", map[string]any{"sql": `SELECT count(*) FROM logs`}, []string{"CREATE TEMPORARY VIEW logs AS", "SELECT count(*) FROM logs"}},
+		// The message is read only for the Logs the other tests keep.
+		{"/api/123/logs/query", "query", map[string]any{"query": `where duration > 100 and message contains "e"`}, []string{"PREWHERE"}},
+		{"/api/123/logs/query", "match", map[string]any{"query": ``, "after_batch": "00000000-0000-0000-0000-000000000000"}, []string{"toUInt128(batch)"}},
+		{"/api/123/logs/query", "query", map[string]any{"query": `summarize count() by service`}, []string{"count()", "GROUP BY"}},
+		{"/api/123/logs/histogram", "histogram", map[string]any{"query": `where level == "error"`}, []string{"toStartOfInterval"}},
+		// With no filter, the histogram reads the counts kept by minute.
+		{"/api/123/logs/histogram", "histogram", map[string]any{"query": ``}, []string{"log_minute_counts"}},
+		// SQL logs the SQL as written.
+		{"/api/123/logs/sql", "sql", map[string]any{"sql": `SELECT count(*) FROM logs`}, []string{"SELECT count(*) FROM logs"}},
 	}
 	for i, run := range runs {
 		logs := captureLogs(t)
@@ -229,6 +234,8 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Request-Id", requestID)
 		req.Header.Set("X-Log-SQL", "1")
+		req.Header.Set("X-User-Email", "ana@example.com")
+		req.Header.Set("X-User-Name", "Ana%20Mar%C3%ADa")
 		resp, err := env.QueryApp.Test(req, 10000)
 		if err != nil || resp.StatusCode != 200 {
 			t.Fatalf("POST %s %v: %v %v", run.path, run.body, resp, err)
@@ -247,6 +254,7 @@ func TestEveryRunLogsTheSQLItRanWithItsRequestID(t *testing.T) {
 			for _, field := range []string{
 				"kind=log_read_sql", "read=" + run.read, "project_id=123", "request_id=" + requestID,
 				fmt.Sprintf("statement=%d", n+1), fmt.Sprintf("statements=%d", len(lines)), "duration_ms=", "sql=",
+				"user_email=ana@example.com", `user_name="Ana María"`,
 			} {
 				if !strings.Contains(line, field) {
 					t.Errorf("%s %v: expected %s in %q", run.path, run.body, field, line)

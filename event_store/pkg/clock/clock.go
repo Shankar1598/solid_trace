@@ -1,7 +1,6 @@
 // Package clock is where EventStore's Log modules read the current time, so a
-// test can decide what "now" is. Log ingest takes receipt times from it; the
-// hot window, the Log export, the daily set, Retention and the disk limit
-// are to read it too.
+// test can decide what "now" is. Log ingest takes receipt times from it, and
+// Log processing, Retention and the disk limit read it too.
 //
 // UUIDv7 ids can't follow it: google/uuid reads the real clock.
 package clock

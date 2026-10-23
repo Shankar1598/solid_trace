@@ -4,76 +4,78 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/solidtrace/event_store/pkg/sqltext"
+	"github.com/solidtrace/event_store/pkg/chsql"
 	"github.com/solidtrace/event_store/storage"
 )
 
-// ReadableSQL writes the Query as SQL against the logs view
-// (storage.LogsView), for a person to read and change: one CTE per stage,
-// every Attribute read from its map. Run through Run SQL over the same Project
-// and range, it returns the Query's rows: a Query of Log rows gives the view's
-// rows, newest first; a table gives its columns, a value of no fixed type as
-// JSON.
+// readableLogs is the table a Query's Readable SQL reads: SQL mode's logs,
+// which holds a Project's Logs as the logs table does, with their Attributes
+// in attributes and attrs_json.
+const readableLogs = "logs"
+
+// ReadableSQL writes the Query as ClickHouse SQL against SQL mode's logs
+// table, for a person to read and change: its head as one condition, then
+// one CTE per stage, every Attribute read from attributes or attrs_json. Run
+// in SQL mode over the same Project and range, it returns the Query's rows:
+// a Query of Log rows gives the table's rows, newest first; a table gives its
+// columns, a value of no fixed type as a Dynamic holding it, an array or
+// object as its JSON text.
 //
-// It reads no range of its own, since the view holds only the run's; a where
+// It reads no range of its own, since SQL mode reads only the run's; a where
 // on time stays in it. Unlike a run, a table isn't cut at a number of rows.
 func (q *Query) ReadableSQL() string {
-	cols := storage.LogViewColumns()
-	c := &chain{prev: storage.LogsView, isLogs: true}
-	for _, s := range q.head {
-		switch s := s.(type) {
-		case whereStage:
-			c.add("SELECT * FROM %s WHERE %s", c.prev, writeCondition(s.predicate, cols, false))
-		case searchStage:
-			c.add("SELECT * FROM %s WHERE %s", c.prev, writeSearch(s.terms, cols))
-		}
-	}
-
-	var final string
+	on := func(rel string) fields { return storage.ClickHouseColumns{Table: rel} }
+	where := q.Where(storage.ClickHouseColumns{})
 	if !q.table {
 		// The tail is only takes and newest-first sorts.
-		final = fmt.Sprintf("SELECT * FROM %s ORDER BY %s", c.prev, newestFirstOrder)
+		final := "SELECT * FROM " + readableLogs
+		if where != "" {
+			final += "\nWHERE " + where
+		}
+		final += "\nORDER BY " + newestFirstOrder(storage.ClickHouseColumns{})
 		if q.hasTake {
 			final += fmt.Sprintf(" LIMIT %d", q.take)
 		}
-	} else {
-		q.writeTail(c, cols)
-		list := make([]string, len(q.output))
-		for i, col := range q.output {
-			value := writeValue(col.x, cols)
-			if col.x.typ() == dynamicType {
-				value = dynamicJSON(col.x, cols)
-			}
-			list[i] = value + " AS " + sqltext.Identifier(col.name)
-		}
-		final = fmt.Sprintf("SELECT %s\nFROM %s\nORDER BY %s", strings.Join(list, ", "), c.prev, c.order())
-	}
-	if len(c.ctes) == 0 {
 		return final
+	}
+
+	c := &chain{prev: readableLogs, isLogs: true}
+	if where != "" {
+		c.add("SELECT * FROM %s WHERE %s", c.prev, where)
+	}
+	q.writeTail(c, on)
+	last := on(c.prev)
+	list := make([]string, len(q.output))
+	// A Dynamic can't be a sort key, so a table in no order of its own is
+	// sorted by its columns' values as the last step holds them.
+	keys := make([]string, len(q.output))
+	for i, col := range q.output {
+		value := writeValue(col.x, last)
+		keys[i] = value
+		if col.x.typ() == dynamicType {
+			value = dynamicSQLValue(col.x, last)
+		}
+		list[i] = value + " AS " + chsql.Identifier(col.name)
+	}
+	order := c.order(last)
+	if order == "ALL" {
+		order = strings.Join(keys, ", ")
 	}
 	ctes := make([]string, len(c.ctes))
 	for i, cte := range c.ctes {
 		ctes[i] = cte.name + " AS (\n  " + cte.sql + "\n)"
 	}
-	return "WITH\n" + strings.Join(ctes, ",\n") + "\n" + final
+	return "WITH\n" + strings.Join(ctes, ",\n") + fmt.Sprintf("\nSELECT %s\nFROM %s\nORDER BY %s",
+		strings.Join(list, ", "), c.prev, order)
 }
 
-// dynamicJSON writes a value of no fixed type as JSON: the value of its type
-// it holds, or NULL.
-func dynamicJSON(x expr, f fields) string {
-	parts := make([]string, len(dynamicParts))
-	for i, t := range dynamicParts {
-		var part string
-		if ref, ok := x.(fieldRef); ok {
-			part = f.Attribute(t, ref.name)
-		} else {
-			part = "struct_extract(" + writeValue(x, f) + ", " + sqltext.String(dynamicField(t)) + ")"
-		}
-		if t == storage.JSONAttribute {
-			parts[i] = "CAST(" + part + " AS JSON)"
-		} else {
-			parts[i] = "to_json(" + part + ")"
-		}
+// dynamicSQLValue writes a value of no fixed type as a Dynamic: the value of its
+// type it holds, an array or object as its JSON text, or NULL.
+func dynamicSQLValue(x expr, f fields) string {
+	part := partsOf(x, f)
+	var cases []string
+	for _, t := range dynamicParts[:len(dynamicParts)-1] {
+		cases = append(cases, "isNotNull("+part(t)+"), "+part(t)+"::Dynamic")
 	}
-	return "CAST(coalesce(" + strings.Join(parts, ", ") + ") AS JSON)"
+	return "multiIf(" + strings.Join(cases, ", ") + ", " + part(storage.JSONAttribute) + "::Dynamic)"
 }

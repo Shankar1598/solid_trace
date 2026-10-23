@@ -88,15 +88,15 @@ func TestHistogramCountsLogsPerBucketAndLevelWithEmptyBuckets(t *testing.T) {
 	}
 
 	// ada and bob have no Level; di is the day before, outside the range.
-	check("in the hot table", "", []string{
+	check("once stored", "", []string{
 		"10:00:00 2 map[none:2]",
 		"10:30:00 1 map[error:1]",
 		"11:00:00 1 map[error:1]",
 		"11:30:00 0 map[]",
 	}, 4, map[string]int{"error": 2, "none": 2})
 
-	exportLanguageLogs(t, env) // hour 10 to files, and fy late at 10:45
-	check("across files and a late Log", "", []string{
+	postLateLanguageLog(t, env) // fy, late at 10:45
+	check("with a late Log", "", []string{
 		"10:00:00 2 map[none:2]",
 		"10:30:00 2 map[error:1 none:1]",
 		"11:00:00 1 map[error:1]",
@@ -152,9 +152,50 @@ func TestHistogramCountsTheLogsARunReturns(t *testing.T) {
 			}
 		}
 	}
-	check("in the hot table")
-	exportLanguageLogs(t, env)
-	check("across files and a late Log")
+	check("once stored")
+	postLateLanguageLog(t, env)
+	check("with a late Log")
+}
+
+// An unfiltered histogram is read from counts kept by minute; one with a
+// filter, or buckets that aren't whole minutes, counts the Logs themselves.
+// Both count the same Logs, whenever they came.
+func TestAnUnfilteredHistogramCountsWhatAFilterKeepingEveryLogCounts(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedLanguageLogs(t, env) // the clock reads 11:30
+
+	// Logs part-way into minutes, one with no Level; then Logs sent late
+	// into minutes that already have Logs, and into one that had none.
+	postAndProcess(t, env,
+		logJSON(t, "gil", languageAt(10, 10).Add(20*time.Second), map[string]any{"level": "warn"}),
+		logJSON(t, "hal", languageAt(10, 59).Add(59500*time.Millisecond), nil),
+	)
+	env.Clock.Set(languageAt(12, 5))
+	postAndProcess(t, env, logJSON(t, "ivy", languageAt(10, 10).Add(40*time.Second), map[string]any{"level": "error"}))
+	postAndProcess(t, env, logJSON(t, "jo", languageAt(10, 20), nil), logJSON(t, "kit", languageAt(9, 3), map[string]any{"level": "info"}))
+
+	everyLog := `where level != "no Log has this Level"`
+	ranges := []histogramRequest{
+		{From: languageAt(10, 0), To: languageAt(12, 0), BucketSeconds: 60},
+		{From: languageAt(10, 10).Add(30 * time.Second), To: languageAt(11, 10).Add(30 * time.Second), BucketSeconds: 300},
+		{From: languageAt(10, 10).Add(10 * time.Second), To: languageAt(10, 10).Add(50 * time.Second), BucketSeconds: 60},
+		{From: languageAt(0, 0).AddDate(0, 0, -1), To: languageAt(13, 0), BucketSeconds: 3600},
+		{From: languageAt(0, 0), To: languageAt(13, 0)},
+	}
+	for _, r := range ranges {
+		unfiltered := r
+		filtered := r
+		filtered.Query = everyLog
+		got, want := histogram(t, env, unfiltered), histogram(t, env, filtered)
+		if fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
+			t.Errorf("[%s, %s) by %ds:\n unfiltered %+v\n filtered   %+v", r.From.Format(time.TimeOnly), r.To.Format(time.TimeOnly), r.BucketSeconds, got, want)
+		}
+	}
+	// Each of the nine Logs of the day is counted once.
+	if got := histogram(t, env, ranges[4]); got.Count != 9 || got.Levels["error"] != 3 || got.Levels["none"] != 4 {
+		t.Errorf("Expected 9 Logs, 3 errors and 4 with no Level, got %d %v", got.Count, got.Levels)
+	}
 }
 
 func TestHistogramPicksABucketSizeAndRefusesMistakes(t *testing.T) {

@@ -53,17 +53,21 @@ func isContentError(err error) bool {
 
 // Processor is Event processing: one worker that reads each Project's Events
 // from Pebble after its processing cursor, and for each batch works out the
-// Issues, indexes the Events in DuckDB, tells the Console, then moves the
-// cursor. It is the only place that does Issue work.
+// Issues, stores the Events' rows in ClickHouse, tells the Console, then
+// moves the cursor. It is the only place that does Issue work.
+//
+// Each batch is stored exactly once: its range is recorded in Pebble before
+// its insert, which carries a token made from the range. After a crash before
+// the cursor moved, the recorded range is processed again, and ClickHouse
+// drops the repeated insert.
 type Processor struct {
 	events  *storage.PebbleWriter
-	index   *storage.DuckDBWriter
+	index   *storage.ClickHouse
 	console *storage.MessageQueueWriter
 	issues  IssueRepository
 
-	// batchLock is shared with the archive job, which moves rows out of
-	// events_hot by timestamp. Holding it for a whole batch keeps the archive
-	// out of the window between a batch's DuckDB commit and its cursor move.
+	// batchLock is shared with the Event cleanup, so that a deleted Project's
+	// rows never go between a batch's insert and its cursor move.
 	batchLock sync.Locker
 
 	mu      sync.Mutex
@@ -73,11 +77,6 @@ type Processor struct {
 	// Used only by the worker.
 	known            map[uint32]struct{} // Projects to check for a backlog
 	lastBacklogCheck time.Time
-	// indexedUpTo holds, per Project, the newest Event that DuckDB already
-	// had past the cursor at startup. A crash after a batch's DuckDB commit
-	// leaves it there; the replay skips the append up to it but still sends
-	// the batch's Console messages.
-	indexedUpTo map[uint32]string
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -87,42 +86,29 @@ type Processor struct {
 
 // New constructs Event processing. IssueRepository is the seam to Issue
 // persistence; storage.SQLiteWriter is the production adapter.
-func New(events *storage.PebbleWriter, index *storage.DuckDBWriter, console *storage.MessageQueueWriter, issues IssueRepository, batchLock sync.Locker) *Processor {
+func New(events *storage.PebbleWriter, index *storage.ClickHouse, console *storage.MessageQueueWriter, issues IssueRepository, batchLock sync.Locker) *Processor {
 	return &Processor{
-		events:      events,
-		index:       index,
-		console:     console,
-		issues:      issues,
-		batchLock:   batchLock,
-		pending:     make(map[uint32]struct{}),
-		wake:        make(chan struct{}, 1),
-		known:       make(map[uint32]struct{}),
-		indexedUpTo: make(map[uint32]string),
-		stop:        make(chan struct{}),
-		done:        make(chan struct{}),
+		events:    events,
+		index:     index,
+		console:   console,
+		issues:    issues,
+		batchLock: batchLock,
+		pending:   make(map[uint32]struct{}),
+		wake:      make(chan struct{}, 1),
+		known:     make(map[uint32]struct{}),
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 }
 
-// Prepare runs once, before the worker and the archive job start. It records
-// how far DuckDB already got past each Project's cursor, and marks every
-// Project that has Events as having new ones.
+// Prepare runs once, before the worker starts. It marks every Project that
+// has Events as having new ones.
 func (p *Processor) Prepare() error {
 	projects, err := p.events.ProjectsWithEvents()
 	if err != nil {
 		return fmt.Errorf("list projects with events: %w", err)
 	}
 	for _, projectID := range projects {
-		cursor, err := p.events.ProcessingCursor(projectID)
-		if err != nil {
-			return fmt.Errorf("read processing cursor of project %d: %w", projectID, err)
-		}
-		newest, err := p.index.NewestHotUUIDAfter(projectID, cursor)
-		if err != nil {
-			return fmt.Errorf("find newest indexed event of project %d: %w", projectID, err)
-		}
-		if newest != "" {
-			p.indexedUpTo[projectID] = newest
-		}
 		p.Notify(projectID)
 	}
 	return nil
@@ -207,11 +193,14 @@ func (p *Processor) takePending() (uint32, bool) {
 }
 
 // processBatch handles up to batchSize of a Project's Events after its
-// cursor. full reports whether the batch was full, so more may be waiting.
+// cursor. full reports whether more may be waiting.
 //
-// Stop abandons a batch only while a step is retrying a store error, or while
-// DuckDB rows are retried. Otherwise the batch finishes with the Events whose
-// Issue work is done, so a graceful stop never loses an issue_created.
+// A Project with a recorded Event range gets that range again, all of it:
+// its insert may have been stored before the cursor moved.
+//
+// Stop abandons a batch while a step is retrying a store error, and a range
+// processed again. Otherwise the batch finishes with the Events whose Issue
+// work is done, so a graceful stop never loses an issue_created.
 func (p *Processor) processBatch(projectID uint32) (full bool, err error) {
 	if p.stopped() {
 		return false, ErrStopped
@@ -220,23 +209,40 @@ func (p *Processor) processBatch(projectID uint32) (full bool, err error) {
 	defer p.batchLock.Unlock()
 
 	var events []models.Event
+	var recorded storage.EventRange
+	again := false
 	err = p.retry("read events", func() error {
 		cursor, err := p.events.ProcessingCursor(projectID)
 		if err != nil {
 			return err
 		}
-		events, err = p.events.EventsAfter(projectID, cursor, batchSize)
-		return err
+		var ok bool
+		if recorded, ok, err = p.events.RecordedEventRange(projectID); err != nil {
+			return err
+		}
+		if events, err = p.events.EventsAfter(projectID, cursor, batchSize); err != nil {
+			return err
+		}
+		again = ok && recorded.After == cursor
+		if again {
+			events = slices.DeleteFunc(events, func(event models.Event) bool { return event.EventUUID > recorded.Through })
+		} else {
+			recorded = storage.EventRange{ProjectID: projectID, After: cursor}
+		}
+		return nil
 	})
 	if err != nil || len(events) == 0 {
 		return false, err
 	}
 
 	// 1. SQLite: the Issue of each Event.
-	full = len(events) == batchSize
+	full = again || len(events) == batchSize
 	rows := make([]models.Event, 0, len(events))
 	for i, event := range events {
 		if p.stopped() {
+			if again {
+				return false, ErrStopped
+			}
 			events, full = events[:i], false
 			break
 		}
@@ -246,7 +252,7 @@ func (p *Processor) processBatch(projectID uint32) (full bool, err error) {
 			row, err = p.issueWork(event)
 			return err
 		})
-		if errors.Is(err, errStoppedBeforeRetry) {
+		if errors.Is(err, errStoppedBeforeRetry) && !again {
 			events, full = events[:i], false
 			break
 		}
@@ -261,31 +267,36 @@ func (p *Processor) processBatch(projectID uint32) (full bool, err error) {
 		return false, ErrStopped
 	}
 
-	// 2. DuckDB: index the rows it doesn't already hold.
-	indexed, err := p.indexRows(projectID, rows)
-	if err != nil {
-		return false, err
-	}
-
-	// 3. SQLite: count the Events that reached DuckDB on their Issues.
-	last := events[len(events)-1].EventUUID
-	if len(indexed) > 0 {
-		if err := p.retry("record seen events", func() error { return p.issues.RecordSeenEvents(projectID, indexed, last) }); err != nil {
+	// 2. Pebble: record the range, unless it is the recorded one.
+	r := recorded
+	if !again {
+		r.Through = events[len(events)-1].EventUUID
+		if err := p.retry("record event range", func() error { return p.events.RecordEventRange(r) }); err != nil {
 			return false, err
 		}
 	}
 
-	// 4. Console messages, only after the rows can be queried.
+	// 3. ClickHouse: insert the rows, with the range's token.
+	stored, err := p.storeRows(r, rows)
+	if err != nil {
+		return false, err
+	}
+
+	// 4. SQLite: count the Events stored on their Issues.
+	if len(stored) > 0 {
+		if err := p.retry("record seen events", func() error { return p.issues.RecordSeenEvents(projectID, stored, r.Through) }); err != nil {
+			return false, err
+		}
+	}
+
+	// 5. Console messages, only after the rows can be queried.
 	if err := p.retry("enqueue console messages", func() error { return p.enqueueMessages(rows) }); err != nil {
 		return false, err
 	}
 
-	// 5. Pebble: move the cursor.
-	if err := p.retry("move processing cursor", func() error { return p.events.SetProcessingCursor(projectID, last) }); err != nil {
+	// 6. Pebble: move the cursor past the range.
+	if err := p.retry("move processing cursor", func() error { return p.events.SetProcessingCursor(projectID, r.Through) }); err != nil {
 		return false, err
-	}
-	if mark, ok := p.indexedUpTo[projectID]; ok && mark <= last {
-		delete(p.indexedUpTo, projectID)
 	}
 
 	return full, nil
@@ -306,7 +317,7 @@ func parseEvent(raw []byte) (map[string]interface{}, error) {
 	return payload, err
 }
 
-// issueWork derives an Event's DuckDB row from its raw payload, finding or
+// issueWork derives an Event's row from its raw payload, finding or
 // creating its Issue and reopening the Issue if it is resolved.
 func (p *Processor) issueWork(event models.Event) (models.Event, error) {
 	payload, err := parseEvent(event.RawJSON)
@@ -354,78 +365,24 @@ func (p *Processor) issueWork(event models.Event) (models.Event, error) {
 	}, nil
 }
 
-// indexRows appends the rows DuckDB doesn't already hold, in one transaction,
-// and returns the rows DuckDB holds after it.
-//
-// If DuckDB rejects a row, the rows are appended one at a time, each in its
-// own transaction and in UUID order. A row DuckDB rejects is retried, then
-// skipped. While DuckDB itself is failing, every append is retried with
-// backoff and no row is skipped.
-func (p *Processor) indexRows(projectID uint32, rows []models.Event) ([]models.Event, error) {
-	// rows are in UUID order, so the rows DuckDB may already hold come first.
-	held := 0
-	if mark, ok := p.indexedUpTo[projectID]; ok {
-		for held < len(rows) && rows[held].EventUUID <= mark {
-			held++
+// storeRows inserts the range's rows that the events table can hold, in one
+// insert, and returns them. A row it can't hold is skipped and logged; that
+// depends on the row alone, so a range processed again skips the same rows.
+// While ClickHouse fails, the insert is retried with backoff and the same
+// token, and no row is skipped.
+func (p *Processor) storeRows(r storage.EventRange, rows []models.Event) ([]models.Event, error) {
+	stored := make([]models.Event, 0, len(rows))
+	for _, row := range rows {
+		if err := storage.EventRowError(row); err != nil {
+			p.skip("store event", row, err)
+			continue
 		}
+		stored = append(stored, row)
 	}
-	indexed, err := p.heldRows(projectID, rows[:held])
-	if err != nil {
+	if err := p.retry("store events", func() error { return p.index.InsertEvents(r, stored) }); err != nil {
 		return nil, err
 	}
-	toAppend := rows[held:]
-	if len(toAppend) == 0 {
-		return indexed, nil
-	}
-
-	err = p.retry("index events", func() error { return p.writeRows(toAppend) })
-	if err == nil {
-		return append(indexed, toAppend...), nil
-	}
-	if !isContentError(err) {
-		return nil, err
-	}
-	for _, row := range toAppend {
-		skipped, err := p.attempt("index event", row, func() error { return p.writeRows([]models.Event{row}) })
-		if err != nil {
-			return nil, err
-		}
-		if !skipped {
-			indexed = append(indexed, row)
-		}
-	}
-	return indexed, nil
-}
-
-// heldRows returns the rows DuckDB holds out of rows it held past the cursor
-// at startup. The run before a crash may have skipped some of them.
-func (p *Processor) heldRows(projectID uint32, rows []models.Event) ([]models.Event, error) {
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	var held map[string]bool
-	err := p.retry("find indexed events", func() error {
-		var err error
-		held, err = p.index.HotUUIDsBetween(projectID, rows[0].EventUUID, rows[len(rows)-1].EventUUID)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return slices.DeleteFunc(slices.Clone(rows), func(row models.Event) bool { return !held[row.EventUUID] }), nil
-}
-
-// writeRows appends rows in one transaction. A failed append is a content
-// error if DuckDB still answers a query, and a store error if it doesn't.
-//
-// The appender's errors aren't typed, so a failure that hits only appends,
-// such as DuckDB reaching its memory limit, also counts as a content error.
-func (p *Processor) writeRows(rows []models.Event) error {
-	err := p.index.WriteBatch(rows)
-	if err != nil && p.index.Ping() == nil {
-		return contentError{err}
-	}
-	return err
+	return stored, nil
 }
 
 // enqueueMessages sends issue_created for the Issues created in this batch and
@@ -476,18 +433,23 @@ func (p *Processor) attempt(step string, event models.Event, fn func() error) (s
 			return false, err
 		}
 		if try == contentRetries {
-			logger.L.Error("Event processing skipped an event",
-				"step", step,
-				"project_id", event.ProjectID,
-				"event_uuid", event.EventUUID,
-				"key", hex.EncodeToString(storage.KeyForEvent(event.ProjectID, event.EventUUID)),
-				"error", err)
+			p.skip(step, event, err)
 			return true, nil
 		}
 		if !p.wait(&backoff) {
 			return false, errStoppedBeforeRetry
 		}
 	}
+}
+
+// skip logs an Event that a step skips for its content, with its key.
+func (p *Processor) skip(step string, event models.Event, err error) {
+	logger.L.Error("Event processing skipped an event",
+		"step", step,
+		"project_id", event.ProjectID,
+		"event_uuid", event.EventUUID,
+		"key", hex.EncodeToString(storage.KeyForEvent(event.ProjectID, event.EventUUID)),
+		"error", err)
 }
 
 // retry runs fn until it succeeds or returns a content error, backing off

@@ -30,6 +30,17 @@ class RegistrationsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "grace@example.com" ], Organization.find_by!(name: "SolidTrace").users.pluck(:email)
   end
 
+  test "the first to sign up is the instance admin, and a later sign-up isn't" do
+    sign_up("grace@example.com")
+    delete session_url
+    InstanceSetting.current.update!(sign_up_open: true)
+
+    sign_up("ada@example.com")
+
+    assert User.find_by!(email: "grace@example.com").instance_admin?
+    assert_not User.find_by!(email: "ada@example.com").instance_admin?
+  end
+
   test "without a Meta Organization, signing up joins no Organization" do
     sign_up("grace@example.com")
 
