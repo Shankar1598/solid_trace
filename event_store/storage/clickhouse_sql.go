@@ -281,10 +281,15 @@ func (s *ClickHouseSQL) userName(projectID uint32) string {
 
 // profileStatement makes the SQL users' settings profile: read-only, each
 // limit fixed, and the range settings changeable, empty until set.
+//
+// JSON and Dynamic columns are sent flattened: clickhouse-go 2.49 can't read
+// the form 26.8 sends a JSON column in once a sort has merged blocks of
+// several parts ("unsupported column type" naming a path).
 func (s *ClickHouseSQL) profileStatement() string {
 	empty := chsql.String(sqlTime(time.Unix(0, 0)))
 	return fmt.Sprintf(`CREATE SETTINGS PROFILE OR REPLACE %s SETTINGS
 		readonly = 1 CONST,
+		output_format_native_use_flattened_dynamic_and_json_serialization = 1 CONST,
 		max_execution_time = %s CONST,
 		max_memory_usage = %d CONST,
 		max_temporary_data_on_disk_size_for_query = %d CONST,

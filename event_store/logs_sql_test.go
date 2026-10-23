@@ -134,6 +134,31 @@ func TestSQLsLogsHoldTheProjectsLogsOfTheExplorersRange(t *testing.T) {
 	}
 }
 
+// attributes is an object of each Log's string, number and bool Attributes,
+// nested by their names' dots, and attrs_json a map of their arrays and
+// objects as JSON text, whichever inserts their Logs came in.
+func TestSQLReadsAttributesAsJSONAndTheJSONTextMap(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+	env.Clock.Set(languageAt(10, 29))
+	postAndProcess(t, env, logJSON(t, "page", languageAt(10, 1), map[string]any{
+		"page": "orders", "render_ms": 137.8, "viewport": map[string]any{"width": 768, "height": 1080}}))
+	postAndProcess(t, env, logJSON(t, "charge", languageAt(10, 2), map[string]any{
+		"declined": false, "customer": map[string]any{"id": "cus_1"}, "tags": []any{"checkout", "db"}}))
+	postAndProcess(t, env, logJSON(t, "status", languageAt(10, 3), map[string]any{"status": "200", "tags": "one"}))
+
+	_, rows := sqlTable(t, env, sqlRequest{SQL: "SELECT message, attributes, attrs_json FROM logs ORDER BY time", From: allTime.from, To: allTime.to})
+	want := []string{
+		`["page",{"page":"orders","render_ms":137.8,"viewport":{"height":1080,"width":768}},{}]`,
+		`["charge",{"customer":{"id":"cus_1"},"declined":false},{"tags":"[\"checkout\",\"db\"]"}]`,
+		`["status",{"status":"200","tags":"one"},{}]`,
+	}
+	if !slices.Equal(rows, want) {
+		t.Errorf("Expected each Log's Attributes\n want %v\n got  %v", want, rows)
+	}
+}
+
 // readableSQL asks for a Query's readable SQL, over all time.
 func readableSQL(t *testing.T, env *TestEnv, query string) string {
 	t.Helper()
