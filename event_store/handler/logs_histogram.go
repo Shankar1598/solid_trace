@@ -97,14 +97,12 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	limit := len(starts) * len(histogramLevels)
 	from, to := query.Range()
 	if !query.Filters() && bucket%time.Minute == 0 {
-		// Every Log counts, by minute: the counts kept by minute serve,
-		// except for the Logs from before the switch, which only their Log
-		// files hold. The buckets up to their end are counted from the
-		// Logs, as a Chart's are, so their ended hours come from the bin
-		// cache.
-		split := from
-		if end, ok := h.clickHouse.OldLogsEnd(projectID, from, to); ok {
-			split = earliestTime(bucketEnd(end, bucket), to)
+		// Every Log counts, by minute: the counts kept by minute serve from
+		// where they hold every Log. The buckets before it are counted from
+		// the Logs, as a Chart's are, so their ended hours come from the
+		// bin cache.
+		split := h.clickHouse.CountedByMinuteFrom(projectID, from, to, bucket)
+		if from.Before(split) {
 			counted, err = h.countByLevel(run, projectID, query.Histogram(bucket), from, split, limit)
 		}
 		if err == nil && split.Before(to) {
@@ -181,24 +179,6 @@ func (h *LogsHandler) countByLevel(run *run, projectID uint32, counts *logquery.
 		counted[i] = storage.LevelCount{Bucket: start, Level: level, Logs: n}
 	}
 	return counted, nil
-}
-
-// bucketEnd is the first start of a bucket of size bucket, counted from the
-// epoch, at or after t.
-func bucketEnd(t time.Time, bucket time.Duration) time.Time {
-	size, at := bucket.Microseconds(), t.UnixMicro()
-	end := at - ((at%size)+size)%size
-	if end < at {
-		end += size
-	}
-	return time.UnixMicro(end).UTC()
-}
-
-func earliestTime(a, b time.Time) time.Time {
-	if b.Before(a) {
-		return b
-	}
-	return a
 }
 
 // bucketStarts are the starts of the buckets of size bucket, counted from the

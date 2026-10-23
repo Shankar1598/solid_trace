@@ -90,6 +90,31 @@ func (s *ClickHouseLogs) CountLogsByLevel(ctx context.Context, projectID uint32,
 	return counts, err
 }
 
+// CountedByMinuteFrom is where, in [from, to), the counts by minute that
+// CountLogsByLevel reads hold every Log of a Project. It is from, unless
+// Logs from before the switch, which only their Log files hold, may be in the
+// range: then it is the start of the first bucket of size after them, at most
+// to. The buckets before it must be counted from the Logs.
+func (s *ClickHouseLogs) CountedByMinuteFrom(projectID uint32, from, to time.Time, size time.Duration) time.Time {
+	first, last := storableRange(from, to)
+	end, ok := s.old.end(projectID, first, last)
+	if !ok {
+		return from
+	}
+	return earliestTime(bucketEnd(end, size), to)
+}
+
+// bucketEnd is the first start of a bucket of size, counted from the epoch,
+// at or after t.
+func bucketEnd(t time.Time, size time.Duration) time.Time {
+	length, at := size.Microseconds(), t.UnixMicro()
+	end := at - ((at%length)+length)%length
+	if end < at {
+		end += length
+	}
+	return time.UnixMicro(end).UTC()
+}
+
 func (s *ClickHouseLogs) scanLevelCounts(ctx context.Context, query string) ([]LevelCount, error) {
 	rows, err := s.conn.Query(ctx, query)
 	if err != nil {

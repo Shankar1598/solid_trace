@@ -97,13 +97,6 @@ type SQLError struct {
 func (e *SQLError) Error() string { return e.Err.Error() }
 func (e *SQLError) Unwrap() error { return e.Err }
 
-// ClickHouse's error codes that SQL queries tell apart.
-const (
-	chTimeoutExceeded      = 159
-	chUnknownUser          = 192
-	chAuthenticationFailed = 516
-)
-
 // ClickHouseSQL runs SQL queries on ClickHouse, each as its Project's SQL
 // user.
 type ClickHouseSQL struct {
@@ -138,7 +131,7 @@ func (s *ClickHouseSQL) RunSQL(ctx context.Context, projectID uint32, from, to t
 	result, err := s.run(ctx, projectID, from, to, query, limit)
 	// The user was dropped or its password changed since this process made
 	// it, as by another EventStore on the same database: make it again.
-	if code, ok := exceptionCode(err); ok && (code == chAuthenticationFailed || code == chUnknownUser) {
+	if exception, ok := clickHouseException(err); ok && (exception.Code == chAuthenticationFailed || exception.Code == chUnknownUser) {
 		s.forget(projectID)
 		result, err = s.run(ctx, projectID, from, to, query, limit)
 	}
@@ -168,15 +161,15 @@ func (s *ClickHouseSQL) run(ctx context.Context, projectID uint32, from, to time
 	defer cancel()
 	defer context.AfterFunc(ctx, cancel)()
 	queryCtx = clickhouse.Context(queryCtx, clickhouse.WithSettings(clickhouse.Settings{
-		sqlFromSetting: clickhouse.CustomSetting{Value: sqlTime(from)},
-		sqlToSetting:   clickhouse.CustomSetting{Value: sqlTime(to)},
+		sqlFromSetting: clickhouse.CustomSetting{Value: chsql.TimeText(from)},
+		sqlToSetting:   clickhouse.CustomSetting{Value: chsql.TimeText(to)},
 	}))
 
 	began := time.Now()
 	result, err := readSQL(queryCtx, conn, query, limit)
 	recordStatement(ctx, query, began, err)
-	if code, ok := exceptionCode(err); ok && code != chAuthenticationFailed && code != chUnknownUser {
-		return SQLResult{}, &SQLError{Err: errors.New(exceptionMessage(err)), Stopped: code == chTimeoutExceeded}
+	if exception, ok := clickHouseException(err); ok && exception.Code != chAuthenticationFailed && exception.Code != chUnknownUser {
+		return SQLResult{}, &SQLError{Err: errors.New(exception.Message), Stopped: exception.Code == chTimeoutExceeded}
 	}
 	return result, err
 }
@@ -215,28 +208,6 @@ func readSQL(ctx context.Context, conn clickhouse.Conn, query string, limit int)
 		return result, nil
 	}
 	return result, rows.Err()
-}
-
-// sqlTime writes t as the range settings hold it.
-func sqlTime(t time.Time) string {
-	return t.UTC().Format("2006-01-02 15:04:05.000000")
-}
-
-// exceptionCode is the code of the ClickHouse exception err is, if it is
-// one.
-func exceptionCode(err error) (int32, bool) {
-	var exception *clickhouse.Exception
-	if errors.As(err, &exception) {
-		return exception.Code, true
-	}
-	return 0, false
-}
-
-// exceptionMessage is ClickHouse's message for the exception err is.
-func exceptionMessage(err error) string {
-	var exception *clickhouse.Exception
-	errors.As(err, &exception)
-	return exception.Message
 }
 
 // user is projectID's SQL user, made if this process hasn't made it yet,
@@ -307,7 +278,7 @@ func dropSQLUser(ctx context.Context, conn driver.Conn, database string, project
 // the form 26.8 sends a JSON column in once a sort has merged blocks of
 // several parts ("unsupported column type" naming a path).
 func (s *ClickHouseSQL) profileStatement() string {
-	empty := chsql.String(sqlTime(time.Unix(0, 0)))
+	empty := chsql.String(chsql.TimeText(time.Unix(0, 0)))
 	return fmt.Sprintf(`CREATE SETTINGS PROFILE OR REPLACE %s SETTINGS
 		readonly = 1 CONST,
 		output_format_native_use_flattened_dynamic_and_json_serialization = 1 CONST,
