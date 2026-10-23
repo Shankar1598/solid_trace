@@ -1,5 +1,8 @@
 #!/usr/bin/env sh
 
+# The ClickHouse server EventStore keeps Logs and Events in, shared with the Go tests.
+bin/clickhouse-dev || exit 1
+
 cd event_store
 vrl/build
 go build -gcflags="all=-N -l" -o bin/event_store main.go

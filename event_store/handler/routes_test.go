@@ -70,7 +70,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 		t.Fatalf("DuckDB WriteBatch failed: %v", err)
 	}
 
-	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, answers{})
 
 	ingestApp := fiber.New()
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
@@ -82,6 +82,11 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 }
 
 // sqlOn is an instance whose operator has turned SQL queries on.
+// answers is a store that always answers /health's ping.
+type answers struct{}
+
+func (answers) Ping() error { return nil }
+
 type sqlOn struct{}
 
 func (sqlOn) Instance() (storage.InstanceSettings, error) {

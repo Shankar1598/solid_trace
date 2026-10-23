@@ -38,6 +38,14 @@ func main() {
 		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
 	defer duckdbWriter.Close()
+
+	// Nothing reads or writes ClickHouse yet; /health pings it.
+	clickHouse, err := storage.OpenClickHouse(cfg.ClickHouse, cfg.ObjectStore)
+	if err != nil {
+		logger.L.Fatal("Failed to open ClickHouse", "error", err)
+	}
+	defer clickHouse.Close()
+
 	// The Log files and the Event archive share the bucket, if one is set.
 	// Nothing here waits on the bucket, so ingest starts while it is down:
 	// the archive consumer lists the Event archive in it in the background.
@@ -163,7 +171,7 @@ func main() {
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
 	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
-	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
 	app := handler.NewIngestApp(ingestHandler, healthHandler)
