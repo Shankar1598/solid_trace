@@ -37,7 +37,7 @@ func TestSQLThatWouldChangeAnythingIsRefusedBeforeItRuns(t *testing.T) {
 	// field list does.
 	keyCounts := func() []storage.AttributeCount {
 		t.Helper()
-		counts, _, err := env.LogStore.AttributeCounts(context.Background(), 123, allTime.from, allTime.to, 1000)
+		counts, _, err := env.ClickHouseLogs.AttributeCounts(context.Background(), 123, allTime.from, allTime.to, 1000)
 		if err != nil {
 			t.Fatalf("AttributeCounts: %v", err)
 		}

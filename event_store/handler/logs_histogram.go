@@ -100,7 +100,7 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
-		Where:     counts.Where,
+		Where:     func(cols storage.LogColumns) string { return counts.Where(cols) },
 		Select:    counts.Select,
 		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
 	}

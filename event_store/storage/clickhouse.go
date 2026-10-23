@@ -28,6 +28,7 @@ type clickHouseMigration struct {
 // clickHouseMigrations are the steps, in version order. Append a step; never
 // change one that has shipped.
 var clickHouseMigrations = []clickHouseMigration{
+	logsTableMigration,
 	eventsTableMigration,
 }
 

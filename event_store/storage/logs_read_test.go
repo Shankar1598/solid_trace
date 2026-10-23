@@ -63,16 +63,11 @@ func TestAScanPastItsContextIsStoppedPartWayAndItsConnectionStillReads(t *testin
 	}
 	slowTable := count
 	slowTable.Query = func(string) string { return slowSQL }
-	slowRows := LogScan{
-		ProjectID: 123, From: from, To: to, Limit: 10,
-		Where: func(LogColumns) string { return "(" + slowSQL + ") IS NOT NULL" },
-	}
 	scans := []struct {
 		name string
 		scan func(context.Context) error
 	}{
 		{"a table", func(ctx context.Context) error { _, err := store.ScanLogTable(ctx, slowTable); return err }},
-		{"Log rows", func(ctx context.Context) error { _, err := store.ScanLogs(ctx, slowRows); return err }},
 	}
 	for _, s := range scans {
 		// The read begins well within 250 ms, so the context ends while
@@ -96,10 +91,6 @@ func TestAScanPastItsContextIsStoppedPartWayAndItsConnectionStillReads(t *testin
 		table, err := store.ScanLogTable(context.Background(), count)
 		if err != nil || len(table) != 1 || fmt.Sprint(table[0]) != "[3]" {
 			t.Errorf("After stopping %s, expected a table counting 3 Logs, got %v (%v)", s.name, table, err)
-		}
-		page, err := store.ScanLogs(context.Background(), LogScan{ProjectID: 123, From: from, To: to, Limit: 10})
-		if err != nil || len(page.Logs) != 3 {
-			t.Errorf("After stopping %s, expected 3 Logs, got %d (%v)", s.name, len(page.Logs), err)
 		}
 	}
 }
