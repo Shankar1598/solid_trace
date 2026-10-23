@@ -30,6 +30,7 @@ type clickHouseMigration struct {
 var clickHouseMigrations = []clickHouseMigration{
 	logsTableMigration,
 	eventsTableMigration,
+	logMinuteCountsMigration,
 }
 
 // clickHousePingTimeout bounds a health check of ClickHouse.

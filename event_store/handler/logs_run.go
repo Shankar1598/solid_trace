@@ -89,7 +89,10 @@ func (r *run) end() {
 // timedOut reports whether the run has gone past its timeout, so that a
 // scan that failed was stopped.
 func (r *run) timedOut() bool {
-	return errors.Is(r.ctx.Err(), context.DeadlineExceeded)
+	// clickhouse-go gives its connection the run's deadline, which can
+	// fail a read a moment before the context says it is past.
+	deadline, ok := r.ctx.Deadline()
+	return errors.Is(r.ctx.Err(), context.DeadlineExceeded) || ok && !time.Now().Before(deadline)
 }
 
 // shorterRange is the advice for a run of a time range stopped at its

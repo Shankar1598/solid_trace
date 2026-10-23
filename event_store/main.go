@@ -47,6 +47,7 @@ func main() {
 	}
 	defer clickHouse.Close()
 	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+	clickHouseLogs.UseBinCache(cfg.LogsBinCacheBytes)
 
 	// The Log files are kept in the bucket, if one is set. Nothing here waits
 	// on the bucket, so ingest starts while it is down.
@@ -68,7 +69,6 @@ func main() {
 	} else if err := logStore.UseLocalDiskOnly(); err != nil {
 		logger.L.Fatal("Failed to keep Log files on local disk only", "error", err)
 	}
-	logStore.UseBinCache(cfg.LogsBinCacheBytes)
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
 	if err != nil {

@@ -53,8 +53,8 @@ type TestEnv struct {
 	BatchLock        *sync.Mutex
 	LogStore         *storage.LogStore
 	// ClickHouseLogs is the Logs in ClickHouse, which Log processing
-	// inserts into and Log rows are read from. LogStore is DuckDB's, which
-	// tables still read.
+	// inserts into and Log rows, tables and histograms are read from, with
+	// its bin cache. LogStore is DuckDB's, which SQL still reads.
 	ClickHouseLogs *storage.ClickHouseLogs
 	// FlakyLogs is ClickHouseLogs as Log processing sees it, which a test
 	// can break.
@@ -421,7 +421,6 @@ func (env *TestEnv) open(t *testing.T) {
 	} else if err := logStore.UseLocalDiskOnly(); err != nil {
 		t.Fatalf("Failed to keep Log files on local disk only: %v", err)
 	}
-	logStore.UseBinCache(env.BinCacheBytes)
 	if env.BusyProjectLogs > 0 {
 		logStore.UseBusyProjectLogs(env.BusyProjectLogs)
 	}
@@ -453,6 +452,7 @@ func (env *TestEnv) open(t *testing.T) {
 	env.ClickHouse = clickHouse
 	env.LogStore = logStore
 	env.ClickHouseLogs = storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+	env.ClickHouseLogs.UseBinCache(env.BinCacheBytes)
 	env.FlakyLogs = &flakyLogStore{ClickHouseLogs: env.ClickHouseLogs}
 	env.SQLiteWriter = sqliteWriter
 	env.Issues = &flakyIssueRepository{SQLiteWriter: sqliteWriter}
