@@ -85,8 +85,10 @@ const logsColumnList = "project_id, id, time, level, service, environment, messa
 // which the Fields list reads. Log processing's cursors are in Pebble, which
 // a read of the Logs ingested after a batch reads too.
 type ClickHouseLogs struct {
-	conn   driver.Conn
-	pebble *PebbleWriter
+	conn driver.Conn
+	// database is EventStore's, which names the SQL users.
+	database string
+	pebble   *PebbleWriter
 	// bucket is whether the logs table's parts move to a bucket.
 	bucket bool
 
@@ -118,7 +120,7 @@ const keptCountDays = 64
 // NewClickHouseLogs reads and writes Logs in ch, with Log processing's
 // cursors in pebble.
 func NewClickHouseLogs(ch *ClickHouse, pebble *PebbleWriter) *ClickHouseLogs {
-	return &ClickHouseLogs{conn: ch.Conn(), pebble: pebble, bucket: ch.HasBucket(), counts: map[projectDay]map[typedKey]int64{}}
+	return &ClickHouseLogs{conn: ch.Conn(), database: ch.Database(), pebble: pebble, bucket: ch.HasBucket(), counts: map[projectDay]map[typedKey]int64{}}
 }
 
 // Ping checks that ClickHouse answers.
