@@ -25,7 +25,7 @@ func newTestDuckDB(t *testing.T) *DuckDBWriter {
 	t.Helper()
 	logger.Init()
 	dir := t.TempDir()
-	w, err := NewDuckDBWriter(filepath.Join(dir, "events.duckdb"), filepath.Join(dir, "parquet"), "", "")
+	w, err := NewDuckDBWriter(filepath.Join(dir, "events.duckdb"), "", "")
 	if err != nil {
 		t.Fatalf("NewDuckDBWriter: %v", err)
 	}

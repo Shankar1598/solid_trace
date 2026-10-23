@@ -93,8 +93,7 @@ func (b *flakyBucket) object(projectID uint32, at time.Time, name string) string
 }
 
 // setupBucketTestEnv is setupTestEnv with the Log files kept in a bucket too,
-// each local copy for localCacheHours after its hour ends, and the Event
-// archive, listed as the archive consumer does when EventStore starts.
+// each local copy for localCacheHours after its hour ends.
 func setupBucketTestEnv(t *testing.T, localCacheHours int) (*TestEnv, *flakyBucket) {
 	t.Helper()
 	var bucket *flakyBucket
@@ -103,7 +102,6 @@ func setupBucketTestEnv(t *testing.T, localCacheHours int) (*TestEnv, *flakyBuck
 		bucket = &flakyBucket{ObjectStore: storage.NewDirStore(dir), dir: dir}
 		env.Bucket, env.LocalCacheHours = bucket, localCacheHours
 	})
-	env.EnsureEventsView(t)
 	return env, bucket
 }
 

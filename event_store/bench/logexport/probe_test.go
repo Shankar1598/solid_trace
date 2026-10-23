@@ -169,7 +169,7 @@ func envInt(t *testing.T, name string, fallback int) int {
 // and its LogStore.
 func openStore(t *testing.T, dir string, threads int) (*storage.DuckDBWriter, *storage.LogStore) {
 	t.Helper()
-	events, err := storage.NewDuckDBWriter(fmt.Sprintf("%s?threads=%d", filepath.Join(dir, "events.duckdb"), threads), filepath.Join(dir, "parquet"), "", "2GB")
+	events, err := storage.NewDuckDBWriter(fmt.Sprintf("%s?threads=%d", filepath.Join(dir, "events.duckdb"), threads), "", "2GB")
 	if err != nil {
 		t.Fatal(err)
 	}

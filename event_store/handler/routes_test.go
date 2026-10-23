@@ -16,6 +16,7 @@ import (
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/clickhousetest"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
@@ -33,8 +34,9 @@ func newTestApps(t *testing.T, events ...*models.Event) testApps {
 	return newTestAppsWithStores(t, events, true)
 }
 
-// newTestAppsWithStores writes the events to Pebble, and to DuckDB only with
-// indexed set, to model events that DuckDB has not yet ingested.
+// newTestAppsWithStores writes the events to Pebble, and to ClickHouse only
+// with indexed set, to model events that Event processing has not yet stored.
+// The package's ClickHouse database starts empty.
 func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) testApps {
 	t.Helper()
 	logger.Init()
@@ -46,7 +48,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	}
 	t.Cleanup(pebbleWriter.Close)
 
-	duckdbWriter, err := storage.NewDuckDBWriter(filepath.Join(tmpDir, "events.duckdb"), filepath.Join(tmpDir, "parquet"), "", "")
+	duckdbWriter, err := storage.NewDuckDBWriter(filepath.Join(tmpDir, "events.duckdb"), "", "")
 	if err != nil {
 		t.Fatalf("Failed to create DuckDB: %v", err)
 	}
@@ -57,17 +59,27 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 		t.Fatalf("Failed to attach logs DuckDB: %v", err)
 	}
 
-	var duckdbEvents []models.Event
+	clickhousetest.Empty(t)
+	clickHouse, err := storage.OpenClickHouse(clickhousetest.Config(), nil)
+	if err != nil {
+		t.Fatalf("Failed to open ClickHouse: %v", err)
+	}
+	t.Cleanup(func() { clickHouse.Close() })
+
+	var rows []models.Event
 	for _, event := range events {
 		if err := pebbleWriter.WriteEvent(event); err != nil {
 			t.Fatalf("Pebble WriteEvent failed: %v", err)
 		}
 		if indexed {
-			duckdbEvents = append(duckdbEvents, *event)
+			rows = append(rows, *event)
 		}
 	}
-	if err := duckdbWriter.WriteBatch(duckdbEvents); err != nil {
-		t.Fatalf("DuckDB WriteBatch failed: %v", err)
+	if len(rows) > 0 {
+		r := storage.EventRange{Through: rows[len(rows)-1].EventUUID}
+		if err := clickHouse.InsertEvents(r, rows); err != nil {
+			t.Fatalf("Inserting the Events failed: %v", err)
+		}
 	}
 
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, answers{})
@@ -76,7 +88,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, duckdbWriter), handler.NewLogsHandler(logStore, sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, clickHouse), handler.NewLogsHandler(logStore, sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
 }
@@ -221,7 +233,7 @@ func TestGetEventIsScopedToProject(t *testing.T) {
 	})
 }
 
-func TestGetEventDoesNotWaitForDuckDB(t *testing.T) {
+func TestGetEventDoesNotWaitForEventProcessing(t *testing.T) {
 	event := newEvent(1)
 	app := newTestAppsWithStores(t, []*models.Event{event}, false).query
 
