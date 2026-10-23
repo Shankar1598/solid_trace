@@ -79,6 +79,72 @@ func TestAStoreWithoutDuckDBDataStartsAndStartsAgain(t *testing.T) {
 	}
 }
 
+// writeMarker writes a prepared folder's marker, as prepare-clickhouse
+// does at the end of a run.
+func writeMarker(t *testing.T, dir string, preparedAt time.Time) {
+	t.Helper()
+	marker := fmt.Sprintf(`{"release":"v0.9.1","prepared_at":%q}`, preparedAt.Format(time.RFC3339))
+	if err := os.WriteFile(filepath.Join(dir, "marker.json"), []byte(marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDuckDBDataStartsOncePreparedAndStopsTheStartAgainAfterARollback(t *testing.T) {
+	logger.Init()
+	clickhousetest.Empty(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "logs.duckdb"), []byte("the DuckDB release's Logs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	copyDir(t, filepath.Join(preparedFixture, "prepared"), filepath.Join(dir, "prepared"))
+	if err := startOn(t, dir); err != nil {
+		t.Fatalf("Expected a prepared store to start, got %v", err)
+	}
+	if err := startOn(t, dir); err != nil {
+		t.Fatalf("Expected it to start again, got %v", err)
+	}
+
+	// The DuckDB release starts again on it, which removes the marker.
+	if err := os.Remove(filepath.Join(dir, "prepared", "marker.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := startOn(t, dir); err == nil || !strings.Contains(err.Error(), "prepare-clickhouse") {
+		t.Fatalf("Expected the start after a rollback to stop and name prepare-clickhouse, got %v", err)
+	}
+	// Prepared again, it starts.
+	writeMarker(t, filepath.Join(dir, "prepared"), switchTime.Add(time.Hour))
+	if err := startOn(t, dir); err != nil {
+		t.Fatalf("Expected the store prepared again to start, got %v", err)
+	}
+}
+
+func TestEachMarkerIsLoadedOnceReplacingTheLastOnesFiles(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixture(t, env)
+	})
+	defer env.Cleanup()
+	first, second := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	firstDay := []attributeCount{{"user", "string", 4}, {"duration_ms", "number", 2}, {"plan", "string", 2}, {"cached", "bool", 1}}
+	secondDay := []attributeCount{{"user", "string", 2}, {"cached", "bool", 1}, {"duration_ms", "number", 1}, {"plan", "string", 1}}
+
+	// Retention deletes the 1st's files and their rows.
+	env.Clock.Set(time.Date(2026, 11, 1, 0, 30, 0, 0, time.UTC))
+	env.DeleteLogsPastRetention(t)
+	assertAttributes(t, getFields(t, env, 3, first, second, ""), nil, "the 1st, past Retention")
+
+	// The marker loaded isn't loaded again.
+	env.Reopen(t)
+	assertAttributes(t, getFields(t, env, 3, first, second, ""), nil, "the 1st, after a restart")
+
+	// A marker of another run, after a rollback, is loaded in place of the
+	// last one's files: what it prepared is read, once.
+	writeMarker(t, env.OldLogFiles.PreparedDir, switchTime.Add(time.Hour))
+	env.Reopen(t)
+	assertAttributes(t, getFields(t, env, 3, first, second, ""), firstDay, "the 1st, prepared again")
+	assertAttributes(t, getFields(t, env, 3, second, second.Add(time.Hour), ""), secondDay, "the 2nd, prepared again")
+}
+
 // preparedFixture is an install prepare-clickhouse prepared, written by the
 // last DuckDB release's tests: its prepared/, its Log file store and its
 // bucket's objects, and logs.ndjson, the Logs they hold.
