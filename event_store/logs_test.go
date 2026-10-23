@@ -798,7 +798,7 @@ func TestAttributesWithAwkwardNamesAreFoundAndReadBack(t *testing.T) {
 	// Names that differ only in case, a name with a quote, a NUL or a dot, a
 	// name that is a prefix of another, and one name carrying two types.
 	postAndProcess(t, env,
-		`{"message": "one", "time": "2026-10-02T11:59:00Z", "User": "a", "user": "b", "code": 5, "say \"hi\"": "q", "nul\u0000key": "n", "tags": "x", "tags.host": "h", "back`+"`"+`tick": "b", "C:\\dir": "d"}`,
+		`{"message": "one", "time": "2026-10-02T11:59:00Z", "User": "a", "user": "b", "code": 5, "say \"hi\"": "q", "nul\u0000key": "n", "tags": "x", "tags.host": "h", "back`+"`"+`tick": "b", "C:\\dir": "d", "": "empty", "a..b": "dots", ".lead": "l"}`,
 		`{"message": "two", "time": "2026-10-02T11:59:01Z", "code": "E5", "tags": {"host": "h2"}}`)
 
 	queries := map[string][]string{
@@ -813,11 +813,14 @@ func TestAttributesWithAwkwardNamesAreFoundAndReadBack(t *testing.T) {
 		`where ['tags.host'] == "h2"`:  {"two"},
 		"where ['back`tick'] == \"b\"": {"one"},
 		`where ['C:\\dir'] == "d"`:     {"one"},
+		`where [''] == "empty"`:        {"one"},
+		`where ['a..b'] == "dots"`:     {"one"},
+		`where ['.lead'] == "l"`:       {"one"},
 	}
 	check := func(when string) {
 		t.Helper()
 		attributes := attributesByMessage(latestLogs(t, env, 123, 10))
-		want := map[string]any{"User": "a", "user": "b", "code": 5.0, "say \"hi\"": "q", "nul\u0000key": "n", "tags": "x", "tags.host": "h", "back`tick": "b", `C:\dir`: "d"}
+		want := map[string]any{"User": "a", "user": "b", "code": 5.0, "say \"hi\"": "q", "nul\u0000key": "n", "tags": "x", "tags.host": "h", "back`tick": "b", `C:\dir`: "d", "": "empty", "a..b": "dots", ".lead": "l"}
 		if got := attributes["one"]; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: expected %v, got %v", when, want, got)
 		}
