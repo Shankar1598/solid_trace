@@ -169,8 +169,8 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
 ### Logs from before the switch
 
 - **The old Log files stay where they are.** ClickHouse reads them in place with `s3()` from the bucket, or `file()` for local files, with the Log file store mounted read-only into the ClickHouse container. Nothing is imported.
-- **Loading:** at its first start on a prepared install, EventStore loads the prepared manifest, promoted sets and key counts (see Cutover) into ClickHouse tables of old Log files, old promoted sets and key counts, and records the switch time.
-- **Reading:** a read whose range reaches before the switch time also reads that range's old files.
+- **Loading:** at its first start on a prepared install, EventStore loads the prepared manifest, promoted sets and key counts (see Cutover) into ClickHouse tables of old Log files, old promoted sets and key counts, and records the marker it loaded. A marker other than the recorded one (the install was rolled back to the DuckDB release and prepared again) is loaded again, replacing the old tables.
+- **Reading:** a read also reads the old files whose time span (their `min_time`/`max_time`) overlaps its range. The marker's time isn't a cutoff: prepare files the current hour and Logs up to an hour ahead, so old files can reach past it.
   - Each day's files are read with that day's promoted set. A promoted key reads `coalesce(column, map[key])`, as `LogColumns.Attribute` does now. A file without a column the day's set has reads it as NULL.
   - Old files and `logs` are read together, since a late Log of an old hour inserted after the switch lands in `logs`.
 - **Old hours' bins** are cached like any other: their generation changes only when Retention or Project deletion deletes their files.
@@ -229,7 +229,7 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
   Events aren't touched. Run again, it does nothing.
 - **The ClickHouse release:**
   - **`deploy/install`**, finding DuckDB data with no marker, runs `prepare-clickhouse` from the previous release's image (pulled from ghcr.io) before starting the new stack.
-  - **EventStore**, finding `logs.duckdb` with no marker, refuses to start and names the command. With a marker, it loads the prepared files once (see "Logs from before the switch") and records that in ClickHouse.
+  - **EventStore**, finding `logs.duckdb` with no marker, refuses to start and names the command. With a marker it hasn't loaded, it loads the prepared files (see "Logs from before the switch") and records the marker in ClickHouse.
   - `logs.duckdb` and `events.duckdb` are left on disk for the operator to delete.
 - **The prepared files are the contract between the two releases.** A small set written by the command is committed as test data for the ClickHouse release's tests.
 

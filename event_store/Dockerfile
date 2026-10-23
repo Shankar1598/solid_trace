@@ -69,6 +69,11 @@ RUN apt-get update && apt-get install -y \
 COPY --from=extensions /usr/local/lib/solidtrace/duckdb_extensions /usr/local/lib/solidtrace/duckdb_extensions
 COPY --from=builder /app/event_store .
 
+# The release, which prepare-clickhouse's marker names. The release workflow
+# sets it to the tag.
+ARG SOLIDTRACE_VERSION=dev
+ENV SOLIDTRACE_VERSION=$SOLIDTRACE_VERSION
+
 EXPOSE 4000
 
 CMD ["./event_store"]
