@@ -8,7 +8,8 @@ import (
 )
 
 // TestMain runs the handler tests with a database of their own on the dev
-// ClickHouse (bin/clickhouse-dev), where the Event reads read.
+// ClickHouse (bin/clickhouse-dev), where the Event reads and the logs routes
+// read.
 func TestMain(m *testing.M) {
 	os.Exit(clickhousetest.Main(m))
 }

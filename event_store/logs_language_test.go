@@ -38,16 +38,21 @@ func seedLanguageLogs(t *testing.T, env *TestEnv) {
 	env.Clock.Set(languageAt(11, 30))
 }
 
-// exportLanguageLogs moves hour 10 and the day before to files, and adds fy,
-// a late Log of 10:45 beside hour 10's file.
-func exportLanguageLogs(t *testing.T, env *TestEnv) {
+// postLateLanguageLog adds fy, a Log of 10:45 sent at 12:05.
+func postLateLanguageLog(t *testing.T, env *TestEnv) {
 	t.Helper()
 	env.Clock.Set(languageAt(12, 5))
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, languageAt(10, 0), 1)
 	postAndProcess(t, env, logJSON(t, "fy", languageAt(10, 45), map[string]any{
 		"status": 200, "user": "fy", "duration": 10, "path": "/api/users/7", "service": "api"}))
 }
+
+// Until tables and SQL mode move to ClickHouse, in tickets 04 and 07, the
+// root tests skip their checks of a Query's table, and of its Readable SQL
+// run in SQL mode. These turn them back on.
+const (
+	tablesOnClickHouse = false // 04
+	sqlOnClickHouse    = false // 07
+)
 
 func TestWhereComparesMatchesAndTestsFields(t *testing.T) {
 	env := setupTestEnv(t)
@@ -85,9 +90,9 @@ func TestWhereComparesMatchesAndTestsFields(t *testing.T) {
 	cases[`where path !startswith_cs "/api"`] = []string{"ed", "bob", "di"}
 	cases[`where user !~ "BOB"`] = []string{"ed", "cy", "ada", "di"}
 	cases[`where -duration < -500 or duration % 100 == 20`] = []string{"ed", "ada"}
-	assertQueries(t, env, cases, "in the hot table")
+	assertQueries(t, env, cases, "once stored")
 
-	exportLanguageLogs(t, env)
+	postLateLanguageLog(t, env)
 	cases[`where user !~ "BOB"`] = []string{"ed", "fy", "cy", "ada", "di"}
 	cases[`where path contains "USERS"`] = []string{"ed", "fy", "ada"}
 	cases[`where path startswith "/api"`] = []string{"ed", "fy", "cy", "ada"}
@@ -101,7 +106,7 @@ func TestWhereComparesMatchesAndTestsFields(t *testing.T) {
 	cases[`where isempty(note)`] = []string{"fy", "cy", "bob", "ada", "di"}
 	cases[`where isnotempty(status)`] = []string{"ed", "fy", "bob", "ada", "di"}
 	cases[`where duration > 100 and path contains "api"`] = []string{"ed", "cy", "ada"}
-	assertQueries(t, env, cases, "across files and a late Log")
+	assertQueries(t, env, cases, "with a late Log")
 }
 
 func TestContainsFindsTextInArrays(t *testing.T) {
@@ -121,17 +126,19 @@ func TestContainsFindsTextInArrays(t *testing.T) {
 		`where tags !contains "db"`:          {"untagged", "named"},
 		`where tags !contains_cs "Checkout"`: {"untagged", "named"},
 	}
-	assertQueries(t, env, cases, "in the hot table")
+	assertQueries(t, env, cases, "once stored")
 	for query, want := range cases {
+		if !sqlOnClickHouse {
+			break
+		}
 		_, rows := sqlTable(t, env, sqlRequest{SQL: readableSQL(t, env, query), From: allTime.from, To: allTime.to})
 		if len(rows) != len(want) {
 			t.Errorf("Readable SQL of %s: expected %d rows, got %v", query, len(want), rows)
 		}
 	}
 
-	env.Clock.Set(languageAt(12, 5))
-	env.ExportLogs(t)
-	assertQueries(t, env, cases, "in files")
+	env.Reopen(t)
+	assertQueries(t, env, cases, "after a restart")
 }
 
 func TestWhereOnTimeNarrowsTheRangeButNeverWidensIt(t *testing.T) {
@@ -202,9 +209,9 @@ func TestAWhereOnTimeOutsideTheRangeGivesAnEmptyTableAndHistogram(t *testing.T) 
 			t.Errorf("%s: expected the histogram to count no Logs, got %d", when, answer.Count)
 		}
 	}
-	check("in the hot table")
-	exportLanguageLogs(t, env)
-	check("in files")
+	check("once stored")
+	postLateLanguageLog(t, env)
+	check("with a late Log")
 }
 
 // tableAnswer is a run's answer for a Query that returns a table.

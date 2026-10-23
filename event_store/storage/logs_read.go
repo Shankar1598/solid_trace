@@ -70,47 +70,6 @@ func (s *LogStore) beginRead(ctx context.Context, projectID uint32, from, to tim
 	})
 }
 
-// beginIngestedRead begins a read of a Project's Logs ingested after the Log
-// batch after: it reads the Project's Log processing cursor, and lists the
-// files that hold a later batch. Its hours are those of the files, and those
-// between the oldest and the newest Log of a later batch in the hot table.
-// It reads nothing more when no batch after after is up to the cursor. The
-// caller must end it.
-func (s *LogStore) beginIngestedRead(ctx context.Context, projectID uint32, after uuid.UUID) (*logRead, error) {
-	return s.startRead(ctx, projectID, func(r *logRead) (map[time.Time][]logFile, error) {
-		var err error
-		if r.cursor, err = logProcessingCursor(r.ctx, r.conn, r.projectID); err != nil {
-			return nil, err
-		}
-		if !batchesBetween(after, r.cursor) {
-			return nil, nil
-		}
-		files, err := listLogFilesAfterBatch(r.ctx, r.conn, r.projectID, after)
-		if err != nil {
-			return nil, err
-		}
-		hours := map[time.Time]bool{}
-		for hour := range files {
-			hours[hour] = true
-		}
-		if r.hot {
-			var oldest, newest sql.NullTime
-			err := queryReadRow(r.ctx, r.conn, fmt.Sprintf("SELECT min(time), max(time) FROM %s.%s WHERE %s",
-				logsCatalog, hotTable(r.projectID), batchWindow(after, r.cursor)), &oldest, &newest)
-			if err != nil {
-				return nil, err
-			}
-			if oldest.Valid {
-				for hour := oldest.Time.UTC().Truncate(time.Hour); !hour.After(newest.Time.UTC()); hour = hour.Add(time.Hour) {
-					hours[hour] = true
-				}
-			}
-		}
-		r.hours = newestFirst(hours)
-		return files, nil
-	})
-}
-
 // startRead begins a read of a Project's Logs, with the files list returns
 // and the hours it sets. Its queries stop when ctx ends. The caller must end
 // it.

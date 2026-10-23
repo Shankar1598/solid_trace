@@ -170,7 +170,7 @@ func TestAbortDropsALogAndABatchLeftEmptyStillMovesTheCursor(t *testing.T) {
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"signed in"}) {
 		t.Errorf("Expected only [signed in] stored, got %v", got)
 	}
-	if cursor, err := env.LogStore.LogProcessingCursor(123); err != nil || cursor != batches[1].ID {
+	if cursor, err := env.PebbleWriter.LogProcessingCursor(123); err != nil || cursor != batches[1].ID {
 		t.Errorf("Expected the cursor past the batch left empty, %s, got %s (%v)", batches[1].ID, cursor, err)
 	}
 }

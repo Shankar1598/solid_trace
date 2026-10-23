@@ -82,13 +82,15 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 		}
 	}
 
+	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, answers{})
 
 	ingestApp := fiber.New()
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
 
 	queryApp := fiber.New()
-	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, clickHouse), handler.NewLogsHandler(logStore, sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
+	handler.RegisterQueryRoutes(queryApp, handler.NewEventsHandler(pebbleWriter, clickHouse), handler.NewLogsHandler(clickHouseLogs, logStore, sqlOn{}, clock.System{}), handler.NewLogTransformHandler(logtransform.New(nil, clock.System{})), healthHandler)
 
 	return testApps{ingest: ingestApp, query: queryApp}
 }
