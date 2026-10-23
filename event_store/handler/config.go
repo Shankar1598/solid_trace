@@ -26,6 +26,9 @@ type configAnswer struct {
 	ObjectStore       *objectStoreAnswer `json:"object_store"`
 	CPUProfileDir     string             `json:"cpu_profile_dir"`
 	Debug             bool               `json:"debug"`
+	// Defaults are the file's keys whose value is EventStore's default
+	// (config.Defaults), so the page can say so.
+	Defaults []string `json:"defaults"`
 }
 
 // diskLimitAnswer is the disk limit as configured, 0 for the default of
@@ -89,7 +92,40 @@ func NewConfigHandler(cfg *config.Config, diskLimitBytes int64) *ConfigHandler {
 			SecretSet:       store.Secret != "",
 		}
 	}
+	answer.Defaults = defaultKeys(cfg)
 	return &ConfigHandler{answer: answer}
+}
+
+// defaultKeys lists the file's keys whose value in cfg is the default.
+func defaultKeys(cfg *config.Config) []string {
+	d := config.Defaults()
+	keys := []string{}
+	for _, key := range []struct {
+		name      string
+		isDefault bool
+	}{
+		{"ingest_port", cfg.Port == d.Port},
+		{"query_port", cfg.QueryPort == d.QueryPort},
+		{"pebble_path", cfg.PebblePath == d.PebblePath},
+		{"message_queue_path", cfg.MessageQueuePath == d.MessageQueuePath},
+		{"sqlite_path", cfg.SQLitePath == d.SQLitePath},
+		{"logs_parquet_path", cfg.LogsParquetPath == d.LogsParquetPath},
+		{"logs_disk_limit_gb", cfg.LogsDiskLimitBytes == d.LogsDiskLimitBytes},
+		{"logs_bin_cache_mb", cfg.LogsBinCacheBytes == d.LogsBinCacheBytes},
+		{"ingest_max_waiting", cfg.IngestMaxWaiting == d.IngestMaxWaiting},
+		{"clickhouse.address", cfg.ClickHouse.Address == d.ClickHouse.Address},
+		{"clickhouse.database", cfg.ClickHouse.Database == d.ClickHouse.Database},
+		{"clickhouse.user", cfg.ClickHouse.User == d.ClickHouse.User},
+		{"clickhouse.config_dir", cfg.ClickHouse.ConfigDir == d.ClickHouse.ConfigDir},
+		{"object_store", cfg.ObjectStore == nil},
+		{"cpu_profile_dir", cfg.CPUProfileDir == d.CPUProfileDir},
+		{"debug", cfg.Debug == d.Debug},
+	} {
+		if key.isDefault {
+			keys = append(keys, key.name)
+		}
+	}
+	return keys
 }
 
 // Config answers the loaded config.

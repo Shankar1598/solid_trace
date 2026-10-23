@@ -186,7 +186,17 @@ func Load() *Config {
 // LoadFile reads the config from the file at path over the defaults. A
 // missing file gives the defaults.
 func LoadFile(path string) (*Config, error) {
-	cfg := &Config{
+	cfg := Defaults()
+	if err := applyFileConfig(cfg, path); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// Defaults is the config with no file, with the ClickHouse password from
+// the environment.
+func Defaults() *Config {
+	return &Config{
 		Port:             "4000",
 		QueryPort:        "4100",
 		PebblePath:       "../storage/pebble/development/events",
@@ -211,11 +221,6 @@ func LoadFile(path string) (*Config, error) {
 
 		Debug: false,
 	}
-
-	if err := applyFileConfig(cfg, path); err != nil {
-		return nil, err
-	}
-	return cfg, nil
 }
 
 func applyFileConfig(cfg *Config, path string) error {
