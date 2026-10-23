@@ -10,6 +10,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
+	"github.com/solidtrace/event_store/pkg/chsql"
 )
 
 // Events in ClickHouse's events table: one row for each Event that Event
@@ -175,26 +176,20 @@ func eventPredicate(params QueryParams) (string, []any) {
 	// when a DateTime64 key is compared with a DateTime (#123999).
 	if !params.NewerThan.IsZero() {
 		clauses = append(clauses, "timestamp > toDateTime64(?, 6, 'UTC')")
-		args = append(args, eventTimeText(params.NewerThan))
+		args = append(args, chsql.TimeText(params.NewerThan))
 	}
 	if !params.OlderThan.IsZero() {
 		clauses = append(clauses, "timestamp < toDateTime64(?, 6, 'UTC')")
-		args = append(args, eventTimeText(params.OlderThan))
+		args = append(args, chsql.TimeText(params.OlderThan))
 	}
 
 	return strings.Join(clauses, " AND "), args
 }
 
-// eventTimeText is a time as toDateTime64 reads it, in UTC.
-func eventTimeText(t time.Time) string {
-	return t.UTC().Format("2006-01-02 15:04:05.000000")
-}
-
 // eventsReadError is ErrEventsUnavailable, with why, for a read that failed
 // because ClickHouse didn't answer it, and err for one ClickHouse refused.
 func eventsReadError(err error) error {
-	var exception *clickhouse.Exception
-	if errors.As(err, &exception) {
+	if _, ok := clickHouseException(err); ok {
 		return err
 	}
 	return fmt.Errorf("%w: ClickHouse doesn't answer: %v", ErrEventsUnavailable, err)

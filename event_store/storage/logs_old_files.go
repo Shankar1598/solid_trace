@@ -98,11 +98,9 @@ var oldLogFilesMigration = clickHouseMigration{version: 901, statements: []strin
 // OldLogFiles says where an install's Logs from before the switch are.
 type OldLogFiles struct {
 	// LogsDuckDB is the DuckDB release's logs.duckdb. Found with no marker,
-	// it stops the start: its Logs haven't been prepared.
+	// it stops the start: its Logs haven't been prepared. prepare-clickhouse
+	// writes the prepared files and the marker to prepared/, beside it.
 	LogsDuckDB string
-	// PreparedDir is where prepare-clickhouse wrote the prepared files and
-	// the marker: prepared/, next to logs.duckdb.
-	PreparedDir string
 	// LocalDir is the Log file store, where the local copies are
 	// (logs_parquet_path).
 	LocalDir string
@@ -125,6 +123,15 @@ type oldLogFilesMarker struct {
 // ClickHouse keeps.
 func (m oldLogFilesMarker) same(other oldLogFilesMarker) bool {
 	return m.Release == other.Release && m.PreparedAt.Truncate(time.Microsecond).Equal(other.PreparedAt.Truncate(time.Microsecond))
+}
+
+// preparedDir is where prepare-clickhouse writes the prepared files and the
+// marker: prepared/, beside logs.duckdb.
+func (cfg OldLogFiles) preparedDir() string {
+	if cfg.LogsDuckDB == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(cfg.LogsDuckDB), "prepared")
 }
 
 // oldLogFilesMarkerFile is the marker's name in the prepared folder. The
@@ -150,7 +157,7 @@ func (s *ClickHouseLogs) UseOldLogFiles(cfg OldLogFiles) error {
 		old.objects = NewObjectStore(cfg.Bucket)
 	}
 
-	marker, err := readOldLogFilesMarker(cfg.PreparedDir)
+	marker, err := readOldLogFilesMarker(cfg.preparedDir())
 	if err != nil {
 		return err
 	}
@@ -165,13 +172,14 @@ func (s *ClickHouseLogs) UseOldLogFiles(cfg OldLogFiles) error {
 	switch {
 	case marker != nil && (loaded == nil || !loaded.same(*marker)):
 		if err := old.load(ctx, s.pebble, *marker); err != nil {
-			return fmt.Errorf("load the Logs from before the switch, prepared in %s: %w", cfg.PreparedDir, err)
+			return fmt.Errorf("load the Logs from before the switch, prepared in %s: %w", cfg.preparedDir(), err)
 		}
-	case marker == nil && duckDB && (!recorded || loaded != nil):
-		// Never prepared, or the DuckDB release ran again since it was,
-		// which removes the marker.
+	case marker == nil && duckDB:
+		// Never prepared, or the DuckDB release ran since, which removes
+		// the marker, as after a rollback: whatever an earlier start
+		// recorded, the DuckDB release's Logs may hold some not yet read.
 		return fmt.Errorf("%s holds the DuckDB release's Logs, and %s has no marker that they were prepared for ClickHouse: %w",
-			cfg.LogsDuckDB, cfg.PreparedDir, errUnprepared)
+			cfg.LogsDuckDB, cfg.preparedDir(), errUnprepared)
 	case !recorded:
 		if err := old.recordMarker(ctx, nil); err != nil {
 			return err
@@ -292,7 +300,7 @@ const preparedData = "format(Parquet, base64Decode({prepared:String}))"
 
 // withPrepared is ctx carrying a prepared file for preparedData.
 func (o *oldLogFiles) withPrepared(ctx context.Context, file string) (context.Context, error) {
-	raw, err := os.ReadFile(filepath.Join(o.cfg.PreparedDir, file))
+	raw, err := os.ReadFile(filepath.Join(o.cfg.preparedDir(), file))
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +337,8 @@ func (o *oldLogFiles) load(ctx context.Context, pebble *PebbleWriter, marker old
 
 // loadCursors moves each Project's Processing cursor in Pebble up to the
 // one prepared, the last Log batch the DuckDB release stored, unless it is
-// already past it.
+// already past it. The cursors are synced before it returns, since the
+// marker recorded next says they were loaded.
 func (o *oldLogFiles) loadCursors(ctx context.Context, pebble *PebbleWriter) error {
 	withFile, err := o.withPrepared(ctx, preparedCursors)
 	if err != nil {
@@ -340,6 +349,7 @@ func (o *oldLogFiles) loadCursors(ctx context.Context, pebble *PebbleWriter) err
 		return err
 	}
 	defer rows.Close()
+	ahead := map[uint32]uuid.UUID{}
 	for rows.Next() {
 		var (
 			projectID uint32
@@ -357,12 +367,13 @@ func (o *oldLogFiles) loadCursors(ctx context.Context, pebble *PebbleWriter) err
 			return err
 		}
 		if bytes.Compare(prepared[:], cursor[:]) > 0 {
-			if err := pebble.SetLogProcessingCursor(projectID, prepared); err != nil {
-				return err
-			}
+			ahead[projectID] = prepared
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return pebble.SetLogProcessingCursors(ahead)
 }
 
 // oldLogFile is one old Log file of a Project.
@@ -375,8 +386,11 @@ type oldLogFile struct {
 	// when the DuckDB release couldn't read it.
 	from, to time.Time
 	// local is whether a copy is in the Log file store: then it is read
-	// there, and else from the bucket.
+	// there, and else from the bucket. A copy the manifest lists but that
+	// was gone at start doesn't count, if the bucket has the file.
 	local bool
+	// remote is whether the bucket has the file.
+	remote bool
 	// batchMax is the last Log batch it holds Logs of, or nil for a file
 	// from before the batch column.
 	batchMax *uuid.UUID
@@ -418,12 +432,13 @@ func (state oldState) inBucket() int {
 // readState reads the old tables.
 func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 	state := oldState{files: map[uint32][]oldLogFile{}, sets: map[projectDay][]oldPromotedKey{}}
-	rows, err := o.conn.Query(ctx, `SELECT project_id, day, hour, key, min_time, max_time, local, batch_max
+	rows, err := o.conn.Query(ctx, `SELECT project_id, day, hour, key, min_time, max_time, local, remote, batch_max
 		FROM old_log_files ORDER BY project_id, day, hour, name`)
 	if err != nil {
 		return state, fmt.Errorf("read the old Log files: %w", err)
 	}
 	defer rows.Close()
+	lost := 0
 	for rows.Next() {
 		var (
 			projectID  uint32
@@ -431,11 +446,18 @@ func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 			hour       uint8
 			minT, maxT *time.Time
 		)
-		if err := rows.Scan(&projectID, &file.day, &hour, &file.key, &minT, &maxT, &file.local, &file.batchMax); err != nil {
+		if err := rows.Scan(&projectID, &file.day, &hour, &file.key, &minT, &maxT, &file.local, &file.remote, &file.batchMax); err != nil {
 			return state, err
 		}
 		if !oldKeyPattern.MatchString(file.key) {
 			return state, fmt.Errorf("old Log file %q isn't named as prepare-clickhouse names them", file.key)
+		}
+		if file.local && !o.hasLocalCopy(file.key) {
+			// Read from the bucket, if it has the file: file() would skip
+			// it.
+			if file.local = false; !file.remote {
+				lost++
+			}
 		}
 		file.day = LogDay(file.day)
 		file.from = file.day.Add(time.Duration(hour) * time.Hour)
@@ -447,6 +469,9 @@ func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return state, err
+	}
+	if lost > 0 {
+		logger.L.Warn("Old Log files with no local copy left and none in the bucket aren't read", "files", lost, "dir", o.cfg.LocalDir)
 	}
 
 	sets, err := o.conn.Query(ctx, `SELECT project_id, day, type, key, column_name, partway
@@ -471,6 +496,16 @@ func (o *oldLogFiles) readState(ctx context.Context) (oldState, error) {
 	return state, sets.Err()
 }
 
+// hasLocalCopy reports whether an old file's copy is in the Log file store,
+// or may be: true when the store isn't known.
+func (o *oldLogFiles) hasLocalCopy(key string) bool {
+	if o.cfg.LocalDir == "" {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(o.cfg.LocalDir, filepath.FromSlash(key)))
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
 // oldSource is old Log files of one Project's day that one table function
 // reads: all on local disk, or all in the bucket.
 type oldSource struct {
@@ -490,7 +525,7 @@ func (o *oldLogFiles) sources(projectID uint32, keep func(oldLogFile) bool) []ol
 	var files []oldLogFile
 	for _, file := range o.state.files[projectID] {
 		// A file only in a bucket no longer configured can't be read.
-		if keep(file) && (file.local || o.cfg.Bucket != nil) {
+		if keep(file) && (file.local || (file.remote && o.cfg.Bucket != nil)) {
 			files = append(files, file)
 		}
 	}
@@ -596,15 +631,20 @@ func oldFileStructure(set []oldPromotedKey) string {
 	return strings.Join(columns, ", ")
 }
 
-// oldDay is how a day's old files keep each Field, for ClickHouseColumns:
-// a promoted key in its column, coalesced with its map when it was
-// promoted partway through the day, any other in its map. The built-in
-// fields read as the logs table's do: service and message never NULL.
+// oldDay is how a day's old files keep each Field, its LogColumns: a
+// promoted key in its column, coalesced with its map when it was promoted
+// partway through the day, any other in its map, and arrays and objects in
+// attrs_json, as the logs table has them. The built-in fields read as the
+// logs table's do: service and message never NULL. No column holds file.
 type oldDay struct {
 	set []oldPromotedKey
 }
 
-func (d *oldDay) builtIn(name string) string {
+func (d oldDay) Column(name string) string { return chsql.Identifier(name) }
+
+func (d oldDay) StringColumn(string) (string, bool) { return "", false }
+
+func (d oldDay) BuiltIn(name string) string {
 	switch name {
 	case "service", "message":
 		return "ifNull(" + chsql.Identifier(name) + ", '')"
@@ -612,7 +652,10 @@ func (d *oldDay) builtIn(name string) string {
 	return chsql.Identifier(name)
 }
 
-func (d *oldDay) attribute(t AttributeType, key string) string {
+func (d oldDay) Attribute(t AttributeType, key string) string {
+	if t == JSONAttribute {
+		return jsonAttribute("attrs_json", key)
+	}
 	m := "attrs_" + string(t)
 	inMap := "if(mapContains(" + m + ", " + chsql.String(key) + "), " + m + "[" + chsql.String(key) + "], NULL)"
 	for _, promoted := range d.set {
@@ -629,7 +672,7 @@ func (d *oldDay) attribute(t AttributeType, key string) string {
 
 // searchText is every string Attribute's value, joined by \0: the map's
 // and the promoted columns'.
-func (d *oldDay) searchText() string {
+func (d oldDay) SearchText() string {
 	parts := []string{"arrayStringConcat(mapValues(attrs_string), '\\0')"}
 	for _, promoted := range d.set {
 		if promoted.typ == StringAttribute {
@@ -640,13 +683,13 @@ func (d *oldDay) searchText() string {
 }
 
 // columns is how the source's files keep each Field.
-func (src oldSource) columns() ClickHouseColumns {
-	return ClickHouseColumns{old: &oldDay{set: src.set}}
+func (src oldSource) columns() LogColumns {
+	return oldDay{set: src.set}
 }
 
 // where is the WHERE of a read of a source: conditions, and the Logs
 // where keeps, written for the source's day.
-func (src oldSource) where(conditions []string, where func(ClickHouseColumns) Filter) string {
+func (src oldSource) where(conditions []string, where func(LogColumns) Filter) string {
 	if where != nil {
 		filter := where(src.columns())
 		for _, part := range []string{filter.Rest, filter.Message} {
@@ -683,13 +726,12 @@ func (o *oldLogFiles) span(projectID uint32, from, to time.Time) (oldest, newest
 	return oldest, newest, ok
 }
 
-// OldLogsEnd returns the end of the Logs from before the switch that a
-// Project's old Log files may hold in [from, to), and false if none of them
-// overlaps it. Counts kept since the switch, such as the histogram's by
-// minute, hold Logs after it only.
-func (s *ClickHouseLogs) OldLogsEnd(projectID uint32, from, to time.Time) (time.Time, bool) {
-	from, to = storableRange(from, to)
-	_, newest, ok := s.old.span(projectID, from, to)
+// end returns the end of the Logs from before the switch that a Project's
+// old Log files may hold in [from, to), and false if none of them overlaps
+// it. Counts kept since the switch, such as the histogram's by minute, hold
+// Logs after it only.
+func (o *oldLogFiles) end(projectID uint32, from, to time.Time) (time.Time, bool) {
+	_, newest, ok := o.span(projectID, from, to)
 	return newest.Add(time.Microsecond), ok
 }
 
@@ -728,13 +770,13 @@ func (o *oldLogFiles) tableSources(scan TableScan, spans []timeSpan) string {
 
 // scanLogs returns up to limit of a Project's old Logs of [from, to) that
 // meet conditions and where, newest first.
-func (o *oldLogFiles) scanLogs(s *ClickHouseLogs, ctx context.Context, projectID uint32, from, to time.Time, conditions []string, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, error) {
+func (o *oldLogFiles) scanLogs(ctx context.Context, projectID uint32, from, to time.Time, conditions []string, where func(LogColumns) Filter, limit int) ([]models.Log, error) {
 	sources := o.sources(projectID, inSpans(timeSpan{from, to}))
 	if len(sources) == 0 || limit <= 0 {
 		return nil, nil
 	}
 	conditions = append(conditions, timeSpans([]timeSpan{{from, to}}))
-	return o.newestLogs(s, ctx, sources, conditions, where, limit)
+	return o.newestLogs(ctx, sources, conditions, where, limit)
 }
 
 // newestLogs returns up to limit of the Logs of sources that meet
@@ -744,11 +786,11 @@ func (o *oldLogFiles) scanLogs(s *ClickHouseLogs, ctx context.Context, projectID
 // from the files that hold them. A read of whole Logs in order would read
 // every column of every Log in range: ClickHouse reads lazily only from its
 // own tables.
-func (o *oldLogFiles) newestLogs(s *ClickHouseLogs, ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, limit int) (logs []models.Log, err error) {
+func (o *oldLogFiles) newestLogs(ctx context.Context, sources []oldSource, conditions []string, where func(LogColumns) Filter, limit int) (logs []models.Log, err error) {
 	order := fmt.Sprintf("ORDER BY %s LIMIT %d", logsNewestFirst, limit)
 	query := "SELECT time, id, _path FROM (" + o.union(sources, func(oldSource) string { return "time, id, _path" }, conditions, where) + ") " + order
 	began := time.Now()
-	rows, err := s.conn.Query(o.withBucketKey(ctx), query)
+	rows, err := o.conn.Query(o.withBucketKey(ctx), query)
 	if err != nil {
 		recordStatement(ctx, query, began, err)
 		return nil, err
@@ -792,12 +834,12 @@ func (o *oldLogFiles) newestLogs(s *ClickHouseLogs, ctx context.Context, sources
 		}
 	}
 	conditions = append(slices.Clone(conditions), timeSpans([]timeSpan{{first, end}}), "id IN ("+strings.Join(ids, ", ")+")")
-	return o.queryLogs(s, ctx, holding, conditions, where, order)
+	return o.queryLogs(ctx, holding, conditions, where, order)
 }
 
 // union is the Logs of sources that meet conditions and where, each read
 // with the columns columns gives, after UNION ALL.
-func (o *oldLogFiles) union(sources []oldSource, columns func(oldSource) string, conditions []string, where func(ClickHouseColumns) Filter) string {
+func (o *oldLogFiles) union(sources []oldSource, columns func(oldSource) string, conditions []string, where func(LogColumns) Filter) string {
 	selects := make([]string, len(sources))
 	for i, src := range sources {
 		selects[i] = fmt.Sprintf("(SELECT %s FROM %s %s%s)", columns(src), o.table(src), src.where(conditions, where), oldFileSettings)
@@ -807,11 +849,11 @@ func (o *oldLogFiles) union(sources []oldSource, columns func(oldSource) string,
 
 // queryLogs reads the Logs of sources that meet conditions and where,
 // whole, with tail after them: an order and a limit.
-func (o *oldLogFiles) queryLogs(s *ClickHouseLogs, ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, tail string) (logs []models.Log, err error) {
+func (o *oldLogFiles) queryLogs(ctx context.Context, sources []oldSource, conditions []string, where func(LogColumns) Filter, tail string) (logs []models.Log, err error) {
 	query := "SELECT * FROM (" + o.union(sources, oldSource.logColumns, conditions, where) + ") " + tail
 	began := time.Now()
 	defer func() { recordStatement(ctx, query, began, err) }()
-	rows, err := s.conn.Query(o.withBucketKey(ctx), query)
+	rows, err := o.conn.Query(o.withBucketKey(ctx), query)
 	if err != nil {
 		return nil, err
 	}
@@ -873,7 +915,7 @@ func setPromoted[V any](m map[string]V, keys []string, values []*V) {
 // batches in (after, upTo] that meet where, newest first, and how many there
 // are, past limit too. Only files whose last batch is after after are read:
 // those of the last runs before the switch.
-func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, projectID uint32, after, upTo uuid.UUID, where func(ClickHouseColumns) Filter, limit int) ([]models.Log, int, error) {
+func (o *oldLogFiles) ingestedAfter(ctx context.Context, projectID uint32, after, upTo uuid.UUID, where func(LogColumns) Filter, limit int) ([]models.Log, int, error) {
 	sources := o.sources(projectID, func(file oldLogFile) bool {
 		return file.batchMax != nil && bytes.Compare(file.batchMax[:], after[:]) > 0
 	})
@@ -887,7 +929,7 @@ func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, proj
 	var logs []models.Log
 	if limit > 0 {
 		var err error
-		if logs, err = o.newestLogs(s, ctx, sources, conditions, where, limit); err != nil {
+		if logs, err = o.newestLogs(ctx, sources, conditions, where, limit); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -896,7 +938,7 @@ func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, proj
 	}
 	var total uint64
 	query := "SELECT count() FROM (" + o.union(sources, func(oldSource) string { return "1" }, conditions, where) + ")"
-	err := s.queryRow(o.withBucketKey(ctx), query, &total)
+	err := queryRow(o.withBucketKey(ctx), o.conn, query, &total)
 	return logs, int(total), err
 }
 
@@ -905,7 +947,7 @@ func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, proj
 // the files of at's day. Else it reads those of the days around the id's
 // time, and then every file with a local copy, as the DuckDB release did:
 // reading all of the bucket's would read every old Log.
-func (o *oldLogFiles) logByID(s *ClickHouseLogs, ctx context.Context, projectID uint32, id uuid.UUID, at *time.Time) (models.Log, bool, error) {
+func (o *oldLogFiles) logByID(ctx context.Context, projectID uint32, id uuid.UUID, at *time.Time) (models.Log, bool, error) {
 	onDays := func(from, to time.Time) func(oldLogFile) bool {
 		return func(file oldLogFile) bool { return !file.day.Before(LogDay(from)) && !file.day.After(LogDay(to)) }
 	}
@@ -923,7 +965,7 @@ func (o *oldLogFiles) logByID(s *ClickHouseLogs, ctx context.Context, projectID 
 		if len(sources) == 0 {
 			continue
 		}
-		logs, err := o.queryLogs(s, ctx, sources, match, nil, "LIMIT 1")
+		logs, err := o.queryLogs(ctx, sources, match, nil, "LIMIT 1")
 		if err != nil || len(logs) > 0 {
 			return firstLog(logs), len(logs) > 0, err
 		}
@@ -931,24 +973,17 @@ func (o *oldLogFiles) logByID(s *ClickHouseLogs, ctx context.Context, projectID 
 	return models.Log{}, false, nil
 }
 
-// keyCounts is what the read of key counts adds for the old days' counts,
-// which prepare-clickhouse wrote, after UNION ALL; its arguments are
-// keyCountsArgs.
-func (o *oldLogFiles) keyCounts() string {
+// keyCounts is what the read of a Project's key counts of the days first
+// to last adds for the old days' counts, which prepare-clickhouse wrote,
+// after UNION ALL, and its arguments.
+func (o *oldLogFiles) keyCounts(projectID uint32, first, last time.Time) (string, []any) {
 	if o == nil {
-		return ""
+		return "", nil
 	}
 	return `
 			UNION ALL
 			SELECT key, type, logs FROM old_log_key_counts
-			WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)`
-}
-
-func (o *oldLogFiles) keyCountsArgs(projectID uint32, first, last time.Time) []any {
-	if o == nil {
-		return nil
-	}
-	return []any{projectID, dayString(first), dayString(last)}
+			WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)`, []any{projectID, dayString(first), dayString(last)}
 }
 
 // projects lists the Projects that have old Log files.
@@ -1080,6 +1115,110 @@ func (o *oldLogFiles) deleteLocalCopy(key string) error {
 		}
 	}
 	return nil
+}
+
+// oldLocalDay is a Project's day of old Log files with local copies, for
+// the disk limit.
+type oldLocalDay struct {
+	projectDay
+	// bytes is how much disk the day's local copies take.
+	bytes  int64
+	copies []oldLocalCopy
+}
+
+// oldLocalCopy is an old Log file's local copy.
+type oldLocalCopy struct {
+	key   string
+	bytes int64
+	// remote is whether the bucket has the file too.
+	remote bool
+}
+
+// localDays lists the Projects' days of old Log files with local copies,
+// oldest day first and then by Project, with how much disk the copies take,
+// read now.
+func (o *oldLogFiles) localDays() ([]oldLocalDay, int64) {
+	if o == nil || o.cfg.LocalDir == "" {
+		return nil, 0
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	byDay := map[projectDay]*oldLocalDay{}
+	var total int64
+	for projectID, files := range o.state.files {
+		for _, file := range files {
+			if !file.local {
+				continue
+			}
+			info, err := os.Stat(filepath.Join(o.cfg.LocalDir, filepath.FromSlash(file.key)))
+			if err != nil {
+				continue // gone: it takes nothing
+			}
+			key := projectDay{projectID, file.day}
+			if byDay[key] == nil {
+				byDay[key] = &oldLocalDay{projectDay: key}
+			}
+			byDay[key].bytes += info.Size()
+			byDay[key].copies = append(byDay[key].copies, oldLocalCopy{key: file.key, bytes: info.Size(), remote: file.remote})
+			total += info.Size()
+		}
+	}
+	days := make([]oldLocalDay, 0, len(byDay))
+	for _, day := range byDay {
+		days = append(days, *day)
+	}
+	slices.SortFunc(days, func(a, b oldLocalDay) int {
+		return cmp.Or(a.day.Compare(b.day), cmp.Compare(a.projectID, b.projectID))
+	})
+	return days, total
+}
+
+// freeLocalCopies deletes the local copies of the oldest days' old Log
+// files that the bucket has, which reads then read there, until the Logs on
+// local disk take no more than maxBytes. They take total now; it returns how
+// much they take after. A copy that isn't deleted is logged, and the next
+// tried. Without a bucket, it deletes none.
+func (o *oldLogFiles) freeLocalCopies(days []oldLocalDay, total, maxBytes int64) int64 {
+	if o == nil || o.objects == nil {
+		return total
+	}
+	freed, failed := 0, 0
+	for _, day := range days {
+		for _, local := range day.copies {
+			if total <= maxBytes {
+				break
+			}
+			if !local.remote {
+				continue
+			}
+			o.readFromBucket(day.projectID, local.key)
+			if err := o.deleteLocalCopy(local.key); err != nil {
+				failed++
+				logger.L.Error("Deleting the local copy of an old Log file for the disk limit failed", "project_id", day.projectID, "key", local.key, "error", err)
+				continue
+			}
+			total -= local.bytes
+			freed++
+		}
+	}
+	if freed > 0 || failed > 0 {
+		logger.L.Info("Deleted the local copies of the oldest old Log files, which the bucket has, for the disk limit", "files", freed, "failed", failed, "limit", maxBytes)
+	}
+	return total
+}
+
+// readFromBucket makes reads read a Project's old file from the bucket, not
+// its local copy.
+func (o *oldLogFiles) readFromBucket(projectID uint32, key string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	files := slices.Clone(o.state.files[projectID])
+	for i := range files {
+		if files[i].key == key {
+			files[i].local = false
+		}
+	}
+	o.state.files[projectID] = files
 }
 
 // mergeNewestFirst merges two lists of Logs, each newest first, into one,

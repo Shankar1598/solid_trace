@@ -26,7 +26,13 @@ func Identifier(name string) string {
 // compared only with such a value: 26.8.34 skips a boundary second when one
 // is compared with a DateTime or an integer (ClickHouse #123999).
 func Time(t time.Time) string {
-	return "toDateTime64(" + String(t.UTC().Format("2006-01-02 15:04:05.000000")) + ", 6, 'UTC')"
+	return "toDateTime64(" + String(TimeText(t)) + ", 6, 'UTC')"
+}
+
+// TimeText writes t, in UTC, as the text toDateTime64(…, 6, 'UTC') reads,
+// to the microsecond: for a query's parameter or a setting.
+func TimeText(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05.000000")
 }
 
 // UUID writes id as a UUID.

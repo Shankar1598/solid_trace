@@ -17,7 +17,6 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/chcol"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/solidtrace/event_store/pkg/chsql"
@@ -97,13 +96,6 @@ type SQLError struct {
 func (e *SQLError) Error() string { return e.Err.Error() }
 func (e *SQLError) Unwrap() error { return e.Err }
 
-// ClickHouse's error codes that SQL queries tell apart.
-const (
-	chTimeoutExceeded      = 159
-	chUnknownUser          = 192
-	chAuthenticationFailed = 516
-)
-
 // ClickHouseSQL runs SQL queries on ClickHouse, each as its Project's SQL
 // user.
 type ClickHouseSQL struct {
@@ -138,7 +130,7 @@ func (s *ClickHouseSQL) RunSQL(ctx context.Context, projectID uint32, from, to t
 	result, err := s.run(ctx, projectID, from, to, query, limit)
 	// The user was dropped or its password changed since this process made
 	// it, as by another EventStore on the same database: make it again.
-	if code, ok := exceptionCode(err); ok && (code == chAuthenticationFailed || code == chUnknownUser) {
+	if exception, ok := clickHouseException(err); ok && (exception.Code == chAuthenticationFailed || exception.Code == chUnknownUser) {
 		s.forget(projectID)
 		result, err = s.run(ctx, projectID, from, to, query, limit)
 	}
@@ -168,15 +160,15 @@ func (s *ClickHouseSQL) run(ctx context.Context, projectID uint32, from, to time
 	defer cancel()
 	defer context.AfterFunc(ctx, cancel)()
 	queryCtx = clickhouse.Context(queryCtx, clickhouse.WithSettings(clickhouse.Settings{
-		sqlFromSetting: clickhouse.CustomSetting{Value: sqlTime(from)},
-		sqlToSetting:   clickhouse.CustomSetting{Value: sqlTime(to)},
+		sqlFromSetting: clickhouse.CustomSetting{Value: chsql.TimeText(from)},
+		sqlToSetting:   clickhouse.CustomSetting{Value: chsql.TimeText(to)},
 	}))
 
 	began := time.Now()
 	result, err := readSQL(queryCtx, conn, query, limit)
 	recordStatement(ctx, query, began, err)
-	if code, ok := exceptionCode(err); ok && code != chAuthenticationFailed && code != chUnknownUser {
-		return SQLResult{}, &SQLError{Err: errors.New(exceptionMessage(err)), Stopped: code == chTimeoutExceeded}
+	if exception, ok := clickHouseException(err); ok && exception.Code != chAuthenticationFailed && exception.Code != chUnknownUser {
+		return SQLResult{}, &SQLError{Err: errors.New(exception.Message), Stopped: exception.Code == chTimeoutExceeded}
 	}
 	return result, err
 }
@@ -217,28 +209,6 @@ func readSQL(ctx context.Context, conn clickhouse.Conn, query string, limit int)
 	return result, rows.Err()
 }
 
-// sqlTime writes t as the range settings hold it.
-func sqlTime(t time.Time) string {
-	return t.UTC().Format("2006-01-02 15:04:05.000000")
-}
-
-// exceptionCode is the code of the ClickHouse exception err is, if it is
-// one.
-func exceptionCode(err error) (int32, bool) {
-	var exception *clickhouse.Exception
-	if errors.As(err, &exception) {
-		return exception.Code, true
-	}
-	return 0, false
-}
-
-// exceptionMessage is ClickHouse's message for the exception err is.
-func exceptionMessage(err error) string {
-	var exception *clickhouse.Exception
-	errors.As(err, &exception)
-	return exception.Message
-}
-
 // user is projectID's SQL user, made if this process hasn't made it yet,
 // and its password.
 func (s *ClickHouseSQL) user(ctx context.Context, projectID uint32) (string, string, error) {
@@ -277,26 +247,27 @@ func (s *ClickHouseSQL) forget(projectID uint32) {
 // server's, not a database's.
 func (s *ClickHouseSQL) profileName() string { return s.ch.database + "_sql" }
 func (s *ClickHouseSQL) userName(projectID uint32) string {
-	return sqlUserName(s.ch.database, projectID)
+	return fmt.Sprintf("%s_sql_%d", s.ch.database, projectID)
 }
 
-func sqlUserName(database string, projectID uint32) string {
-	return fmt.Sprintf("%s_sql_%d", database, projectID)
-}
-
-// dropSQLUser drops a Project's SQL user of database, if it has one: its
-// row policies, then the user. Project deletion drops it with the Project's
+// DropProjectUser drops a Project's SQL user, if it has one: its row
+// policies, then the user. Project deletion drops it with the Project's
 // Logs. Should SQL run for the Project again, the run makes it afresh.
-func dropSQLUser(ctx context.Context, conn driver.Conn, database string, projectID uint32) error {
-	user, db := chsql.Identifier(sqlUserName(database, projectID)), chsql.Identifier(database)
+func (s *ClickHouseSQL) DropProjectUser(projectID uint32) error {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, db := chsql.Identifier(s.userName(projectID)), chsql.Identifier(s.ch.database)
 	for _, statement := range []string{
 		fmt.Sprintf("DROP ROW POLICY IF EXISTS %s ON %s.logs, %s ON %s.events", user, db, user, db),
 		fmt.Sprintf("DROP USER IF EXISTS %s", user),
 	} {
-		if err := conn.Exec(ctx, statement); err != nil {
+		if err := s.ch.conn.Exec(ctx, statement); err != nil {
 			return fmt.Errorf("drop Project %d's SQL user: %w", projectID, err)
 		}
 	}
+	delete(s.passwords, projectID)
 	return nil
 }
 
@@ -307,7 +278,7 @@ func dropSQLUser(ctx context.Context, conn driver.Conn, database string, project
 // the form 26.8 sends a JSON column in once a sort has merged blocks of
 // several parts ("unsupported column type" naming a path).
 func (s *ClickHouseSQL) profileStatement() string {
-	empty := chsql.String(sqlTime(time.Unix(0, 0)))
+	empty := chsql.String(chsql.TimeText(time.Unix(0, 0)))
 	return fmt.Sprintf(`CREATE SETTINGS PROFILE OR REPLACE %s SETTINGS
 		readonly = 1 CONST,
 		output_format_native_use_flattened_dynamic_and_json_serialization = 1 CONST,
