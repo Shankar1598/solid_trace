@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -15,7 +14,6 @@ import (
 	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/logtransform"
-	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/cpuprofile"
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -26,18 +24,8 @@ import (
 func main() {
 	cfg := config.Load()
 	logger.Init()
-	if len(os.Args) > 1 {
-		if os.Args[1] != prepareClickHouseCommand {
-			fmt.Fprintf(os.Stderr, "unknown command %q: the only one is %s\n", os.Args[1], prepareClickHouseCommand)
-			os.Exit(2)
-		}
-		os.Exit(prepareClickHouse(cfg))
-	}
-
-	// This release stores Logs in DuckDB from now on, so an earlier
-	// prepare-clickhouse's files miss them, and it must run again.
-	if err := storage.ForgetClickHousePrepared(storage.PreparedDir(cfg.LogsDuckDBPath)); err != nil {
-		logger.L.Fatal("Failed to remove the marker of an earlier prepare-clickhouse", "error", err)
+	for _, warning := range cfg.Warnings {
+		logger.L.Warn(warning)
 	}
 
 	// Initialize storage
@@ -47,51 +35,38 @@ func main() {
 	}
 	defer pebbleWriter.Close()
 
-	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath, cfg.ParquetStoragePath, cfg.DuckDBTempDirectory, cfg.DuckDBMemoryLimit)
+	// Event processing stores Events' rows in ClickHouse, and Event reads
+	// read them there. Log processing inserts Logs into it, and Log rows,
+	// single Logs, Match monitors and Fields read them there.
+	clickHouse, err := storage.OpenClickHouse(cfg.ClickHouse, cfg.ObjectStore)
 	if err != nil {
-		logger.L.Fatal("Failed to open DuckDB", "error", err)
+		logger.L.Fatal("Failed to open ClickHouse", "error", err)
 	}
-	defer duckdbWriter.Close()
-	// The Log files and the Event archive share the bucket, if one is set.
-	// Nothing here waits on the bucket, so ingest starts while it is down:
-	// the archive consumer lists the Event archive in it in the background.
-	bucket := storage.NewObjectStore(cfg.ObjectStore)
-	if cfg.ObjectStore != nil {
-		if err := duckdbWriter.UseBucket(cfg.ObjectStore, cfg.DuckDBExtensionDirectory); err != nil {
-			logger.L.Fatal("Failed to let DuckDB read the object store's bucket", "error", err)
-		}
-		if err := duckdbWriter.UseEventArchiveBucket(bucket); err != nil {
-			logger.L.Fatal("Failed to keep the Event archive in the object store's bucket", "error", err)
-		}
-	} else if err := duckdbWriter.UseLocalEventArchiveOnly(); err != nil {
-		logger.L.Fatal("Failed to keep the Event archive on local disk only", "error", err)
-	}
+	defer clickHouse.Close()
+	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
+	clickHouseLogs.UseBinCache(cfg.LogsBinCacheBytes)
 
-	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath, cfg.LogsParquetPath)
-	if err != nil {
-		logger.L.Fatal("Failed to open logs DuckDB", "error", err)
+	// The Logs from before the switch, in the DuckDB release's Log files,
+	// are read in place. This loads what prepare-clickhouse wrote, and stops
+	// the start on DuckDB data it didn't prepare. It runs before Log
+	// processing, which reads the Processing cursors it loads.
+	if err := clickHouseLogs.UseOldLogFiles(storage.OldLogFiles{
+		LogsDuckDB: cfg.LogsDuckDBPath,
+		// Compose mounts logs_parquet_path at ClickHouse's user_files_path,
+		// where deploy/install finds it, and bin/clickhouse-dev the
+		// development store, so ClickHouseDir is "": file() reads each file
+		// by its path in the store.
+		LocalDir: cfg.LogsParquetPath,
+		Bucket:   cfg.ObjectStore,
+	}); err != nil {
+		logger.L.Fatal("Failed to ready the Logs from before the switch to ClickHouse", "error", err)
 	}
-	if cfg.ObjectStore != nil {
-		if err := logStore.UseObjectStore(bucket, cfg.ObjectStore.LocalCacheHours); err != nil {
-			logger.L.Fatal("Failed to keep Log files in the object store's bucket", "error", err)
-		}
-	} else if err := logStore.UseLocalDiskOnly(); err != nil {
-		logger.L.Fatal("Failed to keep Log files on local disk only", "error", err)
-	}
-	logStore.UseBinCache(cfg.LogsBinCacheBytes)
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
 	if err != nil {
 		logger.L.Fatal("Failed to open SQLite", "error", err)
 	}
 	defer sqliteWriter.Close()
-
-	// Initialize Message Queue Reader (for Console -> Event Store)
-	messageQueueReader, err := storage.NewMessageQueueReader(cfg.MessageQueuePath)
-	if err != nil {
-		logger.L.Fatal("Failed to open Message Queue Reader", "error", err)
-	}
-	defer messageQueueReader.Close()
 
 	// Initialize Message Queue Writer (for Event Store -> Rails)
 	messageQueueWriter, err := storage.NewMessageQueueWriter(cfg.MessageQueuePath)
@@ -112,46 +87,35 @@ func main() {
 		logger.L.Fatal("Failed to open Console settings", "error", err)
 	}
 	defer consoleSettings.Close()
-	logStore.UseLogFileOrders(consoleSettings)
 
-	// Prepare must run before the worker and the archive job start. The
-	// archive never runs inside a batch: they share batchLock.
+	// Prepare must run before the worker starts. The Event cleanup never
+	// runs inside a batch: they share batchLock.
 	var batchLock sync.Mutex
-	processor := processing.New(pebbleWriter, duckdbWriter, messageQueueWriter, sqliteWriter, &batchLock)
+	processor := processing.New(pebbleWriter, clickHouse, messageQueueWriter, sqliteWriter, &batchLock)
 	if err := processor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Event processing", "error", err)
 	}
 	processor.Start()
 
-	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter, &batchLock)
-	go archiveConsumer.Run()
-
 	// Deletes a deleted Project's Events, holding batchLock while it does.
-	eventCleanup := processing.NewCleanup(pebbleWriter, duckdbWriter, sqliteWriter, consoleSettings, &batchLock, clock.System{})
+	eventCleanup := processing.NewCleanup(pebbleWriter, clickHouse, sqliteWriter, consoleSettings, &batchLock, clock.System{})
 	eventCleanup.Start()
 
 	logTransforms := logtransform.New(consoleSettings, clock.System{})
-	logProcessor := logprocessing.New(pebbleWriter, logStore, logTransforms, clock.System{})
+	logProcessor := logprocessing.New(pebbleWriter, clickHouseLogs, logTransforms, clock.System{})
 	if err := logProcessor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Log processing", "error", err)
 	}
 	logProcessor.Start()
 
-	logExport := logprocessing.NewLogExport(logStore, clock.System{})
-	logExport.Start()
-
-	// Without a bucket nothing is uploaded, and the worker never starts.
-	logUploads := logprocessing.NewLogUploads(logStore, clock.System{})
-	if cfg.ObjectStore != nil {
-		logUploads.Start()
-	}
-
-	diskLimit, err := storage.NewLogDiskLimit(cfg.LogsDiskLimitBytes, cfg.LogsParquetPath)
+	// Retention and deleted Projects once a day, the disk limit hourly.
+	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
 	if err != nil {
 		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
 	}
 	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
-	logCleanup := logprocessing.NewCleanup(logStore, consoleSettings, diskLimit, clock.System{})
+	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
+	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, consoleSettings, diskLimit, clock.System{})
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
@@ -174,10 +138,10 @@ func main() {
 		MaxWaiting:   cfg.IngestMaxWaiting,
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
-	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
-	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, clock.System{})
+	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
+	logsHandler := handler.NewLogsHandler(clickHouseLogs, sqlQueries, consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
-	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
 	app := handler.NewIngestApp(ingestHandler, healthHandler)
@@ -186,9 +150,6 @@ func main() {
 		DisableStartupMessage: true,
 	})
 	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, healthHandler)
-
-	// Maintenance API
-	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort
@@ -229,11 +190,8 @@ func main() {
 	// Then the stores close through the defers above.
 	processor.Stop()
 	logProcessor.Stop()
-	logExport.Stop()
-	logUploads.Stop()
 	logCleanup.Stop()
 	eventCleanup.Stop()
-	archiveConsumer.Stop()
 	if profiler != nil {
 		profiler.Stop()
 	}

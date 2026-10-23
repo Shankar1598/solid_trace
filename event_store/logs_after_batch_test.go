@@ -1,12 +1,9 @@
 package main_test
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -86,7 +83,6 @@ func TestAMatchMonitorReadsTheLogsIngestedSinceItsLastRun(t *testing.T) {
 	defer env.Cleanup()
 
 	at := func(minute int) time.Time { return testNow.Add(time.Duration(minute) * time.Minute) }
-	// At 11:59 the hot window is 11:30 to 12:00, so every Log is hot.
 	env.Clock.Set(at(-1))
 
 	// Armed before Log processing has stored anything for the Project, a
@@ -151,29 +147,23 @@ func TestAMatchMonitorReadsLateLogsWhateverTheirTimeAndTheRange(t *testing.T) {
 		t.Errorf("Expected the late Logs read with the new one, %v, got %v", want, got)
 	}
 
-	// The export moves the late Logs to files; one more late Log of
-	// yesterday's hour 10 goes to its late file at the next export.
-	env.ExportLogs(t)
+	// One more late Log of yesterday's hour 10.
 	postAndProcess(t, env, logJSON(t, "late yesterday ten", yesterday(10, 20), nil))
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, yesterday(10, 0), 2)
-
 	if got, want := monitor.run(quarterHour), []string{"late yesterday ten"}; !slices.Equal(got, want) {
-		t.Errorf("Expected only the Log of the late file, %v, got %v", want, got)
+		t.Errorf("Expected only the new late Log, %v, got %v", want, got)
 	}
 	if got := monitor.run(quarterHour); len(got) != 0 {
 		t.Errorf("Expected no more Logs, got %v", got)
 	}
 }
 
-func TestTheLogsIngestedAfterABatchAreTheSameBeforeAndAfterTheExport(t *testing.T) {
+func TestTheLogsIngestedAfterABatchAreFilteredWhateverTheirTime(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
 	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
 	env.Clock.Set(at(10, 29))
-	// A Log of hour 10 stored before the Monitor is armed goes to the same
-	// file as those after, and is never read.
+	// A Log of hour 10 stored before the Monitor is armed is never read.
 	postAndProcess(t, env, logJSON(t, "before", at(10, 5), map[string]any{"user": "ada"}))
 	armed := armMonitor(t, env, "").cursor
 	postAndProcess(t, env, logJSON(t, "ten", at(10, 40), map[string]any{"user": "ada", "status": 500}))
@@ -185,35 +175,31 @@ func TestTheLogsIngestedAfterABatchAreTheSameBeforeAndAfterTheExport(t *testing.
 		``:                    {"eleven", "ten", "late"},
 		`where user == "ada"`: {"ten", "late"},
 		`where status >= 500`: {"ten"},
+		// The message is read only for the Logs the rest keep.
+		`where user == "ada" and message startswith "t"`: {"ten"},
+		`where user == "ada" | search "LATE"`:            {"late"},
 	}
 	read := func(query string) ingestedPage { return runAfterBatch(t, env, query, armed, nil) }
 	want := map[string]ingestedPage{}
 	for query, messagesWanted := range queries {
 		want[query] = read(query)
 		if got := messages(want[query].Logs); !slices.Equal(got, messagesWanted) {
-			t.Errorf("%q: expected %v from the hot table and logs_late, got %v", query, messagesWanted, got)
+			t.Errorf("%q: expected %v, got %v", query, messagesWanted, got)
 		}
 	}
 
-	// At 12:00 the export moves hour 10 and the late Log to files, and hour
-	// 11 stays hot; at 13:00 it moves hour 11.
-	for _, hour := range []int{12, 13} {
-		env.Clock.Set(at(hour, 0))
-		env.ExportLogs(t)
-		for query := range queries {
-			if got := read(query); !reflect.DeepEqual(got, want[query]) {
-				t.Errorf("%q after the export at %d:00: expected\n %+v\ngot\n %+v", query, hour, want[query], got)
-			}
+	// A restart reads the same.
+	env.Reopen(t)
+	for query := range queries {
+		if got := read(query); !reflect.DeepEqual(got, want[query]) {
+			t.Errorf("%q after a restart: expected\n %+v\ngot\n %+v", query, want[query], got)
 		}
 	}
-	assertHourFiles(t, env, 123, at(10, 0), 1)
-	assertHourFiles(t, env, 123, at(11, 0), 1)
 }
 
 func TestNoLogIsMissedOrReadTwiceWhenRequestsStoreTheirBatchesOutOfOrder(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
-	// At 11:59 the hot window is 11:30 to 12:00, so every Log is hot.
 	env.Clock.Set(testNow.Add(-time.Minute))
 	monitor := armMonitor(t, env, "")
 
@@ -379,6 +365,9 @@ func TestARunAfterABatchFiltersCountsPastItsLimitAndTakesOnlyLogRows(t *testing.
 			t.Errorf("Expected only a Log's fields, got %q in %s", field, raw)
 		}
 	}
+	if got := queryMessages(t, env, `where batch == "the sender's"`); len(got) != 7 {
+		t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", got)
+	}
 	if _, rows := runTable(t, env, `summarize count() by batch`); !slices.Equal(rows, []string{`["the sender's",7]`}) {
 		t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", rows)
 	}
@@ -404,115 +393,5 @@ func TestARunAfterABatchFiltersCountsPastItsLimitAndTakesOnlyLogRows(t *testing.
 		if status, raw := postQueryApp(t, env, "/api/123/logs/query", body); status != 400 || !strings.Contains(string(raw), "after_batch must be") {
 			t.Errorf("after_batch %v: expected 400 saying what after_batch must be, got %d: %s", after, status, raw)
 		}
-	}
-}
-
-// forgetBatches makes the closed environment's Logs those of an install from
-// before the batch column: no hot table or logs_late has the column, no Log
-// file has it, and the manifest has no batch_max.
-func forgetBatches(t *testing.T, env *TestEnv) {
-	t.Helper()
-	db, err := sql.Open("duckdb", filepath.Join(env.dir, "logs.duckdb"))
-	if err != nil {
-		t.Fatalf("Open logs.duckdb: %v", err)
-	}
-	defer db.Close()
-	tables := []string{"logs_late"}
-	rows, err := db.Query("SELECT table_name FROM duckdb_tables() WHERE table_name LIKE 'logs_hot_%'")
-	if err != nil {
-		t.Fatalf("List hot tables: %v", err)
-	}
-	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			t.Fatalf("Scan: %v", err)
-		}
-		tables = append(tables, table)
-	}
-	rows.Close()
-	statements := []string{"UPDATE log_files SET batch_max = NULL"}
-	for _, table := range tables {
-		statements = append(statements, "ALTER TABLE "+table+" DROP COLUMN batch")
-	}
-	files, err := filepath.Glob(filepath.Join(env.dir, "logs_parquet", "*", "*", "*", "*.parquet"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("Expected Log files, got %v %v", files, err)
-	}
-	for _, file := range files {
-		statements = append(statements, fmt.Sprintf(
-			"COPY (SELECT * EXCLUDE (batch) FROM read_parquet('%[1]s')) TO '%[1]s.old' (FORMAT parquet)", file))
-	}
-	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatalf("%s: %v", statement, err)
-		}
-	}
-	for _, file := range files {
-		if err := os.Rename(file+".old", file); err != nil {
-			t.Fatalf("Replace %s: %v", file, err)
-		}
-	}
-}
-
-func TestAnInstallFromBeforeTheBatchColumnKeepsItsLogsAndArmsMonitors(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-
-	at := func(hour, minute int) time.Time { return time.Date(2026, 10, 2, hour, minute, 0, 0, time.UTC) }
-	env.Clock.Set(at(12, 29))
-	postAndProcess(t, env,
-		logJSON(t, "ten", at(10, 10), map[string]any{"user": "ada", "status": 200}),
-		logJSON(t, "yesterday", testNow.AddDate(0, 0, -1), map[string]any{"user": "old"}),
-	)
-	env.ExportLogs(t) // hour 10's data.parquet, and yesterday's
-	// A late Log of hour 10 waits in logs_late, and one of 12:10 is hot.
-	postAndProcess(t, env,
-		logJSON(t, "late ten", at(10, 40), map[string]any{"user": "bob", "status": 500}),
-		logJSON(t, "twelve", at(12, 10), map[string]any{"user": "cy"}),
-	)
-	want := answersOf(t, env)
-	if got := messages(want.logs); !slices.Equal(got, []string{"twelve", "late ten", "ten", "yesterday"}) {
-		t.Fatalf("Unexpected Logs: %v", got)
-	}
-
-	env.close()
-	forgetBatches(t, env)
-	env.open(t)
-	assertAnswersUnchanged(t, env, want, "after an upgrade from before the batch column")
-
-	// A Monitor armed now reads only Logs stored from now on.
-	monitor := armMonitor(t, env, "")
-	armed := monitor.cursor
-	postAndProcess(t, env,
-		logJSON(t, "new twelve", at(12, 20), map[string]any{"user": "di"}),
-		logJSON(t, "new late ten", at(10, 50), map[string]any{"user": "ed"}),
-	)
-	newLogs := []string{"new twelve", "new late ten"}
-	if got := monitor.run(nil); !slices.Equal(got, newLogs) {
-		t.Errorf("Expected the new Logs, got %v", got)
-	}
-
-	// The next export puts old and new late Logs of hour 10 in one late
-	// file, beside its data.parquet from before the batch column.
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, at(10, 0), 2)
-	if got := messages(runAfterBatch(t, env, "", armed, nil).Logs); !slices.Equal(got, newLogs) {
-		t.Errorf("Expected the same new Logs after the export, got %v", got)
-	}
-	if got := monitor.run(nil); len(got) != 0 {
-		t.Errorf("Expected no more Logs, got %v", got)
-	}
-	if got := messages(latestLogs(t, env, 123, 100)); !slices.Equal(got, []string{"new twelve", "twelve", "new late ten", "late ten", "ten", "yesterday"}) {
-		t.Errorf("Expected every Log listed after the export, got %v", got)
-	}
-	// The late file has the batch column and data.parquet hasn't.
-	if got := queryMessages(t, env, `where status >= 200`); !slices.Equal(got, []string{"late ten", "ten"}) {
-		t.Errorf("Expected a where to read the files from before and after the batch column, got %v", got)
-	}
-
-	// A restart keeps it all.
-	env.Reopen(t)
-	if got := messages(runAfterBatch(t, env, "", armed, nil).Logs); !slices.Equal(got, newLogs) {
-		t.Errorf("Expected the same new Logs after a restart, got %v", got)
 	}
 }

@@ -93,23 +93,26 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
 
-	counts := query.Histogram(bucket)
-	from, to := counts.Range()
+	var counted []storage.LevelCount
 	limit := len(starts) * len(histogramLevels)
-	scan := storage.LogTableScan{
-		ProjectID: projectID,
-		From:      from,
-		To:        to,
-		Where:     counts.Where,
-		Select:    counts.Select,
-		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
+	from, to := query.Range()
+	if !query.Filters() && bucket%time.Minute == 0 {
+		// Every Log counts, by minute: the counts kept by minute serve from
+		// where they hold every Log. The buckets before it are counted from
+		// the Logs, as a Chart's are, so their ended hours come from the
+		// bin cache.
+		split := h.clickHouse.CountedByMinuteFrom(projectID, from, to, bucket)
+		if from.Before(split) {
+			counted, err = h.countByLevel(run, projectID, query.Histogram(bucket), from, split, limit)
+		}
+		if err == nil && split.Before(to) {
+			var byMinute []storage.LevelCount
+			byMinute, err = h.clickHouse.CountLogsByLevel(run.ctx, projectID, split, to, bucket)
+			counted = append(counted, byMinute...)
+		}
+	} else {
+		counted, err = h.countByLevel(run, projectID, query.Histogram(bucket), from, to, limit)
 	}
-	// As a Chart's, the buckets whose Logs are all in files may come from
-	// the bin cache.
-	if b, ok := counts.Bins(); ok {
-		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: limit}
-	}
-	raw, err := h.logs.ScanLogTable(run.ctx, scan)
 	if err != nil {
 		if run.timedOut() {
 			return run.stopped(c, shorterRange)
@@ -125,14 +128,13 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		index[start.UnixMilli()] = i
 	}
 	total, levels := int64(0), newLevelCounts()
-	for _, row := range raw {
-		start, _ := row[0].(time.Time)
-		level, _ := row[1].(string)
+	for _, count := range counted {
+		level := count.Level
 		if level == "" {
 			level = "none"
 		}
-		n, _ := row[2].(int64)
-		i, ok := index[start.UnixMilli()]
+		n := int64(count.Logs)
+		i, ok := index[count.Bucket.UnixMilli()]
 		if !ok {
 			continue
 		}
@@ -147,6 +149,36 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		"count":          total,
 		"levels":         levels,
 	})
+}
+
+// countByLevel runs counts, a Query's Histogram, over the Logs of [from,
+// to), as a table of at most limit rows. As a Chart's, its buckets of hours
+// that have ended may come from the bin cache.
+func (h *LogsHandler) countByLevel(run *run, projectID uint32, counts *logquery.Query, from, to time.Time, limit int) ([]storage.LevelCount, error) {
+	scan := storage.TableScan{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Where:     func(cols storage.LogColumns) storage.Filter { return counts.Filter(cols) },
+		Select:    func(cols storage.LogColumns) string { return counts.Select(cols) },
+		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
+		Now:       h.clock.Now(),
+	}
+	if b, ok := counts.Bins(); ok {
+		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: limit}
+	}
+	raw, err := h.clickHouse.ScanLogTable(run.ctx, scan)
+	if err != nil {
+		return nil, err
+	}
+	counted := make([]storage.LevelCount, len(raw))
+	for i, row := range raw {
+		start, _ := row[0].(time.Time)
+		level, _ := row[1].(string)
+		n, _ := row[2].(uint64)
+		counted[i] = storage.LevelCount{Bucket: start, Level: level, Logs: n}
+	}
+	return counted, nil
 }
 
 // bucketStarts are the starts of the buckets of size bucket, counted from the

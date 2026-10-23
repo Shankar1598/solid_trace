@@ -12,7 +12,9 @@
 # It pulls a release's images from GitHub's registry, for amd64 or arm64: the
 # release this checkout is at, or on any other commit the newest release before
 # it. With --build it builds them from this checkout instead. Safe to run again:
-# it never overwrites the config or the secrets.
+# it never overwrites the config or the secrets. Upgrading from a DuckDB release,
+# it first runs the last DuckDB release's prepare-clickhouse with the services
+# stopped (prepare_duckdb_logs).
 
 set -euo pipefail
 
@@ -24,6 +26,8 @@ CONFIG_FILE="$DEPLOY_DIR/config/event_store.yml"
 ENV_FILE="$DEPLOY_DIR/.env"
 # The user Console's image runs as (console/Dockerfile).
 CONSOLE_UID=1000
+# The user ClickHouse's image runs as.
+CLICKHOUSE_UID=101
 
 say() { printf '\n== %s\n' "$*"; }
 die() { printf '\nerror: %s\n' "$*" >&2; exit 1; }
@@ -88,6 +92,8 @@ check_old_paths() {
 create_data_dirs() {
   say "Creating $DATA_DIR"
   as_root install -d -m 0755 -o "$CONSOLE_UID" -g "$CONSOLE_UID" "$DATA_DIR/storage" "$DATA_DIR/storage_cold"
+  # ClickHouse's data. Compose stops its image from chowning it.
+  as_root install -d -m 0750 -o "$CLICKHOUSE_UID" -g "$CLICKHOUSE_UID" "$DATA_DIR/clickhouse"
   # Caddy's certificates. Its image runs as root.
   as_root install -d -m 0700 "$DATA_DIR/caddy"
 }
@@ -98,13 +104,6 @@ create_config() {
   else
     say "Writing $CONFIG_FILE"
     install -D -m 0644 "$DEPLOY_DIR/event_store.yml" "$CONFIG_FILE"
-  fi
-  # DuckDB's own default is 80% of memory, which leaves Console too little.
-  # Only while the template's commented line is there, as deploy/setup-gcp leaves it.
-  if grep -q '^# duckdb_memory_limit: ' "$CONFIG_FILE" && ! grep -q '^duckdb_memory_limit: ' "$CONFIG_FILE"; then
-    local memory_mb
-    memory_mb=$(awk '/^MemTotal:/ { print int($2 / 1024 / 2) }' /proc/meminfo)
-    sed -i "s|^# duckdb_memory_limit: .*|duckdb_memory_limit: ${memory_mb}MB|" "$CONFIG_FILE"
   fi
 }
 
@@ -118,15 +117,36 @@ ensure_env_secret() {
   (umask 077 && echo "$1=$(od -An -N"$2" -tx1 /dev/urandom | tr -d ' \n')" >>"$ENV_FILE")
 }
 
+# ensure_env_value NAME VALUE MESSAGE appends NAME=VALUE to deploy/.env,
+# unless it already has a value, which an operator may have changed.
+ensure_env_value() {
+  if grep -qs "^$1=." "$ENV_FILE"; then
+    return
+  fi
+  say "$3"
+  (umask 077 && echo "$1=$2" >>"$ENV_FILE")
+}
+
 # env_value KEY prints KEY's value in deploy/.env, or nothing.
 env_value() { grep -sE "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2- || true; }
 
 https_on() { [[ $(env_value COMPOSE_PROFILES) == *https* ]]; }
 
+# set_env_value NAME VALUE writes NAME=VALUE to deploy/.env, replacing its
+# value: for what each run works out afresh.
+set_env_value() {
+  local tmp
+  tmp=$(mktemp)
+  grep -svE "^$1=" "$ENV_FILE" > "$tmp" || true
+  echo "$1=$2" >> "$tmp"
+  # In place, so the file keeps its owner and mode (it holds secrets).
+  cat "$tmp" > "$ENV_FILE"
+  rm -f "$tmp"
+}
+
 # set_version writes SOLIDTRACE_VERSION to deploy/.env: the release whose images
 # run, the one this checkout is at or the newest before it, or dev with --build.
 set_version() {
-  local tmp
   if (( BUILD )); then
     VERSION=dev
   else
@@ -135,12 +155,7 @@ set_version() {
     [[ $VERSION == "$(git -C "$DEPLOY_DIR" describe --tags --exact-match 2>/dev/null)" ]] ||
       printf '\nwarning: %s\n' "This commit isn't a release, so it runs $VERSION's images, which may not match this checkout. To run this checkout's code: deploy/install --build" >&2
   fi
-  tmp=$(mktemp)
-  grep -svE '^SOLIDTRACE_VERSION=' "$ENV_FILE" > "$tmp" || true
-  echo "SOLIDTRACE_VERSION=$VERSION" >> "$tmp"
-  # In place, so the file keeps its owner and mode (it holds secrets).
-  cat "$tmp" > "$ENV_FILE"
-  rm -f "$tmp"
+  set_env_value SOLIDTRACE_VERSION "$VERSION"
 }
 
 # pull_images pulls a release's images, and stops if any isn't there.
@@ -151,6 +166,100 @@ pull_images() {
     as_root docker pull --quiet "$image" >/dev/null ||
       die "Couldn't pull $image. Its release may still be building (see https://github.com/Shankar1598/solid_trace/actions), or build from this checkout: deploy/install --build"
   done
+}
+
+# config_value KEY prints KEY's value in EventStore's config, if a line sets it.
+config_value() { sed -n "s/^$1:[[:space:]]*//p" "$CONFIG_FILE" 2>/dev/null | tail -n1 | tr -d "\"'" || true; }
+
+# host_path PATH prints where PATH, as EventStore's container sees it, is on
+# this machine.
+host_path() {
+  case $1 in
+    /storage/*) echo "$DATA_DIR/storage/${1#/storage/}" ;;
+    /storage_cold/*) echo "$DATA_DIR/storage_cold/${1#/storage_cold/}" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# log_file_store prints where the Log file store is, as EventStore's container
+# sees it and as EventStore finds it: logs_parquet_path, else logs_parquet
+# beside duckdb_path, as the DuckDB releases' config had it.
+log_file_store() {
+  local files duckdb
+  files=$(config_value logs_parquet_path)
+  if [[ -z $files ]]; then
+    duckdb=$(config_value duckdb_path)
+    files="$(dirname "${duckdb:-/storage/duckdb/production/events.duckdb}")/logs_parquet"
+  fi
+  echo "$files"
+}
+
+# set_log_file_store writes SOLIDTRACE_LOG_FILE_STORE to deploy/.env: where the
+# Log file store is on this machine, which Compose mounts read-only at
+# ClickHouse's user_files_path, /logs_parquet. EventStore's file() reads name
+# the files by their path in the store, so ClickHouse finds them there.
+set_log_file_store() {
+  set_env_value SOLIDTRACE_LOG_FILE_STORE "$(host_path "$(log_file_store)")"
+}
+
+# prepare_release prints the newest release before the one to run that ships
+# prepare-clickhouse: the last DuckDB release.
+prepare_release() {
+  local base=HEAD tag
+  [[ $VERSION == dev ]] || base="$VERSION^"
+  for tag in $(git -C "$DEPLOY_DIR" tag --merged "$base" --sort=-v:refname --list 'v*' 2>/dev/null); do
+    if git -C "$DEPLOY_DIR" grep -q prepare-clickhouse "$tag" -- ':/event_store/main.go' 2>/dev/null; then
+      echo "$tag"
+      return
+    fi
+  done
+  return 1
+}
+
+# prepare_duckdb_logs readies the Logs of a DuckDB release for this one. The
+# ClickHouse releases read the Log files the DuckDB releases wrote in place,
+# from what the last DuckDB release's prepare-clickhouse writes beside
+# logs.duckdb, and EventStore won't start on DuckDB data without it. So with
+# DuckDB data and no prepare-clickhouse marker, it stops the stack and runs
+# that release's command, and stops the install if it fails.
+prepare_duckdb_logs() {
+  local release=${VERSION}
+  # A release from before ClickHouse still runs on DuckDB.
+  [[ $release == dev ]] && release=HEAD
+  git -C "$DEPLOY_DIR" cat-file -e "$release:deploy/clickhouse" 2>/dev/null || return 0
+
+  # Where EventStore looks for it too: logs_duckdb_path, else beside
+  # duckdb_path, else beside the Log file store (logs_parquet_path).
+  local logs_duckdb duckdb files prepared
+  logs_duckdb=$(config_value logs_duckdb_path)
+  if [[ -z $logs_duckdb ]]; then
+    duckdb=$(config_value duckdb_path)
+    files=$(config_value logs_parquet_path)
+    if [[ -n $duckdb ]]; then
+      logs_duckdb="$(dirname "$duckdb")/logs.duckdb"
+    else
+      logs_duckdb="$(dirname "${files:-/storage/duckdb/production/logs_parquet}")/logs.duckdb"
+    fi
+  fi
+  logs_duckdb=$(host_path "$logs_duckdb")
+  prepared="$(dirname "$logs_duckdb")/prepared"
+  as_root test -e "$logs_duckdb" || return 0
+  as_root test -e "$prepared/marker.json" && return 0
+
+  local from image
+  from=$(prepare_release) ||
+    die "$logs_duckdb holds Logs from a DuckDB release, which $VERSION reads only once the last DuckDB release's prepare-clickhouse has prepared them, and no release before $VERSION ships it. Upgrade to the last DuckDB release first."
+  image="ghcr.io/shankar1598/solid-trace-event-store:$from"
+  say "Preparing the Logs in $logs_duckdb for ClickHouse with $from's prepare-clickhouse, with the services stopped"
+  compose stop ||
+    die "Couldn't stop the services. See: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml ps"
+  as_root docker pull --quiet "$image" >/dev/null ||
+    die "Couldn't pull $image, which prepares the Logs in $logs_duckdb. The services are stopped; run deploy/install again."
+  as_root env SOLIDTRACE_VERSION="$from" docker compose --project-directory "$DEPLOY_DIR" -f "$DEPLOY_DIR/docker-compose.yml" \
+    run --rm --no-deps event_store ./event_store prepare-clickhouse ||
+    die "$from's prepare-clickhouse failed, so the Logs in $logs_duckdb aren't ready for $VERSION. The services are stopped. Fix what it says and run deploy/install again, or go back to $from: git checkout $from && deploy/install"
+  as_root test -e "$prepared/marker.json" ||
+    die "$from's prepare-clickhouse ended without writing $prepared/marker.json. The services are stopped."
 }
 
 start_services() {
@@ -211,7 +320,15 @@ ensure_env_secret SECRET_KEY_BASE 64 "Writing Console's secret to $ENV_FILE"
 # SolidTrace's own Logs (docs/adr/0011). db_prepare gives the Project this key
 # when it seeds it, and Vector sends with it.
 ensure_env_secret META_PROJECT_KEY 16 "Writing the Meta Organization's project key to $ENV_FILE"
+# EventStore's password on ClickHouse, which reads it from the environment too.
+ensure_env_secret SOLIDTRACE_CLICKHOUSE_PASSWORD 24 "Writing ClickHouse's password to $ENV_FILE"
+# ClickHouse's memory: half of RAM, which leaves Console and Vector the rest.
+ensure_env_value SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES \
+  "$(awk '/^MemTotal:/ { printf "%.0f", $2 * 1024 / 2 }' /proc/meminfo)" \
+  "Giving ClickHouse half of this machine's memory in $ENV_FILE"
 set_version
+set_log_file_store
+prepare_duckdb_logs
 start_services
 wait_for Console http://127.0.0.1:3000/up
 wait_for EventStore http://127.0.0.1:4000/health

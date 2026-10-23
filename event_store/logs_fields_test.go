@@ -60,8 +60,7 @@ func getFields(t *testing.T, env *TestEnv, projectID uint32, from, to time.Time,
 }
 
 // postHotTo sends a Project one Log per set of Attributes, all at one time,
-// with the clock at that time, so that they are hot and counted for their
-// day.
+// with the clock at that time.
 func postHotTo(t *testing.T, env *TestEnv, projectID uint32, key string, at time.Time, attributes ...map[string]any) {
 	t.Helper()
 	env.Clock.Set(at)
@@ -181,6 +180,24 @@ func TestFieldsAnswerTheTopAttributesUpToTheLimitAndItsCap(t *testing.T) {
 			t.Errorf("limit %q: expected 400, got %d: %s", limit, status, raw)
 		}
 	}
+}
+
+func TestFieldsCountLogsThatComeLate(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// A Log sent five hours after its time, one sent a day after, and one on
+	// time, each counted for its own day.
+	env.Clock.Set(testNow)
+	yesterday := testNow.AddDate(0, 0, -1)
+	postAndProcess(t, env,
+		logJSON(t, "hours late", testNow.Add(-5*time.Hour), map[string]any{"late": "yes"}),
+		logJSON(t, "a day late", yesterday, map[string]any{"late": "yes"}),
+		logJSON(t, "on time", testNow.Add(-time.Minute), map[string]any{"late": "no"}))
+
+	today := testNow.Truncate(24 * time.Hour)
+	assertAttributes(t, getFields(t, env, 123, today, testNow, ""), []attributeCount{{"late", "string", 2}}, "today")
+	assertAttributes(t, getFields(t, env, 123, yesterday, yesterday.Add(time.Hour), ""), []attributeCount{{"late", "string", 1}}, "yesterday")
 }
 
 func TestFieldsOfAProjectWithNoCountsAreTheBuiltInFields(t *testing.T) {

@@ -73,8 +73,10 @@ services:
       # The object_store bucket's key, if event_store.yml has one.
       SOLIDTRACE_OBJECT_STORE_KEY_ID: ${SOLIDTRACE_OBJECT_STORE_KEY_ID:-}
       SOLIDTRACE_OBJECT_STORE_SECRET: ${SOLIDTRACE_OBJECT_STORE_SECRET:-}
-    # Pebble's tables and DuckDB's Parquet files each hold a file descriptor.
-    # 1048576 is the most the kernel allows by default (fs.nr_open).
+      # EventStore's password on ClickHouse.
+      SOLIDTRACE_CLICKHOUSE_PASSWORD: ${SOLIDTRACE_CLICKHOUSE_PASSWORD:?run deploy/install, which writes it to deploy/.env}
+    # Pebble's tables each hold a file descriptor. 1048576 is the most the
+    # kernel allows by default (fs.nr_open).
     ulimits:
       nofile:
         soft: 1048576
@@ -84,12 +86,55 @@ services:
       - ./data/storage_cold:/storage_cold
       - ./config:/etc/solid-trace:ro
     restart: unless-stopped
-    # Room for DuckDB's checkpoint and an in-flight upload after the HTTP servers stop.
-    stop_grace_period: 30s
     logging: *logging
     depends_on:
       db_prepare:
         condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+
+  # Keeps Logs and Events for EventStore, on 127.0.0.1:4200 only, with
+  # deploy/clickhouse's config. EventStore adds the bucket volume to its
+  # storage policy, from event_store.yml's object_store, in its conf.d.
+  clickhouse:
+    # The patch bin/clickhouse-dev runs too; change both together.
+    image: clickhouse/clickhouse-server:26.8.34.13
+    network_mode: host
+    environment:
+      # deploy/clickhouse sets the users; the image's entrypoint leaves them.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      # deploy/install makes data/clickhouse ClickHouse's (uid 101). The
+      # entrypoint's chown would fail on the read-only Log file store.
+      CLICKHOUSE_DO_NOT_CHOWN: "1"
+      SOLIDTRACE_CLICKHOUSE_PASSWORD: ${SOLIDTRACE_CLICKHOUSE_PASSWORD:?run deploy/install, which writes it to deploy/.env}
+      # Half of RAM, from deploy/install. Never a mem_limit: under a cgroup
+      # limit, ClickHouse 26.8 returns freed pages at once and scans run
+      # about 1.9x slower.
+      SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES: ${SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES:-0}
+      # The bucket volume reads the object_store's key from these.
+      SOLIDTRACE_OBJECT_STORE_KEY_ID: ${SOLIDTRACE_OBJECT_STORE_KEY_ID:-}
+      SOLIDTRACE_OBJECT_STORE_SECRET: ${SOLIDTRACE_OBJECT_STORE_SECRET:-}
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - ./clickhouse/config.d:/etc/clickhouse-server/config.d:ro
+      - ./clickhouse/users.d:/etc/clickhouse-server/users.d:ro
+      # EventStore writes it (clickhouse.config_dir); ClickHouse reloads it.
+      - ./data/storage/clickhouse/conf.d:/etc/clickhouse-server/conf.d:ro
+      - ./data/clickhouse:/var/lib/clickhouse
+      # The Log file store, for Log files written before the switch, at
+      # ClickHouse's user_files_path: event_store.yml's logs_parquet_path,
+      # which deploy/install finds on this machine.
+      - ${SOLIDTRACE_LOG_FILE_STORE:-./data/storage/duckdb/production/logs_parquet}:/logs_parquet:ro
+    healthcheck:
+      test: ["CMD", "clickhouse", "client", "--port", "4200", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    restart: unless-stopped
+    logging: *logging
 
   # TLS in front of Console (443) and ingest (4443), only with HTTPS on in
   # deploy/setup-gcp, which sets COMPOSE_PROFILES=https. It runs as root, so it can

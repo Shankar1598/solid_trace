@@ -1,38 +1,48 @@
-// A run's error as the result area shows it. DuckDB points at a mistake in
-// SQL with the line it is on and a caret under it:
+// A run's error as the result area shows it. ClickHouse says where SQL fails
+// to parse as a position, counted in bytes from 1:
 //
-//   LINE 1: SELECT nope FROM logs
-//                  ^
+//   Syntax error: failed at position 31 (level): level = 'error'. Expected one of: …
+//
+// With the SQL that ran, the error also shows the line of the SQL that holds
+// the position, and a caret under it:
+//
+//   LINE 1: SELECT message FROM logs WHER level = 'error'
+//                                         ^
 //
 // Those two lines keep their columns, or the caret points at nothing, while
-// the prose around them wraps to fit a phone.
+// the prose above them wraps to fit a phone.
 
 /** Some of an error's lines: prose to wrap, or a LINE and its caret to keep as written. */
 export type ErrorPart = { kind: 'prose' | 'pointer'; text: string }
 
-const LINE = /^LINE \d+: /
-const CARET = /^\s*\^\s*$/
+const POSITION = /\bfailed at position (\d+)\b/
 
-export function errorParts(message: string): ErrorPart[] {
-  const lines = message.split('\n')
-  const parts: ErrorPart[] = []
-  let prose: string[] = []
-  const endProse = () => {
-    // Blank lines between parts become the space between them.
-    while (prose.length > 0 && prose[0].trim() === '') prose.shift()
-    while (prose.length > 0 && prose[prose.length - 1].trim() === '') prose.pop()
-    if (prose.length > 0) parts.push({ kind: 'prose', text: prose.join('\n') })
-    prose = []
+export function errorParts(message: string, sql?: string): ErrorPart[] {
+  const prose: ErrorPart = { kind: 'prose', text: message }
+  const position = POSITION.exec(message)
+  if (!position || sql === undefined) return [prose]
+  const at = charIndex(sql, Number(position[1]) - 1)
+  if (at === null) return [prose]
+
+  const lines = sql.slice(0, at).split('\n')
+  const number = lines.length
+  const before = lines[number - 1]
+  const line = before + sql.slice(at).split('\n')[0]
+  const label = `LINE ${number}: `
+  // Tabs stay tabs, so the caret lines up however wide they are drawn.
+  const indent = ' '.repeat(label.length) + before.replace(/[^\t]/g, ' ')
+  return [prose, { kind: 'pointer', text: `${label}${line}\n${indent}^` }]
+}
+
+/** The index in `text` of the character that starts at UTF-8 byte `offset`; its length at the end; null past it. */
+function charIndex(text: string, offset: number): number | null {
+  const encoder = new TextEncoder()
+  let bytes = 0
+  let index = 0
+  for (const char of text) {
+    if (bytes >= offset) break
+    bytes += encoder.encode(char).length
+    index += char.length
   }
-  for (let i = 0; i < lines.length; i++) {
-    if (LINE.test(lines[i]) && CARET.test(lines[i + 1] ?? '')) {
-      endProse()
-      parts.push({ kind: 'pointer', text: `${lines[i]}\n${lines[i + 1].trimEnd()}` })
-      i++
-    } else {
-      prose.push(lines[i])
-    }
-  }
-  endProse()
-  return parts
+  return bytes === offset ? index : null
 }

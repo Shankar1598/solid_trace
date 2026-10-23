@@ -1,18 +1,18 @@
 package main_test
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/solidtrace/event_store/config"
 )
 
-// The bin cache keeps charts' bins of exported hours in memory. Whatever it
-// holds, a run answers exactly as a run without it would.
+// The bin cache keeps charts' bins of hours that have ended in memory, until
+// a Log is inserted into one of their hours. Whatever it holds, a run answers
+// exactly as a run without it would.
 
 // binCachedQueries are charts made bin by bin: by an hour, a bin smaller and
 // one larger than an hour, a day, and a column binned before the
@@ -30,13 +30,15 @@ var binCachedQueries = []string{
 	`search "B" | summarize count() by bin(time, 20m)`,
 }
 
-// binCachedHistograms are the explorer's histograms, made bin by bin as
-// those charts are: with buckets of an hour and of 20 minutes, and of the
-// size picked for the range, with no Query, a where and a text match.
+// binCachedHistograms are the explorer's histograms: filtered, so made bin
+// by bin as those charts are, with buckets of an hour and of 20 minutes, and
+// of the size picked for the range; and one with no filter, which reads
+// counts kept by minute instead.
 var binCachedHistograms = []histogramRequest{
-	{BucketSeconds: 3600},
+	{Query: `where user != "nobody"`, BucketSeconds: 3600},
 	{Query: `where user == "ada"`, BucketSeconds: 1200},
 	{Query: `search "B"`},
+	{BucketSeconds: 3600},
 }
 
 // histogramName names a histogram in failures and in the hits
@@ -70,8 +72,8 @@ func chartLog(t *testing.T, at time.Time, user string, ms int) string {
 }
 
 // postChartLogs sends Logs from 20:00 on October 1st to 12:30 on the 2nd,
-// at noon, those of 11:00 earlier, while the hot window takes them: so the
-// Logs of 11:00 and 12:00 are hot, and the others late.
+// those of 11:00 at 11:29 and the rest at noon, where it leaves the clock: so
+// the hours up to 11:00 have ended, and 12:00 hasn't.
 func postChartLogs(t *testing.T, env *TestEnv) {
 	t.Helper()
 	var eleven, logs []string
@@ -112,7 +114,7 @@ func binnedTableIn(t *testing.T, env *TestEnv, query string, from, to time.Time)
 
 // binCacheStats are the bin cache's hits and misses so far.
 func binCacheStats(env *TestEnv) (hits, misses int64) {
-	return env.LogStore.BinCacheStats()
+	return env.ClickHouseLogs.BinCacheStats()
 }
 
 // assertSameWithAndWithoutTheBinCache runs each Query and histogram with the
@@ -141,7 +143,7 @@ func assertSameWithAndWithoutTheBinCache(t *testing.T, env *TestEnv, when string
 	for _, r := range runs {
 		cached[r.name] = r.answer()
 	}
-	env.LogStore.UseBinCache(0)
+	env.ClickHouseLogs.UseBinCache(0)
 	uncached := map[string]string{}
 	for _, r := range runs {
 		uncached[r.name] = r.answer()
@@ -149,7 +151,7 @@ func assertSameWithAndWithoutTheBinCache(t *testing.T, env *TestEnv, when string
 			t.Errorf("%s, %s\n with the bin cache: %s\n without it:         %s", when, r.name, cached[r.name], uncached[r.name])
 		}
 	}
-	env.LogStore.UseBinCache(config.DefaultLogsBinCacheMB << 20)
+	env.ClickHouseLogs.UseBinCache(config.DefaultLogsBinCacheMB << 20)
 	for _, r := range runs {
 		if got := r.answer(); got != uncached[r.name] {
 			t.Errorf("%s, %s, filling a new bin cache\n got:  %s\n want: %s", when, r.name, got, uncached[r.name])
@@ -167,73 +169,101 @@ func assertSameWithAndWithoutTheBinCache(t *testing.T, env *TestEnv, when string
 	return hits
 }
 
-func TestTheBinCacheAnswersAsARunWithoutItAcrossExportsLateLogsRetentionAndDeletion(t *testing.T) {
+func TestTheBinCacheAnswersAsARunWithoutItAsLogsArriveAndHoursEnd(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
-	seedProject(t, env.SQLitePath, 123, 0)
-	seedProject(t, env.SQLitePath, 456, 0)
 
-	// At noon, the hours up to 10:00 are exported, and 11:00 and 12:00
-	// are hot.
+	// At noon, the hours up to 11:00 have ended.
 	postChartLogs(t, env)
-	env.ExportLogs(t)
-	hits := assertSameWithAndWithoutTheBinCache(t, env, "after the export")
-	// Of the 29 whole hours of the range, two hold hot Logs; the rest,
-	// empty ones after noon too, come from the cache.
-	if got := hits[binCachedQueries[0]]; got != 27 {
-		t.Errorf("Expected a second run to take 27 hours from the cache, got %d", got)
+	hits := assertSameWithAndWithoutTheBinCache(t, env, "once stored")
+	// Of the 29 whole hours of the range, the 16 up to 11:00 have ended and
+	// come from the cache; noon and the hours after it are worked out on
+	// every run.
+	if got := hits[binCachedQueries[0]]; got != 16 {
+		t.Errorf("Expected a second run to take 16 hours from the cache, got %d", got)
 	}
-	// Of the 14 whole 2h bins, those of 10:00 to 12:00 and 12:00 to
-	// 14:00 hold hot Logs, as does the day of October 2nd, so each is
-	// worked out on every run.
-	if got := hits[binCachedQueries[2]]; got != 12 {
-		t.Errorf("Expected a second run to take 12 two-hour bins from the cache, got %d", got)
+	// Of the 14 whole 2h bins, the 8 up to 10:00 to 12:00 have ended.
+	if got := hits[binCachedQueries[2]]; got != 8 {
+		t.Errorf("Expected a second run to take 8 two-hour bins from the cache, got %d", got)
 	}
+	// October 2nd hasn't ended.
 	if got := hits[binCachedQueries[3]]; got != 0 {
 		t.Errorf("Expected no whole day from the cache, got %d", got)
 	}
 	// A Chart filtered on text takes its hours from the cache too.
-	if got := hits[binCachedQueries[7]]; got != 27 {
-		t.Errorf("Expected a text-filtered Chart to take 27 hours from the cache, got %d", got)
+	if got := hits[binCachedQueries[7]]; got != 16 {
+		t.Errorf("Expected a text-filtered Chart to take 16 hours from the cache, got %d", got)
 	}
-	// So does the explorer's histogram.
-	if got := hits[histogramName(binCachedHistograms[0])]; got != 27 {
-		t.Errorf("Expected an hourly histogram to take 27 hours from the cache, got %d", got)
+	// So does the explorer's filtered histogram; the histogram of every Log
+	// reads counts kept by minute.
+	if got := hits[histogramName(binCachedHistograms[0])]; got != 16 {
+		t.Errorf("Expected a filtered hourly histogram to take 16 hours from the cache, got %d", got)
+	}
+	if got := hits[histogramName(binCachedHistograms[3])]; got != 0 {
+		t.Errorf("Expected the histogram of every Log to take nothing from the cache, got %d", got)
 	}
 
-	// A late Log of 05:30 goes to logs_late, and one of 03:10 to a late
-	// file of its hour at once, so their hours' bins in the cache are
-	// stale.
+	// Logs of 03:10 and 05:30 arrive late, into hours whose bins the cache
+	// holds.
 	postAndProcess(t, env, chartLog(t, chartAt(2, 3, 10), "dee", 500))
-	env.ExportLogs(t)
 	postAndProcess(t, env, chartLog(t, chartAt(2, 5, 30), "dee", 700))
 	assertSameWithAndWithoutTheBinCache(t, env, "after late Logs")
 
-	// An hour later, 11:00 is exported, 05:30's Log goes to a late file,
-	// and Logs arrive in an hour that was empty.
-	env.Clock.Set(testNow.Add(time.Hour))
+	// An hour and a half later, noon has ended, and Logs arrive in an hour
+	// that was empty.
+	env.Clock.Set(testNow.Add(90 * time.Minute))
 	postAndProcess(t, env, chartLog(t, chartAt(2, 13, 10), "ada", 30))
-	env.ExportLogs(t)
-	assertSameWithAndWithoutTheBinCache(t, env, "after the next export")
+	hits = assertSameWithAndWithoutTheBinCache(t, env, "an hour and a half later")
+	if got := hits[binCachedQueries[0]]; got != 17 {
+		t.Errorf("Expected a second run to take 17 hours from the cache once noon has ended, got %d", got)
+	}
 
-	// The next day, everything is exported, and a Retention of one day
-	// deletes October 1st.
-	env.Clock.Set(chartAt(3, 0, 30))
-	env.ExportLogs(t)
-	assertSameWithAndWithoutTheBinCache(t, env, "after a day's exports")
-	consoleExec(t, env, "UPDATE projects SET log_retention_days = 1 WHERE id = 123")
+	// A restart empties the cache, and the runs fill it again.
+	env.Reopen(t)
+	assertSameWithAndWithoutTheBinCache(t, env, "after a restart")
+}
+
+func TestACachedBinMissesOnceALogIsInsertedIntoItsHour(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	postChartLogs(t, env)
+
+	query := binCachedQueries[0]
+	binnedTable(t, env, query)
+	binnedTable(t, env, query)
+
+	// A Log of 03:10 arrives late: 03:00's bin is worked out again, and the
+	// other hours still come from the cache.
+	postAndProcess(t, env, chartLog(t, chartAt(2, 3, 10), "dee", 500))
+	hitsBefore, missesBefore := binCacheStats(env)
+	got := binnedTable(t, env, query)
+	hitsAfter, missesAfter := binCacheStats(env)
+	if hits, misses := hitsAfter-hitsBefore, missesAfter-missesBefore; hits != 15 || misses != 1 {
+		t.Errorf("Expected 03:00's bin missed and 15 hours from the cache, got %d hits and %d misses", hits, misses)
+	}
+	if !strings.Contains(got, `["2026-10-02T03:00:00Z","dee",1]`) {
+		t.Errorf("Expected 03:00's row of dee's late Log, got %s", got)
+	}
+	env.ClickHouseLogs.UseBinCache(0)
+	if uncached := binnedTable(t, env, query); got != uncached {
+		t.Errorf("%s\n from the bin cache: %s\n without it:         %s", query, got, uncached)
+	}
+}
+
+func TestCachedBinsMissOnceRetentionDeletesTheirDay(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	postChartLogs(t, env)
+	assertSameWithAndWithoutTheBinCache(t, env, "before Retention")
+
+	// Past midnight on November 1st, 30 days back is October 2nd, so
+	// October 1st's Logs go, while the cache holds bins of its hours.
+	env.Clock.Set(time.Date(2026, 11, 1, 0, 30, 0, 0, time.UTC))
 	env.DeleteLogsPastRetention(t)
 	assertSameWithAndWithoutTheBinCache(t, env, "after Retention")
-
-	// The Project is deleted.
-	consoleExec(t, env, "DELETE FROM projects WHERE id = 123")
-	env.DeleteLogsPastRetention(t)
-	assertSameWithAndWithoutTheBinCache(t, env, "after the Project's deletion")
-	var empty struct {
-		Rows []json.RawMessage `json:"rows"`
-	}
-	if err := json.Unmarshal([]byte(binnedTable(t, env, binCachedQueries[0])), &empty); err != nil || len(empty.Rows) != 0 {
-		t.Errorf("Expected no rows once the Project is deleted, got %v (%v)", empty.Rows, err)
+	if got := binnedTable(t, env, binCachedQueries[0]); strings.Contains(got, `["2026-10-01`) || !strings.Contains(got, `["2026-10-02`) {
+		t.Errorf("Expected October 2nd's rows alone after Retention, got %s", got)
 	}
 }
 
@@ -241,7 +271,6 @@ func TestARateChartRunOverALaterRangeTakesTheBinsBothHold(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	postChartLogs(t, env)
-	env.ExportLogs(t)
 
 	// Ten minutes later, as a Dashboard refreshes, the range's ends cut
 	// other hours, whose rates are worked out afresh.
@@ -251,11 +280,11 @@ func TestARateChartRunOverALaterRangeTakesTheBinsBothHold(t *testing.T) {
 	hitsBefore, _ := binCacheStats(env)
 	refreshed := binnedTableIn(t, env, query, later.from, later.to)
 	hitsAfter, _ := binCacheStats(env)
-	// Of the 29 whole hours both ranges hold, two hold hot Logs.
-	if got := hitsAfter - hitsBefore; got != 27 {
-		t.Errorf("Expected the later run to take 27 hours from the cache, got %d", got)
+	// Of the 29 whole hours both ranges hold, 16 have ended.
+	if got := hitsAfter - hitsBefore; got != 16 {
+		t.Errorf("Expected the later run to take 16 hours from the cache, got %d", got)
 	}
-	env.LogStore.UseBinCache(0)
+	env.ClickHouseLogs.UseBinCache(0)
 	if uncached := binnedTableIn(t, env, query, later.from, later.to); refreshed != uncached {
 		t.Errorf("%s\n from the bin cache: %s\n without it:         %s", query, refreshed, uncached)
 	}
@@ -264,65 +293,35 @@ func TestARateChartRunOverALaterRangeTakesTheBinsBothHold(t *testing.T) {
 func TestTheBinCacheFiltersEveryStretchARunWorksOut(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
-
-	// At noon, the hours up to 10:00 are exported, and a late Log of 02:50
-	// waits in logs_late.
 	postChartLogs(t, env)
-	env.ExportLogs(t)
-	postAndProcess(t, env, chartLog(t, chartAt(2, 2, 50), "bob", 900))
+	postAndProcess(t, env, chartLog(t, chartAt(2, 2, 50), "ada", 900))
 
 	// From part-way into 02:00: a run with the cache works out that part
-	// and the hot 11:00 and 12:00, two stretches of one day, and takes the
-	// rest from the cache.
+	// and the hours from noon, two stretches of one day, and takes the rest
+	// from the cache.
 	query := `where user == "ada" | summarize count(), slowest = max(ms) by bin(time, 1h)`
 	from, to := chartAt(2, 2, 40), chartAt(2, 23, 0)
 	filling := binnedTableIn(t, env, query, from, to)
 	hitsBefore, _ := binCacheStats(env)
 	again := binnedTableIn(t, env, query, from, to)
 	hitsAfter, _ := binCacheStats(env)
-	if got := hitsAfter - hitsBefore; got != 18 {
-		t.Errorf("Expected a second run to take 18 hours from the cache, got %d", got)
+	if got := hitsAfter - hitsBefore; got != 9 {
+		t.Errorf("Expected a second run to take the 9 hours from 03:00 to 11:00 from the cache, got %d", got)
 	}
-	env.LogStore.UseBinCache(0)
+	env.ClickHouseLogs.UseBinCache(0)
 	uncached := binnedTableIn(t, env, query, from, to)
 	if filling != uncached || again != uncached {
 		t.Errorf("%s\n filling the bin cache: %s\n run again:             %s\n without it:            %s", query, filling, again, uncached)
 	}
-}
-
-func TestTheBinCacheAnswersAsARunWithoutItWithTheFilesInABucket(t *testing.T) {
-	env, _ := setupBucketTestEnv(t, 0)
-	defer env.Cleanup()
-
-	postChartLogs(t, env)
-	env.ExportLogs(t)
-	env.UploadLogFiles(t)
-	env.EvictLogFiles(t)
-	hits := assertSameWithAndWithoutTheBinCache(t, env, "with every exported hour in the bucket")
-	if got := hits[binCachedQueries[0]]; got != 27 {
-		t.Errorf("Expected a second run to take 27 hours from the cache, got %d", got)
+	if !strings.Contains(uncached, `["2026-10-02T02:00:00Z",1,900]`) {
+		t.Errorf("Expected 02:50's Log in the part of 02:00 the range holds, got %s", uncached)
 	}
-
-	// Evicting copies changes no bin: what the cache holds is still taken.
-	postAndProcess(t, env, chartLog(t, chartAt(2, 4, 50), "dee", 900))
-	env.ExportLogs(t)
-	hitsBefore, _ := binCacheStats(env)
-	binnedTable(t, env, binCachedQueries[0])
-	env.UploadLogFiles(t)
-	env.EvictLogFiles(t)
-	binnedTable(t, env, binCachedQueries[0])
-	hitsAfter, _ := binCacheStats(env)
-	if got := hitsAfter - hitsBefore; got != 2*27-1 {
-		t.Errorf("Expected the hours but 04:00 taken from the cache twice, and 04:00 once after its late file, got %d hits", got)
-	}
-	assertSameWithAndWithoutTheBinCache(t, env, "after a late file in the bucket")
 }
 
 func TestQueriesNotMadeBinByBinNeverUseTheBinCache(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	postChartLogs(t, env)
-	env.ExportLogs(t)
 
 	for _, query := range []string{
 		"summarize count() by user, bin(time, 1h)",
@@ -340,33 +339,4 @@ func TestQueriesNotMadeBinByBinNeverUseTheBinCache(t *testing.T) {
 			}
 		}
 	}
-}
-
-func TestAnInstallFromBeforeGenerationsGetsThemForItsFiles(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-	postChartLogs(t, env)
-	env.ExportLogs(t)
-
-	// Its manifest has no generations, and no sequence to make them.
-	env.close()
-	db, err := sql.Open("duckdb", filepath.Join(env.dir, "logs.duckdb"))
-	if err != nil {
-		t.Fatalf("Open logs.duckdb: %v", err)
-	}
-	for _, ddl := range []string{"ALTER TABLE log_files DROP COLUMN generation", "DROP SEQUENCE log_file_generations"} {
-		if _, err := db.Exec(ddl); err != nil {
-			t.Fatalf("%s: %v", ddl, err)
-		}
-	}
-	db.Close()
-	env.open(t)
-
-	hits := assertSameWithAndWithoutTheBinCache(t, env, "after the upgrade")
-	if got := hits[binCachedQueries[0]]; got != 27 {
-		t.Errorf("Expected a second run to take 27 hours from the cache, got %d", got)
-	}
-	postAndProcess(t, env, chartLog(t, chartAt(2, 3, 10), "dee", 500))
-	env.ExportLogs(t)
-	assertSameWithAndWithoutTheBinCache(t, env, "after a late file")
 }

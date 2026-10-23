@@ -28,7 +28,7 @@ const (
 //     with how many Logs carried each, most first; type is "string",
 //     "number" or "bool", and a name whose values have two types is listed
 //     once for each. They come from Log processing's popularity counts
-//     (storage.LogStore.AttributeCounts), so they leave out JSON Attributes.
+//     (storage.ClickHouseLogs.AttributeCounts), so they leave out JSON Attributes.
 //   - truncated is true when there are more Attributes than limit (default
 //     100, at most 500).
 //
@@ -54,7 +54,7 @@ func (h *LogsHandler) Fields(c *fiber.Ctx) error {
 		limit = min(limit, maxFieldAttributes)
 	}
 
-	attributes, truncated, err := h.logs.AttributeCounts(c.UserContext(), projectID, from, to, limit)
+	attributes, truncated, err := h.clickHouse.AttributeCounts(c.UserContext(), projectID, from, to, limit)
 	if err != nil {
 		logger.L.Error("Counting a Project's Attributes failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})

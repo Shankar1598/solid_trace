@@ -23,10 +23,11 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
 
     assert InstanceSetting.current.sql_queries_enabled?
     assert_includes out, "SQL queries: on"
-    [ "read-only", "read only the logs and events views", "their own Organization's Projects", "starve ingest" ].each do |allowed|
+    [ "ClickHouse SQL", "read-only", "sees only that Project's logs and events", "their own Organization's Projects",
+      "slow ingest down" ].each do |allowed|
       assert_includes out, allowed
     end
-    [ "every Organization's Logs", "read files on the server", "read the bucket", "web address" ].each do |refused|
+    [ "DuckDB", "not sandboxed", "every Organization's Logs", "read files on the server", "web address" ].each do |refused|
       assert_not_includes out, refused
     end
   end

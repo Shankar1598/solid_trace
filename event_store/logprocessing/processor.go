@@ -1,14 +1,14 @@
 // Package logprocessing is Log processing: it moves the Log batches that Log
-// ingest stored in Pebble into each Project's hot table in DuckDB.
+// ingest stored in Pebble into ClickHouse's logs table.
 package logprocessing
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/duckdb/duckdb-go/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	// maxLogsPerCommit is roughly how many Logs one transaction appends for
-	// a Project: whole Log batches, at least one, until they reach it.
+	// maxLogsPerCommit is roughly how many Logs one insert takes for a
+	// Project: whole Log batches, at least one, until they reach it.
 	maxLogsPerCommit = 10000
 	tickInterval     = time.Second
 
@@ -50,13 +50,11 @@ func isContentError(err error) bool {
 	return errors.As(err, &content)
 }
 
-// Store is logs.duckdb as Log processing uses it. *storage.LogStore is the
-// production adapter.
+// Store is ClickHouse's logs table as Log processing uses it.
+// *storage.ClickHouseLogs is the production adapter.
 type Store interface {
-	LogProcessingCursor(projectID uint32) (uuid.UUID, error)
-	LogProcessingCursors() ([]uuid.UUID, error)
-	AppendLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error
-	TryLogBatches(projectID uint32, batches []storage.LogBatch, now time.Time) error
+	InsertLogBatches(projectID uint32, insert storage.LogInsert) error
+	TryLogBatches(projectID uint32, batches []storage.LogBatch) error
 	Ping() error
 }
 
@@ -70,17 +68,24 @@ type Transform interface {
 
 // Processor is Log processing: one worker, separate from Event processing,
 // that reads each Project's Log batches from Pebble after its Log processing
-// cursor and appends their Logs to the Project's hot table, moving the cursor
-// in the same DuckDB transaction. Only then does it delete the batches from
-// Pebble. A crash between the commit and the delete leaves batches at or
-// below the cursor, which are never read again.
+// cursor and inserts their Logs into ClickHouse, each Log exactly once:
+//  1. it records in Pebble the range of batches it is about to insert;
+//  2. it inserts them, with a dedup token made from the range;
+//  3. it moves the cursor, in Pebble, past the range, and deletes the
+//     batches.
+//
+// After a crash or a failed insert, the recorded range past the cursor is
+// inserted again, the same batches with the same token, and ClickHouse drops
+// whatever it already has. A crash between moving the cursor and the delete
+// leaves batches at or below the cursor, which are never read again.
 //
 // A Project whose Logs fail to store waits to be retried, with backoff, and
 // the other Projects carry on meanwhile. A store error is retried until it
 // clears and skips nothing. Logs that fail on their content are retried, then
 // tried apart, and a Log that fails on its own is skipped and logged.
 //
-// Every minute it logs each Project whose Logs have waited too long.
+// Every minute it logs each Project whose Logs have waited too long, and what
+// each Project's inserts stored.
 type Processor struct {
 	batches   *storage.PebbleWriter
 	store     Store
@@ -94,6 +99,7 @@ type Processor struct {
 	// Used only by the worker.
 	failing          map[uint32]*failure // Projects whose Logs failed to store
 	lastBacklogCheck time.Time
+	commits          map[uint32]*commitCounts // each Project's inserts since the last backlog check
 
 	*worker
 }
@@ -103,13 +109,18 @@ type failure struct {
 	retryAt time.Time     // when to try the Project again
 	backoff time.Duration // the wait after the next failure
 	content int           // how many of the failures were content errors
-	count   int           // how many failures there were
-	last    error         // the last failure
 }
 
-// processAllFailures is how many times in a row ProcessAll lets a Project's
-// Logs fail to store before it gives up.
-const processAllFailures = 5
+// commitCounts is what a Project's inserts stored since the last backlog
+// check. The commits line keeps its name, kind=log_commits, and counts
+// inserts as commits.
+type commitCounts struct {
+	commits int           // inserts that stored Logs
+	batches int           // Log batches they stored, one per ingest request
+	logs    int           // Logs in those batches, before the Log transform
+	took    time.Duration // time spent storing them, the inserts included
+	slowest time.Duration // the longest of those
+}
 
 // New constructs Log processing, which runs each Project's Log transform with
 // transform. It reads the time from clock.
@@ -122,6 +133,7 @@ func New(batches *storage.PebbleWriter, store Store, transform Transform, clock 
 		pending:   make(map[uint32]struct{}),
 		wake:      make(chan struct{}, 1),
 		failing:   make(map[uint32]*failure),
+		commits:   make(map[uint32]*commitCounts),
 		worker:    newWorker(),
 	}
 }
@@ -131,7 +143,7 @@ func New(batches *storage.PebbleWriter, store Store, transform Transform, clock 
 // batches a crash left in Pebble after they were stored, and marks every
 // Project that has Log batches as pending.
 func (p *Processor) Prepare() error {
-	cursors, err := p.store.LogProcessingCursors()
+	cursors, err := p.batches.LogProcessingCursors()
 	if err != nil {
 		return fmt.Errorf("read log processing cursors: %w", err)
 	}
@@ -143,7 +155,7 @@ func (p *Processor) Prepare() error {
 		return fmt.Errorf("list projects with log batches: %w", err)
 	}
 	for _, projectID := range projects {
-		cursor, err := p.store.LogProcessingCursor(projectID)
+		cursor, err := p.batches.LogProcessingCursor(projectID)
 		if err != nil {
 			return fmt.Errorf("read log processing cursor of project %d: %w", projectID, err)
 		}
@@ -197,7 +209,7 @@ func (p *Processor) Start() {
 	p.start(p.run)
 }
 
-// Stop stops the worker and waits for it to exit. Batches not yet committed
+// Stop stops the worker and waits for it to exit. Batches not yet inserted
 // are processed again after a restart, from the cursor.
 func (p *Processor) Stop() {
 	p.halt()
@@ -233,30 +245,6 @@ func (p *Processor) ProcessUntilCaughtUp() error {
 		projectID, ok, retryAt := p.takeDue()
 		if ok {
 			p.processProject(projectID)
-			continue
-		}
-		if retryAt.IsZero() {
-			return nil
-		}
-		if !p.waitUntil(retryAt) {
-			return ErrStopped
-		}
-	}
-}
-
-// ProcessAll processes every Log batch waiting, with no worker running, and
-// returns once none is left, for prepare-clickhouse. Unlike
-// ProcessUntilCaughtUp, it gives up once a Project's Logs fail to store
-// processAllFailures times in a row, and returns the last failure, so that an
-// offline run ends.
-func (p *Processor) ProcessAll() error {
-	for {
-		projectID, ok, retryAt := p.takeDue()
-		if ok {
-			p.processProject(projectID)
-			if failed := p.failing[projectID]; failed != nil && failed.count >= processAllFailures {
-				return fmt.Errorf("the Logs of Project %d failed to store %d times in a row: %w", projectID, failed.count, failed.last)
-			}
 			continue
 		}
 		if retryAt.IsZero() {
@@ -307,8 +295,6 @@ func (p *Processor) retryLater(projectID uint32, err error) {
 		failed = &failure{backoff: minBackoff}
 		p.failing[projectID] = failed
 	}
-	failed.count++
-	failed.last = err
 	if isContentError(err) {
 		failed.content++
 		logger.L.Error("Log processing content error, retrying", "project_id", projectID, "error", err, "retry_in", failed.backoff)
@@ -321,17 +307,32 @@ func (p *Processor) retryLater(projectID uint32, err error) {
 }
 
 // storeLogs stores a Project's Log batches after its cursor, up to about
-// maxLogsPerCommit Logs. Once they have failed on their content
+// maxLogsPerCommit Logs: or, while the range it last recorded is past the
+// cursor, that range again. Once they have failed on their content
 // contentRetries times, it stores them without the Logs that fail on their
 // own. more reports whether more may be waiting.
 func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
-	cursor, err := p.store.LogProcessingCursor(projectID)
+	cursor, err := p.batches.LogProcessingCursor(projectID)
 	if err != nil {
 		return false, fmt.Errorf("read log processing cursor: %w", err)
+	}
+	recorded, err := p.batches.RecordedLogInsert(projectID)
+	if err != nil {
+		return false, fmt.Errorf("read the recorded range of log batches: %w", err)
 	}
 	batches, err := p.batches.LogBatchesAfter(projectID, cursor, maxLogsPerCommit)
 	if err != nil {
 		return false, fmt.Errorf("read log batches: %w", err)
+	}
+	// The recorded range may have been inserted, whole or in part: it goes
+	// again, the same batches under the same token, never a longer range.
+	again := bytes.Compare(recorded[:], cursor[:]) > 0
+	if again {
+		if kept := upTo(batches, recorded); len(kept) > 0 {
+			batches = kept
+		} else {
+			again = false
+		}
 	}
 	if len(batches) == 0 {
 		return false, nil
@@ -341,57 +342,63 @@ func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 		logs += len(batch.Logs)
 	}
 	last := batches[len(batches)-1].ID
+	if !again {
+		if err := p.batches.RecordLogInsert(projectID, last); err != nil {
+			return false, fmt.Errorf("record the range of log batches: %w", err)
+		}
+	}
 
-	// Before the hot/late split, so promotion, the hot table, logs_late and
-	// Match monitors all see the Logs the Project's Log transform returns. A
-	// batch it leaves empty still moves the cursor.
+	// Match monitors and the Logs explorer see the Logs the Project's Log
+	// transform returns. A batch it leaves empty still moves the cursor.
 	batches, err = p.transform.Apply(projectID, batches)
 	if err != nil {
 		return false, fmt.Errorf("run log transform: %w", err)
 	}
 
-	now := p.clock.Now()
-	err = p.classify(p.store.AppendLogBatches(projectID, batches, now))
+	insert := storage.LogInsert{After: cursor, UpTo: last, Batches: batches, Again: again}
+	began := time.Now()
+	err = p.classify(p.store.InsertLogBatches(projectID, insert))
 	if failed := p.failing[projectID]; isContentError(err) && failed != nil && failed.content >= contentRetries {
-		err = p.storeApart(projectID, batches, now)
+		err = p.storeApart(projectID, insert)
 	}
 	if err != nil {
 		return false, fmt.Errorf("store logs: %w", err)
 	}
+	p.countCommit(projectID, len(batches), logs, time.Since(began))
 
+	if err := p.batches.SetLogProcessingCursor(projectID, last); err != nil {
+		// The range is stored and recorded, so it goes again with the same
+		// token, and ClickHouse drops it.
+		return false, fmt.Errorf("move log processing cursor: %w", err)
+	}
 	if err := p.batches.DeleteLogBatchesUpTo(projectID, last); err != nil {
 		// The Logs are stored and the cursor is past these batches, so they
 		// go with the next delete, or at startup.
 		logger.L.Warn("Deleting stored log batches failed", "project_id", projectID, "error", err)
 	}
-	return logs >= maxLogsPerCommit, nil
+	// A range inserted again may have left later batches behind.
+	return logs >= maxLogsPerCommit || again, nil
 }
 
-// classify marks a failure to store Logs as a content error if DuckDB still
-// answers a query and the failure isn't one DuckDB reports for the store
-// itself, such as a full disk. A content error is then the Logs' fault.
-//
-// The appender's errors aren't typed, so a failure that hits only appends
-// and isn't reported as one of those also counts as a content error.
+// upTo returns the batches up to and including the one with id last.
+func upTo(batches []storage.LogBatch, last uuid.UUID) []storage.LogBatch {
+	for i, batch := range batches {
+		if bytes.Compare(batch.ID[:], last[:]) > 0 {
+			return batches[:i]
+		}
+	}
+	return batches
+}
+
+// classify marks a failure to store Logs as a content error if ClickHouse
+// still answers and the failure isn't one it reports for the store itself,
+// such as a full disk or too little memory. A content error is then the
+// Logs' fault.
 func (p *Processor) classify(err error) error {
-	if err == nil || storeFailure(err) || p.store.Ping() != nil {
+	if err == nil || storage.StoreFailure(err) || p.store.Ping() != nil {
 		return err
 	}
 	return contentError{err}
-}
-
-// storeFailure reports whether DuckDB says err is a failure of the store,
-// not of what was stored.
-func storeFailure(err error) bool {
-	var duckErr *duckdb.Error
-	if !errors.As(err, &duckErr) {
-		return false
-	}
-	switch duckErr.Type {
-	case duckdb.ErrorTypeIO, duckdb.ErrorTypeOutOfMemory, duckdb.ErrorTypeFatal, duckdb.ErrorTypeTransaction:
-		return true
-	}
-	return false
 }
 
 // batchedLog is a Log with the id of its Log batch.
@@ -406,18 +413,18 @@ type rejectedLog struct {
 	err error
 }
 
-// storeApart stores a Project's Log batches, which fail on their content
+// storeApart stores the Log batches of an insert, which fail on their content
 // together, without the Logs that fail on their own. It finds those by trying
 // the Logs in halves without storing them, and skips and logs each. The
 // batches the skipped Logs leave empty still move the cursor.
-func (p *Processor) storeApart(projectID uint32, batches []storage.LogBatch, now time.Time) error {
+func (p *Processor) storeApart(projectID uint32, insert storage.LogInsert) error {
 	var logs []batchedLog
-	for _, batch := range batches {
+	for _, batch := range insert.Batches {
 		for _, log := range batch.Logs {
 			logs = append(logs, batchedLog{batch.ID, log})
 		}
 	}
-	rejected, err := p.rejectedLogs(projectID, logs, now)
+	rejected, err := p.rejectedLogs(projectID, logs)
 	if err != nil {
 		return err
 	}
@@ -426,16 +433,17 @@ func (p *Processor) storeApart(projectID uint32, batches []storage.LogBatch, now
 	for _, r := range rejected {
 		skip[r.log.ID] = true
 	}
-	kept := make([]storage.LogBatch, len(batches))
-	for i, batch := range batches {
-		kept[i] = storage.LogBatch{ID: batch.ID}
+	kept := insert
+	kept.Batches = make([]storage.LogBatch, len(insert.Batches))
+	for i, batch := range insert.Batches {
+		kept.Batches[i] = storage.LogBatch{ID: batch.ID}
 		for _, log := range batch.Logs {
 			if !skip[log.ID] {
-				kept[i].Logs = append(kept[i].Logs, log)
+				kept.Batches[i].Logs = append(kept.Batches[i].Logs, log)
 			}
 		}
 	}
-	if err := p.classify(p.store.AppendLogBatches(projectID, kept, now)); err != nil {
+	if err := p.classify(p.store.InsertLogBatches(projectID, kept)); err != nil {
 		return err
 	}
 
@@ -452,14 +460,14 @@ func (p *Processor) storeApart(projectID uint32, batches []storage.LogBatch, now
 // rejectedLogs returns the Logs out of logs that fail on their own. It tries
 // logs without storing them, and if they fail on their content, it looks in
 // each half, down to single Logs. A store error, or Stop, ends the search.
-func (p *Processor) rejectedLogs(projectID uint32, logs []batchedLog, now time.Time) ([]rejectedLog, error) {
+func (p *Processor) rejectedLogs(projectID uint32, logs []batchedLog) ([]rejectedLog, error) {
 	if len(logs) == 0 {
 		return nil, nil
 	}
 	if p.stopped() {
 		return nil, ErrStopped
 	}
-	err := p.classify(p.store.TryLogBatches(projectID, batchesOf(logs), now))
+	err := p.classify(p.store.TryLogBatches(projectID, batchesOf(logs)))
 	if err == nil || !isContentError(err) {
 		return nil, err
 	}
@@ -467,11 +475,11 @@ func (p *Processor) rejectedLogs(projectID uint32, logs []batchedLog, now time.T
 		return []rejectedLog{{logs[0], err}}, nil
 	}
 	half := len(logs) / 2
-	first, err := p.rejectedLogs(projectID, logs[:half], now)
+	first, err := p.rejectedLogs(projectID, logs[:half])
 	if err != nil {
 		return nil, err
 	}
-	second, err := p.rejectedLogs(projectID, logs[half:], now)
+	second, err := p.rejectedLogs(projectID, logs[half:])
 	if err != nil {
 		return nil, err
 	}
@@ -491,22 +499,60 @@ func batchesOf(logs []batchedLog) []storage.LogBatch {
 	return batches
 }
 
-// checkBacklog runs logBacklog at most once per backlogInterval by the
-// clock. It is called from the processing loop, which also runs while
-// Projects wait to be retried, so a failing worker still reports.
+// countCommit adds an insert that stored a Project's batches, holding logs
+// Logs, in took, to the Project's inserts since the last backlog check.
+func (p *Processor) countCommit(projectID uint32, batches, logs int, took time.Duration) {
+	c := p.commits[projectID]
+	if c == nil {
+		c = &commitCounts{}
+		p.commits[projectID] = c
+	}
+	c.commits++
+	c.batches += batches
+	c.logs += logs
+	c.took += took
+	c.slowest = max(c.slowest, took)
+}
+
+// checkBacklog runs logBacklog and logCommits at most once per
+// backlogInterval by the clock. It is called from the processing loop, which
+// also runs while Projects wait to be retried, so a failing worker still
+// reports.
 func (p *Processor) checkBacklog() {
 	now := p.clock.Now()
 	if now.Sub(p.lastBacklogCheck) < backlogInterval {
 		return
 	}
+	if !p.lastBacklogCheck.IsZero() {
+		p.logCommits(now.Sub(p.lastBacklogCheck))
+	}
+	clear(p.commits)
 	p.lastBacklogCheck = now
 	p.logBacklog(now)
+}
+
+// logCommits logs, for each Project that stored Logs over window, since the
+// last backlog check, how many inserts stored how many Log batches and Logs,
+// and how long they took. From these a reader works out inserts a second and
+// Logs an insert. The line counts inserts as commits.
+func (p *Processor) logCommits(window time.Duration) {
+	for projectID, c := range p.commits {
+		logger.L.Info("Log processing commits",
+			"kind", "log_commits",
+			"project_id", projectID,
+			"seconds", window.Seconds(),
+			"commits", c.commits,
+			"batches", c.batches,
+			"logs", c.logs,
+			"took_ms", float64(c.took.Microseconds())/1000,
+			"slowest_ms", float64(c.slowest.Microseconds())/1000)
+	}
 }
 
 // logBacklog logs each Project whose oldest Log batch was written more than
 // backlogThreshold before now, with how far behind it is. Batches leave
 // Pebble once they are stored, so it reads Pebble alone, and reports even
-// while DuckDB is down.
+// while ClickHouse is down.
 func (p *Processor) logBacklog(now time.Time) {
 	oldest, err := p.batches.OldestLogBatches()
 	if err != nil {

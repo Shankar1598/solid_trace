@@ -85,7 +85,7 @@ type Result =
   | { status: 'waiting' }
   | { status: 'running' }
   | { status: 'cancelled' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; sql?: string }
   | { status: 'done'; stream: Stream; loadingOlder: boolean; olderError: string | null }
   | { status: 'table'; table: LogTable; elapsedMs: number | null }
 
@@ -170,7 +170,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
           if (currentRun.current === run) setResult({ status: 'table', table, elapsedMs })
         })
         .catch((error: Error) => {
-          if (currentRun.current === run && !run.controller.signal.aborted) setResult({ status: 'error', message: error.message })
+          if (currentRun.current === run && !run.controller.signal.aborted) setResult({ status: 'error', message: error.message, sql: state.sql })
         })
       return
     }
@@ -739,7 +739,7 @@ function ResultArea({ result, getStarted, sql, chart, onLoadOlder, selectedId, o
     case 'cancelled':
       return <Notice>{sql ? 'SQL cancelled. Run it again.' : 'Query cancelled. Run it again to see Logs.'}</Notice>
     case 'error':
-      return <ErrorNotice message={result.message} />
+      return <ErrorNotice message={result.message} sql={result.sql} />
     case 'table':
       return <LogTableView table={result.table} elapsedMs={result.elapsedMs} chart={chart} />
     case 'done':
@@ -768,15 +768,16 @@ function Notice({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * A run's error: its lines left-aligned as one block. DuckDB's LINE and caret
- * keep their columns, scrolling sideways when they don't fit, so the ^ stays
- * under the mistake it points at; the prose around them wraps.
+ * A run's error: its lines left-aligned as one block. For SQL that ClickHouse
+ * says fails at a position, the SQL's line and a caret under the position keep
+ * their columns, scrolling sideways when they don't fit, so the ^ stays under
+ * the mistake it points at; the prose above them wraps.
  */
-function ErrorNotice({ message }: { message: string }) {
+function ErrorNotice({ message, sql }: { message: string; sql?: string }) {
   return (
     <div role="alert" className="p-10 text-sm text-destructive">
       <div className="mx-auto w-fit max-w-full space-y-5">
-        {errorParts(message).map((part, i) => part.kind === 'pointer'
+        {errorParts(message, sql).map((part, i) => part.kind === 'pointer'
           ? <PointerLines key={i} text={part.text} />
           : <p key={i} className="whitespace-pre-wrap break-words">{part.text}</p>)}
       </div>
@@ -784,7 +785,7 @@ function ErrorNotice({ message }: { message: string }) {
   )
 }
 
-/** DuckDB's LINE and caret, scrolled to the caret when a phone draws it past the right edge. */
+/** The SQL's line and its caret, scrolled to the caret when a phone draws it past the right edge. */
 function PointerLines({ text }: { text: string }) {
   const scrollToCaret = useCallback((pre: HTMLPreElement | null) => {
     const node = pre?.firstChild

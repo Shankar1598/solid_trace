@@ -15,7 +15,7 @@ import (
 )
 
 // LogBatch is the normalised Logs of one ingest request, stored in Pebble as
-// one entry until Log processing moves them to DuckDB. Its id is a UUIDv7
+// one entry until Log processing moves them to ClickHouse. Its id is a UUIDv7
 // generated when it is written, so a Project's batches sort in write order.
 type LogBatch struct {
 	ID   uuid.UUID
@@ -222,6 +222,95 @@ func (w *PebbleWriter) OldestLogBatches() ([]OldestLogBatch, error) {
 		valid = iter.SeekGE(logBatchUpperBound(projectID))
 	}
 	return oldest, iter.Error()
+}
+
+// Log processing keeps two ids per Project in Pebble, beside Event
+// processing's cursors: its Processing cursor, the last Log batch whose Logs
+// are in ClickHouse, and the last batch of the range it is inserting. Each is
+// the reserved Project id 0, its prefix, then the Project id. The prefixes sort
+// before "logs/", outside the Log batches' keyspace.
+func logProcessingCursorKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "logcursor/"...), projectID)
+}
+
+func logInsertKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "loginsert/"...), projectID)
+}
+
+// LogProcessingCursor returns the id of the last Log batch whose Logs Log
+// processing has stored for a Project, or uuid.Nil if it has stored none.
+func (w *PebbleWriter) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
+	return w.logBatchID(logProcessingCursorKey(projectID))
+}
+
+// SetLogProcessingCursor moves a Project's Log processing cursor to the
+// batch with id cursor, once its Logs are stored. NoSync: a cursor lost to a
+// power loss is behind its range (RecordLogInsert), which is inserted again,
+// and ClickHouse drops the repeat.
+func (w *PebbleWriter) SetLogProcessingCursor(projectID uint32, cursor uuid.UUID) error {
+	return w.db.Set(logProcessingCursorKey(projectID), cursor[:], pebble.NoSync)
+}
+
+// SetLogProcessingCursors moves several Projects' Log processing cursors at
+// once, synced, so that they are on disk before what follows records that
+// they moved, as loading the prepared cursors records its marker.
+func (w *PebbleWriter) SetLogProcessingCursors(cursors map[uint32]uuid.UUID) error {
+	batch := w.db.NewBatch()
+	defer batch.Close()
+	for projectID, cursor := range cursors {
+		if err := batch.Set(logProcessingCursorKey(projectID), cursor[:], nil); err != nil {
+			return err
+		}
+	}
+	return batch.Commit(pebble.Sync)
+}
+
+// LogProcessingCursors returns the Log processing cursor of every Project
+// that has one.
+func (w *PebbleWriter) LogProcessingCursors() ([]uuid.UUID, error) {
+	prefix := append(eventKeyPrefix(0), "logcursor/"...)
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: prefix, UpperBound: append(eventKeyPrefix(0), "logcursor0"...)})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	var cursors []uuid.UUID
+	for valid := iter.First(); valid; valid = iter.Next() {
+		cursor, err := uuid.FromBytes(iter.Value())
+		if err != nil {
+			return nil, fmt.Errorf("log processing cursor %x: %w", iter.Key(), err)
+		}
+		cursors = append(cursors, cursor)
+	}
+	return cursors, iter.Error()
+}
+
+// RecordLogInsert records, before Log processing inserts a Project's Log
+// batches, the last batch of the range it inserts: the batches after its
+// cursor up to upTo. Synced, so that after any crash the range is inserted
+// again whole, never a different one.
+func (w *PebbleWriter) RecordLogInsert(projectID uint32, upTo uuid.UUID) error {
+	return w.db.Set(logInsertKey(projectID), upTo[:], pebble.Sync)
+}
+
+// RecordedLogInsert returns the last batch of the range Log processing last
+// recorded for a Project, or uuid.Nil if it has recorded none. A range past
+// the cursor may have been inserted, whole or in part, or not at all.
+func (w *PebbleWriter) RecordedLogInsert(projectID uint32) (uuid.UUID, error) {
+	return w.logBatchID(logInsertKey(projectID))
+}
+
+// logBatchID reads a Log batch id stored at key, uuid.Nil if there is none.
+func (w *PebbleWriter) logBatchID(key []byte) (uuid.UUID, error) {
+	value, err := w.get(key)
+	if err != nil || value == nil {
+		return uuid.Nil, err
+	}
+	id, err := uuid.FromBytes(value)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("log batch id at %x: %w", key, err)
+	}
+	return id, nil
 }
 
 // LogBatchWrittenAt is when the Log batch with id batchID was written, to the

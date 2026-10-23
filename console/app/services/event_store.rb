@@ -218,7 +218,7 @@ class EventStore
       get!("#{base_url}/api/#{project_id}/logs/fields", params)
     end
 
-    # A Query printed as readable SQL against the logs view of a Project's
+    # A Query printed as readable SQL against the logs table of a Project's
     # [from, to): {"sql" => String}. It runs nothing, but seeds SQL mode, so
     # it is refused like Run SQL while SQL queries are off.
     def readable_logs_sql(project_id:, query:, from:, to:)
@@ -226,7 +226,8 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/readable-sql", { query: query, from: utc(from), to: utc(to) }, sql: true)
     end
 
-    # Runs SQL as written against the logs view of a Project's [from, to):
+    # Runs SQL as written, as the Project's SQL user, whose logs and events
+    # tables show the Project's rows of [from, to):
     # {"table" => {"columns", "rows", "truncated"}}, shaped like a tabular
     # Query's run. Raises SQLQueriesOff while SQL queries are off.
     # timeout_seconds works as in query_logs.
