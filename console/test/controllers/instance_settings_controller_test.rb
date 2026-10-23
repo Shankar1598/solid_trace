@@ -161,6 +161,16 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert console_rows.present?
   end
 
+  test "with EventStore too slow to answer, the EventStore group says it timed out" do
+    stub_request(:get, %r{/config\z}).to_timeout
+    sign_in_as(@instance_admin)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+
+    assert_response :success
+    assert_match(/\ACouldn't read EventStore's config: .*timed out after \d+s/i, event_store_group["unavailable"])
+  end
+
   test "saving changes SQL queries, the default Retention and log-all-reads, and the page shows them" do
     sign_in_as(@instance_admin)
 
