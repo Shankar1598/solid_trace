@@ -16,27 +16,46 @@ import (
 
 // ClickHouseColumns says where the logs table keeps each Field, so that a
 // Query can be written as SQL against it. Its answers are SQL expressions.
-type ClickHouseColumns struct{}
+type ClickHouseColumns struct {
+	// Table, if set, is the relation each column is read from, such as a
+	// CTE of rows of logs, as in stage1.level. ClickHouse lets an alias in
+	// a SELECT stand for a column of the same name, so a column read beside
+	// aliases must name its relation.
+	Table string
+}
+
+// Column is the relation's column of the given name.
+func (c ClickHouseColumns) Column(name string) string {
+	return c.qualify(chsql.Identifier(name))
+}
+
+// qualify names a column's relation, if Table sets one.
+func (c ClickHouseColumns) qualify(column string) string {
+	if c.Table == "" {
+		return column
+	}
+	return c.Table + "." + column
+}
 
 // BuiltIn is a built-in field's column, such as level.
-func (ClickHouseColumns) BuiltIn(name string) string {
-	return chsql.Identifier(name)
+func (c ClickHouseColumns) BuiltIn(name string) string {
+	return c.Column(name)
 }
 
 // Attribute is the value of the Attribute key of type t, NULL for a Log
 // without one: the typed subcolumn of its path, never the path's Dynamic
 // value, which throws on a path that holds values of more than one type, or
 // its JSON text in attrs_json.
-func (ClickHouseColumns) Attribute(t AttributeType, key string) string {
+func (c ClickHouseColumns) Attribute(t AttributeType, key string) string {
 	if t == JSONAttribute {
-		name := chsql.String(key)
-		return "if(mapContains(attrs_json, " + name + "), attrs_json[" + name + "], NULL)"
+		name, json := chsql.String(key), c.qualify("attrs_json")
+		return "if(mapContains(" + json + ", " + name + "), " + json + "[" + name + "], NULL)"
 	}
 	if key == "" {
 		// No identifier names the empty path.
-		return "dynamicElement(getSubcolumn(attributes, ''), '" + attributeTypes[t] + "')"
+		return "dynamicElement(getSubcolumn(" + c.qualify("attributes") + ", ''), '" + attributeTypes[t] + "')"
 	}
-	return "attributes." + chsql.Identifier(key) + ".:" + attributeTypes[t]
+	return c.qualify("attributes") + "." + chsql.Identifier(key) + ".:" + attributeTypes[t]
 }
 
 // attributeTypes are the ClickHouse types of the values of each type of
@@ -45,16 +64,16 @@ var attributeTypes = map[AttributeType]string{StringAttribute: "String", NumberA
 
 // SearchText is every string Attribute's value, joined by \0, which search
 // reads besides message.
-func (ClickHouseColumns) SearchText() string {
-	return "search_text"
+func (c ClickHouseColumns) SearchText() string {
+	return c.qualify("search_text")
 }
 
 // StringColumn is a column that holds the string Attribute key's value, or ”
 // for a Log whose key isn't a string, if there is one: file, a sort column,
 // so that a filter on it skips other files.
-func (ClickHouseColumns) StringColumn(key string) (string, bool) {
+func (c ClickHouseColumns) StringColumn(key string) (string, bool) {
 	if key == "file" {
-		return "file", true
+		return c.qualify("file"), true
 	}
 	return "", false
 }

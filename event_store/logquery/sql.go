@@ -8,13 +8,15 @@ import (
 
 	"github.com/solidtrace/event_store/logquery/parser"
 	"github.com/solidtrace/event_store/pkg/chsql"
-	"github.com/solidtrace/event_store/pkg/sqltext"
 	"github.com/solidtrace/event_store/storage"
 )
 
-// fields says where the rows being written against keep each Field: a
-// source of Logs (Columns), or the Logs a tail reads.
+// fields says where the rows being written against keep each Field and
+// column: a source of Logs (Columns), or a relation of a tail's chain.
 type fields interface {
+	// Column is the rows' column of the given name, such as a table's or
+	// one extend added.
+	Column(name string) string
 	BuiltIn(name string) string
 	Attribute(t storage.AttributeType, key string) string
 }
@@ -92,7 +94,12 @@ func writeCondition(p expr, f fields, negate bool) string {
 	if p.typ() != boolType {
 		panic(fmt.Sprintf("logquery: %T isn't a condition", p))
 	}
-	test := writeValue(p, f)
+	var test string
+	if m, ok := p.(textMatch); ok {
+		test = writeTextMatch(m, f)
+	} else {
+		test = writeValue(p, f)
+	}
 	if negate {
 		return "NOT coalesce(" + test + ", false)"
 	}
@@ -157,16 +164,13 @@ func writeIsEmpty(x expr, f fields) string {
 		v := writeValue(x, f)
 		return "(" + v + " IS NULL OR " + v + " = '')"
 	case dynamicType:
-		if ref, ok := x.(fieldRef); ok {
-			s := f.Attribute(storage.StringAttribute, ref.name)
-			tests := []string{"(" + s + " IS NULL OR " + s + " = '')"}
-			for _, t := range dynamicParts[1:] {
-				tests = append(tests, f.Attribute(t, ref.name)+" IS NULL")
-			}
-			return "(" + strings.Join(tests, " AND ") + ")"
+		part := partsOf(x, f)
+		s := part(storage.StringAttribute)
+		tests := []string{"(" + s + " IS NULL OR " + s + " = '')"}
+		for _, t := range dynamicParts[1:] {
+			tests = append(tests, part(t)+" IS NULL")
 		}
-		v := writeValue(x, f)
-		return "(" + v + " IS NULL OR struct_extract(" + v + ", 's') = '')"
+		return "(" + strings.Join(tests, " AND ") + ")"
 	}
 	return "(" + writeValue(x, f) + " IS NULL)"
 }
@@ -188,18 +192,17 @@ func writeValue(x expr, f fields) string {
 		}
 		return dynamicValue(parts)
 	case columnRef:
-		return sqltext.Identifier(x.name)
+		return f.Column(x.name)
 	case attributeText:
 		return "coalesce(" + f.Attribute(storage.StringAttribute, x.name) + ", " + f.Attribute(storage.JSONAttribute, x.name) + ")"
 	case partOf:
 		t, _ := x.t.attributeType()
-		return "struct_extract(" + writeValue(x.x, f) + ", " + sqltext.String(dynamicField(t)) + ")"
+		return dynamicPart(writeValue(x.x, f), t)
 	case literal:
 		return writeLiteral(x.Literal)
-	case compare, isEmpty, and, or, not:
-		return "coalesce(" + writeCondition(x, f, false) + ", false)"
-	case textMatch:
-		return writeTextMatch(x, f)
+	case compare, isEmpty, and, or, not, textMatch:
+		// ClickHouse's tests are UInt8s; a value is a Bool.
+		return "toBool(coalesce(" + writeCondition(x, f, false) + ", false))"
 	case arith:
 		return "(" + writeValue(x.x, f) + " " + x.op + " " + writeValue(x.y, f) + ")"
 	case negative:
@@ -213,16 +216,32 @@ func writeValue(x expr, f fields) string {
 }
 
 // dynamicValue writes the parts of an Attribute read without a type, in
-// dynamicParts' order, as one struct value: NULL where the Log lacks the
-// Attribute, else the part of its type set and the rest NULL.
+// dynamicParts' order, as one tuple: the part of its type set and the rest
+// NULL, or every part NULL where the Log lacks the Attribute, since
+// ClickHouse has no NULL tuple.
 func dynamicValue(parts []string) string {
-	missing := make([]string, len(parts))
-	fields := make([]string, len(parts))
-	for i, part := range parts {
-		missing[i] = part + " IS NULL"
-		fields[i] = sqltext.String(dynamicField(dynamicParts[i])) + ": " + part
+	return "tuple(" + strings.Join(parts, ", ") + ")"
+}
+
+// dynamicPart writes the part of v, a dynamic value, that holds values of
+// type t.
+func dynamicPart(v string, t storage.AttributeType) string {
+	for i, part := range dynamicParts {
+		if part == t {
+			return fmt.Sprintf("tupleElement(%s, %d)", v, i+1)
+		}
 	}
-	return fmt.Sprintf("CASE WHEN %s THEN NULL ELSE {%s} END", strings.Join(missing, " AND "), strings.Join(fields, ", "))
+	panic("logquery: no dynamic part of type " + string(t))
+}
+
+// dynamicMissing writes a test, true or false for every row, that v, a
+// dynamic value, is missing: no part is set.
+func dynamicMissing(v string) string {
+	tests := make([]string, len(dynamicParts))
+	for i, t := range dynamicParts {
+		tests[i] = dynamicPart(v, t) + " IS NULL"
+	}
+	return "(" + strings.Join(tests, " AND ") + ")"
 }
 
 // writeTextMatch writes a text match with ClickHouse's string functions.
@@ -300,16 +319,21 @@ func writeToString(x expr, f fields) string {
 	case timeType:
 		return "formatDateTime(" + writeValue(x, f) + ", '%Y-%m-%dT%H:%i:%S.%fZ')"
 	case dynamicType:
-		if ref, ok := x.(fieldRef); ok {
-			return fmt.Sprintf("coalesce(%s, %s, toString(%s), %s)",
-				f.Attribute(storage.StringAttribute, ref.name), numberText(f.Attribute(storage.NumberAttribute, ref.name)),
-				f.Attribute(storage.BoolAttribute, ref.name), f.Attribute(storage.JSONAttribute, ref.name))
-		}
-		v := writeValue(x, f)
-		return fmt.Sprintf("coalesce(struct_extract(%[1]s, 's'), %[2]s, CAST(struct_extract(%[1]s, 'b') AS VARCHAR), struct_extract(%[1]s, 'j'))",
-			v, numberText("struct_extract("+v+", 'n')"))
+		part := partsOf(x, f)
+		return fmt.Sprintf("coalesce(%s, %s, toString(%s), %s)", part(storage.StringAttribute),
+			numberText(part(storage.NumberAttribute)), part(storage.BoolAttribute), part(storage.JSONAttribute))
 	}
 	return "toString(" + writeValue(x, f) + ")"
+}
+
+// partsOf returns the parts of x, a dynamic value, by type: an Attribute's
+// typed values, or the elements of a dynamic column's tuple.
+func partsOf(x expr, f fields) func(storage.AttributeType) string {
+	if ref, ok := x.(fieldRef); ok {
+		return func(t storage.AttributeType) string { return f.Attribute(t, ref.name) }
+	}
+	v := writeValue(x, f)
+	return func(t storage.AttributeType) string { return dynamicPart(v, t) }
 }
 
 func numberText(n string) string {
@@ -327,35 +351,40 @@ func writeToNumber(x expr, f fields) string {
 	case boolType:
 		return "toFloat64(" + writeValue(x, f) + ")"
 	case dynamicType:
-		if ref, ok := x.(fieldRef); ok {
-			return fmt.Sprintf("coalesce(%s, toFloat64OrNull(%s), toFloat64(%s))",
-				f.Attribute(storage.NumberAttribute, ref.name), f.Attribute(storage.StringAttribute, ref.name),
-				f.Attribute(storage.BoolAttribute, ref.name))
-		}
-		v := writeValue(x, f)
-		return fmt.Sprintf("coalesce(struct_extract(%[1]s, 'n'), TRY_CAST(struct_extract(%[1]s, 's') AS DOUBLE), CAST(struct_extract(%[1]s, 'b') AS DOUBLE))", v)
+		part := partsOf(x, f)
+		return fmt.Sprintf("coalesce(%s, toFloat64OrNull(%s), toFloat64(%s))",
+			part(storage.NumberAttribute), part(storage.StringAttribute), part(storage.BoolAttribute))
 	}
 	return "toFloat64OrNull(toString(" + writeValue(x, f) + "))"
 }
 
+// writeAggregate writes one of summarize's functions. Over no rows, or no
+// values, sum, avg, min, max and percentile are NULL, as SQL has them, rather
+// than ClickHouse's 0 or 1970: their -OrNull forms. dcount counts the
+// values present; percentile is the t-digest's, as approx_quantile was
+// DuckDB's.
 func writeAggregate(a aggregate, f fields) string {
 	switch a.fn {
 	case "count":
-		return "count(*)"
+		return "count()"
 	case "rate":
 		// Every row of a group is in the same bin, so min() reads the
-		// bin's seconds in range.
-		return "coalesce(count(*) / min(" + binSecondsColumn + "), 0)"
+		// bin's seconds in range: none in an empty range.
+		return "coalesce(count() / nullIf(minOrNull(" + f.Column(binSecondsColumn) + "), 0), 0)"
 	case "peak_rate":
-		return "coalesce(max(" + secondCountColumn + "), 0)"
+		return "coalesce(maxOrNull(" + f.Column(secondCountColumn) + "), 0)"
 	case "countif":
-		return "count_if(" + writeValue(a.x, f) + ")"
+		return "countIf(" + writeValue(a.x, f) + ")"
 	case "dcount":
-		return "approx_count_distinct(" + writeValue(a.x, f) + ")"
+		v := writeValue(a.x, f)
+		if a.x.typ() == dynamicType {
+			return "uniqIf(" + v + ", NOT " + dynamicMissing(v) + ")"
+		}
+		return "uniq(" + v + ")"
 	case "percentile":
-		return "approx_quantile(" + writeValue(a.x, f) + ", " + strconv.FormatFloat(a.percent/100, 'g', -1, 64) + ")"
+		return "toFloat64(quantileTDigestOrNull(" + strconv.FormatFloat(a.percent/100, 'g', -1, 64) + ")(" + writeValue(a.x, f) + "))"
 	}
-	return a.fn + "(" + writeValue(a.x, f) + ")"
+	return a.fn + "OrNull(" + writeValue(a.x, f) + ")"
 }
 
 func writeLiteral(l Literal) string {

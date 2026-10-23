@@ -365,10 +365,8 @@ func TestARunAfterABatchFiltersCountsPastItsLimitAndTakesOnlyLogRows(t *testing.
 	if got := queryMessages(t, env, `where batch == "the sender's"`); len(got) != 7 {
 		t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", got)
 	}
-	if tablesOnClickHouse {
-		if _, rows := runTable(t, env, `summarize count() by batch`); !slices.Equal(rows, []string{`["the sender's",7]`}) {
-			t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", rows)
-		}
+	if _, rows := runTable(t, env, `summarize count() by batch`); !slices.Equal(rows, []string{`["the sender's",7]`}) {
+		t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", rows)
 	}
 
 	// Only a Query of Log rows runs after a batch, armed or not; a Query
