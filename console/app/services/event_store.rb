@@ -106,6 +106,13 @@ class EventStore
       0
     end
 
+    # The config EventStore loaded at start (its GET /config), with each
+    # secret only as whether it's set. Raises Unavailable when EventStore
+    # can't answer within a few seconds, or is a release without /config.
+    def config
+      execute!(method: :get, url: "#{base_url}/config", headers: { accept: :json }, open_timeout: 2, read_timeout: 3)
+    end
+
     # Like count_events, but raises Unavailable instead of counting 0 when
     # EventStore cannot answer.
     def count_events!(project_id:, params: {})
