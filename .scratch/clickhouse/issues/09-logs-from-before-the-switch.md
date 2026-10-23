@@ -23,3 +23,10 @@
   - Retention deletes old files past it;
   - unprepared DuckDB data stops the start.
 - [ ] Targeted tests only, `go test -p 1`.
+
+## Comments
+
+- 2026-10-23, review of 08: the prepared-files contract is in [08](08-prepare-clickhouse-command.md)'s Answer, and the fixtures are in `event_store/testdata/prepared_clickhouse/` (static on this branch; see its README). Two points from the review, now in the spec:
+  - **Old files are chosen by their time span, not the switch time.** Prepare files the current hour and Logs up to an hour ahead, so a file's `max_time` can be later than the marker's `prepared_at`. A read takes the old files whose `min_time`/`max_time` overlaps its range (a NULL span counts as its whole hour).
+  - **Load per marker, not once.** If the install is rolled back to the DuckDB release, it removes the marker on start, and a later upgrade prepares again with a new marker. EventStore records which marker it loaded and reloads, replacing the old tables, when it finds a different one.
+
