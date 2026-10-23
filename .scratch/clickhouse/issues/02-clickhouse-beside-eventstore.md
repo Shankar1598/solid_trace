@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **`bin/clickhouse-dev`** starts one ClickHouse container for the dev stack and the Go tests, capped at about 2 GB, with its data under the checkout's storage. `Procfile.dev`/`bin/go-dev` use it. `docs/agents/testing.md` adds it as a prerequisite.
 - [x] **ClickHouse's config lives in `deploy/clickhouse/`:**
