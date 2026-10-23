@@ -17,7 +17,7 @@
   - `deploy/event_store.yml` and `deploy/install` lose DuckDB.
 - [x] **Console:**
   - the Log file order card goes from Project settings;
-  - a migration removes `projects.log_file_order`;
+  - ~~a migration removes `projects.log_file_order`~~ `projects.log_file_order` stays, ignored, so that a rollback to the DuckDB release works ([12](12-remove-the-old-log-file-path.md) drops it; amended after the code review);
   - `list_projects` drops `log_file_order`;
   - their Rails tests, vitest and flows follow.
 - [x] **ADR 0016**, Logs and Events in ClickHouse, with the probe's numbers, the options weighed and the SQL user mechanism. It supersedes 0004, 0005, 0007 and 0013 and ADR 0008's Log file and Event archive parts. It notes the amendment 07 made to 0003. Each superseded ADR gets a status line.
@@ -60,7 +60,7 @@ Built on `clickhouse/10-duckdb-out`, from `feature/clickhouse` at 17091ea, which
 
 **Console**
 - The Log file order card, its lib and vitest, and the `project-log-file-order` flow are deleted.
-- Migration `RemoveLogFileOrderFromProjects` (20261023090000) drops the column. It was run down and up on the test database, and `schema.rb` matches.
+- `projects.log_file_order` stays, and `Project` ignores it (`ignored_columns`): the DuckDB release reads it, so dropping it would break a rollback. The migration that dropped it (20261023090000) was removed after the code review, and `models/project_test.rb` checks that the column stays and isn't read. Ticket 12 drops it.
 - `list_projects` answers no `log_file_order`. The MCP instructions and the run, add-chart and monitor tools point at `service` and `file` instead.
 - The language reference's "Reading less" is rewritten for ClickHouse, in both copies.
 
@@ -78,13 +78,12 @@ Built on `clickhouse/10-duckdb-out`, from `feature/clickhouse` at 17091ea, which
 
 **Left for the user: the release check.**
 1. Start the dev ClickHouse: `bin/clickhouse-dev`.
-2. With the dev stack stopped, ready the main checkout's DuckDB dev data, which has no marker, so EventStore won't start on it. Do this before step 3, since prepare reads `projects.log_file_order`. Either:
+2. With the dev stack stopped, ready the main checkout's DuckDB dev data, which has no marker, so EventStore won't start on it. Either:
    - prepare it: in the main checkout, check out `feature/prepare-clickhouse`, then run `cd event_store && vrl/build && go run . prepare-clickhouse`, then check out the release commit again; or
    - move it aside: `mv storage/duckdb/development/logs.duckdb storage/duckdb/development/logs.duckdb.aside`. Its hot Logs then aren't read.
-3. On the release commit, run `bin/rails db:migrate` in `console/`, which drops `projects.log_file_order`. Then start the dev stack's EventStore and wait until it answers.
+3. On the release commit, run `bin/rails db:migrate` in `console/`. Then start the dev stack's EventStore and wait until it answers.
 4. Run the Go suite (`vrl/build && go test -p 1 -count=1 -timeout 60m $(go list ./... | grep -v /bench/)`, with MinIO up for the bucket tests) and Playwright (`bun run e2e --reporter=line`) in parallel.
 5. Once Go is done, run Rails: `RAILS_ENV=test bin/rails db:test:prepare && bin/rails test`.
-6. Before the dev stack runs a branch without this migration again, run `bin/rails db:migrate:down:primary VERSION=20261023090000` from this branch's `console/`. That branch's Console and EventStore still read `log_file_order`.
 
 **Flows to watch:** `project-log-file-order` is deleted. These pages or reads changed:
 - `project-keys`, `project-delete` and `log-transform` (the Project settings page);

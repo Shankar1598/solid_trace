@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_23_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_22_180200) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -288,6 +288,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_23_090000) do
 
   create_table "projects", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.json "log_file_order"
     t.integer "log_retention_days"
     t.string "name"
     t.integer "organization_id", null: false
