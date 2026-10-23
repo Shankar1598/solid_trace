@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/duckdb/duckdb-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/models"
 )
@@ -39,8 +39,8 @@ func logAt(t *testing.T, message, at string) models.Log {
 	return models.Log{ID: uuid.Must(uuid.NewV7()), Time: ts.UTC(), Message: message}
 }
 
-// unstorableLog is a Log whose time is past DuckDB's TIMESTAMP range, so its
-// row can't be appended. Log ingest never stores one: a test writes it with
+// unstorableLog is a Log whose time is past the days a partition can name, so
+// it can't be stored. Log ingest never stores one: a test writes it with
 // storeLogBatch.
 func unstorableLog(message string) models.Log {
 	return models.Log{
@@ -60,7 +60,7 @@ func storeLogBatch(t *testing.T, env *TestEnv, projectID uint32, logs ...models.
 	env.LogProcessor.Notify(projectID)
 }
 
-func TestALogDuckDBRejectsIsSkippedAndTheRestOfItsBatchIsStored(t *testing.T) {
+func TestALogClickHouseCannotStoreIsSkippedAndTheRestOfItsBatchIsStored(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	output := captureLogs(t)
@@ -96,7 +96,7 @@ func TestALogDuckDBRejectsIsSkippedAndTheRestOfItsBatchIsStored(t *testing.T) {
 	}
 }
 
-func TestALoneLogDuckDBRejectsIsSkippedAndLaterLogsAreStored(t *testing.T) {
+func TestALoneLogClickHouseCannotStoreIsSkippedAndLaterLogsAreStored(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	output := captureLogs(t)
@@ -155,12 +155,12 @@ func waitFor(t *testing.T, timeout time.Duration, what string, ok func() bool) {
 	}
 }
 
-// diskFull is how DuckDB fails a commit when the disk is full.
-var diskFull = &duckdb.Error{Type: duckdb.ErrorTypeIO, Msg: `IO Error: Could not write file "logs.duckdb.wal": No space left on device`}
+// diskFull is how ClickHouse fails an insert when the disk is full.
+var diskFull = &clickhouse.Exception{Code: 243, Name: "DB::Exception", Message: "Cannot reserve 1.00 MiB, not enough space"}
 
 func TestLogsWaitOutAStoreFailureAndNoneIsLost(t *testing.T) {
 	failures := map[string]func(*flakyLogStore){
-		"DuckDB unavailable": func(s *flakyLogStore) { s.goDown() },
+		"ClickHouse unavailable": func(s *flakyLogStore) { s.goDown() },
 		"disk full":          func(s *flakyLogStore) { s.fail(diskFull) },
 	}
 	for name, breakStore := range failures {

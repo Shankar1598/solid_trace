@@ -376,7 +376,8 @@ func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 		// go with the next delete, or at startup.
 		logger.L.Warn("Deleting stored log batches failed", "project_id", projectID, "error", err)
 	}
-	return logs >= maxLogsPerCommit, nil
+	// A range inserted again may have left later batches behind.
+	return logs >= maxLogsPerCommit || again, nil
 }
 
 // upTo returns the batches up to and including the one with id last.
