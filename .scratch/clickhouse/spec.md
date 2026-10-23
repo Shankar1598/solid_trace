@@ -98,10 +98,11 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
   - ClickHouse listens on loopback only.
   - The default user is limited to localhost, and EventStore's user has a password from `SOLIDTRACE_CLICKHOUSE_PASSWORD`, which `deploy/install` generates.
   - System tables need a grant (`select_from_system_db_requires_grant`, and the same for `information_schema`).
-- **Memory and threads:** `deploy/install` gives ClickHouse the share of RAM DuckDB gets now (half), through `max_server_memory_usage`. `max_threads` is the CPU count, and the background merge pool is sized for 2 vCPUs. The probe checks inserts keep up while reads run.
+- **Memory and threads:** `deploy/install` gives ClickHouse the share of RAM DuckDB gets now (half), through `max_server_memory_usage`. Never cap it with a container memory limit: under a cgroup limit, 26.8 returns freed pages at once and scans run about 1.9× slower ([probe](issues/01-probe-clickhouse-26-8.md)). `max_threads` and the merge pool keep 26.8's defaults, which the probe found ample on 2 CPUs.
+- **The version:** 26.8.34.13 was probed. It has a bug that skips a boundary second when `time` is compared with a DateTime or an integer (#123999), so the compiler compares `time` only with `toDateTime64(…)`. Re-pin to a 26.8.35 patch once one has been out a few days.
 - **System logs:** `query_log` stays on, with a TTL of a few days. The other system log tables are off, as in the probe.
 - **Config:** `event_store.yml` gains a `clickhouse` section (address, database, user). `object_store` keeps its keys, and `local_cache_hours` keeps its meaning. The `duckdb_*` keys, `logs_duckdb_path` and `parquet_storage_path` are ignored with a startup warning. `logs_parquet_path` stays while old Log files exist.
-- **Dev and tests:** one container started by `bin/clickhouse-dev`, capped at about 2 GB, serves the dev stack and the Go tests. Each test package gets its own database, named after the package and the worktree, and the tests make and drop it. `docs/agents/testing.md` lists `bin/clickhouse-dev` as a prerequisite of the Go suite and the Playwright flows.
+- **Dev and tests:** one container started by `bin/clickhouse-dev`, capped at about 2 GB by `max_server_memory_usage`, serves the dev stack and the Go tests. Each test package gets its own database, named after the package and the worktree, and the tests make and drop it. `docs/agents/testing.md` lists `bin/clickhouse-dev` as a prerequisite of the Go suite and the Playwright flows.
 
 ### The `logs` table
 
@@ -114,10 +115,12 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
   - `message` with ZSTD;
   - `trace_id`, `span_id`;
   - `batch`, the Log batch's id, for Match monitors;
-  - `file`, the sort column;
-  - `attributes`, a `JSON` column, plus a map of JSON-text values for array and object Attributes, as `attrs_json` holds them now. The probe settles the exact type of that map and of the hints.
-- **Attributes keep each value's type:** string, number (Float64, as DOUBLE now) or bool. A whole number too large for a Float64 is still a string. `max_dynamic_paths` applies per part, and a part holds one Project's day, so a busy Project's keys never push a quiet Project's out into shared data.
-- **The `file` column** holds the `file` Attribute's value when it's a string, and an empty string otherwise. The Attribute itself stays in `attributes`. A Query that compares `file` with a string also filters on the column, so the primary key skips other files. If the probe shows a typed JSON hint can be the sort column directly, it replaces this column.
+  - `file`, the sort column, a `LowCardinality(String)`;
+  - `attributes`, a plain `JSON` column with no type hints and the default `max_dynamic_paths`;
+  - `attrs_json`, a `Map(LowCardinality(String), String)` of JSON-text values for array and object Attributes, as now;
+  - `search_text`, `MATERIALIZED ''` with ZSTD, holding every string Attribute's value joined by `\0`. It serves `search` (see Reads), stays out of `SELECT *`, and costs about 6% of disk.
+- **Attributes keep each value's type:** string, number (Float64, as DOUBLE now) or bool. A whole number too large for a Float64 is still a string. Log processing sends typed values through the native JSON column, never JSON text, which would infer Int64 or dates. `max_dynamic_paths` applies per part, and a part holds one Project's day, so a busy Project's keys never push a quiet Project's out into shared data.
+- **The `file` column** holds the `file` Attribute's value when it's a string, and an empty string otherwise. The Attribute itself stays in `attributes`. A Query that compares `file` with a string also filters on the column, so the primary key skips other files. (A typed JSON hint can sit in `ORDER BY`, but it turns a number `file` into a string, so the probe kept the column.)
 - **A minmax skip index on `batch`** lets a Match monitor's run skip granules ingested before its cursor.
 - **No skip index on `message`.** The n-gram index doubled ingest CPU and pruned little, and a token index can't serve substring `contains`.
 - **The bucket tier** (when `object_store` is set):
@@ -131,7 +134,7 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
 - **Pebble stays in front of the `200`.** Log processing still reads a Project's Log batches from its Processing cursor, runs the Log transform, and stores the Logs. It now inserts them into `logs`, about once a second per Project, up to today's batch limit.
 - **Exactly once:**
   1. Before an insert, Log processing records in Pebble the range of Log batches it is about to insert.
-  2. The insert carries a dedup token made from that range (`non_replicated_deduplication_window` is on).
+  2. The insert carries a dedup token made from that range. `non_replicated_deduplication_window` is set on `logs`, on every MV's target table and on the key counts table: without it on an MV's target, a re-sent insert is dropped from `logs` but counted twice there. The writer sets `async_insert=0` (26.x defaults it to 1) and `max_insert_threads=1`.
   3. After the insert, the Processing cursor moves, in Pebble, and the batches are deleted.
   4. After a crash, Log processing re-sends the recorded range with the same token, and ClickHouse drops the repeat.
 - **The Processing cursor moves to Pebble**, beside Event processing's.
@@ -144,14 +147,15 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
 ### Reads
 
 - **The Query compiler emits ClickHouse SQL**, one dialect. The language, its meaning and its answers don't change. In particular:
-  - Attribute reads use JSON paths. An untyped Attribute's value is the path's `Dynamic` value, compared within its own type, as the struct of typed values works now.
-  - `tostring` and `tonumber` read the typed subcolumns.
+  - Attribute reads use JSON paths, and comparisons and aggregates use the path's typed subcolumns, never the bare `Dynamic` path, which throws on a path holding mixed types. `== 200` reads `.:Float64`, `== "200"` reads `.:String`, and `== true` reads `.:Bool`. A missing path reads as NULL, so `==`, `!=` and `not` all fail to match, as now.
+  - `tostring` is `coalesce(.:String, toString(.:Float64), toString(.:Bool))`, and `tonumber` is `coalesce(.:Float64, toFloat64OrNull(.:String))`. An Attribute is present if its path isn't NULL or `attrs_json` has its key.
   - Text matching uses ClickHouse's `lower`/`position`/`startsWith`/`match` equivalents, keeping today's semantics: `contains` is a case-insensitive substring and `contains_cs` a case-sensitive one.
-  - `search` reads `message` and every string Attribute's value, never key names. The probe times the way it does it.
+  - `search` reads `message` and `search_text`, never key names. That took 390–576 ms on the quarter-hour, against 760–980 ms for an `or` over every path.
   - Time bins use `toStartOfInterval` with the same origin.
-  - The approximate aggregates use ClickHouse's: `uniq` for `dcount`, and a quantile function chosen so the root tests' expected values hold. Any change to expected values is listed in the ticket for the user.
+  - The approximate aggregates use ClickHouse's: `uniq` for `dcount` and `quantileTDigest` for percentiles. The root tests' expected values hold.
+  - 26.8's automatic PREWHERE can read all of `message` first when a filter mixes `message` matches with sort-column conditions (610 ms against 79 ms on 25.8). The compiler puts the conditions that don't touch `message` in `PREWHERE` and the `message` matches in `WHERE` where that helps (97 ms).
 - **The Readable SQL** a Query shows is ClickHouse SQL against SQL mode's tables, and still runs in SQL mode.
-- **The newest page** keeps today's two steps: times and ids first, newest partitions first, then those Logs whole by id. Lazy materialization is allowed up to a page's size. The probe compares this with one step.
+- **The newest page** is one query with lazy materialization, newest first, which 26.8 allows up to 10,000 rows by default. On the quarter-hour it took 64–70 ms, against 74–87 ms for today's two steps. Ticket 03 checks it over a range of several days.
 - **Charts and tables** run as one query over `logs`. The bin cache stays:
   - A bin is keyed by the Project, the Query, its size and start, and the generations of the hours it covers.
   - Generations are in-memory counters per (Project, hour). Log processing bumps them on insert, and Retention and Project deletion bump them when they drop data. The cache is in memory too, so both reset together on restart.
@@ -304,11 +308,12 @@ EventStore keeps Logs and Events in ClickHouse, a server that runs beside it in 
 - Ingest CPU is about the same without an index, about 15 µs a Log. ClickHouse uses both CPUs.
 - On a production quarter-hour (3.16 M Logs, 108 columns), the 14 slowest reads took 7.5 s of CPU on ClickHouse against 15.8 s on DuckDB, and 1.0 s with the query condition cache. A Dashboard refresh took 0.20 s against 0.61 s.
 - DuckDB still won the newest page: 72–165 ms against 243–250 ms with lazy materialization.
-- Not covered there, so in the probe:
-  - the JSON type;
-  - many parts while ingesting;
-  - reads during ingest;
-  - 26.8.
+
+**From the [probe](issues/01-probe-clickhouse-26-8.md)** (26.8.34.13, 2 CPUs, the same quarter-hour):
+- JSON Attributes used 0.95× the 108 promoted columns' CPU on the 14 slow reads, about the same on Dashboard 1's Charts, and 1.1–1.2× on reads of Attributes alone.
+- Inserts kept up at 3,580 Logs a second in one-second inserts, using 8% of 2 CPUs, with at most 8 active parts. That is about 33 µs a Log with JSON (26 µs with promoted columns), not the research's synthetic 15 µs.
+- Reads during ingest stayed in tens of milliseconds.
+- DuckDB's old Log files read correctly in place through `file()` and `s3()`.
 
 **Production on 2026-10-23:**
 - Two Projects (`tagalys`, `solidtrace`), both with 30-day Retention and Log file order `[service, file]`.
