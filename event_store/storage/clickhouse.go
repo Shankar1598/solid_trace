@@ -106,6 +106,11 @@ func onStoragePolicy(steps []clickHouseMigration, policy string) []clickHouseMig
 	return moved
 }
 
+// openClickHouseConn connects as EventStore's user.
+//
+// JSON and Dynamic columns are sent flattened: clickhouse-go 2.49 can't read
+// the form 26.8 sends a JSON column in once a sort has merged blocks of
+// several parts. The SQL users' profile fixes the same setting.
 func openClickHouseConn(cfg config.ClickHouse, database string) (driver.Conn, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{cfg.Address},
@@ -114,6 +119,7 @@ func openClickHouseConn(cfg config.ClickHouse, database string) (driver.Conn, er
 			Username: cfg.User,
 			Password: cfg.Password,
 		},
+		Settings:    clickhouse.Settings{"output_format_native_use_flattened_dynamic_and_json_serialization": 1},
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
