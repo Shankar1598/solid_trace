@@ -128,6 +128,18 @@ var preparedFiles = []struct{ name, query string }{
 			bytes, min_time, max_time, log_count, CAST(batch_max AS VARCHAR) AS batch_max, local, remote, generation
 		FROM logs.log_files
 		ORDER BY project_id, day, hour, name`},
+	{"log_promoted_sets.parquet", `
+		SELECT project_id, day, type, key, 'attrs_' || type || '.' || key AS "column", added_at, partway
+		FROM logs.log_promoted_sets
+		ORDER BY project_id, day, type, key`},
+	{"log_key_counts.parquet", `
+		SELECT project_id, day, type, key, logs
+		FROM logs.log_key_counts
+		ORDER BY project_id, day, type, key`},
+	{"log_processing_cursors.parquet", `
+		SELECT project_id, CAST(batch_id AS VARCHAR) AS batch_id
+		FROM logs.log_processing_cursors
+		ORDER BY project_id`},
 }
 
 // writePreparedFiles writes each prepared file to dir, synced.

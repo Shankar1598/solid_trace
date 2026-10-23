@@ -269,6 +269,36 @@ func october(day, hour, minute int) time.Time {
 	return time.Date(2026, 10, day, hour, minute, 0, 0, time.UTC)
 }
 
+// withStrings is a Log with string Attributes.
+func withStrings(log models.Log, attributes map[string]string) models.Log {
+	log.Attributes.String = attributes
+	return log
+}
+
+// lastWaitingBatch is the id of the last of a Project's Log batches waiting
+// in Pebble.
+func (in *install) lastWaitingBatch(projectID uint32) string {
+	in.t.Helper()
+	batches, err := in.batches.LogBatchesAfter(projectID, uuid.Nil, 1_000_000)
+	if err != nil || len(batches) == 0 {
+		in.t.Fatalf("Expected Log batches of Project %d waiting, got %d (%v)", projectID, len(batches), err)
+	}
+	return batches[len(batches)-1].ID.String()
+}
+
+// prepared returns the rows of a prepared file, in the order written.
+func (in *install) prepared(name, columns string) []string {
+	in.t.Helper()
+	return query(in.t, "SELECT "+columns+" FROM read_parquet(?)", in.preparedFile(name))
+}
+
+func assertRows(t *testing.T, what string, got, want []string) {
+	t.Helper()
+	if !slices.Equal(got, want) {
+		t.Errorf("Expected %s:\n%s\ngot:\n%s", what, strings.Join(want, "\n"), strings.Join(got, "\n"))
+	}
+}
+
 func TestPrepareFilesTheLogsStillInDuckDBAndThoseWaitingInPebble(t *testing.T) {
 	in := newInstall(t)
 	in.post(1, october(5, 10, 20), logAt(october(5, 10, 20), "hot"))
@@ -278,4 +308,61 @@ func TestPrepareFilesTheLogsStillInDuckDBAndThoseWaitingInPebble(t *testing.T) {
 	in.mustPrepare(october(5, 10, 30), "v1.0.0")
 
 	in.assertEveryLogFiled()
+}
+
+// Hot Logs before and after the export's cutoffs, late Logs, Logs of an hour
+// whose file is written, and a busy Project's quarter-hours all end up in
+// files.
+func TestPrepareFilesEveryLogWhateverTheCutoffs(t *testing.T) {
+	in := newInstall(t)
+	const quiet, busy = 1, 2
+	in.post(quiet, october(5, 10, 3), logAt(october(5, 10, 2), "quiet, hot"))
+	in.post(busy, october(5, 10, 6), logAt(october(5, 10, 5), "busy, first quarter"), logAt(october(5, 10, 10), "busy, first quarter"))
+	in.run(october(5, 10, 21), func(r *running) {
+		r.store.UseBusyProjectLogs(2)
+		r.process()
+		r.clock.Set(october(5, 10, 30))
+		r.export() // the busy Project's 10:00 quarter-hour
+
+		in.post(quiet, october(5, 10, 31), logAt(october(5, 8, 30), "quiet, late"))
+		in.post(busy, october(5, 10, 31), logAt(october(5, 10, 12), "busy, late to its quarter-hour's file"), logAt(october(5, 10, 20), "busy, hot"))
+		r.clock.Set(october(5, 10, 32))
+		r.process()
+	})
+	in.post(quiet, october(5, 10, 40), logAt(october(5, 10, 40), "quiet, waiting"))
+	in.post(busy, october(5, 10, 40), logAt(october(5, 10, 40), "busy, waiting"))
+
+	in.mustPrepare(october(5, 10, 45), "v1.0.0")
+
+	in.assertEveryLogFiled()
+}
+
+// The promoted sets, key counts and Log processing cursors the ClickHouse
+// release loads are those the stores hold once every Log batch waiting is
+// stored.
+func TestPrepareWritesThePromotedSetsKeyCountsAndCursors(t *testing.T) {
+	in := newInstall(t)
+	in.post(1, october(5, 10, 5), withStrings(logAt(october(5, 10, 5), "first"), map[string]string{"user": "ada"}))
+	in.run(october(5, 10, 6), func(r *running) {
+		r.process()
+		// plan joins the day's set partway through the day.
+		in.post(1, october(5, 10, 10), withStrings(logAt(october(5, 10, 10), "second"), map[string]string{"user": "bo", "plan": "pro"}))
+		r.clock.Set(october(5, 10, 11))
+		r.process()
+	})
+	in.post(1, october(5, 10, 25), withStrings(logAt(october(5, 10, 25), "waiting"), map[string]string{"user": "cy"}))
+	in.post(2, october(5, 10, 20), logAt(october(5, 10, 20), "another Project's"))
+	cursors := []string{"1|" + in.lastWaitingBatch(1), "2|" + in.lastWaitingBatch(2)}
+
+	in.mustPrepare(october(5, 10, 30), "v1.0.0")
+
+	assertRows(t, "the promoted sets", in.prepared("log_promoted_sets.parquet", "project_id, day, type, key, \"column\", added_at, partway"), []string{
+		"1|2026-10-05T00:00:00Z|string|plan|attrs_string.plan|2026-10-05T10:11:00Z|true",
+		"1|2026-10-05T00:00:00Z|string|user|attrs_string.user|2026-10-05T10:06:00Z|false",
+	})
+	assertRows(t, "the key counts", in.prepared("log_key_counts.parquet", "project_id, day, type, key, logs"), []string{
+		"1|2026-10-05T00:00:00Z|string|plan|1",
+		"1|2026-10-05T00:00:00Z|string|user|3",
+	})
+	assertRows(t, "the Log processing cursors", in.prepared("log_processing_cursors.parquet", "project_id, batch_id"), cursors)
 }
