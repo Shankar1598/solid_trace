@@ -175,6 +175,9 @@ func TestTheLogsIngestedAfterABatchAreFilteredWhateverTheirTime(t *testing.T) {
 		``:                    {"eleven", "ten", "late"},
 		`where user == "ada"`: {"ten", "late"},
 		`where status >= 500`: {"ten"},
+		// The message is read only for the Logs the rest keep.
+		`where user == "ada" and message startswith "t"`: {"ten"},
+		`where user == "ada" | search "LATE"`:            {"late"},
 	}
 	read := func(query string) ingestedPage { return runAfterBatch(t, env, query, armed, nil) }
 	want := map[string]ingestedPage{}
@@ -365,10 +368,8 @@ func TestARunAfterABatchFiltersCountsPastItsLimitAndTakesOnlyLogRows(t *testing.
 	if got := queryMessages(t, env, `where batch == "the sender's"`); len(got) != 7 {
 		t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", got)
 	}
-	if tablesOnClickHouse {
-		if _, rows := runTable(t, env, `summarize count() by batch`); !slices.Equal(rows, []string{`["the sender's",7]`}) {
-			t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", rows)
-		}
+	if _, rows := runTable(t, env, `summarize count() by batch`); !slices.Equal(rows, []string{`["the sender's",7]`}) {
+		t.Errorf("Expected batch in a Query to be the sender's Attribute, got %v", rows)
 	}
 
 	// Only a Query of Log rows runs after a batch, armed or not; a Query

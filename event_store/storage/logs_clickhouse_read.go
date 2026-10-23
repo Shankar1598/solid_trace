@@ -16,27 +16,46 @@ import (
 
 // ClickHouseColumns says where the logs table keeps each Field, so that a
 // Query can be written as SQL against it. Its answers are SQL expressions.
-type ClickHouseColumns struct{}
+type ClickHouseColumns struct {
+	// Table, if set, is the relation each column is read from, such as a
+	// CTE of rows of logs, as in stage1.level. ClickHouse lets an alias in
+	// a SELECT stand for a column of the same name, so a column read beside
+	// aliases must name its relation.
+	Table string
+}
+
+// Column is the relation's column of the given name.
+func (c ClickHouseColumns) Column(name string) string {
+	return c.qualify(chsql.Identifier(name))
+}
+
+// qualify names a column's relation, if Table sets one.
+func (c ClickHouseColumns) qualify(column string) string {
+	if c.Table == "" {
+		return column
+	}
+	return c.Table + "." + column
+}
 
 // BuiltIn is a built-in field's column, such as level.
-func (ClickHouseColumns) BuiltIn(name string) string {
-	return chsql.Identifier(name)
+func (c ClickHouseColumns) BuiltIn(name string) string {
+	return c.Column(name)
 }
 
 // Attribute is the value of the Attribute key of type t, NULL for a Log
 // without one: the typed subcolumn of its path, never the path's Dynamic
 // value, which throws on a path that holds values of more than one type, or
 // its JSON text in attrs_json.
-func (ClickHouseColumns) Attribute(t AttributeType, key string) string {
+func (c ClickHouseColumns) Attribute(t AttributeType, key string) string {
 	if t == JSONAttribute {
-		name := chsql.String(key)
-		return "if(mapContains(attrs_json, " + name + "), attrs_json[" + name + "], NULL)"
+		name, json := chsql.String(key), c.qualify("attrs_json")
+		return "if(mapContains(" + json + ", " + name + "), " + json + "[" + name + "], NULL)"
 	}
 	if key == "" {
 		// No identifier names the empty path.
-		return "dynamicElement(getSubcolumn(attributes, ''), '" + attributeTypes[t] + "')"
+		return "dynamicElement(getSubcolumn(" + c.qualify("attributes") + ", ''), '" + attributeTypes[t] + "')"
 	}
-	return "attributes." + chsql.Identifier(key) + ".:" + attributeTypes[t]
+	return c.qualify("attributes") + "." + chsql.Identifier(key) + ".:" + attributeTypes[t]
 }
 
 // attributeTypes are the ClickHouse types of the values of each type of
@@ -45,18 +64,51 @@ var attributeTypes = map[AttributeType]string{StringAttribute: "String", NumberA
 
 // SearchText is every string Attribute's value, joined by \0, which search
 // reads besides message.
-func (ClickHouseColumns) SearchText() string {
-	return "search_text"
+func (c ClickHouseColumns) SearchText() string {
+	return c.qualify("search_text")
 }
 
 // StringColumn is a column that holds the string Attribute key's value, or ”
 // for a Log whose key isn't a string, if there is one: file, a sort column,
 // so that a filter on it skips other files.
-func (ClickHouseColumns) StringColumn(key string) (string, bool) {
+func (c ClickHouseColumns) StringColumn(key string) (string, bool) {
 	if key == "file" {
-		return "file", true
+		return c.qualify("file"), true
 	}
 	return "", false
+}
+
+// Filter is the SQL condition a Log must meet, in two parts, each "" for
+// none: Message, the tests that read message or search_text, and Rest, the
+// others.
+type Filter struct {
+	Rest, Message string
+}
+
+// whereClause writes the clauses of a read of the Logs that meet conditions,
+// cheap tests of the sort key and time, and filter. With tests of both kinds,
+// the rest are in PREWHERE and the message tests in WHERE, so that message is
+// read only for the Logs that pass the rest: 26.8's own order of PREWHERE
+// tests may read all of message first (ClickHouse probe, S8).
+func whereClause(conditions []string, filter Filter) string {
+	if filter.Rest != "" {
+		conditions = append(conditions, "("+filter.Rest+")")
+	}
+	switch {
+	case filter.Message == "":
+		return "WHERE " + strings.Join(conditions, " AND ")
+	case filter.Rest == "":
+		return "WHERE " + strings.Join(append(conditions, "("+filter.Message+")"), " AND ")
+	}
+	return "PREWHERE " + strings.Join(conditions, " AND ") + " WHERE " + filter.Message
+}
+
+// filterOf is the filter where returns, or none if where is nil.
+func filterOf(where func(ClickHouseColumns) Filter) Filter {
+	if where == nil {
+		return Filter{}
+	}
+	return where(ClickHouseColumns{})
 }
 
 // logSelectList is the columns a Log is read whole from.
@@ -81,9 +133,9 @@ type LogScan struct {
 	// After, if set, continues a page: only Logs after it in newest-first
 	// order, strictly older, are scanned.
 	After *LogPosition
-	// Where, if set, returns the SQL condition a Log must meet. "" keeps
-	// every Log.
-	Where func(ClickHouseColumns) string
+	// Where, if set, returns the SQL condition a Log must meet. An empty
+	// Filter keeps every Log.
+	Where func(ClickHouseColumns) Filter
 	// Limit is how many Logs to return at most.
 	Limit int
 	// Budget, if set, is how long the scan may go on reading spans of time
@@ -129,7 +181,8 @@ func (s *ClickHouseLogs) ScanLogs(ctx context.Context, scan LogScan) (LogScanPag
 	from = latestTime(from, oldest)
 	to = earliestTime(to, newest.Add(time.Microsecond))
 
-	condition := func(spanFrom, spanTo time.Time) string {
+	filter := filterOf(scan.Where)
+	clauses := func(spanFrom, spanTo time.Time) string {
 		conditions := []string{
 			fmt.Sprintf("project_id = %d", scan.ProjectID),
 			"time >= " + chsql.Time(spanFrom), "time < " + chsql.Time(spanTo),
@@ -139,12 +192,7 @@ func (s *ClickHouseLogs) ScanLogs(ctx context.Context, scan LogScan) (LogScanPag
 			conditions = append(conditions, fmt.Sprintf("(time < %s OR %s < %s)",
 				at, chsql.UUIDOrder("id"), chsql.UUIDOrder(chsql.UUID(scan.After.ID))))
 		}
-		if scan.Where != nil {
-			if w := scan.Where(ClickHouseColumns{}); w != "" {
-				conditions = append(conditions, "("+w+")")
-			}
-		}
-		return strings.Join(conditions, " AND ")
+		return whereClause(conditions, filter)
 	}
 	// The first span is the newest Log's hour; each after it twice the last,
 	// from an hour up to maxScanSpan.
@@ -156,8 +204,8 @@ func (s *ClickHouseLogs) ScanLogs(ctx context.Context, scan LogScan) (LogScanPag
 		}
 		span = min(max(2*span, time.Hour), maxScanSpan)
 		spanFrom = latestTime(spanFrom, from)
-		found, err := s.queryLogs(ctx, fmt.Sprintf("SELECT %s FROM logs WHERE %s ORDER BY %s LIMIT %d",
-			logSelectList, condition(spanFrom, spanTo), logsNewestFirst, scan.Limit-len(page.Logs)))
+		found, err := s.queryLogs(ctx, fmt.Sprintf("SELECT %s FROM logs %s ORDER BY %s LIMIT %d",
+			logSelectList, clauses(spanFrom, spanTo), logsNewestFirst, scan.Limit-len(page.Logs)))
 		if err != nil {
 			return LogScanPage{}, err
 		}
@@ -271,9 +319,9 @@ type IngestedLogScan struct {
 	// After is the Log batch the scan starts after, the nil UUID for the
 	// first.
 	After uuid.UUID
-	// Where, if set, returns the SQL condition a Log must meet. "" keeps
-	// every Log.
-	Where func(ClickHouseColumns) string
+	// Where, if set, returns the SQL condition a Log must meet. An empty
+	// Filter keeps every Log.
+	Where func(ClickHouseColumns) Filter
 	// Limit is how many Logs to return at most.
 	Limit int
 }
@@ -316,14 +364,9 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 		chsql.UUIDOrder("batch") + " > " + chsql.UUIDOrder(chsql.UUID(scan.After)),
 		chsql.UUIDOrder("batch") + " <= " + chsql.UUIDOrder(chsql.UUID(cursor)),
 	}
-	if scan.Where != nil {
-		if w := scan.Where(ClickHouseColumns{}); w != "" {
-			conditions = append(conditions, "("+w+")")
-		}
-	}
-	where := strings.Join(conditions, " AND ")
+	where := whereClause(conditions, filterOf(scan.Where))
 	if scan.Limit > 0 {
-		logs, err := s.queryLogs(ctx, fmt.Sprintf("SELECT %s FROM logs WHERE %s ORDER BY %s LIMIT %d",
+		logs, err := s.queryLogs(ctx, fmt.Sprintf("SELECT %s FROM logs %s ORDER BY %s LIMIT %d",
 			logSelectList, where, logsNewestFirst, scan.Limit))
 		if err != nil {
 			return IngestedLogs{}, err
@@ -336,7 +379,7 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 		return found, nil
 	}
 	var total uint64
-	if err := s.queryRow(ctx, "SELECT count() FROM logs WHERE "+where, &total); err != nil {
+	if err := s.queryRow(ctx, "SELECT count() FROM logs "+where, &total); err != nil {
 		return IngestedLogs{}, err
 	}
 	found.Total = int(total)

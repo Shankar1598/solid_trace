@@ -135,11 +135,6 @@ func (r *logRead) sources(from, to time.Time, sel, where func(LogColumns) string
 	return r.sourcesIn([]timeSpan{{from, to}}, sel, where)
 }
 
-// timeSpan is the time range [from, to).
-type timeSpan struct {
-	from, to time.Time
-}
-
 // sourcesIn is sources over the Logs of spans, which are in time order and
 // apart, reading only the files of the hours they cover.
 func (r *logRead) sourcesIn(spans []timeSpan, sel, where func(LogColumns) string) string {

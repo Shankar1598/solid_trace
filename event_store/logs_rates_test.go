@@ -80,7 +80,7 @@ func TestRateAndPeakRateCountRequestsPerSecondOfEachBin(t *testing.T) {
 		search + `summarize count(), rate(), peak_rate()`:       {"count_,rate_,peak_rate_", []string{`[33,0.2,9]`}, false},
 		`where path == "/none" | summarize rate(), peak_rate()`: {"rate_,peak_rate_", []string{`[0,0]`}, false},
 	}
-	assertTablesIn(t, env, cases, rateRange.from, rateRange.to, "in the hot table")
+	assertTablesIn(t, env, cases, rateRange.from, rateRange.to, "once stored")
 
 	// The chart's hints, and its totals over the whole range.
 	query := search + `summarize rate(), peak_rate() by bin(time, 1m)`
@@ -95,11 +95,6 @@ func TestRateAndPeakRateCountRequestsPerSecondOfEachBin(t *testing.T) {
 	if got, want := totalsOf(answer), "rate_[rate] peak_rate_[peak_rate]: [0.2,9]"; got != want {
 		t.Errorf("Totals of %s\n want %s\n got  %s", query, want, got)
 	}
-
-	// Hour 10 goes to a file.
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, rateAt(0, 0, 0), 1)
-	assertTablesIn(t, env, cases, rateRange.from, rateRange.to, "after the export")
 }
 
 func TestRatesNeedBinsOfTheLogsTime(t *testing.T) {

@@ -15,8 +15,7 @@ func languageAt(hour, minute int) time.Time {
 }
 
 // seedLanguageLogs stores five Logs, newest first ed, cy, bob, ada and di
-// (the day before), each hour's while the hot window takes it, so all but di
-// are in the hot table. It leaves the clock at 11:30.
+// (the day before), each hour's soon after it. It leaves the clock at 11:30.
 func seedLanguageLogs(t *testing.T, env *TestEnv) {
 	t.Helper()
 	env.Clock.Set(languageAt(10, 29))
@@ -46,13 +45,10 @@ func postLateLanguageLog(t *testing.T, env *TestEnv) {
 		"status": 200, "user": "fy", "duration": 10, "path": "/api/users/7", "service": "api"}))
 }
 
-// Until tables and SQL mode move to ClickHouse, in tickets 04 and 07, the
-// root tests skip their checks of a Query's table, and of its Readable SQL
-// run in SQL mode. These turn them back on.
-const (
-	tablesOnClickHouse = false // 04
-	sqlOnClickHouse    = false // 07
-)
+// Until SQL mode moves to ClickHouse, in ticket 07, the root tests skip
+// their checks of a Query's Readable SQL run in SQL mode. This turns them
+// back on.
+const sqlOnClickHouse = false // 07
 
 func TestWhereComparesMatchesAndTestsFields(t *testing.T) {
 	env := setupTestEnv(t)
@@ -318,15 +314,13 @@ func TestTabularStagesReturnTables(t *testing.T) {
 		`distinct service, level`:        {"service,level", []string{`["api","error"]`, `["api",null]`, `["web",null]`, `["worker",null]`}, false},
 		`summarize count() by service | sort by count_ desc | take 1`: {"service,count_", []string{`["api",3]`}, false},
 	}
-	assertTables(t, env, cases, "in the hot table")
+	assertTables(t, env, cases, "once stored")
 
-	// Hour 10 and the day before go to files.
+	env.Reopen(t)
+	assertTables(t, env, cases, "after a restart")
+
+	// A late Log of hour 10.
 	env.Clock.Set(languageAt(12, 5))
-	env.ExportLogs(t)
-	assertHourFiles(t, env, 123, languageAt(10, 0), 1)
-	assertTables(t, env, cases, "after the export")
-
-	// A late Log of hour 10, beside its file.
 	postAndProcess(t, env, logJSON(t, "fy", languageAt(10, 45), map[string]any{"duration": 10, "service": "api"}))
 	assertTables(t, env, map[string]tableCase{
 		`summarize count() by bin(time, 1h)`:      {"time,count_", []string{`["2026-10-01T10:00:00Z",1]`, `["2026-10-02T10:00:00Z",4]`, `["2026-10-02T11:00:00Z",1]`}, false},
@@ -347,7 +341,7 @@ func TestTakeAndANewestFirstSortKeepLogRows(t *testing.T) {
 		`take 0`:                           {},
 		`limit 3 | sort by time desc`:      {"ed", "cy", "bob"},
 		`where duration > 100 | limit 100`: {"ed", "cy", "ada"},
-	}, "in the hot table")
+	}, "once stored")
 
 	// Pages stop at take's number of Logs.
 	pages := pageThrough(t, env, queryRequest{Query: `take 3`, From: allTime.from, To: allTime.to, Limit: 2})
@@ -476,7 +470,10 @@ func TestScalarFunctionsAndSortsInTables(t *testing.T) {
 		`sort by message asc | project message, isslow = duration > 200, hasnote = isnotempty(note)`: {"message,isslow,hasnote",
 			[]string{`["ada",false,false]`, `["bob",false,false]`, `["cy",true,false]`, `["di",false,false]`, `["ed",true,true]`}, false},
 		`extend message = toupper(message) | where duration > 200 | project message`: {"message", []string{`["CY"]`, `["ED"]`}, false},
+		// Each column is worked out from the stage before, never from a
+		// column of the same name the stage makes.
+		`where message == "bob" | project a = user, user = message, message = a`: {"a,user,message", []string{`["Bob","bob",null]`}, false},
 		`summarize first = min(time), last = max(time), quietest = min(message)`: {"first,last,quietest",
 			[]string{`["2026-10-01T10:40:00Z","2026-10-02T11:10:00Z","ada"]`}, false},
-	}, "in the hot table")
+	}, "once stored")
 }
