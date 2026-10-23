@@ -21,9 +21,10 @@ type Config struct {
 	DuckDBPath      string
 	LogsDuckDBPath  string // logs.duckdb, attached to the DuckDB of DuckDBPath
 	LogsParquetPath string // Where the Log export writes Log files
-	// LogsDiskLimitBytes caps the Log files of every Project together; the
-	// oldest hours are deleted past it. 0 caps them at half the disk that
-	// holds them (storage.NewLogDiskLimit).
+	// LogsDiskLimitBytes caps the Logs of every Project together on
+	// ClickHouse's local disk; past it, the oldest days move to the bucket,
+	// or are deleted without one. 0 caps them at half of that disk
+	// (storage.ClickHouseLogs.DiskLimit).
 	LogsDiskLimitBytes int64
 	// LogsBinCacheBytes is the memory the bin cache keeps charts' bins in;
 	// 0 turns it off.
@@ -90,8 +91,9 @@ type ObjectStore struct {
 	// empty for AWS's own. It is GCSEndpoint when Kind is gcs and none is
 	// given.
 	Endpoint string
-	// LocalCacheHours is how long a Log file's local copy is kept after it
-	// is uploaded; 0 deletes it once uploaded.
+	// LocalCacheHours is how long Logs stay on local disk: a part of
+	// ClickHouse's logs table moves to the bucket once its newest Log is
+	// this many hours old, and 0 moves it at once.
 	LocalCacheHours int
 	// KeyID and Secret come from SOLIDTRACE_OBJECT_STORE_KEY_ID and
 	// SOLIDTRACE_OBJECT_STORE_SECRET, never from the file.
@@ -114,6 +116,10 @@ type ClickHouse struct {
 	// EventStore writes the storage policy's bucket volume from
 	// object_store. Empty, EventStore leaves the policy as it is.
 	ConfigDir string
+	// StoragePolicy is the storage policy EventStore's tables are made on,
+	// or "" for storage.ClickHouseStoragePolicy. It isn't in the file: tests
+	// give theirs a policy with a bucket volume of their own.
+	StoragePolicy string
 }
 
 // clickHouseFile is the clickhouse block as written in the file.

@@ -87,6 +87,8 @@ const logsColumnList = "project_id, id, time, level, service, environment, messa
 type ClickHouseLogs struct {
 	conn   driver.Conn
 	pebble *PebbleWriter
+	// bucket is whether the logs table's parts move to a bucket.
+	bucket bool
 
 	// countsMu guards counts: each (Project, day)'s key counts as the key
 	// counts table holds them, read once and then kept up to date by the
@@ -112,7 +114,7 @@ const keptCountDays = 64
 // NewClickHouseLogs reads and writes Logs in ch, with Log processing's
 // cursors in pebble.
 func NewClickHouseLogs(ch *ClickHouse, pebble *PebbleWriter) *ClickHouseLogs {
-	return &ClickHouseLogs{conn: ch.Conn(), pebble: pebble, counts: map[projectDay]map[typedKey]int64{}}
+	return &ClickHouseLogs{conn: ch.Conn(), pebble: pebble, bucket: ch.HasBucket(), counts: map[projectDay]map[typedKey]int64{}}
 }
 
 // Ping checks that ClickHouse answers.

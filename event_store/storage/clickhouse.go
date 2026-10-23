@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -18,6 +19,9 @@ type ClickHouse struct {
 	// address is the server's, where SQL queries connect as their
 	// Projects' users (ClickHouseSQL).
 	address string
+	// bucket is whether the tables' storage policy has a bucket volume,
+	// which the logs table's parts move to.
+	bucket bool
 }
 
 // clickHouseMigration is one step of making EventStore's tables. Its
@@ -42,7 +46,9 @@ const clickHousePingTimeout = 3 * time.Second
 // OpenClickHouse connects to the ClickHouse server in cfg and makes
 // EventStore's database if it is missing. With cfg.ConfigDir set, it first
 // writes the tables' storage policy for bucket (nil for none) and waits for
-// ClickHouse to load it. Then it runs the migrations the database hasn't had.
+// ClickHouse to load it. Then it runs the migrations the database hasn't had,
+// making the tables on cfg's storage policy, and with a bucket sets when the
+// logs table's parts move to it (useBucket).
 func OpenClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHouse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -61,18 +67,42 @@ func OpenClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHo
 	if err != nil {
 		return nil, err
 	}
-	ch := &ClickHouse{conn: conn, database: cfg.Database, address: cfg.Address}
+	ch := &ClickHouse{conn: conn, database: cfg.Database, address: cfg.Address, bucket: bucket != nil}
 	if cfg.ConfigDir != "" {
 		if err := ch.useStoragePolicy(ctx, cfg.ConfigDir, bucket); err != nil {
 			conn.Close()
 			return nil, err
 		}
 	}
-	if err := ch.migrate(ctx, clickHouseMigrations); err != nil {
+	steps := clickHouseMigrations
+	if cfg.StoragePolicy != "" {
+		steps = onStoragePolicy(steps, cfg.StoragePolicy)
+	}
+	if err := ch.migrate(ctx, steps); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := ch.useBucket(ctx, bucket); err != nil {
 		conn.Close()
 		return nil, err
 	}
 	return ch, nil
+}
+
+// onStoragePolicy is steps with their tables made on policy in place of
+// ClickHouseStoragePolicy.
+func onStoragePolicy(steps []clickHouseMigration, policy string) []clickHouseMigration {
+	from := "storage_policy = '" + ClickHouseStoragePolicy + "'"
+	to := "storage_policy = '" + policy + "'"
+	var moved []clickHouseMigration
+	for _, step := range steps {
+		statements := make([]string, len(step.statements))
+		for i, statement := range step.statements {
+			statements[i] = strings.ReplaceAll(statement, from, to)
+		}
+		moved = append(moved, clickHouseMigration{version: step.version, statements: statements})
+	}
+	return moved
 }
 
 func openClickHouseConn(cfg config.ClickHouse, database string) (driver.Conn, error) {
@@ -147,6 +177,9 @@ func (ch *ClickHouse) Ping() error {
 
 // Conn is the connection to EventStore's database.
 func (ch *ClickHouse) Conn() driver.Conn { return ch.conn }
+
+// HasBucket is whether the tables' storage policy has a bucket volume.
+func (ch *ClickHouse) HasBucket() bool { return ch.bucket }
 
 // Database is EventStore's database's name.
 func (ch *ClickHouse) Database() string { return ch.database }
