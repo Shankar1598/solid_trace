@@ -5,6 +5,9 @@
 # (or, for a secret, the env var it comes from), the value in effect, whether
 # that's the default, and whether it's a secret. A secret's value is only
 # whether it's set. Changing any of them takes a restart.
+#
+# An answer missing a part the rows need (a release with a different /config)
+# raises EventStore::Unavailable, as EventStore not answering does.
 class EventStoreConfig
   # config is EventStore's GET /config answer.
   def initialize(config)
@@ -13,7 +16,7 @@ class EventStoreConfig
   end
 
   def settings
-    clickhouse = @config["clickhouse"]
+    clickhouse = @config.fetch("clickhouse")
     [
       row("Ingest port", "ingest_port", @config["ingest_port"]),
       row("Query port", "query_port", @config["query_port"]),
@@ -33,6 +36,8 @@ class EventStoreConfig
       row("CPU profile directory", "cpu_profile_dir", @config["cpu_profile_dir"]),
       row("Debug", "debug", @config["debug"])
     ]
+  rescue KeyError, TypeError, NoMethodError => e
+    raise EventStore::Unavailable, "its answer isn't the config this Console reads (#{e.message})"
   end
 
   private
@@ -67,14 +72,14 @@ class EventStoreConfig
   # bytes. Left out of the file, it's half of ClickHouse's disk as EventStore
   # worked it out at start.
   def disk_limit
-    limit = @config["logs_disk_limit"]
-    bytes = limit["effective_bytes"]
+    limit = @config.fetch("logs_disk_limit")
+    bytes = limit.fetch("effective_bytes")
     size = "#{(bytes / 1e9).round(1).to_s.delete_suffix('.0')} GB (#{bytes} bytes)"
     limit["configured_bytes"].to_i.positive? ? size : "Half of ClickHouse's disk: #{size}"
   end
 
   def bin_cache
-    bytes = @config["logs_bin_cache_bytes"]
+    bytes = @config.fetch("logs_bin_cache_bytes")
     bytes.zero? ? "Off" : "#{bytes >> 20} MiB"
   end
 end
