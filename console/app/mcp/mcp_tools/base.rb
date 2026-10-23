@@ -34,7 +34,7 @@ module McpTools
     FROM = { type: "string", description: "Where to start reading, as an ISO 8601 time. Give it with to, instead of range." }.freeze
     TO = { type: "string", description: "Where to stop reading, as an ISO 8601 time. Give it with from, instead of range." }.freeze
     # How to write a Query that reads less, for the tools that run or save one.
-    READING_LESS = "To read less, filter with == or in on the Project's log_file_order (list_projects): " \
+    READING_LESS = "To read less, filter with == or in on service and file, which every Project's Logs are sorted by: " \
                    "query_language_reference's Reading less says how.".freeze
 
     # A record's name and the tool that lists its kind, for when one isn't

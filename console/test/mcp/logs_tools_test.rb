@@ -219,12 +219,14 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert same, "Copy docs/logs/query-language.md to console/app/mcp/docs/query-language.md."
   end
 
-  test "the server and the tools that run or save a Query point agents at the Log file order and Reading less" do
-    assert_includes McpServer::INSTRUCTIONS, "log_file_order"
+  test "the server and the tools that run or save a Query point agents at service, file and Reading less" do
+    assert_includes McpServer::INSTRUCTIONS, "service and file"
+    assert_not_includes McpServer::INSTRUCTIONS, "log_file_order"
     [ McpTools::QueryLogs, McpTools::AddChart, McpTools::CreateMonitor ].each do |tool|
-      [ "log_file_order", "Reading less" ].each { |part| assert_includes tool.description_value, part, tool.name }
+      [ "service and file", "Reading less" ].each { |part| assert_includes tool.description_value, part, tool.name }
+      assert_not_includes tool.description_value, "log_file_order", tool.name
     end
-    assert_includes McpTools::ListProjects.description_value, "log_file_order, the Fields its Log files are sorted by"
+    assert_not_includes McpTools::ListProjects.description_value, "log_file_order"
     assert_includes Rails.root.join("app/mcp/docs/query-language.md").read, "## Reading less"
   end
 

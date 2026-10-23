@@ -1,14 +1,18 @@
 package main_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/chcol"
 	"github.com/gofiber/fiber/v2"
 	"github.com/solidtrace/event_store/pkg/clickhousetest"
 )
@@ -40,6 +44,45 @@ func TestEventStoreIsUnhealthyWhileClickHouseIsUnreachable(t *testing.T) {
 
 	link.Restore()
 	assertHealth(t, env, fiber.StatusOK, "ok")
+}
+
+// EventStore's own connection reads attributes, a JSON column, whatever
+// form ClickHouse sends it in. A sort over several parts with no LIMIT
+// merges their blocks, and the form 26.8 sends that in is one clickhouse-go
+// can't read unless it asks for JSON flattened.
+func TestEventStoresConnectionReadsAttributesSortedAcrossSeveralParts(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	for i := range 4 {
+		var logs []string
+		for j := range 50 {
+			at := testNow.Add(-time.Duration(i*50+j) * time.Second)
+			attributes := map[string]any{"store_id": i*50 + j, "path": fmt.Sprintf("/p/%d", j), "cached": j%2 == 0}
+			if j%3 == 0 {
+				attributes["store_id"] = fmt.Sprintf("s%d", j)
+			}
+			attributes[fmt.Sprintf("only_in_%d", i)] = "x"
+			logs = append(logs, logJSON(t, "m", at, attributes))
+		}
+		postAndProcess(t, env, logs...)
+	}
+
+	rows, err := env.ClickHouse.Conn().Query(context.Background(), "SELECT attributes FROM logs ORDER BY time")
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var attributes chcol.JSON
+		if err := rows.Scan(&attributes); err != nil {
+			t.Fatalf("Expected each Log's attributes read, got %v", err)
+		}
+		n++
+	}
+	if err := rows.Err(); err != nil || n != 200 {
+		t.Errorf("Expected 200 Logs' attributes, got %d (%v)", n, err)
+	}
 }
 
 // assertHealth checks /health on both apps: its status, and whether its

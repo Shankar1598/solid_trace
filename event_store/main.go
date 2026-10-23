@@ -25,6 +25,9 @@ import (
 func main() {
 	cfg := config.Load()
 	logger.Init()
+	for _, warning := range cfg.Warnings {
+		logger.L.Warn(warning)
+	}
 
 	// Initialize storage
 	pebbleWriter, err := storage.NewPebbleWriter(cfg)
@@ -32,12 +35,6 @@ func main() {
 		logger.L.Fatal("Failed to open Pebble", "error", err)
 	}
 	defer pebbleWriter.Close()
-
-	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath, cfg.DuckDBTempDirectory, cfg.DuckDBMemoryLimit)
-	if err != nil {
-		logger.L.Fatal("Failed to open DuckDB", "error", err)
-	}
-	defer duckdbWriter.Close()
 
 	// Event processing stores Events' rows in ClickHouse, and Event reads
 	// read them there. Log processing inserts Logs into it, and Log rows,
@@ -52,9 +49,8 @@ func main() {
 
 	// The Logs from before the switch, in the DuckDB release's Log files,
 	// are read in place. This loads what prepare-clickhouse wrote, and stops
-	// the start on DuckDB data it didn't prepare. It runs before logs.duckdb
-	// is opened, which makes one, and before Log processing, which reads the
-	// Processing cursors it loads.
+	// the start on DuckDB data it didn't prepare. It runs before Log
+	// processing, which reads the Processing cursors it loads.
 	if err := clickHouseLogs.UseOldLogFiles(storage.OldLogFiles{
 		LogsDuckDB:  cfg.LogsDuckDBPath,
 		PreparedDir: filepath.Join(filepath.Dir(cfg.LogsDuckDBPath), "prepared"),
@@ -62,27 +58,6 @@ func main() {
 		Bucket:      cfg.ObjectStore,
 	}); err != nil {
 		logger.L.Fatal("Failed to ready the Logs from before the switch to ClickHouse", "error", err)
-	}
-
-	// The Log files are kept in the bucket, if one is set. Nothing here waits
-	// on the bucket, so ingest starts while it is down.
-	bucket := storage.NewObjectStore(cfg.ObjectStore)
-	if cfg.ObjectStore != nil {
-		if err := duckdbWriter.UseBucket(cfg.ObjectStore, cfg.DuckDBExtensionDirectory); err != nil {
-			logger.L.Fatal("Failed to let DuckDB read the object store's bucket", "error", err)
-		}
-	}
-
-	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath, cfg.LogsParquetPath)
-	if err != nil {
-		logger.L.Fatal("Failed to open logs DuckDB", "error", err)
-	}
-	if cfg.ObjectStore != nil {
-		if err := logStore.UseObjectStore(bucket, cfg.ObjectStore.LocalCacheHours); err != nil {
-			logger.L.Fatal("Failed to keep Log files in the object store's bucket", "error", err)
-		}
-	} else if err := logStore.UseLocalDiskOnly(); err != nil {
-		logger.L.Fatal("Failed to keep Log files on local disk only", "error", err)
 	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
@@ -110,7 +85,6 @@ func main() {
 		logger.L.Fatal("Failed to open Console settings", "error", err)
 	}
 	defer consoleSettings.Close()
-	logStore.UseLogFileOrders(consoleSettings)
 
 	// Prepare must run before the worker starts. The Event cleanup never
 	// runs inside a batch: they share batchLock.
@@ -164,7 +138,7 @@ func main() {
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
 	logsHandler := handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
-	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
 	app := handler.NewIngestApp(ingestHandler, healthHandler)

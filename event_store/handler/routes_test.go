@@ -48,12 +48,6 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	}
 	t.Cleanup(pebbleWriter.Close)
 
-	duckdbWriter, err := storage.NewDuckDBWriter(filepath.Join(tmpDir, "events.duckdb"), "", "")
-	if err != nil {
-		t.Fatalf("Failed to create DuckDB: %v", err)
-	}
-	t.Cleanup(duckdbWriter.Close)
-
 	clickhousetest.Empty(t)
 	clickHouse, err := storage.OpenClickHouse(clickhousetest.Config(), nil)
 	if err != nil {
@@ -79,7 +73,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 
 	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
 
-	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, answers{})
+	healthHandler := handler.NewHealthHandler(pebbleWriter, answers{})
 
 	ingestApp := fiber.New()
 	handler.RegisterIngestRoutes(ingestApp, nil, healthHandler)
