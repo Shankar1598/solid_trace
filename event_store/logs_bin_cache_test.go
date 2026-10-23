@@ -250,6 +250,23 @@ func TestACachedBinMissesOnceALogIsInsertedIntoItsHour(t *testing.T) {
 	}
 }
 
+func TestCachedBinsMissOnceRetentionDeletesTheirDay(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	postChartLogs(t, env)
+	assertSameWithAndWithoutTheBinCache(t, env, "before Retention")
+
+	// Past midnight on November 1st, 30 days back is October 2nd, so
+	// October 1st's Logs go, while the cache holds bins of its hours.
+	env.Clock.Set(time.Date(2026, 11, 1, 0, 30, 0, 0, time.UTC))
+	env.DeleteLogsPastRetention(t)
+	assertSameWithAndWithoutTheBinCache(t, env, "after Retention")
+	if got := binnedTable(t, env, binCachedQueries[0]); strings.Contains(got, `["2026-10-01`) || !strings.Contains(got, `["2026-10-02`) {
+		t.Errorf("Expected October 2nd's rows alone after Retention, got %s", got)
+	}
+}
+
 func TestARateChartRunOverALaterRangeTakesTheBinsBothHold(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()

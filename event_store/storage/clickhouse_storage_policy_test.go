@@ -29,6 +29,7 @@ type storageConfig struct {
 		Disk     string `xml:"disk"`
 		Priority int    `xml:"volume_priority"`
 	} `xml:"storage_configuration>policies>solidtrace>volumes>bucket"`
+	MoveFactor string `xml:"storage_configuration>policies>solidtrace>move_factor"`
 }
 
 type envRef struct {
@@ -74,6 +75,10 @@ func TestABucketAddsACachedVolumeOnItsClickHouseFolderAfterTheLocalOne(t *testin
 	}
 	if len(got.Volumes) != 1 || got.Volumes[0].Disk != "bucket_cache" || got.Volumes[0].Priority != 2 {
 		t.Errorf("volumes = %+v, want one on the cache, after the local volume", got.Volumes)
+	}
+	// Parts move to the bucket early once the local disk is 90% full.
+	if got.MoveFactor != "0.1" {
+		t.Errorf("move_factor = %q, want 0.1", got.MoveFactor)
 	}
 }
 
