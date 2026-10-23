@@ -24,3 +24,10 @@
 - [ ] **GLOSSARY.md, `README.md`, `docs/logs/object-store.md`** and the docs under `docs/` follow the spec's word list.
 - [ ] **Searches:** `grep -ri duckdb` over `event_store/`, `console/app`, `deploy/` and `docs/` finds only history (ADRs) and the old-Log-file module's comments.
 - [ ] **The release check, which needs the user:** the Go suite and Playwright in parallel, then Rails, as `docs/agents/testing.md` says. Leave it for the user and say so in the Answer.
+
+## Comments
+
+- 2026-10-23, from tickets 05 and 07 (details in `~/.cache/solid-trace/clickhouse-notes/05-notes.md` and `07-notes.md`):
+  - **JSON decoding:** clickhouse-go 2.49 can't decode a `JSON` column that 26.8 sends after a sort merges several parts ("unsupported column type", "unexpected value 116 for boolean"). The SQL users' profile sets `output_format_native_use_flattened_dynamic_and_json_serialization = 1`; EventStore's own connection doesn't. Set it there too, with a root test that reads `attributes` sorted across several parts with no `LIMIT`.
+  - **A deleted Project's SQL user** (and its row policies) is dropped with the Project's data.
+  - **SQL queries are on by default today** (`instance_settings.sql_queries_enabled` defaults to true), not off as the spec says. 07 left the default alone; the user decides whether to change it.
