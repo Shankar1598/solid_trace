@@ -231,7 +231,7 @@ func (s *ClickHouseLogs) ScanLogs(ctx context.Context, scan LogScan) (LogScanPag
 		if err != nil {
 			return LogScanPage{}, err
 		}
-		old, err := s.old.scanLogs(s, ctx, scan.ProjectID, spanFrom, spanTo, after, scan.Where, scan.Limit-len(page.Logs))
+		old, err := s.old.scanLogs(ctx, scan.ProjectID, spanFrom, spanTo, after, scan.Where, scan.Limit-len(page.Logs))
 		if err != nil {
 			return LogScanPage{}, err
 		}
@@ -263,7 +263,7 @@ func storableRange(from, to time.Time) (time.Time, time.Time) {
 // only the parts' metadata.
 func (s *ClickHouseLogs) timeSpan(ctx context.Context, projectID uint32, from, to time.Time) (oldest, newest time.Time, ok bool, err error) {
 	var count uint64
-	err = s.queryRow(ctx, fmt.Sprintf(`SELECT count(), min(time), max(time) FROM logs
+	err = queryRow(ctx, s.conn, fmt.Sprintf(`SELECT count(), min(time), max(time) FROM logs
 		WHERE project_id = %d AND toDate(time) >= toDate(%s) AND toDate(time) <= toDate(%s)`,
 		projectID, chsql.Time(from), chsql.Time(to.Add(-time.Microsecond))), &count, &oldest, &newest)
 	return oldest.UTC(), newest.UTC(), count > 0, err
@@ -289,11 +289,11 @@ func (s *ClickHouseLogs) queryLogs(ctx context.Context, query string) (logs []mo
 	return logs, rows.Err()
 }
 
-// queryRow runs a query of one row into dest, recording it in ctx's
+// queryRow runs a query of one row on conn into dest, recording it in ctx's
 // ReadStatements.
-func (s *ClickHouseLogs) queryRow(ctx context.Context, query string, dest ...any) error {
+func queryRow(ctx context.Context, conn driver.Conn, query string, dest ...any) error {
 	began := time.Now()
-	err := s.conn.QueryRow(ctx, query).Scan(dest...)
+	err := conn.QueryRow(ctx, query).Scan(dest...)
 	recordStatement(ctx, query, began, err)
 	return err
 }
@@ -391,7 +391,7 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 		chsql.UUIDOrder("batch") + " <= " + chsql.UUIDOrder(chsql.UUID(cursor)),
 	}
 	where := whereClause(conditions, filterOf(scan.Where))
-	old, oldTotal, err := s.old.ingestedAfter(s, ctx, scan.ProjectID, scan.After, cursor, scan.Where, scan.Limit)
+	old, oldTotal, err := s.old.ingestedAfter(ctx, scan.ProjectID, scan.After, cursor, scan.Where, scan.Limit)
 	if err != nil {
 		return IngestedLogs{}, err
 	}
@@ -407,7 +407,7 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 		return found, nil
 	}
 	var total uint64
-	if err := s.queryRow(ctx, "SELECT count() FROM logs "+where, &total); err != nil {
+	if err := queryRow(ctx, s.conn, "SELECT count() FROM logs "+where, &total); err != nil {
 		return IngestedLogs{}, err
 	}
 	found.Total = int(total) + oldTotal
@@ -438,7 +438,7 @@ func (s *ClickHouseLogs) LogByID(ctx context.Context, projectID uint32, id uuid.
 			return firstLog(logs), len(logs) > 0, err
 		}
 	}
-	return s.old.logByID(s, ctx, projectID, id, at)
+	return s.old.logByID(ctx, projectID, id, at)
 }
 
 func firstLog(logs []models.Log) models.Log {
