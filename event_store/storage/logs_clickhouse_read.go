@@ -28,18 +28,20 @@ func (ClickHouseColumns) BuiltIn(name string) string {
 // value, which throws on a path that holds values of more than one type, or
 // its JSON text in attrs_json.
 func (ClickHouseColumns) Attribute(t AttributeType, key string) string {
-	path := "attributes." + chsql.Identifier(key)
-	switch t {
-	case StringAttribute:
-		return path + ".:String"
-	case NumberAttribute:
-		return path + ".:Float64"
-	case BoolAttribute:
-		return path + ".:Bool"
+	if t == JSONAttribute {
+		name := chsql.String(key)
+		return "if(mapContains(attrs_json, " + name + "), attrs_json[" + name + "], NULL)"
 	}
-	name := chsql.String(key)
-	return "if(mapContains(attrs_json, " + name + "), attrs_json[" + name + "], NULL)"
+	if key == "" {
+		// No identifier names the empty path.
+		return "dynamicElement(getSubcolumn(attributes, ''), '" + attributeTypes[t] + "')"
+	}
+	return "attributes." + chsql.Identifier(key) + ".:" + attributeTypes[t]
 }
+
+// attributeTypes are the ClickHouse types of the values of each type of
+// Attribute in attributes.
+var attributeTypes = map[AttributeType]string{StringAttribute: "String", NumberAttribute: "Float64", BoolAttribute: "Bool"}
 
 // SearchText is every string Attribute's value, joined by \0, which search
 // reads besides message.
