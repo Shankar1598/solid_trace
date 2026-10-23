@@ -105,8 +105,6 @@ type failure struct {
 	retryAt time.Time     // when to try the Project again
 	backoff time.Duration // the wait after the next failure
 	content int           // how many of the failures were content errors
-	count   int           // how many failures there were
-	last    error         // the last failure
 }
 
 // commitCounts is what a Project's commits stored since the last backlog
@@ -118,10 +116,6 @@ type commitCounts struct {
 	took    time.Duration // time spent storing them, the commits included
 	slowest time.Duration // the longest of those
 }
-
-// processAllFailures is how many times in a row ProcessAll lets a Project's
-// Logs fail to store before it gives up.
-const processAllFailures = 5
 
 // New constructs Log processing, which runs each Project's Log transform with
 // transform. It reads the time from clock.
@@ -257,30 +251,6 @@ func (p *Processor) ProcessUntilCaughtUp() error {
 	}
 }
 
-// ProcessAll processes every Log batch waiting, with no worker running, and
-// returns once none is left, for prepare-clickhouse. Unlike
-// ProcessUntilCaughtUp, it gives up once a Project's Logs fail to store
-// processAllFailures times in a row, and returns the last failure, so that an
-// offline run ends.
-func (p *Processor) ProcessAll() error {
-	for {
-		projectID, ok, retryAt := p.takeDue()
-		if ok {
-			p.processProject(projectID)
-			if failed := p.failing[projectID]; failed != nil && failed.count >= processAllFailures {
-				return fmt.Errorf("the Logs of Project %d failed to store %d times in a row: %w", projectID, failed.count, failed.last)
-			}
-			continue
-		}
-		if retryAt.IsZero() {
-			return nil
-		}
-		if !p.waitUntil(retryAt) {
-			return ErrStopped
-		}
-	}
-}
-
 // waitUntil waits until t, or until a Project has new Log batches. It returns
 // false if Stop is called meanwhile.
 func (p *Processor) waitUntil(t time.Time) bool {
@@ -320,8 +290,6 @@ func (p *Processor) retryLater(projectID uint32, err error) {
 		failed = &failure{backoff: minBackoff}
 		p.failing[projectID] = failed
 	}
-	failed.count++
-	failed.last = err
 	if isContentError(err) {
 		failed.content++
 		logger.L.Error("Log processing content error, retrying", "project_id", projectID, "error", err, "retry_in", failed.backoff)
