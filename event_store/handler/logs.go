@@ -32,10 +32,10 @@ const (
 // LogsHandler serves stored Logs on the query app: it runs and validates
 // Queries, fetches single Logs, and runs SQL while the instance allows it.
 type LogsHandler struct {
-	// clickHouse holds the Logs: Log rows, single Logs, the Logs ingested
-	// after a batch and the Fields are read from it. logs is DuckDB's
-	// LogStore, which tables, the histogram and SQL still read until they
-	// move to ClickHouse too.
+	// clickHouse holds the Logs: Log rows, tables, the histogram, single
+	// Logs, the Logs ingested after a batch and the Fields are read from it.
+	// logs is DuckDB's LogStore, which SQL still reads until it moves to
+	// ClickHouse too.
 	clickHouse *storage.ClickHouseLogs
 	logs       *storage.LogStore
 	settings   ConsoleSettings
@@ -319,18 +319,15 @@ func (h *LogsHandler) table(c *fiber.Ctx, run *run, projectID uint32, query *log
 // and whether there were more. With bins, a table made bin by bin may take
 // bins from the bin cache.
 func (h *LogsHandler) scanTable(run *run, projectID uint32, query *logquery.Query, from, to time.Time, bins bool) ([][]any, bool, error) {
-	scan := storage.LogTableScan{
+	scan := storage.TableScan{
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
-		Where:     func(cols storage.LogColumns) string { return query.Where(cols) },
-		Select:    query.Select,
+		Where:     func(cols storage.ClickHouseColumns) string { return query.Where(cols) },
+		Select:    func(cols storage.ClickHouseColumns) string { return query.Select(cols) },
 		Query:     func(logs string) string { return query.TableSQL(logs, maxTableRows+1) },
 	}
-	if b, ok := query.Bins(); ok && bins {
-		scan.Bins = &storage.TableBins{Size: b.Size, Query: b.Key, Limit: maxTableRows + 1}
-	}
-	raw, err := h.logs.ScanLogTable(run.ctx, scan)
+	raw, err := h.clickHouse.ScanLogTable(run.ctx, scan)
 	if err != nil {
 		return nil, false, err
 	}

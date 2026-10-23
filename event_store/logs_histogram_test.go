@@ -88,15 +88,15 @@ func TestHistogramCountsLogsPerBucketAndLevelWithEmptyBuckets(t *testing.T) {
 	}
 
 	// ada and bob have no Level; di is the day before, outside the range.
-	check("in the hot table", "", []string{
+	check("once stored", "", []string{
 		"10:00:00 2 map[none:2]",
 		"10:30:00 1 map[error:1]",
 		"11:00:00 1 map[error:1]",
 		"11:30:00 0 map[]",
 	}, 4, map[string]int{"error": 2, "none": 2})
 
-	postLateLanguageLog(t, env) // hour 10 to files, and fy late at 10:45
-	check("across files and a late Log", "", []string{
+	postLateLanguageLog(t, env) // fy, late at 10:45
+	check("with a late Log", "", []string{
 		"10:00:00 2 map[none:2]",
 		"10:30:00 2 map[error:1 none:1]",
 		"11:00:00 1 map[error:1]",
@@ -152,9 +152,9 @@ func TestHistogramCountsTheLogsARunReturns(t *testing.T) {
 			}
 		}
 	}
-	check("in the hot table")
+	check("once stored")
 	postLateLanguageLog(t, env)
-	check("across files and a late Log")
+	check("with a late Log")
 }
 
 func TestHistogramPicksABucketSizeAndRefusesMistakes(t *testing.T) {

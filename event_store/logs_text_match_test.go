@@ -160,9 +160,7 @@ func TestTextMatchesFindTheSameLogsOnTimeAndLate(t *testing.T) {
 				t.Errorf("%s, readable SQL: %s\n want %v\n got  %v", when, query, want, got)
 			}
 		}
-		if tablesOnClickHouse {
-			assertTablesIn(t, env, tables, from, to, when)
-		}
+		assertTablesIn(t, env, tables, from, to, when)
 	}
 	check(onTestDay(10, 0), "on time")
 	check(yesterday, "a day late")
