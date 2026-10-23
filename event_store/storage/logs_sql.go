@@ -54,7 +54,8 @@ func (e *SQLError) Unwrap() error { return e.Err }
 // RunSQL runs a read-only SQL query as written (ADR 0003), with the logs
 // view holding a Project's Logs of [from, to): from its hot table, its late
 // Logs and its files, promoted values merged back into their maps. The
-// events view holds the Project's Events of [from, to). It reads at most
+// events view has the columns of Events and none of them: Events are in
+// ClickHouse, which SQL queries don't read yet (ticket 07). It reads at most
 // limit rows. SQL that isn't one SELECT, that calls a function that changes
 // something (checkReadOnly), or that reads anything but the two views
 // (checkScope), is refused before any of it runs. If the query is refused
@@ -79,9 +80,6 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 	if !to.After(from) {
 		to = from
 	}
-	// The query may read the events view, so it holds off the deletion of
-	// the Event archive's uploaded local copies until it ends.
-	defer s.events.readingArchive()()
 	read, err := s.beginRead(ctx, projectID, from, to, false)
 	if err != nil {
 		return SQLResult{}, err
@@ -101,20 +99,15 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 	if err != nil {
 		return SQLResult{}, err
 	}
-	// Only a query that reads the events view gets one, so a query that
-	// doesn't still runs while there is no global events view.
+	// Only a query that reads the events view gets one.
 	if readsEvents {
 		if err := createEventsView(ctx, conn, projectID, from, to); err != nil {
-			if s.events.eventsUnavailable() != nil {
-				return SQLResult{}, &SQLError{s.withEventsUnavailable(err)}
-			}
 			return SQLResult{}, err
 		}
 	}
 	rows, err := queryRead(ctx, conn, query)
 	if err != nil {
-		// The query may have failed for want of the events view.
-		return SQLResult{}, &SQLError{s.withEventsUnavailable(err)}
+		return SQLResult{}, &SQLError{err}
 	}
 	defer rows.Close()
 	types, err := rows.ColumnTypes()
@@ -144,15 +137,6 @@ func (s *LogStore) RunSQL(ctx context.Context, projectID uint32, from, to time.T
 		}
 	}
 	return result, nil
-}
-
-// withEventsUnavailable is err with why Events can't be read now, while
-// they can't.
-func (s *LogStore) withEventsUnavailable(err error) error {
-	if unavailable := s.events.eventsUnavailable(); unavailable != nil {
-		return fmt.Errorf("%w\n%v", err, unavailable)
-	}
-	return err
 }
 
 // jsonEncodable turns any value DuckDB gives into one that encodes as JSON: a

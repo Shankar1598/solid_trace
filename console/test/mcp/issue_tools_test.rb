@@ -130,7 +130,7 @@ class McpIssueToolsTest < ActiveSupport::TestCase
 
   test "get_issue answers the Issue while EventStore can't read Events, saying why its Event is left out" do
     create(:issue_fingerprint, issue: @issue)
-    why = "Events can't be read now: the Event archive in the bucket hasn't been listed yet; EventStore tries again every minute"
+    why = "Events can't be read now: ClickHouse doesn't answer: dial tcp 127.0.0.1:4200: connect: connection refused"
     stub_request(:get, %r{/api/#{@shop.id}/events}).to_return(status: 503, body: { error: why }.to_json)
 
     answer = call_tool(:get_issue, user: @user, project: "shop", issue: @issue.number)

@@ -14,7 +14,6 @@ import (
 	"github.com/solidtrace/event_store/ingest"
 	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/logtransform"
-	"github.com/solidtrace/event_store/pipeline"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/cpuprofile"
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -33,32 +32,27 @@ func main() {
 	}
 	defer pebbleWriter.Close()
 
-	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath, cfg.ParquetStoragePath, cfg.DuckDBTempDirectory, cfg.DuckDBMemoryLimit)
+	duckdbWriter, err := storage.NewDuckDBWriter(cfg.DuckDBPath, cfg.DuckDBTempDirectory, cfg.DuckDBMemoryLimit)
 	if err != nil {
 		logger.L.Fatal("Failed to open DuckDB", "error", err)
 	}
 	defer duckdbWriter.Close()
 
-	// Nothing reads or writes ClickHouse yet; /health pings it.
+	// Event processing stores Events' rows in ClickHouse, and Event reads
+	// read them there.
 	clickHouse, err := storage.OpenClickHouse(cfg.ClickHouse, cfg.ObjectStore)
 	if err != nil {
 		logger.L.Fatal("Failed to open ClickHouse", "error", err)
 	}
 	defer clickHouse.Close()
 
-	// The Log files and the Event archive share the bucket, if one is set.
-	// Nothing here waits on the bucket, so ingest starts while it is down:
-	// the archive consumer lists the Event archive in it in the background.
+	// The Log files are kept in the bucket, if one is set. Nothing here waits
+	// on the bucket, so ingest starts while it is down.
 	bucket := storage.NewObjectStore(cfg.ObjectStore)
 	if cfg.ObjectStore != nil {
 		if err := duckdbWriter.UseBucket(cfg.ObjectStore, cfg.DuckDBExtensionDirectory); err != nil {
 			logger.L.Fatal("Failed to let DuckDB read the object store's bucket", "error", err)
 		}
-		if err := duckdbWriter.UseEventArchiveBucket(bucket); err != nil {
-			logger.L.Fatal("Failed to keep the Event archive in the object store's bucket", "error", err)
-		}
-	} else if err := duckdbWriter.UseLocalEventArchiveOnly(); err != nil {
-		logger.L.Fatal("Failed to keep the Event archive on local disk only", "error", err)
 	}
 
 	logStore, err := storage.NewLogStore(duckdbWriter, cfg.LogsDuckDBPath, cfg.LogsParquetPath)
@@ -79,13 +73,6 @@ func main() {
 		logger.L.Fatal("Failed to open SQLite", "error", err)
 	}
 	defer sqliteWriter.Close()
-
-	// Initialize Message Queue Reader (for Console -> Event Store)
-	messageQueueReader, err := storage.NewMessageQueueReader(cfg.MessageQueuePath)
-	if err != nil {
-		logger.L.Fatal("Failed to open Message Queue Reader", "error", err)
-	}
-	defer messageQueueReader.Close()
 
 	// Initialize Message Queue Writer (for Event Store -> Rails)
 	messageQueueWriter, err := storage.NewMessageQueueWriter(cfg.MessageQueuePath)
@@ -108,20 +95,17 @@ func main() {
 	defer consoleSettings.Close()
 	logStore.UseLogFileOrders(consoleSettings)
 
-	// Prepare must run before the worker and the archive job start. The
-	// archive never runs inside a batch: they share batchLock.
+	// Prepare must run before the worker starts. The Event cleanup never
+	// runs inside a batch: they share batchLock.
 	var batchLock sync.Mutex
-	processor := processing.New(pebbleWriter, duckdbWriter, messageQueueWriter, sqliteWriter, &batchLock)
+	processor := processing.New(pebbleWriter, clickHouse, messageQueueWriter, sqliteWriter, &batchLock)
 	if err := processor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Event processing", "error", err)
 	}
 	processor.Start()
 
-	archiveConsumer := pipeline.NewArchiveConsumer(messageQueueReader, duckdbWriter, &batchLock)
-	go archiveConsumer.Run()
-
 	// Deletes a deleted Project's Events, holding batchLock while it does.
-	eventCleanup := processing.NewCleanup(pebbleWriter, duckdbWriter, sqliteWriter, consoleSettings, &batchLock, clock.System{})
+	eventCleanup := processing.NewCleanup(pebbleWriter, clickHouse, sqliteWriter, consoleSettings, &batchLock, clock.System{})
 	eventCleanup.Start()
 
 	logTransforms := logtransform.New(consoleSettings, clock.System{})
@@ -168,7 +152,7 @@ func main() {
 		MaxWaiting:   cfg.IngestMaxWaiting,
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
-	eventsHandler := handler.NewEventsHandler(pebbleWriter, duckdbWriter)
+	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
 	logsHandler := handler.NewLogsHandler(logStore, consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
@@ -180,9 +164,6 @@ func main() {
 		DisableStartupMessage: true,
 	})
 	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, healthHandler)
-
-	// Maintenance API
-	// app.Post("/api/maintenance/archive-events", archiverHandler.ArchiveEvents)
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort
@@ -227,7 +208,6 @@ func main() {
 	logUploads.Stop()
 	logCleanup.Stop()
 	eventCleanup.Stop()
-	archiveConsumer.Stop()
 	if profiler != nil {
 		profiler.Stop()
 	}

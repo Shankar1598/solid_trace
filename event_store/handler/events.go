@@ -13,15 +13,17 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
+// EventsHandler reads an Event's raw payload from Pebble, and lists, counts
+// and pages through Events in ClickHouse.
 type EventsHandler struct {
 	pebble *storage.PebbleWriter
-	duckdb *storage.DuckDBWriter
+	events *storage.ClickHouse
 }
 
-func NewEventsHandler(pebble *storage.PebbleWriter, duckdb *storage.DuckDBWriter) *EventsHandler {
+func NewEventsHandler(pebble *storage.PebbleWriter, events *storage.ClickHouse) *EventsHandler {
 	return &EventsHandler{
 		pebble: pebble,
-		duckdb: duckdb,
+		events: events,
 	}
 }
 
@@ -58,7 +60,7 @@ func (h *EventsHandler) List(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	events, err := h.duckdb.QueryEvents(params)
+	events, err := h.events.QueryEvents(params)
 	if errors.Is(err, storage.ErrEventsUnavailable) {
 		return eventsUnavailable(c, err)
 	}
@@ -91,7 +93,7 @@ func (h *EventsHandler) GetEventWithContext(c *fiber.Ctx) error {
 		params.SortDesc = true
 	}
 
-	results, err := h.duckdb.QueryEventWithContext(params)
+	results, err := h.events.QueryEventWithContext(params)
 	if errors.Is(err, storage.ErrEventsUnavailable) {
 		return eventsUnavailable(c, err)
 	}
@@ -129,7 +131,7 @@ func (h *EventsHandler) Count(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	count, err := h.duckdb.CountEvents(params)
+	count, err := h.events.CountEvents(params)
 	if errors.Is(err, storage.ErrEventsUnavailable) {
 		return eventsUnavailable(c, err)
 	}
@@ -141,9 +143,8 @@ func (h *EventsHandler) Count(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"count": count})
 }
 
-// eventsUnavailable answers a read of Events while there is no events view
-// that reads every archive file: 503, saying why, since a retry within a
-// minute may succeed.
+// eventsUnavailable answers a read of Events while ClickHouse doesn't answer:
+// 503, saying why, since a retry may succeed.
 func eventsUnavailable(c *fiber.Ctx, err error) error {
 	return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": err.Error()})
 }

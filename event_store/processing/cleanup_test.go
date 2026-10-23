@@ -15,7 +15,7 @@ import (
 type fakeCleanupStores struct {
 	withEvents []uint32
 	existing   map[uint32]int
-	failHotOf  uint32
+	failRowsOf uint32
 
 	lock    recordingLock
 	deletes []string
@@ -33,11 +33,11 @@ func (f *fakeCleanupStores) record(step string, projectID uint32) {
 	f.deletes = append(f.deletes, step+" "+string(rune('0'+projectID))+" "+held)
 }
 
-func (f *fakeCleanupStores) DeleteProjectHotEvents(projectID uint32) error {
-	if projectID == f.failHotOf {
+func (f *fakeCleanupStores) DeleteProjectEventRows(projectID uint32) error {
+	if projectID == f.failRowsOf {
 		return errors.New("disk full")
 	}
-	f.record("hot", projectID)
+	f.record("rows", projectID)
 	return nil
 }
 
@@ -73,8 +73,8 @@ func TestCleanupDeletesTheEventsOfDeletedProjectsOnly(t *testing.T) {
 
 	// The Events go last, so a failed step leaves the Project for the next pass.
 	want := []string{
-		"hot 1 locked", "issues 1 locked", "events 1 locked",
-		"hot 3 locked", "issues 3 locked", "events 3 locked",
+		"rows 1 locked", "issues 1 locked", "events 1 locked",
+		"rows 3 locked", "issues 3 locked", "events 3 locked",
 	}
 	if !reflect.DeepEqual(f.deletes, want) {
 		t.Errorf("deletes = %v, want %v", f.deletes, want)
@@ -93,13 +93,13 @@ func TestCleanupDeletesNothingWhenTheProjectsTableIsEmpty(t *testing.T) {
 }
 
 func TestCleanupKeepsAProjectsEventsWhenAnEarlierStepFails(t *testing.T) {
-	f := &fakeCleanupStores{withEvents: []uint32{1, 3}, existing: map[uint32]int{2: 30}, failHotOf: 1}
+	f := &fakeCleanupStores{withEvents: []uint32{1, 3}, existing: map[uint32]int{2: 30}, failRowsOf: 1}
 
 	err := newTestCleanup(f).DeleteEventsOfDeletedProjects()
 	if err == nil {
 		t.Fatal("a failed delete reported success")
 	}
-	want := []string{"hot 3 locked", "issues 3 locked", "events 3 locked"}
+	want := []string{"rows 3 locked", "issues 3 locked", "events 3 locked"}
 	if !reflect.DeepEqual(f.deletes, want) {
 		t.Errorf("deletes = %v, want %v", f.deletes, want)
 	}
