@@ -5,17 +5,24 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
+// Pinger is a store /health checks.
+type Pinger interface {
+	Ping() error
+}
+
 // HealthHandler handles health check endpoints
 type HealthHandler struct {
-	pebble *storage.PebbleWriter
-	duckdb *storage.DuckDBWriter
+	pebble     *storage.PebbleWriter
+	duckdb     *storage.DuckDBWriter
+	clickhouse Pinger
 }
 
 // NewHealthHandler creates a new health handler
-func NewHealthHandler(pebble *storage.PebbleWriter, duckdb *storage.DuckDBWriter) *HealthHandler {
+func NewHealthHandler(pebble *storage.PebbleWriter, duckdb *storage.DuckDBWriter, clickhouse Pinger) *HealthHandler {
 	return &HealthHandler{
-		pebble: pebble,
-		duckdb: duckdb,
+		pebble:     pebble,
+		duckdb:     duckdb,
+		clickhouse: clickhouse,
 	}
 }
 
@@ -26,8 +33,9 @@ func (h *HealthHandler) Health(c *fiber.Ctx) error {
 	httpStatus := 200
 
 	checks := fiber.Map{
-		"pebble": "ok",
-		"duckdb": "ok",
+		"pebble":     "ok",
+		"duckdb":     "ok",
+		"clickhouse": "ok",
 	}
 
 	// Check Pebble
@@ -40,6 +48,12 @@ func (h *HealthHandler) Health(c *fiber.Ctx) error {
 	// Check DuckDB
 	if err := h.duckdb.Ping(); err != nil {
 		checks["duckdb"] = err.Error()
+		status = "unhealthy"
+		httpStatus = 503
+	}
+
+	if err := h.clickhouse.Ping(); err != nil {
+		checks["clickhouse"] = err.Error()
 		status = "unhealthy"
 		httpStatus = 503
 	}
