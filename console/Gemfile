@@ -103,3 +103,6 @@ gem "pundit", "~> 2.5"
 
 # Model Context Protocol server at /mcp
 gem "mcp", "~> 1.8"
+
+# One JSON log line per request in production (lib/request_log.rb)
+gem "lograge", "~> 0.15"
