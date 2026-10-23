@@ -121,6 +121,12 @@ type oldLogFilesMarker struct {
 	PreparedAt time.Time `json:"prepared_at"`
 }
 
+// same reports whether two markers are of the same run, to the microsecond
+// ClickHouse keeps.
+func (m oldLogFilesMarker) same(other oldLogFilesMarker) bool {
+	return m.Release == other.Release && m.PreparedAt.Truncate(time.Microsecond).Equal(other.PreparedAt.Truncate(time.Microsecond))
+}
+
 // oldLogFilesMarkerFile is the marker's name in the prepared folder. The
 // DuckDB release removes it when it starts again, as after a rollback.
 const oldLogFilesMarkerFile = "marker.json"
@@ -157,7 +163,7 @@ func (s *ClickHouseLogs) UseOldLogFiles(cfg OldLogFiles) error {
 		return err
 	}
 	switch {
-	case marker != nil && (!recorded || loaded == nil || *loaded != *marker):
+	case marker != nil && (loaded == nil || !loaded.same(*marker)):
 		if err := old.load(ctx, s.pebble, *marker); err != nil {
 			return fmt.Errorf("load the Logs from before the switch, prepared in %s: %w", cfg.PreparedDir, err)
 		}
@@ -708,7 +714,65 @@ func (o *oldLogFiles) scanLogs(s *ClickHouseLogs, ctx context.Context, projectID
 		return nil, nil
 	}
 	conditions = append(conditions, timeSpans([]timeSpan{{from, to}}))
-	return o.queryLogs(s, ctx, sources, conditions, where, fmt.Sprintf("ORDER BY %s LIMIT %d", logsNewestFirst, limit))
+	return o.newestLogs(s, ctx, sources, conditions, where, limit)
+}
+
+// newestLogs returns up to limit of the Logs of sources that meet
+// conditions and where, newest first, in two steps, as the DuckDB release
+// read its files: first the newest Logs' times and ids, which reads only
+// those columns and the ones the conditions read; then those Logs whole,
+// from the files that hold them. A read of whole Logs in order would read
+// every column of every Log in range: ClickHouse reads lazily only from its
+// own tables.
+func (o *oldLogFiles) newestLogs(s *ClickHouseLogs, ctx context.Context, sources []oldSource, conditions []string, where func(ClickHouseColumns) Filter, limit int) (logs []models.Log, err error) {
+	order := fmt.Sprintf("ORDER BY %s LIMIT %d", logsNewestFirst, limit)
+	query := "SELECT time, id, _path FROM (" + o.union(sources, func(oldSource) string { return "time, id, _path" }, conditions, where) + ") " + order
+	began := time.Now()
+	rows, err := s.conn.Query(o.withBucketKey(ctx), query)
+	if err != nil {
+		recordStatement(ctx, query, began, err)
+		return nil, err
+	}
+	var (
+		ids        []string
+		paths      []string
+		first, end time.Time
+	)
+	for rows.Next() {
+		var (
+			at   time.Time
+			id   uuid.UUID
+			path string
+		)
+		if err = rows.Scan(&at, &id, &path); err != nil {
+			break
+		}
+		ids, paths = append(ids, chsql.UUID(id)), append(paths, strings.ReplaceAll(path, "//", "/"))
+		if first.IsZero() || at.Before(first) {
+			first = at
+		}
+		end = latestTime(end, at.Add(time.Microsecond))
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	recordStatement(ctx, query, began, err)
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+
+	var holding []oldSource
+	for _, src := range sources {
+		src.keys = slices.DeleteFunc(slices.Clone(src.keys), func(key string) bool {
+			return !slices.ContainsFunc(paths, func(path string) bool { return strings.HasSuffix(path, "/"+key) })
+		})
+		if len(src.keys) > 0 {
+			holding = append(holding, src)
+		}
+	}
+	conditions = append(slices.Clone(conditions), timeSpans([]timeSpan{{first, end}}), "id IN ("+strings.Join(ids, ", ")+")")
+	return o.queryLogs(s, ctx, holding, conditions, where, order)
 }
 
 // union is the Logs of sources that meet conditions and where, each read
@@ -803,7 +867,7 @@ func (o *oldLogFiles) ingestedAfter(s *ClickHouseLogs, ctx context.Context, proj
 	var logs []models.Log
 	if limit > 0 {
 		var err error
-		if logs, err = o.queryLogs(s, ctx, sources, conditions, where, fmt.Sprintf("ORDER BY %s LIMIT %d", logsNewestFirst, limit)); err != nil {
+		if logs, err = o.newestLogs(s, ctx, sources, conditions, where, limit); err != nil {
 			return nil, 0, err
 		}
 	}
