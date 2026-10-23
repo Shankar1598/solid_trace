@@ -51,7 +51,7 @@ func (q *Query) Where(cols Columns) string {
 		case whereStage:
 			conditions = append(conditions, writeCondition(s.predicate, cols, false))
 		case searchStage:
-			conditions = append(conditions, writeSearch(s.term, cols))
+			conditions = append(conditions, writeSearch(s.terms, cols))
 		}
 	}
 	if len(conditions) == 0 {
@@ -77,7 +77,7 @@ func (q *Query) Filter(cols Columns) storage.Filter {
 				}
 			}
 		case searchStage:
-			message = append(message, writeSearch(s.term, cols))
+			message = append(message, writeSearch(s.terms, cols))
 		}
 	}
 	all := func(conditions []string) string {
@@ -472,9 +472,14 @@ func writeLiteral(l Literal) string {
 	}
 }
 
-// writeSearch writes a case-insensitive contains over message and every
-// string Attribute's value.
-func writeSearch(term string, cols Columns) string {
-	return caseInsensitivePosition(cols.BuiltIn("message"), term) + " > 0 OR " +
-		caseInsensitivePosition(cols.SearchText(), term) + " > 0"
+// writeSearch writes a case-insensitive contains of any of terms over
+// message and every string Attribute's value.
+func writeSearch(terms []string, cols Columns) string {
+	var matches []string
+	for _, term := range terms {
+		matches = append(matches,
+			caseInsensitivePosition(cols.BuiltIn("message"), term)+" > 0",
+			caseInsensitivePosition(cols.SearchText(), term)+" > 0")
+	}
+	return strings.Join(matches, " OR ")
 }

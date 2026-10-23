@@ -6,6 +6,7 @@
 # only while that Project is the Organization's.
 class DashboardChartsController < ApplicationController
   include ChartRunning
+  include DashboardView
 
   before_action :set_current_org
   before_action :set_dashboard
@@ -26,7 +27,7 @@ class DashboardChartsController < ApplicationController
   def destroy
     @chart.destroy
     respond_to do |format|
-      format.html { redirect_to dashboard_page, notice: "Chart deleted." }
+      format.html { redirect_to dashboard_page(@dashboard), notice: "Chart deleted." }
       format.json { head :no_content }
     end
   end
@@ -38,15 +39,19 @@ class DashboardChartsController < ApplicationController
     save(copy, notice: "Chart duplicated.", status: :created)
   end
 
-  # GET with from and to (ISO 8601): the chart's Query run over that range.
+  # GET with from and to (ISO 8601), and the page's keys for each filter the
+  # Query names that isn't All (Dashboard.filter_values_in): the chart's
+  # Query run over that range with those values.
   def data
-    run_chart(@current_org.projects.find(@chart.project_id), @chart.query)
+    run_chart(@current_org.projects.find(@chart.project_id), @chart.query, parameters: @dashboard.filter_values(shown_filter_values))
   end
 
-  # POST with project_id, query, from and to: the chart editor's preview of a
-  # Query not yet saved, run as a chart's is, with its timeout and in its cap.
+  # POST with project_id, query, from, to and parameters, {name => [values]}
+  # from the filter bar: the chart editor's preview of a Query not yet saved,
+  # run as a chart's is, with its timeout and in its cap.
   def preview
-    run_chart(@current_org.projects.find(params[:project_id]), params[:query].to_s)
+    given = params[:parameters].respond_to?(:to_unsafe_h) ? params[:parameters].to_unsafe_h : {}
+    run_chart(@current_org.projects.find(params[:project_id]), params[:query].to_s, parameters: @dashboard.filter_values(given))
   end
 
   private
@@ -72,17 +77,12 @@ class DashboardChartsController < ApplicationController
   def save(chart, notice:, status: :ok)
     respond_to do |format|
       if chart.save
-        format.html { redirect_to dashboard_page, notice: notice }
+        format.html { redirect_to dashboard_page(@dashboard), notice: notice }
         format.json { render json: DashboardChartSerializer.new(chart).as_json, status: status }
       else
-        format.html { redirect_to dashboard_page, inertia: { errors: chart.errors.to_hash } }
+        format.html { redirect_to dashboard_page(@dashboard), inertia: { errors: chart.errors.to_hash } }
         format.json { render json: { errors: chart.errors.to_hash }, status: :unprocessable_content }
       end
     end
-  end
-
-  # The Dashboard's page, over the range it was showing.
-  def dashboard_page
-    dashboard_path(@dashboard, org_slug: @current_org.slug, **params.permit(:range, :from, :to).to_h.symbolize_keys)
   end
 end

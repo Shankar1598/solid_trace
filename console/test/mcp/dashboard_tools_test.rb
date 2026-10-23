@@ -45,6 +45,24 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}", answer.link
   end
 
+  test "get_dashboard lists the Dashboard's filters in the bar's order: name, label, kind, multiple and options" do
+    @dashboard.update!(filters: [
+      { name: "service", label: "Service", kind: "select", multiple: true, options: { from: "field", project_id: @shop.id, field: "service" } },
+      { name: "level", kind: "select", options: { from: "list", items: [ { label: "Errors", value: "error" }, { value: "warn" } ] } },
+      { name: "q", kind: "search" }
+    ])
+
+    answer = call_tool(:get_dashboard, user: @user, dashboard: @dashboard.id)
+
+    assert_equal [
+      { "name" => "service", "label" => "Service", "kind" => "select", "multiple" => true,
+        "options" => { "from" => "field", "project_id" => @shop.id, "field" => "service" } },
+      { "name" => "level", "label" => "level", "kind" => "select", "multiple" => false,
+        "options" => { "from" => "list", "items" => [ { "label" => "Errors", "value" => "error" }, { "label" => "warn", "value" => "warn" } ] } },
+      { "name" => "q", "label" => "q", "kind" => "search" }
+    ], answer.json["filters"]
+  end
+
   test "create_dashboard makes a Dashboard by the user, linking to it" do
     answer = call_tool(:create_dashboard, user: @user, name: "Errors", description: "What failed", default_range: "7d", auto_refresh: "5m")
 
@@ -65,6 +83,32 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert call_tool(:create_dashboard, user: @user, name: "Errors", auto_refresh: "10s").error?
   end
 
+  test "create_dashboard takes filters, validated as the Dashboard page's are" do
+    filters = [
+      { name: "level", label: "Level", kind: "select", multiple: true, options: { from: "list", items: [ { value: "error" }, { value: "warn" } ] } },
+      { name: "service", kind: "select", options: { from: "field", project_id: @shop.id, field: "service" } },
+      { name: "q", kind: "search" }
+    ]
+
+    answer = call_tool(:create_dashboard, user: @user, name: "Errors", filters: filters)
+
+    assert_not answer.error?
+    made = @acme.dashboards.find_by!(name: "Errors")
+    assert_equal %w[level service q], made.filter_names
+    assert_equal [ "Level", true, [ "error", "warn" ] ], [ made.filters[0]["label"], made.filters[0]["multiple"], made.filters[0]["options"]["items"].pluck("value") ]
+    assert_equal({ "from" => "field", "project_id" => @shop.id, "field" => "service" }, made.filters[1]["options"])
+    assert_equal made.filters, answer.json["filters"]
+
+    refused = call_tool(:create_dashboard, user: @user, name: "Bad filters", filters: [
+      { name: "Service", kind: "select", options: { from: "field", project_id: @their_project.id, field: "service" } },
+      { name: "q", kind: "search", multiple: true }
+    ])
+    assert_equal "Not saved: Filters[0] name must be lowercase letters, digits and _, starting with a letter or _, at most 40 characters; " \
+                 "Filters[0] options project must be a Project of the Dashboard's Organization; Filters[1] multiple is for selects only.",
+      refused.text
+    assert_not Dashboard.exists?(name: "Bad filters")
+  end
+
   test "update_dashboard changes only the fields given" do
     @dashboard.update!(description: "Orders")
 
@@ -78,6 +122,24 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
     assert_match(/Give at least one of name/, call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id).text)
     assert_equal "Not saved: Name can't be blank.", call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id, name: "").text
+  end
+
+  test "update_dashboard replaces the filters with the whole list given, keeping them when the list is invalid" do
+    @dashboard.update!(name: "Checkout", filters: [ { name: "q", kind: "search" } ])
+    level = { name: "level", kind: "select", options: { from: "list", items: [ { value: "error" } ] } }
+
+    answer = call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id, filters: [ level, { name: "q", kind: "search" } ])
+
+    assert_not answer.error?
+    assert_equal %w[level q], @dashboard.reload.filter_names
+    assert_equal %w[level q], answer.json["filters"].pluck("name")
+
+    refused = call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id, filters: [ level, level ])
+    assert_equal "Not saved: Filters[1] name is already a filter's name.", refused.text
+    assert_equal %w[level q], @dashboard.reload.filter_names
+
+    assert_not call_tool(:update_dashboard, user: @user, dashboard: @dashboard.id, filters: []).error?
+    assert_equal [ [], "Checkout" ], [ @dashboard.reload.filters, @dashboard.name ]
   end
 
   test "delete_dashboard deletes the Dashboard and its Charts, linking to the Dashboards page" do
@@ -179,6 +241,34 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_requested api_check, times: 1
   end
 
+  test "add_chart and update_chart refuse a Query naming a filter the Dashboard lacks, naming its filters" do
+    @dashboard.update!(filters: [ { name: "level", kind: "select", options: { from: "list", items: [ { value: "error" } ] } },
+                                  { name: "q", kind: "search" } ])
+    query = @chart.query
+
+    stub_query_check(@shop, parameters: %w[level nope])
+    added = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Typo",
+      query: "where level == $level and service == $nope | summarize count()")
+    assert_equal "Not saved: Query names $nope, which isn't one of this Dashboard's filters (level, q).", added.text
+    assert_equal [ @chart ], @dashboard.charts.reload
+
+    stub_query_check(@shop, parameters: %w[nope q other])
+    changed = call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id,
+      query: "where service == $nope and host == $other | search $q | summarize count()")
+    assert_equal "Not saved: Query names $nope and $other, which aren't any of this Dashboard's filters (level, q).", changed.text
+    assert_equal query, @chart.reload.query
+
+    stub_query_check(@shop, parameters: %w[q level])
+    assert_not call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id,
+      query: "search $q | where level == $level | summarize count()").error?
+    assert_equal "search $q | where level == $level | summarize count()", @chart.reload.query
+
+    @dashboard.update!(filters: [])
+    stub_query_check(@shop, parameters: %w[level])
+    assert_equal "Not saved: Query names $level, which isn't one of this Dashboard's filters (it has none).",
+      call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "None", query: "where level == $level | count").text
+  end
+
   test "delete_chart deletes the Chart, linking to the Dashboard" do
     answer = call_tool(:delete_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id)
 
@@ -239,7 +329,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
       assert_not answer.error?
       assert_equal({ "chart" => @chart.id, "title" => "Requests", "viz" => "line",
-                     "from" => "2026-10-02T10:00:00.000Z", "to" => "2026-10-03T10:00:00.000Z",
+                     "from" => "2026-10-02T10:00:00.000Z", "to" => "2026-10-03T10:00:00.000Z", "filters" => {},
                      "columns" => [ { "name" => "time", "type" => "datetime", "bin_seconds" => 3600 },
                                     { "name" => "count_", "type" => "number", "agg" => "count" } ],
                      "rows" => [ [ "2026-10-03T09:00:00Z", 12 ] ] }, answer.json)
@@ -261,6 +351,39 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal rows.first(100), answer.json["rows"]
     assert_equal "50 more: narrow the Query.", answer.json["more"]
     assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}?from=2026-10-03T09%3A00%3A00.000Z&to=2026-10-03T10%3A00%3A00.000Z", answer.link
+  end
+
+  test "get_chart_data runs the Chart with the filter values given as EventStore's parameters, saying which it ran with" do
+    @dashboard.update!(filters: [
+      { name: "service", kind: "select", multiple: true, options: { from: "list", items: [ { value: "api" }, { value: "web" } ] } },
+      { name: "level", kind: "select", options: { from: "list", items: [ { value: "error" } ] } },
+      { name: "q", kind: "search" }
+    ])
+    @chart.update!(query: "where service == $service and level == $level | search $q | summarize count()")
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+      .with(body: { query: @chart.query, from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
+                    timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: { service: [ "api", "web" ], level: [ "error" ] } }.to_json)
+      .to_return(status: 200, body: { table: { columns: [ { name: "count_", type: "number" } ], rows: [ [ 7 ] ] } }.to_json)
+
+    answer = call_tool(:get_chart_data, user: @user, dashboard: @dashboard.id, chart: @chart.id,
+      from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", filters: { level: "error", service: [ "api", "web" ], q: "" })
+
+    assert_not answer.error?
+    assert_requested run
+    assert_equal [ { "service" => [ "api", "web" ], "level" => [ "error" ] }, [ [ 7 ] ] ], answer.json.values_at("filters", "rows")
+    assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}?from=2026-10-03T09%3A00%3A00.000Z&to=2026-10-03T10%3A00%3A00.000Z" \
+                 "&v_service=api&v_service=web&v_level=error", answer.link
+  end
+
+  test "get_chart_data refuses a filter the Dashboard lacks, naming its filters" do
+    @dashboard.update!(filters: [ { name: "q", kind: "search" } ])
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+
+    answer = call_tool(:get_chart_data, user: @user, dashboard: @dashboard.id, chart: @chart.id, filters: { servce: "api" })
+
+    assert answer.error?
+    assert_equal "servce isn't one of this Dashboard's filters (q).", answer.text
+    assert_not_requested run
   end
 
   test "get_chart_data refuses a Chart whose Query answers Logs, saying to end it with summarize" do
@@ -286,10 +409,11 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
   private
 
-  # Answers EventStore's check of a Query on project, with mistakes or none.
-  def stub_query_check(project, mistakes: [])
+  # Answers EventStore's check of a Query on project, with mistakes or none,
+  # and the names of the filters the Query names.
+  def stub_query_check(project, mistakes: [], parameters: [])
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/validate")
-      .to_return(status: 200, body: { errors: mistakes, source: nil, chips: nil, stages: [] }.to_json)
+      .to_return(status: 200, body: { errors: mistakes, source: nil, chips: nil, stages: [], parameters: parameters }.to_json)
   end
 
   def holding_every_chart_run(left = ChartRuns.limit, &block)

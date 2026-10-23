@@ -67,6 +67,7 @@
   --syntax-string: oklch(50.8% 0.118 165.612);
   --syntax-literal: oklch(49.1% 0.27 292.581);
   --syntax-name: oklch(55.3% 0.195 38.402);
+  --syntax-parameter: oklch(60.9% 0.126 221.723);
   /* Square corners everywhere; only status dots and avatars are round (rounded-full). */
   --radius: 0;
   --sidebar: oklch(0.985 0 0);
@@ -125,6 +126,7 @@
   --syntax-string: oklch(76.5% 0.177 163.223);
   --syntax-literal: oklch(70.2% 0.183 293.541);
   --syntax-name: oklch(83.7% 0.128 66.29);
+  --syntax-parameter: oklch(78.9% 0.154 211.53);
   --sidebar: oklch(0.145 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.87 0 0);

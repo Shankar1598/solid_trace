@@ -23,7 +23,8 @@ module McpTools
       query: {
         type: "string",
         description: "The Query the Monitor runs on its Project. EventStore checks it as kind needs before it's saved: " \
-                     "a Query it can't run, or a threshold Query that doesn't end in a summarize of one number, is not saved.",
+                     "a Query it can't run, a threshold Query that doesn't end in a summarize of one number, or a Query naming " \
+                     "a Dashboard filter ($name), which only Dashboard Charts fill in, is not saved.",
       },
       interval_minutes: { type: "integer", description: "How often the Monitor runs, in minutes, 1 to #{LogMonitor::MAX_INTERVAL_MINUTES}. 1 when made." },
       range_minutes: {

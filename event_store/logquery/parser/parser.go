@@ -132,18 +132,21 @@ func (p *parser) stage(pipe Span) (Stage, error) {
 		return &WhereStage{Pipe: pipe, Keyword: keyword.Span, Predicate: predicate}, nil
 	case "search":
 		term, ok := p.next()
-		if !ok || term.Kind != TokenString {
-			span := term.Span
-			if !ok {
-				span = keyword.Span
-			}
-			return nil, p.errorf(span, "search needs a quoted string, such as search \"timeout\"")
+		switch {
+		case ok && term.Kind == TokenString:
+			return &SearchStage{
+				Pipe:    pipe,
+				Keyword: keyword.Span,
+				Term:    &BasicLit{ValueSpan: term.Span, Kind: StringLiteral, Value: term.Value},
+			}, nil
+		case ok && term.Kind == TokenParam:
+			return &SearchStage{Pipe: pipe, Keyword: keyword.Span, Term: &Param{Name: term.Value, NameSpan: term.Span}}, nil
 		}
-		return &SearchStage{
-			Pipe:    pipe,
-			Keyword: keyword.Span,
-			Term:    &BasicLit{ValueSpan: term.Span, Kind: StringLiteral, Value: term.Value},
-		}, nil
+		span := term.Span
+		if !ok {
+			span = keyword.Span
+		}
+		return nil, p.errorf(span, "search needs a quoted string or a filter, such as search \"timeout\" or search $q")
 	case "project":
 		columns, err := p.namedExprs(keyword, true)
 		if err != nil {
@@ -291,6 +294,9 @@ func (p *parser) sortKey(after Token) (*SortKey, error) {
 // count parses the whole number of rows after take or top.
 func (p *parser) count(keyword Token) (*BasicLit, error) {
 	tok, ok := p.next()
+	if ok && tok.Kind == TokenParam {
+		return nil, (&Param{Name: tok.Value, NameSpan: tok.Span}).Misplaced()
+	}
 	if !ok || tok.Kind != TokenNumber {
 		return nil, p.errorf(keyword.Span, "%s needs a number of rows, as in %s 10", keyword.Value, keyword.Value)
 	}
@@ -445,6 +451,8 @@ func (p *parser) primaryExpr() (Expr, error) {
 		return &BasicLit{ValueSpan: tok.Span, Kind: DateTimeLiteral, Value: tok.Value}, nil
 	case TokenQuotedIdentifier:
 		return &Ident{Name: tok.Value, NameSpan: tok.Span, Quoted: true}, nil
+	case TokenParam:
+		return &Param{Name: tok.Value, NameSpan: tok.Span}, nil
 	case TokenIdentifier:
 		return p.identExpr(tok)
 	case TokenLParen:

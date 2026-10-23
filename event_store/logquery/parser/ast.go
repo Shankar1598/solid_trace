@@ -1,5 +1,7 @@
 package parser
 
+import "fmt"
+
 // Node is a node of a Query's syntax tree.
 type Node interface {
 	Span() Span
@@ -39,11 +41,12 @@ func (s *WhereStage) Span() Span {
 	return unionSpans(s.Pipe, s.Keyword, nodeSpan(s.Predicate))
 }
 
-// SearchStage is search "<term>".
+// SearchStage is search "<term>", or search $name for a Dashboard filter.
 type SearchStage struct {
 	Pipe    Span // invalid for a Query's first stage
 	Keyword Span
-	Term    *BasicLit
+	// Term is a string *BasicLit or a *Param.
+	Term Expr
 }
 
 func (s *SearchStage) stage() {}
@@ -72,6 +75,24 @@ func (id *Ident) expr() {}
 
 func (id *Ident) Span() Span {
 	return id.NameSpan
+}
+
+// Param is a Dashboard filter, $name, which stands for the filter's values.
+type Param struct {
+	// Name is the filter's name, without the $.
+	Name     string
+	NameSpan Span
+}
+
+func (p *Param) expr() {}
+
+func (p *Param) Span() Span {
+	return p.NameSpan
+}
+
+// Misplaced is the mistake of a Dashboard filter where it can't go.
+func (p *Param) Misplaced() *Error {
+	return &Error{Span: p.NameSpan, Message: fmt.Sprintf("$%s only goes in a where, compared with ==, !=, =~, !~, contains or startswith, or in search $%s", p.Name, p.Name)}
 }
 
 // LiteralKind is the type of a BasicLit.

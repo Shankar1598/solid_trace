@@ -10,14 +10,24 @@ export type FilterOp =
   | 'contains' | '!contains' | 'startswith' | '!startswith'
   | 'in' | '!in' | 'exists' | 'missing'
 
+/** A chip's value that is one of a Dashboard's filters, written `$name`. */
+export interface FilterReference {
+  filter: string
+}
+
 /**
  * One Where filter: a Field, an operator and a value. in and !in take a
- * list; exists and missing (isnotnull and isnull) take none.
+ * list; exists and missing (isnotnull and isnull) take none. ==, != and the
+ * text operators can take a Dashboard filter instead of a value.
  */
 export interface Chip {
   field: string
   op: FilterOp
-  value: ChipValue | ChipValue[] | null
+  value: ChipValue | FilterReference | ChipValue[] | null
+}
+
+export function isFilterReference(value: Chip['value']): value is FilterReference {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export type AggregateFn = 'count' | 'rate' | 'peak_rate' | 'dcount' | 'sum' | 'avg' | 'min' | 'max' | 'percentile'
@@ -53,6 +63,8 @@ export interface SortKey {
 export interface Chips {
   filters: Chip[]
   search: string | null
+  /** The Dashboard filter the search is, as in `search $q`; search is null then. */
+  search_filter?: string | null
   summarize?: Summarize | null
   sort?: SortKey[]
   take?: number | null
@@ -61,6 +73,8 @@ export interface Chips {
 export interface Builder {
   filters: Chip[]
   search: string
+  /** A Dashboard filter the search is, `search $q`, in place of the search text. */
+  searchFilter?: string
   /** Absent for no Summarize, and likewise sort and take. */
   summarize?: Summarize
   sort?: SortKey[]
@@ -75,7 +89,8 @@ export const EMPTY_BUILDER: Builder = { filters: [], search: '' }
  */
 export function queryOf(builder: Builder, projectSlug: string): string {
   const stages = [sourceText(projectSlug), ...builder.filters.map(filterText)]
-  if (builder.search.trim() !== '') stages.push(`search ${stringText(builder.search)}`)
+  if (builder.searchFilter) stages.push(`search $${builder.searchFilter}`)
+  else if (builder.search.trim() !== '') stages.push(`search ${stringText(builder.search)}`)
   const summarize = builder.summarize && summarizeText(builder.summarize)
   if (summarize) stages.push(summarize)
   if (builder.sort && builder.sort.length > 0) {
@@ -90,9 +105,10 @@ function sourceText(slug: string): string {
   return `['${escape(slug).replaceAll("'", "\\'")}']`
 }
 
-/** One chip as its where stage, such as `where service == "api"`. */
+/** One chip as its where stage, such as `where service == "api"`, or `where service == $service`. */
 export function filterText(chip: Chip): string {
   const field = nameText(chip.field)
+  if (isFilterReference(chip.value)) return `where ${field} ${chip.op} $${chip.value.filter}`
   switch (chip.op) {
     case 'exists':
       return `where isnotnull(${field})`
@@ -144,6 +160,7 @@ export function summarizeColumns(summarize: Summarize): string[] {
 
 export function builderOf(chips: Chips): Builder {
   const builder: Builder = { filters: chips.filters, search: chips.search ?? '' }
+  if (chips.search_filter) builder.searchFilter = chips.search_filter
   if (chips.summarize) builder.summarize = chips.summarize
   if (chips.sort && chips.sort.length > 0) builder.sort = chips.sort
   if (chips.take !== undefined && chips.take !== null) builder.take = chips.take
@@ -202,8 +219,15 @@ export function removeFilter(builder: Builder, index: number): Builder {
   return { ...builder, filters: builder.filters.filter((_, i) => i !== index) }
 }
 
+/** Sets the search text, in place of any search filter. */
 export function search(builder: Builder, text: string): Builder {
-  return { ...builder, search: text }
+  const { searchFilter: _old, ...rest } = builder
+  return { ...rest, search: text }
+}
+
+/** Makes the search a Dashboard's search filter, `search $name`, in place of any text. */
+export function searchByFilter(builder: Builder, name: string): Builder {
+  return { ...builder, search: '', searchFilter: name }
 }
 
 /**
@@ -286,7 +310,8 @@ export function canFilter(value: unknown): value is ChipValue {
 
 // Names the language reads as words, not Fields.
 const RESERVED = new Set(['and', 'or', 'not', 'true', 'false'])
-const PLAIN_PART = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+// $ goes in a name but starts a Dashboard filter, so a name starting with $ is quoted.
+const PLAIN_PART = /^[A-Za-z_][A-Za-z0-9_$]*$/
 
 /** A Field's name: bare when it's plain (dotted parts and all), else ['quoted']. */
 export function nameText(name: string): string {
@@ -299,7 +324,7 @@ export function valueText(value: ChipValue): string {
   return typeof value === 'string' ? stringText(value) : String(value)
 }
 
-function listOf(value: Chip['value']): ChipValue[] {
+function listOf(value: ChipValue | ChipValue[] | null): ChipValue[] {
   if (value === null) return []
   return Array.isArray(value) ? value : [value]
 }

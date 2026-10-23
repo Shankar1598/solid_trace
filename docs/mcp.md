@@ -65,15 +65,15 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 
 **Dashboards**
 
-- `list_dashboards`, `get_dashboard`: an Organization's Dashboards, and one with its Charts.
-- `create_dashboard`, `update_dashboard`, `delete_dashboard`: make, change and delete a Dashboard.
-- `add_chart`, `update_chart`, `delete_chart`: a Dashboard's Charts. A new Chart goes under the others.
-- `get_chart_data`: runs a Chart's Query and answers the table it draws.
+- `list_dashboards`, `get_dashboard`: an Organization's Dashboards, and one with its filters and Charts.
+- `create_dashboard`, `update_dashboard`, `delete_dashboard`: make, change and delete a Dashboard. `filters` is the Dashboard's whole list of [filters](logs/query-language.md#dashboard-filters), in the bar's order, and giving it replaces the list. Each filter is `{"name", "label", "kind", "multiple", "options"}`: a `search` has only a name and a label, and a `select` takes `multiple` and its `options`, either a fixed list, `{"from": "list", "items": [{"label": "Errors", "value": "error"}]}`, or a field's most common values in one of the Organization's Projects, `{"from": "field", "project_id": 3, "field": "service"}`. They're checked as the Filters dialog checks them.
+- `add_chart`, `update_chart`, `delete_chart`: a Dashboard's Charts. A new Chart goes under the others. A Chart's Query uses a filter by naming it as `$name`, and a Query naming a filter the Dashboard lacks isn't saved.
+- `get_chart_data`: runs a Chart's Query and answers the table it draws. `filters` gives the filters' values by name, a string or a list, such as `{"service": ["api", "web"], "q": "timeout"}`, and a filter left out runs as All. The answer says the values it ran with, and links to the Dashboard showing them.
 
 **Monitors**
 
 - `list_monitors`, `get_monitor`: an Organization's Monitors with their status and firing groups, and one with its groups' states and last runs.
-- `create_monitor`, `update_monitor`, `delete_monitor`: make, change, turn on or off, and delete a [Monitor](logs/monitors.md).
+- `create_monitor`, `update_monitor`, `delete_monitor`: make, change, turn on or off, and delete a [Monitor](logs/monitors.md). A Monitor's Query can't name a Dashboard filter.
 - `run_monitor`: runs a Monitor now, as its schedule would, telling its Integrations what changed.
 - `list_integrations`: the Integrations Monitors can tell.
 
