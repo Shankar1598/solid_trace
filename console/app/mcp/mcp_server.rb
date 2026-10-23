@@ -54,7 +54,7 @@ module McpServer
     Tools take an Organization's slug, which you can leave out when you belong to one, and a Project's slug.
     whoami lists your Organizations, and list_projects an Organization's Projects.
     query_logs runs a Query on a Project's Logs; list_fields lists the names a Query reads, and query_language_reference explains the language.
-    To read less, filter with == or in on the Project's log_file_order (list_projects); query_language_reference's Reading less says how.
+    To read less, filter with == or in on service and file, which every Project's Logs are sorted by; query_language_reference's Reading less says how.
     get_log_transform shows the program that shapes a Project's Logs before they're stored.
     Dashboards, Monitors and Issues each have list_ and get_ tools, and tools to make and change them; get_issue's trace_logs finds an Event's Logs.
     An instance admin (whoami says) reads and changes the install's email settings with get_email_settings and update_email_settings.

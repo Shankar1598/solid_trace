@@ -70,7 +70,8 @@ func TestAStoreWithoutDuckDBDataStartsAndStartsAgain(t *testing.T) {
 	if err := startOn(t, dir); err != nil {
 		t.Fatalf("Expected a new store to start, got %v", err)
 	}
-	// This release still makes an empty logs.duckdb at start (SQL mode's).
+	// A logs.duckdb made after a start with no DuckDB data, as this
+	// release's builds before DuckDB went did, doesn't stop the next start.
 	if err := os.WriteFile(filepath.Join(dir, "logs.duckdb"), []byte("made by this release"), 0o644); err != nil {
 		t.Fatal(err)
 	}

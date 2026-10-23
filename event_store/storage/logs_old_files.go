@@ -566,6 +566,9 @@ func (o *oldLogFiles) withBucketKey(ctx context.Context) context.Context {
 	}))
 }
 
+// logObjectPrefix begins the bucket key of every old Log file.
+const logObjectPrefix = "logs/"
+
 // oldBucketURL is where the bucket keeps the old Log files: the keys go
 // after it.
 func oldBucketURL(bucket *config.ObjectStore) string {

@@ -2,14 +2,13 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"sync"
 	"time"
 )
 
-// ReadStatement is one SQL statement a Log read ran, with how long DuckDB
-// took to run it (duckdb-go runs a statement whole before its rows are
-// read) and its error, if it failed.
+// ReadStatement is one SQL statement a Log read ran, with how long it took,
+// its rows read when the read records it after them, and its error, if it
+// failed.
 type ReadStatement struct {
 	SQL      string
 	Duration time.Duration
@@ -49,21 +48,4 @@ func recordStatement(ctx context.Context, query string, began time.Time, err err
 	statements.mu.Lock()
 	defer statements.mu.Unlock()
 	statements.list = append(statements.list, ReadStatement{SQL: query, Duration: time.Since(began), Err: err})
-}
-
-// queryRead runs a Log read's query, recording it in ctx's ReadStatements.
-func queryRead(ctx context.Context, conn *sql.Conn, query string) (*sql.Rows, error) {
-	began := time.Now()
-	rows, err := conn.QueryContext(ctx, query)
-	recordStatement(ctx, query, began, err)
-	return rows, err
-}
-
-// queryReadRow runs a Log read's query of one row into dest, recording it
-// in ctx's ReadStatements.
-func queryReadRow(ctx context.Context, conn *sql.Conn, query string, dest ...any) error {
-	began := time.Now()
-	err := conn.QueryRowContext(ctx, query).Scan(dest...)
-	recordStatement(ctx, query, began, err)
-	return err
 }

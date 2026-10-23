@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -239,6 +240,87 @@ func TestADeletedProjectsLogsAreDeletedAndAProjectWithoutKeysKeepsItsOwn(t *test
 	assertDeleted("after a restart")
 	env.DeleteLogsPastRetention(t)
 	assertDeleted("after another pass")
+}
+
+// sqlUsersAndPolicies lists the SQL users of the environment's database and
+// their row policies, as an operator sees them with SHOW USERS and SHOW ROW
+// POLICIES.
+func sqlUsersAndPolicies(t *testing.T, env *TestEnv) (users, policies []string) {
+	t.Helper()
+	ctx := context.Background()
+	prefix := env.ClickHouse.Database() + "_sql_"
+	read := func(query string) []string {
+		rows, err := env.ClickHouse.Conn().Query(ctx, query, prefix)
+		if err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		defer rows.Close()
+		var names []string
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				t.Fatal(err)
+			}
+			names = append(names, name)
+		}
+		return names
+	}
+	users = read("SELECT name FROM system.users WHERE startsWith(name, ?) ORDER BY name")
+	policies = read("SELECT name FROM system.row_policies WHERE startsWith(short_name, ?) ORDER BY name")
+	return users, policies
+}
+
+// A deleted Project's SQL user, with its row policies, goes with its Logs,
+// and other Projects keep theirs.
+func TestADeletedProjectsSQLUserGoesWithItsLogs(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedProject(t, env.SQLitePath, 456, 0)
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+
+	env.Clock.Set(testNow)
+	countLogs := func(projectID uint32) string {
+		t.Helper()
+		status, raw := runSQL(t, env, projectID, sqlRequest{SQL: "SELECT count() FROM logs", From: allTime.from, To: allTime.to})
+		if status != 200 {
+			t.Fatalf("SQL of Project %d expected 200, got %d: %s", projectID, status, raw)
+		}
+		var answer tableAnswer
+		if err := json.Unmarshal(raw, &answer); err != nil || answer.Table == nil || len(answer.Table.Rows) != 1 {
+			t.Fatalf("Decode SQL answer %s: %v", raw, err)
+		}
+		return string(answer.Table.Rows[0])
+	}
+	for _, p := range []struct {
+		id  uint32
+		key string
+	}{{123, "test_public_key"}, {456, "other_public_key"}} {
+		postAndProcessTo(t, env, p.id, p.key, logJSON(t, "m", testNow.Add(-time.Minute), nil))
+		if got := countLogs(p.id); got != "[1]" {
+			t.Fatalf("Expected Project %d's SQL to count 1 Log, got %s", p.id, got)
+		}
+	}
+	db := env.ClickHouse.Database()
+	user := func(projectID uint32) string { return fmt.Sprintf("%s_sql_%d", db, projectID) }
+	if users, policies := sqlUsersAndPolicies(t, env); len(users) != 2 || len(policies) != 4 {
+		t.Fatalf("Expected two SQL users with two row policies each, got %v and %v", users, policies)
+	}
+
+	consoleExec(t, env, "DELETE FROM projects WHERE id = 456")
+	env.DeleteLogsPastRetention(t)
+
+	users, policies := sqlUsersAndPolicies(t, env)
+	if want := []string{user(123)}; !slices.Equal(users, want) {
+		t.Errorf("Expected the SQL users %v, got %v", want, users)
+	}
+	if want := []string{user(123) + " ON " + db + ".events", user(123) + " ON " + db + ".logs"}; !slices.Equal(policies, want) {
+		t.Errorf("Expected the row policies %v, got %v", want, policies)
+	}
+	if got := countLogs(123); got != "[1]" {
+		t.Errorf("Expected Project 123's SQL to count 1 Log still, got %s", got)
+	}
 }
 
 func TestAnEmptyProjectsTableDeletesNoProjectsLogs(t *testing.T) {

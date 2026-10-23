@@ -15,7 +15,7 @@ import (
 )
 
 // LogBatch is the normalised Logs of one ingest request, stored in Pebble as
-// one entry until Log processing moves them to DuckDB. Its id is a UUIDv7
+// one entry until Log processing moves them to ClickHouse. Its id is a UUIDv7
 // generated when it is written, so a Project's batches sort in write order.
 type LogBatch struct {
 	ID   uuid.UUID

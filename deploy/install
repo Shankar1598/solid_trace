@@ -105,13 +105,6 @@ create_config() {
     say "Writing $CONFIG_FILE"
     install -D -m 0644 "$DEPLOY_DIR/event_store.yml" "$CONFIG_FILE"
   fi
-  # DuckDB's own default is 80% of memory, which leaves Console too little.
-  # Only while the template's commented line is there, as deploy/setup-gcp leaves it.
-  if grep -q '^# duckdb_memory_limit: ' "$CONFIG_FILE" && ! grep -q '^duckdb_memory_limit: ' "$CONFIG_FILE"; then
-    local memory_mb
-    memory_mb=$(awk '/^MemTotal:/ { print int($2 / 1024 / 2) }' /proc/meminfo)
-    sed -i "s|^# duckdb_memory_limit: .*|duckdb_memory_limit: ${memory_mb}MB|" "$CONFIG_FILE"
-  fi
 }
 
 # ensure_env_secret NAME BYTES MESSAGE appends NAME, BYTES random bytes in hex,
@@ -208,11 +201,18 @@ prepare_duckdb_logs() {
   [[ $release == dev ]] && release=HEAD
   git -C "$DEPLOY_DIR" cat-file -e "$release:deploy/clickhouse" 2>/dev/null || return 0
 
-  local logs_duckdb duckdb prepared
+  # Where EventStore looks for it too: logs_duckdb_path, else beside
+  # duckdb_path, else beside the Log file store (logs_parquet_path).
+  local logs_duckdb duckdb files prepared
   logs_duckdb=$(config_value logs_duckdb_path)
   if [[ -z $logs_duckdb ]]; then
     duckdb=$(config_value duckdb_path)
-    logs_duckdb="$(dirname "${duckdb:-/storage/duckdb/production/events.duckdb}")/logs.duckdb"
+    files=$(config_value logs_parquet_path)
+    if [[ -n $duckdb ]]; then
+      logs_duckdb="$(dirname "$duckdb")/logs.duckdb"
+    else
+      logs_duckdb="$(dirname "${files:-/storage/duckdb/production/logs_parquet}")/logs.duckdb"
+    fi
   fi
   logs_duckdb=$(host_path "$logs_duckdb")
   prepared="$(dirname "$logs_duckdb")/prepared"
@@ -295,7 +295,7 @@ ensure_env_secret SECRET_KEY_BASE 64 "Writing Console's secret to $ENV_FILE"
 ensure_env_secret META_PROJECT_KEY 16 "Writing the Meta Organization's project key to $ENV_FILE"
 # EventStore's password on ClickHouse, which reads it from the environment too.
 ensure_env_secret SOLIDTRACE_CLICKHOUSE_PASSWORD 24 "Writing ClickHouse's password to $ENV_FILE"
-# ClickHouse's memory: half of RAM, as DuckDB gets.
+# ClickHouse's memory: half of RAM, which leaves Console and Vector the rest.
 ensure_env_value SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES \
   "$(awk '/^MemTotal:/ { printf "%.0f", $2 * 1024 / 2 }' /proc/meminfo)" \
   "Giving ClickHouse half of this machine's memory in $ENV_FILE"

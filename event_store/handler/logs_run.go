@@ -20,14 +20,14 @@ const maxTimeoutSeconds = 24 * 60 * 60
 // answer's elapsed_ms, and the context its scan stops by, which ends after
 // the request's timeout_seconds, if it has one. When Console asks with
 // X-Log-SQL: 1, as it does for the reads it times, its end logs each SQL
-// statement the run made DuckDB run, with the X-Request-Id Console sent,
+// statement the run made ClickHouse run, with the X-Request-Id Console sent,
 // which Console's call timing of the run also has
 // (.scratch/call-timings/spec.md).
 //
 // Fiber gives a handler no context that ends when the client goes away, so a
 // scan without a timeout runs to its end whether or not anyone is waiting.
-// Past the timeout the context ends: duckdb-go interrupts the query it is
-// running, a scan of Log rows stops before its next hour, and the run
+// Past the timeout the context ends: clickhouse-go cancels the query it is
+// running, a scan of Log rows stops before its next span, and the run
 // answers 504.
 type run struct {
 	ctx        context.Context
