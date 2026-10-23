@@ -149,7 +149,7 @@ func TestAnEventAndALogItemInOneEnvelopeAreBothStored(t *testing.T) {
 	env.Process(t)
 	env.ProcessLogs(t)
 
-	events, err := env.DuckDBWriter.QueryEvents(storage.QueryParams{ProjectID: 123})
+	events, err := env.ClickHouse.QueryEvents(storage.QueryParams{ProjectID: 123})
 	if err != nil {
 		t.Fatalf("Query Events: %v", err)
 	}
