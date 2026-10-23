@@ -27,9 +27,9 @@ import (
 //   - marker.json: the release that wrote them, and when.
 //
 // The marker comes last, so a folder with one holds every prepared file. Their
-// columns are the contract with the ClickHouse release, which reads them
-// (ticket 09); the fixtures in event_store/testdata/prepared_clickhouse are
-// written by this code.
+// columns are the contract with the ClickHouse release, which reads them (the
+// ClickHouse effort's ticket 09); the fixtures in
+// event_store/testdata/prepared_clickhouse are written by this code.
 
 const (
 	// preparedFolder is the name of the prepared folder, next to
