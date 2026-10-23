@@ -22,6 +22,9 @@ type ClickHouseColumns struct {
 	// a SELECT stand for a column of the same name, so a column read beside
 	// aliases must name its relation.
 	Table string
+	// old, if set, is a day of Log files from before the switch, which
+	// keep Fields their own way (logs_old_files.go).
+	old *oldDay
 }
 
 // Column is the relation's column of the given name.
@@ -39,6 +42,9 @@ func (c ClickHouseColumns) qualify(column string) string {
 
 // BuiltIn is a built-in field's column, such as level.
 func (c ClickHouseColumns) BuiltIn(name string) string {
+	if c.old != nil {
+		return c.old.builtIn(name)
+	}
 	return c.Column(name)
 }
 
@@ -47,6 +53,9 @@ func (c ClickHouseColumns) BuiltIn(name string) string {
 // value, which throws on a path that holds values of more than one type, or
 // its JSON text in attrs_json.
 func (c ClickHouseColumns) Attribute(t AttributeType, key string) string {
+	if c.old != nil && t != JSONAttribute {
+		return c.old.attribute(t, key)
+	}
 	if t == JSONAttribute {
 		name, json := chsql.String(key), c.qualify("attrs_json")
 		return "if(mapContains(" + json + ", " + name + "), " + json + "[" + name + "], NULL)"
@@ -65,6 +74,9 @@ var attributeTypes = map[AttributeType]string{StringAttribute: "String", NumberA
 // SearchText is every string Attribute's value, joined by \0, which search
 // reads besides message.
 func (c ClickHouseColumns) SearchText() string {
+	if c.old != nil {
+		return c.old.searchText()
+	}
 	return c.qualify("search_text")
 }
 
@@ -72,7 +84,7 @@ func (c ClickHouseColumns) SearchText() string {
 // for a Log whose key isn't a string, if there is one: file, a sort column,
 // so that a filter on it skips other files.
 func (c ClickHouseColumns) StringColumn(key string) (string, bool) {
-	if key == "file" {
+	if key == "file" && c.old == nil {
 		return c.qualify("file"), true
 	}
 	return "", false
@@ -175,23 +187,33 @@ func (s *ClickHouseLogs) ScanLogs(ctx context.Context, scan LogScan) (LogScanPag
 		return page, nil
 	}
 	oldest, newest, ok, err := s.timeSpan(ctx, scan.ProjectID, from, to)
-	if err != nil || !ok {
+	if err != nil {
 		return page, err
+	}
+	if oldOldest, oldNewest, oldOK := s.old.span(scan.ProjectID, from, to); oldOK {
+		if !ok {
+			oldest, newest = oldOldest, oldNewest
+		}
+		oldest, newest, ok = earliestTime(oldest, oldOldest), latestTime(newest, oldNewest), true
+	}
+	if !ok {
+		return page, nil
 	}
 	from = latestTime(from, oldest)
 	to = earliestTime(to, newest.Add(time.Microsecond))
 
 	filter := filterOf(scan.Where)
+	var after []string
+	if scan.After != nil && scan.After.ID != uuid.Nil {
+		at := chsql.Time(scan.After.Time)
+		after = append(after, fmt.Sprintf("(time < %s OR %s < %s)",
+			at, chsql.UUIDOrder("id"), chsql.UUIDOrder(chsql.UUID(scan.After.ID))))
+	}
 	clauses := func(spanFrom, spanTo time.Time) string {
-		conditions := []string{
+		conditions := append([]string{
 			fmt.Sprintf("project_id = %d", scan.ProjectID),
 			"time >= " + chsql.Time(spanFrom), "time < " + chsql.Time(spanTo),
-		}
-		if scan.After != nil && scan.After.ID != uuid.Nil {
-			at := chsql.Time(scan.After.Time)
-			conditions = append(conditions, fmt.Sprintf("(time < %s OR %s < %s)",
-				at, chsql.UUIDOrder("id"), chsql.UUIDOrder(chsql.UUID(scan.After.ID))))
-		}
+		}, after...)
 		return whereClause(conditions, filter)
 	}
 	// The first span is the newest Log's hour; each after it twice the last,
@@ -209,7 +231,11 @@ func (s *ClickHouseLogs) ScanLogs(ctx context.Context, scan LogScan) (LogScanPag
 		if err != nil {
 			return LogScanPage{}, err
 		}
-		page.Logs = append(page.Logs, found...)
+		old, err := s.old.scanLogs(s, ctx, scan.ProjectID, spanFrom, spanTo, after, scan.Where, scan.Limit-len(page.Logs))
+		if err != nil {
+			return LogScanPage{}, err
+		}
+		page.Logs = append(page.Logs, mergeNewestFirst(found, old, scan.Limit-len(page.Logs))...)
 		if len(page.Logs) >= scan.Limit {
 			last := page.Logs[len(page.Logs)-1]
 			page.Next = &LogPosition{Time: last.Time, ID: last.ID}
