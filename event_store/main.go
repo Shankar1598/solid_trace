@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -26,19 +25,6 @@ import (
 func main() {
 	cfg := config.Load()
 	logger.Init()
-	if len(os.Args) > 1 {
-		if os.Args[1] != prepareClickHouseCommand {
-			fmt.Fprintf(os.Stderr, "unknown command %q: the only one is %s\n", os.Args[1], prepareClickHouseCommand)
-			os.Exit(2)
-		}
-		os.Exit(prepareClickHouse(cfg))
-	}
-
-	// This release stores Logs in DuckDB from now on, so an earlier
-	// prepare-clickhouse's files miss them, and it must run again.
-	if err := storage.ForgetClickHousePrepared(storage.PreparedDir(cfg.LogsDuckDBPath)); err != nil {
-		logger.L.Fatal("Failed to remove the marker of an earlier prepare-clickhouse", "error", err)
-	}
 
 	// Initialize storage
 	pebbleWriter, err := storage.NewPebbleWriter(cfg)
