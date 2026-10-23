@@ -336,6 +336,7 @@ class EventStore
 
     # Sends a Log call's request and parses EventStore's JSON answer. A 400
     # raises Rejected, a 504 TimedOut, and a 403 SQLQueriesOff when sql.
+    # Anything else, a timeout included, raises Unavailable.
     def execute!(sql: false, **request)
       JSON.parse(RestClient::Request.execute(**request).body)
     rescue RestClient::BadRequest => e
@@ -346,10 +347,21 @@ class EventStore
       raise Unavailable, "EventStore error: 403 - #{e.response&.body}"
     rescue RestClient::GatewayTimeout => e
       raise TimedOut, parse_body(e.response&.body)
+    rescue RestClient::Exceptions::Timeout => e
+      # Before ExceptionWithResponse, which a timeout is too, with no response.
+      raise Unavailable, timed_out_message(e, request)
     rescue RestClient::ExceptionWithResponse => e
       raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
     rescue StandardError => e
       raise Unavailable, "EventStore connection error: #{e.message}"
+    end
+
+    # Why a call gave up waiting on EventStore: connecting or reading, and
+    # after how long when the request set a limit.
+    def timed_out_message(error, request)
+      opening = error.is_a?(RestClient::Exceptions::OpenTimeout)
+      seconds = opening ? request[:open_timeout] : request[:read_timeout]
+      [ "EventStore timed out", seconds && "after #{seconds}s", opening ? "connecting" : "answering" ].compact.join(" ")
     end
 
     def parse_body(body)
