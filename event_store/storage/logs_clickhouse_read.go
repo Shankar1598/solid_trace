@@ -436,7 +436,7 @@ func (s *ClickHouseLogs) LogByID(ctx context.Context, projectID uint32, id uuid.
 			return firstLog(logs), len(logs) > 0, err
 		}
 	}
-	return models.Log{}, false, nil
+	return s.old.logByID(s, ctx, projectID, id, at)
 }
 
 func firstLog(logs []models.Log) models.Log {
@@ -461,13 +461,15 @@ func (s *ClickHouseLogs) AttributeCounts(ctx context.Context, projectID uint32, 
 		last = LogDay(to.Add(-time.Nanosecond))
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT key, type, sum(logs) AS total FROM log_key_counts
-		WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)
+		SELECT key, type, sum(logs) AS total FROM (
+			SELECT key, type, logs FROM log_key_counts
+			WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)`+s.old.keyCounts()+`
+		)
 		GROUP BY key, type
 		HAVING total > 0
 		ORDER BY total DESC, key, type
 		LIMIT ?`,
-		projectID, dayString(first), dayString(last), limit+1)
+		append(append([]any{projectID, dayString(first), dayString(last)}, s.old.keyCountsArgs(projectID, first, last)...), limit+1)...)
 	if err != nil {
 		return nil, false, fmt.Errorf("count Attributes: %w", err)
 	}
