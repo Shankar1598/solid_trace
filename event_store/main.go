@@ -117,18 +117,13 @@ func main() {
 	}
 	logProcessor.Start()
 
-	// Without a bucket nothing is uploaded, and the worker never starts.
-	logUploads := logprocessing.NewLogUploads(logStore, clock.System{})
-	if cfg.ObjectStore != nil {
-		logUploads.Start()
-	}
-
-	diskLimit, err := storage.NewLogDiskLimit(cfg.LogsDiskLimitBytes, cfg.LogsParquetPath)
+	// Retention and deleted Projects once a day, the disk limit hourly.
+	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
 	if err != nil {
 		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
 	}
 	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
-	logCleanup := logprocessing.NewCleanup(logStore, consoleSettings, diskLimit, clock.System{})
+	logCleanup := logprocessing.NewCleanup(clickHouseLogs, consoleSettings, diskLimit, clock.System{})
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
@@ -203,7 +198,6 @@ func main() {
 	// Then the stores close through the defers above.
 	processor.Stop()
 	logProcessor.Stop()
-	logUploads.Stop()
 	logCleanup.Stop()
 	eventCleanup.Stop()
 	if profiler != nil {

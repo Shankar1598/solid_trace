@@ -10,23 +10,20 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// CleanupStore deletes stored Logs. *storage.LogStore is the production
-// adapter.
+// CleanupStore deletes stored Logs. *storage.ClickHouseLogs is the
+// production adapter.
 type CleanupStore interface {
 	// LogProjects lists the Projects that have any Logs stored.
 	LogProjects() ([]uint32, error)
 	// DeleteLogDaysBefore deletes a Project's Logs of the UTC days before
-	// that of day, with those days' promoted sets and counts.
+	// that of day, with those days' counts.
 	DeleteLogDaysBefore(projectID uint32, day time.Time) error
 	// DeleteProjectLogs deletes everything of a Project's Logs.
 	DeleteProjectLogs(projectID uint32) error
-	// EnforceDiskLimit deletes the oldest hours of Log files, of any
-	// Project, until the files fit limit. If the files are kept in a
-	// bucket, it then deletes there the Log files deleted earlier.
+	// EnforceDiskLimit keeps the Logs on local disk within limit: it moves
+	// the oldest days to the bucket, if there is one, and deletes them if
+	// that fails or there is none.
 	EnforceDiskLimit(limit storage.LogDiskLimit) error
-	// EvictLogFiles removes the local copies of uploaded Log files kept
-	// long enough, if the files are kept in a bucket.
-	EvictLogFiles(now time.Time) error
 }
 
 // Projects tells which Projects exist, and the Retention of each.
@@ -39,20 +36,18 @@ type Projects interface {
 }
 
 const (
-	// cleanupAfterHour is how long after each hour start the cleanup runs,
-	// so that it follows the Log export at the hour start, the one that
-	// writes quiet Projects' hours.
+	// cleanupAfterHour is how long after each hour start the cleanup runs.
 	cleanupAfterHour = 5 * time.Minute
 	// retryCleanupAfter is how soon a failed cleanup runs again.
 	retryCleanupAfter = time.Minute
 )
 
 // Cleanup is the timer inside EventStore that keeps Logs from outliving
-// their Retention or their Project, and Log files from passing the disk
-// limit. Once a UTC day by its clock, and when it starts, it deletes Logs past
-// their Retention; a few minutes past each hour start, it evicts the local
-// copies of uploaded Log files kept long enough, and enforces the disk limit.
-// A failed run is tried again a minute later.
+// their Retention or their Project, and from passing the disk limit. Once a
+// UTC day by its clock, and when it starts, it deletes Logs past their
+// Retention and every Log of a deleted Project; a few minutes past each hour
+// start, it enforces the disk limit. A failed run is tried again a minute
+// later.
 type Cleanup struct {
 	store     CleanupStore
 	projects  Projects
@@ -93,10 +88,6 @@ func (c *Cleanup) run() {
 				lastPass = day
 			}
 		}
-		if err := c.store.EvictLogFiles(now); err != nil {
-			logRetry("Evicting the local copies of uploaded Log files failed, retrying", err)
-			failed = true
-		}
 		if err := c.store.EnforceDiskLimit(c.diskLimit); err != nil {
 			logRetry("Enforcing the Log disk limit failed, retrying", err)
 			failed = true
@@ -121,13 +112,8 @@ func (c *Cleanup) run() {
 	}
 }
 
-// logRetry logs a cleanup that runs again soon: as an error, unless it only
-// waits for a read of the files it would delete.
+// logRetry logs a cleanup that runs again soon.
 func logRetry(message string, err error) {
-	if errors.Is(err, storage.ErrLogFilesInUse) {
-		logger.L.Info(message, "error", err, "retry_in", retryCleanupAfter)
-		return
-	}
 	logger.L.Error(message, "error", err, "retry_in", retryCleanupAfter)
 }
 
