@@ -70,13 +70,25 @@ func TestAStoreWithoutDuckDBDataStartsAndStartsAgain(t *testing.T) {
 	if err := startOn(t, dir); err != nil {
 		t.Fatalf("Expected a new store to start, got %v", err)
 	}
-	// A logs.duckdb made after a start with no DuckDB data, as this
-	// release's builds before DuckDB went did, doesn't stop the next start.
-	if err := os.WriteFile(filepath.Join(dir, "logs.duckdb"), []byte("made by this release"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	if err := startOn(t, dir); err != nil {
 		t.Fatalf("Expected it to start again, got %v", err)
+	}
+}
+
+func TestDuckDBDataThatAppearsAfterAStartWithoutAnyStopsTheNextStart(t *testing.T) {
+	logger.Init()
+	clickhousetest.Empty(t)
+	dir := t.TempDir()
+	if err := startOn(t, dir); err != nil {
+		t.Fatalf("Expected a new store to start, got %v", err)
+	}
+
+	// The DuckDB release ran on the store since, as after a rollback.
+	if err := os.WriteFile(filepath.Join(dir, "logs.duckdb"), []byte("the DuckDB release's Logs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := startOn(t, dir); err == nil || !strings.Contains(err.Error(), "prepare-clickhouse") {
+		t.Fatalf("Expected the start to stop and name prepare-clickhouse, got %v", err)
 	}
 }
 

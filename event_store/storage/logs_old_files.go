@@ -167,9 +167,10 @@ func (s *ClickHouseLogs) UseOldLogFiles(cfg OldLogFiles) error {
 		if err := old.load(ctx, s.pebble, *marker); err != nil {
 			return fmt.Errorf("load the Logs from before the switch, prepared in %s: %w", cfg.PreparedDir, err)
 		}
-	case marker == nil && duckDB && (!recorded || loaded != nil):
-		// Never prepared, or the DuckDB release ran again since it was,
-		// which removes the marker.
+	case marker == nil && duckDB:
+		// Never prepared, or the DuckDB release ran since, which removes
+		// the marker, as after a rollback: whatever an earlier start
+		// recorded, the DuckDB release's Logs may hold some not yet read.
 		return fmt.Errorf("%s holds the DuckDB release's Logs, and %s has no marker that they were prepared for ClickHouse: %w",
 			cfg.LogsDuckDB, cfg.PreparedDir, errUnprepared)
 	case !recorded:
