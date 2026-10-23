@@ -52,6 +52,37 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_equal [ false, 7, false ], [ settings.sql_queries_enabled, settings.default_log_retention_days, settings.log_all_reads ]
   end
 
+  test "update_instance_settings answers a bad Retention as a tool error, and saves nothing" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, log_all_reads: true, default_log_retention_days: 0)
+
+    assert answer.error?
+    assert_equal "Not saved: Default log retention days must be greater than 0.", answer.text
+    assert_not InstanceSetting.current.log_all_reads?
+    assert_equal 30, InstanceSetting.current.default_log_retention_days
+  end
+
+  test "update_instance_settings can't open Sign-up" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, sign_up_open: true, log_all_reads: true)
+
+    assert_not answer.error?, answer.text
+    assert InstanceSetting.current.log_all_reads?
+    assert_not InstanceSetting.current.sign_up_open?
+    assert_equal false, answer.json.dig("sign_up", "open")
+  end
+
+  test "an Organization admin who isn't an instance admin is refused by each tool, and changes nothing" do
+    {
+      get_instance_settings: [ {}, "read the instance settings" ],
+      update_instance_settings: [ { sql_queries_enabled: false, log_all_reads: true }, "change the instance settings" ],
+    }.each do |tool, (arguments, doing)|
+      answer = call_tool(tool, user: @org_admin, **arguments)
+      assert answer.error?, tool
+      assert_equal "Only an instance admin can #{doing}.", answer.text
+    end
+    assert InstanceSetting.current.sql_queries_enabled?
+    assert_not InstanceSetting.current.log_all_reads?
+  end
+
   private
 
   def with_env(values)
