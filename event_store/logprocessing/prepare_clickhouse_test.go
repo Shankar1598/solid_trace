@@ -531,6 +531,45 @@ func TestPrepareFailsAndWritesNoMarkerWhenAFileFailsToUpload(t *testing.T) {
 	}
 }
 
+// digest is a digest of a file's bytes, or "" if there is none.
+func digest(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+// Events stay where they are: the ClickHouse release doesn't migrate them.
+func TestPrepareLeavesEventsAlone(t *testing.T) {
+	in := newInstall(t)
+	in.post(1, october(5, 10, 20), logAt(october(5, 10, 20), "hot"))
+	in.run(october(5, 10, 21), func(r *running) { r.process() })
+	event := &models.Event{ProjectID: 1, Timestamp: october(5, 10, 20), RawJSON: []byte(`{"message":"waiting"}`)}
+	if err := in.batches.WriteEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	before := digest(t, in.eventsDuckDB())
+	beforeWAL := digest(t, in.eventsDuckDB()+".wal")
+	if before == "" {
+		t.Fatal("Expected the running release to have made events.duckdb")
+	}
+
+	in.mustPrepare(october(5, 10, 30), "v1.0.0")
+
+	if digest(t, in.eventsDuckDB()) != before || digest(t, in.eventsDuckDB()+".wal") != beforeWAL {
+		t.Error("Expected events.duckdb untouched")
+	}
+	waiting, err := in.batches.EventsAfter(1, "", 10)
+	if err != nil || len(waiting) != 1 || waiting[0].EventUUID != event.EventUUID {
+		t.Errorf("Expected the Event still waiting in Pebble, got %v, %v", waiting, err)
+	}
+}
+
 // downStore is logs.duckdb gone: every write fails, and so does a ping.
 type downStore struct{}
 
