@@ -3,6 +3,7 @@ package main_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/logprocessing"
 )
 
 // logCounts is the JSON route's answer.
@@ -476,30 +477,73 @@ func TestLogsAcknowledgedBeforeARestartAreListedAfterIt(t *testing.T) {
 	}
 }
 
-func TestCrashAfterLogsCommitBeforeTheirBatchesAreDeletedStoresThemOnce(t *testing.T) {
+// assertStoredOnce checks that Project 123 lists each of want once, newest
+// first, and that its histogram and Fields count each Log once.
+func assertStoredOnce(t *testing.T, env *TestEnv, want []string, when string) {
+	t.Helper()
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, want) {
+		t.Errorf("%s: expected each Log once, %v, got %v", when, want, got)
+	}
+	if got := histogram(t, env, histogramRequest{From: testNow.Add(-24 * time.Hour), To: testNow, BucketSeconds: 3600}); got.Count != len(want) {
+		t.Errorf("%s: expected the histogram to count each Log once, %d, got %d", when, len(want), got.Count)
+	}
+	fields := getFields(t, env, 123, testNow.Add(-24*time.Hour), testNow, "")
+	assertAttributes(t, fields, []attributeCount{{"user", "string", int64(len(want))}}, when)
+}
+
+func TestACrashBetweenTheInsertAndTheCursorRepeatsNothingAndLosesNothing(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 
-	postLogs(t, env, "application/json", `{"message": "one", "time": "2026-10-02T11:00:01Z"}`)
-	postLogs(t, env, "application/json", `[{"message": "two", "time": "2026-10-02T11:00:02Z"}, {"message": "three", "time": "2026-10-02T11:00:03Z"}]`)
+	postLogs(t, env, "application/json", `{"message": "one", "time": "2026-10-02T11:00:01Z", "user": "ada"}`)
+	postLogs(t, env, "application/json", `[{"message": "two", "time": "2026-10-02T11:00:02Z", "user": "bob"}, {"message": "three", "time": "2026-10-02T11:00:03Z", "user": "cy"}]`)
 
-	// Log processing commits the batches to DuckDB, then crashes before
-	// deleting them from Pebble.
-	batches, err := env.PebbleWriter.LogBatchesAfter(123, uuid.Nil, 100)
-	if err != nil || len(batches) != 2 {
-		t.Fatalf("Expected 2 Log batches, got %d %v", len(batches), err)
+	// Log processing inserts both batches, and EventStore crashes before it
+	// hears back: its cursor stays where it was, and the batches in Pebble.
+	crashed := make(chan struct{})
+	env.FlakyLogs.failAfterInsert(connectionLost, func() {
+		env.FlakyLogs.goDown()
+		close(crashed)
+	})
+	done := startLogProcessing(env)
+	select {
+	case <-crashed:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Expected Log processing to insert the batches")
 	}
-	if err := env.LogStore.AppendLogBatches(123, batches, env.Clock.Now()); err != nil {
-		t.Fatalf("Commit Log batches: %v", err)
-	}
-	postLogs(t, env, "application/json", `{"message": "four", "time": "2026-10-02T11:00:04Z"}`)
-
+	// A Log the restart waits on, which comes after the range.
+	postLogs(t, env, "application/json", `{"message": "four", "time": "2026-10-02T11:00:04Z", "user": "di"}`)
 	env.Reopen(t)
-	env.ProcessLogs(t)
-
-	if got, want := messages(latestLogs(t, env, 123, 10)), []string{"four", "three", "two", "one"}; !slices.Equal(got, want) {
-		t.Errorf("Expected each Log once, %v, got %v", want, got)
+	if err := <-done; !errors.Is(err, logprocessing.ErrStopped) {
+		t.Fatalf("Expected the crashed Log processing to stop, got %v", err)
 	}
+	env.ProcessLogs(t)
+	assertStoredOnce(t, env, []string{"four", "three", "two", "one"}, "after the restart")
+
+	// Nothing is inserted again later, either.
+	postAndProcess(t, env, `{"message": "five", "time": "2026-10-02T11:00:05Z", "user": "ed"}`)
+	assertStoredOnce(t, env, []string{"five", "four", "three", "two", "one"}, "after the next insert")
+}
+
+func TestARangeOfLogBatchesInsertedAgainIsStoredOnce(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postLogs(t, env, "application/json", `{"message": "one", "time": "2026-10-02T11:00:01Z", "user": "ada"}`)
+	postLogs(t, env, "application/json", `[{"message": "two", "time": "2026-10-02T11:00:02Z", "user": "bob"}, {"message": "three", "time": "2026-10-02T11:00:03Z", "user": "cy"}]`)
+
+	// ClickHouse takes the insert, but its answer is lost; a Log arrives
+	// before Log processing tries again, and the range it inserts again
+	// doesn't take it in.
+	env.FlakyLogs.failAfterInsert(connectionLost, func() {
+		postLogs(t, env, "application/json", `{"message": "four", "time": "2026-10-02T11:00:04Z", "user": "di"}`)
+	})
+	tries := env.FlakyLogs.attempts.Load()
+	processLogsWithin(t, env, 10*time.Second)
+	if got := env.FlakyLogs.attempts.Load() - tries; got != 3 {
+		t.Errorf("Expected the range inserted twice, then the new Log, got %d inserts", got)
+	}
+	assertStoredOnce(t, env, []string{"four", "three", "two", "one"}, "after the range was inserted again")
 }
 
 func TestLogsSentAfterTheClockStepsBackAreStored(t *testing.T) {
@@ -591,4 +635,261 @@ func TestLogIngestAfterTheWriterStopsIsServiceUnavailable(t *testing.T) {
 		t.Fatalf("Expected 503 for an envelope, got %d: %s", resp.StatusCode, body)
 	}
 	assertRetryAfterAFewSeconds(t, resp)
+}
+
+// attributesByMessage maps each listed Log's message to its Attributes.
+func attributesByMessage(logs []listedLog) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(logs))
+	for _, log := range logs {
+		out[log.Message] = log.Attributes
+	}
+	return out
+}
+
+// assertProjectQueries checks each Query's messages for a Project over all
+// time, newest first.
+func assertProjectQueries(t *testing.T, env *TestEnv, projectID uint32, cases map[string][]string, when string) {
+	t.Helper()
+	for query, want := range cases {
+		logs := runQueryPages(t, env, projectID, queryRequest{Query: query, From: allTime.from, To: allTime.to, Limit: 1000})
+		if got := messages(logs); !slices.Equal(got, want) {
+			t.Errorf("%s: Project %d: %s\n want %v\n got  %v", when, projectID, query, want, got)
+		}
+	}
+}
+
+func TestALogIsFoundByEachOfItsKeysAndReadBackUnchanged(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postLogs(t, env, "application/json", `{
+		"message": "checkout",
+		"time": "2026-10-02T11:59:00Z",
+		"user": "ada",
+		"status": 200,
+		"cached": true,
+		"roles": ["admin", "dev"]
+	}`)
+	env.ProcessLogs(t)
+
+	// Built-in fields aren't Attributes, and an array is JSON text.
+	want := map[string]any{"user": "ada", "status": 200.0, "cached": true, "roles": []any{"admin", "dev"}}
+	queries := map[string][]string{
+		`where user == "ada"`:          {"checkout"},
+		`where status == 200`:          {"checkout"},
+		`where cached == true`:         {"checkout"},
+		`where roles contains "admin"`: {"checkout"},
+		`where user != "ada"`:          {},
+		`where status == "200"`:        {},
+	}
+	check := func(when string) {
+		t.Helper()
+		if got := attributesByMessage(latestLogs(t, env, 123, 10))["checkout"]; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected Attributes %v, got %v", when, want, got)
+		}
+		assertQueries(t, env, queries, when)
+	}
+	check("once stored")
+	env.Reopen(t)
+	check("after a restart")
+}
+
+// logJSON is one Log as a sender would send it: a message, a time and
+// Attributes.
+func logJSON(t *testing.T, message string, at time.Time, attributes map[string]any) string {
+	t.Helper()
+	object := map[string]any{"message": message, "time": at.Format(time.RFC3339Nano)}
+	for name, value := range attributes {
+		object[name] = value
+	}
+	raw, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("Encode Log: %v", err)
+	}
+	return string(raw)
+}
+
+// numberedKeys returns Attributes named <prefix>000, <prefix>001 … each with
+// value.
+func numberedKeys(prefix string, n int, value any) map[string]any {
+	attributes := make(map[string]any, n)
+	for i := range n {
+		attributes[fmt.Sprintf("%s%03d", prefix, i)] = value
+	}
+	return attributes
+}
+
+func TestALogWithManyAttributesIsFoundByEachAndReadBackWhole(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Every built-in field, and 150 keys.
+	wide := numberedKeys("k", 150, "v")
+	wide["level"] = "info"
+	wide["service"] = "web"
+	wide["environment"] = "production"
+	wide["trace_id"] = "4bf92f3577b34da6a3ce929d0e0e4736"
+	wide["span_id"] = "00f067aa0ba902b7"
+	postLogs(t, env, "application/json", logJSON(t, "wide", testNow.Add(-time.Minute), wide))
+	env.ProcessLogs(t)
+
+	// Then a Log with a new key and one of the same keys.
+	env.Clock.Advance(time.Minute)
+	postLogs(t, env, "application/json", logJSON(t, "after", testNow, map[string]any{"late": 1, "k000": "w"}))
+	env.ProcessLogs(t)
+
+	queries := map[string][]string{
+		`where k000 == "v"`: {"wide"},
+		`where k000 == "w"`: {"after"},
+		`where k099 == "v"`: {"wide"},
+		`where k100 == "v"`: {"wide"},
+		`where k149 == "v"`: {"wide"},
+		`where k120 != "v"`: {"after"},
+		`where late == 1`:   {"after"},
+	}
+	attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+	if got, want := attributes["wide"], numberedKeys("k", 150, "v"); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected all 150 Attributes back, got %d: %v", len(got), got)
+	}
+	if got, want := attributes["after"], map[string]any{"late": 1.0, "k000": "w"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected %v, got %v", want, got)
+	}
+	assertQueries(t, env, queries, "once stored")
+}
+
+// postAndProcess sends one request of Logs and processes it before the next,
+// so each is its own Log processing insert.
+func postAndProcess(t *testing.T, env *TestEnv, logs ...string) {
+	t.Helper()
+	body := "[" + strings.Join(logs, ",") + "]"
+	if counts := postLogs(t, env, "application/json", body); counts.Accepted != len(logs) {
+		t.Fatalf("Expected %d Logs accepted, got %+v", len(logs), counts)
+	}
+	env.ProcessLogs(t)
+}
+
+// postWhileHot sends Logs with the clock at 29 minutes past each one's hour.
+// A run of Logs of one hour is one request. It leaves the clock at the last
+// Log's hour.
+func postWhileHot(t *testing.T, env *TestEnv, logs ...string) {
+	t.Helper()
+	hourOf := func(log string) time.Time {
+		var object struct {
+			Time time.Time `json:"time"`
+		}
+		if err := json.Unmarshal([]byte(log), &object); err != nil {
+			t.Fatalf("Decode Log %q: %v", log, err)
+		}
+		return object.Time.UTC().Truncate(time.Hour)
+	}
+	for len(logs) > 0 {
+		hour := hourOf(logs[0])
+		n := 1
+		for n < len(logs) && hourOf(logs[n]).Equal(hour) {
+			n++
+		}
+		env.Clock.Set(hour.Add(29 * time.Minute))
+		postAndProcess(t, env, logs[:n]...)
+		logs = logs[n:]
+	}
+}
+
+func TestAttributesWithAwkwardNamesAreFoundAndReadBack(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Names that differ only in case, a name with a quote, a NUL or a dot, a
+	// name that is a prefix of another, and one name carrying two types.
+	postAndProcess(t, env,
+		`{"message": "one", "time": "2026-10-02T11:59:00Z", "User": "a", "user": "b", "code": 5, "say \"hi\"": "q", "nul\u0000key": "n", "tags": "x", "tags.host": "h", "back`+"`"+`tick": "b", "C:\\dir": "d", "": "empty", "a..b": "dots", ".lead": "l"}`,
+		`{"message": "two", "time": "2026-10-02T11:59:01Z", "code": "E5", "tags": {"host": "h2"}}`)
+
+	queries := map[string][]string{
+		`where User == "a"`:            {"one"},
+		`where user == "b"`:            {"one"},
+		`where user == "a"`:            {},
+		`where code == 5`:              {"one"},
+		`where code == "E5"`:           {"two"},
+		`where ['say "hi"'] == "q"`:    {"one"},
+		`where tags == "x"`:            {"one"},
+		`where ['tags.host'] == "h"`:   {"one"},
+		`where ['tags.host'] == "h2"`:  {"two"},
+		"where ['back`tick'] == \"b\"": {"one"},
+		`where ['C:\\dir'] == "d"`:     {"one"},
+		`where [''] == "empty"`:        {"one"},
+		`where ['a..b'] == "dots"`:     {"one"},
+		`where ['.lead'] == "l"`:       {"one"},
+	}
+	check := func(when string) {
+		t.Helper()
+		attributes := attributesByMessage(latestLogs(t, env, 123, 10))
+		want := map[string]any{"User": "a", "user": "b", "code": 5.0, "say \"hi\"": "q", "nul\u0000key": "n", "tags": "x", "tags.host": "h", "back`tick": "b", `C:\dir`: "d", "": "empty", "a..b": "dots", ".lead": "l"}
+		if got := attributes["one"]; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		if got, want := attributes["two"], map[string]any{"code": "E5", "tags.host": "h2"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: expected %v, got %v", when, want, got)
+		}
+		assertQueries(t, env, queries, when)
+	}
+	check("once stored")
+}
+
+func TestLateAndFutureLogsAreFoundAtOnceByTheirAttributes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	now := testNow.Add(30 * time.Minute)
+	env.Clock.Set(now)
+	yesterday := testNow.AddDate(0, 0, -1)
+	postAndProcess(t, env,
+		logJSON(t, "yesterday", yesterday, map[string]any{"user": "ada", "status": 200}),
+		logJSON(t, "five hours ago", now.Add(-5*time.Hour), map[string]any{"user": "eve", "status": 503}),
+		logJSON(t, "a quarter-hour ago", time.Date(2026, 10, 2, 12, 14, 59, 0, time.UTC), map[string]any{"user": "bob"}),
+		logJSON(t, "just now", time.Date(2026, 10, 2, 12, 15, 0, 0, time.UTC), map[string]any{"user": "cy"}),
+		logJSON(t, "next hour", time.Date(2026, 10, 2, 13, 10, 0, 0, time.UTC), map[string]any{"user": "di"}),
+	)
+
+	logs := latestLogs(t, env, 123, 10)
+	if got, want := messages(logs), []string{"next hour", "just now", "a quarter-hour ago", "five hours ago", "yesterday"}; !slices.Equal(got, want) {
+		t.Fatalf("Expected %v, got %v", want, got)
+	}
+	if got, want := attributesByMessage(logs)["yesterday"], map[string]any{"user": "ada", "status": 200.0}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected a late Log's Attributes %v, got %v", want, got)
+	}
+
+	// Each Log is found by its Attributes as soon as it is stored, whatever
+	// its time.
+	queries := map[string][]string{
+		`where user == "ada"`: {"yesterday"},
+		`where user == "eve"`: {"five hours ago"},
+		`where user == "bob"`: {"a quarter-hour ago"},
+		`where user == "cy"`:  {"just now"},
+		`where user == "di"`:  {"next hour"},
+		`where status == 200`: {"yesterday"},
+		`where status >= 500`: {"five hours ago"},
+		`where user != "cy"`:  {"next hour", "a quarter-hour ago", "five hours ago", "yesterday"},
+	}
+	assertQueries(t, env, queries, "with late and future Logs")
+
+	// A Project whose only Log is late lists it too.
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+	resp := sendLogs(t, env, "/api/456/logs", "application/json",
+		logJSON(t, "only late", yesterday, map[string]any{"k": "v"}),
+		map[string]string{"Authorization": "Bearer other_public_key"})
+	decodeLogCounts(t, resp)
+	env.ProcessLogs(t)
+	if got, want := messages(latestLogs(t, env, 456, 10)), []string{"only late"}; !slices.Equal(got, want) {
+		t.Errorf("Expected Project 456 to list %v, got %v", want, got)
+	}
+	assertProjectQueries(t, env, 456, map[string][]string{`where k == "v"`: {"only late"}}, "Project 456")
+}
+
+// assertListsUnchanged checks that a Project's latest Logs are still want,
+// every field and Attribute alike.
+func assertListsUnchanged(t *testing.T, env *TestEnv, projectID uint32, want []listedLog, when string) {
+	t.Helper()
+	if got := latestLogs(t, env, projectID, 100); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected the same Logs %s:\n want %+v\n got  %+v", when, want, got)
+	}
 }

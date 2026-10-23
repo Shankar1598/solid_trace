@@ -19,7 +19,7 @@ A Log read is a Query run (`EventStore.query_logs`), a histogram, a SQL query, o
 
 ## The lines
 
-Both kinds: `time`, `level` (`info`, or `warn` when the call didn't succeed), `message`, `kind`, `duration_ms`, `outcome`, `error` (when not ok), `user_id`, `user_email`, `request_id` (the web request's id, which Console's own log lines carry, or the job's id). And `version`: the release tag the Console image was built from (`release.yml` passes it), or `dev`.
+Both kinds: `time`, `level` (`info`, or `warn` when the call didn't succeed), `message`, `kind`, `duration_ms`, `outcome`, `error` (when not ok), `user_id`, `user_email`, `user_name`, `request_id` (the web request's id, which Console's own log lines carry, or the job's id). And `version`: the release tag the Console image was built from (`release.yml` passes it), or `dev`.
 
 - `kind: "mcp_tool"`: `tool`, `arguments` (flattened into dotted Attributes, ADR 0002). `outcome` is `ok`, `error` (the tool answered an error) or `exception`.
 - `kind: "log_read"`: `read` (`query`, `histogram`, `sql`, `match`), `origin` (`logs#query`, `dashboard_charts#data`, `mcp:query_logs`, `MonitorEvaluationJob`, …), `project_id`, `query`, `from`, `to`, `rows` (Logs, table rows or buckets answered). `outcome` is `ok`, `rejected`, `timed_out`, `unavailable` or `sql_off`.
@@ -28,7 +28,7 @@ Timing is Console's: it includes the request to EventStore and parsing its answe
 
 ## The SQL EventStore ran
 
-Console sends each read it times `X-Log-SQL: 1` and its `request_id` as `X-Request-Id`. Only then does EventStore record every statement a run (Query, Match monitor, histogram, SQL) makes DuckDB run (`storage.WithReadStatements`), and when the run ends logs one line per statement: `message="Log read SQL"`, `kind=log_read_sql`, `read`, `project_id`, `request_id`, `statement` (1, 2, …) of `statements`, `duration_ms` (DuckDB's run of the statement) and `sql`, with `error` at `warn` when it failed. For SQL queries the statements are the `logs` view's definition, then the query. Vector makes the numbers numbers. A long statement is cut at 64 KB by Log ingest. `read` is `query`, `match` (a Match monitor's `after_batch` run), `histogram` or `sql`.
+Console sends each read it times `X-Log-SQL: 1`, its `request_id` as `X-Request-Id`, and its user as `X-User-Email` and `X-User-Name` (percent-encoded, added 2026-10-23). Only then does EventStore record every statement a run (Query, Match monitor, histogram, SQL) makes DuckDB run (`storage.WithReadStatements`), and when the run ends logs one line per statement: `message="Log read SQL"`, `kind=log_read_sql`, `read`, `project_id`, `request_id`, `statement` (1, 2, …) of `statements`, `duration_ms` (DuckDB's run of the statement), `sql`, `user_email` and `user_name`, with `error` at `warn` when it failed. For SQL queries the statements are the `logs` view's definition, then the query. Vector makes the numbers numbers. A long statement is cut at 64 KB by Log ingest. `read` is `query`, `match` (a Match monitor's `after_batch` run), `histogram` or `sql`.
 
 ## Not now
 

@@ -1,11 +1,11 @@
 import { Link, usePage } from '@inertiajs/react'
-import { Building2, Users, Puzzle, UserCircle } from 'lucide-react'
+import { Building2, Users, Puzzle, UserCircle, Mail } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SharedProps } from '@/types'
 
 export function SettingsSidebar() {
   const { url, props } = usePage<SharedProps>()
-  const { current_org } = props
+  const { current_org, current_user } = props
 
   if (!current_org) return null
 
@@ -33,6 +33,18 @@ export function SettingsSidebar() {
         }
       ]
     },
+    // The install's settings, which apply to every Organization: only an instance admin sees them.
+    ...(current_user?.instance_admin ? [{
+      group: 'Install',
+      items: [
+        {
+          label: 'Email',
+          href: `/${current_org.slug}/settings/email`,
+          icon: Mail,
+          active: url.startsWith(`/${current_org.slug}/settings/email`)
+        }
+      ]
+    }] : []),
     {
       group: 'User',
       items: [

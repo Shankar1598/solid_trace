@@ -1,5 +1,8 @@
 #!/usr/bin/env sh
 
+# The dev ClickHouse keeps its data in the main checkout's storage: stop it
+# first if that is this storage. bin/go-dev starts it again.
+[ -d ./storage/clickhouse/data ] && bin/clickhouse-dev --stop
 rm -rf ./storage/*
 cd console
 rm ./db/schema.rb ./db/message_queue_schema.rb

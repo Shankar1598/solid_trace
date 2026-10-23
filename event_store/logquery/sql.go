@@ -4,27 +4,47 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/solidtrace/event_store/logquery/parser"
-	"github.com/solidtrace/event_store/pkg/sqltext"
+	"github.com/solidtrace/event_store/pkg/chsql"
 	"github.com/solidtrace/event_store/storage"
 )
 
-// fields says where the rows being written against keep each Field: a
-// source of Logs (storage.LogColumns), or the Logs a tail reads.
+// fields says where the rows being written against keep each Field and
+// column: a source of Logs (Columns), or a relation of a tail's chain.
 type fields interface {
+	// Column is the rows' column of the given name, such as a table's or
+	// one extend added.
+	Column(name string) string
 	BuiltIn(name string) string
 	Attribute(t storage.AttributeType, key string) string
 }
 
+// Columns says where a source of Logs keeps each Field, as SQL, such as
+// storage.ClickHouseColumns for the logs table.
+type Columns interface {
+	fields
+	// SearchText is the text search reads besides message: every string
+	// Attribute's value, joined by \0.
+	SearchText() string
+}
+
+// stringColumns are fields with a column that holds a string Attribute's
+// value, or ” for a Log whose Attribute isn't a string, such as the logs
+// table's file: a filter on it skips the Logs of other files.
+type stringColumns interface {
+	StringColumn(key string) (string, bool)
+}
+
 // Where writes the Query's head, its leading where and search stages, as one
-// SQL condition on a source of Logs whose columns cols describes, or "" if
-// the head keeps every Log.
+// ClickHouse SQL condition on a source of Logs whose columns cols describes,
+// or "" if the head keeps every Log.
 //
 // Conditions are two-valued, as a person reads them: a comparison with a
 // Field a Log lacks is false, and its negation true. So != keeps Logs missing
 // the Field, and not(a == b) is a != b.
-func (q *Query) Where(cols storage.LogColumns) string {
+func (q *Query) Where(cols Columns) string {
 	var conditions []string
 	for _, s := range q.head {
 		switch s := s.(type) {
@@ -40,12 +60,82 @@ func (q *Query) Where(cols storage.LogColumns) string {
 	return "(" + strings.Join(conditions, ") AND (") + ")"
 }
 
+// Filter writes the Query's head as Where does, in two parts: the tests that
+// read message, search among them, and the rest. A read can test the rest
+// first, and read message only for the Logs that pass them: left to itself,
+// ClickHouse 26.8 may read all of message first.
+func (q *Query) Filter(cols Columns) storage.Filter {
+	var rest, message []string
+	for _, s := range q.head {
+		switch s := s.(type) {
+		case whereStage:
+			for _, test := range conjuncts(s.predicate) {
+				if readsMessage(test) {
+					message = append(message, writeCondition(test, cols, false))
+				} else {
+					rest = append(rest, writeCondition(test, cols, false))
+				}
+			}
+		case searchStage:
+			message = append(message, writeSearch(s.terms, cols))
+		}
+	}
+	all := func(conditions []string) string {
+		if len(conditions) == 0 {
+			return ""
+		}
+		return "(" + strings.Join(conditions, ") AND (") + ")"
+	}
+	return storage.Filter{Rest: all(rest), Message: all(message)}
+}
+
+// conjuncts are the conditions all of which p is: those it ands.
+func conjuncts(p expr) []expr {
+	if p, ok := p.(and); ok {
+		return append(conjuncts(p.x), conjuncts(p.y)...)
+	}
+	return []expr{p}
+}
+
+// readsMessage reports whether x reads a Log's message.
+func readsMessage(x expr) bool {
+	switch x := x.(type) {
+	case fieldRef:
+		return x.builtIn && x.name == "message"
+	case partOf:
+		return readsMessage(x.x)
+	case compare:
+		return readsMessage(x.x) || readsMessage(x.y)
+	case textMatch:
+		return readsMessage(x.x)
+	case isEmpty:
+		return readsMessage(x.x)
+	case and:
+		return readsMessage(x.x) || readsMessage(x.y)
+	case or:
+		return readsMessage(x.x) || readsMessage(x.y)
+	case not:
+		return readsMessage(x.x)
+	case arith:
+		return readsMessage(x.x) || readsMessage(x.y)
+	case negative:
+		return readsMessage(x.x)
+	case call:
+		for _, arg := range x.args {
+			if readsMessage(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // writeCondition writes a condition, or its negation when negate is set, for
 // a WHERE clause. Negations are pushed down to the tests, and each negated
 // test is written true or false for every row, so that SQL's NULLs never
 // leak out as "unknown". A test not negated may be NULL where a value is
-// missing, which a WHERE reads as false, and is kept plain so that DuckDB can
-// push it into its scans.
+// missing, which a WHERE reads as false, and is kept plain so that ClickHouse
+// can use it to skip granules.
 func writeCondition(p expr, f fields, negate bool) string {
 	switch p := p.(type) {
 	case and:
@@ -74,7 +164,12 @@ func writeCondition(p expr, f fields, negate bool) string {
 	if p.typ() != boolType {
 		panic(fmt.Sprintf("logquery: %T isn't a condition", p))
 	}
-	test := writeValue(p, f)
+	var test string
+	if m, ok := p.(textMatch); ok {
+		test = writeTextMatch(m, f)
+	} else {
+		test = writeValue(p, f)
+	}
 	if negate {
 		return "NOT coalesce(" + test + ", false)"
 	}
@@ -87,6 +182,12 @@ func writeCompare(p compare, f fields, negate bool) string {
 	equal := p.op == opEq || p.op == opNE
 	if equal && p.x.typ() != p.y.typ() {
 		return strconv.FormatBool((p.op == opNE) != negate)
+	}
+	if column, value, ok := stringColumnCompare(p, f); equal && ok {
+		if (p.op == opEq) != negate {
+			return column + " = " + value
+		}
+		return column + " != " + value
 	}
 	x, y := writeValue(p.x, f), writeValue(p.y, f)
 	if equal {
@@ -103,6 +204,28 @@ func writeCompare(p compare, f fields, negate bool) string {
 	return test
 }
 
+// stringColumnCompare returns the column that holds a string Attribute
+// compared with a string that isn't empty, and the string as SQL, if f has
+// one. The column equals the string just when the Attribute does, since a Log
+// without the Attribute, or with one of another type, holds ”.
+func stringColumnCompare(p compare, f fields) (column, value string, ok bool) {
+	columns, ok := f.(stringColumns)
+	if !ok {
+		return "", "", false
+	}
+	field, other := p.x, p.y
+	if _, isLiteral := field.(literal); isLiteral {
+		field, other = other, field
+	}
+	ref, isRef := field.(fieldRef)
+	lit, isLiteral := other.(literal)
+	if !isRef || ref.builtIn || ref.t != stringType || !isLiteral || lit.Kind != parser.StringLiteral || lit.String == "" {
+		return "", "", false
+	}
+	column, ok = columns.StringColumn(ref.name)
+	return column, chsql.String(lit.String), ok
+}
+
 // writeIsEmpty writes a test, true or false for every row, that x is missing
 // or an empty string.
 func writeIsEmpty(x expr, f fields) string {
@@ -111,16 +234,13 @@ func writeIsEmpty(x expr, f fields) string {
 		v := writeValue(x, f)
 		return "(" + v + " IS NULL OR " + v + " = '')"
 	case dynamicType:
-		if ref, ok := x.(fieldRef); ok {
-			s := f.Attribute(storage.StringAttribute, ref.name)
-			tests := []string{"(" + s + " IS NULL OR " + s + " = '')"}
-			for _, t := range dynamicParts[1:] {
-				tests = append(tests, f.Attribute(t, ref.name)+" IS NULL")
-			}
-			return "(" + strings.Join(tests, " AND ") + ")"
+		part := partsOf(x, f)
+		s := part(storage.StringAttribute)
+		tests := []string{"(" + s + " IS NULL OR " + s + " = '')"}
+		for _, t := range dynamicParts[1:] {
+			tests = append(tests, part(t)+" IS NULL")
 		}
-		v := writeValue(x, f)
-		return "(" + v + " IS NULL OR struct_extract(" + v + ", 's') = '')"
+		return "(" + strings.Join(tests, " AND ") + ")"
 	}
 	return "(" + writeValue(x, f) + " IS NULL)"
 }
@@ -142,18 +262,17 @@ func writeValue(x expr, f fields) string {
 		}
 		return dynamicValue(parts)
 	case columnRef:
-		return sqltext.Identifier(x.name)
+		return f.Column(x.name)
 	case attributeText:
 		return "coalesce(" + f.Attribute(storage.StringAttribute, x.name) + ", " + f.Attribute(storage.JSONAttribute, x.name) + ")"
 	case partOf:
 		t, _ := x.t.attributeType()
-		return "struct_extract(" + writeValue(x.x, f) + ", " + sqltext.String(dynamicField(t)) + ")"
+		return dynamicPart(writeValue(x.x, f), t)
 	case literal:
 		return writeLiteral(x.Literal)
-	case compare, isEmpty, and, or, not:
-		return "coalesce(" + writeCondition(x, f, false) + ", false)"
-	case textMatch:
-		return writeTextMatch(x, f)
+	case compare, isEmpty, and, or, not, textMatch:
+		// ClickHouse's tests are UInt8s; a value is a Bool.
+		return "toBool(coalesce(" + writeCondition(x, f, false) + ", false))"
 	case arith:
 		return "(" + writeValue(x.x, f) + " " + x.op + " " + writeValue(x.y, f) + ")"
 	case negative:
@@ -167,38 +286,69 @@ func writeValue(x expr, f fields) string {
 }
 
 // dynamicValue writes the parts of an Attribute read without a type, in
-// dynamicParts' order, as one struct value: NULL where the Log lacks the
-// Attribute, else the part of its type set and the rest NULL.
+// dynamicParts' order, as one tuple: the part of its type set and the rest
+// NULL, or every part NULL where the Log lacks the Attribute, since
+// ClickHouse has no NULL tuple.
 func dynamicValue(parts []string) string {
-	missing := make([]string, len(parts))
-	fields := make([]string, len(parts))
-	for i, part := range parts {
-		missing[i] = part + " IS NULL"
-		fields[i] = sqltext.String(dynamicField(dynamicParts[i])) + ": " + part
-	}
-	return fmt.Sprintf("CASE WHEN %s THEN NULL ELSE {%s} END", strings.Join(missing, " AND "), strings.Join(fields, ", "))
+	return "tuple(" + strings.Join(parts, ", ") + ")"
 }
 
-// writeTextMatch writes a text match with DuckDB's string functions, which
-// are much faster than LIKE patterns. Where case doesn't count, both sides
-// are lowercased by DuckDB's lower, as ILIKE lowercases them.
+// dynamicPart writes the part of v, a dynamic value, that holds values of
+// type t.
+func dynamicPart(v string, t storage.AttributeType) string {
+	for i, part := range dynamicParts {
+		if part == t {
+			return fmt.Sprintf("tupleElement(%s, %d)", v, i+1)
+		}
+	}
+	panic("logquery: no dynamic part of type " + string(t))
+}
+
+// dynamicMissing writes a test, true or false for every row, that v, a
+// dynamic value, is missing: no part is set.
+func dynamicMissing(v string) string {
+	tests := make([]string, len(dynamicParts))
+	for i, t := range dynamicParts {
+		tests[i] = dynamicPart(v, t) + " IS NULL"
+	}
+	return "(" + strings.Join(tests, " AND ") + ")"
+}
+
+// writeTextMatch writes a text match with ClickHouse's string functions.
+// Where case doesn't count, both sides are lowercased by lowerUTF8, or the
+// pattern is looked for with a case-insensitive position.
 func writeTextMatch(m textMatch, f fields) string {
-	x, term := writeValue(m.x, f), sqltext.String(m.pattern)
-	if m.op == matchRegex {
-		return "regexp_matches(" + x + ", " + term + ")"
+	x, term := writeValue(m.x, f), chsql.String(m.pattern)
+	switch {
+	case m.op == matchRegex:
+		return "match(" + x + ", " + term + ")"
+	case m.op == matchContains && m.caseSensitive:
+		return "position(" + x + ", " + term + ") > 0"
+	case m.op == matchContains:
+		return caseInsensitivePosition(x, m.pattern) + " > 0"
 	}
 	if !m.caseSensitive {
-		x, term = "lower("+x+")", "lower("+term+")"
+		x, term = "lowerUTF8("+x+")", "lowerUTF8("+term+")"
 	}
 	switch m.op {
-	case matchContains:
-		return "contains(" + x + ", " + term + ")"
 	case matchStartsWith:
-		return "starts_with(" + x + ", " + term + ")"
+		return "startsWith(" + x + ", " + term + ")"
 	case matchEquals:
 		return x + " = " + term
 	}
 	panic(fmt.Sprintf("logquery: unknown text match %d", m.op))
+}
+
+// caseInsensitivePosition writes where pattern starts in x, ignoring case,
+// from 1, or 0 if x doesn't hold it. An ASCII pattern takes the ASCII form,
+// which is faster: only ASCII bytes can match it.
+func caseInsensitivePosition(x, pattern string) string {
+	for _, r := range pattern {
+		if r >= utf8.RuneSelf {
+			return "positionCaseInsensitiveUTF8(" + x + ", " + chsql.String(pattern) + ")"
+		}
+	}
+	return "positionCaseInsensitive(" + x + ", " + chsql.String(pattern) + ")"
 }
 
 func writeCall(c call, f fields) string {
@@ -207,18 +357,19 @@ func writeCall(c call, f fields) string {
 	case "tostring":
 		return writeToString(c.args[0], f)
 	case "tolower":
-		return "lower(" + arg(0) + ")"
+		return "lowerUTF8(" + arg(0) + ")"
 	case "toupper":
-		return "upper(" + arg(0) + ")"
+		return "upperUTF8(" + arg(0) + ")"
 	case "strlen":
-		return "CAST(length(" + arg(0) + ") AS DOUBLE)"
+		return "toFloat64(lengthUTF8(" + arg(0) + "))"
 	case "todouble", "toreal":
 		return writeToNumber(c.args[0], f)
 	case "toint", "tolong":
 		return "trunc(" + writeToNumber(c.args[0], f) + ")"
 	case "bin", "floor":
 		if c.args[0].typ() == timeType {
-			return "time_bucket(" + arg(1) + ", " + arg(0) + ", TIMESTAMP '1970-01-01')"
+			// Bins of microseconds start at the epoch, whatever their size.
+			return "toStartOfInterval(" + arg(0) + ", " + arg(1) + ")"
 		}
 		return "(floor(" + arg(0) + " / " + arg(1) + ") * " + arg(1) + ")"
 	}
@@ -233,23 +384,30 @@ func writeToString(x expr, f fields) string {
 		return writeValue(x, f)
 	case numberType:
 		return numberText(writeValue(x, f))
+	case boolType:
+		return "if(" + writeValue(x, f) + ", 'true', 'false')"
 	case timeType:
-		return "strftime(" + writeValue(x, f) + ", '%Y-%m-%dT%H:%M:%S.%fZ')"
+		return "formatDateTime(" + writeValue(x, f) + ", '%Y-%m-%dT%H:%i:%S.%fZ')"
 	case dynamicType:
-		if ref, ok := x.(fieldRef); ok {
-			return fmt.Sprintf("coalesce(%s, %s, CAST(%s AS VARCHAR), %s)",
-				f.Attribute(storage.StringAttribute, ref.name), numberText(f.Attribute(storage.NumberAttribute, ref.name)),
-				f.Attribute(storage.BoolAttribute, ref.name), f.Attribute(storage.JSONAttribute, ref.name))
-		}
-		v := writeValue(x, f)
-		return fmt.Sprintf("coalesce(struct_extract(%[1]s, 's'), %[2]s, CAST(struct_extract(%[1]s, 'b') AS VARCHAR), struct_extract(%[1]s, 'j'))",
-			v, numberText("struct_extract("+v+", 'n')"))
+		part := partsOf(x, f)
+		return fmt.Sprintf("coalesce(%s, %s, toString(%s), %s)", part(storage.StringAttribute),
+			numberText(part(storage.NumberAttribute)), part(storage.BoolAttribute), part(storage.JSONAttribute))
 	}
-	return "CAST(" + writeValue(x, f) + " AS VARCHAR)"
+	return "toString(" + writeValue(x, f) + ")"
+}
+
+// partsOf returns the parts of x, a dynamic value, by type: an Attribute's
+// typed values, or the elements of a dynamic column's tuple.
+func partsOf(x expr, f fields) func(storage.AttributeType) string {
+	if ref, ok := x.(fieldRef); ok {
+		return func(t storage.AttributeType) string { return f.Attribute(t, ref.name) }
+	}
+	v := writeValue(x, f)
+	return func(t storage.AttributeType) string { return dynamicPart(v, t) }
 }
 
 func numberText(n string) string {
-	return fmt.Sprintf("CASE WHEN %[1]s = trunc(%[1]s) AND abs(%[1]s) < 1e15 THEN CAST(CAST(%[1]s AS BIGINT) AS VARCHAR) ELSE CAST(%[1]s AS VARCHAR) END", n)
+	return fmt.Sprintf("if(%[1]s = trunc(%[1]s) AND abs(%[1]s) < 1e15, toString(toInt64(%[1]s)), toString(%[1]s))", n)
 }
 
 // writeToNumber writes x as a number: a string is read as one, NULL if it
@@ -258,70 +416,70 @@ func writeToNumber(x expr, f fields) string {
 	switch x.typ() {
 	case numberType:
 		return writeValue(x, f)
+	case stringType:
+		return "toFloat64OrNull(" + writeValue(x, f) + ")"
+	case boolType:
+		return "toFloat64(" + writeValue(x, f) + ")"
 	case dynamicType:
-		if ref, ok := x.(fieldRef); ok {
-			return fmt.Sprintf("coalesce(%s, TRY_CAST(%s AS DOUBLE), CAST(%s AS DOUBLE))",
-				f.Attribute(storage.NumberAttribute, ref.name), f.Attribute(storage.StringAttribute, ref.name),
-				f.Attribute(storage.BoolAttribute, ref.name))
-		}
-		v := writeValue(x, f)
-		return fmt.Sprintf("coalesce(struct_extract(%[1]s, 'n'), TRY_CAST(struct_extract(%[1]s, 's') AS DOUBLE), CAST(struct_extract(%[1]s, 'b') AS DOUBLE))", v)
+		part := partsOf(x, f)
+		return fmt.Sprintf("coalesce(%s, toFloat64OrNull(%s), toFloat64(%s))",
+			part(storage.NumberAttribute), part(storage.StringAttribute), part(storage.BoolAttribute))
 	}
-	return "TRY_CAST(" + writeValue(x, f) + " AS DOUBLE)"
+	return "toFloat64OrNull(toString(" + writeValue(x, f) + "))"
 }
 
+// writeAggregate writes one of summarize's functions. Over no rows, or no
+// values, sum, avg, min, max and percentile are NULL, as SQL has them, rather
+// than ClickHouse's 0 or 1970: their -OrNull forms. dcount counts the
+// values present, approximately past some thousands; percentile is a
+// t-digest's estimate.
 func writeAggregate(a aggregate, f fields) string {
 	switch a.fn {
 	case "count":
-		return "count(*)"
+		return "count()"
 	case "rate":
 		// Every row of a group is in the same bin, so min() reads the
-		// bin's seconds in range.
-		return "coalesce(count(*) / min(" + binSecondsColumn + "), 0)"
+		// bin's seconds in range: none in an empty range.
+		return "coalesce(count() / nullIf(minOrNull(" + f.Column(binSecondsColumn) + "), 0), 0)"
 	case "peak_rate":
-		return "coalesce(max(" + secondCountColumn + "), 0)"
+		return "coalesce(maxOrNull(" + f.Column(secondCountColumn) + "), 0)"
 	case "countif":
-		return "count_if(" + writeValue(a.x, f) + ")"
+		return "countIf(" + writeValue(a.x, f) + ")"
 	case "dcount":
-		return "approx_count_distinct(" + writeValue(a.x, f) + ")"
+		v := writeValue(a.x, f)
+		if a.x.typ() == dynamicType {
+			return "uniqIf(" + v + ", NOT " + dynamicMissing(v) + ")"
+		}
+		return "uniq(" + v + ")"
 	case "percentile":
-		return "approx_quantile(" + writeValue(a.x, f) + ", " + strconv.FormatFloat(a.percent/100, 'g', -1, 64) + ")"
+		return "toFloat64(quantileTDigestOrNull(" + strconv.FormatFloat(a.percent/100, 'g', -1, 64) + ")(" + writeValue(a.x, f) + "))"
 	}
-	return a.fn + "(" + writeValue(a.x, f) + ")"
+	return a.fn + "OrNull(" + writeValue(a.x, f) + ")"
 }
 
 func writeLiteral(l Literal) string {
 	switch l.Kind {
 	case parser.NumberLiteral:
-		return "CAST(" + strconv.FormatFloat(l.Number, 'g', -1, 64) + " AS DOUBLE)"
+		return "toFloat64(" + strconv.FormatFloat(l.Number, 'g', -1, 64) + ")"
 	case parser.BoolLiteral:
 		return strconv.FormatBool(l.Bool)
 	case parser.DateTimeLiteral:
-		return "CAST(" + sqltext.String(l.Time.UTC().Format("2006-01-02 15:04:05.999999")) + " AS TIMESTAMP)"
+		return chsql.Time(l.Time)
 	case parser.TimespanLiteral:
-		return "to_microseconds(" + strconv.FormatInt(l.Timespan.Microseconds(), 10) + ")"
+		return "toIntervalMicrosecond(" + strconv.FormatInt(l.Timespan.Microseconds(), 10) + ")"
 	default:
-		return sqltext.String(l.String)
+		return chsql.String(l.String)
 	}
 }
 
 // writeSearch writes a case-insensitive contains of any of terms over
-// message and every string Attribute.
-func writeSearch(terms []string, cols storage.LogColumns) string {
+// message and every string Attribute's value.
+func writeSearch(terms []string, cols Columns) string {
 	var matches []string
 	for _, term := range terms {
-		lowered := "lower(" + sqltext.String(term) + ")"
-		contains := func(column string) string {
-			return "contains(lower(" + column + "), " + lowered + ")"
-		}
 		matches = append(matches,
-			contains(cols.BuiltIn("message")),
-			fmt.Sprintf("coalesce(list_bool_or(list_transform(map_values(%s), lambda v: %s)), false)",
-				cols.Map(storage.StringAttribute), contains("v")),
-		)
-		for _, column := range cols.Promoted(storage.StringAttribute) {
-			matches = append(matches, contains(column))
-		}
+			caseInsensitivePosition(cols.BuiltIn("message"), term)+" > 0",
+			caseInsensitivePosition(cols.SearchText(), term)+" > 0")
 	}
 	return strings.Join(matches, " OR ")
 }

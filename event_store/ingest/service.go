@@ -23,7 +23,7 @@ var (
 // Service owns Event ingest and Log ingest after authentication succeeds: it
 // stores each Event, and each request's normalised Logs, in Pebble and nothing
 // more. Event processing does the Issue work; Log processing moves Logs to
-// DuckDB.
+// ClickHouse.
 type Service struct {
 	events       EventWriter
 	notifyEvents func(projectID uint32)

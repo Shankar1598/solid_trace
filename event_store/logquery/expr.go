@@ -62,24 +62,9 @@ func (t valueType) attributeType() (storage.AttributeType, bool) {
 }
 
 // dynamicParts are the types an Attribute read without a type is made of,
-// in the order a dynamic value's struct holds them.
+// in the order a dynamic value's tuple holds them.
 var dynamicParts = []storage.AttributeType{
 	storage.StringAttribute, storage.NumberAttribute, storage.BoolAttribute, storage.JSONAttribute,
-}
-
-// dynamicField is the field of a dynamic value's struct that holds values of
-// type t.
-func dynamicField(t storage.AttributeType) string {
-	switch t {
-	case storage.StringAttribute:
-		return "s"
-	case storage.NumberAttribute:
-		return "n"
-	case storage.BoolAttribute:
-		return "b"
-	default:
-		return "j"
-	}
 }
 
 // expr is a compiled, typed expression.

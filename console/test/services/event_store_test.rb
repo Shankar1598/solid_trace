@@ -33,7 +33,7 @@ class EventStoreTest < ActiveSupport::TestCase
   end
 
   test "query_events! raises Unavailable with EventStore's reason when it can't read Events" do
-    why = "Events can't be read now: the bucket timed out; EventStore tries again every minute"
+    why = "Events can't be read now: ClickHouse doesn't answer: dial tcp 127.0.0.1:4200: connect: connection refused"
     stub_request(:get, "#{@base_url}/api/123/events").to_return(status: 503, body: { error: why }.to_json)
 
     error = assert_raises(EventStore::Unavailable) { EventStore.query_events!(project_id: 123) }

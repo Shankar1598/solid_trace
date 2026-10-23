@@ -7,7 +7,7 @@ module McpTools
 
     description "Makes a Monitor on one of the Organization's Projects. It is on, and runs every interval_minutes, telling " \
                 "the Integrations of integration_ids what it finds. A threshold Monitor needs operator and threshold. " \
-                "EventStore checks the Query before it's saved. run_monitor runs it now."
+                "EventStore checks the Query before it's saved. run_monitor runs it now. #{READING_LESS}"
     writes!
     takes_project
     takes_monitor_fields required: %i[name kind query]

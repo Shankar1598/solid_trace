@@ -51,7 +51,7 @@ func TestAFiltersValueIsComparedAsIfWrittenInItsPlace(t *testing.T) {
 		// brackets.
 		{`where ['$type'] == "order"`, nil, []string{"gil"}},
 		{`where ['$type'] == $type`, filters{"type": {"order"}}, []string{"gil"}},
-	}, "in the hot table")
+	}, "once stored")
 }
 
 func TestSeveralValuesMatchAnyOrNoneAndAllDropsTheComparison(t *testing.T) {
@@ -87,12 +87,12 @@ func TestSeveralValuesMatchAnyOrNoneAndAllDropsTheComparison(t *testing.T) {
 		{`search $q`, filters{"q": {"disk", "HEALTH"}}, []string{"ed", "bob"}},
 		{`search $q | where service == "api"`, nil, []string{"ed", "cy", "ada"}},
 	}
-	assertFilterCases(t, env, cases, "in the hot table")
-	exportLanguageLogs(t, env)
+	assertFilterCases(t, env, cases, "once stored")
+	postLateLanguageLog(t, env)
 	assertFilterCases(t, env, []filterCase{
 		{`where path contains $p`, filters{"p": {"users"}}, []string{"ed", "fy", "ada"}},
 		{`where service != $service`, filters{"service": {"api"}}, []string{"bob", "di"}},
-	}, "in files")
+	}, "with a late Log")
 
 	// A filter set to All compiles to the SQL of the Query without its
 	// comparison; readable SQL compiles every filter as All.
@@ -151,7 +151,7 @@ func TestAFiltersValueIsTextOrTheNumberOrBoolItReadsAs(t *testing.T) {
 		{`where service == $service`, filters{"service": {"7"}}, []string{"gil"}},
 		{`where service == $service`, filters{"service": {"7.0"}}, nil},
 		{`where level == $level`, filters{"level": {"error"}}, []string{"ed", "cy"}},
-	}, "in the hot table")
+	}, "once stored")
 
 	// After summarize, a number column compares with the number the value
 	// reads as, and a value that isn't one matches nothing.
@@ -305,7 +305,6 @@ func TestEachSetOfFilterValuesHasItsOwnBinsAndAllSharesTheQuerysWithout(t *testi
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	postChartLogs(t, env)
-	env.ExportLogs(t)
 
 	query := `where user == $user | summarize count() by bin(time, 1h)`
 	ada, _, adaMisses := binnedTableWith(t, env, query, filters{"user": {"ada"}})
@@ -327,7 +326,7 @@ func TestEachSetOfFilterValuesHasItsOwnBinsAndAllSharesTheQuerysWithout(t *testi
 		t.Errorf("Expected All to take the %d bins of the Query without the comparison, got %d hits and %d misses", withoutMisses, hits, misses)
 	}
 
-	env.LogStore.UseBinCache(0)
+	env.ClickHouseLogs.UseBinCache(0)
 	for user, cached := range map[string]string{"ada": ada, "bob": bob} {
 		if uncached, _, _ := binnedTableWith(t, env, query, filters{"user": {user}}); uncached != cached {
 			t.Errorf("%s for %s\n from the bin cache: %s\n without it:         %s", query, user, cached, uncached)

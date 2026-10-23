@@ -3,7 +3,7 @@
 require "test_helper"
 require "rake"
 
-# The operator's side of the instance settings: there is no UI for them.
+# The operator's side of the instance settings that have no UI yet.
 class InstanceSettingsTaskTest < ActiveSupport::TestCase
   setup do
     Rails.application.load_tasks unless Rake::Task.task_defined?("instance_settings:set")
@@ -23,10 +23,11 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
 
     assert InstanceSetting.current.sql_queries_enabled?
     assert_includes out, "SQL queries: on"
-    [ "read-only", "read only the logs and events views", "their own Organization's Projects", "starve ingest" ].each do |allowed|
+    [ "ClickHouse SQL", "read-only", "sees only that Project's logs and events", "their own Organization's Projects",
+      "slow ingest down" ].each do |allowed|
       assert_includes out, allowed
     end
-    [ "every Organization's Logs", "read files on the server", "read the bucket", "web address" ].each do |refused|
+    [ "DuckDB", "not sandboxed", "every Organization's Logs", "read files on the server", "web address" ].each do |refused|
       assert_not_includes out, refused
     end
   end

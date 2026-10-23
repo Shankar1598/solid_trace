@@ -27,8 +27,8 @@ type Log struct {
 	Attributes  Attributes `json:"attributes" msgpack:"a"`
 }
 
-// Attributes are a Log's Attributes, one map per value type, as a hot table
-// stores them. A name is in at most one of the maps.
+// Attributes are a Log's Attributes, one map per value type. A name is in at
+// most one of the maps.
 type Attributes struct {
 	String map[string]string  `msgpack:"s,omitempty"`
 	Number map[string]float64 `msgpack:"n,omitempty"`

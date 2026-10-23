@@ -7,7 +7,8 @@ module McpTools
     include DashboardTool
 
     description "Adds a Chart to a Dashboard: a Query on one of the Organization's Projects, drawn as viz. " \
-                "It goes under every Chart unless y is given. get_chart_data shows what it draws."
+                "It goes under every Chart unless y is given. get_chart_data shows what it draws. " \
+                "#{READING_LESS}"
     writes!
     takes_dashboard
     takes_chart_fields required: %i[project title query]

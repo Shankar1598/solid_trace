@@ -15,7 +15,6 @@ class ProjectSerializer
       slug: @project.slug,
       platform: @project.platform,
       log_retention_days: @project.log_retention_days,
-      log_file_order: @project.log_file_order,
       created_at: @project.created_at.iso8601,
       issues_count: @project.issues.count,
     }

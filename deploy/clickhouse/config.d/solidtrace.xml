@@ -1,0 +1,81 @@
+<!--
+  ClickHouse's server config for SolidTrace, over the image's config.xml. This
+  directory replaces the image's config.d, so its docker_related_config.xml,
+  which listens on every address, is gone. Used by Compose and bin/clickhouse-dev.
+-->
+<clickhouse>
+  <!-- Loopback only: EventStore is on the same host network. -->
+  <listen_host>127.0.0.1</listen_host>
+  <!-- Not ClickHouse's 9000, which MinIO takes on a development machine. -->
+  <tcp_port>4200</tcp_port>
+  <http_port>4201</http_port>
+  <mysql_port remove="1"/>
+  <postgresql_port remove="1"/>
+  <interserver_http_port remove="1"/>
+
+  <!-- To the container's output only, which Compose rotates. -->
+  <logger>
+    <level>warning</level>
+    <console>1</console>
+    <log remove="1"/>
+    <errorlog remove="1"/>
+  </logger>
+
+  <!-- From deploy/install: half of RAM. 0 is ClickHouse's own
+       default, 90% of RAM. Never a container memory limit: under one, 26.8
+       returns freed pages at once and scans run about 1.9x slower. -->
+  <max_server_memory_usage from_env="SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES"/>
+
+  <!-- Users see system tables and information_schema only when granted. -->
+  <access_control_improvements>
+    <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
+    <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
+  </access_control_improvements>
+
+  <!-- Old Log files, from before the switch, mounted read-only here, where
+       file() reads them. -->
+  <user_files_path>/logs_parquet/</user_files_path>
+
+  <!-- The tables' storage policy. EventStore's clickhouse-config adds a bucket
+       volume to it when event_store.yml has an object_store. -->
+  <storage_configuration>
+    <policies>
+      <solidtrace>
+        <volumes>
+          <local>
+            <disk>default</disk>
+            <volume_priority>1</volume_priority>
+          </local>
+        </volumes>
+      </solidtrace>
+    </policies>
+  </storage_configuration>
+
+  <!-- Only query_log, for a few days. -->
+  <query_log>
+    <partition_by>event_date</partition_by>
+    <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+  </query_log>
+  <trace_log remove="1"/>
+  <query_thread_log remove="1"/>
+  <query_views_log remove="1"/>
+  <part_log remove="1"/>
+  <background_schedule_pool_log remove="1"/>
+  <text_log remove="1"/>
+  <metric_log remove="1"/>
+  <error_log remove="1"/>
+  <instrumentation_trace_log remove="1"/>
+  <query_metric_log remove="1"/>
+  <asynchronous_metric_log remove="1"/>
+  <iceberg_metadata_log remove="1"/>
+  <delta_lake_metadata_log remove="1"/>
+  <opentelemetry_span_log remove="1"/>
+  <crash_log remove="1"/>
+  <processors_profile_log remove="1"/>
+  <asynchronous_insert_log remove="1"/>
+  <backup_log remove="1"/>
+  <blob_storage_log remove="1"/>
+  <aggregated_zookeeper_log remove="1"/>
+  <zookeeper_log remove="1"/>
+  <zookeeper_connection_log remove="1"/>
+</clickhouse>

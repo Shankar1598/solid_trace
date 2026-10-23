@@ -26,16 +26,12 @@ type sqlRequest struct {
 	TimeoutSeconds *float64  `json:"timeout_seconds"`
 }
 
-// sqlTimeoutSeconds is the longest a SQL run may take. DuckDB gives a query
-// every thread it has, so a slow one would hold them from ingest for as long
-// as it ran.
-const sqlTimeoutSeconds = 10.0
-
 // sqlTimeout is the timeout a SQL run gets for the timeout_seconds it asked
-// for: sqlTimeoutSeconds at most, and when it asked for none. One startRun
-// refuses, not positive or longer than a day, is passed on for it to refuse.
-func sqlTimeout(asked *float64) *float64 {
-	timeout := sqlTimeoutSeconds
+// for: the SQL users' time limit at most, and when it asked for none. One
+// startRun refuses, not positive or longer than a day, is passed on for it
+// to refuse.
+func sqlTimeout(limit time.Duration, asked *float64) *float64 {
+	timeout := limit.Seconds()
 	if asked != nil && (*asked < timeout || *asked > maxTimeoutSeconds) {
 		timeout = *asked
 	}
@@ -47,16 +43,17 @@ const simplerSQL = "try a shorter time range or a simpler query"
 
 // POST /api/:project_id/logs/sql
 //
-// Runs raw DuckDB SQL, {"sql", "from", "to"} (RFC 3339), as written, with the
-// logs view holding the Project's Logs of [from, to) (ADR 0003), and
-// "timeout_seconds" optional. Only while the instance's SQL queries setting is
-// on; otherwise 403. The run stops after timeout_seconds, and after
-// sqlTimeoutSeconds whatever it asks for. Answers {"table": {"columns": [{"name", "type"}],
-// "rows": [[…]], "truncated"}, "elapsed_ms"}, at most maxTableRows rows, and
-// "notice" when the SQL matches message slowly, saying what to write instead. SQL
-// that fails answers 400 with {"error"}, DuckDB's message, as does SQL that
-// isn't one read-only SELECT, with "SQL queries are read-only: … isn't
-// allowed". A run past its timeout answers 504 with {"errors": [{"message"}]}.
+// Runs ClickHouse SQL, {"sql", "from", "to"} (RFC 3339), as written, as the
+// Project's SQL user, whose logs and events show the Project's rows of
+// [from, to) and nothing else (ADR 0003), with "timeout_seconds" optional.
+// Only while the instance's SQL queries setting is on; otherwise 403. The run
+// stops after timeout_seconds, and at the SQL users' time limit whatever it
+// asks for. Answers {"table": {"columns": [{"name", "type"}], "rows": [[…]],
+// "truncated"}, "elapsed_ms"}, at most maxTableRows rows. SQL that fails
+// answers 400 with {"error"}, ClickHouse's message, which gives a syntax
+// error's position: so does SQL that reads what its user may not, or
+// changes a setting. A run past its timeout answers 504 with {"errors":
+// [{"message"}]}.
 func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -74,7 +71,7 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with sql, from and to"})
 	}
-	run, problem := startRun(c, "sql", sqlTimeout(req.TimeoutSeconds))
+	run, problem := startRun(c, "sql", sqlTimeout(h.sql.Limits().Time, req.TimeoutSeconds))
 	if problem != nil {
 		return c.Status(400).JSON(problem)
 	}
@@ -82,13 +79,15 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
-	result, err := h.logs.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, maxTableRows)
-	// Stopped, the SQL fails as DuckDB interrupts it.
-	if err != nil && run.timedOut() {
+	result, err := h.sql.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, maxTableRows)
+	// Stopped, the SQL fails as the context ends or ClickHouse stops it at
+	// its time limit.
+	var sqlErr *storage.SQLError
+	isSQLErr := errors.As(err, &sqlErr)
+	if err != nil && (run.timedOut() || isSQLErr && sqlErr.Stopped) {
 		return run.stopped(c, simplerSQL)
 	}
-	var sqlErr *storage.SQLError
-	if errors.As(err, &sqlErr) {
+	if isSQLErr {
 		return c.Status(400).JSON(fiber.Map{"error": sqlErr.Error()})
 	}
 	if err != nil {
@@ -99,32 +98,31 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	for i, col := range result.Columns {
 		columns[i] = logquery.Column{Name: col.Name, Type: columnType(col.Type)}
 	}
-	answer := fiber.Map{"table": fiber.Map{"columns": columns, "rows": result.Rows, "truncated": result.Truncated}}
-	if result.Notice != "" {
-		answer["notice"] = result.Notice
-	}
-	return run.answer(c, answer)
+	return run.answer(c, fiber.Map{"table": fiber.Map{"columns": columns, "rows": result.Rows, "truncated": result.Truncated}})
 }
 
-// columnType names a DuckDB type as a table's column types are named: string,
-// number, bool, datetime, timespan, or dynamic for the rest (maps, lists,
-// structs, JSON).
-func columnType(duckdbType string) string {
-	switch duckdbType {
-	case "VARCHAR", "UUID", "ENUM", "TIME", "TIMETZ", "BIT":
-		return "string"
-	case "BOOLEAN":
-		return "bool"
-	case "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT",
-		"UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "FLOAT", "DOUBLE":
-		return "number"
-	case "DATE", "TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS", "TIMESTAMPTZ":
-		return "datetime"
-	case "INTERVAL":
-		return "timespan"
+// columnType names a ClickHouse type as a table's column types are named:
+// string, number, bool, datetime, or dynamic for the rest (maps, arrays,
+// tuples, JSON, Dynamic, intervals).
+func columnType(clickHouseType string) string {
+	t := clickHouseType
+	for _, wrapper := range []string{"LowCardinality(", "Nullable("} {
+		if strings.HasPrefix(t, wrapper) && strings.HasSuffix(t, ")") {
+			t = strings.TrimSuffix(strings.TrimPrefix(t, wrapper), ")")
+		}
 	}
-	if strings.HasPrefix(duckdbType, "DECIMAL") {
+	name, _, _ := strings.Cut(t, "(")
+	switch name {
+	case "String", "FixedString", "UUID", "Enum8", "Enum16", "IPv4", "IPv6":
+		return "string"
+	case "Bool":
+		return "bool"
+	case "Int8", "Int16", "Int32", "Int64", "Int128", "Int256",
+		"UInt8", "UInt16", "UInt32", "UInt64", "UInt128", "UInt256",
+		"Float32", "Float64", "BFloat16", "Decimal", "Decimal32", "Decimal64", "Decimal128", "Decimal256":
 		return "number"
+	case "Date", "Date32", "DateTime", "DateTime64":
+		return "datetime"
 	}
 	return "dynamic"
 }

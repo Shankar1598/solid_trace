@@ -176,6 +176,17 @@ A filter goes on either side of `==`, `!=`, `=~` and `!~`, after `contains`, `st
 
 Only a Dashboard's Charts fill filters in, on the Dashboard page or through the MCP server's `get_chart_data`. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have. A Monitor's Query can't name a filter.
 
+## Reading less
+
+Every Project's Logs are sorted by `service`, then by the `file` Attribute, then by time.
+
+- **Filter on `service` and `file`** with `==` or `in`, such as `where file == "sidekiq.log"`, to read only those Logs, whatever the range. `service` skips most. `file` skips well too, alone, when the Project has few Services.
+- **Filter on an Attribute rather than `message`.** Each Attribute is kept apart from the others, so a condition on one reads it alone. `message` is the widest Field: `where job_status == "fail"` reads far less than `where message contains "INFO: fail:"`. Pair a `message` match with a `service` or `file` condition.
+- **Use `where`, not `search`**, which reads `message` and every string Attribute.
+- **Keep the range short.** A read skips the days outside it, and a Dashboard refresh reads again only the bins of hours that haven't ended or have new Logs.
+
+In SQL, the same holds: a condition on `service` and `file` reads less, and `attributes.name.:String` reads that Attribute alone.
+
 ## Not in the language
 
 `has`, `join`, `mv-expand`, `parse`, `evaluate`, `project-away` and series and geo functions aren't supported.

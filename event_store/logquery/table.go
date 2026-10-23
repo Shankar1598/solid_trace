@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/solidtrace/event_store/pkg/sqltext"
+	"github.com/solidtrace/event_store/pkg/chsql"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -17,48 +17,67 @@ func readColumn(t storage.AttributeType, key string) string {
 	return "@" + string(t) + ":" + key
 }
 
-// tailFields are the columns of the Logs a tail reads: the built-in fields
-// by name, and each Attribute it reads under its readColumn.
-type tailFields struct{}
+// tailFields are the columns of rel, one relation of a tail's chain: a
+// table's columns and the built-in fields by name, and each Attribute the
+// tail reads under its readColumn. Each is written as rel's own column, since
+// ClickHouse lets an alias in a SELECT stand for a column of the same name.
+type tailFields struct{ rel string }
 
-func (tailFields) BuiltIn(name string) string {
-	return sqltext.Identifier(name)
+func (f tailFields) Column(name string) string {
+	return f.rel + "." + chsql.Identifier(name)
 }
 
-func (tailFields) Attribute(t storage.AttributeType, key string) string {
-	return sqltext.Identifier(readColumn(t, key))
+func (f tailFields) BuiltIn(name string) string {
+	return f.Column(name)
+}
+
+func (f tailFields) Attribute(t storage.AttributeType, key string) string {
+	return f.Column(readColumn(t, key))
+}
+
+// tailOn are the fields of the relation rel of a run's chain.
+func tailOn(rel string) fields {
+	return tailFields{rel: rel}
 }
 
 // Select is the select list a source of Logs, whose columns cols describes,
 // is read with for the Query's tail: id, the built-in fields, and each
 // Attribute the tail reads.
-func (q *Query) Select(cols storage.LogColumns) string {
+func (q *Query) Select(cols Columns) string {
 	list := []string{cols.BuiltIn("id")}
 	for _, name := range builtInOrder {
 		list = append(list, cols.BuiltIn(name))
 	}
 	for _, k := range q.reads {
-		list = append(list, cols.Attribute(k.t, k.key)+" AS "+sqltext.Identifier(readColumn(k.t, k.key)))
+		list = append(list, cols.Attribute(k.t, k.key)+" AS "+chsql.Identifier(readColumn(k.t, k.key)))
 	}
 	return strings.Join(list, ", ")
 }
 
 // orderColumn numbers the rows of a sorted relation in their order, since
 // SQL keeps no order from one query to the next.
-const orderColumn = `"#order"`
+const orderColumn = "#order"
 
-// TableSQL writes the Query's tail as SQL over logs, the Logs that pass its
-// head read with Select, returning its table's rows, at most limit of them.
-// Each stage is one CTE.
+// sourceRelation is the CTE of the Logs that pass a Query's head, which its
+// tail reads. takenRelation is a subquery's, whose rows a stage numbers.
+const (
+	sourceRelation = "matched"
+	takenRelation  = "taken"
+)
+
+// TableSQL writes the Query's tail as ClickHouse SQL over logs, a query of
+// the Logs that pass its head read with Select, returning its table's rows,
+// at most limit of them. Each stage is one CTE.
 func (q *Query) TableSQL(logs string, limit int) string {
-	c := &chain{prev: "logs", isLogs: true}
-	ctes := []string{"logs AS (\n" + logs + "\n)"}
-	q.writeTail(c, tailFields{})
+	c := &chain{prev: sourceRelation, isLogs: true}
+	ctes := []string{sourceRelation + " AS (\n" + logs + "\n)"}
+	q.writeTail(c, tailOn)
 	for _, cte := range c.ctes {
 		ctes = append(ctes, cte.name+" AS ("+cte.sql+")")
 	}
+	last := tailOn(c.prev)
 	return fmt.Sprintf("WITH %s\nSELECT %s FROM %s ORDER BY %s LIMIT %d",
-		strings.Join(ctes, ",\n"), selectList(q.output, tailFields{}), c.prev, c.order(), limit)
+		strings.Join(ctes, ",\n"), selectList(q.output, last), c.prev, c.order(last), limit)
 }
 
 // chain is a Query written as a chain of CTEs, one per stage, each reading
@@ -83,25 +102,31 @@ func (c *chain) add(format string, args ...any) {
 	c.prev = name
 }
 
-// order is what the chain's last relation is ordered by.
-func (c *chain) order() string {
+// order is what the chain's last relation, whose columns f reads, is
+// ordered by.
+func (c *chain) order(f fields) string {
 	switch {
 	case c.ordered:
-		return orderColumn
+		return f.Column(orderColumn)
 	case c.isLogs:
-		return newestFirstOrder
+		return newestFirstOrder(f)
 	}
 	return "ALL"
 }
 
-// newestFirstOrder orders Logs newest first.
-const newestFirstOrder = `"time" DESC, "id" DESC`
+// newestFirstOrder orders Logs, whose fields f reads, newest first: by
+// time, then by id in the order of its bytes.
+func newestFirstOrder(f fields) string {
+	return f.BuiltIn("time") + " DESC, " + chsql.UUIDOrder(f.BuiltIn("id")) + " DESC"
+}
 
-// writeTail adds the Query's tail to a chain over Logs, whose Fields f reads.
-func (q *Query) writeTail(c *chain, f fields) {
-	keepOrder := func(list string) string {
+// writeTail adds the Query's tail to a chain over Logs, whose relations' Fields
+// on reads.
+func (q *Query) writeTail(c *chain, on func(rel string) fields) {
+	order := chsql.Identifier(orderColumn)
+	keepOrder := func(list string, f fields) string {
 		if c.ordered {
-			return list + ", " + orderColumn
+			return list + ", " + f.Column(orderColumn) + " AS " + order
 		}
 		return list
 	}
@@ -116,30 +141,33 @@ func (q *Query) writeTail(c *chain, f fields) {
 			has[col.name] = true
 		}
 	}
+	taken := on(takenRelation)
 	for i, s := range q.tail {
+		f := on(c.prev)
 		switch s := s.(type) {
 		case whereStage:
 			c.add("SELECT * FROM %s WHERE %s", c.prev, writeCondition(s.predicate, f, false))
 		case projectStage:
-			c.add("SELECT %s FROM %s", keepOrder(selectList(s.columns, f)), c.prev)
+			c.add("SELECT %s FROM %s", keepOrder(selectList(s.columns, f), f), c.prev)
 			hasOnly(s.columns)
 			c.isLogs = false
 		case extendStage:
 			var replaced []string
 			for _, col := range s.columns {
 				if has[col.name] {
-					replaced = append(replaced, sqltext.Identifier(col.name))
+					replaced = append(replaced, chsql.Identifier(col.name))
 				}
 				has[col.name] = true
 			}
 			all := "*"
 			if len(replaced) > 0 {
-				all = "* EXCLUDE (" + strings.Join(replaced, ", ") + ")"
+				all = "* EXCEPT (" + strings.Join(replaced, ", ") + ")"
 			}
 			c.add("SELECT %s, %s FROM %s", all, selectList(s.columns, f), c.prev)
 		case summarizeStage:
 			if rates := q.rateColumns(s, i, f); rates != "" {
 				c.add("SELECT *, %s FROM %s", rates, c.prev)
+				f = on(c.prev)
 			}
 			all := append(append([]namedValue{}, s.by...), s.aggregates...)
 			group := ""
@@ -155,26 +183,26 @@ func (q *Query) writeTail(c *chain, f fields) {
 			c.ordered, c.isLogs = false, false
 		case sortStage:
 			c.add("SELECT %s, row_number() OVER (ORDER BY %s) AS %s FROM %s",
-				exceptOrder(c.ordered), orderBy(s.keys, f), orderColumn, c.prev)
+				exceptOrder(c.ordered), orderBy(s.keys, f), order, c.prev)
 			c.ordered = true
 		case takeStage:
 			switch {
 			case c.ordered:
-				c.add("SELECT * FROM %s ORDER BY %s LIMIT %d", c.prev, orderColumn, s.n)
+				c.add("SELECT * FROM %s ORDER BY %s LIMIT %d", c.prev, f.Column(orderColumn), s.n)
 			case c.isLogs:
-				c.add("SELECT *, row_number() OVER (ORDER BY %[1]s) AS %[2]s FROM (SELECT * FROM %[3]s ORDER BY %[1]s LIMIT %[4]d)",
-					newestFirstOrder, orderColumn, c.prev, s.n)
+				c.add("SELECT *, row_number() OVER (ORDER BY %s) AS %s FROM (SELECT * FROM %s ORDER BY %s LIMIT %d) AS %s",
+					newestFirstOrder(taken), order, c.prev, newestFirstOrder(f), s.n, takenRelation)
 				c.ordered = true
 			default:
 				c.add("SELECT * FROM %s LIMIT %d", c.prev, s.n)
 			}
 		case topStage:
-			order := orderBy([]sortKey{s.key}, f)
-			c.add("SELECT *, row_number() OVER (ORDER BY %[1]s) AS %[2]s FROM (SELECT %[3]s FROM %[4]s ORDER BY %[1]s LIMIT %[5]d)",
-				order, orderColumn, exceptOrder(c.ordered), c.prev, s.n)
+			keys := []sortKey{s.key}
+			c.add("SELECT *, row_number() OVER (ORDER BY %s) AS %s FROM (SELECT %s FROM %s ORDER BY %s LIMIT %d) AS %s",
+				orderBy(keys, taken), order, exceptOrder(c.ordered), c.prev, orderBy(keys, f), s.n, takenRelation)
 			c.ordered = true
 		case countStage:
-			c.add(`SELECT count(*) AS "Count" FROM %s`, c.prev)
+			c.add("SELECT count() AS %s FROM %s", chsql.Identifier("Count"), c.prev)
 			has = map[string]bool{"Count": true}
 			c.ordered, c.isLogs = false, false
 		case distinctStage:
@@ -188,14 +216,14 @@ func (q *Query) writeTail(c *chain, f fields) {
 func selectList(columns []namedValue, f fields) string {
 	list := make([]string, len(columns))
 	for i, col := range columns {
-		list[i] = writeValue(col.x, f) + " AS " + sqltext.Identifier(col.name)
+		list[i] = writeValue(col.x, f) + " AS " + chsql.Identifier(col.name)
 	}
 	return strings.Join(list, ", ")
 }
 
 func exceptOrder(ordered bool) string {
 	if ordered {
-		return "* EXCLUDE (" + orderColumn + ")"
+		return "* EXCEPT (" + chsql.Identifier(orderColumn) + ")"
 	}
 	return "*"
 }
@@ -222,7 +250,7 @@ func orderBy(keys []sortKey, f fields) string {
 			if ref, ok := k.x.(fieldRef); ok {
 				part = f.Attribute(t, ref.name)
 			} else {
-				part = "struct_extract(" + writeValue(k.x, f) + ", " + sqltext.String(dynamicField(t)) + ")"
+				part = dynamicPart(writeValue(k.x, f), t)
 			}
 			terms = append(terms, part+direction+nulls)
 		}
@@ -255,8 +283,9 @@ func (q *Query) Columns() []Column {
 	return columns
 }
 
-// Row turns a row of the table as DuckDB returns it into JSON values: times
-// as RFC 3339 in UTC, a dynamic value as the value it holds.
+// Row turns a row of the table, as storage's ScanLogTable returns it, into
+// JSON values: times as RFC 3339 in UTC, a dynamic value as the value it
+// holds.
 func (q *Query) Row(raw []any) []any {
 	row := make([]any, len(raw))
 	for i, v := range raw {
@@ -266,7 +295,7 @@ func (q *Query) Row(raw []any) []any {
 }
 
 // tableCell is a cell of a Query's table as a JSON value: a time as RFC 3339
-// in UTC, NaN and infinities as null, and a dynamic value, a struct with one
+// in UTC, NaN and infinities as null, and a dynamic value, a tuple with one
 // part set, as the value of that part.
 func tableCell(v any) any {
 	switch v := v.(type) {
@@ -277,15 +306,21 @@ func tableCell(v any) any {
 			return nil
 		}
 		return v
-	case map[string]any:
-		// A dynamic value: one part set, the rest NULL.
-		for _, field := range []string{"s", "n", "b"} {
-			if part := v[field]; part != nil {
-				return tableCell(part)
+	case float32:
+		return tableCell(float64(v))
+	case []any:
+		// A dynamic value: one part set, the rest NULL, in dynamicParts'
+		// order.
+		for i, t := range dynamicParts {
+			if i >= len(v) || v[i] == nil {
+				continue
 			}
-		}
-		if j, ok := v["j"].(string); ok && json.Valid([]byte(j)) {
-			return json.RawMessage(j)
+			if t != storage.JSONAttribute {
+				return tableCell(v[i])
+			}
+			if j, ok := v[i].(string); ok && json.Valid([]byte(j)) {
+				return json.RawMessage(j)
+			}
 		}
 		return nil
 	}

@@ -2,8 +2,8 @@ package logprocessing
 
 import "sync"
 
-// worker is the lifecycle shared by Log processing, the Log export and the
-// cleanup: one goroutine that runs until stop closes.
+// worker is the lifecycle shared by Log processing and the cleanup: one
+// goroutine that runs until stop closes.
 type worker struct {
 	stop     chan struct{}
 	stopOnce sync.Once

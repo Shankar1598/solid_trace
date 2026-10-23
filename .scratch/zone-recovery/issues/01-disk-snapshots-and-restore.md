@@ -50,3 +50,6 @@ The bucket gets only Log files, each one uploaded once its hour is exported ([AD
 - [ ] Practise the restore once into a throwaway VM, without the static IP, then delete it. Record the time it took and anything the databases logged while recovering in the Comments.
 
 ## Comments
+
+- 2026-10-23, from the ClickHouse effort ([spec](../../clickhouse/spec.md)): **to fix for HA, left for now by the user.** After the switch to ClickHouse, Logs older than a day sit in the bucket as ClickHouse chunks whose file map lives only on the VM's disk, so the bucket can't be restored from (today's Log files are at least self-contained Parquet). A restored snapshot can also point at chunks ClickHouse deleted after it (merges, late Logs, Retention), so the restore needs GCS soft delete (check it's on for `gs://tagalys-solid-trace`) and a step that restores objects under `clickhouse/` deleted after the snapshot. The fix discussed: ClickHouse `BACKUP` of `logs`, `events` and the counts tables to `backups/clickhouse/` (weekly full, hourly or daily incremental, two weeks kept; about one more copy of the Logs, ~$7–15/month), Console's SQLite to `backups/console/`, and a restore from the bucket alone. Probe first: `BACKUP` to GCS with explicit keys (26.7+), server-side copy on GCS, `RESTORE` on an empty server.
+

@@ -219,9 +219,20 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert same, "Copy docs/logs/query-language.md to console/app/mcp/docs/query-language.md."
   end
 
+  test "the server and the tools that run or save a Query point agents at service, file and Reading less" do
+    assert_includes McpServer::INSTRUCTIONS, "service and file"
+    assert_not_includes McpServer::INSTRUCTIONS, "log_file_order"
+    [ McpTools::QueryLogs, McpTools::AddChart, McpTools::CreateMonitor ].each do |tool|
+      [ "service and file", "Reading less" ].each { |part| assert_includes tool.description_value, part, tool.name }
+      assert_not_includes tool.description_value, "log_file_order", tool.name
+    end
+    assert_not_includes McpTools::ListProjects.description_value, "log_file_order"
+    assert_includes Rails.root.join("app/mcp/docs/query-language.md").read, "## Reading less"
+  end
+
   # run_sql
 
-  test "run_sql runs SQL on the Project's logs view with the SQL timeout, answering at most 100 rows, linking to SQL mode" do
+  test "run_sql runs SQL on the Project's logs with the SQL timeout, answering at most 100 rows, linking to SQL mode" do
     InstanceSetting.current.update!(sql_queries_enabled: true)
     sql = "SELECT service, count(*) AS logs FROM logs GROUP BY service"
     rows = Array.new(120) { |i| [ "service-#{i}", i ] }
@@ -242,34 +253,18 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     end
   end
 
-  test "run_sql passes on EventStore's notice on SQL that matched message slowly, and adds none of its own" do
-    InstanceSetting.current.update!(sql_queries_enabled: true)
-    notice = "message ILIKE '%timeout%' is slow on Logs: contains(lower(message), 'timeout') matches the same Logs several times faster."
-    table = { columns: [ { name: "logs", type: "number" } ], rows: [ [ 3 ] ], truncated: false }
-    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
-      .to_return({ status: 200, body: { table: table, notice: notice, elapsed_ms: 8 }.to_json },
-                 { status: 200, body: { table: table, elapsed_ms: 8 }.to_json })
-
-    slow = call_tool(:run_sql, user: @user, project: "shop", sql: "SELECT count(*) AS logs FROM logs WHERE message ILIKE '%timeout%'")
-    fast = call_tool(:run_sql, user: @user, project: "shop", sql: "SELECT count(*) AS logs FROM logs WHERE contains(lower(message), 'timeout')")
-
-    assert_equal [ [ 3 ] ], slow.json["rows"]
-    assert_equal notice, slow.json["notice"]
-    assert_equal [ [ 3 ] ], fast.json["rows"]
-    assert_not fast.json.key?("notice")
-  end
-
   test "run_sql answers EventStore's refusals and SQL mistakes as it says them" do
     InstanceSetting.current.update!(sql_queries_enabled: true)
-    parser_error = "Parser Error: syntax error at or near \"SELEC\"\n\nLINE 1: SELEC 1\n        ^"
+    refusal = "shop_sql_1: Not enough privileges. To execute this query, it's necessary to have the grant SELECT ON solidtrace.log_key_counts."
+    syntax_error = "Syntax error: failed at position 1 (SELEC): SELEC 1. Expected one of: Query, SELECT, WITH, end of query."
     stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
-      .to_return({ status: 400, body: { error: "SQL queries are read-only: DROP isn't allowed" }.to_json },
-                 { status: 400, body: { error: parser_error }.to_json })
+      .to_return({ status: 400, body: { error: refusal }.to_json },
+                 { status: 400, body: { error: syntax_error }.to_json })
 
-    refused = call_tool(:run_sql, user: @user, project: "shop", sql: "DROP TABLE logs.log_key_counts")
+    refused = call_tool(:run_sql, user: @user, project: "shop", sql: "SELECT * FROM log_key_counts")
     assert refused.error?
-    assert_equal "SQL queries are read-only: DROP isn't allowed", refused.text
-    assert_equal parser_error, call_tool(:run_sql, user: @user, project: "shop", sql: "SELEC 1").text
+    assert_equal refusal, refused.text
+    assert_equal syntax_error, call_tool(:run_sql, user: @user, project: "shop", sql: "SELEC 1").text
   end
 
   test "run_sql answers SQL EventStore stopped at its timeout with EventStore's message" do

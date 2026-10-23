@@ -21,14 +21,14 @@ class McpContextToolsTest < ActiveSupport::TestCase
     answer = call_tool(:whoami, user: @user)
 
     assert_not answer.error?
-    assert_equal({ "user" => { "name" => "Ada", "email" => "ada@example.com" },
+    assert_equal({ "user" => { "name" => "Ada", "email" => "ada@example.com", "instance_admin" => false },
                    "organizations" => [ { "slug" => "acme", "name" => "Acme", "role" => "admin" },
                                         { "slug" => "beta", "name" => "Beta", "role" => "member" } ] }, answer.json)
     assert_equal "http://console.test/user_settings", answer.link
   end
 
   test "list_projects answers the Organization's Projects by name, linking to its Projects page" do
-    create(:project, organization: @acme, name: "Web", slug: "web", log_retention_days: 7, log_file_order: [])
+    create(:project, organization: @acme, name: "Web", slug: "web", log_retention_days: 7)
     create(:project, organization: @acme, name: "Api", slug: "api")
     create(:project, organization: create(:organization, slug: "theirs"), name: "Secret", slug: "secret")
 
@@ -39,7 +39,7 @@ class McpContextToolsTest < ActiveSupport::TestCase
     assert_equal "acme", answer.json["organization"]
     assert_equal [ "api", "web" ], projects.map { |project| project["slug"] }
     assert_equal [ 30, 7 ], projects.map { |project| project["log_retention_days"] }
-    assert_equal [ [ "service", "file" ], [] ], projects.map { |project| project["log_file_order"] }
+    assert projects.none? { |project| project.key?("log_file_order") }, "every Project's Logs are sorted by Service and file"
     assert_equal "http://console.test/acme/projects", answer.link
   end
 
