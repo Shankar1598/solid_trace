@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **The table:** the `logs` table and the key counts table, as 01 settled them. The `file` sort column is filled from the `file` Attribute.
 - [x] **Log processing** inserts each Project's Logs about once a second, after the Log transform, up to today's batch limit:
