@@ -146,13 +146,15 @@ func (s *ClickHouseLogs) ScanLogs(ctx context.Context, scan LogScan) (LogScanPag
 		}
 		return strings.Join(conditions, " AND ")
 	}
-	span := time.Hour
+	// The first span is the newest Log's hour; each after it twice the last,
+	// from an hour up to maxScanSpan.
+	var span time.Duration
 	for spanTo := to; spanTo.After(from); {
 		spanFrom := spanTo.Add(-time.Microsecond).Truncate(time.Hour)
-		if spanTo != to {
+		if span > 0 {
 			spanFrom = spanTo.Add(-span)
-			span = min(2*span, maxScanSpan)
 		}
+		span = min(max(2*span, time.Hour), maxScanSpan)
 		spanFrom = latestTime(spanFrom, from)
 		found, err := s.queryLogs(ctx, fmt.Sprintf("SELECT %s FROM logs WHERE %s ORDER BY %s LIMIT %d",
 			logSelectList, condition(spanFrom, spanTo), logsNewestFirst, scan.Limit-len(page.Logs)))
