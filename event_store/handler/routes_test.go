@@ -252,6 +252,11 @@ func TestConfigAnswersTheLoadedConfigWithoutSecrets(t *testing.T) {
 		},
 		"cpu_profile_dir": "/storage/profiles",
 		"debug":           true,
+		// The file's keys whose value is EventStore's default.
+		"defaults": []any{
+			"ingest_port", "query_port", "logs_disk_limit_gb", "logs_bin_cache_mb", "ingest_max_waiting",
+			"clickhouse.address", "clickhouse.database", "clickhouse.user",
+		},
 	}
 	gotJSON, _ := json.MarshalIndent(got, "", "  ")
 	wantJSON, _ := json.MarshalIndent(want, "", "  ")
