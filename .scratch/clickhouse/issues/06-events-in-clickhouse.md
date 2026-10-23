@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **The `events` table:**
   - `ORDER BY (project_id, issue_fingerprint_id, timestamp)`, `PARTITION BY toYYYYMM(timestamp)`;
