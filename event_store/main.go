@@ -112,7 +112,8 @@ func main() {
 		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
 	}
 	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
-	logCleanup := logprocessing.NewCleanup(clickHouseLogs, consoleSettings, diskLimit, clock.System{})
+	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
+	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, consoleSettings, diskLimit, clock.System{})
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
@@ -136,7 +137,7 @@ func main() {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
-	logsHandler := handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), consoleSettings, clock.System{})
+	logsHandler := handler.NewLogsHandler(clickHouseLogs, sqlQueries, consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
