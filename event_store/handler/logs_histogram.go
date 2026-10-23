@@ -159,8 +159,8 @@ func (h *LogsHandler) countByLevel(run *run, projectID uint32, counts *logquery.
 		ProjectID: projectID,
 		From:      from,
 		To:        to,
-		Where:     func(cols storage.ClickHouseColumns) storage.Filter { return counts.Filter(cols) },
-		Select:    func(cols storage.ClickHouseColumns) string { return counts.Select(cols) },
+		Where:     func(cols storage.LogColumns) storage.Filter { return counts.Filter(cols) },
+		Select:    func(cols storage.LogColumns) string { return counts.Select(cols) },
 		Query:     func(logs string) string { return counts.TableSQL(logs, limit) },
 		Now:       h.clock.Now(),
 	}

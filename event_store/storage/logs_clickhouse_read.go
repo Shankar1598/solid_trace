@@ -14,17 +14,33 @@ import (
 	"github.com/solidtrace/event_store/pkg/chsql"
 )
 
-// ClickHouseColumns says where the logs table keeps each Field, so that a
-// Query can be written as SQL against it. Its answers are SQL expressions.
+// LogColumns says where a source of Logs keeps each Field, so that a Query
+// can be written as SQL against it. Its answers are SQL expressions. The
+// logs table's are ClickHouseColumns; a day of Log files from before the
+// switch keeps them its own way (logs_old_files.go).
+type LogColumns interface {
+	// Column is the source's column of the given name.
+	Column(name string) string
+	// BuiltIn is a built-in field's column, such as level.
+	BuiltIn(name string) string
+	// Attribute is the value of the Attribute key of type t, NULL for a
+	// Log without one.
+	Attribute(t AttributeType, key string) string
+	// SearchText is every string Attribute's value, joined by \0, which
+	// search reads besides message.
+	SearchText() string
+	// StringColumn is a column that holds the string Attribute key's
+	// value, or '' for a Log whose key isn't a string, if there is one.
+	StringColumn(key string) (string, bool)
+}
+
+// ClickHouseColumns says where the logs table keeps each Field.
 type ClickHouseColumns struct {
 	// Table, if set, is the relation each column is read from, such as a
 	// CTE of rows of logs, as in stage1.level. ClickHouse lets an alias in
 	// a SELECT stand for a column of the same name, so a column read beside
 	// aliases must name its relation.
 	Table string
-	// old, if set, is a day of Log files from before the switch, which
-	// keep Fields their own way (logs_old_files.go).
-	old *oldDay
 }
 
 // Column is the relation's column of the given name.
@@ -42,9 +58,6 @@ func (c ClickHouseColumns) qualify(column string) string {
 
 // BuiltIn is a built-in field's column, such as level.
 func (c ClickHouseColumns) BuiltIn(name string) string {
-	if c.old != nil {
-		return c.old.builtIn(name)
-	}
 	return c.Column(name)
 }
 
@@ -53,12 +66,8 @@ func (c ClickHouseColumns) BuiltIn(name string) string {
 // value, which throws on a path that holds values of more than one type, or
 // its JSON text in attrs_json.
 func (c ClickHouseColumns) Attribute(t AttributeType, key string) string {
-	if c.old != nil && t != JSONAttribute {
-		return c.old.attribute(t, key)
-	}
 	if t == JSONAttribute {
-		name, json := chsql.String(key), c.qualify("attrs_json")
-		return "if(mapContains(" + json + ", " + name + "), " + json + "[" + name + "], NULL)"
+		return jsonAttribute(c.qualify("attrs_json"), key)
 	}
 	if key == "" {
 		// No identifier names the empty path.
@@ -71,12 +80,16 @@ func (c ClickHouseColumns) Attribute(t AttributeType, key string) string {
 // Attribute in attributes.
 var attributeTypes = map[AttributeType]string{StringAttribute: "String", NumberAttribute: "Float64", BoolAttribute: "Bool"}
 
+// jsonAttribute is the JSON text of an array or object Attribute key in the
+// map m, NULL for a Log without one.
+func jsonAttribute(m, key string) string {
+	name := chsql.String(key)
+	return "if(mapContains(" + m + ", " + name + "), " + m + "[" + name + "], NULL)"
+}
+
 // SearchText is every string Attribute's value, joined by \0, which search
 // reads besides message.
 func (c ClickHouseColumns) SearchText() string {
-	if c.old != nil {
-		return c.old.searchText()
-	}
 	return c.qualify("search_text")
 }
 
@@ -84,7 +97,7 @@ func (c ClickHouseColumns) SearchText() string {
 // for a Log whose key isn't a string, if there is one: file, a sort column,
 // so that a filter on it skips other files.
 func (c ClickHouseColumns) StringColumn(key string) (string, bool) {
-	if key == "file" && c.old == nil {
+	if key == "file" {
 		return c.qualify("file"), true
 	}
 	return "", false
@@ -116,7 +129,7 @@ func whereClause(conditions []string, filter Filter) string {
 }
 
 // filterOf is the filter where returns, or none if where is nil.
-func filterOf(where func(ClickHouseColumns) Filter) Filter {
+func filterOf(where func(LogColumns) Filter) Filter {
 	if where == nil {
 		return Filter{}
 	}
@@ -147,7 +160,7 @@ type LogScan struct {
 	After *LogPosition
 	// Where, if set, returns the SQL condition a Log must meet. An empty
 	// Filter keeps every Log.
-	Where func(ClickHouseColumns) Filter
+	Where func(LogColumns) Filter
 	// Limit is how many Logs to return at most.
 	Limit int
 	// Budget, if set, is how long the scan may go on reading spans of time
@@ -347,7 +360,7 @@ type IngestedLogScan struct {
 	After uuid.UUID
 	// Where, if set, returns the SQL condition a Log must meet. An empty
 	// Filter keeps every Log.
-	Where func(ClickHouseColumns) Filter
+	Where func(LogColumns) Filter
 	// Limit is how many Logs to return at most.
 	Limit int
 }
@@ -462,16 +475,17 @@ func (s *ClickHouseLogs) AttributeCounts(ctx context.Context, projectID uint32, 
 	if to.After(from) {
 		last = LogDay(to.Add(-time.Nanosecond))
 	}
+	oldCounts, oldArgs := s.old.keyCounts(projectID, first, last)
 	rows, err := s.conn.Query(ctx, `
 		SELECT key, type, sum(logs) AS total FROM (
 			SELECT key, type, logs FROM log_key_counts
-			WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)`+s.old.keyCounts()+`
+			WHERE project_id = ? AND day >= toDate(?) AND day <= toDate(?)`+oldCounts+`
 		)
 		GROUP BY key, type
 		HAVING total > 0
 		ORDER BY total DESC, key, type
 		LIMIT ?`,
-		append(append([]any{projectID, dayString(first), dayString(last)}, s.old.keyCountsArgs(projectID, first, last)...), limit+1)...)
+		append(append([]any{projectID, dayString(first), dayString(last)}, oldArgs...), limit+1)...)
 	if err != nil {
 		return nil, false, fmt.Errorf("count Attributes: %w", err)
 	}
