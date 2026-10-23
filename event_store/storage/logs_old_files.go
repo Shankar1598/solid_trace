@@ -330,7 +330,8 @@ func (o *oldLogFiles) load(ctx context.Context, pebble *PebbleWriter, marker old
 
 // loadCursors moves each Project's Processing cursor in Pebble up to the
 // one prepared, the last Log batch the DuckDB release stored, unless it is
-// already past it.
+// already past it. The cursors are synced before it returns, since the
+// marker recorded next says they were loaded.
 func (o *oldLogFiles) loadCursors(ctx context.Context, pebble *PebbleWriter) error {
 	withFile, err := o.withPrepared(ctx, preparedCursors)
 	if err != nil {
@@ -341,6 +342,7 @@ func (o *oldLogFiles) loadCursors(ctx context.Context, pebble *PebbleWriter) err
 		return err
 	}
 	defer rows.Close()
+	ahead := map[uint32]uuid.UUID{}
 	for rows.Next() {
 		var (
 			projectID uint32
@@ -358,12 +360,13 @@ func (o *oldLogFiles) loadCursors(ctx context.Context, pebble *PebbleWriter) err
 			return err
 		}
 		if bytes.Compare(prepared[:], cursor[:]) > 0 {
-			if err := pebble.SetLogProcessingCursor(projectID, prepared); err != nil {
-				return err
-			}
+			ahead[projectID] = prepared
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return pebble.SetLogProcessingCursors(ahead)
 }
 
 // oldLogFile is one old Log file of a Project.
