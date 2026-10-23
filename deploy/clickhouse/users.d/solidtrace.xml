@@ -1,0 +1,26 @@
+<!--
+  ClickHouse's users for SolidTrace. This directory replaces the image's users.d.
+-->
+<clickhouse>
+  <users>
+    <!-- No password, so this machine only: for an operator's clickhouse client. -->
+    <default>
+      <networks replace="1">
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+      </networks>
+    </default>
+
+    <!-- EventStore's user, with the password deploy/install generates. -->
+    <solidtrace>
+      <password from_env="SOLIDTRACE_CLICKHOUSE_PASSWORD"/>
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+      </networks>
+      <profile>default</profile>
+      <quota>default</quota>
+      <access_management>1</access_management>
+    </solidtrace>
+  </users>
+</clickhouse>
