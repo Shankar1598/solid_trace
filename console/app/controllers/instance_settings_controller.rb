@@ -10,6 +10,9 @@ class InstanceSettingsController < ApplicationController
   before_action :require_instance_admin
 
   def show
+    render inertia: "Settings/Instance", props: {
+      settings: InstanceSettingsAnswer.new(console_url: request.base_url).as_json,
+    }
   end
 
   def update

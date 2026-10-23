@@ -52,15 +52,20 @@ class EventStore
   # A Log's id: a UUID.
   LOG_ID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
 
+  # Where Console reaches EventStore's query API and its ingest when
+  # EVENT_STORE_URL and EVENT_STORE_INGEST_URL are unset.
+  DEFAULT_URL = "http://127.0.0.1:4100"
+  DEFAULT_INGEST_URL = "http://127.0.0.1:4000"
+
   # The event store's query API, which listens on loopback only.
   def self.base_url
-    ENV.fetch("EVENT_STORE_URL", "http://127.0.0.1:4100")
+    ENV.fetch("EVENT_STORE_URL", DEFAULT_URL)
   end
 
   # The event store's ingest, where SDKs and shippers send, as Console
   # reaches it.
   def self.ingest_url
-    ENV.fetch("EVENT_STORE_INGEST_URL", "http://127.0.0.1:4000")
+    ENV.fetch("EVENT_STORE_INGEST_URL", DEFAULT_INGEST_URL)
   end
 
   # Ingest as SDKs and shippers reach it: PUBLIC_INGEST_URL, or else
