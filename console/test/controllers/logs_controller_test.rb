@@ -581,16 +581,16 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "n" ], response.parsed_body["table"]["columns"].map { |c| c["name"] }
   end
 
-  test "failing SQL answers with DuckDB's message" do
+  test "failing SQL answers with ClickHouse's message" do
     InstanceSetting.current.update!(sql_queries_enabled: true)
-    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
-      .to_return(status: 400, body: { error: "Binder Error: column \"nope\" not found" }.to_json)
+    message = "Unknown expression identifier `nope` in scope SELECT nope FROM logs."
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql").to_return(status: 400, body: { error: message }.to_json)
 
     post sql_project_logs_url(@project, org_slug: @organization.slug),
       params: { sql: "SELECT nope FROM logs", from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }, as: :json
 
     assert_response :bad_request
-    assert_equal "Binder Error: column \"nope\" not found", response.parsed_body["error"]
+    assert_equal message, response.parsed_body["error"]
   end
 
   test "SQL can't be run from a link" do
