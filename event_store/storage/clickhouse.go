@@ -16,6 +16,9 @@ import (
 type ClickHouse struct {
 	conn     driver.Conn
 	database string
+	// address is the server's, where SQL queries connect as their
+	// Projects' users (ClickHouseSQL).
+	address string
 	// bucket is whether the tables' storage policy has a bucket volume,
 	// which the logs table's parts move to.
 	bucket bool
@@ -64,7 +67,7 @@ func OpenClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHo
 	if err != nil {
 		return nil, err
 	}
-	ch := &ClickHouse{conn: conn, database: cfg.Database, bucket: bucket != nil}
+	ch := &ClickHouse{conn: conn, database: cfg.Database, address: cfg.Address, bucket: bucket != nil}
 	if cfg.ConfigDir != "" {
 		if err := ch.useStoragePolicy(ctx, cfg.ConfigDir, bucket); err != nil {
 			conn.Close()

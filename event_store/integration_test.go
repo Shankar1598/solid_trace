@@ -62,9 +62,13 @@ type TestEnv struct {
 	LogProcessor *logprocessing.Processor
 	LogCleanup   *logprocessing.Cleanup
 	LogsHandler  *handler.LogsHandler
-	MQWriter     *storage.MessageQueueWriter
-	MQPath       string
-	SQLitePath   string
+	// SQL runs SQL queries, each as its Project's SQL user, within
+	// SQLLimits, storage's defaults unless a test changes them.
+	SQL        *storage.ClickHouseSQL
+	SQLLimits  storage.SQLLimits
+	MQWriter   *storage.MessageQueueWriter
+	MQPath     string
+	SQLitePath string
 
 	// LogTransforms runs each Project's Log transform in Log processing.
 	// Restart keeps it; Reopen makes a new one.
@@ -359,6 +363,7 @@ func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 		ClickHouseConfig: clickhousetest.Config(),
 
 		BinCacheBytes: config.DefaultLogsBinCacheMB << 20,
+		SQLLimits:     storage.DefaultSQLLimits(),
 	}
 	if configure != nil {
 		configure(env)
@@ -459,7 +464,8 @@ func (env *TestEnv) open(t *testing.T) {
 	})
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
-	logsHandler := handler.NewLogsHandler(env.ClickHouseLogs, logStore, consoleSettings, env.Clock)
+	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
+	logsHandler := handler.NewLogsHandler(env.ClickHouseLogs, env.SQL, consoleSettings, env.Clock)
 	env.LogsHandler = logsHandler
 	healthHandler := handler.NewHealthHandler(pebbleWriter, duckdbWriter, clickHouse)
 
