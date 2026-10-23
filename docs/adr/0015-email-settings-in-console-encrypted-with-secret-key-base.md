@@ -6,6 +6,12 @@ The SMTP password is encrypted with Active Record Encryption (non-deterministic)
 
 We chose this because changing email meant editing `deploy/.env` and restarting, and `deploy/.env` held the password in plain text. A copy of the SQLite file alone, a backup say, now doesn't give the password away, nor do `inspect` and logs.
 
+## Amended: the other live settings are set in Console too, but Sign-up (2026-10-24)
+
+Instance admins now change SQL queries, the default Retention and log-all-reads on Settings → Instance or over the MCP server (`get_instance_settings`, `update_instance_settings`), as they do email. These apply at once, so they needed no restart before either; the page saves needing a shell for them. The page and the MCP tools also show, read-only, Sign-up and what Console and EventStore read at start, each secret only as whether it's set.
+
+Sign-up stays shell-only on purpose: the page shows whether it's open and the `bin/rails instance_settings:set` command that changes it, and neither the page nor MCP can change it. Opening it lets anyone who can reach Console make an account, so a stolen instance admin session or API token mustn't be able to open the install. `instance_settings:show` and `:set` keep working for every setting. ([spec](../../.scratch/instance-settings/spec.md))
+
 ## Considered options
 
 - **Env vars as they are:** the operator needs a shell on the VM and a restart to change email, and the password sits in plain text in `deploy/.env`.
@@ -19,6 +25,6 @@ We chose this because changing email meant editing `deploy/.env` and restarting,
 - A shell on the VM reads both `deploy/.env` and the database, so it can decrypt the password. That isn't what this protects against.
 - Upgrading drops the env vars with no import: an install with `SMTP_*` in `deploy/.env` sends no email until an instance admin fills in the page. `deploy/setup-gcp` leaves those lines, for the operator to copy from, then delete.
 - `CONSOLE_URL` stays in the environment: jobs need it for links, and `setup-gcp` works it out.
-- The page and the role leave room for the other instance settings, which stay on `bin/rails instance_settings:set` for now. Integration secrets could be encrypted the same way later.
+- The page and the role leave room for the other instance settings. Since the amendment above, every one that applies at once but Sign-up is set in Console too. Integration secrets could be encrypted the same way later.
 
 Source: [.scratch/email-settings/spec.md](../../.scratch/email-settings/spec.md)
