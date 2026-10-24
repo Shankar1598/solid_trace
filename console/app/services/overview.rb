@@ -212,7 +212,8 @@ class Overview
 
     volume = org_projects.map { |p| [ answered_projects.dig(p.id, "received") || {}, retention_of(p) ] }
     OtherTools.new(projects: volume, bytes_on_wire: answer.dig("band", "received", "bytes_on_wire"),
-                   days: RANGES.fetch(range_name), seconds: answer.dig("rates", "seconds")).to_h
+                   days: RANGES.fetch(range_name), seconds: answer.dig("rates", "seconds"),
+                   stored: answer.dig("band", "stored") || {}).to_h
   end
 
   # The whole install's disk against the disk limit, the bucket and the old
