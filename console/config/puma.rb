@@ -33,7 +33,8 @@
 # waits up to 30 s, outside the cap: only a click starts it, one per Monitor
 # at a time, and the browser can't abort it. So production keeps 10, well
 # above Rails' 3, and database.yml's max_connections reads the same
-# RAILS_MAX_THREADS so the pool matches.
+# RAILS_MAX_THREADS so the pool matches. ConsoleEnvironment::DEFAULT_WEB_THREADS
+# copies the 10 for Settings → Instance.
 threads_count = Rails.env.development? ? 1 : ENV.fetch("RAILS_MAX_THREADS", 10)
 threads threads_count, threads_count
 

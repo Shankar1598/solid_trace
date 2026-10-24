@@ -52,15 +52,20 @@ class EventStore
   # A Log's id: a UUID.
   LOG_ID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
 
+  # Where Console reaches EventStore's query API and its ingest when
+  # EVENT_STORE_URL and EVENT_STORE_INGEST_URL are unset.
+  DEFAULT_URL = "http://127.0.0.1:4100"
+  DEFAULT_INGEST_URL = "http://127.0.0.1:4000"
+
   # The event store's query API, which listens on loopback only.
   def self.base_url
-    ENV.fetch("EVENT_STORE_URL", "http://127.0.0.1:4100")
+    ENV.fetch("EVENT_STORE_URL", DEFAULT_URL)
   end
 
   # The event store's ingest, where SDKs and shippers send, as Console
   # reaches it.
   def self.ingest_url
-    ENV.fetch("EVENT_STORE_INGEST_URL", "http://127.0.0.1:4000")
+    ENV.fetch("EVENT_STORE_INGEST_URL", DEFAULT_INGEST_URL)
   end
 
   # Ingest as SDKs and shippers reach it: PUBLIC_INGEST_URL, or else
@@ -99,6 +104,13 @@ class EventStore
     rescue Unavailable => e
       Rails.logger.error(e.message)
       0
+    end
+
+    # The config EventStore loaded at start (its GET /config), with each
+    # secret only as whether it's set. Raises Unavailable when EventStore
+    # can't answer within a few seconds, or is a release without /config.
+    def config
+      execute!(method: :get, url: "#{base_url}/config", headers: { accept: :json }, open_timeout: 2, read_timeout: 3)
     end
 
     # Like count_events, but raises Unavailable instead of counting 0 when
@@ -334,6 +346,7 @@ class EventStore
 
     # Sends a Log call's request and parses EventStore's JSON answer. A 400
     # raises Rejected, a 504 TimedOut, and a 403 SQLQueriesOff when sql.
+    # Anything else, a timeout included, raises Unavailable.
     def execute!(sql: false, **request)
       JSON.parse(RestClient::Request.execute(**request).body)
     rescue RestClient::BadRequest => e
@@ -344,10 +357,21 @@ class EventStore
       raise Unavailable, "EventStore error: 403 - #{e.response&.body}"
     rescue RestClient::GatewayTimeout => e
       raise TimedOut, parse_body(e.response&.body)
+    rescue RestClient::Exceptions::Timeout => e
+      # Before ExceptionWithResponse, which a timeout is too, with no response.
+      raise Unavailable, timed_out_message(e, request)
     rescue RestClient::ExceptionWithResponse => e
       raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
     rescue StandardError => e
       raise Unavailable, "EventStore connection error: #{e.message}"
+    end
+
+    # Why a call gave up waiting on EventStore: connecting or reading, and
+    # after how long when the request set a limit.
+    def timed_out_message(error, request)
+      opening = error.is_a?(RestClient::Exceptions::OpenTimeout)
+      seconds = opening ? request[:open_timeout] : request[:read_timeout]
+      [ "EventStore timed out", seconds && "after #{seconds}s", opening ? "connecting" : "answering" ].compact.join(" ")
     end
 
     def parse_body(body)

@@ -129,11 +129,9 @@ Other stores with S3's API, such as Cloudflare R2, also use `kind: s3`, with the
 
 ## MinIO for development
 
-The dev ClickHouse (`bin/clickhouse-dev`) is shared by every checkout, worktree and Go test package, so a bucket on it reaches all of them.
+The dev ClickHouse and MinIO (`docker-compose.dev.yml`, started by `bin/clickhouse-dev`) are shared by every checkout, worktree and Go test package, so a bucket on them reaches all of them. MinIO listens on `127.0.0.1:9000` (console on `:9001`) with the key `solidtrace` / `solidtrace-dev`, keeps its data in the main checkout's `storage/minio/`, and makes the buckets `solidtrace-dev` and `solidtrace-test` when they're missing. The dev ClickHouse has that key in `SOLIDTRACE_OBJECT_STORE_KEY_ID` and `SOLIDTRACE_OBJECT_STORE_SECRET` unless they were set otherwise when it started.
 
-1. Run MinIO on `127.0.0.1:9000` and create a bucket, for example with `mc mb local/solidtrace-dev`.
-2. Start the dev ClickHouse with the bucket's key in `SOLIDTRACE_OBJECT_STORE_KEY_ID` and `SOLIDTRACE_OBJECT_STORE_SECRET`: ClickHouse reads them when its container starts, so run `bin/clickhouse-dev --stop` first if it is running.
-3. Configure the bucket. The region defaults to `us-east-1` when an `endpoint` is set:
+1. Configure the bucket. The region defaults to `us-east-1` when an `endpoint` is set:
 
    ```yaml
    object_store:
@@ -146,11 +144,11 @@ The dev ClickHouse (`bin/clickhouse-dev`) is shared by every checkout, worktree 
 
    With `local_cache_hours: 0`, every part moves to MinIO once it is stored.
 
-4. Start EventStore with the same key in the same two variables.
+2. Start EventStore with the same key in the same two variables.
 
 ClickHouse can't drop a volume while it runs, so taking the block out again needs a restart of the dev ClickHouse too.
 
-The Go tests that need an S3 API make a storage policy of their own (`clickhousetest.Bucket`), never the shared one. They use `SOLIDTRACE_TEST_S3_ENDPOINT`, with the key in the same two variables, or else the dev MinIO with its key in `~/.cache/solid-trace/minio/env`, and skip without either. The bucket is `SOLIDTRACE_TEST_S3_BUCKET`, or `solidtrace-test`. From `event_store/`:
+The Go tests that need an S3 API make a storage policy of their own (`clickhousetest.Bucket`), never the shared one. They use `SOLIDTRACE_TEST_S3_ENDPOINT`, with the key in the same two variables, or else the dev MinIO with its development key, and skip without either. The bucket is `SOLIDTRACE_TEST_S3_BUCKET`, or `solidtrace-test`. From `event_store/`:
 
 ```sh
 go test -p 1 -count=1 -run 'Bucket|MinIO|OldLogFiles' . ./storage/

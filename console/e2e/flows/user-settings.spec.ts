@@ -26,3 +26,11 @@ for (const path of [`/${ORG}/settings/user`, '/user_settings']) {
     expect(errors).toEqual([])
   })
 }
+
+test('Account is about the profile alone, and lit alone in the sidebar', async ({ page }) => {
+  await page.goto(`/${ORG}/settings/user`)
+  await expect(page.getByLabel('Name', { exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Account', exact: true })).toHaveClass(/bg-secondary/)
+  await expect(page.getByRole('link', { name: 'API tokens & MCP', exact: true })).not.toHaveClass(/bg-secondary/)
+  await expect(page.getByLabel('Token name')).toHaveCount(0)
+})

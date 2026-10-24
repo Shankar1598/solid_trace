@@ -18,4 +18,9 @@ export RUBY_DEBUG_OPEN="true"
 export RUBY_DEBUG_LAZY="true"
 
 source "$(dirname "$0")/clear-ports"
+
+# ClickHouse and MinIO (docker-compose.dev.yml) before the rest, so a failure
+# stops here rather than taking the stack down from inside foreman.
+"$(dirname "$0")/clickhouse-dev" || exit 1
+
 exec foreman start -f Procfile.dev "$@"

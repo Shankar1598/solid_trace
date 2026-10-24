@@ -38,7 +38,7 @@ SolidTrace keeps its own logs as Logs, in the **Meta Organization**: an Organiza
 
 Sign-up works only until the install has a user, so sign up as soon as it is running; after that, people join by Invite. To let anyone sign up, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set SIGN_UP_OPEN=true`, and `=false` to close it again. The first user to sign up is an instance admin, who sets up email; on an install that already had users, the oldest is. To make someone else one, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_admins:grant EMAIL=<their email>`; `instance_admins:revoke` and `instance_admins:list` do the rest.
 
-Every MCP tool call and its Log reads are timed into the Meta Organization's "SolidTrace" Project, with the SQL EventStore ran for them. To time every Log read too, the explorer's, Dashboards' and Monitors', `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set LOG_ALL_READS=true`; they refresh every 15 seconds, so it adds many Logs.
+Every MCP tool call and its Log reads are timed into the Meta Organization's "SolidTrace" Project, with the SQL EventStore ran for them. To time every Log read too, the explorer's, Dashboards' and Monitors', turn on Log all reads on Settings → Instance, or `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set LOG_ALL_READS=true`; they refresh every 15 seconds, so it adds many Logs. To stop timing the MCP server's Log reads (its tool calls stay timed), turn off Log MCP reads there, or `LOG_MCP_READS=false`; it applies while Log all reads is off.
 
 With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](deploy/caddy/Caddyfile)) gets a Let's Encrypt certificate for the machine's public IP or domain: Console is on `https://<host>`, ingest on `https://<host>:4443`. Ports 80, 443 and 4443 must be open to the internet, and 3000 and 4000 closed; setup prints the GCP firewall and static-IP commands. An IP's certificate lasts 160 hours, and Caddy renews it ([ADR 0010](docs/adr/0010-caddy-terminates-tls.md)).
 
@@ -74,7 +74,7 @@ The EventStore listens on two ports. Ingest (`4000`) is public: SDKs send events
 
 ## MCP server
 
-Agents such as Claude Code and Cursor can query Logs, read Issues and build Dashboards and Monitors through SolidTrace's MCP server, with an API token made in User settings. See [docs/mcp.md](docs/mcp.md).
+Agents such as Claude Code and Cursor can query Logs, read Issues and build Dashboards and Monitors through SolidTrace's MCP server, with an API token made in Settings → API tokens & MCP. See [docs/mcp.md](docs/mcp.md).
 
 ## Project Structure
 

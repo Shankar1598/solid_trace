@@ -1,7 +1,7 @@
 // A user's API tokens, which let Claude Code or Cursor act as them through
 // the MCP server: making one, and the snippets that add the MCP server with it.
 
-/** An API token as User settings list it. Its secret is answered once, when it is made. */
+/** An API token as Settings → API tokens & MCP lists it. Its secret is answered once, when it is made. */
 export interface ApiToken {
   id: number
   name: string

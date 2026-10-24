@@ -22,6 +22,7 @@ const pages: [string, string][] = [
   ['settings-integrations', `/${ORG}/settings/integrations`],
   ['settings-integration-new', `/${ORG}/settings/integrations/new`],
   ['settings-user', `/${ORG}/settings/user`],
+  ['settings-api-tokens', `/${ORG}/settings/api_tokens`],
 ]
 
 for (const [name, path] of pages) {
