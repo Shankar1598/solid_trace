@@ -207,10 +207,7 @@ func (s *ClickHouseLogs) DiskLimit(configured int64) (LogDiskLimit, error) {
 	defer cancel()
 	var size int64
 	err := s.conn.QueryRow(ctx, `
-		SELECT toInt64(sum(total_space)) FROM system.disks
-		WHERE NOT is_remote AND name IN (
-			SELECT arrayJoin(disks) FROM system.storage_policies
-			WHERE policy_name = (SELECT storage_policy FROM system.tables WHERE database = currentDatabase() AND name = 'logs'))`).Scan(&size)
+		SELECT toInt64(sum(total_space)) FROM system.disks WHERE name IN (`+logsLocalDisks+`)`).Scan(&size)
 	if err != nil {
 		return LogDiskLimit{}, fmt.Errorf("read the size of ClickHouse's local disk: %w", err)
 	}
