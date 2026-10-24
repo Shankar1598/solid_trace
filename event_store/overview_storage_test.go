@@ -23,6 +23,8 @@ type overviewStorage struct {
 	Bucket            bool     `json:"bucket"`
 	BucketBytes       int64    `json:"bucket_bytes"`
 	GrowthBytesPerDay float64  `json:"growth_bytes_per_day"`
+	ProjectedBytes    int64    `json:"projected_local_bytes"`
+	StaysUnderLimit   bool     `json:"stays_under_limit"`
 	DaysUntilLimit    *float64 `json:"days_until_limit"`
 	OldFiles          *struct {
 		Files             int     `json:"files"`
@@ -59,6 +61,7 @@ func TestStorageAnswersTheInstallsLocalDiskAgainstTheDiskLimitOnlyWhenAsked(t *t
 	defer env.Cleanup()
 	seedProject(t, env.SQLitePath, 456, 30)
 	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+	seedProject(t, env.SQLitePath, 123, 60)
 
 	day := func(month, day int) time.Time { return time.Date(2026, time.Month(month), day, 9, 0, 0, 0, time.UTC) }
 	// Today is 2 October: the last 7 days are 25 September to 1 October.
@@ -95,17 +98,38 @@ func TestStorageAnswersTheInstallsLocalDiskAgainstTheDiskLimitOnlyWhenAsked(t *t
 	if got.DaysUntilLimit != nil {
 		t.Errorf("Expected no days until the limit with none set in the test environment, got %v", *got.DaysUntilLimit)
 	}
+	// At steady state each Project keeps its Retention's days of its last
+	// 7 days' average: 60 days of 123's and 30 of 456's.
+	lastWeekOf := func(projectID uint32) float64 {
+		return float64(overview(t, env, day(9, 25), day(10, 1), projectID).Band.Stored.Bytes) / 7
+	}
+	projected := int64(lastWeekOf(123)*60 + lastWeekOf(456)*30)
+	if math.Abs(float64(got.ProjectedBytes-projected)) > 1 {
+		t.Errorf("Expected %d bytes on local disk at steady state, got %d", projected, got.ProjectedBytes)
+	}
 
-	// The limit main works out at start: 10 days' growth past the disk use
-	// is 10 days off.
+	// The limit main works out at start. Under steady state's bytes, 10
+	// days' growth past the disk use is 10 days off.
 	env.LogDiskLimit = storage.LogDiskLimit{Bytes: local + int64(10*got.GrowthBytesPerDay)}
+	if env.LogDiskLimit.Bytes >= projected {
+		t.Fatalf("Expected the limit, %d bytes, under steady state's %d", env.LogDiskLimit.Bytes, projected)
+	}
 	env.Reopen(t)
 	got = overviewStorageOf(t, env, testNow, testNow, 123)
 	if got.DiskLimitBytes != env.LogDiskLimit.Bytes {
 		t.Errorf("Expected the disk limit in effect, %d, got %d", env.LogDiskLimit.Bytes, got.DiskLimitBytes)
 	}
-	if got.DaysUntilLimit == nil || math.Abs(*got.DaysUntilLimit-10) > 0.01 {
-		t.Errorf("Expected 10 days until the limit, got %v", got.DaysUntilLimit)
+	if got.StaysUnderLimit || got.DaysUntilLimit == nil || math.Abs(*got.DaysUntilLimit-10) > 0.01 {
+		t.Errorf("Expected 10 days until the limit, got %v (stays under: %v)", got.DaysUntilLimit, got.StaysUnderLimit)
+	}
+
+	// Over steady state's bytes, Retention deletes as much as arrives
+	// before the limit is reached: no day count.
+	env.LogDiskLimit = storage.LogDiskLimit{Bytes: projected + 1}
+	env.Reopen(t)
+	got = overviewStorageOf(t, env, testNow, testNow, 123)
+	if !got.StaysUnderLimit || got.DaysUntilLimit != nil || math.Abs(float64(got.ProjectedBytes-projected)) > 1 {
+		t.Errorf("Expected it to stay under the limit at %d bytes, with no day count, got %+v", projected, got)
 	}
 
 	// Past the limit, it's now.
