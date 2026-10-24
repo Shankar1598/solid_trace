@@ -58,12 +58,21 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
   end
 
   test "a fresh install times only the MCP server's reads, and the operator turns on every read's" do
-    assert_includes run_task("instance_settings:show"), "Log all reads: off: only the MCP server's"
+    out = run_task("instance_settings:show")
+    assert_includes out, "Log all reads: off"
+    assert_includes out, "Log MCP reads: on"
 
     out = run_task("instance_settings:set", "LOG_ALL_READS" => "true")
 
     assert InstanceSetting.current.log_all_reads?
     assert_includes out, "Log all reads: on"
+  end
+
+  test "the operator stops timing the MCP server's reads" do
+    out = run_task("instance_settings:set", "LOG_MCP_READS" => "false")
+
+    assert_not InstanceSetting.current.log_mcp_reads?
+    assert_includes out, "Log MCP reads: off"
   end
 
   test "the operator sets the default Log Retention" do

@@ -61,7 +61,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Settings/Instance", response.parsed_body["component"]
     settings = response.parsed_body.dig("props", "settings")
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
-      "default_log_retention_days" => 14, "log_all_reads" => false }, settings["editable"])
+      "default_log_retention_days" => 14, "log_all_reads" => false, "log_mcp_reads" => true }, settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")
 
@@ -197,6 +197,18 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
       .values_at("sql_queries_enabled", "default_log_retention_days", "log_all_reads")
   end
 
+  test "saving turns MCP reads' logging off, even while log-all-reads is on, and the page shows it" do
+    InstanceSetting.current.update!(log_all_reads: true)
+    sign_in_as(@instance_admin)
+
+    save(log_mcp_reads: false)
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ true, false ], response.parsed_body.dig("props", "settings", "editable")
+      .values_at("log_all_reads", "log_mcp_reads")
+  end
+
   test "a Retention below one day, or not a whole number, comes back as a form error and saves nothing" do
     sign_in_as(@instance_admin)
 
@@ -211,7 +223,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "an update carrying Sign-up or any other setting changes nothing but the three" do
+  test "an update carrying Sign-up or any other setting changes nothing but the four" do
     sign_in_as(@instance_admin)
 
     save(sign_up_open: true, smtp_address: "evil.example.com", meta_organization_seeded: true, log_all_reads: true)

@@ -29,6 +29,7 @@ class InstanceSettingsAnswer
         sql_queries_description: InstanceSetting::SQL_QUERIES_DESCRIPTION,
         default_log_retention_days: @settings.default_log_retention_days,
         log_all_reads: @settings.log_all_reads,
+        log_mcp_reads: @settings.log_mcp_reads,
       },
       sign_up: {
         open: @settings.sign_up_open,

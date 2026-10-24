@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 # The operator's commands for the instance settings (InstanceSetting). SQL
-# queries, the default Retention and log-all-reads also change on Settings →
-# Instance and over the MCP server; Sign-up changes only here, so a stolen
+# queries, the default Retention, log-all-reads and log-MCP-reads also change
+# on Settings → Instance and over the MCP server; Sign-up changes only here, so a stolen
 # instance admin session or API token can't open the install to anyone.
 # Instance admins set email in Console (instance_admins.rake).
 namespace :instance_settings do
@@ -10,7 +10,9 @@ namespace :instance_settings do
     puts "SQL queries: #{settings.sql_queries_enabled? ? "on" : "off"}"
     puts "Sign-up: #{settings.sign_up_open? ? "open" : "closed: people join by Invite, but the first user can always sign up"}"
     puts "Default Log Retention: #{settings.default_log_retention_days} days"
-    puts "Log all reads: #{settings.log_all_reads? ? "on: every Log read and its SQL is timed into the Meta Organization's Project" : "off: only the MCP server's"}"
+    puts "Log all reads: #{settings.log_all_reads? ? "on: every Log read and its SQL is timed into the Meta Organization's Project" : "off"}"
+    puts "Log MCP reads: #{settings.log_mcp_reads? ? "on: the MCP server's Log reads and their SQL are timed" : "off"}" \
+      "#{" (Log all reads times them while it's on)" if settings.log_all_reads?}"
     puts
     puts InstanceSetting::SQL_QUERIES_DESCRIPTION
   end
@@ -20,7 +22,7 @@ namespace :instance_settings do
     print_settings.call(InstanceSetting.current)
   end
 
-  desc "Change the instance settings: SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false, LOG_ALL_READS=true|false " \
+  desc "Change the instance settings: SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false, LOG_ALL_READS=true|false, LOG_MCP_READS=true|false " \
     "and/or DEFAULT_LOG_RETENTION_DAYS=<whole days>. Read what SQL queries allow first (instance_settings:show)"
   task set: :environment do
     changes = {}
@@ -36,12 +38,13 @@ namespace :instance_settings do
     changes[:sql_queries_enabled] = boolean.call("SQL_QUERIES_ENABLED") if ENV.key?("SQL_QUERIES_ENABLED")
     changes[:sign_up_open] = boolean.call("SIGN_UP_OPEN") if ENV.key?("SIGN_UP_OPEN")
     changes[:log_all_reads] = boolean.call("LOG_ALL_READS") if ENV.key?("LOG_ALL_READS")
+    changes[:log_mcp_reads] = boolean.call("LOG_MCP_READS") if ENV.key?("LOG_MCP_READS")
 
     if ENV.key?("DEFAULT_LOG_RETENTION_DAYS")
       changes[:default_log_retention_days] = ENV["DEFAULT_LOG_RETENTION_DAYS"]
     end
 
-    abort "Nothing to change. Give SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false, LOG_ALL_READS=true|false " \
+    abort "Nothing to change. Give SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false, LOG_ALL_READS=true|false, LOG_MCP_READS=true|false " \
       "and/or DEFAULT_LOG_RETENTION_DAYS=<whole days>." if changes.empty?
 
     settings = InstanceSetting.current

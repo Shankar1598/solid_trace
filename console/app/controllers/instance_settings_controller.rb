@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 # Settings → Instance: the install's settings, for instance admins. SQL
-# queries, the default Retention and log-all-reads apply at once, so they
-# change here. Sign-up and everything that needs a restart are shown read-only
+# queries, the default Retention, log-all-reads and log-MCP-reads apply at
+# once, so they change here. Sign-up and everything that needs a restart are shown read-only
 # (InstanceSettingsAnswer builds what's shown).
 class InstanceSettingsController < ApplicationController
   layout "dashboard"

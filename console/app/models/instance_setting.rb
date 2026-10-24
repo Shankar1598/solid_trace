@@ -3,7 +3,7 @@
 # The install's settings: one record. Instance admins set email (the SMTP
 # server and the sender) on the Email settings page or over the MCP server,
 # and the settings that apply at once (EDITABLE: SQL queries, the default
-# Retention, log-all-reads) on Settings → Instance or over the MCP server.
+# Retention, log-all-reads, log-MCP-reads) on Settings → Instance or over the MCP server.
 # Sign-up has no UI on purpose: opening it lets anyone who can reach Console
 # make an account, so it changes only from a shell on the server, with
 # `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
@@ -17,7 +17,7 @@ class InstanceSetting < ApplicationRecord
 
   # The settings that apply at once, so instance admins change them on
   # Settings → Instance and over the MCP server.
-  EDITABLE = %i[sql_queries_enabled default_log_retention_days log_all_reads].freeze
+  EDITABLE = %i[sql_queries_enabled default_log_retention_days log_all_reads log_mcp_reads].freeze
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
@@ -40,6 +40,8 @@ class InstanceSetting < ApplicationRecord
   validates :sql_queries_enabled, inclusion: { in: [ true, false ] }
   validates :sign_up_open, inclusion: { in: [ true, false ] }
   validates :log_all_reads, inclusion: { in: [ true, false ] }
+  # Off still saves while log_all_reads is on, and applies once that's off.
+  validates :log_mcp_reads, inclusion: { in: [ true, false ] }
   validates :default_log_retention_days, numericality: { only_integer: true, greater_than: 0 }
 
   normalizes :smtp_address, :smtp_username, :mail_from, with: ->(value) { value.strip.presence }

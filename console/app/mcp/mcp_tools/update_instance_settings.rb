@@ -16,7 +16,10 @@ module McpTools
     argument :default_log_retention_days, { type: "integer",
       description: "Whole days that Projects with no Retention of their own keep Logs, at least 1. EventStore's next " \
                    "Retention run deletes older Logs." }
-    argument :log_all_reads, { type: "boolean", description: "true times every Log read, to investigate slowness." }
+    argument :log_all_reads, { type: "boolean", description: "true times every Log read, the MCP server's included, to investigate slowness." }
+    argument :log_mcp_reads, { type: "boolean",
+      description: "true times the MCP server's Log reads, the default. It applies only while log_all_reads is off, " \
+                   "as log_all_reads times them too; false still saves then, for when log_all_reads is turned off." }
 
     def run
       require_instance_admin!("change the instance settings")
