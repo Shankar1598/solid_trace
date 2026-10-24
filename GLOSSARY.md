@@ -54,7 +54,7 @@ _Avoid_: severity, priority
 
 **Service**:
 The part of a system that emitted a Log, such as an application, a worker or a proxy. How Logs from one Project are told apart.
-_Avoid_: source, app, dataset
+_Avoid_: "source" alone for a Service, app, dataset; a **Source** is a Service and file together
 
 **Log ingest**:
 The EventStore module that authenticates incoming Logs, normalises them, stores each request's Logs in Pebble as one Log batch and acknowledges them. A `200` means the Logs are stored.
@@ -63,6 +63,10 @@ _Avoid_: shipper endpoint, collector
 **Ingest counts**:
 Log ingest's per-second counts of what arrived per Project: Logs received, bytes received (decoded and as sent), requests, unreadable Logs and requests turned away as overloaded, by second of arrival. Kept in memory and written to ClickHouse about once a second; deleted with the Project's days by Retention, Project deletion and the disk limit.
 _Avoid_: ingest metrics, ingest stats, throughput log
+
+**Source**:
+A Service and `file` of one Project together: what the Overview's Biggest sources ranks and **Source counts** count.
+_Avoid_: "source" for a Service alone
 
 **Source counts**:
 Log processing's daily counts of Logs and bytes per Project, Service and `file`, by the Logs' own UTC day, with the Logs the Log transform dropped.
