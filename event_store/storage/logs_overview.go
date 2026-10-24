@@ -193,3 +193,127 @@ func (s *ClickHouseLogs) HasLogs(ctx context.Context, projectIDs []uint32) (bool
 	}
 	return parts > 0, nil
 }
+
+// IngestDay sums a day of a scope's Ingest counts, the Projects together or
+// one Project's (ProjectID is 0 for the Projects together), with its
+// busiest second for Logs.
+type IngestDay struct {
+	models.IngestCount
+	Day      time.Time
+	PeakLogs Peak
+}
+
+// IngestDays sums a scope's Ingest counts by UTC day of arrival, the
+// Projects together, in no order. A day's peak sums the Projects in each
+// second.
+func (s *ClickHouseLogs) IngestDays(ctx context.Context, scope OverviewScope) ([]IngestDay, error) {
+	return s.ingestDays(ctx, scope, false)
+}
+
+// ProjectIngestDays sums a scope's Ingest counts by Project and UTC day of
+// arrival, in no order.
+func (s *ClickHouseLogs) ProjectIngestDays(ctx context.Context, scope OverviewScope) ([]IngestDay, error) {
+	return s.ingestDays(ctx, scope, true)
+}
+
+func (s *ClickHouseLogs) ingestDays(ctx context.Context, scope OverviewScope, byProject bool) ([]IngestDay, error) {
+	// A second's rows are summed, across Projects or the parts not yet
+	// merged, before its day's peak is taken. Of equal seconds the first
+	// wins.
+	project, by := "toUInt32(0)", ""
+	if byProject {
+		project, by = "project_id", "project_id, "
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT `+project+`, toDate(second) AS day, toInt64(sum(l)), toInt64(sum(u)), toInt64(sum(b)), toInt64(sum(w)),
+			toInt64(sum(r)), toInt64(sum(o)), toInt64(max(l)), argMax(second, (l, -toUnixTimestamp(second)))
+		FROM (
+			SELECT `+by+`second, sum(logs_received) AS l, sum(logs_unreadable) AS u, sum(bytes_received) AS b,
+				sum(bytes_on_wire) AS w, sum(requests) AS r, sum(requests_overloaded) AS o
+			FROM log_ingest_counts
+			WHERE project_id IN ? AND second >= ? AND second < ?
+			GROUP BY `+by+`second
+		)
+		GROUP BY `+by+`day`, scope.ProjectIDs, scope.From, scope.To)
+	if err != nil {
+		return nil, fmt.Errorf("sum Ingest counts by day: %w", err)
+	}
+	defer rows.Close()
+	var days []IngestDay
+	for rows.Next() {
+		var d IngestDay
+		if err := rows.Scan(&d.ProjectID, &d.Day, &d.LogsReceived, &d.LogsUnreadable, &d.BytesReceived, &d.BytesOnWire,
+			&d.Requests, &d.RequestsOverloaded, &d.PeakLogs.Count, &d.PeakLogs.At); err != nil {
+			return nil, err
+		}
+		d.Day = LogDay(d.Day)
+		if d.PeakLogs.Count == 0 {
+			d.PeakLogs.At = time.Time{}
+		} else {
+			d.PeakLogs.At = d.PeakLogs.At.UTC()
+		}
+		days = append(days, d)
+	}
+	return days, rows.Err()
+}
+
+// StoredProject is what ClickHouse holds of a Project's Logs across every
+// day it keeps, by logs' parts: its Logs, their bytes on local disk and in
+// the bucket, and its oldest day.
+type StoredProject struct {
+	ProjectID uint32
+	Logs      int64
+	Bytes     int64
+	OldestDay time.Time
+}
+
+// StoredProjects sums the stored Logs of each Project of projectIDs that
+// has any, across every day, in no order.
+func (s *ClickHouseLogs) StoredProjects(ctx context.Context, projectIDs []uint32) ([]StoredProject, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT toUInt32OrZero(splitByChar('-', partition_id)[1]) AS project_id, toInt64(sum(rows)), toInt64(sum(bytes_on_disk)),
+			min(splitByChar('-', partition_id)[2])
+		FROM system.parts
+		WHERE database = currentDatabase() AND table = 'logs' AND active AND project_id IN ?
+		GROUP BY project_id`, projectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sum the parts of stored Logs by Project: %w", err)
+	}
+	defer rows.Close()
+	var projects []StoredProject
+	for rows.Next() {
+		var p StoredProject
+		var oldest string
+		if err := rows.Scan(&p.ProjectID, &p.Logs, &p.Bytes, &oldest); err != nil {
+			return nil, err
+		}
+		if p.OldestDay, err = time.Parse("20060102", oldest); err != nil {
+			return nil, fmt.Errorf("oldest day %q of Project %d's Logs: %w", oldest, p.ProjectID, err)
+		}
+		projects = append(projects, p)
+	}
+	return projects, rows.Err()
+}
+
+// LastLogArrivals is the second each Project of projectIDs last received a
+// Log in, by its Ingest counts, for those that have.
+func (s *ClickHouseLogs) LastLogArrivals(ctx context.Context, projectIDs []uint32) (map[uint32]time.Time, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT project_id, max(second) FROM log_ingest_counts
+		WHERE project_id IN ? AND logs_received > 0
+		GROUP BY project_id`, projectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("find when Projects' last Logs arrived: %w", err)
+	}
+	defer rows.Close()
+	last := map[uint32]time.Time{}
+	for rows.Next() {
+		var projectID uint32
+		var at time.Time
+		if err := rows.Scan(&projectID, &at); err != nil {
+			return nil, err
+		}
+		last[projectID] = at.UTC()
+	}
+	return last, rows.Err()
+}
