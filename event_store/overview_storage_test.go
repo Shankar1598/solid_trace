@@ -115,3 +115,38 @@ func TestStorageAnswersTheInstallsLocalDiskAgainstTheDiskLimitOnlyWhenAsked(t *t
 		t.Errorf("Expected 0 days until a limit already passed, got %v", got.DaysUntilLimit)
 	}
 }
+
+func TestStorageAnswersTheOldLogFilesKeptAndWhenRetentionDeletesTheLast(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) {
+		seedFixtureProjects(t, env)
+		usePreparedFixtureLocally(t, env)
+	})
+	defer env.Cleanup()
+	// Project 2 keeps its Logs 40 days, Project 3 the fixture's 30.
+	consoleExec(t, env, "UPDATE projects SET log_retention_days = 40 WHERE id = 2")
+
+	got := overviewStorageOf(t, env, testNow, testNow, 3)
+	old := got.OldFiles
+	if old == nil {
+		t.Fatalf("Expected the old Log files, got none")
+	}
+	// The fixture's 8 files of 1 and 2 October, 6 with local copies.
+	if old.Files != 8 || old.LocalBytes != fixtureLocalBytes(t) || old.NewestDay != "2026-10-02" {
+		t.Errorf("Expected 8 files of %d local bytes, the newest of 2 October, got %+v", fixtureLocalBytes(t), *old)
+	}
+	// 2 October kept 40 days is deleted on 12 November, whichever
+	// Organization asks.
+	if old.PassesRetentionOn == nil || *old.PassesRetentionOn != "2026-11-12" {
+		t.Errorf("Expected the last to pass Retention on 2026-11-12, got %v", old.PassesRetentionOn)
+	}
+	if _, local := localDiskUse(t, env); got.LocalBytes != local || local < old.LocalBytes {
+		t.Errorf("Expected the disk limit's %d local bytes, the old files' among them, got %d", local, got.LocalBytes)
+	}
+
+	// Once Retention has deleted them all, there are none.
+	env.Clock.Set(time.Date(2026, 11, 12, 0, 30, 0, 0, time.UTC))
+	env.DeleteLogsPastRetention(t)
+	if got := overviewStorageOf(t, env, testNow, testNow, 3); got.OldFiles != nil {
+		t.Errorf("Expected no old Log files past Retention, got %+v", *got.OldFiles)
+	}
+}
