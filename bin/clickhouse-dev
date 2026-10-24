@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
-# Starts the ClickHouse server that the dev stack and the Go tests share, if it
-# isn't running, and waits until it answers. bin/go-dev runs it.
+# Starts the ClickHouse server and the MinIO that the dev stack and the Go
+# tests share (docker-compose.dev.yml), if they aren't running, and waits
+# until ClickHouse answers. bin/go-dev runs it.
 #
-#   bin/clickhouse-dev           # start it, or restart it if deploy/clickhouse changed
-#   bin/clickhouse-dev --stop    # stop and remove the container; its data stays
+#   bin/clickhouse-dev           # start them, or restart ClickHouse if deploy/clickhouse changed
+#   bin/clickhouse-dev --stop    # stop and remove the containers; their data stays
 #
-# One container, solidtrace-clickhouse, serves every checkout and worktree. Its
-# data is in the main checkout's storage/clickhouse/, which outlives worktrees,
-# with a copy of deploy/clickhouse/'s config taken from the checkout that last
-# started it. It listens on 127.0.0.1:4200 (native) and :4201 (HTTP), and
-# EventStore's user, solidtrace, has no password here. Each Go test package
-# makes and drops a database of its own on it (pkg/clickhousetest).
+# One compose project, solidtrace-dev, serves every checkout and worktree. Its
+# data is in the main checkout's storage/ (clickhouse/, minio/), which
+# outlives worktrees, with a copy of deploy/clickhouse/'s config taken from
+# the checkout that last started it. ClickHouse listens on 127.0.0.1:4200
+# (native) and :4201 (HTTP), and EventStore's user, solidtrace, has no
+# password here. MinIO listens on 127.0.0.1:9000 (S3) and :9001 (console),
+# with the key solidtrace / solidtrace-dev. Each Go test package makes and
+# drops a database of its own on ClickHouse (pkg/clickhousetest).
 
 set -euo pipefail
-
-NAME=solidtrace-clickhouse
-# The patch deploy/docker-compose.yml pins; change both together.
-IMAGE=clickhouse/clickhouse-server:26.8.34.13
-# About 2 GB, set inside ClickHouse. Never docker --memory: under a cgroup
-# limit, 26.8 returns freed pages at once and scans run about 1.9x slower.
-MEMORY_BYTES=2147483648
 
 checkout="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 main="$(dirname "$(git -C "$checkout" rev-parse --path-format=absolute --git-common-dir)")"
 dir="$main/storage/clickhouse"
 
+export SOLIDTRACE_DEV_STORAGE="$main/storage"
+export SOLIDTRACE_DEV_UID="$(id -u)" SOLIDTRACE_DEV_GID="$(id -g)"
+compose() { docker compose -f "$checkout/docker-compose.dev.yml" "$@"; }
+
 if [[ ${1:-} == --stop ]]; then
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  compose down
   exit 0
 fi
 
@@ -35,7 +35,7 @@ wait_until_up() {
     curl -fsS -o /dev/null http://127.0.0.1:4201/ping 2>/dev/null && return
     sleep 0.5
   done
-  echo "ClickHouse did not answer on 127.0.0.1:4201. See: docker logs $NAME" >&2
+  echo "ClickHouse did not answer on 127.0.0.1:4201. See: docker logs solidtrace-clickhouse" >&2
   exit 1
 }
 
@@ -53,40 +53,12 @@ if (( changed )); then
   cp -R "$checkout/deploy/clickhouse/config.d" "$checkout/deploy/clickhouse/users.d" "$dir/etc/"
 fi
 
-running_image="$(docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null || true)"
-if [[ -n $running_image && $running_image != "$IMAGE" ]]; then
-  echo "Replacing $NAME's image $running_image with $IMAGE"
-  docker rm -f "$NAME" >/dev/null
-  running_image=""
-fi
-
-if [[ -z $running_image ]]; then
-  # conf.d holds the bucket volume EventStore writes for an object_store
-  # (clickhouse.config_dir), which reads the bucket's key from the
-  # SOLIDTRACE_OBJECT_STORE_* variables set when the container started.
-  # Old Log files are read from logs_parquet.
-  mkdir -p "$dir/data" "$dir/conf.d" "$main/storage/duckdb/development/logs_parquet"
-  echo "Starting $NAME ($IMAGE), data in $dir"
-  # The host's network, as in Compose, so it listens on loopback only. As
-  # this user, so its files stay yours.
-  docker run --detach --name "$NAME" --restart unless-stopped \
-    --network host --user "$(id -u):$(id -g)" \
-    --ulimit nofile=262144:262144 \
-    --env CLICKHOUSE_SKIP_USER_SETUP=1 \
-    --env SOLIDTRACE_CLICKHOUSE_PASSWORD= \
-    --env SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES="$MEMORY_BYTES" \
-    --env SOLIDTRACE_OBJECT_STORE_KEY_ID --env SOLIDTRACE_OBJECT_STORE_SECRET \
-    --volume "$dir/etc/config.d:/etc/clickhouse-server/config.d:ro" \
-    --volume "$dir/etc/users.d:/etc/clickhouse-server/users.d:ro" \
-    --volume "$dir/conf.d:/etc/clickhouse-server/conf.d:ro" \
-    --volume "$dir/data:/var/lib/clickhouse" \
-    --volume "$main/storage/duckdb/development/logs_parquet:/logs_parquet:ro" \
-    "$IMAGE" >/dev/null
-elif (( changed )); then
-  echo "deploy/clickhouse changed: restarting $NAME"
-  docker restart "$NAME" >/dev/null
-elif [[ $(docker inspect -f '{{.State.Running}}' "$NAME") != true ]]; then
-  docker start "$NAME" >/dev/null
+mkdir -p "$dir/data" "$dir/conf.d" "$main/storage/minio" "$main/storage/duckdb/development/logs_parquet"
+# Creates or recreates what's missing or changed (an image, the compose file).
+compose up --detach --quiet-pull
+if (( changed )); then
+  echo "deploy/clickhouse changed: restarting ClickHouse"
+  compose restart clickhouse
 fi
 
 wait_until_up

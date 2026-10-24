@@ -1,11 +1,11 @@
 package clickhousetest
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,8 +34,8 @@ const bucketPolicyFile = "solidtrace-test-bucket.xml"
 //
 // The S3 stand-in is SOLIDTRACE_TEST_S3_ENDPOINT, with its key in
 // SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET, or else
-// the dev MinIO at http://127.0.0.1:9000 with its key in
-// ~/.cache/solid-trace/minio/env. The bucket is SOLIDTRACE_TEST_S3_BUCKET, or
+// the dev MinIO from docker-compose.dev.yml at http://127.0.0.1:9000, with
+// its development key. The bucket is SOLIDTRACE_TEST_S3_BUCKET, or
 // solidtrace-test, and ClickHouse keeps its parts there under
 // clickhouse-test/.
 //
@@ -113,26 +113,27 @@ func s3StandIn(t testing.TB) *config.ObjectStore {
 	if bucket.Endpoint != "" {
 		return bucket
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no S3 stand-in: set SOLIDTRACE_TEST_S3_ENDPOINT, or run the dev MinIO")
+	// The dev MinIO from docker-compose.dev.yml, with its development key.
+	bucket.Endpoint = devMinIOEndpoint
+	bucket.KeyID = "solidtrace"
+	bucket.Secret = "solidtrace-dev"
+	if !reachable(devMinIOEndpoint + "/minio/health/live") {
+		t.Skip("no S3 stand-in: set SOLIDTRACE_TEST_S3_ENDPOINT, or run the dev MinIO (bin/clickhouse-dev)")
 	}
-	env, err := os.ReadFile(filepath.Join(home, ".cache", "solid-trace", "minio", "env"))
-	if err != nil {
-		t.Skip("no S3 stand-in: set SOLIDTRACE_TEST_S3_ENDPOINT, or run the dev MinIO with its key in ~/.cache/solid-trace/minio/env")
-	}
-	lines := bufio.NewScanner(bytes.NewReader(env))
-	for lines.Scan() {
-		name, value, _ := strings.Cut(lines.Text(), "=")
-		switch name {
-		case "MINIO_ROOT_USER":
-			bucket.KeyID = value
-		case "MINIO_ROOT_PASSWORD":
-			bucket.Secret = value
-		}
-	}
-	bucket.Endpoint = "http://127.0.0.1:9000"
 	return bucket
+}
+
+// devMinIOEndpoint is where docker-compose.dev.yml's MinIO listens.
+const devMinIOEndpoint = "http://127.0.0.1:9000"
+
+func reachable(url string) bool {
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // devConfDir is the conf.d bin/clickhouse-dev mounts into the dev
