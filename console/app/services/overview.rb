@@ -17,7 +17,15 @@ class Overview
   TIMEOUT_SECONDS = 3
 
   # The sections, in the order they're answered.
-  SECTIONS = %i[range event_store empty ingest_counts band rates].freeze
+  SECTIONS = %i[range event_store empty ingest_counts band rates daily projects].freeze
+
+  # The Projects that wear a Chart colour of their own, the first by
+  # creation; the rest fold into Other, which wears the next. Never cycled.
+  COLORED_PROJECTS = 7
+  OTHER = "other"
+
+  # A Project whose last Log arrived longer ago than this is stale.
+  STALE_AFTER = 1.hour
 
   attr_reader :organization, :user, :range_name
 
@@ -52,8 +60,8 @@ class Overview
   # What the page says when there's nothing to show: no Projects yet, or
   # Projects with no Logs yet. Logs is nil when EventStore didn't answer.
   def empty
-    logs = if projects.empty? then true elsif answer then !answer["has_logs"] end
-    { projects: projects.empty?, logs: logs }
+    logs = if org_projects.empty? then true elsif answer then !answer["has_logs"] end
+    { projects: org_projects.empty?, logs: logs }
   end
 
   # When Ingest counts begin, and whether that's after the range starts, so
@@ -100,10 +108,91 @@ class Overview
     }
   end
 
+  # The daily Charts' series and days: the Logs each series received each
+  # day, a series a Project or Other (by its key), the bytes received and
+  # stored, and the Logs a second, average and peak. Each Project's series
+  # keeps its colour whatever the range, as it follows creation order alone.
+  def daily
+    return unless answer
+
+    days = Array(answer["days"]).map do |day|
+      logs = series.to_h { |s| [ s[:key], 0 ] }
+      Array(day["projects"]).each do |p|
+        key = series_key(p["project_id"])
+        logs[key] += p["received_logs"].to_i if key
+      end
+      {
+        day: day["day"], logs: logs,
+        received_bytes: day.dig("received", "bytes").to_i, stored_bytes: day.dig("stored", "bytes").to_i,
+        logs_per_second: rate_of(day["logs_per_second"]),
+      }
+    end
+    { series: series, days: days }
+  end
+
+  # One row per Project, in creation order: what it received and stored of
+  # the range, the ratio (received bytes over stored), its share of the
+  # bytes received, its Logs a second, its Retention (the instance's when it
+  # has none) and the Logs it keeps of every day, and when its last Log
+  # arrived, stale when over an hour ago.
+  def projects
+    return unless answer
+
+    by_id = Array(answer["projects"]).index_by { |p| p["project_id"] }
+    total = by_id.values.sum { |p| p.dig("received", "bytes").to_i }
+    default_retention = InstanceSetting.current.default_log_retention_days
+    org_projects.map do |project|
+      got = by_id[project.id] || {}
+      received, stored = got.dig("received", "bytes").to_i, got.dig("stored", "bytes").to_i
+      all_days = got["all_days"] || {}
+      last = got["last_log_at"]&.then { |time| Time.iso8601(time) }
+      {
+        id: project.id, name: project.name, slug: project.slug, color: color_of(project.id),
+        logs: got.dig("received", "logs").to_i, received_bytes: received, stored_bytes: stored,
+        ratio: stored.positive? ? (received.to_f / stored).round(1) : nil,
+        share: total.positive? ? (received.to_f / total).round(4) : nil,
+        logs_per_second: rate_of(got["logs_per_second"]),
+        retention_days: project.log_retention_days || default_retention,
+        retention_is_default: project.log_retention_days.nil?,
+        oldest_day: all_days["oldest_day"],
+        all_days: { logs: all_days["logs"].to_i, bytes: all_days["bytes"].to_i },
+        last_log_at: last&.utc&.iso8601,
+        stale: last && last < Time.now - STALE_AFTER,
+        has_logs: all_days["logs"].to_i.positive? || last.present?,
+      }
+    end
+  end
+
   private
 
-  def projects
-    @projects ||= organization.projects.order(:created_at, :id).to_a
+  def org_projects
+    @org_projects ||= organization.projects.order(:created_at, :id).to_a
+  end
+
+  # The daily Charts' series: a Project each for the first COLORED_PROJECTS
+  # by creation, then Other for the rest, with the Projects each holds.
+  def series
+    @series ||= begin
+      own, rest = org_projects.take(COLORED_PROJECTS), org_projects.drop(COLORED_PROJECTS)
+      list = own.each_with_index.map do |project, i|
+        { key: "project-#{project.id}", name: project.name, color: i + 1, project_ids: [ project.id ] }
+      end
+      list << { key: OTHER, name: "Other", color: COLORED_PROJECTS + 1, project_ids: rest.map(&:id) } if rest.any?
+      list
+    end
+  end
+
+  def series_key(project_id)
+    series.find { |s| s[:project_ids].include?(project_id) }&.dig(:key)
+  end
+
+  def color_of(project_id)
+    series.find { |s| s[:project_ids].include?(project_id) }&.dig(:color)
+  end
+
+  def rate_of(rate)
+    rate ||= {}
+    { average: rate["average"].to_f, peak: rate["peak"].to_i, peak_at: rate["peak_at"] }
   end
 
   # EventStore's Overview of the Organization's Projects, or nil when it has
@@ -112,8 +201,8 @@ class Overview
   def answer
     return @answer if defined?(@answer)
 
-    @answer = projects.empty? ? nil : EventStore.overview!(
-      project_ids: projects.map(&:id), from: @from, to: @to,
+    @answer = org_projects.empty? ? nil : EventStore.overview!(
+      project_ids: org_projects.map(&:id), from: @from, to: @to,
       include_storage: user.instance_admin?, read_timeout: TIMEOUT_SECONDS
     )
   rescue EventStore::Unavailable, EventStore::Rejected => e

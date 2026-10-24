@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
@@ -79,6 +80,13 @@ type overviewData struct {
 	lastLogs  int64
 	hasRecent bool
 	hasLogs   bool
+	// The range's Ingest counts by day, of the Projects together and of
+	// each; each Project's stored Logs of every day; and when each last
+	// received a Log.
+	ingestDays     []storage.IngestDay
+	projectDays    []storage.IngestDay
+	storedProjects []storage.StoredProject
+	arrivals       map[uint32]time.Time
 }
 
 // overviewParts are the Overview's reads. Each fills only its own fields of
@@ -99,6 +107,22 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 		},
 		func(ctx context.Context) (err error) {
 			d.hasLogs, err = h.logs.HasLogs(ctx, q.scope.ProjectIDs)
+			return err
+		},
+		func(ctx context.Context) (err error) {
+			d.ingestDays, err = h.logs.IngestDays(ctx, q.scope)
+			return err
+		},
+		func(ctx context.Context) (err error) {
+			d.projectDays, err = h.logs.ProjectIngestDays(ctx, q.scope)
+			return err
+		},
+		func(ctx context.Context) (err error) {
+			d.storedProjects, err = h.logs.StoredProjects(ctx, q.scope.ProjectIDs)
+			return err
+		},
+		func(ctx context.Context) (err error) {
+			d.arrivals, err = h.logs.LastLogArrivals(ctx, q.scope.ProjectIDs)
 			return err
 		},
 		func(ctx context.Context) (err error) {
@@ -127,7 +151,15 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     seconds of the range so far and the peak, the busiest second of the
 //     Projects together, with that second; last_five_minutes, the Logs a
 //     second of the last five minutes, when the range holds now.
-//   - days: each day of the range, with what is stored of it.
+//   - days: each day of the range, with what is stored of it, what
+//     arrived on it, its Logs a second (the average over its seconds so
+//     far, and its busiest second of the Projects together), and each
+//     Project's Logs received, in the order of project_ids.
+//   - projects: each Project of project_ids, in that order, with what it
+//     received and stored of the range, its Logs a second over the range,
+//     all_days, its stored Logs and bytes of every day it keeps and the
+//     oldest of them (null with none), and last_log_at, the second its last
+//     Log arrived, by Ingest counts (null with none).
 //   - ingest_counts_since: the first second Ingest counts hold for any
 //     Project, so a range that starts before it isn't read as quiet.
 //   - has_logs: whether any of the Projects has Logs stored of any day, or
@@ -186,13 +218,14 @@ func (h *OverviewHandler) readOverviewRequest(req overviewRequest) (overviewQuer
 // The Overview's answer.
 type (
 	overviewAnswer struct {
-		From              string        `json:"from"`
-		To                string        `json:"to"`
-		IngestCountsSince *time.Time    `json:"ingest_counts_since"`
-		HasLogs           bool          `json:"has_logs"`
-		Band              overviewBand  `json:"band"`
-		Rates             overviewRates `json:"rates"`
-		Days              []overviewDay `json:"days"`
+		From              string            `json:"from"`
+		To                string            `json:"to"`
+		IngestCountsSince *time.Time        `json:"ingest_counts_since"`
+		HasLogs           bool              `json:"has_logs"`
+		Band              overviewBand      `json:"band"`
+		Rates             overviewRates     `json:"rates"`
+		Days              []overviewDay     `json:"days"`
+		Projects          []overviewProject `json:"projects"`
 	}
 	overviewBand struct {
 		Received           overviewReceived `json:"received"`
@@ -229,10 +262,57 @@ type (
 		LogsPerSecond float64 `json:"logs_per_second"`
 	}
 	overviewDay struct {
-		Day    string         `json:"day"`
-		Stored overviewStored `json:"stored"`
+		Day           string               `json:"day"`
+		Stored        overviewStored       `json:"stored"`
+		Received      overviewReceived     `json:"received"`
+		LogsPerSecond overviewRate         `json:"logs_per_second"`
+		Projects      []overviewDayProject `json:"projects"`
+	}
+	overviewDayProject struct {
+		ProjectID    uint32 `json:"project_id"`
+		ReceivedLogs int64  `json:"received_logs"`
+	}
+	overviewProject struct {
+		ProjectID     uint32           `json:"project_id"`
+		Received      overviewReceived `json:"received"`
+		Stored        overviewStored   `json:"stored"`
+		LogsPerSecond overviewRate     `json:"logs_per_second"`
+		AllDays       overviewAllDays  `json:"all_days"`
+		LastLogAt     *time.Time       `json:"last_log_at"`
+	}
+	overviewAllDays struct {
+		Logs      int64   `json:"logs"`
+		Bytes     int64   `json:"bytes"`
+		OldestDay *string `json:"oldest_day"`
 	}
 )
+
+func (r *overviewReceived) add(c models.IngestCount) {
+	r.Logs += c.LogsReceived
+	r.Bytes += c.BytesReceived
+	r.BytesOnWire += c.BytesOnWire
+	r.Requests += c.Requests
+}
+
+// rateOver is a total a second over seconds, with its busiest second.
+func rateOver(seconds, total int64, peak storage.Peak) overviewRate {
+	r := overviewRate{Peak: peak.Count}
+	if seconds > 0 {
+		r.Average = float64(total) / float64(seconds)
+	}
+	if !peak.At.IsZero() {
+		r.PeakAt = &peak.At
+	}
+	return r
+}
+
+// busier is the busier of two peaks, the earlier of equals.
+func busier(a, b storage.Peak) storage.Peak {
+	if b.Count > a.Count || (b.Count == a.Count && b.Count > 0 && b.At.Before(a.At)) {
+		return b
+	}
+	return a
+}
 
 func (s *overviewStored) add(d storage.StoredLogDay) {
 	s.Logs += d.Logs
@@ -256,16 +336,7 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 	a.Band.OverloadedRequests = i.RequestsOverloaded
 
 	seconds := int64(q.elapsed() / time.Second)
-	rate := func(total int64, peak storage.Peak) overviewRate {
-		r := overviewRate{Peak: peak.Count}
-		if seconds > 0 {
-			r.Average = float64(total) / float64(seconds)
-		}
-		if !peak.At.IsZero() {
-			r.PeakAt = &peak.At
-		}
-		return r
-	}
+	rate := func(total int64, peak storage.Peak) overviewRate { return rateOver(seconds, total, peak) }
 	a.Rates = overviewRates{
 		Seconds:  seconds,
 		Logs:     rate(i.LogsReceived, i.PeakLogs),
@@ -276,14 +347,49 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 		a.Rates.LastFiveMinutes = &overviewRecentRates{LogsPerSecond: float64(d.lastLogs) / lastMinutes.Seconds()}
 	}
 
+	byProject := map[uint32]int{}
+	for i, projectID := range q.scope.ProjectIDs {
+		byProject[projectID] = i
+		a.Projects = append(a.Projects, overviewProject{ProjectID: projectID})
+	}
 	byDay := map[time.Time]int{}
 	for day := q.from; !day.After(q.to); day = day.AddDate(0, 0, 1) {
 		byDay[day] = len(a.Days)
-		a.Days = append(a.Days, overviewDay{Day: day.Format(time.DateOnly)})
+		projects := make([]overviewDayProject, len(q.scope.ProjectIDs))
+		for i, projectID := range q.scope.ProjectIDs {
+			projects[i].ProjectID = projectID
+		}
+		a.Days = append(a.Days, overviewDay{Day: day.Format(time.DateOnly), Projects: projects})
 	}
 	for _, stored := range d.stored {
 		a.Band.Stored.add(stored)
 		a.Days[byDay[stored.Day]].Stored.add(stored)
+		a.Projects[byProject[stored.ProjectID]].Stored.add(stored)
+	}
+	for _, in := range d.ingestDays {
+		day := &a.Days[byDay[in.Day]]
+		day.Received.add(in.IngestCount)
+		// A day's average is over its seconds so far: all of a past day's,
+		// Today's up to now.
+		so := min(max(q.now.Sub(in.Day), 0), 24*time.Hour)
+		day.LogsPerSecond = rateOver(int64(so/time.Second), in.LogsReceived, in.PeakLogs)
+	}
+	peaks := make([]storage.Peak, len(a.Projects))
+	for _, in := range d.projectDays {
+		i := byProject[in.ProjectID]
+		a.Days[byDay[in.Day]].Projects[i].ReceivedLogs += in.LogsReceived
+		a.Projects[i].Received.add(in.IngestCount)
+		peaks[i] = busier(peaks[i], in.PeakLogs)
+	}
+	for i := range a.Projects {
+		a.Projects[i].LogsPerSecond = rate(a.Projects[i].Received.Logs, peaks[i])
+	}
+	for _, stored := range d.storedProjects {
+		oldest := stored.OldestDay.Format(time.DateOnly)
+		a.Projects[byProject[stored.ProjectID]].AllDays = overviewAllDays{Logs: stored.Logs, Bytes: stored.Bytes, OldestDay: &oldest}
+	}
+	for projectID, at := range d.arrivals {
+		a.Projects[byProject[projectID]].LastLogAt = &at
 	}
 	return a
 }
