@@ -35,6 +35,11 @@ class Overview
     RANGES.key?(name.to_s) ? name.to_s : DEFAULT_RANGE
   end
 
+  # A Project as every section names it.
+  def self.project_ref(project)
+    { id: project.id, name: project.name, slug: project.slug }
+  end
+
   def initialize(organization:, user:, range: DEFAULT_RANGE, today: Time.now.utc.to_date)
     @organization = organization
     @user = user
@@ -143,21 +148,19 @@ class Overview
   def projects
     return unless answer
 
-    by_id = Array(answer["projects"]).index_by { |p| p["project_id"] }
-    total = by_id.values.sum { |p| p.dig("received", "bytes").to_i }
-    default_retention = InstanceSetting.current.default_log_retention_days
+    total = answered_projects.values.sum { |p| p.dig("received", "bytes").to_i }
     org_projects.map do |project|
-      got = by_id[project.id] || {}
+      got = answered_projects[project.id] || {}
       received, kept, stored = got.dig("received", "bytes").to_i, got.dig("kept", "bytes").to_i, got.dig("stored", "bytes").to_i
       all_days = got["all_days"] || {}
       last = got["last_log_at"]&.then { |time| Time.iso8601(time) }
       {
-        id: project.id, name: project.name, slug: project.slug, color: color_of(project.id),
+        **self.class.project_ref(project), color: color_of(project.id),
         logs: got.dig("received", "logs").to_i, received_bytes: received, kept_bytes: kept, stored_bytes: stored,
         ratio: ratio(kept, stored), dropped_by_transform: got["dropped_by_transform"].to_i,
         share: total.positive? ? (received.to_f / total).round(4) : nil,
         logs_per_second: rate_of(got["logs_per_second"]),
-        retention_days: project.log_retention_days || default_retention,
+        retention_days: retention_of(project),
         retention_is_default: project.log_retention_days.nil?,
         oldest_day: all_days["oldest_day"],
         all_days: { logs: all_days["logs"].to_i, bytes: all_days["bytes"].to_i },
@@ -196,9 +199,7 @@ class Overview
   def other_tools
     return unless answer
 
-    by_id = Array(answer["projects"]).index_by { |p| p["project_id"] }
-    default_retention = InstanceSetting.current.default_log_retention_days
-    volume = org_projects.map { |p| [ by_id.dig(p.id, "received") || {}, p.log_retention_days || default_retention ] }
+    volume = org_projects.map { |p| [ answered_projects.dig(p.id, "received") || {}, retention_of(p) ] }
     OtherTools.new(projects: volume, bytes_on_wire: answer.dig("band", "received", "bytes_on_wire"), days: RANGES.fetch(range_name)).to_h
   end
 
@@ -221,7 +222,7 @@ class Overview
 
     logs, dropped = source["logs"].to_i, source["dropped_by_transform"].to_i
     row = {
-      project: { id: project.id, name: project.name, slug: project.slug, color: color_of(project.id) },
+      project: { **self.class.project_ref(project), color: color_of(project.id) },
       service: source["service"].to_s, file: source["file"].to_s,
       logs: logs, bytes: source["bytes"].to_i, dropped_by_transform: dropped, sent: logs + dropped,
     }
@@ -240,6 +241,16 @@ class Overview
 
   def org_projects
     @org_projects ||= organization.projects.order(:created_at, :id).to_a
+  end
+
+  # EventStore's answer for each Project, by id.
+  def answered_projects
+    @answered_projects ||= Array(answer["projects"]).index_by { |p| p["project_id"] }
+  end
+
+  # A Project's Retention in days, the instance's default when it has none.
+  def retention_of(project)
+    project.log_retention_days || (@default_retention ||= InstanceSetting.current.default_log_retention_days)
   end
 
   # The daily Charts' series: a Project each for the first COLORED_PROJECTS

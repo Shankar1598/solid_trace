@@ -17,19 +17,18 @@ class Overview
     def to_h
       return unless @storage
 
-      s = @storage
-      limit, local = s["disk_limit_bytes"].to_i, s["local_bytes"].to_i
+      limit, local = @storage["disk_limit_bytes"].to_i, @storage["local_bytes"].to_i
       {
         whole_install: true,
         local_bytes: local,
         disk_limit_bytes: limit,
         limit_share: limit.positive? ? (local.to_f / limit).round(4) : nil,
-        disk_bytes: s["disk_bytes"].to_i,
-        free_bytes: s["free_bytes"].to_i,
-        bucket: s["bucket"] == true,
-        bucket_bytes: s["bucket_bytes"].to_i,
-        growth_bytes_per_day: s["growth_bytes_per_day"].to_f.round,
-        days_until_limit: s["days_until_limit"]&.floor,
+        disk_bytes: @storage["disk_bytes"].to_i,
+        free_bytes: @storage["free_bytes"].to_i,
+        bucket: @storage["bucket"] == true,
+        bucket_bytes: @storage["bucket_bytes"].to_i,
+        growth_bytes_per_day: @storage["growth_bytes_per_day"].to_f.round,
+        days_until_limit: @storage["days_until_limit"]&.floor,
         old_files: old_files,
       }
     end
