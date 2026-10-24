@@ -16,7 +16,7 @@ module McpTools
                 "before any program; or on up to #{MAX_LOGS} logs you give. Nothing is stored or saved. Answers how many " \
                 "Logs the draft kept, dropped and failed, and the first #{IN_FULL} Logs in full: before, and after, " \
                 "dropped or the error. When there are more, failures gives each error with how many Logs it failed. " \
-                "A draft that doesn't compile answers VRL's errors. Any member can. #{LogTransformTool::LANGUAGE}"
+                "A draft that doesn't compile answers VRL's errors. Any member can. #{LogTransformTool::HOW_TO_WRITE}"
     read_only!
     takes_project
     argument :program, LogTransformTool::PROGRAM, required: true
