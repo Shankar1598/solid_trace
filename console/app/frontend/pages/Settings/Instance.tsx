@@ -34,6 +34,7 @@ interface InstanceSettings {
     sql_queries_description: string
     default_log_retention_days: number
     log_all_reads: boolean
+    log_mcp_reads: boolean
   }
   sign_up: { open: boolean, command: string }
   restart_to_change: RestartGroup[]
@@ -52,6 +53,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     sql_queries_enabled: editable.sql_queries_enabled,
     default_log_retention_days: String(editable.default_log_retention_days),
     log_all_reads: editable.log_all_reads,
+    log_mcp_reads: editable.log_mcp_reads,
   })
 
   transform((data) => ({ instance_settings: data }))
@@ -120,9 +122,28 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                   Log all reads
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  Times every Log read and its SQL into the Meta Organization's Project, to investigate slowness. Off, only the MCP server's reads are timed.
+                  Times every Log read and its SQL into the Meta Organization's Project, to investigate slowness.
                 </p>
                 {errors.log_all_reads && <p className="text-sm font-medium text-destructive">{errors.log_all_reads}</p>}
+              </div>
+
+              <div className="space-y-2">
+                {/* While Log all reads is on it times the MCP server's reads too, so this shows on and waits. */}
+                <label className="flex items-center gap-2 text-sm font-medium has-[:disabled]:text-muted-foreground">
+                  <Checkbox
+                    aria-label="Log MCP reads"
+                    checked={data.log_all_reads || data.log_mcp_reads}
+                    disabled={data.log_all_reads}
+                    onCheckedChange={(checked) => setData('log_mcp_reads', checked === true)}
+                  />
+                  Log MCP reads
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  {data.log_all_reads
+                    ? 'Log all reads times the MCP server\'s reads too; this applies once it\'s off.'
+                    : 'Times the MCP server\'s Log reads and their SQL. Its tool calls are always timed.'}
+                </p>
+                {errors.log_mcp_reads && <p className="text-sm font-medium text-destructive">{errors.log_mcp_reads}</p>}
               </div>
             </CardContent>
             <CardFooter className="justify-end">
