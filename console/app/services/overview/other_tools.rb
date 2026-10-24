@@ -5,7 +5,9 @@ class Overview
   # cost a month at Datadog's, Better Stack's and Axiom's list prices, and
   # GCP's internet egress for sending the bytes on the wire to such a tool.
   #
-  # The volume is the range's scaled to 30 days: each Project's GB and Logs
+  # The volume is the range's scaled to 30 days by the seconds the range has
+  # had so far (Today at 06:00 is 6 hours × 30 days / 6 hours, not a whole
+  # day's), or by its whole days before any has passed: each Project's GB and Logs
   # received at its Retention (the instance's when it has none), and the
   # bytes on the wire. The prices are PRICES, checked by hand on CHECKED_ON
   # from each pricing page and updated in a release when stale; nothing is
@@ -56,10 +58,11 @@ class Overview
       per_gib: [ [ 1_024, 0.12 ], [ 10_240, 0.11 ], [ nil, 0.08 ] ],
     }.freeze
 
-    # projects: [[received {logs, bytes}, Retention days]]; days: the range's.
-    def initialize(projects:, bytes_on_wire:, days:)
-      scale = DAYS.to_f / days
-      @days = days
+    # projects: [[received {logs, bytes}, Retention days]]; days: the range's
+    # whole days; seconds: those it has had so far.
+    def initialize(projects:, bytes_on_wire:, days:, seconds:)
+      @days, @seconds = days, seconds.to_i
+      scale = @seconds.positive? ? DAYS * 86_400.0 / @seconds : DAYS.to_f / days
       @projects = projects.map do |received, retention_days|
         { gb: received["bytes"].to_i * scale / GB, logs: received["logs"].to_i * scale, retention_days: retention_days }
       end
@@ -70,7 +73,7 @@ class Overview
     def to_h
       {
         checked_on: CHECKED_ON,
-        volume: { days: @days, scaled: @days != DAYS, logs: @projects.sum { |p| p[:logs] }.round, bytes: @bytes.round,
+        volume: { days: @days, seconds: @seconds, scaled: @seconds != DAYS * 86_400, logs: @projects.sum { |p| p[:logs] }.round, bytes: @bytes.round,
                   bytes_on_wire: @bytes_on_wire.round },
         tools: [ datadog, better_stack, axiom ],
         egress: tool(EGRESS, tiered(@bytes_on_wire / GIB, EGRESS[:per_gib])),

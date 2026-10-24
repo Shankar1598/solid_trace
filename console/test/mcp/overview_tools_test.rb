@@ -83,7 +83,9 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
   test "get_overview answers what Today's volume, scaled to 30 days, would cost at other tools, with the prices' date" do
     band = answer[:band].merge(received: { logs: 1_000_000, bytes: 10**9, bytes_on_wire: 2**30, requests: 4 })
     projects = [ { project_id: @web.id, received: { logs: 1_000_000, bytes: 10**9 } } ]
-    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(band: band, projects: projects).to_json)
+    # Today's whole day, so the volume is 30 times it.
+    rates = answer[:rates].merge(seconds: 86_400)
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(band: band, projects: projects, rates: rates).to_json)
 
     got = call_tool(:get_overview, user: @user)
 

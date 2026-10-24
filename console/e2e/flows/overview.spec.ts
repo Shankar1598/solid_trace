@@ -123,7 +123,7 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
     await expect(otherTools.locator(`[data-other-tool="${tool}"]`)).toContainText(/\$[\d,.]+/)
     await expect(otherTools.locator(`[data-other-tool="${tool}"]`).getByRole('link', { name: 'Pricing' })).toHaveAttribute('href', /^https:\/\//)
   }
-  await expect(otherTools.locator('[data-other-tools="scaled"]')).toContainText('today scaled to 30 days')
+  await expect(otherTools.locator('[data-other-tools="scaled"]')).toContainText('today so far, scaled to 30 days')
   await expect(otherTools.locator('[data-other-tools="checked-on"]')).toContainText(/list prices on \w+ \d+, \d{4}, before discounts/)
 
   await page.getByRole('button', { name: '7 days' }).click()
@@ -132,7 +132,7 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
   await expect(band.locator('[data-step="received"]')).toContainText('Logs')
   await expect(rates.locator('[data-rate="last-five-minutes"]')).toHaveCount(0)
   await expect(daily.locator('[data-chart="logs"] [data-chart-table] tbody tr')).toHaveCount(7)
-  await expect(otherTools.locator('[data-other-tools="scaled"]')).toContainText('the last 7 days scaled to 30 days')
+  await expect(otherTools.locator('[data-other-tools="scaled"]')).toContainText('the last 7 days so far, scaled to 30 days')
 
   // A source opens the Logs explorer on its Project, filtered to it.
   await sources.locator(`[data-sources="by-logs"] [data-source="${source}"]`).getByRole('link').click()

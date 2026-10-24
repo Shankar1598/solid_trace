@@ -18,8 +18,8 @@ export interface OtherToolEstimate {
 export interface OverviewOtherTools {
   /** The day the prices were checked, YYYY-MM-DD. */
   checked_on: string
-  /** The range's volume scaled to 30 days; scaled is false for 30 days. */
-  volume: { days: number; scaled: boolean; logs: number; bytes: number; bytes_on_wire: number }
+  /** The range's volume scaled to 30 days by the seconds it has had so far; scaled is false only for 30 whole days. */
+  volume: { days: number; seconds: number; scaled: boolean; logs: number; bytes: number; bytes_on_wire: number }
   tools: OtherToolEstimate[]
   egress: Omit<OtherToolEstimate, 'key' | 'beyond_list'>
 }

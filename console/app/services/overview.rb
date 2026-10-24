@@ -193,14 +193,15 @@ class Overview
     Health.new(organization: organization, projects: org_projects, from: @from, to: @to, answer: answer).to_h
   end
 
-  # What the range's volume, scaled to 30 days, would cost a month at other
+  # What the range's volume, scaled to 30 days from the seconds it has had, would cost a month at other
   # tools' list prices at each Project's Retention, and the egress for the
   # bytes on the wire (Overview::OtherTools).
   def other_tools
     return unless answer
 
     volume = org_projects.map { |p| [ answered_projects.dig(p.id, "received") || {}, retention_of(p) ] }
-    OtherTools.new(projects: volume, bytes_on_wire: answer.dig("band", "received", "bytes_on_wire"), days: RANGES.fetch(range_name)).to_h
+    OtherTools.new(projects: volume, bytes_on_wire: answer.dig("band", "received", "bytes_on_wire"),
+                   days: RANGES.fetch(range_name), seconds: answer.dig("rates", "seconds")).to_h
   end
 
   # The whole install's disk against the disk limit, the bucket and the old
