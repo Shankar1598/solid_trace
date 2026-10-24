@@ -199,7 +199,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     ids = [ @web, @api, *more ].map(&:id)
     days = [
       day("2026-10-01", { ids[1] => 5, ids[7] => 2, ids[8] => 1 }, received_bytes: 900, stored_bytes: 90),
-      day("2026-10-02", { ids[0] => 3, ids[8] => 4 }, received_bytes: 700, stored_bytes: 70, peak: 4),
+      day("2026-10-02", { ids[0] => 3, ids[8] => 4 }, received_bytes: 700, stored_bytes: 70, peak: 4)
     ]
     stub_request(:post, @overview_url).with(body: hash_including(project_ids: ids))
       .to_return(status: 200, body: answer.merge(days: days, projects: ids.map { |id| project(id) }).to_json)
@@ -229,7 +229,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     InstanceSetting.current.update!(default_log_retention_days: 45)
     projects = [
       project(@web.id, logs: 30, received_bytes: 3000, kept_bytes: 2400, stored_bytes: 600, all_logs: 90, oldest_day: "2026-09-26", last_log_at: "2026-10-02T12:30:00Z"),
-      project(@api.id, logs: 10, received_bytes: 1000, stored_bytes: 0, all_logs: 10, oldest_day: "2026-10-01", last_log_at: "2026-10-02T11:59:59Z"),
+      project(@api.id, logs: 10, received_bytes: 1000, stored_bytes: 0, all_logs: 10, oldest_day: "2026-10-01", last_log_at: "2026-10-02T11:59:59Z")
     ]
     stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(projects: projects).to_json)
     sign_in_as(@member)
