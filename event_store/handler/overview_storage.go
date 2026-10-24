@@ -102,10 +102,8 @@ func assembleStorage(q overviewQuery, limit storage.LogDiskLimit, d overviewStor
 			if day.After(newest) {
 				newest = day
 			}
-			// Retention keeps a day for its Retention's days after it, and
-			// deletes it the day after.
-			if days := d.retention[projectID]; days > 0 && day.AddDate(0, 0, days+1).After(last) {
-				last = day.AddDate(0, 0, days+1)
+			if days := d.retention[projectID]; days > 0 && storage.LogDayPassesRetention(day, days).After(last) {
+				last = storage.LogDayPassesRetention(day, days)
 			}
 		}
 		a.OldFiles.NewestDay = newest.Format(time.DateOnly)

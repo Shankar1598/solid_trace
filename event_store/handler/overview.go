@@ -423,8 +423,8 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 		day.Received.add(in.IngestCount)
 		// A day's average is over its seconds so far: all of a past day's,
 		// Today's up to now.
-		so := min(max(q.now.Sub(in.Day), 0), 24*time.Hour)
-		day.LogsPerSecond = rateOver(int64(so/time.Second), in.LogsReceived, in.PeakLogs)
+		elapsed := min(max(q.now.Sub(in.Day), 0), 24*time.Hour)
+		day.LogsPerSecond = rateOver(int64(elapsed/time.Second), in.LogsReceived, in.PeakLogs)
 	}
 	peaks := make([]storage.Peak, len(a.Projects))
 	for _, in := range d.projectDays {

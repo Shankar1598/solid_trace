@@ -72,34 +72,47 @@ type IngestTotals struct {
 	PeakLogs, PeakBytes, PeakRequests Peak
 }
 
+// ingestSeconds is a scope's Ingest counts summed per second, and per
+// Project when by is "project_id, ", as l, u, b, w, r and o: a second's
+// rows are summed, across Projects or the parts not yet merged, before a
+// peak is taken over them. It takes the scope's ProjectIDs, From and To.
+func ingestSeconds(by string) string {
+	return `
+		SELECT ` + by + `second, sum(logs_received) AS l, sum(logs_unreadable) AS u, sum(bytes_received) AS b,
+			sum(bytes_on_wire) AS w, sum(requests) AS r, sum(requests_overloaded) AS o
+		FROM log_ingest_counts
+		WHERE project_id IN ? AND second >= ? AND second < ?
+		GROUP BY ` + by + `second`
+}
+
+// peakOf selects the most of an ingestSeconds column in one second, and
+// the second: of equal seconds the first wins.
+func peakOf(column string) string {
+	return fmt.Sprintf("toInt64(max(%[1]s)), argMax(second, (%[1]s, -toUnixTimestamp(second)))", column)
+}
+
+// settle clears a Peak's second when nothing arrived, and reads it in UTC.
+func (p *Peak) settle() {
+	if p.Count == 0 {
+		p.At = time.Time{}
+	} else {
+		p.At = p.At.UTC()
+	}
+}
+
 // IngestTotals sums the Ingest counts of a scope.
 func (s *ClickHouseLogs) IngestTotals(ctx context.Context, scope OverviewScope) (IngestTotals, error) {
-	// A second's rows are summed across Projects, and the parts not yet
-	// merged, before its peak is taken. Of equal seconds the first wins.
-	peak := func(column string) string {
-		return fmt.Sprintf("toInt64(max(%[1]s)), argMax(second, (%[1]s, -toUnixTimestamp(second)))", column)
-	}
 	row := s.conn.QueryRow(ctx, `
 		SELECT toInt64(sum(l)), toInt64(sum(u)), toInt64(sum(b)), toInt64(sum(w)), toInt64(sum(r)), toInt64(sum(o)),
-			`+peak("l")+`, `+peak("b")+`, `+peak("r")+`
-		FROM (
-			SELECT second, sum(logs_received) AS l, sum(logs_unreadable) AS u, sum(bytes_received) AS b,
-				sum(bytes_on_wire) AS w, sum(requests) AS r, sum(requests_overloaded) AS o
-			FROM log_ingest_counts
-			WHERE project_id IN ? AND second >= ? AND second < ?
-			GROUP BY second
-		)`, scope.ProjectIDs, scope.From, scope.To)
+			`+peakOf("l")+`, `+peakOf("b")+`, `+peakOf("r")+`
+		FROM (`+ingestSeconds("")+`)`, scope.ProjectIDs, scope.From, scope.To)
 	var t IngestTotals
 	if err := row.Scan(&t.LogsReceived, &t.LogsUnreadable, &t.BytesReceived, &t.BytesOnWire, &t.Requests, &t.RequestsOverloaded,
 		&t.PeakLogs.Count, &t.PeakLogs.At, &t.PeakBytes.Count, &t.PeakBytes.At, &t.PeakRequests.Count, &t.PeakRequests.At); err != nil {
 		return IngestTotals{}, fmt.Errorf("sum Ingest counts: %w", err)
 	}
 	for _, p := range []*Peak{&t.PeakLogs, &t.PeakBytes, &t.PeakRequests} {
-		if p.Count == 0 {
-			p.At = time.Time{}
-		} else {
-			p.At = p.At.UTC()
-		}
+		p.settle()
 	}
 	return t, nil
 }
@@ -130,22 +143,26 @@ type StoredLogDay struct {
 	RawBytes    int64
 }
 
+// localAndBucketBytes selects the bytes of a system.parts selection on
+// local disk, then in the bucket.
+const localAndBucketBytes = `
+	toInt64(sumIf(bytes_on_disk, disk_name IN (SELECT name FROM system.disks WHERE NOT is_remote))),
+	toInt64(sumIf(bytes_on_disk, disk_name IN (SELECT name FROM system.disks WHERE is_remote)))`
+
 // StoredLogDays lists the stored days of each Project of projectIDs from
 // the day of from to the day of to, by logs' parts, in no order.
 func (s *ClickHouseLogs) StoredLogDays(ctx context.Context, projectIDs []uint32, from, to time.Time) ([]StoredLogDay, error) {
 	var ids []string
 	for _, projectID := range projectIDs {
 		for day := LogDay(from); !day.After(to); day = day.AddDate(0, 0, 1) {
-			ids = append(ids, fmt.Sprintf("%d-%s", projectID, day.Format("20060102")))
+			ids = append(ids, logPartitionID(projectID, day))
 		}
 	}
 	if len(ids) == 0 {
 		return nil, nil
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT partition_id, toInt64(sum(rows)),
-			toInt64(sumIf(bytes_on_disk, disk_name IN (SELECT name FROM system.disks WHERE NOT is_remote))),
-			toInt64(sumIf(bytes_on_disk, disk_name IN (SELECT name FROM system.disks WHERE is_remote))),
+		SELECT partition_id, toInt64(sum(rows)), `+localAndBucketBytes+`,
 			toInt64(sum(data_uncompressed_bytes))
 		FROM system.parts
 		WHERE database = currentDatabase() AND table = 'logs' AND active AND partition_id IN ?
@@ -217,23 +234,14 @@ func (s *ClickHouseLogs) ProjectIngestDays(ctx context.Context, scope OverviewSc
 }
 
 func (s *ClickHouseLogs) ingestDays(ctx context.Context, scope OverviewScope, byProject bool) ([]IngestDay, error) {
-	// A second's rows are summed, across Projects or the parts not yet
-	// merged, before its day's peak is taken. Of equal seconds the first
-	// wins.
 	project, by := "toUInt32(0)", ""
 	if byProject {
 		project, by = "project_id", "project_id, "
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT `+project+`, toDate(second) AS day, toInt64(sum(l)), toInt64(sum(u)), toInt64(sum(b)), toInt64(sum(w)),
-			toInt64(sum(r)), toInt64(sum(o)), toInt64(max(l)), argMax(second, (l, -toUnixTimestamp(second)))
-		FROM (
-			SELECT `+by+`second, sum(logs_received) AS l, sum(logs_unreadable) AS u, sum(bytes_received) AS b,
-				sum(bytes_on_wire) AS w, sum(requests) AS r, sum(requests_overloaded) AS o
-			FROM log_ingest_counts
-			WHERE project_id IN ? AND second >= ? AND second < ?
-			GROUP BY `+by+`second
-		)
+			toInt64(sum(r)), toInt64(sum(o)), `+peakOf("l")+`
+		FROM (`+ingestSeconds(by)+`)
 		GROUP BY `+by+`day`, scope.ProjectIDs, scope.From, scope.To)
 	if err != nil {
 		return nil, fmt.Errorf("sum Ingest counts by day: %w", err)
@@ -247,11 +255,7 @@ func (s *ClickHouseLogs) ingestDays(ctx context.Context, scope OverviewScope, by
 			return nil, err
 		}
 		d.Day = LogDay(d.Day)
-		if d.PeakLogs.Count == 0 {
-			d.PeakLogs.At = time.Time{}
-		} else {
-			d.PeakLogs.At = d.PeakLogs.At.UTC()
-		}
+		d.PeakLogs.settle()
 		days = append(days, d)
 	}
 	return days, rows.Err()
@@ -272,7 +276,7 @@ type StoredProject struct {
 func (s *ClickHouseLogs) StoredProjects(ctx context.Context, projectIDs []uint32) ([]StoredProject, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT toUInt32OrZero(splitByChar('-', partition_id)[1]) AS project_id, toInt64(sum(rows)), toInt64(sum(bytes_on_disk)),
-			min(splitByChar('-', partition_id)[2])
+			min(partition_id)
 		FROM system.parts
 		WHERE database = currentDatabase() AND table = 'logs' AND active AND project_id IN ?
 		GROUP BY project_id`, projectIDs)
@@ -287,8 +291,9 @@ func (s *ClickHouseLogs) StoredProjects(ctx context.Context, projectIDs []uint32
 		if err := rows.Scan(&p.ProjectID, &p.Logs, &p.Bytes, &oldest); err != nil {
 			return nil, err
 		}
-		if p.OldestDay, err = time.Parse("20060102", oldest); err != nil {
-			return nil, fmt.Errorf("oldest day %q of Project %d's Logs: %w", oldest, p.ProjectID, err)
+		// A Project's partitions differ only in their day, so the least is its oldest.
+		if _, p.OldestDay, err = parseLogPartitionID(oldest); err != nil {
+			return nil, fmt.Errorf("oldest partition %q of Project %d's Logs: %w", oldest, p.ProjectID, err)
 		}
 		projects = append(projects, p)
 	}
