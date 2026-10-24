@@ -8,6 +8,7 @@ module McpServer
   TOOLS = [
     McpTools::Whoami,
     McpTools::ListProjects,
+    McpTools::GetOverview,
     McpTools::QueryLogs,
     McpTools::GetLog,
     McpTools::ListFields,
@@ -55,6 +56,7 @@ module McpServer
     SolidTrace keeps Projects' Logs and Issues, and Organizations' Dashboards and Monitors.
     You act as the user whose API token you sent, with their role in each Organization.
     whoami lists your Organizations, and list_projects an Organization's Projects, with descriptions that say which to query.
+    get_overview answers how much an Organization's Projects sent and store, how fast, how healthy, and what that volume would cost elsewhere.
     query_logs runs a Query on a Project's Logs; list_fields lists the names a Query reads, and query_language_reference explains the language.
     get_issue's trace_logs finds an Event's Logs.
     An answer ends with a link to the Console page that shows it, for the user to open.

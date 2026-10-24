@@ -136,11 +136,17 @@ func main() {
 		Clock:        clock.System{},
 		Retention:    consoleSettings,
 		MaxWaiting:   cfg.IngestMaxWaiting,
+		IngestCounts: clickHouseLogs,
 	})
+	ingestService.StartFlushingIngestCounts()
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
 	logsHandler := handler.NewLogsHandler(clickHouseLogs, sqlQueries, consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
+	overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{
+		Logs: clickHouseLogs, Clock: clock.System{}, DiskLimit: diskLimit, Retention: consoleSettings,
+		LocalCacheHours: cfg.ObjectStore.LocalHours(),
+	})
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
@@ -149,7 +155,7 @@ func main() {
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, healthHandler, handler.NewConfigHandler(cfg, diskLimit.Bytes))
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, overviewHandler, healthHandler, handler.NewConfigHandler(cfg, diskLimit.Bytes))
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort
@@ -182,6 +188,8 @@ func main() {
 	if queryErr != nil || ingestErr != nil {
 		logger.L.Error("HTTP shutdown timed out", "query_error", queryErr, "ingest_error", ingestErr)
 	}
+	// Ingest takes no more requests: the last seconds' counts are written.
+	ingestService.StopFlushingIngestCounts()
 
 	// Every later write returns ErrShuttingDown, so nothing reaches Pebble
 	// after the deferred Close.

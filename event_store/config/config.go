@@ -65,6 +65,15 @@ type Config struct {
 // DefaultLogsBinCacheMB is the bin cache's size, in MiB, unless the file says.
 const DefaultLogsBinCacheMB = 64
 
+// LocalHours is how long Logs stay on local disk before they move to the
+// bucket: LocalCacheHours, or 0 with no bucket.
+func (o *ObjectStore) LocalHours() int {
+	if o == nil {
+		return 0
+	}
+	return o.LocalCacheHours
+}
+
 // ObjectStore kinds.
 const (
 	ObjectStoreS3  = "s3"

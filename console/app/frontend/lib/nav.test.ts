@@ -41,6 +41,17 @@ describe('the sidebar entry of a page', () => {
   })
 })
 
+describe('the Overview', () => {
+  it('is its own sidebar entry, whatever its range', () => {
+    expect(navSection('/acme/overview')).toBe('overview')
+    expect(navSection('/acme/overview?range=7d')).toBe('overview')
+  })
+
+  it('switches to the other Organization\'s Overview, on Today', () => {
+    expect(orgSwitchUrl('/acme/overview?range=30d', 'meta')).toBe('/meta/overview')
+  })
+})
+
 describe('where switching Organization lands', () => {
   it('is the other Organization\'s Issues from the Issues list, an Issue or a Project\'s Issues', () => {
     expect(orgSwitchUrl('/acme/issues?status=open', 'meta')).toBe('/meta/issues')

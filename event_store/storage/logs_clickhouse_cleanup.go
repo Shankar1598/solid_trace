@@ -19,8 +19,9 @@ import (
 // each drops whole partitions, which costs ClickHouse no rewrite.
 
 // logDayTables are the tables partitioned by (Project, day) that hold a
-// Project's Logs and what is counted from them.
-var logDayTables = []string{"logs", "log_minute_counts", "log_key_counts"}
+// Project's Logs and what is counted from them. The Ingest counts' day is
+// the day of arrival, not the Logs' own.
+var logDayTables = []string{"logs", "log_minute_counts", "log_key_counts", "log_ingest_counts", "log_source_counts"}
 
 // cleanupTimeout bounds a deletion, or a pass of the disk limit, whose moves
 // of days to the bucket can take minutes each.
@@ -65,6 +66,15 @@ func (s *ClickHouseLogs) logPartitions(ctx context.Context) ([]logPartition, err
 	return partitions, rows.Err()
 }
 
+// logPartitionDay is how a Log table's partition ID writes its day.
+const logPartitionDay = "20060102"
+
+// logPartitionID is the ID of a Project's day's partition of a Log table,
+// as parseLogPartitionID reads it.
+func logPartitionID(projectID uint32, day time.Time) string {
+	return fmt.Sprintf("%d-%s", projectID, day.Format(logPartitionDay))
+}
+
 // parseLogPartitionID reads the Project and the day from the ID of a
 // partition of a Log table.
 func parseLogPartitionID(id string) (uint32, time.Time, error) {
@@ -76,7 +86,7 @@ func parseLogPartitionID(id string) (uint32, time.Time, error) {
 	if err != nil {
 		return 0, time.Time{}, err
 	}
-	at, err := time.Parse("20060102", day)
+	at, err := time.Parse(logPartitionDay, day)
 	if err != nil {
 		return 0, time.Time{}, err
 	}
@@ -206,10 +216,7 @@ func (s *ClickHouseLogs) DiskLimit(configured int64) (LogDiskLimit, error) {
 	defer cancel()
 	var size int64
 	err := s.conn.QueryRow(ctx, `
-		SELECT toInt64(sum(total_space)) FROM system.disks
-		WHERE NOT is_remote AND name IN (
-			SELECT arrayJoin(disks) FROM system.storage_policies
-			WHERE policy_name = (SELECT storage_policy FROM system.tables WHERE database = currentDatabase() AND name = 'logs'))`).Scan(&size)
+		SELECT toInt64(sum(total_space)) FROM system.disks WHERE name IN (`+logsLocalDisks+`)`).Scan(&size)
 	if err != nil {
 		return LogDiskLimit{}, fmt.Errorf("read the size of ClickHouse's local disk: %w", err)
 	}

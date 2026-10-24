@@ -144,6 +144,9 @@ type LogInsert struct {
 	// Again is set when the range may have been inserted before, whole or
 	// in part, as after a crash or a failed insert.
 	Again bool
+	// Dropped is how many Logs of the range the Log transform dropped, by
+	// the source each arrived with.
+	Dropped map[LogSource]int64
 }
 
 // token is the insert's dedup token, the same each time its range is
@@ -177,10 +180,12 @@ func checkStorable(batches []LogBatch) error {
 }
 
 // InsertLogBatches inserts the Logs of a Project's Log batches into logs,
-// and how many of them carried each Attribute into the key counts table,
-// each with the range's dedup token: ClickHouse drops an insert whose range
-// it has already taken, so a range inserted again after a crash, whole or in
-// part, is stored once. The batches may hold no Logs.
+// how many of them carried each Attribute into the key counts table, and
+// what each source sent into the Source counts table, each with the range's
+// dedup token: ClickHouse drops an insert whose range it has already taken,
+// so a range inserted again after a crash, whole or in part, is stored once.
+// The batches may hold no Logs; a range the Log transform dropped still
+// writes its Source counts.
 func (s *ClickHouseLogs) InsertLogBatches(projectID uint32, insert LogInsert) error {
 	if err := checkStorable(insert.Batches); err != nil {
 		return err
@@ -190,18 +195,20 @@ func (s *ClickHouseLogs) InsertLogBatches(projectID uint32, insert LogInsert) er
 	for _, batch := range insert.Batches {
 		rows += len(batch.Logs)
 	}
-	if rows == 0 {
-		return nil
+	if rows > 0 {
+		err := s.insertLogs(ctx, "logs", projectID, insert.Batches)
+		// Whether or not ClickHouse answered, the Logs may be in logs now,
+		// so no bin of their hours the bin cache kept is taken again.
+		s.generations.bump(projectID, insert.Batches)
+		if err != nil {
+			return fmt.Errorf("insert logs: %w", err)
+		}
+		if err := s.insertKeyCounts(ctx, projectID, insert); err != nil {
+			return fmt.Errorf("insert key counts: %w", err)
+		}
 	}
-	err := s.insertLogs(ctx, "logs", projectID, insert.Batches)
-	// Whether or not ClickHouse answered, the Logs may be in logs now, so
-	// no bin of their hours the bin cache kept is taken again.
-	s.generations.bump(projectID, insert.Batches)
-	if err != nil {
-		return fmt.Errorf("insert logs: %w", err)
-	}
-	if err := s.insertKeyCounts(ctx, projectID, insert); err != nil {
-		return fmt.Errorf("insert key counts: %w", err)
+	if err := s.insertSourceCounts(ctx, projectID, insert); err != nil {
+		return fmt.Errorf("insert Source counts: %w", err)
 	}
 	return nil
 }

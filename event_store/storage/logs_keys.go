@@ -37,6 +37,19 @@ func LogDay(t time.Time) time.Time {
 	return t.UTC().Truncate(24 * time.Hour)
 }
 
+// FirstLogDayKept is the first UTC day a Retention of days keeps at now.
+// A day is kept while any of its time is within Retention, so Retention
+// deletes the days before this one.
+func FirstLogDayKept(now time.Time, days int) time.Time {
+	return LogDay(now.AddDate(0, 0, -days))
+}
+
+// LogDayPassesRetention is the UTC day a Retention of days deletes day on:
+// the first day whose FirstLogDayKept is after it.
+func LogDayPassesRetention(day time.Time, days int) time.Time {
+	return LogDay(day).AddDate(0, 0, days+1)
+}
+
 // dayString is a day as a Date literal, such as 2026-10-23.
 func dayString(day time.Time) string {
 	return day.UTC().Format(time.DateOnly)

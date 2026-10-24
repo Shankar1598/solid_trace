@@ -55,6 +55,7 @@ The old-file path is one module, `storage/logs_old_files.go`, which goes once th
 - **Start:** `main.go` and the root tests' `TestEnv.open` call `UseOldLogFiles`; `storage/clickhouse.go` lists its migration; `config`'s `duckDBReleasesLogs` finds `logs.duckdb` and the Log file store (`logs_parquet_path`).
 - **Reads** (`ClickHouseLogs.old`): `ScanLogs` (`span`, `scanLogs`, merged), `ScanLogsIngestedAfter` (`ingestedAfter`), `LogByID` (`logByID`), `AttributeCounts` (`keyCounts`), `ScanLogTable` (`withBucketKey`, `tableSources`) and the histogram's `CountedByMinuteFrom` (`end`). The logs table's columns and a day of old files' are two implementations of `LogColumns`.
 - **Deleting:** `LogProjects` (`projects`), `DeleteLogDaysBefore` and `DeleteProjectLogs` (`deleteOldDays`), and `EnforceDiskLimit` and `LogDiskUse` (`localDays`, `freeLocalCopies`, `deleteOldDays`).
+- **Overview:** `InstallStorage` (`storage`), the old files' count, local bytes and newest day, for the Overview's Storage.
 - **Deploy:** Compose's Log file store mount into ClickHouse at its `user_files_path`, which `deploy/install` points at `logs_parquet_path` (`SOLIDTRACE_LOG_FILE_STORE`), `bin/clickhouse-dev`'s mount of the development store, and `deploy/install`'s `prepare_duckdb_logs`.
 - **Console:** `projects.log_file_order`, which the DuckDB release reads, stays in the table, ignored, so that a rollback to it works.
 
