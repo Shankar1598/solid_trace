@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { bytesText, dayText, exactText, shareText } from '@/lib/overview'
-import { limitStatus, untilLimitText, type OverviewStorage as Storage, type StorageStatus } from '@/lib/overviewStorage'
+import { diskFillsFirst, limitStatus, untilLimitText, type OverviewStorage as Storage, type StorageStatus } from '@/lib/overviewStorage'
 import { cn } from '@/lib/utils'
 
 const TONES = { ok: 'ok', warning: 'warn', error: 'error' } as const
@@ -18,7 +18,8 @@ const FILLS: Record<StorageStatus, string> = { ok: 'bg-primary', warning: 'bg-wa
 export function OverviewStorage({ storage }: { storage: Storage }) {
   const status = limitStatus(storage)
   const Icon = ICONS[status]
-  const share = storage.limit_share
+  // From the bytes, not the rounded share, so a sliver reads as under 0.1%.
+  const share = storage.disk_limit_bytes > 0 ? storage.local_bytes / storage.disk_limit_bytes : null
   const old = storage.old_files
   return (
     <div className="space-y-6">
@@ -48,6 +49,12 @@ export function OverviewStorage({ storage }: { storage: Storage }) {
       <dl className="space-y-2 text-sm">
         <Line label="Free disk" hook="free">
           {bytesText(storage.free_bytes)} free of {bytesText(storage.disk_bytes)} on ClickHouse&rsquo;s local disk
+          {diskFillsFirst(storage) && (
+            <span className="mt-1 flex items-start gap-1.5 text-warning" data-storage-notice="disk-fills-first">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              Less than the limit leaves room for: the disk fills before the limit moves or deletes any day.
+            </span>
+          )}
         </Line>
         <Line label="Bucket" hook="bucket">
           {storage.bucket ? `${bytesText(storage.bucket_bytes)} of Logs` : 'None: every Log stays on local disk'}

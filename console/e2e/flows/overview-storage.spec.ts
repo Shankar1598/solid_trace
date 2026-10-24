@@ -12,7 +12,7 @@ test('an Instance admin sees the whole install\'s Storage on the Overview', asyn
 
   const storage = page.locator('[data-section="storage"]')
   await expect(storage.getByRole('heading', { name: 'Storage of the whole install' })).toBeVisible()
-  await expect(storage).toContainText('not only this one’s')
+  await expect(storage).toContainText("not only this one's")
   await expect(storage.locator('[data-storage="local"]')).toContainText(/B on local disk of a .*B limit/)
   await expect(storage.getByRole('meter', { name: 'Local disk against the disk limit' })).toBeVisible()
   await expect(storage.locator('[data-storage-status]')).toContainText(/the limit/)
