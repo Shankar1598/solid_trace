@@ -40,11 +40,17 @@ export function limitStatus({ limit_share: share, days_until_limit: days }: Over
   return 'ok'
 }
 
+/** Whether the disk has less free than the limit leaves room for, so it fills before the limit bites. */
+export function diskFillsFirst(storage: OverviewStorage): boolean {
+  return storage.disk_limit_bytes > 0 && storage.free_bytes < storage.disk_limit_bytes - storage.local_bytes
+}
+
 /** About how long until the limit, at the last 7 days' growth. */
 export function untilLimitText(storage: OverviewStorage): string {
   const days = storage.days_until_limit
   if (storage.bucket) return 'Logs move to the bucket, so the local disk doesn’t fill with them.'
   if (days === null) return 'Nothing stored over the last 7 days, so no estimate.'
   if (days === 0) return 'Past the limit now: the oldest days are being deleted.'
+  if (days > 365) return 'Over a year until the limit at this growth.'
   return `About ${days === 1 ? 'a day' : `${new Intl.NumberFormat('en').format(days)} days`} until the limit at this growth.`
 }
