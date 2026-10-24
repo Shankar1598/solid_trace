@@ -80,6 +80,22 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
     assert_equal [ "web", "api", "app.log", 30, 0.7895 ], [ top.dig("project", "slug"), *top.values_at("service", "file", "logs", "share") ]
   end
 
+  test "get_overview answers what Today's volume, scaled to 30 days, would cost at other tools, with the prices' date" do
+    band = answer[:band].merge(received: { logs: 1_000_000, bytes: 10**9, bytes_on_wire: 2**30, requests: 4 })
+    projects = [ { project_id: @web.id, received: { logs: 1_000_000, bytes: 10**9 } } ]
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(band: band, projects: projects).to_json)
+
+    got = call_tool(:get_overview, user: @user)
+
+    tools = got.json["other_tools"]
+    assert_equal "2026-10-24", tools["checked_on"]
+    assert_equal [ 1, true ], tools["volume"].values_at("days", "scaled")
+    # 30 GB and 30 million Logs kept 30 days (the instance default); 30 GiB on the wire.
+    assert_equal({ "datadog" => 115.5, "better_stack" => 4.5, "axiom" => 25.0 },
+      tools["tools"].to_h { |t| [ t["key"], t["monthly_usd"] ] })
+    assert_equal 3.6, tools.dig("egress", "monthly_usd")
+  end
+
   test "get_overview is Today by default, and says when EventStore can't answer" do
     stub_request(:post, @overview_url).with(body: hash_including(from: "2026-10-02")).to_raise(Errno::ECONNREFUSED)
 
