@@ -13,6 +13,8 @@ export interface OtherToolEstimate {
   monthly_usd: number
   /** Datadog only: a Project keeps Logs longer than Datadog lists a price for, so this is the least it costs. */
   beyond_list?: boolean
+  /** Axiom only: the compression its storage is priced at, ClickHouse's measured (raw bytes over stored) or 10× when nothing is stored. */
+  compression?: { ratio: number; measured: boolean }
 }
 
 export interface OverviewOtherTools {

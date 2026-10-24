@@ -60,6 +60,13 @@ function EstimateLine({ id, estimate, detail }: {
             A Project keeps Logs longer than the 30 days Datadog lists a price for, so it's priced at 30 days'.
           </span>
         )}
+        {estimate.compression && (
+          <span className="basis-full text-xs text-muted-foreground" data-other-tools="compression">
+            {estimate.compression.measured
+              ? `Storage at ClickHouse's measured ${estimate.compression.ratio}× compression of these Logs.`
+              : `Storage at an assumed ${estimate.compression.ratio}× compression, as nothing is stored yet to measure.`}
+          </span>
+        )}
       </dd>
     </div>
   )

@@ -40,8 +40,10 @@ class Overview
         ingest_per_gb: 0.10, retention_per_gb_month: 0.05,
       },
       # Axiom Cloud: the platform fee, data loading past the 1,000 GB
-      # included, and compressed storage past the 100 GB free, assuming 10×
-      # compression. Queries are assumed to stay in the included compute.
+      # included, and compressed storage past the 100 GB free, at
+      # ClickHouse's measured compression (raw bytes over stored), or 10×
+      # when nothing is stored to measure. Queries are assumed to stay in
+      # the included compute.
       axiom: {
         name: "Axiom", plan: "Axiom Cloud",
         url: "https://axiom.co/pricing",
@@ -59,8 +61,11 @@ class Overview
     }.freeze
 
     # projects: [[received {logs, bytes}, Retention days]]; days: the range's
-    # whole days; seconds: those it has had so far.
-    def initialize(projects:, bytes_on_wire:, days:, seconds:)
+    # whole days; seconds: those it has had so far; stored: the band's stored
+    # {bytes, raw_bytes}, whose ratio Axiom's storage is compressed by.
+    def initialize(projects:, bytes_on_wire:, days:, seconds:, stored: {})
+      raw, compressed = stored["raw_bytes"].to_i, stored["bytes"].to_i
+      @compression = compressed.positive? && raw.positive? ? { ratio: raw.to_f / compressed, measured: true } : nil
       @days, @seconds = days, seconds.to_i
       scale = @seconds.positive? ? DAYS * 86_400.0 / @seconds : DAYS.to_f / days
       @projects = projects.map do |received, retention_days|
@@ -101,9 +106,11 @@ class Overview
 
     def axiom
       prices = PRICES[:axiom]
-      stored = @projects.sum { |p| gb_months(p) } / prices[:compression]
+      compression = @compression || { ratio: prices[:compression].to_f, measured: false }
+      stored = @projects.sum { |p| gb_months(p) } / compression[:ratio]
       tool(prices, prices[:platform_fee] + tiered(@projects.sum { |p| p[:gb] }, prices[:loading_per_gb]) +
         [ stored - prices[:free_storage_gb], 0 ].max * prices[:storage_per_gb_month])
+        .merge(compression: { ratio: compression[:ratio].round(1), measured: compression[:measured] })
     end
 
     # The GB a month a Project holds when it keeps a month's GB R days.
