@@ -50,6 +50,31 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/overview?range=7d", got.link
   end
 
+  test "get_overview answers the daily series and each Project" do
+    days = [ {
+      day: "2026-10-02", stored: { logs: 38, bytes: 500 }, received: { logs: 40, bytes: 4000 },
+      logs_per_second: { average: 0.001, peak: 12, peak_at: "2026-10-02T10:00:05Z" },
+      projects: [ { project_id: @web.id, received_logs: 40 } ],
+    } ]
+    projects = [ {
+      project_id: @web.id, received: { logs: 40, bytes: 4000 }, stored: { logs: 38, bytes: 500 },
+      logs_per_second: { average: 0.001, peak: 12, peak_at: "2026-10-02T10:00:05Z" },
+      all_days: { logs: 900, bytes: 9000, oldest_day: "2026-09-10" }, last_log_at: "2026-10-02T12:59:00Z",
+    } ]
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(days: days, projects: projects).to_json)
+
+    got = call_tool(:get_overview, user: @user)
+
+    assert_not got.error?
+    daily = got.json["daily"]
+    assert_equal [ { "key" => "project-#{@web.id}", "name" => @web.name, "color" => 1, "project_ids" => [ @web.id ] } ], daily["series"]
+    assert_equal({ "project-#{@web.id}" => 40 }, daily["days"].first["logs"])
+    assert_equal [ 4000, 500 ], daily["days"].first.values_at("received_bytes", "stored_bytes")
+    row = got.json["projects"].sole
+    assert_equal [ "web", 40, 8.0, 1.0, "2026-09-10", false ], row.values_at("slug", "logs", "ratio", "share", "oldest_day", "stale")
+    assert_equal({ "logs" => 900, "bytes" => 9000 }, row["all_days"])
+  end
+
   test "get_overview is Today by default, and says when EventStore can't answer" do
     stub_request(:post, @overview_url).with(body: hash_including(from: "2026-10-02")).to_raise(Errno::ECONNREFUSED)
 
