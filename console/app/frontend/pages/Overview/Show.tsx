@@ -8,6 +8,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { OverviewSection } from '@/components/overview/OverviewSection'
 import { OverviewBand } from '@/components/overview/OverviewBand'
 import { OverviewRates } from '@/components/overview/OverviewRates'
+import { OverviewDailyCharts } from '@/components/overview/OverviewDailyCharts'
+import { OverviewProjects } from '@/components/overview/OverviewProjects'
 import { OverviewHealth } from '@/components/overview/OverviewHealth'
 import { OVERVIEW_RANGES, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
 import type { SharedProps } from '@/types'
@@ -72,6 +74,22 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
           {rates && !overview.empty.logs && (
             <OverviewSection id="rates" title="Rates" description="By arrival time. The peak is the busiest second of all the Projects together.">
               <OverviewRates rates={rates} />
+            </OverviewSection>
+          )}
+
+          {overview.daily && !overview.empty.logs && (
+            <OverviewSection id="daily" title="By day" description="Received is by day of arrival, stored by the Logs' own day.">
+              <OverviewDailyCharts daily={overview.daily} />
+            </OverviewSection>
+          )}
+
+          {overview.projects && !overview.empty.logs && (
+            <OverviewSection
+              id="projects"
+              title="Projects"
+              description="The range's Logs and bytes, and what each Project keeps of every day. Open a row to see its Logs."
+            >
+              <OverviewProjects projects={overview.projects} orgSlug={orgSlug} />
             </OverviewSection>
           )}
 
