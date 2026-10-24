@@ -22,6 +22,7 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
       band: {
         received: { logs: 40, bytes: 4000, bytes_on_wire: 1500, requests: 4 },
         unreadable_logs: 2, overloaded_requests: 0,
+        kept: { logs: 38, bytes: 3000 }, dropped_by_transform: 0,
         stored: { logs: 38, bytes: 500, local_bytes: 500, bucket_bytes: 0, raw_bytes: 3500 },
       },
       rates: {
@@ -45,7 +46,7 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
     assert_requested asked
     assert_equal "7d", got.json.dig("range", "name")
     assert_equal({ "logs" => 40, "bytes" => 4000, "bytes_on_wire" => 1500, "requests" => 4 }, got.json.dig("band", "received"))
-    assert_equal 8.0, got.json.dig("band", "ratio")
+    assert_equal 6.0, got.json.dig("band", "ratio")
     assert_equal({ "average" => 0.0001, "peak" => 12, "peak_at" => "2026-10-01T10:00:05Z" }, got.json.dig("rates", "logs"))
     assert_equal "http://console.test/acme/overview?range=7d", got.link
   end
@@ -60,8 +61,10 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
       project_id: @web.id, received: { logs: 40, bytes: 4000 }, stored: { logs: 38, bytes: 500 },
       logs_per_second: { average: 0.001, peak: 12, peak_at: "2026-10-02T10:00:05Z" },
       all_days: { logs: 900, bytes: 9000, oldest_day: "2026-09-10" }, last_log_at: "2026-10-02T12:59:00Z",
+      kept: { logs: 38, bytes: 3000 }, dropped_by_transform: 0,
     } ]
-    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(days: days, projects: projects).to_json)
+    source = { project_id: @web.id, service: "api", file: "app.log", logs: 30, bytes: 2000, dropped_by_transform: 0 }
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(days: days, projects: projects, sources: { by_logs: [ source ], by_bytes: [ source ] }).to_json)
 
     got = call_tool(:get_overview, user: @user)
 
@@ -71,8 +74,10 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
     assert_equal({ "project-#{@web.id}" => 40 }, daily["days"].first["logs"])
     assert_equal [ 4000, 500 ], daily["days"].first.values_at("received_bytes", "stored_bytes")
     row = got.json["projects"].sole
-    assert_equal [ "web", 40, 8.0, 1.0, "2026-09-10", false ], row.values_at("slug", "logs", "ratio", "share", "oldest_day", "stale")
+    assert_equal [ "web", 40, 6.0, 1.0, "2026-09-10", false ], row.values_at("slug", "logs", "ratio", "share", "oldest_day", "stale")
     assert_equal({ "logs" => 900, "bytes" => 9000 }, row["all_days"])
+    top = got.json.dig("sources", "by_logs").sole
+    assert_equal [ "web", "api", "app.log", 30, 0.7895 ], [ top.dig("project", "slug"), *top.values_at("service", "file", "logs", "share") ]
   end
 
   test "get_overview is Today by default, and says when EventStore can't answer" do

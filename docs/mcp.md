@@ -51,7 +51,7 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 
 - `whoami`: you, the Organizations you belong to, and your role in each.
 - `list_projects`: an Organization's Projects, with their slugs and how many days their Logs are kept.
-- `get_overview`: an Organization's Overview, as its Overview page shows it, over `today` (the default), `7d` or `30d`, in whole UTC days: the Logs and bytes received and stored, with the compression ratio, unreadable Logs and requests turned away, and Logs, bytes and requests a second, each an average and the busiest second; each day's Logs by Project, bytes received and stored, and Logs a second; and each Project's Logs, sizes, ratio, share, rates, Retention, oldest day and when its last Log arrived. It answers what EventStore couldn't as null.
+- `get_overview`: an Organization's Overview, as its Overview page shows it, over `today` (the default), `7d` or `30d`, in whole UTC days: the Logs and bytes received, kept and stored, with the compression ratio (kept over stored), unreadable Logs, Logs the Log transform dropped and requests turned away, and Logs, bytes and requests a second, each an average and the busiest second; each day's Logs by Project, bytes received and stored, and Logs a second; and each Project's Logs, sizes, ratio, share, rates, Retention, oldest day and when its last Log arrived; and the biggest sources, the Services and files that sent the most Logs and kept the most bytes, with their Project, share and Logs dropped by the Log transform. It answers what EventStore couldn't as null.
 
 **Logs**
 
