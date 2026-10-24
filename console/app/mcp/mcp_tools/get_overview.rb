@@ -18,7 +18,7 @@ module McpTools
                 "health, each Project's oldest Log batch waiting for Log processing and its Log reads' median and " \
                 "95th percentile over the last 24 hours, the slowest reads, Monitors whose last run failed, Firing " \
                 "Monitors, and the range's new Issues and Events, each with a status of ok, warning or error; " \
-                "other_tools, what the range's volume, scaled to 30 days, would cost a month in USD at Datadog's, " \
+                "other_tools, what the range's volume, scaled to 30 days from the seconds it has had so far, would cost a month in USD at Datadog's, " \
                 "Better Stack's and Axiom's list prices (before discounts, an estimate) at each Project's Retention, " \
                 "and GCP's internet egress for the bytes on the wire, with each pricing page and the date checked; " \
                 "storage, for an instance admin only and the whole install's, every Organization's: local disk use " \

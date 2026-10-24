@@ -18,7 +18,7 @@ export function OverviewOtherTools({ otherTools }: { otherTools: OtherTools }) {
         <span className="tabular-nums" title={`${valueText(volume.bytes)} bytes`}>{bytesText(volume.bytes)}</span> received
         {volume.scaled && (
           <span className="text-muted-foreground" data-other-tools="scaled">
-            {' '}({volume.days === 1 ? 'today' : `the last ${volume.days} days`} scaled to 30 days)
+            {' '}({volume.days === 1 ? 'today' : `the last ${volume.days} days`} so far, scaled to 30 days)
           </span>
         )}
       </p>
