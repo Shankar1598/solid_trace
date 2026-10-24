@@ -116,6 +116,15 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
   }).toPass({ timeout: 30_000 })
   await expect(health.locator(`[data-health-project="${PROJECT}"]`)).toContainText(/Keeping up|Behind/)
   await expect(health.locator('[data-health="slowest-reads"]')).toContainText(/in .*UTC/)
+  // Compared with other tools: each tool's estimate and the egress, Today
+  // scaled to 30 days, with the prices' date.
+  const otherTools = page.locator('[data-section="other-tools"]')
+  for (const tool of ['datadog', 'better_stack', 'axiom', 'egress']) {
+    await expect(otherTools.locator(`[data-other-tool="${tool}"]`)).toContainText(/\$[\d,.]+/)
+    await expect(otherTools.locator(`[data-other-tool="${tool}"]`).getByRole('link', { name: 'Pricing' })).toHaveAttribute('href', /^https:\/\//)
+  }
+  await expect(otherTools.locator('[data-other-tools="scaled"]')).toContainText('today scaled to 30 days')
+  await expect(otherTools.locator('[data-other-tools="checked-on"]')).toContainText(/list prices on \w+ \d+, \d{4}, before discounts/)
 
   await page.getByRole('button', { name: '7 days' }).click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/overview\\?range=7d$`))
@@ -123,6 +132,7 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
   await expect(band.locator('[data-step="received"]')).toContainText('Logs')
   await expect(rates.locator('[data-rate="last-five-minutes"]')).toHaveCount(0)
   await expect(daily.locator('[data-chart="logs"] [data-chart-table] tbody tr')).toHaveCount(7)
+  await expect(otherTools.locator('[data-other-tools="scaled"]')).toContainText('the last 7 days scaled to 30 days')
 
   // A source opens the Logs explorer on its Project, filtered to it.
   await sources.locator(`[data-sources="by-logs"] [data-source="${source}"]`).getByRole('link').click()

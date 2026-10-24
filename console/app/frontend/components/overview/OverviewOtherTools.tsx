@@ -40,7 +40,7 @@ function EstimateLine({ id, estimate, detail }: {
 }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3" data-other-tool={id}>
-      <dt className="w-44 shrink-0 font-medium">{estimate.name}</dt>
+      <dt className="w-full shrink-0 font-medium sm:w-44">{estimate.name}</dt>
       <dd className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
         <span className="text-lg font-semibold tabular-nums" title={`$${estimate.monthly_usd.toFixed(2)}`}>
           {estimate.beyond_list && 'at least '}{usdText(estimate.monthly_usd)}
