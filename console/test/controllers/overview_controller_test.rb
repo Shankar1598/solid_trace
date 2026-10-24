@@ -134,6 +134,106 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "projects" => false, "logs" => true }, overview_props(overview_url(org_slug: "acme"))["empty"])
   end
 
+  # An answer's day: the Logs each Project received, by id, and the bytes.
+  def day(day, logs, received_bytes: 0, stored_bytes: 0, peak: 0)
+    {
+      day: day, stored: { logs: 0, bytes: stored_bytes },
+      received: { logs: logs.values.sum, bytes: received_bytes, bytes_on_wire: 0, requests: 1 },
+      logs_per_second: { average: logs.values.sum / 86_400.0, peak: peak, peak_at: peak.positive? ? "#{day}T10:00:00Z" : nil },
+      projects: logs.map { |id, n| { project_id: id, received_logs: n } },
+    }
+  end
+
+  # An answer's Project.
+  def project(id, logs: 0, received_bytes: 0, stored_bytes: 0, all_logs: 0, oldest_day: nil, last_log_at: nil)
+    {
+      project_id: id,
+      received: { logs: logs, bytes: received_bytes, bytes_on_wire: received_bytes, requests: 1 },
+      stored: { logs: logs, bytes: stored_bytes, local_bytes: stored_bytes, bucket_bytes: 0, raw_bytes: 0 },
+      logs_per_second: { average: logs / 86_400.0, peak: logs, peak_at: logs.positive? ? "2026-10-02T10:00:00Z" : nil },
+      all_days: { logs: all_logs, bytes: stored_bytes * 3, oldest_day: oldest_day },
+      last_log_at: last_log_at,
+    }
+  end
+
+  test "each Project wears a Chart colour in creation order, and the eighth on fold into Other" do
+    # @web and @api came first; seven more make nine.
+    more = (1..7).map { |n| create(:project, organization: @organization, name: "More #{n}", created_at: Time.utc(2026, 10, 1) + n.minutes) }
+    @web.update!(created_at: Time.utc(2026, 9, 1))
+    @api.update!(created_at: Time.utc(2026, 9, 2))
+    ids = [ @web, @api, *more ].map(&:id)
+    days = [
+      day("2026-10-01", { ids[1] => 5, ids[7] => 2, ids[8] => 1 }, received_bytes: 900, stored_bytes: 90),
+      day("2026-10-02", { ids[0] => 3, ids[8] => 4 }, received_bytes: 700, stored_bytes: 70, peak: 4),
+    ]
+    stub_request(:post, @overview_url).with(body: hash_including(project_ids: ids))
+      .to_return(status: 200, body: answer.merge(days: days, projects: ids.map { |id| project(id) }).to_json)
+    sign_in_as(@member)
+
+    daily = overview_props(overview_url(org_slug: "acme", range: "7d"))["daily"]
+
+    # Web takes the first colour though it has no Logs the first day.
+    series = daily["series"]
+    assert_equal [ "Web", "Api", *(1..5).map { |n| "More #{n}" }, "Other" ], series.map { |s| s["name"] }
+    assert_equal [ *1..8 ], series.map { |s| s["color"] }
+    assert_equal ids[7..], series.last["project_ids"]
+    keys = series.map { |s| s["key"] }
+    assert_equal({ keys[1] => 5, "other" => 3 }, daily["days"][0]["logs"].select { |_, n| n.positive? })
+    assert_equal({ keys[0] => 3, "other" => 4 }, daily["days"][1]["logs"].select { |_, n| n.positive? })
+    assert_equal [ "2026-10-01", 900, 90 ], daily["days"][0].values_at("day", "received_bytes", "stored_bytes")
+    assert_equal({ "average" => 7 / 86_400.0, "peak" => 4, "peak_at" => "2026-10-02T10:00:00Z" }, daily["days"][1]["logs_per_second"])
+
+    rows = overview_props(overview_url(org_slug: "acme", range: "7d"))["projects"]
+    assert_equal [ *1..7, 8, 8 ], rows.map { |r| r["color"] }
+    assert_equal [ "Web", "Api" ], rows.first(2).map { |r| r["name"] }
+  end
+
+  test "the Projects table answers each Project's numbers, Retention and last Log" do
+    @web.update!(created_at: Time.utc(2026, 9, 1), log_retention_days: 7)
+    @api.update!(created_at: Time.utc(2026, 9, 2))
+    InstanceSetting.current.update!(default_log_retention_days: 45)
+    projects = [
+      project(@web.id, logs: 30, received_bytes: 3000, stored_bytes: 600, all_logs: 90, oldest_day: "2026-09-26", last_log_at: "2026-10-02T12:30:00Z"),
+      project(@api.id, logs: 10, received_bytes: 1000, stored_bytes: 0, all_logs: 10, oldest_day: "2026-10-01", last_log_at: "2026-10-02T11:59:59Z"),
+    ]
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(projects: projects).to_json)
+    sign_in_as(@member)
+
+    web, api = overview_props(overview_url(org_slug: "acme"))["projects"]
+
+    assert_equal({ "id" => @web.id, "name" => "Web", "slug" => "web", "color" => 1 }, web.slice("id", "name", "slug", "color"))
+    assert_equal [ 30, 3000, 600, 5.0, 0.75 ], web.values_at("logs", "received_bytes", "stored_bytes", "ratio", "share")
+    assert_equal({ "average" => 30 / 86_400.0, "peak" => 30, "peak_at" => "2026-10-02T10:00:00Z" }, web["logs_per_second"])
+    assert_equal [ 7, false ], web.values_at("retention_days", "retention_is_default")
+    assert_equal [ "2026-09-26", { "logs" => 90, "bytes" => 1800 } ], web.values_at("oldest_day", "all_days")
+    assert_equal [ "2026-10-02T12:30:00Z", false, true ], web.values_at("last_log_at", "stale", "has_logs")
+    # Api's Retention is the instance's, its last Log over an hour ago.
+    assert_equal [ 45, true ], api.values_at("retention_days", "retention_is_default")
+    assert_equal [ nil, 0.25, true ], api.values_at("ratio", "share", "stale")
+  end
+
+  test "a Project with no Logs yet says so" do
+    projects = [ project(@web.id), project(@api.id, logs: 1, all_logs: 1, oldest_day: "2026-10-02", last_log_at: "2026-10-02T12:59:00Z") ]
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(projects: projects).to_json)
+    sign_in_as(@member)
+
+    rows = overview_props(overview_url(org_slug: "acme"))["projects"]
+
+    web = rows.find { |r| r["slug"] == "web" }
+    assert_equal [ false, nil, nil, nil ], web.values_at("has_logs", "last_log_at", "stale", "oldest_day")
+    assert rows.find { |r| r["slug"] == "api" }["has_logs"]
+  end
+
+  test "the daily Charts and Projects are absent when EventStore can't be reached" do
+    stub_request(:post, @overview_url).to_raise(Errno::ECONNREFUSED)
+    sign_in_as(@member)
+
+    overview = overview_props(overview_url(org_slug: "acme"))
+
+    assert_nil overview["daily"]
+    assert_nil overview["projects"]
+  end
+
   test "an Instance admin's Overview asks for Storage" do
     admin = create(:user, instance_admin: true)
     @organization.organization_users.create!(user: admin, role: :member)

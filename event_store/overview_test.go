@@ -63,11 +63,31 @@ type overviewAnswer struct {
 		} `json:"last_five_minutes"`
 	} `json:"rates"`
 	Days []struct {
-		Day    string         `json:"day"`
-		Stored overviewStored `json:"stored"`
+		Day           string           `json:"day"`
+		Stored        overviewStored   `json:"stored"`
+		Received      overviewReceived `json:"received"`
+		LogsPerSecond overviewRate     `json:"logs_per_second"`
+		Projects      []struct {
+			ProjectID    uint32 `json:"project_id"`
+			ReceivedLogs int64  `json:"received_logs"`
+		} `json:"projects"`
 	} `json:"days"`
-	Storage json.RawMessage `json:"storage"`
-	Health  overviewHealth  `json:"health"`
+	Projects []overviewProject `json:"projects"`
+	Storage  json.RawMessage   `json:"storage"`
+	Health   overviewHealth    `json:"health"`
+}
+
+type overviewProject struct {
+	ProjectID     uint32           `json:"project_id"`
+	Received      overviewReceived `json:"received"`
+	Stored        overviewStored   `json:"stored"`
+	LogsPerSecond overviewRate     `json:"logs_per_second"`
+	AllDays       struct {
+		Logs      int64   `json:"logs"`
+		Bytes     int64   `json:"bytes"`
+		OldestDay *string `json:"oldest_day"`
+	} `json:"all_days"`
+	LastLogAt *time.Time `json:"last_log_at"`
 }
 
 // overview asks the query app for the Overview of projects over the UTC
@@ -226,6 +246,141 @@ func TestRequestsTurnedAwayAsOverloadedAreCounted(t *testing.T) {
 	got := overview(t, env, testNow, testNow, 123)
 	if got.Band.OverloadedRequests != 3 || got.Band.Received != (overviewReceived{}) {
 		t.Errorf("Expected 3 overloaded requests and nothing received, got %+v", got.Band)
+	}
+}
+
+func TestTheOverviewAnswersEachDayAndEachProject(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedProject(t, env.SQLitePath, 456, 0)
+	seedProjectKey(t, env.SQLitePath, 456, "other_public_key")
+	seedProject(t, env.SQLitePath, 789, 0)
+
+	today, yesterday, fiveDaysAgo := testNow, testNow.AddDate(0, 0, -1), testNow.AddDate(0, 0, -5)
+	yesterdayAt, todayAt := yesterday.Add(-2*time.Hour), today.Add(-time.Hour)
+	logs := func(at time.Time, n int) []string {
+		var each []string
+		for i := range n {
+			each = append(each, logJSON(t, fmt.Sprintf("log %d", i), at, nil))
+		}
+		return each
+	}
+	body := func(logs ...[]string) string {
+		var all []string
+		for _, l := range logs {
+			all = append(all, l...)
+		}
+		return "[" + strings.Join(all, ",") + "]"
+	}
+
+	// Yesterday at 10:00:00, 123 sends 2 Logs and 456 sends 1: 3 in the
+	// second. Today at 11:00:00 123 sends 2 of today and 1 of five days
+	// ago, and at 11:00:01 1 more. 789 sends nothing.
+	sent := map[string]string{
+		"yesterday 123": body(logs(yesterdayAt, 2)),
+		"yesterday 456": body(logs(yesterdayAt, 1)),
+		"today":         body(logs(todayAt, 2), logs(fiveDaysAgo, 1)),
+		"today later":   body(logs(todayAt.Add(time.Second), 1)),
+	}
+	sendLogsAt(t, env, 123, "test_public_key", yesterdayAt, sent["yesterday 123"], nil)
+	sendLogsAt(t, env, 456, "other_public_key", yesterdayAt, sent["yesterday 456"], nil)
+	sendLogsAt(t, env, 123, "test_public_key", todayAt, sent["today"], nil)
+	sendLogsAt(t, env, 123, "test_public_key", todayAt.Add(time.Second), sent["today later"], nil)
+	env.Clock.Set(today)
+	env.FlushIngestCounts(t)
+	env.ProcessLogs(t)
+
+	got := overview(t, env, yesterday, today, 123, 456, 789)
+	bytes := func(names ...string) (n int64) {
+		for _, name := range names {
+			n += int64(len(sent[name]))
+		}
+		return n
+	}
+
+	// Each day: what arrived on it, its busiest second of the Projects
+	// together, the average over its seconds so far, and each Project's
+	// Logs received.
+	if len(got.Days) != 2 {
+		t.Fatalf("Expected 2 days, got %+v", got.Days)
+	}
+	for i, want := range []struct {
+		day      string
+		received overviewReceived
+		seconds  float64
+		peak     int64
+		peakAt   time.Time
+		projects map[uint32]int64
+	}{
+		{"2026-10-01", overviewReceived{3, bytes("yesterday 123", "yesterday 456"), bytes("yesterday 123", "yesterday 456"), 2}, 86400, 3, yesterdayAt, map[uint32]int64{123: 2, 456: 1}},
+		{"2026-10-02", overviewReceived{4, bytes("today", "today later"), bytes("today", "today later"), 2}, 12 * 3600, 3, todayAt, map[uint32]int64{123: 4}},
+	} {
+		day := got.Days[i]
+		if day.Day != want.day || day.Received != want.received {
+			t.Errorf("Expected %s to have received %+v, got %s with %+v", want.day, want.received, day.Day, day.Received)
+		}
+		rate := day.LogsPerSecond
+		if math.Abs(rate.Average-float64(want.received.Logs)/want.seconds) > 1e-9 || rate.Peak != want.peak || rate.PeakAt == nil || !rate.PeakAt.Equal(want.peakAt) {
+			t.Errorf("Expected %s's Logs a second to average %v and peak at %d at %v, got %+v", want.day, float64(want.received.Logs)/want.seconds, want.peak, want.peakAt, rate)
+		}
+		projects := map[uint32]int64{}
+		for _, p := range day.Projects {
+			if p.ReceivedLogs > 0 {
+				projects[p.ProjectID] = p.ReceivedLogs
+			}
+		}
+		if fmt.Sprint(projects) != fmt.Sprint(want.projects) {
+			t.Errorf("Expected %s's Logs by Project %v, got %v", want.day, want.projects, projects)
+		}
+	}
+	if s := got.Days[1].Stored; s.Logs != 3 {
+		t.Errorf("Expected today's 3 Logs stored, got %+v", s)
+	}
+
+	// Each Project, in the order asked: the range's totals and rate, every
+	// day it keeps, and when its last Log arrived.
+	if len(got.Projects) != 3 {
+		t.Fatalf("Expected 3 Projects, got %+v", got.Projects)
+	}
+	web, api, quiet := got.Projects[0], got.Projects[1], got.Projects[2]
+	if web.ProjectID != 123 || api.ProjectID != 456 || quiet.ProjectID != 789 {
+		t.Errorf("Expected Projects 123, 456 and 789 in order, got %d, %d and %d", web.ProjectID, api.ProjectID, quiet.ProjectID)
+	}
+	rangeSeconds := float64(86400 + 12*3600)
+	for _, want := range []struct {
+		got        overviewProject
+		received   overviewReceived
+		storedLogs int64
+		peak       int64
+		peakAt     time.Time
+		allLogs    int64
+		oldest     string
+		last       time.Time
+	}{
+		{web, overviewReceived{6, bytes("yesterday 123", "today", "today later"), bytes("yesterday 123", "today", "today later"), 3}, 5, 3, todayAt, 6, "2026-09-27", todayAt.Add(time.Second)},
+		{api, overviewReceived{1, bytes("yesterday 456"), bytes("yesterday 456"), 1}, 1, 1, yesterdayAt, 1, "2026-10-01", yesterdayAt},
+	} {
+		p := want.got
+		if p.Received != want.received || p.Stored.Logs != want.storedLogs || p.Stored.Bytes <= 0 {
+			t.Errorf("Expected Project %d to have received %+v and stored %d Logs, got %+v and %+v", p.ProjectID, want.received, want.storedLogs, p.Received, p.Stored)
+		}
+		rate := p.LogsPerSecond
+		if math.Abs(rate.Average-float64(want.received.Logs)/rangeSeconds) > 1e-9 || rate.Peak != want.peak || rate.PeakAt == nil || !rate.PeakAt.Equal(want.peakAt) {
+			t.Errorf("Expected Project %d to peak at %d Logs a second at %v, got %+v", p.ProjectID, want.peak, want.peakAt, rate)
+		}
+		if p.AllDays.Logs != want.allLogs || p.AllDays.Bytes < p.Stored.Bytes || p.AllDays.OldestDay == nil || *p.AllDays.OldestDay != want.oldest {
+			t.Errorf("Expected Project %d to keep %d Logs since %s, got %+v", p.ProjectID, want.allLogs, want.oldest, p.AllDays)
+		}
+		if p.LastLogAt == nil || !p.LastLogAt.Equal(want.last) {
+			t.Errorf("Expected Project %d's last Log at %v, got %v", p.ProjectID, want.last, p.LastLogAt)
+		}
+	}
+	if web.AllDays.Bytes <= web.Stored.Bytes {
+		t.Errorf("Expected 123's every day to hold more than the range's, got %d and %d", web.AllDays.Bytes, web.Stored.Bytes)
+	}
+	if quiet.Received != (overviewReceived{}) || quiet.AllDays.Logs != 0 || quiet.AllDays.OldestDay != nil || quiet.LastLogAt != nil || quiet.LogsPerSecond.PeakAt != nil {
+		t.Errorf("Expected nothing of Project 789, got %+v", quiet)
 	}
 }
 
