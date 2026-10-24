@@ -244,18 +244,9 @@ func insertFixtureLogs(t *testing.T, env *TestEnv) {
 // them.
 func usePreparedFixture(t *testing.T, env *TestEnv) {
 	t.Helper()
-	name := strings.Trim(notPlainName.ReplaceAllString(strings.ToLower(t.Name()), "_"), "_")
-	inStore := "clickhouse-tests/" + clickhousetest.Config().Database + "/" + name
-	local := filepath.Join(clickhousetest.UserFiles(t), filepath.FromSlash(inStore))
 	bucket := *clickhousetest.S3StandIn(t)
+	inStore := usePreparedFixtureLocally(t, env)
 	bucket.Prefix = inStore + "/"
-
-	if err := os.RemoveAll(local); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(local) })
-	copyDir(t, filepath.Join(preparedFixture, "logs_parquet"), local)
-	copyDir(t, filepath.Join(preparedFixture, "prepared"), filepath.Join(env.dir, "prepared"))
 
 	objects := storage.NewObjectStore(&bucket)
 	ctx := context.Background()
@@ -276,13 +267,32 @@ func usePreparedFixture(t *testing.T, env *TestEnv) {
 	if err != nil {
 		t.Fatalf("Upload the fixture's bucket to the S3 stand-in: %v", err)
 	}
+	env.OldLogFiles.Bucket = &bucket
+}
+
+// usePreparedFixtureLocally is usePreparedFixture without the bucket, as an
+// install whose bucket is no longer configured: the files only the bucket
+// has are kept but not read. It returns where the Log file store is in the
+// dev ClickHouse's user files, and skips the test without them.
+func usePreparedFixtureLocally(t *testing.T, env *TestEnv) string {
+	t.Helper()
+	name := strings.Trim(notPlainName.ReplaceAllString(strings.ToLower(t.Name()), "_"), "_")
+	inStore := "clickhouse-tests/" + clickhousetest.Config().Database + "/" + name
+	local := filepath.Join(clickhousetest.UserFiles(t), filepath.FromSlash(inStore))
+
+	if err := os.RemoveAll(local); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(local) })
+	copyDir(t, filepath.Join(preparedFixture, "logs_parquet"), local)
+	copyDir(t, filepath.Join(preparedFixture, "prepared"), filepath.Join(env.dir, "prepared"))
 
 	env.OldLogFiles = storage.OldLogFiles{
 		LogsDuckDB:    filepath.Join(env.dir, "logs.duckdb"),
 		LocalDir:      local,
 		ClickHouseDir: inStore,
-		Bucket:        &bucket,
 	}
+	return inStore
 }
 
 var notPlainName = regexp.MustCompile(`[^a-z0-9_]+`)

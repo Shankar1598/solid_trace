@@ -143,7 +143,9 @@ func main() {
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
 	logsHandler := handler.NewLogsHandler(clickHouseLogs, sqlQueries, consoleSettings, clock.System{})
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
-	overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{Logs: clickHouseLogs, Clock: clock.System{}})
+	overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{
+		Logs: clickHouseLogs, Clock: clock.System{}, DiskLimit: diskLimit, Retention: consoleSettings,
+	})
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners

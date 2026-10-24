@@ -16,8 +16,9 @@ class Overview
   # How long Console waits for EventStore's Overview, in seconds.
   TIMEOUT_SECONDS = 3
 
-  # The sections, in the order they're answered.
-  SECTIONS = %i[range event_store empty ingest_counts band rates daily projects sources health other_tools].freeze
+  # The sections, in the order they're answered. Storage, the whole
+  # install's, is answered for Instance admins only.
+  SECTIONS = %i[range event_store empty ingest_counts band rates daily projects sources health other_tools storage].freeze
 
   # The Projects that wear a Chart colour of their own, the first by
   # creation; the rest fold into Other, which wears the next. Never cycled.
@@ -43,7 +44,8 @@ class Overview
   end
 
   def to_h
-    SECTIONS.index_with { |section| send(section) }
+    sections = user.instance_admin? ? SECTIONS : SECTIONS - %i[storage]
+    sections.index_with { |section| send(section) }
   end
 
   # The range's name and its first and last UTC day.
@@ -198,6 +200,15 @@ class Overview
     default_retention = InstanceSetting.current.default_log_retention_days
     volume = org_projects.map { |p| [ by_id.dig(p.id, "received") || {}, p.log_retention_days || default_retention ] }
     OtherTools.new(projects: volume, bytes_on_wire: answer.dig("band", "received", "bytes_on_wire"), days: RANGES.fetch(range_name)).to_h
+  end
+
+  # The whole install's disk against the disk limit, the bucket and the old
+  # Parquet files (Overview::Storage), for Instance admins; nil for anyone
+  # else, whom #to_h leaves it out for.
+  def storage
+    return unless user.instance_admin?
+
+    Storage.new(answer: answer).to_h
   end
 
   private
