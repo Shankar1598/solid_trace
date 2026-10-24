@@ -50,7 +50,7 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 **Context**
 
 - `whoami`: you, the Organizations you belong to, and your role in each.
-- `list_projects`: an Organization's Projects, with their slugs and how many days their Logs are kept.
+- `list_projects`: an Organization's Projects, with their slugs, descriptions of what each holds, and how many days their Logs are kept.
 
 **Logs**
 
@@ -59,7 +59,7 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 - `list_fields`: the names a Query can read: the built-in fields, then the Project's Attributes, most used first, with their types. It counts every Log as it is stored, but leaves out Attributes whose values are JSON, such as arrays. A Query still reads them.
 - `query_language_reference`: the whole Query language reference.
 - `run_sql`: runs a [ClickHouse SQL](logs/sql.md) SELECT on a Project's `logs` and `events` tables, as the Project's read-only database user. It is listed only while the instance's SQL queries are on.
-- `get_log_transform`: a Project's Log transform, the [VRL](https://vector.dev/docs/reference/vrl/functions/) program Log processing runs on each of its Logs before storing them: the current program or an older version's, who saved it and when, the last 10 versions, and how many Logs the current version has processed, dropped and failed since EventStore started.
+- `get_log_transform`: a Project's Log transform, the [VRL](https://vector.dev/docs/reference/vrl/functions/) program Log processing runs on each of its Logs before storing them: the current program or an older version's, who saved it and when, the last 10 versions, how many Logs the current version has processed, dropped and failed since EventStore started, and how a program is written. `preview_log_transform` and `update_log_transform` point agents at that last part rather than repeating it.
 - `preview_log_transform`: runs a draft program on the Project's recent arrivals, or on up to 200 Logs you give, and answers how many it kept, dropped and failed, with the first 20 Logs before and after. Nothing is stored.
 - `update_log_transform`: saves a program as the Project's Log transform, or answers VRL's errors when it doesn't compile. It applies to the Logs processed after it; Logs already stored don't change. Restore an older version by saving its program. Admins only.
 
@@ -86,7 +86,8 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 
 **Admin**
 
-- `create_project`: makes a Project with its first key.
+- `create_project`: makes a Project with its first key, and optionally a description.
+- `update_project`: changes a Project's description or how many days its Logs are kept. Admins only.
 - `get_project_setup`: how to send a Project its Events and Logs: the DSN, the Log ingest URL and key, and a curl example.
 - `create_key`, `rotate_key`, `delete_key`: a Project's keys. Admins only.
 - `list_members`: an Organization's members, with their emails and roles.

@@ -20,11 +20,12 @@ class McpAdminToolsTest < ActiveSupport::TestCase
   end
 
   test "create_project makes a member's Project with its first key, linking to its page" do
-    answer = call_tool(:create_project, user: @member, name: "Checkout", log_retention_days: 7)
+    answer = call_tool(:create_project, user: @member, name: "Checkout", description: "The checkout service", log_retention_days: 7)
 
     assert_not answer.error?, answer.text
     made = @acme.projects.find_by!(slug: "checkout")
-    assert_equal({ "id" => made.id, "name" => "Checkout", "slug" => "checkout", "log_retention_days" => 7 }, answer.json["project"])
+    assert_equal({ "id" => made.id, "name" => "Checkout", "slug" => "checkout", "description" => "The checkout service",
+                   "log_retention_days" => 7 }, answer.json["project"])
     key = made.project_keys.sole
     assert_equal key.public_key, answer.json.dig("key", "public_key")
     assert_equal "http://#{key.public_key}@console.test:4000/#{made.id}", answer.json.dig("key", "dsn")
@@ -37,6 +38,32 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert answer.error?
     assert_equal "Not saved: Name can't be blank.", answer.text
     assert_equal 1, @acme.projects.count
+  end
+
+  test "an admin's update_project describes the Project and keeps what it leaves out; a member's is refused" do
+    @shop.update!(log_retention_days: 7)
+
+    refused = call_tool(:update_project, user: @member, project: "shop", description: "The storefront")
+    assert_equal "Only an Organization admin can change a Project's settings.", refused.text
+    assert_nil @shop.reload.description
+
+    answer = call_tool(:update_project, user: @admin, project: "shop", description: "The storefront")
+    assert_not answer.error?, answer.text
+    assert_equal "The storefront", @shop.reload.description
+    assert_equal 7, @shop.log_retention_days
+    assert_equal "The storefront", answer.json.dig("project", "description")
+    assert_equal "http://console.test/acme/projects/shop", answer.link
+
+    call_tool(:update_project, user: @admin, project: "shop", description: "", log_retention_days: 14)
+    assert_nil @shop.reload.description
+    assert_equal 14, @shop.log_retention_days
+  end
+
+  test "update_project won't save a description over 1000 characters" do
+    answer = call_tool(:update_project, user: @admin, project: "shop", description: "a" * 1001)
+
+    assert answer.error?
+    assert_equal "Not saved: Description is too long (maximum is 1000 characters).", answer.text
   end
 
   test "create_project won't make a second Project of a slug" do

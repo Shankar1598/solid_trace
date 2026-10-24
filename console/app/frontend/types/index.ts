@@ -20,6 +20,7 @@ export interface Project {
   name: string
   slug: string
   platform?: string
+  description?: string | null
   log_retention_days?: number | null
   created_at: string
   issues_count?: number

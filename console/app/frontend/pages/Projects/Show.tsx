@@ -8,6 +8,7 @@ import {
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { Project, SharedProps } from '@/types'
 import { AlertTriangle, Check, Copy, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
@@ -34,6 +35,13 @@ export default function ProjectsShow({
   transform((data) => ({
     project: data
   }))
+  const descriptionForm = useForm({
+    description: project.description ?? ''
+  })
+
+  descriptionForm.transform((data) => ({
+    project: data
+  }))
 
   if (!current_org) return null
 
@@ -53,6 +61,14 @@ export default function ProjectsShow({
     patch(`/${current_org.slug}/projects/${project.slug}`, {
       preserveScroll: true,
       onError: () => toast.error('Failed to update Log Retention')
+    })
+  }
+
+  const submitDescription: React.FormEventHandler = (e) => {
+    e.preventDefault()
+    descriptionForm.patch(`/${current_org.slug}/projects/${project.slug}`, {
+      preserveScroll: true,
+      onError: () => toast.error('Failed to update Description')
     })
   }
 
@@ -124,6 +140,41 @@ export default function ProjectsShow({
               <dd className="font-mono text-xs leading-5">{project.id}</dd>
             </dl>
           </CardContent>
+        </Card>
+
+        <Card>
+          <form onSubmit={submitDescription}>
+            <CardHeader>
+              <CardTitle>Description</CardTitle>
+              <CardDescription>
+                What this project holds, so agents querying over MCP can tell which project to read.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 pb-6">
+              <Label htmlFor="projectDescription" className="sr-only">Description</Label>
+              <Textarea
+                id="projectDescription"
+                value={descriptionForm.data.description}
+                onChange={(e) => descriptionForm.setData('description', e.target.value)}
+                placeholder="e.g. The checkout service's errors and Logs"
+                maxLength={1000}
+                disabled={!can_manage_project}
+              />
+              {descriptionForm.errors.description && (
+                <p className="text-sm font-medium text-destructive">{descriptionForm.errors.description}</p>
+              )}
+              {!can_manage_project && (
+                <p className="text-xs text-muted-foreground">Only organization admins can change this.</p>
+              )}
+            </CardContent>
+            {can_manage_project && (
+              <CardFooter className="justify-end">
+                <Button type="submit" disabled={descriptionForm.processing}>
+                  {descriptionForm.processing ? 'Saving…' : 'Save'}
+                </Button>
+              </CardFooter>
+            )}
+          </form>
         </Card>
 
         <Card>

@@ -101,6 +101,24 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Updated Project", @project.reload.name
   end
 
+  test "an admin describes a Project, and clears the description with blanks" do
+    sign_in_as(@admin)
+
+    patch project_url(@project, org_slug: @organization.slug), params: { project: { description: "  The storefront  " } }
+    assert_equal "The storefront", @project.reload.description
+
+    patch project_url(@project, org_slug: @organization.slug), params: { project: { description: "  " } }
+    assert_nil @project.reload.description
+  end
+
+  test "a Project's description is at most 1000 characters" do
+    sign_in_as(@admin)
+
+    patch project_url(@project, org_slug: @organization.slug), params: { project: { description: "a" * 1001 } }
+
+    assert_nil @project.reload.description
+  end
+
   test "an admin sets a Project's Log Retention" do
     sign_in_as(@admin)
 

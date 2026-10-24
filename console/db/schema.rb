@@ -290,6 +290,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_24_120000) do
 
   create_table "projects", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.text "description"
     t.json "log_file_order"
     t.integer "log_retention_days"
     t.string "name"

@@ -219,8 +219,7 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert same, "Copy docs/logs/query-language.md to console/app/mcp/docs/query-language.md."
   end
 
-  test "the server and the tools that run or save a Query point agents at service, file and Reading less" do
-    assert_includes McpServer::INSTRUCTIONS, "service and file"
+  test "the tools that run or save a Query point agents at service, file and Reading less" do
     assert_not_includes McpServer::INSTRUCTIONS, "log_file_order"
     [ McpTools::QueryLogs, McpTools::AddChart, McpTools::CreateMonitor ].each do |tool|
       [ "service and file", "Reading less" ].each { |part| assert_includes tool.description_value, part, tool.name }

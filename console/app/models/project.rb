@@ -20,11 +20,14 @@ class Project < ApplicationRecord
   has_many :log_transform_versions, dependent: :delete_all
 
   before_validation :generate_slug, on: :create
+  normalizes :description, with: ->(description) { description.strip.presence }
 
   validates :name, presence: true
   validate :slug_reachable, on: :create
   # Whole days; nil means the instance default (InstanceSetting).
   validates :log_retention_days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
+  # What the Project holds, for agents over MCP to pick the Project to query.
+  validates :description, length: { maximum: 1000 }
 
   # A new Project with its first key, so SDKs and shippers can send to it at
   # once, as Console makes one.
