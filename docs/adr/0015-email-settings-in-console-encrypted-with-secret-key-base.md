@@ -8,7 +8,7 @@ We chose this because changing email meant editing `deploy/.env` and restarting,
 
 ## Amended: the other live settings are set in Console too, but Sign-up (2026-10-24)
 
-Instance admins now change SQL queries, the default Retention and log-all-reads on Settings → Instance or over the MCP server (`get_instance_settings`, `update_instance_settings`), as they do email. These apply at once, so they needed no restart before either; the page saves needing a shell for them. The page and the MCP tools also show, read-only, Sign-up and what Console and EventStore read at start, each secret only as whether it's set.
+Instance admins now change SQL queries, the default Retention, log-all-reads and log-MCP-reads on Settings → Instance or over the MCP server (`get_instance_settings`, `update_instance_settings`), as they do email. These apply at once, so they needed no restart before either; the page saves needing a shell for them. The page and the MCP tools also show, read-only, Sign-up and what Console and EventStore read at start, each secret only as whether it's set.
 
 Sign-up stays shell-only on purpose: the page shows whether it's open and the `bin/rails instance_settings:set` command that changes it, and neither the page nor MCP can change it. Opening it lets anyone who can reach Console make an account, so a stolen instance admin session or API token mustn't be able to open the install. `instance_settings:show` and `:set` keep working for every setting. ([spec](../../.scratch/instance-settings/spec.md))
 
