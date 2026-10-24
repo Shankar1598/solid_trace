@@ -7,6 +7,9 @@ module McpTools
                 "band, the Logs and bytes received (decoded, and as sent) and the bytes ClickHouse stores of the " \
                 "range's days, with the compression ratio, unreadable Logs and requests turned away as overloaded; " \
                 "rates, Logs, bytes and requests a second, each an average and the busiest second, by arrival time; " \
+                "health, each Project's oldest Log batch waiting for Log processing and its Log reads' median and " \
+                "95th percentile over the last 24 hours, the slowest reads, Monitors whose last run failed, Firing " \
+                "Monitors, and the range's new Issues and Events, each with a status of ok, warning or error; " \
                 "ingest_counts, when counting began. event_store says whether EventStore answered; when it didn't, " \
                 "its sections are null."
     read_only!
