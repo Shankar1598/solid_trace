@@ -4,7 +4,7 @@ require "test_helper"
 require "webmock/minitest"
 
 # The instance settings tools: the install's settings as Settings → Instance
-# shows them, and the three that apply at once, which only an instance admin
+# shows them, and the four that apply at once, which only an instance admin
 # reads or changes. They take no Organization, never answer a secret, and
 # can't change Sign-up or anything that needs a restart.
 class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
@@ -37,7 +37,7 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
 
     assert_not answer.error?, answer.text
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
-      "default_log_retention_days" => 14, "log_all_reads" => false }, answer.json["editable"])
+      "default_log_retention_days" => 14, "log_all_reads" => false, "log_mcp_reads" => true }, answer.json["editable"])
     assert_equal({ "open" => false, "command" => "bin/rails instance_settings:set SIGN_UP_OPEN=true|false" },
       answer.json["sign_up"])
     console = answer.json["restart_to_change"].find { |group| group["name"] == "Console" }
@@ -61,6 +61,21 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     call_tool(:update_instance_settings, user: @instance_admin, log_all_reads: false)
     settings = InstanceSetting.current
     assert_equal [ false, 7, false ], [ settings.sql_queries_enabled, settings.default_log_retention_days, settings.log_all_reads ]
+  end
+
+  test "update_instance_settings turns MCP reads' logging off, even while log-all-reads is on" do
+    InstanceSetting.current.update!(log_all_reads: true)
+
+    answer = call_tool(:update_instance_settings, user: @instance_admin, log_mcp_reads: false)
+
+    assert_not answer.error?, answer.text
+    assert_not InstanceSetting.current.log_mcp_reads?
+    assert_equal [ true, false ], answer.json["editable"].values_at("log_all_reads", "log_mcp_reads")
+  end
+
+  test "update_instance_settings takes log_mcp_reads as a boolean" do
+    schema = McpTools::UpdateInstanceSettings.input_schema_value.to_h
+    assert_equal "boolean", schema.dig(:properties, :log_mcp_reads, :type)
   end
 
   test "update_instance_settings answers a bad Retention as a tool error, and saves nothing" do
