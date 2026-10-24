@@ -14,7 +14,7 @@ import { OverviewSources } from '@/components/overview/OverviewSources'
 import { OverviewHealth } from '@/components/overview/OverviewHealth'
 import { OverviewOtherTools } from '@/components/overview/OverviewOtherTools'
 import { OverviewStorage } from '@/components/overview/OverviewStorage'
-import { OVERVIEW_RANGES, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
+import { OVERVIEW_RANGES, dayText, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
 import type { SharedProps } from '@/types'
 
 /**
@@ -68,6 +68,13 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
                   {overview.ingest_counts.since
                     ? `Ingest counts begin ${secondText(overview.ingest_counts.since)}, after this range starts, so Received can be shorter than Stored.`
                     : 'Nothing has been counted on arrival yet, so Received is empty.'}
+                </p>
+              )}
+              {overview.source_counts?.starts_after_range && (
+                <p className="text-sm text-muted-foreground" data-notice="source-counts-start">
+                  {overview.source_counts.since
+                    ? `Source counts begin ${dayText(overview.source_counts.since)}, after this range starts, so Kept covers only the days since and the ratio compares those days alone.`
+                    : 'Nothing kept has been counted yet, so Kept is empty and there is no ratio.'}
                 </p>
               )}
               <OverviewBand band={band} />

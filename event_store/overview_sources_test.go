@@ -1,7 +1,9 @@
 package main_test
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -196,5 +198,80 @@ func TestRetentionAndProjectDeletionDeleteSourceCounts(t *testing.T) {
 	env.DeleteLogsPastRetention(t)
 	if got := kept(456); got != 0 {
 		t.Errorf("Expected a deleted Project's counts deleted, got %d Logs", got)
+	}
+}
+
+// countedAnswer is the part of the Overview that the kept-over-stored ratio
+// reads: the stored bytes of the days with Source counts, and when they
+// begin.
+type countedAnswer struct {
+	SourceCountsSince *string `json:"source_counts_since"`
+	Band              struct {
+		Stored             overviewStored `json:"stored"`
+		StoredCountedBytes int64          `json:"stored_counted_bytes"`
+	} `json:"band"`
+	Days []struct {
+		Day    string         `json:"day"`
+		Stored overviewStored `json:"stored"`
+	} `json:"days"`
+	Projects []struct {
+		ProjectID          uint32 `json:"project_id"`
+		StoredCountedBytes int64  `json:"stored_counted_bytes"`
+	} `json:"projects"`
+}
+
+func countedOverview(t *testing.T, env *TestEnv, from, to time.Time, projects ...uint32) countedAnswer {
+	t.Helper()
+	status, raw := postQueryApp(t, env, "/overview", overviewRequest{
+		ProjectIDs: projects, From: from.Format(time.DateOnly), To: to.Format(time.DateOnly),
+	})
+	if status != 200 {
+		t.Fatalf("Expected the Overview, got %d: %s", status, raw)
+	}
+	var answer countedAnswer
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		t.Fatalf("Decode the Overview %s: %v", raw, err)
+	}
+	return answer
+}
+
+func TestTheOverviewAnswersTheStoredBytesOfOnlyTheDaysWithSourceCounts(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	yesterday := testNow.AddDate(0, 0, -1)
+	postAndProcessTo(t, env, 123, "test_public_key",
+		logJSON(t, "today", testNow, nil), logJSON(t, "yesterday", yesterday, map[string]any{"service": "web"}))
+	// Yesterday's Logs as if stored before Source counts began.
+	dropSourceCounts := func(day time.Time) {
+		t.Helper()
+		if err := env.ClickHouse.Conn().Exec(context.Background(),
+			fmt.Sprintf("ALTER TABLE log_source_counts DROP PARTITION ID '123-%s'", day.Format("20060102"))); err != nil {
+			t.Fatalf("Drop the Source counts of %s: %v", day.Format(time.DateOnly), err)
+		}
+	}
+	dropSourceCounts(yesterday)
+
+	got := countedOverview(t, env, testNow.AddDate(0, 0, -6), testNow, 123)
+
+	var today int64
+	for _, d := range got.Days {
+		if d.Day == testNow.Format(time.DateOnly) {
+			today = d.Stored.Bytes
+		}
+	}
+	if today <= 0 || got.Band.Stored.Bytes <= today {
+		t.Fatalf("Expected both days stored, today's %d bytes of %d, got %+v", today, got.Band.Stored.Bytes, got)
+	}
+	if got.Band.StoredCountedBytes != today || len(got.Projects) != 1 || got.Projects[0].StoredCountedBytes != today {
+		t.Errorf("Expected only today's %d stored bytes counted, in the band and the Project, got %+v", today, got)
+	}
+	if got.SourceCountsSince == nil || *got.SourceCountsSince != testNow.Format(time.DateOnly) {
+		t.Errorf("Expected Source counts since today, got %v", got.SourceCountsSince)
+	}
+
+	dropSourceCounts(testNow)
+	if none := countedOverview(t, env, testNow.AddDate(0, 0, -6), testNow, 123); none.Band.StoredCountedBytes != 0 || none.SourceCountsSince != nil {
+		t.Errorf("Expected no day counted and no Source counts, got %+v", none)
 	}
 }

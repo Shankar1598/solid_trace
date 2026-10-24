@@ -3,6 +3,7 @@ package handler
 import (
 	"cmp"
 	"slices"
+	"time"
 
 	"github.com/solidtrace/event_store/storage"
 )
@@ -32,11 +33,27 @@ type (
 )
 
 // assembleSources adds the Source counts to the answer: the band's and each
-// Project's kept and dropped, and the sources ranked by Logs sent and by
+// Project's kept and dropped, the stored bytes of the Project days that have
+// Source counts, when they begin, and the sources ranked by Logs sent and by
 // bytes kept.
-func assembleSources(a *overviewAnswer, byProject map[uint32]int, counts []storage.SourceCount) {
-	sources := make([]overviewSource, 0, len(counts))
-	for _, c := range counts {
+func assembleSources(a *overviewAnswer, byProject map[uint32]int, d overviewData) {
+	if d.hasSourcesSince {
+		since := d.sourcesSince.Format(time.DateOnly)
+		a.SourceCountsSince = &since
+	}
+	counted := map[storage.LogProjectDay]bool{}
+	for _, day := range d.sourceDays {
+		counted[day] = true
+	}
+	for _, stored := range d.stored {
+		if counted[storage.LogProjectDay{ProjectID: stored.ProjectID, Day: stored.Day}] {
+			bytes := stored.LocalBytes + stored.BucketBytes
+			a.Band.StoredCountedBytes += bytes
+			a.Projects[byProject[stored.ProjectID]].StoredCountedBytes += bytes
+		}
+	}
+	sources := make([]overviewSource, 0, len(d.sources))
+	for _, c := range d.sources {
 		a.Band.Kept.Logs += c.Logs
 		a.Band.Kept.Bytes += c.Bytes
 		a.Band.DroppedByTransform += c.DroppedByTransform

@@ -18,7 +18,7 @@ class Overview
 
   # The sections, in the order they're answered. Storage, the whole
   # install's, is answered for Instance admins only.
-  SECTIONS = %i[range event_store empty ingest_counts band rates daily projects sources health other_tools storage].freeze
+  SECTIONS = %i[range event_store empty ingest_counts source_counts band rates daily projects sources health other_tools storage].freeze
 
   # The Projects that wear a Chart colour of their own, the first by
   # creation; the rest fold into Other, which wears the next. Never cycled.
@@ -80,9 +80,19 @@ class Overview
     { since: since&.utc&.iso8601, starts_after_range: since.nil? || since > @from.to_time(:utc) }
   end
 
+  # When Source counts begin, and whether that's after the range starts, so
+  # the ratio, taken only over the days that have them, says so.
+  def source_counts
+    return unless answer
+
+    since = answer["source_counts_since"]&.then { |day| Date.iso8601(day) }
+    { since: since&.iso8601, starts_after_range: since.nil? || since > @from }
+  end
+
   # Received → Kept → Stored: the bytes and Logs that arrived, what Log
   # processing kept of the range's days (Source counts) and what ClickHouse
-  # holds of them, with the compression ratio, kept bytes over stored bytes;
+  # holds of them, with the compression ratio, kept bytes over the stored
+  # bytes of only the days that have Source counts;
   # the Logs dropped between Received and Kept, unreadable or by the Log
   # transform, and the requests turned away beside it.
   def band
@@ -94,7 +104,7 @@ class Overview
       received: received.slice("logs", "bytes", "bytes_on_wire", "requests"),
       kept: { logs: kept["logs"].to_i, bytes: kept["bytes"].to_i },
       stored: stored.slice("logs", "bytes", "local_bytes", "bucket_bytes"),
-      ratio: ratio(kept["bytes"], stored["bytes"]),
+      ratio: ratio(kept["bytes"], band["stored_counted_bytes"]),
       unreadable_logs: band["unreadable_logs"],
       dropped_by_transform: band["dropped_by_transform"].to_i,
       overloaded_requests: band["overloaded_requests"],
@@ -141,7 +151,8 @@ class Overview
   end
 
   # One row per Project, in creation order: what it received, kept and
-  # stored of the range, the ratio (kept bytes over stored), the Logs the
+  # stored of the range, the ratio (kept bytes over the stored bytes of its
+  # days with Source counts), the Logs the
   # Log transform dropped, its share of the bytes received, its Logs a second, its Retention (the instance's when it
   # has none) and the Logs it keeps of every day, and when its last Log
   # arrived, stale when over an hour ago.
@@ -157,7 +168,7 @@ class Overview
       {
         **self.class.project_ref(project), color: color_of(project.id),
         logs: got.dig("received", "logs").to_i, received_bytes: received, kept_bytes: kept, stored_bytes: stored,
-        ratio: ratio(kept, stored), dropped_by_transform: got["dropped_by_transform"].to_i,
+        ratio: ratio(kept, got["stored_counted_bytes"]), dropped_by_transform: got["dropped_by_transform"].to_i,
         share: total.positive? ? (received.to_f / total).round(4) : nil,
         logs_per_second: rate_of(got["logs_per_second"]),
         retention_days: retention_of(project),
@@ -234,8 +245,8 @@ class Overview
     total.to_i.positive? ? (part.to_f / total.to_i).round(4) : nil
   end
 
-  # Kept bytes over stored bytes, how well Logs compress; nil when nothing
-  # is stored.
+  # Kept bytes over the stored bytes of the same days, those with Source
+  # counts: how well Logs compress; nil when none of them is stored.
   def ratio(kept, stored)
     stored.to_i.positive? ? (kept.to_f / stored.to_i).round(1) : nil
   end

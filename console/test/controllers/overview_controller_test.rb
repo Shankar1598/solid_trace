@@ -18,15 +18,18 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     travel_to Time.utc(2026, 10, 2, 13, 0, 0)
   end
 
-  # An answer of EventStore's /overview.
-  def answer(received_bytes: 4000, kept_bytes: 3000, stored_bytes: 1000, since: "2026-10-02T09:00:00Z")
+  # An answer of EventStore's /overview. Every stored day has Source counts
+  # unless stored_counted_bytes says less.
+  def answer(received_bytes: 4000, kept_bytes: 3000, stored_bytes: 1000, stored_counted_bytes: stored_bytes,
+             since: "2026-10-02T09:00:00Z", source_counts_since: "2026-09-01")
     {
-      from: "2026-10-02", to: "2026-10-02", has_logs: true, ingest_counts_since: since,
+      from: "2026-10-02", to: "2026-10-02", has_logs: true, ingest_counts_since: since, source_counts_since: source_counts_since,
       band: {
         received: { logs: 40, bytes: received_bytes, bytes_on_wire: 1500, requests: 4 },
         unreadable_logs: 2, overloaded_requests: 1,
         kept: { logs: 35, bytes: kept_bytes }, dropped_by_transform: 3,
         stored: { logs: 38, bytes: stored_bytes, local_bytes: stored_bytes, bucket_bytes: 0, raw_bytes: 3500 },
+        stored_counted_bytes: stored_counted_bytes,
       },
       rates: {
         seconds: 46_800,
@@ -147,7 +150,8 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
   end
 
   # An answer's Project.
-  def project(id, logs: 0, received_bytes: 0, kept_bytes: received_bytes, stored_bytes: 0, all_logs: 0, oldest_day: nil, last_log_at: nil)
+  def project(id, logs: 0, received_bytes: 0, kept_bytes: received_bytes, stored_bytes: 0, stored_counted_bytes: stored_bytes,
+              all_logs: 0, oldest_day: nil, last_log_at: nil)
     {
       project_id: id,
       received: { logs: logs, bytes: received_bytes, bytes_on_wire: received_bytes, requests: 1 },
@@ -155,8 +159,36 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
       logs_per_second: { average: logs / 86_400.0, peak: logs, peak_at: logs.positive? ? "2026-10-02T10:00:00Z" : nil },
       all_days: { logs: all_logs, bytes: stored_bytes * 3, oldest_day: oldest_day },
       last_log_at: last_log_at,
-      kept: { logs: logs, bytes: kept_bytes }, dropped_by_transform: 1,
+      kept: { logs: logs, bytes: kept_bytes }, dropped_by_transform: 1, stored_counted_bytes: stored_counted_bytes,
     }
+  end
+
+  test "the ratio compares kept bytes with the stored bytes of only the days with Source counts, with a notice when they begin in the range" do
+    projects = [ project(@web.id, logs: 30, received_bytes: 3000, kept_bytes: 2400, stored_bytes: 600, stored_counted_bytes: 300) ]
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer(
+      kept_bytes: 3000, stored_bytes: 1000, stored_counted_bytes: 500, source_counts_since: "2026-09-30"
+    ).merge(projects: projects).to_json)
+    sign_in_as(@member)
+
+    overview = overview_props(overview_url(org_slug: "acme", range: "7d"))
+
+    assert_equal 6.0, overview["band"]["ratio"], "3,000 kept over the 500 stored of the counted days"
+    assert_equal 8.0, overview["projects"][0]["ratio"], "2,400 kept over 300"
+    assert_equal({ "since" => "2026-09-30", "starts_after_range" => true }, overview["source_counts"])
+  end
+
+  test "with no day's Source counts there's no ratio" do
+    projects = [ project(@web.id, logs: 30, received_bytes: 3000, kept_bytes: 0, stored_bytes: 600, stored_counted_bytes: 0) ]
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer(
+      kept_bytes: 0, stored_bytes: 1000, stored_counted_bytes: 0, source_counts_since: nil
+    ).merge(projects: projects).to_json)
+    sign_in_as(@member)
+
+    overview = overview_props(overview_url(org_slug: "acme"))
+
+    assert_nil overview["band"]["ratio"]
+    assert_nil overview["projects"][0]["ratio"]
+    assert_equal({ "since" => nil, "starts_after_range" => true }, overview["source_counts"])
   end
 
   test "each Project wears a Chart colour in creation order, and the eighth on fold into Other" do

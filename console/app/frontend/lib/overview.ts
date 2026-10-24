@@ -28,12 +28,14 @@ export interface Overview {
   /** logs is null when EventStore didn't answer. */
   empty: { projects: boolean; logs: boolean | null }
   ingest_counts: { since: string | null; starts_after_range: boolean } | null
+  /** When Source counts begin, a UTC day; the ratio is taken only over the days that have them. */
+  source_counts: { since: string | null; starts_after_range: boolean } | null
   band: {
     received: { logs: number; bytes: number; bytes_on_wire: number; requests: number }
     /** What Log processing kept of the range's days: each Log's message and Attributes' JSON. */
     kept: { logs: number; bytes: number }
     stored: { logs: number; bytes: number; local_bytes: number; bucket_bytes: number }
-    /** Kept bytes over stored bytes; null when nothing is stored. */
+    /** Kept bytes over the stored bytes of the days with Source counts; null when none of them is stored. */
     ratio: number | null
     unreadable_logs: number
     dropped_by_transform: number
@@ -104,7 +106,7 @@ export interface OverviewProject {
   received_bytes: number
   kept_bytes: number
   stored_bytes: number
-  /** Kept bytes over stored; null when nothing is stored. */
+  /** Kept bytes over the stored bytes of its days with Source counts; null when none of them is stored. */
   ratio: number | null
   dropped_by_transform: number
   /** Its share of the bytes received, 0 to 1; null when none were. */

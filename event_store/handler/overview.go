@@ -94,8 +94,12 @@ type overviewData struct {
 	projectDays    []storage.IngestDay
 	storedProjects []storage.StoredProject
 	arrivals       map[uint32]time.Time
-	// Each source's Source counts over the range's days.
-	sources []storage.SourceCount
+	// Each source's Source counts over the range's days, the Project days
+	// that have them, and the install's first day of them.
+	sources         []storage.SourceCount
+	sourceDays      []storage.LogProjectDay
+	sourcesSince    time.Time
+	hasSourcesSince bool
 	// Health's reads (overview_health.go).
 	health overviewHealthData
 	// Storage's reads, when asked for (overview_storage.go).
@@ -140,6 +144,14 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 		},
 		func(ctx context.Context) (err error) {
 			d.sources, err = h.logs.SourceCounts(ctx, q.scope.ProjectIDs, q.from, q.to)
+			return err
+		},
+		func(ctx context.Context) (err error) {
+			d.sourceDays, err = h.logs.SourceCountDays(ctx, q.scope.ProjectIDs, q.from, q.to)
+			return err
+		},
+		func(ctx context.Context) (err error) {
+			d.sourcesSince, d.hasSourcesSince, err = h.logs.SourceCountsSince(ctx)
 			return err
 		},
 		func(ctx context.Context) (err error) {
@@ -188,6 +200,10 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     dropped.
 //   - ingest_counts_since: the first second Ingest counts hold for any
 //     Project, so a range that starts before it isn't read as quiet.
+//   - source_counts_since: the first day Source counts hold for any
+//     Project, null with none; and band.stored_counted_bytes and each
+//     Project's, the stored bytes of only the Project days that have Source
+//     counts, so kept over stored compares the same days.
 //   - has_logs: whether any of the Projects has Logs stored of any day, or
 //     Ingest counts.
 //   - health: processing, each Project's oldest Log batch waiting for Log
@@ -266,6 +282,7 @@ type (
 		From              string            `json:"from"`
 		To                string            `json:"to"`
 		IngestCountsSince *time.Time        `json:"ingest_counts_since"`
+		SourceCountsSince *string           `json:"source_counts_since"`
 		HasLogs           bool              `json:"has_logs"`
 		Band              overviewBand      `json:"band"`
 		Rates             overviewRates     `json:"rates"`
@@ -282,6 +299,7 @@ type (
 		Kept               overviewKept     `json:"kept"`
 		DroppedByTransform int64            `json:"dropped_by_transform"`
 		Stored             overviewStored   `json:"stored"`
+		StoredCountedBytes int64            `json:"stored_counted_bytes"`
 	}
 	overviewReceived struct {
 		Logs        int64 `json:"logs"`
@@ -331,6 +349,7 @@ type (
 		LastLogAt          *time.Time       `json:"last_log_at"`
 		Kept               overviewKept     `json:"kept"`
 		DroppedByTransform int64            `json:"dropped_by_transform"`
+		StoredCountedBytes int64            `json:"stored_counted_bytes"`
 	}
 	overviewAllDays struct {
 		Logs      int64   `json:"logs"`
@@ -443,7 +462,7 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 	for projectID, at := range d.arrivals {
 		a.Projects[byProject[projectID]].LastLogAt = &at
 	}
-	assembleSources(&a, byProject, d.sources)
+	assembleSources(&a, byProject, d)
 	a.Health = assembleHealth(q, d.health)
 	return a
 }

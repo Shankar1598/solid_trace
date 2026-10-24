@@ -149,3 +149,47 @@ func (s *ClickHouseLogs) SourceCounts(ctx context.Context, projectIDs []uint32, 
 	}
 	return counts, rows.Err()
 }
+
+// LogProjectDay is one UTC day of one Project's Logs.
+type LogProjectDay struct {
+	ProjectID uint32
+	Day       time.Time
+}
+
+// SourceCountDays lists the days from the day of from to the day of to that
+// each Project of projectIDs has Source counts of, in no order. A day of
+// Logs stored before Source counts began has none.
+func (s *ClickHouseLogs) SourceCountDays(ctx context.Context, projectIDs []uint32, from, to time.Time) ([]LogProjectDay, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT DISTINCT project_id, day
+		FROM log_source_counts
+		WHERE project_id IN ? AND day >= toDate(?) AND day <= toDate(?)`, projectIDs, dayString(from), dayString(to))
+	if err != nil {
+		return nil, fmt.Errorf("list the days with Source counts: %w", err)
+	}
+	defer rows.Close()
+	var days []LogProjectDay
+	for rows.Next() {
+		var d LogProjectDay
+		if err := rows.Scan(&d.ProjectID, &d.Day); err != nil {
+			return nil, err
+		}
+		d.Day = LogDay(d.Day)
+		days = append(days, d)
+	}
+	return days, rows.Err()
+}
+
+// SourceCountsSince is the first day the install's Source counts hold, from
+// the parts' own bounds, or false when they hold none.
+func (s *ClickHouseLogs) SourceCountsSince(ctx context.Context) (time.Time, bool, error) {
+	var since time.Time
+	var parts uint64
+	if err := s.conn.QueryRow(ctx, `
+		SELECT min(min_date), count()
+		FROM system.parts
+		WHERE database = currentDatabase() AND table = 'log_source_counts' AND active`).Scan(&since, &parts); err != nil {
+		return time.Time{}, false, fmt.Errorf("find when Source counts start: %w", err)
+	}
+	return LogDay(since), parts > 0, nil
+}

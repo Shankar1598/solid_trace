@@ -5,10 +5,10 @@ module McpTools
   class GetOverview < Base
     description "Answers an Organization's Overview over today, the last 7 or the last 30 whole UTC days: " \
                 "band, the Logs and bytes received (decoded, and as sent), kept by Log processing and stored by " \
-                "ClickHouse of the range's days, with the compression ratio (kept over stored), unreadable Logs, " \
+                "ClickHouse of the range's days, with the compression ratio (kept over the stored bytes of the days with Source counts), unreadable Logs, " \
                 "Logs the Log transform dropped and requests turned away as overloaded; " \
                 "rates, Logs, bytes and requests a second, each an average and the busiest second, by arrival time; " \
-                "ingest_counts, when counting began; daily, each UTC day's Logs received by series (a Project each, " \
+                "ingest_counts, when counting began; source_counts, when counting what was kept began; daily, each UTC day's Logs received by series (a Project each, " \
                 "the eighth by creation on folded into Other), bytes received and stored, and Logs a second, average " \
                 "and peak; projects, each Project's Logs and bytes received, kept and stored, ratio, share of the bytes " \
                 "received, Logs a second, Retention, oldest day and Logs kept of every day, and when its last Log " \
