@@ -3,8 +3,8 @@
 module McpTools
   # An Organization's Projects, as its Project pickers list them.
   class ListProjects < Base
-    description "Lists an Organization's Projects: the slug other tools take, the name, and " \
-                "log_retention_days, how many days back its Logs go."
+    description "Lists an Organization's Projects: the slug other tools take, the name, the description " \
+                "of what the Project holds, to pick the Project to query, and log_retention_days, how many days back its Logs go."
     read_only!
     takes_organization
 

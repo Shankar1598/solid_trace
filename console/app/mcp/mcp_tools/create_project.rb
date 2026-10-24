@@ -11,6 +11,10 @@ module McpTools
     writes!
     takes_organization
     argument :name, { type: "string", description: "The Project's name, such as Checkout." }, required: true
+    argument :description, {
+      type: "string",
+      description: "What the Project holds, such as the checkout service's errors and Logs, so agents can tell which Project to query.",
+    }
     argument :log_retention_days, {
       type: "integer",
       description: "How many days back its Logs are kept. The instance default when left out.",
@@ -18,7 +22,8 @@ module McpTools
 
     def run
       # Project refuses a name whose slug no page could be reached at.
-      made = organization.projects.build_with_key(name: arguments[:name].to_s.strip, log_retention_days: arguments[:log_retention_days])
+      made = organization.projects.build_with_key(name: arguments[:name].to_s.strip, description: arguments[:description],
+        log_retention_days: arguments[:log_retention_days])
       made.save!
       json({ organization: organization.slug, project: ProjectOptionSerializer.new(made).as_json,
              key: key_json(made.project_keys.sole) }, link: links.project(made))

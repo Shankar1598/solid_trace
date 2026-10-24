@@ -63,6 +63,6 @@ class ProjectsController < ApplicationController
   end
 
   def project_params
-    params.require(:project).permit(:name, :platform, :log_retention_days)
+    params.require(:project).permit(:name, :platform, :description, :log_retention_days)
   end
 end

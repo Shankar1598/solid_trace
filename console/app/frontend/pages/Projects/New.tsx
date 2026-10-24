@@ -5,6 +5,7 @@ import { Card, CardContent, CardFooter } from '@/components/ui/card'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SharedProps } from '@/types'
 import { FormEventHandler } from 'react'
@@ -15,6 +16,7 @@ export default function ProjectsNew() {
 
   const { data, setData, post, processing, errors } = useForm({
     name: '',
+    description: '',
     platform: 'javascript'
   })
 
@@ -60,6 +62,23 @@ export default function ProjectsNew() {
               {errors.name && (
                 <p className="text-sm font-medium text-destructive">{errors.name}</p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                placeholder="e.g. The checkout service's errors and Logs"
+                value={data.description}
+                onChange={(e) => setData('description', e.target.value)}
+                maxLength={1000}
+              />
+              {errors.description && (
+                <p className="text-sm font-medium text-destructive">{errors.description}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                What this project holds, so agents querying over MCP can tell which project to read.
+              </p>
             </div>
 
             <div className="space-y-2">

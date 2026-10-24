@@ -165,7 +165,7 @@ A user who changes the install's settings that apply to every **Organization**, 
 _Avoid_: superuser, super admin, site admin, root
 
 **Project**:
-The namespace that owns project keys and groups Issues inside an organization.
+The namespace that owns project keys and groups Issues inside an organization. Its description says what it holds, so agents over MCP can tell which Project to query.
 _Avoid_: app, tenant
 
 **Meta Organization**:
