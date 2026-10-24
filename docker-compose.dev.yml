@@ -1,6 +1,8 @@
 # The ClickHouse server and the MinIO (S3 stand-in) that the dev stack and the
-# Go tests share. Run it through bin/clickhouse-dev, which sets the variables
-# below; bin/go-dev runs that.
+# Go tests share. Start it with bin/clickhouse-dev (bin/dev and bin/go-dev run
+# it), which also copies deploy/clickhouse/'s config and waits for ClickHouse.
+# It writes the variables below into .env beside this file, so plain
+# docker compose -f docker-compose.dev.yml ps/logs/down work after that.
 #
 # One project, solidtrace-dev, serves every checkout and worktree. Data is in
 # the main checkout's storage/ (SOLIDTRACE_DEV_STORAGE), which outlives
@@ -17,7 +19,7 @@ services:
     # (127.0.0.1:4200 native, :4201 HTTP). As the dev user, so its files stay
     # theirs.
     network_mode: host
-    user: "${SOLIDTRACE_DEV_UID:?run bin/clickhouse-dev}:${SOLIDTRACE_DEV_GID:?run bin/clickhouse-dev}"
+    user: "${SOLIDTRACE_DEV_UID:?run bin/clickhouse-dev, which writes .env}:${SOLIDTRACE_DEV_GID:?run bin/clickhouse-dev}"
     ulimits:
       nofile: { soft: 262144, hard: 262144 }
     environment:
@@ -35,7 +37,7 @@ services:
     volumes:
       # A copy of deploy/clickhouse/'s config that bin/clickhouse-dev takes, so
       # the container doesn't depend on a worktree that may be removed.
-      - ${SOLIDTRACE_DEV_STORAGE:?run bin/clickhouse-dev}/clickhouse/etc/config.d:/etc/clickhouse-server/config.d:ro
+      - ${SOLIDTRACE_DEV_STORAGE:?run bin/clickhouse-dev, which writes .env}/clickhouse/etc/config.d:/etc/clickhouse-server/config.d:ro
       - ${SOLIDTRACE_DEV_STORAGE}/clickhouse/etc/users.d:/etc/clickhouse-server/users.d:ro
       - ${SOLIDTRACE_DEV_STORAGE}/clickhouse/conf.d:/etc/clickhouse-server/conf.d:ro
       - ${SOLIDTRACE_DEV_STORAGE}/clickhouse/data:/var/lib/clickhouse

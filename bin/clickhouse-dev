@@ -21,8 +21,13 @@ checkout="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 main="$(dirname "$(git -C "$checkout" rev-parse --path-format=absolute --git-common-dir)")"
 dir="$main/storage/clickhouse"
 
-export SOLIDTRACE_DEV_STORAGE="$main/storage"
-export SOLIDTRACE_DEV_UID="$(id -u)" SOLIDTRACE_DEV_GID="$(id -g)"
+# The compose file's variables, in .env beside it so that plain docker compose
+# commands work too. Other lines in .env are kept.
+dev_env="SOLIDTRACE_DEV_STORAGE=$main/storage
+SOLIDTRACE_DEV_UID=$(id -u)
+SOLIDTRACE_DEV_GID=$(id -g)"
+{ grep -v '^SOLIDTRACE_DEV_' "$checkout/.env" 2>/dev/null || true; echo "$dev_env"; } >| "$checkout/.env.new"
+mv "$checkout/.env.new" "$checkout/.env"
 compose() { docker compose -f "$checkout/docker-compose.dev.yml" "$@"; }
 
 if [[ ${1:-} == --stop ]]; then
