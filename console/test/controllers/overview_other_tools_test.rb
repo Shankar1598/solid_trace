@@ -36,7 +36,7 @@ class OverviewOtherToolsTest < ActionDispatch::IntegrationTest
       days: [],
       projects: [
         { project_id: @web.id, received: received.(7_000_000, 7_000_000_000) },
-        { project_id: @api.id, received: received.(70_000_000, 700_000_000_000) },
+        { project_id: @api.id, received: received.(70_000_000, 700_000_000_000) }
       ],
     }
   end
