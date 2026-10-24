@@ -3,6 +3,8 @@
 // its numbers.
 import { tickLabel, valueTicks } from '@/lib/charts/axis'
 
+import type { OverviewHealth } from './overviewHealth'
+
 export type OverviewRangeName = 'today' | '7d' | '30d'
 
 export const OVERVIEW_RANGES: { value: OverviewRangeName; label: string }[] = [
@@ -48,6 +50,7 @@ export interface Overview {
   } | null
   projects: OverviewProject[] | null
   sources: { by_logs: OverviewSource[]; by_bytes: OverviewSource[] } | null
+  health: OverviewHealth
 }
 
 /** A Service and file of a Project, over the range's days, by the Logs' own time. */

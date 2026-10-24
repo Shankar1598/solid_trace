@@ -89,6 +89,8 @@ type overviewData struct {
 	arrivals       map[uint32]time.Time
 	// Each source's Source counts over the range's days.
 	sources []storage.SourceCount
+	// Health's reads (overview_health.go).
+	health overviewHealthData
 }
 
 // overviewParts are the Overview's reads. Each fills only its own fields of
@@ -179,6 +181,12 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     Project, so a range that starts before it isn't read as quiet.
 //   - has_logs: whether any of the Projects has Logs stored of any day, or
 //     Ingest counts.
+//   - health: processing, each Project's oldest Log batch waiting for Log
+//     processing, with how long it has waited; reads, each Project's Log
+//     reads of the last 24 hours, whatever the range, with their median and
+//     95th percentile in ms, and the slowest reads with their kind and when
+//     they began; events, each Project's Events of the range. A Project with
+//     none is left out of each.
 //
 // Received and rates are by second of arrival; kept, sources and stored are
 // by the Logs' own days. A request that isn't one answers 400 with {"error"}.
@@ -195,7 +203,7 @@ func (h *OverviewHandler) Overview(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.UserContext(), overviewTimeout)
 	defer cancel()
 	var d overviewData
-	parts := h.overviewParts(q, &d)
+	parts := append(h.overviewParts(q, &d), h.healthParts(q, &d.health)...)
 	errs := make([]error, len(parts))
 	var wg sync.WaitGroup
 	for i, part := range parts {
@@ -242,6 +250,7 @@ type (
 		Days              []overviewDay     `json:"days"`
 		Projects          []overviewProject `json:"projects"`
 		Sources           overviewSources   `json:"sources"`
+		Health            healthAnswer      `json:"health"`
 	}
 	overviewBand struct {
 		Received           overviewReceived `json:"received"`
@@ -412,5 +421,6 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 		a.Projects[byProject[projectID]].LastLogAt = &at
 	}
 	assembleSources(&a, byProject, d.sources)
+	a.Health = assembleHealth(q, d.health)
 	return a
 }
