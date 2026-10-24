@@ -4,7 +4,7 @@ SolidTrace has an [MCP](https://modelcontextprotocol.io) server, so an agent suc
 
 ## Connecting
 
-1. In Console, open **User settings**, and under **API tokens** make a token with a name that says where it is used, such as "Laptop, Claude Code".
+1. In Console, open **Settings → API tokens & MCP** and make a token with a name that says where it is used, such as "Laptop, Claude Code".
 2. Copy the token when it is shown. SolidTrace keeps only its digest, so it is shown this once.
 3. Add the server to your client. The page shows both snippets with your token and Console's address filled in.
 
@@ -41,7 +41,7 @@ A tool acts as the token's user, with that user's rights. In each Organization i
 - **Only an instance admin** can read and change the install's email settings and its other settings, which apply to every Organization, and send a test email. `whoami` says whether you are one.
 - Other Organizations' records are not found.
 
-The User settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
+The **API tokens & MCP** settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
 
 ## Tools
 
