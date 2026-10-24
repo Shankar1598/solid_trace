@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { bytesText, dayText, exactText, shareText } from '@/lib/overview'
+import { valueText } from '@/lib/charts/axis'
+import { bytesText, dayText, shareText } from '@/lib/overview'
 import { diskFillsFirst, limitStatus, untilLimitText, type OverviewStorage as Storage, type StorageStatus } from '@/lib/overviewStorage'
 import { cn } from '@/lib/utils'
 
@@ -65,7 +66,7 @@ export function OverviewStorage({ storage }: { storage: Storage }) {
         <Line label="Old Parquet files" hook="old-files">
           {old ? (
             <>
-              <span title={exactText(old.files)}>{exactText(old.files)}</span> {old.files === 1 ? 'file' : 'files'} from
+              <span title={valueText(old.files)}>{valueText(old.files)}</span> {old.files === 1 ? 'file' : 'files'} from
               before the switch to ClickHouse, {bytesText(old.local_bytes)} of them on local disk, the newest
               of {dayText(old.newest_day)}.{' '}
               {old.passes_retention_on

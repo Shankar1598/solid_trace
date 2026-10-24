@@ -2,9 +2,8 @@ import { Link, router } from '@inertiajs/react'
 import { formatDistanceToNow } from 'date-fns'
 import { Clock } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import {
-  bytesText, chartColor, countText, dayText, exactText, rateText, secondText, shareText, type OverviewProject,
-} from '@/lib/overview'
+import { statText, valueText } from '@/lib/charts/axis'
+import { bytesText, chartColor, dayText, rateText, secondText, shareText, type OverviewProject } from '@/lib/overview'
 
 /**
  * The Overview's Projects, one row each in creation order, wearing the
@@ -45,30 +44,30 @@ export function OverviewProjects({ projects, orgSlug }: { projects: OverviewProj
             >
               <TableCell>
                 <span className="flex items-center gap-2">
-                  <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ background: chartColor(p.color) }} aria-hidden />
+                  <span className="h-2 w-2 shrink-0" style={{ background: chartColor(p.color) }} aria-hidden />
                   <Link href={logsPath(p)} className="font-medium hover:underline">{p.name}</Link>
                 </span>
               </TableCell>
               {p.has_logs ? (
                 <>
-                  <Num value={countText(p.logs)} exact={exactText(p.logs)} />
+                  <Num value={statText(p.logs)} exact={valueText(p.logs)} />
                   <Num value={bytesText(p.received_bytes)} />
                   <Num value={bytesText(p.kept_bytes)} />
                   <Num value={bytesText(p.stored_bytes)} />
                   <Num value={p.ratio === null ? '—' : `${p.ratio}×`} />
                   <Num value={p.share === null ? '—' : shareText(p.share)} />
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">
-                    <span title={exactText(p.logs_per_second.average)}>{rateText(p.logs_per_second.average)}</span>
+                  <TableCell className="text-right font-mono tabular-nums whitespace-nowrap">
+                    <span title={valueText(p.logs_per_second.average)}>{rateText(p.logs_per_second.average)}</span>
                     <span className="text-muted-foreground"> avg · </span>
                     <span title={p.logs_per_second.peak_at ? `at ${secondText(p.logs_per_second.peak_at)}` : undefined}>{rateText(p.logs_per_second.peak)}</span>
                     <span className="text-muted-foreground"> peak</span>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">
+                  <TableCell className="text-right font-mono tabular-nums whitespace-nowrap">
                     <div>{p.retention_days} days{p.retention_is_default && <span className="text-muted-foreground"> (default)</span>}</div>
                     {p.oldest_day && <div className="text-xs text-muted-foreground">since {dayText(p.oldest_day)}</div>}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">
-                    <div title={exactText(p.all_days.logs)}>{countText(p.all_days.logs)} Logs</div>
+                  <TableCell className="text-right font-mono tabular-nums whitespace-nowrap">
+                    <div title={valueText(p.all_days.logs)}>{statText(p.all_days.logs)} Logs</div>
                     <div className="text-xs text-muted-foreground">{bytesText(p.all_days.bytes)}</div>
                   </TableCell>
                   <TableCell className="whitespace-nowrap"><LastLog project={p} /></TableCell>
@@ -88,7 +87,7 @@ export function OverviewProjects({ projects, orgSlug }: { projects: OverviewProj
 }
 
 function Num({ value, exact }: { value: string; exact?: string }) {
-  return <TableCell className="text-right tabular-nums whitespace-nowrap" title={exact}>{value}</TableCell>
+  return <TableCell className="text-right font-mono tabular-nums whitespace-nowrap" title={exact}>{value}</TableCell>
 }
 
 /** When the last Log arrived, marked with an icon and words when over an hour ago. */

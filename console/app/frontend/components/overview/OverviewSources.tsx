@@ -1,6 +1,7 @@
 import { Link, router } from '@inertiajs/react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { bytesText, chartColor, countText, exactText, shareText, type Overview, type OverviewSource } from '@/lib/overview'
+import { statText, valueText } from '@/lib/charts/axis'
+import { bytesText, chartColor, shareText, type Overview, type OverviewSource } from '@/lib/overview'
 
 type Sources = NonNullable<Overview['sources']>
 
@@ -23,7 +24,7 @@ export function OverviewSources({ sources, range, orgSlug }: { sources: Sources;
         sources={sources.by_logs}
         explorer={explorer}
         measure={s => (
-          <span title={`${exactText(s.sent)} Logs sent, ${exactText(s.logs)} kept`}>{countText(s.sent)}</span>
+          <span title={`${valueText(s.sent)} Logs sent, ${valueText(s.logs)} kept`}>{statText(s.sent)}</span>
         )}
         measureName="Logs"
         shareOf="Of the Logs sent, kept or dropped by the Log transform"
@@ -33,7 +34,7 @@ export function OverviewSources({ sources, range, orgSlug }: { sources: Sources;
         ranked="by-bytes"
         sources={sources.by_bytes}
         explorer={explorer}
-        measure={s => <span title={`${exactText(s.bytes)} bytes`}>{bytesText(s.bytes)}</span>}
+        measure={s => <span title={`${valueText(s.bytes)} bytes`}>{bytesText(s.bytes)}</span>}
         measureName="Kept"
         shareOf="Of the bytes kept"
       />
@@ -80,14 +81,14 @@ function SourceTable({ label, ranked, sources, explorer, measure, measureName, s
                     {s.file && <span className="font-normal text-muted-foreground"> · {s.file}</span>}
                   </Link>
                   <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ background: chartColor(s.project.color) }} aria-hidden />
+                    <span className="h-2 w-2 shrink-0" style={{ background: chartColor(s.project.color) }} aria-hidden />
                     <span className="truncate">{s.project.name}</span>
                   </span>
                 </TableCell>
-                <TableCell className="text-right tabular-nums whitespace-nowrap">{measure(s)}</TableCell>
-                <TableCell className="text-right tabular-nums whitespace-nowrap">{s.share === null ? '—' : shareText(s.share)}</TableCell>
-                <TableCell className="text-right tabular-nums whitespace-nowrap" title={`${exactText(s.dropped_by_transform)} Logs`}>
-                  {s.dropped_by_transform > 0 ? countText(s.dropped_by_transform) : <span className="text-muted-foreground">0</span>}
+                <TableCell className="text-right font-mono tabular-nums whitespace-nowrap">{measure(s)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums whitespace-nowrap">{s.share === null ? '—' : shareText(s.share)}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums whitespace-nowrap" title={`${valueText(s.dropped_by_transform)} Logs`}>
+                  {s.dropped_by_transform > 0 ? statText(s.dropped_by_transform) : <span className="text-muted-foreground">0</span>}
                 </TableCell>
               </TableRow>
             ))}
