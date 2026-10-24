@@ -74,7 +74,7 @@ The EventStore listens on two ports. Ingest (`4000`) is public: SDKs send events
 
 ## MCP server
 
-Agents such as Claude Code and Cursor can query Logs, read Issues and build Dashboards and Monitors through SolidTrace's MCP server, with an API token made in User settings. See [docs/mcp.md](docs/mcp.md).
+Agents such as Claude Code and Cursor can query Logs, read Issues and build Dashboards and Monitors through SolidTrace's MCP server, with an API token made in Settings → API tokens & MCP. See [docs/mcp.md](docs/mcp.md).
 
 ## Project Structure
 

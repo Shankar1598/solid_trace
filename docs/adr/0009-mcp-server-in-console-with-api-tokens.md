@@ -1,6 +1,6 @@
 # The MCP server runs in Console, and agents sign in with API tokens
 
-An agent such as Claude Code or Cursor reaches SolidTrace through one MCP URL, `POST /mcp` on Console, with an API token in `Authorization: Bearer`. A user makes the token in User settings, and the agent acts as that user. Console keeps only the token's SHA-256 digest and finds the token by it. The token names a user, not a role: each tool call reads the user's role in the Organization it acts on and runs the same Pundit policy as the UI, and another Organization's records are not found.
+An agent such as Claude Code or Cursor reaches SolidTrace through one MCP URL, `POST /mcp` on Console, with an API token in `Authorization: Bearer`. A user makes the token in Settings → API tokens & MCP, and the agent acts as that user. Console keeps only the token's SHA-256 digest and finds the token by it. The token names a user, not a role: each tool call reads the user's role in the Organization it acts on and runs the same Pundit policy as the UI, and another Organization's records are not found.
 
 `McpController` builds one `MCP::Server` per request, on the official `mcp` gem's Streamable HTTP transport in stateless JSON mode (`stateless: true, enable_json_response: true`). Each POST is answered with one JSON response: there are no sessions and no SSE stream, so no request holds a Puma thread open. Tools that run Queries go through `ChartRuns` and `EventStoreProxy::RUN_TIMEOUT_SECONDS`, as a Dashboard's charts do.
 
