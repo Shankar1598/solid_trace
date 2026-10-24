@@ -19,6 +19,9 @@ import (
 type OverviewHandler struct {
 	logs  *storage.ClickHouseLogs
 	clock clock.Clock
+	// Storage's (overview_storage.go).
+	diskLimit storage.LogDiskLimit
+	retention RetentionReader
 }
 
 // OverviewConfig is what the Overview reads.
@@ -27,11 +30,15 @@ type OverviewConfig struct {
 	// Clock gives now: how far into the range Today is, and the last five
 	// minutes.
 	Clock clock.Clock
+	// DiskLimit is the disk limit in effect, worked out at start, and
+	// Retention each Project's Retention, for Storage.
+	DiskLimit storage.LogDiskLimit
+	Retention RetentionReader
 }
 
 // NewOverviewHandler answers the Overview from cfg.
 func NewOverviewHandler(cfg OverviewConfig) *OverviewHandler {
-	return &OverviewHandler{logs: cfg.Logs, clock: cfg.Clock}
+	return &OverviewHandler{logs: cfg.Logs, clock: cfg.Clock, diskLimit: cfg.DiskLimit, retention: cfg.Retention}
 }
 
 const (
@@ -91,6 +98,8 @@ type overviewData struct {
 	sources []storage.SourceCount
 	// Health's reads (overview_health.go).
 	health overviewHealthData
+	// Storage's reads, when asked for (overview_storage.go).
+	storage overviewStorageData
 }
 
 // overviewParts are the Overview's reads. Each fills only its own fields of
@@ -187,6 +196,16 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     95th percentile in ms, and the slowest reads with their kind and when
 //     they began; events, each Project's Events of the range. A Project with
 //     none is left out of each.
+//   - storage, only with include_storage: the whole install's, every
+//     Project's: local_bytes, the Logs on ClickHouse's local disk and the old
+//     Log files' local copies, which the disk limit counts, against
+//     disk_limit_bytes, the limit in effect, with disk_bytes and free_bytes
+//     of that disk; bucket_bytes, the Logs in the bucket; growth_bytes_per_day,
+//     the bytes of a day's Logs over the last 7 whole days, and
+//     days_until_limit at that growth (null with a bucket, which Logs move
+//     to); and old_files, the old Log files from before the switch: how many,
+//     their local copies' bytes, their newest day and passes_retention_on, the
+//     day Retention deletes the last of them (null with none).
 //
 // Received and rates are by second of arrival; kept, sources and stored are
 // by the Logs' own days. A request that isn't one answers 400 with {"error"}.
@@ -204,6 +223,7 @@ func (h *OverviewHandler) Overview(c *fiber.Ctx) error {
 	defer cancel()
 	var d overviewData
 	parts := append(h.overviewParts(q, &d), h.healthParts(q, &d.health)...)
+	parts = append(parts, h.storageParts(q, &d.storage)...)
 	errs := make([]error, len(parts))
 	var wg sync.WaitGroup
 	for i, part := range parts {
@@ -214,7 +234,9 @@ func (h *OverviewHandler) Overview(c *fiber.Ctx) error {
 		logger.L.Error("Answering an Overview failed", "projects", len(req.ProjectIDs), "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
-	return c.JSON(assembleOverview(q, d))
+	a := assembleOverview(q, d)
+	a.Storage = assembleStorage(q, h.diskLimit, d.storage)
+	return c.JSON(a)
 }
 
 func (h *OverviewHandler) readOverviewRequest(req overviewRequest) (overviewQuery, string) {
@@ -251,6 +273,7 @@ type (
 		Projects          []overviewProject `json:"projects"`
 		Sources           overviewSources   `json:"sources"`
 		Health            healthAnswer      `json:"health"`
+		Storage           *storageAnswer    `json:"storage,omitempty"`
 	}
 	overviewBand struct {
 		Received           overviewReceived `json:"received"`

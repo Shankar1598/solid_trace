@@ -65,9 +65,13 @@ type TestEnv struct {
 	// IngestMaxWaiting is ingest's wait limit, 100 unless a test changes
 	// it: 0 turns every request away as overloaded.
 	IngestMaxWaiting int
-	LogProcessor     *logprocessing.Processor
-	LogCleanup       *logprocessing.Cleanup
-	LogsHandler      *handler.LogsHandler
+	// LogDiskLimit is the disk limit the Overview's Storage answers, none
+	// unless a test sets it; Log cleanup has none.
+	LogDiskLimit storage.LogDiskLimit
+
+	LogProcessor *logprocessing.Processor
+	LogCleanup   *logprocessing.Cleanup
+	LogsHandler  *handler.LogsHandler
 	// SQL runs SQL queries, each as its Project's SQL user, within
 	// SQLLimits, storage's defaults unless a test changes them.
 	SQL        *storage.ClickHouseSQL
@@ -477,7 +481,9 @@ func (env *TestEnv) open(t *testing.T) {
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
-		handler.NewOverviewHandler(handler.OverviewConfig{Logs: env.ClickHouseLogs, Clock: env.Clock}), healthHandler)
+		handler.NewOverviewHandler(handler.OverviewConfig{
+			Logs: env.ClickHouseLogs, Clock: env.Clock, DiskLimit: env.LogDiskLimit, Retention: consoleSettings,
+		}), healthHandler)
 
 	env.close = func() {
 		pebbleWriter.StopWrites()
