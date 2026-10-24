@@ -66,6 +66,15 @@ func (s *ClickHouseLogs) logPartitions(ctx context.Context) ([]logPartition, err
 	return partitions, rows.Err()
 }
 
+// logPartitionDay is how a Log table's partition ID writes its day.
+const logPartitionDay = "20060102"
+
+// logPartitionID is the ID of a Project's day's partition of a Log table,
+// as parseLogPartitionID reads it.
+func logPartitionID(projectID uint32, day time.Time) string {
+	return fmt.Sprintf("%d-%s", projectID, day.Format(logPartitionDay))
+}
+
 // parseLogPartitionID reads the Project and the day from the ID of a
 // partition of a Log table.
 func parseLogPartitionID(id string) (uint32, time.Time, error) {
@@ -77,7 +86,7 @@ func parseLogPartitionID(id string) (uint32, time.Time, error) {
 	if err != nil {
 		return 0, time.Time{}, err
 	}
-	at, err := time.Parse("20060102", day)
+	at, err := time.Parse(logPartitionDay, day)
 	if err != nil {
 		return 0, time.Time{}, err
 	}

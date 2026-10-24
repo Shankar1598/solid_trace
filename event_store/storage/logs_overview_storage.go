@@ -51,9 +51,7 @@ const logsLocalDisks = `
 func (s *ClickHouseLogs) InstallStorage(ctx context.Context, from, to time.Time) (InstallStorage, error) {
 	got := InstallStorage{Bucket: s.bucket}
 	partitions, err := s.conn.Query(ctx, `
-		SELECT partition_id,
-			toInt64(sumIf(bytes_on_disk, disk_name IN (SELECT name FROM system.disks WHERE NOT is_remote))),
-			toInt64(sumIf(bytes_on_disk, disk_name IN (SELECT name FROM system.disks WHERE is_remote)))
+		SELECT partition_id, `+localAndBucketBytes+`
 		FROM system.parts
 		WHERE database = currentDatabase() AND table = 'logs' AND active
 		GROUP BY partition_id`)

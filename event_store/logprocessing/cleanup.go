@@ -160,7 +160,7 @@ func (c *Cleanup) DeleteLogsPastRetention(now time.Time) error {
 			logger.L.Error("Keeping the Logs of a Project with no valid Retention", "project_id", projectID)
 			continue
 		default:
-			err = c.store.DeleteLogDaysBefore(projectID, storage.LogDay(now.AddDate(0, 0, -days)))
+			err = c.store.DeleteLogDaysBefore(projectID, storage.FirstLogDayKept(now, days))
 		}
 		if err != nil {
 			// The next pass tries again.
