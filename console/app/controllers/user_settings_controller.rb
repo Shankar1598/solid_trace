@@ -7,9 +7,6 @@ class UserSettingsController < ApplicationController
   def show
     render inertia: "Settings/User", props: {
       user: UserSerializer.new(current_user).as_json,
-      api_tokens: current_user.api_tokens.order(created_at: :desc, id: :desc).map { |t| ApiTokenSerializer.new(t).as_json },
-      # Where a client adds the MCP server, as this request reaches Console.
-      mcp_url: "#{request.base_url}/mcp",
     }
   end
 
