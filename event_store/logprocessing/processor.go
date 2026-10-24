@@ -350,12 +350,13 @@ func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 
 	// Match monitors and the Logs explorer see the Logs the Project's Log
 	// transform returns. A batch it leaves empty still moves the cursor.
+	arrived := batches
 	batches, err = p.transform.Apply(projectID, batches)
 	if err != nil {
 		return false, fmt.Errorf("run log transform: %w", err)
 	}
 
-	insert := storage.LogInsert{After: cursor, UpTo: last, Batches: batches, Again: again}
+	insert := storage.LogInsert{After: cursor, UpTo: last, Batches: batches, Again: again, Dropped: droppedLogs(arrived, batches)}
 	began := time.Now()
 	err = p.classify(p.store.InsertLogBatches(projectID, insert))
 	if failed := p.failing[projectID]; isContentError(err) && failed != nil && failed.content >= contentRetries {
@@ -378,6 +379,37 @@ func (p *Processor) storeLogs(projectID uint32) (more bool, err error) {
 	}
 	// A range inserted again may have left later batches behind.
 	return logs >= maxLogsPerCommit || again, nil
+}
+
+// droppedLogs counts the Logs of arrived that the Log transform left out of
+// kept, by the source each arrived with. A Log keeps its id through the
+// transform.
+func droppedLogs(arrived, kept []storage.LogBatch) map[storage.LogSource]int64 {
+	logs, left := 0, 0
+	for i := range arrived {
+		logs += len(arrived[i].Logs)
+	}
+	for i := range kept {
+		left += len(kept[i].Logs)
+	}
+	if left == logs {
+		return nil
+	}
+	ids := make(map[uuid.UUID]bool, left)
+	for _, batch := range kept {
+		for _, log := range batch.Logs {
+			ids[log.ID] = true
+		}
+	}
+	dropped := map[storage.LogSource]int64{}
+	for _, batch := range arrived {
+		for _, log := range batch.Logs {
+			if !ids[log.ID] {
+				dropped[storage.SourceOf(log)]++
+			}
+		}
+	}
+	return dropped
 }
 
 // upTo returns the batches up to and including the one with id last.
