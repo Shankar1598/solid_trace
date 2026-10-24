@@ -19,12 +19,13 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
   end
 
   # An answer of EventStore's /overview.
-  def answer(received_bytes: 4000, stored_bytes: 1000, since: "2026-10-02T09:00:00Z")
+  def answer(received_bytes: 4000, kept_bytes: 3000, stored_bytes: 1000, since: "2026-10-02T09:00:00Z")
     {
       from: "2026-10-02", to: "2026-10-02", has_logs: true, ingest_counts_since: since,
       band: {
         received: { logs: 40, bytes: received_bytes, bytes_on_wire: 1500, requests: 4 },
         unreadable_logs: 2, overloaded_requests: 1,
+        kept: { logs: 35, bytes: kept_bytes }, dropped_by_transform: 3,
         stored: { logs: 38, bytes: stored_bytes, local_bytes: stored_bytes, bucket_bytes: 0, raw_bytes: 3500 },
       },
       rates: {
@@ -59,9 +60,10 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "projects" => false, "logs" => false }, overview["empty"])
     band = overview["band"]
     assert_equal({ "logs" => 40, "bytes" => 4000, "bytes_on_wire" => 1500, "requests" => 4 }, band["received"])
+    assert_equal({ "logs" => 35, "bytes" => 3000 }, band["kept"])
     assert_equal 38, band["stored"]["logs"]
-    assert_equal 4.0, band["ratio"]
-    assert_equal [ 2, 1 ], [ band["unreadable_logs"], band["overloaded_requests"] ]
+    assert_equal 3.0, band["ratio"], "kept bytes over stored"
+    assert_equal [ 2, 3, 1 ], band.values_at("unreadable_logs", "dropped_by_transform", "overloaded_requests")
     assert_equal({ "average" => 0.001, "peak" => 12, "peak_at" => "2026-10-02T10:00:05Z" }, overview["rates"]["logs"])
     assert_equal({ "logs_per_second" => 0.5 }, overview["rates"]["last_five_minutes"])
     assert_equal({ "since" => "2026-10-02T09:00:00Z", "starts_after_range" => true }, overview["ingest_counts"])
@@ -145,7 +147,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
   end
 
   # An answer's Project.
-  def project(id, logs: 0, received_bytes: 0, stored_bytes: 0, all_logs: 0, oldest_day: nil, last_log_at: nil)
+  def project(id, logs: 0, received_bytes: 0, kept_bytes: received_bytes, stored_bytes: 0, all_logs: 0, oldest_day: nil, last_log_at: nil)
     {
       project_id: id,
       received: { logs: logs, bytes: received_bytes, bytes_on_wire: received_bytes, requests: 1 },
@@ -153,6 +155,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
       logs_per_second: { average: logs / 86_400.0, peak: logs, peak_at: logs.positive? ? "2026-10-02T10:00:00Z" : nil },
       all_days: { logs: all_logs, bytes: stored_bytes * 3, oldest_day: oldest_day },
       last_log_at: last_log_at,
+      kept: { logs: logs, bytes: kept_bytes }, dropped_by_transform: 1,
     }
   end
 
@@ -193,7 +196,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     @api.update!(created_at: Time.utc(2026, 9, 2))
     InstanceSetting.current.update!(default_log_retention_days: 45)
     projects = [
-      project(@web.id, logs: 30, received_bytes: 3000, stored_bytes: 600, all_logs: 90, oldest_day: "2026-09-26", last_log_at: "2026-10-02T12:30:00Z"),
+      project(@web.id, logs: 30, received_bytes: 3000, kept_bytes: 2400, stored_bytes: 600, all_logs: 90, oldest_day: "2026-09-26", last_log_at: "2026-10-02T12:30:00Z"),
       project(@api.id, logs: 10, received_bytes: 1000, stored_bytes: 0, all_logs: 10, oldest_day: "2026-10-01", last_log_at: "2026-10-02T11:59:59Z"),
     ]
     stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(projects: projects).to_json)
@@ -202,7 +205,8 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     web, api = overview_props(overview_url(org_slug: "acme"))["projects"]
 
     assert_equal({ "id" => @web.id, "name" => "Web", "slug" => "web", "color" => 1 }, web.slice("id", "name", "slug", "color"))
-    assert_equal [ 30, 3000, 600, 5.0, 0.75 ], web.values_at("logs", "received_bytes", "stored_bytes", "ratio", "share")
+    assert_equal [ 30, 3000, 2400, 600, 4.0, 0.75 ], web.values_at("logs", "received_bytes", "kept_bytes", "stored_bytes", "ratio", "share")
+    assert_equal 1, web["dropped_by_transform"]
     assert_equal({ "average" => 30 / 86_400.0, "peak" => 30, "peak_at" => "2026-10-02T10:00:00Z" }, web["logs_per_second"])
     assert_equal [ 7, false ], web.values_at("retention_days", "retention_is_default")
     assert_equal [ "2026-09-26", { "logs" => 90, "bytes" => 1800 } ], web.values_at("oldest_day", "all_days")
@@ -222,6 +226,27 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     web = rows.find { |r| r["slug"] == "web" }
     assert_equal [ false, nil, nil, nil ], web.values_at("has_logs", "last_log_at", "stale", "oldest_day")
     assert rows.find { |r| r["slug"] == "api" }["has_logs"]
+  end
+
+  test "the biggest sources answer each source's Project, Logs, bytes, drops and share" do
+    source = ->(id, service, file, logs, bytes, dropped) do
+      { project_id: id, service: service, file: file, logs: logs, bytes: bytes, dropped_by_transform: dropped }
+    end
+    sources = {
+      by_logs: [ source.(@api.id, "worker", "", 20, 500, 5), source.(@web.id, "web", "a.log", 10, 2500, 0) ],
+      by_bytes: [ source.(@web.id, "web", "a.log", 10, 2500, 0), source.(@api.id, "worker", "", 20, 500, 5) ],
+    }
+    # 35 Logs kept and 3 dropped make 38 sent; 3000 bytes kept.
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(sources: sources).to_json)
+    sign_in_as(@member)
+
+    got = overview_props(overview_url(org_slug: "acme"))["sources"]
+
+    worker, web = got["by_logs"]
+    assert_equal({ "id" => @api.id, "name" => "Api", "slug" => "api", "color" => 2 }, worker["project"])
+    assert_equal [ "worker", "", 20, 500, 5, 25, 0.6579 ], worker.values_at("service", "file", "logs", "bytes", "dropped_by_transform", "sent", "share")
+    assert_equal [ "web", "a.log", 0.2632 ], web.values_at("service", "file", "share")
+    assert_equal [ [ "a.log", 0.8333 ], [ "", 0.1667 ] ], got["by_bytes"].map { |s| s.values_at("file", "share") }
   end
 
   test "the daily Charts and Projects are absent when EventStore can't be reached" do

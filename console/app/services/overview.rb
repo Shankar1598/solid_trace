@@ -17,7 +17,7 @@ class Overview
   TIMEOUT_SECONDS = 3
 
   # The sections, in the order they're answered.
-  SECTIONS = %i[range event_store empty ingest_counts band rates daily projects].freeze
+  SECTIONS = %i[range event_store empty ingest_counts band rates daily projects sources].freeze
 
   # The Projects that wear a Chart colour of their own, the first by
   # creation; the rest fold into Other, which wears the next. Never cycled.
@@ -73,20 +73,23 @@ class Overview
     { since: since&.utc&.iso8601, starts_after_range: since.nil? || since > @from.to_time(:utc) }
   end
 
-  # Received → Stored: the bytes and Logs that arrived and what ClickHouse
-  # holds of the range's days, with the compression ratio, received bytes
-  # over stored bytes; the unreadable Logs and the requests turned away beside
-  # it.
+  # Received → Kept → Stored: the bytes and Logs that arrived, what Log
+  # processing kept of the range's days (Source counts) and what ClickHouse
+  # holds of them, with the compression ratio, kept bytes over stored bytes;
+  # the Logs dropped between Received and Kept, unreadable or by the Log
+  # transform, and the requests turned away beside it.
   def band
     return unless answer
 
     band = answer["band"]
-    received, stored = band["received"], band["stored"]
+    received, kept, stored = band["received"], band["kept"] || {}, band["stored"]
     {
       received: received.slice("logs", "bytes", "bytes_on_wire", "requests"),
+      kept: { logs: kept["logs"].to_i, bytes: kept["bytes"].to_i },
       stored: stored.slice("logs", "bytes", "local_bytes", "bucket_bytes"),
-      ratio: stored["bytes"].to_i.positive? ? (received["bytes"].to_f / stored["bytes"]).round(1) : nil,
+      ratio: ratio(kept["bytes"], stored["bytes"]),
       unreadable_logs: band["unreadable_logs"],
+      dropped_by_transform: band["dropped_by_transform"].to_i,
       overloaded_requests: band["overloaded_requests"],
     }
   end
@@ -130,9 +133,9 @@ class Overview
     { series: series, days: days }
   end
 
-  # One row per Project, in creation order: what it received and stored of
-  # the range, the ratio (received bytes over stored), its share of the
-  # bytes received, its Logs a second, its Retention (the instance's when it
+  # One row per Project, in creation order: what it received, kept and
+  # stored of the range, the ratio (kept bytes over stored), the Logs the
+  # Log transform dropped, its share of the bytes received, its Logs a second, its Retention (the instance's when it
   # has none) and the Logs it keeps of every day, and when its last Log
   # arrived, stale when over an hour ago.
   def projects
@@ -143,13 +146,13 @@ class Overview
     default_retention = InstanceSetting.current.default_log_retention_days
     org_projects.map do |project|
       got = by_id[project.id] || {}
-      received, stored = got.dig("received", "bytes").to_i, got.dig("stored", "bytes").to_i
+      received, kept, stored = got.dig("received", "bytes").to_i, got.dig("kept", "bytes").to_i, got.dig("stored", "bytes").to_i
       all_days = got["all_days"] || {}
       last = got["last_log_at"]&.then { |time| Time.iso8601(time) }
       {
         id: project.id, name: project.name, slug: project.slug, color: color_of(project.id),
-        logs: got.dig("received", "logs").to_i, received_bytes: received, stored_bytes: stored,
-        ratio: stored.positive? ? (received.to_f / stored).round(1) : nil,
+        logs: got.dig("received", "logs").to_i, received_bytes: received, kept_bytes: kept, stored_bytes: stored,
+        ratio: ratio(kept, stored), dropped_by_transform: got["dropped_by_transform"].to_i,
         share: total.positive? ? (received.to_f / total).round(4) : nil,
         logs_per_second: rate_of(got["logs_per_second"]),
         retention_days: project.log_retention_days || default_retention,
@@ -163,7 +166,47 @@ class Overview
     end
   end
 
+  # The Services and files that sent the most Logs over the range's days,
+  # kept and dropped by the Log transform together, and that kept the most
+  # bytes: each with its Project, Logs kept, bytes, Logs dropped, Logs sent
+  # (kept and dropped) and its share of the band's, of Logs sent in by_logs
+  # and of bytes kept in by_bytes.
+  def sources
+    return unless answer
+
+    kept = answer.dig("band", "kept") || {}
+    sent = kept["logs"].to_i + answer.dig("band", "dropped_by_transform").to_i
+    by_logs = Array(answer.dig("sources", "by_logs")).filter_map { |s| source_row(s) { |row| share(row[:sent], sent) } }
+    by_bytes = Array(answer.dig("sources", "by_bytes")).filter_map { |s| source_row(s) { |row| share(row[:bytes], kept["bytes"]) } }
+    { by_logs: by_logs, by_bytes: by_bytes }
+  end
+
   private
+
+  # A source as a row, its share by the block, or nil when its Project isn't
+  # the Organization's.
+  def source_row(source)
+    project = org_projects.find { |p| p.id == source["project_id"] }
+    return unless project
+
+    logs, dropped = source["logs"].to_i, source["dropped_by_transform"].to_i
+    row = {
+      project: { id: project.id, name: project.name, slug: project.slug, color: color_of(project.id) },
+      service: source["service"].to_s, file: source["file"].to_s,
+      logs: logs, bytes: source["bytes"].to_i, dropped_by_transform: dropped, sent: logs + dropped,
+    }
+    row.merge(share: yield(row))
+  end
+
+  def share(part, total)
+    total.to_i.positive? ? (part.to_f / total.to_i).round(4) : nil
+  end
+
+  # Kept bytes over stored bytes, how well Logs compress; nil when nothing
+  # is stored.
+  def ratio(kept, stored)
+    stored.to_i.positive? ? (kept.to_f / stored.to_i).round(1) : nil
+  end
 
   def org_projects
     @org_projects ||= organization.projects.order(:created_at, :id).to_a
