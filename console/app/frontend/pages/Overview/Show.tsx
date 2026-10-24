@@ -11,6 +11,7 @@ import { OverviewRates } from '@/components/overview/OverviewRates'
 import { OverviewDailyCharts } from '@/components/overview/OverviewDailyCharts'
 import { OverviewProjects } from '@/components/overview/OverviewProjects'
 import { OverviewHealth } from '@/components/overview/OverviewHealth'
+import { OverviewStorage } from '@/components/overview/OverviewStorage'
 import { OVERVIEW_RANGES, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
 import type { SharedProps } from '@/types'
 
@@ -100,6 +101,16 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
               description="How long Log processing keeps Logs waiting and how fast reads ran over the last 24 hours, Monitors that need a look, and what's new in Issues."
             >
               <OverviewHealth health={overview.health} orgSlug={orgSlug} />
+            </OverviewSection>
+          )}
+
+          {overview.storage && (
+            <OverviewSection
+              id="storage"
+              title="Storage of the whole install"
+              description="Every Organization's Logs on this install, not only this one's. Only Instance admins see this section."
+            >
+              <OverviewStorage storage={overview.storage} />
             </OverviewSection>
           )}
         </div>

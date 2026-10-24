@@ -462,6 +462,10 @@ func TestTheOverviewAnswersStoredBytesOnLocalDiskAndInTheBucket(t *testing.T) {
 	if s := got.Band.Stored; s.Logs != 2 || s.Bytes != s.LocalBytes+s.BucketBytes {
 		t.Errorf("Expected both days stored, got %+v", s)
 	}
+	// Storage's bucket is the install's: here the one old day.
+	if s := overviewStorageOf(t, env, now, now, 123); !s.Bucket || s.BucketBytes != byDay[old.Format(time.DateOnly)].BucketBytes || s.DaysUntilLimit != nil {
+		t.Errorf("Expected the bucket's %d bytes and no days until the limit, got %+v", byDay[old.Format(time.DateOnly)].BucketBytes, s)
+	}
 }
 
 func TestTheOverviewRefusesARequestThatIsntOne(t *testing.T) {
