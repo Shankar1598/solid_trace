@@ -36,6 +36,7 @@ registerPaletteSource('monitors', ({ orgSlug, monitors }) => monitors.map(m => (
 })))
 
 registerPaletteSource('pages', ({ orgSlug }) => (orgSlug ? [
+  { id: 'page/overview', group: 'Pages', label: 'Overview', href: `/${orgSlug}/overview` },
   { id: 'page/issues', group: 'Pages', label: 'Issues', href: `/${orgSlug}/issues` },
   { id: 'page/dashboards', group: 'Pages', label: 'Dashboards', href: `/${orgSlug}/dashboards` },
   { id: 'page/monitors', group: 'Pages', label: 'Monitors', href: `/${orgSlug}/monitors` },

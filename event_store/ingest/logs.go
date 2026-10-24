@@ -30,28 +30,35 @@ type LogCounts struct {
 //
 // A body that isn't one JSON value is read as NDJSON whatever its content
 // type, so a sender that labels NDJSON as JSON still gets its Logs stored.
+//
+// Every request whose body is read adds to its Project's Ingest counts of
+// its second of arrival, and so does one turned away as overloaded.
 func (s *Service) IngestLogs(projectID uint32, body Body, ndjson bool) (LogCounts, error) {
 	if !s.enterGate() {
+		s.counts.count(projectID, s.clock.Now(), models.IngestCount{RequestsOverloaded: 1})
 		return LogCounts{}, ErrOverloaded
 	}
 	defer s.leaveGate()
 
-	raw, err := body()
+	raw, err := body.Read()
 	if err != nil {
 		return LogCounts{}, err
 	}
 	objects, dropped := logObjects(raw, ndjson)
-	return s.storeLogs(projectID, objects, dropped, normalise.JSON)
+	request := models.IngestCount{BytesReceived: int64(len(raw)), BytesOnWire: int64(body.Wire)}
+	return s.storeLogs(projectID, objects, dropped, request, normalise.JSON)
 }
 
 // storeLogs normalises one request's Logs with normaliseLog, against the
 // receipt time and the Project's Retention, stores the ones kept as one Log
 // batch, and wakes Log processing. dropped counts what the request held that
-// wasn't a Log at all. The caller is in the gate.
+// wasn't a Log at all. It adds the request, with its bytes in request, to
+// the Ingest counts of its receipt second. The caller is in the gate.
 func (s *Service) storeLogs(
 	projectID uint32,
 	objects []map[string]json.RawMessage,
 	dropped int,
+	request models.IngestCount,
 	normaliseLog func(map[string]json.RawMessage, normalise.Receipt) (models.Log, normalise.Outcome),
 ) (LogCounts, error) {
 	retentionDays, err := s.retention.LogRetentionDays(projectID)
@@ -80,6 +87,10 @@ func (s *Service) storeLogs(
 	}
 
 	counts.Accepted = len(logs)
+	request.Requests = 1
+	request.LogsReceived = int64(len(objects) + dropped)
+	request.LogsUnreadable = int64(counts.Dropped)
+	s.counts.count(projectID, receipt.At, request)
 	if len(logs) == 0 {
 		return counts, nil
 	}

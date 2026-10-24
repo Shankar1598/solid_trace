@@ -47,13 +47,13 @@ var (
 func requestBody(c *fiber.Ctx, limit int) (ingest.Body, error) {
 	raw := c.Request().Body()
 	if len(raw) > limit {
-		return nil, errBodyTooLarge
+		return ingest.Body{}, errBodyTooLarge
 	}
 	coding, err := contentCoding(c.Get(fiber.HeaderContentEncoding))
 	if err != nil {
-		return nil, err
+		return ingest.Body{}, err
 	}
-	return func() ([]byte, error) { return decodeBody(raw, coding) }, nil
+	return ingest.EncodedBody(len(raw), func() ([]byte, error) { return decodeBody(raw, coding) }), nil
 }
 
 // decodeBody decodes a body sent in one content coding, "" for identity.

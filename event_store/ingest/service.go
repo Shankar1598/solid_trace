@@ -36,6 +36,9 @@ type Service struct {
 	// Past maxWaiting a request is rejected as overloaded.
 	waiting    atomic.Int64
 	maxWaiting int64
+
+	// counts is the Ingest counts not yet written (counts.go).
+	counts *ingestCounts
 }
 
 // Config is what the Service writes to and whom it tells.
@@ -56,6 +59,9 @@ type Config struct {
 	// MaxWaiting caps the requests, Events and Logs together, waiting for
 	// their write. Past it, ingest answers 503.
 	MaxWaiting int
+	// IngestCounts stores the Ingest counts of the Log routes' requests;
+	// with none, they aren't kept.
+	IngestCounts IngestCountsWriter
 }
 
 // NewService constructs Event ingest and Log ingest.
@@ -68,17 +74,33 @@ func NewService(cfg Config) *Service {
 		clock:        cfg.Clock,
 		retention:    cfg.Retention,
 		maxWaiting:   int64(cfg.MaxWaiting),
+		counts:       &ingestCounts{writer: cfg.IngestCounts, seconds: map[projectSecond]*models.IngestCount{}},
 	}
 }
 
 // Body is a request's body, read only once the request holds a waiting
 // place, so that an overloaded ingest turns a request away before decoding
-// its body. An error it returns is returned as it is.
-type Body func() ([]byte, error)
+// its body.
+type Body struct {
+	// Wire is how many bytes the body took as sent, before decoding.
+	Wire int
+	read func() ([]byte, error)
+}
+
+// EncodedBody is a body of wire bytes as sent, which decode decodes. An
+// error decode returns is returned as it is.
+func EncodedBody(wire int, decode func() ([]byte, error)) Body {
+	return Body{Wire: wire, read: decode}
+}
 
 // RawBody is a Body that needs no decoding.
 func RawBody(body []byte) Body {
-	return func() ([]byte, error) { return body, nil }
+	return Body{Wire: len(body), read: func() ([]byte, error) { return body, nil }}
+}
+
+// Read decodes the body.
+func (b Body) Read() ([]byte, error) {
+	return b.read()
 }
 
 // IngestStore ingests a raw Event payload from the store endpoint.
@@ -88,7 +110,7 @@ func (s *Service) IngestStore(projectID uint32, body Body) error {
 	}
 	defer s.leaveGate()
 
-	rawJSON, err := body()
+	rawJSON, err := body.Read()
 	if err != nil {
 		return err
 	}
@@ -113,7 +135,7 @@ func (s *Service) IngestEnvelope(projectID uint32, body Body) error {
 	}
 	defer s.leaveGate()
 
-	envelope, err := body()
+	envelope, err := body.Read()
 	if err != nil {
 		return err
 	}
@@ -132,7 +154,14 @@ func (s *Service) IngestEnvelope(projectID uint32, body Body) error {
 	}
 	if len(items.logs) > 0 {
 		records, dropped := sentryLogRecords(items.logs)
-		if _, err := s.storeLogs(projectID, records, dropped, normalise.Sentry); err != nil {
+		// The envelope's Ingest counts are its log items': their payloads'
+		// bytes, and that share of the bytes sent.
+		received := 0
+		for _, payload := range items.logs {
+			received += len(payload)
+		}
+		request := models.IngestCount{BytesReceived: int64(received), BytesOnWire: int64(body.Wire * received / max(len(envelope), 1))}
+		if _, err := s.storeLogs(projectID, records, dropped, request, normalise.Sentry); err != nil {
 			if !items.hasEvent {
 				return err
 			}
