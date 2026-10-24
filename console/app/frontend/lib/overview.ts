@@ -4,6 +4,7 @@
 import { tickLabel, valueTicks } from '@/lib/charts/axis'
 
 import type { OverviewHealth } from './overviewHealth'
+import type { OverviewStorage } from './overviewStorage'
 
 export type OverviewRangeName = 'today' | '7d' | '30d'
 
@@ -47,6 +48,8 @@ export interface Overview {
   } | null
   projects: OverviewProject[] | null
   health: OverviewHealth
+  /** The whole install's, for Instance admins only: absent for anyone else, null when EventStore didn't answer. */
+  storage?: OverviewStorage | null
 }
 
 /** A daily Chart's series: a Project, or Other for those past the seventh. */
