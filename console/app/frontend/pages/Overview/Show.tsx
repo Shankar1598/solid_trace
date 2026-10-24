@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { OverviewSection } from '@/components/overview/OverviewSection'
 import { OverviewBand } from '@/components/overview/OverviewBand'
 import { OverviewRates } from '@/components/overview/OverviewRates'
+import { OverviewHealth } from '@/components/overview/OverviewHealth'
 import { OVERVIEW_RANGES, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
 import type { SharedProps } from '@/types'
 
@@ -71,6 +72,16 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
           {rates && !overview.empty.logs && (
             <OverviewSection id="rates" title="Rates" description="By arrival time. The peak is the busiest second of all the Projects together.">
               <OverviewRates rates={rates} />
+            </OverviewSection>
+          )}
+
+          {!overview.empty.projects && (
+            <OverviewSection
+              id="health"
+              title="Health"
+              description="How long Log processing keeps Logs waiting and how fast reads ran over the last 24 hours, Monitors that need a look, and what's new in Issues."
+            >
+              <OverviewHealth health={overview.health} orgSlug={orgSlug} />
             </OverviewSection>
           )}
         </div>
