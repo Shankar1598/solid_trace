@@ -145,6 +145,7 @@ func main() {
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{
 		Logs: clickHouseLogs, Clock: clock.System{}, DiskLimit: diskLimit, Retention: consoleSettings,
+		LocalCacheHours: cfg.ObjectStore.LocalHours(),
 	})
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 

@@ -4,9 +4,11 @@ class Overview
   # The Overview's Storage section, for Instance admins only: the whole
   # install's, every Organization's, from EventStore's answer (nil when
   # there's none). ClickHouse's local disk use against the disk limit in
-  # effect, with the disk's free space; the bucket; about how many days until
-  # the limit at the last 7 days' growth (nil with a bucket, which Logs move
-  # to, or with no growth); and the old Parquet files from before the switch
+  # effect, with the disk's free space; the bucket; the local disk at steady
+  # state, each Project's last 7 days' average a day kept for its Retention
+  # (local_cache_hours with a bucket), whether that stays under the limit,
+  # and about how many days until the limit at the last 7 days' growth when
+  # it doesn't (nil when it stays under, or with no growth); and the old Parquet files from before the switch
   # to ClickHouse, with the day Retention deletes the last of them. Their
   # bucket bytes aren't recorded, so they aren't answered.
   class Storage
@@ -28,6 +30,8 @@ class Overview
         bucket: @storage["bucket"] == true,
         bucket_bytes: @storage["bucket_bytes"].to_i,
         growth_bytes_per_day: @storage["growth_bytes_per_day"].to_f.round,
+        projected_local_bytes: @storage["projected_local_bytes"].to_i,
+        stays_under_limit: @storage["stays_under_limit"] == true,
         days_until_limit: @storage["days_until_limit"]&.floor,
         old_files: old_files,
       }

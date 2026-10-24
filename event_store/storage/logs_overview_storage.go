@@ -20,6 +20,8 @@ type InstallStorage struct {
 	// the Logs' days from the day of from up to the day of to, not
 	// included.
 	RecentBytes int64
+	// RecentBytesByProject is RecentBytes by Project, of those with any.
+	RecentBytesByProject map[uint32]int64
 	// DiskBytes and FreeBytes are the size of ClickHouse's local disk for
 	// the logs table, and how much of it is free, read now.
 	DiskBytes, FreeBytes int64
@@ -49,7 +51,7 @@ const logsLocalDisks = `
 // InstallStorage reads how much the install's Logs take, with the days from
 // the day of from up to the day of to as RecentBytes.
 func (s *ClickHouseLogs) InstallStorage(ctx context.Context, from, to time.Time) (InstallStorage, error) {
-	got := InstallStorage{Bucket: s.bucket}
+	got := InstallStorage{Bucket: s.bucket, RecentBytesByProject: map[uint32]int64{}}
 	partitions, err := s.conn.Query(ctx, `
 		SELECT partition_id, `+localAndBucketBytes+`
 		FROM system.parts
@@ -68,7 +70,7 @@ func (s *ClickHouseLogs) InstallStorage(ctx context.Context, from, to time.Time)
 		if err := partitions.Scan(&id, &local, &bucket); err != nil {
 			return got, err
 		}
-		_, day, err := parseLogPartitionID(id)
+		projectID, day, err := parseLogPartitionID(id)
 		if err != nil {
 			return got, fmt.Errorf("partition %s of logs: %w", id, err)
 		}
@@ -76,6 +78,7 @@ func (s *ClickHouseLogs) InstallStorage(ctx context.Context, from, to time.Time)
 		got.BucketBytes += bucket
 		if !day.Before(from) && day.Before(to) {
 			got.RecentBytes += local + bucket
+			got.RecentBytesByProject[projectID] += local + bucket
 		}
 	}
 	if err := partitions.Err(); err != nil {

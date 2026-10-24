@@ -9,8 +9,9 @@ import (
 
 // The Overview's Storage, the whole install's, which Console asks for
 // Instance admins only: ClickHouse's local disk against the disk limit in
-// effect, the bucket, about how many days until the limit at the last 7
-// days' growth, and the old Log files from before the switch to ClickHouse.
+// effect, the bucket, the local disk at steady state and about how many days
+// until the limit if that's past it, and the old Log files from before the
+// switch to ClickHouse.
 
 // growthDays is how many whole days before today the growth is measured
 // over.
@@ -59,12 +60,20 @@ type (
 		Bucket         bool  `json:"bucket"`
 		BucketBytes    int64 `json:"bucket_bytes"`
 		// GrowthBytesPerDay is the bytes stored a day of the last 7 whole
-		// days' Logs, local and in the bucket.
+		// days' Logs, local and in the bucket: how fast the local disk
+		// grows until Retention or the bucket takes as much as arrives.
 		GrowthBytesPerDay float64 `json:"growth_bytes_per_day"`
+		// ProjectedLocalBytes is the local disk's Logs at steady state:
+		// each Project's average a day of those 7 days times the days it
+		// keeps locally, local_cache_hours with a bucket, else its
+		// Retention. Old Log files, which only go, aren't in it.
+		ProjectedLocalBytes int64 `json:"projected_local_bytes"`
+		// StaysUnderLimit is whether the local disk use is and stays
+		// within the limit at steady state.
+		StaysUnderLimit bool `json:"stays_under_limit"`
 		// DaysUntilLimit is about how many days until the local disk use
-		// reaches the limit at that growth, 0 once it has; null with a
-		// bucket, which the Logs move to after local_cache_hours, with no
-		// growth, or with no limit.
+		// reaches the limit at that growth, 0 once it has; null when it
+		// stays under the limit, with no growth, or with no limit.
 		DaysUntilLimit *float64         `json:"days_until_limit"`
 		OldFiles       *oldFilesStorage `json:"old_files"`
 	}
@@ -81,7 +90,7 @@ type (
 )
 
 // assembleStorage makes Storage's answer, or nil when it isn't asked for.
-func assembleStorage(q overviewQuery, limit storage.LogDiskLimit, d overviewStorageData) *storageAnswer {
+func assembleStorage(q overviewQuery, limit storage.LogDiskLimit, localCacheHours int, d overviewStorageData) *storageAnswer {
 	if !q.storage {
 		return nil
 	}
@@ -91,8 +100,29 @@ func assembleStorage(q overviewQuery, limit storage.LogDiskLimit, d overviewStor
 		Bucket: in.Bucket, BucketBytes: in.BucketBytes,
 		GrowthBytesPerDay: float64(in.RecentBytes) / growthDays,
 	}
-	if !in.Bucket && limit.Bytes > 0 && a.GrowthBytesPerDay > 0 {
-		days := max(float64(limit.Bytes-in.LocalBytes), 0) / a.GrowthBytesPerDay
+	var projected float64
+	for projectID, bytes := range in.RecentBytesByProject {
+		// A Project with no valid Retention keeps every day, so it never
+		// settles: its days are left out, as Console deleted it or will
+		// be asked to fix it.
+		keptDays := float64(d.retention[projectID])
+		if in.Bucket {
+			keptDays = float64(localCacheHours) / 24
+		}
+		projected += float64(bytes) / growthDays * keptDays
+	}
+	a.ProjectedLocalBytes = int64(projected)
+	switch {
+	case limit.Bytes <= 0:
+	case in.LocalBytes <= limit.Bytes && a.ProjectedLocalBytes <= limit.Bytes:
+		a.StaysUnderLimit = true
+	case in.LocalBytes > limit.Bytes:
+		past := 0.0
+		a.DaysUntilLimit = &past
+	case a.GrowthBytesPerDay > 0:
+		// Nothing is deleted until steady state, so the disk grows by
+		// what arrives.
+		days := float64(limit.Bytes-in.LocalBytes) / a.GrowthBytesPerDay
 		a.DaysUntilLimit = &days
 	}
 	if old := in.OldFiles; old != nil {

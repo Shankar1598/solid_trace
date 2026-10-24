@@ -483,6 +483,7 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
 		handler.NewOverviewHandler(handler.OverviewConfig{
 			Logs: env.ClickHouseLogs, Clock: env.Clock, DiskLimit: env.LogDiskLimit, Retention: consoleSettings,
+			LocalCacheHours: env.BucketConfig.LocalHours(),
 		}), healthHandler, handler.NewConfigHandler(&config.Config{}, 0))
 
 	env.close = func() {

@@ -35,7 +35,7 @@ class OverviewStorageTest < ActionDispatch::IntegrationTest
     {
       disk_limit_bytes: 50_000_000_000, local_bytes: 20_000_000_000, disk_bytes: 100_000_000_000,
       free_bytes: 30_000_000_000, bucket: false, bucket_bytes: 0,
-      growth_bytes_per_day: 1_500_000_000.4, days_until_limit: 20.7,
+      growth_bytes_per_day: 1_500_000_000.4, projected_local_bytes: 80_000_000_000, stays_under_limit: false, days_until_limit: 20.7,
       old_files: { files: 1200, local_bytes: 3_000_000_000, newest_day: "2026-09-14", passes_retention_on: "2026-10-15" },
     }
   end
@@ -57,9 +57,21 @@ class OverviewStorageTest < ActionDispatch::IntegrationTest
     assert_equal [ 20_000_000_000, 50_000_000_000, 0.4 ], storage.values_at("local_bytes", "disk_limit_bytes", "limit_share")
     assert_equal [ 100_000_000_000, 30_000_000_000 ], storage.values_at("disk_bytes", "free_bytes")
     assert_equal [ false, 0 ], storage.values_at("bucket", "bucket_bytes")
-    assert_equal [ 1_500_000_000, 20 ], storage.values_at("growth_bytes_per_day", "days_until_limit")
+    assert_equal [ 1_500_000_000, 80_000_000_000, false, 20 ],
+                 storage.values_at("growth_bytes_per_day", "projected_local_bytes", "stays_under_limit", "days_until_limit")
     assert_equal({ "files" => 1200, "local_bytes" => 3_000_000_000, "newest_day" => "2026-09-14", "passes_retention_on" => "2026-10-15" },
                  storage["old_files"])
+  end
+
+  test "a disk that stays under the limit at steady state has its projected size and no day count" do
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer(storage: storage_answer.merge(
+      projected_local_bytes: 40_000_000_000, stays_under_limit: true, days_until_limit: nil
+    )).to_json)
+    sign_in_as(@admin)
+
+    storage = overview_props["storage"]
+
+    assert_equal [ 40_000_000_000, true, nil ], storage.values_at("projected_local_bytes", "stays_under_limit", "days_until_limit")
   end
 
   test "with a bucket and no old files, there are no days until the limit and no old files" do
