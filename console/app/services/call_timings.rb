@@ -2,10 +2,12 @@
 
 # One JSON line for every MCP tool call and every Log read, with how long it
 # took and the release that ran it (.scratch/call-timings/spec.md). EventStore
-# logs the SQL each Log read ran with the same request_id. The MCP server's
-# reads are always timed; the rest, the explorer's, Dashboards', the chart
+# logs the SQL each Log read ran with the same request_id. Every MCP tool call
+# is timed. The MCP server's reads are timed while InstanceSetting#log_mcp_reads
+# is on (the default); the rest, the explorer's, Dashboards', the chart
 # editor's and Monitors', only while the operator has turned on
-# InstanceSetting#log_all_reads, as they refresh every 15 seconds. Production writes the lines to stdout,
+# InstanceSetting#log_all_reads, as they refresh every 15 seconds, and that
+# times the MCP server's too. Production writes the lines to stdout,
 # where Vector ships them to the Meta Organization's Project and their fields
 # become Attributes (docs/adr/0011); development appends them to
 # log/call_timings.log (config/initializers/call_timings.rb). A line that
@@ -14,12 +16,22 @@ module CallTimings
   # Who and what a Log read runs for, set by the controller, job or MCP tool
   # that starts it, and reset with the request or job.
   class Context < ActiveSupport::CurrentAttributes
-    attribute :origin, :request_id, :user, :log_all_reads
+    attribute :origin, :request_id, :user, :instance_settings
 
     # InstanceSetting#log_all_reads, read once per request or job.
     def log_all_reads?
-      self.log_all_reads = InstanceSetting.current.log_all_reads? if log_all_reads.nil?
-      log_all_reads
+      read_instance_settings.log_all_reads?
+    end
+
+    # InstanceSetting#log_mcp_reads, read once per request or job.
+    def log_mcp_reads?
+      read_instance_settings.log_mcp_reads?
+    end
+
+    private
+
+    def read_instance_settings
+      self.instance_settings ||= InstanceSetting.current
     end
   end
 
@@ -69,9 +81,9 @@ module CallTimings
     end
 
     # Whether the Log read running now is timed, and EventStore logs its SQL:
-    # an MCP tool's always, any other only while log_all_reads is on.
+    # any while log_all_reads is on, and an MCP tool's while log_mcp_reads is.
     def logged_read?
-      Context.origin.to_s.start_with?("mcp:") || Context.log_all_reads?
+      Context.log_all_reads? || (Context.origin.to_s.start_with?("mcp:") && Context.log_mcp_reads?)
     end
 
     # Who the call or read running now is for: an MCP tool's user, or the
