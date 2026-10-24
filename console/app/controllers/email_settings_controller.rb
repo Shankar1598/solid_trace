@@ -37,10 +37,6 @@ class EmailSettingsController < ApplicationController
 
   private
 
-  def require_instance_admin
-    raise Pundit::NotAuthorizedError unless current_user.instance_admin?
-  end
-
   def settings_params
     params.require(:email_settings).permit(:smtp_address, :smtp_port, :smtp_username, :smtp_password, :mail_from,
       :clear_password)

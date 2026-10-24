@@ -110,10 +110,14 @@ Rails.application.routes.draw do
       resources :organization_users, only: [ :index, :create, :update, :destroy ]
       resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
       resource :user, only: [ :show, :update ], controller: "user_settings"
+      # The user's API tokens and the MCP server's URL (ApiTokenSettingsController).
+      resource :api_token_settings, only: [ :show ], path: "api_tokens", controller: "api_token_settings"
       # The install's email, for instance admins (EmailSettingsController).
       resource :email_settings, only: [ :show, :update ], path: "email", controller: "email_settings" do
         post :send_test, path: "test"
       end
+      # The install's settings, for instance admins (InstanceSettingsController).
+      resource :instance_settings, only: [ :show, :update ], path: "instance", controller: "instance_settings"
     end
     get "settings", to: redirect("/%{org_slug}/settings/organization")
   end

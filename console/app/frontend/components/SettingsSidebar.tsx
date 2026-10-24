@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
-import { Building2, Users, Puzzle, UserCircle, Mail } from 'lucide-react'
+import { Building2, Users, Puzzle, UserCircle, KeyRound, Mail, Server } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SharedProps } from '@/types'
 
@@ -42,6 +42,12 @@ export function SettingsSidebar() {
           href: `/${current_org.slug}/settings/email`,
           icon: Mail,
           active: url.startsWith(`/${current_org.slug}/settings/email`)
+        },
+        {
+          label: 'Instance',
+          href: `/${current_org.slug}/settings/instance`,
+          icon: Server,
+          active: url.startsWith(`/${current_org.slug}/settings/instance`)
         }
       ]
     }] : []),
@@ -52,7 +58,13 @@ export function SettingsSidebar() {
           label: 'Account',
           href: `/${current_org.slug}/settings/user`,
           icon: UserCircle,
-          active: url.includes('/settings/user')
+          active: url.startsWith(`/${current_org.slug}/settings/user`)
+        },
+        {
+          label: 'API tokens & MCP',
+          href: `/${current_org.slug}/settings/api_tokens`,
+          icon: KeyRound,
+          active: url.startsWith(`/${current_org.slug}/settings/api_tokens`)
         }
       ]
     }

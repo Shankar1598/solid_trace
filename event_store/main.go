@@ -154,7 +154,7 @@ func main() {
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, overviewHandler, healthHandler)
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, overviewHandler, healthHandler, handler.NewConfigHandler(cfg, diskLimit.Bytes))
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort

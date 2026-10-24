@@ -50,7 +50,7 @@ class McpController < ActionController::API
       @token.touch_last_used
     else
       response.set_header("WWW-Authenticate", "Bearer")
-      render json: { error: "Send an API token as Authorization: Bearer st_…. Make one in User settings." },
+      render json: { error: "Send an API token as Authorization: Bearer st_…. Make one in Settings → API tokens & MCP." },
         status: :unauthorized
     end
   end

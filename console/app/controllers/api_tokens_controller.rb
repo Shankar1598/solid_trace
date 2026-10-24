@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
-# A user's own API tokens, made and revoked from User settings.
+# A user's own API tokens, made and revoked from Settings → API tokens & MCP
+# (ApiTokenSettingsController).
 class ApiTokensController < ApplicationController
   # Answers JSON with the token and its secret. The secret is answered only
   # here, and never stored.
@@ -14,6 +15,14 @@ class ApiTokensController < ApplicationController
   # Revoking deletes the row, so the token no longer signs anything in.
   def destroy
     current_user.api_tokens.find(params[:id]).destroy!
-    redirect_back_or_to user_settings_path, notice: "API token revoked"
+    redirect_back_or_to tokens_page, notice: "API token revoked"
+  end
+
+  private
+
+  # The page lives under an Organization; a user in none has no page to show.
+  def tokens_page
+    organization = home_organization
+    organization ? api_token_settings_path(org_slug: organization.slug) : root_path
   end
 end

@@ -149,6 +149,27 @@ class CallTimingsTest < ActiveSupport::TestCase
     assert_equal [ "log_read", "mcp_tool" ], lines.map { |line| line["kind"] }
   end
 
+  test "with log_mcp_reads off too, the MCP server's reads aren't timed but its tool calls are" do
+    InstanceSetting.current.update!(log_all_reads: false, log_mcp_reads: false)
+    quiet = stub_request(:post, @query_url).with { |request| !request.headers.key?("X-Log-Sql") }
+      .to_return(status: 200, body: { logs: [] }.to_json)
+
+    call_tool(:query_logs, user: @user, project: "shop", query: "")
+
+    assert_requested quiet
+    assert_equal [ "mcp_tool" ], lines.map { |line| line["kind"] }
+  end
+
+  test "with log_all_reads on, the MCP server's reads are timed even with log_mcp_reads off" do
+    InstanceSetting.current.update!(log_all_reads: true, log_mcp_reads: false)
+    logged = stub_request(:post, @query_url).with(headers: { "X-Log-SQL" => "1" }).to_return(status: 200, body: { logs: [] }.to_json)
+
+    call_tool(:query_logs, user: @user, project: "shop", query: "")
+
+    assert_requested logged
+    assert_equal [ "log_read", "mcp_tool" ], lines.map { |line| line["kind"] }
+  end
+
   test "a line that can't be written doesn't fail the read" do
     closed = StringIO.new
     closed.close

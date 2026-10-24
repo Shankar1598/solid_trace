@@ -4,7 +4,7 @@ SolidTrace has an [MCP](https://modelcontextprotocol.io) server, so an agent suc
 
 ## Connecting
 
-1. In Console, open **User settings**, and under **API tokens** make a token with a name that says where it is used, such as "Laptop, Claude Code".
+1. In Console, open **Settings → API tokens & MCP** and make a token with a name that says where it is used, such as "Laptop, Claude Code".
 2. Copy the token when it is shown. SolidTrace keeps only its digest, so it is shown this once.
 3. Add the server to your client. The page shows both snippets with your token and Console's address filled in.
 
@@ -38,10 +38,10 @@ A tool acts as the token's user, with that user's rights. In each Organization i
 
 - **Any member** can read Logs and Issues, make and change Dashboards, Charts and Monitors, resolve, assign and comment on Issues, and make Projects.
 - **Only an Organization admin** can create, rotate and delete a Project's keys, change a Project's Log transform, and invite members. A member's agent is told so.
-- **Only an instance admin** can read and change the install's email settings, which apply to every Organization, and send a test email. `whoami` says whether you are one.
+- **Only an instance admin** can read and change the install's email settings and its other settings, which apply to every Organization, and send a test email. `whoami` says whether you are one.
 - Other Organizations' records are not found.
 
-The User settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
+The **API tokens & MCP** settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
 
 ## Tools
 
@@ -98,6 +98,8 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 - `get_email_settings`: the SMTP server and sender the install sends every Organization's email with, whether a password is saved and readable, and whether email is set up or what's missing. The password is never answered. Instance admins only.
 - `update_email_settings`: changes the settings given, and sets or clears the password. A password given here passes through the agent's context; typing it on Console's Email settings page keeps it out. Instance admins only.
 - `send_test_email`: sends a test email at once, to you or an address given, and answers the SMTP server's error when it fails. Instance admins only.
+- `get_instance_settings`: the install's settings, as Settings → Instance shows them: the ones that apply at once (SQL queries, the default Retention, log-all-reads, log-MCP-reads), whether Sign-up is open and the command that changes it, and what Console and EventStore read at start, each with its env var or `event_store.yml` key. Secrets answer only whether they're set. Instance admins only.
+- `update_instance_settings`: changes SQL queries, the default Retention, log-all-reads or log-MCP-reads, at once. It can't change Sign-up, which takes a shell on the server so a stolen session or API token can't open the install, or anything that needs a restart. Instance admins only.
 
 Reads are marked read-only, and deletes, key rotation and Log transform saves destructive, so a client can ask you before it runs them.
 
