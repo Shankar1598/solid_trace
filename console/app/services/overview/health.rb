@@ -109,7 +109,7 @@ class Overview
     end
 
     def project_json(project)
-      { id: project.id, name: project.name, slug: project.slug }
+      Overview.project_ref(project)
     end
 
     def monitor_json(monitor)
