@@ -17,9 +17,11 @@ class LogsController < ApplicationController
   before_action :set_project, except: :start
   before_action :set_time_range, only: %i[query histogram readable_sql sql]
 
-  # The sidebar's Logs entry: the newest Project's explorer.
+  # The sidebar's Logs entry: the explorer of the Project whose Logs the user
+  # last opened in this Organization, otherwise of the newest Project.
   def start
-    project = @current_org.projects.order(created_at: :desc).first
+    project = @current_org.projects.find_by(id: last_logs_project_ids[@current_org.id.to_s]) ||
+      @current_org.projects.order(created_at: :desc).first
     if project
       redirect_to project_logs_path(project, org_slug: @current_org.slug)
     else
@@ -28,6 +30,7 @@ class LogsController < ApplicationController
   end
 
   def index
+    remember_last_logs_project if page_opened?
     render inertia: "Logs/Index", props: {
       project: ProjectOptionSerializer.new(@project).as_json,
       projects: ProjectOptionSerializer.list(@current_org.projects.order(:name)),
@@ -125,6 +128,16 @@ class LogsController < ApplicationController
   end
 
   private
+
+  # The Project each Organization's Logs were last opened on, by Organization
+  # id, kept in the session as the last Organization is.
+  def last_logs_project_ids
+    session[:last_logs_project_ids] || {}
+  end
+
+  def remember_last_logs_project
+    session[:last_logs_project_ids] = last_logs_project_ids.merge(@current_org.id.to_s => @project.id)
+  end
 
   def runs_busy
     render json: { error: "Console is busy running other Queries and charts. Run again in a moment." }, status: :service_unavailable

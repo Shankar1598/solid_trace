@@ -635,6 +635,25 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to project_logs_url(newest, org_slug: @organization.slug)
   end
 
+  test "the Logs entry opens the Project whose Logs were opened last" do
+    create(:project, organization: @organization, created_at: 1.minute.from_now)
+    explorer_page
+
+    get logs_url(org_slug: @organization.slug)
+
+    assert_redirected_to project_logs_url(@project, org_slug: @organization.slug)
+  end
+
+  test "the Logs entry opens the newest Project once the last opened one is gone" do
+    explorer_page
+    @project.destroy!
+    newest = create(:project, organization: @organization)
+
+    get logs_url(org_slug: @organization.slug)
+
+    assert_redirected_to project_logs_url(newest, org_slug: @organization.slug)
+  end
+
   test "the Logs entry asks for a Project when the Organization has none" do
     @project.destroy!
 
