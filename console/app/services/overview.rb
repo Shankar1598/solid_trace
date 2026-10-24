@@ -17,7 +17,7 @@ class Overview
   TIMEOUT_SECONDS = 3
 
   # The sections, in the order they're answered.
-  SECTIONS = %i[range event_store empty ingest_counts band rates].freeze
+  SECTIONS = %i[range event_store empty ingest_counts band rates health].freeze
 
   attr_reader :organization, :user, :range_name
 
@@ -98,6 +98,13 @@ class Overview
       requests: rate.(rates["requests"]),
       last_five_minutes: range_name == "today" ? rates["last_five_minutes"] : nil,
     }
+  end
+
+  # Log processing's waits and Log reads' times per Project, failing and
+  # Firing Monitors, and the range's new Issues and Events (Overview::Health).
+  # Monitors and Issues are Console's, so they answer without EventStore.
+  def health
+    Health.new(organization: organization, projects: projects, from: @from, to: @to, answer: answer).to_h
   end
 
   private
