@@ -28,10 +28,13 @@ export interface Overview {
   ingest_counts: { since: string | null; starts_after_range: boolean } | null
   band: {
     received: { logs: number; bytes: number; bytes_on_wire: number; requests: number }
+    /** What Log processing kept of the range's days: each Log's message and Attributes' JSON. */
+    kept: { logs: number; bytes: number }
     stored: { logs: number; bytes: number; local_bytes: number; bucket_bytes: number }
-    /** Received bytes over stored bytes; null when nothing is stored. */
+    /** Kept bytes over stored bytes; null when nothing is stored. */
     ratio: number | null
     unreadable_logs: number
+    dropped_by_transform: number
     overloaded_requests: number
   } | null
   rates: {
@@ -46,7 +49,26 @@ export interface Overview {
     days: OverviewDay[]
   } | null
   projects: OverviewProject[] | null
+  sources: { by_logs: OverviewSource[]; by_bytes: OverviewSource[] } | null
   health: OverviewHealth
+}
+
+/** A Service and file of a Project, over the range's days, by the Logs' own time. */
+export interface OverviewSource {
+  project: { id: number; name: string; slug: string; color: number }
+  /** "" for none. */
+  service: string
+  /** "" for none. */
+  file: string
+  /** Logs kept. */
+  logs: number
+  /** Bytes kept. */
+  bytes: number
+  dropped_by_transform: number
+  /** Logs kept and dropped by the Log transform. */
+  sent: number
+  /** Of Logs sent in by_logs, of bytes kept in by_bytes, 0 to 1; null when there were none. */
+  share: number | null
 }
 
 /** A daily Chart's series: a Project, or Other for those past the seventh. */
@@ -75,9 +97,11 @@ export interface OverviewProject {
   color: number
   logs: number
   received_bytes: number
+  kept_bytes: number
   stored_bytes: number
-  /** Received bytes over stored; null when nothing is stored. */
+  /** Kept bytes over stored; null when nothing is stored. */
   ratio: number | null
+  dropped_by_transform: number
   /** Its share of the bytes received, 0 to 1; null when none were. */
   share: number | null
   logs_per_second: OverviewRate
