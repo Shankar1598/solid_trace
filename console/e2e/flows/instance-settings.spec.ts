@@ -5,7 +5,9 @@ import { MEMBER, ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 
 // Settings → Instance: the seeded admin, an instance admin, changes
-// log-all-reads and the default Retention, and sees them after a reload.
+// log-all-reads, log-MCP-reads and the default Retention, and sees them after
+// a reload. Log MCP reads shows checked and can't change while Log all reads
+// is on.
 // Sign-up is read-only, and Console's environment and EventStore's config
 // (from its GET /config) show with secrets only as set or not. A member who isn't an instance admin sees no Instance link. The
 // settings are put back as they were after.
@@ -18,15 +20,15 @@ const rails = (code: string) =>
 let saved = '{}'
 
 test.beforeAll(() => {
-  saved = rails('print InstanceSetting.current.slice(:log_all_reads, :default_log_retention_days).to_json')
-  rails('InstanceSetting.current.update!(log_all_reads: false, default_log_retention_days: 30)')
+  saved = rails('print InstanceSetting.current.slice(:log_all_reads, :log_mcp_reads, :default_log_retention_days).to_json')
+  rails('InstanceSetting.current.update!(log_all_reads: false, log_mcp_reads: true, default_log_retention_days: 30)')
 })
 
 test.afterAll(() => {
   rails(`InstanceSetting.current.update!(JSON.parse(${JSON.stringify(saved)}))`)
 })
 
-test('an instance admin changes log-all-reads and the default Retention, and sees Sign-up read-only', async ({ page }) => {
+test('an instance admin changes log-all-reads, log-MCP-reads and the default Retention, and sees Sign-up read-only', async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto(`/${ORG}/settings/organization`)
   await page.getByRole('link', { name: 'Instance', exact: true }).click()
@@ -34,20 +36,40 @@ test('an instance admin changes log-all-reads and the default Retention, and see
   await expect(page.getByTestId('sql-queries-description')).toContainText('SQL queries let every member')
 
   const logAllReads = page.getByRole('checkbox', { name: 'Log all reads' })
+  const logMcpReads = page.getByRole('checkbox', { name: 'Log MCP reads' })
   await expect(logAllReads).not.toBeChecked()
+  await expect(logMcpReads).toBeChecked()
+  await expect(logMcpReads).toBeEnabled()
 
   await page.getByLabel('Default Retention (days)').fill('0')
   await page.getByRole('button', { name: 'Save changes' }).click()
   await expect(page.getByText('must be greater than 0')).toBeVisible()
 
+  await logMcpReads.click()
+  await expect(logMcpReads).not.toBeChecked()
   await logAllReads.click()
+  await expect(logMcpReads).toBeChecked()
+  await expect(logMcpReads).toBeDisabled()
   await page.getByLabel('Default Retention (days)').fill('21')
   await page.getByRole('button', { name: 'Save changes' }).click()
   await expect(page.getByText('Instance settings saved')).toBeVisible()
 
   await page.reload()
-  await expect(page.getByRole('checkbox', { name: 'Log all reads' })).toBeChecked()
+  await expect(logAllReads).toBeChecked()
+  await expect(logMcpReads).toBeChecked()
+  await expect(logMcpReads).toBeDisabled()
   await expect(page.getByLabel('Default Retention (days)')).toHaveValue('21')
+
+  // Log MCP reads was saved off, which shows once Log all reads is off.
+  await logAllReads.click()
+  await expect(logMcpReads).not.toBeChecked()
+  await expect(logMcpReads).toBeEnabled()
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByText('Instance settings saved')).toBeVisible()
+
+  await page.reload()
+  await expect(logAllReads).not.toBeChecked()
+  await expect(logMcpReads).not.toBeChecked()
 
   const signUp = page.getByTestId('sign-up')
   await expect(signUp).toContainText('bin/rails instance_settings:set SIGN_UP_OPEN=true|false')
