@@ -108,6 +108,16 @@ class EventStore
       request!(url, params: params, not_found: { "count" => 0 })["count"]
     end
 
+    # The Overview of an Organization's Projects over the UTC days from to to
+    # (Dates), as EventStore's POST /overview answers it: what arrived, from
+    # Ingest counts, and what is stored. With include_storage it also answers
+    # the install's Storage. Raises Unavailable when EventStore can't answer
+    # within read_timeout seconds.
+    def overview!(project_ids:, from:, to:, include_storage: false, read_timeout: 3)
+      body = { project_ids: project_ids, from: from.iso8601, to: to.iso8601, include_storage: include_storage }
+      post!("#{base_url}/overview", body, read_timeout: read_timeout, open_timeout: read_timeout)
+    end
+
     # One page of a Project's Logs that match a Query in [from, to), newest
     # first: {"logs" => [...], "next_cursor" => String | nil}, or a tabular
     # Query's {"table" => {...}}. Pass a page's next_cursor as cursor for the
