@@ -13,6 +13,7 @@ import { OverviewProjects } from '@/components/overview/OverviewProjects'
 import { OverviewSources } from '@/components/overview/OverviewSources'
 import { OverviewHealth } from '@/components/overview/OverviewHealth'
 import { OverviewOtherTools } from '@/components/overview/OverviewOtherTools'
+import { OverviewStorage } from '@/components/overview/OverviewStorage'
 import { OVERVIEW_RANGES, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
 import type { SharedProps } from '@/types'
 
@@ -122,6 +123,16 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
               description="What this volume would cost a month at other tools' list prices, and GCP's egress to send it there."
             >
               <OverviewOtherTools otherTools={overview.other_tools} />
+            </OverviewSection>
+          )}
+
+          {overview.storage && (
+            <OverviewSection
+              id="storage"
+              title="Storage of the whole install"
+              description="Every Organization's Logs on this install, not only this one's. Only Instance admins see this section."
+            >
+              <OverviewStorage storage={overview.storage} />
             </OverviewSection>
           )}
         </div>

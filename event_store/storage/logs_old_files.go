@@ -1125,6 +1125,30 @@ func (o *oldLogFiles) deleteLocalCopy(key string) error {
 	return nil
 }
 
+// storage is the old Log files kept, for the Overview's Storage, or nil
+// with none.
+func (o *oldLogFiles) storage() *OldLogFilesStorage {
+	if o == nil {
+		return nil
+	}
+	_, local := o.localDays()
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	got := OldLogFilesStorage{LocalBytes: local, NewestDays: map[uint32]time.Time{}}
+	for projectID, files := range o.state.files {
+		for _, file := range files {
+			got.Files++
+			if file.day.After(got.NewestDays[projectID]) {
+				got.NewestDays[projectID] = file.day
+			}
+		}
+	}
+	if got.Files == 0 {
+		return nil
+	}
+	return &got
+}
+
 // oldLocalDay is a Project's day of old Log files with local copies, for
 // the disk limit.
 type oldLocalDay struct {
