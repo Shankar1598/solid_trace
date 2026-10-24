@@ -38,3 +38,6 @@ local/*
 /deploy/.env
 /deploy/config/
 /deploy/data/
+
+# docker-compose.dev.yml's variables, written by bin/clickhouse-dev.
+/.env
