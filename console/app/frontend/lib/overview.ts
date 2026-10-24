@@ -120,10 +120,21 @@ export interface OverviewProject {
   has_logs: boolean
 }
 
-/** A Chart colour's slot as a colour. */
+/** A Chart colour's slot as a colour. Slots 1 to 8 are the Projects' (and Other's) alone. */
 export function chartColor(slot: number): string {
   return `var(--chart-${slot})`
 }
+
+/**
+ * Colours for what isn't a Project, such as the band's steps and the bytes
+ * and rates Charts, so a colour always names one Project: ink, and ink mixed
+ * into the paper, from light to full.
+ */
+export const INK = {
+  light: 'color-mix(in oklch, var(--foreground) 30%, var(--background))',
+  mid: 'color-mix(in oklch, var(--foreground) 60%, var(--background))',
+  full: 'var(--foreground)',
+} as const
 
 /** A UTC day as a Chart's axis names it: Oct 2. */
 export function dayText(day: string): string {
@@ -138,7 +149,7 @@ export function shareText(share: number): string {
 
 const UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
 
-/** Bytes in binary units, three significant digits: 1.21 GiB. */
+/** Bytes in binary units, three significant digits: 1.21 GiB. No shared formatter writes bytes. */
 export function bytesText(bytes: number): string {
   let value = bytes
   let unit = 0
@@ -167,23 +178,15 @@ export function bytesTicks(max: number): { domain: [number, number]; ticks: numb
   }
 }
 
-/** A count, abbreviated from a thousand up (12.3K, 4.56M); exactText gives the whole number. */
-export function countText(count: number): string {
-  return Math.abs(count) >= 1000
-    ? new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 }).format(count)
-    : exactText(count)
-}
-
-/** A count in full, for a tooltip: 12,345. */
-export function exactText(count: number): string {
-  return new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(count)
-}
-
-/** A rate a second: three significant digits under 1000, abbreviated above. */
+/**
+ * A rate a second: three significant digits, abbreviated from a thousand up.
+ * Its own because valueText keeps two decimals (123.45 Logs a second) and
+ * statText abbreviates only from a million: a rate reads at a glance.
+ */
 export function rateText(rate: number): string {
   if (rate === 0) return '0'
-  if (Math.abs(rate) >= 1000) return countText(rate)
-  return new Intl.NumberFormat('en', { maximumSignificantDigits: 3 }).format(rate)
+  const compact = Math.abs(rate) >= 1000 ? { notation: 'compact' as const } : {}
+  return new Intl.NumberFormat('en', { ...compact, maximumSignificantDigits: 3 }).format(rate)
 }
 
 /** A second as the page names it, in UTC: Oct 2, 12:00:05 UTC. */

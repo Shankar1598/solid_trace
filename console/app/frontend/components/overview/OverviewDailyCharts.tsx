@@ -2,10 +2,8 @@ import { useMemo } from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { tickLabel, valueTicks } from '@/lib/charts/axis'
-import {
-  bytesText, bytesTicks, chartColor, countText, dayText, exactText, rateText, secondText, type Overview,
-} from '@/lib/overview'
+import { statText, tickLabel, valueText, valueTicks } from '@/lib/charts/axis'
+import { INK, bytesText, bytesTicks, chartColor, dayText, rateText, secondText, type Overview } from '@/lib/overview'
 import { cn } from '@/lib/utils'
 
 type Daily = NonNullable<Overview['daily']>
@@ -32,8 +30,8 @@ export function OverviewDailyCharts({ daily }: { daily: Daily }) {
         form="stacked"
         series={series.map(s => ({ key: s.key, name: s.name, color: chartColor(s.color) }))}
         data={logs}
-        value={countText}
-        exact={exactText}
+        value={statText}
+        exact={valueText}
       />
       <DailyChart
         id="bytes"
@@ -41,8 +39,8 @@ export function OverviewDailyCharts({ daily }: { daily: Daily }) {
         description="Received, as decoded, beside stored, as ClickHouse keeps it."
         form="grouped"
         series={[
-          { key: 'received', name: 'Received', color: chartColor(1) },
-          { key: 'stored', name: 'Stored', color: chartColor(2) },
+          { key: 'received', name: 'Received', color: INK.light },
+          { key: 'stored', name: 'Stored', color: INK.full },
         ]}
         data={bytes}
         value={bytesText}
@@ -54,8 +52,8 @@ export function OverviewDailyCharts({ daily }: { daily: Daily }) {
         description="Each day's average, and its busiest second."
         form="lines"
         series={[
-          { key: 'peak', name: 'Peak', color: chartColor(1) },
-          { key: 'average', name: 'Average', color: chartColor(2) },
+          { key: 'peak', name: 'Peak', color: INK.full },
+          { key: 'average', name: 'Average', color: INK.mid },
         ]}
         data={rates}
         value={rateText}
@@ -82,14 +80,12 @@ const DIRECT_LABELS = 4
 const LABEL_GUTTER_PX = 84
 /** The least room a direct label takes, up and down. */
 const LABEL_PX = 14
-/** The surface gap between stacked segments, and the rounding of a bar's data end. */
-const GAP_PX = 2
-const RADIUS_PX = 4
 
 /**
  * One daily Chart: its legend, its plot over the range's days, one value
- * axis, a tooltip on each day, and its table below. Up to four series are
- * also labelled directly at the right, beside the last day's marks.
+ * axis, a tooltip on each day, and its table below. Two to four series are
+ * also labelled directly at the right, beside the last day's marks; a single
+ * series needs neither labels nor a legend.
  */
 function DailyChart({ id, title, description, form, series, data, value, exact = value, bytes = false, note }: {
   id: string
@@ -114,10 +110,8 @@ function DailyChart({ id, title, description, form, series, data, value, exact =
     const ticks = valueTicks(0, high, 4)
     return { ...ticks, label: tickLabel(ticks.step) }
   }, [bytes, high])
-  const labelled = series.length <= DIRECT_LABELS && data.length > 0
+  const labelled = series.length > 1 && series.length <= DIRECT_LABELS && data.length > 0
   const labels = labelled ? directLabels(series, data.at(-1)!, form, axis.domain[1], num) : []
-  // The top of each day's stack: the last series with a value, which alone has a rounded end.
-  const tops = form === 'stacked' ? data.map(p => [...series].reverse().find(s => num(p, s.key) > 0)?.key) : []
 
   return (
     <figure className="min-w-0 space-y-3" data-chart={id}>
@@ -129,7 +123,7 @@ function DailyChart({ id, title, description, form, series, data, value, exact =
         <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs" aria-label={`${title} legend`} data-chart-legend>
           {series.map(s => (
             <li key={s.key} className="flex items-center gap-1.5">
-              <span className={cn('shrink-0', form === 'lines' ? 'h-0.5 w-3' : 'h-2 w-2 rounded-[2px]')} style={{ background: s.color }} aria-hidden />
+              <span className={cn('shrink-0', form === 'lines' ? 'h-0.5 w-3' : 'h-2 w-2')} style={{ background: s.color }} aria-hidden />
               {s.name}
             </li>
           ))}
@@ -165,7 +159,7 @@ function DailyChart({ id, title, description, form, series, data, value, exact =
               ))}
             </LineChart>
           ) : (
-            <BarChart data={data} margin={{ top: TOP_PX, right: labelled ? LABEL_GUTTER_PX : 12, bottom: 0, left: 0 }} barGap={GAP_PX} barCategoryGap="20%">
+            <BarChart data={data} margin={{ top: TOP_PX, right: labelled ? LABEL_GUTTER_PX : 12, bottom: 0, left: 0 }} barCategoryGap="20%">
               <Grid />
               <DayAxis />
               <ValueAxis axis={axis} />
@@ -182,10 +176,10 @@ function DailyChart({ id, title, description, form, series, data, value, exact =
                   stackId={form === 'stacked' ? 'logs' : undefined}
                   fill={`var(--color-${s.key})`}
                   maxBarSize={24}
+                  // As QueryChart's: square, with a surface line between stacked segments.
+                  stroke={form === 'stacked' ? 'var(--card)' : undefined}
+                  strokeWidth={form === 'stacked' ? 1 : 0}
                   isAnimationActive={false}
-                  shape={(props: BarShapeProps) => (
-                    <BarShape {...props} top={form !== 'stacked' || tops[props.index ?? -1] === s.key} />
-                  )}
                 />
               ))}
             </BarChart>
@@ -262,34 +256,9 @@ function Tooltip({ value, note, ...props }: TooltipProps) {
         labelFormatter={() => (day ? dayText(day) : '')}
         valueFormatter={value}
       />
-      {extra && <div className="-mt-1 rounded-b-lg border border-t-0 bg-background px-2.5 pb-1.5 text-xs text-muted-foreground">{extra}</div>}
+      {extra && <div className="-mt-1 border border-t-0 bg-background px-2.5 pb-1.5 text-xs text-muted-foreground">{extra}</div>}
     </div>
   )
-}
-
-interface BarShapeProps {
-  x?: number
-  y?: number
-  width?: number
-  height?: number
-  fill?: string
-  index?: number
-}
-
-/**
- * A bar or a stacked segment: square at the baseline, the data end rounded
- * on the top of the stack, and a 2px surface gap above each segment below it.
- */
-function BarShape({ x = 0, y = 0, width = 0, height = 0, fill, top }: BarShapeProps & { top: boolean }) {
-  if (height <= 0 || width <= 0) return null
-  if (!top) {
-    const h = height - GAP_PX
-    return h > 0 ? <rect x={x} y={y + GAP_PX} width={width} height={h} fill={fill} /> : null
-  }
-  const r = Math.min(RADIUS_PX, width / 2, height)
-  const bottom = y + height
-  const d = `M${x},${bottom} V${y + r} Q${x},${y} ${x + r},${y} H${x + width - r} Q${x + width},${y} ${x + width},${y + r} V${bottom} Z`
-  return <path d={d} fill={fill} />
 }
 
 /**
@@ -331,7 +300,7 @@ function DailyTable({ title, series, data, value }: { title: string; series: Dai
             <TableRow key={p.day}>
               <TableCell className="py-1 text-xs">{dayText(p.day)}</TableCell>
               {series.map(s => (
-                <TableCell key={s.key} className="py-1 text-right text-xs tabular-nums" title={typeof p[s.key] === 'number' ? exactText(p[s.key] as number) : undefined}>
+                <TableCell key={s.key} className="py-1 text-right font-mono text-xs tabular-nums" title={typeof p[s.key] === 'number' ? valueText(p[s.key] as number) : undefined}>
                   {typeof p[s.key] === 'number' ? value(p[s.key] as number) : '—'}
                 </TableCell>
               ))}

@@ -1,24 +1,29 @@
 import type { ReactNode } from 'react'
 import { Link } from '@inertiajs/react'
-import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { countText, secondText } from '@/lib/overview'
+import { statText } from '@/lib/charts/axis'
+import { secondText } from '@/lib/overview'
 import { msText, waitText, type HealthStatus, type OverviewHealth as Health } from '@/lib/overviewHealth'
 
 const TONES = { ok: 'ok', warning: 'warn', error: 'error' } as const
-const ICONS = { ok: CheckCircle2, warning: AlertTriangle, error: XCircle }
-
-/** A status as a colour, an icon and words, never colour alone. */
+/** A status as a colour, a dot and words, never colour alone. */
 function StatusBadge({ status, children }: { status: HealthStatus; children: ReactNode }) {
-  const Icon = ICONS[status]
   return (
-    <Badge variant={TONES[status]} data-health-status={status}>
-      <Icon aria-hidden />
+    <Badge variant={TONES[status]} dot data-health-status={status}>
       {children}
     </Badge>
   )
 }
+
+/** A cell's column name, shown before its value only on a phone, where the rows stack and the header is hidden. */
+function PhoneLabel({ children }: { children: ReactNode }) {
+  return <span className="mr-2 font-sans text-muted-foreground md:hidden">{children}</span>
+}
+
+/** On a phone, a row stacks its cells, so the table never scrolls sideways. */
+const STACKED_ROW = 'max-md:flex max-md:flex-col max-md:gap-1 max-md:py-2'
+const STACKED_CELL = 'max-md:p-0 max-md:text-left'
 
 const WAIT_WORDS = { ok: 'Keeping up', warning: 'Behind', error: 'Far behind' }
 const READ_WORDS = { ok: 'Fast', warning: 'Slow', error: 'Very slow' }
@@ -37,7 +42,7 @@ export function OverviewHealth({ health, orgSlug }: { health: Health; orgSlug: s
         <div className="space-y-2" data-health="projects">
           <h3 className="text-sm font-medium">Log processing and reads</h3>
           <Table>
-            <TableHeader>
+            <TableHeader className="max-md:hidden">
               <TableRow>
                 <TableHead>Project</TableHead>
                 <TableHead>Oldest Log batch waiting</TableHead>
@@ -48,26 +53,30 @@ export function OverviewHealth({ health, orgSlug }: { health: Health; orgSlug: s
             </TableHeader>
             <TableBody>
               {projects.map(({ project, processing, reads }) => (
-                <TableRow key={project.id} data-health-project={project.slug}>
-                  <TableCell className="font-medium">{project.name}</TableCell>
-                  <TableCell>
+                <TableRow key={project.id} data-health-project={project.slug} className={STACKED_ROW}>
+                  <TableCell className={`font-medium ${STACKED_CELL}`}>{project.name}</TableCell>
+                  <TableCell className={STACKED_CELL}>
                     <span className="inline-flex items-center gap-2">
                       <StatusBadge status={processing.status}>{WAIT_WORDS[processing.status]}</StatusBadge>
-                      <span className="tabular-nums text-muted-foreground">
+                      <span className="font-mono tabular-nums text-muted-foreground">
                         {processing.oldest_batch_at ? waitText(processing.waited_seconds) : 'Nothing waiting'}
                       </span>
                     </span>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className={STACKED_CELL}>
                     {reads ? (
                       <span className="inline-flex items-center gap-2">
                         <StatusBadge status={reads.status}>{READ_WORDS[reads.status]}</StatusBadge>
-                        <span className="tabular-nums text-muted-foreground">{countText(reads.reads)}</span>
+                        <span className="font-mono tabular-nums text-muted-foreground">{statText(reads.reads)}</span>
                       </span>
                     ) : <span className="text-muted-foreground">No reads</span>}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{reads ? msText(reads.median_ms) : '–'}</TableCell>
-                  <TableCell className="text-right tabular-nums">{reads ? msText(reads.p95_ms) : '–'}</TableCell>
+                  <TableCell className={`text-right font-mono tabular-nums ${STACKED_CELL}`}>
+                    <PhoneLabel>Median</PhoneLabel>{reads ? msText(reads.median_ms) : '–'}
+                  </TableCell>
+                  <TableCell className={`text-right font-mono tabular-nums ${STACKED_CELL}`}>
+                    <PhoneLabel>95th percentile</PhoneLabel>{reads ? msText(reads.p95_ms) : '–'}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -117,9 +126,9 @@ export function OverviewHealth({ health, orgSlug }: { health: Health; orgSlug: s
       <div className="space-y-2" data-health="issues">
         <h3 className="text-sm font-medium">Issues and Events</h3>
         <p className="flex flex-wrap items-center gap-2 text-sm">
-          <StatusBadge status={issues.status}>{issues.new === 0 ? 'No new Issues' : `${countText(issues.new)} new ${issues.new === 1 ? 'Issue' : 'Issues'}`}</StatusBadge>
+          <StatusBadge status={issues.status}>{issues.new === 0 ? 'No new Issues' : `${statText(issues.new)} new ${issues.new === 1 ? 'Issue' : 'Issues'}`}</StatusBadge>
           <span className="text-muted-foreground">
-            {events ? `${countText(events.new)} ${events.new === 1 ? 'Event' : 'Events'} in the range.` : 'Events are unavailable.'}
+            {events ? `${statText(events.new)} ${events.new === 1 ? 'Event' : 'Events'} in the range.` : 'Events are unavailable.'}
           </span>
           {issues.new > 0 && (
             <Link href={`/${orgSlug}/issues`} className="underline underline-offset-2">All Issues</Link>

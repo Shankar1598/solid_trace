@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { bytesText, countText, exactText, type Overview } from '@/lib/overview'
+import { statText, valueText } from '@/lib/charts/axis'
+import { INK, bytesText, type Overview } from '@/lib/overview'
 
 /**
  * One step of the band: its name, its bytes and Logs, and its colour. A step
@@ -41,19 +42,19 @@ export function bandSteps(band: NonNullable<Overview['band']>): BandStep[] {
   const { received } = band
   const droppedBytes = (logs: number) => (received.logs > 0 ? (Math.min(logs, received.logs) / received.logs) * received.bytes : 0)
   return [
-    { key: 'received', name: 'Received', bytes: received.bytes, logs: received.logs, color: 'var(--chart-1)' },
+    { key: 'received', name: 'Received', bytes: received.bytes, logs: received.logs, color: INK.light },
     {
-      key: 'kept', name: 'Kept', bytes: band.kept.bytes, logs: band.kept.logs, color: 'var(--chart-2)',
+      key: 'kept', name: 'Kept', bytes: band.kept.bytes, logs: band.kept.logs, color: INK.mid,
       slices: [
-        { key: 'unreadable', label: `${exactText(band.unreadable_logs)} unreadable`, bytes: droppedBytes(band.unreadable_logs), color: UNREADABLE },
+        { key: 'unreadable', label: `${valueText(band.unreadable_logs)} unreadable`, bytes: droppedBytes(band.unreadable_logs), color: UNREADABLE },
         {
-          key: 'dropped_by_transform', label: `${exactText(band.dropped_by_transform)} dropped by the Log transform`,
+          key: 'dropped_by_transform', label: `${valueText(band.dropped_by_transform)} dropped by the Log transform`,
           bytes: droppedBytes(band.dropped_by_transform), color: DROPPED_BY_TRANSFORM,
         },
       ].filter(slice => slice.bytes > 0),
     },
     {
-      key: 'stored', name: 'Stored', bytes: band.stored.bytes, logs: band.stored.logs, color: 'var(--chart-3)',
+      key: 'stored', name: 'Stored', bytes: band.stored.bytes, logs: band.stored.logs, color: INK.full,
       aside: band.ratio !== null && (
         <span className="text-2xl font-semibold tabular-nums tracking-tight" title="Kept bytes over stored bytes">
           {band.ratio.toLocaleString('en', { maximumFractionDigits: 1 })}× smaller
@@ -110,11 +111,11 @@ export function OverviewBand({ band }: { band: NonNullable<Overview['band']> }) 
               ))}
             </div>
             <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-              <span className="text-2xl font-semibold tabular-nums tracking-tight" title={`${exactText(step.bytes)} bytes`}>
+              <span className="text-2xl font-semibold tabular-nums tracking-tight" title={`${valueText(step.bytes)} bytes`}>
                 {bytesText(step.bytes)}
               </span>
-              <span className="text-sm tabular-nums text-muted-foreground" title={`${exactText(step.logs)} Logs`}>
-                {countText(step.logs)} Logs
+              <span className="text-sm tabular-nums text-muted-foreground" title={`${valueText(step.logs)} Logs`}>
+                {statText(step.logs)} Logs
               </span>
               {step.aside}
             </div>
@@ -123,17 +124,17 @@ export function OverviewBand({ band }: { band: NonNullable<Overview['band']> }) 
       </ol>
 
       <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
-        <BandFact label="Sent on the wire" title={`${exactText(band.received.bytes_on_wire)} bytes`}>
-          {bytesText(band.received.bytes_on_wire)} in {countText(band.received.requests)} requests
+        <BandFact label="Sent on the wire" title={`${valueText(band.received.bytes_on_wire)} bytes`}>
+          {bytesText(band.received.bytes_on_wire)} in {statText(band.received.requests)} requests
         </BandFact>
-        <BandFact label="Unreadable" title={`${exactText(band.unreadable_logs)} Logs`} hatch={UNREADABLE}>
-          {countText(band.unreadable_logs)} Logs
+        <BandFact label="Unreadable" title={`${valueText(band.unreadable_logs)} Logs`} hatch={UNREADABLE}>
+          {statText(band.unreadable_logs)} Logs
         </BandFact>
-        <BandFact label="Dropped by the Log transform" title={`${exactText(band.dropped_by_transform)} Logs`} hatch={DROPPED_BY_TRANSFORM}>
-          {countText(band.dropped_by_transform)} Logs
+        <BandFact label="Dropped by the Log transform" title={`${valueText(band.dropped_by_transform)} Logs`} hatch={DROPPED_BY_TRANSFORM}>
+          {statText(band.dropped_by_transform)} Logs
         </BandFact>
-        <BandFact label="Turned away as overloaded" title={`${exactText(band.overloaded_requests)} requests`}>
-          {countText(band.overloaded_requests)} requests
+        <BandFact label="Turned away as overloaded" title={`${valueText(band.overloaded_requests)} requests`}>
+          {statText(band.overloaded_requests)} requests
         </BandFact>
       </dl>
     </div>

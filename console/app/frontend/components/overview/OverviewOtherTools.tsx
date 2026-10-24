@@ -1,5 +1,6 @@
 import { ExternalLink } from 'lucide-react'
-import { bytesText, countText, exactText } from '@/lib/overview'
+import { statText, valueText } from '@/lib/charts/axis'
+import { bytesText } from '@/lib/overview'
 import { checkedText, usdText, type OtherToolEstimate, type OverviewOtherTools as OtherTools } from '@/lib/overviewOtherTools'
 
 /**
@@ -13,8 +14,8 @@ export function OverviewOtherTools({ otherTools }: { otherTools: OtherTools }) {
     <div className="space-y-4">
       <p className="text-sm" data-other-tools="volume">
         A month of{' '}
-        <span className="tabular-nums" title={`${exactText(volume.logs)} Logs`}>{countText(volume.logs)}</span> Logs,{' '}
-        <span className="tabular-nums" title={`${exactText(volume.bytes)} bytes`}>{bytesText(volume.bytes)}</span> received
+        <span className="tabular-nums" title={`${valueText(volume.logs)} Logs`}>{statText(volume.logs)}</span> Logs,{' '}
+        <span className="tabular-nums" title={`${valueText(volume.bytes)} bytes`}>{bytesText(volume.bytes)}</span> received
         {volume.scaled && (
           <span className="text-muted-foreground" data-other-tools="scaled">
             {' '}({volume.days === 1 ? 'today' : `the last ${volume.days} days`} scaled to 30 days)
