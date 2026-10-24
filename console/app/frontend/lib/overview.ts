@@ -1,6 +1,7 @@
 // The Overview's props, as Console's Overview builder (app/services/overview.rb)
 // answers them for the page and get_overview alike, and how the page writes
 // its numbers.
+import { tickLabel, valueTicks } from '@/lib/charts/axis'
 
 export type OverviewRangeName = 'today' | '7d' | '30d'
 
@@ -38,6 +39,69 @@ export interface Overview {
     requests: OverviewRate
     last_five_minutes: { logs_per_second: number } | null
   } | null
+  daily: {
+    series: OverviewSeries[]
+    days: OverviewDay[]
+  } | null
+  projects: OverviewProject[] | null
+}
+
+/** A daily Chart's series: a Project, or Other for those past the seventh. */
+export interface OverviewSeries {
+  key: string
+  name: string
+  /** Its Chart colour's slot, 1 to 8, by creation order. */
+  color: number
+  project_ids: number[]
+}
+
+export interface OverviewDay {
+  day: string
+  /** Logs received, by series key. */
+  logs: Record<string, number>
+  received_bytes: number
+  stored_bytes: number
+  logs_per_second: OverviewRate
+}
+
+export interface OverviewProject {
+  id: number
+  name: string
+  slug: string
+  /** Its Chart colour's slot, Other's for a Project past the seventh. */
+  color: number
+  logs: number
+  received_bytes: number
+  stored_bytes: number
+  /** Received bytes over stored; null when nothing is stored. */
+  ratio: number | null
+  /** Its share of the bytes received, 0 to 1; null when none were. */
+  share: number | null
+  logs_per_second: OverviewRate
+  retention_days: number
+  retention_is_default: boolean
+  oldest_day: string | null
+  all_days: { logs: number; bytes: number }
+  last_log_at: string | null
+  /** Whether its last Log arrived over an hour ago; null when none has. */
+  stale: boolean | null
+  has_logs: boolean
+}
+
+/** A Chart colour's slot as a colour. */
+export function chartColor(slot: number): string {
+  return `var(--chart-${slot})`
+}
+
+/** A UTC day as a Chart's axis names it: Oct 2. */
+export function dayText(day: string): string {
+  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`))
+}
+
+/** A share as a percentage: 42%, 0.4%, under 0.1%. */
+export function shareText(share: number): string {
+  if (share > 0 && share < 0.001) return 'under 0.1%'
+  return `${new Intl.NumberFormat('en', { maximumSignificantDigits: share < 0.1 ? 2 : 3 }).format(share * 100)}%`
 }
 
 const UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
@@ -52,6 +116,23 @@ export function bytesText(bytes: number): string {
   }
   const digits = unit === 0 ? { maximumFractionDigits: 0 } : { maximumSignificantDigits: 3 }
   return `${new Intl.NumberFormat('en', digits).format(value)} ${UNITS[unit]}`
+}
+
+/**
+ * A bytes axis up to max: round steps of the binary unit max reads in, so
+ * ticks read 0, 256 KiB, 512 KiB rather than 195 KiB.
+ */
+export function bytesTicks(max: number): { domain: [number, number]; ticks: number[]; label: (bytes: number) => string } {
+  let unit = 0
+  while (max >= 1024 ** (unit + 1) && unit < UNITS.length - 1) unit++
+  const size = 1024 ** unit
+  const { domain, ticks, step } = valueTicks(0, max / size, 4)
+  const tick = tickLabel(step)
+  return {
+    domain: [domain[0] * size, domain[1] * size],
+    ticks: ticks.map(t => t * size),
+    label: bytes => (bytes === 0 ? '0' : `${tick(bytes / size)} ${UNITS[unit]}`),
+  }
 }
 
 /** A count, abbreviated from a thousand up (12.3K, 4.56M); exactText gives the whole number. */
