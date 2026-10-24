@@ -2,6 +2,8 @@
 // answers them for the page and get_overview alike, and how the page writes
 // its numbers.
 
+import type { OverviewHealth } from './overviewHealth'
+
 export type OverviewRangeName = 'today' | '7d' | '30d'
 
 export const OVERVIEW_RANGES: { value: OverviewRangeName; label: string }[] = [
@@ -38,6 +40,7 @@ export interface Overview {
     requests: OverviewRate
     last_five_minutes: { logs_per_second: number } | null
   } | null
+  health: OverviewHealth
 }
 
 const UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
