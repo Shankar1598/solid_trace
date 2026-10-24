@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { logsPath, PROJECT } from './data'
@@ -129,27 +129,34 @@ function escape(text: string) {
 
 // SQL queries are an instance setting, shared by every Playwright run
 // against the dev stack. Each run that turns them on leaves a file named by
-// its process id while it needs them, and the last one out turns them off,
-// so one run's afterAll doesn't turn SQL off under another's test.
+// its process id while it needs them, and the last one out puts back the
+// value from before the first one, so one run's afterAll doesn't turn SQL off
+// under another's test, and a dev instance that had them on keeps them on.
 const SQL_HOLDERS = join(homedir(), '.cache/solid-trace/playwright-sql-holders')
+const SQL_BEFORE = join(SQL_HOLDERS, 'before')
 
 /** Turns SQL queries on for the dev instance, until releaseSqlQueries(). */
 export function holdSqlQueries() {
   mkdirSync(SQL_HOLDERS, { recursive: true })
+  if (!existsSync(SQL_BEFORE)) writeFileSync(SQL_BEFORE, String(sqlQueriesOn()))
   writeFileSync(join(SQL_HOLDERS, String(process.pid)), '')
   setSqlQueries(true)
 }
 
-/** Turns SQL queries off again, unless another live run still holds them. */
+/** Puts SQL queries back as they were, unless another live run still holds them. */
 export function releaseSqlQueries() {
   rmSync(join(SQL_HOLDERS, String(process.pid)), { force: true })
-  const holders = readdirSync(SQL_HOLDERS).filter(pid => {
-    if (alive(Number(pid))) return true
+  const holders = readdirSync(SQL_HOLDERS).filter(name => {
+    if (name === 'before') return false
+    if (alive(Number(name))) return true
     // A run that stopped without releasing them.
-    rmSync(join(SQL_HOLDERS, pid), { force: true })
+    rmSync(join(SQL_HOLDERS, name), { force: true })
     return false
   })
-  if (holders.length === 0) setSqlQueries(false)
+  if (holders.length > 0) return
+  const before = existsSync(SQL_BEFORE) ? readFileSync(SQL_BEFORE, 'utf8') : 'false'
+  setSqlQueries(before === 'true')
+  rmSync(SQL_BEFORE, { force: true })
 }
 
 function alive(pid: number): boolean {
@@ -159,6 +166,13 @@ function alive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
+}
+
+function sqlQueriesOn(): boolean {
+  const out = execFileSync('mise', ['exec', '--', 'bin/rails', 'instance_settings:show'], {
+    cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
+  }).toString()
+  return /^SQL queries: on$/m.test(out)
 }
 
 function setSqlQueries(on: boolean) {
