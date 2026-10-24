@@ -10,7 +10,8 @@ module McpTools
 
     # How a program is written and what Log processing does with it: what .
     # holds, what is stored, what a failure does and which functions are left
-    # out.
+    # out. get_log_transform answers it as how_to_write, so it costs the
+    # agent's context only when it works on a Log transform.
     LANGUAGE = <<~TEXT.squish
       A Project's Log transform is a VRL program, the language of Vector's transforms
       (functions: https://vector.dev/docs/reference/vrl/functions/), which Log processing runs on each of the Project's Logs before storing it.
@@ -33,6 +34,9 @@ module McpTools
     TEXT
 
     PROGRAM = { type: "string", description: "The VRL program, at most 64 KB. An empty one is none." }.freeze
+
+    # Where the tools that take a program send the agent for LANGUAGE.
+    HOW_TO_WRITE = "get_log_transform's how_to_write says how a program is written."
 
     private
 

@@ -13,7 +13,8 @@ module McpTools
                 "size in bytes; and EventStore's running_counts for the version it runs now (version_id) since it " \
                 "started or that version was saved: Logs processed, dropped and failed, average_micros a Log, and " \
                 "compile_error when that version doesn't compile, while every Log is stored as it arrived; null, with a note, " \
-                "when EventStore can't give them. Read it to learn why a Project's Fields look as they do. #{LogTransformTool::LANGUAGE}"
+                "when EventStore can't give them; and how_to_write, how a VRL program is written and what Log processing does " \
+                "with it. Read it to learn why a Project's Fields look as they do, and before writing a program."
     read_only!
     takes_project
     argument :version, { type: "integer", description: "A version's id, from versions, for its program. The current one when left out." }
@@ -27,6 +28,7 @@ module McpTools
       answer[:versions] = project.log_transform_versions.newest_first.includes(:user).limit(VERSIONS)
         .map { |version| version_json(version).merge(bytes: version.program.bytesize) }
       answer[:running_counts] = running_counts
+      answer[:how_to_write] = LANGUAGE
       notes = []
       notes << "The Project has no Log transform: its Logs are stored as they arrive." if answer[:program].blank?
       notes << "EventStore couldn't give the running counts, so running_counts is null. Try again shortly." unless answer[:running_counts]

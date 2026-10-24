@@ -9,7 +9,7 @@ module McpTools
     description "Saves a program as a Project's Log transform, its newest version, or refuses it with VRL's errors " \
                 "when it doesn't compile. preview_log_transform first shows what it would do. " \
                 "Restore an older version by saving its program, from get_log_transform. " \
-                "Only an Organization admin can. #{LogTransformTool::LANGUAGE}"
+                "Only an Organization admin can. #{LogTransformTool::HOW_TO_WRITE}"
     destructive!
     takes_project
     argument :program, LogTransformTool::PROGRAM, required: true

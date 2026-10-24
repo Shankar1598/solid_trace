@@ -42,7 +42,7 @@ class McpLogTransformToolsTest < ActiveSupport::TestCase
     ada = { "name" => "Ada", "email" => "ada@example.com" }
     assert_equal({
       "project" => "shop", "program" => ".n = 12", "version" => versions.last.id, "saved_by" => ada,
-      "saved_at" => "2026-10-21T09:12:00Z", "current" => true, "running_counts" => stats,
+      "saved_at" => "2026-10-21T09:12:00Z", "current" => true, "running_counts" => stats, "how_to_write" => McpTools::LogTransformTool::LANGUAGE,
     }, answer.json.except("versions"))
     assert_equal versions.last(10).reverse.map(&:id), answer.json["versions"].pluck("version")
     assert_equal({ "version" => versions[10].id, "saved_by" => nil, "saved_at" => "2026-10-21T09:11:00Z", "bytes" => 7 },
@@ -75,7 +75,7 @@ class McpLogTransformToolsTest < ActiveSupport::TestCase
 
     assert_equal({
       "project" => "shop", "program" => "", "note" => "The Project has no Log transform: its Logs are stored as they arrive.",
-      "versions" => [], "running_counts" => stats,
+      "versions" => [], "running_counts" => stats, "how_to_write" => McpTools::LogTransformTool::LANGUAGE,
     }, answer.json)
   end
 
@@ -89,7 +89,7 @@ class McpLogTransformToolsTest < ActiveSupport::TestCase
     saved = { "version" => version.id, "saved_by" => { "name" => "Ada", "email" => "ada@example.com" }, "saved_at" => "2026-10-21T09:05:00Z" }
     assert_equal({
       "project" => "shop", "program" => ".a = 1", **saved, "current" => true,
-      "versions" => [ saved.merge("bytes" => 6) ], "running_counts" => nil,
+      "versions" => [ saved.merge("bytes" => 6) ], "running_counts" => nil, "how_to_write" => McpTools::LogTransformTool::LANGUAGE,
       "note" => "EventStore couldn't give the running counts, so running_counts is null. Try again shortly.",
     }, answer.json)
   end
@@ -201,13 +201,17 @@ class McpLogTransformToolsTest < ActiveSupport::TestCase
     assert_nil @shop.log_transform
   end
 
-  test "update_log_transform is marked destructive, and its description explains the program" do
-    tool = McpTools::UpdateLogTransform
+  test "update_log_transform is marked destructive, and get_log_transform's how_to_write explains the program" do
+    assert McpTools::UpdateLogTransform.annotations_value.destructive_hint
+    [ McpTools::PreviewLogTransform, McpTools::UpdateLogTransform ].each do |tool|
+      assert_includes tool.description_value, "get_log_transform's how_to_write", tool.name
+    end
 
-    assert tool.annotations_value.destructive_hint
+    stub_request(:get, "#{EventStore.base_url}/api/#{@shop.id}/logs/transform/stats").to_raise(Errno::ECONNREFUSED)
+    how_to_write = call_tool(:get_log_transform, user: @member, project: "shop").json["how_to_write"]
     [ "abort", "solidtrace.transform_error", "http_request", "Logs already stored don't change",
       "https://vector.dev/docs/reference/vrl/functions/", ".http.method" ].each do |part|
-      assert_includes tool.description_value, part
+      assert_includes how_to_write, part
     end
   end
 end
