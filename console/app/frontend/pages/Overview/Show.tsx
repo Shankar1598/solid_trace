@@ -10,6 +10,7 @@ import { OverviewBand } from '@/components/overview/OverviewBand'
 import { OverviewRates } from '@/components/overview/OverviewRates'
 import { OverviewDailyCharts } from '@/components/overview/OverviewDailyCharts'
 import { OverviewProjects } from '@/components/overview/OverviewProjects'
+import { OverviewSources } from '@/components/overview/OverviewSources'
 import { OVERVIEW_RANGES, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
 import type { SharedProps } from '@/types'
 
@@ -56,8 +57,8 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
           {band && !overview.empty.logs && (
             <OverviewSection
               id="band"
-              title="Received → Stored"
-              description="Received is what shippers sent, by second of arrival. Stored is what ClickHouse holds of the range's days, by the Logs' own time."
+              title="Received → Kept → Stored"
+              description="Received is what shippers sent, by second of arrival. Kept is what Log processing stored of the range's days, and Stored what ClickHouse holds of them, both by the Logs' own time."
             >
               {overview.ingest_counts?.starts_after_range && (
                 <p className="text-sm text-muted-foreground" data-notice="counts-start">
@@ -89,6 +90,16 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
               description="The range's Logs and bytes, and what each Project keeps of every day. Open a row to see its Logs."
             >
               <OverviewProjects projects={overview.projects} orgSlug={orgSlug} />
+            </OverviewSection>
+          )}
+
+          {overview.sources && !overview.empty.logs && (
+            <OverviewSection
+              id="sources"
+              title="Biggest sources"
+              description="The Services and files that sent the most Logs and kept the most bytes, by the Logs' own day. Open one to see its Logs."
+            >
+              <OverviewSources sources={overview.sources} range={range} orgSlug={orgSlug} />
             </OverviewSection>
           )}
         </div>
