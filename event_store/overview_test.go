@@ -74,6 +74,7 @@ type overviewAnswer struct {
 	} `json:"days"`
 	Projects []overviewProject `json:"projects"`
 	Storage  json.RawMessage   `json:"storage"`
+	Health   overviewHealth    `json:"health"`
 }
 
 type overviewProject struct {

@@ -14,7 +14,11 @@ module McpTools
                 "received, Logs a second, Retention, oldest day and Logs kept of every day, and when its last Log " \
                 "arrived (stale when over an hour ago); sources, by_logs the Services and files that sent the most " \
                 "Logs and by_bytes those that kept the most bytes, each with its Project, Logs kept, bytes, Logs " \
-                "dropped by the Log transform and share. event_store says whether EventStore answered; when it didn't, " \
+                "dropped by the Log transform and share; " \
+                "health, each Project's oldest Log batch waiting for Log processing and its Log reads' median and " \
+                "95th percentile over the last 24 hours, the slowest reads, Monitors whose last run failed, Firing " \
+                "Monitors, and the range's new Issues and Events, each with a status of ok, warning or error; " \
+                "event_store says whether EventStore answered; when it didn't, " \
                 "its sections are null."
     read_only!
     takes_organization

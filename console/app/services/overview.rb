@@ -17,7 +17,7 @@ class Overview
   TIMEOUT_SECONDS = 3
 
   # The sections, in the order they're answered.
-  SECTIONS = %i[range event_store empty ingest_counts band rates daily projects sources].freeze
+  SECTIONS = %i[range event_store empty ingest_counts band rates daily projects sources health].freeze
 
   # The Projects that wear a Chart colour of their own, the first by
   # creation; the rest fold into Other, which wears the next. Never cycled.
@@ -179,6 +179,13 @@ class Overview
     by_logs = Array(answer.dig("sources", "by_logs")).filter_map { |s| source_row(s) { |row| share(row[:sent], sent) } }
     by_bytes = Array(answer.dig("sources", "by_bytes")).filter_map { |s| source_row(s) { |row| share(row[:bytes], kept["bytes"]) } }
     { by_logs: by_logs, by_bytes: by_bytes }
+  end
+
+  # Log processing's waits and Log reads' times per Project, failing and
+  # Firing Monitors, and the range's new Issues and Events (Overview::Health).
+  # Monitors and Issues are Console's, so they answer without EventStore.
+  def health
+    Health.new(organization: organization, projects: org_projects, from: @from, to: @to, answer: answer).to_h
   end
 
   private

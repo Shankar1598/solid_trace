@@ -100,6 +100,22 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
   for (const ranked of ['by-logs', 'by-bytes']) {
     await expect(sources.locator(`[data-sources="${ranked}"] [data-source="${source}"]`)).toContainText(second)
   }
+  // Health: both Projects' processing; a read of the Logs explorer shows in
+  // its Project's read times once ClickHouse writes its query_log (every
+  // few seconds).
+  const health = page.locator('[data-section="health"]')
+  await expect(health.locator(`[data-health-project="${secondSlug}"]`)).toContainText(second)
+  await expect(health.locator('[data-health="monitors"]')).toContainText('Monitors')
+  await expect(health.locator('[data-health="issues"]')).toContainText(/Events? in the range/)
+  await page.goto(`/${ORG}/projects/${PROJECT}/logs`)
+  await expect(page.getByText('overview flow 0').first()).toBeVisible()
+  await page.goto(`/${ORG}/overview`)
+  await expect(async () => {
+    await page.reload()
+    await expect(health.locator(`[data-health-project="${PROJECT}"]`)).not.toContainText('No reads')
+  }).toPass({ timeout: 30_000 })
+  await expect(health.locator(`[data-health-project="${PROJECT}"]`)).toContainText(/Keeping up|Behind/)
+  await expect(health.locator('[data-health="slowest-reads"]')).toContainText(/in .*UTC/)
 
   await page.getByRole('button', { name: '7 days' }).click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/overview\\?range=7d$`))

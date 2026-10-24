@@ -11,6 +11,7 @@ import { OverviewRates } from '@/components/overview/OverviewRates'
 import { OverviewDailyCharts } from '@/components/overview/OverviewDailyCharts'
 import { OverviewProjects } from '@/components/overview/OverviewProjects'
 import { OverviewSources } from '@/components/overview/OverviewSources'
+import { OverviewHealth } from '@/components/overview/OverviewHealth'
 import { OVERVIEW_RANGES, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
 import type { SharedProps } from '@/types'
 
@@ -100,6 +101,16 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
               description="The Services and files that sent the most Logs and kept the most bytes, by the Logs' own day. Open one to see its Logs."
             >
               <OverviewSources sources={overview.sources} range={range} orgSlug={orgSlug} />
+            </OverviewSection>
+          )}
+
+          {!overview.empty.projects && (
+            <OverviewSection
+              id="health"
+              title="Health"
+              description="How long Log processing keeps Logs waiting and how fast reads ran over the last 24 hours, Monitors that need a look, and what's new in Issues."
+            >
+              <OverviewHealth health={overview.health} orgSlug={orgSlug} />
             </OverviewSection>
           )}
         </div>

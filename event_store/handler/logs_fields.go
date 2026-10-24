@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/solidtrace/event_store/logquery"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/storage"
 )
 
 const (
@@ -54,7 +55,7 @@ func (h *LogsHandler) Fields(c *fiber.Ctx) error {
 		limit = min(limit, maxFieldAttributes)
 	}
 
-	attributes, truncated, err := h.clickHouse.AttributeCounts(c.UserContext(), projectID, from, to, limit)
+	attributes, truncated, err := h.clickHouse.AttributeCounts(storage.TagRead(c.UserContext(), projectID, storage.ReadFields), projectID, from, to, limit)
 	if err != nil {
 		logger.L.Error("Counting a Project's Attributes failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
