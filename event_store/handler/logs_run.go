@@ -44,6 +44,12 @@ type run struct {
 	statements *storage.ReadStatements
 }
 
+// readKinds are the kinds of the runs whose ClickHouse statements are tagged
+// with their Project, for the Overview's read times. A Query that returns a
+// table is tagged again as one. SQL isn't tagged: its Project's SQL user
+// names it.
+var readKinds = map[string]string{"query": storage.ReadNewestPage, "match": storage.ReadMatch, "histogram": storage.ReadHistogram}
+
 // startRun starts a run, a read of query, match, histogram or sql, with a
 // request's timeout_seconds, nil for none. If the timeout isn't a positive
 // number of seconds, at most a day, it returns the answer to give instead.
@@ -52,6 +58,11 @@ func startRun(c *fiber.Ctx, read string, timeoutSeconds *float64) (*run, fiber.M
 	// Fiber reuses a request's buffers once its handler returns.
 	r := &run{began: time.Now(), read: read, projectID: strings.Clone(c.Params("project_id")), requestID: strings.Clone(c.Get("X-Request-Id"))}
 	ctx := c.UserContext()
+	if kind, ok := readKinds[read]; ok {
+		if projectID, err := parseProjectID(c); err == nil {
+			ctx = storage.TagRead(ctx, projectID, kind)
+		}
+	}
 	if c.Get("X-Log-SQL") == "1" {
 		ctx, r.statements = storage.WithReadStatements(ctx)
 		r.userEmail = strings.Clone(c.Get("X-User-Email"))

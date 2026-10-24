@@ -162,6 +162,7 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 
 	from, to := query.Range()
 	if query.Table() {
+		run.ctx = storage.TagRead(run.ctx, projectID, storage.ReadTable)
 		return h.table(c, run, projectID, query, from, to, req.Totals)
 	}
 	if take, ok := query.Take(); ok && (req.Cursor == "" || left < 0) {
@@ -465,7 +466,7 @@ func (h *LogsHandler) Get(c *fiber.Ctx) error {
 		}
 		at = &t
 	}
-	log, found, err := h.clickHouse.LogByID(c.UserContext(), projectID, id, at)
+	log, found, err := h.clickHouse.LogByID(storage.TagRead(c.UserContext(), projectID, storage.ReadLogByID), projectID, id, at)
 	if err != nil {
 		logger.L.Error("Log fetch failed", "project_id", projectID, "log_id", id, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})

@@ -67,6 +67,7 @@ type overviewAnswer struct {
 		Stored overviewStored `json:"stored"`
 	} `json:"days"`
 	Storage json.RawMessage `json:"storage"`
+	Health  overviewHealth  `json:"health"`
 }
 
 // overview asks the query app for the Overview of projects over the UTC
