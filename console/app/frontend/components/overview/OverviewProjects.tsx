@@ -22,8 +22,9 @@ export function OverviewProjects({ projects, orgSlug }: { projects: OverviewProj
             <TableHead>Project</TableHead>
             <TableHead className="text-right">Logs</TableHead>
             <TableHead className="text-right">Received</TableHead>
+            <TableHead className="text-right" title="Each Log's message and Attributes, after the Log transform">Kept</TableHead>
             <TableHead className="text-right">Stored</TableHead>
-            <TableHead className="text-right" title="Received bytes over stored bytes">Ratio</TableHead>
+            <TableHead className="text-right" title="Kept bytes over stored bytes">Ratio</TableHead>
             <TableHead className="text-right" title="Of the bytes received">Share</TableHead>
             <TableHead className="text-right">Logs per second</TableHead>
             <TableHead className="text-right">Retention</TableHead>
@@ -52,6 +53,7 @@ export function OverviewProjects({ projects, orgSlug }: { projects: OverviewProj
                 <>
                   <Num value={countText(p.logs)} exact={exactText(p.logs)} />
                   <Num value={bytesText(p.received_bytes)} />
+                  <Num value={bytesText(p.kept_bytes)} />
                   <Num value={bytesText(p.stored_bytes)} />
                   <Num value={p.ratio === null ? '—' : `${p.ratio}×`} />
                   <Num value={p.share === null ? '—' : shareText(p.share)} />
@@ -72,7 +74,7 @@ export function OverviewProjects({ projects, orgSlug }: { projects: OverviewProj
                   <TableCell className="whitespace-nowrap"><LastLog project={p} /></TableCell>
                 </>
               ) : (
-                <TableCell colSpan={9} className="text-muted-foreground" data-empty>
+                <TableCell colSpan={10} className="text-muted-foreground" data-empty>
                   No Logs yet.{' '}
                   <Link href={logsPath(p)} className="font-medium text-foreground underline underline-offset-2">See how to send them</Link>
                 </TableCell>
