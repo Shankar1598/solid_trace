@@ -4,14 +4,17 @@ module McpTools
   # An Organization's Overview, the sections its Overview page shows.
   class GetOverview < Base
     description "Answers an Organization's Overview over today, the last 7 or the last 30 whole UTC days: " \
-                "band, the Logs and bytes received (decoded, and as sent) and the bytes ClickHouse stores of the " \
-                "range's days, with the compression ratio, unreadable Logs and requests turned away as overloaded; " \
+                "band, the Logs and bytes received (decoded, and as sent), kept by Log processing and stored by " \
+                "ClickHouse of the range's days, with the compression ratio (kept over stored), unreadable Logs, " \
+                "Logs the Log transform dropped and requests turned away as overloaded; " \
                 "rates, Logs, bytes and requests a second, each an average and the busiest second, by arrival time; " \
                 "ingest_counts, when counting began; daily, each UTC day's Logs received by series (a Project each, " \
                 "the eighth by creation on folded into Other), bytes received and stored, and Logs a second, average " \
-                "and peak; projects, each Project's Logs and bytes received and stored, ratio, share of the bytes " \
+                "and peak; projects, each Project's Logs and bytes received, kept and stored, ratio, share of the bytes " \
                 "received, Logs a second, Retention, oldest day and Logs kept of every day, and when its last Log " \
-                "arrived (stale when over an hour ago); " \
+                "arrived (stale when over an hour ago); sources, by_logs the Services and files that sent the most " \
+                "Logs and by_bytes those that kept the most bytes, each with its Project, Logs kept, bytes, Logs " \
+                "dropped by the Log transform and share; " \
                 "health, each Project's oldest Log batch waiting for Log processing and its Log reads' median and " \
                 "95th percentile over the last 24 hours, the slowest reads, Monitors whose last run failed, Firing " \
                 "Monitors, and the range's new Issues and Events, each with a status of ok, warning or error; " \

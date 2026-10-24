@@ -105,6 +105,7 @@ func TestSQLCantReadAnotherTableAFileAURLTheBucketOrASystemTable(t *testing.T) {
 		"SELECT * FROM log_key_counts",
 		"SELECT * FROM " + db + ".log_minute_counts",
 		"SELECT * FROM log_ingest_counts",
+		"SELECT * FROM log_source_counts",
 		"SELECT * FROM schema_migrations",
 		"SELECT * FROM logs WHERE project_id IN (SELECT project_id FROM log_key_counts)",
 		// The server's.

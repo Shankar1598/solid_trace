@@ -94,6 +94,8 @@ type overviewData struct {
 	projectDays    []storage.IngestDay
 	storedProjects []storage.StoredProject
 	arrivals       map[uint32]time.Time
+	// Each source's Source counts over the range's days.
+	sources []storage.SourceCount
 	// Health's reads (overview_health.go).
 	health overviewHealthData
 	// Storage's reads, when asked for (overview_storage.go).
@@ -137,6 +139,10 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 			return err
 		},
 		func(ctx context.Context) (err error) {
+			d.sources, err = h.logs.SourceCounts(ctx, q.scope.ProjectIDs, q.from, q.to)
+			return err
+		},
+		func(ctx context.Context) (err error) {
 			// Only a range that holds now has a right now.
 			if q.now.Before(q.scope.From) || !q.now.Before(q.scope.To) {
 				return nil
@@ -155,9 +161,12 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //
 //   - band: received, every Log, element or line that arrived, with the
 //     bytes decoded and as sent and the requests; unreadable_logs, those that
-//     weren't Logs; overloaded_requests, those turned away; and stored, the
-//     range's days of Logs as ClickHouse holds them, compressed on local disk
-//     and in the bucket, raw_bytes before compression.
+//     weren't Logs; overloaded_requests, those turned away; kept, the Logs of
+//     the range's days Log processing stored, and their bytes, each Log's
+//     message and Attributes' JSON; dropped_by_transform, the Logs of those
+//     days the Log transform dropped; and stored, the range's days of Logs as
+//     ClickHouse holds them, compressed on local disk and in the bucket,
+//     raw_bytes before compression.
 //   - rates: Logs, bytes and requests a second, each an average over the
 //     seconds of the range so far and the peak, the busiest second of the
 //     Projects together, with that second; last_five_minutes, the Logs a
@@ -169,8 +178,14 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //   - projects: each Project of project_ids, in that order, with what it
 //     received and stored of the range, its Logs a second over the range,
 //     all_days, its stored Logs and bytes of every day it keeps and the
-//     oldest of them (null with none), and last_log_at, the second its last
-//     Log arrived, by Ingest counts (null with none).
+//     oldest of them (null with none), last_log_at, the second its last
+//     Log arrived, by Ingest counts (null with none), and kept and
+//     dropped_by_transform, as the band's.
+//   - sources: by_logs, the Services and files of the Projects that sent the
+//     most Logs over the range's days, kept and dropped by the Log transform
+//     together, and by_bytes, those that kept the most bytes, at most
+//     maxSources each, with their Project, Logs kept, bytes and Logs
+//     dropped.
 //   - ingest_counts_since: the first second Ingest counts hold for any
 //     Project, so a range that starts before it isn't read as quiet.
 //   - has_logs: whether any of the Projects has Logs stored of any day, or
@@ -192,8 +207,8 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     their local copies' bytes, their newest day and passes_retention_on, the
 //     day Retention deletes the last of them (null with none).
 //
-// Received and rates are by second of arrival; stored is by the Logs' own
-// days. A request that isn't one answers 400 with {"error"}.
+// Received and rates are by second of arrival; kept, sources and stored are
+// by the Logs' own days. A request that isn't one answers 400 with {"error"}.
 func (h *OverviewHandler) Overview(c *fiber.Ctx) error {
 	var req overviewRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -256,6 +271,7 @@ type (
 		Rates             overviewRates     `json:"rates"`
 		Days              []overviewDay     `json:"days"`
 		Projects          []overviewProject `json:"projects"`
+		Sources           overviewSources   `json:"sources"`
 		Health            healthAnswer      `json:"health"`
 		Storage           *storageAnswer    `json:"storage,omitempty"`
 	}
@@ -263,6 +279,8 @@ type (
 		Received           overviewReceived `json:"received"`
 		UnreadableLogs     int64            `json:"unreadable_logs"`
 		OverloadedRequests int64            `json:"overloaded_requests"`
+		Kept               overviewKept     `json:"kept"`
+		DroppedByTransform int64            `json:"dropped_by_transform"`
 		Stored             overviewStored   `json:"stored"`
 	}
 	overviewReceived struct {
@@ -305,12 +323,14 @@ type (
 		ReceivedLogs int64  `json:"received_logs"`
 	}
 	overviewProject struct {
-		ProjectID     uint32           `json:"project_id"`
-		Received      overviewReceived `json:"received"`
-		Stored        overviewStored   `json:"stored"`
-		LogsPerSecond overviewRate     `json:"logs_per_second"`
-		AllDays       overviewAllDays  `json:"all_days"`
-		LastLogAt     *time.Time       `json:"last_log_at"`
+		ProjectID          uint32           `json:"project_id"`
+		Received           overviewReceived `json:"received"`
+		Stored             overviewStored   `json:"stored"`
+		LogsPerSecond      overviewRate     `json:"logs_per_second"`
+		AllDays            overviewAllDays  `json:"all_days"`
+		LastLogAt          *time.Time       `json:"last_log_at"`
+		Kept               overviewKept     `json:"kept"`
+		DroppedByTransform int64            `json:"dropped_by_transform"`
 	}
 	overviewAllDays struct {
 		Logs      int64   `json:"logs"`
@@ -423,6 +443,7 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 	for projectID, at := range d.arrivals {
 		a.Projects[byProject[projectID]].LastLogAt = &at
 	}
+	assembleSources(&a, byProject, d.sources)
 	a.Health = assembleHealth(q, d.health)
 	return a
 }

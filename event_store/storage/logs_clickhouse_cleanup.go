@@ -21,7 +21,7 @@ import (
 // logDayTables are the tables partitioned by (Project, day) that hold a
 // Project's Logs and what is counted from them. The Ingest counts' day is
 // the day of arrival, not the Logs' own.
-var logDayTables = []string{"logs", "log_minute_counts", "log_key_counts", "log_ingest_counts"}
+var logDayTables = []string{"logs", "log_minute_counts", "log_key_counts", "log_ingest_counts", "log_source_counts"}
 
 // cleanupTimeout bounds a deletion, or a pass of the disk limit, whose moves
 // of days to the bucket can take minutes each.

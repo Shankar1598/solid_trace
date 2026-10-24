@@ -5,9 +5,9 @@ import { ORG, PROJECT } from '../support/data'
 import { watchErrors } from '../support/screens'
 
 // The Overview: Logs sent to two Projects show in the band, the rates, the
-// daily Charts and the Projects table. Each run makes its own second
-// Project, and a quiet one whose last Log arrived two hours ago, and deletes
-// them after.
+// daily Charts, the Projects table and the biggest sources. Each run makes
+// its own second Project, and a quiet one whose last Log arrived two hours
+// ago, and deletes them after.
 
 const ingest = process.env.E2E_INGEST_URL ?? 'http://localhost:4000'
 // The stack's ClickHouse, over HTTP, where the quiet Project's Ingest count
@@ -18,6 +18,8 @@ const second = `Second ${Date.now()}`
 const secondSlug = second.toLowerCase().replace(' ', '-')
 const quiet = `Quiet ${Date.now()}`
 const quietSlug = quiet.toLowerCase().replace(' ', '-')
+// The second Project's Logs come from a file of their own, a source.
+const file = `overview-flow-${Date.now()}.log`
 
 const runner = (code: string) => execFileSync('mise', ['exec', '--', 'bin/rails', 'runner', code], {
   cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
@@ -46,7 +48,7 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
   const errors = watchErrors(page)
   const now = new Date().toISOString()
   for (const [slug, n] of [[PROJECT, 3], [secondSlug, 2]] as const) {
-    const logs = Array.from({ length: n }, (_, i) => ({ message: `overview flow ${i}`, time: now, service: 'overview-flow' }))
+    const logs = Array.from({ length: n }, (_, i) => ({ message: `overview flow ${i}`, time: now, service: 'overview-flow', file }))
     const sent = await request.post(`${ingest}/api/logs`, { headers: { Authorization: `Bearer ${keyOf(slug)}` }, data: logs })
     expect(sent.ok()).toBe(true)
   }
@@ -66,7 +68,9 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
     await expect(band.locator('[data-step="stored"]')).not.toContainText(/^Stored\s*0 B/)
   }).toPass({ timeout: 20_000 })
   await expect(band.getByText('Received', { exact: true })).toBeVisible()
+  await expect(band.locator('[data-step="kept"]')).toContainText(/Kept\s*\d/)
   await expect(band.getByText('Stored', { exact: true })).toBeVisible()
+  await expect(band.getByText('Dropped by the Log transform')).toBeVisible()
   await expect(band.getByText(/× smaller/)).toBeVisible()
   await expect(band.getByText('Turned away as overloaded')).toBeVisible()
 
@@ -90,6 +94,12 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
   }
   await expect(projects.locator(`[data-project="${quietSlug}"] [data-stale]`)).toContainText(/about 2 hours ago/)
 
+  // The second Project's file is a source, by Logs and by bytes.
+  const sources = page.locator('[data-section="sources"]')
+  const source = `${secondSlug}/overview-flow/${file}`
+  for (const ranked of ['by-logs', 'by-bytes']) {
+    await expect(sources.locator(`[data-sources="${ranked}"] [data-source="${source}"]`)).toContainText(second)
+  }
   // Health: both Projects' processing; a read of the Logs explorer shows in
   // its Project's read times once ClickHouse writes its query_log (every
   // few seconds).
@@ -113,6 +123,13 @@ test('Logs sent to two Projects show in the band and the rates, over Today and 7
   await expect(band.locator('[data-step="received"]')).toContainText('Logs')
   await expect(rates.locator('[data-rate="last-five-minutes"]')).toHaveCount(0)
   await expect(daily.locator('[data-chart="logs"] [data-chart-table] tbody tr')).toHaveCount(7)
+
+  // A source opens the Logs explorer on its Project, filtered to it.
+  await sources.locator(`[data-sources="by-logs"] [data-source="${source}"]`).getByRole('link').click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/projects/${secondSlug}/logs\\?.*q=`))
+  await expect(page.getByText('overview flow 1').first()).toBeVisible()
+  await expect(page.getByText(file).first()).toBeVisible()
+  await page.goBack()
 
   // A row opens its Project's Logs.
   await projects.locator(`[data-project="${secondSlug}"] td`).nth(1).click()
