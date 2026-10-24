@@ -24,6 +24,7 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
         unreadable_logs: 2, overloaded_requests: 0,
         kept: { logs: 38, bytes: 3000 }, dropped_by_transform: 0,
         stored: { logs: 38, bytes: 500, local_bytes: 500, bucket_bytes: 0, raw_bytes: 3500 },
+        stored_counted_bytes: 500,
       },
       rates: {
         seconds: 600_000,
@@ -58,7 +59,7 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
       projects: [ { project_id: @web.id, received_logs: 40 } ],
     } ]
     projects = [ {
-      project_id: @web.id, received: { logs: 40, bytes: 4000 }, stored: { logs: 38, bytes: 500 },
+      project_id: @web.id, received: { logs: 40, bytes: 4000 }, stored: { logs: 38, bytes: 500 }, stored_counted_bytes: 500,
       logs_per_second: { average: 0.001, peak: 12, peak_at: "2026-10-02T10:00:05Z" },
       all_days: { logs: 900, bytes: 9000, oldest_day: "2026-09-10" }, last_log_at: "2026-10-02T12:59:00Z",
       kept: { logs: 38, bytes: 3000 }, dropped_by_transform: 0,
