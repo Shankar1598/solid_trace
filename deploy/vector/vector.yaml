@@ -217,6 +217,29 @@ tests:
                 "container": "solid-trace-console-1"
               })
 
+  - name: a Console exception, one JSON line with its backtrace
+    inputs:
+      - insert_at: lines
+        type: vrl
+        source: |
+          .message = "{\"level\":\"FATAL\",\"message\":\"RuntimeError (Boom):\\n  \\napp/models/organization.rb:3:in 'boom'\"}"
+          .timestamp = t'2026-10-19T10:00:01.7Z'
+          .container_name = "solid-trace-console-1"
+          .label = {"com.docker.compose.project": "solid-trace", "com.docker.compose.service": "console"}
+          .stream = "stdout"
+    outputs:
+      - extract_from: lines
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(., {
+                "time": t'2026-10-19T10:00:01.7Z',
+                "level": "FATAL",
+                "message": "RuntimeError (Boom):\n  \napp/models/organization.rb:3:in 'boom'",
+                "service": "console",
+                "container": "solid-trace-console-1"
+              })
+
   - name: a Thruster JSON line from the jobs container
     inputs:
       - insert_at: lines
