@@ -1,15 +1,16 @@
+import { useEffect, useRef } from 'react'
 import { Link, usePage } from '@inertiajs/react'
 import { Building2, Users, Puzzle, UserCircle, KeyRound, Mail, Server } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SharedProps } from '@/types'
 
-export function SettingsSidebar() {
+function useSettingsItems() {
   const { url, props } = usePage<SharedProps>()
   const { current_org, current_user } = props
 
   if (!current_org) return null
 
-  const settingsItems = [
+  return [
     {
       group: 'Organization',
       items: [
@@ -69,6 +70,43 @@ export function SettingsSidebar() {
       ]
     }
   ]
+}
+
+/** Below md, where the sidebar is hidden: the same pages as a row of tabs that scrolls sideways. */
+export function SettingsTabs() {
+  const settingsItems = useSettingsItems()
+  const row = useRef<HTMLElement>(null)
+  // The current page's tab may sit past the edge: bring it into the row.
+  useEffect(() => {
+    row.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  })
+  if (!settingsItems) return null
+
+  return (
+    <nav ref={row} aria-label="Settings" className="md:hidden flex gap-1 overflow-x-auto border-b px-2 py-2">
+      {settingsItems.flatMap(group => group.items).map(item => (
+        <Link
+          key={item.href}
+          href={item.href}
+          aria-current={item.active ? 'page' : undefined}
+          className={cn(
+            "flex shrink-0 items-center gap-2 px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+            item.active
+              ? "bg-secondary text-primary"
+              : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+          )}
+        >
+          <item.icon className="h-4 w-4" />
+          {item.label}
+        </Link>
+      ))}
+    </nav>
+  )
+}
+
+export function SettingsSidebar() {
+  const settingsItems = useSettingsItems()
+  if (!settingsItems) return null
 
   return (
     <div className="w-64 flex-shrink-0 border-r bg-card h-full hidden md:block">

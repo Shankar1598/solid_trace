@@ -272,3 +272,19 @@ export function movedPlaces(charts: Place[], layout: { i: string; x: number; y: 
     return [{ id: chart.id, x: item.x, y: item.y, w: item.w, h: item.h }]
   })
 }
+
+/**
+ * The places stacked in one full-width column, in reading order (top to
+ * bottom, then left to right), each keeping its height: how a phone shows a
+ * Dashboard. Only shown, never saved.
+ */
+export function stackedPlaces<T extends { x: number; y: number; w: number; h: number }>(places: T[]): T[] {
+  let y = 0
+  return [...places]
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .map(p => {
+      const stacked = { ...p, x: 0, y, w: GRID_COLUMNS }
+      y += p.h
+      return stacked
+    })
+}
