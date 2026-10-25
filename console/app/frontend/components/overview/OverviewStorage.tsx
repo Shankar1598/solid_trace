@@ -23,7 +23,7 @@ export function OverviewStorage({ storage }: { storage: Storage }) {
   const share = storage.disk_limit_bytes > 0 ? storage.local_bytes / storage.disk_limit_bytes : null
   const old = storage.old_files
   return (
-    <div className="space-y-6">
+    <div className="grid gap-x-8 gap-y-4 lg:grid-cols-2">
       <div className="space-y-2" data-storage="local">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <p className="text-sm">
@@ -85,7 +85,7 @@ export function OverviewStorage({ storage }: { storage: Storage }) {
 function Line({ label, hook, children }: { label: string; hook: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap gap-x-3" data-storage={hook}>
-      <dt className="w-44 shrink-0 text-muted-foreground">{label}</dt>
+      <dt className="w-32 shrink-0 text-muted-foreground">{label}</dt>
       <dd className="min-w-0 flex-1 tabular-nums">{children}</dd>
     </div>
   )
