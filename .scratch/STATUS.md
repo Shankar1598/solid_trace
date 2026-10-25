@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-10-23
+Updated: 2026-10-25
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [GLOSSARY.md](../GLOSSARY.md).
 
@@ -15,6 +15,8 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 - Benchmark and probe runs must finish in under a minute on the dev box.
 
 ## Where things stand
+
+- **Security scan and fixes** (asked for by the user on 2026-10-24, released in v0.14.0): `bin/security` runs bundler-audit, brakeman, `bun audit` (high and up), govulncheck, osv-scanner on the VRL crate, gitleaks (false alarms in `.gitleaksignore`) and trivy on the images `deploy/docker-compose.yml` runs; `bin/security <check>` runs one. Fixed on `security/console-deps` and `security/event-store-deps`, merged into `main` (2026-10-25): every gem, JS and Go finding, Rails 8.1.4, brakeman 8.1 (its three new warnings fixed: HEAD on the invite and sign-up pages, the role update's mass assignment), Vite 6, Vitest 4, shadcn 4, Ruby 4.0.9 in Console's image, Fiber 2.52.13, gRPC 1.83.2, x/net 0.60.0, tokio 1.54.1, Vector 0.60.0. Left: unsafe-libyaml (unmaintained, no fix; behind VRL's `parse_yaml`, ignored in `event_store/vrl/rust/osv-scanner.toml`), Caddy 2.11.7's findings (no newer image), and the `json` default gem in Ruby's image (the bundle loads 2.21.2). Rails (857 runs), vitest (469), typecheck, the Vite build and the Go packages other than the root pass; the root Go package and the Playwright flows (Vite 6's dev server among them) are for the user.
 
 - **Overview** ([spec](overview/spec.md), [tickets](overview/issues/), 6 / 7, released in v0.13.0): planned with the user on 2026-10-24. Each Organization gets a page of what came in, what was kept and what it costs:
   - A band of Received → Kept → Stored leads the page; the user asked for it to look good.
