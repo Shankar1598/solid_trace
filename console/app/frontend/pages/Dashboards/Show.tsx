@@ -13,6 +13,7 @@ import { AutoRefreshPicker, useAutoRefresh } from '@/components/AutoRefreshPicke
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { HoverTimeProvider } from '@/components/charts/hoverTime'
 import { Button } from '@/components/ui/button'
 import { saveLayout } from '@/lib/dashboards/api'
 import {
@@ -173,6 +174,8 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
         {arranging && <p className="text-xs text-muted-foreground">Drag a chart by its title, or resize it from its bottom-right corner. Each change is saved.</p>}
 
         <TagMenuProvider onFilter={null} onSummarize={null} columns={NO_COLUMNS}>
+          {/* Hovering one time chart marks its time on the others. */}
+          <HoverTimeProvider>
           <div ref={containerRef}>
             {charts.length === 0 ? (
               <div className="border border-dashed p-10 text-center text-sm text-muted-foreground">
@@ -211,6 +214,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
               </ReactGridLayout>
             )}
           </div>
+          </HoverTimeProvider>
         </TagMenuProvider>
       </div>
 

@@ -144,6 +144,17 @@ test('a member builds a Dashboard from the explorer and the editor, ranges it, l
   await page.getByRole('menuitem', { name: 'Duplicate' }).click()
   await chartsRan(page, 3)
   await expect(card(page, 'Logs by level (copy)').getByRole('figure')).toHaveAttribute('aria-label', /^Bar chart of /)
+
+  // Hovering one time chart marks its time on the other, and on itself draws none; leaving it takes the mark away.
+  const marked = (title: string) => card(page, title).locator('.chart-marked-time')
+  const plot = await card(page, 'Logs by level').locator('.recharts-surface').first().boundingBox()
+  if (!plot) throw new Error('no plot')
+  await page.mouse.move(plot.x + plot.width * 0.6, plot.y + plot.height / 2, { steps: 5 })
+  await expect(marked('Logs by level (copy)')).toHaveCount(1)
+  await expect(marked('Logs by level')).toHaveCount(0)
+  await page.mouse.move(0, 0)
+  await expect(marked('Logs by level (copy)')).toHaveCount(0)
+
   await card(page, 'Logs by level').getByRole('button', { name: 'Menu for Logs by level' }).click()
   await page.getByRole('menuitem', { name: 'Open in explorer' }).click()
   await expect(page).toHaveURL(/\/projects\/solid-trace-project\/logs\?range=2d&mode=builder&q=.*level.*&viz=bars$/)
