@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useId, useMemo, useState } from 'react'
 import { format } from 'date-fns'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ReferenceArea, ReferenceLine, XAxis, YAxis } from 'recharts'
 import type { LabelListEntry, MouseHandlerDataParam } from 'recharts'
@@ -16,6 +16,7 @@ import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
 import type { LogTable } from '@/lib/logs/table'
 import { cn } from '@/lib/utils'
+import { useHoverTime } from './hoverTime'
 
 /**
  * The palette slot each series id wore in the last chart drawn in one place,
@@ -79,7 +80,9 @@ const PLOT_RIGHT_PX = 12
  * A Query's table drawn as a time series (line, area or bars), bars over
  * categories, or a single number. Columns that measure different things get
  * a panel each, over one time axis. The legend shows and hides series;
- * dragging across a time chart zooms to the bins dragged over. Used wherever
+ * dragging across a time chart zooms to the bins dragged over, and inside a
+ * HoverTimeProvider the time under the pointer is marked on the other time
+ * charts. Used wherever
  * a Query's table is charted, so it takes the table and options, never a
  * page's state.
  */
@@ -154,6 +157,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   const [hidden, setHidden] = useState<ReadonlySet<string>>(initialHidden)
   const [drag, setDrag] = useState<Drag | null>(null)
   const [measure, width] = useWidth()
+  const [markedTime, setHoverTime] = useHoverTime(useId())
   const config = useMemo<ChartConfig>(
     () => Object.fromEntries(model.series.map(s => [s.key, { label: s.name, color: s.color }])),
     [model],
@@ -230,6 +234,19 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     },
     onMouseLeave: () => setDrag(null),
   } : {}
+  // The time under the pointer, where its point is drawn, for the other charts to mark.
+  const events = time ? {
+    ...zoomEvents,
+    onMouseMove: (state: MouseHandlerDataParam) => {
+      zoomEvents.onMouseMove?.(state)
+      const i = index(state)
+      setHoverTime(i === null ? null : data[i].x as number)
+    },
+    onMouseLeave: () => {
+      zoomEvents.onMouseLeave?.()
+      setHoverTime(null)
+    },
+  } : zoomEvents
   const dragArea = drag && time && drag.start !== drag.end ? (() => {
     const low = model.points[Math.min(drag.start, drag.end)].x as number
     const high = (model.points[Math.max(drag.start, drag.end)].x as number) + binMs
@@ -248,6 +265,8 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
       zIndex={450}
     />
   )) : null
+
+  const markedLine = time && markedTime !== null ? <ReferenceLine x={markedTime} stroke="var(--muted-foreground)" strokeDasharray="3 3" className="chart-marked-time" /> : null
 
   const thresholdLine = threshold === undefined ? null : (
     <ReferenceLine
@@ -358,8 +377,8 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
                     content={<ChartTooltipContent indicator="line" valueFormatter={(value: number) => optionsText(value, options ?? {})} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.start ?? payload?.[0]?.payload?.x)} />}
                   />
                 )}
-                overlay={<>{partialAreas}{dragArea}{thresholdLine}</>}
-                events={zoomEvents}
+                overlay={<>{partialAreas}{dragArea}{thresholdLine}{markedLine}</>}
+                events={events}
               />
             </ChartContainer>
           </div>
