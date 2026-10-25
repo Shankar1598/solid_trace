@@ -6,7 +6,7 @@ import { watchErrors } from '../support/screens'
 
 // An admin invites someone new from the Members page and copies their invite
 // link from the Invited row. The invited person opens it in their own browser,
-// sets a name and password, and lands on the Organization's Issues; the link
+// sets a name and password, and lands on the Organization's Overview; the link
 // then stops working. Each run invites its own email, removes the member from
 // the page at the end, and deletes the user after.
 
@@ -55,7 +55,7 @@ test('an invited person joins through the link copied from their Invited row', a
   await invited.getByLabel('Password', { exact: true }).fill('invite-password-1')
   await invited.getByLabel('Confirm password').fill('invite-password-1')
   await invited.getByRole('button', { name: 'Set password and sign in' }).click()
-  await invited.waitForURL(url => url.pathname === `/${ORG}/issues`)
+  await invited.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
   // The link worked once, and only once.
   await invited.goto(link)

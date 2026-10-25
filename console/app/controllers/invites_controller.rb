@@ -36,7 +36,7 @@ class InvitesController < ApplicationController
     if @user.errors.none? && @user.update(params.permit(:name, :password, :password_confirmation))
       terminate_session
       start_new_session_for @user
-      redirect_to issues_path(org_slug: @organization.slug)
+      redirect_to overview_path(org_slug: @organization.slug)
     else
       redirect_to invite_path(params[:token], org: @organization.slug), inertia: { errors: @user.errors.to_hash }
     end

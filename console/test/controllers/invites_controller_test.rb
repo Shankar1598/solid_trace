@@ -39,13 +39,13 @@ class InvitesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "admin@example.com", response.parsed_body.dig("props", "invite", "signed_in_as")
   end
 
-  test "setting a password signs them in to the Organization's Issues, once" do
+  test "setting a password signs them in to the Organization's Overview, once" do
     path = @grace.invite_path(@organization)
 
     put path, params: { name: "Grace Hopper", password: "new-password", password_confirmation: "new-password" },
       as: :json, headers: inertia
 
-    assert_redirected_to issues_path(org_slug: @organization.slug)
+    assert_redirected_to overview_path(org_slug: @organization.slug)
     @grace.reload
     assert_not @grace.invited?
     assert_equal "Grace Hopper", @grace.name

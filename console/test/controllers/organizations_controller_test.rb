@@ -35,7 +35,7 @@ class OrganizationsControllerTest < ActionDispatch::IntegrationTest
 
     get root_url
 
-    assert_redirected_to issues_url(org_slug: organization.slug)
+    assert_redirected_to overview_url(org_slug: organization.slug)
   end
 
   test "signing up leads to making an Organization, with the welcome kept" do
@@ -63,7 +63,7 @@ class OrganizationsControllerTest < ActionDispatch::IntegrationTest
     post organizations_url, params: { organization: { name: "Acme" } }, as: :json, headers: inertia
 
     organization = Organization.find_by!(slug: "acme")
-    assert_redirected_to issues_url(org_slug: "acme")
+    assert_redirected_to overview_url(org_slug: "acme")
     assert organization.organization_users.find_by!(user: @user).admin?
   end
 

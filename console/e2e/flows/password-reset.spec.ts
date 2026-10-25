@@ -7,7 +7,7 @@ import { watchErrors } from '../support/screens'
 // "Forgot your password?" from the sign-in page: ask for a link, open it,
 // choose a new password, and sign in with it. The link comes from rails
 // runner, as the flow can't read the email. Each run makes its own user, a
-// member of the seed Organization so that signing in lands on its Issues.
+// member of the seed Organization so that signing in lands on its Overview.
 
 const email = `flow-reset-${Date.now()}@solidtrace.local`
 
@@ -54,6 +54,6 @@ test('a forgotten password is reset through its link, and the new one signs in',
   await page.fill('input[type=email]', email)
   await page.fill('input[type=password]', 'new-password-1')
   await page.click('button[type=submit]')
-  await page.waitForURL(url => url.pathname === `/${ORG}/issues`)
+  await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
   expect(errors).toEqual([])
 })
