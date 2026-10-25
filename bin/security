@@ -15,7 +15,8 @@
 #   secrets  Keys and passwords in git's history (gitleaks; .gitleaksignore
 #            lists the false alarms)
 #   images   The images deploy/docker-compose.yml runs, at the latest release,
-#            for fixable high and critical CVEs (trivy)
+#            for fixable high and critical CVEs (trivy; .trivyignore.yaml lists
+#            the accepted ones, each until a date)
 #
 # The tools not in console's Gemfile run through mise at the versions below,
 # so mise.toml stays as it is.
@@ -49,7 +50,7 @@ check_images() {
     sed 's/\${SOLIDTRACE_VERSION:-dev}/latest/'); do
     echo "== $image"
     mise x "trivy@$TRIVY" -- trivy image --quiet --scanners vuln --severity HIGH,CRITICAL \
-      --ignore-unfixed --exit-code 1 "$image" || status=1
+      --ignore-unfixed --ignorefile "$root/.trivyignore.yaml" --exit-code 1 "$image" || status=1
   done
   return $status
 }
