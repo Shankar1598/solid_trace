@@ -32,7 +32,7 @@ class RegistrationsController < ApplicationController
   def require_sign_up_allowed
     return if InstanceSetting.current.sign_up_allowed?
 
-    if request.get?
+    if request.get? || request.head?
       render inertia: "Registrations/New", props: { closed: CLOSED }
     else
       redirect_to new_registration_path

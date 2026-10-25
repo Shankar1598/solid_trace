@@ -1,0 +1,7 @@
+# False alarms bin/security's secrets check skips, as gitleaks fingerprints.
+# The test's stand-in key, 0123456789…
+92ae86779aff27e6fd842c6398a7063c209df341:console/test/lib/tasks/meta_organization_task_test.rb:generic-api-key:9
+# dev_data's made-up Project key
+3219353edbb753250942338c29b1a6e076f94c73:console/lib/tasks/dev_data.rake:generic-api-key:34
+# Axiom's docs example, "Bearer API_TOKEN"
+b7c2dedf6becb56df6ff65087435b46347844018:.scratch/logging-old/research/research-protocols.md:curl-auth-header:28
