@@ -48,7 +48,7 @@ class InvitesController < ApplicationController
       @user = User.find_by_token_for(:invite, params[:token].to_s)
       return if @user&.invited? && @organization&.organization_users&.exists?(user: @user)
 
-      if request.get?
+      if request.get? || request.head?
         render inertia: "Invites/Edit", props: { expired: EXPIRED }
       else
         redirect_to invite_path(params[:token], org: params[:org])

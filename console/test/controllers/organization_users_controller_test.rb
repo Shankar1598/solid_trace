@@ -111,6 +111,18 @@ class OrganizationUsersControllerTest < ActionDispatch::IntegrationTest
     assert_equal "You are not authorized to perform this action.", flash[:alert]
   end
 
+  test "an admin changes a member's role, and nothing else about them" do
+    sign_in_as(@admin)
+    membership = @organization.organization_users.find_by!(user: @member)
+
+    patch organization_user_url(membership, org_slug: @organization.slug),
+      params: { organization_user: { role: "admin", organization_id: create(:organization).id } }
+
+    assert_equal "Member updated successfully", flash[:notice]
+    assert membership.reload.admin?
+    assert_equal @organization, membership.organization
+  end
+
   private
 
   def members_page
