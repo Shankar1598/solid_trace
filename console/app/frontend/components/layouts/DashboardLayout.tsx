@@ -1,4 +1,5 @@
 import { Sidebar } from '../Sidebar'
+import { MobileNav } from '../MobileNav'
 import FlashToasts from '../FlashToasts'
 import { CommandPalette } from '../CommandPalette'
 import { useShortcutListener } from '../useShortcut'
@@ -16,7 +17,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         <FlashToasts />
         <Sidebar className="hidden md:flex flex-shrink-0" />
 
-        <div className="flex-1 flex flex-col min-w-0">
+        <MobileNav />
+
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <main className="flex-1 overflow-y-auto p-4">
             {children}
           </main>

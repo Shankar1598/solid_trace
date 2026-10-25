@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   chosenText, explorerHref, fieldSelectValues, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
-  parametersOfChart, rangeOfSearch, searchOfRangeAndValues, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
+  parametersOfChart, rangeOfSearch, searchOfRangeAndValues, stackedPlaces, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
   withSource,
   type DashboardFilter,
 } from './dashboard'
@@ -153,5 +153,20 @@ describe('a layout change', () => {
     const charts = [{ id: 1, x: 0, y: 0, w: 6, h: 4 }, { id: 2, x: 6, y: 0, w: 6, h: 4 }]
     const layout = [{ i: '1', x: 0, y: 0, w: 6, h: 4 }, { i: '2', x: 0, y: 4, w: 12, h: 4 }, { i: '9', x: 0, y: 0, w: 1, h: 1 }]
     expect(movedPlaces(charts, layout)).toEqual([{ id: 2, x: 0, y: 4, w: 12, h: 4 }])
+  })
+})
+
+describe('stackedPlaces', () => {
+  it('stacks the cards in one full-width column in reading order, keeping their heights', () => {
+    const places = [
+      { i: 'c', x: 0, y: 4, w: 12, h: 2 },
+      { i: 'b', x: 6, y: 0, w: 6, h: 3 },
+      { i: 'a', x: 0, y: 0, w: 6, h: 4 },
+    ]
+    expect(stackedPlaces(places)).toEqual([
+      { i: 'a', x: 0, y: 0, w: 12, h: 4 },
+      { i: 'b', x: 0, y: 4, w: 12, h: 3 },
+      { i: 'c', x: 0, y: 7, w: 12, h: 2 },
+    ])
   })
 })

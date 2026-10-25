@@ -85,7 +85,7 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
       <PageHeader title="Issues" />
       <div className="flex flex-col h-full space-y-4">
 
-        <div className="flex items-center gap-2 w-full">
+        <div className="flex flex-wrap items-center gap-2 w-full">
           <div className="flex items-center border">
             <Select
               value={filters.project_id}
@@ -117,7 +117,8 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
             </Select>
           </div>
 
-          <div className="flex-1 relative">
+          {/* On a phone the search takes a line of its own, under the filters. */}
+          <div className="relative order-last basis-full sm:order-none sm:basis-0 sm:flex-1">
             <Input
               className="pl-2 text-sm"
               placeholder="Search Issues…"
@@ -170,9 +171,10 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                 </div>
               </TableHead>
               <TableHead>Issue</TableHead>
-              <TableHead className="text-right px-4 w-32">Last seen</TableHead>
-              <TableHead className="text-right px-4 w-32">Age</TableHead>
-              <TableHead className="text-right px-4 w-24">Events</TableHead>
+              {/* A phone keeps the Issue and when it was last seen. */}
+              <TableHead className="text-right px-4 w-24 sm:w-32">Last seen</TableHead>
+              <TableHead className="hidden sm:table-cell text-right px-4 w-32">Age</TableHead>
+              <TableHead className="hidden sm:table-cell text-right px-4 w-24">Events</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -201,17 +203,17 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                     >
                       <div className="flex flex-col min-w-0">
                         <div className="flex items-baseline gap-2 mb-1">
-                          <h3 className="font-semibold truncate text-foreground group-hover:underline">
+                          <h3 className="min-w-0 font-semibold truncate text-foreground group-hover:underline">
                             {issue.title}
                           </h3>
                           <span className="font-mono text-xs text-muted-foreground truncate font-normal">
                             {issue.culprit}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                           <Badge className="font-mono">{issue.kind || 'error'}</Badge>
                           {issue.status === 'resolved' && <Badge variant="ok" dot>Resolved</Badge>}
-                          <span>{issue.project.name}</span>
+                          <span className="truncate">{issue.project.name}</span>
                         </div>
                       </div>
                     </Link>
@@ -219,10 +221,10 @@ export default function IssuesIndex({ issues, pagination, projects, filters }: I
                   <TableCell className="text-right px-4 py-3 text-sm text-foreground/80 tabular-nums">
                     {formatDistanceToNow(new Date(issue.last_seen_at || issue.created_at), { addSuffix: false }).replace('about ', '')}
                   </TableCell>
-                  <TableCell className="text-right px-4 py-3 text-sm text-muted-foreground tabular-nums">
+                  <TableCell className="hidden sm:table-cell text-right px-4 py-3 text-sm text-muted-foreground tabular-nums">
                     {issueAge(issue)}
                   </TableCell>
-                  <TableCell className="text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
+                  <TableCell className="hidden sm:table-cell text-right px-4 py-3 text-sm font-medium text-foreground font-mono">
                     {new Intl.NumberFormat('en-US', { notation: "compact" }).format(issue.events_count)}
                   </TableCell>
                 </TableRow>
