@@ -1,0 +1,24 @@
+# Findings bin/security's images check accepts for now, each with why and
+# until when. Past expired_at, trivy reports it again: look for a newer
+# release that fixes it, then bump the date or drop the entry.
+vulnerabilities:
+  # Thruster 0.1.27, the newest, is built with Go 1.27.1 and x/net 0.59.0.
+  # Caddy talks to it over HTTP/1.1 on loopback and it does no TLS, so these
+  # HTTP/2 and TLS defects aren't reachable; the Range one is a slowdown at
+  # worst. A Thruster built on Go 1.27.3 clears them.
+  - id: CVE-2026-78669
+    paths: ["usr/local/bundle/ruby/*/gems/thruster-*/exe/*/thrust"]
+    statement: HTTP/2 SETTINGS flood; Thruster serves HTTP/1.1 behind Caddy
+    expired_at: 2026-11-30
+  - id: CVE-2026-78667
+    paths: ["usr/local/bundle/ruby/*/gems/thruster-*/exe/*/thrust"]
+    statement: Range header DoS; a slowdown at worst, behind Caddy
+    expired_at: 2026-11-30
+  - id: CVE-2026-111943
+    paths: ["usr/local/bundle/ruby/*/gems/thruster-*/exe/*/thrust"]
+    statement: x509 intermediate verification; Thruster makes no outgoing TLS
+    expired_at: 2026-11-30
+  - id: CVE-2026-97031
+    paths: ["usr/local/bundle/ruby/*/gems/thruster-*/exe/*/thrust"]
+    statement: TLS ECH DoS; Thruster does no TLS here
+    expired_at: 2026-11-30
