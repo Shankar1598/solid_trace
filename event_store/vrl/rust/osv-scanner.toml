@@ -1,0 +1,11 @@
+# The advisories osv-scanner (bin/security rust) leaves out, and why.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0449"
+reason = """
+unsafe-libyaml is unmaintained, with no fixed release. vrl 0.37 depends on \
+serde_yaml_ng, and through it unsafe-libyaml, unconditionally: no feature \
+drops it. It backs VRL's parse_yaml function and vrl's build script, which \
+parses ua-parser's bundled regexes. Revisit when vrl moves to a maintained \
+YAML parser.\
+"""
