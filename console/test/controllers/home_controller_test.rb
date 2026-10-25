@@ -2,8 +2,9 @@
 
 require "test_helper"
 
-# `/` opens the Organization the user last opened, while they are still in it,
-# and otherwise their first Organization by name.
+# `/`, where signing in lands, opens the Overview of the Organization the user
+# last opened, while they are still in it, and otherwise of their first
+# Organization by name.
 class HomeControllerTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
 
@@ -21,7 +22,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
 
     get root_url
 
-    assert_redirected_to issues_url(org_slug: @meta.slug)
+    assert_redirected_to overview_url(org_slug: @meta.slug)
   end
 
   test "any page of an Organization counts as opening it" do
@@ -30,7 +31,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
 
     get root_url
 
-    assert_redirected_to issues_url(org_slug: @meta.slug)
+    assert_redirected_to overview_url(org_slug: @meta.slug)
   end
 
   test "a JSON request under an Organization doesn't make it the last used" do
@@ -40,7 +41,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     get root_url
 
-    assert_redirected_to issues_url(org_slug: @acme.slug)
+    assert_redirected_to overview_url(org_slug: @acme.slug)
   end
 
   test "home opens the first Organization by name before any is opened" do
@@ -49,7 +50,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
 
     get root_url
 
-    assert_redirected_to issues_url(org_slug: @acme.slug)
+    assert_redirected_to overview_url(org_slug: @acme.slug)
   end
 
   test "a user removed from the last used Organization is sent to their first by name" do
@@ -58,7 +59,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
 
     get root_url
 
-    assert_redirected_to issues_url(org_slug: @acme.slug)
+    assert_redirected_to overview_url(org_slug: @acme.slug)
   end
 
   test "a user whose last used Organization was deleted is sent to their first by name" do
@@ -68,7 +69,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
 
     get root_url
 
-    assert_redirected_to issues_url(org_slug: @acme.slug)
+    assert_redirected_to overview_url(org_slug: @acme.slug)
   end
 
   test "every Organization page shares the user's Organizations by name, in any case, and only theirs" do
@@ -92,7 +93,7 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
     get root_url
 
-    assert_redirected_to issues_url(org_slug: @meta.slug)
+    assert_redirected_to overview_url(org_slug: @meta.slug)
   end
 
   private

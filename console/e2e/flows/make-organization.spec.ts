@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { watchErrors } from '../support/screens'
 
 // Someone who signs up is in no Organization, so they make one, become its
-// admin and land on its Issues. Each run opens sign-up, which the dev
+// admin and land on its Overview. Each run opens sign-up, which the dev
 // database's seeded users would otherwise close, signs up its own user and
 // deletes it, with its Organization, after.
 
@@ -33,7 +33,7 @@ test.afterAll(() => {
     `User.where(email: ${JSON.stringify(email)}).each { |user| OrganizationUser.where(user: user).delete_all; user.destroy! }`)
 })
 
-test('signing up leads to making an Organization, and its Issues', async ({ page }) => {
+test('signing up leads to making an Organization, and its Overview', async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto('/registration/new')
   await page.getByLabel('Name').fill('Flow Sign-up')
@@ -49,7 +49,7 @@ test('signing up leads to making an Organization, and its Issues', async ({ page
   await page.getByLabel('Name').fill(name)
   await page.getByRole('button', { name: 'Make Organization' }).click()
 
-  await page.waitForURL(url => url.pathname === `/${slug}/issues`)
+  await page.waitForURL(url => url.pathname === `/${slug}/overview`)
   await expect(page.getByText(`${name} is made. Add a Project to send it Events and Logs.`)).toBeVisible()
   expect(errors).toEqual([])
 })
