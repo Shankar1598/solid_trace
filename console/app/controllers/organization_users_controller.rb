@@ -58,7 +58,7 @@ class OrganizationUsersController < ApplicationController
     @organization_user = @current_org.organization_users.find(params[:id])
     authorize @organization_user
 
-    if @organization_user.update(update_params)
+    if @organization_user.update(role: role_param)
       redirect_to organization_users_path(org_slug: @current_org.slug), notice: "Member updated successfully"
     else
       redirect_to organization_users_path(org_slug: @current_org.slug), alert: @organization_user.errors.full_messages.first
@@ -89,7 +89,8 @@ class OrganizationUsersController < ApplicationController
     params.require(:member).permit(:email, :name)
   end
 
-  def update_params
-    params.require(:organization_user).permit(:role)
+  # The only thing an admin changes on a member is their role
+  def role_param
+    params.require(:organization_user).require(:role)
   end
 end
