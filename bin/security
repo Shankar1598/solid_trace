@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Scans every part of SolidTrace for known security defects, locally. Each
+# check runs even when one before it fails, and a summary at the end says
+# which found something; it exits non-zero if any did.
+#
+#   bin/security                    # every check
+#   bin/security go rust            # only the checks named
+#
+# The checks:
+#   gems     Console's Ruby gems with known CVEs (bundler-audit)
+#   rails    Console's Rails code, statically (brakeman)
+#   js       Console's JS packages with known CVEs (bun audit, high and up)
+#   go       EventStore's Go modules whose defects its code reaches (govulncheck)
+#   rust     The VRL crate's dependencies with known CVEs (osv-scanner)
+#   secrets  Keys and passwords in git's history (gitleaks; .gitleaksignore
+#            lists the false alarms)
+#   images   The images deploy/docker-compose.yml runs, at the latest release,
+#            for fixable high and critical CVEs (trivy)
+#
+# The tools not in console's Gemfile run through mise at the versions below,
+# so mise.toml stays as it is.
+
+set -uo pipefail
+
+GOVULNCHECK=1.9.0
+OSV_SCANNER=2.7.0
+GITLEAKS=8.30.1
+TRIVY=0.76.1
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+all=(gems rails js go rust secrets images)
+
+check_gems() { (cd "$root/console" && bin/bundler-audit check --update); }
+check_rails() { (cd "$root/console" && bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error); }
+check_js() { (cd "$root/console" && bun audit --audit-level=high); }
+check_go() {
+  (cd "$root/event_store" && mise x "go:golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK" -- govulncheck ./...)
+}
+check_rust() {
+  mise x "osv-scanner@$OSV_SCANNER" -- osv-scanner scan source -L "$root/event_store/vrl/rust/Cargo.lock"
+}
+check_secrets() { mise x "gitleaks@$GITLEAKS" -- gitleaks git --no-banner --redact "$root"; }
+
+# Console's and EventStore's images are tagged by release; latest is the
+# newest one, which is what a VM upgrades to.
+check_images() {
+  local image status=0
+  for image in $(grep -oE 'image: *[^ ]+' "$root/deploy/docker-compose.yml" | awk '{print $2}' |
+    sed 's/\${SOLIDTRACE_VERSION:-dev}/latest/'); do
+    echo "== $image"
+    mise x "trivy@$TRIVY" -- trivy image --quiet --scanners vuln --severity HIGH,CRITICAL \
+      --ignore-unfixed --exit-code 1 "$image" || status=1
+  done
+  return $status
+}
+
+checks=("$@")
+[ ${#checks[@]} -eq 0 ] && checks=("${all[@]}")
+for check in "${checks[@]}"; do
+  if ! declare -F "check_$check" >/dev/null; then
+    echo "Unknown check: $check (one of: ${all[*]})" >&2
+    exit 2
+  fi
+done
+
+passed=()
+failed=()
+for check in "${checks[@]}"; do
+  printf '\n\033[1m### %s\033[0m\n' "$check"
+  if "check_$check"; then passed+=("$check"); else failed+=("$check"); fi
+done
+
+printf '\n\033[1m### Summary\033[0m\n'
+for check in "${passed[@]}"; do printf '  \033[32mpass\033[0m  %s\n' "$check"; done
+for check in "${failed[@]}"; do printf '  \033[31mFAIL\033[0m  %s\n' "$check"; done
+[ ${#failed[@]} -eq 0 ]
