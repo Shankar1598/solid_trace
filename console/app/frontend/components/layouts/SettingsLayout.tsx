@@ -1,5 +1,5 @@
 import DashboardLayout from './DashboardLayout'
-import { SettingsSidebar } from '../SettingsSidebar'
+import { SettingsSidebar, SettingsTabs } from '../SettingsSidebar'
 import { cn } from '@/lib/utils'
 
 interface SettingsLayoutProps {
@@ -10,9 +10,11 @@ interface SettingsLayoutProps {
 export default function SettingsLayout({ children, className }: SettingsLayoutProps) {
   return (
     <DashboardLayout>
-      <div className="flex h-screen -m-4 overflow-hidden">
+      {/* A phone scrolls the whole page under a row of tabs; wider, the sidebar stays put and only the page scrolls. */}
+      <div className="flex flex-col md:flex-row -m-4 md:h-screen md:overflow-hidden">
         <SettingsSidebar />
-        <main className={cn("flex-1 overflow-y-auto", className)}>
+        <SettingsTabs />
+        <main className={cn("flex-1 md:overflow-y-auto", className)}>
           {/* The same padding as every other page, so the title sits where theirs does. */}
           <div className="max-w-4xl p-4 pb-20">
             {children}

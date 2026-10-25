@@ -16,7 +16,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { saveLayout } from '@/lib/dashboards/api'
 import {
-  GRID_COLUMNS, filterValues, filterValuesOfSearch, movedPlaces, rangeOfSearch, searchOfRangeAndValues,
+  GRID_COLUMNS, filterValues, filterValuesOfSearch, movedPlaces, rangeOfSearch, searchOfRangeAndValues, stackedPlaces,
   type AutoRefresh, type Dashboard, type DashboardChart, type FilterValues, type Place,
 } from '@/lib/dashboards/dashboard'
 import { createFetchQueue } from '@/lib/dashboards/fetchQueue'
@@ -35,6 +35,8 @@ import { FiltersDialog } from './components/FiltersDialog'
 /** A grid row's height and the gap between cards, in px. */
 const ROW_PX = 64
 const GAP_PX = 12
+/** Below this grid width (a phone) the cards stack in one column. */
+const STACK_BELOW_PX = 640
 const NO_COLUMNS = { shown: [], toggle: () => {} }
 
 interface DashboardsShowProps {
@@ -116,6 +118,10 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
     })
   }
   const { width, containerRef, mounted } = useContainerWidth()
+  // A phone shows the cards one under another and can't move them: the
+  // stacked places are never saved.
+  const stacked = width < STACK_BELOW_PX
+  const arranging = editing && !stacked
 
   const copyLink = (kind: LinkKind) => {
     const shown: TimeRange = kind === 'shown' && range.kind === 'relative' ? { kind: 'absolute', from: run.from, to: run.to } : range
@@ -152,7 +158,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           {editing ? (
             <Button onClick={() => setEditing(false)}><Check className="h-3.5 w-3.5" /> Done</Button>
           ) : (
-            <Button variant="outline" onClick={() => setEditing(true)} disabled={charts.length === 0}><Pencil className="h-3.5 w-3.5" /> Edit layout</Button>
+            <Button variant="outline" onClick={() => setEditing(true)} disabled={charts.length === 0 || stacked}><Pencil className="h-3.5 w-3.5" /> Edit layout</Button>
           )}
           <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Dashboard settings" onClick={() => setSettings(true)}>
             <Settings className="h-4 w-4" />
@@ -164,7 +170,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
         onChange={pickValues} onEdit={() => setFiltersOpen(true)}
       />
       <div className="flex flex-col gap-3">
-        {editing && <p className="text-xs text-muted-foreground">Drag a chart by its title, or resize it from its bottom-right corner. Each change is saved.</p>}
+        {arranging && <p className="text-xs text-muted-foreground">Drag a chart by its title, or resize it from its bottom-right corner. Each change is saved.</p>}
 
         <TagMenuProvider onFilter={null} onSummarize={null} columns={NO_COLUMNS}>
           <div ref={containerRef}>
@@ -174,11 +180,11 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
               </div>
             ) : mounted && (
               <ReactGridLayout
-                layout={layout}
+                layout={stacked ? stackedPlaces(layout) : layout}
                 width={width}
                 gridConfig={{ cols: GRID_COLUMNS, rowHeight: ROW_PX, margin: [GAP_PX, GAP_PX], containerPadding: [0, 0] }}
-                dragConfig={{ enabled: editing, handle: '.dashboard-chart-handle' }}
-                resizeConfig={{ enabled: editing }}
+                dragConfig={{ enabled: arranging, handle: '.dashboard-chart-handle' }}
+                resizeConfig={{ enabled: arranging }}
                 onDragStop={persist}
                 onResizeStop={persist}
               >
@@ -194,7 +200,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                       filters={dashboard.filters}
                       values={values}
                       queue={queue}
-                      editing={editing}
+                      editing={arranging}
                       onRunning={onRunning}
                       onEdit={() => setEditor({ chart })}
                       onDuplicate={() => duplicate(chart)}
