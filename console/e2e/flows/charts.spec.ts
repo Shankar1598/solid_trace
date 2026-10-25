@@ -280,9 +280,11 @@ test('a count by an Attribute is charted, over time and as bars', async ({ page 
 
 /** Each legend entry's swatch colour, by its name. */
 async function legendColors(page: Page): Promise<Record<string, string>> {
-  return Object.fromEntries(await legend(page).evaluateAll(buttons => buttons.map(b => [
-    (b as HTMLElement).innerText.trim(), getComputedStyle(b.querySelector('span')!).backgroundColor,
-  ])))
+  // A key is a block or stroke of colour, or a dashed stroke for a series over the right value axis alone.
+  return Object.fromEntries(await legend(page).evaluateAll(buttons => buttons.map(b => {
+    const key = getComputedStyle(b.querySelector('span')!)
+    return [(b as HTMLElement).innerText.trim(), key.backgroundColor === 'rgba(0, 0, 0, 0)' ? key.borderTopColor : key.backgroundColor]
+  })))
 }
 
 test('a series keeps its colour when a filter takes another away', async ({ page }) => {
@@ -299,14 +301,30 @@ test('a series keeps its colour when a filter takes another away', async ({ page
   expect(errors).toEqual([])
 })
 
-test('columns that measure different things get a panel each over one time axis', async ({ page }) => {
+test('two columns that measure different things share a plot over a value axis each', async ({ page }) => {
   const errors = watchErrors(page)
   await openLogs(page, last24h('query'))
   await runQuery(page, `${SOURCE}\n| summarize avg(duration_ms), count() by bin_auto(time), service`)
+  await expect(chart(page)).toHaveAttribute('aria-label', /with avg_duration_ms on the left axis and count_ on the right$/)
+  await expect(page.locator('[data-chart-axis]')).toHaveText(['avg_duration_ms', 'count_'])
+  await expect(chart(page).locator('.recharts-surface')).toHaveCount(1)
+  await expect(chart(page).locator('.recharts-yAxis')).toHaveCount(2)
+  // A service wears one colour over both axes, with one legend entry; its count is dashed.
+  // Only some services log a duration, so fewer solid lines than dashed.
+  expect((await legend(page).allInnerTexts()).sort()).toEqual(['api', 'billing', 'web', 'worker'])
+  await expect(chart(page).locator(`.recharts-line-curve[stroke-dasharray="5 3"]`)).toHaveCount(4)
+  await expect(chart(page).locator(`.recharts-line-curve:not([stroke-dasharray])`)).not.toHaveCount(0)
+
+  // Bars over two axes would hide each other, so they get a panel each over one time axis.
+  await viz(page, 'Bars').click()
   await expect(page.locator('[data-chart-panel]')).toHaveText(['avg_duration_ms', 'count_'])
   await expect(chart(page).locator('.recharts-surface')).toHaveCount(2)
-  // A service wears one colour in both panels, with one legend entry.
-  expect((await legend(page).allInnerTexts()).sort()).toEqual(['api', 'billing', 'web', 'worker'])
+
+  // Three units are more than two axes hold: a panel each.
+  await viz(page, 'Line').click()
+  await runQuery(page, `${SOURCE}\n| summarize avg(duration_ms), count(), rate() by bin_auto(time)`)
+  await expect(page.locator('[data-chart-panel]')).toHaveCount(3)
+  await expect(page.locator('[data-chart-axis]')).toHaveCount(0)
 
   await runQuery(page, `${SOURCE}\n| summarize min(duration_ms), avg(duration_ms), max(duration_ms) by bin_auto(time)`)
   await expect(page.locator('[data-chart-panel]')).toHaveCount(0)
