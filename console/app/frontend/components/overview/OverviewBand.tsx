@@ -15,8 +15,6 @@ export interface BandStep {
   color: string
   /** Hatched slices right after the step's block, on the same scale, such as what was dropped before it. */
   slices?: BandSlice[]
-  /** Beside the step's block, in large type, such as the ratio. */
-  aside?: ReactNode
 }
 
 /** A hatched slice of the band: Logs dropped between two steps. */
@@ -53,14 +51,7 @@ export function bandSteps(band: NonNullable<Overview['band']>): BandStep[] {
         },
       ].filter(slice => slice.bytes > 0),
     },
-    {
-      key: 'stored', name: 'Stored', bytes: band.stored.bytes, logs: band.stored.logs, color: INK.full,
-      aside: band.ratio !== null && (
-        <span className="text-2xl font-semibold tabular-nums tracking-tight" title="Kept bytes over stored bytes">
-          {band.ratio.toLocaleString('en', { maximumFractionDigits: 1 })}× smaller
-        </span>
-      ),
-    },
+    { key: 'stored', name: 'Stored', bytes: band.stored.bytes, logs: band.stored.logs, color: INK.full },
   ]
 }
 
@@ -71,7 +62,8 @@ function hatch(color: string): string {
 /**
  * The band: what arrived, what Log processing kept and what ClickHouse
  * holds, a row per step, each as wide as its bytes, so drops and compression
- * show before a number is read. It fills once on first load, unless the
+ * show before a number is read, with the compression ratio beside them as
+ * the page's one large number. It fills once on first load, unless the
  * reader prefers reduced motion.
  */
 export function OverviewBand({ band }: { band: NonNullable<Overview['band']> }) {
@@ -86,44 +78,53 @@ export function OverviewBand({ band }: { band: NonNullable<Overview['band']> }) 
   const fill = 'h-full shrink-0 transition-[width] duration-700 ease-out motion-reduce:transition-none'
 
   return (
-    <div className="space-y-6">
-      <ol className="space-y-5" aria-label="Received to Kept to Stored">
-        {steps.map(step => (
-          <li key={step.key} data-step={step.key} className="space-y-1.5">
-            <div className="text-sm font-medium">{step.name}</div>
-            <div className="flex h-8">
-              <div
-                className={fill}
-                style={{ width: `${filled ? width(step.bytes) : 0}%`, background: step.color }}
-                role="img"
-                aria-label={`${step.name}: ${bytesText(step.bytes)}`}
-              />
-              {step.slices?.map(slice => (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <ol className="min-w-0 flex-1 space-y-2" aria-label="Received to Kept to Stored">
+          {steps.map(step => (
+            <li key={step.key} data-step={step.key} className="grid grid-cols-[4rem_minmax(0,1fr)_6.5rem] items-center gap-3">
+              <div className="text-sm font-medium">{step.name}</div>
+              <div className="flex h-5">
                 <div
-                  key={slice.key}
-                  data-slice={slice.key}
-                  className={`${fill} border-y border-r`}
-                  style={{ width: `${filled ? width(slice.bytes) : 0}%`, background: hatch(slice.color), borderColor: slice.color }}
+                  className={fill}
+                  style={{ width: `${filled ? width(step.bytes) : 0}%`, background: step.color }}
                   role="img"
-                  aria-label={`Dropped: ${slice.label} Logs`}
-                  title={`Dropped: ${slice.label} Logs, as wide as their share of the Logs received`}
+                  aria-label={`${step.name}: ${bytesText(step.bytes)}`}
                 />
-              ))}
+                {step.slices?.map(slice => (
+                  <div
+                    key={slice.key}
+                    data-slice={slice.key}
+                    className={`${fill} border-y border-r`}
+                    style={{ width: `${filled ? width(slice.bytes) : 0}%`, background: hatch(slice.color), borderColor: slice.color }}
+                    role="img"
+                    aria-label={`Dropped: ${slice.label} Logs`}
+                    title={`Dropped: ${slice.label} Logs, as wide as their share of the Logs received`}
+                  />
+                ))}
+              </div>
+              <div className="text-right leading-tight">
+                <div className="text-base font-semibold tabular-nums tracking-tight" title={`${valueText(step.bytes)} bytes`}>
+                  {bytesText(step.bytes)}
+                </div>
+                <div className="text-xs tabular-nums text-muted-foreground" title={`${valueText(step.logs)} Logs`}>
+                  {statText(step.logs)} Logs
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+        {band.ratio !== null && (
+          <div className="shrink-0 sm:w-36 sm:border-l sm:pl-4" data-band="ratio">
+            <div className="text-4xl font-semibold tabular-nums tracking-tight" title="Kept bytes over stored bytes">
+              {band.ratio.toLocaleString('en', { maximumFractionDigits: 1 })}×<span className="sr-only"> smaller</span>
             </div>
-            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-              <span className="text-2xl font-semibold tabular-nums tracking-tight" title={`${valueText(step.bytes)} bytes`}>
-                {bytesText(step.bytes)}
-              </span>
-              <span className="text-sm tabular-nums text-muted-foreground" title={`${valueText(step.logs)} Logs`}>
-                {statText(step.logs)} Logs
-              </span>
-              {step.aside}
-            </div>
-          </li>
-        ))}
-      </ol>
+            <div className="text-xs text-muted-foreground" aria-hidden>smaller, kept over stored</div>
+          </div>
+        )}
+      </div>
 
-      <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+      <dl className="flex flex-wrap gap-x-6 gap-y-1 border-t pt-2 text-xs">
         <BandFact label="Sent on the wire" title={`${valueText(band.received.bytes_on_wire)} bytes`}>
           {bytesText(band.received.bytes_on_wire)} in {statText(band.received.requests)} requests
         </BandFact>
@@ -143,7 +144,7 @@ export function OverviewBand({ band }: { band: NonNullable<Overview['band']> }) 
 
 function BandFact({ label, title, hatch: color, children }: { label: string; title: string; hatch?: string; children: ReactNode }) {
   return (
-    <div className="space-y-0.5">
+    <div className="flex items-center gap-1.5">
       <dt className="flex items-center gap-1.5 text-muted-foreground">
         {color && <span className="h-2.5 w-2.5 shrink-0 border" style={{ background: hatch(color), borderColor: color }} aria-hidden />}
         {label}

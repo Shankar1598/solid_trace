@@ -14,7 +14,7 @@ import { bytesText, chartColor, dayText, rateText, secondText, shareText, type O
 export function OverviewProjects({ projects, orgSlug }: { projects: OverviewProject[]; orgSlug: string }) {
   const logsPath = (p: OverviewProject) => `/${orgSlug}/projects/${p.slug}/logs`
   return (
-    <div className="border">
+    <div>
       <Table aria-label="Projects">
         <TableHeader>
           <TableRow>

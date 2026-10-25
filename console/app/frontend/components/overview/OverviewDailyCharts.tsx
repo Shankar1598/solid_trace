@@ -9,9 +9,9 @@ import { cn } from '@/lib/utils'
 type Daily = NonNullable<Overview['daily']>
 
 /**
- * The Overview's daily Charts, each with its table below: Logs per day
- * stacked by Project, received and stored bytes as grouped bars on one
- * axis, and the average and peak Logs per second as two lines. Two across
+ * The Overview's daily Charts, each with its table folded below: Logs per
+ * day stacked by Project, received and stored bytes as grouped bars on one
+ * axis, and the average and peak Logs per second as two lines. Three across
  * on wide screens, stacked on a phone.
  */
 export function OverviewDailyCharts({ daily }: { daily: Daily }) {
@@ -22,7 +22,7 @@ export function OverviewDailyCharts({ daily }: { daily: Daily }) {
   const peakAt = new Map(days.map(d => [d.day, d.logs_per_second.peak_at]))
 
   return (
-    <div className="grid gap-x-10 gap-y-12 lg:grid-cols-2">
+    <div className="grid divide-y lg:grid-cols-3 lg:divide-x lg:divide-y-0">
       <DailyChart
         id="logs"
         title="Logs per day"
@@ -72,7 +72,7 @@ interface DailySeries {
 type DailyPoint = { day: string } & Record<string, number | string>
 
 /** The plot's height, the room under it for the day axis, and over it. */
-const HEIGHT_PX = 224
+const HEIGHT_PX = 144
 const X_AXIS_PX = 24
 const TOP_PX = 8
 /** The most series labelled directly, at the right of the plot; past it, the legend alone names them. */
@@ -114,13 +114,14 @@ function DailyChart({ id, title, description, form, series, data, value, exact =
   const labels = labelled ? directLabels(series, data.at(-1)!, form, axis.domain[1], num) : []
 
   return (
-    <figure className="min-w-0 space-y-3" data-chart={id}>
-      <figcaption className="space-y-0.5">
-        <div className="text-sm font-medium">{title}</div>
-        <div className="text-xs text-muted-foreground">{description}</div>
+    <figure className="min-w-0 space-y-2 p-3" data-chart={id}>
+      <figcaption className="truncate" title={description}>
+        <span className="text-sm font-medium">{title}</span>
+        <span className="ml-2 text-xs text-muted-foreground">{description}</span>
       </figcaption>
-      {series.length > 1 && (
-        <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs" aria-label={`${title} legend`} data-chart-legend>
+      {/* A single series has no legend; its row is kept so the three plots line up. */}
+      {series.length > 1 ? (
+        <ul className="flex h-4 flex-wrap gap-x-3 overflow-hidden text-xs" aria-label={`${title} legend`} data-chart-legend>
           {series.map(s => (
             <li key={s.key} className="flex items-center gap-1.5">
               <span className={cn('shrink-0', form === 'lines' ? 'h-0.5 w-3' : 'h-2 w-2')} style={{ background: s.color }} aria-hidden />
@@ -128,7 +129,7 @@ function DailyChart({ id, title, description, form, series, data, value, exact =
             </li>
           ))}
         </ul>
-      )}
+      ) : <div className="h-4" aria-hidden />}
       <div className="relative" role="img" aria-label={`${title}: ${series.map(s => s.name).join(', ')} by day`}>
         <ChartContainer config={config} className="aspect-auto w-full" style={{ height: HEIGHT_PX }}>
           {form === 'lines' ? (
@@ -284,30 +285,36 @@ function directLabels(series: DailySeries[], last: DailyPoint, form: 'stacked' |
   return placed
 }
 
-/** A daily Chart's numbers, a row per day, so nothing rests on colour alone. */
+/**
+ * A daily Chart's numbers, a row per day, so nothing rests on colour alone,
+ * folded under the Chart so the Overview fits one view.
+ */
 function DailyTable({ title, series, data, value }: { title: string; series: DailySeries[]; data: DailyPoint[]; value: (n: number) => string }) {
   return (
-    <div className="max-h-56 overflow-y-auto border" data-chart-table>
-      <Table aria-label={`${title} by day`}>
-        <TableHeader className="sticky top-0 bg-background">
-          <TableRow>
-            <TableHead className="h-8 text-xs">Day</TableHead>
-            {series.map(s => <TableHead key={s.key} className="h-8 text-right text-xs">{s.name}</TableHead>)}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {[...data].reverse().map(p => (
-            <TableRow key={p.day}>
-              <TableCell className="py-1 text-xs">{dayText(p.day)}</TableCell>
-              {series.map(s => (
-                <TableCell key={s.key} className="py-1 text-right font-mono text-xs tabular-nums" title={typeof p[s.key] === 'number' ? valueText(p[s.key] as number) : undefined}>
-                  {typeof p[s.key] === 'number' ? value(p[s.key] as number) : '—'}
-                </TableCell>
-              ))}
+    <details className="text-xs">
+      <summary className="w-fit cursor-pointer text-muted-foreground hover:text-foreground">Numbers by day</summary>
+      <div className="mt-2 max-h-56 overflow-y-auto border" data-chart-table>
+        <Table aria-label={`${title} by day`}>
+          <TableHeader className="sticky top-0 bg-background">
+            <TableRow>
+              <TableHead className="h-8 text-xs">Day</TableHead>
+              {series.map(s => <TableHead key={s.key} className="h-8 text-right text-xs">{s.name}</TableHead>)}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
+          </TableHeader>
+          <TableBody>
+            {[...data].reverse().map(p => (
+              <TableRow key={p.day}>
+                <TableCell className="py-1 text-xs">{dayText(p.day)}</TableCell>
+                {series.map(s => (
+                  <TableCell key={s.key} className="py-1 text-right font-mono text-xs tabular-nums" title={typeof p[s.key] === 'number' ? valueText(p[s.key] as number) : undefined}>
+                    {typeof p[s.key] === 'number' ? value(p[s.key] as number) : '—'}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </details>
   )
 }
