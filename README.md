@@ -1,128 +1,44 @@
 # SolidTrace
 
-A self-hosted error tracking tool with lightweight architecture and strong UX.
+Self-hosted error tracking and logs, on one machine.
 
-## Why?
+SolidTrace groups your application's errors into Issues and keeps its Logs, with Dashboards, Monitors and an MCP server for agents on top. It runs as a handful of containers on a single VM that you own, and it's a 0.x prototype: it runs in production, but it isn't yet hardened for it.
 
-Self-hosting Sentry means managing multiple databases and services. SolidTrace does the same job with two services, the embedded databases SQLite and Pebble, and one ClickHouse server beside them.
+## Philosophy
 
-For low to medium scale application, Vertical scaling is often a better solution than scaling horizontally with multiple services. Less moving parts, less maintenance.
+- **One machine, scaled up.** For low to medium scale, a bigger machine beats a cluster. No replicas, no orchestration: fewer moving parts, less to maintain, less to go wrong.
+- **Few parts.** Self-hosting Sentry means running many databases and services. SolidTrace is two services, the embedded databases SQLite and Pebble, and one ClickHouse server beside them.
+- **Your data, your bill.** Hosted log tools charge by the volume you send. On your own VM, the cost is the VM, its disk and an optional bucket, and the data stays in your account.
+- **Strong UX.** A lightweight architecture shouldn't mean a rough tool.
+- **Agents welcome.** Through MCP, an agent can query Logs, read Issues and build Dashboards and Monitors, as you would in the UI.
 
-SolidTrace currently does not focus on offering high availability or massive scale. Periodic backups of VM/VPS should be sufficient for most use cases.
+## What it does
 
-## Architecture
+- **Issues** from Sentry's SDKs, grouped, with comments and mentions.
+- **Logs** sent as JSON over HTTP, searched and charted with a [Query language](docs/logs/query-language.md) or [SQL](docs/logs/sql.md), shaped on arrival by a Log transform, and moved to an [S3 or GCS bucket](docs/logs/object-store.md) as they age.
+- **Dashboards** with filters, and **[Monitors](docs/logs/monitors.md)** that notify by email, Slack or PagerDuty.
+- **The Overview**: what came in, what was kept and what it costs.
+- **An [MCP server](docs/mcp.md)** for Claude Code, Cursor and other agents.
 
-Two services:
+## Scale
 
-- **Console** — Rails app. UI, API, user management.
-  - Built with Rails, React, Inertia.js, Tailwind CSS.
-  - Uses SQLite for relational data
-- **EventStore** — Go service. Ingests and processes events.
-  - Uses Pebble for ingest, and a ClickHouse server beside it for Logs, Events and the queries on them ([ADR 0016](docs/adr/0016-logs-and-events-in-clickhouse.md)).
+One machine goes a long way. A production install on a GCP n4a-highmem-2 VM (2 Arm vCPUs, 16 GB) takes about 330 million Logs a day, 230 GiB as received: about 3,900 a second on average, 9,200 at the 99th percentile, and bursts of nearly 100,000 a second while shippers catch up after an outage. Its CPU averages 45%, and its memory is about 20% used.
 
-## Install on a VM
+## Install
 
-On a Debian or Ubuntu machine, from a [release](https://github.com/Shankar1598/solid_trace/releases):
+On a Debian or Ubuntu machine, from the newest [release](https://github.com/Shankar1598/solid_trace/releases):
 
 ```bash
-git clone --branch v0.1.0 https://github.com/Shankar1598/solid_trace.git
+git clone --branch v0.14.1 https://github.com/Shankar1598/solid_trace.git
 cd solid_trace
 deploy/setup-gcp
 ```
 
-`deploy/setup-gcp` asks, stage by stage, whether to use HTTPS and for Console's and ingest's public URLs, and whether older Logs go in a GCS bucket, with the `gcloud` commands that create the bucket and its HMAC key. It writes the answers to `deploy/.env` and `deploy/config/event_store.yml`, then runs `deploy/install`. Run it again to change any of them. Email is set up in Console once it is running: the first user to sign up is an instance admin, who sets the SMTP server and the sender on Settings → Email and sends a test email from there. Console encrypts the SMTP password with keys derived from its secret ([ADR 0015](docs/adr/0015-email-settings-in-console-encrypted-with-secret-key-base.md)). It no longer reads `SMTP_*` and `MAIL_FROM` from `deploy/.env`: an install that set them there sends no email until an instance admin copies them into the page; then delete those lines.
+It asks a few questions, installs Docker if it's missing and starts SolidTrace. Sign up as soon as it's running: the first user is the admin.
 
-`deploy/install` installs Docker if it is missing, creates `deploy/data/` for data and EventStore's config (from the template `deploy/event_store.yml`) if there is none, writes Console's secret to `deploy/.env`, then starts the services with `deploy/docker-compose.yml`. It pulls a release's images from GitHub's registry (`ghcr.io/shankar1598/solid-trace-console` and `-event-store`, for amd64 and arm64, so x86 VMs and Arm ones such as GCP's T2A both work), which each published release builds (`.github/workflows/release.yml`): the release the checkout is at, or on any other commit, `main` included, the newest release before it. `deploy/install --build` builds them from the checkout instead, which takes several minutes; EventStore's alone takes about ten on two cores, as it compiles the Log transform's Rust library. Run on its own, it installs with the defaults: no email, everything on local disk. Console is on port `3000`, ingest on `4000`. The services restart on failure and at boot, and their logs rotate.
+## Docs
 
-SolidTrace keeps its own logs as Logs, in the **Meta Organization**: an Organization and Project both called "SolidTrace", which the install creates. Its admin is the first user to sign up, or the oldest user on an install that already had users; they invite others the usual way. Vector ([`deploy/vector/vector.yaml`](deploy/vector/vector.yaml)) reads every service's output from Docker and sends it there, with each Log's Service the Compose service's name. Lines written while Vector is down, during an upgrade or reboot, are only in `docker compose logs`. Deleting the Organization or its Project turns this off for good ([ADR 0011](docs/adr/0011-meta-organization-and-vector-reads-docker-logs.md)).
-
-Sign-up works only until the install has a user, so sign up as soon as it is running; after that, people join by Invite. To let anyone sign up, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set SIGN_UP_OPEN=true`, and `=false` to close it again. The first user to sign up is an instance admin, who sets up email; on an install that already had users, the oldest is. To make someone else one, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_admins:grant EMAIL=<their email>`; `instance_admins:revoke` and `instance_admins:list` do the rest.
-
-Every MCP tool call and its Log reads are timed into the Meta Organization's "SolidTrace" Project, with the SQL EventStore ran for them. To time every Log read too, the explorer's, Dashboards' and Monitors', turn on Log all reads on Settings → Instance, or `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set LOG_ALL_READS=true`; they refresh every 15 seconds, so it adds many Logs. To stop timing the MCP server's Log reads (its tool calls stay timed), turn off Log MCP reads there, or `LOG_MCP_READS=false`; it applies while Log all reads is off.
-
-With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](deploy/caddy/Caddyfile)) gets a Let's Encrypt certificate for the machine's public IP or domain: Console is on `https://<host>`, ingest on `https://<host>:4443`. Ports 80, 443 and 4443 must be open to the internet, and 3000 and 4000 closed; setup prints the GCP firewall and static-IP commands. An IP's certificate lasts 160 hours, and Caddy renews it ([ADR 0010](docs/adr/0010-caddy-terminates-tls.md)).
-
-To upgrade to a newer release: `git fetch --tags && git checkout <tag> && deploy/install`. To run `main`'s code: `git pull && deploy/install --build`. Either way it keeps the config and the secrets.
-
-Upgrading from a release that kept Logs in DuckDB, `deploy/install` first stops the services and runs the last such release's `prepare-clickhouse`, which readies its Logs for ClickHouse; EventStore won't start on DuckDB Logs that weren't prepared. The Logs from before the upgrade stay in their Log files, on disk or in the bucket, and are read in place until Retention deletes them; nothing is copied. Events from before it aren't moved. Once the upgrade has started, `logs.duckdb` and `events.duckdb` in `deploy/data/storage/duckdb/production/` can be deleted; keep `logs_parquet/` beside them. The config's DuckDB keys are ignored, each with a warning at start.
-
-Everything the install keeps is in `deploy/`, which git ignores: `.env` (the secrets), `config/` and `data/`. Back up those three. `git clean -x` would delete them.
-
-## Dev Setup
-
-```bash
-git clone https://github.com/solidtrace/solid_trace.git
-cd solid_trace
-
-cd console && bundle install && bun install && cd ..
-cd event_store && go mod download && vrl/build && cd ..
-
-cd console && bin/rails db:prepare
-```
-
-EventStore links the Rust `vrl` crate, built as a static library, for the Log transform. Rust comes through `mise`. `event_store/vrl/build` builds the library; run it before `go build` or `go test` in `event_store/`, and again after changing `event_store/vrl/rust/`. The first build takes about four minutes. EventStore's Docker image builds the library in a Rust stage of its own, with the crate's `dist` profile (fat LTO), so building the image needs only Docker.
-
-## Run
-
-```bash
-bin/dev
-```
-
-Starts Rails, Vite, EventStore, and background jobs via `Procfile.dev`.
-
-The EventStore listens on two ports. Ingest (`4000`) is public: SDKs send events there. The query API (`query_port`, default `4100`) serves stored events to the console without authentication, so it binds to `127.0.0.1` only. Never expose it.
-
-## MCP server
-
-Agents such as Claude Code and Cursor can query Logs, read Issues and build Dashboards and Monitors through SolidTrace's MCP server, with an API token made in Settings → API tokens & MCP. See [docs/mcp.md](docs/mcp.md).
-
-## Project Structure
-
-- `console/` — Rails app (UI, API, user management)
-- `event_store/` — Go service (event ingestion and processing)
-
-## Load Testing
-
-Run event ingestion load tests using k6:
-
-```bash
-# Install k6 (macOS)
-brew install k6
-
-# Run with defaults (single_issue scenario, 100 VUs, 2 minutes)
-bin/load-test
-
-# Test specific scenario with custom VUs
-bin/load-test --scenario per_event --vus 200 --duration 5m
-```
-
-Available scenarios:
-- `single_issue` — All events grouped into one issue
-- `per_1000` — New issue every 1000 events
-- `per_100` — New issue every 100 events
-- `per_event` — Every event creates a new issue
-
-See [test/load/k6/README.md](test/load/k6/README.md) for detailed documentation.
-
-## Performance Benchmarks
-
-Benchmarks run on MacBook Pro M3 (11-core, 18GB RAM) with ~8KB event payloads.
-
-| Scenario | VUs | Max RPS | P95 Latency | P99 Latency | Success Rate |
-|----------|-----|---------|-------------|-------------|--------------|
-| single_issue | - | - | - | - | - |
-| per_1000 | - | - | - | - | - |
-| per_100 | - | - | - | - | - |
-| per_event | - | - | - | - | - |
-
-*Run `bin/load-test` and update these results with your hardware's performance.*
-
-## Future
-
-### Tiered storage (S3 / GCS)
-
-Older Logs can already go in an S3 or GCS bucket: see [docs/logs/object-store.md](docs/logs/object-store.md). Tiering Pebble's Events is not built yet. The goal is to keep recent events on local disk and move older ones to cheaper storage.
-
-Pebble's support is limited. It can put almost all data on one remote store (S3, GCS, or an HDD path) and keep only recent writes local. It cannot chain tiers (SSD → HDD → S3) or tier by event age, so those would need to be built in the EventStore.
-
-The early `storage_tiers` setting is not production-ready.
+- [Install and run](docs/install.md): HTTPS, users, email, upgrades, backups and high availability
+- [Logs](docs/logs/README.md) and [MCP](docs/mcp.md)
+- [Development](docs/development.md)
+- [Release notes](docs/changelogs/)
