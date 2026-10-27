@@ -64,6 +64,13 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 - `preview_log_transform`: runs a draft program on the Project's recent arrivals, or on up to 200 Logs you give, and answers how many it kept, dropped and failed, with the first 20 Logs before and after. Nothing is stored.
 - `update_log_transform`: saves a program as the Project's Log transform, or answers VRL's errors when it doesn't compile. It applies to the Logs processed after it; Logs already stored don't change. Restore an older version by saving its program. Admins only.
 
+**Performance**
+
+These read the Transactions a Project's Sentry SDKs trace, over `range` (`24h` when left out) or `from` and `to`, in one `environment` or every one.
+
+- `list_transactions`: a Project's Transactions, one row per name, the most time consuming first, as its Performance page lists them: throughput a minute and time consumed, both estimates that count each sampled request as 1 / its sample rate; p50, p95 and p99 of the sampled durations; the error rate, the weighted share of requests whose status was sent and isn't `ok`; and each number's change from the period of the same length before. Transactions named by their raw URL are one row, Unparameterised.
+- `get_transaction`: one Transaction, as its page shows it: its p50 and p95 by release, its Spans' self time by op and by group (op and description with literals replaced), the groups a request runs more than once with their median and most repeats, and its slowest traces.
+
 **Dashboards**
 
 - `list_dashboards`, `get_dashboard`: an Organization's Dashboards, and one with its filters and Charts.

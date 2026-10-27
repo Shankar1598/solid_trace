@@ -14,6 +14,8 @@ module McpServer
     McpTools::ListFields,
     McpTools::QueryLanguageReference,
     McpTools::RunSql,
+    McpTools::ListTransactions,
+    McpTools::GetTransaction,
     McpTools::GetLogTransform,
     McpTools::PreviewLogTransform,
     McpTools::UpdateLogTransform,
@@ -58,6 +60,7 @@ module McpServer
     whoami lists your Organizations, and list_projects an Organization's Projects, with descriptions that say which to query.
     get_overview answers how much an Organization's Projects sent and store, how fast, how healthy, and what that volume would cost elsewhere.
     query_logs runs a Query on a Project's Logs; list_fields lists the names a Query reads, and query_language_reference explains the language.
+    list_transactions lists a Project's traced requests and jobs by the time they take, and get_transaction finds where one's time goes.
     get_issue's trace_logs finds an Event's Logs.
     An answer ends with a link to the Console page that shows it, for the user to open.
   TEXT

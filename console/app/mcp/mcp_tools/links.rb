@@ -49,6 +49,19 @@ module McpTools
       url(routes.project_logs_path(project, org_slug: project.organization.slug, **search))
     end
 
+    # A Project's Performance page over a TimeRange, in an environment or
+    # every one.
+    def performance(project, range:, environment: nil)
+      search = range.link_params.merge(environment: environment.presence).compact
+      url(routes.project_performance_path(project, org_slug: project.organization.slug, **search))
+    end
+
+    # A Transaction's page, as performance's.
+    def transaction(project, name, range:, environment: nil)
+      search = range.link_params.merge(name: name, environment: environment.presence).compact
+      url(routes.transaction_project_performance_path(project, org_slug: project.organization.slug, **search))
+    end
+
     # A fresh Invite link for an Invited user to organization.
     def invite(user, organization)
       user.invite_url(organization, console_url: @console_url)
