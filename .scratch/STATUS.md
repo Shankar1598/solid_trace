@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-10-25
+Updated: 2026-10-27
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [GLOSSARY.md](../GLOSSARY.md).
 
@@ -15,6 +15,8 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 - Benchmark and probe runs must finish in under a minute on the dev box.
 
 ## Where things stand
+
+- **Traces** ([spec](traces/spec.md), [tickets](traces/issues/), 0 / 7): planned with the user on 2026-10-27. EventStore stores the Transactions that Sentry SDKs send, sampled at 1–5% in the SDK, as Spans in ClickHouse. They're linked by trace id to Logs and Issues across the Organization's Projects, with Performance pages per Project and four MCP additions (`list_transactions`, `get_transaction`, `get_trace`, a `spans` table in `run_sql`). Trace Retention defaults to 14 days, and Spans move to the bucket after `local_cache_hours`. Tagalys moves over one app at a time, sending to sentry.io and SolidTrace at once; its own steps are in the spec's Tagalys rollout. The VM's CPU is already busy (load ~4.7 on 2 vCPUs), so 07 watches it. Next: [01](traces/issues/01-day-tables-cleaned-up-by-family.md), a prefactor, then 02 (the tracer bullet).
 
 - **Security scan and fixes** (asked for by the user on 2026-10-24, released in v0.14.0): `bin/security` runs bundler-audit, brakeman, `bun audit` (high and up), govulncheck, osv-scanner on the VRL crate, gitleaks (false alarms in `.gitleaksignore`) and trivy on the images `deploy/docker-compose.yml` runs; `bin/security <check>` runs one. Fixed on `security/console-deps` and `security/event-store-deps`, merged into `main` (2026-10-25): every gem, JS and Go finding, Rails 8.1.4, brakeman 8.1 (its three new warnings fixed: HEAD on the invite and sign-up pages, the role update's mass assignment), Vite 6, Vitest 4, shadcn 4, Ruby 4.0.9 in Console's image, Fiber 2.52.13, gRPC 1.83.2, x/net 0.60.0, tokio 1.54.1, Vector 0.60.0. Left: unsafe-libyaml (unmaintained, no fix; behind VRL's `parse_yaml`, ignored in `event_store/vrl/rust/osv-scanner.toml`), Caddy 2.11.7's findings (no newer image), and the `json` default gem in Ruby's image (the bundle loads 2.21.2). Rails (857 runs), vitest (469), typecheck, the Vite build and the Go packages other than the root pass; the root Go package and the Playwright flows (Vite 6's dev server among them) are for the user.
 
