@@ -16,6 +16,7 @@ class ProjectSerializer
       platform: @project.platform,
       description: @project.description,
       log_retention_days: @project.log_retention_days,
+      trace_retention_days: @project.trace_retention_days,
       created_at: @project.created_at.iso8601,
       issues_count: @project.issues.count,
     }

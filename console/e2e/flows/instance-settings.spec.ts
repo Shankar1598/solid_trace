@@ -41,7 +41,7 @@ test('an instance admin changes log-all-reads, log-MCP-reads and the default Ret
   await expect(logMcpReads).toBeChecked()
   await expect(logMcpReads).toBeEnabled()
 
-  await page.getByLabel('Default Retention (days)').fill('0')
+  await page.getByLabel('Default Log Retention (days)').fill('0')
   await page.getByRole('button', { name: 'Save changes' }).click()
   await expect(page.getByText('must be greater than 0')).toBeVisible()
 
@@ -50,7 +50,7 @@ test('an instance admin changes log-all-reads, log-MCP-reads and the default Ret
   await logAllReads.click()
   await expect(logMcpReads).toBeChecked()
   await expect(logMcpReads).toBeDisabled()
-  await page.getByLabel('Default Retention (days)').fill('21')
+  await page.getByLabel('Default Log Retention (days)').fill('21')
   await page.getByRole('button', { name: 'Save changes' }).click()
   await expect(page.getByText('Instance settings saved')).toBeVisible()
 
@@ -58,7 +58,7 @@ test('an instance admin changes log-all-reads, log-MCP-reads and the default Ret
   await expect(logAllReads).toBeChecked()
   await expect(logMcpReads).toBeChecked()
   await expect(logMcpReads).toBeDisabled()
-  await expect(page.getByLabel('Default Retention (days)')).toHaveValue('21')
+  await expect(page.getByLabel('Default Log Retention (days)')).toHaveValue('21')
 
   // Log MCP reads was saved off, which shows once Log all reads is off.
   await logAllReads.click()
