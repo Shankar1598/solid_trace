@@ -49,6 +49,10 @@ Logs and Events moved to a ClickHouse server ([spec](../../.scratch/clickhouse/s
 
 The setting stays, and stays on by default. With it on, a member can read every Log and Event of their own Organization's Projects, and a slow query can take CPU from ingest for up to 10 seconds. A ClickHouse upgrade should check that new table functions and system tables still need a grant. Root tests try each way out (`logs_sql_scope_test.go`, `logs_sql_readonly_test.go`).
 
+## Amended: SQL reads the Project's Spans too (2026-10-27)
+
+With Traces, the SQL user also gets the `spans` table, with a row policy like those on `logs` and `events`, and SELECT on it; `trace_index` stays without a grant. [ADR 0016](0016-logs-and-events-in-clickhouse.md)'s amendment of the same day has the details. A member can now read their own Organization's Spans as well as its Logs and Events (`logs_sql_scope_test.go`).
+
 ## Consequences
 
 - Users query the `logs` and `events` tables. Since the amendment above, their columns are the tables' own, and SQL written for the DuckDB views doesn't run.
