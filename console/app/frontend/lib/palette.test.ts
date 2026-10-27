@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterGroups, organizationItems, paletteGroups, queryLine, registerPaletteSource, type PaletteContext, type PaletteItem } from './palette'
+import { filterGroups, organizationItems, paletteGroups, queryLine, registerPaletteSource, typedGroups, type PaletteContext, type PaletteItem } from './palette'
 
 const context: PaletteContext = { viewer: 1, orgSlug: 'acme', organizations: [], projects: [{ name: 'Storefront', slug: 'storefront' }], dashboards: [], monitors: [] }
 const item = (group: string, label: string, detail?: string): PaletteItem => ({ id: `${group}/${label}`, group, label, detail, href: '/' })
@@ -43,6 +43,21 @@ describe('searching the palette', () => {
     expect(filterGroups(groups, 'theme').map(g => g.group)).toEqual(['Actions'])
     expect(filterGroups(groups, '  ')).toEqual(groups)
     expect(filterGroups(groups, 'nothing')).toEqual([])
+  })
+})
+
+describe('a trace id typed in the palette', () => {
+  it('opens its trace in the Organization, lowercased, ignoring the spaces around it', () => {
+    expect(typedGroups(' 6D2F0E4A9B3D4E6F8A7B6C5D4E3F2B10 ', 'acme')).toEqual([{
+      group: 'Traces',
+      items: [{ id: 'trace/6d2f0e4a9b3d4e6f8a7b6c5d4e3f2b10', group: 'Traces', label: 'Open trace 6d2f0e4a9b3d4e6f8a7b6c5d4e3f2b10', href: '/acme/traces/6d2f0e4a9b3d4e6f8a7b6c5d4e3f2b10' }],
+    }])
+  })
+
+  it('is nothing for text that isn\'t 32 hex digits', () => {
+    expect(typedGroups('6d2f0e4a9b3d4e6f8a7b6c5d4e3f2b1', 'acme')).toEqual([])
+    expect(typedGroups('storefront', 'acme')).toEqual([])
+    expect(typedGroups('6d2f0e4a9b3d4e6f8a7b6c5d4e3f2b10', '')).toEqual([])
   })
 })
 
