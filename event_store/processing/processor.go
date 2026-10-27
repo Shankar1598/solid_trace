@@ -359,6 +359,7 @@ func (p *Processor) issueWork(event models.Event) (models.Event, error) {
 		ServerName:         extractString(payload, "server_name"),
 		Release:            extractString(payload, "release"),
 		Level:              extractString(payload, "level"),
+		TraceID:            extractTraceID(payload),
 		IssueFingerprintID: fingerprintID,
 		IssueID:            issueID,
 		IsNewIssue:         isNewIssue,
