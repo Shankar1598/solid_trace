@@ -205,4 +205,23 @@ class TracesControllerTest < ActionDispatch::IntegrationTest
     ], trace["spans"].map { |s| s.values_at("span_id", "depth", "count", "duration_us", "self_time_us", "critical") }
     assert_equal 8, trace["span_count"]
   end
+
+  test "the critical path leaves out a sibling that was still running when the one after it started" do
+    stub_request(:post, @trace_url).to_return(status: 200, body: {
+      trace_id: TRACE_ID,
+      spans: [
+        span(@api, "a1", "", "http.server", "OrdersController#show", 0, 100, 0),
+        # The request waited on the call; the query ran beside it and ended
+        # first.
+        span(@api, "a2", "a1", "db.sql.active_record", "SELECT 1", 0, 90, 90, segment: "a1"),
+        span(@api, "a3", "a1", "http.client", "GET https://rates.example.com/rates", 20, 80, 80, segment: "a1")
+      ],
+    }.to_json)
+    sign_in_as(@member)
+
+    trace = trace_props(trace_url(org_slug: "acme", trace_id: TRACE_ID))
+
+    assert_equal [ [ "a1", true ], [ "a2", false ], [ "a3", true ] ],
+      trace["spans"].map { |s| s.values_at("span_id", "critical") }
+  end
 end
