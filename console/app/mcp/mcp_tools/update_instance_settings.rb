@@ -23,6 +23,13 @@ module McpTools
     argument :log_mcp_reads, { type: "boolean",
       description: "true times the MCP server's Log reads, the default. It applies only while log_all_reads is off, " \
                    "as log_all_reads times them too; false still saves then, for when log_all_reads is turned off." }
+    argument :send_console_issues, { type: "boolean",
+      description: "true, the default, sends Console's own Issues to its Sentry DSN, the Meta Project on an install. " \
+                   "false sends none, from the next Event on." }
+    argument :trace_console, { type: "boolean",
+      description: "true, the default, traces the share of Console's requests and jobs SENTRY_TRACES_SAMPLE_RATE " \
+                   "gives into its Sentry DSN, the Meta Project on an install. false traces none, from the next " \
+                   "request or job on." }
 
     def run
       require_instance_admin!("change the instance settings")

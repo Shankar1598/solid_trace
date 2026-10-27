@@ -6,9 +6,13 @@
 # (docs/traces.md). Without a sample rate, nothing is traced.
 Sentry.init do |config|
   config.dsn = ENV["SENTRY_DSN"].presence || Rails.application.credentials[:sentry_dsn]
-  if ENV["SENTRY_TRACES_SAMPLE_RATE"].present?
-    config.traces_sample_rate = Float(ENV["SENTRY_TRACES_SAMPLE_RATE"], exception: false)
+  # The sampler is set only with a rate, as any sampler turns tracing on.
+  rate = Float(ENV["SENTRY_TRACES_SAMPLE_RATE"].presence, exception: false)
+  if rate
+    config.traces_sample_rate = rate
+    config.traces_sampler = ->(context) { ConsoleSentry.traces_sample_rate(context, rate) }
   end
+  config.before_send = ->(event, hint) { ConsoleSentry.before_send(event, hint) }
   config.breadcrumbs_logger = [ :active_support_logger, :http_logger ]
   # The Docker image has no git, but its build sets SOLIDTRACE_VERSION.
   commit = begin
