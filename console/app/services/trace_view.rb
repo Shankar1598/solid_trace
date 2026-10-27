@@ -13,21 +13,22 @@
 # time), or else around its first Event. When EventStore can't answer, there
 # is nothing of it and event_store says why.
 class TraceView
+  include EventStoreView
+
   # How long Console waits for EventStore's trace, in seconds.
   TIMEOUT_SECONDS = 10
-  # The most rows #summary gives, so that a large trace fits an agent's
-  # context.
+  # The most rows #summary gives, its Transactions, critical path and Spans
+  # together, so that a large trace fits an agent's context.
   SUMMARY_ROWS = 200
   # How much of a description #summary gives, and of a message the page
   # does.
   SUMMARY_DESCRIPTION = 120
   LOG_MESSAGE = 500
 
-  attr_reader :organization, :user, :trace_id, :time
+  attr_reader :organization, :trace_id, :time
 
-  def initialize(organization:, user:, trace_id:, time: nil)
+  def initialize(organization:, trace_id:, time: nil)
     @organization = organization
-    @user = user
     @trace_id = trace_id.to_s.downcase
     @time = time
   end
@@ -42,29 +43,33 @@ class TraceView
     }
   end
 
-  # The trace for an agent: its Transactions; its rows by self time, the
-  # most first, at most rows of them, with what was left out; the critical
-  # path; its Issues; and the query_logs arguments that read its Logs.
+  # The trace for an agent: its Transactions; the critical path; its rows by
+  # self time, the most first; its Issues; and the query_logs arguments that
+  # read its Logs. The Transactions, the critical path and the rows share
+  # one budget of rows: the Transactions take at most a tenth of it, the
+  # critical path a quarter, and the rows the rest, and left_out counts what
+  # each didn't give.
   def summary(rows: SUMMARY_ROWS)
-    kept = spans.sort_by { |row| [ -row["self_time_us"], row["offset_us"] ] }.first(rows)
+    kept_transactions = transactions.first(rows / 10)
+    path = spans.select { |row| row["critical"] }
+    kept_path = path.first(rows / 4)
+    kept = spans.sort_by { |row| [ -row["self_time_us"], row["offset_us"] ] }
+      .first(rows - kept_transactions.size - kept_path.size)
     {
       trace_id: trace_id, event_store: event_store, sampled: sampled, duration_us: duration_us,
-      span_count: received.size, transactions: transactions.first(rows),
+      span_count: received.size, transactions: kept_transactions,
       spans: kept.map { |row| summary_row(row) },
-      left_out: { rows: spans.size - kept.size, spans: received.size - kept.sum { |row| row["count"] } },
-      critical_path: spans.select { |row| row["critical"] }.first(rows).map { |row| row["span_id"] },
+      left_out: {
+        transactions: transactions.size - kept_transactions.size, critical_path: path.size - kept_path.size,
+        rows: spans.size - kept.size, spans: received.size - kept.sum { |row| row["count"] },
+      },
+      critical_path: kept_path.map { |row| row["span_id"] },
       issues: issues.map do |issue|
         { project: issue[:project][:slug], issue: issue[:number], title: issue[:title], events: issue[:events], event: issue[:event] }
       end,
       logs: { count: logs.size, more: answer&.dig("more_logs") || false },
       trace_logs: trace_logs,
     }
-  end
-
-  # Whether EventStore answered, and if not, why.
-  def event_store
-    answer
-    @unavailable ? { available: false, error: @unavailable } : { available: true }
   end
 
   # Whether the trace has Spans: nil when EventStore didn't answer.
@@ -183,8 +188,9 @@ class TraceView
   end
 
   # The Spans the trace's end waited on: from its end back, the Span that
-  # ended last, then the one that ended last before that one began, and so
-  # on, and within each of those its children the same way.
+  # ended last, then the one that ended last by the time that one began, and
+  # so on, and within each of those its children the same way. A Span still
+  # running when the next one on the path began isn't on it.
   def critical
     @critical ||= begin
       marked = Set.new.compare_by_identity
@@ -192,7 +198,7 @@ class TraceView
       mark = lambda do |spans, until_us|
         cursor = until_us
         spans.sort_by { |s| -end_us(s) }.each do |span|
-          next unless start_us(span) < cursor
+          next unless end_us(span) <= cursor
 
           marked << span
           mark.call(children[span["span_id"]] || [], end_us(span))
@@ -206,10 +212,6 @@ class TraceView
 
   def children
     @children ||= received.group_by { |s| s["parent_span_id"] }
-  end
-
-  def project_ref(project)
-    { id: project.id, name: project.name, slug: project.slug }
   end
 
   # The query_logs arguments that read the trace's Logs, for each Project
@@ -288,14 +290,10 @@ class TraceView
   end
 
   # EventStore's answer, or nil when the Organization has no Projects or
-  # EventStore can't answer (@unavailable says why).
+  # EventStore can't answer (event_store says why).
   def answer
-    return @answer if defined?(@answer)
-
-    @answer = projects.empty? ? nil : EventStore.trace!(project_ids: projects.keys, trace_id: trace_id, time: time, read_timeout: TIMEOUT_SECONDS)
-  rescue EventStore::Unavailable, EventStore::Rejected => e
-    Rails.logger.error("Trace: #{e.message}")
-    @unavailable = "EventStore can't read the trace: #{e.message}"
-    @answer = nil
+    event_store_answer("trace") do
+      EventStore.trace!(project_ids: projects.keys, trace_id: trace_id, time: time, read_timeout: TIMEOUT_SECONDS) if projects.any?
+    end
   end
 end

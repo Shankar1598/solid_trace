@@ -1,4 +1,5 @@
 // A trace as Console's TraceView answers it for the trace page.
+import { valueText } from '@/lib/charts/axis'
 
 export interface TraceSpan {
   span_id: string
@@ -103,4 +104,9 @@ export function durationText(us: number): string {
   if (ms >= 10_000) return `${(ms / 1000).toFixed(1)} s`
   if (ms >= 10) return `${Math.round(ms)} ms`
   return `${Number(ms.toPrecision(2))} ms`
+}
+
+/** A duration in microseconds in full, for a title. */
+export function microsecondsText(us: number): string {
+  return `${valueText(us)} µs`
 }

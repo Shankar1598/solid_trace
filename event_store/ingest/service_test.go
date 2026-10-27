@@ -635,6 +635,80 @@ func TestEnvelopeLogsAreTurnedAwayWhileEventsFillTheWaitingLimit(t *testing.T) {
 	}
 }
 
+// fakeTransactionWriter records each Transaction batch's receipt time.
+type fakeTransactionWriter struct {
+	receivedAt []time.Time
+}
+
+func (f *fakeTransactionWriter) WriteTransactionBatch(projectID uint32, transactions []models.Transaction, receivedAt time.Time) error {
+	f.receivedAt = append(f.receivedAt, receivedAt)
+	return nil
+}
+
+// fakeIngestCountsWriter records the Ingest counts written.
+type fakeIngestCountsWriter struct {
+	counts []models.IngestCount
+}
+
+func (f *fakeIngestCountsWriter) WriteIngestCounts(token string, counts []models.IngestCount) error {
+	f.counts = append(f.counts, counts...)
+	return nil
+}
+
+// tickingClock moves on by step each time it is read.
+type tickingClock struct {
+	*clock.Manual
+	step time.Duration
+}
+
+func (c tickingClock) Now() time.Time {
+	now := c.Manual.Now()
+	c.Advance(c.step)
+	return now
+}
+
+const transactionEnvelope = `{"trace":{"sample_rate":"0.5"}}` + "\n" + `{"type":"transaction"}` + "\n" +
+	`{"type":"transaction","transaction":"GET /","spans":[{"span_id":"a"},{"span_id":"b"}]}` + "\n"
+
+func TestATransactionsSpansAreCountedInTheSecondItsBatchWasReceived(t *testing.T) {
+	transactions := &fakeTransactionWriter{}
+	counts := &fakeIngestCountsWriter{}
+	// Each read of the clock is 600 ms on: two reads in one request would
+	// fall in different seconds.
+	ticking := tickingClock{clock.NewManual(time.Date(2026, 10, 2, 12, 0, 0, 500_000_000, time.UTC)), 600 * time.Millisecond}
+	service := NewService(Config{
+		Transactions: transactions, NotifySpans: func(uint32) {}, IngestCounts: counts, Clock: ticking, MaxWaiting: 10,
+	})
+
+	if err := service.IngestEnvelope(42, RawBody([]byte(transactionEnvelope))); err != nil {
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+	ticking.Advance(time.Hour)
+	if err := service.FlushIngestCounts(); err != nil {
+		t.Fatalf("FlushIngestCounts: %v", err)
+	}
+
+	if len(transactions.receivedAt) != 1 || len(counts.counts) != 1 {
+		t.Fatalf("Expected one batch and one second counted, got %v and %+v", transactions.receivedAt, counts.counts)
+	}
+	if got, want := counts.counts[0].Second, transactions.receivedAt[0].Truncate(time.Second); !got.Equal(want) ||
+		counts.counts[0].SpansReceived != 3 {
+		t.Errorf("Expected 3 Spans counted at %v, the batch's second, got %d at %v", want, counts.counts[0].SpansReceived, got)
+	}
+}
+
+func TestTransactionsAreStoredWithNoSpanProcessingToWake(t *testing.T) {
+	transactions := &fakeTransactionWriter{}
+	service := NewService(Config{Transactions: transactions, Clock: clock.NewManual(time.Now()), MaxWaiting: 10})
+
+	if err := service.IngestEnvelope(42, RawBody([]byte(transactionEnvelope))); err != nil {
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+	if len(transactions.receivedAt) != 1 {
+		t.Errorf("Expected the Transaction stored, got %d batches", len(transactions.receivedAt))
+	}
+}
+
 func TestAnEnvelopeWithAnInvalidEventStoresNothing(t *testing.T) {
 	events := newFakeEventWriter()
 	logs := newFakeLogWriter()

@@ -19,11 +19,15 @@ module McpTools
       type: "integer",
       description: "How many days back its Logs are kept. The instance default when left out.",
     }
+    argument :trace_retention_days, {
+      type: "integer",
+      description: "How many days back its traces' Spans are kept. The instance default when left out.",
+    }
 
     def run
       # Project refuses a name whose slug no page could be reached at.
       made = organization.projects.build_with_key(name: arguments[:name].to_s.strip, description: arguments[:description],
-        log_retention_days: arguments[:log_retention_days])
+        log_retention_days: arguments[:log_retention_days], trace_retention_days: arguments[:trace_retention_days])
       made.save!
       json({ organization: organization.slug, project: ProjectOptionSerializer.new(made).as_json,
              key: key_json(made.project_keys.sole) }, link: links.project(made))

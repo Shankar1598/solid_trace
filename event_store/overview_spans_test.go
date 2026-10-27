@@ -79,9 +79,13 @@ func TestTheOverviewAnswersSpansReceivedAndStoredPerProjectAndInTotal(t *testing
 		t.Errorf("Expected the stored bytes on local disk, summed in all, got %+v and %+v", total, each)
 	}
 
-	// Spans aren't Logs.
-	if got := overview(t, env, testNow, testNow, 123, 124); got.Band.Received.Logs != 0 || got.Band.Received.Requests != 0 || got.Band.Stored.Logs != 0 {
+	// Spans aren't Logs: Projects that sent only Spans have none.
+	got := overview(t, env, testNow, testNow, 123, 124)
+	if got.Band.Received.Logs != 0 || got.Band.Received.Requests != 0 || got.Band.Stored.Logs != 0 {
 		t.Errorf("Expected no Logs received or stored, got %+v", got.Band)
+	}
+	if got.HasLogs {
+		t.Error("Expected Projects that sent only Spans to have no Logs")
 	}
 	// Nor are they another day's.
 	dayBefore := testNow.AddDate(0, 0, -1)

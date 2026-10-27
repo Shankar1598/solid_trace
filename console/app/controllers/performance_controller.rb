@@ -12,12 +12,12 @@ class PerformanceController < ApplicationController
   before_action :set_project
 
   def show
-    view = TransactionsView.new(project: @project, user: current_user, range: range, environment: params[:environment])
+    view = TransactionsView.new(project: @project, range: range, environment: params[:environment])
     render inertia: "Performance/Show", props: { performance: view.to_h }
   end
 
   def transaction
-    view = TransactionView.new(project: @project, user: current_user, name: params[:name], range: range,
+    view = TransactionView.new(project: @project, name: params[:name], range: range,
       environment: params[:environment])
     render inertia: "Performance/Transaction", props: { transaction: view.to_h }
   end

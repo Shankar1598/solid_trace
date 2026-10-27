@@ -58,7 +58,7 @@ export function OverviewStorage({ storage }: { storage: Storage }) {
           )}
         </Line>
         <Line label="Bucket" hook="bucket">
-          {storage.bucket ? `${bytesText(storage.bucket_bytes)} of Logs` : 'None: every Log stays on local disk'}
+          {storage.bucket ? `${bytesText(storage.bucket_bytes)} of Logs and Spans` : 'None: every Log and Span stays on local disk'}
         </Line>
         <Line label="Growth" hook="growth">
           {bytesText(storage.growth_bytes_per_day)} a day over the last 7 days. {untilLimitText(storage)}
