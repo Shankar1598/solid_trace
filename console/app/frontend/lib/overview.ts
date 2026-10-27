@@ -53,11 +53,33 @@ export interface Overview {
     days: OverviewDay[]
   } | null
   projects: OverviewProject[] | null
+  spans: OverviewSpans | null
   sources: { by_logs: OverviewSource[]; by_bytes: OverviewSource[] } | null
   health: OverviewHealth
   other_tools: OverviewOtherTools | null
   /** The whole install's, for Instance admins only: absent for anyone else, null when EventStore didn't answer. */
   storage?: OverviewStorage | null
+}
+
+/** Spans received, by arrival, and stored, by their own day, with their bytes. */
+export interface OverviewSpanCounts {
+  received: number
+  received_bytes: number
+  stored: number
+  stored_bytes: number
+}
+
+/** The Spans of traces, in total and for each Project that has any, in creation order. */
+export interface OverviewSpans extends OverviewSpanCounts {
+  projects: (OverviewSpanCounts & {
+    id: number
+    name: string
+    slug: string
+    color: number
+    /** Its trace Retention, the instance's when it has none. */
+    retention_days: number
+    retention_is_default: boolean
+  })[]
 }
 
 /** A Service and file of a Project, over the range's days, by the Logs' own time. */

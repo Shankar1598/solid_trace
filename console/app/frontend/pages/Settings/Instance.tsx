@@ -33,6 +33,7 @@ interface InstanceSettings {
     sql_queries_enabled: boolean
     sql_queries_description: string
     default_log_retention_days: number
+    default_trace_retention_days: number
     log_all_reads: boolean
     log_mcp_reads: boolean
   }
@@ -52,6 +53,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
   const { data, setData, put, processing, errors, transform } = useForm({
     sql_queries_enabled: editable.sql_queries_enabled,
     default_log_retention_days: String(editable.default_log_retention_days),
+    default_trace_retention_days: String(editable.default_trace_retention_days),
     log_all_reads: editable.log_all_reads,
     log_mcp_reads: editable.log_mcp_reads,
   })
@@ -96,7 +98,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="default_log_retention_days">Default Retention (days)</Label>
+                <Label htmlFor="default_log_retention_days">Default Log Retention (days)</Label>
                 <Input
                   id="default_log_retention_days"
                   inputMode="numeric"
@@ -109,6 +111,23 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                 )}
                 <p className="text-xs text-muted-foreground">
                   Whole days. It applies only to Projects that set no Retention of their own; EventStore's next Retention run deletes their older Logs.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="default_trace_retention_days">Default trace Retention (days)</Label>
+                <Input
+                  id="default_trace_retention_days"
+                  inputMode="numeric"
+                  className="max-w-32"
+                  value={data.default_trace_retention_days}
+                  onChange={(e) => setData('default_trace_retention_days', e.target.value)}
+                />
+                {errors.default_trace_retention_days && (
+                  <p className="text-sm font-medium text-destructive">{errors.default_trace_retention_days}</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Whole days that traces' Spans are kept, for Projects that set none of their own. EventStore's next Retention run deletes older Spans.
                 </p>
               </div>
 

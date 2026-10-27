@@ -192,24 +192,39 @@ func (s *Service) IngestEnvelope(projectID uint32, body Body) error {
 }
 
 // storeTransactions stores an envelope's transaction items that are JSON
-// objects as one Transaction batch, and wakes Span processing. The caller is
-// in the gate.
+// objects as one Transaction batch, and wakes Span processing. It adds their
+// Spans and bytes to the Ingest counts of their second of arrival. The
+// caller is in the gate.
 func (s *Service) storeTransactions(projectID uint32, items envelopeItems) error {
 	var transactions []models.Transaction
+	var counted models.IngestCount
 	for _, payload := range items.transactions {
-		if _, ok := jsonObject(payload); ok {
+		if object, ok := jsonObject(payload); ok {
 			transactions = append(transactions, models.Transaction{SampleRate: items.sampleRate, Payload: bytes.Clone(payload)})
+			counted.SpansReceived += 1 + spansIn(object)
+			counted.SpanBytesReceived += int64(len(payload))
 		}
 	}
 	if len(transactions) == 0 {
 		return nil
 	}
+	s.counts.count(projectID, s.clock.Now(), counted)
 	// A Pebble write is never retried: the SDK gets an error instead.
 	if err := s.transactions.WriteTransactionBatch(projectID, transactions, s.clock.Now().UTC()); err != nil {
 		return fmt.Errorf("write transaction batch: %w", err)
 	}
 	s.notifySpans(projectID)
 	return nil
+}
+
+// spansIn is how many Spans a Transaction's spans array holds, 0 when it
+// has none or isn't an array.
+func spansIn(transaction map[string]json.RawMessage) int64 {
+	var spans []json.RawMessage
+	if json.Unmarshal(transaction["spans"], &spans) != nil {
+		return 0
+	}
+	return int64(len(spans))
 }
 
 // envelopeItems are the payloads of the items of an envelope that ingest

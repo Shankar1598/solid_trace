@@ -3,7 +3,7 @@
 # The install's settings: one record. Instance admins set email (the SMTP
 # server and the sender) on the Email settings page or over the MCP server,
 # and the settings that apply at once (EDITABLE: SQL queries, the default
-# Retention, log-all-reads, log-MCP-reads) on Settings → Instance or over the MCP server.
+# Retention of Logs and of traces, log-all-reads, log-MCP-reads) on Settings → Instance or over the MCP server.
 # Sign-up has no UI on purpose: opening it lets anyone who can reach Console
 # make an account, so it changes only from a shell on the server, with
 # `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
@@ -17,16 +17,17 @@ class InstanceSetting < ApplicationRecord
 
   # The settings that apply at once, so instance admins change them on
   # Settings → Instance and over the MCP server.
-  EDITABLE = %i[sql_queries_enabled default_log_retention_days log_all_reads log_mcp_reads].freeze
+  EDITABLE = %i[sql_queries_enabled default_log_retention_days default_trace_retention_days log_all_reads
+                log_mcp_reads].freeze
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
     SQL queries let every member of every Organization run ClickHouse SQL from the Logs explorer and the MCP server.
-    Each runs as its Project's read-only database user, which sees only that Project's logs and events tables.
+    Each runs as its Project's read-only database user, which sees only that Project's logs, events and spans tables.
     The database refuses the rest: other Projects, other tables, system tables, files, URLs, the bucket and any change.
     A query stops after 10 seconds or 1 GiB of memory, and can't raise its limits.
     So turning them on lets any member:
-      - read every Log and Event of their own Organization's Projects
+      - read every Log, Event and Span of their own Organization's Projects
       - slow ingest down for up to 10 seconds a query
     They are on by default. Turn them off if you don't trust every member of every Organization not to slow the install down.
   TEXT

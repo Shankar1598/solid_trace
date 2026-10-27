@@ -11,6 +11,7 @@ import { OverviewRates } from '@/components/overview/OverviewRates'
 import { OverviewDailyCharts } from '@/components/overview/OverviewDailyCharts'
 import { OverviewProjects } from '@/components/overview/OverviewProjects'
 import { OverviewSources } from '@/components/overview/OverviewSources'
+import { OverviewSpans } from '@/components/overview/OverviewSpans'
 import { OverviewHealth } from '@/components/overview/OverviewHealth'
 import { OverviewStorage } from '@/components/overview/OverviewStorage'
 import { OVERVIEW_RANGES, dayText, secondText, type Overview, type OverviewRangeName } from '@/lib/overview'
@@ -105,6 +106,18 @@ export default function OverviewShow({ overview }: { overview: Overview }) {
               description="The range's Logs and bytes, and what each Project keeps of every day. Open a row to see its Logs."
             >
               <OverviewProjects projects={overview.projects} orgSlug={orgSlug} />
+            </OverviewSection>
+          )}
+
+          {overview.spans && overview.spans.projects.length > 0 && (
+            <OverviewSection
+              id="spans"
+              className="xl:col-span-12"
+              bodyClassName=""
+              title="Spans"
+              description="The Spans of traces that Sentry SDKs sent: received by arrival, stored by their own day. Each Project keeps them for its trace Retention."
+            >
+              <OverviewSpans spans={overview.spans} />
             </OverviewSection>
           )}
 

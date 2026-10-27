@@ -18,7 +18,8 @@ class Overview
 
   # The sections, in the order they're answered. Storage, the whole
   # install's, is answered for Instance admins only.
-  SECTIONS = %i[range event_store empty ingest_counts source_counts band rates daily projects sources health other_tools storage].freeze
+  SECTIONS = %i[range event_store empty ingest_counts source_counts band rates daily projects spans sources health other_tools
+                storage].freeze
 
   # The Projects that wear a Chart colour of their own, the first by
   # creation; the rest fold into Other, which wears the next. Never cycled.
@@ -182,6 +183,24 @@ class Overview
     end
   end
 
+  # Spans received, by second of arrival, and stored, by their own days, in
+  # total and for each Project that has any, in creation order, with its
+  # trace Retention (the instance's when it has none).
+  def spans
+    return unless answer
+
+    count = ->(spans) { %w[received received_bytes stored stored_bytes].index_with { |key| spans.to_h[key].to_i } }
+    total = count.(answer["spans"])
+    rows = org_projects.filter_map do |project|
+      got = count.(answered_projects.dig(project.id, "spans"))
+      next unless got["received"].positive? || got["stored"].positive?
+
+      { **self.class.project_ref(project), color: color_of(project.id), **got,
+        retention_days: trace_retention_of(project), retention_is_default: project.trace_retention_days.nil? }
+    end
+    { **total.symbolize_keys, projects: rows }
+  end
+
   # The Services and files that sent the most Logs over the range's days,
   # kept and dropped by the Log transform together, and that kept the most
   # bytes: each with its Project, Logs kept, bytes, Logs dropped, Logs sent
@@ -205,13 +224,15 @@ class Overview
   end
 
   # What the range's volume, scaled to 30 days from the seconds it has had, would cost a month at other
-  # tools' list prices at each Project's Retention, and the egress for the
-  # bytes on the wire (Overview::OtherTools).
+  # tools' list prices at each Project's Retention, its Spans at Datadog
+  # APM's at each trace Retention, and the egress for the bytes on the wire
+  # (Overview::OtherTools).
   def other_tools
     return unless answer
 
     volume = org_projects.map { |p| [ answered_projects.dig(p.id, "received") || {}, retention_of(p) ] }
-    OtherTools.new(projects: volume, bytes_on_wire: answer.dig("band", "received", "bytes_on_wire"),
+    spans = org_projects.map { |p| [ answered_projects.dig(p.id, "spans") || {}, trace_retention_of(p) ] }
+    OtherTools.new(projects: volume, spans: spans, bytes_on_wire: answer.dig("band", "received", "bytes_on_wire"),
                    days: RANGES.fetch(range_name), seconds: answer.dig("rates", "seconds"),
                    stored: answer.dig("band", "stored") || {}).to_h
   end
@@ -264,6 +285,11 @@ class Overview
   # A Project's Retention in days, the instance's default when it has none.
   def retention_of(project)
     project.log_retention_days || (@default_retention ||= InstanceSetting.current.default_log_retention_days)
+  end
+
+  # A Project's trace Retention in days, the instance's default when it has none.
+  def trace_retention_of(project)
+    project.trace_retention_days || (@default_trace_retention ||= InstanceSetting.current.default_trace_retention_days)
   end
 
   # The daily Charts' series: a Project each for the first COLORED_PROJECTS
