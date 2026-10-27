@@ -21,6 +21,7 @@ class EventThresholdJob < ApplicationJob
   end
 
   def perform(issue)
+    ConsoleSentry.notifying(issue.project.organization_id)
     IntegrationNotification.check_event_threshold(issue)
   end
 end
