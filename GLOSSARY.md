@@ -88,6 +88,26 @@ _Avoid_: VRL layer, pipeline, remap, derived columns, parser
 How many whole days a Project's Logs are kept before they are deleted: an instance default that a Project can override.
 _Avoid_: TTL, expiry, archive period
 
+**Trace**:
+Every Span, Log and Event that shares one trace id, across an Organization's Projects. A trace id from another Organization shows nothing of it.
+_Avoid_: request, distributed trace
+
+**Span**:
+One timed operation in a Trace, with an op, description, start, duration and parent. Its self time is its duration less the time its children cover, and its group is its op and description with literals replaced, so the same query with other values is one group.
+_Avoid_: event, segment (for any Span but a Transaction's own)
+
+**Transaction**:
+The root Span of one request or job in one Project, as a Sentry SDK sends it. It is named by route or job, and holds its child Spans. One named by its raw URL, or by nothing, is stored as Unparameterised, keeping its raw name as an Attribute. It never becomes an Issue.
+_Avoid_: request, endpoint, segment
+
+**Span processing**:
+The EventStore module that moves received Transactions from Pebble to ClickHouse, as Log processing moves Logs: each Project's from its own cursor, a range at a time under a dedup token, so a retry never stores a range twice. It works out each Span's self time, group and repeats.
+_Avoid_: trace pipeline, APM ingest
+
+**Trace Retention**:
+How many whole days a Project keeps its Spans: an instance default, 14 days to start, that a Project can override. Separate from Retention, which is its Logs'.
+_Avoid_: span TTL, APM retention
+
 **Query**:
 A request for Logs written in SolidTrace's KQL-style query language. It always runs against one Project and time range chosen outside the text.
 _Avoid_: APL, KQL, search
@@ -206,6 +226,9 @@ _Avoid_: API key, project key, access token
 - A **Project** owns many **Issues** and the keys used to submit **Events**
 - A **Project** owns many **Logs**, submitted with the same keys as its **Events**
 - A **Project**'s **Retention** decides when its **Logs** are deleted
+- An **EventStore** accepts **Transactions** in the same envelopes as **Events**; **Span processing** stores each as its **Spans**
+- A **Trace** joins the **Spans**, **Logs** and **Events** of one trace id across an organization's **Projects**
+- A **Project**'s **Trace Retention** decides when its **Spans** are deleted
 - A **Chart** draws one **Query**'s or **SQL query**'s table; the **Logs explorer** shows it above the table
 - A **Dashboard** holds many **Charts**, each a saved **Query** on a **Project** of the Dashboard's organization
 - A **Dashboard** has an ordered list of **Dashboard filters**; each narrows the **Charts** whose **Query** names it

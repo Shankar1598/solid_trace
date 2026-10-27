@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_24_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_27_130000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -103,17 +103,20 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_24_120000) do
   create_table "instance_settings", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "default_log_retention_days", default: 30, null: false
+    t.integer "default_trace_retention_days", default: 14, null: false
     t.boolean "log_all_reads", default: false, null: false
     t.boolean "log_mcp_reads", default: true, null: false
     t.string "mail_from"
     t.integer "meta_organization_id"
     t.boolean "meta_organization_seeded", default: false, null: false
+    t.boolean "send_console_issues", default: true, null: false
     t.boolean "sign_up_open", default: false, null: false
     t.string "smtp_address"
     t.text "smtp_password"
     t.integer "smtp_port", default: 587, null: false
     t.string "smtp_username"
     t.boolean "sql_queries_enabled", default: true, null: false
+    t.boolean "trace_console", default: true, null: false
     t.datetime "updated_at", null: false
     t.index ["meta_organization_id"], name: "index_instance_settings_on_meta_organization_id"
   end
@@ -296,6 +299,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_24_120000) do
     t.string "name"
     t.integer "organization_id", null: false
     t.string "slug"
+    t.integer "trace_retention_days"
     t.datetime "updated_at", null: false
     t.index ["organization_id"], name: "index_projects_on_organization_id"
     t.index ["slug"], name: "index_projects_on_slug"

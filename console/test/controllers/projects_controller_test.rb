@@ -159,6 +159,31 @@ class ProjectsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 30, page["default_log_retention_days"]
   end
 
+  test "an admin sets a Project's trace Retention, refused below a day, and clears it back to the instance default" do
+    sign_in_as(@admin)
+
+    patch project_url(@project, org_slug: @organization.slug), params: { project: { trace_retention_days: "3" } }
+    assert_redirected_to project_url(@project, org_slug: @organization.slug)
+    assert_equal 3, project_page["project"]["trace_retention_days"]
+
+    patch project_url(@project, org_slug: @organization.slug), params: { project: { trace_retention_days: "0" } }
+    page = project_page
+    assert page["errors"]["trace_retention_days"].present?
+    assert_equal 3, page["project"]["trace_retention_days"]
+
+    patch project_url(@project, org_slug: @organization.slug), params: { project: { trace_retention_days: "" } }
+    page = project_page
+    assert_nil page["project"]["trace_retention_days"]
+    assert_equal 14, page["default_trace_retention_days"]
+  end
+
+  test "a member can't change a Project's trace Retention" do
+    patch project_url(@project, org_slug: @organization.slug), params: { project: { trace_retention_days: "3" } }
+
+    assert_equal "You are not authorized to perform this action.", flash[:alert]
+    assert_nil @project.reload.trace_retention_days
+  end
+
   test "the Project page lets only admins edit Project settings" do
     assert_equal false, project_page["can_manage_project"]
 

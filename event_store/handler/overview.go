@@ -15,7 +15,7 @@ import (
 
 // OverviewHandler answers an Organization's Overview: what arrived, from
 // Ingest counts, and what is stored, from ClickHouse's parts. It never reads
-// logs, so it costs about what a small Chart does.
+// logs or spans, so it costs about what a small Chart does.
 type OverviewHandler struct {
 	logs  *storage.ClickHouseLogs
 	clock clock.Clock
@@ -106,6 +106,8 @@ type overviewData struct {
 	sourceDays      []storage.LogProjectDay
 	sourcesSince    time.Time
 	hasSourcesSince bool
+	// The range's days of stored Spans.
+	spanDays []storage.StoredLogDay
 	// Health's reads (overview_health.go).
 	health overviewHealthData
 	// Storage's reads, when asked for (overview_storage.go).
@@ -130,6 +132,10 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 		},
 		func(ctx context.Context) (err error) {
 			d.hasLogs, err = h.logs.HasLogs(ctx, q.scope.ProjectIDs)
+			return err
+		},
+		func(ctx context.Context) (err error) {
+			d.spanDays, err = h.logs.StoredSpanDays(ctx, q.scope.ProjectIDs, q.from, q.to)
 			return err
 		},
 		func(ctx context.Context) (err error) {
@@ -211,7 +217,13 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     Project's, the stored bytes of only the Project days that have Source
 //     counts, so kept over stored compares the same days.
 //   - has_logs: whether any of the Projects has Logs stored of any day, or
-//     Ingest counts.
+//     Ingest counts of Logs received.
+//   - spans, and each Project's: received, the Spans of the Transactions
+//     that arrived, one for each Transaction and each of its Spans, and
+//     received_bytes, those Transactions' bytes, by second of arrival; and
+//     stored, the Spans of the range's days as ClickHouse holds them, by
+//     their start, with stored_bytes compressed, on local disk and in the
+//     bucket. None of it is counted as Logs.
 //   - health: processing, each Project's oldest Log batch waiting for Log
 //     processing, with how long it has waited; reads, each Project's Log
 //     reads of the last 24 hours, whatever the range, with their median and
@@ -219,13 +231,13 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     they began; events, each Project's Events of the range. A Project with
 //     none is left out of each.
 //   - storage, only with include_storage: the whole install's, every
-//     Project's: local_bytes, the Logs on ClickHouse's local disk and the old
-//     Log files' local copies, which the disk limit counts, against
-//     disk_limit_bytes, the limit in effect, with disk_bytes and free_bytes
-//     of that disk; bucket_bytes, the Logs in the bucket; growth_bytes_per_day,
-//     the bytes of a day's Logs over the last 7 whole days, and
-//     days_until_limit at that growth (null with a bucket, which Logs move
-//     to); and old_files, the old Log files from before the switch: how many,
+//     Project's: local_bytes, the Logs and Spans on ClickHouse's local disk
+//     and the old Log files' local copies, which the disk limit counts,
+//     against disk_limit_bytes, the limit in effect, with disk_bytes and
+//     free_bytes of that disk; bucket_bytes, the Logs and Spans in the
+//     bucket; growth_bytes_per_day, the bytes of a day's Logs and Spans over
+//     the last 7 whole days, and days_until_limit at that growth (null with
+//     a bucket, which they move to); and old_files, the old Log files from before the switch: how many,
 //     their local copies' bytes, their newest day and passes_retention_on, the
 //     day Retention deletes the last of them (null with none).
 //
@@ -291,6 +303,7 @@ type (
 		SourceCountsSince *string           `json:"source_counts_since"`
 		HasLogs           bool              `json:"has_logs"`
 		Band              overviewBand      `json:"band"`
+		Spans             overviewSpans     `json:"spans"`
 		Rates             overviewRates     `json:"rates"`
 		Days              []overviewDay     `json:"days"`
 		Projects          []overviewProject `json:"projects"`
@@ -306,6 +319,14 @@ type (
 		DroppedByTransform int64            `json:"dropped_by_transform"`
 		Stored             overviewStored   `json:"stored"`
 		StoredCountedBytes int64            `json:"stored_counted_bytes"`
+	}
+	overviewSpans struct {
+		Received      int64 `json:"received"`
+		ReceivedBytes int64 `json:"received_bytes"`
+		Stored        int64 `json:"stored"`
+		StoredBytes   int64 `json:"stored_bytes"`
+		LocalBytes    int64 `json:"local_bytes"`
+		BucketBytes   int64 `json:"bucket_bytes"`
 	}
 	overviewReceived struct {
 		Logs        int64 `json:"logs"`
@@ -356,6 +377,7 @@ type (
 		Kept               overviewKept     `json:"kept"`
 		DroppedByTransform int64            `json:"dropped_by_transform"`
 		StoredCountedBytes int64            `json:"stored_counted_bytes"`
+		Spans              overviewSpans    `json:"spans"`
 	}
 	overviewAllDays struct {
 		Logs      int64   `json:"logs"`
@@ -391,6 +413,18 @@ func busier(a, b storage.Peak) storage.Peak {
 	return a
 }
 
+func (s *overviewSpans) receive(c models.IngestCount) {
+	s.Received += c.SpansReceived
+	s.ReceivedBytes += c.SpanBytesReceived
+}
+
+func (s *overviewSpans) store(d storage.StoredLogDay) {
+	s.Stored += d.Logs
+	s.LocalBytes += d.LocalBytes
+	s.BucketBytes += d.BucketBytes
+	s.StoredBytes += d.LocalBytes + d.BucketBytes
+}
+
 func (s *overviewStored) add(d storage.StoredLogDay) {
 	s.Logs += d.Logs
 	s.LocalBytes += d.LocalBytes
@@ -411,6 +445,7 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 	a.Band.Received = overviewReceived{Logs: i.LogsReceived, Bytes: i.BytesReceived, BytesOnWire: i.BytesOnWire, Requests: i.Requests}
 	a.Band.UnreadableLogs = i.LogsUnreadable
 	a.Band.OverloadedRequests = i.RequestsOverloaded
+	a.Spans.receive(i.IngestCount)
 
 	seconds := int64(q.elapsed() / time.Second)
 	rate := func(total int64, peak storage.Peak) overviewRate { return rateOver(seconds, total, peak) }
@@ -456,7 +491,12 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 		i := byProject[in.ProjectID]
 		a.Days[byDay[in.Day]].Projects[i].ReceivedLogs += in.LogsReceived
 		a.Projects[i].Received.add(in.IngestCount)
+		a.Projects[i].Spans.receive(in.IngestCount)
 		peaks[i] = busier(peaks[i], in.PeakLogs)
+	}
+	for _, stored := range d.spanDays {
+		a.Spans.store(stored)
+		a.Projects[byProject[stored.ProjectID]].Spans.store(stored)
 	}
 	for i := range a.Projects {
 		a.Projects[i].LogsPerSecond = rate(a.Projects[i].Received.Logs, peaks[i])

@@ -81,6 +81,16 @@ export function filterGroups(groups: PaletteGroup[], text: string): PaletteGroup
     .filter(g => g.items.length > 0)
 }
 
+/**
+ * The groups the typed text itself makes, ahead of the sources': a pasted
+ * trace id (32 hex digits) opens that trace in the Organization.
+ */
+export function typedGroups(text: string, orgSlug: string): PaletteGroup[] {
+  const id = text.trim().toLowerCase()
+  if (!orgSlug || !/^[0-9a-f]{32}$/.test(id)) return []
+  return [{ group: 'Traces', items: [{ id: `trace/${id}`, group: 'Traces', label: `Open trace ${id}`, href: `/${orgSlug}/traces/${id}` }] }]
+}
+
 /** A Query on one line for the palette: its stages after a Project's source, joined by |. */
 export function queryLine(query: string): string {
   const line = query.split('\n').map(l => l.trim()).filter(Boolean).join(' ')

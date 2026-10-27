@@ -4,8 +4,9 @@ class Overview
   # The Overview's Storage section, for Instance admins only: the whole
   # install's, every Organization's, from EventStore's answer (nil when
   # there's none). ClickHouse's local disk use against the disk limit in
-  # effect, with the disk's free space; the bucket; the local disk at steady
-  # state, each Project's last 7 days' average a day kept for its Retention
+  # effect, Logs and Spans together, with the disk's free space; the bucket;
+  # the local disk at steady state, each Project's last 7 days' average a day
+  # of Logs and of Spans, each kept for its Retention
   # (local_cache_hours with a bucket), whether that stays under the limit,
   # and about how many days until the limit at the last 7 days' growth when
   # it doesn't (nil when it stays under, or with no growth); and the old Parquet files from before the switch

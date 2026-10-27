@@ -3,7 +3,7 @@
 module McpTools
   # Runs SQL on a Project's Logs, as the explorer's SQL mode does. The server
   # lists it only while SQL queries are on. EventStore runs it as the
-  # Project's SQL user, which sees only the Project's logs and events.
+  # Project's SQL user, which sees only the Project's logs, events and spans.
   class RunSql < Base
     description <<~TEXT.squish
       Runs a ClickHouse SQL SELECT on the logs table, which holds the Project's Logs over the range and no others, and
@@ -12,9 +12,15 @@ module McpTools
       type: attributes.user.:String, attributes.http.status.:Float64, attributes.cached.:Bool (NULL when a Log
       lacks it or holds another type). attrs_json holds array and object Attributes as JSON text, read as
       attrs_json['tags']. An events table holds the Project's Events over the range: uuid, issue_fingerprint_id,
-      timestamp, environment, server_name, release, level and tags. The SQL runs as a read-only database user that
-      sees only those two tables of this Project: other tables, system tables, files, URLs and setting changes are
-      refused, and a query stops after 10 seconds. query_logs does most things more simply.
+      timestamp, environment, server_name, release, level, tags and trace_id. A spans table holds the Project's
+      Spans that started in the range, one row per Span and one per Transaction (is_segment): trace_id, span_id,
+      parent_span_id, segment_id, is_segment, transaction (its Transaction's name), op, description, group_hash (the
+      op and description with literals replaced), repeats (how often its group repeats in its Transaction),
+      status, start, duration_us, self_time_us, sample_rate (weight a row by 1 / sample_rate to estimate all
+      requests), environment, release, server_name and attributes (a string map of the SDK's tags and data, read as
+      attributes['customer']). The SQL runs as a read-only database user that sees only those three tables of this
+      Project: other tables, system tables, files, URLs and setting changes are refused, and a query stops after 10
+      seconds. query_logs does most things more simply.
     TEXT
     read_only!
     needs_sql_queries!

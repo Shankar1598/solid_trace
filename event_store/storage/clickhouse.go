@@ -42,6 +42,9 @@ var clickHouseMigrations = []clickHouseMigration{
 	oldLogFilesMigration,
 	logIngestCountsMigration,
 	logSourceCountsMigration,
+	spansTablesMigration,
+	traceLinksMigration,
+	spanIngestCountsMigration,
 }
 
 // clickHousePingTimeout bounds a health check of ClickHouse.
@@ -52,7 +55,7 @@ const clickHousePingTimeout = 3 * time.Second
 // writes the tables' storage policy for bucket (nil for none) and waits for
 // ClickHouse to load it. Then it runs the migrations the database hasn't had,
 // making the tables on cfg's storage policy, and with a bucket sets when the
-// logs table's parts move to it (useBucket).
+// day tables' parts move to it (useBucket).
 func OpenClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHouse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

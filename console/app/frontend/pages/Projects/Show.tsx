@@ -17,19 +17,21 @@ import { toast } from 'sonner'
 interface ProjectsShowProps {
   project: Project
   default_log_retention_days: number
+  default_trace_retention_days: number
   can_manage_project: boolean
   can_manage_keys: boolean
   can_delete_project: boolean
 }
 
 export default function ProjectsShow({
-  project, default_log_retention_days, can_manage_project, can_manage_keys, can_delete_project,
+  project, default_log_retention_days, default_trace_retention_days, can_manage_project, can_manage_keys, can_delete_project,
 }: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const { data, setData, patch, processing, errors, transform } = useForm({
-    log_retention_days: project.log_retention_days?.toString() ?? ''
+    log_retention_days: project.log_retention_days?.toString() ?? '',
+    trace_retention_days: project.trace_retention_days?.toString() ?? '',
   })
 
   transform((data) => ({
@@ -60,7 +62,7 @@ export default function ProjectsShow({
     e.preventDefault()
     patch(`/${current_org.slug}/projects/${project.slug}`, {
       preserveScroll: true,
-      onError: () => toast.error('Failed to update Log Retention')
+      onError: () => toast.error('Failed to update Retention')
     })
   }
 
@@ -180,29 +182,32 @@ export default function ProjectsShow({
         <Card>
           <form onSubmit={submitRetention}>
             <CardHeader>
-              <CardTitle>Log retention</CardTitle>
+              <CardTitle>Retention</CardTitle>
               <CardDescription>
-                How many whole days this project's logs are kept before they are deleted.
+                How many whole days this project's logs and traces' spans are kept before they are deleted.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-2 pb-6">
-              <Label htmlFor="logRetentionDays">Days</Label>
-              <Input
+            <CardContent className="space-y-4 pb-6">
+              <RetentionField
                 id="logRetentionDays"
-                type="number"
-                min={1}
-                step={1}
-                inputMode="numeric"
+                label="Logs (days)"
                 value={data.log_retention_days}
-                onChange={(e) => setData('log_retention_days', e.target.value)}
-                placeholder={`Instance default (${default_log_retention_days})`}
+                onChange={(value) => setData('log_retention_days', value)}
+                instanceDefault={default_log_retention_days}
+                error={errors.log_retention_days}
                 disabled={!can_manage_project}
               />
-              {errors.log_retention_days && (
-                <p className="text-sm font-medium text-destructive">{errors.log_retention_days}</p>
-              )}
+              <RetentionField
+                id="traceRetentionDays"
+                label="Traces (days)"
+                value={data.trace_retention_days}
+                onChange={(value) => setData('trace_retention_days', value)}
+                instanceDefault={default_trace_retention_days}
+                error={errors.trace_retention_days}
+                disabled={!can_manage_project}
+              />
               <p className="text-xs text-muted-foreground">
-                Leave empty to use the instance default of {default_log_retention_days} days.
+                Leave one empty to use the instance default.
                 {!can_manage_project && ' Only organization admins can change this.'}
               </p>
             </CardContent>
@@ -260,5 +265,35 @@ export default function ProjectsShow({
         </AlertDialogContent>
       </AlertDialog>
     </DashboardLayout>
+  )
+}
+
+/** One Retention input: empty means the instance default, shown as its placeholder. */
+function RetentionField({ id, label, value, onChange, instanceDefault, error, disabled }: {
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+  instanceDefault: number
+  error?: string
+  disabled: boolean
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type="number"
+        min={1}
+        step={1}
+        inputMode="numeric"
+        className="max-w-48"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={`Instance default (${instanceDefault})`}
+        disabled={disabled}
+      />
+      {error && <p className="text-sm font-medium text-destructive">{error}</p>}
+    </div>
   )
 }

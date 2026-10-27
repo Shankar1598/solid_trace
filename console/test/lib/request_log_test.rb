@@ -30,6 +30,21 @@ class RequestLogTest < ActiveSupport::TestCase
     assert_match(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\z/, line[:time])
   end
 
+  test "a request Sentry traces, sampled or not, has its trace id, which EventStore reads as the Log's" do
+    trace_id = "6d2f0e4a9b3d4e6f8a7b6c5d4e3f2b10"
+    request = ActionDispatch::Request.new(Rack::MockRequest.env_for("/acme/logs"))
+    event = ActiveSupport::Notifications::Event.new("process_action.action_controller", 0, 0, "1", { request: request, params: {} })
+
+    traced = Sentry.with_scope do |scope|
+      scope.set_span(Sentry::Transaction.new(name: "LogsController#index", trace_id: trace_id, sampled: false))
+      RequestLog.line({ status: 200, duration: 1.0 }.merge(RequestLog.request(event)), {})
+    end
+    untraced = RequestLog.line({ status: 200, duration: 1.0 }.merge(RequestLog.request(event)), {})
+
+    assert_equal trace_id, traced[:trace_id]
+    assert_not untraced.key?(:trace_id)
+  end
+
   test "a failed request is an error with the exception, and a signed-out one names no user" do
     lograge = { method: "POST", path: "/mcp", status: 500, error: "RuntimeError: boom", duration: 2.0 }
 

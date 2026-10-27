@@ -32,19 +32,30 @@ var logIngestCountsMigration = clickHouseMigration{version: 1001, statements: []
 	SETTINGS storage_policy = '` + ClickHouseStoragePolicy + `', non_replicated_deduplication_window = ` + fmt.Sprint(logsDedupWindow),
 }}
 
+// spanIngestCountsMigration counts Spans on arrival beside Logs, so that the
+// Overview answers Spans received without reading spans. SummingMergeTree
+// sums the new columns too. Traces 05, 25xx.
+var spanIngestCountsMigration = clickHouseMigration{version: 2501, statements: []string{
+	`ALTER TABLE log_ingest_counts
+		ADD COLUMN IF NOT EXISTS spans_received UInt64,
+		ADD COLUMN IF NOT EXISTS span_bytes_received UInt64`,
+}}
+
 // WriteIngestCounts inserts Ingest counts as one block with token as its
 // dedup token, so that the same rows written again with it are dropped.
 func (s *ClickHouseLogs) WriteIngestCounts(token string, counts []models.IngestCount) error {
 	ctx := insertContext(token)
 	block, err := s.conn.PrepareBatch(ctx, `INSERT INTO log_ingest_counts
-		(project_id, second, logs_received, logs_unreadable, bytes_received, bytes_on_wire, requests, requests_overloaded)`)
+		(project_id, second, logs_received, logs_unreadable, bytes_received, bytes_on_wire, requests, requests_overloaded,
+		spans_received, span_bytes_received)`)
 	if err != nil {
 		return err
 	}
 	defer block.Abort()
 	for _, c := range counts {
 		if err := block.Append(c.ProjectID, c.Second, uint64(c.LogsReceived), uint64(c.LogsUnreadable),
-			uint64(c.BytesReceived), uint64(c.BytesOnWire), uint64(c.Requests), uint64(c.RequestsOverloaded)); err != nil {
+			uint64(c.BytesReceived), uint64(c.BytesOnWire), uint64(c.Requests), uint64(c.RequestsOverloaded),
+			uint64(c.SpansReceived), uint64(c.SpanBytesReceived)); err != nil {
 			return err
 		}
 	}
@@ -73,13 +84,15 @@ type IngestTotals struct {
 }
 
 // ingestSeconds is a scope's Ingest counts summed per second, and per
-// Project when by is "project_id, ", as l, u, b, w, r and o: a second's
+// Project when by is "project_id, ", as l, u, b, w, r, o, and s and sb for
+// Spans and their bytes: a second's
 // rows are summed, across Projects or the parts not yet merged, before a
 // peak is taken over them. It takes the scope's ProjectIDs, From and To.
 func ingestSeconds(by string) string {
 	return `
 		SELECT ` + by + `second, sum(logs_received) AS l, sum(logs_unreadable) AS u, sum(bytes_received) AS b,
-			sum(bytes_on_wire) AS w, sum(requests) AS r, sum(requests_overloaded) AS o
+			sum(bytes_on_wire) AS w, sum(requests) AS r, sum(requests_overloaded) AS o,
+			sum(spans_received) AS s, sum(span_bytes_received) AS sb
 		FROM log_ingest_counts
 		WHERE project_id IN ? AND second >= ? AND second < ?
 		GROUP BY ` + by + `second`
@@ -104,11 +117,11 @@ func (p *Peak) settle() {
 func (s *ClickHouseLogs) IngestTotals(ctx context.Context, scope OverviewScope) (IngestTotals, error) {
 	row := s.conn.QueryRow(ctx, `
 		SELECT toInt64(sum(l)), toInt64(sum(u)), toInt64(sum(b)), toInt64(sum(w)), toInt64(sum(r)), toInt64(sum(o)),
-			`+peakOf("l")+`, `+peakOf("b")+`, `+peakOf("r")+`
+			toInt64(sum(s)), toInt64(sum(sb)), `+peakOf("l")+`, `+peakOf("b")+`, `+peakOf("r")+`
 		FROM (`+ingestSeconds("")+`)`, scope.ProjectIDs, scope.From, scope.To)
 	var t IngestTotals
 	if err := row.Scan(&t.LogsReceived, &t.LogsUnreadable, &t.BytesReceived, &t.BytesOnWire, &t.Requests, &t.RequestsOverloaded,
-		&t.PeakLogs.Count, &t.PeakLogs.At, &t.PeakBytes.Count, &t.PeakBytes.At, &t.PeakRequests.Count, &t.PeakRequests.At); err != nil {
+		&t.SpansReceived, &t.SpanBytesReceived, &t.PeakLogs.Count, &t.PeakLogs.At, &t.PeakBytes.Count, &t.PeakBytes.At, &t.PeakRequests.Count, &t.PeakRequests.At); err != nil {
 		return IngestTotals{}, fmt.Errorf("sum Ingest counts: %w", err)
 	}
 	for _, p := range []*Peak{&t.PeakLogs, &t.PeakBytes, &t.PeakRequests} {
@@ -152,6 +165,17 @@ const localAndBucketBytes = `
 // StoredLogDays lists the stored days of each Project of projectIDs from
 // the day of from to the day of to, by logs' parts, in no order.
 func (s *ClickHouseLogs) StoredLogDays(ctx context.Context, projectIDs []uint32, from, to time.Time) ([]StoredLogDay, error) {
+	return s.storedDays(ctx, "logs", projectIDs, from, to)
+}
+
+// StoredSpanDays lists the stored days of Spans as StoredLogDays does Logs,
+// by spans' parts, with Logs counting the day's Spans.
+func (s *ClickHouseLogs) StoredSpanDays(ctx context.Context, projectIDs []uint32, from, to time.Time) ([]StoredLogDay, error) {
+	return s.storedDays(ctx, "spans", projectIDs, from, to)
+}
+
+// storedDays lists the stored days of a Project-day table by its parts.
+func (s *ClickHouseLogs) storedDays(ctx context.Context, table string, projectIDs []uint32, from, to time.Time) ([]StoredLogDay, error) {
 	var ids []string
 	for _, projectID := range projectIDs {
 		for day := LogDay(from); !day.After(to); day = day.AddDate(0, 0, 1) {
@@ -165,10 +189,10 @@ func (s *ClickHouseLogs) StoredLogDays(ctx context.Context, projectIDs []uint32,
 		SELECT partition_id, toInt64(sum(rows)), `+localAndBucketBytes+`,
 			toInt64(sum(data_uncompressed_bytes))
 		FROM system.parts
-		WHERE database = currentDatabase() AND table = 'logs' AND active AND partition_id IN ?
-		GROUP BY partition_id`, ids)
+		WHERE database = currentDatabase() AND table = ? AND active AND partition_id IN ?
+		GROUP BY partition_id`, table, ids)
 	if err != nil {
-		return nil, fmt.Errorf("list the parts of stored Logs: %w", err)
+		return nil, fmt.Errorf("list the parts of %s: %w", table, err)
 	}
 	defer rows.Close()
 	var days []StoredLogDay
@@ -179,7 +203,7 @@ func (s *ClickHouseLogs) StoredLogDays(ctx context.Context, projectIDs []uint32,
 			return nil, err
 		}
 		if d.ProjectID, d.Day, err = parseLogPartitionID(id); err != nil {
-			return nil, fmt.Errorf("partition %s of logs: %w", id, err)
+			return nil, fmt.Errorf("partition %s of %s: %w", id, table, err)
 		}
 		days = append(days, d)
 	}
@@ -199,16 +223,20 @@ func (s *ClickHouseLogs) IngestLogsBetween(ctx context.Context, projectIDs []uin
 }
 
 // HasLogs is whether any Project of projectIDs has stored Logs of any day,
-// or Ingest counts of any, by the tables' parts.
+// by the logs table's parts, or Ingest counts of Logs received. Ingest
+// counts of Spans alone aren't Logs.
 func (s *ClickHouseLogs) HasLogs(ctx context.Context, projectIDs []uint32) (bool, error) {
-	var parts uint64
+	var has bool
 	if err := s.conn.QueryRow(ctx, `
-		SELECT count() FROM system.parts
-		WHERE database = currentDatabase() AND active AND table IN ('logs', 'log_ingest_counts')
-			AND toUInt32OrZero(splitByChar('-', partition_id)[1]) IN ?`, projectIDs).Scan(&parts); err != nil {
+		SELECT (SELECT count() FROM system.parts
+				WHERE database = currentDatabase() AND active AND table = 'logs'
+					AND toUInt32OrZero(splitByChar('-', partition_id)[1]) IN ?) > 0
+			OR (SELECT count() FROM (
+				SELECT 1 FROM log_ingest_counts WHERE project_id IN ? AND logs_received > 0 LIMIT 1)) > 0`,
+		projectIDs, projectIDs).Scan(&has); err != nil {
 		return false, fmt.Errorf("find whether Projects have Logs: %w", err)
 	}
-	return parts > 0, nil
+	return has, nil
 }
 
 // IngestDay sums a day of a scope's Ingest counts, the Projects together or
@@ -240,7 +268,7 @@ func (s *ClickHouseLogs) ingestDays(ctx context.Context, scope OverviewScope, by
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT `+project+`, toDate(second) AS day, toInt64(sum(l)), toInt64(sum(u)), toInt64(sum(b)), toInt64(sum(w)),
-			toInt64(sum(r)), toInt64(sum(o)), `+peakOf("l")+`
+			toInt64(sum(r)), toInt64(sum(o)), toInt64(sum(s)), toInt64(sum(sb)), `+peakOf("l")+`
 		FROM (`+ingestSeconds(by)+`)
 		GROUP BY `+by+`day`, scope.ProjectIDs, scope.From, scope.To)
 	if err != nil {
@@ -251,7 +279,7 @@ func (s *ClickHouseLogs) ingestDays(ctx context.Context, scope OverviewScope, by
 	for rows.Next() {
 		var d IngestDay
 		if err := rows.Scan(&d.ProjectID, &d.Day, &d.LogsReceived, &d.LogsUnreadable, &d.BytesReceived, &d.BytesOnWire,
-			&d.Requests, &d.RequestsOverloaded, &d.PeakLogs.Count, &d.PeakLogs.At); err != nil {
+			&d.Requests, &d.RequestsOverloaded, &d.SpansReceived, &d.SpanBytesReceived, &d.PeakLogs.Count, &d.PeakLogs.At); err != nil {
 			return nil, err
 		}
 		d.Day = LogDay(d.Day)
