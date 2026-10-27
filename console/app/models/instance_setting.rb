@@ -18,7 +18,7 @@ class InstanceSetting < ApplicationRecord
   # The settings that apply at once, so instance admins change them on
   # Settings → Instance and over the MCP server.
   EDITABLE = %i[sql_queries_enabled default_log_retention_days default_trace_retention_days log_all_reads
-                log_mcp_reads].freeze
+                log_mcp_reads send_console_issues trace_console].freeze
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
@@ -43,8 +43,16 @@ class InstanceSetting < ApplicationRecord
   validates :log_all_reads, inclusion: { in: [ true, false ] }
   # Off still saves while log_all_reads is on, and applies once that's off.
   validates :log_mcp_reads, inclusion: { in: [ true, false ] }
+  # Whether Console sends its own Issues and traces to its Sentry DSN, the
+  # Meta Project on an install (ConsoleSentry, docs/traces.md).
+  validates :send_console_issues, inclusion: { in: [ true, false ] }
+  validates :trace_console, inclusion: { in: [ true, false ] }
   validates :default_log_retention_days, numericality: { only_integer: true, greater_than: 0 }
   validates :default_trace_retention_days, numericality: { only_integer: true, greater_than: 0 }
+
+  # Console's Sentry reads these settings once in a while; this process reads
+  # them again at once.
+  after_save { ConsoleSentry.reset }
 
   normalizes :smtp_address, :smtp_username, :mail_from, with: ->(value) { value.strip.presence }
   validates :smtp_port, numericality: { only_integer: true, in: 1..65_535 }
