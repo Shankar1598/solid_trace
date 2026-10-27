@@ -14,9 +14,9 @@ Spec: [../spec.md](../spec.md)
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Both transports deliver one envelope to two local EventStores
-- [ ] The documented Log transform passes a preview on sample request and job lines
-- [ ] A Console request on the dev stack appears as a trace with its Logs
-- [ ] The install script writes the DSN and sample rate (its existing test)
+- [x] Both transports deliver one envelope to two local EventStores (`event_store/traces_docs_test.go`: the Ruby and Go senders in `docs/traces/` send through their DualTransport to the test EventStore on two addresses, each with its own Project's DSN; both Projects store the Transaction and the Event's Issue)
+- [x] The documented Log transform passes a preview on sample request and job lines (`console/config/trace_tag_log_transform.vrl`, shown as-is in `docs/traces.md` and seeded into the Meta Project)
+- [x] A Console request on the dev stack appears as a trace with its Logs. Checked by hand, not on the dev stack (its EventStore wasn't running and the stack is the main checkout's): Console in production mode at a 100% rate sent its envelopes to a listener; those envelopes and its stdout, shaped as Vector ships it, went into the test EventStore with the seeded transform, and each request's trace answered its Spans and its Logs (and the 500's Issue)
+- [x] The install script writes the DSN and sample rate. There was no test of `deploy/install`; `console/test/deploy/install_test.rb` is new, and runs the install's new `write_env` from a sourced copy
