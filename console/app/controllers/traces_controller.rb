@@ -10,7 +10,7 @@ class TracesController < ApplicationController
   before_action :set_current_org
 
   def show
-    trace = TraceView.new(organization: @current_org, user: current_user, trace_id: params[:trace_id], time: hint)
+    trace = TraceView.new(organization: @current_org, trace_id: params[:trace_id], time: hint)
     render inertia: "Traces/Show", props: { trace: trace.to_h }
   end
 

@@ -24,7 +24,7 @@ module McpTools
       trace_id = arguments[:trace].to_s.downcase
       raise ToolError, "trace must be a trace id, 32 hex digits." unless trace_id.match?(/\A\h{32}\z/)
 
-      trace = TraceView.new(organization: organization, user: user, trace_id: trace_id, time: time)
+      trace = TraceView.new(organization: organization, trace_id: trace_id, time: time)
       json(trace.summary, link: links.trace(organization, trace_id, time: time))
     end
 

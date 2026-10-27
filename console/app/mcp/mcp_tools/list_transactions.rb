@@ -32,7 +32,7 @@ module McpTools
     argument :environment, ENVIRONMENT
 
     def run
-      view = TransactionsView.new(project: project, user: user, range: performance_range, environment: arguments[:environment])
+      view = TransactionsView.new(project: project, range: performance_range, environment: arguments[:environment])
       answer = view.to_h
       raise ToolError, "#{view.event_store[:error]}. Try again shortly." unless view.event_store[:available]
 

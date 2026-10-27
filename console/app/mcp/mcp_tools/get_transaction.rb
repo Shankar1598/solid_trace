@@ -25,7 +25,7 @@ module McpTools
 
     def run
       range = TransactionsView.range(range: arguments[:range], from: arguments[:from], to: arguments[:to])
-      view = TransactionView.new(project: project, user: user, name: arguments[:name], range: range, environment: arguments[:environment])
+      view = TransactionView.new(project: project, name: arguments[:name], range: range, environment: arguments[:environment])
       answer = view.to_h
       raise ToolError, "#{view.event_store[:error]}. Try again shortly." unless view.event_store[:available]
 

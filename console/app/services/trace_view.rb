@@ -13,6 +13,8 @@
 # time), or else around its first Event. When EventStore can't answer, there
 # is nothing of it and event_store says why.
 class TraceView
+  include EventStoreView
+
   # How long Console waits for EventStore's trace, in seconds.
   TIMEOUT_SECONDS = 10
   # The most rows #summary gives, its Transactions, critical path and Spans
@@ -23,11 +25,10 @@ class TraceView
   SUMMARY_DESCRIPTION = 120
   LOG_MESSAGE = 500
 
-  attr_reader :organization, :user, :trace_id, :time
+  attr_reader :organization, :trace_id, :time
 
-  def initialize(organization:, user:, trace_id:, time: nil)
+  def initialize(organization:, trace_id:, time: nil)
     @organization = organization
-    @user = user
     @trace_id = trace_id.to_s.downcase
     @time = time
   end
@@ -69,12 +70,6 @@ class TraceView
       logs: { count: logs.size, more: answer&.dig("more_logs") || false },
       trace_logs: trace_logs,
     }
-  end
-
-  # Whether EventStore answered, and if not, why.
-  def event_store
-    answer
-    @unavailable ? { available: false, error: @unavailable } : { available: true }
   end
 
   # Whether the trace has Spans: nil when EventStore didn't answer.
@@ -219,10 +214,6 @@ class TraceView
     @children ||= received.group_by { |s| s["parent_span_id"] }
   end
 
-  def project_ref(project)
-    { id: project.id, name: project.name, slug: project.slug }
-  end
-
   # The query_logs arguments that read the trace's Logs, for each Project
   # with any, as get_issue's trace_logs are.
   def trace_logs
@@ -299,14 +290,10 @@ class TraceView
   end
 
   # EventStore's answer, or nil when the Organization has no Projects or
-  # EventStore can't answer (@unavailable says why).
+  # EventStore can't answer (event_store says why).
   def answer
-    return @answer if defined?(@answer)
-
-    @answer = projects.empty? ? nil : EventStore.trace!(project_ids: projects.keys, trace_id: trace_id, time: time, read_timeout: TIMEOUT_SECONDS)
-  rescue EventStore::Unavailable, EventStore::Rejected => e
-    Rails.logger.error("Trace: #{e.message}")
-    @unavailable = "EventStore can't read the trace: #{e.message}"
-    @answer = nil
+    event_store_answer("trace") do
+      EventStore.trace!(project_ids: projects.keys, trace_id: trace_id, time: time, read_timeout: TIMEOUT_SECONDS) if projects.any?
+    end
   end
 end
