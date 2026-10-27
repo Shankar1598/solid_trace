@@ -65,7 +65,7 @@ class Overview
     # trace Retention; past 30 days Datadog lists none, so 30 days' is the
     # floor. The ingested GB are the Transactions' bytes as received.
     APM = {
-      key: "datadog_apm", name: "Datadog", plan: "APM, on-demand",
+      key: "datadog_apm", name: "Datadog", plan: "APM, on-demand", checked_on: "2026-10-27",
       url: "https://www.datadoghq.com/pricing/list/",
       per_host: 36.0, included_gb_per_host: 150, included_indexed_per_host: 1_000_000,
       ingest_per_gb: 0.10,
@@ -138,7 +138,7 @@ class Overview
         p[:spans] * billable / 1_000_000 * listed.fetch(days)
       end
       cost = hosts * APM[:per_host] + [ gb - hosts * APM[:included_gb_per_host], 0 ].max * APM[:ingest_per_gb] + indexed
-      { key: APM[:key], name: APM[:name], plan: APM[:plan], url: APM[:url], monthly_usd: cost.round(2),
+      { key: APM[:key], name: APM[:name], plan: APM[:plan], url: APM[:url], checked_on: APM[:checked_on], monthly_usd: cost.round(2),
         per_host_usd: APM[:per_host], volume: { spans: spans.round, bytes: (gb * GB).round, hosts: hosts },
         beyond_list: @spans.any? { |p| p[:retention_days] > listed.keys.last } }
     end
