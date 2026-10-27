@@ -24,9 +24,9 @@ module McpTools
                 "apm, what its Spans would cost at Datadog APM's (one APM host taken per Project that sent Spans, " \
                 "every Span indexed at its trace Retention; null with no Spans), " \
                 "and GCP's internet egress for the bytes on the wire, with each pricing page and the date checked; " \
-                "storage, for an instance admin only and the whole install's, every Organization's: local disk use " \
+                "storage, for an instance admin only and the whole install's, every Organization's: Logs' and Spans' local disk use " \
                 "against the disk limit, free disk, bucket bytes, the local disk at steady state (each Project's " \
-                "last 7 days' average a day kept for its Retention, or local_cache_hours with a bucket), whether that " \
+                "last 7 days' average a day of Logs and of Spans, each kept for its Retention, or local_cache_hours with a bucket), whether that " \
                 "stays under the limit, and if not about how many days until the limit at the last 7 days' growth, and the old Parquet files kept and the day Retention deletes the " \
                 "last of them; " \
                 "event_store says whether EventStore answered; when it didn't, " \

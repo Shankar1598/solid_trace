@@ -231,13 +231,13 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     they began; events, each Project's Events of the range. A Project with
 //     none is left out of each.
 //   - storage, only with include_storage: the whole install's, every
-//     Project's: local_bytes, the Logs on ClickHouse's local disk and the old
-//     Log files' local copies, which the disk limit counts, against
-//     disk_limit_bytes, the limit in effect, with disk_bytes and free_bytes
-//     of that disk; bucket_bytes, the Logs in the bucket; growth_bytes_per_day,
-//     the bytes of a day's Logs over the last 7 whole days, and
-//     days_until_limit at that growth (null with a bucket, which Logs move
-//     to); and old_files, the old Log files from before the switch: how many,
+//     Project's: local_bytes, the Logs and Spans on ClickHouse's local disk
+//     and the old Log files' local copies, which the disk limit counts,
+//     against disk_limit_bytes, the limit in effect, with disk_bytes and
+//     free_bytes of that disk; bucket_bytes, the Logs and Spans in the
+//     bucket; growth_bytes_per_day, the bytes of a day's Logs and Spans over
+//     the last 7 whole days, and days_until_limit at that growth (null with
+//     a bucket, which they move to); and old_files, the old Log files from before the switch: how many,
 //     their local copies' bytes, their newest day and passes_retention_on, the
 //     day Retention deletes the last of them (null with none).
 //
