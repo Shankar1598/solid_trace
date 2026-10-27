@@ -11,6 +11,8 @@
 # row, Unparameterised. When EventStore can't answer, there are no rows and
 # event_store says why.
 class TransactionsView
+  include EventStoreView
+
   # How long Console waits for EventStore, in seconds.
   TIMEOUT_SECONDS = 10
   # The range when none is given.
@@ -44,32 +46,21 @@ class TransactionsView
     { span: range.span, from: range.from.utc.iso8601(3), to: range.to.utc.iso8601(3) }
   end
 
-  def self.project_h(project)
-    { id: project.id, name: project.name, slug: project.slug }
-  end
-
-  attr_reader :project, :user, :range, :environment
+  attr_reader :project, :range, :environment
 
   # range is a McpTools::TimeRange, as TransactionsView.range reads it;
   # environment nil reads every one.
-  def initialize(project:, user:, range:, environment: nil)
+  def initialize(project:, range:, environment: nil)
     @project = project
-    @user = user
     @range = range
     @environment = environment.presence
   end
 
   def to_h
     {
-      project: self.class.project_h(project), range: self.class.range_h(range), environment: environment,
+      project: project_ref(project), range: self.class.range_h(range), environment: environment,
       event_store: event_store, environments: Array(answer&.dig("environments")), transactions: transactions,
     }
-  end
-
-  # Whether EventStore answered, and if not, why.
-  def event_store
-    answer
-    @unavailable ? { available: false, error: @unavailable } : { available: true }
   end
 
   # A row per Transaction name, the most time consuming first.
@@ -95,13 +86,9 @@ class TransactionsView
   end
 
   def answer
-    return @answer if defined?(@answer)
-
-    @answer = EventStore.transactions!(project_id: project.id, from: range.from, to: range.to, environment: environment,
-      read_timeout: TIMEOUT_SECONDS)
-  rescue EventStore::Unavailable, EventStore::Rejected => e
-    Rails.logger.error("Transactions: #{e.message}")
-    @unavailable = "EventStore can't read the Transactions: #{e.message}"
-    @answer = nil
+    event_store_answer("Transactions") do
+      EventStore.transactions!(project_id: project.id, from: range.from, to: range.to, environment: environment,
+        read_timeout: TIMEOUT_SECONDS)
+    end
   end
 end
