@@ -115,7 +115,8 @@ func main() {
 	}
 	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
 	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
-	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, consoleSettings, diskLimit, clock.System{})
+	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, diskLimit, clock.System{},
+		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention})
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
