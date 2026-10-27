@@ -22,3 +22,10 @@ vulnerabilities:
     paths: ["usr/local/bundle/ruby/*/gems/thruster-*/exe/*/thrust"]
     statement: TLS ECH DoS; Thruster does no TLS here
     expired_at: 2026-11-30
+  # Ruby 4.0.9's image, the newest, ships json 2.18.0 as a default gem.
+  # Console runs through Bundler, whose lockfile loads json 2.21.2, so the
+  # default copy is never required. A Ruby 4.0.10 image clears it.
+  - id: CVE-2026-33210
+    paths: ["usr/local/lib/ruby/gems/*/specifications/default/json-*.gemspec"]
+    statement: json default gem in Ruby's image; the bundle loads json 2.21.2
+    expired_at: 2026-11-30
