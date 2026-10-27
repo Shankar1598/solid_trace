@@ -26,6 +26,8 @@ class Project < ApplicationRecord
   validate :slug_reachable, on: :create
   # Whole days; nil means the instance default (InstanceSetting).
   validates :log_retention_days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
+  # Trace Retention, in whole days; nil means the instance default.
+  validates :trace_retention_days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
   # What the Project holds, for agents over MCP to pick the Project to query.
   validates :description, length: { maximum: 1000 }
 

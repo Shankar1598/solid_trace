@@ -12,8 +12,9 @@ import (
 // instance_settings table has no row. They mirror that table's column
 // defaults in console/db/schema.rb, which owns them.
 const (
-	defaultSQLQueriesEnabled = true
-	defaultLogRetentionDays  = 30
+	defaultSQLQueriesEnabled  = true
+	defaultLogRetentionDays   = 30
+	defaultTraceRetentionDays = 14
 )
 
 // instanceSettingsID is the one instance_settings row (InstanceSetting::ID in
@@ -114,14 +115,27 @@ func (s *ConsoleSettings) ProjectSlug(projectID uint32) (string, error) {
 // been deleted. A Project whose Retention is below one day, which only
 // Console's validations prevent, has 0.
 func (s *ConsoleSettings) ProjectLogRetention() (map[uint32]int, error) {
+	return s.projectRetention("log_retention_days", "default_log_retention_days", defaultLogRetentionDays)
+}
+
+// ProjectTraceRetention returns the effective trace Retention, in whole days,
+// of every Project in Console's projects table, as ProjectLogRetention does
+// Log Retention: its own, else the instance default, else 14.
+func (s *ConsoleSettings) ProjectTraceRetention() (map[uint32]int, error) {
+	return s.projectRetention("trace_retention_days", "default_trace_retention_days", defaultTraceRetentionDays)
+}
+
+// projectRetention reads every Project's Retention in column, else the
+// instance's in instanceColumn, else defaultDays.
+func (s *ConsoleSettings) projectRetention(column, instanceColumn string, defaultDays int) (map[uint32]int, error) {
 	rows, err := s.db.Query(`
 		SELECT id, COALESCE(
-			log_retention_days,
-			(SELECT default_log_retention_days FROM instance_settings WHERE id = ?),
+			`+column+`,
+			(SELECT `+instanceColumn+` FROM instance_settings WHERE id = ?),
 			?
 		)
 		FROM projects`,
-		instanceSettingsID, defaultLogRetentionDays)
+		instanceSettingsID, defaultDays)
 	if err != nil {
 		return nil, err
 	}

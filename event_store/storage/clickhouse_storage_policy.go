@@ -38,9 +38,9 @@ func ClickHouseStorageConfig(bucket *config.ObjectStore) []byte {
 		Var string `xml:"from_env,attr"`
 	}
 	type disk struct {
-		Type     string `xml:"type"`
-		Endpoint string `xml:"endpoint,omitempty"`
-		Region   string `xml:"region,omitempty"`
+		Type     string   `xml:"type"`
+		Endpoint string   `xml:"endpoint,omitempty"`
+		Region   string   `xml:"region,omitempty"`
 		KeyID    *fromEnv `xml:"access_key_id"`
 		Secret   *fromEnv `xml:"secret_access_key"`
 		// GCS's S3 API has no DeleteObjects.
@@ -107,14 +107,15 @@ func clickHouseBucketEndpoint(bucket *config.ObjectStore) string {
 }
 
 // bucketTTL is a family's main table's TTL with a bucket: a part moves to
-// the bucket volume once its newest row's time is localCacheHours old. It is
-// written as ClickHouse writes it back in system.tables.
-func bucketTTL(localCacheHours int) string {
-	return fmt.Sprintf("toDateTime(time) + toIntervalHour(%d) TO VOLUME '%s'", localCacheHours, ClickHouseBucketVolume)
+// the bucket volume once its newest row's time, in timeColumn, is
+// localCacheHours old. It is written as ClickHouse writes it back in
+// system.tables.
+func bucketTTL(timeColumn string, localCacheHours int) string {
+	return fmt.Sprintf("toDateTime(%s) + toIntervalHour(%d) TO VOLUME '%s'", timeColumn, localCacheHours, ClickHouseBucketVolume)
 }
 
 // useBucket sets the TTL of each family's main table for bucket (dayFamilies,
-// whose main tables have a time column): with one, parts move to it after
+// by each one's time column): with one, parts move to it after
 // its local_cache_hours; with none, they stay on local disk. It alters a
 // table only when its TTL differs, since ClickHouse then works out every
 // part's TTL again.
@@ -124,7 +125,7 @@ func bucketTTL(localCacheHours int) string {
 // limit moves the oldest days (EnforceDiskLimit).
 func (ch *ClickHouse) useBucket(ctx context.Context, bucket *config.ObjectStore) error {
 	for _, f := range dayFamilies {
-		if err := ch.useBucketFor(ctx, f.Tables[0], bucket); err != nil {
+		if err := ch.useBucketFor(ctx, f.Tables[0], f.TimeColumn, bucket); err != nil {
 			return err
 		}
 	}
@@ -132,7 +133,7 @@ func (ch *ClickHouse) useBucket(ctx context.Context, bucket *config.ObjectStore)
 }
 
 // useBucketFor sets one table's TTL for bucket, as useBucket.
-func (ch *ClickHouse) useBucketFor(ctx context.Context, table string, bucket *config.ObjectStore) error {
+func (ch *ClickHouse) useBucketFor(ctx context.Context, table, timeColumn string, bucket *config.ObjectStore) error {
 	var engine string
 	if err := ch.conn.QueryRow(ctx,
 		"SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = ?", table).Scan(&engine); err != nil {
@@ -143,7 +144,7 @@ func (ch *ClickHouse) useBucketFor(ctx context.Context, table string, bucket *co
 		have, _, _ = strings.Cut(rest, " SETTINGS ")
 	}
 	if bucket != nil {
-		want = bucketTTL(bucket.LocalCacheHours)
+		want = bucketTTL(timeColumn, bucket.LocalCacheHours)
 	}
 	if have == want {
 		return nil
