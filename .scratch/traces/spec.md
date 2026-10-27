@@ -156,7 +156,7 @@ Three new routes on the loopback Query API. As with the Overview, Console sends 
 
 ### Console
 
-- The trace page belongs to the Organization. Performance and the Transaction page belong to the Project. The sidebar gains Performance under each Project.
+- The trace page belongs to the Organization. Performance and the Transaction page belong to the Project. The sidebar gains Performance, an entry like Logs: it opens the Project last seen there, and the page's filter row picks another (changed on 2026-10-27 from a Project list under a Performance heading, which grew with each Project and didn't read like the other entries).
 - **One answer builder per view** (trace, Transactions, Transaction) feeds both its page and its MCP tool, as the Overview's builder does. Each builder's interface is "this view, for this user, over this range". The EventStore call, Organization scoping, links and summarising are inside it.
 - When EventStore fails, a page renders whatever Console holds and says what's unavailable, as the Overview does.
 - Links into the trace page come from:

@@ -1,8 +1,7 @@
-import { Fragment } from 'react'
 import { Link, usePage } from '@inertiajs/react'
 import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Check, ChevronsUpDown, Timer } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { navSection, orgSwitchUrl, performanceProject } from '@/lib/nav'
+import { navSection, orgSwitchUrl } from '@/lib/nav'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
@@ -13,31 +12,6 @@ import { buttonVariants } from '@/components/ui/button'
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
 
-/** Performance, which belongs to a Project: a heading, with each Project's under it. */
-function PerformanceNav({ org, projects, current }: { org: string; projects: { name: string; slug: string }[]; current: string | null }) {
-  return (
-    <div role="group" aria-label="Performance">
-      <div className={cn("flex items-center gap-3 px-3 py-2 text-sm font-medium", current ? "text-primary" : "text-muted-foreground")}>
-        <Timer className="h-4 w-4" />
-        Performance
-      </div>
-      {projects.map(project => (
-        <Link
-          key={project.slug}
-          href={`/${org}/projects/${project.slug}/performance`}
-          aria-current={current === project.slug ? 'page' : undefined}
-          className={cn(
-            "block truncate py-1 pr-3 pl-10 text-[13px] transition-colors",
-            current === project.slug ? "bg-secondary text-primary" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-          )}
-        >
-          {project.name}
-        </Link>
-      ))}
-    </div>
-  )
-}
-
 export function Sidebar({ className }: SidebarProps) {
   const { url, props } = usePage<SharedProps>()
   const { current_org, current_user } = props
@@ -46,7 +20,6 @@ export function Sidebar({ className }: SidebarProps) {
   if (!current_org) return null
 
   const organizations = props.organizations ?? []
-  const projects = props.org_projects ?? []
   const orgHeader = (
     <>
       <div className="h-8 w-8 shrink-0 bg-foreground flex items-center justify-center text-background font-mono font-semibold text-sm">
@@ -63,6 +36,7 @@ export function Sidebar({ className }: SidebarProps) {
     { label: 'Overview', href: `/${current_org.slug}/overview`, icon: Gauge, active: section === 'overview' },
     { label: 'Issues', href: `/${current_org.slug}/issues`, icon: List, active: section === 'issues' },
     { label: 'Logs', href: `/${current_org.slug}/logs`, icon: ScrollText, active: section === 'logs' },
+    { label: 'Performance', href: `/${current_org.slug}/performance`, icon: Timer, active: section === 'performance' },
     { label: 'Dashboards', href: `/${current_org.slug}/dashboards`, icon: LayoutDashboard, active: section === 'dashboards' },
     { label: 'Monitors', href: `/${current_org.slug}/monitors`, icon: BellRing, active: section === 'monitors' },
     { label: 'Projects', href: `/${current_org.slug}/projects`, icon: GitMerge, active: section === 'projects' },
@@ -116,23 +90,19 @@ export function Sidebar({ className }: SidebarProps) {
             <kbd className="ml-auto font-mono text-[11px]">{keyLabel(['Mod', 'k'], onMac())}</kbd>
           </button>
           {navItems.map((item) => (
-            <Fragment key={item.href}>
-              <Link
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 text-sm font-medium transition-colors",
-                  item.active
-                    ? "bg-secondary text-primary"
-                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                )}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </Link>
-              {item.label === 'Logs' && projects.length > 0 && (
-                <PerformanceNav org={current_org.slug} projects={projects} current={performanceProject(url)} />
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "flex items-center gap-3 px-3 py-2 text-sm font-medium transition-colors",
+                item.active
+                  ? "bg-secondary text-primary"
+                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
               )}
-            </Fragment>
+            >
+              <item.icon className="h-4 w-4" />
+              {item.label}
+            </Link>
           ))}
         </nav>
       </div>
