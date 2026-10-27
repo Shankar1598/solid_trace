@@ -42,6 +42,28 @@ class MetaOrganizationTaskTest < ActiveSupport::TestCase
     assert_nil Project.sole.log_retention_days
   end
 
+  test "its Project's Log transform moves the trace tag on Console's lines into their trace id" do
+    seed
+
+    transform = Project.sole.log_transform
+    assert_equal Rails.root.join("config/trace_tag_log_transform.vrl").read, transform.program
+    assert_nil transform.user
+  end
+
+  test "an install seeded before it had a Log transform gets it once, and keeps one an admin changed" do
+    seed
+    project = Project.sole
+    project.log_transform_versions.delete_all
+
+    seed
+    seed
+    assert_equal 1, project.log_transform_versions.count
+
+    project.log_transform_versions.create!(program: "")
+    seed
+    assert_equal "", project.reload.log_transform.program
+  end
+
   test "run again, it makes nothing more" do
     seed
     seed
