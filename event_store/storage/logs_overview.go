@@ -223,16 +223,20 @@ func (s *ClickHouseLogs) IngestLogsBetween(ctx context.Context, projectIDs []uin
 }
 
 // HasLogs is whether any Project of projectIDs has stored Logs of any day,
-// or Ingest counts of any, by the tables' parts.
+// by the logs table's parts, or Ingest counts of Logs received. Ingest
+// counts of Spans alone aren't Logs.
 func (s *ClickHouseLogs) HasLogs(ctx context.Context, projectIDs []uint32) (bool, error) {
-	var parts uint64
+	var has bool
 	if err := s.conn.QueryRow(ctx, `
-		SELECT count() FROM system.parts
-		WHERE database = currentDatabase() AND active AND table IN ('logs', 'log_ingest_counts')
-			AND toUInt32OrZero(splitByChar('-', partition_id)[1]) IN ?`, projectIDs).Scan(&parts); err != nil {
+		SELECT (SELECT count() FROM system.parts
+				WHERE database = currentDatabase() AND active AND table = 'logs'
+					AND toUInt32OrZero(splitByChar('-', partition_id)[1]) IN ?) > 0
+			OR (SELECT count() FROM (
+				SELECT 1 FROM log_ingest_counts WHERE project_id IN ? AND logs_received > 0 LIMIT 1)) > 0`,
+		projectIDs, projectIDs).Scan(&has); err != nil {
 		return false, fmt.Errorf("find whether Projects have Logs: %w", err)
 	}
-	return parts > 0, nil
+	return has, nil
 }
 
 // IngestDay sums a day of a scope's Ingest counts, the Projects together or

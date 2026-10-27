@@ -383,3 +383,33 @@ func TestATransactionsTimeIsBrokenDownByOpGroupAndReleaseWithItsRepeatsAndSlowes
 		t.Errorf("Expected nothing of another Project, got %+v", got)
 	}
 }
+
+func TestATransactionsBreakdownKeepsItsNewestTwentyReleases(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	// 25 releases, a minute apart, the oldest first.
+	for i := range 25 {
+		sent := sentTransaction{fixture: "sentry-ruby-6.3-rails", traceID: traceIDOf(100 + i), at: at(11, 10+i),
+			release: fmt.Sprintf("api@1.%d.0", i)}
+		postEnvelopeWithKey(t, env, "test_public_key", sent.envelope(t))
+	}
+	env.ProcessSpans(t)
+
+	got := readTransaction(t, env, 123, "OrdersController#show", at(11, 0), at(12, 0), "production")
+	var releases []string
+	for _, r := range got.Releases {
+		line := r.Release
+		for _, p := range r.Points {
+			line += " " + p.Time.Format("15:04")
+		}
+		releases = append(releases, line)
+	}
+	var want []string
+	for i := 5; i < 25; i++ {
+		want = append(want, fmt.Sprintf("api@1.%d.0 %s", i, at(11, 10+i).Format("15:04")))
+	}
+	if !slices.Equal(releases, want) {
+		t.Errorf("Expected the newest 20 releases, each with its own points, the first seen first\n  %s\ngot\n  %s",
+			strings.Join(want, "\n  "), strings.Join(releases, "\n  "))
+	}
+}

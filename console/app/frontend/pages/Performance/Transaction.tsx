@@ -7,8 +7,10 @@ import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { durationText } from '@/lib/traces'
+import { valueText } from '@/lib/charts/axis'
+import { durationText, microsecondsText } from '@/lib/traces'
 import {
+  exactPercentText,
   percentText,
   performancePath,
   performanceSearch,
@@ -48,9 +50,10 @@ export default function PerformanceTransaction({ transaction }: { transaction: T
           ]}
           description={summary && (
             <span data-summary>
-              {summary.sampled.toLocaleString()} sampled · ~{throughputText(summary.throughput_per_minute)} a minute ·
+              {valueText(summary.sampled)} sampled ·{' '}
+              <span title={`${valueText(summary.throughput_per_minute)} a minute`}>~{throughputText(summary.throughput_per_minute)} a minute</span> ·
               p50 {durationText(summary.p50_us)} · p95 {durationText(summary.p95_us)} · p99 {durationText(summary.p99_us)} ·
-              errors {percentText(summary.error_rate)}
+              errors <span title={exactPercentText(summary.error_rate)}>{percentText(summary.error_rate)}</span>
             </span>
           )}
           actions={
@@ -90,9 +93,9 @@ export default function PerformanceTransaction({ transaction }: { transaction: T
                   {transaction.releases.map(r => (
                     <TableRow key={r.release} data-release={r.release}>
                       <TableCell className="font-mono">{r.release || '(none)'}</TableCell>
-                      <Num>{r.sampled.toLocaleString()}</Num>
-                      <Num>{durationText(r.p50_us)}</Num>
-                      <Num>{durationText(r.p95_us)}</Num>
+                      <Num exact={valueText(r.sampled)}>{valueText(r.sampled)}</Num>
+                      <Num exact={microsecondsText(r.p50_us)}>{durationText(r.p50_us)}</Num>
+                      <Num exact={microsecondsText(r.p95_us)}>{durationText(r.p95_us)}</Num>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -125,9 +128,9 @@ export default function PerformanceTransaction({ transaction }: { transaction: T
                           <span className="mr-2 font-medium">{r.op}</span>
                           <span className="break-all font-mono text-xs text-muted-foreground" title={r.description}>{r.normalised}</span>
                         </TableCell>
-                        <Num>×{r.median}</Num>
-                        <Num>×{r.max}</Num>
-                        <Num>{r.sampled.toLocaleString()}</Num>
+                        <Num exact={valueText(r.median)}>×{valueText(r.median)}</Num>
+                        <Num exact={valueText(r.max)}>×{valueText(r.max)}</Num>
+                        <Num exact={valueText(r.sampled)}>{valueText(r.sampled)}</Num>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -154,7 +157,7 @@ export default function PerformanceTransaction({ transaction }: { transaction: T
                         <Link href={`/${org}/traces/${t.trace_id}`} className="font-mono text-xs hover:underline">{t.trace_id}</Link>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{format(new Date(t.start), 'MMM d, HH:mm:ss')}</TableCell>
-                      <Num>{durationText(t.duration_us)}</Num>
+                      <Num exact={microsecondsText(t.duration_us)}>{durationText(t.duration_us)}</Num>
                       <TableCell className={t.status && t.status !== 'ok' ? 'text-destructive' : 'text-muted-foreground'}>{t.status || '—'}</TableCell>
                       <TableCell className="font-mono text-xs">{t.release}</TableCell>
                       <TableCell>{t.environment}</TableCell>
@@ -182,8 +185,9 @@ function Section({ title, description, children }: { title: string; description:
   )
 }
 
-function Num({ children }: { children: ReactNode }) {
-  return <TableCell className="text-right font-mono tabular-nums whitespace-nowrap">{children}</TableCell>
+/** A number cell, the number in full in its title. */
+function Num({ exact, children }: { exact: string; children: ReactNode }) {
+  return <TableCell className="text-right font-mono tabular-nums whitespace-nowrap" title={exact}>{children}</TableCell>
 }
 
 /** Self times as bars of their share. */
@@ -209,8 +213,10 @@ function SelfTimes({ label, rows }: {
           <span role="cell" className="h-2 bg-muted/30" aria-hidden>
             <span className="block h-full bg-chart-1" style={{ width: `${Math.min(row.share * 100, 100)}%` }} />
           </span>
-          <span role="cell" className="text-right tabular-nums">{percentText(row.share)}</span>
-          <span role="cell" className="text-right tabular-nums">{durationText(row.avg_self_time_us)}</span>
+          <span role="cell" className="text-right tabular-nums" title={exactPercentText(row.share)}>{percentText(row.share)}</span>
+          <span role="cell" className="text-right tabular-nums" title={microsecondsText(row.avg_self_time_us)}>
+            {durationText(row.avg_self_time_us)}
+          </span>
         </div>
       ))}
     </div>

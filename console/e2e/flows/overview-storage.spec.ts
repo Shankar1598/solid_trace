@@ -17,7 +17,7 @@ test('an Instance admin sees the whole install\'s Storage on the Overview', asyn
   await expect(storage.getByRole('meter', { name: 'Local disk against the disk limit' })).toBeVisible()
   await expect(storage.locator('[data-storage-status]')).toContainText(/the limit/)
   await expect(storage.locator('[data-storage="free"]')).toContainText(/free of .*B on ClickHouse/)
-  await expect(storage.locator('[data-storage="bucket"]')).toContainText(/of Logs|every Log stays on local disk/)
+  await expect(storage.locator('[data-storage="bucket"]')).toContainText(/of Logs and Spans|every Log and Span stays on local disk/)
   await expect(storage.locator('[data-storage="growth"]')).toContainText(/a day over the last 7 days/)
   await expect(storage.locator('[data-storage="old-files"]')).toContainText(/files from before the switch|None left/)
 

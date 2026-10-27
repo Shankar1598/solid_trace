@@ -20,12 +20,13 @@ class McpAdminToolsTest < ActiveSupport::TestCase
   end
 
   test "create_project makes a member's Project with its first key, linking to its page" do
-    answer = call_tool(:create_project, user: @member, name: "Checkout", description: "The checkout service", log_retention_days: 7)
+    answer = call_tool(:create_project, user: @member, name: "Checkout", description: "The checkout service", log_retention_days: 7,
+      trace_retention_days: 3)
 
     assert_not answer.error?, answer.text
     made = @acme.projects.find_by!(slug: "checkout")
     assert_equal({ "id" => made.id, "name" => "Checkout", "slug" => "checkout", "description" => "The checkout service",
-                   "log_retention_days" => 7, "trace_retention_days" => 14 }, answer.json["project"])
+                   "log_retention_days" => 7, "trace_retention_days" => 3 }, answer.json["project"])
     key = made.project_keys.sole
     assert_equal key.public_key, answer.json.dig("key", "public_key")
     assert_equal "http://#{key.public_key}@console.test:4000/#{made.id}", answer.json.dig("key", "dsn")

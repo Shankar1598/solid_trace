@@ -7,21 +7,22 @@ import (
 )
 
 // The Overview's Storage reads, the whole install's: ClickHouse's local disk
-// and the logs table's parts on it and in the bucket, and the old Log files.
+// and the day tables' parts on it and in the bucket, and the old Log files.
 
-// InstallStorage is how much the install's Logs take, every Project's.
+// InstallStorage is how much the install's days take, every Project's of
+// every family of day tables.
 type InstallStorage struct {
-	// LocalBytes is what the disk limit counts: the logs table's parts on
-	// local disk and the old Log files' local copies.
+	// LocalBytes is what the disk limit counts: the families' main tables'
+	// parts on local disk and the old Log files' local copies.
 	LocalBytes int64
-	// BucketBytes is the logs table's parts in the bucket.
+	// BucketBytes is the main tables' parts in the bucket.
 	BucketBytes int64
-	// RecentBytes is the logs table's parts, local and in the bucket, of
-	// the Logs' days from the day of from up to the day of to, not
-	// included.
+	// RecentBytes is the main tables' parts, local and in the bucket, of
+	// the days from the day of from up to the day of to, not included.
 	RecentBytes int64
-	// RecentBytesByProject is RecentBytes by Project, of those with any.
-	RecentBytesByProject map[uint32]int64
+	// RecentBytesByProject is RecentBytes by family's Name and by Project,
+	// of those with any.
+	RecentBytesByProject map[string]map[uint32]int64
 	// DiskBytes and FreeBytes are the size of ClickHouse's local disk for
 	// the logs table, and how much of it is free, read now.
 	DiskBytes, FreeBytes int64
@@ -48,37 +49,48 @@ const logsLocalDisks = `
 		SELECT arrayJoin(disks) FROM system.storage_policies
 		WHERE policy_name = (SELECT storage_policy FROM system.tables WHERE database = currentDatabase() AND name = 'logs'))`
 
-// InstallStorage reads how much the install's Logs take, with the days from
+// InstallStorage reads how much the install's days take, with the days from
 // the day of from up to the day of to as RecentBytes.
 func (s *ClickHouseLogs) InstallStorage(ctx context.Context, from, to time.Time) (InstallStorage, error) {
-	got := InstallStorage{Bucket: s.bucket, RecentBytesByProject: map[uint32]int64{}}
+	got := InstallStorage{Bucket: s.bucket, RecentBytesByProject: map[string]map[uint32]int64{}}
+	family := map[string]string{}
+	var tables []string
+	for _, f := range dayFamilies {
+		family[f.Tables[0]] = f.Name
+		tables = append(tables, f.Tables[0])
+	}
 	partitions, err := s.conn.Query(ctx, `
-		SELECT partition_id, `+localAndBucketBytes+`
+		SELECT table, partition_id, `+localAndBucketBytes+`
 		FROM system.parts
-		WHERE database = currentDatabase() AND table = 'logs' AND active
-		GROUP BY partition_id`)
+		WHERE database = currentDatabase() AND table IN ? AND active
+		GROUP BY table, partition_id`, tables)
 	if err != nil {
-		return got, fmt.Errorf("list the parts of the install's Logs: %w", err)
+		return got, fmt.Errorf("list the parts of the install's days: %w", err)
 	}
 	defer partitions.Close()
 	from, to = LogDay(from), LogDay(to)
 	for partitions.Next() {
 		var (
-			id            string
+			table, id     string
 			local, bucket int64
 		)
-		if err := partitions.Scan(&id, &local, &bucket); err != nil {
+		if err := partitions.Scan(&table, &id, &local, &bucket); err != nil {
 			return got, err
 		}
 		projectID, day, err := parseLogPartitionID(id)
 		if err != nil {
-			return got, fmt.Errorf("partition %s of logs: %w", id, err)
+			return got, fmt.Errorf("partition %s of %s: %w", id, table, err)
 		}
 		got.LocalBytes += local
 		got.BucketBytes += bucket
 		if !day.Before(from) && day.Before(to) {
 			got.RecentBytes += local + bucket
-			got.RecentBytesByProject[projectID] += local + bucket
+			byProject := got.RecentBytesByProject[family[table]]
+			if byProject == nil {
+				byProject = map[uint32]int64{}
+				got.RecentBytesByProject[family[table]] = byProject
+			}
+			byProject[projectID] += local + bucket
 		}
 	}
 	if err := partitions.Err(); err != nil {

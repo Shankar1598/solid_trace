@@ -64,14 +64,17 @@ class McpTraceToolsTest < ActiveSupport::TestCase
     assert_operator got.body.bytesize, :<, 64_000, "get_trace answered #{got.body.bytesize} bytes"
     assert_equal [ TRACE_ID, true, 2_000, 2_000_000 ], trace.values_at("trace_id", "sampled", "span_count", "duration_us")
     # The 499 queries are one row; with the segment and 1,500 steps that's
-    # 1,502 rows, of which 200 are given.
+    # 1,502 rows. Every one is on the critical path, as the steps and
+    # queries ran one after another. The answer gives 200 rows in all: its
+    # one Transaction, the first 50 of the critical path, and 149 rows.
     rows = trace["spans"]
-    assert_equal 200, rows.size
-    assert_equal({ "rows" => 1_302, "spans" => 2_000 - 499 - 199 }, trace["left_out"])
+    assert_equal [ 1, 50, 149 ], [ trace["transactions"].size, trace["critical_path"].size, rows.size ]
+    assert_equal({ "transactions" => 0, "critical_path" => 1_452, "rows" => 1_353, "spans" => 2_000 - 499 - 148 },
+      trace["left_out"])
     assert_equal [ "q00000", 499, 449_100, true ], rows.first.values_at("span_id", "count", "self_time_us", "critical")
     assert_equal rows.map { |r| r["self_time_us"] }.sort.reverse, rows.map { |r| r["self_time_us"] }
     assert_operator rows.map { |r| r["description"].size }.max, :<=, TraceView::SUMMARY_DESCRIPTION
-    assert_equal "s0", trace["critical_path"].first
+    assert_equal [ "s0", "a00000", "a00001" ], trace["critical_path"].first(3)
     # Its Issues, for get_issue, and the query_logs arguments that read its
     # Logs in each Project that has any.
     assert_equal [ { "project" => "api", "issue" => @issue.number, "title" => "Payment declined", "events" => 1, "event" => "e-1" } ],

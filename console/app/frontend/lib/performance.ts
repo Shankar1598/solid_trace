@@ -1,6 +1,7 @@
 // A Project's Performance and a Transaction's page, as Console's
 // TransactionsView and TransactionView answer them, and how their URLs hold
 // a range and an environment.
+import { valueText } from '@/lib/charts/axis'
 import type { TimeRange } from '@/lib/timeRange'
 
 export interface ProjectRef { id: number; name: string; slug: string }
@@ -128,13 +129,18 @@ export function worse(key: NumberKey, change: number | null | undefined): boolea
 /** Requests a minute, as an estimate reads: two significant places below 10. */
 export function throughputText(perMinute: number): string {
   if (perMinute === 0) return '0'
-  if (perMinute >= 10) return Math.round(perMinute).toLocaleString()
-  return String(Number(perMinute.toPrecision(2)))
+  return valueText(perMinute >= 10 ? Math.round(perMinute) : Number(perMinute.toPrecision(2)))
 }
 
+/** A share as a percent: whole from 10%, else to one decimal. */
 export function percentText(share: number): string {
   const value = share * 100
-  return `${value >= 10 || value === 0 ? Math.round(value) : value.toFixed(1)}%`
+  return `${valueText(value >= 10 || value === 0 ? Math.round(value) : Number(value.toFixed(1)))}%`
+}
+
+/** A share in full, for a title. */
+export function exactPercentText(share: number): string {
+  return `${valueText(share * 100)}%`
 }
 
 /** The range a page answered, as the picker holds it. */
