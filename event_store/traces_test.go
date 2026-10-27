@@ -201,3 +201,99 @@ func TestTransactionsFromEachSDKAreAnsweredAsATraceAcrossItsProjects(t *testing.
 		t.Errorf("Expected no Spans of another Project's trace, got %v", rows(got.Spans))
 	}
 }
+
+func TestATransactionNamedByItsRawURLIsUnparameterisedAndARetryStoresItOnce(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// ClickHouse stores the first insert but its answer is lost: Span
+	// processing inserts the same range again.
+	env.FlakySpans.failAfterInsert.Store(1)
+	postEnvelopeWithKey(t, env, "test_public_key", transactionFixture(t, "sentry-ruby-5.28-url"))
+	postEnvelopeWithKey(t, env, "test_public_key", transactionFixture(t, "sentry-ruby-6.3-url"))
+	env.ProcessSpans(t)
+	if got := env.FlakySpans.attempts.Load(); got < 2 {
+		t.Fatalf("Expected the insert tried again after its answer was lost, got %d attempts", got)
+	}
+
+	for _, traceID := range []string{"5c1f0e4a9b3d4e6f8a7b6c5d4e3f2a11", ruby63URL} {
+		got := readTrace(t, env, traceID, 123).Spans
+		want := []string{`123 b000000000000001<- http.server "/orders/42" b000000000000001/<unparameterised> 10000us self 10000us "internal_error" x1`}
+		if !slices.Equal(rows(got), want) {
+			t.Errorf("Expected trace %s stored once as Unparameterised, %v, got %v", traceID, want, rows(got))
+			continue
+		}
+		if raw := got[0].Attributes["transaction.raw"]; raw != "/orders/42" {
+			t.Errorf("Expected the raw name kept as an Attribute, got %q", raw)
+		}
+	}
+}
+
+func TestATransactionMakesNoIssueWhileItsEnvelopesEventAndLogsAreStored(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	postEnvelopeWithKey(t, env, "test_public_key", transactionFixture(t, "sentry-ruby-6.3-rails"))
+	env.Process(t)
+	var issues int
+	sqliteQuery(t, env, &issues, "SELECT count(*) FROM issues WHERE project_id = 123")
+	if issues != 0 {
+		t.Fatalf("Expected a Transaction to make no Issue, got %d", issues)
+	}
+
+	// The 5.28 Transaction's envelope, with an event item and a log item.
+	envelope := strings.TrimRight(transactionFixture(t, "sentry-ruby-5.28-rails"), "\n") +
+		sentryItem(`{"type":"event"}`, `{"event_id":"9b7d475493954601ab7f3b599b2578cb","message":"Payment declined","environment":"production"}`) +
+		sentryItem(logItemHeader(1), `{"items":[{"timestamp":1790938800.05,"trace_id":"`+ruby528Trace+`","level":"warn","body":"Slow rates"}]}`)
+	postEnvelopeWithKey(t, env, "test_public_key", envelope)
+	env.Process(t)
+	env.ProcessLogs(t)
+	env.ProcessSpans(t)
+
+	sqliteQuery(t, env, &issues, "SELECT count(*) FROM issues WHERE project_id = 123")
+	if issues != 1 {
+		t.Errorf("Expected the envelope's Event to make one Issue, got %d", issues)
+	}
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"Slow rates"}) {
+		t.Errorf("Expected the envelope's Log stored, got %v", got)
+	}
+	for _, traceID := range []string{ruby528Trace, ruby63Trace} {
+		if got := readTrace(t, env, traceID, 123).Spans; len(got) != len(railsRows) {
+			t.Errorf("Expected trace %s's %d Spans stored, got %v", traceID, len(railsRows), rows(got))
+		}
+	}
+}
+
+func TestSpansPastTraceRetentionAndADeletedProjectsSpansAreDropped(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	// Project 123 keeps its Spans a day, 125 the default 14 days, and 124
+	// is deleted.
+	seedProject(t, env.SQLitePath, 123, 0)
+	consoleExec(t, env, "UPDATE projects SET trace_retention_days = 1 WHERE id = 123")
+	seedProject(t, env.SQLitePath, 124, 0)
+	seedProject(t, env.SQLitePath, 125, 0)
+	seedProjectKey(t, env.SQLitePath, 124, "go_public_key")
+	seedProjectKey(t, env.SQLitePath, 125, "kept_public_key")
+	postEnvelopeWithKey(t, env, "test_public_key", transactionFixture(t, "sentry-ruby-6.3-rails"))
+	postEnvelopeWithKey(t, env, "go_public_key", transactionFixture(t, "sentry-go-0.47"))
+	postEnvelopeWithKey(t, env, "kept_public_key", transactionFixture(t, "sentry-ruby-5.28-rails"))
+	postAndProcess(t, env, logJSON(t, "kept for 30 days", testNow, nil))
+	env.ProcessSpans(t)
+	consoleExec(t, env, "DELETE FROM projects WHERE id = 124")
+
+	// Past midnight on 4 October, a day back is wholly past 2 October.
+	env.Clock.Set(time.Date(2026, 10, 4, 0, 30, 0, 0, time.UTC))
+	env.DeleteLogsPastRetention(t)
+
+	if got := readTrace(t, env, ruby63Trace, 123, 124).Spans; len(got) != 0 {
+		t.Errorf("Expected Project 123's Spans past a day and Project 124's dropped, got %v", rows(got))
+	}
+	if got := readTrace(t, env, ruby528Trace, 125).Spans; len(got) != len(railsRows) {
+		t.Errorf("Expected Project 125's Spans kept for 14 days, got %v", rows(got))
+	}
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"kept for 30 days"}) {
+		t.Errorf("Expected Project 123's Logs kept for their own Retention, got %v", got)
+	}
+}
