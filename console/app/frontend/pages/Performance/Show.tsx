@@ -4,10 +4,12 @@ import { AlertTriangle, ArrowDown, ArrowUp } from 'lucide-react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { durationText } from '@/lib/traces'
+import { valueText } from '@/lib/charts/axis'
+import { durationText, microsecondsText } from '@/lib/traces'
 import {
   DEFAULT_SORT,
   changeText,
+  exactPercentText,
   nextSort,
   percentText,
   performancePath,
@@ -130,24 +132,26 @@ function TransactionTableRow({ row, href }: { row: TransactionRow; href: string 
         <Link href={href} className={cn('block truncate font-medium hover:underline', row.label !== row.name && 'italic')} title={row.name}>
           {row.label}
         </Link>
-        <span className="text-xs text-muted-foreground">{row.sampled.toLocaleString()} sampled</span>
+        <span className="text-xs text-muted-foreground">{valueText(row.sampled)} sampled</span>
       </TableCell>
-      <NumberCell row={row} number="throughput_per_minute" text={`~${throughputText(row.throughput_per_minute)}`} />
-      <NumberCell row={row} number="p50_us" text={durationText(row.p50_us)} />
-      <NumberCell row={row} number="p95_us" text={durationText(row.p95_us)} />
-      <NumberCell row={row} number="p99_us" text={durationText(row.p99_us)} />
-      <NumberCell row={row} number="error_rate" text={percentText(row.error_rate)} />
-      <NumberCell row={row} number="time_consumed_us" text={`~${durationText(row.time_consumed_us)}`} />
+      <NumberCell row={row} number="throughput_per_minute" text={`~${throughputText(row.throughput_per_minute)}`}
+        exact={`${valueText(row.throughput_per_minute)} a minute`} />
+      <NumberCell row={row} number="p50_us" text={durationText(row.p50_us)} exact={microsecondsText(row.p50_us)} />
+      <NumberCell row={row} number="p95_us" text={durationText(row.p95_us)} exact={microsecondsText(row.p95_us)} />
+      <NumberCell row={row} number="p99_us" text={durationText(row.p99_us)} exact={microsecondsText(row.p99_us)} />
+      <NumberCell row={row} number="error_rate" text={percentText(row.error_rate)} exact={exactPercentText(row.error_rate)} />
+      <NumberCell row={row} number="time_consumed_us" text={`~${durationText(row.time_consumed_us)}`}
+        exact={microsecondsText(row.time_consumed_us)} />
     </TableRow>
   )
 }
 
-/** A number, with its change from the period before under it. */
-function NumberCell({ row, number, text }: { row: TransactionRow; number: NumberKey; text: string }) {
+/** A number, in full in its title, with its change from the period before under it. */
+function NumberCell({ row, number, text, exact }: { row: TransactionRow; number: NumberKey; text: string; exact: string }) {
   const change = row.change?.[number]
   const label = row.previous ? changeText(number, change) : 'new'
   return (
-    <TableCell className="text-right font-mono tabular-nums whitespace-nowrap" data-number={number}>
+    <TableCell className="text-right font-mono tabular-nums whitespace-nowrap" data-number={number} title={exact}>
       <div>{text}</div>
       {label && (
         <div className={cn('text-xs', worse(number, change) ? 'text-destructive' : 'text-muted-foreground')} title="Change from the period before">
