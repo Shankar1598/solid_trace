@@ -2,7 +2,7 @@
 
 SolidTrace keeps the Transactions that Sentry's SDKs send, with their Spans, and links each one to the Logs and Issues that share its trace id. A Project's **Performance** page lists its Transactions by the time they take, a Transaction's page shows where that time goes, and a trace's page shows one request across the Organization's Projects: its Spans as a waterfall, its Logs and its Issues. Over [MCP](mcp.md), `list_transactions`, `get_transaction` and `get_trace` answer the same, and SQL queries can read the `spans` table.
 
-This page shows how to turn tracing on, how to send to sentry.io and SolidTrace at once while you move over, and how to put the trace id on your Log lines. The words used here (Trace, Span, Transaction) are in the [glossary](../GLOSSARY.md).
+This page shows how to turn tracing on, how to send to sentry.io and SolidTrace at once while you move over, and how to put the trace id on your Logs. The words used here (Trace, Span, Transaction) are in the [glossary](../GLOSSARY.md).
 
 ## Turning tracing on
 
@@ -147,7 +147,7 @@ Both transports are tested against EventStore: [`docs/traces/`](traces/) has the
 
 Inside the same VPC as SolidTrace, use the DSN with its host swapped for the machine's internal IP and port 4000, over `http`, as `deploy/install` says when it finishes.
 
-## Putting the trace id on Log lines
+## Putting the trace id on Logs
 
 A trace's page shows the Logs whose trace id is the trace's. Sentry's SDK knows the trace id of the request or job it is in, sampled or not, so each line it logs can carry it. The recipe below tags lines `trace=<id>` without changing their format, so your shippers don't change, and a Log transform moves the tag into the Log's trace id when SolidTrace receives it.
 
@@ -228,7 +228,7 @@ If the Log transform already does other work, add these lines to it. A Log trans
 
 ## A trace that wasn't sampled
 
-At a 5% sample rate, 95 requests in 100 send no Transaction. They still have a trace id: their Issues' Events carry it, and with the middleware above so do their Log lines. So a link from such an Issue or Log still opens the trace's page. It shows the trace's Logs and Issues, read around the time of the Log or Event it was opened from, with a note that the request wasn't sampled and so has no Spans. `get_trace` answers the same.
+At a 5% sample rate, 95 requests in 100 send no Transaction. They still have a trace id: their Issues' Events carry it, and with the middleware above so do their Logs. So a link from such an Issue or Log still opens the trace's page. It shows the trace's Logs and Issues, read around the time of the Log or Event it was opened from, with a note that the request wasn't sampled and so has no Spans. `get_trace` answers the same.
 
 ## SolidTrace traces itself
 
