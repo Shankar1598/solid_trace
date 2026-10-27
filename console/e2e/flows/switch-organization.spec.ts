@@ -63,7 +63,7 @@ test('a user in two Organizations switches from Logs, keeps it on /, and jumps b
 
   // `/` keeps them there.
   await page.goto('/')
-  await page.waitForURL(url => url.pathname === `/${slug}/issues`)
+  await page.waitForURL(url => url.pathname === `/${slug}/overview`)
 
   // Picking the current one only closes the menu, without a visit.
   const visits: string[] = []
@@ -89,7 +89,7 @@ test('a user in two Organizations switches from Logs, keeps it on /, and jumps b
   await page.waitForURL(url => url.pathname === `/${ORG}/issues`)
 
   await page.goto('/')
-  await page.waitForURL(url => url.pathname === `/${ORG}/issues`)
+  await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
   expect(errors).toEqual([])
 })
 
