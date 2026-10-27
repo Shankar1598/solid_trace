@@ -55,7 +55,8 @@ type Config struct {
 	NotifyEvents func(projectID uint32)
 	NotifyLogs   func(projectID uint32)
 	// Transactions stores envelopes' transaction items, and NotifySpans
-	// wakes Span processing; with none, they are dropped.
+	// wakes Span processing; with no Transactions, they are dropped, and
+	// with no NotifySpans, nothing is woken.
 	Transactions TransactionWriter
 	NotifySpans  func(projectID uint32)
 	// Clock gives the receipt time of Logs.
@@ -208,12 +209,15 @@ func (s *Service) storeTransactions(projectID uint32, items envelopeItems) error
 	if len(transactions) == 0 {
 		return nil
 	}
-	s.counts.count(projectID, s.clock.Now(), counted)
+	receivedAt := s.clock.Now().UTC()
+	s.counts.count(projectID, receivedAt, counted)
 	// A Pebble write is never retried: the SDK gets an error instead.
-	if err := s.transactions.WriteTransactionBatch(projectID, transactions, s.clock.Now().UTC()); err != nil {
+	if err := s.transactions.WriteTransactionBatch(projectID, transactions, receivedAt); err != nil {
 		return fmt.Errorf("write transaction batch: %w", err)
 	}
-	s.notifySpans(projectID)
+	if s.notifySpans != nil {
+		s.notifySpans(projectID)
+	}
 	return nil
 }
 
