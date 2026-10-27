@@ -217,7 +217,7 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     Project's, the stored bytes of only the Project days that have Source
 //     counts, so kept over stored compares the same days.
 //   - has_logs: whether any of the Projects has Logs stored of any day, or
-//     Ingest counts.
+//     Ingest counts of Logs received.
 //   - spans, and each Project's: received, the Spans of the Transactions
 //     that arrived, one for each Transaction and each of its Spans, and
 //     received_bytes, those Transactions' bytes, by second of arrival; and
