@@ -89,7 +89,7 @@ These read the Transactions a Project's Sentry SDKs trace ([turning tracing on](
 
 - `list_issues`: an Organization's Issues, the most recently seen first, narrowed by Project, status and title.
 - `get_issue`: an Issue and one of its Events: the exception, its top frames, its tags and trace id, and how to find the trace's Logs.
-- `get_trace`: a trace across the Organization's Projects, summarised to fit: its Transactions, its Spans with repeats collapsed, the most self time first, and the critical path; its Issues; and the `query_logs` arguments for its Logs. A trace that wasn't sampled still answers its Issues and Logs.
+- `get_trace`: a trace across the Organization's Projects, summarised to fit: its Transactions, the critical path, and its Spans with repeats collapsed, the most self time first, the three sharing a budget of 200 rows with a count of what was left out; its Issues; and the `query_logs` arguments for its Logs. A trace that wasn't sampled still answers its Issues and Logs.
 - `update_issue`: resolves or unresolves an Issue, or assigns it to a member by email.
 - `add_comment`: comments on an Issue as you.
 
