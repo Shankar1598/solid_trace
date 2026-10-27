@@ -17,16 +17,18 @@ import (
 // over.
 const growthDays = 7
 
-// RetentionReader gives each Project's Retention in days, as Console holds
-// it; a Project missing from it has been deleted.
+// RetentionReader gives each Project's Retention of Logs and of Spans in
+// days, as Console holds it; a Project missing from it has been deleted.
 type RetentionReader interface {
 	ProjectLogRetention() (map[uint32]int, error)
+	ProjectTraceRetention() (map[uint32]int, error)
 }
 
 // overviewStorageData is what Storage's parts read.
 type overviewStorageData struct {
-	install   storage.InstallStorage
-	retention map[uint32]int
+	install storage.InstallStorage
+	// retention is each family's Retention, by its Name, of each Project.
+	retention map[string]map[uint32]int
 }
 
 // storageParts are Storage's reads, each filling its own field of d, or
@@ -41,10 +43,16 @@ func (h *OverviewHandler) storageParts(q overviewQuery, d *overviewStorageData) 
 			d.install, err = h.logs.InstallStorage(ctx, today.AddDate(0, 0, -growthDays), today)
 			return err
 		},
-		func(context.Context) (err error) {
-			if h.retention != nil {
-				d.retention, err = h.retention.ProjectLogRetention()
+		func(context.Context) error {
+			if h.retention == nil {
+				return nil
 			}
+			logs, err := h.retention.ProjectLogRetention()
+			if err != nil {
+				return err
+			}
+			spans, err := h.retention.ProjectTraceRetention()
+			d.retention = map[string]map[uint32]int{storage.LogDays.Name: logs, storage.SpanDays.Name: spans}
 			return err
 		},
 	}
@@ -60,13 +68,14 @@ type (
 		Bucket         bool  `json:"bucket"`
 		BucketBytes    int64 `json:"bucket_bytes"`
 		// GrowthBytesPerDay is the bytes stored a day of the last 7 whole
-		// days' Logs, local and in the bucket: how fast the local disk
+		// days' Logs and Spans, local and in the bucket: how fast the local disk
 		// grows until Retention or the bucket takes as much as arrives.
 		GrowthBytesPerDay float64 `json:"growth_bytes_per_day"`
-		// ProjectedLocalBytes is the local disk's Logs at steady state:
-		// each Project's average a day of those 7 days times the days it
-		// keeps locally, local_cache_hours with a bucket, else its
-		// Retention. Old Log files, which only go, aren't in it.
+		// ProjectedLocalBytes is the local disk's days at steady state:
+		// each Project's average a day of those 7 days, of Logs and of Spans,
+		// times the days it keeps each locally, local_cache_hours with a
+		// bucket, else that one's Retention. Old Log files, which only go,
+		// aren't in it.
 		ProjectedLocalBytes int64 `json:"projected_local_bytes"`
 		// StaysUnderLimit is whether the local disk use is and stays
 		// within the limit at steady state.
@@ -101,15 +110,17 @@ func assembleStorage(q overviewQuery, limit storage.LogDiskLimit, localCacheHour
 		GrowthBytesPerDay: float64(in.RecentBytes) / growthDays,
 	}
 	var projected float64
-	for projectID, bytes := range in.RecentBytesByProject {
-		// A Project with no valid Retention keeps every day, so it never
-		// settles: its days are left out, as Console deleted it or will
-		// be asked to fix it.
-		keptDays := float64(d.retention[projectID])
-		if in.Bucket {
-			keptDays = float64(localCacheHours) / 24
+	for family, byProject := range in.RecentBytesByProject {
+		for projectID, bytes := range byProject {
+			// A Project with no valid Retention keeps every day, so it
+			// never settles: its days are left out, as Console deleted it
+			// or will be asked to fix it.
+			keptDays := float64(d.retention[family][projectID])
+			if in.Bucket {
+				keptDays = float64(localCacheHours) / 24
+			}
+			projected += float64(bytes) / growthDays * keptDays
 		}
-		projected += float64(bytes) / growthDays * keptDays
 	}
 	a.ProjectedLocalBytes = int64(projected)
 	switch {
@@ -132,7 +143,7 @@ func assembleStorage(q overviewQuery, limit storage.LogDiskLimit, localCacheHour
 			if day.After(newest) {
 				newest = day
 			}
-			if days := d.retention[projectID]; days > 0 && storage.LogDayPassesRetention(day, days).After(last) {
+			if days := d.retention[storage.LogDays.Name][projectID]; days > 0 && storage.LogDayPassesRetention(day, days).After(last) {
 				last = storage.LogDayPassesRetention(day, days)
 			}
 		}

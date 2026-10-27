@@ -140,6 +140,40 @@ func TestStorageAnswersTheInstallsLocalDiskAgainstTheDiskLimitOnlyWhenAsked(t *t
 	}
 }
 
+func TestStorageCountsSpansAsTheDiskLimitDoes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	// Project 123 keeps its Logs 60 days and its Spans 10.
+	seedProject(t, env.SQLitePath, 123, 60)
+	consoleExec(t, env, "UPDATE projects SET trace_retention_days = 10 WHERE id = 123")
+
+	day := func(month, day int) time.Time { return time.Date(2026, time.Month(month), day, 9, 0, 0, 0, time.UTC) }
+	postAt(t, env, 123, "test_public_key", "the last 7 days", day(9, 30))
+	sent := sentTransaction{fixture: "sentry-ruby-6.3-rails", traceID: traceIDOf(1), at: day(9, 30)}
+	postEnvelopeWithKey(t, env, "test_public_key", sent.envelope(t))
+	env.ProcessSpans(t)
+	env.Clock.Set(testNow)
+
+	_, logsLocal := localDiskUse(t, env)
+	logs := overview(t, env, day(9, 25), day(10, 1), 123).Band.Stored.Bytes
+	spans, _ := overviewSpansOf(t, env, day(9, 25), day(10, 1), 123)
+	if logsLocal <= 0 || spans.LocalBytes <= 0 {
+		t.Fatalf("Expected Logs and Spans on local disk, got %d and %+v", logsLocal, spans)
+	}
+
+	got := overviewStorageOf(t, env, testNow, testNow, 123)
+	if want := logsLocal + spans.LocalBytes; got.LocalBytes != want {
+		t.Errorf("Expected the Logs' %d and the Spans' %d bytes on local disk, %d, got %d", logsLocal, spans.LocalBytes, want, got.LocalBytes)
+	}
+	if want := float64(logs+spans.StoredBytes) / 7; math.Abs(got.GrowthBytesPerDay-want) > 0.01 {
+		t.Errorf("Expected the last 7 days' Logs and Spans a day's growth, %.2f, got %.2f", want, got.GrowthBytesPerDay)
+	}
+	// Each at steady state keeps its own Retention's days.
+	if want := int64(float64(logs)/7*60 + float64(spans.StoredBytes)/7*10); math.Abs(float64(got.ProjectedBytes-want)) > 1 {
+		t.Errorf("Expected %d bytes on local disk at steady state, got %d", want, got.ProjectedBytes)
+	}
+}
+
 func TestStorageAnswersTheOldLogFilesKeptAndWhenRetentionDeletesTheLast(t *testing.T) {
 	env := newTestEnv(t, func(env *TestEnv) {
 		seedFixtureProjects(t, env)
