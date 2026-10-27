@@ -94,6 +94,11 @@ module McpTools
       url(routes.project_issue_path(issue.project, issue, org_slug: issue.project.organization.slug, event_id: event.presence))
     end
 
+    # A trace's page, at the time given for one its SDK didn't sample.
+    def trace(organization, trace_id, time: nil)
+      url(routes.trace_path(org_slug: organization.slug, trace_id: trace_id, time: time&.utc&.iso8601))
+    end
+
     private
 
     def routes

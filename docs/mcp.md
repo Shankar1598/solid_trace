@@ -82,6 +82,7 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 
 - `list_issues`: an Organization's Issues, the most recently seen first, narrowed by Project, status and title.
 - `get_issue`: an Issue and one of its Events: the exception, its top frames, its tags and trace id, and how to find the trace's Logs.
+- `get_trace`: a trace across the Organization's Projects, summarised to fit: its Transactions, its Spans with repeats collapsed, the most self time first, and the critical path; its Issues; and the `query_logs` arguments for its Logs. A trace that wasn't sampled still answers its Issues and Logs.
 - `update_issue`: resolves or unresolves an Issue, or assigns it to a member by email.
 - `add_comment`: comments on an Issue as you.
 
