@@ -99,6 +99,49 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
     assert_equal 3.6, tools.dig("egress", "monthly_usd")
   end
 
+  test "get_overview answers Spans received and stored, in total and for each Project that has any" do
+    @api = create(:project, organization: @acme, slug: "api", trace_retention_days: 3)
+    spans = ->(received, stored) {
+      { received: received, received_bytes: received * 100, stored: stored, stored_bytes: stored * 10,
+        local_bytes: stored * 10, bucket_bytes: 0 }
+    }
+    projects = [
+      { project_id: @web.id, received: { logs: 40, bytes: 4000 }, spans: spans.(70, 60) },
+      { project_id: @api.id, received: { logs: 0, bytes: 0 }, spans: spans.(0, 0) }
+    ]
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(spans: spans.(70, 60), projects: projects).to_json)
+
+    got = call_tool(:get_overview, user: @user)
+
+    assert_not got.error?, got.text
+    assert_equal({ "received" => 70, "received_bytes" => 7000, "stored" => 60, "stored_bytes" => 600 },
+      got.json["spans"].except("projects"))
+    row = got.json.dig("spans", "projects").sole
+    assert_equal [ "web", 70, 7000, 60, 600, 14, true ],
+      row.values_at("slug", "received", "received_bytes", "stored", "stored_bytes", "retention_days", "retention_is_default")
+  end
+
+  test "get_overview answers what Today's Spans, scaled to 30 days, would cost at Datadog APM's list prices" do
+    # Today's whole day: 2 million Spans in 10 GB from Web, kept 14 days (the
+    # instance default); none from Api.
+    @api = create(:project, organization: @acme, slug: "api")
+    rates = answer[:rates].merge(seconds: 86_400)
+    projects = [
+      { project_id: @web.id, received: { logs: 0, bytes: 0 }, spans: { received: 2_000_000, received_bytes: 10 * 10**9 } },
+      { project_id: @api.id, received: { logs: 0, bytes: 0 }, spans: { received: 0, received_bytes: 0 } }
+    ]
+    stub_request(:post, @overview_url).to_return(status: 200, body: answer.merge(rates: rates, projects: projects).to_json)
+
+    apm = call_tool(:get_overview, user: @user).json.dig("other_tools", "apm")
+
+    assert_equal "https://www.datadoghq.com/pricing/list/", apm["url"]
+    assert_equal({ "spans" => 60_000_000, "bytes" => 300 * 10**9, "hosts" => 1 }, apm["volume"])
+    # One APM host at $36, (300 − 150 included) GB × $0.10, and every Span
+    # indexed 15 days (the shortest ≥ 14): (60M − 1M included) × $2.55 / M.
+    assert_equal 201.45, apm["monthly_usd"]
+    assert_equal 36.0, apm["per_host_usd"]
+  end
+
   test "get_overview is Today by default, and says when EventStore can't answer" do
     stub_request(:post, @overview_url).with(body: hash_including(from: "2026-10-02")).to_raise(Errno::ECONNREFUSED)
 
