@@ -16,6 +16,9 @@ module McpTools
     argument :default_log_retention_days, { type: "integer",
       description: "Whole days that Projects with no Retention of their own keep Logs, at least 1. EventStore's next " \
                    "Retention run deletes older Logs." }
+    argument :default_trace_retention_days, { type: "integer",
+      description: "Whole days that Projects with no trace Retention of their own keep Spans, at least 1. EventStore's " \
+                   "next Retention run deletes older Spans." }
     argument :log_all_reads, { type: "boolean", description: "true times every Log read, the MCP server's included, to investigate slowness." }
     argument :log_mcp_reads, { type: "boolean",
       description: "true times the MCP server's Log reads, the default. It applies only while log_all_reads is off, " \

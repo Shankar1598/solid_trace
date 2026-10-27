@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,19 +27,28 @@ import (
 // a read-only ClickHouse user that EventStore makes the first time this
 // process runs SQL for the Project, with a password only this process holds.
 //
-//   - Its row policies on logs and events keep it to its Project's rows, and
+//   - Its row policies on logs, events and spans keep it to its Project's rows, and
 //     to the explorer's range through two settings the policies read,
 //     SQL_from and SQL_to. The range is a convenience, not a boundary: a
 //     query may set them itself, and still reads only its Project.
 //   - Its settings profile makes it read-only and caps its time, memory,
 //     threads and result. Read-only, it can change no setting but the range,
 //     so a query can't raise its limits.
-//   - It has no grant but SELECT on logs and events: no other table, no
+//   - It has no grant but SELECT on those tables: no other table, no
 //     system table, and no table function that reads (file, url, s3,
 //     remote, …).
 //
 // So isolation is ClickHouse's, whatever the SQL says, and EventStore runs
 // the SQL as written.
+
+// sqlTables are the tables SQL queries read, each with the time column its
+// row policy keeps to the range. trace_index isn't among them: spans has
+// all it holds.
+var sqlTables = []struct{ name, timeColumn string }{
+	{"logs", "time"},
+	{"events", "timestamp"},
+	{"spans", "start"},
+}
 
 // The settings the row policies read: the explorer's range, from inclusive
 // to exclusive, as "2006-01-02 15:04:05.000000" in UTC.
@@ -109,7 +119,7 @@ type ClickHouseSQL struct {
 	passwords   map[uint32]string
 }
 
-// NewClickHouseSQL runs SQL queries on ch's logs and events, within limits.
+// NewClickHouseSQL runs SQL queries on ch's logs, events and spans, within limits.
 func NewClickHouseSQL(ch *ClickHouse, limits SQLLimits) *ClickHouseSQL {
 	return &ClickHouseSQL{ch: ch, limits: limits, passwords: map[uint32]string{}}
 }
@@ -117,8 +127,8 @@ func NewClickHouseSQL(ch *ClickHouse, limits SQLLimits) *ClickHouseSQL {
 // Limits are what each SQL query may use.
 func (s *ClickHouseSQL) Limits() SQLLimits { return s.limits }
 
-// RunSQL runs a SQL query as written, as projectID's SQL user, with logs and
-// events showing the Project's rows of [from, to). It reads at most limit
+// RunSQL runs a SQL query as written, as projectID's SQL user, with logs,
+// events and spans showing the Project's rows of [from, to). It reads at most limit
 // rows. If the query itself fails, the error is a *SQLError with
 // ClickHouse's message. Cancelling ctx stops it. Each run records the
 // query in ctx's ReadStatements.
@@ -259,8 +269,12 @@ func (s *ClickHouseSQL) DropProjectUser(projectID uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	user, db := chsql.Identifier(s.userName(projectID)), chsql.Identifier(s.ch.database)
+	policies := make([]string, len(sqlTables))
+	for i, table := range sqlTables {
+		policies[i] = fmt.Sprintf("%s ON %s.%s", user, db, table.name)
+	}
 	for _, statement := range []string{
-		fmt.Sprintf("DROP ROW POLICY IF EXISTS %s ON %s.logs, %s ON %s.events", user, db, user, db),
+		"DROP ROW POLICY IF EXISTS " + strings.Join(policies, ", "),
 		fmt.Sprintf("DROP USER IF EXISTS %s", user),
 	} {
 		if err := s.ch.conn.Exec(ctx, statement); err != nil {
@@ -308,10 +322,13 @@ func (s *ClickHouseSQL) makeUser(ctx context.Context, projectID uint32, name, pa
 	statements := []string{
 		fmt.Sprintf("CREATE USER OR REPLACE %s IDENTIFIED WITH sha256_password BY %s HOST IP '127.0.0.1', IP '::1' DEFAULT DATABASE %s SETTINGS PROFILE %s",
 			user, chsql.String(password), db, chsql.Identifier(s.profileName())),
-		fmt.Sprintf("CREATE ROW POLICY OR REPLACE %s ON %s.logs FOR SELECT USING %s TO %s", user, db, inRange("time"), user),
-		fmt.Sprintf("CREATE ROW POLICY OR REPLACE %s ON %s.events FOR SELECT USING %s TO %s", user, db, inRange("timestamp"), user),
-		fmt.Sprintf("GRANT SELECT ON %s.logs TO %s", db, user),
-		fmt.Sprintf("GRANT SELECT ON %s.events TO %s", db, user),
+	}
+	for _, table := range sqlTables {
+		statements = append(statements, fmt.Sprintf("CREATE ROW POLICY OR REPLACE %s ON %s.%s FOR SELECT USING %s TO %s",
+			user, db, table.name, inRange(table.timeColumn), user))
+	}
+	for _, table := range sqlTables {
+		statements = append(statements, fmt.Sprintf("GRANT SELECT ON %s.%s TO %s", db, table.name, user))
 	}
 	for _, statement := range statements {
 		if err := s.ch.conn.Exec(ctx, statement); err != nil {

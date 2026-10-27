@@ -28,6 +28,7 @@ class InstanceSettingsAnswer
         sql_queries_enabled: @settings.sql_queries_enabled,
         sql_queries_description: InstanceSetting::SQL_QUERIES_DESCRIPTION,
         default_log_retention_days: @settings.default_log_retention_days,
+        default_trace_retention_days: @settings.default_trace_retention_days,
         log_all_reads: @settings.log_all_reads,
         log_mcp_reads: @settings.log_mcp_reads,
       },
