@@ -1,13 +1,20 @@
-import { router } from '@inertiajs/react'
+import { Link, router } from '@inertiajs/react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Hash, ArrowLeft, ArrowRight, Code, Copy, User as UserIcon, Tag, X } from 'lucide-react'
+import { Hash, ArrowLeft, ArrowRight, Code, Copy, User as UserIcon, Tag, Waypoints, X } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import Stacktrace from '@/components/Stacktrace'
+import { TRACE_ID, tracePath } from '@/lib/traces'
 import { Issue, Event } from '@/types'
 import { BreadcrumbsList } from './BreadcrumbsList'
+
+/** The id of the trace the Event was raised in, from its trace context, or null. */
+function traceIdOf(event: Event): string | null {
+  const id = (event.event_data as { contexts?: { trace?: { trace_id?: unknown } } } | null)?.contexts?.trace?.trace_id
+  return typeof id === 'string' && TRACE_ID.test(id) ? id : null
+}
 
 interface OverviewTabContentProps {
   issue: Issue
@@ -44,6 +51,14 @@ export function OverviewTabContent({
                 <Hash className="h-3 w-3" />
                 <span>{event.id}</span>
               </div>
+            )}
+            {event && traceIdOf(event) && (
+              <Link
+                href={tracePath(current_org.slug, traceIdOf(event)!, event.created_at)}
+                className="inline-flex h-7 items-center gap-1.5 border px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <Waypoints className="h-3.5 w-3.5" /> Open trace
+              </Link>
             )}
           </div>
           <div className="flex items-center gap-1">
