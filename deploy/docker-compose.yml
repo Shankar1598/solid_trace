@@ -26,8 +26,12 @@ x-console: &console
     # Console writes its own line per request, with its user (RequestLog), so
     # Thruster writes none.
     LOG_REQUESTS: "false"
-    # Optional: only Sentry's DSN is in the credentials.
+    # Optional: only Sentry's DSN is in the credentials, which SENTRY_DSN overrides.
     RAILS_MASTER_KEY: ${RAILS_MASTER_KEY:-}
+    # The Meta Project's DSN and the share of requests and jobs Console traces
+    # into it, which deploy/install writes (docs/traces.md).
+    SENTRY_DSN: ${SENTRY_DSN:-}
+    SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-}
     SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run deploy/install, which writes it to deploy/.env}
     EVENT_STORE_URL: http://127.0.0.1:4100
     # Where Console sends an empty Project's test Log.

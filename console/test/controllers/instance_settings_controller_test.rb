@@ -72,20 +72,23 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "label" => "Version", "source" => "SOLIDTRACE_VERSION", "value" => "dev", "default" => true,
       "secret" => false }, version)
     assert_equal [ "CONSOLE_URL", "PUBLIC_INGEST_URL", "EVENT_STORE_URL", "EVENT_STORE_INGEST_URL", "SOLIDTRACE_VERSION",
-      "RAILS_MAX_THREADS", "JOB_CONCURRENCY", "RAILS_LOG_LEVEL", "SECRET_KEY_BASE", "SENTRY_DSN" ],
+      "RAILS_MAX_THREADS", "JOB_CONCURRENCY", "RAILS_LOG_LEVEL", "SENTRY_TRACES_SAMPLE_RATE", "SECRET_KEY_BASE",
+      "SENTRY_DSN" ],
       console["settings"].pluck("source")
   end
 
   test "a setting given in the environment says it isn't the default" do
     sign_in_as(@instance_admin)
 
-    with_env("EVENT_STORE_URL" => "http://10.0.0.5:4100", "JOB_CONCURRENCY" => "3") do
+    with_env("EVENT_STORE_URL" => "http://10.0.0.5:4100", "JOB_CONCURRENCY" => "3", "SENTRY_TRACES_SAMPLE_RATE" => "0.05") do
       get instance_settings_url(org_slug: @organization.slug), headers: inertia
     end
 
     rows = console_rows
     assert_equal [ "http://10.0.0.5:4100", false ], rows["EVENT_STORE_URL"].values_at("value", "default")
     assert_equal [ "3", false ], rows["JOB_CONCURRENCY"].values_at("value", "default")
+    assert_equal [ "Traces sample rate", "0.05", false ],
+      rows["SENTRY_TRACES_SAMPLE_RATE"].values_at("label", "value", "default")
     assert_equal [ "http://127.0.0.1:4000", true ], rows["EVENT_STORE_INGEST_URL"].values_at("value", "default")
   end
 

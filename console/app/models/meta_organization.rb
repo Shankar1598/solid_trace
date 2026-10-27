@@ -3,31 +3,48 @@
 # The Organization SolidTrace makes for itself on a VM install, whose one
 # Project receives SolidTrace's own Logs (ADR 0011). db_prepare seeds it with
 # the project key deploy/install wrote to deploy/.env, and Vector sends with
-# that key. Otherwise it is an ordinary Organization.
+# that key, as Console's Sentry SDK does with the DSN deploy/install makes
+# from it (docs/traces.md). Otherwise it is an ordinary Organization.
 module MetaOrganization
   NAME = "SolidTrace"
+
+  # The Log transform its Project starts with, which moves the trace tag on
+  # Console's lines into their trace id, as docs/traces.md documents it.
+  LOG_TRANSFORM = Rails.root.join("config/trace_tag_log_transform.vrl")
 
   # Makes the Organization and its Project, whose project key is key, with the
   # oldest user, if any, as its admin. Once: the instance settings record it,
   # so a deleted one is not made again. Its Project sets no Retention, so it
   # has the instance's default. Without a key, as in local development, does
   # nothing.
+  #
+  # Its Project starts with LOG_TRANSFORM. An install seeded before there was
+  # one gets it here too, while the key's Project has never had a Log
+  # transform, so an admin's own, or none, stays.
   def self.seed(key)
     return if key.blank?
 
     settings = InstanceSetting.current
-    return if settings.meta_organization_seeded?
+    return add_log_transform(ProjectKey.find_by(public_key: key)&.project) if settings.meta_organization_seeded?
 
     Organization.transaction do
       organization = Organization.create!(name: NAME, slug: Organization.free_slug(NAME))
       project = organization.projects.build(name: NAME)
       project.project_keys.build(public_key: key)
       project.save!
+      add_log_transform(project)
       oldest_user = User.order(:created_at, :id).first
       organization.add_admin(oldest_user) if oldest_user
       settings.update!(meta_organization_seeded: true, meta_organization_id: organization.id)
     end
   end
+
+  def self.add_log_transform(project)
+    return if project.nil? || project.log_transform_versions.exists?
+
+    project.log_transform_versions.create!(program: LOG_TRANSFORM.read)
+  end
+  private_class_method :add_log_transform
 
   # Makes user the Meta Organization's admin while it has never had a member,
   # as when the person who set up a fresh install signs up first.

@@ -1,0 +1,11 @@
+# Moves a trace=<id> tag on a line into the Log's trace id, and out of its
+# message: a tagged Rails line's [trace=<id>], and a key=value line's
+# trace=<id>, such as lograge's or Sidekiq's. A Log whose trace id is already
+# set, or whose line has no tag, is left as it is.
+if !exists(.trace_id) && is_string(.message) {
+  tag, err = parse_regex(.message, r'\[?\btrace=(?P<id>[0-9a-f]{32})\]? ?')
+  if err == null {
+    .trace_id = tag.id
+    .message = strip_whitespace(replace(string!(.message), r'\[?\btrace=[0-9a-f]{32}\]? ?', "", count: 1))
+  }
+}
