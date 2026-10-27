@@ -2,8 +2,9 @@
 
 class Overview
   # The Overview's Compared with other tools: what the range's volume would
-  # cost a month at Datadog's, Better Stack's and Axiom's list prices, and
-  # GCP's internet egress for sending the bytes on the wire to such a tool.
+  # cost a month at Datadog's, Better Stack's and Axiom's list prices, its
+  # Spans at Datadog APM's, and GCP's internet egress for sending the bytes
+  # on the wire to such a tool.
   #
   # The volume is the range's scaled to 30 days by the seconds the range has
   # had so far (Today at 06:00 is 6 hours × 30 days / 6 hours, not a whole
@@ -53,6 +54,24 @@ class Overview
       },
     }.freeze
 
+    # Datadog APM, on-demand (no contract), checked on the list page above
+    # and the APM billing docs (allotments: "1 million Indexed Spans and 150
+    # GB of Ingested Spans included per month with every APM host",
+    # https://docs.datadoghq.com/account_management/billing/apm_tracing_profiler/).
+    # SolidTrace doesn't know the hosts, so it takes one APM host per
+    # Project that sent Spans, and pools the allotments across them as
+    # Datadog does. Every Span is indexed, as SolidTrace keeps every Span it
+    # receives, at the shortest listed retention as long as the Project's
+    # trace Retention; past 30 days Datadog lists none, so 30 days' is the
+    # floor. The ingested GB are the Transactions' bytes as received.
+    APM = {
+      key: "datadog_apm", name: "Datadog", plan: "APM, on-demand",
+      url: "https://www.datadoghq.com/pricing/list/",
+      per_host: 36.0, included_gb_per_host: 150, included_indexed_per_host: 1_000_000,
+      ingest_per_gb: 0.10,
+      index_per_million: { 7 => 1.91, 15 => 2.55, 30 => 3.75 },
+    }.freeze
+
     # Premium Tier internet egress from a European region to Europe, per GiB.
     EGRESS = {
       name: "GCP internet egress", plan: "Premium Tier, from a European region",
@@ -60,10 +79,11 @@ class Overview
       per_gib: [ [ 1_024, 0.12 ], [ 10_240, 0.11 ], [ nil, 0.08 ] ],
     }.freeze
 
-    # projects: [[received {logs, bytes}, Retention days]]; days: the range's
+    # projects: [[received {logs, bytes}, Retention days]]; spans: [[spans
+    # {received, received_bytes}, trace Retention days]]; days: the range's
     # whole days; seconds: those it has had so far; stored: the band's stored
     # {bytes, raw_bytes}, whose ratio Axiom's storage is compressed by.
-    def initialize(projects:, bytes_on_wire:, days:, seconds:, stored: {})
+    def initialize(projects:, bytes_on_wire:, days:, seconds:, stored: {}, spans: [])
       raw, compressed = stored["raw_bytes"].to_i, stored["bytes"].to_i
       @compression = compressed.positive? && raw.positive? ? { ratio: raw.to_f / compressed, measured: true } : nil
       @days, @seconds = days, seconds.to_i
@@ -73,6 +93,11 @@ class Overview
       end
       @bytes = projects.sum { |received, _| received["bytes"].to_i } * scale
       @bytes_on_wire = bytes_on_wire.to_i * scale
+      @spans = spans.filter_map do |received, retention_days|
+        next unless received["received"].to_i.positive?
+
+        { spans: received["received"].to_i * scale, gb: received["received_bytes"].to_i * scale / GB, retention_days: retention_days }
+      end
     end
 
     def to_h
@@ -82,6 +107,7 @@ class Overview
                   bytes_on_wire: @bytes_on_wire.round },
         tools: [ datadog, better_stack, axiom ],
         egress: tool(EGRESS, tiered(@bytes_on_wire / GIB, EGRESS[:per_gib])),
+        apm: apm,
       }
     end
 
@@ -95,6 +121,26 @@ class Overview
         p[:gb] * prices[:ingest_per_gb] + p[:logs] / 1_000_000 * listed.fetch(days)
       end
       tool(prices, cost).merge(beyond_list: @projects.any? { |p| p[:retention_days] > listed.keys.last })
+    end
+
+    # Datadog APM for the Spans, nil when none arrived.
+    def apm
+      return if @spans.empty?
+
+      hosts = @spans.size
+      listed = APM[:index_per_million]
+      spans = @spans.sum { |p| p[:spans] }
+      gb = @spans.sum { |p| p[:gb] }
+      # The indexed allotment comes off each Project's Spans in proportion.
+      billable = spans.positive? ? [ spans - hosts * APM[:included_indexed_per_host], 0 ].max / spans : 0
+      indexed = @spans.sum do |p|
+        days = listed.keys.find { |d| d >= p[:retention_days] } || listed.keys.last
+        p[:spans] * billable / 1_000_000 * listed.fetch(days)
+      end
+      cost = hosts * APM[:per_host] + [ gb - hosts * APM[:included_gb_per_host], 0 ].max * APM[:ingest_per_gb] + indexed
+      { key: APM[:key], name: APM[:name], plan: APM[:plan], url: APM[:url], monthly_usd: cost.round(2),
+        per_host_usd: APM[:per_host], volume: { spans: spans.round, bytes: (gb * GB).round, hosts: hosts },
+        beyond_list: @spans.any? { |p| p[:retention_days] > listed.keys.last } }
     end
 
     def better_stack
