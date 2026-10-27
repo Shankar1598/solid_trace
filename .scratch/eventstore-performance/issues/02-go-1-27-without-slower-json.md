@@ -77,3 +77,7 @@ Run them with `go test -run '^$' -bench . -benchmem -count 6 ./ingest/ ./models/
 `.vscode/settings.json` points `go.goroot` at mise's `1.27` link (changed on the merge, at the user's request).
 
 **Left on the v1 API, not hot:** the SQL read-only check (`storage/logs_sql_readonly.go`, once per SQL query) and the Log transform preview (`logtransform/view.go`).
+
+### 2026-10-27: sonic measured, not adopted
+
+[bytedance/sonic](https://github.com/bytedance/sonic) v1.15.5 is 30–40% faster than these paths on Go 1.27 (`ConfigStd`). It isn't adopted: it caps nesting at depth 4,096, ignores `MarshalJSONTo`, and has to catch up with each Go release. Figures, behaviour and when to revisit are in [research/sonic.md](../research/sonic.md).
