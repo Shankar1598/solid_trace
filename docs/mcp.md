@@ -95,7 +95,7 @@ These read the Transactions a Project's Sentry SDKs trace ([turning tracing on](
 
 **Admin**
 
-- `create_project`: makes a Project with its first key, and optionally a description.
+- `create_project`: makes a Project with its first key, and optionally a description and how many days its Logs and its traces' Spans are kept.
 - `update_project`: changes a Project's description or how many days its Logs or its traces' Spans are kept. Admins only.
 - `get_project_setup`: how to send a Project its Events and Logs: the DSN, the Log ingest URL and key, and a curl example.
 - `create_key`, `rotate_key`, `delete_key`: a Project's keys. Admins only.
