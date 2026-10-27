@@ -152,7 +152,8 @@ type TransactionScope struct {
 type TransactionBreakdown struct {
 	// Totals are its segments' numbers.
 	Totals TransactionStats
-	// Releases are its durations by release, the first seen first.
+	// Releases are its durations by its newest releases, the first seen
+	// first.
 	Releases []ReleaseDurations
 	// Groups are its Spans' self time by group, the most first. A group
 	// has one op.
@@ -265,7 +266,14 @@ func (ch *ClickHouse) TransactionBreakdown(ctx context.Context, scope Transactio
 	if err := rows.Err(); err != nil {
 		return b, err
 	}
-	b.Releases = b.Releases[:min(len(b.Releases), maxReleases)]
+	// The newest releases, still the first seen first.
+	if over := len(b.Releases) - maxReleases; over > 0 {
+		b.Releases = b.Releases[over:]
+		clear(releases)
+		for i, r := range b.Releases {
+			releases[r.Release] = i
+		}
+	}
 	rows, err = ch.conn.Query(ctx, fmt.Sprintf(`
 		SELECT release, toStartOfInterval(start, INTERVAL %d SECOND) AS bucket, count(), quantiles(0.5, 0.95)(duration_us)
 		FROM spans WHERE %s
