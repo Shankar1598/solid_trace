@@ -10,9 +10,14 @@ Spec: [../spec.md](../spec.md)
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The settings save, validate and are refused to non-admins, over HTTP and MCP (Rails controller + MCP tool tests)
-- [ ] A `spans` query reads its own Project's Spans only (Go, beside the SQL scope tests)
-- [ ] The Overview route answers Spans received and stored, and `get_overview` includes them with the APM estimate (Go + MCP tool test)
-- [ ] Playwright flows change trace Retention and see Spans on the Overview
+- [x] The settings save, validate and are refused to non-admins, over HTTP and MCP (Rails controller + MCP tool tests)
+- [x] A `spans` query reads its own Project's Spans only (Go, beside the SQL scope tests)
+- [x] The Overview route answers Spans received and stored, and `get_overview` includes them with the APM estimate (Go + MCP tool test)
+- [x] Playwright flows change trace Retention and see Spans on the Overview
+
+## Notes
+
+- The flows (`trace-retention.spec.ts`, `overview-spans.spec.ts`, the renamed label in `instance-settings.spec.ts`) were written but not run: the dev stack on this box serves `main` with no EventStore on :4000.
+- The Datadog APM estimate takes one APM host per Project that sent Spans (SolidTrace can't count hosts), pools the 150 GB / 1M indexed allotments, and indexes every Span at the shortest listed retention as long as the trace Retention, at on-demand prices checked 2026-10-27 (pricing list page and APM billing docs). It is in `get_overview` only, as Compared with other tools is off the page.
