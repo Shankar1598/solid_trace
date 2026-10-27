@@ -10,6 +10,7 @@ class IntegrationNotificationProcessorJob < ApplicationJob
     on_conflict: :discard
 
   def perform(integration_id)
+    ConsoleSentry.notifying(Integration.where(id: integration_id).pick(:organization_id))
     IntegrationNotification.deliver_pending(integration_id)
   end
 end

@@ -9,6 +9,7 @@ Sentry.init do |config|
   if ENV["SENTRY_TRACES_SAMPLE_RATE"].present?
     config.traces_sample_rate = Float(ENV["SENTRY_TRACES_SAMPLE_RATE"], exception: false)
   end
+  config.before_send = ->(event, hint) { ConsoleSentry.before_send(event, hint) }
   config.breadcrumbs_logger = [ :active_support_logger, :http_logger ]
   # The Docker image has no git, but its build sets SOLIDTRACE_VERSION.
   commit = begin
