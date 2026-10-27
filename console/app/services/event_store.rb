@@ -130,6 +130,35 @@ class EventStore
       post!("#{base_url}/overview", body, read_timeout: read_timeout, open_timeout: read_timeout)
     end
 
+    # A trace among project_ids', an Organization's, as EventStore's POST
+    # /trace answers it: {"trace_id", "spans" => [...] in start order,
+    # "logs" => [...] in time order, "more_logs", "logs_from", "logs_to",
+    # "issues" => [{"issue_fingerprint_id", "project_id", "events"}]}. time,
+    # a Time, is when the trace happened, for one with no Spans. Raises
+    # Unavailable when EventStore can't answer within read_timeout seconds.
+    def trace!(project_ids:, trace_id:, time: nil, read_timeout: 10)
+      body = { project_ids: project_ids, trace_id: trace_id, time: time&.utc&.iso8601(3) }.compact
+      post!("#{base_url}/trace", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # A Project's Transactions by name over [from, to), in environment or
+    # every one when it's blank, as EventStore's POST /transactions answers
+    # them: {"environments", "transactions" => [...]}, each name's numbers
+    # with its "previous" period's. Raises Unavailable when EventStore can't
+    # answer within read_timeout seconds.
+    def transactions!(project_id:, from:, to:, environment: nil, read_timeout: 10)
+      body = { from: utc(from), to: utc(to), environment: environment.to_s }
+      post!("#{base_url}/api/#{project_id}/transactions", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # One Transaction name's breakdown over [from, to), as EventStore's POST
+    # /transaction answers it: its numbers, "releases", "ops", "groups",
+    # "repeats" and "slowest". Raises Unavailable as transactions! does.
+    def transaction!(project_id:, name:, from:, to:, environment: nil, read_timeout: 10)
+      body = { name: name, from: utc(from), to: utc(to), environment: environment.to_s }
+      post!("#{base_url}/api/#{project_id}/transaction", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
     # One page of a Project's Logs that match a Query in [from, to), newest
     # first: {"logs" => [...], "next_cursor" => String | nil}, or a tabular
     # Query's {"table" => {...}}. Pass a page's next_cursor as cursor for the

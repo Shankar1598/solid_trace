@@ -17,6 +17,7 @@ class ProjectsController < ApplicationController
     render inertia: "Projects/Show", props: {
       project: ProjectSerializer.new(@project, include_keys: true, ingest_url: public_ingest_url).as_json,
       default_log_retention_days: InstanceSetting.current.default_log_retention_days,
+      default_trace_retention_days: InstanceSetting.current.default_trace_retention_days,
       can_manage_project: policy(@project).update?,
       can_delete_project: policy(@project).destroy?,
       can_manage_keys: policy(ProjectKey.new(project: @project)).create?,
@@ -63,6 +64,6 @@ class ProjectsController < ApplicationController
   end
 
   def project_params
-    params.require(:project).permit(:name, :platform, :description, :log_retention_days)
+    params.require(:project).permit(:name, :platform, :description, :log_retention_days, :trace_retention_days)
   end
 end

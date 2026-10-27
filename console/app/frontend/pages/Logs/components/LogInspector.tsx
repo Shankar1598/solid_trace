@@ -16,9 +16,11 @@ import {
   Equal,
   EqualNot,
   Search,
+  Waypoints,
   WrapText,
   X,
 } from 'lucide-react'
+import { Link } from '@inertiajs/react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TooltipContent } from '@/components/ui/tooltip'
 import { useShortcut } from '@/components/useShortcut'
@@ -26,6 +28,7 @@ import { fetchLog } from '@/lib/logs/api'
 import { canFilter, type Chip, type FilterOp } from '@/lib/logs/builder'
 import { inspectorFields, inspectorJson, jsonLines, localTime, utcTime, type InspectorField, type JsonLine } from '@/lib/logs/inspector'
 import type { AttributeValue, Log } from '@/lib/logs/stream'
+import { TRACE_ID, tracePath } from '@/lib/traces'
 import { cn } from '@/lib/utils'
 import { LEVEL_TEXT } from './LogStream'
 import { Tag, copy, valueText, type ColumnControl } from './TagMenu'
@@ -140,6 +143,14 @@ export function LogInspector({ log: listed, orgSlug, projectSlug, actions, onNew
             {log.service && <Pill field="service" value={log.service}>{log.service}</Pill>}
             {log.environment && <Pill field="environment" value={log.environment}>{log.environment}</Pill>}
             {log.trace_id && <Pill field="trace_id" value={log.trace_id}><span className="text-muted-foreground">trace</span> {log.trace_id.slice(0, 8)}</Pill>}
+            {log.trace_id && TRACE_ID.test(log.trace_id) && (
+              <Link
+                href={tracePath(orgSlug, log.trace_id, utc)}
+                className="inline-flex h-6 items-center gap-1.5 border px-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <Waypoints className="h-3.5 w-3.5" /> Open trace
+              </Link>
+            )}
             {actions.around && (
               <button
                 type="button"

@@ -39,6 +39,6 @@ It asks a few questions, installs Docker if it's missing and starts SolidTrace. 
 ## Docs
 
 - [Install and run](docs/install.md): HTTPS, users, email, upgrades, backups and high availability
-- [Logs](docs/logs/README.md) and [MCP](docs/mcp.md)
+- [Logs](docs/logs/README.md), [Traces](docs/traces.md) and [MCP](docs/mcp.md)
 - [Development](docs/development.md)
 - [Release notes](docs/changelogs/)

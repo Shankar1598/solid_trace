@@ -40,11 +40,12 @@ func RegisterIngestRoutes(app *fiber.App, ingestHandler *IngestHandler, healthHa
 // and EventStore's config. They have no authentication, so they must only be
 // served on the loopback query listener, where the console is the only
 // client.
-func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandler *LogsHandler, transformHandler *LogTransformHandler, overviewHandler *OverviewHandler, healthHandler *HealthHandler, configHandler *ConfigHandler) {
+func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandler *LogsHandler, transformHandler *LogTransformHandler, overviewHandler *OverviewHandler, tracesHandler *TracesHandler, healthHandler *HealthHandler, configHandler *ConfigHandler) {
 	app.Get("/health", healthHandler.Health)
 	app.Get("/config", configHandler.Config)
 
 	app.Post("/overview", overviewHandler.Overview)
+	app.Post("/trace", tracesHandler.Trace)
 
 	app.Get("/api/:project_id/events", eventsHandler.List)
 	app.Get("/api/:project_id/events/context", eventsHandler.GetEventWithContext)
@@ -65,4 +66,12 @@ func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandl
 	// captured as one.
 	app.Get("/api/:project_id/logs/fields", logsHandler.Fields)
 	app.Get("/api/:project_id/logs/:log_id", logsHandler.Get)
+}
+
+// RegisterPerformanceRoutes mounts the Query API's Transactions routes, on
+// the loopback query listener as RegisterQueryRoutes' are. A Transaction's
+// name goes in the body, since it may hold any character.
+func RegisterPerformanceRoutes(app *fiber.App, performanceHandler *PerformanceHandler) {
+	app.Post("/api/:project_id/transactions", performanceHandler.Transactions)
+	app.Post("/api/:project_id/transaction", performanceHandler.Transaction)
 }

@@ -49,6 +49,19 @@ module McpTools
       url(routes.project_logs_path(project, org_slug: project.organization.slug, **search))
     end
 
+    # A Project's Performance page over a TimeRange, in an environment or
+    # every one.
+    def performance(project, range:, environment: nil)
+      search = range.link_params.merge(environment: environment.presence).compact
+      url(routes.project_performance_path(project, org_slug: project.organization.slug, **search))
+    end
+
+    # A Transaction's page, as performance's.
+    def transaction(project, name, range:, environment: nil)
+      search = range.link_params.merge(name: name, environment: environment.presence).compact
+      url(routes.transaction_project_performance_path(project, org_slug: project.organization.slug, **search))
+    end
+
     # A fresh Invite link for an Invited user to organization.
     def invite(user, organization)
       user.invite_url(organization, console_url: @console_url)
@@ -92,6 +105,11 @@ module McpTools
     # An Issue's page, on its latest Event or the Event whose id is event.
     def issue(issue, event: nil)
       url(routes.project_issue_path(issue.project, issue, org_slug: issue.project.organization.slug, event_id: event.presence))
+    end
+
+    # A trace's page, at the time given for one its SDK didn't sample.
+    def trace(organization, trace_id, time: nil)
+      url(routes.trace_path(org_slug: organization.slug, trace_id: trace_id, time: time&.utc&.iso8601))
     end
 
     private

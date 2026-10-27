@@ -304,8 +304,8 @@ func TestADeletedProjectsSQLUserGoesWithItsLogs(t *testing.T) {
 	}
 	db := env.ClickHouse.Database()
 	user := func(projectID uint32) string { return fmt.Sprintf("%s_sql_%d", db, projectID) }
-	if users, policies := sqlUsersAndPolicies(t, env); len(users) != 2 || len(policies) != 4 {
-		t.Fatalf("Expected two SQL users with two row policies each, got %v and %v", users, policies)
+	if users, policies := sqlUsersAndPolicies(t, env); len(users) != 2 || len(policies) != 6 {
+		t.Fatalf("Expected two SQL users with three row policies each, got %v and %v", users, policies)
 	}
 
 	consoleExec(t, env, "DELETE FROM projects WHERE id = 456")
@@ -315,7 +315,7 @@ func TestADeletedProjectsSQLUserGoesWithItsLogs(t *testing.T) {
 	if want := []string{user(123)}; !slices.Equal(users, want) {
 		t.Errorf("Expected the SQL users %v, got %v", want, users)
 	}
-	if want := []string{user(123) + " ON " + db + ".events", user(123) + " ON " + db + ".logs"}; !slices.Equal(policies, want) {
+	if want := []string{user(123) + " ON " + db + ".events", user(123) + " ON " + db + ".logs", user(123) + " ON " + db + ".spans"}; !slices.Equal(policies, want) {
 		t.Errorf("Expected the row policies %v, got %v", want, policies)
 	}
 	if got := countLogs(123); got != "[1]" {
@@ -365,7 +365,7 @@ func localDiskUse(t *testing.T, env *TestEnv) (map[string]int64, int64) {
 // enforceLogDiskLimit keeps the Logs on local disk within bytes.
 func enforceLogDiskLimit(t *testing.T, env *TestEnv, bytes int64) {
 	t.Helper()
-	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: bytes}); err != nil {
+	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: bytes}, []storage.DayFamily{storage.LogDays}); err != nil {
 		t.Fatalf("Enforcing the Log disk limit failed: %v", err)
 	}
 }

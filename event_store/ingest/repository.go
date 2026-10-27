@@ -24,6 +24,15 @@ type LogWriter interface {
 	WriteLogBatch(projectID uint32, logs []models.Log, receivedAt time.Time) error
 }
 
+// TransactionWriter is the seam between envelope ingest and Span storage.
+// storage.PebbleWriter is the production adapter.
+type TransactionWriter interface {
+	// WriteTransactionBatch durably stores an envelope's Transactions,
+	// received at receivedAt, as one batch. Once the writer is closed it
+	// returns an error that the caller must not retry.
+	WriteTransactionBatch(projectID uint32, transactions []models.Transaction, receivedAt time.Time) error
+}
+
 // Retention tells how many whole days a Project keeps its Logs. Log ingest
 // reads it once per request: a Log's own time older than that is replaced
 // with the receipt time.

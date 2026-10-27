@@ -267,6 +267,39 @@ func TestCachedBinsMissOnceRetentionDeletesTheirDay(t *testing.T) {
 	}
 }
 
+func TestCachedBinsStayWhenTraceRetentionDeletesTheirDaysSpans(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	// Project 123 keeps its Spans a day and its Logs 30.
+	seedProject(t, env.SQLitePath, 123, 0)
+	consoleExec(t, env, "UPDATE projects SET trace_retention_days = 1 WHERE id = 123")
+	postChartLogs(t, env)
+	sent := sentTransaction{fixture: "sentry-ruby-6.3-rails", traceID: traceIDOf(1), at: chartAt(1, 21, 0)}
+	postEnvelopeWithKey(t, env, "test_public_key", sent.envelope(t))
+	env.ProcessSpans(t)
+
+	// Past midnight on October 4th, October 1st's Spans are past a day,
+	// and its Logs aren't. The run before Retention caches every hour that
+	// has ended by then.
+	env.Clock.Set(time.Date(2026, 10, 4, 0, 30, 0, 0, time.UTC))
+	query := binCachedQueries[0]
+	binnedTable(t, env, query)
+	env.DeleteLogsPastRetention(t)
+	if got := readTrace(t, env, traceIDOf(1), 123).Spans; len(got) != 0 {
+		t.Fatalf("Expected October 1st's Spans dropped, got %v", rows(got))
+	}
+
+	_, missesBefore := binCacheStats(env)
+	got := binnedTable(t, env, query)
+	if _, missesAfter := binCacheStats(env); missesAfter != missesBefore {
+		t.Errorf("Expected every hour from the cache after the Spans' day went, got %d misses", missesAfter-missesBefore)
+	}
+	env.ClickHouseLogs.UseBinCache(0)
+	if uncached := binnedTable(t, env, query); got != uncached {
+		t.Errorf("%s\n from the bin cache: %s\n without it:         %s", query, got, uncached)
+	}
+}
+
 func TestARateChartRunOverALaterRangeTakesTheBinsBothHold(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()

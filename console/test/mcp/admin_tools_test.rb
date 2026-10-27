@@ -20,12 +20,13 @@ class McpAdminToolsTest < ActiveSupport::TestCase
   end
 
   test "create_project makes a member's Project with its first key, linking to its page" do
-    answer = call_tool(:create_project, user: @member, name: "Checkout", description: "The checkout service", log_retention_days: 7)
+    answer = call_tool(:create_project, user: @member, name: "Checkout", description: "The checkout service", log_retention_days: 7,
+      trace_retention_days: 3)
 
     assert_not answer.error?, answer.text
     made = @acme.projects.find_by!(slug: "checkout")
     assert_equal({ "id" => made.id, "name" => "Checkout", "slug" => "checkout", "description" => "The checkout service",
-                   "log_retention_days" => 7 }, answer.json["project"])
+                   "log_retention_days" => 7, "trace_retention_days" => 3 }, answer.json["project"])
     key = made.project_keys.sole
     assert_equal key.public_key, answer.json.dig("key", "public_key")
     assert_equal "http://#{key.public_key}@console.test:4000/#{made.id}", answer.json.dig("key", "dsn")
@@ -57,6 +58,21 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     call_tool(:update_project, user: @admin, project: "shop", description: "", log_retention_days: 14)
     assert_nil @shop.reload.description
     assert_equal 14, @shop.log_retention_days
+  end
+
+  test "an admin's update_project sets the Project's trace Retention; a member's is refused" do
+    refused = call_tool(:update_project, user: @member, project: "shop", trace_retention_days: 3)
+    assert refused.error?
+    assert_nil @shop.reload.trace_retention_days
+
+    answer = call_tool(:update_project, user: @admin, project: "shop", trace_retention_days: 3)
+    assert_not answer.error?, answer.text
+    assert_equal 3, @shop.reload.trace_retention_days
+    assert_equal 3, answer.json.dig("project", "trace_retention_days")
+
+    bad = call_tool(:update_project, user: @admin, project: "shop", trace_retention_days: 0)
+    assert_equal "Not saved: Trace retention days must be greater than 0.", bad.text
+    assert_equal 3, @shop.reload.trace_retention_days
   end
 
   test "update_project won't save a description over 1000 characters" do

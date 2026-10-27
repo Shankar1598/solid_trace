@@ -37,7 +37,8 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
 
     assert_not answer.error?, answer.text
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
-      "default_log_retention_days" => 14, "log_all_reads" => false, "log_mcp_reads" => true }, answer.json["editable"])
+      "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
+      "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true }, answer.json["editable"])
     assert_equal({ "open" => false, "command" => "bin/rails instance_settings:set SIGN_UP_OPEN=true|false" },
       answer.json["sign_up"])
     console = answer.json["restart_to_change"].find { |group| group["name"] == "Console" }
@@ -63,6 +64,18 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_equal [ false, 7, false ], [ settings.sql_queries_enabled, settings.default_log_retention_days, settings.log_all_reads ]
   end
 
+  test "update_instance_settings changes the default trace Retention, and refuses one below a day" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, default_trace_retention_days: 3)
+
+    assert_not answer.error?, answer.text
+    assert_equal 3, InstanceSetting.current.default_trace_retention_days
+    assert_equal 3, answer.json.dig("editable", "default_trace_retention_days")
+
+    refused = call_tool(:update_instance_settings, user: @instance_admin, default_trace_retention_days: 0)
+    assert_equal "Not saved: Default trace retention days must be greater than 0.", refused.text
+    assert_equal 3, InstanceSetting.current.default_trace_retention_days
+  end
+
   test "update_instance_settings turns MCP reads' logging off, even while log-all-reads is on" do
     InstanceSetting.current.update!(log_all_reads: true)
 
@@ -71,6 +84,17 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_not answer.error?, answer.text
     assert_not InstanceSetting.current.log_mcp_reads?
     assert_equal [ true, false ], answer.json["editable"].values_at("log_all_reads", "log_mcp_reads")
+  end
+
+  test "update_instance_settings turns off sending Console's Issues and tracing Console" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, send_console_issues: false, trace_console: false)
+
+    assert_not answer.error?, answer.text
+    settings = InstanceSetting.current
+    assert_equal [ false, false ], [ settings.send_console_issues, settings.trace_console ]
+    assert_equal [ false, false ], answer.json["editable"].values_at("send_console_issues", "trace_console")
+    schema = McpTools::UpdateInstanceSettings.input_schema_value.to_h
+    assert_equal [ "boolean", "boolean" ], schema[:properties].values_at(:send_console_issues, :trace_console).pluck(:type)
   end
 
   test "update_instance_settings takes log_mcp_reads as a boolean" do
@@ -99,7 +123,8 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
   test "an Organization admin who isn't an instance admin is refused by each tool, and changes nothing" do
     {
       get_instance_settings: [ {}, "read the instance settings" ],
-      update_instance_settings: [ { sql_queries_enabled: false, log_all_reads: true }, "change the instance settings" ],
+      update_instance_settings: [ { sql_queries_enabled: false, log_all_reads: true, default_trace_retention_days: 3 },
+        "change the instance settings" ],
     }.each do |tool, (arguments, doing)|
       answer = call_tool(tool, user: @org_admin, **arguments)
       assert answer.error?, tool
@@ -107,6 +132,7 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     end
     assert InstanceSetting.current.sql_queries_enabled?
     assert_not InstanceSetting.current.log_all_reads?
+    assert_equal 14, InstanceSetting.current.default_trace_retention_days
   end
 
   private

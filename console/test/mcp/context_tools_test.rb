@@ -28,7 +28,8 @@ class McpContextToolsTest < ActiveSupport::TestCase
   end
 
   test "list_projects answers the Organization's Projects by name, linking to its Projects page" do
-    create(:project, organization: @acme, name: "Web", slug: "web", description: "The storefront", log_retention_days: 7)
+    create(:project, organization: @acme, name: "Web", slug: "web", description: "The storefront", log_retention_days: 7,
+      trace_retention_days: 3)
     create(:project, organization: @acme, name: "Api", slug: "api")
     create(:project, organization: create(:organization, slug: "theirs"), name: "Secret", slug: "secret")
 
@@ -40,6 +41,7 @@ class McpContextToolsTest < ActiveSupport::TestCase
     assert_equal [ "api", "web" ], projects.map { |project| project["slug"] }
     assert_equal [ nil, "The storefront" ], projects.map { |project| project["description"] }
     assert_equal [ 30, 7 ], projects.map { |project| project["log_retention_days"] }
+    assert_equal [ 14, 3 ], projects.map { |project| project["trace_retention_days"] }
     assert projects.none? { |project| project.key?("log_file_order") }, "every Project's Logs are sorted by Service and file"
     assert_equal "http://console.test/acme/projects", answer.link
   end

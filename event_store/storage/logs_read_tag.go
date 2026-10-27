@@ -20,6 +20,13 @@ const (
 	ReadLogByID   = "Log by id"
 	ReadFields    = "Fields"
 	ReadSQLQuery  = "SQL query"
+	// ReadTrace reads a trace across Projects, tagged with the first the
+	// read was asked for.
+	ReadTrace = "trace"
+	// ReadTransactions reads a Project's Transactions by name, and
+	// ReadTransaction one Transaction's breakdown.
+	ReadTransactions = "transactions"
+	ReadTransaction  = "transaction"
 )
 
 // readTag is a Log read's log_comment: its Project, its kind, and the run

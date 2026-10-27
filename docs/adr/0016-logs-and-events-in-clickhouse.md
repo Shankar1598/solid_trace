@@ -45,6 +45,10 @@ SQL queries are ClickHouse SQL, run as written, with the isolation ADR 0003 said
 
 Project deletion drops the user and its policies with the Project's Logs. ADR 0003's amendment of 2026-10-23 has the details.
 
+## Amended: SQL reads the Project's Spans too (2026-10-27)
+
+Traces ([spec](../../.scratch/traces/spec.md)) store Spans in a `spans` table, partitioned by Project and UTC day as `logs` is, with a `trace_index` table beside it that finds a trace's Projects and days by its id. The SQL user gets the `spans` table as it has `logs` and `events`: a row policy shows it only its Project's Spans, in the explorer's range by their `start`, and its grants are SELECT on `logs`, `events` and `spans`. `trace_index` stays hidden: it has no grant, and `spans` holds all it does.
+
 ## Logs from before the switch
 
 The Log files the DuckDB releases wrote stay where they are, on disk or in the bucket. The last DuckDB release's `prepare-clickhouse` exports every Log still in DuckDB to Log files. It then writes the manifest, the promoted sets, the key counts and the Processing cursors beside `logs.duckdb`, with a marker. `deploy/install` runs it from the previous release's image.

@@ -24,6 +24,11 @@ export interface OverviewOtherTools {
   volume: { days: number; seconds: number; scaled: boolean; logs: number; bytes: number; bytes_on_wire: number }
   tools: OtherToolEstimate[]
   egress: Omit<OtherToolEstimate, 'key' | 'beyond_list'>
+  /**
+   * The Spans at Datadog APM's list prices, null with no Spans: one APM host
+   * taken per Project that sent Spans, each indexed at its trace Retention.
+   */
+  apm: (OtherToolEstimate & { checked_on: string; per_host_usd: number; volume: { spans: number; bytes: number; hosts: number } }) | null
 }
 
 const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })

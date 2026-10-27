@@ -35,6 +35,30 @@ class LevelLogFormatterTest < ActiveSupport::TestCase
     )
   end
 
+  # Console's lines carry the trace id of the request or job that wrote them,
+  # sampled or not, which the Meta Project's Log transform moves into the
+  # Log's (docs/traces.md).
+  test "a line written in a request or job Sentry traces carries its trace id" do
+    trace_id = "6d2f0e4a9b3d4e6f8a7b6c5d4e3f2b10"
+    out = StringIO.new
+    logger = LevelLogFormatter.logger(out)
+
+    Sentry.with_scope do |scope|
+      scope.set_span(Sentry::Transaction.new(name: "LogsController#index", trace_id: trace_id, sampled: false))
+      logger.tagged("4f2a-request") { logger.info("Started GET \"/\"") }
+      logger.fatal("RuntimeError (Boom):\napp/models/organization.rb:3:in 'boom'")
+    end
+    logger.info("Listening")
+
+    first, json, untraced = out.string.lines
+    assert_equal "INFO [trace=#{trace_id}] [4f2a-request] Started GET \"/\"\n", first
+    assert_equal(
+      { "level" => "FATAL", "message" => "RuntimeError (Boom):\napp/models/organization.rb:3:in 'boom'", "trace_id" => trace_id },
+      JSON.parse(json)
+    )
+    assert_equal "INFO Listening\n", untraced
+  end
+
   test "a routing error, one line once its padding is trimmed, stays a Level line" do
     out = StringIO.new
 

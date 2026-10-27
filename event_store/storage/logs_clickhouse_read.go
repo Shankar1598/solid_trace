@@ -311,15 +311,16 @@ func queryRow(ctx context.Context, conn driver.Conn, query string, dest ...any) 
 	return err
 }
 
-// scanLog reads a row of logSelectList's columns as a Log.
-func scanLog(rows driver.Rows) (models.Log, error) {
+// scanLog reads a row of logSelectList's columns as a Log. A row that
+// selects columns before them reads those into before first.
+func scanLog(rows driver.Rows, before ...any) (models.Log, error) {
 	var (
 		log                                 models.Log
 		level, environment, traceID, spanID *string
 		attributes                          chcol.JSON
 		attrsJSON                           map[string]string
 	)
-	if err := rows.Scan(&log.ID, &log.Time, &level, &log.Message, &log.Service, &environment, &traceID, &spanID, &attributes, &attrsJSON); err != nil {
+	if err := rows.Scan(append(before, &log.ID, &log.Time, &level, &log.Message, &log.Service, &environment, &traceID, &spanID, &attributes, &attrsJSON)...); err != nil {
 		return models.Log{}, err
 	}
 	log.Time = log.Time.UTC()

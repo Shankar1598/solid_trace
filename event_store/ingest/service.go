@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/solidtrace/event_store/ingest/normalise"
@@ -29,6 +30,8 @@ type Service struct {
 	notifyEvents func(projectID uint32)
 	logs         LogWriter
 	notifyLogs   func(projectID uint32)
+	transactions TransactionWriter
+	notifySpans  func(projectID uint32)
 	clock        clock.Clock
 	retention    Retention
 
@@ -51,6 +54,11 @@ type Config struct {
 	// once it is stored, to wake Event processing and Log processing.
 	NotifyEvents func(projectID uint32)
 	NotifyLogs   func(projectID uint32)
+	// Transactions stores envelopes' transaction items, and NotifySpans
+	// wakes Span processing; with no Transactions, they are dropped, and
+	// with no NotifySpans, nothing is woken.
+	Transactions TransactionWriter
+	NotifySpans  func(projectID uint32)
 	// Clock gives the receipt time of Logs.
 	Clock clock.Clock
 	// Retention gives each Project's Retention, which decides how old a
@@ -71,6 +79,8 @@ func NewService(cfg Config) *Service {
 		notifyEvents: cfg.NotifyEvents,
 		logs:         cfg.Logs,
 		notifyLogs:   cfg.NotifyLogs,
+		transactions: cfg.Transactions,
+		notifySpans:  cfg.NotifySpans,
 		clock:        cfg.Clock,
 		retention:    cfg.Retention,
 		maxWaiting:   int64(cfg.MaxWaiting),
@@ -121,14 +131,15 @@ func (s *Service) IngestStore(projectID uint32, body Body) error {
 }
 
 // IngestEnvelope ingests the first event item of an envelope, as the store
-// endpoint does, and the Logs of its log items, as one Log batch. It ignores
-// every other item type, transactions included.
+// endpoint does, the Logs of its log items, as one Log batch, and its
+// transaction items, as one Transaction batch with the sample rate of the
+// envelope's dynamic sampling context. It ignores every other item type.
 //
-// A log item or log record that can't be read is dropped and the envelope
-// still succeeds, as it does on Sentry. Once its Event is stored, Logs that
-// fail to store are dropped and logged, and the envelope succeeds too. Only a
-// malformed envelope or event, overload, or a failure before anything is
-// stored fails it.
+// A log item, log record or transaction item that can't be read is dropped
+// and the envelope still succeeds, as it does on Sentry. Once its Event is
+// stored, Logs and Transactions that fail to store are dropped and logged,
+// and the envelope succeeds too. Only a malformed envelope or event,
+// overload, or a failure before anything is stored fails it.
 func (s *Service) IngestEnvelope(projectID uint32, body Body) error {
 	if !s.enterGate() {
 		return ErrOverloaded
@@ -169,15 +180,84 @@ func (s *Service) IngestEnvelope(projectID uint32, body Body) error {
 				"project_id", projectID, "logs", len(records), "error", err)
 		}
 	}
+	if len(items.transactions) > 0 && s.transactions != nil {
+		if err := s.storeTransactions(projectID, items); err != nil {
+			if !items.hasEvent && len(items.logs) == 0 {
+				return err
+			}
+			logger.L.Error("Dropping an envelope's Transactions, as its other items are stored",
+				"project_id", projectID, "transactions", len(items.transactions), "error", err)
+		}
+	}
 	return nil
 }
 
+// storeTransactions stores an envelope's transaction items that are JSON
+// objects as one Transaction batch, and wakes Span processing. It adds their
+// Spans and bytes to the Ingest counts of their second of arrival. The
+// caller is in the gate.
+func (s *Service) storeTransactions(projectID uint32, items envelopeItems) error {
+	var transactions []models.Transaction
+	var counted models.IngestCount
+	for _, payload := range items.transactions {
+		if object, ok := jsonObject(payload); ok {
+			transactions = append(transactions, models.Transaction{SampleRate: items.sampleRate, Payload: bytes.Clone(payload)})
+			counted.SpansReceived += 1 + spansIn(object)
+			counted.SpanBytesReceived += int64(len(payload))
+		}
+	}
+	if len(transactions) == 0 {
+		return nil
+	}
+	receivedAt := s.clock.Now().UTC()
+	s.counts.count(projectID, receivedAt, counted)
+	// A Pebble write is never retried: the SDK gets an error instead.
+	if err := s.transactions.WriteTransactionBatch(projectID, transactions, receivedAt); err != nil {
+		return fmt.Errorf("write transaction batch: %w", err)
+	}
+	if s.notifySpans != nil {
+		s.notifySpans(projectID)
+	}
+	return nil
+}
+
+// spansIn is how many Spans a Transaction's spans array holds, 0 when it
+// has none or isn't an array.
+func spansIn(transaction map[string]json.RawMessage) int64 {
+	var spans []json.RawMessage
+	if json.Unmarshal(transaction["spans"], &spans) != nil {
+		return 0
+	}
+	return int64(len(spans))
+}
+
 // envelopeItems are the payloads of the items of an envelope that ingest
-// reads: its first event item, and every log item.
+// reads: its first event item, and every log and transaction item, with the
+// sample rate of its dynamic sampling context.
 type envelopeItems struct {
-	hasEvent bool
-	event    []byte
-	logs     [][]byte
+	hasEvent     bool
+	event        []byte
+	logs         [][]byte
+	transactions [][]byte
+	sampleRate   float64
+}
+
+// sampleRateOf reads the sample rate of an envelope's header: its dynamic
+// sampling context's, a string as SDKs send it, or a number. A missing or
+// unreadable rate, or one outside (0, 1], is 1.
+func sampleRateOf(header map[string]json.RawMessage) float64 {
+	var dsc struct {
+		SampleRate json.RawMessage `json:"sample_rate"`
+	}
+	if json.Unmarshal(header["trace"], &dsc) != nil {
+		return 1
+	}
+	raw := bytes.Trim(dsc.SampleRate, `"`)
+	rate, err := strconv.ParseFloat(string(raw), 64)
+	if err != nil || !(rate > 0 && rate <= 1) {
+		return 1
+	}
+	return rate
 }
 
 // readEnvelope walks the items of a Sentry envelope and returns the payloads
@@ -192,10 +272,11 @@ type envelopeItems struct {
 func readEnvelope(envelope []byte) (envelopeItems, error) {
 	var items envelopeItems
 	envelopeHeader, rest, _ := bytes.Cut(envelope, newline)
-	var headers map[string]interface{}
+	var headers map[string]json.RawMessage
 	if err := json.Unmarshal(envelopeHeader, &headers); err != nil {
 		return items, ErrInvalidEnvelope
 	}
+	items.sampleRate = sampleRateOf(headers)
 
 	for len(rest) > 0 {
 		if rest[0] == '\n' {
@@ -235,6 +316,8 @@ func readEnvelope(envelope []byte) (envelopeItems, error) {
 			items.hasEvent, items.event = true, payload
 		case itemHeader.Type == "log":
 			items.logs = append(items.logs, payload)
+		case itemHeader.Type == "transaction":
+			items.transactions = append(items.transactions, payload)
 		}
 	}
 

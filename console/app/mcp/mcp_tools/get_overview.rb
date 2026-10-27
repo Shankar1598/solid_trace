@@ -12,7 +12,8 @@ module McpTools
                 "the eighth by creation on folded into Other), bytes received and stored, and Logs a second, average " \
                 "and peak; projects, each Project's Logs and bytes received, kept and stored, ratio, share of the bytes " \
                 "received, Logs a second, Retention, oldest day and Logs kept of every day, and when its last Log " \
-                "arrived (stale when over an hour ago); sources, by_logs the Services and files that sent the most " \
+                "arrived (stale when over an hour ago); spans, the Spans of traces received (by arrival) and stored (by " \
+                "their own day), with their bytes, in total and for each Project that has any, with its trace Retention; sources, by_logs the Services and files that sent the most " \
                 "Logs and by_bytes those that kept the most bytes, each with its Project, Logs kept, bytes, Logs " \
                 "dropped by the Log transform and share; " \
                 "health, each Project's oldest Log batch waiting for Log processing and its Log reads' median and " \
@@ -20,10 +21,12 @@ module McpTools
                 "Monitors, and the range's new Issues and Events, each with a status of ok, warning or error; " \
                 "other_tools, what the range's volume, scaled to 30 days from the seconds it has had so far, would cost a month in USD at Datadog's, " \
                 "Better Stack's and Axiom's list prices (before discounts, an estimate) at each Project's Retention, " \
+                "apm, what its Spans would cost at Datadog APM's (one APM host taken per Project that sent Spans, " \
+                "every Span indexed at its trace Retention; null with no Spans), " \
                 "and GCP's internet egress for the bytes on the wire, with each pricing page and the date checked; " \
-                "storage, for an instance admin only and the whole install's, every Organization's: local disk use " \
+                "storage, for an instance admin only and the whole install's, every Organization's: Logs' and Spans' local disk use " \
                 "against the disk limit, free disk, bucket bytes, the local disk at steady state (each Project's " \
-                "last 7 days' average a day kept for its Retention, or local_cache_hours with a bucket), whether that " \
+                "last 7 days' average a day of Logs and of Spans, each kept for its Retention, or local_cache_hours with a bucket), whether that " \
                 "stays under the limit, and if not about how many days until the limit at the last 7 days' growth, and the old Parquet files kept and the day Retention deletes the " \
                 "last of them; " \
                 "event_store says whether EventStore answered; when it didn't, " \

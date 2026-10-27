@@ -45,8 +45,9 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "You are not authorized to perform this action.", flash[:alert]
 
     patch instance_settings_url(org_slug: @organization.slug),
-      params: { instance_settings: { sql_queries_enabled: false, log_all_reads: true } }
+      params: { instance_settings: { sql_queries_enabled: false, log_all_reads: true, default_trace_retention_days: 3 } }
     assert_redirected_to root_url
+    assert_equal 14, InstanceSetting.current.default_trace_retention_days
     assert InstanceSetting.current.sql_queries_enabled?
     assert_not InstanceSetting.current.log_all_reads?
   end
@@ -61,7 +62,8 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Settings/Instance", response.parsed_body["component"]
     settings = response.parsed_body.dig("props", "settings")
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
-      "default_log_retention_days" => 14, "log_all_reads" => false, "log_mcp_reads" => true }, settings["editable"])
+      "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
+      "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true }, settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")
 
@@ -70,20 +72,23 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "label" => "Version", "source" => "SOLIDTRACE_VERSION", "value" => "dev", "default" => true,
       "secret" => false }, version)
     assert_equal [ "CONSOLE_URL", "PUBLIC_INGEST_URL", "EVENT_STORE_URL", "EVENT_STORE_INGEST_URL", "SOLIDTRACE_VERSION",
-      "RAILS_MAX_THREADS", "JOB_CONCURRENCY", "RAILS_LOG_LEVEL", "SECRET_KEY_BASE", "SENTRY_DSN" ],
+      "RAILS_MAX_THREADS", "JOB_CONCURRENCY", "RAILS_LOG_LEVEL", "SENTRY_TRACES_SAMPLE_RATE", "SECRET_KEY_BASE",
+      "SENTRY_DSN" ],
       console["settings"].pluck("source")
   end
 
   test "a setting given in the environment says it isn't the default" do
     sign_in_as(@instance_admin)
 
-    with_env("EVENT_STORE_URL" => "http://10.0.0.5:4100", "JOB_CONCURRENCY" => "3") do
+    with_env("EVENT_STORE_URL" => "http://10.0.0.5:4100", "JOB_CONCURRENCY" => "3", "SENTRY_TRACES_SAMPLE_RATE" => "0.05") do
       get instance_settings_url(org_slug: @organization.slug), headers: inertia
     end
 
     rows = console_rows
     assert_equal [ "http://10.0.0.5:4100", false ], rows["EVENT_STORE_URL"].values_at("value", "default")
     assert_equal [ "3", false ], rows["JOB_CONCURRENCY"].values_at("value", "default")
+    assert_equal [ "Traces sample rate", "0.05", false ],
+      rows["SENTRY_TRACES_SAMPLE_RATE"].values_at("label", "value", "default")
     assert_equal [ "http://127.0.0.1:4000", true ], rows["EVENT_STORE_INGEST_URL"].values_at("value", "default")
   end
 
@@ -197,6 +202,27 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
       .values_at("sql_queries_enabled", "default_log_retention_days", "log_all_reads")
   end
 
+  test "saving changes the default trace Retention, and the page shows it" do
+    sign_in_as(@instance_admin)
+
+    save(default_trace_retention_days: "3")
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ 3, 30 ], response.parsed_body.dig("props", "settings", "editable")
+      .values_at("default_trace_retention_days", "default_log_retention_days")
+  end
+
+  test "a trace Retention below one day comes back as a form error and saves nothing" do
+    sign_in_as(@instance_admin)
+
+    save(default_trace_retention_days: "0")
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert response.parsed_body.dig("props", "errors", "default_trace_retention_days").present?
+    assert_equal 14, InstanceSetting.current.default_trace_retention_days
+  end
+
   test "saving turns MCP reads' logging off, even while log-all-reads is on, and the page shows it" do
     InstanceSetting.current.update!(log_all_reads: true)
     sign_in_as(@instance_admin)
@@ -207,6 +233,17 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     get instance_settings_url(org_slug: @organization.slug), headers: inertia
     assert_equal [ true, false ], response.parsed_body.dig("props", "settings", "editable")
       .values_at("log_all_reads", "log_mcp_reads")
+  end
+
+  test "saving turns off sending Console's Issues and tracing Console, and the page shows it" do
+    sign_in_as(@instance_admin)
+
+    save(send_console_issues: false, trace_console: false)
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ false, false ], response.parsed_body.dig("props", "settings", "editable")
+      .values_at("send_console_issues", "trace_console")
   end
 
   test "a Retention below one day, or not a whole number, comes back as a form error and saves nothing" do
