@@ -6,8 +6,8 @@
 #   deploy/install --build                          # build the images from this checkout
 #
 # Installs Docker if it is missing (Debian and Ubuntu), starts it at boot,
-# creates the data directories, EventStore's config, Console's secret and the
-# Meta Organization's project key, then
+# creates the data directories, EventStore's config, Console's secret, the
+# Meta Organization's project key and Console's Sentry DSN and sample rate, then
 # starts the services, with Caddy in front if deploy/setup-gcp turned HTTPS on.
 # It pulls a release's images from GitHub's registry, for amd64 or arm64: the
 # release this checkout is at, or on any other commit the newest release before
@@ -306,6 +306,32 @@ wait_for() {
   die "$name did not answer at $url. See: sudo docker compose -f $DEPLOY_DIR/docker-compose.yml logs"
 }
 
+# write_env writes deploy/.env's secrets and settings, the ones it lacks.
+write_env() {
+  ensure_env_secret SECRET_KEY_BASE 64 "Writing Console's secret to $ENV_FILE"
+  # The project key of the Meta Organization's Project, which receives
+  # SolidTrace's own Logs (docs/adr/0011). db_prepare gives the Project this key
+  # when it seeds it, and Vector sends with it.
+  ensure_env_secret META_PROJECT_KEY 16 "Writing the Meta Organization's project key to $ENV_FILE"
+  # Console's Sentry DSN: the Meta Project's, made from its key, since ingest
+  # finds the Project by the key alone and never reads the DSN's project id.
+  # Console sends its Issues there, and the Transactions of the share of its
+  # requests and jobs it traces (docs/traces.md).
+  ensure_env_value SENTRY_DSN "http://$(env_value META_PROJECT_KEY)@127.0.0.1:4000/0" \
+    "Sending Console's own Issues and traces to the Meta Organization's Project, in $ENV_FILE"
+  ensure_env_value SENTRY_TRACES_SAMPLE_RATE 0.05 "Tracing 5% of Console's requests and jobs, in $ENV_FILE"
+  # EventStore's password on ClickHouse, which reads it from the environment too.
+  ensure_env_secret SOLIDTRACE_CLICKHOUSE_PASSWORD 24 "Writing ClickHouse's password to $ENV_FILE"
+  # ClickHouse's memory: half of RAM, which leaves Console and Vector the rest.
+  ensure_env_value SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES \
+    "$(awk '/^MemTotal:/ { printf "%.0f", $2 * 1024 / 2 }' /proc/meminfo)" \
+    "Giving ClickHouse half of this machine's memory in $ENV_FILE"
+}
+
+# Sourced, as its test does (console/test/deploy/install_test.rb), it only
+# defines the functions above.
+[[ ${BASH_SOURCE[0]} == "$0" ]] || return 0
+
 check_old_paths
 # deploy/setup-gcp runs this check before it asks anything.
 [[ ${1:-} == --check-old-paths ]] && exit 0
@@ -315,17 +341,7 @@ install_docker
 start_docker
 create_data_dirs
 create_config
-ensure_env_secret SECRET_KEY_BASE 64 "Writing Console's secret to $ENV_FILE"
-# The project key of the Meta Organization's Project, which receives
-# SolidTrace's own Logs (docs/adr/0011). db_prepare gives the Project this key
-# when it seeds it, and Vector sends with it.
-ensure_env_secret META_PROJECT_KEY 16 "Writing the Meta Organization's project key to $ENV_FILE"
-# EventStore's password on ClickHouse, which reads it from the environment too.
-ensure_env_secret SOLIDTRACE_CLICKHOUSE_PASSWORD 24 "Writing ClickHouse's password to $ENV_FILE"
-# ClickHouse's memory: half of RAM, which leaves Console and Vector the rest.
-ensure_env_value SOLIDTRACE_CLICKHOUSE_MEMORY_BYTES \
-  "$(awk '/^MemTotal:/ { printf "%.0f", $2 * 1024 / 2 }' /proc/meminfo)" \
-  "Giving ClickHouse half of this machine's memory in $ENV_FILE"
+write_env
 set_version
 set_log_file_store
 prepare_duckdb_logs

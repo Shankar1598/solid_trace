@@ -37,7 +37,8 @@ module RequestLog
     # What the request itself says: its id, which other lines it causes,
     # such as its call timings, also carry, where it came from, and its
     # params, filtered as Rails filters them, as one JSON string, not an
-    # Attribute for every param.
+    # Attribute for every param. And its trace id when Sentry traces it,
+    # sampled or not, which EventStore reads as the Log's (docs/traces.md).
     def request(event)
       request = event.payload[:request]
       params = event.payload[:params].except(*ROUTE_PARAMS)
@@ -47,6 +48,7 @@ module RequestLog
         user_agent: request.user_agent,
         params: params.presence&.to_json,
         version: Rails.configuration.x.solidtrace_version,
+        trace_id: Sentry.get_current_scope&.get_span&.trace_id,
       }
     end
 
