@@ -183,8 +183,9 @@ class TraceView
   end
 
   # The Spans the trace's end waited on: from its end back, the Span that
-  # ended last, then the one that ended last before that one began, and so
-  # on, and within each of those its children the same way.
+  # ended last, then the one that ended last by the time that one began, and
+  # so on, and within each of those its children the same way. A Span still
+  # running when the next one on the path began isn't on it.
   def critical
     @critical ||= begin
       marked = Set.new.compare_by_identity
@@ -192,7 +193,7 @@ class TraceView
       mark = lambda do |spans, until_us|
         cursor = until_us
         spans.sort_by { |s| -end_us(s) }.each do |span|
-          next unless start_us(span) < cursor
+          next unless end_us(span) <= cursor
 
           marked << span
           mark.call(children[span["span_id"]] || [], end_us(span))
