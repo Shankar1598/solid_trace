@@ -35,6 +35,7 @@ module McpServer
     McpTools::ListIntegrations,
     McpTools::ListIssues,
     McpTools::GetIssue,
+    McpTools::GetTrace,
     McpTools::UpdateIssue,
     McpTools::AddComment,
     McpTools::CreateProject,
@@ -58,7 +59,7 @@ module McpServer
     whoami lists your Organizations, and list_projects an Organization's Projects, with descriptions that say which to query.
     get_overview answers how much an Organization's Projects sent and store, how fast, how healthy, and what that volume would cost elsewhere.
     query_logs runs a Query on a Project's Logs; list_fields lists the names a Query reads, and query_language_reference explains the language.
-    get_issue's trace_logs finds an Event's Logs.
+    get_issue's trace_logs finds an Event's Logs, and get_trace a trace's Spans, Issues and Logs across the Organization's Projects.
     An answer ends with a link to the Console page that shows it, for the user to open.
   TEXT
 
