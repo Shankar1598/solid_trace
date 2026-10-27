@@ -239,4 +239,11 @@ An install traces its own Console into the Meta Project, the Project in Console'
 
 Restart Console after changing either: `sudo docker compose -f deploy/docker-compose.yml up -d console jobs`. Settings → Instance shows both.
 
+Two instance settings on Settings → Instance, both on to start, turn these off with no restart, from the next Event or request on (another Console process within 10 seconds). `update_instance_settings` changes them too:
+
+- **Send Console's Issues**: off, Console sends no Events, whatever DSN it has.
+- **Trace Console**: off, Console traces nothing, even a request whose caller's trace was sampled.
+
+Console never traces its job that reads EventStore's messages, which runs every second, or health checks (`/up`, `/health`). It keeps the sampling decision of a trace that reaches it already sampled, or not. A job that notifies the Meta Organization's Integrations, about its Issues or Monitors, sends no Event when it fails, only its log line: that Event would be a Meta Project Issue, whose notification would fail again, and so on.
+
 Console's text lines carry `[trace=<id>]` and its JSON lines, such as its line for each request, a `trace_id` field. The Meta Project is seeded with the Log transform above, so its Logs have their trace ids.
