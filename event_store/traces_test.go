@@ -90,12 +90,52 @@ func (s traceSpan) row() string {
 type traceAnswer struct {
 	TraceID string      `json:"trace_id"`
 	Spans   []traceSpan `json:"spans"`
+	// The trace's Logs, read from LogsFrom to LogsTo, and its Events by
+	// Issue.
+	Logs     []traceLog   `json:"logs"`
+	MoreLogs bool         `json:"more_logs"`
+	LogsFrom *time.Time   `json:"logs_from"`
+	LogsTo   *time.Time   `json:"logs_to"`
+	Issues   []traceIssue `json:"issues"`
+}
+
+// traceLog is a Log as the trace route answers it, with its Project.
+type traceLog struct {
+	ProjectID uint32    `json:"project_id"`
+	ID        string    `json:"id"`
+	Time      time.Time `json:"time"`
+	Message   string    `json:"message"`
+	TraceID   string    `json:"trace_id"`
+}
+
+// traceIssue is an Issue's Events in a trace, by the Issue's fingerprint, as
+// the trace route answers them.
+type traceIssue struct {
+	ProjectID          uint32       `json:"project_id"`
+	IssueFingerprintID int64        `json:"issue_fingerprint_id"`
+	Events             []traceEvent `json:"events"`
+}
+
+type traceEvent struct {
+	UUID      string    `json:"uuid"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // readTrace asks the trace route for a trace across Projects.
 func readTrace(t *testing.T, env *TestEnv, traceID string, projectIDs ...uint32) traceAnswer {
 	t.Helper()
-	status, raw := postQueryApp(t, env, "/trace", map[string]any{"project_ids": projectIDs, "trace_id": traceID})
+	return readTraceAround(t, env, traceID, nil, projectIDs...)
+}
+
+// readTraceAround asks the trace route for a trace across Projects, with a
+// time hint unless hint is nil.
+func readTraceAround(t *testing.T, env *TestEnv, traceID string, hint *time.Time, projectIDs ...uint32) traceAnswer {
+	t.Helper()
+	body := map[string]any{"project_ids": projectIDs, "trace_id": traceID}
+	if hint != nil {
+		body["time"] = hint.Format(time.RFC3339Nano)
+	}
+	status, raw := postQueryApp(t, env, "/trace", body)
 	if status != 200 {
 		t.Fatalf("Trace %s expected 200, got %d: %s", traceID, status, raw)
 	}

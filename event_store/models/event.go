@@ -12,6 +12,9 @@ type Event struct {
 	ServerName         string            `json:"server_name"`
 	Release            string            `json:"release"`
 	Level              string            `json:"level"`
+	// TraceID is the trace the Event was raised in, from its trace
+	// context: "" for none, and for an Event stored before Traces.
+	TraceID            string            `json:"trace_id"`
 	IssueFingerprintID int64             `json:"issue_fingerprint_id"`
 	IssueID            int64             `json:"issue_id"`
 	IsNewIssue         bool              `json:"is_new_issue"`
