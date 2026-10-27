@@ -11,6 +11,11 @@ require "active_support/tagged_logging"
 # `{"level":"FATAL","message":"…"}`, which Vector reads whole. Rails pads an
 # exception with blank lines; those are trimmed first, so a routing error is
 # one ordinary line.
+#
+# A line written in a request or job Sentry traces, sampled or not, carries
+# its trace id: `INFO [trace=<id>] message`, or a JSON line's trace_id field.
+# The Meta Project's Log transform moves the tag into the Log's trace id
+# (docs/traces.md).
 class LevelLogFormatter < ActiveSupport::Logger::SimpleFormatter
   def self.logger(io)
     logger = ActiveSupport::Logger.new(io)
@@ -23,10 +28,16 @@ class LevelLogFormatter < ActiveSupport::Logger::SimpleFormatter
     lines.shift while lines.first&.strip&.empty?
     lines.pop while lines.last&.strip&.empty?
 
+    trace_id = self.trace_id
     if lines.size > 1
-      "#{JSON.generate(level: severity, message: lines.join("\n"))}\n"
+      "#{JSON.generate({ level: severity, message: lines.join("\n"), trace_id: trace_id }.compact)}\n"
     else
-      "#{severity} #{lines.first}\n"
+      "#{severity} #{"[trace=#{trace_id}] " if trace_id}#{lines.first}\n"
     end
+  end
+
+  # The trace id of the request or job writing the line, if Sentry traces it.
+  def trace_id
+    Sentry.get_current_scope&.get_span&.trace_id if defined?(Sentry)
   end
 end
