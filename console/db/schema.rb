@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_27_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_27_130000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -109,12 +109,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_27_120000) do
     t.string "mail_from"
     t.integer "meta_organization_id"
     t.boolean "meta_organization_seeded", default: false, null: false
+    t.boolean "send_console_issues", default: true, null: false
     t.boolean "sign_up_open", default: false, null: false
     t.string "smtp_address"
     t.text "smtp_password"
     t.integer "smtp_port", default: 587, null: false
     t.string "smtp_username"
     t.boolean "sql_queries_enabled", default: true, null: false
+    t.boolean "trace_console", default: true, null: false
     t.datetime "updated_at", null: false
     t.index ["meta_organization_id"], name: "index_instance_settings_on_meta_organization_id"
   end

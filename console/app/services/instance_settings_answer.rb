@@ -31,6 +31,8 @@ class InstanceSettingsAnswer
         default_trace_retention_days: @settings.default_trace_retention_days,
         log_all_reads: @settings.log_all_reads,
         log_mcp_reads: @settings.log_mcp_reads,
+        send_console_issues: @settings.send_console_issues,
+        trace_console: @settings.trace_console,
       },
       sign_up: {
         open: @settings.sign_up_open,

@@ -72,6 +72,48 @@ class ConsoleSentryTest < ActiveSupport::TestCase
     assert_not transaction("LogsController#index", op: "http.server", parent_sampled: false).sampled
   end
 
+  test "with Send Console's Issues off, no Event is sent, from the next one on, until it's on again" do
+    InstanceSetting.current.update_editable(send_console_issues: false)
+    Sentry.capture_exception(RuntimeError.new("off"))
+    assert_empty sentry_events
+
+    InstanceSetting.current.update_editable(send_console_issues: true)
+    Sentry.capture_exception(RuntimeError.new("on"))
+    assert_equal 1, sentry_events.size
+  end
+
+  test "with Trace Console off, nothing is traced, even a trace sampled upstream" do
+    tracing_at(1.0)
+    InstanceSetting.current.update_editable(trace_console: false)
+
+    assert_not transaction("LogsController#index", op: "http.server").sampled
+    assert_not transaction("LogsController#index", op: "http.server", parent_sampled: true).sampled
+
+    InstanceSetting.current.update_editable(trace_console: true)
+    assert transaction("LogsController#index", op: "http.server").sampled
+  end
+
+  test "the settings are read once in a while, not for each Event or Transaction, and another process's change applies then" do
+    tracing_at(1.0)
+    Sentry.capture_exception(RuntimeError.new("first"))
+
+    assert_no_queries do
+      Sentry.capture_exception(RuntimeError.new("second"))
+      transaction("LogsController#index", op: "http.server")
+    end
+
+    # As another process saves it: this one's read is kept until it's due again.
+    InstanceSetting.current.update_columns(send_console_issues: false, trace_console: false)
+    Sentry.capture_exception(RuntimeError.new("before the read is due"))
+    assert_equal 3, sentry_events.count { |event| event.is_a?(Sentry::ErrorEvent) }
+
+    travel ConsoleSentry::SETTINGS_FOR + 1.second do
+      Sentry.capture_exception(RuntimeError.new("after"))
+      assert_not transaction("LogsController#index", op: "http.server").sampled
+    end
+    assert_equal 3, sentry_events.count { |event| event.is_a?(Sentry::ErrorEvent) }
+  end
+
   private
 
   # Sentry configured as config/initializers/sentry.rb does with
