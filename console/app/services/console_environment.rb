@@ -31,6 +31,9 @@ class ConsoleEnvironment
       row("Web threads", "RAILS_MAX_THREADS", web_threads.to_s),
       row("Job processes", "JOB_CONCURRENCY", @env.fetch("JOB_CONCURRENCY", DEFAULT_JOB_PROCESSES)),
       row("Log level", "RAILS_LOG_LEVEL", Rails.application.config.log_level.to_s),
+      # The share of Console's requests and jobs Sentry traces into the Meta
+      # Project (docs/traces.md), none when unset.
+      row("Traces sample rate", "SENTRY_TRACES_SAMPLE_RATE", @env["SENTRY_TRACES_SAMPLE_RATE"].presence),
       *SECRETS.map { |source, label| secret_row(label, source) },
     ]
   end
