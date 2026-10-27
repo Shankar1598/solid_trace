@@ -121,10 +121,24 @@ func (w *PebbleWriter) KeepLogBatchIDsAbove(id uuid.UUID) {
 	}
 }
 
-// seedLogBatchFloor keeps new Log batch ids above the newest stored batch of
-// every Project, reading one key per Project.
+// seedLogBatchFloor keeps new batch ids above the newest stored Log batch
+// and Transaction batch of every Project, reading one key per Project.
 func (w *PebbleWriter) seedLogBatchFloor() error {
-	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: logBatchKeyspace, UpperBound: logBatchKeyspaceEnd})
+	for _, keyspace := range [][2][]byte{
+		{logBatchKeyspace, logBatchKeyspaceEnd},
+		{transactionBatchKeyspace, transactionBatchKeyspaceEnd},
+	} {
+		if err := w.seedBatchFloor(keyspace[0], keyspace[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// seedBatchFloor keeps new batch ids above the newest batch of every Project
+// in the keyspace from lower to upper.
+func (w *PebbleWriter) seedBatchFloor(lower, upper []byte) error {
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return err
 	}
@@ -133,12 +147,13 @@ func (w *PebbleWriter) seedLogBatchFloor() error {
 		key := iter.Key()
 		batchID, err := uuid.FromBytes(key[len(key)-16:])
 		if err != nil {
-			return fmt.Errorf("log batch key %x: %w", key, err)
+			return fmt.Errorf("batch key %x: %w", key, err)
 		}
 		if bytes.Compare(batchID[:], w.logBatchFloor[:]) > 0 {
 			w.logBatchFloor = batchID
 		}
-		valid = iter.SeekLT(logBatchPrefix(binary.BigEndian.Uint32(key[len(logBatchKeyspace):])))
+		projectStart := binary.BigEndian.AppendUint32(bytes.Clone(lower), binary.BigEndian.Uint32(key[len(lower):]))
+		valid = iter.SeekLT(projectStart)
 	}
 	return iter.Error()
 }

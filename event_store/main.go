@@ -18,6 +18,7 @@ import (
 	"github.com/solidtrace/event_store/pkg/cpuprofile"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/processing"
+	"github.com/solidtrace/event_store/spanprocessing"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -108,6 +109,12 @@ func main() {
 	}
 	logProcessor.Start()
 
+	spanProcessor := spanprocessing.New(pebbleWriter, clickHouse)
+	if err := spanProcessor.Prepare(); err != nil {
+		logger.L.Fatal("Failed to prepare Span processing", "error", err)
+	}
+	spanProcessor.Start()
+
 	// Retention and deleted Projects once a day, the disk limit hourly.
 	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
 	if err != nil {
@@ -116,7 +123,8 @@ func main() {
 	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
 	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
 	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, diskLimit, clock.System{},
-		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention})
+		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
+		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention})
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
@@ -134,6 +142,8 @@ func main() {
 		NotifyEvents: processor.Notify,
 		Logs:         pebbleWriter,
 		NotifyLogs:   logProcessor.Notify,
+		Transactions: pebbleWriter,
+		NotifySpans:  spanProcessor.Notify,
 		Clock:        clock.System{},
 		Retention:    consoleSettings,
 		MaxWaiting:   cfg.IngestMaxWaiting,
@@ -156,7 +166,7 @@ func main() {
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, overviewHandler, healthHandler, handler.NewConfigHandler(cfg, diskLimit.Bytes))
+	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, overviewHandler, handler.NewTracesHandler(clickHouse), healthHandler, handler.NewConfigHandler(cfg, diskLimit.Bytes))
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort
@@ -199,6 +209,7 @@ func main() {
 	// Then the stores close through the defers above.
 	processor.Stop()
 	logProcessor.Stop()
+	spanProcessor.Stop()
 	logCleanup.Stop()
 	eventCleanup.Stop()
 	if profiler != nil {
