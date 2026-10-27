@@ -147,7 +147,7 @@ Three new routes on the loopback Query API. As with the Overview, Console sends 
 - **Transactions**: takes a Project, a range and an environment. For each Transaction name, it answers:
   - throughput, the sum of `1 / sample_rate` over segments divided by the range's seconds;
   - p50, p95 and p99 over sampled segments, unweighted;
-  - error rate, the weighted share of segments whose status isn't `ok`;
+  - error rate, the weighted share of segments that sent a status other than `ok`. A segment that sent no status, as sentry-ruby does when none was set, isn't an error;
   - time consumed, the weighted sum of durations;
   - the same numbers for the previous period of the same length.
 - **Transaction**: takes a Project, a name, a range and an environment. It answers p50 and p95 over time by release, self time by op and by group, repeated groups with their median and maximum repeats, and the slowest trace ids.

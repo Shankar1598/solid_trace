@@ -26,7 +26,7 @@ Spec: [../spec.md](../spec.md)
 - [x] Weighted throughput, error rate and time consumed, with the previous period, from Transactions at two sample rates (Go)
 - [x] A Transaction's breakdown, release series, repeats and slowest traces (Go)
 - [x] Each page's props agree with its MCP tool (Rails controller + MCP tool tests)
-- [x] A Playwright flow opens Performance, sorts it, opens a Transaction and then one of its slowest traces
+- [ ] A Playwright flow opens Performance, sorts it, opens a Transaction and then one of its slowest traces (written, `console/e2e/flows/performance.spec.ts`; not run)
 
 Notes:
 

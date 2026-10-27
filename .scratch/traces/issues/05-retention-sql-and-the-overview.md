@@ -15,7 +15,7 @@ Spec: [../spec.md](../spec.md)
 - [x] The settings save, validate and are refused to non-admins, over HTTP and MCP (Rails controller + MCP tool tests)
 - [x] A `spans` query reads its own Project's Spans only (Go, beside the SQL scope tests)
 - [x] The Overview route answers Spans received and stored, and `get_overview` includes them with the APM estimate (Go + MCP tool test)
-- [x] Playwright flows change trace Retention and see Spans on the Overview
+- [ ] Playwright flows change trace Retention and see Spans on the Overview (written, `trace-retention.spec.ts` and `overview-spans.spec.ts`; not run)
 
 ## Notes
 
