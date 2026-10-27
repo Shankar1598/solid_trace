@@ -54,7 +54,36 @@ class ConsoleSentryTest < ActiveSupport::TestCase
     end
   end
 
+  test "the traces sampler never keeps the every-second message job or a health check, and otherwise uses the rate" do
+    tracing_at(0.05)
+
+    assert_not transaction("EventStoreMessageProcessorJob", op: "queue.active_job").sampled
+    assert_not transaction("/up", op: "http.server", env: Rack::MockRequest.env_for("/up")).sampled
+    assert_equal 0.05, transaction("LogsController#index", op: "http.server",
+      env: Rack::MockRequest.env_for("/acme/logs")).effective_sample_rate
+    assert_equal 0.05, transaction("MonitorSchedulerJob", op: "queue.active_job").effective_sample_rate
+  end
+
+  test "the traces sampler follows the decision of a trace sampled upstream" do
+    tracing_at(0.05)
+
+    assert transaction("LogsController#index", op: "http.server", parent_sampled: true).sampled
+    tracing_at(1.0)
+    assert_not transaction("LogsController#index", op: "http.server", parent_sampled: false).sampled
+  end
+
   private
+
+  # Sentry configured as config/initializers/sentry.rb does with
+  # SENTRY_TRACES_SAMPLE_RATE=rate.
+  def tracing_at(rate)
+    Sentry.configuration.traces_sample_rate = rate
+    Sentry.configuration.traces_sampler = ->(context) { ConsoleSentry.traces_sample_rate(context, rate) }
+  end
+
+  def transaction(name, op:, env: nil, **options)
+    Sentry.start_transaction(name: name, op: op, custom_sampling_context: env ? { env: env } : {}, **options)
+  end
 
   def failing(receiver, method, &block)
     receiver.stub(method, ->(*, **) { raise "notification down" }, &block)
