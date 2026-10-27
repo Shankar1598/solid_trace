@@ -15,8 +15,8 @@
 class TraceView
   # How long Console waits for EventStore's trace, in seconds.
   TIMEOUT_SECONDS = 10
-  # The most rows #summary gives, so that a large trace fits an agent's
-  # context.
+  # The most rows #summary gives, its Transactions, critical path and Spans
+  # together, so that a large trace fits an agent's context.
   SUMMARY_ROWS = 200
   # How much of a description #summary gives, and of a message the page
   # does.
@@ -42,17 +42,27 @@ class TraceView
     }
   end
 
-  # The trace for an agent: its Transactions; its rows by self time, the
-  # most first, at most rows of them, with what was left out; the critical
-  # path; its Issues; and the query_logs arguments that read its Logs.
+  # The trace for an agent: its Transactions; the critical path; its rows by
+  # self time, the most first; its Issues; and the query_logs arguments that
+  # read its Logs. The Transactions, the critical path and the rows share
+  # one budget of rows: the Transactions take at most a tenth of it, the
+  # critical path a quarter, and the rows the rest, and left_out counts what
+  # each didn't give.
   def summary(rows: SUMMARY_ROWS)
-    kept = spans.sort_by { |row| [ -row["self_time_us"], row["offset_us"] ] }.first(rows)
+    kept_transactions = transactions.first(rows / 10)
+    path = spans.select { |row| row["critical"] }
+    kept_path = path.first(rows / 4)
+    kept = spans.sort_by { |row| [ -row["self_time_us"], row["offset_us"] ] }
+      .first(rows - kept_transactions.size - kept_path.size)
     {
       trace_id: trace_id, event_store: event_store, sampled: sampled, duration_us: duration_us,
-      span_count: received.size, transactions: transactions.first(rows),
+      span_count: received.size, transactions: kept_transactions,
       spans: kept.map { |row| summary_row(row) },
-      left_out: { rows: spans.size - kept.size, spans: received.size - kept.sum { |row| row["count"] } },
-      critical_path: spans.select { |row| row["critical"] }.first(rows).map { |row| row["span_id"] },
+      left_out: {
+        transactions: transactions.size - kept_transactions.size, critical_path: path.size - kept_path.size,
+        rows: spans.size - kept.size, spans: received.size - kept.sum { |row| row["count"] },
+      },
+      critical_path: kept_path.map { |row| row["span_id"] },
       issues: issues.map do |issue|
         { project: issue[:project][:slug], issue: issue[:number], title: issue[:title], events: issue[:events], event: issue[:event] }
       end,
