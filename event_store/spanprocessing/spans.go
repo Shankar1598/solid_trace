@@ -252,9 +252,10 @@ var (
 	inList        = regexp.MustCompile(`(?i)\bIN\s*\(\s*\?(?:\s*,\s*\?)*\s*\)`)
 )
 
-// normalised is a description with its literals replaced by ?: quoted
-// strings, UUIDs, hex ids, numbers, and IN lists of them.
-func normalised(description string) string {
+// Normalised is a description with its literals replaced by ?: quoted
+// strings, UUIDs, hex ids, numbers, and IN lists of them. A group is of a
+// normalised description.
+func Normalised(description string) string {
 	d := quotedLiteral.ReplaceAllString(description, "?")
 	d = uuidLiteral.ReplaceAllString(d, "?")
 	d = hexLiteral.ReplaceAllStringFunc(d, func(s string) string {
@@ -272,6 +273,6 @@ func group(op, description string) string {
 	h := fnv.New64a()
 	h.Write([]byte(op))
 	h.Write([]byte{0})
-	h.Write([]byte(normalised(description)))
+	h.Write([]byte(Normalised(description)))
 	return fmt.Sprintf("%016x", h.Sum64())
 }

@@ -67,3 +67,11 @@ func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandl
 	app.Get("/api/:project_id/logs/fields", logsHandler.Fields)
 	app.Get("/api/:project_id/logs/:log_id", logsHandler.Get)
 }
+
+// RegisterPerformanceRoutes mounts the Query API's Transactions routes, on
+// the loopback query listener as RegisterQueryRoutes' are. A Transaction's
+// name goes in the body, since it may hold any character.
+func RegisterPerformanceRoutes(app *fiber.App, performanceHandler *PerformanceHandler) {
+	app.Post("/api/:project_id/transactions", performanceHandler.Transactions)
+	app.Post("/api/:project_id/transaction", performanceHandler.Transaction)
+}
