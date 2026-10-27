@@ -104,6 +104,12 @@ Rails.application.routes.draw do
         post :preview
         post :restore
       end
+
+      # Performance, and a Transaction's page, named by ?name= since a name
+      # may hold any character.
+      resource :performance, only: [ :show ], controller: "performance" do
+        get :transaction
+      end
     end
 
     scope "/settings" do

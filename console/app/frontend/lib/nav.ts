@@ -1,13 +1,16 @@
 // Which sidebar entry a page belongs to, from its path alone: the search is
 // left out, since a Query in it can hold any text, such as "/issues".
 
-export type NavSection = 'overview' | 'issues' | 'logs' | 'dashboards' | 'monitors' | 'projects' | 'settings'
+export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'projects' | 'settings'
+
+// The parts of a Console URL's path after its Organization.
+function pathParts(url: string): string[] {
+  return url.split(/[?#]/)[0].replace(/\/+$/, '').split('/').slice(2)
+}
 
 /** The section of a Console URL under an Organization, such as `/acme/projects/shop/logs?q=…`; null for none. */
 export function navSection(url: string): NavSection | null {
-  const path = url.split(/[?#]/)[0].replace(/\/+$/, '')
-  const parts = path.split('/').slice(2)
-  const [first, , third] = parts
+  const [first, , third] = pathParts(url)
   switch (first) {
     case 'overview':
     case 'issues':
@@ -19,10 +22,17 @@ export function navSection(url: string): NavSection | null {
     case 'projects':
       if (third === 'issues') return 'issues'
       if (third === 'logs') return 'logs'
+      if (third === 'performance') return 'performance'
       return 'projects'
     default:
       return null
   }
+}
+
+/** The slug of the Project whose Performance a URL is, or null for any other page. */
+export function performanceProject(url: string): string | null {
+  const [first, slug, third] = pathParts(url)
+  return first === 'projects' && third === 'performance' ? slug : null
 }
 
 /**
@@ -32,5 +42,7 @@ export function navSection(url: string): NavSection | null {
  */
 export function orgSwitchUrl(url: string, slug: string): string {
   const section = navSection(url) ?? 'issues'
-  return section === 'settings' ? `/${slug}/settings/organization` : `/${slug}/${section}`
+  if (section === 'settings') return `/${slug}/settings/organization`
+  // Performance belongs to a Project, which the other Organization lacks.
+  return `/${slug}/${section === 'performance' ? 'projects' : section}`
 }
