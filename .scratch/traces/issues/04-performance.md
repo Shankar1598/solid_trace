@@ -21,9 +21,15 @@ Spec: [../spec.md](../spec.md)
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Weighted throughput, error rate and time consumed, with the previous period, from Transactions at two sample rates (Go)
-- [ ] A Transaction's breakdown, release series, repeats and slowest traces (Go)
-- [ ] Each page's props agree with its MCP tool (Rails controller + MCP tool tests)
-- [ ] A Playwright flow opens Performance, sorts it, opens a Transaction and then one of its slowest traces
+- [x] Weighted throughput, error rate and time consumed, with the previous period, from Transactions at two sample rates (Go)
+- [x] A Transaction's breakdown, release series, repeats and slowest traces (Go)
+- [x] Each page's props agree with its MCP tool (Rails controller + MCP tool tests)
+- [x] A Playwright flow opens Performance, sorts it, opens a Transaction and then one of its slowest traces
+
+Notes:
+
+- An error is a segment whose status was sent and isn't `ok`. A segment sent with no status (`""`) isn't an error, since the SDK said nothing about how it ended.
+- The flow (`console/e2e/flows/performance.spec.ts`) is written but wasn't run: the dev stack had no EventStore up when this was built.
+- The empty page links to `docs/traces.md`, which ticket 06 writes.
