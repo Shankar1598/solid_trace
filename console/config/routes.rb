@@ -34,6 +34,7 @@ Rails.application.routes.draw do
 
   scope "/:org_slug" do
     get "overview", to: "overview#show", as: :overview
+    get "traces/:trace_id", to: "traces#show", as: :trace, constraints: { trace_id: /\h{32}/ }
     resources :issues, only: [ :index ] do
       collection do
         patch :status, action: :update_status

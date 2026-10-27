@@ -33,6 +33,7 @@ import (
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/processing"
+	"github.com/solidtrace/event_store/spanprocessing"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -70,8 +71,12 @@ type TestEnv struct {
 	LogDiskLimit storage.LogDiskLimit
 
 	LogProcessor *logprocessing.Processor
-	LogCleanup   *logprocessing.Cleanup
-	LogsHandler  *handler.LogsHandler
+	// SpanProcessor is Span processing, which inserts into FlakySpans.
+	SpanProcessor *spanprocessing.Processor
+	FlakySpans    *flakySpanStore
+	// LogCleanup cleans up every family of day tables, Spans' too.
+	LogCleanup  *logprocessing.Cleanup
+	LogsHandler *handler.LogsHandler
 	// SQL runs SQL queries, each as its Project's SQL user, within
 	// SQLLimits, storage's defaults unless a test changes them.
 	SQL        *storage.ClickHouseSQL
@@ -117,6 +122,35 @@ func (env *TestEnv) ProcessLogs(t *testing.T) {
 	if err := env.LogProcessor.ProcessUntilCaughtUp(); err != nil {
 		t.Fatalf("Log processing failed: %v", err)
 	}
+}
+
+// ProcessSpans runs Span processing until every stored Transaction is
+// handled.
+func (env *TestEnv) ProcessSpans(t *testing.T) {
+	t.Helper()
+	if err := env.SpanProcessor.ProcessUntilCaughtUp(); err != nil {
+		t.Fatalf("Span processing failed: %v", err)
+	}
+}
+
+// flakySpanStore is ClickHouse's Span tables as Span processing uses them,
+// except that the next failAfterInsert inserts fail once they have stored
+// their Spans, as when ClickHouse's answer is lost.
+type flakySpanStore struct {
+	*storage.ClickHouse
+	failAfterInsert atomic.Int32
+	attempts        atomic.Int32
+}
+
+func (s *flakySpanStore) InsertSpans(projectID uint32, insert storage.SpanInsert) error {
+	s.attempts.Add(1)
+	if err := s.ClickHouse.InsertSpans(projectID, insert); err != nil {
+		return err
+	}
+	if s.failAfterInsert.Add(-1) >= 0 {
+		return connectionLost
+	}
+	return nil
 }
 
 // DeleteLogsPastRetention runs the daily pass at the clock's time: each Project's
@@ -458,7 +492,13 @@ func (env *TestEnv) open(t *testing.T) {
 	}
 	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
 	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock,
-		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention})
+		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
+		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention})
+	env.FlakySpans = &flakySpanStore{ClickHouse: clickHouse}
+	env.SpanProcessor = spanprocessing.New(pebbleWriter, env.FlakySpans)
+	if err := env.SpanProcessor.Prepare(); err != nil {
+		t.Fatalf("Span processing Prepare failed: %v", err)
+	}
 
 	// Setup Handler
 	env.EventWriter.setWriter(pebbleWriter)
@@ -467,6 +507,8 @@ func (env *TestEnv) open(t *testing.T) {
 		NotifyEvents: func(projectID uint32) { env.Processor.Notify(projectID) },
 		Logs:         pebbleWriter,
 		NotifyLogs:   func(projectID uint32) { env.LogProcessor.Notify(projectID) },
+		Transactions: pebbleWriter,
+		NotifySpans:  func(projectID uint32) { env.SpanProcessor.Notify(projectID) },
 		Clock:        env.Clock,
 		Retention:    consoleSettings,
 		MaxWaiting:   env.IngestMaxWaiting,
@@ -485,12 +527,13 @@ func (env *TestEnv) open(t *testing.T) {
 		handler.NewOverviewHandler(handler.OverviewConfig{
 			Logs: env.ClickHouseLogs, Clock: env.Clock, DiskLimit: env.LogDiskLimit, Retention: consoleSettings,
 			LocalCacheHours: env.BucketConfig.LocalHours(),
-		}), healthHandler, handler.NewConfigHandler(&config.Config{}, 0))
+		}), handler.NewTracesHandler(clickHouse), healthHandler, handler.NewConfigHandler(&config.Config{}, 0))
 
 	env.close = func() {
 		pebbleWriter.StopWrites()
 		env.Processor.Stop()
 		env.LogProcessor.Stop()
+		env.SpanProcessor.Stop()
 
 		pebbleWriter.Close()
 		clickHouse.Close()

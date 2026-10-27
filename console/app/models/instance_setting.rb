@@ -43,6 +43,7 @@ class InstanceSetting < ApplicationRecord
   # Off still saves while log_all_reads is on, and applies once that's off.
   validates :log_mcp_reads, inclusion: { in: [ true, false ] }
   validates :default_log_retention_days, numericality: { only_integer: true, greater_than: 0 }
+  validates :default_trace_retention_days, numericality: { only_integer: true, greater_than: 0 }
 
   normalizes :smtp_address, :smtp_username, :mail_from, with: ->(value) { value.strip.presence }
   validates :smtp_port, numericality: { only_integer: true, in: 1..65_535 }
