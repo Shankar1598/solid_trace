@@ -45,7 +45,9 @@ class InstallTest < ActiveSupport::TestCase
 
   private
 
-  def env_file = File.join(@dir, ".env")
+  def env_file
+    File.join(@dir, ".env")
+  end
 
   # Runs the install's write_env, and answers deploy/.env as a Hash. Sourced,
   # the install only defines its functions; should it ever do more, sudo and
