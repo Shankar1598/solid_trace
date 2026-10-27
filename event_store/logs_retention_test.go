@@ -365,7 +365,7 @@ func localDiskUse(t *testing.T, env *TestEnv) (map[string]int64, int64) {
 // enforceLogDiskLimit keeps the Logs on local disk within bytes.
 func enforceLogDiskLimit(t *testing.T, env *TestEnv, bytes int64) {
 	t.Helper()
-	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: bytes}); err != nil {
+	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: bytes}, []storage.DayFamily{storage.LogDays}); err != nil {
 		t.Fatalf("Enforcing the Log disk limit failed: %v", err)
 	}
 }

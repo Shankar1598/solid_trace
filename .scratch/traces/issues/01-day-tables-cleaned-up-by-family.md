@@ -6,7 +6,7 @@ Spec: [../spec.md](../spec.md)
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The existing Log Retention, Project deletion, disk-limit and bucket tests pass unchanged
-- [ ] A stand-in second family with its own Retention keeps its own days, counts toward the disk limit, and is dropped with its Project (Go test)
+- [x] The existing Log Retention, Project deletion, disk-limit and bucket tests pass unchanged
+- [x] A stand-in second family with its own Retention keeps its own days, counts toward the disk limit, and is dropped with its Project (Go test)

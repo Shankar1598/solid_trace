@@ -106,45 +106,56 @@ func clickHouseBucketEndpoint(bucket *config.ObjectStore) string {
 	return bucket.Endpoint + "/" + bucket.Bucket + "/" + key
 }
 
-// logsBucketTTL is the logs table's TTL with a bucket: a part moves to the
-// bucket volume once its newest Log is localCacheHours old. It is written as
-// ClickHouse writes it back in system.tables.
-func logsBucketTTL(localCacheHours int) string {
+// bucketTTL is a family's main table's TTL with a bucket: a part moves to
+// the bucket volume once its newest row's time is localCacheHours old. It is
+// written as ClickHouse writes it back in system.tables.
+func bucketTTL(localCacheHours int) string {
 	return fmt.Sprintf("toDateTime(time) + toIntervalHour(%d) TO VOLUME '%s'", localCacheHours, ClickHouseBucketVolume)
 }
 
-// useBucket sets the logs table's TTL for bucket: with one, parts move to it
-// after its local_cache_hours; with none, they stay on local disk. It alters
-// the table only when its TTL differs, since ClickHouse then works out every
+// useBucket sets the TTL of each family's main table for bucket (dayFamilies,
+// whose main tables have a time column): with one, parts move to it after
+// its local_cache_hours; with none, they stay on local disk. It alters a
+// table only when its TTL differs, since ClickHouse then works out every
 // part's TTL again.
 //
 // Parts move there earlier too: ClickHouse moves the largest once its local
 // disk is 90% full (the policy's move_factor, 0.1 by default), and the disk
 // limit moves the oldest days (EnforceDiskLimit).
 func (ch *ClickHouse) useBucket(ctx context.Context, bucket *config.ObjectStore) error {
+	for _, f := range dayFamilies {
+		if err := ch.useBucketFor(ctx, f.Tables[0], bucket); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// useBucketFor sets one table's TTL for bucket, as useBucket.
+func (ch *ClickHouse) useBucketFor(ctx context.Context, table string, bucket *config.ObjectStore) error {
 	var engine string
 	if err := ch.conn.QueryRow(ctx,
-		"SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = 'logs'").Scan(&engine); err != nil {
-		return fmt.Errorf("reading the logs table's TTL: %w", err)
+		"SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = ?", table).Scan(&engine); err != nil {
+		return fmt.Errorf("reading the %s table's TTL: %w", table, err)
 	}
 	var have, want string
 	if _, rest, ok := strings.Cut(engine, " TTL "); ok {
 		have, _, _ = strings.Cut(rest, " SETTINGS ")
 	}
 	if bucket != nil {
-		want = logsBucketTTL(bucket.LocalCacheHours)
+		want = bucketTTL(bucket.LocalCacheHours)
 	}
 	if have == want {
 		return nil
 	}
-	alter := "ALTER TABLE logs MODIFY TTL " + want
+	alter := fmt.Sprintf("ALTER TABLE %s MODIFY TTL %s", table, want)
 	if want == "" {
-		alter = "ALTER TABLE logs REMOVE TTL"
+		alter = fmt.Sprintf("ALTER TABLE %s REMOVE TTL", table)
 	}
 	if err := ch.conn.Exec(ctx, alter); err != nil {
-		return fmt.Errorf("setting when the logs table's parts move to the bucket: %w", err)
+		return fmt.Errorf("setting when the %s table's parts move to the bucket: %w", table, err)
 	}
-	logger.L.Info("Set when the logs table's parts move to the bucket", "was", have, "now", want)
+	logger.L.Info("Set when a table's parts move to the bucket", "table", table, "was", have, "now", want)
 	return nil
 }
 

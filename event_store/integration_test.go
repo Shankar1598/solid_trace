@@ -123,7 +123,7 @@ func (env *TestEnv) ProcessLogs(t *testing.T) {
 // Logs past its Retention, and every Log of a deleted Project, are deleted.
 func (env *TestEnv) DeleteLogsPastRetention(t *testing.T) {
 	t.Helper()
-	if err := env.LogCleanup.DeleteLogsPastRetention(env.Clock.Now()); err != nil {
+	if err := env.LogCleanup.DeleteDaysPastRetention(env.Clock.Now()); err != nil {
 		t.Fatalf("Deleting Logs past their Retention failed: %v", err)
 	}
 }
@@ -457,7 +457,8 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
 	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
-	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, consoleSettings, storage.LogDiskLimit{}, env.Clock)
+	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock,
+		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention})
 
 	// Setup Handler
 	env.EventWriter.setWriter(pebbleWriter)
