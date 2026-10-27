@@ -185,9 +185,10 @@ func (s *ClickHouseLogs) deleteDays(f DayFamily, projectID uint32, drop func(tim
 }
 
 // dropPartitions drops partitions of day tables, oldest day first. Then,
-// whether or not every drop succeeded, it changes the generations of their
-// days' hours, so that no bin the bin cache kept of them is taken again, and
-// forgets their days' key counts kept in memory.
+// whether or not every drop succeeded, it changes the generations of the
+// hours of their days of Logs, so that no bin the bin cache kept of them is
+// taken again, and forgets those days' key counts kept in memory. A day of
+// another family's alone leaves both be.
 //
 // The key counts' partitions go last, under countsMu, so that no insert
 // counts a day's keys from the counts in memory while they are dropped.
@@ -208,7 +209,9 @@ func (s *ClickHouseLogs) dropPartitions(ctx context.Context, partitions []logPar
 		return cmp.Or(a.day.Compare(b.day), cmp.Compare(a.projectID, b.projectID), cmp.Compare(a.table, b.table))
 	})
 	drop := func(p logPartition) error {
-		days[projectDay{p.projectID, p.day}] = true
+		if slices.Contains(LogDays.Tables, p.table) {
+			days[projectDay{p.projectID, p.day}] = true
+		}
 		if err := s.conn.Exec(ctx, fmt.Sprintf("ALTER TABLE %s DROP PARTITION ID '%s'", p.table, p.id)); err != nil {
 			return fmt.Errorf("drop Project %d's %s of %s: %w", p.projectID, p.day.Format(time.DateOnly), p.table, err)
 		}
