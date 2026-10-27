@@ -14,22 +14,47 @@ import (
 	"github.com/solidtrace/event_store/pkg/logger"
 )
 
-// Retention, Project deletion and the disk limit delete Logs a (Project, day)
-// at a time: every table of Logs is partitioned by Project and UTC day, so
+// Retention, Project deletion and the disk limit delete a (Project, day) at a
+// time: every table they clean up is partitioned by Project and UTC day, so
 // each drops whole partitions, which costs ClickHouse no rewrite.
 
-// logDayTables are the tables partitioned by (Project, day) that hold a
-// Project's Logs and what is counted from them. The Ingest counts' day is
-// the day of arrival, not the Logs' own.
-var logDayTables = []string{"logs", "log_minute_counts", "log_key_counts", "log_ingest_counts", "log_source_counts"}
+// A DayFamily is a family of tables partitioned by (Project, day) whose days
+// go together: past the family's own Retention, with their Project, and past
+// the disk limit.
+type DayFamily struct {
+	// Name is what its rows are called in messages, as "Logs".
+	Name string
+	// Tables are its tables, its main one first. The disk limit counts the
+	// main table's local disk and moves its days to the bucket, where its
+	// parts also move once local_cache_hours old (useBucket). The others
+	// hold what is counted from it, which takes far less and stays on local
+	// disk.
+	Tables []string
+	// logs is set on LogDays alone, whose days are also in the old Log
+	// files from before the switch.
+	logs bool
+}
+
+// LogDays are a Project's Logs and what is counted from them. The Ingest
+// counts' day is the day of arrival, not the Logs' own.
+var LogDays = DayFamily{
+	Name:   "Logs",
+	Tables: []string{"logs", "log_minute_counts", "log_key_counts", "log_ingest_counts", "log_source_counts"},
+	logs:   true,
+}
+
+// dayFamilies are EventStore's families of day tables.
+var dayFamilies = []DayFamily{LogDays}
 
 // cleanupTimeout bounds a deletion, or a pass of the disk limit, whose moves
 // of days to the bucket can take minutes each.
 const cleanupTimeout = 30 * time.Minute
 
-// logPartition is a table's partition of one Project's UTC day.
+// logPartition is a day table's partition of one Project's UTC day.
 type logPartition struct {
 	table string
+	// main is whether the table is its family's main one.
+	main bool
 	// id is ClickHouse's ID of the partition: for a key of whole numbers
 	// and dates, their values joined by "-", as "123-20261002".
 	id        string
@@ -40,16 +65,24 @@ type logPartition struct {
 	localBytes int64
 }
 
-// logPartitions lists the partitions of the Log tables that hold any rows.
-func (s *ClickHouseLogs) logPartitions(ctx context.Context) ([]logPartition, error) {
+// logPartitions lists the partitions of the families' tables that hold any
+// rows.
+func (s *ClickHouseLogs) logPartitions(ctx context.Context, families []DayFamily) ([]logPartition, error) {
+	var tables, names []string
+	main := map[string]bool{}
+	for _, f := range families {
+		tables = append(tables, f.Tables...)
+		names = append(names, f.Name)
+		main[f.Tables[0]] = true
+	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT table, partition_id,
 			toInt64(sumIf(bytes_on_disk, disk_name IN (SELECT name FROM system.disks WHERE NOT is_remote)))
 		FROM system.parts
-		WHERE database = currentDatabase() AND active AND table IN ('`+strings.Join(logDayTables, "', '")+`')
+		WHERE database = currentDatabase() AND active AND table IN ('`+strings.Join(tables, "', '")+`')
 		GROUP BY table, partition_id`)
 	if err != nil {
-		return nil, fmt.Errorf("list the partitions of Logs: %w", err)
+		return nil, fmt.Errorf("list the partitions of %s: %w", strings.Join(names, " and "), err)
 	}
 	defer rows.Close()
 	var partitions []logPartition
@@ -61,22 +94,23 @@ func (s *ClickHouseLogs) logPartitions(ctx context.Context) ([]logPartition, err
 		if p.projectID, p.day, err = parseLogPartitionID(p.id); err != nil {
 			return nil, fmt.Errorf("partition %s of %s: %w", p.id, p.table, err)
 		}
+		p.main = main[p.table]
 		partitions = append(partitions, p)
 	}
 	return partitions, rows.Err()
 }
 
-// logPartitionDay is how a Log table's partition ID writes its day.
+// logPartitionDay is how a day table's partition ID writes its day.
 const logPartitionDay = "20060102"
 
-// logPartitionID is the ID of a Project's day's partition of a Log table,
+// logPartitionID is the ID of a Project's day's partition of a day table,
 // as parseLogPartitionID reads it.
 func logPartitionID(projectID uint32, day time.Time) string {
 	return fmt.Sprintf("%d-%s", projectID, day.Format(logPartitionDay))
 }
 
 // parseLogPartitionID reads the Project and the day from the ID of a
-// partition of a Log table.
+// partition of a day table.
 func parseLogPartitionID(id string) (uint32, time.Time, error) {
 	project, day, ok := strings.Cut(id, "-")
 	if !ok {
@@ -93,18 +127,20 @@ func parseLogPartitionID(id string) (uint32, time.Time, error) {
 	return uint32(projectID), at, nil
 }
 
-// LogProjects lists every Project that has any Logs in ClickHouse, or
-// counts of them.
-func (s *ClickHouseLogs) LogProjects() ([]uint32, error) {
+// DayProjects lists every Project that has any days of a family: of Logs,
+// in ClickHouse or the old Log files, or counts of them.
+func (s *ClickHouseLogs) DayProjects(f DayFamily) ([]uint32, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
-	partitions, err := s.logPartitions(ctx)
+	partitions, err := s.logPartitions(ctx, []DayFamily{f})
 	if err != nil {
 		return nil, err
 	}
-	projects, err := s.old.projects(ctx)
-	if err != nil {
-		return nil, err
+	var projects []uint32
+	if f.logs {
+		if projects, err = s.old.projects(ctx); err != nil {
+			return nil, err
+		}
 	}
 	for _, p := range partitions {
 		projects = append(projects, p.projectID)
@@ -113,34 +149,38 @@ func (s *ClickHouseLogs) LogProjects() ([]uint32, error) {
 	return slices.Compact(projects), nil
 }
 
-// DeleteLogDaysBefore deletes a Project's Logs of every UTC day before that
-// of day, with their counts, and its old Log files of those days.
-func (s *ClickHouseLogs) DeleteLogDaysBefore(projectID uint32, day time.Time) error {
+// DeleteDaysBefore deletes a Project's days of a family before that of day:
+// of Logs, with their counts and its old Log files of those days.
+func (s *ClickHouseLogs) DeleteDaysBefore(f DayFamily, projectID uint32, day time.Time) error {
 	day = LogDay(day)
-	dropped := s.dropLogDays(func(p logPartition) bool { return p.projectID == projectID && p.day.Before(day) })
-	return errors.Join(dropped, s.deleteOldDays(projectID, func(d time.Time) bool { return d.Before(day) }))
+	return s.deleteDays(f, projectID, func(d time.Time) bool { return d.Before(day) })
 }
 
-// DeleteProjectLogs deletes every Log of a Project, with their counts, and
-// its old Log files. Its Processing cursor, in Pebble, stays, so that a Log
-// batch it already stored is never stored again.
-func (s *ClickHouseLogs) DeleteProjectLogs(projectID uint32) error {
-	dropped := s.dropLogDays(func(p logPartition) bool { return p.projectID == projectID })
-	return errors.Join(dropped, s.deleteOldDays(projectID, func(time.Time) bool { return true }))
+// DeleteProjectDays deletes every day of a family of a Project: of Logs,
+// with their counts and its old Log files. Its Processing cursor, in
+// Pebble, stays, so that a Log batch it already stored is never stored
+// again.
+func (s *ClickHouseLogs) DeleteProjectDays(f DayFamily, projectID uint32) error {
+	return s.deleteDays(f, projectID, func(time.Time) bool { return true })
 }
 
-// dropLogDays drops the partitions of the Log tables that drop selects.
-func (s *ClickHouseLogs) dropLogDays(drop func(logPartition) bool) error {
+// deleteDays deletes the days of a family of a Project that drop selects.
+func (s *ClickHouseLogs) deleteDays(f DayFamily, projectID uint32, drop func(time.Time) bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
-	partitions, err := s.logPartitions(ctx)
-	if err != nil {
+	partitions, err := s.logPartitions(ctx, []DayFamily{f})
+	if err == nil {
+		err = s.dropPartitions(ctx, slices.DeleteFunc(partitions, func(p logPartition) bool {
+			return p.projectID != projectID || !drop(p.day)
+		}))
+	}
+	if !f.logs {
 		return err
 	}
-	return s.dropPartitions(ctx, slices.DeleteFunc(partitions, func(p logPartition) bool { return !drop(p) }))
+	return errors.Join(err, s.deleteOldDays(projectID, drop))
 }
 
-// dropPartitions drops partitions of the Log tables, oldest day first. Then,
+// dropPartitions drops partitions of day tables, oldest day first. Then,
 // whether or not every drop succeeded, it changes the generations of their
 // days' hours, so that no bin the bin cache kept of them is taken again, and
 // forgets their days' key counts kept in memory.
@@ -200,7 +240,8 @@ func (s *ClickHouseLogs) dropPartitions(ctx context.Context, partitions []logPar
 // grow, and doesn't move when they do.
 const defaultDiskShare = 50 // percent
 
-// LogDiskLimit caps how much local disk all Projects' Logs take together.
+// LogDiskLimit caps how much local disk all Projects' days take together,
+// those of every family of day tables.
 type LogDiskLimit struct {
 	// Bytes is the cap, more than 0.
 	Bytes int64
@@ -226,24 +267,24 @@ func (s *ClickHouseLogs) DiskLimit(configured int64) (LogDiskLimit, error) {
 	return LogDiskLimit{Bytes: size * defaultDiskShare / 100}, nil
 }
 
-// LogDayUse is how much local disk a Project's UTC day of Logs takes.
+// LogDayUse is how much local disk a Project's UTC day takes.
 type LogDayUse struct {
 	ProjectID uint32
 	Day       time.Time
 	Bytes     int64
 }
 
-// logDay is a Project's day of Logs on local disk, with its partitions of
-// every Log table.
+// logDay is a Project's day on local disk, with its partitions of every day
+// table.
 type logDay struct {
 	LogDayUse
 	partitions []logPartition
 }
 
 // localLogDays groups partitions by Project and day, oldest day first and
-// then by Project, leaving out the days whose Logs are wholly in the bucket.
-// A day's size is that of its Logs alone: what is counted from them takes
-// far less, and stays on local disk.
+// then by Project, leaving out the days whose main tables' partitions are
+// wholly in the bucket. A day's size is that of those partitions alone: what
+// is counted from them takes far less, and stays on local disk.
 func localLogDays(partitions []logPartition) ([]logDay, int64) {
 	byDay := map[projectDay]*logDay{}
 	for _, p := range partitions {
@@ -251,7 +292,7 @@ func localLogDays(partitions []logPartition) ([]logDay, int64) {
 		if byDay[key] == nil {
 			byDay[key] = &logDay{LogDayUse: LogDayUse{ProjectID: p.projectID, Day: p.day}}
 		}
-		if p.table == "logs" {
+		if p.main {
 			byDay[key].Bytes += p.localBytes
 		}
 		byDay[key].partitions = append(byDay[key].partitions, p)
@@ -276,7 +317,7 @@ func localLogDays(partitions []logPartition) ([]logDay, int64) {
 func (s *ClickHouseLogs) LogDiskUse() ([]LogDayUse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
-	partitions, err := s.logPartitions(ctx)
+	partitions, err := s.logPartitions(ctx, []DayFamily{LogDays})
 	if err != nil {
 		return nil, err
 	}
@@ -299,25 +340,25 @@ func (s *ClickHouseLogs) LogDiskUse() ([]LogDayUse, error) {
 	return use, nil
 }
 
-// EnforceDiskLimit keeps the Logs on local disk within limit: ClickHouse's,
-// and the local copies of the old Log files from before the switch.
+// EnforceDiskLimit keeps the families' days on local disk within limit,
+// with the local copies of the old Log files from before the switch.
 //
 // First it deletes the local copies of the oldest old files that the bucket
 // has, which reads then read there. With a bucket, it then moves the oldest
 // days of any Project there, as they would move once local_cache_hours old.
-// If the Logs on local disk are still past the limit, the bucket must be
+// If the days on local disk are still past the limit, the bucket must be
 // failing: it deletes the oldest days, and logs each as an error. Without a
 // bucket, it deletes the oldest days. Either way, the oldest days of old
-// files go before the oldest partitions. A day's Logs go with what is
-// counted from them.
-func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit) error {
+// files go before the oldest partitions. A Project's day goes from every
+// family at once, each main table's partition with what is counted from it.
+func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit, families []DayFamily) error {
 	if limit.Bytes <= 0 {
 		return fmt.Errorf("no Log disk limit: %d bytes", limit.Bytes)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	measure := func() ([]logDay, []oldLocalDay, int64, error) {
-		partitions, err := s.logPartitions(ctx)
+		partitions, err := s.logPartitions(ctx, families)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -361,9 +402,9 @@ func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit) error {
 		}
 		args := []any{"project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "bytes", day.Bytes, "limit", limit.Bytes}
 		if s.bucket {
-			logger.L.Error("Deleting the oldest day of Logs past the disk limit, as it didn't move to the bucket", args...)
+			logger.L.Error("Deleting the oldest day past the disk limit, as it didn't move to the bucket", args...)
 		} else {
-			logger.L.Info("Deleting the oldest day of Logs past the disk limit", args...)
+			logger.L.Info("Deleting the oldest day past the disk limit", args...)
 		}
 		if err := s.dropPartitions(ctx, day.partitions); err != nil {
 			return err
@@ -373,9 +414,9 @@ func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit) error {
 	return nil
 }
 
-// moveForTheDiskLimit moves the Logs of the oldest days on local disk to the
-// bucket until those left there take no more than maxBytes. A move that
-// fails is logged, and the next day is tried.
+// moveForTheDiskLimit moves the main tables' partitions of the oldest days on
+// local disk to the bucket until those left there take no more than
+// maxBytes. A move that fails is logged, and the next day is tried.
 func (s *ClickHouseLogs) moveForTheDiskLimit(ctx context.Context, days []logDay, total, maxBytes int64) {
 	moved, failed := 0, 0
 	for _, day := range days {
@@ -383,14 +424,14 @@ func (s *ClickHouseLogs) moveForTheDiskLimit(ctx context.Context, days []logDay,
 			break
 		}
 		for _, p := range day.partitions {
-			if p.table != "logs" || p.localBytes == 0 {
+			if !p.main || p.localBytes == 0 {
 				continue
 			}
-			err := s.conn.Exec(ctx, fmt.Sprintf("ALTER TABLE logs MOVE PARTITION ID '%s' TO VOLUME '%s'", p.id, ClickHouseBucketVolume))
+			err := s.conn.Exec(ctx, fmt.Sprintf("ALTER TABLE %s MOVE PARTITION ID '%s' TO VOLUME '%s'", p.table, p.id, ClickHouseBucketVolume))
 			if err != nil {
 				failed++
-				logger.L.Error("Moving a day of Logs to the bucket for the disk limit failed",
-					"project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "error", err)
+				logger.L.Error("Moving a day to the bucket for the disk limit failed",
+					"table", p.table, "project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "error", err)
 				continue
 			}
 			moved++
@@ -398,6 +439,6 @@ func (s *ClickHouseLogs) moveForTheDiskLimit(ctx context.Context, days []logDay,
 		total -= day.Bytes
 	}
 	if moved > 0 {
-		logger.L.Info("Moved the oldest days of Logs past the disk limit to the bucket", "days", moved, "failed", failed, "limit", maxBytes)
+		logger.L.Info("Moved the oldest days past the disk limit to the bucket", "partitions", moved, "failed", failed, "limit", maxBytes)
 	}
 }
