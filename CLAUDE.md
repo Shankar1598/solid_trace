@@ -17,3 +17,7 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 ### Tests
 
 The full suites before a release: Go and Playwright in parallel, then Rails once Go is done. See `docs/agents/testing.md`.
+
+### Security
+
+Before tagging a release, check GitHub's open security findings and settle each. See `docs/agents/security.md`.
