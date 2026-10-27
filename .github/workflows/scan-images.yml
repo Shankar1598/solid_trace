@@ -1,0 +1,73 @@
+name: Scan images
+
+# Scans the images deploy/docker-compose.yml runs, as bin/security's images
+# check does: Console's and EventStore's at latest (the newest release), and
+# the pinned ClickHouse, Caddy and Vector, for fixable high and critical CVEs,
+# with .trivyignore.yaml's accepted ones left out. Findings go to the
+# repository's Security tab, one category per image, so an advisory published
+# after a release shows there without a rebuild. The job doesn't fail on a
+# finding; the Security tab keeps them open until a scan no longer sees them.
+#
+# Runs weekly, after each release's images are built, and by hand.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_run:
+    workflows: [Release images]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The version bin/security uses, run from its image pinned by digest.
+  TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+
+jobs:
+  images:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: List the images
+        id: list
+        run: |
+          list=$(grep -oE 'image: *[^ ]+' deploy/docker-compose.yml | awk '{print $2}' |
+            sed 's/\${SOLIDTRACE_VERSION:-dev}/latest/' | jq -Rnc '[inputs]')
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  scan:
+    needs: images
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.images.outputs.list) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # Scanned once to JSON, then written as SARIF for the upload and as a
+      # table for the log.
+      - name: Scan
+        run: |
+          trivy() { docker run --rm -v "$PWD:/work" -w /work "$TRIVY_IMAGE" "$@"; }
+          trivy image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --ignorefile .trivyignore.yaml --format json --output trivy.json '${{ matrix.image }}'
+          trivy convert --format sarif --output trivy.sarif trivy.json
+          trivy convert --format table trivy.json
+
+      - name: Upload to the Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy.sarif
+          category: ${{ matrix.image }}

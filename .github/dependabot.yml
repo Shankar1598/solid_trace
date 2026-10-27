@@ -1,12 +1,50 @@
+# Weekly PRs bumping each part's dependencies, minor and patch updates grouped
+# into one PR per part. Security fixes come as their own PRs when an advisory
+# lands, from Dependabot security updates (on in the repository's settings).
+# Console's Dockerfile names its Ruby through an ARG, which Dependabot can't
+# follow; bump .ruby-version and the ARG together by hand.
 version: 2
 updates:
 - package-ecosystem: bundler
-  directory: "/"
+  directory: /console
   schedule:
     interval: weekly
-  open-pull-requests-limit: 10
+  groups:
+    gems:
+      update-types: [minor, patch]
+- package-ecosystem: bun
+  directory: /console
+  schedule:
+    interval: weekly
+  groups:
+    packages:
+      update-types: [minor, patch]
+- package-ecosystem: gomod
+  directory: /event_store
+  schedule:
+    interval: weekly
+  groups:
+    modules:
+      update-types: [minor, patch]
+- package-ecosystem: cargo
+  directory: /event_store/vrl/rust
+  schedule:
+    interval: weekly
+  groups:
+    crates:
+      update-types: [minor, patch]
+- package-ecosystem: docker
+  directories: [/console, /event_store]
+  schedule:
+    interval: weekly
+- package-ecosystem: docker-compose
+  directory: /deploy
+  schedule:
+    interval: weekly
 - package-ecosystem: github-actions
-  directory: "/"
+  directory: /
   schedule:
     interval: weekly
-  open-pull-requests-limit: 10
+  groups:
+    actions:
+      update-types: [minor, patch]
