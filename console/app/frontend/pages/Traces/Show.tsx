@@ -3,13 +3,15 @@ import { AlertTriangle } from 'lucide-react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { clockTime, durationText, type Trace, type TraceSpan } from '@/lib/traces'
+import { cn } from '@/lib/utils'
 
 /**
  * One trace across the Organization's Projects: a waterfall of its Spans,
  * each under its parent, with its Project, op, description, start,
  * duration, self time and status, repeats collapsed and the critical path
- * marked; then its Issues and its Logs. A trace that wasn't sampled shows
- * its Logs and Issues alone. Console's TraceView builds it.
+ * marked; and its Issues and Logs beside it on a wide screen, below it on a
+ * narrower one. A trace that wasn't sampled shows its Logs and Issues
+ * alone. Console's TraceView builds it.
  */
 export default function TraceShow({ trace }: { trace: Trace }) {
   const { spans } = trace
@@ -43,9 +45,16 @@ export default function TraceShow({ trace }: { trace: Trace }) {
           </p>
         )}
 
-        {spans.length > 0 && <Waterfall trace={trace} />}
-        {trace.issues.length > 0 && <Issues trace={trace} />}
-        {trace.logs.length > 0 && <Logs trace={trace} />}
+        {/* On a wide screen its Issues and Logs are beside the waterfall; on a narrower one, below it. */}
+        <div className={cn('space-y-6', spans.length > 0 && '2xl:grid 2xl:grid-cols-[minmax(0,1fr)_26rem] 2xl:items-start 2xl:gap-6 2xl:space-y-0')}>
+          {spans.length > 0 && <Waterfall trace={trace} />}
+          {trace.issues.length + trace.logs.length > 0 && (
+            <div className="min-w-0 space-y-6" data-beside="waterfall">
+              {trace.issues.length > 0 && <Issues trace={trace} />}
+              {trace.logs.length > 0 && <Logs trace={trace} />}
+            </div>
+          )}
+        </div>
       </div>
     </DashboardLayout>
   )
