@@ -20,7 +20,7 @@
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@hugeicons/core-free-icons": "^3.3.0",
     "@hugeicons/react": "^1.1.10",
-    "@inertiajs/react": "^2.3.29",
+    "@inertiajs/react": "^3.9.1",
     "@lezer/highlight": "^1.2.5",
     "@radix-ui/react-checkbox": "^1.4.1",
     "@tailwindcss/vite": "^4.3.3",
