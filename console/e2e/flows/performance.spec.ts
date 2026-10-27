@@ -66,9 +66,13 @@ test('Performance lists Transactions by time consumed, sorts, and opens a Transa
   }
 
   await page.goto(`/${ORG}/issues`)
-  await page.getByRole('group', { name: 'Performance' }).getByRole('link', { name }).click()
-  await expect(page).toHaveURL(new RegExp(`/${ORG}/projects/${slug}/performance$`))
+  // The sidebar's Performance opens a Project's, and the filter row picks another.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Performance' }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/projects/[^/]+/performance`))
   await expect(page.getByRole('heading', { name: 'Performance', level: 1 })).toBeVisible()
+  await page.getByRole('combobox', { name: 'Project' }).click()
+  await page.getByRole('option', { name }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/projects/${slug}/performance\\?range=24h$`))
 
   // Span processing stores them within a second or so.
   const table = page.getByRole('table', { name: 'Transactions' })

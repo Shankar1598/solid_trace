@@ -15,6 +15,7 @@ export function navSection(url: string): NavSection | null {
     case 'overview':
     case 'issues':
     case 'logs':
+    case 'performance':
     case 'dashboards':
     case 'monitors':
     case 'settings':
@@ -29,12 +30,6 @@ export function navSection(url: string): NavSection | null {
   }
 }
 
-/** The slug of the Project whose Performance a URL is, or null for any other page. */
-export function performanceProject(url: string): string | null {
-  const [first, slug, third] = pathParts(url)
-  return first === 'projects' && third === 'performance' ? slug : null
-}
-
 /**
  * Where switching to the Organization `slug` lands from the page at `url`:
  * that Organization's index for the page's section (Settings meaning its
@@ -43,6 +38,5 @@ export function performanceProject(url: string): string | null {
 export function orgSwitchUrl(url: string, slug: string): string {
   const section = navSection(url) ?? 'issues'
   if (section === 'settings') return `/${slug}/settings/organization`
-  // Performance belongs to a Project, which the other Organization lacks.
-  return `/${slug}/${section === 'performance' ? 'projects' : section}`
+  return `/${slug}/${section}`
 }

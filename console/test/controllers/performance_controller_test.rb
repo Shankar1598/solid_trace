@@ -74,6 +74,28 @@ class PerformanceControllerTest < ActionDispatch::IntegrationTest
     assert_equal [], transaction["slowest"]
   end
 
+  test "the Organization's Performance opens the Project last seen there, else the newest" do
+    @api.update!(created_at: 1.day.ago)
+    create(:project, organization: @organization, name: "Web", slug: "web")
+
+    get performance_path(org_slug: "acme")
+    assert_redirected_to project_performance_path("web", org_slug: "acme")
+
+    stub_transactions(@api, from: "2026-10-01T12:00:00.000Z", to: "2026-10-02T12:00:00.000Z")
+    props(project_performance_path(@api, org_slug: "acme"), "Performance/Show", "performance")
+    get performance_path(org_slug: "acme")
+    assert_redirected_to project_performance_path("api", org_slug: "acme")
+  end
+
+  test "the Organization's Performance with no Project goes to Projects" do
+    @organization.projects.destroy_all
+
+    get performance_path(org_slug: "acme")
+
+    assert_redirected_to projects_path(org_slug: "acme")
+    assert_equal "Create a Project to see its Performance.", flash[:notice]
+  end
+
   test "another Organization's Project is not found" do
     get project_performance_path("secret", org_slug: "theirs")
     assert_response :not_found

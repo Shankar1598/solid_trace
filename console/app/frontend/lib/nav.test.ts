@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { navSection, orgSwitchUrl, performanceProject } from './nav'
+import { navSection, orgSwitchUrl } from './nav'
 
 describe('the sidebar entry of a page', () => {
   it('is Issues for the list and each Issue', () => {
@@ -34,11 +34,10 @@ describe('the sidebar entry of a page', () => {
     expect(navSection('/acme/projects/shop?tab=keys')).toBe('projects')
   })
 
-  it('is Performance for a Project\'s Performance and its Transactions, whatever their names hold', () => {
+  it('is Performance for the Organization\'s, a Project\'s and its Transactions, whatever their names hold', () => {
+    expect(navSection('/acme/performance')).toBe('performance')
     expect(navSection('/acme/projects/shop/performance?range=7d')).toBe('performance')
     expect(navSection('/acme/projects/shop/performance/transaction?name=GET+/issues')).toBe('performance')
-    expect(performanceProject('/acme/projects/shop/performance/transaction?name=x')).toBe('shop')
-    expect(performanceProject('/acme/projects/shop/logs')).toBeNull()
   })
 
   it('is Settings under settings, and none elsewhere', () => {
@@ -80,8 +79,8 @@ describe('where switching Organization lands', () => {
     expect(orgSwitchUrl('/acme/projects/new', 'meta')).toBe('/meta/projects')
   })
 
-  it('is the other Organization\'s Projects from a Project\'s Performance, which belongs to the Project', () => {
-    expect(orgSwitchUrl('/acme/projects/shop/performance?range=7d', 'meta')).toBe('/meta/projects')
+  it('is the other Organization\'s Performance from a Project\'s Performance', () => {
+    expect(orgSwitchUrl('/acme/projects/shop/performance?range=7d', 'meta')).toBe('/meta/performance')
   })
 
   it('is the other Organization\'s settings from any Settings page', () => {

@@ -41,6 +41,7 @@ Rails.application.routes.draw do
       end
     end
     get "logs", to: "logs#start", as: :logs
+    get "performance", to: "performance#start", as: :performance
     resources :dashboards, only: [ :index, :show, :create, :update, :destroy ] do
       member do
         patch :layout

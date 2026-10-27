@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 
 /**
  * One panel of the Overview, framed as a Dashboard's Chart is: a title strip
- * over its body. The line about it sits behind an info mark, so the panels
+ * over its body. A Transaction's page uses it for its parts too. The line about it sits behind an info mark, so the panels
  * stay short enough for the page to read as one view. `id` names the
  * section for links and tests; `bodyClassName` replaces the body's padding,
  * as a table flush to the frame wants. The panel is `relative` so its
