@@ -28,7 +28,7 @@ export interface OverviewOtherTools {
    * The Spans at Datadog APM's list prices, null with no Spans: one APM host
    * taken per Project that sent Spans, each indexed at its trace Retention.
    */
-  apm: (OtherToolEstimate & { per_host_usd: number; volume: { spans: number; bytes: number; hosts: number } }) | null
+  apm: (OtherToolEstimate & { checked_on: string; per_host_usd: number; volume: { spans: number; bytes: number; hosts: number } }) | null
 }
 
 const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })

@@ -134,7 +134,7 @@ class McpOverviewToolsTest < ActiveSupport::TestCase
 
     apm = call_tool(:get_overview, user: @user).json.dig("other_tools", "apm")
 
-    assert_equal "https://www.datadoghq.com/pricing/list/", apm["url"]
+    assert_equal [ "https://www.datadoghq.com/pricing/list/", "2026-10-27" ], apm.values_at("url", "checked_on")
     assert_equal({ "spans" => 60_000_000, "bytes" => 300 * 10**9, "hosts" => 1 }, apm["volume"])
     # One APM host at $36, (300 − 150 included) GB × $0.10, and every Span
     # indexed 15 days (the shortest ≥ 14): (60M − 1M included) × $2.55 / M.
