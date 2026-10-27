@@ -56,9 +56,9 @@ func TestSQLSeesOnlyItsOwnProjectsLogsAndEventsWhateverItAsks(t *testing.T) {
 		"SELECT count() FROM logs l JOIN events e ON l.project_id = e.project_id":                            {`[6]`},
 		"WITH named AS (SELECT message FROM logs), again AS (SELECT * FROM named) SELECT count() FROM again": {`[6]`},
 		"SELECT ';DROP TABLE logs' AS text -- ; DROP":                                                        {`[";DROP TABLE logs"]`},
-		// The catalogue shows only the two tables.
-		"SELECT name FROM system.tables ORDER BY name": {`["events"]`, `["logs"]`},
-		"SHOW TABLES": {`["events"]`, `["logs"]`},
+		// The catalogue shows only the three tables.
+		"SELECT name FROM system.tables ORDER BY name": {`["events"]`, `["logs"]`, `["spans"]`},
+		"SHOW TABLES": {`["events"]`, `["logs"]`, `["spans"]`},
 	}
 	for query, want := range cases {
 		if got := all(query); !slices.Equal(got, want) {
@@ -76,6 +76,49 @@ func TestSQLSeesOnlyItsOwnProjectsLogsAndEventsWhateverItAsks(t *testing.T) {
 	}
 	if got := in("SELECT count() FROM events"+wideOpen, from, to); !slices.Equal(got, []string{`[1]`}) {
 		t.Errorf("Expected the Project's one Event with the range widened, got %v", got)
+	}
+}
+
+func TestSQLSeesOnlyItsOwnProjectsSpansInItsRange(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	setSQLQueries(t, env, true)
+	seedProjectKey(t, env.SQLitePath, 124, "go_public_key")
+	// Project 123's Rails request at 11:00 called Project 124's service.
+	postEnvelopeWithKey(t, env, "test_public_key", transactionFixture(t, "sentry-ruby-6.3-rails"))
+	postEnvelopeWithKey(t, env, "go_public_key", transactionFixture(t, "sentry-go-0.47"))
+	env.ProcessSpans(t)
+	in := func(query string, from, to time.Time) []string {
+		t.Helper()
+		_, rows := sqlTable(t, env, sqlRequest{SQL: query, From: from, To: to})
+		return rows
+	}
+	all := func(query string) []string {
+		t.Helper()
+		return in(query, allTime.from, allTime.to)
+	}
+
+	cases := map[string][]string{
+		"SELECT DISTINCT project_id FROM spans" + wideOpen:                                          {`[123]`},
+		"SELECT count() FROM spans WHERE project_id = 124" + wideOpen:                               {`[0]`},
+		"SELECT count() FROM merge(currentDatabase(), '^spans$') WHERE project_id = 124" + wideOpen: {`[0]`},
+		"SELECT transaction, count() FROM spans GROUP BY transaction":                               {`["OrdersController#show",7]`},
+		"SELECT op, repeats FROM spans WHERE op = 'db.sql.active_record' ORDER BY repeats":          {`["db.sql.active_record",1]`, `["db.sql.active_record",3]`, `["db.sql.active_record",3]`, `["db.sql.active_record",3]`},
+		"SELECT attributes['customer'] FROM spans WHERE is_segment":                                 {`["acme"]`},
+	}
+	for query, want := range cases {
+		if got := all(query); !slices.Equal(got, want) {
+			t.Errorf("SQL %q\n want %v\n got  %v", query, want, got)
+		}
+	}
+
+	// spans shows the explorer's range by start, which a query may widen.
+	before := languageAt(10, 0)
+	if got := in("SELECT count() FROM spans", before, before.Add(time.Hour)); !slices.Equal(got, []string{`[0]`}) {
+		t.Errorf("Expected no Spans before 11:00, got %v", got)
+	}
+	if got := in("SELECT count() FROM spans"+wideOpen, before, before.Add(time.Hour)); !slices.Equal(got, []string{`[7]`}) {
+		t.Errorf("Expected the Project's 7 Spans with the range widened, got %v", got)
 	}
 }
 
@@ -107,6 +150,7 @@ func TestSQLCantReadAnotherTableAFileAURLTheBucketOrASystemTable(t *testing.T) {
 		"SELECT * FROM log_ingest_counts",
 		"SELECT * FROM log_source_counts",
 		"SELECT * FROM schema_migrations",
+		"SELECT * FROM trace_index",
 		"SELECT * FROM logs WHERE project_id IN (SELECT project_id FROM log_key_counts)",
 		// The server's.
 		"SELECT * FROM system.users",
