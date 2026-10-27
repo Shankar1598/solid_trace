@@ -3,7 +3,8 @@ package models
 import "time"
 
 // IngestCount is the Ingest counts of one Project's second of arrival: what
-// the requests to its Log routes that arrived in that second held.
+// the requests to its Log routes that arrived in that second held, and the
+// Spans of the transaction items of the envelopes that did.
 type IngestCount struct {
 	ProjectID uint32
 	// Second is the second of arrival, in UTC, by ingest's clock.
@@ -21,6 +22,11 @@ type IngestCount struct {
 	// RequestsOverloaded those turned away as overloaded before.
 	Requests           int64
 	RequestsOverloaded int64
+	// SpansReceived counts the Spans of the transaction items received, one
+	// for each Transaction and one for each of its Spans, and
+	// SpanBytesReceived is those items' bytes. Neither is counted above.
+	SpansReceived     int64
+	SpanBytesReceived int64
 }
 
 // Add adds o's counts to c's.
@@ -31,4 +37,6 @@ func (c *IngestCount) Add(o IngestCount) {
 	c.BytesOnWire += o.BytesOnWire
 	c.Requests += o.Requests
 	c.RequestsOverloaded += o.RequestsOverloaded
+	c.SpansReceived += o.SpansReceived
+	c.SpanBytesReceived += o.SpanBytesReceived
 }
