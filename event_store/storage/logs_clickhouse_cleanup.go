@@ -30,6 +30,9 @@ type DayFamily struct {
 	// hold what is counted from it, which takes far less and stays on local
 	// disk.
 	Tables []string
+	// TimeColumn is the main table's time, which its parts move to the
+	// bucket by.
+	TimeColumn string
 	// logs is set on LogDays alone, whose days are also in the old Log
 	// files from before the switch.
 	logs bool
@@ -38,13 +41,14 @@ type DayFamily struct {
 // LogDays are a Project's Logs and what is counted from them. The Ingest
 // counts' day is the day of arrival, not the Logs' own.
 var LogDays = DayFamily{
-	Name:   "Logs",
-	Tables: []string{"logs", "log_minute_counts", "log_key_counts", "log_ingest_counts", "log_source_counts"},
-	logs:   true,
+	Name:       "Logs",
+	Tables:     []string{"logs", "log_minute_counts", "log_key_counts", "log_ingest_counts", "log_source_counts"},
+	TimeColumn: "time",
+	logs:       true,
 }
 
 // dayFamilies are EventStore's families of day tables.
-var dayFamilies = []DayFamily{LogDays}
+var dayFamilies = []DayFamily{LogDays, SpanDays}
 
 // cleanupTimeout bounds a deletion, or a pass of the disk limit, whose moves
 // of days to the bucket can take minutes each.

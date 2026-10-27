@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { Combobox } from '@base-ui/react/combobox'
 import { router, usePage } from '@inertiajs/react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { filterGroups, organizationItems, paletteGroups, queryLine, registerPaletteSource, type PaletteContext, type PaletteGroup, type PaletteItem } from '@/lib/palette'
+import { filterGroups, organizationItems, paletteGroups, queryLine, registerPaletteSource, typedGroups, type PaletteContext, type PaletteGroup, type PaletteItem } from '@/lib/palette'
 import { browserStorage, latestQueries } from '@/lib/recentQueries'
 import { toggleTheme } from '@/lib/theme'
 import type { SharedProps } from '@/types'
@@ -98,7 +98,7 @@ function PaletteDialog({ open, onOpenChange, context }: { open: boolean; onOpenC
   }
   // Read on opening: recent Queries and a page's items change between openings.
   const groups = useMemo(() => (open ? paletteGroups(context) : []), [open])
-  const shown = filterGroups(groups, text)
+  const shown = [...typedGroups(text, context.orgSlug), ...filterGroups(groups, text)]
 
   const close = () => onOpenChange(false)
   const choose = (item: PaletteItem | null) => {
@@ -125,7 +125,7 @@ function PaletteDialog({ open, onOpenChange, context }: { open: boolean; onOpenC
         >
           <Combobox.Input
             aria-label="Search the palette"
-            placeholder="Jump to a Project's Logs, a Dashboard, a page, a recent Query or an action…"
+            placeholder="Jump to a Project's Logs, a Dashboard, a page, a recent Query, a trace id or an action…"
             className="h-10 w-full border-b bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
           />
           <Combobox.Empty className="p-4 text-center text-xs text-muted-foreground empty:p-0">Nothing matches.</Combobox.Empty>

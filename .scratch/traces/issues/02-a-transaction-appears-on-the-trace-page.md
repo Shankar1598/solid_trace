@@ -12,10 +12,10 @@ Spec: [../spec.md](../spec.md)
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Envelopes from sentry-ruby 5.28, sentry-ruby 6.x and sentry-go are answered by the trace route with self time, group, repeats and sample rate. A raw-URL name is stored as Unparameterised, and a retry stores nothing twice (Go, through ingest and the Query API)
-- [ ] A Transaction makes no Issue, and the envelope's event and log items are still stored (Go)
-- [ ] Spans past trace Retention, and a deleted Project's Spans, are dropped (Go)
-- [ ] The trace page's props for a trace across two Projects, with another Organization's trace refused (Rails controller test)
-- [ ] A Playwright flow sends an envelope and opens its trace from the palette
+- [x] Envelopes from sentry-ruby 5.28, sentry-ruby 6.x and sentry-go are answered by the trace route with self time, group, repeats and sample rate. A raw-URL name is stored as Unparameterised, and a retry stores nothing twice (Go, through ingest and the Query API)
+- [x] A Transaction makes no Issue, and the envelope's event and log items are still stored (Go)
+- [x] Spans past trace Retention, and a deleted Project's Spans, are dropped (Go)
+- [x] The trace page's props for a trace across two Projects, with another Organization's trace refused (Rails controller test)
+- [ ] A Playwright flow sends an envelope and opens its trace from the palette (written, `console/e2e/flows/traces.spec.ts`; not run, as the dev stack runs main's code with its EventStore down)

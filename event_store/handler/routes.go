@@ -40,11 +40,12 @@ func RegisterIngestRoutes(app *fiber.App, ingestHandler *IngestHandler, healthHa
 // and EventStore's config. They have no authentication, so they must only be
 // served on the loopback query listener, where the console is the only
 // client.
-func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandler *LogsHandler, transformHandler *LogTransformHandler, overviewHandler *OverviewHandler, healthHandler *HealthHandler, configHandler *ConfigHandler) {
+func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandler *LogsHandler, transformHandler *LogTransformHandler, overviewHandler *OverviewHandler, tracesHandler *TracesHandler, healthHandler *HealthHandler, configHandler *ConfigHandler) {
 	app.Get("/health", healthHandler.Health)
 	app.Get("/config", configHandler.Config)
 
 	app.Post("/overview", overviewHandler.Overview)
+	app.Post("/trace", tracesHandler.Trace)
 
 	app.Get("/api/:project_id/events", eventsHandler.List)
 	app.Get("/api/:project_id/events/context", eventsHandler.GetEventWithContext)
