@@ -36,6 +36,8 @@ interface InstanceSettings {
     default_trace_retention_days: number
     log_all_reads: boolean
     log_mcp_reads: boolean
+    send_console_issues: boolean
+    trace_console: boolean
   }
   sign_up: { open: boolean, command: string }
   restart_to_change: RestartGroup[]
@@ -56,7 +58,12 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     default_trace_retention_days: String(editable.default_trace_retention_days),
     log_all_reads: editable.log_all_reads,
     log_mcp_reads: editable.log_mcp_reads,
+    send_console_issues: editable.send_console_issues,
+    trace_console: editable.trace_console,
   })
+  const sampleRate = settings.restart_to_change
+    .find((group) => group.name === 'Console')?.settings
+    ?.find((setting) => setting.source === 'SENTRY_TRACES_SAMPLE_RATE')?.value
 
   transform((data) => ({ instance_settings: data }))
 
@@ -163,6 +170,38 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                     : 'Times the MCP server\'s Log reads and their SQL. Its tool calls are always timed.'}
                 </p>
                 {errors.log_mcp_reads && <p className="text-sm font-medium text-destructive">{errors.log_mcp_reads}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Checkbox
+                    aria-label="Send Console's Issues"
+                    checked={data.send_console_issues}
+                    onCheckedChange={(checked) => setData('send_console_issues', checked === true)}
+                  />
+                  Send Console&apos;s Issues
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Sends Console&apos;s own errors to its Sentry DSN, the Meta Organization&apos;s Project, where they become Issues.
+                </p>
+                {errors.send_console_issues && <p className="text-sm font-medium text-destructive">{errors.send_console_issues}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Checkbox
+                    aria-label="Trace Console"
+                    checked={data.trace_console}
+                    onCheckedChange={(checked) => setData('trace_console', checked === true)}
+                  />
+                  Trace Console
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  {sampleRate
+                    ? `Traces ${Number(sampleRate).toLocaleString('en', { style: 'percent', maximumFractionDigits: 2 })} of Console's requests and jobs into the Meta Organization's Project. The share is SENTRY_TRACES_SAMPLE_RATE, below.`
+                    : 'SENTRY_TRACES_SAMPLE_RATE is not set, so Console traces nothing whatever this says.'}
+                </p>
+                {errors.trace_console && <p className="text-sm font-medium text-destructive">{errors.trace_console}</p>}
               </div>
             </CardContent>
             <CardFooter className="justify-end">

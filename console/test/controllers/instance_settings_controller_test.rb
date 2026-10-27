@@ -63,7 +63,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     settings = response.parsed_body.dig("props", "settings")
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
       "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
-      "log_mcp_reads" => true }, settings["editable"])
+      "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true }, settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")
 
@@ -233,6 +233,17 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     get instance_settings_url(org_slug: @organization.slug), headers: inertia
     assert_equal [ true, false ], response.parsed_body.dig("props", "settings", "editable")
       .values_at("log_all_reads", "log_mcp_reads")
+  end
+
+  test "saving turns off sending Console's Issues and tracing Console, and the page shows it" do
+    sign_in_as(@instance_admin)
+
+    save(send_console_issues: false, trace_console: false)
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ false, false ], response.parsed_body.dig("props", "settings", "editable")
+      .values_at("send_console_issues", "trace_console")
   end
 
   test "a Retention below one day, or not a whole number, comes back as a form error and saves nothing" do
