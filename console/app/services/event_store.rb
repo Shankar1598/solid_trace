@@ -130,6 +130,14 @@ class EventStore
       post!("#{base_url}/overview", body, read_timeout: read_timeout, open_timeout: read_timeout)
     end
 
+    # A trace's Spans among project_ids', an Organization's, in start order,
+    # as EventStore's POST /trace answers it: {"trace_id", "spans" => [...]}.
+    # Raises Unavailable when EventStore can't answer within read_timeout
+    # seconds.
+    def trace!(project_ids:, trace_id:, read_timeout: 10)
+      post!("#{base_url}/trace", { project_ids: project_ids, trace_id: trace_id }, read_timeout: read_timeout, open_timeout: 3)
+    end
+
     # One page of a Project's Logs that match a Query in [from, to), newest
     # first: {"logs" => [...], "next_cursor" => String | nil}, or a tabular
     # Query's {"table" => {...}}. Pass a page's next_cursor as cursor for the
