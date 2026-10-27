@@ -50,7 +50,7 @@ Most tools take `organization`, an Organization's slug, which can be left out wh
 **Context**
 
 - `whoami`: you, the Organizations you belong to, and your role in each.
-- `list_projects`: an Organization's Projects, with their slugs, descriptions of what each holds, and how many days their Logs are kept.
+- `list_projects`: an Organization's Projects, with their slugs, descriptions of what each holds, and how many days their Logs and their traces' Spans are kept.
 - `get_overview`: an Organization's Overview, as its Overview page shows it, over `today` (the default), `7d` or `30d`, in whole UTC days: the Logs and bytes received, kept and stored, with the compression ratio (kept over the stored bytes of only the days with Source counts, and when those begin), unreadable Logs, Logs the Log transform dropped and requests turned away, and Logs, bytes and requests a second, each an average and the busiest second; each day's Logs by Project, bytes received and stored, and Logs a second; and each Project's Logs, sizes, ratio, share, rates, Retention, oldest day and when its last Log arrived; and the biggest sources, the Services and files that sent the most Logs and kept the most bytes, with their Project, share and Logs dropped by the Log transform; and Health: each Project's oldest Log batch waiting for Log processing and its Log reads' times over the last 24 hours, the slowest reads, Monitors whose last run failed, Firing Monitors, and new Issues and Events; and Compared with other tools: what the range's volume, scaled to 30 days from the seconds it has had so far, would cost a month at Datadog's, Better Stack's and Axiom's list prices at each Project's Retention, and GCP's internet egress for the bytes on the wire, with each pricing page and the date the prices were checked. For an instance admin only, it also answers Storage, the whole install's, every Organization's: ClickHouse's local disk use against the disk limit, the disk's free space, the bytes in the bucket, the local disk at steady state (each Project's last 7 days' average a day kept for its Retention, or local_cache_hours with a bucket), whether that stays under the limit, and if not about how many days until the limit at the last 7 days' growth, and the old Parquet files kept, with the day Retention deletes the last of them. It answers what EventStore couldn't as null.
 
 **Logs**
@@ -96,7 +96,7 @@ These read the Transactions a Project's Sentry SDKs trace, over `range` (`24h` w
 **Admin**
 
 - `create_project`: makes a Project with its first key, and optionally a description.
-- `update_project`: changes a Project's description or how many days its Logs are kept. Admins only.
+- `update_project`: changes a Project's description or how many days its Logs or its traces' Spans are kept. Admins only.
 - `get_project_setup`: how to send a Project its Events and Logs: the DSN, the Log ingest URL and key, and a curl example.
 - `create_key`, `rotate_key`, `delete_key`: a Project's keys. Admins only.
 - `list_members`: an Organization's members, with their emails and roles.
@@ -107,8 +107,8 @@ These read the Transactions a Project's Sentry SDKs trace, over `range` (`24h` w
 - `get_email_settings`: the SMTP server and sender the install sends every Organization's email with, whether a password is saved and readable, and whether email is set up or what's missing. The password is never answered. Instance admins only.
 - `update_email_settings`: changes the settings given, and sets or clears the password. A password given here passes through the agent's context; typing it on Console's Email settings page keeps it out. Instance admins only.
 - `send_test_email`: sends a test email at once, to you or an address given, and answers the SMTP server's error when it fails. Instance admins only.
-- `get_instance_settings`: the install's settings, as Settings → Instance shows them: the ones that apply at once (SQL queries, the default Retention, log-all-reads, log-MCP-reads), whether Sign-up is open and the command that changes it, and what Console and EventStore read at start, each with its env var or `event_store.yml` key. Secrets answer only whether they're set. Instance admins only.
-- `update_instance_settings`: changes SQL queries, the default Retention, log-all-reads or log-MCP-reads, at once. It can't change Sign-up, which takes a shell on the server so a stolen session or API token can't open the install, or anything that needs a restart. Instance admins only.
+- `get_instance_settings`: the install's settings, as Settings → Instance shows them: the ones that apply at once (SQL queries, the default Retention of Logs and of traces, log-all-reads, log-MCP-reads), whether Sign-up is open and the command that changes it, and what Console and EventStore read at start, each with its env var or `event_store.yml` key. Secrets answer only whether they're set. Instance admins only.
+- `update_instance_settings`: changes SQL queries, the default Retention of Logs or of traces, log-all-reads or log-MCP-reads, at once. It can't change Sign-up, which takes a shell on the server so a stolen session or API token can't open the install, or anything that needs a restart. Instance admins only.
 
 Reads are marked read-only, and deletes, key rotation and Log transform saves destructive, so a client can ask you before it runs them.
 
