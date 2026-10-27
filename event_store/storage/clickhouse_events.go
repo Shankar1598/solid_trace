@@ -98,7 +98,7 @@ func (ch *ClickHouse) InsertEvents(r EventRange, rows []models.Event) error {
 		// many months. More parts beats a batch that never goes in.
 		"throw_on_max_partitions_per_insert_block": 0,
 	}))
-	batch, err := ch.conn.PrepareBatch(ctx, "INSERT INTO events (uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags)")
+	batch, err := ch.conn.PrepareBatch(ctx, "INSERT INTO events (uuid, project_id, issue_fingerprint_id, timestamp, environment, server_name, release, level, tags, trace_id)")
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func (ch *ClickHouse) InsertEvents(r EventRange, rows []models.Event) error {
 			tags = map[string]string{}
 		}
 		if err := batch.Append(uuid.MustParse(row.EventUUID), row.ProjectID, row.IssueFingerprintID, row.Timestamp,
-			row.Environment, row.ServerName, row.Release, row.Level, tags); err != nil {
+			row.Environment, row.ServerName, row.Release, row.Level, tags, row.TraceID); err != nil {
 			return err
 		}
 	}

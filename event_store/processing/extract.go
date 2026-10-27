@@ -1,6 +1,22 @@
 package processing
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// extractTraceID reads the id of the Event's trace, its trace context's
+// trace_id, lowercased: "" when it has none of 32 hex digits.
+func extractTraceID(payload map[string]interface{}) string {
+	contexts, _ := payload["contexts"].(map[string]interface{})
+	trace, _ := contexts["trace"].(map[string]interface{})
+	id, _ := trace["trace_id"].(string)
+	id = strings.ToLower(id)
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
+		return ""
+	}
+	return id
+}
 
 // extractTimestamp reads the event's "timestamp", which Sentry allows as
 // either Unix seconds or an RFC 3339 string (UTC when it has no offset).
