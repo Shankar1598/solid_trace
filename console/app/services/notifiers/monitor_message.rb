@@ -95,9 +95,13 @@ module Notifiers
       # From a Baseline of 0 it has no size: up from 0, or down from 0.
       def change_text(value, baseline)
         change = LogMonitor.change(value, baseline)
-        return "#{change.positive? ? 'up' : 'down'} from 0" if change.infinite?
+        from_zero_text(change) || "#{'+' if change.positive?}#{number(change.round(1))}%"
+      end
 
-        "#{'+' if change.positive?}#{number(change.round(1))}%"
+      # A change from a Baseline of 0, which has no size: up from 0, or down
+      # from 0. nil for any other change.
+      def from_zero_text(change)
+        "#{change.positive? ? 'up' : 'down'} from 0" if change.infinite?
       end
 
       private
@@ -160,11 +164,12 @@ module Notifiers
       def from_baseline_text(monitor, payload)
         value, baseline = payload["value"].to_f, payload["baseline"].to_f
         change = LogMonitor.change(value, baseline)
-        how = if change.zero? then "no change"
-        elsif change.infinite? then change.positive? ? "up" : "down"
-        else "#{change.positive? ? 'up' : 'down'} #{number(change.abs.round(1))}%"
+        from = "from #{number(baseline)}"
+        how = if change.zero? then "no change #{from}"
+        elsif change.finite? then "#{change.positive? ? 'up' : 'down'} #{number(change.abs.round(1))}% #{from}"
+        else from_zero_text(change)
         end
-        "#{how} from #{number(baseline)} #{baseline_range_text(monitor, payload)}"
+        "#{how} #{baseline_range_text(monitor, payload)}"
       end
 
       # Where the Baseline range is, after the range it's compared with: the
