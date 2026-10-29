@@ -69,6 +69,7 @@ test.afterAll(async () => {
 })
 
 const status = (page: Page) => page.locator('[data-monitor-status]').first()
+const REFUSED_PREVIEW = /status of 422 \(Unprocessable Content\)/
 
 test('a member makes a Threshold monitor from the explorer; Run now fires it into Slack, and a higher threshold resolves it', async ({ page }) => {
   test.setTimeout(210_000)
@@ -171,7 +172,8 @@ test('a member makes a Threshold monitor from the explorer; Run now fires it int
 
 test('a member makes a Monitor comparing the change from the range just before; Run now shows each group\'s Baseline and change', async ({ page }) => {
   test.setTimeout(120_000)
-  const errors = watchErrors(page)
+  // The groups preview answers a rule saving would refuse with a 422, which the browser logs.
+  const errors = watchErrors(page, [REFUSED_PREVIEW])
   const name = `Flow change monitor ${Date.now()}`
 
   await page.goto(`/${ORG}/monitors/new`)
@@ -246,7 +248,7 @@ test('a member makes a Monitor comparing the change from the range just before; 
 
 test('a 1-day Baseline with a 2-day range is refused beside the Baseline; one falling 50% from 1 day earlier with a minimum saves', async ({ page }) => {
   test.setTimeout(120_000)
-  const errors = watchErrors(page)
+  const errors = watchErrors(page, [REFUSED_PREVIEW])
   const name = `Flow daily change monitor ${Date.now()}`
 
   await page.goto(`/${ORG}/monitors/new`)

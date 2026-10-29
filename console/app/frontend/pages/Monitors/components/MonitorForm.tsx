@@ -398,10 +398,10 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
 
       <FormSection title={isThreshold ? 'When it fires' : 'When it runs'}>
         {isThreshold && comparesChange && (
-          // The change rule reads as one sentence, beside the Compare that chose it.
-          <div className="flex flex-wrap items-end gap-4">
+          // The change rule reads as one sentence, under the Compare that chose it.
+          <div className="space-y-4">
             {compareField}
-            <div className="min-w-0 space-y-1">
+            <div className="w-fit max-w-full space-y-1">
               <div className="flex min-h-8 flex-wrap items-center gap-x-2 gap-y-2 text-sm">
                 <span>Fires when the number</span>
                 <Select value={direction} onValueChange={value => value && setDirection(value as ChangeOperator)} items={CHANGE_OPERATORS.map(o => ({ value: o, label: CHANGE_WORDS[o] }))}>
