@@ -152,6 +152,14 @@ module Notifiers
         "no longer a change of 50% or more.", texts[:steady].text
     end
 
+    test "a change Monitor that fired for no data resolves with the change it has again" do
+      resolved = MonitorMessage.build(row(IntegrationNotification::MONITOR_RESOLVED, "",
+        change_payload(70.0, 60.0).merge("no_data" => true)))
+
+      assert_equal "There is data again over the last 15 minutes: count_ was 70, up 16.7% from 60 the 15 minutes " \
+        "before, not a rise of 50% or more.", resolved.text
+    end
+
     test "a change from 1 day or 1 week earlier names that Baseline" do
       day = change_payload(120.0, 60.0).merge("baseline_from" => "2026-10-16T11:44:00Z", "baseline_to" => "2026-10-16T11:59:00Z")
       week = change_payload(70.0, 60.0).merge("baseline_from" => "2026-10-10T11:44:00Z", "baseline_to" => "2026-10-10T11:59:00Z")
