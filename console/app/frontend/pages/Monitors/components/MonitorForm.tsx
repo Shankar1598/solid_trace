@@ -19,8 +19,9 @@ import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/buil
 import { fieldInfos } from '@/lib/logs/columns'
 import type { LogTable } from '@/lib/logs/table'
 import {
-  MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, groupLabel, groupsNow, withRangeBins, withoutTimeBins,
-  type IntegrationOption, type MonitorKind, type MonitorOperator, type MonitorSettings,
+  BASELINES, CHANGE_OPERATORS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, groupLabel, groupsNow, withRangeBins,
+  withoutTimeBins, type ChangeOperator, type IntegrationOption, type MonitorBaseline, type MonitorCompare, type MonitorKind,
+  type MonitorSettings, type ValueOperator,
 } from '@/lib/monitors/monitor'
 import { cn } from '@/lib/utils'
 import { BuilderPanel, type ProjectOption } from '../../Logs/components/BuilderPanel'
@@ -35,6 +36,7 @@ const CHART_HOURS = 24
 const PROCESSING_LAG_MS = 60_000
 /** Groups listed under the chart; the rest are counted. */
 const GROUPS_SHOWN = 20
+const CHANGE_LABELS: Record<ChangeOperator, string> = { rises: 'rises by', falls: 'falls by', changes: 'changes by' }
 
 type Mode = 'builder' | 'query'
 type Run = { status: 'running' } | { status: 'done'; table: LogTable } | { status: 'error'; message: string }
@@ -64,7 +66,13 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   const [builder, setBuilder] = useState<Builder | null>(null)
   const [intervalText, setIntervalText] = useState(String(monitor.interval_minutes))
   const [range, setRange] = useState(String(monitor.range_minutes))
-  const [operator, setOperator] = useState<MonitorOperator>(monitor.operator ?? '>')
+  const [compare, setCompare] = useState<MonitorCompare>(monitor.compare ?? 'value')
+  const [baseline, setBaseline] = useState<MonitorBaseline>(monitor.baseline ?? 'previous')
+  // Each comparison keeps its own operator, so switching back and forth keeps what was picked.
+  const [operator, setOperator] = useState<ValueOperator>(
+    OPERATORS.find(o => o === monitor.operator) ?? '>')
+  const [direction, setDirection] = useState<ChangeOperator>(
+    CHANGE_OPERATORS.find(o => o === monitor.operator) ?? 'rises')
   const [threshold, setThreshold] = useState(monitor.threshold === null ? '' : String(monitor.threshold))
   const [byGroup, setByGroup] = useState(monitor.notify_by_group)
   const [noData, setNoData] = useState(monitor.alert_on_no_data)
@@ -162,11 +170,16 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
     }
   }, [query, project?.slug, rangeMinutes, kind, again])
 
+  // Comparing the change, the groups' numbers now are listed without comparing them: a run
+  // compares each with its Baseline.
+  const comparesChange = compare === 'change'
   const found = useMemo(
     () => (now.status === 'done'
-      ? groupsNow(now.table, { operator, threshold: thresholdValue, notify_by_group: byGroup, alert_on_no_data: noData })
+      ? groupsNow(now.table, {
+        operator: comparesChange ? null : operator, threshold: thresholdValue, notify_by_group: byGroup, alert_on_no_data: noData,
+      })
       : null),
-    [now, operator, thresholdValue, byGroup, noData],
+    [now, operator, comparesChange, thresholdValue, byGroup, noData],
   )
 
   const pickProject = (id: number) => {
@@ -222,7 +235,8 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
     const data = {
       monitor: {
         name: name.trim(), kind, project_id: project.id, query,
-        interval_minutes: intervalText, range_minutes: range, operator, threshold,
+        interval_minutes: intervalText, range_minutes: range, compare, baseline: comparesChange ? baseline : null,
+        operator: comparesChange ? direction : operator, threshold,
         notify_by_group: byGroup, alert_on_no_data: noData, integration_ids: integrationIds,
       },
     }
@@ -344,22 +358,68 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
                 <FieldError name="Range" error={errors.range_minutes} />
               </div>
               <div className="space-y-1">
-                <Label>Fires when the number is</Label>
-                <div className="flex gap-2">
-                  <Select value={operator} onValueChange={value => value && setOperator(value as MonitorOperator)} items={OPERATORS.map(o => ({ value: o, label: o }))}>
-                    <SelectTrigger aria-label="Operator" className="w-20 font-mono"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {OPERATORS.map(o => <SelectItem key={o} value={o} className="font-mono">{o}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Input aria-label="Threshold" type="number" step="any" className="w-32" value={threshold} placeholder="10" onChange={e => setThreshold(e.target.value)} />
-                </div>
-                <FieldError name="Operator" error={errors.operator} />
-                <FieldError name="Threshold" error={errors.threshold} />
+                <Label>Compare</Label>
+                <Segmented
+                  label="Compare"
+                  value={compare}
+                  options={[{ value: 'value', label: 'The value' }, { value: 'change', label: 'The change' }]}
+                  onChange={setCompare}
+                />
+                <FieldError name="Compare" error={errors.compare} />
               </div>
+              {comparesChange ? (
+                <>
+                  <div className="space-y-1">
+                    <Label>Fires when the number</Label>
+                    <div className="flex items-center gap-2">
+                      <Select value={direction} onValueChange={value => value && setDirection(value as ChangeOperator)} items={CHANGE_OPERATORS.map(o => ({ value: o, label: CHANGE_LABELS[o] }))}>
+                        <SelectTrigger aria-label="Direction" className="w-36"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {CHANGE_OPERATORS.map(o => <SelectItem key={o} value={o}>{CHANGE_LABELS[o]}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Input aria-label="Threshold percent" type="number" step="any" min={0} className="w-24" value={threshold} placeholder="50" onChange={e => setThreshold(e.target.value)} />
+                      <span className="text-sm text-muted-foreground">% or more</span>
+                    </div>
+                    <FieldError name="Direction" error={errors.operator} />
+                    <FieldError name="Threshold" error={errors.threshold} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>From its Baseline</Label>
+                    <Select value={baseline} onValueChange={value => value && setBaseline(value as MonitorBaseline)} items={BASELINES}>
+                      <SelectTrigger aria-label="Baseline" className="w-52"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {BASELINES.map(b => <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <FieldError name="Baseline" error={errors.baseline} />
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-1">
+                  <Label>Fires when the number is</Label>
+                  <div className="flex gap-2">
+                    <Select value={operator} onValueChange={value => value && setOperator(value as ValueOperator)} items={OPERATORS.map(o => ({ value: o, label: o }))}>
+                      <SelectTrigger aria-label="Operator" className="w-20 font-mono"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {OPERATORS.map(o => <SelectItem key={o} value={o} className="font-mono">{o}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Input aria-label="Threshold" type="number" step="any" className="w-32" value={threshold} placeholder="10" onChange={e => setThreshold(e.target.value)} />
+                  </div>
+                  <FieldError name="Operator" error={errors.operator} />
+                  <FieldError name="Threshold" error={errors.threshold} />
+                </div>
+              )}
             </>
           )}
         </div>
+        {isThreshold && comparesChange && (
+          <p className="text-xs text-muted-foreground">
+            Each run reads the Query twice: over its range, and over the {rangeMinutes === 1 ? 'minute' : `${rangeMinutes} minutes`} just
+            before it, its Baseline. A group with no row in the Baseline rises from 0; one with no row now is ok.
+          </p>
+        )}
         {isThreshold && (
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-sm">
@@ -384,7 +444,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
             <RunView run={chart}>
               {table => (table.rows.length === 0
                 ? <p className="p-3 text-xs text-muted-foreground">No rows over the last {CHART_HOURS} hours.</p>
-                : <QueryChart table={table} form="line" threshold={thresholdValue ?? undefined} className="pb-1" />)}
+                : <QueryChart table={table} form="line" threshold={comparesChange ? undefined : thresholdValue ?? undefined} className="pb-1" />)}
             </RunView>
           </div>
           <div className="space-y-1.5" data-monitor-groups>
@@ -397,8 +457,12 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
               ) : (
                 <>
                   <p className="text-xs text-muted-foreground">
-                    {firing.length === 0 ? 'Nothing would fire now.' : `${firing.length} ${firing.length === 1 ? 'group' : 'groups'} would fire now.`}
-                    {thresholdValue === null && ' Set a threshold to compare with.'}
+                    {comparesChange
+                      ? "The groups' numbers now. A run compares each with its Baseline; Run now shows each group's change."
+                      : <>
+                        {firing.length === 0 ? 'Nothing would fire now.' : `${firing.length} ${firing.length === 1 ? 'group' : 'groups'} would fire now.`}
+                        {thresholdValue === null && ' Set a threshold to compare with.'}
+                      </>}
                   </p>
                   <ul className="divide-y border text-xs">
                     {listed.slice(0, GROUPS_SHOWN).map(g => (
