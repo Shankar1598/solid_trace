@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Builder } from '@/lib/logs/builder'
 import type { LogTable } from '@/lib/logs/table'
 import {
-  baselineOffsetMinutes, breached, changeText, groupLabel, groupsNow, newMonitorHref, rangeMinutesOf, readingText, ruleText, runText, withRangeBins,
+  baselineOffsetMinutes, breached, changeText, groupLabel, groupsNow, newMonitorHref, previewCaption, rangeMinutesOf, ruleText, runText, withRangeBins,
   withBaselineSeries, withoutTimeBins,
 } from './monitor'
 
@@ -186,9 +186,11 @@ describe('runText', () => {
 })
 
 describe('changeText', () => {
-  it('gives a change from the Baseline as a signed percent, to at most one decimal', () => {
+  it('gives a change from the Baseline as a signed percent, to at most one decimal, a fall with a true minus', () => {
     expect(changeText(120, 60)).toBe('+100%')
-    expect(changeText(7, 10)).toBe('-30%')
+    expect(changeText(7, 10)).toBe('−30%')
+    expect(changeText(321, 1301)).toBe('−75.3%')
+    expect(changeText(10_000, 10_001)).toBe('0%')
     expect(changeText(70, 60)).toBe('+16.7%')
     expect(changeText(-50, -100)).toBe('+50%')
     expect(changeText(0, 0)).toBe('0%')
@@ -200,12 +202,17 @@ describe('changeText', () => {
   })
 })
 
-describe('readingText', () => {
-  it('gives a number with its Baseline and change, or the number alone without a Baseline', () => {
-    expect(readingText(120, 60)).toBe('120 (baseline 60, +100%)')
-    expect(readingText(5, 0)).toBe('5 (baseline 0, up from 0)')
-    expect(readingText(42, null)).toBe('42')
-    expect(readingText(null, null)).toBe('No data')
+describe('previewCaption', () => {
+  it('words the bins as the rest of the form words a span', () => {
+    expect(previewCaption(240, false)).toBe('The last 24 hours, in bins of 4 hours.')
+    expect(previewCaption(1, false)).toBe('The last 24 hours, in bins of 1 minute.')
+    expect(previewCaption(15, true)).toBe('The last 24 hours, in bins of 15 minutes: Now, and its Baseline moved forward onto the same hours.')
+  })
+
+  it('says plainly that a range of a day or more charts the 24 hours as a point or two', () => {
+    expect(previewCaption(1440, false)).toBe('The last 24 hours, in bins of 1 day. A bin that long charts as a point or two, not a line.')
+    expect(previewCaption(2880, true)).toBe(
+      'The last 24 hours, in bins of 2 days: Now, and its Baseline moved forward onto the same hours. A bin that long charts as a point or two, not a line.')
   })
 })
 
@@ -235,6 +242,21 @@ describe('ruleText', () => {
     expect(ruleText({ ...change, baseline: 'week', minimum: 10 })).toBe(
       "Runs every minute over the last 15 minutes, and fires when each group's number rises by 50% or more from the same 15 minutes 1 week earlier. " +
       'A group whose number and Baseline are both under 10 stays ok.')
+  })
+
+  it("names the worst group only when the Query has by columns and doesn't notify by group", () => {
+    const change = { ...monitor, compare: 'change' as const, baseline: 'previous' as const, operator: 'rises' as const, threshold: 50 }
+    const alone = { ...change, notify_by_group: false }
+    expect(ruleText(alone, true)).toContain("fires when the worst group's number rises by 50%")
+    expect(ruleText(change, true)).toContain("fires when each group's number rises by 50%")
+    expect(ruleText(alone, false)).toBe(
+      'Runs every minute over the last 15 minutes, and fires when the number rises by 50% or more from the 15 minutes before.')
+    expect(ruleText(change, false)).toContain('fires when the number rises by 50%')
+    expect(ruleText({ ...monitor, notify_by_group: false }, false)).toBe(
+      'Runs every minute over the last 15 minutes, and fires when the number is > 10.')
+    // Not knowing the by columns, it says what notify by group says.
+    expect(ruleText(alone, null)).toContain("fires when the worst group's number")
+    expect(ruleText(change, null)).toContain("fires when each group's number")
   })
 
   it('words whole hours and days as hours and days', () => {

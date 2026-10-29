@@ -23,6 +23,7 @@ class MonitorsController < ApplicationController
   def show
     render inertia: "Monitors/Show", props: {
       monitor: MonitorSerializer.new(@monitor, include_details: true).as_json,
+      has_by_columns: by_columns?(@monitor),
     }
   end
 
@@ -118,7 +119,7 @@ class MonitorsController < ApplicationController
     raise ActiveRecord::RecordNotFound, "no such Project" unless monitor.project
 
     problems = monitor.rule_problems
-    return render json: { error: "#{problems.join('. ')}." }, status: :unprocessable_content if problems.any?
+    return render json: { error: "Saving would refuse it: #{problems.join('. ')}." }, status: :unprocessable_content if problems.any?
 
     found = ChartRuns.hold { MonitorEvaluation.preview(monitor, Time.current) }
     baseline_from, baseline_to = found.baseline_range&.map { |at| at.utc.iso8601 }
@@ -157,6 +158,19 @@ class MonitorsController < ApplicationController
   # The Integration ids the form sent, or nil when it sent none.
   def integration_ids_param
     params.require(:monitor).permit(integration_ids: [])[:integration_ids]
+  end
+
+  # Whether a Threshold monitor's Query groups by columns, as its summarize
+  # in the Builder's chips shows, so its summary sentence can say "the
+  # number" for its one group. nil when that can't be known: a Match
+  # monitor, a Query the Builder can't show, or EventStore not answering.
+  def by_columns?(monitor)
+    return unless monitor.kind_threshold?
+
+    summarize = EventStore.validate_logs_query(project_id: monitor.project_id, query: monitor.query).dig("chips", "summarize")
+    summarize["by"].present? if summarize
+  rescue EventStore::Unavailable, EventStore::Rejected
+    nil
   end
 
   def monitor_page(monitor)

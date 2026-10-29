@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ChartSkeleton } from '@/components/ui/skeleton'
+import { valueText } from '@/lib/charts/axis'
 import { fetchPreview } from '@/lib/dashboards/api'
 import { withSource } from '@/lib/dashboards/dashboard'
 import { providerName } from '@/lib/integrations'
@@ -19,8 +20,8 @@ import { fieldInfos } from '@/lib/logs/columns'
 import type { LogTable } from '@/lib/logs/table'
 import { fetchGroupsPreview, type PreviewGroup } from '@/lib/monitors/api'
 import {
-  BASELINES, CHANGE_OPERATORS, CHANGE_WORDS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, baselineRangeText, groupLabel,
-  groupsNow, readingText, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption,
+  BASELINES, CHANGE_OPERATORS, CHANGE_WORDS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, baselineRangeText, changeText,
+  groupLabel, groupsNow, minimumText, previewCaption, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption,
   type MonitorBaseline, type MonitorCompare, type MonitorKind,
   type MonitorSettings, type ValueOperator,
 } from '@/lib/monitors/monitor'
@@ -300,6 +301,20 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   const firing = groups?.filter(g => g.firing) ?? []
   const listed = [...firing, ...(groups?.filter(g => !g.firing) ?? [])]
   const groupsRun: Run | GroupsRun = comparesChange ? changed : now
+  const minimumValue = minimum.trim() !== '' && Number(minimum) > 0 ? Number(minimum) : null
+  // Comparing the value it follows the range; comparing the change it leads the rule's sentence.
+  const compareField = (
+    <div className="space-y-1">
+      <Label>Compare</Label>
+      <Segmented
+        label="Compare"
+        value={compare}
+        options={[{ value: 'value', label: 'The value' }, { value: 'change', label: 'The change' }]}
+        onChange={setCompare}
+      />
+      <FieldError name="Compare" error={errors.compare} />
+    </div>
+  )
 
   return (
     <form onSubmit={save} className="max-w-4xl space-y-6">
@@ -331,7 +346,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
           />
           <p className="text-xs text-muted-foreground">
             {isThreshold
-              ? 'Runs its Query over a range and fires when a group\'s number passes the threshold. The Query ends in a summarize of one number.'
+              ? 'Runs its Query over a range and fires on a group\'s number: past a threshold, or changed by a percent from its Baseline. The Query ends in a summarize of one number.'
               : 'Reads the Logs ingested since its last run and sends one message when any match its Query.'}
           </p>
         </div>
@@ -382,6 +397,36 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       </FormSection>
 
       <FormSection title={isThreshold ? 'When it fires' : 'When it runs'}>
+        {isThreshold && comparesChange && (
+          // The change rule reads as one sentence, beside the Compare that chose it.
+          <div className="flex flex-wrap items-end gap-4">
+            {compareField}
+            <div className="min-w-0 space-y-1">
+              <div className="flex min-h-8 flex-wrap items-center gap-x-2 gap-y-2 text-sm">
+                <span>Fires when the number</span>
+                <Select value={direction} onValueChange={value => value && setDirection(value as ChangeOperator)} items={CHANGE_OPERATORS.map(o => ({ value: o, label: CHANGE_WORDS[o] }))}>
+                  <SelectTrigger aria-label="Direction" className="w-36"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CHANGE_OPERATORS.map(o => <SelectItem key={o} value={o}>{CHANGE_WORDS[o]}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <span className="flex items-center gap-2">
+                  <Input aria-label="Threshold percent" type="number" step="any" min={0} className="w-24" value={threshold} placeholder="50" onChange={e => setThreshold(e.target.value)} />
+                  <span>% or more from</span>
+                </span>
+                <Select value={baseline} onValueChange={value => value && setBaseline(value as MonitorBaseline)} items={BASELINES}>
+                  <SelectTrigger aria-label="Baseline" className="w-52"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {BASELINES.map(b => <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <FieldError name="Direction" error={errors.operator} />
+              <FieldError name="Threshold" error={errors.threshold} />
+              <FieldError name="Baseline" error={errors.baseline} />
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap items-start gap-4">
           <div className="space-y-1">
             <Label htmlFor="monitor-interval">Run every (minutes)</Label>
@@ -395,50 +440,18 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
                 <Input id="monitor-range" type="number" min={1} max={MAX_RANGE_MINUTES} className="w-32" value={range} onChange={e => setRange(e.target.value)} />
                 <FieldError name="Range" error={errors.range_minutes} />
               </div>
-              <div className="space-y-1">
-                <Label>Compare</Label>
-                <Segmented
-                  label="Compare"
-                  value={compare}
-                  options={[{ value: 'value', label: 'The value' }, { value: 'change', label: 'The change' }]}
-                  onChange={setCompare}
-                />
-                <FieldError name="Compare" error={errors.compare} />
-              </div>
               {comparesChange ? (
-                <>
-                  <div className="space-y-1">
-                    <Label>Fires when the number</Label>
-                    <div className="flex items-center gap-2">
-                      <Select value={direction} onValueChange={value => value && setDirection(value as ChangeOperator)} items={CHANGE_OPERATORS.map(o => ({ value: o, label: CHANGE_WORDS[o] }))}>
-                        <SelectTrigger aria-label="Direction" className="w-36"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {CHANGE_OPERATORS.map(o => <SelectItem key={o} value={o}>{CHANGE_WORDS[o]}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <Input aria-label="Threshold percent" type="number" step="any" min={0} className="w-24" value={threshold} placeholder="50" onChange={e => setThreshold(e.target.value)} />
-                      <span className="text-sm text-muted-foreground">% or more</span>
-                    </div>
-                    <FieldError name="Direction" error={errors.operator} />
-                    <FieldError name="Threshold" error={errors.threshold} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>From its Baseline</Label>
-                    <Select value={baseline} onValueChange={value => value && setBaseline(value as MonitorBaseline)} items={BASELINES}>
-                      <SelectTrigger aria-label="Baseline" className="w-52"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {BASELINES.map(b => <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                    <FieldError name="Baseline" error={errors.baseline} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="monitor-minimum">Minimum</Label>
+                <div className="space-y-1">
+                  <Label htmlFor="monitor-minimum">Minimum</Label>
+                  <div className="flex items-center gap-2">
                     <Input id="monitor-minimum" type="number" step="any" min={0} className="w-28" value={minimum} placeholder="None" onChange={e => setMinimum(e.target.value)} />
-                    <FieldError name="Minimum" error={errors.minimum} />
+                    {minimumValue !== null && <span className="text-xs text-muted-foreground" data-monitor-minimum-rule>{minimumText(minimumValue)}</span>}
                   </div>
-                </>
+                  <FieldError name="Minimum" error={errors.minimum} />
+                </div>
               ) : (
+                <>
+                {compareField}
                 <div className="space-y-1">
                   <Label>Fires when the number is</Label>
                   <div className="flex gap-2">
@@ -453,16 +466,13 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
                   <FieldError name="Operator" error={errors.operator} />
                   <FieldError name="Threshold" error={errors.threshold} />
                 </div>
+                </>
               )}
             </>
           )}
         </div>
         {isThreshold && comparesChange && (
-          <p className="text-xs text-muted-foreground">
-            Each run reads the Query twice: over its range, and over {baselineRangeText(baseline, rangeMinutes)}, its Baseline. A
-            group with no row in the Baseline rises from 0; one with no row now is ok. With a minimum, a group whose number and
-            Baseline are both under it stays ok.
-          </p>
+          <p className="text-xs text-muted-foreground">Compares each group with {baselineRangeText(baseline, rangeMinutes)}.</p>
         )}
         {isThreshold && (
           <div className="space-y-2">
@@ -481,7 +491,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       {isThreshold && (
         <FormSection
           title="Preview"
-          description={`The last ${CHART_HOURS} hours, in bins of ${rangeMinutes} ${rangeMinutes === 1 ? 'minute' : 'minutes'}${comparesChange ? ': Now, and its Baseline moved forward onto the same hours' : ''}.`}
+          description={previewCaption(rangeMinutes, comparesChange)}
           actions={<Button type="button" variant="outline" size="sm" onClick={() => setAgain(n => n + 1)}>Refresh preview</Button>}
         >
           <div className="min-h-48 border" data-monitor-preview>
@@ -504,16 +514,49 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
                     {firing.length === 0 ? 'Nothing would fire now.' : `${firing.length} ${firing.length === 1 ? 'group' : 'groups'} would fire now.`}
                     {thresholdValue === null && ' Set a threshold to compare with.'}
                   </p>
-                  <ul className="divide-y border text-xs">
-                    {listed.slice(0, GROUPS_SHOWN).map(g => (
-                      <li key={JSON.stringify(g.group)} className="flex justify-between gap-3 px-3 py-1.5" data-group-firing={g.firing}>
-                        <span className="min-w-0 truncate font-mono">{groupLabel(g.group)}</span>
-                        <span className={cn('shrink-0 tabular-nums', g.firing && 'font-medium text-destructive')}>
-                          {g.value === null ? 'No data' : <span className="font-mono">{readingText(g.value, g.baseline)}</span>}{g.firing ? ' · fires' : ''}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                  {comparesChange ? (
+                    <div className="overflow-x-auto border">
+                      <table className="w-full text-xs">
+                        <thead className="text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-1.5 text-left font-medium">Group</th>
+                            <th className="px-3 py-1.5 text-right font-medium">Value</th>
+                            <th className="px-3 py-1.5 text-right font-medium">Baseline</th>
+                            <th className="px-3 py-1.5 text-right font-medium">Change</th>
+                            <th className="px-3 py-1.5"><span className="sr-only">Fires</span></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y border-t">
+                          {listed.slice(0, GROUPS_SHOWN).map(g => (
+                            <tr key={JSON.stringify(g.group)} data-group-firing={g.firing}>
+                              <td className="max-w-0 truncate px-3 py-1.5 font-mono w-full">{groupLabel(g.group)}</td>
+                              <td className="whitespace-nowrap px-3 py-1.5 text-right font-mono tabular-nums" data-group-reading="value">
+                                {g.value === null ? 'No data' : valueText(g.value)}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-1.5 text-right font-mono tabular-nums" data-group-reading="baseline">
+                                {g.value === null || g.baseline === null ? '' : valueText(g.baseline)}
+                              </td>
+                              <td className={cn('whitespace-nowrap px-3 py-1.5 text-right font-mono tabular-nums', g.firing && 'text-destructive')} data-group-reading="change">
+                                {g.value === null || g.baseline === null ? '' : changeText(g.value, g.baseline)}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-1.5 text-right font-medium text-destructive">{g.firing ? 'fires' : ''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <ul className="divide-y border text-xs">
+                      {listed.slice(0, GROUPS_SHOWN).map(g => (
+                        <li key={JSON.stringify(g.group)} className="flex justify-between gap-3 px-3 py-1.5" data-group-firing={g.firing}>
+                          <span className="min-w-0 truncate font-mono">{groupLabel(g.group)}</span>
+                          <span className={cn('shrink-0 tabular-nums', g.firing && 'font-medium text-destructive')}>
+                            {g.value === null ? 'No data' : <span className="font-mono">{valueText(g.value)}</span>}{g.firing ? ' · fires' : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {listed.length > GROUPS_SHOWN && <p className="text-xs text-muted-foreground">and {listed.length - GROUPS_SHOWN} more</p>}
                 </>
               ))}
@@ -555,12 +598,12 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   )
 }
 
-/** A field's errors from the server, each after the field's name. */
+/** A field's errors from the server, each after the field's name, wrapping within the field's width rather than widening it. */
 function FieldError({ name, error }: { name: string; error: unknown }) {
   const messages = (Array.isArray(error) ? error : error ? [error] : []).map(String)
   return (
     <>
-      {messages.map((m, i) => <p key={i} role="alert" className="text-xs text-destructive">{name} {m}</p>)}
+      {messages.map((m, i) => <p key={i} role="alert" className="w-0 min-w-full text-xs text-destructive">{name} {m}</p>)}
     </>
   )
 }
