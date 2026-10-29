@@ -276,7 +276,8 @@ export function readingText(value: number | null, baseline: number | null): stri
   return `${valueText(value)} (baseline ${valueText(baseline)}, ${changeText(value, baseline)})`
 }
 
-const CHANGE_WORDS: Record<ChangeOperator, string> = { rises: 'rises by', falls: 'falls by', changes: 'changes by' }
+/** How the form and the summary sentence word a change operator. */
+export const CHANGE_WORDS: Record<ChangeOperator, string> = { rises: 'rises by', falls: 'falls by', changes: 'changes by' }
 
 type RuleOf = Pick<MonitorSettings,
   'kind' | 'compare' | 'baseline' | 'interval_minutes' | 'range_minutes' | 'operator' | 'threshold' | 'notify_by_group' | 'alert_on_no_data'>
@@ -284,11 +285,11 @@ type RuleOf = Pick<MonitorSettings,
 
 /** What the Monitor checks, in a sentence. */
 export function ruleText(monitor: RuleOf): string {
-  const every = `Runs every ${minutes(monitor.interval_minutes)}`
+  const every = `Runs every ${minutesText(monitor.interval_minutes)}`
   if (monitor.kind === 'match') return `${every} and sends one message when Logs ingested since its last run match.`
   const groups = monitor.notify_by_group ? 'each group' : 'the worst group'
   const noData = monitor.alert_on_no_data ? ' No rows at all fire too.' : ''
-  const over = `${every} over the last ${minutes(monitor.range_minutes)}`
+  const over = `${every} over the last ${minutesText(monitor.range_minutes)}`
   if (monitor.compare === 'change') {
     const how = CHANGE_WORDS[monitor.operator as ChangeOperator] ?? 'changes by'
     const either = monitor.operator === 'changes' ? ' either way' : ''
@@ -303,10 +304,14 @@ export function ruleText(monitor: RuleOf): string {
 
 /** Where a range's Baseline is: the 15 minutes before, or the same 15 minutes 1 day or 1 week earlier. */
 export function baselineRangeText(baseline: MonitorBaseline | null, rangeMinutes: number): string {
-  if (baseline === 'day' || baseline === 'week') return `the same ${minutes(rangeMinutes)} 1 ${baseline} earlier`
-  return `the ${minutes(rangeMinutes)} before`
+  if (baseline === 'day' || baseline === 'week') return `the same ${minutesText(rangeMinutes)} 1 ${baseline} earlier`
+  return `the ${minutesText(rangeMinutes)} before`
 }
 
-function minutes(n: number): string {
-  return n === 1 ? 'minute' : `${n} minutes`
+/** A number of minutes as a span, as Monitor messages word it: minute, 15 minutes, 2 hours, 1 day. */
+export function minutesText(n: number): string {
+  if (n === 1) return 'minute'
+  if (n % 1440 === 0) return n === 1440 ? '1 day' : `${n / 1440} days`
+  if (n % 60 === 0) return n === 60 ? '1 hour' : `${n / 60} hours`
+  return `${n} minutes`
 }

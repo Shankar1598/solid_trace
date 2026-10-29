@@ -217,7 +217,7 @@ test('a member makes a Monitor comparing the change from the range just before; 
   await page.getByLabel('Threshold percent').fill('1')
   await page.getByRole('button', { name: 'Create monitor' }).click()
   await expect(page.getByRole('heading', { name })).toBeVisible()
-  await expect(page.getByText("fires when the worst group's number rises by 1% or more from the 1440 minutes before.")).toBeVisible()
+  await expect(page.getByText("fires when the worst group's number rises by 1% or more from the 1 day before.")).toBeVisible()
 
   // Run now: the group shows its number with its Baseline and change.
   await page.getByRole('button', { name: 'Run now' }).click()
@@ -258,7 +258,7 @@ test('a 1-day Baseline with a 2-day range is refused beside the Baseline; one fa
   await page.getByLabel('Over the last (minutes)').fill('60')
   await page.getByRole('button', { name: 'Create monitor' }).click()
   await expect(page.getByRole('heading', { name })).toBeVisible()
-  await expect(page.getByText("fires when the worst group's number falls by 50% or more from the same 60 minutes 1 day earlier. " +
+  await expect(page.getByText("fires when the worst group's number falls by 50% or more from the same 1 hour 1 day earlier. " +
     'A group whose number and Baseline are both under 10 stays ok.')).toBeVisible()
 
   await page.getByRole('button', { name: 'Delete' }).click()

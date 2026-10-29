@@ -152,9 +152,17 @@ module Notifiers
         "no longer a change of 50% or more.", texts[:steady].text
     end
 
+    test "a change Monitor that fired for no data resolves with the change it has again" do
+      resolved = MonitorMessage.build(row(IntegrationNotification::MONITOR_RESOLVED, "",
+        change_payload(70.0, 60.0).merge("no_data" => true)))
+
+      assert_equal "There is data again over the last 15 minutes: count_ was 70, up 16.7% from 60 the 15 minutes " \
+        "before, not a rise of 50% or more.", resolved.text
+    end
+
     test "a change from 1 day or 1 week earlier names that Baseline" do
-      day = change_payload(120.0, 60.0).merge("baseline_from" => "2026-10-16T11:44:00Z", "baseline_to" => "2026-10-16T11:59:00Z")
-      week = change_payload(70.0, 60.0).merge("baseline_from" => "2026-10-10T11:44:00Z", "baseline_to" => "2026-10-10T11:59:00Z")
+      day = change_payload(120.0, 60.0).merge("baseline_setting" => "day", "baseline_from" => "2026-10-16T11:44:00Z", "baseline_to" => "2026-10-16T11:59:00Z")
+      week = change_payload(70.0, 60.0).merge("baseline_setting" => "week", "baseline_from" => "2026-10-10T11:44:00Z", "baseline_to" => "2026-10-10T11:59:00Z")
 
       assert_equal "count_ was 120 over the last 15 minutes, up 100% from 60 1 day earlier.",
         MonitorMessage.build(row(IntegrationNotification::MONITOR_FIRING, GROUP, day)).text
@@ -166,7 +174,7 @@ module Notifiers
       to_change = MonitorMessage.build(row(IntegrationNotification::MONITOR_RESOLVED, GROUP,
         threshold_payload(120.0).except("from", "to").merge("compare_changed" => true)))
       to_value = MonitorMessage.build(row(IntegrationNotification::MONITOR_RESOLVED, GROUP,
-        change_payload(120.0, 60.0).except("from", "to", "baseline_from", "baseline_to").merge("compare_changed" => true)))
+        change_payload(120.0, 60.0).except("from", "to", "baseline_setting", "baseline_from", "baseline_to").merge("compare_changed" => true)))
 
       assert_equal "The Monitor now compares the change from a Baseline instead of the value, so its groups start again.",
         to_change.text
@@ -300,7 +308,7 @@ module Notifiers
     def change_payload(value, baseline)
       change = baseline.zero? ? (value.zero? ? 0.0 : nil) : (value - baseline) / baseline.abs * 100
       threshold_payload(value).merge("compare" => "change", "operator" => "rises", "threshold" => 50.0,
-        "baseline" => baseline, "change" => change,
+        "baseline" => baseline, "change" => change, "baseline_setting" => "previous",
         "baseline_from" => "2026-10-17T11:29:00Z", "baseline_to" => "2026-10-17T11:44:00Z")
     end
 
