@@ -24,6 +24,7 @@ You pick:
 
 - **Run every:** 1 to 1,440 minutes.
 - **Over the last:** the range each run reads, 1 minute to 7 days.
+- **Compare:** the value, or the change from a Baseline. See Comparing the change, below.
 - **The operator and threshold:** `>`, `>=`, `<` or `<=` a number.
 - **Notify by group:** see Groups, below.
 - **Alert on no data:** see No data, below.
@@ -53,6 +54,37 @@ When the table has no rows, nothing fires: no Logs means no number to compare. T
 
 EventStore answers at most 10,000 rows. A run whose table was cut there can't compare every group, and each run would see a different part. That run is an error, and it changes no state. Group by fewer columns, or filter the Logs before the `summarize`.
 
+### Comparing the change
+
+A Threshold monitor can compare each group's **change** instead of its value, for "errors doubled" or "traffic halved" without knowing what normal is. The group's **Baseline** is its number over an earlier range of the same length: the range just before the one the run reads, or the same range 1 day or 1 week earlier. Its change is `(number − Baseline) / |Baseline| × 100`.
+
+You pick, instead of an operator and a number:
+
+- **The direction:** **rises by**, **falls by** or **changes by** (either way).
+- **The threshold:** a percent greater than 0. A group fires when its change is at least that much: `rises by 50` fires at +50% or more, `falls by 50` at −50% or less, and `changes by 50` at either.
+- **The Baseline:** **the range just before**, to catch sudden changes within minutes; **1 day earlier**, so daily cycles don't fire the Monitor; or **1 week earlier**, so weekday and weekend patterns don't either.
+- **A minimum**, optional, to keep small numbers quiet. A group is compared only when the larger of its number and its Baseline, by size, is at least the minimum; below that it's ok. So with a minimum of 10, 2 to 4 is not a 100% rise, while 1,000 to 0 still falls. With no minimum every group is compared.
+
+Saving refuses two Baselines, with the reason beside the Baseline on the form and as the error over MCP:
+
+- **1 day earlier with a range over 1 day**, since the two ranges would overlap. 1 week earlier never does, as no range is longer than a week.
+- **A Baseline older than the Project's Log Retention** keeps (the Project's own, else the instance's default): the range plus how far back the Baseline is, such as 7 days and 15 minutes for 15 minutes 1 week earlier. Its Baseline would have no Logs, so every group would rise from 0. If Retention is lowered after the Monitor is saved, each run is an error that says so, changes no state and sends nothing, until the Baseline or the Retention changes.
+
+The rules:
+
+- **A Baseline of 0.** A number above 0 from a Baseline of 0 is the biggest rise there is, so it fires any rises or changes Monitor. A number below 0 is the biggest fall. 0 then and 0 now is no change. Messages say "up from 0" rather than a percent.
+- **Negative numbers** divide by the Baseline's size, so −100 to −50 is up 50%.
+- **A row now with none in the Baseline** has a Baseline of 0, so a group that has just appeared rises from 0.
+- **A row in the Baseline with none now** is no row, so the group is ok, as when comparing the value. This means **falls doesn't catch a group that stops sending**: its row is gone, not 0. To catch that, use alert on no data, or a Query without groups, whose count drops to 0 rather than disappearing.
+- **Notify by group off:** each row's change is worked out by its group columns, and the worst change makes the one group: the largest for rises, the smallest for falls, and the largest either way for changes. Choosing the worst number first would compare the wrong rows.
+- **Alert on no data** looks only at the current range's table.
+
+Each run runs the Query twice: over its range, then over the Baseline range, the current range shifted back by its own length, by 1 day or by 1 week. Both share the run's 30 seconds: the Baseline's Query gets what's left. Either one failing, timing out or being cut at 10,000 rows makes the run an error that changes no state. Two Queries roughly double what a Monitor reads, so keep that in mind when picking its interval.
+
+The form's preview charts the Query over the last 24 hours twice, on one chart with no threshold line: **Now**, and **Baseline**, the same Query over 24 hours as far back as the Baseline is (one range back for the range just before, else 1 day or 1 week), moved forward onto the same hours. Under it, the groups that would fire now are listed with their number, Baseline and change. Console reads them as a run does, over both ranges with the same rules, and the list follows edits to the direction, threshold, Baseline and minimum before you save. A percent of 0 or less, a minimum of 0 or less, or a Baseline saving would refuse lists nothing: the list says what saving would refuse instead. With a range of 1 day or more, each bin is as long as the chart's 24 hours or longer, so the chart has only a point or two.
+
+A Monitor's page shows each group's last value, Baseline and change in their own columns, such as 120, 60 and +100%, and Run now over MCP lists each group's change.
+
 ## Match monitors
 
 A Match monitor's Query returns Logs: filters only, with no `summarize`. Saving it starts it from the Logs arriving after the save. Each run then reads the Logs that arrived since the last run, in the order they were stored, so a Log that arrives late, with an old time, is still read once.
@@ -73,7 +105,7 @@ When EventStore is down, times out or refuses the Query, the run is an error: it
 
 A Monitor's page shows each group's state and its last 100 runs.
 
-**Turning a Monitor off** stops its runs. **Deleting** it removes it and its runs. Either one resolves each firing group, so a PagerDuty incident it opened is closed. Changing a Threshold monitor into a Match monitor does the same. Turned back on, a group still past the threshold fires again.
+**Turning a Monitor off** stops its runs. **Deleting** it removes it and its runs. Either one resolves each firing group, so a PagerDuty incident it opened is closed. Changing a Threshold monitor into a Match monitor does the same, and so does switching it between comparing the value and the change, since its groups' firing meant something else; the resolve says why, and comparing the change, it gives each group's change at its last run, with links to the ranges that run read unless the Monitor was saved after it. Changing the direction, threshold, Baseline, minimum or range resolves nothing: the next run decides. Turned back on, a group still past the threshold fires again.
 
 **Unticking an Integration** on a Monitor's form sends that Integration a resolve for each firing group, so its PagerDuty incident is closed too. The groups stay firing for the Integrations still ticked.
 
@@ -83,13 +115,15 @@ A Monitor tells the Integrations you pick on its form. Messages go through the s
 
 Every message links to the explorer with the Monitor's Query: over the range the run read, or for a Match message over the Logs it found.
 
+A Monitor comparing the change says the number, its Baseline and the change: "count_ was 120 over the last 15 minutes, up 100% from 60 the 15 minutes before", or "from 60 1 day earlier" and "1 week earlier" for those Baselines. A resolve gives the change it came back to, and adds "no longer a rise of 50% or more". Its fields are Value, Baseline, Change and Threshold ("rises 50%"), and Slack and email also link to the Baseline range.
+
 ### Slack
 
-A Block Kit message: the title ("Firing: Checkout errors (service=api)" or "Resolved: …"), what the run saw ("count_ was 120 over the last 15 minutes, above the threshold of 100"), the Project, group, value, threshold and range, and a button to the explorer. A Match message lists the Logs.
+A Block Kit message: the title ("Firing: Checkout errors (service=api)" or "Resolved: …"), what the run saw ("count_ was 120 over the last 15 minutes, above the threshold of 100"), the Project, group, value, threshold and range, and a button to the explorer, with a second button, Open the Baseline, when comparing the change. A Match message lists the Logs.
 
 ### PagerDuty
 
-Firing sends a `trigger` event and resolved sends a `resolve` event, with the same dedup key, so the resolve closes the incident the trigger opened:
+Firing sends a `trigger` event and resolved sends a `resolve` event, with the same dedup key, so the resolve closes the incident the trigger opened. A trigger keeps one link, to the current range; comparing the change, its custom details also give the Baseline and the change. The keys are:
 
 - `solid-trace-monitor-<id>` for a Monitor with one group
 - `solid-trace-monitor-<id>-<group>` for a group, where the group is its columns as JSON, or a SHA-256 of them when the key would pass PagerDuty's 255 characters

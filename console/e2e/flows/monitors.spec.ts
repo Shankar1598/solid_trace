@@ -69,6 +69,7 @@ test.afterAll(async () => {
 })
 
 const status = (page: Page) => page.locator('[data-monitor-status]').first()
+const REFUSED_PREVIEW = /status of 422 \(Unprocessable Content\)/
 
 test('a member makes a Threshold monitor from the explorer; Run now fires it into Slack, and a higher threshold resolves it', async ({ page }) => {
   test.setTimeout(210_000)
@@ -166,5 +167,117 @@ test('a member makes a Threshold monitor from the explorer; Run now fires it int
   await expect.poll(() => about('Resolved').length, { timeout: 100_000, intervals: [2000] }).toBeGreaterThan(0)
   const titles = stub.bodies.map(b => JSON.stringify(b))
   expect(titles.findIndex(t => t.includes(`Resolved: ${name}`))).toBeGreaterThan(titles.findIndex(t => t.includes(`Firing: ${name}`)))
+  expect(errors).toEqual([])
+})
+
+test('a member makes a Monitor comparing the change from the range just before; Run now shows each group\'s Baseline and change', async ({ page }) => {
+  test.setTimeout(120_000)
+  // The groups preview answers a rule saving would refuse with a 422, which the browser logs.
+  const errors = watchErrors(page, [REFUSED_PREVIEW])
+  const name = `Flow change monitor ${Date.now()}`
+
+  await page.goto(`/${ORG}/monitors/new`)
+  await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  await page.getByLabel('Name').fill(name)
+  await page.getByLabel('Over the last (minutes)').fill('1440')
+  await page.getByLabel('Run every (minutes)').fill('60')
+
+  // The change: a direction, a percent and the Baseline, the range just before.
+  await page.getByRole('group', { name: 'Compare' }).getByRole('button', { name: 'The change' }).click()
+  await expect(page.getByRole('combobox', { name: 'Direction' })).toHaveText('rises by')
+  await expect(page.getByRole('combobox', { name: 'Baseline' })).toHaveText('The range just before')
+  await expect(page.getByLabel('Threshold', { exact: true })).toHaveCount(0)
+
+  // The preview, over 4 hours the seed's Logs fill, then and just before: both series on one
+  // chart with no threshold, and the group that would fire with its number, Baseline and change.
+  await page.getByLabel('Over the last (minutes)').fill('240')
+  await page.getByRole('combobox', { name: 'Direction' }).click()
+  await page.getByRole('option', { name: 'changes by' }).click()
+  await page.getByLabel('Threshold percent').fill('0.0001')
+  const preview = page.locator('[data-monitor-preview]')
+  await expect(preview.getByText('Now', { exact: true })).toBeVisible()
+  await expect(preview.getByText('Baseline', { exact: true })).toBeVisible()
+  await expect(preview.getByText(/threshold/)).toHaveCount(0)
+  const wouldFire = page.locator('[data-monitor-groups]')
+  await expect(wouldFire).toContainText('1 group would fire now.')
+  const firingRow = wouldFire.locator('[data-group-firing="true"]')
+  await expect(firingRow.locator('[data-group-reading="value"]')).toHaveText(/^[\d,.]+$/)
+  await expect(firingRow.locator('[data-group-reading="baseline"]')).toHaveText(/^[\d,.]+$/)
+  await expect(firingRow.locator('[data-group-reading="change"]')).toHaveText(/^([+−][\d.]+%|up from 0|down from 0)$/)
+  await expect(firingRow).toContainText(/fires$/)
+  await shoot(page, 'monitor-form-change-preview', { fullPage: true })
+
+  // A threshold past the change: the list follows it without saving.
+  await page.getByLabel('Threshold percent').fill('1000000000')
+  await expect(wouldFire).toContainText('Nothing would fire now.')
+  await expect(wouldFire.locator('[data-group-firing="false"]')).toHaveCount(1)
+  await page.getByRole('combobox', { name: 'Direction' }).click()
+  await page.getByRole('option', { name: 'rises by' }).click()
+  await page.getByLabel('Over the last (minutes)').fill('1440')
+
+  // A percent of 0: the would-fire list says saving would refuse it, and saving does, beside the field.
+  await page.getByLabel('Threshold percent').fill('0')
+  await expect(wouldFire).toContainText('Saving would refuse it: Threshold must be a percent greater than 0.')
+  await expect(wouldFire.locator('[data-group-firing]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Create monitor' }).click()
+  await expect(page.getByText('Threshold must be a percent greater than 0', { exact: true })).toBeVisible()
+
+  await page.getByLabel('Threshold percent').fill('1')
+  await page.getByRole('button', { name: 'Create monitor' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  // Its Query has no by columns, so the sentence is about the number, not a group's.
+  await expect(page.getByText('fires when the number rises by 1% or more from the 1 day before.')).toBeVisible()
+
+  // Run now: the group shows its number, Baseline and change in their own columns.
+  await page.getByRole('button', { name: 'Run now' }).click()
+  await expect(page.getByText(/Ran the Monitor: /)).toBeVisible()
+  const groups = page.getByRole('table', { name: 'Groups' })
+  for (const column of ['Last value', 'Baseline', 'Change']) {
+    await expect(groups.getByRole('columnheader', { name: column, exact: true })).toBeVisible()
+  }
+  await expect(groups.locator('[data-group-reading="value"]').first()).toHaveText(/^[\d,.]+$/)
+  await expect(groups.locator('[data-group-reading="baseline"]').first()).toHaveText(/^[\d,.]+$/)
+  await expect(groups.locator('[data-group-reading="change"]').first()).toHaveText(/^([+−]?[\d.]+%|up from 0|down from 0)$/)
+  await shoot(page, 'monitor-show-change', { fullPage: true })
+
+  await page.getByRole('button', { name: 'Delete' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete monitor' }).click()
+  await expect(page.locator(`[data-monitor-row="${name}"]`)).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('a 1-day Baseline with a 2-day range is refused beside the Baseline; one falling 50% from 1 day earlier with a minimum saves', async ({ page }) => {
+  test.setTimeout(120_000)
+  const errors = watchErrors(page, [REFUSED_PREVIEW])
+  const name = `Flow daily change monitor ${Date.now()}`
+
+  await page.goto(`/${ORG}/monitors/new`)
+  await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  await page.getByLabel('Name').fill(name)
+  await page.getByLabel('Over the last (minutes)').fill('2880')
+  await page.getByLabel('Run every (minutes)').fill('60')
+  await page.getByRole('group', { name: 'Compare' }).getByRole('button', { name: 'The change' }).click()
+  await page.getByRole('combobox', { name: 'Direction' }).click()
+  await page.getByRole('option', { name: 'falls by', exact: true }).click()
+  await page.getByLabel('Threshold percent').fill('50')
+  await page.getByRole('combobox', { name: 'Baseline' }).click()
+  await page.getByRole('option', { name: '1 day earlier', exact: true }).click()
+  await page.getByLabel('Minimum').fill('10')
+  await expect(page.locator('[data-monitor-minimum-rule]')).toHaveText('A group whose number and Baseline are both under 10 stays ok.')
+
+  // 1 day earlier would overlap a 2-day range: the would-fire list says so before saving, and saving refuses it.
+  await expect(page.locator('[data-monitor-groups]')).toContainText("Saving would refuse it: Baseline can't be 1 day earlier with a range over 1 day")
+  await page.getByRole('button', { name: 'Create monitor' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: /^Baseline can't be 1 day earlier with a range over 1 day/ })).toBeVisible()
+
+  await page.getByLabel('Over the last (minutes)').fill('60')
+  await page.getByRole('button', { name: 'Create monitor' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  await expect(page.getByText("fires when the number falls by 50% or more from the same 1 hour 1 day earlier. " +
+    'A group whose number and Baseline are both under 10 stays ok.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Delete' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete monitor' }).click()
+  await expect(page.locator(`[data-monitor-row="${name}"]`)).toHaveCount(0)
   expect(errors).toEqual([])
 })

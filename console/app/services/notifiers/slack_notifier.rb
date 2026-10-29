@@ -73,10 +73,12 @@ module Notifiers
         text = message.lines.map { |line| "• #{mrkdwn(line)}" }.join("\n")
         blocks << { type: "section", text: { type: "mrkdwn", text: text.truncate(MAX_SECTION) } }
       end
-      if message.link.length <= MAX_URL
+      buttons = [ [ "Open in the Logs explorer", message.link ], [ "Open the Baseline", message.baseline_link ] ]
+        .select { |_, url| url && url.length <= MAX_URL }
+      if buttons.any?
         blocks << {
           type: "actions",
-          elements: [ { type: "button", text: { type: "plain_text", text: "Open in the Logs explorer" }, url: message.link } ],
+          elements: buttons.map { |label, url| { type: "button", text: { type: "plain_text", text: label }, url: url } },
         }
       end
 

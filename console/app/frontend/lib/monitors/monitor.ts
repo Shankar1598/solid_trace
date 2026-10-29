@@ -3,14 +3,29 @@
 // MonitorEvaluation reads it, and the Queries its preview chart runs.
 import type { Builder } from '@/lib/logs/builder'
 import type { LogTable } from '@/lib/logs/table'
+import { valueText } from '@/lib/charts/axis'
 import { rangeMs, type TimeRange } from '@/lib/timeRange'
 
 export type MonitorKind = 'threshold' | 'match'
-export type MonitorOperator = '>' | '>=' | '<' | '<='
+/** What a Threshold monitor compares with its threshold: each group's number, or its percent change from its Baseline. */
+export type MonitorCompare = 'value' | 'change'
+/** Where a group's Baseline is read: the range just before the current one, or the same range 1 day or 1 week earlier. */
+export type MonitorBaseline = 'previous' | 'day' | 'week'
+export type ValueOperator = '>' | '>=' | '<' | '<='
+/** Comparing the change: fires when the change is at least the threshold percent up, down, or either way. */
+export type ChangeOperator = 'rises' | 'falls' | 'changes'
+export type MonitorOperator = ValueOperator | ChangeOperator
 /** disabled when off, error when its last run failed, firing when any group is, ok otherwise. */
 export type MonitorStatus = 'firing' | 'ok' | 'disabled' | 'error'
 
-export const OPERATORS: MonitorOperator[] = ['>', '>=', '<', '<=']
+export const OPERATORS: ValueOperator[] = ['>', '>=', '<', '<=']
+export const CHANGE_OPERATORS: ChangeOperator[] = ['rises', 'falls', 'changes']
+/** The Baselines a Monitor comparing the change can read, as the form offers them. */
+export const BASELINES: { value: MonitorBaseline; label: string }[] = [
+  { value: 'previous', label: 'The range just before' },
+  { value: 'day', label: '1 day earlier' },
+  { value: 'week', label: '1 week earlier' },
+]
 /** A Monitor's bounds, as LogMonitor checks them. */
 export const MAX_INTERVAL_MINUTES = 24 * 60
 export const MAX_RANGE_MINUTES = 7 * 24 * 60
@@ -23,6 +38,10 @@ export interface MonitorSettings {
   query: string
   interval_minutes: number
   range_minutes: number
+  compare: MonitorCompare
+  baseline: MonitorBaseline | null
+  /** Comparing the change, a group is compared only when its number or its Baseline reaches it. */
+  minimum: number | null
   operator: MonitorOperator | null
   threshold: number | null
   notify_by_group: boolean
@@ -36,6 +55,8 @@ export interface MonitorGroupState {
   status: 'ok' | 'firing'
   since: string
   last_value: number | null
+  /** Comparing the change, the group's number over its Baseline range at the last run. */
+  last_baseline: number | null
 }
 
 export interface MonitorRun {
@@ -74,7 +95,7 @@ export interface Monitor extends MonitorSettings {
 }
 
 /** Whether value passes the threshold, by the operator. */
-export function breached(value: number, operator: MonitorOperator, threshold: number): boolean {
+export function breached(value: number, operator: ValueOperator, threshold: number): boolean {
   switch (operator) {
     case '>': return value > threshold
     case '>=': return value >= threshold
@@ -91,7 +112,7 @@ export interface GroupNow {
 }
 
 type Rule = Pick<MonitorSettings, 'notify_by_group' | 'alert_on_no_data'> & {
-  operator: MonitorOperator | null
+  operator: ValueOperator | null
   threshold: number | null
 }
 
@@ -138,6 +159,44 @@ export function withRangeBins(builder: Builder, rangeMinutes: number): Builder |
   const { sort: _sort, take: _take, ...rest } = builder
   const by = [{ field: 'time', bin: `${rangeMinutes}m` }, ...summarize.by.filter(g => !isTimeBin(g))]
   return { ...rest, summarize: { ...summarize, by } }
+}
+
+const BASELINE_OFFSETS: Record<MonitorBaseline, (rangeMinutes: number) => number> = {
+  previous: rangeMinutes => rangeMinutes,
+  day: () => 24 * 60,
+  week: () => 7 * 24 * 60,
+}
+
+/** How far before the current range a Baseline's range is, in minutes, as LogMonitor#baseline_window puts it. */
+export function baselineOffsetMinutes(baseline: MonitorBaseline, rangeMinutes: number): number {
+  return BASELINE_OFFSETS[baseline](rangeMinutes)
+}
+
+/**
+ * The preview chart of a Monitor comparing the change: now's binned table as
+ * the series Now, and the Baseline's, the same Query offsetMs earlier, moved
+ * forward by offsetMs onto now's time axis as the series Baseline, each bin in
+ * the bin of now's it lands in. A group's two series stay apart from other
+ * groups'. It spans now's range.
+ */
+export function withBaselineSeries(now: LogTable, before: LogTable, offsetMs: number): LogTable {
+  const at = now.columns.findIndex(c => c.type === 'datetime' && c.bin_seconds)
+  const step = at >= 0 ? now.columns[at].bin_seconds! * 1000 : 0
+  const moved = (time: unknown) => {
+    if (typeof time !== 'string' || step === 0) return time
+    return new Date(Math.floor((Date.parse(time) + offsetMs) / step) * step).toISOString()
+  }
+  return {
+    columns: [{ name: 'series', type: 'string' }, ...now.columns],
+    rows: [
+      ...now.rows.map(row => ['Now', ...row]),
+      ...before.rows.map(row => ['Baseline', ...row.map((cell, i) => (i === at ? moved(cell) : cell))]),
+    ],
+    truncated: now.truncated || before.truncated,
+    fill_gaps: now.fill_gaps === true && before.fill_gaps === true,
+    from: now.from,
+    to: now.to,
+  }
 }
 
 /**
@@ -189,4 +248,84 @@ export function runText(run: Pick<MonitorRun, 'status' | 'error' | 'firing' | 'm
     text = firing === 0 ? 'Nothing firing' : `${firing} ${firing === 1 ? 'group' : 'groups'} firing`
   }
   return run.logs_skipped ? `${text}. Started again from the newest Logs, skipping those ingested since the last run.` : text
+}
+
+/**
+ * value's percent change from baseline, as LogMonitor.change works it out:
+ * from a Baseline of 0 a number above 0 is an infinite rise and one below an
+ * infinite fall, and 0 then and now is no change. A negative Baseline divides
+ * by its size.
+ */
+export function changeOf(value: number, baseline: number): number {
+  if (baseline === 0) return value === 0 ? 0 : Math.sign(value) * Infinity
+  return ((value - baseline) / Math.abs(baseline)) * 100
+}
+
+/** A change as a signed percent, to at most 1 decimal, a fall with a true minus: +100%, −30%, 0%; or up from 0, down from 0. */
+export function changeText(value: number, baseline: number): string {
+  const change = changeOf(value, baseline)
+  if (!Number.isFinite(change)) return `${change > 0 ? 'up' : 'down'} from 0`
+  const rounded = Math.round(change * 10) / 10
+  if (rounded === 0) return '0%'
+  return `${rounded > 0 ? '+' : '−'}${Math.abs(rounded)}%`
+}
+
+/** How the form and the summary sentence word a change operator. */
+export const CHANGE_WORDS: Record<ChangeOperator, string> = { rises: 'rises by', falls: 'falls by', changes: 'changes by' }
+
+type RuleOf = Pick<MonitorSettings,
+  'kind' | 'compare' | 'baseline' | 'interval_minutes' | 'range_minutes' | 'operator' | 'threshold' | 'notify_by_group' | 'alert_on_no_data'>
+  & Partial<Pick<MonitorSettings, 'minimum'>>
+
+/**
+ * What the Monitor checks, in a sentence. Its subject is the number when the
+ * Query has no by columns, each group's when it notifies by group, and the
+ * worst group's otherwise; byColumns null (not known) goes by notify by
+ * group alone.
+ */
+export function ruleText(monitor: RuleOf, byColumns: boolean | null = null): string {
+  const every = `Runs every ${minutesText(monitor.interval_minutes)}`
+  if (monitor.kind === 'match') return `${every} and sends one message when Logs ingested since its last run match.`
+  const subject = byColumns === false ? 'the number' : monitor.notify_by_group ? "each group's number" : "the worst group's number"
+  const noData = monitor.alert_on_no_data ? ' No rows at all fire too.' : ''
+  const over = `${every} over the last ${minutesText(monitor.range_minutes)}`
+  if (monitor.compare === 'change') {
+    const how = CHANGE_WORDS[monitor.operator as ChangeOperator] ?? 'changes by'
+    const either = monitor.operator === 'changes' ? ' either way' : ''
+    const from = baselineRangeText(monitor.baseline, monitor.range_minutes)
+    const small = monitor.minimum != null ? ` ${minimumText(monitor.minimum)}` : ''
+    return `${over}, and fires when ${subject} ${how} ${monitor.threshold}% or more${either} from ${from}.${small}${noData}`
+  }
+  return `${over}, and fires when ${subject} is ${monitor.operator} ${monitor.threshold}.${noData}`
+}
+
+/** What a change Monitor's minimum keeps ok, in a sentence. */
+export function minimumText(minimum: number): string {
+  return `A group whose number and Baseline are both under ${valueText(minimum)} stays ok.`
+}
+
+/**
+ * The form's preview chart, in a sentence: the last 24 hours in bins as long
+ * as the range, with the Baseline's series when comparing the change. Bins of
+ * a day or more leave the 24 hours a point or two, which it says.
+ */
+export function previewCaption(rangeMinutes: number, comparesChange: boolean): string {
+  const bins = `The last 24 hours, in bins of ${rangeMinutes === 1 ? '1 minute' : minutesText(rangeMinutes)}`
+  const series = comparesChange ? ': Now, and its Baseline moved forward onto the same hours' : ''
+  const long = rangeMinutes >= 1440 ? ' A bin that long charts as a point or two, not a line.' : ''
+  return `${bins}${series}.${long}`
+}
+
+/** Where a range's Baseline is: the 15 minutes before, or the same 15 minutes 1 day or 1 week earlier. */
+export function baselineRangeText(baseline: MonitorBaseline | null, rangeMinutes: number): string {
+  if (baseline === 'day' || baseline === 'week') return `the same ${minutesText(rangeMinutes)} 1 ${baseline} earlier`
+  return `the ${minutesText(rangeMinutes)} before`
+}
+
+/** A number of minutes as a span, as Monitor messages word it: minute, 15 minutes, 2 hours, 1 day. */
+export function minutesText(n: number): string {
+  if (n === 1) return 'minute'
+  if (n % 1440 === 0) return n === 1440 ? '1 day' : `${n / 1440} days`
+  if (n % 60 === 0) return n === 60 ? '1 hour' : `${n / 60} hours`
+  return `${n} minutes`
 }

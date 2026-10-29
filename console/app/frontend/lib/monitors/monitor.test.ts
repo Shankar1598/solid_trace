@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { Builder } from '@/lib/logs/builder'
 import type { LogTable } from '@/lib/logs/table'
 import {
-  breached, groupLabel, groupsNow, newMonitorHref, rangeMinutesOf, runText, withRangeBins, withoutTimeBins,
+  baselineOffsetMinutes, breached, changeText, groupLabel, groupsNow, newMonitorHref, previewCaption, rangeMinutesOf, ruleText, runText, withRangeBins,
+  withBaselineSeries, withoutTimeBins,
 } from './monitor'
 
 const table = (columns: LogTable['columns'], rows: unknown[][]): LogTable => ({ columns, rows, truncated: false })
@@ -55,6 +56,44 @@ describe('groupsNow', () => {
   it('compares nothing without a threshold', () => {
     const { groups } = groupsNow(table([COUNT], [[12]]), { ...rule, threshold: null })
     expect(groups).toEqual([{ group: {}, value: 12, firing: false }])
+  })
+})
+
+describe('withBaselineSeries', () => {
+  const TIME = { name: 'time', type: 'datetime' as const, bin_seconds: 900 }
+
+  it('charts now as Now and the Baseline as Baseline, the Baseline moved forward onto the same time axis', () => {
+    const now = { ...table([TIME, COUNT], [['2026-10-17T11:45:00Z', 7]]), from: '2026-10-16T12:00:00Z', to: '2026-10-17T12:00:00Z' }
+    const before = table([TIME, COUNT], [['2026-10-17T11:30:00Z', 3]])
+
+    const merged = withBaselineSeries(now, before, 15 * 60_000)
+
+    expect(merged.columns).toEqual([{ name: 'series', type: 'string' }, TIME, COUNT])
+    expect(merged.rows).toEqual([['Now', '2026-10-17T11:45:00Z', 7], ['Baseline', '2026-10-17T11:45:00.000Z', 3]])
+    expect([merged.from, merged.to]).toEqual(['2026-10-16T12:00:00Z', '2026-10-17T12:00:00Z'])
+  })
+
+  it("keeps each group's series apart, and a cut table on either side cuts the chart", () => {
+    const now = table([TIME, SERVICE, COUNT], [['2026-10-17T11:45:00Z', 'api', 7]])
+    const before = { ...table([TIME, SERVICE, COUNT], [['2026-10-16T11:45:00Z', 'web', 2]]), truncated: true }
+
+    const merged = withBaselineSeries(now, before, 24 * 3_600_000)
+
+    expect(merged.rows).toEqual([['Now', '2026-10-17T11:45:00Z', 'api', 7], ['Baseline', '2026-10-17T11:45:00.000Z', 'web', 2]])
+    expect(merged.truncated).toBe(true)
+  })
+
+  it("puts a Baseline bin that doesn't land on one of now's bins in the bin it falls in", () => {
+    const merged = withBaselineSeries(table([TIME, COUNT], []), table([TIME, COUNT], [['2026-10-17T11:30:00Z', 3]]), 20 * 60_000)
+    expect(merged.rows).toEqual([['Baseline', '2026-10-17T11:45:00.000Z', 3]])
+  })
+})
+
+describe('baselineOffsetMinutes', () => {
+  it('puts the range just before a whole range back, and 1 day and 1 week earlier a day and a week back', () => {
+    expect(baselineOffsetMinutes('previous', 15)).toBe(15)
+    expect(baselineOffsetMinutes('day', 15)).toBe(1440)
+    expect(baselineOffsetMinutes('week', 15)).toBe(10080)
   })
 })
 
@@ -143,5 +182,87 @@ describe('runText', () => {
   it('says when a Match monitor skipped Logs to start again', () => {
     expect(runText({ ...run, firing: null, matched: 0, logs_skipped: true }, 'match'))
       .toBe('0 Logs matched. Started again from the newest Logs, skipping those ingested since the last run.')
+  })
+})
+
+describe('changeText', () => {
+  it('gives a change from the Baseline as a signed percent, to at most one decimal, a fall with a true minus', () => {
+    expect(changeText(120, 60)).toBe('+100%')
+    expect(changeText(7, 10)).toBe('−30%')
+    expect(changeText(321, 1301)).toBe('−75.3%')
+    expect(changeText(10_000, 10_001)).toBe('0%')
+    expect(changeText(70, 60)).toBe('+16.7%')
+    expect(changeText(-50, -100)).toBe('+50%')
+    expect(changeText(0, 0)).toBe('0%')
+  })
+
+  it('reads a change from a Baseline of 0 as up or down from 0', () => {
+    expect(changeText(5, 0)).toBe('up from 0')
+    expect(changeText(-3, 0)).toBe('down from 0')
+  })
+})
+
+describe('previewCaption', () => {
+  it('words the bins as the rest of the form words a span', () => {
+    expect(previewCaption(240, false)).toBe('The last 24 hours, in bins of 4 hours.')
+    expect(previewCaption(1, false)).toBe('The last 24 hours, in bins of 1 minute.')
+    expect(previewCaption(15, true)).toBe('The last 24 hours, in bins of 15 minutes: Now, and its Baseline moved forward onto the same hours.')
+  })
+
+  it('says plainly that a range of a day or more charts the 24 hours as a point or two', () => {
+    expect(previewCaption(1440, false)).toBe('The last 24 hours, in bins of 1 day. A bin that long charts as a point or two, not a line.')
+    expect(previewCaption(2880, true)).toBe(
+      'The last 24 hours, in bins of 2 days: Now, and its Baseline moved forward onto the same hours. A bin that long charts as a point or two, not a line.')
+  })
+})
+
+describe('ruleText', () => {
+  const monitor = {
+    kind: 'threshold' as const, compare: 'value' as const, baseline: null, interval_minutes: 1, range_minutes: 15,
+    operator: '>' as const, threshold: 10, notify_by_group: true, alert_on_no_data: false,
+  }
+
+  it('says what a Threshold monitor compares', () => {
+    expect(ruleText(monitor)).toBe("Runs every minute over the last 15 minutes, and fires when each group's number is > 10.")
+  })
+
+  it('describes the change rule for a Monitor comparing the change', () => {
+    const change = { ...monitor, compare: 'change' as const, baseline: 'previous' as const, threshold: 50 }
+    expect(ruleText({ ...change, operator: 'rises' })).toBe(
+      "Runs every minute over the last 15 minutes, and fires when each group's number rises by 50% or more from the 15 minutes before.")
+    expect(ruleText({ ...change, operator: 'falls', notify_by_group: false, alert_on_no_data: true })).toBe(
+      "Runs every minute over the last 15 minutes, and fires when the worst group's number falls by 50% or more from the 15 minutes before. No rows at all fire too.")
+    expect(ruleText({ ...change, operator: 'changes' })).toContain('changes by 50% or more either way from the 15 minutes before')
+  })
+
+  it('names a Baseline 1 day or 1 week earlier, and the minimum', () => {
+    const change = { ...monitor, compare: 'change' as const, operator: 'rises' as const, threshold: 50, minimum: null }
+    expect(ruleText({ ...change, baseline: 'day' })).toBe(
+      "Runs every minute over the last 15 minutes, and fires when each group's number rises by 50% or more from the same 15 minutes 1 day earlier.")
+    expect(ruleText({ ...change, baseline: 'week', minimum: 10 })).toBe(
+      "Runs every minute over the last 15 minutes, and fires when each group's number rises by 50% or more from the same 15 minutes 1 week earlier. " +
+      'A group whose number and Baseline are both under 10 stays ok.')
+  })
+
+  it("names the worst group only when the Query has by columns and doesn't notify by group", () => {
+    const change = { ...monitor, compare: 'change' as const, baseline: 'previous' as const, operator: 'rises' as const, threshold: 50 }
+    const alone = { ...change, notify_by_group: false }
+    expect(ruleText(alone, true)).toContain("fires when the worst group's number rises by 50%")
+    expect(ruleText(change, true)).toContain("fires when each group's number rises by 50%")
+    expect(ruleText(alone, false)).toBe(
+      'Runs every minute over the last 15 minutes, and fires when the number rises by 50% or more from the 15 minutes before.')
+    expect(ruleText(change, false)).toContain('fires when the number rises by 50%')
+    expect(ruleText({ ...monitor, notify_by_group: false }, false)).toBe(
+      'Runs every minute over the last 15 minutes, and fires when the number is > 10.')
+    // Not knowing the by columns, it says what notify by group says.
+    expect(ruleText(alone, null)).toContain("fires when the worst group's number")
+    expect(ruleText(change, null)).toContain("fires when each group's number")
+  })
+
+  it('words whole hours and days as hours and days', () => {
+    const change = { ...monitor, compare: 'change' as const, baseline: 'previous' as const, operator: 'rises' as const, threshold: 50 }
+    expect(ruleText({ ...change, interval_minutes: 60, range_minutes: 1440 })).toBe(
+      "Runs every 1 hour over the last 1 day, and fires when each group's number rises by 50% or more from the 1 day before.")
+    expect(ruleText({ ...change, baseline: 'week', range_minutes: 120 })).toContain('from the same 2 hours 1 week earlier.')
   })
 })

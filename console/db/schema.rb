@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_27_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_29_130000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -194,6 +194,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_27_130000) do
   create_table "monitor_states", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "group_key", default: "", null: false
+    t.float "last_baseline"
     t.float "last_value"
     t.integer "monitor_id", null: false
     t.datetime "since", null: false
@@ -204,6 +205,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_27_130000) do
 
   create_table "monitors", force: :cascade do |t|
     t.boolean "alert_on_no_data", default: false, null: false
+    t.string "baseline"
+    t.string "compare", default: "value", null: false
     t.datetime "created_at", null: false
     t.datetime "disabled_at"
     t.string "ingest_cursor"
@@ -225,6 +228,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_27_130000) do
     t.float "threshold"
     t.integer "timeouts_in_a_row", default: 0, null: false
     t.datetime "updated_at", null: false
+    t.float "minimum"
     t.index ["organization_id"], name: "index_monitors_on_organization_id"
     t.index ["project_id"], name: "index_monitors_on_project_id"
   end
