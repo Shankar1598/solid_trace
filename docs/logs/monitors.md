@@ -105,7 +105,7 @@ When EventStore is down, times out or refuses the Query, the run is an error: it
 
 A Monitor's page shows each group's state and its last 100 runs.
 
-**Turning a Monitor off** stops its runs. **Deleting** it removes it and its runs. Either one resolves each firing group, so a PagerDuty incident it opened is closed. Changing a Threshold monitor into a Match monitor does the same, and so does switching it between comparing the value and the change, since its groups' firing meant something else; the resolve says why. Changing the direction, threshold, Baseline, minimum or range resolves nothing: the next run decides. Turned back on, a group still past the threshold fires again.
+**Turning a Monitor off** stops its runs. **Deleting** it removes it and its runs. Either one resolves each firing group, so a PagerDuty incident it opened is closed. Changing a Threshold monitor into a Match monitor does the same, and so does switching it between comparing the value and the change, since its groups' firing meant something else; the resolve says why, and comparing the change, it gives each group's change at its last run, with links to the ranges that run read unless the Monitor was saved after it. Changing the direction, threshold, Baseline, minimum or range resolves nothing: the next run decides. Turned back on, a group still past the threshold fires again.
 
 **Unticking an Integration** on a Monitor's form sends that Integration a resolve for each firing group, so its PagerDuty incident is closed too. The groups stay firing for the Integrations still ticked.
 

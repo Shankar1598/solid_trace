@@ -225,9 +225,9 @@ class MonitorEvaluation
     return {} if readings.empty?
 
     big = readings.values.reject { |reading| @monitor.below_minimum?(reading.value, reading.baseline) }
-    compared = (big.presence || readings.values).map { |reading| [ reading, compared(reading) ] }
-    worst = compared.map(&:last).reduce { |a, b| @monitor.worse(a, b) }
-    { "" => compared.find { |_, number| number == worst }.first }
+    candidates = (big.presence || readings.values).map { |reading| [ reading, compared(reading) ] }
+    worst = candidates.map(&:last).reduce { |a, b| @monitor.worse(a, b) }
+    { "" => candidates.find { |_, number| number == worst }.first }
   end
 
   # The number a group's reading compares with the threshold.
@@ -256,8 +256,8 @@ class MonitorEvaluation
     facts = { "column" => column, "threshold" => @monitor.threshold, "operator" => @monitor.operator,
               "from" => from.utc.iso8601, "to" => to.utc.iso8601 }
     if baseline_range
-      facts.merge!("compare" => "change", "baseline_from" => baseline_range.first.utc.iso8601,
-        "baseline_to" => baseline_range.last.utc.iso8601)
+      facts.merge!("compare" => "change", "baseline_setting" => @monitor.baseline,
+        "baseline_from" => baseline_range.first.utc.iso8601, "baseline_to" => baseline_range.last.utc.iso8601)
     end
     changed = []
     firing_count = 0
@@ -302,8 +302,7 @@ class MonitorEvaluation
   def change_facts(reading)
     return {} unless @monitor.compares_the_change?
 
-    change = LogMonitor.change(reading.value, reading.baseline) unless reading.value.nil?
-    { "baseline" => reading.baseline, "change" => change&.finite? ? change : nil }
+    { "baseline" => reading.baseline, "change" => LogMonitor.change_fact(reading.value, reading.baseline) }
   end
 
   # ---------------------------------------------------------------------------

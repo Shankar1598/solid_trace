@@ -8,7 +8,8 @@ module Notifiers
   # - monitor_firing and monitor_resolved: value (nil for no data), column,
   #   threshold, operator, from and to (the range read); comparing the
   #   change, also compare "change", baseline, change (a percent, nil from a
-  #   Baseline of 0), baseline_from and baseline_to; a resolve says absent,
+  #   Baseline of 0), baseline_setting (the Monitor's Baseline: previous, day
+  #   or week), baseline_from and baseline_to; a resolve says absent,
   #   no_data, kind_changed, compare_changed, turned_off, deleted or unlinked
   #   when it has one of those reasons
   # - monitor_matched: logs (up to MonitorEvaluation::MATCHED_LOGS), total,
@@ -24,6 +25,7 @@ module Notifiers
 
     OPERATOR_WORDS = { ">" => "above", ">=" => "at or above", "<" => "below", "<=" => "at or below" }.freeze
     CHANGE_WORDS = { "rises" => "a rise", "falls" => "a fall", "changes" => "a change" }.freeze
+    BASELINE_WORDS = { "day" => "1 day earlier", "week" => "1 week earlier" }.freeze
     COMPARED = { "value" => "the value", "change" => "the change from a Baseline" }.freeze
 
     class << self
@@ -93,9 +95,13 @@ module Notifiers
       # From a Baseline of 0 it has no size: up from 0, or down from 0.
       def change_text(value, baseline)
         change = LogMonitor.change(value, baseline)
-        return "#{change.positive? ? 'up' : 'down'} from 0" if change.infinite?
+        from_zero_text(change) || "#{'+' if change.positive?}#{number(change.round(1))}%"
+      end
 
-        "#{'+' if change.positive?}#{number(change.round(1))}%"
+      # A change from a Baseline of 0, which has no size: up from 0, or down
+      # from 0. nil for any other change.
+      def from_zero_text(change)
+        "#{change.positive? ? 'up' : 'down'} from 0" if change.infinite?
       end
 
       private
@@ -134,12 +140,14 @@ module Notifiers
         elsif payload["no_data"] && payload["value"].nil?
           "There is data again over the last #{range}."
         elsif payload["no_data"]
-          "There is data again over the last #{range}: #{value_text(payload)}, not #{threshold_text(payload)}."
+          reading = value_text(payload)
+          reading += ", #{from_baseline_text(monitor, payload)}" if change?(payload)
+          "There is data again over the last #{range}: #{reading}, not #{threshold_text(payload)}."
         elsif payload["value"].nil?
           "No rows#{' for this group' if group_key.present?} over the last #{range}, so it is back to ok."
         elsif change?(payload)
           "#{value_text(payload)} over the last #{range}, #{from_baseline_text(monitor, payload)}, " \
-            "no longer #{CHANGE_WORDS.fetch(payload['operator'], 'a change')} of #{number(payload['threshold'])}% or more."
+            "no longer #{threshold_text(payload)}."
         else
           "#{value_text(payload)} over the last #{range}, no longer #{threshold_text(payload)}."
         end
@@ -156,23 +164,19 @@ module Notifiers
       def from_baseline_text(monitor, payload)
         value, baseline = payload["value"].to_f, payload["baseline"].to_f
         change = LogMonitor.change(value, baseline)
-        how = if change.zero? then "no change"
-        elsif change.infinite? then change.positive? ? "up" : "down"
-        else "#{change.positive? ? 'up' : 'down'} #{number(change.abs.round(1))}%"
+        from = "from #{number(baseline)}"
+        how = if change.zero? then "no change #{from}"
+        elsif change.finite? then "#{change.positive? ? 'up' : 'down'} #{number(change.abs.round(1))}% #{from}"
+        else from_zero_text(change)
         end
-        "#{how} from #{number(baseline)} #{baseline_range_text(monitor, payload)}"
+        "#{how} #{baseline_range_text(monitor, payload)}"
       end
 
       # Where the Baseline range is, after the range it's compared with: the
-      # 15 minutes before, 1 day earlier or 1 week earlier, by how far its
-      # end is from the current range's.
+      # 15 minutes before, 1 day earlier or 1 week earlier, by the Monitor's
+      # Baseline when the run read it.
       def baseline_range_text(monitor, payload)
-        to, baseline_to = payload.values_at("to", "baseline_to").map { |value| Time.iso8601(value.to_s) rescue nil }
-        offset = to - baseline_to if to && baseline_to
-        if offset == 1.week then "1 week earlier"
-        elsif offset == 1.day then "1 day earlier"
-        else "the #{range_text(monitor, payload)} before"
-        end
+        BASELINE_WORDS.fetch(payload["baseline_setting"]) { "the #{range_text(monitor, payload)} before" }
       end
 
       # count_ was 120
@@ -180,9 +184,15 @@ module Notifiers
         "#{payload['column'] || 'the value'} was #{number(payload['value'])}"
       end
 
-      # above the threshold of 100
+      # above the threshold of 100; comparing the change, a rise of 50% or
+      # more
       def threshold_text(payload)
-        "#{OPERATOR_WORDS.fetch(payload['operator'], payload['operator'])} the threshold of #{number(payload['threshold'])}"
+        threshold = number(payload["threshold"])
+        if change?(payload)
+          "#{CHANGE_WORDS.fetch(payload['operator'], 'a change')} of #{threshold}% or more"
+        else
+          "#{OPERATOR_WORDS.fetch(payload['operator'], payload['operator'])} the threshold of #{threshold}"
+        end
       end
 
       # The span the run read, from its from and to, or else the Monitor's

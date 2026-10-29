@@ -513,7 +513,8 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_state monitor, api, "firing", 120
     assert_equal 60, monitor.states.sole.last_baseline
     firing = Notification.sole.payload
-    assert_equal({ "column" => "count_", "compare" => "change", "operator" => "rises", "threshold" => 50.0,
+    assert_equal({ "column" => "count_", "compare" => "change", "baseline_setting" => "previous",
+                   "operator" => "rises", "threshold" => 50.0,
                    "value" => 120, "baseline" => 60, "change" => 100.0, "no_data" => false,
                    "from" => "2026-10-17T11:54:00Z", "to" => "2026-10-17T11:59:00Z",
                    "baseline_from" => "2026-10-17T11:49:00Z", "baseline_to" => "2026-10-17T11:54:00Z" },
