@@ -111,10 +111,14 @@ class MonitorsController < ApplicationController
   # ranges a run now would read and each group it would find, with its
   # number, its Baseline when comparing the change, and whether it would
   # fire, read and compared as a run does (MonitorEvaluation.preview). Both
-  # reads are one chart run.
+  # reads are one chart run. A rule saving would refuse (LogMonitor#rule_problems)
+  # is said in place of the groups, reading nothing.
   def preview_groups
     monitor = @current_org.monitors.new(monitor_params.merge(kind: "threshold"))
     raise ActiveRecord::RecordNotFound, "no such Project" unless monitor.project
+
+    problems = monitor.rule_problems
+    return render json: { error: "#{problems.join('. ')}." }, status: :unprocessable_content if problems.any?
 
     found = ChartRuns.hold { MonitorEvaluation.preview(monitor, Time.current) }
     baseline_from, baseline_to = found.baseline_range&.map { |at| at.utc.iso8601 }

@@ -487,8 +487,26 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     preview_groups(baseline: "week")
 
     assert_response :unprocessable_content
-    assert_match(/\AThe Baseline reaches 7 days and 5 minutes back, past the Project's Log Retention of 3 days/, response.parsed_body["error"])
+    assert_match(/\ABaseline reaches 7 days and 5 minutes back, past the Project's Log Retention of 3 days/, response.parsed_body["error"])
     assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+  end
+
+  test "a percent of 0 or less, or a Baseline saving would refuse, says why in place of the groups, reading nothing" do
+    WebMock::RequestRegistry.instance.reset!
+
+    {
+      { threshold: 0 } => "Threshold must be a percent greater than 0",
+      { threshold: -5 } => "Threshold must be a percent greater than 0",
+      { baseline: "day", range_minutes: 2880 } => "Baseline can't be 1 day earlier with a range over 1 day",
+      { minimum: 0 } => "Minimum must be greater than 0",
+    }.each do |settings, reason|
+      preview_groups(**settings)
+
+      assert_response :unprocessable_content
+      assert_match(/\A#{Regexp.escape(reason)}/, response.parsed_body["error"], settings.inspect)
+    end
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/validate")
   end
 
   test "with alert on no data the groups preview fires on no rows now, whatever the Baseline had" do

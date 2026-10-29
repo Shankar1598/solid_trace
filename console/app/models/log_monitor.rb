@@ -79,6 +79,20 @@ class LogMonitor < ApplicationRecord
   # Before the dependent deletes, which take its states and Integrations.
   before_destroy :resolve_groups_on_delete, prepend: true
 
+  # The fields of the rule a change preview compares by, which it checks as
+  # saving would before reading anything.
+  RULE_FIELDS = %i[compare operator threshold baseline minimum].freeze
+
+  # What saving would refuse in the rule, worded as the form words each
+  # beside its field: "Threshold must be a percent greater than 0". The Query
+  # isn't checked (the preview's reads say what's wrong with it), and a
+  # threshold not yet given isn't refused, so the preview lists the groups.
+  def rule_problems
+    valid?(:preview)
+    fields = threshold.nil? ? RULE_FIELDS - [ :threshold ] : RULE_FIELDS
+    fields.flat_map { |field| errors.full_messages_for(field) }
+  end
+
   def enabled?
     disabled_at.nil?
   end
@@ -260,6 +274,7 @@ class LogMonitor < ApplicationRecord
   # EventStore checks the Query when what it runs changes, and when the
   # Monitor is turned back on, which arms a Match monitor again.
   def query_check_needed?
+    return false if validation_context == :preview
     return false if errors.include?(:query) || errors.include?(:project) || project.nil? || kind.nil?
 
     new_record? || will_save_change_to_query? || will_save_change_to_kind? ||
