@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { Builder } from '@/lib/logs/builder'
 import type { LogTable } from '@/lib/logs/table'
 import {
-  breached, changeText, groupLabel, groupsNow, newMonitorHref, rangeMinutesOf, readingText, ruleText, runText, withRangeBins,
-  withoutTimeBins,
+  baselineOffsetMinutes, breached, changeText, groupLabel, groupsNow, newMonitorHref, rangeMinutesOf, readingText, ruleText, runText, withRangeBins,
+  withBaselineSeries, withoutTimeBins,
 } from './monitor'
 
 const table = (columns: LogTable['columns'], rows: unknown[][]): LogTable => ({ columns, rows, truncated: false })
@@ -56,6 +56,44 @@ describe('groupsNow', () => {
   it('compares nothing without a threshold', () => {
     const { groups } = groupsNow(table([COUNT], [[12]]), { ...rule, threshold: null })
     expect(groups).toEqual([{ group: {}, value: 12, firing: false }])
+  })
+})
+
+describe('withBaselineSeries', () => {
+  const TIME = { name: 'time', type: 'datetime' as const, bin_seconds: 900 }
+
+  it('charts now as Now and the Baseline as Baseline, the Baseline moved forward onto the same time axis', () => {
+    const now = { ...table([TIME, COUNT], [['2026-10-17T11:45:00Z', 7]]), from: '2026-10-16T12:00:00Z', to: '2026-10-17T12:00:00Z' }
+    const before = table([TIME, COUNT], [['2026-10-17T11:30:00Z', 3]])
+
+    const merged = withBaselineSeries(now, before, 15 * 60_000)
+
+    expect(merged.columns).toEqual([{ name: 'series', type: 'string' }, TIME, COUNT])
+    expect(merged.rows).toEqual([['Now', '2026-10-17T11:45:00Z', 7], ['Baseline', '2026-10-17T11:45:00.000Z', 3]])
+    expect([merged.from, merged.to]).toEqual(['2026-10-16T12:00:00Z', '2026-10-17T12:00:00Z'])
+  })
+
+  it("keeps each group's series apart, and a cut table on either side cuts the chart", () => {
+    const now = table([TIME, SERVICE, COUNT], [['2026-10-17T11:45:00Z', 'api', 7]])
+    const before = { ...table([TIME, SERVICE, COUNT], [['2026-10-16T11:45:00Z', 'web', 2]]), truncated: true }
+
+    const merged = withBaselineSeries(now, before, 24 * 3_600_000)
+
+    expect(merged.rows).toEqual([['Now', '2026-10-17T11:45:00Z', 'api', 7], ['Baseline', '2026-10-17T11:45:00.000Z', 'web', 2]])
+    expect(merged.truncated).toBe(true)
+  })
+
+  it("puts a Baseline bin that doesn't land on one of now's bins in the bin it falls in", () => {
+    const merged = withBaselineSeries(table([TIME, COUNT], []), table([TIME, COUNT], [['2026-10-17T11:30:00Z', 3]]), 20 * 60_000)
+    expect(merged.rows).toEqual([['Baseline', '2026-10-17T11:45:00.000Z', 3]])
+  })
+})
+
+describe('baselineOffsetMinutes', () => {
+  it('puts the range just before a whole range back, and 1 day and 1 week earlier a day and a week back', () => {
+    expect(baselineOffsetMinutes('previous', 15)).toBe(15)
+    expect(baselineOffsetMinutes('day', 15)).toBe(1440)
+    expect(baselineOffsetMinutes('week', 15)).toBe(10080)
   })
 })
 

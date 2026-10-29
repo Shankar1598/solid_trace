@@ -65,6 +65,29 @@ class MonitorEvaluation
   Reading = Data.define(:value, :baseline)
   NO_DATA = Reading.new(nil, nil)
 
+  # What a Threshold run reads: the number column's name, the current range
+  # [from, to), the Baseline's [from, to) when comparing the change, and
+  # each group's Reading by group key.
+  Found = Data.define(:column, :from, :to, :baseline_range, :groups)
+
+  # What a Threshold run at now would find, for the form's preview of a
+  # Monitor not yet saved: the ranges it reads, and each group's columns,
+  # Reading and whether it would fire, as the run decides it. It reads
+  # EventStore as a run does but takes no lease and writes nothing. Without
+  # a threshold only no data fires. Raises Unusable for a table a run can't
+  # compare, and EventStore's errors.
+  def self.preview(monitor, now)
+    new(monitor, now).preview
+  end
+
+  def preview
+    found = read_threshold
+    found.with(groups: found.groups.map do |key, reading|
+      firing = @monitor.threshold.nil? ? reading.value.nil? : fires?(reading)
+      { group: key.empty? ? {} : JSON.parse(key), value: reading.value, baseline: reading.baseline, firing: firing }
+    end)
+  end
+
   # The MonitorRun recorded, or nil when another run of the Monitor is going.
   def self.run(monitor, now)
     started = take(monitor)
@@ -110,8 +133,24 @@ class MonitorEvaluation
   # ---------------------------------------------------------------------------
 
   def run_threshold
+    found = read_threshold
+    record do
+      firing = move_states(found.groups, column: found.column, from: found.from, to: found.to,
+        baseline_range: found.baseline_range)
+      finish(firing: firing)
+    end
+  rescue EventStore::TimedOut => e
+    failed(EventStore.error_text(e.body))
+  rescue Unusable => e
+    failed(e.message)
+  end
+
+  # What a Threshold run at now reads: the current range's table and,
+  # comparing the change, the Baseline range's, as each group's Reading. A
+  # Baseline older than the Project's Log Retention is Unusable.
+  def read_threshold
     if @monitor.compares_the_change? && (problem = @monitor.baseline_past_retention)
-      return failed("The Baseline #{problem}.")
+      raise Unusable, "The Baseline #{problem}."
     end
 
     from, to = @monitor.window(@now)
@@ -124,15 +163,13 @@ class MonitorEvaluation
     end
     groups = @monitor.notify_by_group ? readings : the_worst(readings)
     groups = { "" => NO_DATA } if groups.empty? && @monitor.alert_on_no_data
+    Found.new(column: column, from: from, to: to, baseline_range: baseline_range, groups: groups)
+  end
 
-    record do
-      firing = move_states(groups, column: column, from: from, to: to, baseline_range: baseline_range)
-      finish(firing: firing)
-    end
-  rescue EventStore::TimedOut => e
-    failed(EventStore.error_text(e.body))
-  rescue Unusable => e
-    failed(e.message)
+  # Whether a group whose reading this is fires: no data does, and a number
+  # does when it, or comparing the change its change, passes the threshold.
+  def fires?(reading)
+    reading.value.nil? || @monitor.breached?(reading.value, reading.baseline)
   end
 
   # The table the Query gives over [from, to), stopped after timeout
@@ -229,7 +266,7 @@ class MonitorEvaluation
       value, baseline = reading.value, reading.baseline
       state = states.delete(key)
       status, since = state ? [ state.status, state.since ] : [ "ok", @now ]
-      firing = value.nil? || @monitor.breached?(value, baseline)
+      firing = fires?(reading)
       firing_count += 1 if firing
       if firing != (status == "firing")
         kind = firing ? IntegrationNotification::MONITOR_FIRING : IntegrationNotification::MONITOR_RESOLVED
