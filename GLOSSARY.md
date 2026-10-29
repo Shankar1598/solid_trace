@@ -145,8 +145,12 @@ A saved **Query** on one of an organization's **Projects** that runs every few m
 _Avoid_: alert, alert rule, check
 
 **Threshold monitor**:
-A **Monitor** whose **Query** ends in a summarize of one number per row. Each row is a group, named by its other columns, and each run reads the Monitor's range ending 60 seconds before the run. A group is **firing** while its number passes the threshold and **ok** otherwise.
+A **Monitor** whose **Query** ends in a summarize of one number per row. Each row is a group, named by its other columns, and each run reads the Monitor's range ending 60 seconds before the run. A group is **firing** while its number passes the threshold and **ok** otherwise. The number is either the value itself or its percent change from its **Baseline**.
 _Avoid_: metric alert, threshold alert, threshold rule
+
+**Baseline**:
+A **Threshold monitor** group's number over an earlier range of the same length: the range just before, one day earlier, or one week earlier. A Monitor that compares the change fires when the group's number rises, falls or changes by at least its threshold percent from its Baseline.
+_Avoid_: previous value, comparison window, reference period
 
 **Match monitor**:
 A **Monitor** whose **Query** returns **Logs**. Each run reads the Logs ingested since the last one, in **Log batch** order, and sends one **Notification** when any match. It keeps no state between runs, so it is never firing.
