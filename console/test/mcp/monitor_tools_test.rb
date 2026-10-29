@@ -164,7 +164,7 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     refused = {
       { compare: "change", baseline: "previous", operator: ">", threshold: 50 } => "Not saved: Operator must be rises, falls or changes.",
       { compare: "value", operator: "rises", threshold: 50 } => "Not saved: Operator must be >, >=, < or <=.",
-      { compare: "change", operator: "rises", threshold: 50 } => "Not saved: Baseline must be previous, the range just before.",
+      { compare: "change", operator: "rises", threshold: 50 } => "Not saved: Baseline must be previous, day or week.",
       { compare: "change", baseline: "previous", operator: "falls", threshold: 0 } => "Not saved: Threshold must be a percent greater than 0.",
     }
     refused.each do |fields, error|
@@ -172,6 +172,60 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
       assert_equal error, answer.text, fields.inspect
     end
     assert_not LogMonitor.exists?(name: "Refused")
+  end
+
+  test "create_monitor makes a Monitor comparing with 1 day earlier with a minimum, and get_monitor gives both" do
+    answer = call_tool(:create_monitor, user: @user, project: "shop", name: "Traffic halved", kind: "threshold",
+      query: "['shop']\n| summarize count()", compare: "change", baseline: "day", operator: "falls", threshold: 50,
+      minimum: 10)
+
+    assert_not answer.error?
+    made = @acme.monitors.find_by!(name: "Traffic halved")
+    assert_equal [ "day", 10.0 ], [ made.baseline, made.minimum ]
+    assert_equal [ "day", 10.0 ], call_tool(:get_monitor, user: @user, monitor: made.id).json.values_at("baseline", "minimum")
+
+    call_tool(:update_monitor, user: @user, monitor: made.id, baseline: "week", minimum: nil)
+    assert_equal [ "week", nil ], call_tool(:get_monitor, user: @user, monitor: made.id).json.values_at("baseline", "minimum")
+  end
+
+  test "saving refuses 1 day earlier with a range over a day, and a Baseline past the Project's Retention, saying why" do
+    query = "['shop']\n| summarize count()"
+    overlap = call_tool(:create_monitor, user: @user, project: "shop", name: "Refused", kind: "threshold", query: query,
+      compare: "change", baseline: "day", operator: "rises", threshold: 50, range_minutes: 2 * 24 * 60)
+    assert overlap.error?
+    assert_equal "Not saved: Baseline can't be 1 day earlier with a range over 1 day, as the two ranges would overlap: " \
+      "choose 1 week earlier, or a range of at most 1 day.", overlap.text
+
+    @shop.update!(log_retention_days: 3)
+    past = call_tool(:create_monitor, user: @user, project: "shop", name: "Refused", kind: "threshold", query: query,
+      compare: "change", baseline: "week", operator: "rises", threshold: 50, range_minutes: 60)
+    assert past.error?
+    assert_equal "Not saved: Baseline reaches 7 days and 1 hour back, past the Project's Log Retention of 3 days, so it " \
+      "would have no Logs to compare with: choose a nearer Baseline or a shorter range, or keep the Project's Logs longer.",
+      past.text
+    assert_not LogMonitor.exists?(name: "Refused")
+  end
+
+  test "a Baseline past the instance's default Retention is refused when the Project keeps no Retention of its own" do
+    InstanceSetting.current.update!(default_log_retention_days: 5)
+
+    answer = call_tool(:update_monitor, user: @user, monitor: @monitor.id, compare: "change", baseline: "week",
+      operator: "rises", threshold: 50)
+
+    assert_match "past the Project's Log Retention of 5 days", answer.text
+    assert @monitor.reload.compare_value?
+  end
+
+  test "update_monitor changing the Baseline or the minimum resolves nothing" do
+    @monitor.update!(compare: "change", baseline: "previous", operator: "rises", threshold: 50)
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+
+    call_tool(:update_monitor, user: @user, monitor: @monitor.id, baseline: "week")
+    call_tool(:update_monitor, user: @user, monitor: @monitor.id, minimum: 25)
+
+    assert_equal [ "week", 25.0 ], [ @monitor.reload.baseline, @monitor.minimum ]
+    assert @monitor.states.reload.sole.status_firing?
+    assert_equal 0, Notification.where(monitor_id: @monitor.id).count
   end
 
   test "update_monitor switching between the value and the change resolves the firing groups; other edits resolve nothing" do

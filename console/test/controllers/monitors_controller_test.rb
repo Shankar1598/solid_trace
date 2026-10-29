@@ -190,8 +190,48 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
 
     assert_not LogMonitor.exists?(name: "Refused")
     errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
-    assert_equal [ [ "must be rises, falls or changes" ], [ "must be previous, the range just before" ],
+    assert_equal [ [ "must be rises, falls or changes" ], [ "must be previous, day or week" ],
                    [ "must be a percent greater than 0" ] ], errors.values_at("operator", "baseline", "threshold")
+  end
+
+  test "a member makes a Monitor comparing with 1 week earlier with a minimum, and its edit page has both" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Weekly", compare: "change", baseline: "week", operator: "changes",
+        threshold: 40, minimum: 10) }, as: :json
+
+    monitor = @organization.monitors.find_by!(name: "Weekly")
+    assert_equal [ "week", 10.0 ], [ monitor.baseline, monitor.minimum ]
+    edited = inertia_page(edit_monitor_url(monitor, org_slug: @organization.slug), "Monitors/Edit")["monitor"]
+    assert_equal [ "week", 10.0 ], edited.values_at("baseline", "minimum")
+    assert_nil inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["monitor"]["minimum"]
+  end
+
+  test "saving refuses 1 day earlier with a range over a day, and a Baseline past Retention, beside the Baseline" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Refused", compare: "change", baseline: "day", operator: "rises",
+        threshold: 50, range_minutes: 2 * 24 * 60) }, as: :json
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_equal [ "can't be 1 day earlier with a range over 1 day, as the two ranges would overlap: choose 1 week " \
+      "earlier, or a range of at most 1 day" ], errors["baseline"]
+
+    @project.update!(log_retention_days: 7)
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Refused", compare: "change", baseline: "week", operator: "rises",
+        threshold: 50) }, as: :json
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_match(/\Areaches 7 days and 15 minutes back, past the Project's Log Retention of 7 days/, errors["baseline"].sole)
+    assert_not LogMonitor.exists?(name: "Refused")
+  end
+
+  test "changing a firing change Monitor's Baseline or minimum resolves nothing" do
+    @monitor.update!(compare: "change", baseline: "previous", operator: "rises", threshold: 50)
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+
+    patch monitor_url(@monitor, org_slug: @organization.slug), params: { monitor: { baseline: "day", minimum: 5 } }, as: :json
+
+    assert_equal [ "day", 5.0 ], [ @monitor.reload.baseline, @monitor.minimum ]
+    assert @monitor.states.reload.sole.status_firing?
+    assert_equal 0, Notification.where(monitor_id: @monitor.id).count
   end
 
   test "switching a firing Monitor to compare the change resolves its groups; changing the threshold or direction doesn't" do
@@ -421,6 +461,36 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "group" => {}, "value" => 20, "baseline" => 10, "firing" => true }, one.("changes"), "+100% beats -60%")
   end
 
+  test "in the groups preview a group below the minimum is ok, and the larger of its number and Baseline decides" do
+    answer_ranges(now: [ [ "api", 4 ], [ "web", 0 ], [ "jobs", 30 ] ], before: [ [ "api", 2 ], [ "web", 1_000 ], [ "jobs", 10 ] ])
+
+    assert_equal [ "jobs" ], firing_in(preview_groups(operator: "rises", minimum: 10)), "api's 2 to 4 is under the minimum"
+    assert_equal [ "web" ], firing_in(preview_groups(operator: "falls", minimum: 10)), "1,000 to 0 still falls"
+    assert_equal [ "api", "jobs", "web" ], firing_in(preview_groups(operator: "changes", minimum: ""))
+  end
+
+  test "the groups preview compares with a Baseline 1 day or 1 week earlier as a run would" do
+    { "day" => 1.day, "week" => 1.week }.each do |baseline, offset|
+      answer_ranges(now: [ [ "api", 90 ] ], before: [ [ "api", 60 ] ], offset: offset)
+
+      answer = preview_groups(baseline: baseline)
+
+      assert_equal (Time.current - LogMonitor::PROCESSING_LAG - offset).utc.iso8601, answer["baseline_to"]
+      assert_equal [ { "group" => { "service" => "api" }, "value" => 90, "baseline" => 60, "firing" => true } ], answer["groups"]
+    end
+  end
+
+  test "a Baseline past the Project's Log Retention says so in place of the groups, reading nothing" do
+    @project.update!(log_retention_days: 3)
+    WebMock::RequestRegistry.instance.reset!
+
+    preview_groups(baseline: "week")
+
+    assert_response :unprocessable_content
+    assert_match(/\AThe Baseline reaches 7 days and 5 minutes back, past the Project's Log Retention of 3 days/, response.parsed_body["error"])
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+  end
+
   test "with alert on no data the groups preview fires on no rows now, whatever the Baseline had" do
     answer_ranges(now: [], before: [ [ "api", 100 ] ])
 
@@ -531,12 +601,12 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
   end
 
   # Freezes the clock and answers the 5-minute range a run now reads with
-  # now, and the range just before it with before: rows of service and
-  # count_.
-  def answer_ranges(now:, before:, range_minutes: 5)
+  # now, and the range offset before it (by default the range just before)
+  # with before: rows of service and count_.
+  def answer_ranges(now:, before:, range_minutes: 5, offset: range_minutes.minutes)
     freeze_time
     to = Time.current - LogMonitor::PROCESSING_LAG
-    { to => now, to - range_minutes.minutes => before }.each do |end_at, rows|
+    { to => now, to - offset => before }.each do |end_at, rows|
       stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
         .with(body: hash_including("from" => (end_at - range_minutes.minutes).utc.iso8601(3)))
         .to_return(status: 200, body: { table: { columns: [ SERVICE, COUNT_COLUMN ], rows: rows, truncated: false } }.to_json)
