@@ -7,7 +7,8 @@ module McpTools
     include MonitorTool
 
     description "Gives a Monitor: its Project, Query, kind and settings, its status, each group's state (firing first, at most " \
-                "#{STATES_SHOWN}), its last #{RUNS_SHOWN} runs, newest first, and the Integrations it tells."
+                "#{STATES_SHOWN}) with its last value and, comparing the change, its last Baseline, its last #{RUNS_SHOWN} " \
+                "runs, newest first, and the Integrations it tells."
     read_only!
     takes_monitor
 

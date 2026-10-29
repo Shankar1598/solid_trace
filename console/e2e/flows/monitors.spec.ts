@@ -168,3 +168,44 @@ test('a member makes a Threshold monitor from the explorer; Run now fires it int
   expect(titles.findIndex(t => t.includes(`Resolved: ${name}`))).toBeGreaterThan(titles.findIndex(t => t.includes(`Firing: ${name}`)))
   expect(errors).toEqual([])
 })
+
+test('a member makes a Monitor comparing the change from the range just before; Run now shows each group\'s Baseline and change', async ({ page }) => {
+  test.setTimeout(120_000)
+  const errors = watchErrors(page)
+  const name = `Flow change monitor ${Date.now()}`
+
+  await page.goto(`/${ORG}/monitors/new`)
+  await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  await page.getByLabel('Name').fill(name)
+  await page.getByLabel('Over the last (minutes)').fill('1440')
+  await page.getByLabel('Run every (minutes)').fill('60')
+
+  // The change: a direction, a percent and the Baseline, the range just before.
+  await page.getByRole('group', { name: 'Compare' }).getByRole('button', { name: 'The change' }).click()
+  await expect(page.getByRole('combobox', { name: 'Direction' })).toHaveText('rises by')
+  await expect(page.getByRole('combobox', { name: 'Baseline' })).toHaveText('The range just before')
+  await expect(page.getByLabel('Threshold', { exact: true })).toHaveCount(0)
+
+  // A percent of 0 is refused beside the field.
+  await page.getByLabel('Threshold percent').fill('0')
+  await page.getByRole('button', { name: 'Create monitor' }).click()
+  await expect(page.getByText('Threshold must be a percent greater than 0')).toBeVisible()
+
+  await page.getByLabel('Threshold percent').fill('1')
+  await page.getByRole('button', { name: 'Create monitor' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  await expect(page.getByText("fires when the worst group's number rises by 1% or more from the 1440 minutes before.")).toBeVisible()
+
+  // Run now: the group shows its number with its Baseline and change.
+  await page.getByRole('button', { name: 'Run now' }).click()
+  await expect(page.getByText(/Ran the Monitor: /)).toBeVisible()
+  const groups = page.getByRole('table', { name: 'Groups' })
+  await expect(groups).toContainText('Last value, Baseline and change')
+  await expect(groups.locator('[data-group-reading]').first()).toHaveText(/^[\d,.]+ \(baseline [\d,.]+, ([+-]?[\d.]+%|up from 0|down from 0)\)$/)
+  await shoot(page, 'monitor-show-change', { fullPage: true })
+
+  await page.getByRole('button', { name: 'Delete' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete monitor' }).click()
+  await expect(page.locator(`[data-monitor-row="${name}"]`)).toHaveCount(0)
+  expect(errors).toEqual([])
+})

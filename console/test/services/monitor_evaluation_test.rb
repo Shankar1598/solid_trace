@@ -406,6 +406,180 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
+  # Threshold: comparing the change
+  # ---------------------------------------------------------------------------
+
+  test "a change run reads its range, then the range just before it with what's left of the run's 30 s" do
+    monitor = change_monitor(range_minutes: 15)
+    asked = []
+    stub_request(:post, @query_url).with(body: hash_including("from", "to")).to_return do |request|
+      body = JSON.parse(request.body)
+      asked << body.values_at("from", "to", "timeout_seconds")
+      sleep 0.05 if asked.size == 1
+      { status: 200, body: { table: { columns: [ COUNT_COLUMN ], rows: [ [ 3 ] ], truncated: false } }.to_json }
+    end
+
+    evaluate(monitor)
+
+    assert_equal [ "2026-10-17T11:44:00.000Z", "2026-10-17T11:59:00.000Z", LogMonitor::RUN_TIMEOUT_SECONDS ], asked.first
+    assert_equal [ "2026-10-17T11:29:00.000Z", "2026-10-17T11:44:00.000Z" ], asked.last.first(2)
+    assert_operator asked.last.last, :<=, LogMonitor::RUN_TIMEOUT_SECONDS - 0.05
+    assert_operator asked.last.last, :>, LogMonitor::RUN_TIMEOUT_SECONDS - 5
+  end
+
+  test "a group fires when its number rises, falls or changes by at least the threshold percent" do
+    rises = change_monitor(operator: "rises")
+    falls = change_monitor(operator: "falls")
+    changes = change_monitor(operator: "changes")
+    answer_ranges(now: [ [ "api", 90 ], [ "web", 30 ], [ "jobs", 80 ] ],
+      before: [ [ "api", 60 ], [ "web", 60 ], [ "jobs", 60 ] ])
+
+    [ rises, falls, changes ].each { |monitor| evaluate(monitor) }
+
+    assert_equal [ "api" ], firing_services(rises)
+    assert_equal [ "web" ], firing_services(falls)
+    assert_equal [ "api", "web" ], firing_services(changes)
+  end
+
+  test "a rise from a Baseline of 0 fires as the biggest rise, a fall below 0 as the biggest fall, and 0 then and now is no change" do
+    rises = change_monitor(operator: "rises", threshold: 1_000_000)
+    falls = change_monitor(operator: "falls", threshold: 1_000_000)
+    changes = change_monitor(operator: "changes", threshold: 1)
+    answer_ranges(now: [ [ "api", 5 ], [ "web", 0 ], [ "jobs", -3 ] ],
+      before: [ [ "api", 0 ], [ "web", 0 ], [ "jobs", 0 ] ])
+
+    [ rises, falls, changes ].each { |monitor| evaluate(monitor) }
+
+    assert_equal [ "api" ], firing_services(rises)
+    assert_equal [ "jobs" ], firing_services(falls)
+    assert_equal [ "api", "jobs" ], firing_services(changes)
+  end
+
+  test "a row now with none in the Baseline rises from 0, and a row in the Baseline with none now is ok" do
+    monitor = change_monitor(operator: "changes")
+    answer_ranges(now: [ [ "api", 4 ] ], before: [ [ "web", 100 ] ])
+
+    evaluate(monitor)
+
+    assert_equal [ "api" ], firing_services(monitor)
+    assert_equal [ { "service" => "api" }.to_json ], monitor.states.pluck(:group_key)
+    assert_equal 0, monitor.states.sole.last_baseline
+  end
+
+  test "a negative number's change is worked out from the Baseline's size" do
+    rises = change_monitor(operator: "rises")
+    falls = change_monitor(operator: "falls")
+    answer_ranges(now: [ [ "api", -50 ], [ "web", -150 ] ], before: [ [ "api", -100 ], [ "web", -100 ] ])
+
+    [ rises, falls ].each { |monitor| evaluate(monitor) }
+
+    assert_equal [ "api" ], firing_services(rises), "-100 to -50 is up 50%"
+    assert_equal [ "web" ], firing_services(falls), "-100 to -150 is down 50%"
+  end
+
+  test "not notifying by group, the worst change decides, not the worst number" do
+    rises = change_monitor(operator: "rises", notify_by_group: false)
+    falls = change_monitor(operator: "falls", notify_by_group: false)
+    changes = change_monitor(operator: "changes", notify_by_group: false)
+    answer_ranges(now: [ [ "api", 110 ], [ "web", 20 ], [ "jobs", 40 ] ],
+      before: [ [ "api", 100 ], [ "web", 10 ], [ "jobs", 100 ] ])
+
+    [ rises, falls, changes ].each { |monitor| evaluate(monitor) }
+
+    assert_equal [ "firing", 20, 10 ], state_of(rises), "web is up 100%, though api's number is larger"
+    assert_equal [ "firing", 40, 100 ], state_of(falls), "jobs is down 60%"
+    assert_equal [ "firing", 20, 10 ], state_of(changes), "web's +100% is bigger than jobs's -60%"
+  end
+
+  test "alert on no data looks only at the current range's table" do
+    alerting = change_monitor(alert_on_no_data: true)
+    quiet = change_monitor
+    answer_ranges(now: [], before: [ [ "api", 100 ] ])
+
+    evaluate(alerting)
+    evaluate(quiet)
+
+    assert_equal [ "firing", nil, nil ], state_of(alerting)
+    assert_empty quiet.states
+    assert Notification.sole.payload["no_data"]
+  end
+
+  test "a group keeps its last Baseline, and its Notifications carry the Baseline, the change and the Baseline's range" do
+    monitor = change_monitor(operator: "rises", threshold: 50)
+    api = { "service" => "api" }.to_json
+    answer_ranges(now: [ [ "api", 120 ] ], before: [ [ "api", 60 ] ])
+    evaluate(monitor)
+
+    assert_state monitor, api, "firing", 120
+    assert_equal 60, monitor.states.sole.last_baseline
+    firing = Notification.sole.payload
+    assert_equal({ "column" => "count_", "compare" => "change", "operator" => "rises", "threshold" => 50.0,
+                   "value" => 120, "baseline" => 60, "change" => 100.0, "no_data" => false,
+                   "from" => "2026-10-17T11:54:00Z", "to" => "2026-10-17T11:59:00Z",
+                   "baseline_from" => "2026-10-17T11:49:00Z", "baseline_to" => "2026-10-17T11:54:00Z" },
+      firing.except("monitor"))
+
+    travel 1.minute
+    answer_ranges(now: [ [ "api", 70 ] ], before: [ [ "api", 0 ] ])
+    evaluate(monitor)
+    assert_state monitor, api, "firing", 70
+    assert_equal 0, monitor.states.sole.last_baseline
+    assert_equal 1, Notification.count
+
+    travel 1.minute
+    answer_ranges(now: [ [ "api", 70 ] ], before: [ [ "api", 60 ] ])
+    evaluate(monitor)
+    assert_state monitor, api, "ok", 70
+    resolved = Notification.order(:id).last.payload
+    assert_equal [ 70, 60 ], resolved.values_at("value", "baseline")
+    assert_in_delta 16.667, resolved["change"], 0.001
+  end
+
+  test "a rise from a Baseline of 0 is carried with no change number, since it has no size" do
+    monitor = change_monitor(operator: "rises")
+    answer_ranges(now: [ [ "api", 5 ] ], before: [])
+
+    evaluate(monitor)
+
+    assert_equal [ 5, 0, nil ], Notification.sole.payload.values_at("value", "baseline", "change")
+  end
+
+  test "a Baseline Query that fails, times out or is cut is an error that changes no state" do
+    monitor = change_monitor(operator: "rises")
+    api = { "service" => "api" }.to_json
+    answer_ranges(now: [ [ "api", 120 ] ], before: [ [ "api", 60 ] ])
+    evaluate(monitor)
+
+    cut = { table: { columns: [ SERVICE, COUNT_COLUMN ], rows: [ [ "api", 200 ] ], truncated: true } }.to_json
+    {
+      { status: 500, body: "Internal error" } => /EventStore error: 500/,
+      { status: 504, body: timeout_body } => /\Athe run was stopped after 30 s/,
+      { status: 200, body: cut } => /\A#{Regexp.escape(MonitorEvaluation::TABLE_CUT)}\z/,
+    }.each do |answer, error|
+      travel 1.minute
+      answer_ranges(now: [ [ "api", 10 ] ], before: [ [ "api", 60 ] ])
+      baseline_from = (Time.current - LogMonitor::PROCESSING_LAG - 10.minutes).utc.iso8601(3)
+      stub_request(:post, @query_url).with(body: hash_including("from" => baseline_from)).to_return(**answer)
+      run = evaluate(monitor)
+
+      assert run.status_error?
+      assert_match error, run.error
+      assert_state monitor, api, "firing", 120
+      assert_equal 60, monitor.states.sole.last_baseline
+      assert_equal 1, Notification.count
+    end
+  end
+
+  test "a Monitor comparing the value reads its range once" do
+    monitor = threshold_monitor
+    answer_table([ [ 3 ] ])
+
+    evaluate(monitor)
+
+    assert_requested(:post, @query_url, times: 1)
+  end
+
+  # ---------------------------------------------------------------------------
   # Threshold: no data
   # ---------------------------------------------------------------------------
 
@@ -715,6 +889,33 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
   def threshold_monitor(**attributes)
     create(:monitor, project: @project, operator: ">", threshold: 10, integrations: [ @slack ], **attributes)
       .tap { WebMock::RequestRegistry.instance.reset! }
+  end
+
+  # A Monitor comparing the change from the range just before, by service.
+  def change_monitor(**attributes)
+    threshold_monitor(compare: "change", baseline: "previous", operator: "rises", threshold: 50,
+      notify_by_group: true, **attributes)
+  end
+
+  # Answers the current range with now and the range just before it with
+  # before, rows of service and count_, for a Monitor of range_minutes run
+  # at the current time.
+  def answer_ranges(now:, before:, range_minutes: 5)
+    to = Time.current - LogMonitor::PROCESSING_LAG
+    { to => now, to - range_minutes.minutes => before }.each do |end_at, rows|
+      stub_request(:post, @query_url).with(body: hash_including("from" => (end_at - range_minutes.minutes).utc.iso8601(3)))
+        .to_return(status: 200, body: { table: { columns: [ SERVICE, COUNT_COLUMN ], rows: rows, truncated: false } }.to_json)
+    end
+  end
+
+  # The services of a Monitor's firing groups.
+  def firing_services(monitor)
+    monitor.states.select(&:status_firing?).map { |state| state.group["service"] }.sort
+  end
+
+  # A Monitor of one group's status, last value and last Baseline.
+  def state_of(monitor)
+    monitor.states.sole.then { |state| [ state.status, state.last_value, state.last_baseline ] }
   end
 
   def match_monitor

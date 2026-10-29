@@ -6,7 +6,8 @@ module McpTools
     include MonitorTool
 
     description "Makes a Monitor on one of the Organization's Projects. It is on, and runs every interval_minutes, telling " \
-                "the Integrations of integration_ids what it finds. A threshold Monitor needs operator and threshold. " \
+                "the Integrations of integration_ids what it finds. A threshold Monitor needs operator and threshold; one comparing " \
+                "the change from its Baseline also needs compare change and baseline, with rises, falls or changes and a percent. " \
                 "EventStore checks the Query before it's saved. run_monitor runs it now. #{READING_LESS}"
     writes!
     takes_project

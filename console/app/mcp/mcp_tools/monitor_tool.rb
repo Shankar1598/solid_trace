@@ -32,12 +32,33 @@ module McpTools
         description: "How far back a threshold Monitor's run reads, in minutes, 1 to #{LogMonitor::MAX_RANGE_MINUTES}, " \
                      "ending 60 seconds before the run. 5 when made.",
       },
+      compare: {
+        type: "string",
+        enum: LogMonitor.compares.keys,
+        description: "What a threshold Monitor compares with threshold. value: each group's number. change: each group's percent " \
+                     "change from its Baseline, its number over the range of baseline, so the Query runs twice per run. Switching " \
+                     "between them resolves the Monitor's firing groups. value when made.",
+      },
+      baseline: {
+        type: "string",
+        enum: LogMonitor::BASELINES,
+        description: "Where a Monitor comparing the change finds each group's Baseline: previous, the range of range_minutes " \
+                     "just before the one it reads. Needed with compare change. A group with no row in the Baseline rises from 0, " \
+                     "which counts as the biggest rise; 0 then and now is no change. A group with no row now is ok, so falls " \
+                     "misses a group that stops sending: alert_on_no_data, or a Query without groups, catches that.",
+      },
       operator: {
         type: "string",
-        enum: LogMonitor::OPERATORS,
-        description: "How a threshold Monitor compares each group's number with threshold: the group fires while number operator threshold holds.",
+        enum: LogMonitor::OPERATORS + LogMonitor::CHANGE_OPERATORS,
+        description: "How a threshold Monitor compares each group with threshold. Comparing the value (>, >=, <, <=): the group " \
+                     "fires while number operator threshold holds. Comparing the change (rises, falls, changes): it fires while " \
+                     "its change is at least threshold percent up, down, or either way.",
       },
-      threshold: { type: "number", description: "The number a threshold Monitor compares its groups' numbers with." },
+      threshold: {
+        type: "number",
+        description: "The number a threshold Monitor compares its groups' numbers with, or comparing the change, a percent " \
+                     "greater than 0, such as 50 for 50%.",
+      },
       notify_by_group: {
         type: "boolean",
         description: "Whether each row of a threshold Monitor's table is its own group, named by its other columns, firing and " \

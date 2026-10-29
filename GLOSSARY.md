@@ -157,7 +157,7 @@ A **Monitor** whose **Query** returns **Logs**. Each run reads the Logs ingested
 _Avoid_: log alert, match rule
 
 **Firing** and **ok**:
-The two states of a **Threshold monitor**'s group: firing while its number passes the threshold, or while the table is empty when the Monitor alerts on no data, and ok otherwise. Going from ok to firing sends a monitor firing **Notification** and going back sends monitor resolved; a group that stays firing sends nothing more. Turning the Monitor off, deleting it or making it a **Match monitor** resolves its firing groups.
+The two states of a **Threshold monitor**'s group: firing while its number passes the threshold, or while the table is empty when the Monitor alerts on no data, and ok otherwise. Going from ok to firing sends a monitor firing **Notification** and going back sends monitor resolved; a group that stays firing sends nothing more. Turning the Monitor off, deleting it, making it a **Match monitor** or switching it between comparing the value and the change resolves its firing groups.
 _Avoid_: alerting, triggered, breached, open
 
 **Log file store**:
