@@ -56,13 +56,19 @@ EventStore answers at most 10,000 rows. A run whose table was cut there can't co
 
 ### Comparing the change
 
-A Threshold monitor can compare each group's **change** instead of its value, for "errors doubled" or "traffic halved" without knowing what normal is. The group's **Baseline** is its number over an earlier range of the same length: the range just before the one the run reads. Its change is `(number − Baseline) / |Baseline| × 100`.
+A Threshold monitor can compare each group's **change** instead of its value, for "errors doubled" or "traffic halved" without knowing what normal is. The group's **Baseline** is its number over an earlier range of the same length: the range just before the one the run reads, or the same range 1 day or 1 week earlier. Its change is `(number − Baseline) / |Baseline| × 100`.
 
 You pick, instead of an operator and a number:
 
 - **The direction:** **rises by**, **falls by** or **changes by** (either way).
 - **The threshold:** a percent greater than 0. A group fires when its change is at least that much: `rises by 50` fires at +50% or more, `falls by 50` at −50% or less, and `changes by 50` at either.
-- **The Baseline:** the range just before.
+- **The Baseline:** **the range just before**, to catch sudden changes within minutes; **1 day earlier**, so daily cycles don't fire the Monitor; or **1 week earlier**, so weekday and weekend patterns don't either.
+- **A minimum**, optional, to keep small numbers quiet. A group is compared only when the larger of its number and its Baseline, by size, is at least the minimum; below that it's ok. So with a minimum of 10, 2 to 4 is not a 100% rise, while 1,000 to 0 still falls. With no minimum every group is compared.
+
+Saving refuses two Baselines, with the reason beside the Baseline on the form and as the error over MCP:
+
+- **1 day earlier with a range over 1 day**, since the two ranges would overlap. 1 week earlier never does, as no range is longer than a week.
+- **A Baseline older than the Project's Log Retention** keeps (the Project's own, else the instance's default): the range plus how far back the Baseline is, such as 7 days and 15 minutes for 15 minutes 1 week earlier. Its Baseline would have no Logs, so every group would rise from 0. If Retention is lowered after the Monitor is saved, each run is an error that says so, changes no state and sends nothing, until the Baseline or the Retention changes.
 
 The rules:
 
@@ -73,7 +79,7 @@ The rules:
 - **Notify by group off:** each row's change is worked out by its group columns, and the worst change makes the one group: the largest for rises, the smallest for falls, and the largest either way for changes. Choosing the worst number first would compare the wrong rows.
 - **Alert on no data** looks only at the current range's table.
 
-Each run runs the Query twice: over its range, then over the Baseline range, the current range shifted back by its own length. Both share the run's 30 seconds: the Baseline's Query gets what's left. Either one failing, timing out or being cut at 10,000 rows makes the run an error that changes no state. Two Queries roughly double what a Monitor reads, so keep that in mind when picking its interval.
+Each run runs the Query twice: over its range, then over the Baseline range, the current range shifted back by its own length, by 1 day or by 1 week. Both share the run's 30 seconds: the Baseline's Query gets what's left. Either one failing, timing out or being cut at 10,000 rows makes the run an error that changes no state. Two Queries roughly double what a Monitor reads, so keep that in mind when picking its interval.
 
 A Monitor's page shows each group as its number, Baseline and change, such as `120 (baseline 60, +100%)`, and Run now over MCP lists each group's change.
 
@@ -97,7 +103,7 @@ When EventStore is down, times out or refuses the Query, the run is an error: it
 
 A Monitor's page shows each group's state and its last 100 runs.
 
-**Turning a Monitor off** stops its runs. **Deleting** it removes it and its runs. Either one resolves each firing group, so a PagerDuty incident it opened is closed. Changing a Threshold monitor into a Match monitor does the same, and so does switching it between comparing the value and the change, since its groups' firing meant something else; the resolve says why. Changing the direction, threshold or range resolves nothing: the next run decides. Turned back on, a group still past the threshold fires again.
+**Turning a Monitor off** stops its runs. **Deleting** it removes it and its runs. Either one resolves each firing group, so a PagerDuty incident it opened is closed. Changing a Threshold monitor into a Match monitor does the same, and so does switching it between comparing the value and the change, since its groups' firing meant something else; the resolve says why. Changing the direction, threshold, Baseline, minimum or range resolves nothing: the next run decides. Turned back on, a group still past the threshold fires again.
 
 **Unticking an Integration** on a Monitor's form sends that Integration a resolve for each firing group, so its PagerDuty incident is closed too. The groups stay firing for the Integrations still ticked.
 
@@ -107,7 +113,7 @@ A Monitor tells the Integrations you pick on its form. Messages go through the s
 
 Every message links to the explorer with the Monitor's Query: over the range the run read, or for a Match message over the Logs it found.
 
-A Monitor comparing the change says the number, its Baseline and the change: "count_ was 120 over the last 15 minutes, up 100% from 60 the 15 minutes before". A resolve gives the change it came back to, and adds "no longer a rise of 50% or more". Its fields are Value, Baseline, Change and Threshold ("rises 50%"), and Slack and email also link to the Baseline range.
+A Monitor comparing the change says the number, its Baseline and the change: "count_ was 120 over the last 15 minutes, up 100% from 60 the 15 minutes before", or "from 60 1 day earlier" and "1 week earlier" for those Baselines. A resolve gives the change it came back to, and adds "no longer a rise of 50% or more". Its fields are Value, Baseline, Change and Threshold ("rises 50%"), and Slack and email also link to the Baseline range.
 
 ### Slack
 
