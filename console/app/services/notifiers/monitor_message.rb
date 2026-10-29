@@ -78,6 +78,22 @@ module Notifiers
         value == value.round ? value.round.to_s : value.round(4).to_s
       end
 
+      # A number with its Baseline and change: 120 (baseline 60, +100%).
+      def reading_text(value, baseline)
+        return number(value) if value.nil? || baseline.nil?
+
+        "#{number(value)} (baseline #{number(baseline)}, #{change_text(value, baseline)})"
+      end
+
+      # A change as a signed percent, to at most 1 decimal: +100%, -30%, 0%.
+      # From a Baseline of 0 it has no size: up from 0, or down from 0.
+      def change_text(value, baseline)
+        change = LogMonitor.change(value, baseline)
+        return "#{change.positive? ? 'up' : 'down'} from 0" if change.infinite?
+
+        "#{'+' if change.positive?}#{number(change.round(1))}%"
+      end
+
       private
 
       def firing(monitor, group_key, payload)

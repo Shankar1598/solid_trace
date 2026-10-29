@@ -243,7 +243,13 @@ class LogMonitor < ApplicationRecord
   end
 
   def stopped_checking_the_threshold?
-    no_longer_a_threshold_monitor? || turned_off?
+    no_longer_a_threshold_monitor? || turned_off? || switched_compare?
+  end
+
+  # A Threshold monitor that compared the value now compares the change, or
+  # the other way: its groups' firing meant something else.
+  def switched_compare?
+    kind_threshold? && saved_change_to_compare?
   end
 
   def no_longer_a_threshold_monitor?
@@ -255,30 +261,37 @@ class LogMonitor < ApplicationRecord
   end
 
   def resolve_groups_on_change
-    reason = no_longer_a_threshold_monitor? ? "kind_changed" : "turned_off"
-    resolve_groups(reason, operator: operator_before_last_save, threshold: threshold_before_last_save)
+    reason = if no_longer_a_threshold_monitor? then "kind_changed"
+    elsif turned_off? then "turned_off"
+    else "compare_changed"
+    end
+    resolve_groups(reason, operator: operator_before_last_save, threshold: threshold_before_last_save,
+      compare: compare_before_last_save)
   end
 
   def resolve_groups_on_delete
-    resolve_groups("deleted", operator: operator, threshold: threshold)
+    resolve_groups("deleted", operator: operator, threshold: threshold, compare: compare)
   end
 
-  # A Threshold monitor changed to a Match monitor, turned off or deleted no
-  # longer compares its groups with the threshold, and no run would resolve
-  # them: each firing group sends monitor_resolved now, saying why, which
-  # closes its PagerDuty incident, and its states go. Turned back on, a group
-  # still past the threshold fires again.
-  def resolve_groups(reason, operator:, threshold:)
-    send_resolved(reason, operator: operator, threshold: threshold, integrations: integrations)
+  # A Threshold monitor changed to a Match monitor, turned off, switched
+  # between comparing the value and the change, or deleted no longer
+  # compares its groups as they fired, and no run would resolve them: each
+  # firing group sends monitor_resolved now, saying why, which closes its
+  # PagerDuty incident, and its states go. A group still past the threshold
+  # fires again at the next run.
+  def resolve_groups(reason, operator:, threshold:, compare:)
+    send_resolved(reason, operator: operator, threshold: threshold, compare: compare, integrations: integrations)
     states.delete_all
   end
 
   # The Notifications are written in bulk, as a Monitor may have thousands
-  # of firing groups and this runs in the save's transaction.
-  def send_resolved(reason, operator:, threshold:, integrations:)
+  # of firing groups and this runs in the save's transaction. They describe
+  # the groups as they fired: comparing the change, with their Baseline.
+  def send_resolved(reason, operator:, threshold:, compare: self.compare, integrations:)
     changes = states.reload.select(&:status_firing?).map do |state|
-      [ IntegrationNotification::MONITOR_RESOLVED, state.group_key,
-        { "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true } ]
+      payload = { "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true }
+      payload.merge!("compare" => "change", "baseline" => state.last_baseline) if compare == "change"
+      [ IntegrationNotification::MONITOR_RESOLVED, state.group_key, payload ]
     end
     IntegrationNotification.schedule_ticks(IntegrationNotification.monitor_changes(self, changes, integrations: integrations))
   end
