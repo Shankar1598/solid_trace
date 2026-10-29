@@ -75,6 +75,8 @@ The rules:
 
 Each run runs the Query twice: over its range, then over the Baseline range, the current range shifted back by its own length. Both share the run's 30 seconds: the Baseline's Query gets what's left. Either one failing, timing out or being cut at 10,000 rows makes the run an error that changes no state. Two Queries roughly double what a Monitor reads, so keep that in mind when picking its interval.
 
+The form's preview charts the Query over the last 24 hours twice, on one chart with no threshold line: **Now**, and **Baseline**, the same Query over 24 hours as far back as the Baseline is (one range back, for the range just before), moved forward onto the same hours. Under it, the groups that would fire now are listed with their number, Baseline and change. Console reads them as a run does, over both ranges with the same rules, and the list follows edits to the direction, threshold and Baseline before you save.
+
 A Monitor's page shows each group as its number, Baseline and change, such as `120 (baseline 60, +100%)`, and Run now over MCP lists each group's change.
 
 ## Match monitors
