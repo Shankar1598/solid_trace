@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_29_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_29_130000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -228,6 +228,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_29_120000) do
     t.float "threshold"
     t.integer "timeouts_in_a_row", default: 0, null: false
     t.datetime "updated_at", null: false
+    t.float "minimum"
     t.index ["organization_id"], name: "index_monitors_on_organization_id"
     t.index ["project_id"], name: "index_monitors_on_project_id"
   end

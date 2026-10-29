@@ -570,6 +570,67 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     end
   end
 
+  test "a Baseline 1 day or 1 week earlier is the current range shifted back exactly that far" do
+    { "day" => [ "2026-10-16T11:44:00.000Z", "2026-10-16T11:59:00.000Z" ],
+      "week" => [ "2026-10-10T11:44:00.000Z", "2026-10-10T11:59:00.000Z" ] }.each do |baseline, range|
+      monitor = change_monitor(baseline: baseline, range_minutes: 15)
+      asked = []
+      stub_request(:post, @query_url).with(body: hash_including("from", "to")).to_return do |request|
+        asked << JSON.parse(request.body).values_at("from", "to")
+        { status: 200, body: { table: { columns: [ COUNT_COLUMN ], rows: [ [ 3 ] ], truncated: false } }.to_json }
+      end
+
+      evaluate(monitor)
+
+      assert_equal [ [ "2026-10-17T11:44:00.000Z", "2026-10-17T11:59:00.000Z" ], range ], asked, baseline
+    end
+  end
+
+  test "below the minimum a group is ok, and the larger of its number and Baseline decides, so 1,000 to 0 still falls" do
+    rises = change_monitor(operator: "rises", minimum: 10)
+    falls = change_monitor(operator: "falls", minimum: 10)
+    everything = change_monitor(operator: "changes")
+    answer_ranges(now: [ [ "api", 4 ], [ "web", 0 ], [ "jobs", 30 ] ],
+      before: [ [ "api", 2 ], [ "web", 1_000 ], [ "jobs", 10 ] ])
+
+    [ rises, falls, everything ].each { |monitor| evaluate(monitor) }
+
+    assert_equal [ "jobs" ], firing_services(rises), "api's 2 to 4 is under the minimum of 10"
+    assert_equal [ "web" ], firing_services(falls)
+    assert_equal [ "api", "jobs", "web" ], firing_services(everything), "with no minimum every group is compared"
+    assert_equal "ok", rises.states.find { |state| state.group["service"] == "api" }.status
+  end
+
+  test "not notifying by group, rows below the minimum can't be the worst" do
+    monitor = change_monitor(operator: "rises", minimum: 10, notify_by_group: false)
+    answer_ranges(now: [ [ "api", 4 ], [ "jobs", 30 ] ], before: [ [ "api", 1 ], [ "jobs", 10 ] ])
+
+    evaluate(monitor)
+
+    assert_equal [ "firing", 30, 10 ], state_of(monitor), "api's +300% is under the minimum"
+  end
+
+  test "a run whose Baseline reaches past the Project's Retention, lowered since, is an error that changes nothing" do
+    monitor = change_monitor(operator: "rises", baseline: "week")
+    answer_ranges(now: [ [ "api", 120 ] ], before: [ [ "api", 60 ] ], offset: 1.week)
+    evaluate(monitor)
+    assert_equal [ "api" ], firing_services(monitor)
+
+    @project.update!(log_retention_days: 3)
+    travel 1.minute
+    answer_ranges(now: [ [ "api", 10 ] ], before: [ [ "api", 60 ] ], offset: 1.week)
+    WebMock::RequestRegistry.instance.reset!
+    run = evaluate(monitor)
+
+    assert run.status_error?
+    assert_equal "The Baseline reaches 7 days and 5 minutes back, past the Project's Log Retention of 3 days, so it " \
+      "would have no Logs to compare with: choose a nearer Baseline or a shorter range, or keep the Project's Logs " \
+      "longer.", run.error
+    assert_equal [ "api" ], firing_services(monitor)
+    assert_equal 1, Notification.count
+    assert_not_requested(:post, @query_url)
+  end
+
   test "a Monitor comparing the value reads its range once" do
     monitor = threshold_monitor
     answer_table([ [ 3 ] ])
@@ -897,12 +958,12 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
       notify_by_group: true, **attributes)
   end
 
-  # Answers the current range with now and the range just before it with
-  # before, rows of service and count_, for a Monitor of range_minutes run
-  # at the current time.
-  def answer_ranges(now:, before:, range_minutes: 5)
+  # Answers the current range with now and the Baseline range, offset
+  # earlier (by default just before it), with before, rows of service and
+  # count_, for a Monitor of range_minutes run at the current time.
+  def answer_ranges(now:, before:, range_minutes: 5, offset: range_minutes.minutes)
     to = Time.current - LogMonitor::PROCESSING_LAG
-    { to => now, to - range_minutes.minutes => before }.each do |end_at, rows|
+    { to => now, to - offset => before }.each do |end_at, rows|
       stub_request(:post, @query_url).with(body: hash_including("from" => (end_at - range_minutes.minutes).utc.iso8601(3)))
         .to_return(status: 200, body: { table: { columns: [ SERVICE, COUNT_COLUMN ], rows: rows, truncated: false } }.to_json)
     end

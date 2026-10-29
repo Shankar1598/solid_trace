@@ -27,6 +27,8 @@ export type PreviewSettings = Pick<MonitorSettings,
   'project_id' | 'query' | 'compare' | 'baseline' | 'operator' | 'notify_by_group' | 'alert_on_no_data'> & {
   range_minutes: number
   threshold: number | null
+  /** Blank for none, as the form saves it. */
+  minimum: string
 }
 
 /**

@@ -19,8 +19,9 @@ import { fieldInfos } from '@/lib/logs/columns'
 import type { LogTable } from '@/lib/logs/table'
 import { fetchGroupsPreview, type PreviewGroup } from '@/lib/monitors/api'
 import {
-  BASELINES, CHANGE_OPERATORS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, groupLabel, groupsNow,
-  readingText, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption, type MonitorBaseline, type MonitorCompare, type MonitorKind,
+  BASELINES, CHANGE_OPERATORS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, baselineRangeText, groupLabel,
+  groupsNow, readingText, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption,
+  type MonitorBaseline, type MonitorCompare, type MonitorKind,
   type MonitorSettings, type ValueOperator,
 } from '@/lib/monitors/monitor'
 import { cn } from '@/lib/utils'
@@ -77,6 +78,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   const [direction, setDirection] = useState<ChangeOperator>(
     CHANGE_OPERATORS.find(o => o === monitor.operator) ?? 'rises')
   const [threshold, setThreshold] = useState(monitor.threshold === null ? '' : String(monitor.threshold))
+  const [minimum, setMinimum] = useState(monitor.minimum == null ? '' : String(monitor.minimum))
   const [byGroup, setByGroup] = useState(monitor.notify_by_group)
   const [noData, setNoData] = useState(monitor.alert_on_no_data)
   const [integrationIds, setIntegrationIds] = useState<number[]>(monitor.integration_ids)
@@ -194,7 +196,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       try {
         const answer = await fetchGroupsPreview(orgSlug, {
           project_id: project.id, query, range_minutes: rangeMinutes, compare, baseline, operator: direction,
-          threshold: thresholdValue, notify_by_group: byGroup, alert_on_no_data: noData,
+          threshold: thresholdValue, minimum: minimum.trim(), notify_by_group: byGroup, alert_on_no_data: noData,
         }, controller.signal)
         setChanged({ status: 'done', groups: answer.groups })
       } catch (error) {
@@ -206,7 +208,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       clearTimeout(timer)
       controller.abort()
     }
-  }, [query, project?.id, rangeMinutes, kind, comparesChange, baseline, direction, thresholdValue, byGroup, noData, again])
+  }, [query, project?.id, rangeMinutes, kind, comparesChange, baseline, direction, thresholdValue, minimum, byGroup, noData, again])
 
   const found = useMemo(
     () => (now.status === 'done'
@@ -269,7 +271,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       monitor: {
         name: name.trim(), kind, project_id: project.id, query,
         interval_minutes: intervalText, range_minutes: range, compare, baseline: comparesChange ? baseline : null,
-        operator: comparesChange ? direction : operator, threshold,
+        operator: comparesChange ? direction : operator, threshold, minimum: comparesChange ? minimum.trim() : '',
         notify_by_group: byGroup, alert_on_no_data: noData, integration_ids: integrationIds,
       },
     }
@@ -431,6 +433,11 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
                     </Select>
                     <FieldError name="Baseline" error={errors.baseline} />
                   </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="monitor-minimum">Minimum</Label>
+                    <Input id="monitor-minimum" type="number" step="any" min={0} className="w-28" value={minimum} placeholder="None" onChange={e => setMinimum(e.target.value)} />
+                    <FieldError name="Minimum" error={errors.minimum} />
+                  </div>
                 </>
               ) : (
                 <div className="space-y-1">
@@ -453,8 +460,9 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
         </div>
         {isThreshold && comparesChange && (
           <p className="text-xs text-muted-foreground">
-            Each run reads the Query twice: over its range, and over the {rangeMinutes === 1 ? 'minute' : `${rangeMinutes} minutes`} just
-            before it, its Baseline. A group with no row in the Baseline rises from 0; one with no row now is ok.
+            Each run reads the Query twice: over its range, and over {baselineRangeText(baseline, rangeMinutes)}, its Baseline. A
+            group with no row in the Baseline rises from 0; one with no row now is ok. With a minimum, a group whose number and
+            Baseline are both under it stays ok.
           </p>
         )}
         {isThreshold && (

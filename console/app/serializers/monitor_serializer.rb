@@ -24,6 +24,7 @@ class MonitorSerializer
       range_minutes: @monitor.range_minutes,
       compare: @monitor.compare,
       baseline: @monitor.baseline,
+      minimum: @monitor.minimum,
       operator: @monitor.operator,
       threshold: @monitor.threshold,
       notify_by_group: @monitor.notify_by_group,

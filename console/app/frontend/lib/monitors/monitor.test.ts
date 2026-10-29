@@ -90,8 +90,10 @@ describe('withBaselineSeries', () => {
 })
 
 describe('baselineOffsetMinutes', () => {
-  it('puts the range just before a whole range back', () => {
+  it('puts the range just before a whole range back, and 1 day and 1 week earlier a day and a week back', () => {
     expect(baselineOffsetMinutes('previous', 15)).toBe(15)
+    expect(baselineOffsetMinutes('day', 15)).toBe(1440)
+    expect(baselineOffsetMinutes('week', 15)).toBe(10080)
   })
 })
 
@@ -224,5 +226,14 @@ describe('ruleText', () => {
     expect(ruleText({ ...change, operator: 'falls', notify_by_group: false, alert_on_no_data: true })).toBe(
       "Runs every minute over the last 15 minutes, and fires when the worst group's number falls by 50% or more from the 15 minutes before. No rows at all fire too.")
     expect(ruleText({ ...change, operator: 'changes' })).toContain('changes by 50% or more either way from the 15 minutes before')
+  })
+
+  it('names a Baseline 1 day or 1 week earlier, and the minimum', () => {
+    const change = { ...monitor, compare: 'change' as const, operator: 'rises' as const, threshold: 50, minimum: null }
+    expect(ruleText({ ...change, baseline: 'day' })).toBe(
+      "Runs every minute over the last 15 minutes, and fires when each group's number rises by 50% or more from the same 15 minutes 1 day earlier.")
+    expect(ruleText({ ...change, baseline: 'week', minimum: 10 })).toBe(
+      "Runs every minute over the last 15 minutes, and fires when each group's number rises by 50% or more from the same 15 minutes 1 week earlier. " +
+      'A group whose number and Baseline are both under 10 stays ok.')
   })
 })

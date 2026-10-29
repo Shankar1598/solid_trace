@@ -232,3 +232,37 @@ test('a member makes a Monitor comparing the change from the range just before; 
   await expect(page.locator(`[data-monitor-row="${name}"]`)).toHaveCount(0)
   expect(errors).toEqual([])
 })
+
+test('a 1-day Baseline with a 2-day range is refused beside the Baseline; one falling 50% from 1 day earlier with a minimum saves', async ({ page }) => {
+  test.setTimeout(120_000)
+  const errors = watchErrors(page)
+  const name = `Flow daily change monitor ${Date.now()}`
+
+  await page.goto(`/${ORG}/monitors/new`)
+  await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  await page.getByLabel('Name').fill(name)
+  await page.getByLabel('Over the last (minutes)').fill('2880')
+  await page.getByLabel('Run every (minutes)').fill('60')
+  await page.getByRole('group', { name: 'Compare' }).getByRole('button', { name: 'The change' }).click()
+  await page.getByRole('combobox', { name: 'Direction' }).click()
+  await page.getByRole('option', { name: 'falls by', exact: true }).click()
+  await page.getByLabel('Threshold percent').fill('50')
+  await page.getByRole('combobox', { name: 'Baseline' }).click()
+  await page.getByRole('option', { name: '1 day earlier', exact: true }).click()
+  await page.getByLabel('Minimum').fill('10')
+
+  // 1 day earlier would overlap a 2-day range.
+  await page.getByRole('button', { name: 'Create monitor' }).click()
+  await expect(page.getByText("Baseline can't be 1 day earlier with a range over 1 day")).toBeVisible()
+
+  await page.getByLabel('Over the last (minutes)').fill('60')
+  await page.getByRole('button', { name: 'Create monitor' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  await expect(page.getByText("fires when the worst group's number falls by 50% or more from the same 60 minutes 1 day earlier. " +
+    'A group whose number and Baseline are both under 10 stays ok.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Delete' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete monitor' }).click()
+  await expect(page.locator(`[data-monitor-row="${name}"]`)).toHaveCount(0)
+  expect(errors).toEqual([])
+})
