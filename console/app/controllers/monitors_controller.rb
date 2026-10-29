@@ -107,6 +107,25 @@ class MonitorsController < ApplicationController
     run_chart(@current_org.projects.find(params[:project_id]), params[:query].to_s)
   end
 
+  # POST with a monitor's unsaved settings, as the form would save them: the
+  # ranges a run now would read and each group it would find, with its
+  # number, its Baseline when comparing the change, and whether it would
+  # fire, read and compared as a run does (MonitorEvaluation.preview). Both
+  # reads are one chart run.
+  def preview_groups
+    monitor = @current_org.monitors.new(monitor_params.merge(kind: "threshold"))
+    raise ActiveRecord::RecordNotFound, "no such Project" unless monitor.project
+
+    found = ChartRuns.hold { MonitorEvaluation.preview(monitor, Time.current) }
+    baseline_from, baseline_to = found.baseline_range&.map { |at| at.utc.iso8601 }
+    render json: {
+      from: found.from.utc.iso8601, to: found.to.utc.iso8601, baseline_from: baseline_from, baseline_to: baseline_to,
+      groups: found.groups,
+    }
+  rescue MonitorEvaluation::Unusable => e
+    render json: { error: e.message }, status: :unprocessable_content
+  end
+
   private
 
   def set_monitor
