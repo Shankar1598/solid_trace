@@ -134,12 +134,14 @@ module Notifiers
         elsif payload["no_data"] && payload["value"].nil?
           "There is data again over the last #{range}."
         elsif payload["no_data"]
-          "There is data again over the last #{range}: #{value_text(payload)}, not #{threshold_text(payload)}."
+          reading = value_text(payload)
+          reading += ", #{from_baseline_text(monitor, payload)}" if change?(payload)
+          "There is data again over the last #{range}: #{reading}, not #{threshold_text(payload)}."
         elsif payload["value"].nil?
           "No rows#{' for this group' if group_key.present?} over the last #{range}, so it is back to ok."
         elsif change?(payload)
           "#{value_text(payload)} over the last #{range}, #{from_baseline_text(monitor, payload)}, " \
-            "no longer #{CHANGE_WORDS.fetch(payload['operator'], 'a change')} of #{number(payload['threshold'])}% or more."
+            "no longer #{threshold_text(payload)}."
         else
           "#{value_text(payload)} over the last #{range}, no longer #{threshold_text(payload)}."
         end
@@ -180,9 +182,15 @@ module Notifiers
         "#{payload['column'] || 'the value'} was #{number(payload['value'])}"
       end
 
-      # above the threshold of 100
+      # above the threshold of 100; comparing the change, a rise of 50% or
+      # more
       def threshold_text(payload)
-        "#{OPERATOR_WORDS.fetch(payload['operator'], payload['operator'])} the threshold of #{number(payload['threshold'])}"
+        threshold = number(payload["threshold"])
+        if change?(payload)
+          "#{CHANGE_WORDS.fetch(payload['operator'], 'a change')} of #{threshold}% or more"
+        else
+          "#{OPERATOR_WORDS.fetch(payload['operator'], payload['operator'])} the threshold of #{threshold}"
+        end
       end
 
       # The span the run read, from its from and to, or else the Monitor's
