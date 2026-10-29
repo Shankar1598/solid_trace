@@ -225,9 +225,9 @@ class MonitorEvaluation
     return {} if readings.empty?
 
     big = readings.values.reject { |reading| @monitor.below_minimum?(reading.value, reading.baseline) }
-    compared = (big.presence || readings.values).map { |reading| [ reading, compared(reading) ] }
-    worst = compared.map(&:last).reduce { |a, b| @monitor.worse(a, b) }
-    { "" => compared.find { |_, number| number == worst }.first }
+    candidates = (big.presence || readings.values).map { |reading| [ reading, compared(reading) ] }
+    worst = candidates.map(&:last).reduce { |a, b| @monitor.worse(a, b) }
+    { "" => candidates.find { |_, number| number == worst }.first }
   end
 
   # The number a group's reading compares with the threshold.
