@@ -157,6 +157,15 @@ class LogMonitor < ApplicationRecord
     (value - baseline).fdiv(baseline.abs) * 100
   end
 
+  # The change a Notification carries: nil for no data and for a rise or
+  # fall from a Baseline of 0, which has no size.
+  def self.change_fact(value, baseline)
+    return if value.nil? || baseline.nil?
+
+    change = change(value, baseline)
+    change if change.finite?
+  end
+
   # Of two numbers for one group, the one that passes the threshold sooner:
   # the larger for >, >=, rises and changes, the smaller for <, <= and falls.
   # Comparing the change, a and b are changes, and changes compares sizes.
@@ -168,22 +177,23 @@ class LogMonitor < ApplicationRecord
     end
   end
 
-  # The [from, to) a Threshold monitor's run at now reads.
-  def window(now)
+  # The [from, to) a Threshold monitor's run at now reads, with its range or
+  # the range_minutes given.
+  def window(now, range_minutes: self.range_minutes)
     to = now - PROCESSING_LAG
     [ to - range_minutes.minutes, to ]
   end
 
   # The [from, to) a run at now reads for its groups' Baseline: the current
   # range shifted back by baseline_offset.
-  def baseline_window(now)
-    from, to = window(now)
-    [ from - baseline_offset, to - baseline_offset ]
+  def baseline_window(now, range_minutes: self.range_minutes, baseline: self.baseline)
+    offset = baseline_offset(range_minutes: range_minutes, baseline: baseline)
+    window(now, range_minutes: range_minutes).map { |at| at - offset }
   end
 
   # How far back the Baseline range is from the current one: the range's
   # own length for previous, so the two meet, else 1 day or 1 week.
-  def baseline_offset
+  def baseline_offset(range_minutes: self.range_minutes, baseline: self.baseline)
     BASELINE_OFFSETS.fetch(baseline) { range_minutes.minutes }
   end
 
@@ -229,7 +239,7 @@ class LogMonitor < ApplicationRecord
   # monitor_resolved now, which closes its PagerDuty incident. The groups
   # stay firing for the Integrations still linked.
   def resolve_groups_for(integration)
-    send_resolved("unlinked", operator: operator, threshold: threshold, integrations: Integration.where(id: integration.id))
+    send_resolved("unlinked", integrations: Integration.where(id: integration.id))
   end
 
   private
@@ -330,12 +340,11 @@ class LogMonitor < ApplicationRecord
     elsif turned_off? then "turned_off"
     else "compare_changed"
     end
-    resolve_groups(reason, operator: operator_before_last_save, threshold: threshold_before_last_save,
-      compare: compare_before_last_save)
+    resolve_groups(reason, was: saved_changes.transform_values(&:first))
   end
 
   def resolve_groups_on_delete
-    resolve_groups("deleted", operator: operator, threshold: threshold, compare: compare)
+    resolve_groups("deleted")
   end
 
   # A Threshold monitor changed to a Match monitor, turned off, switched
@@ -343,21 +352,44 @@ class LogMonitor < ApplicationRecord
   # compares its groups as they fired, and no run would resolve them: each
   # firing group sends monitor_resolved now, saying why, which closes its
   # PagerDuty incident, and its states go. A group still past the threshold
-  # fires again at the next run.
-  def resolve_groups(reason, operator:, threshold:, compare:)
-    send_resolved(reason, operator: operator, threshold: threshold, compare: compare, integrations: integrations)
+  # fires again at the next run. was holds the settings the save changed,
+  # as they were.
+  def resolve_groups(reason, was: {})
+    send_resolved(reason, integrations: integrations, was: was)
     states.delete_all
   end
 
   # The Notifications are written in bulk, as a Monitor may have thousands
   # of firing groups and this runs in the save's transaction. They describe
-  # the groups as they fired: comparing the change, with their Baseline.
-  def send_resolved(reason, operator:, threshold:, compare: self.compare, integrations:)
+  # the groups as they fired, by the Monitor's settings then (was, over its
+  # own): comparing the change, with their Baseline and change, and the
+  # ranges their last run read when that's known.
+  def send_resolved(reason, integrations:, was: {})
+    was = attributes.merge(was)
+    change = was["compare"] == "change"
+    facts = { "operator" => was["operator"], "threshold" => was["threshold"], reason => true }
+    facts.merge!("compare" => "change", "baseline_setting" => was["baseline"]).merge!(last_ranges(was)) if change
     changes = states.reload.select(&:status_firing?).map do |state|
-      payload = { "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true }
-      payload.merge!("compare" => "change", "baseline" => state.last_baseline) if compare == "change"
+      payload = facts.merge("value" => state.last_value)
+      if change
+        payload.merge!("baseline" => state.last_baseline,
+          "change" => LogMonitor.change_fact(state.last_value, state.last_baseline))
+      end
       [ IntegrationNotification::MONITOR_RESOLVED, state.group_key, payload ]
     end
     IntegrationNotification.schedule_ticks(IntegrationNotification.monitor_changes(self, changes, integrations: integrations))
+  end
+
+  # The current and Baseline ranges the groups' states were last read over:
+  # the last ok run's, by the settings in was, when the Monitor wasn't saved
+  # after that run. After a save the run may have read other settings, so
+  # none are known.
+  def last_ranges(was)
+    ran_at = runs.where(status: "ok").pick(:ran_at)
+    return {} unless ran_at && ran_at >= was["updated_at"]
+
+    now = window(ran_at, range_minutes: was["range_minutes"])
+    before = baseline_window(ran_at, range_minutes: was["range_minutes"], baseline: was["baseline"])
+    %w[from to baseline_from baseline_to].zip([ *now, *before ].map { |at| at.utc.iso8601 }).to_h
   end
 end
