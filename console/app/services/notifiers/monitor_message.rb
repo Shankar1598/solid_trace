@@ -8,7 +8,8 @@ module Notifiers
   # - monitor_firing and monitor_resolved: value (nil for no data), column,
   #   threshold, operator, from and to (the range read); comparing the
   #   change, also compare "change", baseline, change (a percent, nil from a
-  #   Baseline of 0), baseline_from and baseline_to; a resolve says absent,
+  #   Baseline of 0), baseline_setting (the Monitor's Baseline: previous, day
+  #   or week), baseline_from and baseline_to; a resolve says absent,
   #   no_data, kind_changed, compare_changed, turned_off, deleted or unlinked
   #   when it has one of those reasons
   # - monitor_matched: logs (up to MonitorEvaluation::MATCHED_LOGS), total,
@@ -24,6 +25,7 @@ module Notifiers
 
     OPERATOR_WORDS = { ">" => "above", ">=" => "at or above", "<" => "below", "<=" => "at or below" }.freeze
     CHANGE_WORDS = { "rises" => "a rise", "falls" => "a fall", "changes" => "a change" }.freeze
+    BASELINE_WORDS = { "day" => "1 day earlier", "week" => "1 week earlier" }.freeze
     COMPARED = { "value" => "the value", "change" => "the change from a Baseline" }.freeze
 
     class << self
@@ -166,15 +168,10 @@ module Notifiers
       end
 
       # Where the Baseline range is, after the range it's compared with: the
-      # 15 minutes before, 1 day earlier or 1 week earlier, by how far its
-      # end is from the current range's.
+      # 15 minutes before, 1 day earlier or 1 week earlier, by the Monitor's
+      # Baseline when the run read it.
       def baseline_range_text(monitor, payload)
-        to, baseline_to = payload.values_at("to", "baseline_to").map { |value| Time.iso8601(value.to_s) rescue nil }
-        offset = to - baseline_to if to && baseline_to
-        if offset == 1.week then "1 week earlier"
-        elsif offset == 1.day then "1 day earlier"
-        else "the #{range_text(monitor, payload)} before"
-        end
+        BASELINE_WORDS.fetch(payload["baseline_setting"]) { "the #{range_text(monitor, payload)} before" }
       end
 
       # count_ was 120

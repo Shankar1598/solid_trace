@@ -256,8 +256,8 @@ class MonitorEvaluation
     facts = { "column" => column, "threshold" => @monitor.threshold, "operator" => @monitor.operator,
               "from" => from.utc.iso8601, "to" => to.utc.iso8601 }
     if baseline_range
-      facts.merge!("compare" => "change", "baseline_from" => baseline_range.first.utc.iso8601,
-        "baseline_to" => baseline_range.last.utc.iso8601)
+      facts.merge!("compare" => "change", "baseline_setting" => @monitor.baseline,
+        "baseline_from" => baseline_range.first.utc.iso8601, "baseline_to" => baseline_range.last.utc.iso8601)
     end
     changed = []
     firing_count = 0
