@@ -9,8 +9,8 @@ import { rangeMs, type TimeRange } from '@/lib/timeRange'
 export type MonitorKind = 'threshold' | 'match'
 /** What a Threshold monitor compares with its threshold: each group's number, or its percent change from its Baseline. */
 export type MonitorCompare = 'value' | 'change'
-/** Where a group's Baseline is read: the range just before the current one. */
-export type MonitorBaseline = 'previous'
+/** Where a group's Baseline is read: the range just before the current one, or the same range 1 day or 1 week earlier. */
+export type MonitorBaseline = 'previous' | 'day' | 'week'
 export type ValueOperator = '>' | '>=' | '<' | '<='
 /** Comparing the change: fires when the change is at least the threshold percent up, down, or either way. */
 export type ChangeOperator = 'rises' | 'falls' | 'changes'
@@ -21,7 +21,11 @@ export type MonitorStatus = 'firing' | 'ok' | 'disabled' | 'error'
 export const OPERATORS: ValueOperator[] = ['>', '>=', '<', '<=']
 export const CHANGE_OPERATORS: ChangeOperator[] = ['rises', 'falls', 'changes']
 /** The Baselines a Monitor comparing the change can read, as the form offers them. */
-export const BASELINES: { value: MonitorBaseline; label: string }[] = [{ value: 'previous', label: 'The range just before' }]
+export const BASELINES: { value: MonitorBaseline; label: string }[] = [
+  { value: 'previous', label: 'The range just before' },
+  { value: 'day', label: '1 day earlier' },
+  { value: 'week', label: '1 week earlier' },
+]
 /** A Monitor's bounds, as LogMonitor checks them. */
 export const MAX_INTERVAL_MINUTES = 24 * 60
 export const MAX_RANGE_MINUTES = 7 * 24 * 60
@@ -36,6 +40,8 @@ export interface MonitorSettings {
   range_minutes: number
   compare: MonitorCompare
   baseline: MonitorBaseline | null
+  /** Comparing the change, a group is compared only when its number or its Baseline reaches it. */
+  minimum: number | null
   operator: MonitorOperator | null
   threshold: number | null
   notify_by_group: boolean
@@ -236,6 +242,7 @@ const CHANGE_WORDS: Record<ChangeOperator, string> = { rises: 'rises by', falls:
 
 type RuleOf = Pick<MonitorSettings,
   'kind' | 'compare' | 'baseline' | 'interval_minutes' | 'range_minutes' | 'operator' | 'threshold' | 'notify_by_group' | 'alert_on_no_data'>
+  & Partial<Pick<MonitorSettings, 'minimum'>>
 
 /** What the Monitor checks, in a sentence. */
 export function ruleText(monitor: RuleOf): string {
@@ -247,9 +254,19 @@ export function ruleText(monitor: RuleOf): string {
   if (monitor.compare === 'change') {
     const how = CHANGE_WORDS[monitor.operator as ChangeOperator] ?? 'changes by'
     const either = monitor.operator === 'changes' ? ' either way' : ''
-    return `${over}, and fires when ${groups}'s number ${how} ${monitor.threshold}% or more${either} from the ${minutes(monitor.range_minutes)} before.${noData}`
+    const from = baselineRangeText(monitor.baseline, monitor.range_minutes)
+    const small = monitor.minimum != null
+      ? ` A group whose number and Baseline are both under ${valueText(monitor.minimum)} stays ok.`
+      : ''
+    return `${over}, and fires when ${groups}'s number ${how} ${monitor.threshold}% or more${either} from ${from}.${small}${noData}`
   }
   return `${over}, and fires when ${groups}'s number is ${monitor.operator} ${monitor.threshold}.${noData}`
+}
+
+/** Where a range's Baseline is: the 15 minutes before, or the same 15 minutes 1 day or 1 week earlier. */
+export function baselineRangeText(baseline: MonitorBaseline | null, rangeMinutes: number): string {
+  if (baseline === 'day' || baseline === 'week') return `the same ${minutes(rangeMinutes)} 1 ${baseline} earlier`
+  return `the ${minutes(rangeMinutes)} before`
 }
 
 function minutes(n: number): string {
