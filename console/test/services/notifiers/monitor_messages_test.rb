@@ -152,6 +152,16 @@ module Notifiers
         "no longer a change of 50% or more.", texts[:steady].text
     end
 
+    test "a change from 1 day or 1 week earlier names that Baseline" do
+      day = change_payload(120.0, 60.0).merge("baseline_from" => "2026-10-16T11:44:00Z", "baseline_to" => "2026-10-16T11:59:00Z")
+      week = change_payload(70.0, 60.0).merge("baseline_from" => "2026-10-10T11:44:00Z", "baseline_to" => "2026-10-10T11:59:00Z")
+
+      assert_equal "count_ was 120 over the last 15 minutes, up 100% from 60 1 day earlier.",
+        MonitorMessage.build(row(IntegrationNotification::MONITOR_FIRING, GROUP, day)).text
+      assert_equal "count_ was 70 over the last 15 minutes, up 16.7% from 60 1 week earlier, no longer a rise of 50% " \
+        "or more.", MonitorMessage.build(row(IntegrationNotification::MONITOR_RESOLVED, GROUP, week)).text
+    end
+
     test "a resolve after switching between the value and the change says so" do
       to_change = MonitorMessage.build(row(IntegrationNotification::MONITOR_RESOLVED, GROUP,
         threshold_payload(120.0).except("from", "to").merge("compare_changed" => true)))

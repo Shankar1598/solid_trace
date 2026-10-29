@@ -164,9 +164,15 @@ module Notifiers
       end
 
       # Where the Baseline range is, after the range it's compared with: the
-      # 15 minutes before.
+      # 15 minutes before, 1 day earlier or 1 week earlier, by how far its
+      # end is from the current range's.
       def baseline_range_text(monitor, payload)
-        "the #{range_text(monitor, payload)} before"
+        to, baseline_to = payload.values_at("to", "baseline_to").map { |value| Time.iso8601(value.to_s) rescue nil }
+        offset = to - baseline_to if to && baseline_to
+        if offset == 1.week then "1 week earlier"
+        elsif offset == 1.day then "1 day earlier"
+        else "the #{range_text(monitor, payload)} before"
+        end
       end
 
       # count_ was 120
