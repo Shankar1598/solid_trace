@@ -19,7 +19,7 @@ import { fieldInfos } from '@/lib/logs/columns'
 import type { LogTable } from '@/lib/logs/table'
 import { fetchGroupsPreview, type PreviewGroup } from '@/lib/monitors/api'
 import {
-  BASELINES, CHANGE_OPERATORS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, baselineRangeText, groupLabel,
+  BASELINES, CHANGE_OPERATORS, CHANGE_WORDS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, baselineRangeText, groupLabel,
   groupsNow, readingText, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption,
   type MonitorBaseline, type MonitorCompare, type MonitorKind,
   type MonitorSettings, type ValueOperator,
@@ -37,7 +37,6 @@ const CHART_HOURS = 24
 const PROCESSING_LAG_MS = 60_000
 /** Groups listed under the chart; the rest are counted. */
 const GROUPS_SHOWN = 20
-const CHANGE_LABELS: Record<ChangeOperator, string> = { rises: 'rises by', falls: 'falls by', changes: 'changes by' }
 
 type Mode = 'builder' | 'query'
 type Run = { status: 'running' } | { status: 'done'; table: LogTable } | { status: 'error'; message: string }
@@ -295,7 +294,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   }
 
   const isThreshold = kind === 'threshold'
-  const groups: { group: Record<string, unknown>; value: number | null; baseline: number | null; firing: boolean }[] | undefined = comparesChange
+  const groups: PreviewGroup[] | undefined = comparesChange
     ? (changed.status === 'done' ? changed.groups : undefined)
     : found?.groups.map(g => ({ ...g, baseline: null }))
   const firing = groups?.filter(g => g.firing) ?? []
@@ -411,10 +410,10 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
                   <div className="space-y-1">
                     <Label>Fires when the number</Label>
                     <div className="flex items-center gap-2">
-                      <Select value={direction} onValueChange={value => value && setDirection(value as ChangeOperator)} items={CHANGE_OPERATORS.map(o => ({ value: o, label: CHANGE_LABELS[o] }))}>
+                      <Select value={direction} onValueChange={value => value && setDirection(value as ChangeOperator)} items={CHANGE_OPERATORS.map(o => ({ value: o, label: CHANGE_WORDS[o] }))}>
                         <SelectTrigger aria-label="Direction" className="w-36"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {CHANGE_OPERATORS.map(o => <SelectItem key={o} value={o}>{CHANGE_LABELS[o]}</SelectItem>)}
+                          {CHANGE_OPERATORS.map(o => <SelectItem key={o} value={o}>{CHANGE_WORDS[o]}</SelectItem>)}
                         </SelectContent>
                       </Select>
                       <Input aria-label="Threshold percent" type="number" step="any" min={0} className="w-24" value={threshold} placeholder="50" onChange={e => setThreshold(e.target.value)} />
