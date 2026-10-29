@@ -302,8 +302,7 @@ class MonitorEvaluation
   def change_facts(reading)
     return {} unless @monitor.compares_the_change?
 
-    change = LogMonitor.change(reading.value, reading.baseline) unless reading.value.nil?
-    { "baseline" => reading.baseline, "change" => change&.finite? ? change : nil }
+    { "baseline" => reading.baseline, "change" => LogMonitor.change_fact(reading.value, reading.baseline) }
   end
 
   # ---------------------------------------------------------------------------
