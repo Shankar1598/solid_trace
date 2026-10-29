@@ -104,7 +104,8 @@ class MonitorEvaluation
     return failed("The Query returns Logs, not a table: end it in a summarize of one number.") unless table
     return failed(TABLE_CUT) if table["truncated"]
 
-    column, groups = groups_of(table)
+    column, rows = rows_of(table)
+    groups = @monitor.notify_by_group ? rows : the_worst(rows)
     groups = { "" => nil } if groups.empty? && @monitor.alert_on_no_data
 
     record do
@@ -117,9 +118,11 @@ class MonitorEvaluation
     failed(e.message)
   end
 
-  # The number column's name, and each group's key and number: the worst of
-  # its rows', since a row's number may be null.
-  def groups_of(table)
+  # The number column's name, and each row's group key and number. Rows are
+  # keyed by their columns other than the number whether or not the Monitor
+  # notifies by group; a row whose number is null is left out, and rows
+  # sharing a key keep the worst number.
+  def rows_of(table)
     columns = table["columns"] || []
     numbers = columns.each_index.select { |i| columns[i]["type"] == "number" }
     unless numbers.size == 1
@@ -127,15 +130,21 @@ class MonitorEvaluation
     end
 
     at = numbers.first
-    groups = {}
+    rows = {}
     (table["rows"] || []).each do |row|
       value = row[at]
       next unless value.is_a?(Numeric)
 
-      key = @monitor.notify_by_group ? group_key(columns, row, at) : ""
-      groups[key] = groups.key?(key) ? worst(groups[key], value) : value
+      key = group_key(columns, row, at)
+      rows[key] = rows.key?(key) ? worst(rows[key], value) : value
     end
-    [ columns[at]["name"], groups ]
+    [ columns[at]["name"], rows ]
+  end
+
+  # A Monitor that doesn't notify by group has one group, "", whose number
+  # is the worst row's; none when there are no rows.
+  def the_worst(rows)
+    rows.empty? ? {} : { "" => rows.values.reduce { |a, b| worst(a, b) } }
   end
 
   # A group's columns, name to value in the table's order, as JSON; "" when
