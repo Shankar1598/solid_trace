@@ -13,6 +13,12 @@
 #   firing sends nothing. A group with no row is ok, and no rows at all fire
 #   the Monitor's one group only with alert_on_no_data. A table cut at
 #   EventStore's row limit is an error (TABLE_CUT).
+# - Threshold comparing the change: runs the Query again over the Baseline
+#   range (LogMonitor#baseline_window) with what's left of the run's
+#   timeout, and each group's change from its Baseline is compared instead:
+#   a row with none in the Baseline rises from 0. Without notify by group
+#   the worst row's change makes the one group. Either Query failing is an
+#   error that changes no state, and no data looks at the current table.
 # - Match: reads the Logs ingested after ingest_cursor and keeps the new
 #   cursor; when any match, sends one monitor_matched with the newest
 #   MATCHED_LOGS and how many matched in all. After TIMEOUTS_BEFORE_SKIPPING
@@ -47,8 +53,17 @@ class MonitorEvaluation
     "group with the threshold: group by fewer columns, or filter the Logs before the summarize."
   CHANGED_DURING_RUN = "The Monitor was changed during this run, so the run changed nothing. The next run checks it again."
 
+  OUT_OF_TIME = "The Query over the current range took the run's #{LogMonitor::RUN_TIMEOUT_SECONDS} s, leaving none " \
+    "to read the Baseline's: filter the Logs before the summarize, or shorten the range."
+
   # The table EventStore answered can't be compared with the threshold.
   class Unusable < StandardError; end
+
+  # A group's number this run and, comparing the change, its Baseline: its
+  # number over the Baseline range, 0 when it had no row there. value is nil
+  # for no data.
+  Reading = Data.define(:value, :baseline)
+  NO_DATA = Reading.new(nil, nil)
 
   # The MonitorRun recorded, or nil when another run of the Monitor is going.
   def self.run(monitor, now)
@@ -96,19 +111,18 @@ class MonitorEvaluation
 
   def run_threshold
     from, to = @monitor.window(@now)
-    answer = EventStore.query_logs(
-      project_id: @monitor.project_id, query: @monitor.query, from: from, to: to,
-      timeout_seconds: LogMonitor::RUN_TIMEOUT_SECONDS
-    )
-    table = answer["table"]
-    return failed("The Query returns Logs, not a table: end it in a summarize of one number.") unless table
-    return failed(TABLE_CUT) if table["truncated"]
-
-    column, groups = groups_of(table)
-    groups = { "" => nil } if groups.empty? && @monitor.alert_on_no_data
+    column, rows = rows_of(table_over(from, to, LogMonitor::RUN_TIMEOUT_SECONDS))
+    readings = rows.transform_values { |value| Reading.new(value, nil) }
+    if @monitor.compares_the_change?
+      baseline_range = @monitor.baseline_window(@now)
+      _, before = rows_of(table_over(*baseline_range, time_left))
+      readings = rows.to_h { |key, value| [ key, Reading.new(value, before.fetch(key, 0)) ] }
+    end
+    groups = @monitor.notify_by_group ? readings : the_worst(readings)
+    groups = { "" => NO_DATA } if groups.empty? && @monitor.alert_on_no_data
 
     record do
-      firing = move_states(groups, column: column, from: from, to: to)
+      firing = move_states(groups, column: column, from: from, to: to, baseline_range: baseline_range)
       finish(firing: firing)
     end
   rescue EventStore::TimedOut => e
@@ -117,9 +131,33 @@ class MonitorEvaluation
     failed(e.message)
   end
 
-  # The number column's name, and each group's key and number: the worst of
-  # its rows', since a row's number may be null.
-  def groups_of(table)
+  # The table the Query gives over [from, to), stopped after timeout
+  # seconds.
+  def table_over(from, to, timeout)
+    answer = EventStore.query_logs(
+      project_id: @monitor.project_id, query: @monitor.query, from: from, to: to, timeout_seconds: timeout
+    )
+    table = answer["table"]
+    raise Unusable, "The Query returns Logs, not a table: end it in a summarize of one number." unless table
+    raise Unusable, TABLE_CUT if table["truncated"]
+
+    table
+  end
+
+  # What's left of the run's LogMonitor::RUN_TIMEOUT_SECONDS, for the
+  # Baseline's Query after the current range's.
+  def time_left
+    left = (LogMonitor::RUN_TIMEOUT_SECONDS - (Process.clock_gettime(Process::CLOCK_MONOTONIC) - @started)).floor(3)
+    raise Unusable, OUT_OF_TIME if left <= 0
+
+    left
+  end
+
+  # The number column's name, and each row's group key and number. Rows are
+  # keyed by their columns other than the number whether or not the Monitor
+  # notifies by group; a row whose number is null is left out, and rows
+  # sharing a key keep the worse number.
+  def rows_of(table)
     columns = table["columns"] || []
     numbers = columns.each_index.select { |i| columns[i]["type"] == "number" }
     unless numbers.size == 1
@@ -127,15 +165,31 @@ class MonitorEvaluation
     end
 
     at = numbers.first
-    groups = {}
+    rows = {}
     (table["rows"] || []).each do |row|
       value = row[at]
       next unless value.is_a?(Numeric)
 
-      key = @monitor.notify_by_group ? group_key(columns, row, at) : ""
-      groups[key] = groups.key?(key) ? worst(groups[key], value) : value
+      key = group_key(columns, row, at)
+      rows[key] = rows.key?(key) ? @monitor.worse(rows[key], value) : value
     end
-    [ columns[at]["name"], groups ]
+    [ columns[at]["name"], rows ]
+  end
+
+  # A Monitor that doesn't notify by group has one group, "", the worst
+  # row's: the one whose number, or comparing the change whose change,
+  # passes the threshold soonest. None when there are no rows.
+  def the_worst(readings)
+    return {} if readings.empty?
+
+    compared = readings.values.map { |reading| [ reading, compared(reading) ] }
+    worst = compared.map(&:last).reduce { |a, b| @monitor.worse(a, b) }
+    { "" => compared.find { |_, number| number == worst }.first }
+  end
+
+  # The number a group's reading compares with the threshold.
+  def compared(reading)
+    @monitor.compares_the_change? ? LogMonitor.change(reading.value, reading.baseline) : reading.value
   end
 
   # A group's columns, name to value in the table's order, as JSON; "" when
@@ -143,10 +197,6 @@ class MonitorEvaluation
   def group_key(columns, row, at)
     group = columns.each_with_index.filter_map { |column, i| [ column["name"], row[i] ] unless i == at }.to_h
     group.empty? ? "" : group.to_json
-  end
-
-  def worst(a, b)
-    @monitor.operator.start_with?(">") ? [ a, b ].max : [ a, b ].min
   end
 
   # Moves each group's state to what this run found, and writes the
@@ -158,28 +208,33 @@ class MonitorEvaluation
   # have up to 10,000 groups, so the states are written in bulk: one upsert
   # of what changed and one delete of the ok groups that are gone. The
   # Notifications are written in bulk too, when the run is recorded.
-  def move_states(groups, column:, from:, to:)
+  def move_states(groups, column:, from:, to:, baseline_range: nil)
     states = @monitor.states.index_by(&:group_key)
     facts = { "column" => column, "threshold" => @monitor.threshold, "operator" => @monitor.operator,
               "from" => from.utc.iso8601, "to" => to.utc.iso8601 }
+    if baseline_range
+      facts.merge!("compare" => "change", "baseline_from" => baseline_range.first.utc.iso8601,
+        "baseline_to" => baseline_range.last.utc.iso8601)
+    end
     changed = []
     firing_count = 0
 
-    groups.each do |key, value|
+    groups.each do |key, reading|
+      value, baseline = reading.value, reading.baseline
       state = states.delete(key)
       status, since = state ? [ state.status, state.since ] : [ "ok", @now ]
-      firing = value.nil? || @monitor.breached?(value)
+      firing = value.nil? || @monitor.breached?(value, baseline)
       firing_count += 1 if firing
       if firing != (status == "firing")
         kind = firing ? IntegrationNotification::MONITOR_FIRING : IntegrationNotification::MONITOR_RESOLVED
         # Firing for no data, or resolving after it.
         no_data = firing ? value.nil? : state.last_value.nil?
-        notify(kind, key, facts.merge("value" => value, "no_data" => no_data))
+        notify(kind, key, facts.merge("value" => value, "no_data" => no_data).merge(change_facts(reading)))
         status, since = (firing ? "firing" : "ok"), @now
       end
-      next if state && state.status == status && state.last_value == value
+      next if state && state.status == status && state.last_value == value && state.last_baseline == baseline
 
-      changed << { group_key: key, status: status, since: since, last_value: value }
+      changed << { group_key: key, status: status, since: since, last_value: value, last_baseline: baseline }
     end
 
     gone = []
@@ -187,8 +242,8 @@ class MonitorEvaluation
       next gone << state.id if state.status_ok?
 
       notify(IntegrationNotification::MONITOR_RESOLVED, state.group_key,
-        facts.merge("value" => nil, "absent" => true, "no_data" => state.last_value.nil?))
-      changed << { group_key: state.group_key, status: "ok", since: @now, last_value: nil }
+        facts.merge("value" => nil, "absent" => true, "no_data" => state.last_value.nil?).merge(change_facts(NO_DATA)))
+      changed << { group_key: state.group_key, status: "ok", since: @now, last_value: nil, last_baseline: nil }
     end
 
     @monitor.states.where(id: gone).delete_all if gone.any?
@@ -196,6 +251,16 @@ class MonitorEvaluation
       @monitor.states.upsert_all(rows, unique_by: %i[monitor_id group_key])
     end
     firing_count
+  end
+
+  # Comparing the change, what a group's Notification says beside its
+  # value: its Baseline and its change, a percent. A rise or fall from a
+  # Baseline of 0 has no size, so its change is nil; so is no data's.
+  def change_facts(reading)
+    return {} unless @monitor.compares_the_change?
+
+    change = LogMonitor.change(reading.value, reading.baseline) unless reading.value.nil?
+    { "baseline" => reading.baseline, "change" => change&.finite? ? change : nil }
   end
 
   # ---------------------------------------------------------------------------

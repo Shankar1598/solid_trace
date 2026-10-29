@@ -3,14 +3,25 @@
 // MonitorEvaluation reads it, and the Queries its preview chart runs.
 import type { Builder } from '@/lib/logs/builder'
 import type { LogTable } from '@/lib/logs/table'
+import { valueText } from '@/lib/charts/axis'
 import { rangeMs, type TimeRange } from '@/lib/timeRange'
 
 export type MonitorKind = 'threshold' | 'match'
-export type MonitorOperator = '>' | '>=' | '<' | '<='
+/** What a Threshold monitor compares with its threshold: each group's number, or its percent change from its Baseline. */
+export type MonitorCompare = 'value' | 'change'
+/** Where a group's Baseline is read: the range just before the current one. */
+export type MonitorBaseline = 'previous'
+export type ValueOperator = '>' | '>=' | '<' | '<='
+/** Comparing the change: fires when the change is at least the threshold percent up, down, or either way. */
+export type ChangeOperator = 'rises' | 'falls' | 'changes'
+export type MonitorOperator = ValueOperator | ChangeOperator
 /** disabled when off, error when its last run failed, firing when any group is, ok otherwise. */
 export type MonitorStatus = 'firing' | 'ok' | 'disabled' | 'error'
 
-export const OPERATORS: MonitorOperator[] = ['>', '>=', '<', '<=']
+export const OPERATORS: ValueOperator[] = ['>', '>=', '<', '<=']
+export const CHANGE_OPERATORS: ChangeOperator[] = ['rises', 'falls', 'changes']
+/** The Baselines a Monitor comparing the change can read, as the form offers them. */
+export const BASELINES: { value: MonitorBaseline; label: string }[] = [{ value: 'previous', label: 'The range just before' }]
 /** A Monitor's bounds, as LogMonitor checks them. */
 export const MAX_INTERVAL_MINUTES = 24 * 60
 export const MAX_RANGE_MINUTES = 7 * 24 * 60
@@ -23,6 +34,8 @@ export interface MonitorSettings {
   query: string
   interval_minutes: number
   range_minutes: number
+  compare: MonitorCompare
+  baseline: MonitorBaseline | null
   operator: MonitorOperator | null
   threshold: number | null
   notify_by_group: boolean
@@ -36,6 +49,8 @@ export interface MonitorGroupState {
   status: 'ok' | 'firing'
   since: string
   last_value: number | null
+  /** Comparing the change, the group's number over its Baseline range at the last run. */
+  last_baseline: number | null
 }
 
 export interface MonitorRun {
@@ -74,7 +89,7 @@ export interface Monitor extends MonitorSettings {
 }
 
 /** Whether value passes the threshold, by the operator. */
-export function breached(value: number, operator: MonitorOperator, threshold: number): boolean {
+export function breached(value: number, operator: ValueOperator, threshold: number): boolean {
   switch (operator) {
     case '>': return value > threshold
     case '>=': return value >= threshold
@@ -91,7 +106,7 @@ export interface GroupNow {
 }
 
 type Rule = Pick<MonitorSettings, 'notify_by_group' | 'alert_on_no_data'> & {
-  operator: MonitorOperator | null
+  operator: ValueOperator | null
   threshold: number | null
 }
 
@@ -189,4 +204,54 @@ export function runText(run: Pick<MonitorRun, 'status' | 'error' | 'firing' | 'm
     text = firing === 0 ? 'Nothing firing' : `${firing} ${firing === 1 ? 'group' : 'groups'} firing`
   }
   return run.logs_skipped ? `${text}. Started again from the newest Logs, skipping those ingested since the last run.` : text
+}
+
+/**
+ * value's percent change from baseline, as LogMonitor.change works it out:
+ * from a Baseline of 0 a number above 0 is an infinite rise and one below an
+ * infinite fall, and 0 then and now is no change. A negative Baseline divides
+ * by its size.
+ */
+export function changeOf(value: number, baseline: number): number {
+  if (baseline === 0) return value === 0 ? 0 : Math.sign(value) * Infinity
+  return ((value - baseline) / Math.abs(baseline)) * 100
+}
+
+/** A change as a signed percent, to at most 1 decimal: +100%, -30%, 0%; or up from 0, down from 0. */
+export function changeText(value: number, baseline: number): string {
+  const change = changeOf(value, baseline)
+  if (!Number.isFinite(change)) return `${change > 0 ? 'up' : 'down'} from 0`
+  const rounded = Math.round(change * 10) / 10
+  return `${rounded > 0 ? '+' : ''}${rounded}%`
+}
+
+/** A group's number with its Baseline and change, such as 120 (baseline 60, +100%). */
+export function readingText(value: number | null, baseline: number | null): string {
+  if (value === null) return 'No data'
+  if (baseline === null) return valueText(value)
+  return `${valueText(value)} (baseline ${valueText(baseline)}, ${changeText(value, baseline)})`
+}
+
+const CHANGE_WORDS: Record<ChangeOperator, string> = { rises: 'rises by', falls: 'falls by', changes: 'changes by' }
+
+type RuleOf = Pick<MonitorSettings,
+  'kind' | 'compare' | 'baseline' | 'interval_minutes' | 'range_minutes' | 'operator' | 'threshold' | 'notify_by_group' | 'alert_on_no_data'>
+
+/** What the Monitor checks, in a sentence. */
+export function ruleText(monitor: RuleOf): string {
+  const every = `Runs every ${minutes(monitor.interval_minutes)}`
+  if (monitor.kind === 'match') return `${every} and sends one message when Logs ingested since its last run match.`
+  const groups = monitor.notify_by_group ? 'each group' : 'the worst group'
+  const noData = monitor.alert_on_no_data ? ' No rows at all fire too.' : ''
+  const over = `${every} over the last ${minutes(monitor.range_minutes)}`
+  if (monitor.compare === 'change') {
+    const how = CHANGE_WORDS[monitor.operator as ChangeOperator] ?? 'changes by'
+    const either = monitor.operator === 'changes' ? ' either way' : ''
+    return `${over}, and fires when ${groups}'s number ${how} ${monitor.threshold}% or more${either} from the ${minutes(monitor.range_minutes)} before.${noData}`
+  }
+  return `${over}, and fires when ${groups}'s number is ${monitor.operator} ${monitor.threshold}.${noData}`
+}
+
+function minutes(n: number): string {
+  return n === 1 ? 'minute' : `${n} minutes`
 }

@@ -167,6 +167,51 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
       Notification.where(monitor_id: @monitor.id).map { |row| [ row.integration_id, row.kind, row.group_key, row.payload["unlinked"] ] }
   end
 
+  test "a member makes a Monitor comparing the change from the range just before, and its pages have it" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Errors doubled", compare: "change", baseline: "previous", operator: "rises", threshold: 100) },
+      as: :json
+
+    monitor = @organization.monitors.find_by!(name: "Errors doubled")
+    assert_redirected_to monitor_url(monitor, org_slug: @organization.slug)
+    assert_equal [ "change", "previous", "rises", 100.0 ], [ monitor.compare, monitor.baseline, monitor.operator, monitor.threshold ]
+
+    monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+    shown = inertia_page(monitor_url(monitor, org_slug: @organization.slug), "Monitors/Show")["monitor"]
+    assert_equal [ "change", "previous", "rises" ], shown.values_at("compare", "baseline", "operator")
+    assert_equal [ 120.0, 60.0 ], shown["states"].sole.values_at("last_value", "last_baseline")
+    edited = inertia_page(edit_monitor_url(monitor, org_slug: @organization.slug), "Monitors/Edit")["monitor"]
+    assert_equal [ "change", "previous" ], edited.values_at("compare", "baseline")
+  end
+
+  test "a Monitor comparing the change with a value operator, no Baseline or a percent of 0 is refused beside those fields" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Refused", compare: "change", operator: ">", threshold: 0) }, as: :json
+
+    assert_not LogMonitor.exists?(name: "Refused")
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_equal [ [ "must be rises, falls or changes" ], [ "must be previous, the range just before" ],
+                   [ "must be a percent greater than 0" ] ], errors.values_at("operator", "baseline", "threshold")
+  end
+
+  test "switching a firing Monitor to compare the change resolves its groups; changing the threshold or direction doesn't" do
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 42)
+
+    patch monitor_url(@monitor, org_slug: @organization.slug),
+      params: { monitor: { compare: "change", baseline: "previous", operator: "rises", threshold: 50 } }, as: :json
+
+    assert_redirected_to monitor_url(@monitor, org_slug: @organization.slug)
+    assert_empty @monitor.states.reload
+    assert_equal [ [ "monitor_resolved", true ] ],
+      Notification.where(monitor_id: @monitor.id).map { |row| [ row.kind, row.payload["compare_changed"] ] }
+
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+    patch monitor_url(@monitor, org_slug: @organization.slug), params: { monitor: { operator: "changes", threshold: 75 } }, as: :json
+
+    assert @monitor.states.reload.sole.status_firing?
+    assert_equal 1, Notification.where(monitor_id: @monitor.id).count
+  end
+
   test "a change refused keeps the Monitor's Integrations" do
     patch monitor_url(@monitor, org_slug: @organization.slug),
       params: { monitor: { name: "", integration_ids: [] } }, as: :json

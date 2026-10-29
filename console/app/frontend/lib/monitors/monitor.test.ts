@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { Builder } from '@/lib/logs/builder'
 import type { LogTable } from '@/lib/logs/table'
 import {
-  breached, groupLabel, groupsNow, newMonitorHref, rangeMinutesOf, runText, withRangeBins, withoutTimeBins,
+  breached, changeText, groupLabel, groupsNow, newMonitorHref, rangeMinutesOf, readingText, ruleText, runText, withRangeBins,
+  withoutTimeBins,
 } from './monitor'
 
 const table = (columns: LogTable['columns'], rows: unknown[][]): LogTable => ({ columns, rows, truncated: false })
@@ -143,5 +144,49 @@ describe('runText', () => {
   it('says when a Match monitor skipped Logs to start again', () => {
     expect(runText({ ...run, firing: null, matched: 0, logs_skipped: true }, 'match'))
       .toBe('0 Logs matched. Started again from the newest Logs, skipping those ingested since the last run.')
+  })
+})
+
+describe('changeText', () => {
+  it('gives a change from the Baseline as a signed percent, to at most one decimal', () => {
+    expect(changeText(120, 60)).toBe('+100%')
+    expect(changeText(7, 10)).toBe('-30%')
+    expect(changeText(70, 60)).toBe('+16.7%')
+    expect(changeText(-50, -100)).toBe('+50%')
+    expect(changeText(0, 0)).toBe('0%')
+  })
+
+  it('reads a change from a Baseline of 0 as up or down from 0', () => {
+    expect(changeText(5, 0)).toBe('up from 0')
+    expect(changeText(-3, 0)).toBe('down from 0')
+  })
+})
+
+describe('readingText', () => {
+  it('gives a number with its Baseline and change, or the number alone without a Baseline', () => {
+    expect(readingText(120, 60)).toBe('120 (baseline 60, +100%)')
+    expect(readingText(5, 0)).toBe('5 (baseline 0, up from 0)')
+    expect(readingText(42, null)).toBe('42')
+    expect(readingText(null, null)).toBe('No data')
+  })
+})
+
+describe('ruleText', () => {
+  const monitor = {
+    kind: 'threshold' as const, compare: 'value' as const, baseline: null, interval_minutes: 1, range_minutes: 15,
+    operator: '>' as const, threshold: 10, notify_by_group: true, alert_on_no_data: false,
+  }
+
+  it('says what a Threshold monitor compares', () => {
+    expect(ruleText(monitor)).toBe("Runs every minute over the last 15 minutes, and fires when each group's number is > 10.")
+  })
+
+  it('describes the change rule for a Monitor comparing the change', () => {
+    const change = { ...monitor, compare: 'change' as const, baseline: 'previous' as const, threshold: 50 }
+    expect(ruleText({ ...change, operator: 'rises' })).toBe(
+      "Runs every minute over the last 15 minutes, and fires when each group's number rises by 50% or more from the 15 minutes before.")
+    expect(ruleText({ ...change, operator: 'falls', notify_by_group: false, alert_on_no_data: true })).toBe(
+      "Runs every minute over the last 15 minutes, and fires when the worst group's number falls by 50% or more from the 15 minutes before. No rows at all fire too.")
+    expect(ruleText({ ...change, operator: 'changes' })).toContain('changes by 50% or more either way from the 15 minutes before')
   })
 })

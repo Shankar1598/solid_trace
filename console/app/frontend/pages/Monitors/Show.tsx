@@ -12,7 +12,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { valueText } from '@/lib/charts/axis'
 import { providerName } from '@/lib/integrations'
-import { groupLabel, runText, type Monitor } from '@/lib/monitors/monitor'
+import { groupLabel, readingText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
 
@@ -28,6 +28,7 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
   const states = monitor.states ?? []
   const runs = monitor.runs ?? []
   const integrations = monitor.integrations ?? []
+  const comparesChange = monitor.kind === 'threshold' && monitor.compare === 'change'
 
   const visit = (what: 'run' | 'power', method: 'post' | 'patch', url: string) => {
     setBusy(what)
@@ -97,7 +98,7 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
                       <TableHead>Group</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Since</TableHead>
-                      <TableHead className="text-right">Last value</TableHead>
+                      <TableHead className="text-right">{comparesChange ? 'Last value, Baseline and change' : 'Last value'}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -108,7 +109,9 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
                           <Badge variant={s.status === 'firing' ? 'error' : 'ok'} dot>{s.status === 'firing' ? 'Firing' : 'OK'}</Badge>
                         </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">{format(new Date(s.since), 'PPp')}</TableCell>
-                        <TableCell className="text-right font-mono text-xs" title={s.last_value === null ? undefined : String(s.last_value)}>{s.last_value === null ? 'No data' : valueText(s.last_value)}</TableCell>
+                        <TableCell className="text-right font-mono text-xs" title={s.last_value === null ? undefined : String(s.last_value)} data-group-reading>
+                          {comparesChange ? readingText(s.last_value, s.last_baseline) : s.last_value === null ? 'No data' : valueText(s.last_value)}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -169,13 +172,4 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
 
 function minutes(n: number): string {
   return n === 1 ? 'minute' : `${n} minutes`
-}
-
-/** What the Monitor checks, in a sentence. */
-function ruleText(monitor: Monitor): string {
-  const every = `Runs every ${minutes(monitor.interval_minutes)}`
-  if (monitor.kind === 'match') return `${every} and sends one message when Logs ingested since its last run match.`
-  const groups = monitor.notify_by_group ? 'each group' : 'the worst group'
-  const noData = monitor.alert_on_no_data ? ' No rows at all fire too.' : ''
-  return `${every} over the last ${minutes(monitor.range_minutes)}, and fires when ${groups}'s number is ${monitor.operator} ${monitor.threshold}.${noData}`
 }

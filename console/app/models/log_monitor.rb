@@ -7,7 +7,9 @@
 #
 # - A Threshold monitor's Query ends in a summarize of one number. Each row
 #   of its table over the last range_minutes is a group, keyed by its other
-#   columns; a group whose number passes the threshold is firing.
+#   columns; a group whose number passes the threshold is firing. It
+#   compares either the number itself (compare value) or its percent change
+#   from its Baseline, the number over the baseline range (compare change).
 # - A Match monitor reads the Logs ingested since its last run, from
 #   ingest_cursor, and sends one message when any match.
 #
@@ -16,6 +18,11 @@ class LogMonitor < ApplicationRecord
   self.table_name = "monitors"
 
   OPERATORS = %w[> >= < <=].freeze
+  # A Monitor comparing the change fires when a group's number rises, falls
+  # or changes either way by at least its threshold, a percent.
+  CHANGE_OPERATORS = %w[rises falls changes].freeze
+  # Where the Baseline range is: the range just before the current one.
+  BASELINES = %w[previous].freeze
   MAX_INTERVAL_MINUTES = 24 * 60
   MAX_RANGE_MINUTES = 7 * 24 * 60
   # A tick comes about a minute after the last, give or take, so a Monitor
@@ -32,6 +39,7 @@ class LogMonitor < ApplicationRecord
   end
 
   enum :kind, { threshold: "threshold", match: "match" }, prefix: true, validate: true
+  enum :compare, { value: "value", change: "change" }, prefix: true, validate: true
 
   belongs_to :organization
   belongs_to :project
@@ -51,9 +59,14 @@ class LogMonitor < ApplicationRecord
   validates :query, presence: true, length: { maximum: 20_000 }
   validates :interval_minutes, numericality: { only_integer: true, in: 1..MAX_INTERVAL_MINUTES }
   validates :range_minutes, numericality: { only_integer: true, in: 1..MAX_RANGE_MINUTES }
-  validates :operator, inclusion: { in: OPERATORS, message: "must be >, >=, < or <=" }, if: :kind_threshold?
-  validates :threshold, numericality: true, if: :kind_threshold?
+  validates :operator, inclusion: { in: OPERATORS, message: "must be >, >=, < or <=" }, if: :compares_the_value?
+  validates :threshold, numericality: true, if: :compares_the_value?
+  validates :operator, inclusion: { in: CHANGE_OPERATORS, message: "must be rises, falls or changes" }, if: :compares_the_change?
+  validates :threshold, numericality: { greater_than: 0, message: "must be a percent greater than 0" }, if: :compares_the_change?
+  validates :baseline, inclusion: { in: BASELINES, message: "must be previous, the range just before" }, if: :compares_the_change?
   validate :project_of_the_organization
+
+  before_validation :forget_the_baseline, unless: :compares_the_change?
   validate :query_runs_as_its_kind, if: :query_check_needed?
 
   before_save :run_at_the_next_tick, if: :schedule_changed?
@@ -96,15 +109,63 @@ class LogMonitor < ApplicationRecord
     enabled? && (next_run_at.nil? || next_run_at <= now + SCHEDULE_SLACK)
   end
 
-  # Whether value passes the threshold, by the operator.
-  def breached?(value)
-    value.public_send(operator, threshold)
+  # Whether a Threshold monitor compares its groups' change from their
+  # Baseline rather than their value.
+  def compares_the_change?
+    kind_threshold? && compare_change?
+  end
+
+  def compares_the_value?
+    kind_threshold? && !compare_change?
+  end
+
+  # Whether a group's value passes the threshold, by the operator: the value
+  # itself, or comparing the change, its change from baseline.
+  def breached?(value, baseline = nil)
+    return value.public_send(operator, threshold) unless compares_the_change?
+
+    change = LogMonitor.change(value, baseline)
+    case operator
+    when "rises" then change >= threshold
+    when "falls" then change <= -threshold
+    else change.abs >= threshold
+    end
+  end
+
+  # value's percent change from baseline. From a Baseline of 0 a number
+  # above 0 is an infinite rise and one below an infinite fall, the biggest
+  # change there is, and 0 then and now is no change. A negative Baseline
+  # divides by its size, so -100 to -50 is up 50%.
+  def self.change(value, baseline)
+    return (value <=> 0) * Float::INFINITY if baseline.zero? && !value.zero?
+    return 0.0 if baseline.zero?
+
+    (value - baseline).fdiv(baseline.abs) * 100
+  end
+
+  # Of two numbers for one group, the one that passes the threshold sooner:
+  # the larger for >, >=, rises and changes, the smaller for <, <= and falls.
+  # Comparing the change, a and b are changes, and changes compares sizes.
+  def worse(a, b)
+    case operator
+    when "<", "<=", "falls" then [ a, b ].min
+    when "changes" then [ a, b ].max_by(&:abs)
+    else [ a, b ].max
+    end
   end
 
   # The [from, to) a Threshold monitor's run at now reads.
   def window(now)
     to = now - PROCESSING_LAG
     [ to - range_minutes.minutes, to ]
+  end
+
+  # The [from, to) a run at now reads for its groups' Baseline: the current
+  # range shifted back by its own length, so the two meet.
+  def baseline_window(now)
+    from, to = window(now)
+    shift = range_minutes.minutes
+    [ from - shift, to - shift ]
   end
 
   # Whether a Match monitor saved now starts its runs from the newest Log
@@ -174,8 +235,21 @@ class LogMonitor < ApplicationRecord
     self.next_run_at = nil
   end
 
+  # A Match monitor, or a Threshold monitor comparing the value, has no
+  # Baseline; a Match monitor compares nothing.
+  def forget_the_baseline
+    self.baseline = nil
+    self.compare = "value" if kind_match?
+  end
+
   def stopped_checking_the_threshold?
-    no_longer_a_threshold_monitor? || turned_off?
+    no_longer_a_threshold_monitor? || turned_off? || switched_compare?
+  end
+
+  # A Threshold monitor that compared the value now compares the change, or
+  # the other way: its groups' firing meant something else.
+  def switched_compare?
+    kind_threshold? && saved_change_to_compare?
   end
 
   def no_longer_a_threshold_monitor?
@@ -187,30 +261,37 @@ class LogMonitor < ApplicationRecord
   end
 
   def resolve_groups_on_change
-    reason = no_longer_a_threshold_monitor? ? "kind_changed" : "turned_off"
-    resolve_groups(reason, operator: operator_before_last_save, threshold: threshold_before_last_save)
+    reason = if no_longer_a_threshold_monitor? then "kind_changed"
+    elsif turned_off? then "turned_off"
+    else "compare_changed"
+    end
+    resolve_groups(reason, operator: operator_before_last_save, threshold: threshold_before_last_save,
+      compare: compare_before_last_save)
   end
 
   def resolve_groups_on_delete
-    resolve_groups("deleted", operator: operator, threshold: threshold)
+    resolve_groups("deleted", operator: operator, threshold: threshold, compare: compare)
   end
 
-  # A Threshold monitor changed to a Match monitor, turned off or deleted no
-  # longer compares its groups with the threshold, and no run would resolve
-  # them: each firing group sends monitor_resolved now, saying why, which
-  # closes its PagerDuty incident, and its states go. Turned back on, a group
-  # still past the threshold fires again.
-  def resolve_groups(reason, operator:, threshold:)
-    send_resolved(reason, operator: operator, threshold: threshold, integrations: integrations)
+  # A Threshold monitor changed to a Match monitor, turned off, switched
+  # between comparing the value and the change, or deleted no longer
+  # compares its groups as they fired, and no run would resolve them: each
+  # firing group sends monitor_resolved now, saying why, which closes its
+  # PagerDuty incident, and its states go. A group still past the threshold
+  # fires again at the next run.
+  def resolve_groups(reason, operator:, threshold:, compare:)
+    send_resolved(reason, operator: operator, threshold: threshold, compare: compare, integrations: integrations)
     states.delete_all
   end
 
   # The Notifications are written in bulk, as a Monitor may have thousands
-  # of firing groups and this runs in the save's transaction.
-  def send_resolved(reason, operator:, threshold:, integrations:)
+  # of firing groups and this runs in the save's transaction. They describe
+  # the groups as they fired: comparing the change, with their Baseline.
+  def send_resolved(reason, operator:, threshold:, compare: self.compare, integrations:)
     changes = states.reload.select(&:status_firing?).map do |state|
-      [ IntegrationNotification::MONITOR_RESOLVED, state.group_key,
-        { "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true } ]
+      payload = { "value" => state.last_value, "operator" => operator, "threshold" => threshold, reason => true }
+      payload.merge!("compare" => "change", "baseline" => state.last_baseline) if compare == "change"
+      [ IntegrationNotification::MONITOR_RESOLVED, state.group_key, payload ]
     end
     IntegrationNotification.schedule_ticks(IntegrationNotification.monitor_changes(self, changes, integrations: integrations))
   end

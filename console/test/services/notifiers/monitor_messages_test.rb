@@ -113,6 +113,83 @@ module Notifiers
     end
 
     # -------------------------------------------------------------------------
+    # Comparing the change
+    # -------------------------------------------------------------------------
+
+    test "Slack: a change trigger gives the number, its Baseline and the change, and links to both ranges" do
+      deliver(@slack, row(IntegrationNotification::MONITOR_FIRING, GROUP, change_payload(120.0, 60.0)))
+
+      assert_requested(:post, SLACK_URL) do |request|
+        body = JSON.parse(request.body)
+        _, text, fields, actions = body["blocks"]
+        now, before = actions["elements"]
+        assert_equal "count_ was 120 over the last 15 minutes, up 100% from 60 the 15 minutes before.", text.dig("text", "text")
+        assert_equal [ "*Project:*\nShop", "*Group:*\nservice=api, level=error", "*Value:*\n120", "*Baseline:*\n60",
+                       "*Change:*\n+100%", "*Threshold:*\nrises 50%", "*Range:*\nlast 15 minutes" ], fields["fields"].map { |f| f["text"] }
+        assert_equal [ "Open in the Logs explorer", "Open the Baseline" ], [ now, before ].map { |button| button.dig("text", "text") }
+        assert_equal [ "2026-10-17T11:44:00Z", "2026-10-17T11:59:00Z" ], Rack::Utils.parse_query(URI(now["url"]).query).values_at("from", "to")
+        assert_equal [ @monitor.query, "2026-10-17T11:29:00Z", "2026-10-17T11:44:00Z" ],
+          Rack::Utils.parse_query(URI(before["url"]).query).values_at("q", "from", "to")
+        true
+      end
+    end
+
+    test "a change reads up from 0, down by a percent, and a resolve gives the change it came back to" do
+      texts = {
+        from_zero: [ IntegrationNotification::MONITOR_FIRING, change_payload(5.0, 0.0) ],
+        falls: [ IntegrationNotification::MONITOR_FIRING, change_payload(30.0, 60.0).merge("operator" => "falls") ],
+        resolved: [ IntegrationNotification::MONITOR_RESOLVED, change_payload(70.0, 60.0) ],
+        steady: [ IntegrationNotification::MONITOR_RESOLVED, change_payload(0.0, 0.0).merge("operator" => "changes") ],
+      }.transform_values { |kind, payload| MonitorMessage.build(row(kind, GROUP, payload)) }
+
+      assert_equal "count_ was 5 over the last 15 minutes, up from 0 the 15 minutes before.", texts[:from_zero].text
+      assert_equal "up from 0", texts[:from_zero].fields.to_h["Change"]
+      assert_equal "count_ was 30 over the last 15 minutes, down 50% from 60 the 15 minutes before.", texts[:falls].text
+      assert_equal "falls 50%", texts[:falls].fields.to_h["Threshold"]
+      assert_equal "count_ was 70 over the last 15 minutes, up 16.7% from 60 the 15 minutes before, " \
+        "no longer a rise of 50% or more.", texts[:resolved].text
+      assert_equal "count_ was 0 over the last 15 minutes, no change from 0 the 15 minutes before, " \
+        "no longer a change of 50% or more.", texts[:steady].text
+    end
+
+    test "a resolve after switching between the value and the change says so" do
+      to_change = MonitorMessage.build(row(IntegrationNotification::MONITOR_RESOLVED, GROUP,
+        threshold_payload(120.0).except("from", "to").merge("compare_changed" => true)))
+      to_value = MonitorMessage.build(row(IntegrationNotification::MONITOR_RESOLVED, GROUP,
+        change_payload(120.0, 60.0).except("from", "to", "baseline_from", "baseline_to").merge("compare_changed" => true)))
+
+      assert_equal "The Monitor now compares the change from a Baseline instead of the value, so its groups start again.",
+        to_change.text
+      assert_equal "The Monitor now compares the value instead of the change from a Baseline, so its groups start again.",
+        to_value.text
+      assert_equal [ "120", "60", "+100%", "rises 50%" ], to_value.fields.to_h.values_at("Value", "Baseline", "Change", "Threshold")
+    end
+
+    test "PagerDuty: a change trigger keeps one link and the group's dedup key, and gives the Baseline and change" do
+      deliver(@pagerduty, row(IntegrationNotification::MONITOR_FIRING, GROUP, change_payload(120.0, 60.0)))
+
+      assert_requested(:post, PAGERDUTY_URL) do |request|
+        event = JSON.parse(request.body)
+        assert_equal "solid-trace-monitor-#{@monitor.id}-#{GROUP}", event["dedup_key"]
+        assert_equal [ "120", "60", "+100%", "rises 50%" ],
+          event.dig("payload", "custom_details").values_at("Value", "Baseline", "Change", "Threshold")
+        assert_equal 1, event["links"].size
+        true
+      end
+    end
+
+    test "Email: a change trigger links to both ranges" do
+      message = MonitorMessage.build(row(IntegrationNotification::MONITOR_FIRING, GROUP, change_payload(120.0, 60.0)))
+      mail = MonitorMailer.notify(message.to_h, [ "ops@example.com" ])
+
+      text = mail.text_part.body.to_s
+      assert_match "Baseline: 60", text
+      assert_match %r{Open in the Logs explorer: http://[^/]+/acme/projects/shop/logs\?.*from=2026-10-17T11%3A44}, text
+      assert_match %r{Open the Baseline in the Logs explorer: http://[^/]+/acme/projects/shop/logs\?.*from=2026-10-17T11%3A29}, text
+      assert_match "Open the Baseline in the Logs explorer", mail.html_part.body.to_s
+    end
+
+    # -------------------------------------------------------------------------
     # PagerDuty
     # -------------------------------------------------------------------------
 
@@ -207,6 +284,14 @@ module Notifiers
     def threshold_payload(value)
       { "value" => value, "column" => "count_", "threshold" => 100.0, "operator" => ">=",
         "from" => "2026-10-17T11:44:00Z", "to" => "2026-10-17T11:59:00Z" }
+    end
+
+    # A run comparing the change from the range just before: rises 50%.
+    def change_payload(value, baseline)
+      change = baseline.zero? ? (value.zero? ? 0.0 : nil) : (value - baseline) / baseline.abs * 100
+      threshold_payload(value).merge("compare" => "change", "operator" => "rises", "threshold" => 50.0,
+        "baseline" => baseline, "change" => change,
+        "baseline_from" => "2026-10-17T11:29:00Z", "baseline_to" => "2026-10-17T11:44:00Z")
     end
 
     def row(kind, group_key, payload)
