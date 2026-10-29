@@ -6,9 +6,11 @@ module Notifiers
   # Builds the Message for a Notification about a Monitor, from the Monitor
   # and what its run saw, which MonitorEvaluation stored in the row's payload:
   # - monitor_firing and monitor_resolved: value (nil for no data), column,
-  #   threshold, operator, from and to (the range read); a resolve says
-  #   absent, no_data, kind_changed, turned_off, deleted or unlinked when it
-  #   has one of those reasons
+  #   threshold, operator, from and to (the range read); comparing the
+  #   change, also compare "change", baseline, change (a percent, nil from a
+  #   Baseline of 0), baseline_from and baseline_to; a resolve says absent,
+  #   no_data, kind_changed, compare_changed, turned_off, deleted or unlinked
+  #   when it has one of those reasons
   # - monitor_matched: logs (up to MonitorEvaluation::MATCHED_LOGS), total,
   #   from and to (for the explorer), and logs_skipped_at when Logs were left
   #   unread before this run
@@ -21,6 +23,8 @@ module Notifiers
     MAX_LOG_LINE = 300
 
     OPERATOR_WORDS = { ">" => "above", ">=" => "at or above", "<" => "below", "<=" => "at or below" }.freeze
+    CHANGE_WORDS = { "rises" => "a rise", "falls" => "a fall", "changes" => "a change" }.freeze
+    COMPARED = { "value" => "the value", "change" => "the change from a Baseline" }.freeze
 
     class << self
       def build(row)
@@ -100,6 +104,8 @@ module Notifiers
         range = range_text(monitor, payload)
         text = if payload["value"].nil?
           "No data over the last #{range}."
+        elsif change?(payload)
+          "#{value_text(payload)} over the last #{range}, #{from_baseline_text(monitor, payload)}."
         else
           "#{value_text(payload)} over the last #{range}, #{threshold_text(payload)}."
         end
@@ -109,12 +115,16 @@ module Notifiers
       # Resolved because the number is back within the threshold, because the
       # group has no row any more (absent), because a Monitor that fired for
       # no data has data again (no_data), because the Monitor now matches
-      # Logs instead (kind_changed), because it was turned off or deleted, or
-      # because this Integration was unlinked from it.
+      # Logs instead (kind_changed), because it switched between comparing
+      # the value and the change (compare_changed), because it was turned
+      # off or deleted, or because this Integration was unlinked from it.
       def resolved(monitor, group_key, payload)
         range = range_text(monitor, payload)
         text = if payload["kind_changed"]
           "The Monitor was changed to match Logs, so it no longer compares a number with the threshold."
+        elsif payload["compare_changed"]
+          now, before = change?(payload) ? %w[value change] : %w[change value]
+          "The Monitor now compares #{COMPARED.fetch(now)} instead of #{COMPARED.fetch(before)}, so its groups start again."
         elsif payload["turned_off"]
           "The Monitor was turned off, so it no longer checks the threshold."
         elsif payload["deleted"]
@@ -127,10 +137,36 @@ module Notifiers
           "There is data again over the last #{range}: #{value_text(payload)}, not #{threshold_text(payload)}."
         elsif payload["value"].nil?
           "No rows#{' for this group' if group_key.present?} over the last #{range}, so it is back to ok."
+        elsif change?(payload)
+          "#{value_text(payload)} over the last #{range}, #{from_baseline_text(monitor, payload)}, " \
+            "no longer #{CHANGE_WORDS.fetch(payload['operator'], 'a change')} of #{number(payload['threshold'])}% or more."
         else
           "#{value_text(payload)} over the last #{range}, no longer #{threshold_text(payload)}."
         end
         threshold_message(monitor, group_key, payload, title: "Resolved", text: text, severity: "info", action: "resolve")
+      end
+
+      # Whether the run, or the Monitor before a switch, compared the change.
+      def change?(payload)
+        payload["compare"] == "change"
+      end
+
+      # up 100% from 60 the 15 minutes before; up from 0 the 15 minutes
+      # before; no change from 0 the 15 minutes before
+      def from_baseline_text(monitor, payload)
+        value, baseline = payload["value"].to_f, payload["baseline"].to_f
+        change = LogMonitor.change(value, baseline)
+        how = if change.zero? then "no change"
+        elsif change.infinite? then change.positive? ? "up" : "down"
+        else "#{change.positive? ? 'up' : 'down'} #{number(change.abs.round(1))}%"
+        end
+        "#{how} from #{number(baseline)} #{baseline_range_text(monitor, payload)}"
+      end
+
+      # Where the Baseline range is, after the range it's compared with: the
+      # 15 minutes before.
+      def baseline_range_text(monitor, payload)
+        "the #{range_text(monitor, payload)} before"
       end
 
       # count_ was 120
@@ -155,8 +191,16 @@ module Notifiers
         fields = [ [ "Project", monitor["project"] ] ]
         fields << [ "Group", group ] if group.present?
         fields << [ "Value", number(payload["value"]) ]
-        fields << [ "Threshold", "#{payload['operator']} #{number(payload['threshold'])}" ]
+        if change?(payload)
+          fields << [ "Baseline", number(payload["baseline"]) ]
+          known = !payload["value"].nil? && !payload["baseline"].nil?
+          fields << [ "Change", known ? change_text(payload["value"].to_f, payload["baseline"].to_f) : "no data" ]
+          fields << [ "Threshold", "#{payload['operator']} #{number(payload['threshold'])}%" ]
+        else
+          fields << [ "Threshold", "#{payload['operator']} #{number(payload['threshold'])}" ]
+        end
         fields << [ "Range", "last #{range_text(monitor, payload)}" ]
+        baseline_link = explorer_url(monitor, payload["baseline_from"], payload["baseline_to"]) if payload["baseline_from"]
 
         Message.new(
           title: [ "#{title}: #{monitor['name']}", group.presence && "(#{group})" ].compact.join(" "),
@@ -164,6 +208,7 @@ module Notifiers
           fields: fields,
           lines: [],
           link: explorer_url(monitor, payload["from"], payload["to"]),
+          baseline_link: baseline_link,
           severity: severity,
           dedup_key: dedup_key(monitor["id"], group_key),
           action: action
