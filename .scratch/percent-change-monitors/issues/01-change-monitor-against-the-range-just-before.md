@@ -4,13 +4,13 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Prefactor first: in a Threshold run, groups are kept per row before the worst is chosen, with today's behaviour unchanged and today's tests green.
-- [ ] Schema: Monitors gain `compare` (default `value`) and `baseline`; group states gain `last_baseline`. Existing Monitors are unchanged.
-- [ ] Saving accepts `compare = change` with `baseline = previous`, a direction (`rises`/`falls`/`changes`) and a threshold percent greater than 0. It refuses value operators in change mode, change operators in value mode, and a change Monitor without a Baseline.
-- [ ] A run reads the current range, then the Baseline range (the current one shifted back by its own length). The second Query gets what's left of the 30 s budget. A failure, timeout or cut table on either side is an error run that changes no state.
-- [ ] Change rule as in the spec:
+- [x] Prefactor first: in a Threshold run, groups are kept per row before the worst is chosen, with today's behaviour unchanged and today's tests green.
+- [x] Schema: Monitors gain `compare` (default `value`) and `baseline`; group states gain `last_baseline`. Existing Monitors are unchanged.
+- [x] Saving accepts `compare = change` with `baseline = previous`, a direction (`rises`/`falls`/`changes`) and a threshold percent greater than 0. It refuses value operators in change mode, change operators in value mode, and a change Monitor without a Baseline.
+- [x] A run reads the current range, then the Baseline range (the current one shifted back by its own length). The second Query gets what's left of the 30 s budget. A failure, timeout or cut table on either side is an error run that changes no state.
+- [x] Change rule as in the spec:
   - the threshold is met (`>=`) for each direction;
   - a zero Baseline is an infinite rise or fall, and 0 → 0 is no change;
   - a row now with none in the Baseline uses a Baseline of 0;
@@ -18,17 +18,17 @@
   - negative numbers divide by `|baseline|`;
   - with notify by group off, the worst change decides;
   - alert on no data looks at the current table only.
-- [ ] `last_baseline` is kept per group, and the Monitor's page shows value, Baseline and change. The summary sentence describes the change rule.
-- [ ] Messages:
+- [x] `last_baseline` is kept per group, and the Monitor's page shows value, Baseline and change. The summary sentence describes the change rule.
+- [x] Messages:
   - firing and resolved text per user stories 29–31, with "up from 0" for a zero Baseline;
   - the fields Value, Baseline, Change and Threshold;
   - Slack and email link to Now and Baseline;
   - PagerDuty keeps one link and its dedup keys, and adds the Baseline and change to its custom details.
-- [ ] Switching between value and change resolves firing groups with a reason of its own. Changing the direction or threshold resolves nothing.
-- [ ] Monitor form: a Compare setting (The value / The change), and in change mode the direction and the threshold as a percent. Baseline offers only "the range just before" in this ticket.
-- [ ] MCP: create, update and get take and return `compare`, `baseline` and the change operators. Get returns `last_baseline` per group, and Run now's answer gives each group's change. Tool descriptions and the MCP docs say so.
-- [ ] The Monitors doc gains "Comparing the change": the settings, the zero-Baseline rule, missing rows (and that "falls" misses a group that stops sending, with what to use instead), two Queries per run, and the switch resolve.
-- [ ] Tests at the agreed seams:
+- [x] Switching between value and change resolves firing groups with a reason of its own. Changing the direction or threshold resolves nothing.
+- [x] Monitor form: a Compare setting (The value / The change), and in change mode the direction and the threshold as a percent. Baseline offers only "the range just before" in this ticket.
+- [x] MCP: create, update and get take and return `compare`, `baseline` and the change operators. Get returns `last_baseline` per group, and Run now's answer gives each group's change. Tool descriptions and the MCP docs say so.
+- [x] The Monitors doc gains "Comparing the change": the settings, the zero-Baseline rule, missing rows (and that "falls" misses a group that stops sending, with what to use instead), two Queries per run, and the switch resolve.
+- [x] Tests at the agreed seams:
   - Monitor runs with EventStore stubbed per range: every case above;
   - message builders: wording, "up from 0", both links, PagerDuty details, the switch resolve text;
   - saving over MCP and the controller: round trip, validations, the switch resolve and no resolve on other edits;

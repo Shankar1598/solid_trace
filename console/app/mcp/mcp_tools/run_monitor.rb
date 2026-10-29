@@ -7,7 +7,7 @@ module McpTools
     include MonitorTool
 
     description "Runs a Monitor now, as its schedule would, and says what the run found: how many groups are firing, or how " \
-                "many Logs matched. Like a scheduled run, it tells the Monitor's Integrations what changed. get_monitor shows the run."
+                "many Logs matched, and comparing the change, each group's number, Baseline and change. Like a scheduled run, it tells the Monitor's Integrations what changed. get_monitor shows the run."
     writes!(open_world: true)
     takes_monitor
 
