@@ -17,3 +17,9 @@
 <p>
   <%= link_to "Open in the Logs explorer", @message.link %>
 </p>
+
+<% if @message.baseline_link %>
+  <p>
+    <%= link_to "Open the Baseline in the Logs explorer", @message.baseline_link %>
+  </p>
+<% end %>

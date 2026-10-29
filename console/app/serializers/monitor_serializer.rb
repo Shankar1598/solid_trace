@@ -22,6 +22,9 @@ class MonitorSerializer
       query: @monitor.query,
       interval_minutes: @monitor.interval_minutes,
       range_minutes: @monitor.range_minutes,
+      compare: @monitor.compare,
+      baseline: @monitor.baseline,
+      minimum: @monitor.minimum,
       operator: @monitor.operator,
       threshold: @monitor.threshold,
       notify_by_group: @monitor.notify_by_group,
@@ -57,7 +60,8 @@ class MonitorSerializer
   def details
     {
       states: @monitor.states.sort_by { |s| [ s.status_firing? ? 0 : 1, s.group_key ] }.map do |state|
-        { group_key: state.group_key, group: state.group, status: state.status, since: state.since.iso8601, last_value: state.last_value }
+        { group_key: state.group_key, group: state.group, status: state.status, since: state.since.iso8601,
+          last_value: state.last_value, last_baseline: state.last_baseline }
       end,
       runs: @monitor.runs.limit(MonitorRun::KEEP).map do |run|
         {

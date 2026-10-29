@@ -84,6 +84,24 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ [ @slack.id, "Alerts", "slack" ] ], monitor["integrations"].map { |i| i.values_at("id", "name", "provider") }
   end
 
+  test "a Monitor's page knows whether its Query has by columns, for its summary sentence, and when that can't be known" do
+    url = monitor_url(@monitor, org_slug: @organization.slug)
+    validate = "#{@base_url}/api/#{@project.id}/logs/validate"
+    summarize = ->(by) { { errors: [], chips: { filters: [], search: nil, summarize: { aggregates: [ { fn: "count" } ], by: by } } }.to_json }
+
+    stub_request(:post, validate).to_return(status: 200, body: summarize.([ { field: "service" } ]))
+    assert_equal true, inertia_page(url, "Monitors/Show")["has_by_columns"]
+
+    stub_request(:post, validate).to_return(status: 200, body: summarize.([]))
+    assert_equal false, inertia_page(url, "Monitors/Show")["has_by_columns"]
+
+    stub_request(:post, validate).to_return(status: 200, body: { errors: [], chips: nil }.to_json)
+    assert_nil inertia_page(url, "Monitors/Show")["has_by_columns"], "a Query the Builder can't show"
+
+    stub_request(:post, validate).to_return(status: 503, body: "down")
+    assert_nil inertia_page(url, "Monitors/Show")["has_by_columns"], "EventStore unavailable"
+  end
+
   test "the New page starts from the explorer's Project, Query and range, with the Organization's Projects and Integrations" do
     query = "['#{@project.slug}'] | summarize count()"
     props = inertia_page(new_monitor_url(org_slug: @organization.slug, project_id: @project.id, query: query, range_minutes: 60), "Monitors/New")
@@ -165,6 +183,91 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to monitor_url(@monitor, org_slug: @organization.slug)
     assert_equal [ [ @slack.id, "monitor_resolved", "", true ] ],
       Notification.where(monitor_id: @monitor.id).map { |row| [ row.integration_id, row.kind, row.group_key, row.payload["unlinked"] ] }
+  end
+
+  test "a member makes a Monitor comparing the change from the range just before, and its pages have it" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Errors doubled", compare: "change", baseline: "previous", operator: "rises", threshold: 100) },
+      as: :json
+
+    monitor = @organization.monitors.find_by!(name: "Errors doubled")
+    assert_redirected_to monitor_url(monitor, org_slug: @organization.slug)
+    assert_equal [ "change", "previous", "rises", 100.0 ], [ monitor.compare, monitor.baseline, monitor.operator, monitor.threshold ]
+
+    monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+    shown = inertia_page(monitor_url(monitor, org_slug: @organization.slug), "Monitors/Show")["monitor"]
+    assert_equal [ "change", "previous", "rises" ], shown.values_at("compare", "baseline", "operator")
+    assert_equal [ 120.0, 60.0 ], shown["states"].sole.values_at("last_value", "last_baseline")
+    edited = inertia_page(edit_monitor_url(monitor, org_slug: @organization.slug), "Monitors/Edit")["monitor"]
+    assert_equal [ "change", "previous" ], edited.values_at("compare", "baseline")
+  end
+
+  test "a Monitor comparing the change with a value operator, no Baseline or a percent of 0 is refused beside those fields" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Refused", compare: "change", operator: ">", threshold: 0) }, as: :json
+
+    assert_not LogMonitor.exists?(name: "Refused")
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_equal [ [ "must be rises, falls or changes" ], [ "must be previous, day or week" ],
+                   [ "must be a percent greater than 0" ] ], errors.values_at("operator", "baseline", "threshold")
+  end
+
+  test "a member makes a Monitor comparing with 1 week earlier with a minimum, and its edit page has both" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Weekly", compare: "change", baseline: "week", operator: "changes",
+        threshold: 40, minimum: 10) }, as: :json
+
+    monitor = @organization.monitors.find_by!(name: "Weekly")
+    assert_equal [ "week", 10.0 ], [ monitor.baseline, monitor.minimum ]
+    edited = inertia_page(edit_monitor_url(monitor, org_slug: @organization.slug), "Monitors/Edit")["monitor"]
+    assert_equal [ "week", 10.0 ], edited.values_at("baseline", "minimum")
+    assert_nil inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["monitor"]["minimum"]
+  end
+
+  test "saving refuses 1 day earlier with a range over a day, and a Baseline past Retention, beside the Baseline" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Refused", compare: "change", baseline: "day", operator: "rises",
+        threshold: 50, range_minutes: 2 * 24 * 60) }, as: :json
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_equal [ "can't be 1 day earlier with a range over 1 day, as the two ranges would overlap: choose 1 week " \
+      "earlier, or a range of at most 1 day" ], errors["baseline"]
+
+    @project.update!(log_retention_days: 7)
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Refused", compare: "change", baseline: "week", operator: "rises",
+        threshold: 50) }, as: :json
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_match(/\Areaches 7 days and 15 minutes back, past the Project's Log Retention of 7 days/, errors["baseline"].sole)
+    assert_not LogMonitor.exists?(name: "Refused")
+  end
+
+  test "changing a firing change Monitor's Baseline or minimum resolves nothing" do
+    @monitor.update!(compare: "change", baseline: "previous", operator: "rises", threshold: 50)
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+
+    patch monitor_url(@monitor, org_slug: @organization.slug), params: { monitor: { baseline: "day", minimum: 5 } }, as: :json
+
+    assert_equal [ "day", 5.0 ], [ @monitor.reload.baseline, @monitor.minimum ]
+    assert @monitor.states.reload.sole.status_firing?
+    assert_equal 0, Notification.where(monitor_id: @monitor.id).count
+  end
+
+  test "switching a firing Monitor to compare the change resolves its groups; changing the threshold or direction doesn't" do
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 42)
+
+    patch monitor_url(@monitor, org_slug: @organization.slug),
+      params: { monitor: { compare: "change", baseline: "previous", operator: "rises", threshold: 50 } }, as: :json
+
+    assert_redirected_to monitor_url(@monitor, org_slug: @organization.slug)
+    assert_empty @monitor.states.reload
+    assert_equal [ [ "monitor_resolved", true ] ],
+      Notification.where(monitor_id: @monitor.id).map { |row| [ row.kind, row.payload["compare_changed"] ] }
+
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+    patch monitor_url(@monitor, org_slug: @organization.slug), params: { monitor: { operator: "changes", threshold: 75 } }, as: :json
+
+    assert @monitor.states.reload.sole.status_firing?
+    assert_equal 1, Notification.where(monitor_id: @monitor.id).count
   end
 
   test "a change refused keeps the Monitor's Integrations" do
@@ -313,6 +416,159 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_response :service_unavailable
   end
 
+  # Comparing the change, the groups that would fire now come from the
+  # server, read and compared as a run reads and compares them.
+
+  test "the groups preview reads the range a run would now, then the range just before it, with the run's timeouts" do
+    travel_to Time.utc(2026, 10, 17, 12, 0, 0)
+    asked = []
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").to_return do |request|
+      asked << JSON.parse(request.body).values_at("query", "from", "to", "timeout_seconds")
+      { status: 200, body: { table: { columns: [ SERVICE, COUNT_COLUMN ], rows: [ [ "api", 3 ] ], truncated: false } }.to_json }
+    end
+
+    answer = preview_groups(range_minutes: 15)
+
+    assert_equal [ change_query, "2026-10-17T11:44:00.000Z", "2026-10-17T11:59:00.000Z", LogMonitor::RUN_TIMEOUT_SECONDS ], asked.first
+    assert_equal [ change_query, "2026-10-17T11:29:00.000Z", "2026-10-17T11:44:00.000Z" ], asked.last.first(3)
+    assert_operator asked.last.last, :<=, LogMonitor::RUN_TIMEOUT_SECONDS
+    assert_equal [ "2026-10-17T11:44:00Z", "2026-10-17T11:59:00Z", "2026-10-17T11:29:00Z", "2026-10-17T11:44:00Z" ],
+      answer.values_at("from", "to", "baseline_from", "baseline_to")
+    assert_equal [ { "group" => { "service" => "api" }, "value" => 3, "baseline" => 3, "firing" => false } ], answer["groups"]
+  end
+
+  test "a group would fire when its number rises, falls or changes by at least the threshold percent" do
+    answer_ranges(now: [ [ "api", 90 ], [ "web", 30 ], [ "jobs", 80 ] ],
+      before: [ [ "api", 60 ], [ "web", 60 ], [ "jobs", 60 ] ])
+
+    assert_equal [ "api" ], firing_in(preview_groups(operator: "rises"))
+    assert_equal [ "web" ], firing_in(preview_groups(operator: "falls"))
+    assert_equal [ "api", "web" ], firing_in(preview_groups(operator: "changes"))
+  end
+
+  test "in the groups preview a rise from a Baseline of 0 is the biggest rise, a fall below 0 the biggest fall, and 0 then and now no change" do
+    answer_ranges(now: [ [ "api", 5 ], [ "web", 0 ], [ "jobs", -3 ] ], before: [ [ "api", 0 ], [ "web", 0 ], [ "jobs", 0 ] ])
+
+    assert_equal [ "api" ], firing_in(preview_groups(operator: "rises", threshold: 1_000_000))
+    assert_equal [ "jobs" ], firing_in(preview_groups(operator: "falls", threshold: 1_000_000))
+    assert_equal [ "api", "jobs" ], firing_in(preview_groups(operator: "changes", threshold: 1))
+  end
+
+  test "in the groups preview a row now with none in the Baseline rises from 0, and a row in the Baseline with none now isn't listed" do
+    answer_ranges(now: [ [ "api", 4 ] ], before: [ [ "web", 100 ] ])
+
+    answer = preview_groups(operator: "changes")
+
+    assert_equal [ { "group" => { "service" => "api" }, "value" => 4, "baseline" => 0, "firing" => true } ], answer["groups"]
+  end
+
+  test "in the groups preview a negative number's change is worked out from the Baseline's size" do
+    answer_ranges(now: [ [ "api", -50 ], [ "web", -150 ] ], before: [ [ "api", -100 ], [ "web", -100 ] ])
+
+    assert_equal [ "api" ], firing_in(preview_groups(operator: "rises")), "-100 to -50 is up 50%"
+    assert_equal [ "web" ], firing_in(preview_groups(operator: "falls")), "-100 to -150 is down 50%"
+  end
+
+  test "not notifying by group, the groups preview has the one group of the worst change, not the worst number" do
+    answer_ranges(now: [ [ "api", 110 ], [ "web", 20 ], [ "jobs", 40 ] ], before: [ [ "api", 100 ], [ "web", 10 ], [ "jobs", 100 ] ])
+
+    one = ->(operator) { preview_groups(operator: operator, notify_by_group: false)["groups"].sole }
+
+    assert_equal({ "group" => {}, "value" => 20, "baseline" => 10, "firing" => true }, one.("rises"), "web is up 100%")
+    assert_equal({ "group" => {}, "value" => 40, "baseline" => 100, "firing" => true }, one.("falls"), "jobs is down 60%")
+    assert_equal({ "group" => {}, "value" => 20, "baseline" => 10, "firing" => true }, one.("changes"), "+100% beats -60%")
+  end
+
+  test "in the groups preview a group below the minimum is ok, and the larger of its number and Baseline decides" do
+    answer_ranges(now: [ [ "api", 4 ], [ "web", 0 ], [ "jobs", 30 ] ], before: [ [ "api", 2 ], [ "web", 1_000 ], [ "jobs", 10 ] ])
+
+    assert_equal [ "jobs" ], firing_in(preview_groups(operator: "rises", minimum: 10)), "api's 2 to 4 is under the minimum"
+    assert_equal [ "web" ], firing_in(preview_groups(operator: "falls", minimum: 10)), "1,000 to 0 still falls"
+    assert_equal [ "api", "jobs", "web" ], firing_in(preview_groups(operator: "changes", minimum: ""))
+  end
+
+  test "the groups preview compares with a Baseline 1 day or 1 week earlier as a run would" do
+    { "day" => 1.day, "week" => 1.week }.each do |baseline, offset|
+      answer_ranges(now: [ [ "api", 90 ] ], before: [ [ "api", 60 ] ], offset: offset)
+
+      answer = preview_groups(baseline: baseline)
+
+      assert_equal (Time.current - LogMonitor::PROCESSING_LAG - offset).utc.iso8601, answer["baseline_to"]
+      assert_equal [ { "group" => { "service" => "api" }, "value" => 90, "baseline" => 60, "firing" => true } ], answer["groups"]
+    end
+  end
+
+  test "a Baseline past the Project's Log Retention says so in place of the groups, reading nothing" do
+    @project.update!(log_retention_days: 3)
+    WebMock::RequestRegistry.instance.reset!
+
+    preview_groups(baseline: "week")
+
+    assert_response :unprocessable_content
+    assert_match(/\ASaving would refuse it: Baseline reaches 7 days and 5 minutes back, past the Project's Log Retention of 3 days/, response.parsed_body["error"])
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+  end
+
+  test "a percent of 0 or less, or a Baseline saving would refuse, says why in place of the groups, reading nothing" do
+    WebMock::RequestRegistry.instance.reset!
+
+    {
+      { threshold: 0 } => "Threshold must be a percent greater than 0",
+      { threshold: -5 } => "Threshold must be a percent greater than 0",
+      { baseline: "day", range_minutes: 2880 } => "Baseline can't be 1 day earlier with a range over 1 day",
+      { minimum: 0 } => "Minimum must be greater than 0",
+    }.each do |settings, reason|
+      preview_groups(**settings)
+
+      assert_response :unprocessable_content
+      assert_match(/\ASaving would refuse it: #{Regexp.escape(reason)}/, response.parsed_body["error"], settings.inspect)
+    end
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/validate")
+  end
+
+  test "with alert on no data the groups preview fires on no rows now, whatever the Baseline had" do
+    answer_ranges(now: [], before: [ [ "api", 100 ] ])
+
+    assert_equal [ { "group" => {}, "value" => nil, "baseline" => nil, "firing" => true } ],
+      preview_groups(alert_on_no_data: true)["groups"]
+    assert_empty preview_groups["groups"]
+  end
+
+  test "with no threshold yet the groups preview lists the groups with nothing firing" do
+    answer_ranges(now: [ [ "api", 90 ] ], before: [ [ "api", 10 ] ])
+
+    assert_equal [ { "group" => { "service" => "api" }, "value" => 90, "baseline" => 10, "firing" => false } ],
+      preview_groups(threshold: "")["groups"]
+  end
+
+  test "a Baseline read that fails, times out or is cut says why in place of the groups" do
+    cut = { table: { columns: [ SERVICE, COUNT_COLUMN ], rows: [ [ "api", 200 ] ], truncated: true } }.to_json
+    {
+      { status: 500, body: "Internal error" } => [ :bad_gateway, /EventStore is unavailable/ ],
+      { status: 504, body: { errors: [ { message: "the run was stopped after 30 s" } ] }.to_json } => [ :gateway_timeout, /stopped after 30 s/ ],
+      { status: 200, body: cut } => [ :unprocessable_content, /\A#{Regexp.escape(MonitorEvaluation::TABLE_CUT)}\z/ ],
+    }.each do |answer, (status, error)|
+      answer_ranges(now: [ [ "api", 10 ] ], before: [ [ "api", 60 ] ])
+      baseline_from = (Time.current - LogMonitor::PROCESSING_LAG - 10.minutes).utc.iso8601(3)
+      stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query").with(body: hash_including("from" => baseline_from))
+        .to_return(**answer)
+
+      preview_groups
+
+      assert_response status
+      assert_match error, response.parsed_body["error"]
+    end
+  end
+
+  test "the groups preview won't run on another Organization's Project, or past the chart runs Console allows" do
+    preview_groups(project_id: @foreign_project.id)
+    assert_response :not_found
+
+    holding_every_chart_run { preview_groups }
+    assert_response :service_unavailable
+  end
+
   # ---------------------------------------------------------------------------
   # Scoping
   # ---------------------------------------------------------------------------
@@ -360,6 +616,43 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
       interval_minutes: 2, range_minutes: 15, operator: ">=", threshold: 5,
       notify_by_group: true, alert_on_no_data: true, integration_ids: [ @slack.id ],
     }.merge(overrides)
+  end
+
+  SERVICE = { "name" => "service", "type" => "string" }.freeze
+
+  def change_query
+    "['#{@project.slug}'] | summarize count() by service"
+  end
+
+  # The groups preview's answer for a Monitor comparing the change from the
+  # range just before, by service, with overrides.
+  def preview_groups(**overrides)
+    post preview_groups_monitors_url(org_slug: @organization.slug), params: {
+      monitor: {
+        project_id: @project.id, query: change_query, range_minutes: 5, compare: "change", baseline: "previous",
+        operator: "rises", threshold: 50, notify_by_group: true, alert_on_no_data: false,
+      }.merge(overrides),
+    }, as: :json
+    response.parsed_body
+  end
+
+  # Freezes the clock and answers the 5-minute range a run now reads with
+  # now, and the range offset before it (by default the range just before)
+  # with before: rows of service and count_.
+  def answer_ranges(now:, before:, range_minutes: 5, offset: range_minutes.minutes)
+    freeze_time
+    to = Time.current - LogMonitor::PROCESSING_LAG
+    { to => now, to - offset => before }.each do |end_at, rows|
+      stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+        .with(body: hash_including("from" => (end_at - range_minutes.minutes).utc.iso8601(3)))
+        .to_return(status: 200, body: { table: { columns: [ SERVICE, COUNT_COLUMN ], rows: rows, truncated: false } }.to_json)
+    end
+  end
+
+  # The services of the groups a preview says would fire.
+  def firing_in(answer)
+    assert_response :success
+    answer["groups"].select { |g| g["firing"] }.map { |g| g["group"]["service"] }.sort
   end
 
   def inertia_page(url, component)

@@ -81,8 +81,8 @@ These read the Transactions a Project's Sentry SDKs trace ([turning tracing on](
 **Monitors**
 
 - `list_monitors`, `get_monitor`: an Organization's Monitors with their status and firing groups, and one with its groups' states and last runs.
-- `create_monitor`, `update_monitor`, `delete_monitor`: make, change, turn on or off, and delete a [Monitor](logs/monitors.md). A Monitor's Query can't name a Dashboard filter.
-- `run_monitor`: runs a Monitor now, as its schedule would, telling its Integrations what changed.
+- `create_monitor`, `update_monitor`, `delete_monitor`: make, change, turn on or off, and delete a [Monitor](logs/monitors.md). A Monitor's Query can't name a Dashboard filter. A Threshold monitor takes `compare`, `value` or `change`: comparing the change, it takes `baseline` (`previous`, the range just before, or `day` or `week`, the same range 1 day or 1 week earlier), an optional `minimum`, `rises`, `falls` or `changes` as its operator, and a threshold percent greater than 0. Saving refuses `day` with a range over 1 day and a Baseline past the Project's Log Retention, as a tool error saying why. Switching `compare` resolves the Monitor's firing groups. `get_monitor` gives each group's `last_baseline` beside its `last_value`.
+- `run_monitor`: runs a Monitor now, as its schedule would, telling its Integrations what changed. For a Monitor comparing the change, it lists each group's number, Baseline and change.
 - `list_integrations`: the Integrations Monitors can tell.
 
 **Issues**
