@@ -110,6 +110,10 @@ class MonitorEvaluation
   # ---------------------------------------------------------------------------
 
   def run_threshold
+    if @monitor.compares_the_change? && (problem = @monitor.baseline_past_retention)
+      return failed("The Baseline #{problem}.")
+    end
+
     from, to = @monitor.window(@now)
     column, rows = rows_of(table_over(from, to, LogMonitor::RUN_TIMEOUT_SECONDS))
     readings = rows.transform_values { |value| Reading.new(value, nil) }
@@ -178,11 +182,13 @@ class MonitorEvaluation
 
   # A Monitor that doesn't notify by group has one group, "", the worst
   # row's: the one whose number, or comparing the change whose change,
-  # passes the threshold soonest. None when there are no rows.
+  # passes the threshold soonest, of those that reach the Monitor's minimum
+  # when any do. None when there are no rows.
   def the_worst(readings)
     return {} if readings.empty?
 
-    compared = readings.values.map { |reading| [ reading, compared(reading) ] }
+    big = readings.values.reject { |reading| @monitor.below_minimum?(reading.value, reading.baseline) }
+    compared = (big.presence || readings.values).map { |reading| [ reading, compared(reading) ] }
     worst = compared.map(&:last).reduce { |a, b| @monitor.worse(a, b) }
     { "" => compared.find { |_, number| number == worst }.first }
   end

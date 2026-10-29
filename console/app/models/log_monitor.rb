@@ -21,8 +21,10 @@ class LogMonitor < ApplicationRecord
   # A Monitor comparing the change fires when a group's number rises, falls
   # or changes either way by at least its threshold, a percent.
   CHANGE_OPERATORS = %w[rises falls changes].freeze
-  # Where the Baseline range is: the range just before the current one.
-  BASELINES = %w[previous].freeze
+  # Where the Baseline range is: the range just before the current one, or
+  # the same range 1 day or 1 week earlier.
+  BASELINES = %w[previous day week].freeze
+  BASELINE_OFFSETS = { "day" => 1.day, "week" => 1.week }.freeze
   MAX_INTERVAL_MINUTES = 24 * 60
   MAX_RANGE_MINUTES = 7 * 24 * 60
   # A tick comes about a minute after the last, give or take, so a Monitor
@@ -63,7 +65,10 @@ class LogMonitor < ApplicationRecord
   validates :threshold, numericality: true, if: :compares_the_value?
   validates :operator, inclusion: { in: CHANGE_OPERATORS, message: "must be rises, falls or changes" }, if: :compares_the_change?
   validates :threshold, numericality: { greater_than: 0, message: "must be a percent greater than 0" }, if: :compares_the_change?
-  validates :baseline, inclusion: { in: BASELINES, message: "must be previous, the range just before" }, if: :compares_the_change?
+  validates :baseline, inclusion: { in: BASELINES, message: "must be previous, day or week" }, if: :compares_the_change?
+  validates :minimum, numericality: { greater_than: 0 }, allow_nil: true, if: :compares_the_change?
+  validate :baseline_apart_from_the_range, if: :compares_the_change?
+  validate :baseline_within_retention, if: :baseline_check_needed?
   validate :project_of_the_organization
 
   before_validation :forget_the_baseline, unless: :compares_the_change?
@@ -121,8 +126,10 @@ class LogMonitor < ApplicationRecord
 
   # Whether a group's value passes the threshold, by the operator: the value
   # itself, or comparing the change, its change from baseline.
+  # A group below the minimum is ok.
   def breached?(value, baseline = nil)
     return value.public_send(operator, threshold) unless compares_the_change?
+    return false if below_minimum?(value, baseline)
 
     change = LogMonitor.change(value, baseline)
     case operator
@@ -130,6 +137,13 @@ class LogMonitor < ApplicationRecord
     when "falls" then change <= -threshold
     else change.abs >= threshold
     end
+  end
+
+  # Whether, comparing the change, a group is too small to compare: neither
+  # its number nor its Baseline reaches the minimum, so a drop from 1,000 to
+  # 0 is still compared.
+  def below_minimum?(value, baseline)
+    compares_the_change? && !minimum.nil? && [ value.abs, baseline.abs ].max < minimum
   end
 
   # value's percent change from baseline. From a Baseline of 0 a number
@@ -161,11 +175,36 @@ class LogMonitor < ApplicationRecord
   end
 
   # The [from, to) a run at now reads for its groups' Baseline: the current
-  # range shifted back by its own length, so the two meet.
+  # range shifted back by baseline_offset.
   def baseline_window(now)
     from, to = window(now)
-    shift = range_minutes.minutes
-    [ from - shift, to - shift ]
+    [ from - baseline_offset, to - baseline_offset ]
+  end
+
+  # How far back the Baseline range is from the current one: the range's
+  # own length for previous, so the two meet, else 1 day or 1 week.
+  def baseline_offset
+    BASELINE_OFFSETS.fetch(baseline) { range_minutes.minutes }
+  end
+
+  # Why the Baseline reaches past the Project's Log Retention, the Project's
+  # own or else the instance's default, so it would have no Logs to compare
+  # with; nil when it doesn't. It reads after "the Baseline".
+  def baseline_past_retention
+    retention = project.log_retention_days || InstanceSetting.current.default_log_retention_days
+    reach = range_minutes.minutes + baseline_offset
+    return if reach <= retention.days
+
+    "reaches #{LogMonitor.duration_text(reach)} back, past the Project's Log Retention of " \
+      "#{retention} #{'day'.pluralize(retention)}, so it would have no Logs to compare with: choose a nearer " \
+      "Baseline or a shorter range, or keep the Project's Logs longer"
+  end
+
+  # A length of time in days, hours and minutes: 7 days and 5 minutes.
+  def self.duration_text(duration)
+    minutes = (duration / 60).round
+    parts = { "day" => minutes / 1440, "hour" => minutes % 1440 / 60, "minute" => minutes % 60 }
+    parts.filter_map { |unit, n| "#{n} #{unit.pluralize(n)}" if n.positive? }.to_sentence
   end
 
   # Whether a Match monitor saved now starts its runs from the newest Log
@@ -217,6 +256,31 @@ class LogMonitor < ApplicationRecord
       will_save_change_to_project_id? || (kind_threshold? && will_save_change_to_range_minutes?) || turned_on?
   end
 
+  # A Baseline 1 day earlier would overlap a range over 1 day. One 1 week
+  # earlier can't: no range is longer than a week.
+  def baseline_apart_from_the_range
+    return unless baseline == "day" && range_minutes.is_a?(Integer) && range_minutes > 1440
+
+    errors.add(:baseline, "can't be 1 day earlier with a range over 1 day, as the two ranges would overlap: " \
+      "choose 1 week earlier, or a range of at most 1 day")
+  end
+
+  # Retention is checked when how far back the Baseline reaches or the
+  # Project changes, so a Monitor whose Project keeps less since can still
+  # be edited and turned off; its runs say why they fail.
+  def baseline_check_needed?
+    return false unless compares_the_change? && project && BASELINES.include?(baseline)
+    return false unless range_minutes.is_a?(Integer) && errors.exclude?(:range_minutes)
+
+    new_record? || will_save_change_to_baseline? || will_save_change_to_range_minutes? ||
+      will_save_change_to_compare? || will_save_change_to_kind? || will_save_change_to_project_id? || turned_on?
+  end
+
+  def baseline_within_retention
+    problem = baseline_past_retention
+    errors.add(:baseline, problem) if problem
+  end
+
   def query_runs_as_its_kind
     MonitorQueryCheck.call(self)
   end
@@ -236,9 +300,10 @@ class LogMonitor < ApplicationRecord
   end
 
   # A Match monitor, or a Threshold monitor comparing the value, has no
-  # Baseline; a Match monitor compares nothing.
+  # Baseline or minimum; a Match monitor compares nothing.
   def forget_the_baseline
     self.baseline = nil
+    self.minimum = nil
     self.compare = "value" if kind_match?
   end
 

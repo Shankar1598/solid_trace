@@ -190,8 +190,48 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
 
     assert_not LogMonitor.exists?(name: "Refused")
     errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
-    assert_equal [ [ "must be rises, falls or changes" ], [ "must be previous, the range just before" ],
+    assert_equal [ [ "must be rises, falls or changes" ], [ "must be previous, day or week" ],
                    [ "must be a percent greater than 0" ] ], errors.values_at("operator", "baseline", "threshold")
+  end
+
+  test "a member makes a Monitor comparing with 1 week earlier with a minimum, and its edit page has both" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Weekly", compare: "change", baseline: "week", operator: "changes",
+        threshold: 40, minimum: 10) }, as: :json
+
+    monitor = @organization.monitors.find_by!(name: "Weekly")
+    assert_equal [ "week", 10.0 ], [ monitor.baseline, monitor.minimum ]
+    edited = inertia_page(edit_monitor_url(monitor, org_slug: @organization.slug), "Monitors/Edit")["monitor"]
+    assert_equal [ "week", 10.0 ], edited.values_at("baseline", "minimum")
+    assert_nil inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["monitor"]["minimum"]
+  end
+
+  test "saving refuses 1 day earlier with a range over a day, and a Baseline past Retention, beside the Baseline" do
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Refused", compare: "change", baseline: "day", operator: "rises",
+        threshold: 50, range_minutes: 2 * 24 * 60) }, as: :json
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_equal [ "can't be 1 day earlier with a range over 1 day, as the two ranges would overlap: choose 1 week " \
+      "earlier, or a range of at most 1 day" ], errors["baseline"]
+
+    @project.update!(log_retention_days: 7)
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(name: "Refused", compare: "change", baseline: "week", operator: "rises",
+        threshold: 50) }, as: :json
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_match(/\Areaches 7 days and 15 minutes back, past the Project's Log Retention of 7 days/, errors["baseline"].sole)
+    assert_not LogMonitor.exists?(name: "Refused")
+  end
+
+  test "changing a firing change Monitor's Baseline or minimum resolves nothing" do
+    @monitor.update!(compare: "change", baseline: "previous", operator: "rises", threshold: 50)
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+
+    patch monitor_url(@monitor, org_slug: @organization.slug), params: { monitor: { baseline: "day", minimum: 5 } }, as: :json
+
+    assert_equal [ "day", 5.0 ], [ @monitor.reload.baseline, @monitor.minimum ]
+    assert @monitor.states.reload.sole.status_firing?
+    assert_equal 0, Notification.where(monitor_id: @monitor.id).count
   end
 
   test "switching a firing Monitor to compare the change resolves its groups; changing the threshold or direction doesn't" do
