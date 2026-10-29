@@ -35,7 +35,7 @@ class MonitorsController < ApplicationController
       monitor: {
         id: nil, name: "", kind: "threshold", project_id: project&.id,
         query: params[:query].presence || (project && "['#{project.slug}']\n| summarize count()"),
-        interval_minutes: 1, range_minutes: range || 5, compare: "value", baseline: nil, operator: ">", threshold: nil,
+        interval_minutes: 1, range_minutes: range || 5, compare: "value", baseline: nil, minimum: nil, operator: ">", threshold: nil,
         notify_by_group: false, alert_on_no_data: false, integration_ids: [],
       }
     )
@@ -124,7 +124,7 @@ class MonitorsController < ApplicationController
   # Project is no Project. LogMonitor#save_with looks up the Integrations.
   def monitor_params
     permitted = params.require(:monitor).permit(
-      :project_id, :name, :kind, :query, :interval_minutes, :range_minutes, :compare, :baseline, :operator, :threshold,
+      :project_id, :name, :kind, :query, :interval_minutes, :range_minutes, :compare, :baseline, :minimum, :operator, :threshold,
       :notify_by_group, :alert_on_no_data
     )
     permitted[:project] = @current_org.projects.find_by(id: permitted.delete(:project_id)) if permitted.key?(:project_id)
