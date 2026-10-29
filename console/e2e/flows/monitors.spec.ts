@@ -186,6 +186,29 @@ test('a member makes a Monitor comparing the change from the range just before; 
   await expect(page.getByRole('combobox', { name: 'Baseline' })).toHaveText('The range just before')
   await expect(page.getByLabel('Threshold', { exact: true })).toHaveCount(0)
 
+  // The preview, over 4 hours the seed's Logs fill, then and just before: both series on one
+  // chart with no threshold, and the group that would fire with its number, Baseline and change.
+  await page.getByLabel('Over the last (minutes)').fill('240')
+  await page.getByRole('combobox', { name: 'Direction' }).click()
+  await page.getByRole('option', { name: 'changes by' }).click()
+  await page.getByLabel('Threshold percent').fill('0.0001')
+  const preview = page.locator('[data-monitor-preview]')
+  await expect(preview.getByText('Now', { exact: true })).toBeVisible()
+  await expect(preview.getByText('Baseline', { exact: true })).toBeVisible()
+  await expect(preview.getByText(/threshold/)).toHaveCount(0)
+  const wouldFire = page.locator('[data-monitor-groups]')
+  await expect(wouldFire).toContainText('1 group would fire now.')
+  await expect(wouldFire.locator('[data-group-firing="true"]')).toContainText(/[\d,.]+ \(baseline [\d,.]+, [+-][\d.]+%\) · fires$/)
+  await shoot(page, 'monitor-form-change-preview', { fullPage: true })
+
+  // A threshold past the change: the list follows it without saving.
+  await page.getByLabel('Threshold percent').fill('1000000000')
+  await expect(wouldFire).toContainText('Nothing would fire now.')
+  await expect(wouldFire.locator('[data-group-firing="false"]')).toHaveCount(1)
+  await page.getByRole('combobox', { name: 'Direction' }).click()
+  await page.getByRole('option', { name: 'rises by' }).click()
+  await page.getByLabel('Over the last (minutes)').fill('1440')
+
   // A percent of 0 is refused beside the field.
   await page.getByLabel('Threshold percent').fill('0')
   await page.getByRole('button', { name: 'Create monitor' }).click()

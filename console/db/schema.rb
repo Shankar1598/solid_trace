@@ -216,7 +216,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_29_130000) do
     t.text "last_error"
     t.datetime "last_run_at"
     t.datetime "logs_skipped_at"
-    t.float "minimum"
     t.string "name", null: false
     t.datetime "next_run_at"
     t.boolean "notify_by_group", default: false, null: false
@@ -229,6 +228,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_29_130000) do
     t.float "threshold"
     t.integer "timeouts_in_a_row", default: 0, null: false
     t.datetime "updated_at", null: false
+    t.float "minimum"
     t.index ["organization_id"], name: "index_monitors_on_organization_id"
     t.index ["project_id"], name: "index_monitors_on_project_id"
   end
