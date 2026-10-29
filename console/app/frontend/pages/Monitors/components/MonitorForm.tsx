@@ -10,7 +10,6 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ChartSkeleton } from '@/components/ui/skeleton'
-import { valueText } from '@/lib/charts/axis'
 import { fetchPreview } from '@/lib/dashboards/api'
 import { withSource } from '@/lib/dashboards/dashboard'
 import { providerName } from '@/lib/integrations'
@@ -18,9 +17,10 @@ import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/builder'
 import { fieldInfos } from '@/lib/logs/columns'
 import type { LogTable } from '@/lib/logs/table'
+import { fetchGroupsPreview, type PreviewGroup } from '@/lib/monitors/api'
 import {
-  BASELINES, CHANGE_OPERATORS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, groupLabel, groupsNow, withRangeBins,
-  withoutTimeBins, type ChangeOperator, type IntegrationOption, type MonitorBaseline, type MonitorCompare, type MonitorKind,
+  BASELINES, CHANGE_OPERATORS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, groupLabel, groupsNow,
+  readingText, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption, type MonitorBaseline, type MonitorCompare, type MonitorKind,
   type MonitorSettings, type ValueOperator,
 } from '@/lib/monitors/monitor'
 import { cn } from '@/lib/utils'
@@ -40,13 +40,16 @@ const CHANGE_LABELS: Record<ChangeOperator, string> = { rises: 'rises by', falls
 
 type Mode = 'builder' | 'query'
 type Run = { status: 'running' } | { status: 'done'; table: LogTable } | { status: 'error'; message: string }
+type GroupsRun = { status: 'running' } | { status: 'done'; groups: PreviewGroup[] } | { status: 'error'; message: string }
 
 /**
  * Makes or edits a Monitor: its name, Project and kind, its Query in the
  * Builder or the Query editor (checked through validate), its schedule and
  * rule, and its Integrations. A Threshold monitor previews its Query over the
  * last 24 hours, binned by its range, with the threshold drawn, and lists the
- * groups a run would fire now. Saving posts through Inertia; the server's
+ * groups a run would fire now. Comparing the change, the chart has the Query
+ * now and over the Baseline's 24 hours, moved onto the same axis, and the
+ * server lists the groups that would fire, compared as a run compares them. Saving posts through Inertia; the server's
  * errors show beside their fields.
  */
 export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlug }: {
@@ -83,6 +86,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   const [saving, setSaving] = useState(false)
   const [chart, setChart] = useState<Run>({ status: 'running' })
   const [now, setNow] = useState<Run>({ status: 'running' })
+  const [changed, setChanged] = useState<GroupsRun>({ status: 'running' })
   // Cmd/Ctrl+Enter in the Query, or Refresh, runs the preview again.
   const [again, setAgain] = useState(0)
 
@@ -118,10 +122,13 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   }, [])
 
   // A Threshold monitor's preview, a moment after the last change: the Query checked, then run
-  // over the range a run now reads, then binned by that range over the last 24 hours.
+  // over the range a run now reads, then binned by that range over the last 24 hours. Comparing
+  // the change, the server lists the groups (below), and the chart runs again over the
+  // Baseline's 24 hours.
   const previewRun = useRef<AbortController | null>(null)
   useEffect(() => {
     if (!project || kind !== 'threshold') return
+    const withBaseline = compare === 'change'
     const controller = new AbortController()
     previewRun.current?.abort()
     previewRun.current = controller
@@ -142,22 +149,28 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
           return
         }
         const to = new Date(Date.now() - PROCESSING_LAG_MS)
-        try {
-          const answer = await fetchPreview(url, { projectId: project.id, query, from: new Date(to.getTime() - rangeMinutes * 60_000), to, signal })
-          setNow({ status: 'done', table: answer.table })
-        } catch (error) {
-          if (signal.aborted) return
-          setNow({ status: 'error', message: fail(error) })
+        if (!withBaseline) {
+          try {
+            const answer = await fetchPreview(url, { projectId: project.id, query, from: new Date(to.getTime() - rangeMinutes * 60_000), to, signal })
+            setNow({ status: 'done', table: answer.table })
+          } catch (error) {
+            if (signal.aborted) return
+            setNow({ status: 'error', message: fail(error) })
+          }
         }
         const binned = chips ? withRangeBins(builderOf(chips), rangeMinutes) : null
         if (!binned) {
           setChart({ status: 'error', message: 'The chart needs a Query the Builder can show, ending in a summarize. The groups below still show what a run would find now.' })
           return
         }
-        const answer = await fetchPreview(url, {
-          projectId: project.id, query: queryOf(binned, project.slug), from: new Date(to.getTime() - CHART_HOURS * 3_600_000), to, signal,
+        const chartOver = (end: Date) => fetchPreview(url, {
+          projectId: project.id, query: queryOf(binned, project.slug), from: new Date(end.getTime() - CHART_HOURS * 3_600_000), to: end, signal,
         })
-        setChart({ status: 'done', table: answer.table })
+        const answer = await chartOver(to)
+        if (!withBaseline) return setChart({ status: 'done', table: answer.table })
+        const offsetMs = baselineOffsetMinutes(baseline, rangeMinutes) * 60_000
+        const before = await chartOver(new Date(to.getTime() - offsetMs))
+        setChart({ status: 'done', table: withBaselineSeries(answer.table, before.table, offsetMs) })
       } catch (error) {
         if (signal.aborted) return
         setChart({ status: 'error', message: fail(error) })
@@ -168,18 +181,38 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       clearTimeout(timer)
       controller.abort()
     }
-  }, [query, project?.slug, rangeMinutes, kind, again])
+  }, [query, project?.slug, rangeMinutes, kind, compare, baseline, again])
 
-  // Comparing the change, the groups' numbers now are listed without comparing them: a run
-  // compares each with its Baseline.
+  // Comparing the change, the groups that would fire now, a moment after the last change: read
+  // over both ranges and compared on the server, as a run reads and compares them.
   const comparesChange = compare === 'change'
+  useEffect(() => {
+    if (!project || kind !== 'threshold' || !comparesChange) return
+    const controller = new AbortController()
+    setChanged({ status: 'running' })
+    const timer = setTimeout(async () => {
+      try {
+        const answer = await fetchGroupsPreview(orgSlug, {
+          project_id: project.id, query, range_minutes: rangeMinutes, compare, baseline, operator: direction,
+          threshold: thresholdValue, notify_by_group: byGroup, alert_on_no_data: noData,
+        }, controller.signal)
+        setChanged({ status: 'done', groups: answer.groups })
+      } catch (error) {
+        if (controller.signal.aborted) return
+        setChanged({ status: 'error', message: error instanceof RunError ? error.message : 'The preview failed. Try again.' })
+      }
+    }, PREVIEW_DELAY_MS)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [query, project?.id, rangeMinutes, kind, comparesChange, baseline, direction, thresholdValue, byGroup, noData, again])
+
   const found = useMemo(
     () => (now.status === 'done'
-      ? groupsNow(now.table, {
-        operator: comparesChange ? null : operator, threshold: thresholdValue, notify_by_group: byGroup, alert_on_no_data: noData,
-      })
+      ? groupsNow(now.table, { operator, threshold: thresholdValue, notify_by_group: byGroup, alert_on_no_data: noData })
       : null),
-    [now, operator, comparesChange, thresholdValue, byGroup, noData],
+    [now, operator, thresholdValue, byGroup, noData],
   )
 
   const pickProject = (id: number) => {
@@ -260,8 +293,12 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   }
 
   const isThreshold = kind === 'threshold'
-  const firing = found?.groups.filter(g => g.firing) ?? []
-  const listed = [...firing, ...(found?.groups.filter(g => !g.firing) ?? [])]
+  const groups: { group: Record<string, unknown>; value: number | null; baseline: number | null; firing: boolean }[] | undefined = comparesChange
+    ? (changed.status === 'done' ? changed.groups : undefined)
+    : found?.groups.map(g => ({ ...g, baseline: null }))
+  const firing = groups?.filter(g => g.firing) ?? []
+  const listed = [...firing, ...(groups?.filter(g => !g.firing) ?? [])]
+  const groupsRun: Run | GroupsRun = comparesChange ? changed : now
 
   return (
     <form onSubmit={save} className="max-w-4xl space-y-6">
@@ -437,39 +474,35 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       {isThreshold && (
         <FormSection
           title="Preview"
-          description={`The last ${CHART_HOURS} hours, in bins of ${rangeMinutes} ${rangeMinutes === 1 ? 'minute' : 'minutes'}.`}
+          description={`The last ${CHART_HOURS} hours, in bins of ${rangeMinutes} ${rangeMinutes === 1 ? 'minute' : 'minutes'}${comparesChange ? ': Now, and its Baseline moved forward onto the same hours' : ''}.`}
           actions={<Button type="button" variant="outline" size="sm" onClick={() => setAgain(n => n + 1)}>Refresh preview</Button>}
         >
           <div className="min-h-48 border" data-monitor-preview>
             <RunView run={chart}>
-              {table => (table.rows.length === 0
+              {({ table }) => (table.rows.length === 0
                 ? <p className="p-3 text-xs text-muted-foreground">No rows over the last {CHART_HOURS} hours.</p>
                 : <QueryChart table={table} form="line" threshold={comparesChange ? undefined : thresholdValue ?? undefined} className="pb-1" />)}
             </RunView>
           </div>
           <div className="space-y-1.5" data-monitor-groups>
             <h3 className="text-sm font-medium">If it ran now</h3>
-            <RunView run={now}>
-              {() => (found?.error ? (
+            <RunView run={groupsRun}>
+              {() => (!comparesChange && found?.error ? (
                 <p role="alert" className="text-xs text-destructive">{found.error}</p>
               ) : listed.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Finds no rows, so nothing would fire{noData ? '' : ' (turn on Alert on no data to fire on that)'}.</p>
               ) : (
                 <>
                   <p className="text-xs text-muted-foreground">
-                    {comparesChange
-                      ? "The groups' numbers now. A run compares each with its Baseline; Run now shows each group's change."
-                      : <>
-                        {firing.length === 0 ? 'Nothing would fire now.' : `${firing.length} ${firing.length === 1 ? 'group' : 'groups'} would fire now.`}
-                        {thresholdValue === null && ' Set a threshold to compare with.'}
-                      </>}
+                    {firing.length === 0 ? 'Nothing would fire now.' : `${firing.length} ${firing.length === 1 ? 'group' : 'groups'} would fire now.`}
+                    {thresholdValue === null && ' Set a threshold to compare with.'}
                   </p>
                   <ul className="divide-y border text-xs">
                     {listed.slice(0, GROUPS_SHOWN).map(g => (
                       <li key={JSON.stringify(g.group)} className="flex justify-between gap-3 px-3 py-1.5" data-group-firing={g.firing}>
                         <span className="min-w-0 truncate font-mono">{groupLabel(g.group)}</span>
                         <span className={cn('shrink-0 tabular-nums', g.firing && 'font-medium text-destructive')}>
-                          {g.value === null ? 'No data' : <span className="font-mono">{valueText(g.value)}</span>}{g.firing ? ' · fires' : ''}
+                          {g.value === null ? 'No data' : <span className="font-mono">{readingText(g.value, g.baseline)}</span>}{g.firing ? ' · fires' : ''}
                         </span>
                       </li>
                     ))}
@@ -525,12 +558,12 @@ function FieldError({ name, error }: { name: string; error: unknown }) {
   )
 }
 
-function RunView({ run, children }: { run: Run; children: (table: LogTable) => React.ReactNode }) {
+function RunView<R extends Run | GroupsRun>({ run, children }: { run: R; children: (done: Extract<R, { status: 'done' }>) => React.ReactNode }) {
   if (run.status === 'running') {
     return <ChartSkeleton label="Running the preview" />
   }
   if (run.status === 'error') return <p role="alert" className="p-3 text-xs text-destructive">{run.message}</p>
-  return <>{children(run.table)}</>
+  return <>{children(run as Extract<R, { status: 'done' }>)}</>
 }
 
 /** A whole number typed in a field, within its bounds, or the low bound when it isn't one. */
