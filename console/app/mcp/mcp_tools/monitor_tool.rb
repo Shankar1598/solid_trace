@@ -43,9 +43,18 @@ module McpTools
         type: "string",
         enum: LogMonitor::BASELINES,
         description: "Where a Monitor comparing the change finds each group's Baseline: previous, the range of range_minutes " \
-                     "just before the one it reads. Needed with compare change. A group with no row in the Baseline rises from 0, " \
-                     "which counts as the biggest rise; 0 then and now is no change. A group with no row now is ok, so falls " \
-                     "misses a group that stops sending: alert_on_no_data, or a Query without groups, catches that.",
+                     "just before the one it reads; day or week, the same range 1 day or 1 week earlier, so daily or weekly " \
+                     "cycles don't fire it. Needed with compare change. day can't take a range over 1 day, and range_minutes plus " \
+                     "the Baseline's offset can't be longer than the Project's log_retention_days: saving refuses both. A group " \
+                     "with no row in the Baseline rises from 0, which counts as the biggest rise; 0 then and now is no change. A " \
+                     "group with no row now is ok, so falls misses a group that stops sending: alert_on_no_data, or a Query " \
+                     "without groups, catches that.",
+      },
+      minimum: {
+        type: %w[number null],
+        description: "Comparing the change, keeps small numbers quiet: a group is compared only when the larger of its number " \
+                     "and its Baseline, by size, is at least minimum, and is ok otherwise, so a drop from 1,000 to 0 still " \
+                     "falls. Greater than 0; null for none, which compares every group. None when made.",
       },
       operator: {
         type: "string",
