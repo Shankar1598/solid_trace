@@ -155,6 +155,42 @@ export function withRangeBins(builder: Builder, rangeMinutes: number): Builder |
   return { ...rest, summarize: { ...summarize, by } }
 }
 
+const BASELINE_OFFSETS: Record<MonitorBaseline, (rangeMinutes: number) => number> = {
+  previous: rangeMinutes => rangeMinutes,
+}
+
+/** How far before the current range a Baseline's range is, in minutes, as LogMonitor#baseline_window puts it. */
+export function baselineOffsetMinutes(baseline: MonitorBaseline, rangeMinutes: number): number {
+  return BASELINE_OFFSETS[baseline](rangeMinutes)
+}
+
+/**
+ * The preview chart of a Monitor comparing the change: now's binned table as
+ * the series Now, and the Baseline's, the same Query offsetMs earlier, moved
+ * forward by offsetMs onto now's time axis as the series Baseline, each bin in
+ * the bin of now's it lands in. A group's two series stay apart from other
+ * groups'. It spans now's range.
+ */
+export function withBaselineSeries(now: LogTable, before: LogTable, offsetMs: number): LogTable {
+  const at = now.columns.findIndex(c => c.type === 'datetime' && c.bin_seconds)
+  const step = at >= 0 ? now.columns[at].bin_seconds! * 1000 : 0
+  const moved = (time: unknown) => {
+    if (typeof time !== 'string' || step === 0) return time
+    return new Date(Math.floor((Date.parse(time) + offsetMs) / step) * step).toISOString()
+  }
+  return {
+    columns: [{ name: 'series', type: 'string' }, ...now.columns],
+    rows: [
+      ...now.rows.map(row => ['Now', ...row]),
+      ...before.rows.map(row => ['Baseline', ...row.map((cell, i) => (i === at ? moved(cell) : cell))]),
+    ],
+    truncated: now.truncated || before.truncated,
+    fill_gaps: now.fill_gaps === true && before.fill_gaps === true,
+    from: now.from,
+    to: now.to,
+  }
+}
+
 /**
  * A Query from the explorer as a Threshold monitor can run it: its time bins
  * and any sort on them go, since a run compares one number per group over its
