@@ -84,6 +84,24 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ [ @slack.id, "Alerts", "slack" ] ], monitor["integrations"].map { |i| i.values_at("id", "name", "provider") }
   end
 
+  test "a Monitor's page knows whether its Query has by columns, for its summary sentence, and when that can't be known" do
+    url = monitor_url(@monitor, org_slug: @organization.slug)
+    validate = "#{@base_url}/api/#{@project.id}/logs/validate"
+    summarize = ->(by) { { errors: [], chips: { filters: [], search: nil, summarize: { aggregates: [ { fn: "count" } ], by: by } } }.to_json }
+
+    stub_request(:post, validate).to_return(status: 200, body: summarize.([ { field: "service" } ]))
+    assert_equal true, inertia_page(url, "Monitors/Show")["has_by_columns"]
+
+    stub_request(:post, validate).to_return(status: 200, body: summarize.([]))
+    assert_equal false, inertia_page(url, "Monitors/Show")["has_by_columns"]
+
+    stub_request(:post, validate).to_return(status: 200, body: { errors: [], chips: nil }.to_json)
+    assert_nil inertia_page(url, "Monitors/Show")["has_by_columns"], "a Query the Builder can't show"
+
+    stub_request(:post, validate).to_return(status: 503, body: "down")
+    assert_nil inertia_page(url, "Monitors/Show")["has_by_columns"], "EventStore unavailable"
+  end
+
   test "the New page starts from the explorer's Project, Query and range, with the Organization's Projects and Integrations" do
     query = "['#{@project.slug}'] | summarize count()"
     props = inertia_page(new_monitor_url(org_slug: @organization.slug, project_id: @project.id, query: query, range_minutes: 60), "Monitors/New")
@@ -487,7 +505,7 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     preview_groups(baseline: "week")
 
     assert_response :unprocessable_content
-    assert_match(/\ABaseline reaches 7 days and 5 minutes back, past the Project's Log Retention of 3 days/, response.parsed_body["error"])
+    assert_match(/\ASaving would refuse it: Baseline reaches 7 days and 5 minutes back, past the Project's Log Retention of 3 days/, response.parsed_body["error"])
     assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
   end
 
@@ -503,7 +521,7 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
       preview_groups(**settings)
 
       assert_response :unprocessable_content
-      assert_match(/\A#{Regexp.escape(reason)}/, response.parsed_body["error"], settings.inspect)
+      assert_match(/\ASaving would refuse it: #{Regexp.escape(reason)}/, response.parsed_body["error"], settings.inspect)
     end
     assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
     assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/validate")

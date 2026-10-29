@@ -12,7 +12,8 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { valueText } from '@/lib/charts/axis'
 import { providerName } from '@/lib/integrations'
-import { groupLabel, minutesText, readingText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
+import { changeText, groupLabel, minutesText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
+import { cn } from '@/lib/utils'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
 
@@ -20,7 +21,11 @@ import { MonitorStatusBadge } from './components/MonitorStatusBadge'
  * One Monitor: what it runs and whom it tells, each group's status, and its
  * run history, with Edit, Run now, turning it off or on, and Delete.
  */
-export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
+export default function MonitorsShow({ monitor, has_by_columns }: {
+  monitor: Monitor
+  /** Whether its Query has by columns, for the summary sentence; null when that can't be known. */
+  has_by_columns: boolean | null
+}) {
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
   const base = `/${orgSlug}/monitors/${monitor.id}`
   const [busy, setBusy] = useState<'run' | 'power' | null>(null)
@@ -77,7 +82,7 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
 
         <section className="space-y-2 border p-4 text-sm">
           <pre className="overflow-x-auto whitespace-pre-wrap break-words bg-muted p-2 font-mono text-xs" data-monitor-query>{monitor.query}</pre>
-          <p>{ruleText(monitor)}</p>
+          <p>{ruleText(monitor, has_by_columns)}</p>
           <p className="text-muted-foreground">
             {integrations.length > 0
               ? <>Tells {integrations.map(i => `${i.name} (${providerName(i.provider)})${i.enabled ? '' : ', off'}`).join(', ')}.</>
@@ -98,7 +103,13 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
                       <TableHead>Group</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Since</TableHead>
-                      <TableHead className="text-right">{comparesChange ? 'Last value, Baseline and change' : 'Last value'}</TableHead>
+                      {comparesChange ? (
+                        <>
+                          <TableHead className="text-right">Last value</TableHead>
+                          <TableHead className="text-right">Baseline</TableHead>
+                          <TableHead className="text-right">Change</TableHead>
+                        </>
+                      ) : <TableHead className="text-right">Last value</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -109,9 +120,19 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
                           <Badge variant={s.status === 'firing' ? 'error' : 'ok'} dot>{s.status === 'firing' ? 'Firing' : 'OK'}</Badge>
                         </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">{format(new Date(s.since), 'PPp')}</TableCell>
-                        <TableCell className="text-right font-mono text-xs" title={s.last_value === null ? undefined : String(s.last_value)} data-group-reading>
-                          {comparesChange ? readingText(s.last_value, s.last_baseline) : s.last_value === null ? 'No data' : valueText(s.last_value)}
+                        <TableCell className="text-right font-mono text-xs tabular-nums" title={s.last_value === null ? undefined : String(s.last_value)} data-group-reading="value">
+                          {s.last_value === null ? 'No data' : valueText(s.last_value)}
                         </TableCell>
+                        {comparesChange && (
+                          <>
+                            <TableCell className="text-right font-mono text-xs tabular-nums" title={s.last_baseline === null ? undefined : String(s.last_baseline)} data-group-reading="baseline">
+                              {s.last_value === null || s.last_baseline === null ? '' : valueText(s.last_baseline)}
+                            </TableCell>
+                            <TableCell className={cn('text-right font-mono text-xs tabular-nums', s.status === 'firing' && 'text-destructive')} data-group-reading="change">
+                              {s.last_value === null || s.last_baseline === null ? '' : changeText(s.last_value, s.last_baseline)}
+                            </TableCell>
+                          </>
+                        )}
                       </TableRow>
                     ))}
                   </TableBody>
