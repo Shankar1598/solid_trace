@@ -69,6 +69,7 @@ test.afterAll(async () => {
 })
 
 const status = (page: Page) => page.locator('[data-monitor-status]').first()
+const REFUSED_PREVIEW = /status of 422 \(Unprocessable Content\)/
 
 test('a member makes a Threshold monitor from the explorer; Run now fires it into Slack, and a higher threshold resolves it', async ({ page }) => {
   test.setTimeout(210_000)
@@ -171,7 +172,8 @@ test('a member makes a Threshold monitor from the explorer; Run now fires it int
 
 test('a member makes a Monitor comparing the change from the range just before; Run now shows each group\'s Baseline and change', async ({ page }) => {
   test.setTimeout(120_000)
-  const errors = watchErrors(page)
+  // The groups preview answers a rule saving would refuse with a 422, which the browser logs.
+  const errors = watchErrors(page, [REFUSED_PREVIEW])
   const name = `Flow change monitor ${Date.now()}`
 
   await page.goto(`/${ORG}/monitors/new`)
@@ -198,7 +200,11 @@ test('a member makes a Monitor comparing the change from the range just before; 
   await expect(preview.getByText(/threshold/)).toHaveCount(0)
   const wouldFire = page.locator('[data-monitor-groups]')
   await expect(wouldFire).toContainText('1 group would fire now.')
-  await expect(wouldFire.locator('[data-group-firing="true"]')).toContainText(/[\d,.]+ \(baseline [\d,.]+, [+-][\d.]+%\) · fires$/)
+  const firingRow = wouldFire.locator('[data-group-firing="true"]')
+  await expect(firingRow.locator('[data-group-reading="value"]')).toHaveText(/^[\d,.]+$/)
+  await expect(firingRow.locator('[data-group-reading="baseline"]')).toHaveText(/^[\d,.]+$/)
+  await expect(firingRow.locator('[data-group-reading="change"]')).toHaveText(/^([+−][\d.]+%|up from 0|down from 0)$/)
+  await expect(firingRow).toContainText(/fires$/)
   await shoot(page, 'monitor-form-change-preview', { fullPage: true })
 
   // A threshold past the change: the list follows it without saving.
@@ -209,22 +215,29 @@ test('a member makes a Monitor comparing the change from the range just before; 
   await page.getByRole('option', { name: 'rises by' }).click()
   await page.getByLabel('Over the last (minutes)').fill('1440')
 
-  // A percent of 0 is refused beside the field.
+  // A percent of 0: the would-fire list says saving would refuse it, and saving does, beside the field.
   await page.getByLabel('Threshold percent').fill('0')
+  await expect(wouldFire).toContainText('Saving would refuse it: Threshold must be a percent greater than 0.')
+  await expect(wouldFire.locator('[data-group-firing]')).toHaveCount(0)
   await page.getByRole('button', { name: 'Create monitor' }).click()
-  await expect(page.getByText('Threshold must be a percent greater than 0')).toBeVisible()
+  await expect(page.getByText('Threshold must be a percent greater than 0', { exact: true })).toBeVisible()
 
   await page.getByLabel('Threshold percent').fill('1')
   await page.getByRole('button', { name: 'Create monitor' }).click()
   await expect(page.getByRole('heading', { name })).toBeVisible()
-  await expect(page.getByText("fires when the worst group's number rises by 1% or more from the 1 day before.")).toBeVisible()
+  // Its Query has no by columns, so the sentence is about the number, not a group's.
+  await expect(page.getByText('fires when the number rises by 1% or more from the 1 day before.')).toBeVisible()
 
-  // Run now: the group shows its number with its Baseline and change.
+  // Run now: the group shows its number, Baseline and change in their own columns.
   await page.getByRole('button', { name: 'Run now' }).click()
   await expect(page.getByText(/Ran the Monitor: /)).toBeVisible()
   const groups = page.getByRole('table', { name: 'Groups' })
-  await expect(groups).toContainText('Last value, Baseline and change')
-  await expect(groups.locator('[data-group-reading]').first()).toHaveText(/^[\d,.]+ \(baseline [\d,.]+, ([+-]?[\d.]+%|up from 0|down from 0)\)$/)
+  for (const column of ['Last value', 'Baseline', 'Change']) {
+    await expect(groups.getByRole('columnheader', { name: column, exact: true })).toBeVisible()
+  }
+  await expect(groups.locator('[data-group-reading="value"]').first()).toHaveText(/^[\d,.]+$/)
+  await expect(groups.locator('[data-group-reading="baseline"]').first()).toHaveText(/^[\d,.]+$/)
+  await expect(groups.locator('[data-group-reading="change"]').first()).toHaveText(/^([+−]?[\d.]+%|up from 0|down from 0)$/)
   await shoot(page, 'monitor-show-change', { fullPage: true })
 
   await page.getByRole('button', { name: 'Delete' }).click()
@@ -235,7 +248,7 @@ test('a member makes a Monitor comparing the change from the range just before; 
 
 test('a 1-day Baseline with a 2-day range is refused beside the Baseline; one falling 50% from 1 day earlier with a minimum saves', async ({ page }) => {
   test.setTimeout(120_000)
-  const errors = watchErrors(page)
+  const errors = watchErrors(page, [REFUSED_PREVIEW])
   const name = `Flow daily change monitor ${Date.now()}`
 
   await page.goto(`/${ORG}/monitors/new`)
@@ -250,15 +263,17 @@ test('a 1-day Baseline with a 2-day range is refused beside the Baseline; one fa
   await page.getByRole('combobox', { name: 'Baseline' }).click()
   await page.getByRole('option', { name: '1 day earlier', exact: true }).click()
   await page.getByLabel('Minimum').fill('10')
+  await expect(page.locator('[data-monitor-minimum-rule]')).toHaveText('A group whose number and Baseline are both under 10 stays ok.')
 
-  // 1 day earlier would overlap a 2-day range.
+  // 1 day earlier would overlap a 2-day range: the would-fire list says so before saving, and saving refuses it.
+  await expect(page.locator('[data-monitor-groups]')).toContainText("Saving would refuse it: Baseline can't be 1 day earlier with a range over 1 day")
   await page.getByRole('button', { name: 'Create monitor' }).click()
-  await expect(page.getByText("Baseline can't be 1 day earlier with a range over 1 day")).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: /^Baseline can't be 1 day earlier with a range over 1 day/ })).toBeVisible()
 
   await page.getByLabel('Over the last (minutes)').fill('60')
   await page.getByRole('button', { name: 'Create monitor' }).click()
   await expect(page.getByRole('heading', { name })).toBeVisible()
-  await expect(page.getByText("fires when the worst group's number falls by 50% or more from the same 1 hour 1 day earlier. " +
+  await expect(page.getByText("fires when the number falls by 50% or more from the same 1 hour 1 day earlier. " +
     'A group whose number and Baseline are both under 10 stays ok.')).toBeVisible()
 
   await page.getByRole('button', { name: 'Delete' }).click()

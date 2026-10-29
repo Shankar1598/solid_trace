@@ -261,19 +261,13 @@ export function changeOf(value: number, baseline: number): number {
   return ((value - baseline) / Math.abs(baseline)) * 100
 }
 
-/** A change as a signed percent, to at most 1 decimal: +100%, -30%, 0%; or up from 0, down from 0. */
+/** A change as a signed percent, to at most 1 decimal, a fall with a true minus: +100%, −30%, 0%; or up from 0, down from 0. */
 export function changeText(value: number, baseline: number): string {
   const change = changeOf(value, baseline)
   if (!Number.isFinite(change)) return `${change > 0 ? 'up' : 'down'} from 0`
   const rounded = Math.round(change * 10) / 10
-  return `${rounded > 0 ? '+' : ''}${rounded}%`
-}
-
-/** A group's number with its Baseline and change, such as 120 (baseline 60, +100%). */
-export function readingText(value: number | null, baseline: number | null): string {
-  if (value === null) return 'No data'
-  if (baseline === null) return valueText(value)
-  return `${valueText(value)} (baseline ${valueText(baseline)}, ${changeText(value, baseline)})`
+  if (rounded === 0) return '0%'
+  return `${rounded > 0 ? '+' : '−'}${Math.abs(rounded)}%`
 }
 
 /** How the form and the summary sentence word a change operator. */
@@ -283,23 +277,43 @@ type RuleOf = Pick<MonitorSettings,
   'kind' | 'compare' | 'baseline' | 'interval_minutes' | 'range_minutes' | 'operator' | 'threshold' | 'notify_by_group' | 'alert_on_no_data'>
   & Partial<Pick<MonitorSettings, 'minimum'>>
 
-/** What the Monitor checks, in a sentence. */
-export function ruleText(monitor: RuleOf): string {
+/**
+ * What the Monitor checks, in a sentence. Its subject is the number when the
+ * Query has no by columns, each group's when it notifies by group, and the
+ * worst group's otherwise; byColumns null (not known) goes by notify by
+ * group alone.
+ */
+export function ruleText(monitor: RuleOf, byColumns: boolean | null = null): string {
   const every = `Runs every ${minutesText(monitor.interval_minutes)}`
   if (monitor.kind === 'match') return `${every} and sends one message when Logs ingested since its last run match.`
-  const groups = monitor.notify_by_group ? 'each group' : 'the worst group'
+  const subject = byColumns === false ? 'the number' : monitor.notify_by_group ? "each group's number" : "the worst group's number"
   const noData = monitor.alert_on_no_data ? ' No rows at all fire too.' : ''
   const over = `${every} over the last ${minutesText(monitor.range_minutes)}`
   if (monitor.compare === 'change') {
     const how = CHANGE_WORDS[monitor.operator as ChangeOperator] ?? 'changes by'
     const either = monitor.operator === 'changes' ? ' either way' : ''
     const from = baselineRangeText(monitor.baseline, monitor.range_minutes)
-    const small = monitor.minimum != null
-      ? ` A group whose number and Baseline are both under ${valueText(monitor.minimum)} stays ok.`
-      : ''
-    return `${over}, and fires when ${groups}'s number ${how} ${monitor.threshold}% or more${either} from ${from}.${small}${noData}`
+    const small = monitor.minimum != null ? ` ${minimumText(monitor.minimum)}` : ''
+    return `${over}, and fires when ${subject} ${how} ${monitor.threshold}% or more${either} from ${from}.${small}${noData}`
   }
-  return `${over}, and fires when ${groups}'s number is ${monitor.operator} ${monitor.threshold}.${noData}`
+  return `${over}, and fires when ${subject} is ${monitor.operator} ${monitor.threshold}.${noData}`
+}
+
+/** What a change Monitor's minimum keeps ok, in a sentence. */
+export function minimumText(minimum: number): string {
+  return `A group whose number and Baseline are both under ${valueText(minimum)} stays ok.`
+}
+
+/**
+ * The form's preview chart, in a sentence: the last 24 hours in bins as long
+ * as the range, with the Baseline's series when comparing the change. Bins of
+ * a day or more leave the 24 hours a point or two, which it says.
+ */
+export function previewCaption(rangeMinutes: number, comparesChange: boolean): string {
+  const bins = `The last 24 hours, in bins of ${rangeMinutes === 1 ? '1 minute' : minutesText(rangeMinutes)}`
+  const series = comparesChange ? ': Now, and its Baseline moved forward onto the same hours' : ''
+  const long = rangeMinutes >= 1440 ? ' A bin that long charts as a point or two, not a line.' : ''
+  return `${bins}${series}.${long}`
 }
 
 /** Where a range's Baseline is: the 15 minutes before, or the same 15 minutes 1 day or 1 week earlier. */
