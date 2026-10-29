@@ -143,6 +143,59 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal [ "Checkout errors", [ @slack ] ], [ @monitor.reload.name, @monitor.integrations.to_a ]
   end
 
+  test "create_monitor makes a Monitor comparing the change from the range just before, and get_monitor gives it with each group's Baseline" do
+    answer = call_tool(:create_monitor, user: @user, project: "shop", name: "Errors doubled", kind: "threshold",
+      query: "['shop']\n| summarize count()", compare: "change", baseline: "previous", operator: "rises", threshold: 100)
+
+    assert_not answer.error?
+    made = @acme.monitors.find_by!(name: "Errors doubled")
+    assert_equal [ "change", "previous", "rises", 100.0 ], [ made.compare, made.baseline, made.operator, made.threshold ]
+    assert_equal [ "change", "previous", "rises" ], answer.json.values_at("compare", "baseline", "operator")
+
+    made.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+    got = call_tool(:get_monitor, user: @user, monitor: made.id)
+    assert_equal [ "change", "previous" ], got.json.values_at("compare", "baseline")
+    assert_equal [ 120.0, 60.0 ], got.json["states"].sole.values_at("last_value", "last_baseline")
+    assert_equal [ "value", nil ], call_tool(:get_monitor, user: @user, monitor: @monitor.id).json.values_at("compare", "baseline")
+  end
+
+  test "saving refuses operators of the other comparison, a change Monitor without a Baseline, and a percent of 0 or less" do
+    query = "['shop']\n| summarize count()"
+    refused = {
+      { compare: "change", baseline: "previous", operator: ">", threshold: 50 } => "Not saved: Operator must be rises, falls or changes.",
+      { compare: "value", operator: "rises", threshold: 50 } => "Not saved: Operator must be >, >=, < or <=.",
+      { compare: "change", operator: "rises", threshold: 50 } => "Not saved: Baseline must be previous, the range just before.",
+      { compare: "change", baseline: "previous", operator: "falls", threshold: 0 } => "Not saved: Threshold must be a percent greater than 0.",
+    }
+    refused.each do |fields, error|
+      answer = call_tool(:create_monitor, user: @user, project: "shop", name: "Refused", kind: "threshold", query: query, **fields)
+      assert_equal error, answer.text, fields.inspect
+    end
+    assert_not LogMonitor.exists?(name: "Refused")
+  end
+
+  test "update_monitor switching between the value and the change resolves the firing groups; other edits resolve nothing" do
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 42)
+
+    call_tool(:update_monitor, user: @user, monitor: @monitor.id, compare: "change", baseline: "previous", operator: "rises", threshold: 50)
+
+    assert_empty @monitor.states.reload
+    resolved = Notification.where(monitor_id: @monitor.id).sole
+    assert_equal [ "monitor_resolved", true, ">" ], [ resolved.kind, resolved.payload["compare_changed"], resolved.payload["operator"] ]
+
+    @monitor.states.create!(group_key: "", status: "firing", since: Time.current, last_value: 120, last_baseline: 60)
+    answer = call_tool(:update_monitor, user: @user, monitor: @monitor.id, operator: "changes", threshold: 80)
+
+    assert_not answer.error?
+    assert @monitor.states.reload.sole.status_firing?
+    assert_equal 1, Notification.where(monitor_id: @monitor.id).count
+
+    call_tool(:update_monitor, user: @user, monitor: @monitor.id, compare: "value", operator: ">", threshold: 10)
+    back = Notification.where(monitor_id: @monitor.id).order(:id).last
+    assert_equal [ true, "change", 60.0, "changes" ], back.payload.values_at("compare_changed", "compare", "baseline", "operator")
+    assert_nil @monitor.reload.baseline
+  end
+
   test "update_monitor changes only the fields given, and replaces the Integrations when they're given" do
     pager = @acme.integrations.create!(provider: "pagerduty", name: "On call", settings: { "routing_key" => "key" })
 
@@ -245,6 +298,24 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal [ "firing", 42.0 ], @monitor.states.sole.values_at(:status, :last_value)
     assert_equal [ "ok", 1 ], @monitor.runs.sole.values_at(:status, :firing)
     assert_equal [ [ @slack.id, "monitor_firing" ] ], Notification.where(monitor_id: @monitor.id).pluck(:integration_id, :kind)
+  end
+
+  test "run_monitor on a Monitor comparing the change gives each group's number, Baseline and change" do
+    @monitor.update!(compare: "change", baseline: "previous", operator: "rises", threshold: 50, notify_by_group: true)
+    travel_to Time.utc(2026, 10, 3, 10) do
+      { "2026-10-03T09:54:00.000Z" => [ [ "api", 120 ], [ "web", 7 ] ],
+        "2026-10-03T09:49:00.000Z" => [ [ "api", 60 ], [ "web", 10 ] ] }.each do |from, rows|
+        stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query").with(body: hash_including("from" => from))
+          .to_return(status: 200, body: { table: { columns: [ { "name" => "service", "type" => "string" }, COUNT_COLUMN ], rows: rows } }.to_json)
+      end
+
+      answer = call_tool(:run_monitor, user: @user, monitor: @monitor.id)
+
+      assert_not answer.error?
+      assert_equal "Ran the Monitor: 1 group firing.\n" \
+        "- service=api: 120 (baseline 60, +100%), firing\n" \
+        "- service=web: 7 (baseline 10, -30%), ok", answer.body
+    end
   end
 
   test "run_monitor says what a Match monitor's run matched" do
