@@ -236,4 +236,11 @@ describe('ruleText', () => {
       "Runs every minute over the last 15 minutes, and fires when each group's number rises by 50% or more from the same 15 minutes 1 week earlier. " +
       'A group whose number and Baseline are both under 10 stays ok.')
   })
+
+  it('words whole hours and days as hours and days', () => {
+    const change = { ...monitor, compare: 'change' as const, baseline: 'previous' as const, operator: 'rises' as const, threshold: 50 }
+    expect(ruleText({ ...change, interval_minutes: 60, range_minutes: 1440 })).toBe(
+      "Runs every 1 hour over the last 1 day, and fires when each group's number rises by 50% or more from the 1 day before.")
+    expect(ruleText({ ...change, baseline: 'week', range_minutes: 120 })).toContain('from the same 2 hours 1 week earlier.')
+  })
 })

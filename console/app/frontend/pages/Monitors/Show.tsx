@@ -12,7 +12,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { valueText } from '@/lib/charts/axis'
 import { providerName } from '@/lib/integrations'
-import { groupLabel, readingText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
+import { groupLabel, minutesText, readingText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
 
@@ -125,7 +125,7 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
           <h2 className="text-sm font-semibold">Runs</h2>
           {runs.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              {monitor.enabled ? `No runs yet. It runs within a minute of being saved, then every ${minutes(monitor.interval_minutes)}; Run now runs it at once.` : 'No runs yet. Turn it on to run it.'}
+              {monitor.enabled ? `No runs yet. It runs within a minute of being saved, then every ${minutesText(monitor.interval_minutes)}; Run now runs it at once.` : 'No runs yet. Turn it on to run it.'}
             </p>
           ) : (
             <div className="border">
@@ -168,8 +168,4 @@ export default function MonitorsShow({ monitor }: { monitor: Monitor }) {
       </AlertDialog>
     </DashboardLayout>
   )
-}
-
-function minutes(n: number): string {
-  return n === 1 ? 'minute' : `${n} minutes`
 }
