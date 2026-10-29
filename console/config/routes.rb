@@ -64,6 +64,7 @@ Rails.application.routes.draw do
     resources :monitors do
       collection do
         post :preview
+        post :preview_groups
       end
       member do
         patch :enable
