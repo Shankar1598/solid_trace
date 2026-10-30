@@ -35,10 +35,6 @@ type Config struct {
 	// LogsBinCacheBytes is the memory the bin cache keeps charts' bins in;
 	// 0 turns it off.
 	LogsBinCacheBytes int64
-	// LogsTextMatchBudgetBytes is the most a Query that matches text in
-	// Logs' messages may read, in kept bytes as Source counts count them,
-	// before a caller that asks is refused; 0 refuses none.
-	LogsTextMatchBudgetBytes int64
 	// LogsHeavyReadSlots is how many heavy Log reads may run at once across
 	// the instance (handler.HeavyReads); 0 caps none.
 	LogsHeavyReadSlots int
@@ -72,14 +68,6 @@ type Config struct {
 
 // DefaultLogsBinCacheMB is the bin cache's size, in MiB, unless the file says.
 const DefaultLogsBinCacheMB = 64
-
-// DefaultLogsTextMatchBudgetMB is the most a Query that matches text may
-// read, in MiB of kept bytes, unless the file says. On production in
-// October 2026, text-match reads under about 4 GB of ClickHouse's
-// read_bytes finished within 7 s, and every one of 13 GB or more ran past
-// the 30 s timeout. A full scan of message and search_text reads about 0.8
-// times the kept bytes, so 4 GiB kept is about 3.2 GiB read.
-const DefaultLogsTextMatchBudgetMB = 4096
 
 // DefaultLogsHeavyReadSlots is how many heavy Log reads may run at once on
 // a machine with cpus cores, unless the file says: one below 8 cores, two
@@ -173,22 +161,26 @@ type objectStoreFile struct {
 }
 
 type fileConfig struct {
-	IngestPort            *string        `yaml:"ingest_port"`
-	QueryPort             *string        `yaml:"query_port"`
-	PebblePath            *string        `yaml:"pebble_path"`
-	LogsParquetPath       *string        `yaml:"logs_parquet_path"`
-	LogsDiskLimitGB       *int64         `yaml:"logs_disk_limit_gb"`
-	LogsBinCacheMB        *int64         `yaml:"logs_bin_cache_mb"`
-	LogsTextMatchBudgetMB *int64         `yaml:"logs_text_match_budget_mb"`
-	LogsHeavyReadSlots    *int           `yaml:"logs_heavy_read_slots"`
-	SQLitePath            *string        `yaml:"sqlite_path"`
-	MessageQueuePath      *string        `yaml:"message_queue_path"`
-	IngestMaxWaiting      *int           `yaml:"ingest_max_waiting"`
-	StorageTiers          *[]StorageTier `yaml:"storage_tiers"`
-	ObjectStore           yaml.Node      `yaml:"object_store"`
-	ClickHouse            yaml.Node      `yaml:"clickhouse"`
-	CPUProfileDir         *string        `yaml:"cpu_profile_dir"`
-	Debug                 *bool          `yaml:"debug"`
+	IngestPort         *string        `yaml:"ingest_port"`
+	QueryPort          *string        `yaml:"query_port"`
+	PebblePath         *string        `yaml:"pebble_path"`
+	LogsParquetPath    *string        `yaml:"logs_parquet_path"`
+	LogsDiskLimitGB    *int64         `yaml:"logs_disk_limit_gb"`
+	LogsBinCacheMB     *int64         `yaml:"logs_bin_cache_mb"`
+	LogsHeavyReadSlots *int           `yaml:"logs_heavy_read_slots"`
+	SQLitePath         *string        `yaml:"sqlite_path"`
+	MessageQueuePath   *string        `yaml:"message_queue_path"`
+	IngestMaxWaiting   *int           `yaml:"ingest_max_waiting"`
+	StorageTiers       *[]StorageTier `yaml:"storage_tiers"`
+	ObjectStore        yaml.Node      `yaml:"object_store"`
+	ClickHouse         yaml.Node      `yaml:"clickhouse"`
+	CPUProfileDir      *string        `yaml:"cpu_profile_dir"`
+	Debug              *bool          `yaml:"debug"`
+
+	// v0.17.0's budget of a Query that matches text, which an Instance
+	// admin sets on Console's Settings → Instance now. It loads with a
+	// warning, and does nothing.
+	LogsTextMatchBudgetMB yaml.Node `yaml:"logs_text_match_budget_mb"`
 
 	// A DuckDB release's keys. EventStore no longer uses DuckDB, so they
 	// load with a warning. duckdb_path and logs_duckdb_path still say
@@ -243,10 +235,9 @@ func Defaults() *Config {
 		SQLitePath:       "../storage/sqlite/development/solid_trace.sqlite3",
 		MessageQueuePath: "../storage/sqlite/development/message_queue.sqlite3",
 
-		IngestMaxWaiting:         10000,
-		LogsBinCacheBytes:        DefaultLogsBinCacheMB << 20,
-		LogsTextMatchBudgetBytes: DefaultLogsTextMatchBudgetMB << 20,
-		LogsHeavyReadSlots:       DefaultLogsHeavyReadSlots(runtime.NumCPU()),
+		IngestMaxWaiting:   10000,
+		LogsBinCacheBytes:  DefaultLogsBinCacheMB << 20,
+		LogsHeavyReadSlots: DefaultLogsHeavyReadSlots(runtime.NumCPU()),
 
 		// bin/clickhouse-dev's server. ConfigDir is relative to
 		// event_store/, as the paths above are; in the Docker image, whose
@@ -299,11 +290,9 @@ func applyFileConfig(cfg *Config, path string) error {
 		}
 		cfg.LogsBinCacheBytes = *config.LogsBinCacheMB << 20
 	}
-	if config.LogsTextMatchBudgetMB != nil {
-		if *config.LogsTextMatchBudgetMB < 0 {
-			return fmt.Errorf("logs_text_match_budget_mb can't be negative, got %d; 0 refuses no Query", *config.LogsTextMatchBudgetMB)
-		}
-		cfg.LogsTextMatchBudgetBytes = *config.LogsTextMatchBudgetMB << 20
+	if config.LogsTextMatchBudgetMB.Kind != 0 {
+		cfg.Warnings = append(cfg.Warnings, "logs_text_match_budget_mb is ignored: the budget of a Query that matches text "+
+			"is set on Console's Settings → Instance now, and applies with no restart. Remove it from the config")
 	}
 	if config.LogsHeavyReadSlots != nil {
 		if *config.LogsHeavyReadSlots < 0 {

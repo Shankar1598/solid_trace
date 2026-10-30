@@ -44,23 +44,19 @@ type LogsHandler struct {
 	// ScanBudget is how long a run of Log rows reads before it answers with
 	// what it has found and a next_cursor.
 	ScanBudget time.Duration
-	// TextMatchBudget is the most kept bytes a Query that matches text may
-	// read before a run that asks is refused (logs_budget.go); 0 refuses
-	// none.
-	TextMatchBudget int64
 	// HeavyReads are the slots heavy reads hold while they run
 	// (logs_heavy_reads.go).
 	HeavyReads *HeavyReads
 }
 
 // NewLogsHandler serves the Logs in clickHouse, and SQL queries through sql;
-// settings say whether SQL runs and what each Project's Logs are named in
-// Queries; clock is the time ago() and now() read.
+// settings say whether SQL runs, how much a Query that matches text may
+// read, and what each Project's Logs are named in Queries; clock is the time
+// ago() and now() read.
 func NewLogsHandler(clickHouse *storage.ClickHouseLogs, sql *storage.ClickHouseSQL, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
 	return &LogsHandler{
 		clickHouse: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget,
-		TextMatchBudget: config.DefaultLogsTextMatchBudgetMB << 20,
-		HeavyReads:      NewHeavyReads(config.DefaultLogsHeavyReadSlots(runtime.NumCPU())),
+		HeavyReads: NewHeavyReads(config.DefaultLogsHeavyReadSlots(runtime.NumCPU())),
 	}
 }
 

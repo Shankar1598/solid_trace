@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -354,5 +355,93 @@ func TestARunThatDoesntAskToBeCheckedRunsAndLogsItsEstimate(t *testing.T) {
 		if !strings.Contains(line, field) {
 			t.Errorf("Expected %s in the estimate's log line, got %q", field, line)
 		}
+	}
+}
+
+// setTextMatchBudget sets the budget of a Query that matches text, in MiB,
+// as an Instance admin does on Settings → Instance.
+func setTextMatchBudget(t *testing.T, env *TestEnv, mb int) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Failed to open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		INSERT INTO instance_settings (id, logs_text_match_budget_mb, created_at, updated_at) VALUES (1, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET logs_text_match_budget_mb = excluded.logs_text_match_budget_mb`,
+		mb, time.Now(), time.Now()); err != nil {
+		t.Fatalf("Failed to set the text-match budget: %v", err)
+	}
+}
+
+// estimateOf is the estimate a checked run of a Query for Project 123
+// answers, without running it.
+func estimateOf(t *testing.T, env *TestEnv, query string, from, to time.Time) budgetEstimate {
+	t.Helper()
+	answer := checkedRun(t, env, query, from, to, map[string]any{"estimate": true})
+	var estimate budgetEstimate
+	if err := json.Unmarshal(answer["estimate"], &estimate); err != nil {
+		t.Fatalf("Decode the estimate %s: %v", answer["estimate"], err)
+	}
+	return estimate
+}
+
+func TestTheBudgetSetInConsoleAppliesFromTheNextQueryWithoutARestart(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	query := `search "timeout" | summarize count() by file`
+
+	// With no instance_settings row, the week's 251.3 GiB is past the default
+	// 4 GiB.
+	if refusal := refusalOf(t, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil)); refusal.Estimate.BudgetBytes != fourGiB {
+		t.Errorf("Expected the default budget of 4 GiB with no instance settings, got %+v", refusal.Estimate)
+	}
+
+	setTextMatchBudget(t, env, 256<<10)
+	ran(t, "the week's search under a 256 GiB budget", checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
+	if e := estimateOf(t, env, query, lastWeek.from, lastWeek.to); e.BudgetBytes != 256<<30 || e.OverBudget || !e.Heavy {
+		t.Errorf("Expected the week within 256 GiB, and heavy, past a quarter of it, got %+v", e)
+	}
+
+	// Two hours' 3.0 GiB are heavy under the default budget, past its
+	// quarter, but not under 16 GiB, whose quarter is 4 GiB.
+	setTextMatchBudget(t, env, 16<<10)
+	if e := estimateOf(t, env, query, lastTwoHours.from, lastTwoHours.to); e.BudgetBytes != 16<<30 || e.OverBudget || e.Heavy {
+		t.Errorf("Expected two hours within 16 GiB and not heavy, got %+v", e)
+	}
+
+	// 0 refuses no Query.
+	setTextMatchBudget(t, env, 0)
+	ran(t, "the week's search with no budget", checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
+}
+
+// A Console that hasn't run its migration yet has no budget to read: the
+// default applies, and the failure is logged.
+func TestABudgetThatCantBeReadIsTheDefault(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	setTextMatchBudget(t, env, 256<<10)
+	db, err := sql.Open("sqlite3", env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Failed to open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`ALTER TABLE instance_settings DROP COLUMN logs_text_match_budget_mb`); err != nil {
+		t.Fatalf("Drop the budget column: %v", err)
+	}
+	logs := captureLogs(t)
+
+	query := `search "timeout" | summarize count() by file`
+	if refusal := refusalOf(t, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil)); refusal.Estimate.BudgetBytes != fourGiB {
+		t.Errorf("Expected the default budget of 4 GiB, got %+v", refusal.Estimate)
+	}
+	ran(t, "the narrower Query", checkedRun(t, env, `where file == "cron.log" | `+query, lastWeek.from, lastWeek.to, nil))
+	if !strings.Contains(logs.String(), `message="Reading the text-match budget failed, so the default applies"`) {
+		t.Errorf("Expected the failed read logged, got %s", logs)
 	}
 }

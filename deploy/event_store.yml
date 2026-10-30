@@ -30,16 +30,11 @@ logs_parquet_path: /storage/duckdb/production/logs_parquet
 # The memory, in MiB, that keeps charts' time bins of hours that have ended, so a
 # chart run again reads only the bins it lacks. 0 turns it off. Default: 64.
 # logs_bin_cache_mb: 64
-# The most a Query that matches text (search, or contains, startswith or =~ on
-# message) may read, in MiB of kept bytes over its range and the files its filters
-# keep, before the Logs explorer and the MCP server refuse it with narrower ways to
-# run it. Dashboard Charts and Monitors are never refused. 0 refuses none. Default: 4096.
-# logs_text_match_budget_mb: 4096
 # How many heavy Log reads may run at once across the instance: Queries that match
-# text over a quarter of logs_text_match_budget_mb, and forced runs. Past it, the
-# Logs explorer and the MCP server refuse another one at once, to be run after.
-# Dashboard Charts and Monitors are never refused. 0 caps none. Default: 1 below 8
-# CPU cores, 2 from 8.
+# text over a quarter of the text-match budget, which instance admins set on
+# Console's Settings → Instance, and forced runs. Past it, the Logs explorer and the
+# MCP server refuse another one at once, to be run after. Dashboard Charts and
+# Monitors are never refused. 0 caps none. Default: 1 below 8 CPU cores, 2 from 8.
 # logs_heavy_read_slots: 1
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3

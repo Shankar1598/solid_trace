@@ -33,6 +33,7 @@ class InstanceSettingsAnswer
         log_mcp_reads: @settings.log_mcp_reads,
         send_console_issues: @settings.send_console_issues,
         trace_console: @settings.trace_console,
+        logs_text_match_budget_mb: @settings.logs_text_match_budget_mb,
       },
       sign_up: {
         open: @settings.sign_up_open,
