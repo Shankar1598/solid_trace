@@ -153,6 +153,8 @@ func main() {
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
 	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
 	logsHandler := handler.NewLogsHandler(clickHouseLogs, sqlQueries, consoleSettings, clock.System{})
+	logsHandler.TextMatchBudget = cfg.LogsTextMatchBudgetBytes
+	logsHandler.HeavyReads = handler.NewHeavyReads(cfg.LogsHeavyReadSlots)
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{
 		Logs: clickHouseLogs, Clock: clock.System{}, DiskLimit: diskLimit, Retention: consoleSettings,

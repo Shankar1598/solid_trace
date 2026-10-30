@@ -10,6 +10,8 @@ class McpContextToolsTest < ActiveSupport::TestCase
     @user = create(:user, name: "Ada", email: "ada@example.com")
     @acme = create(:organization, name: "Acme", slug: "acme")
     create(:organization_user, organization: @acme, user: @user, role: :admin)
+    # EventStore has no volume of any Project, unless a test says otherwise.
+    stub_request(:post, "#{EventStore.base_url}/volumes").to_return(status: 200, body: { projects: [] }.to_json)
   end
 
   test "whoami answers the user and their role in each of their Organizations, linking to User settings" do
@@ -44,6 +46,38 @@ class McpContextToolsTest < ActiveSupport::TestCase
     assert_equal [ 14, 3 ], projects.map { |project| project["trace_retention_days"] }
     assert projects.none? { |project| project.key?("log_file_order") }, "every Project's Logs are sorted by Service and file"
     assert_equal "http://console.test/acme/projects", answer.link
+  end
+
+  test "list_projects answers each Project's volume over the last 24 hours, zeros for one with no Logs" do
+    web = create(:project, organization: @acme, name: "Web", slug: "web")
+    api = create(:project, organization: @acme, name: "Api", slug: "api")
+    asked = stub_request(:post, "#{EventStore.base_url}/volumes")
+      .with(body: { project_ids: [ api.id, web.id ] }.to_json)
+      .to_return(status: 200, body: { projects: [
+        { project_id: api.id, logs_per_hour: 0, bytes_per_hour: 0, files: 0 },
+        { project_id: web.id, logs_per_hour: 3_700_000.4, bytes_per_hour: 1_572_500_170.6, files: 12 }
+      ] }.to_json)
+
+    answer = call_tool(:list_projects, user: @user)
+
+    assert_not answer.error?
+    assert_requested asked, times: 1
+    volumes = answer.json["projects"].map { |project| project.slice("slug", "logs_per_hour", "bytes_per_hour", "files") }
+    assert_equal [ { "slug" => "api", "logs_per_hour" => 0, "bytes_per_hour" => 0, "files" => 0 },
+                   { "slug" => "web", "logs_per_hour" => 3_700_000, "bytes_per_hour" => 1_572_500_171, "files" => 12 } ], volumes
+    assert_nil answer.json["note"]
+  end
+
+  test "list_projects still lists the Projects when EventStore can't give their volume" do
+    create(:project, organization: @acme, name: "Web", slug: "web")
+    stub_request(:post, "#{EventStore.base_url}/volumes").to_raise(Errno::ECONNREFUSED)
+
+    answer = call_tool(:list_projects, user: @user)
+
+    assert_not answer.error?
+    assert_equal [ { "slug" => "web", "logs_per_hour" => nil, "bytes_per_hour" => nil, "files" => nil } ],
+      answer.json["projects"].map { |project| project.slice("slug", "logs_per_hour", "bytes_per_hour", "files") }
+    assert_match "EventStore couldn't give the volumes", answer.json["note"]
   end
 
   test "list_projects in one of several Organizations needs its slug" do

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -34,8 +35,15 @@ type Config struct {
 	// LogsBinCacheBytes is the memory the bin cache keeps charts' bins in;
 	// 0 turns it off.
 	LogsBinCacheBytes int64
-	SQLitePath        string // Rails SQLite for project key auth and issues
-	MessageQueuePath  string // Separate SQLite for event_store_messages
+	// LogsTextMatchBudgetBytes is the most a Query that matches text in
+	// Logs' messages may read, in kept bytes as Source counts count them,
+	// before a caller that asks is refused; 0 refuses none.
+	LogsTextMatchBudgetBytes int64
+	// LogsHeavyReadSlots is how many heavy Log reads may run at once across
+	// the instance (handler.HeavyReads); 0 caps none.
+	LogsHeavyReadSlots int
+	SQLitePath         string // Rails SQLite for project key auth and issues
+	MessageQueuePath   string // Separate SQLite for event_store_messages
 
 	// IngestMaxWaiting caps the requests waiting to store their Event.
 	// Past it, ingest answers 503.
@@ -64,6 +72,25 @@ type Config struct {
 
 // DefaultLogsBinCacheMB is the bin cache's size, in MiB, unless the file says.
 const DefaultLogsBinCacheMB = 64
+
+// DefaultLogsTextMatchBudgetMB is the most a Query that matches text may
+// read, in MiB of kept bytes, unless the file says. On production in
+// October 2026, text-match reads under about 4 GB of ClickHouse's
+// read_bytes finished within 7 s, and every one of 13 GB or more ran past
+// the 30 s timeout. A full scan of message and search_text reads about 0.8
+// times the kept bytes, so 4 GiB kept is about 3.2 GiB read.
+const DefaultLogsTextMatchBudgetMB = 4096
+
+// DefaultLogsHeavyReadSlots is how many heavy Log reads may run at once on
+// a machine with cpus cores, unless the file says: one below 8 cores, two
+// from 8. A heavy read keeps every core ClickHouse has busy, as ClickHouse
+// reads with a thread a core, so a second one at once only shares them out.
+// On production's 2 vCPU in October 2026, ingest alone kept the load
+// average at 3.7–4.8, and five heavy reads an agent ran together all ran
+// past the 30 s timeout.
+func DefaultLogsHeavyReadSlots(cpus int) int {
+	return min(2, max(1, cpus/4))
+}
 
 // LocalHours is how long Logs stay on local disk before they move to the
 // bucket: LocalCacheHours, or 0 with no bucket.
@@ -146,20 +173,22 @@ type objectStoreFile struct {
 }
 
 type fileConfig struct {
-	IngestPort       *string        `yaml:"ingest_port"`
-	QueryPort        *string        `yaml:"query_port"`
-	PebblePath       *string        `yaml:"pebble_path"`
-	LogsParquetPath  *string        `yaml:"logs_parquet_path"`
-	LogsDiskLimitGB  *int64         `yaml:"logs_disk_limit_gb"`
-	LogsBinCacheMB   *int64         `yaml:"logs_bin_cache_mb"`
-	SQLitePath       *string        `yaml:"sqlite_path"`
-	MessageQueuePath *string        `yaml:"message_queue_path"`
-	IngestMaxWaiting *int           `yaml:"ingest_max_waiting"`
-	StorageTiers     *[]StorageTier `yaml:"storage_tiers"`
-	ObjectStore      yaml.Node      `yaml:"object_store"`
-	ClickHouse       yaml.Node      `yaml:"clickhouse"`
-	CPUProfileDir    *string        `yaml:"cpu_profile_dir"`
-	Debug            *bool          `yaml:"debug"`
+	IngestPort            *string        `yaml:"ingest_port"`
+	QueryPort             *string        `yaml:"query_port"`
+	PebblePath            *string        `yaml:"pebble_path"`
+	LogsParquetPath       *string        `yaml:"logs_parquet_path"`
+	LogsDiskLimitGB       *int64         `yaml:"logs_disk_limit_gb"`
+	LogsBinCacheMB        *int64         `yaml:"logs_bin_cache_mb"`
+	LogsTextMatchBudgetMB *int64         `yaml:"logs_text_match_budget_mb"`
+	LogsHeavyReadSlots    *int           `yaml:"logs_heavy_read_slots"`
+	SQLitePath            *string        `yaml:"sqlite_path"`
+	MessageQueuePath      *string        `yaml:"message_queue_path"`
+	IngestMaxWaiting      *int           `yaml:"ingest_max_waiting"`
+	StorageTiers          *[]StorageTier `yaml:"storage_tiers"`
+	ObjectStore           yaml.Node      `yaml:"object_store"`
+	ClickHouse            yaml.Node      `yaml:"clickhouse"`
+	CPUProfileDir         *string        `yaml:"cpu_profile_dir"`
+	Debug                 *bool          `yaml:"debug"`
 
 	// A DuckDB release's keys. EventStore no longer uses DuckDB, so they
 	// load with a warning. duckdb_path and logs_duckdb_path still say
@@ -214,8 +243,10 @@ func Defaults() *Config {
 		SQLitePath:       "../storage/sqlite/development/solid_trace.sqlite3",
 		MessageQueuePath: "../storage/sqlite/development/message_queue.sqlite3",
 
-		IngestMaxWaiting:  10000,
-		LogsBinCacheBytes: DefaultLogsBinCacheMB << 20,
+		IngestMaxWaiting:         10000,
+		LogsBinCacheBytes:        DefaultLogsBinCacheMB << 20,
+		LogsTextMatchBudgetBytes: DefaultLogsTextMatchBudgetMB << 20,
+		LogsHeavyReadSlots:       DefaultLogsHeavyReadSlots(runtime.NumCPU()),
 
 		// bin/clickhouse-dev's server. ConfigDir is relative to
 		// event_store/, as the paths above are; in the Docker image, whose
@@ -267,6 +298,18 @@ func applyFileConfig(cfg *Config, path string) error {
 			return fmt.Errorf("logs_bin_cache_mb can't be negative, got %d; 0 turns the bin cache off", *config.LogsBinCacheMB)
 		}
 		cfg.LogsBinCacheBytes = *config.LogsBinCacheMB << 20
+	}
+	if config.LogsTextMatchBudgetMB != nil {
+		if *config.LogsTextMatchBudgetMB < 0 {
+			return fmt.Errorf("logs_text_match_budget_mb can't be negative, got %d; 0 refuses no Query", *config.LogsTextMatchBudgetMB)
+		}
+		cfg.LogsTextMatchBudgetBytes = *config.LogsTextMatchBudgetMB << 20
+	}
+	if config.LogsHeavyReadSlots != nil {
+		if *config.LogsHeavyReadSlots < 0 {
+			return fmt.Errorf("logs_heavy_read_slots can't be negative, got %d; 0 caps no heavy read", *config.LogsHeavyReadSlots)
+		}
+		cfg.LogsHeavyReadSlots = *config.LogsHeavyReadSlots
 	}
 	if config.SQLitePath != nil && *config.SQLitePath != "" {
 		cfg.SQLitePath = *config.SQLitePath

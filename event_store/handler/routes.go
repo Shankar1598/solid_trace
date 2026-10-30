@@ -45,6 +45,7 @@ func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandl
 	app.Get("/config", configHandler.Config)
 
 	app.Post("/overview", overviewHandler.Overview)
+	app.Post("/volumes", overviewHandler.Volumes)
 	app.Post("/trace", tracesHandler.Trace)
 
 	app.Get("/api/:project_id/events", eventsHandler.List)

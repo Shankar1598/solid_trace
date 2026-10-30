@@ -175,6 +175,38 @@ func TestTheBinCacheTakes64MiBUnlessTheConfigFileSays(t *testing.T) {
 	}
 }
 
+func TestAQueryThatMatchesTextMayRead4GiBUnlessTheConfigFileSays(t *testing.T) {
+	if got := loadFrom(t, filepath.Join(t.TempDir(), "missing.yml")).LogsTextMatchBudgetBytes; got != 4<<30 {
+		t.Errorf("Default text-match budget = %d bytes, want 4 GiB", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_text_match_budget_mb: 8192\n")).LogsTextMatchBudgetBytes; got != 8<<30 {
+		t.Errorf("Text-match budget = %d bytes, want 8 GiB", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_text_match_budget_mb: 0\n")).LogsTextMatchBudgetBytes; got != 0 {
+		t.Errorf("Text-match budget = %d bytes, want 0, refusing none", got)
+	}
+	if _, err := config.LoadFile(writeConfig(t, "logs_text_match_budget_mb: -1\n")); err == nil || !strings.Contains(err.Error(), "logs_text_match_budget_mb can't be negative") {
+		t.Errorf("Expected a negative text-match budget to fail, got %v", err)
+	}
+}
+
+func TestHeavyLogReadsRunOneAtATimeBelow8CoresUnlessTheConfigFileSays(t *testing.T) {
+	for cpus, want := range map[int]int{1: 1, 2: 1, 4: 1, 7: 1, 8: 2, 16: 2, 64: 2} {
+		if got := config.DefaultLogsHeavyReadSlots(cpus); got != want {
+			t.Errorf("Heavy-read slots on %d cores = %d, want %d", cpus, got, want)
+		}
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_heavy_read_slots: 3\n")).LogsHeavyReadSlots; got != 3 {
+		t.Errorf("Heavy-read slots = %d, want 3", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_heavy_read_slots: 0\n")).LogsHeavyReadSlots; got != 0 {
+		t.Errorf("Heavy-read slots = %d, want 0, capping none", got)
+	}
+	if _, err := config.LoadFile(writeConfig(t, "logs_heavy_read_slots: -1\n")); err == nil || !strings.Contains(err.Error(), "logs_heavy_read_slots can't be negative") {
+		t.Errorf("Expected negative heavy-read slots to fail, got %v", err)
+	}
+}
+
 // setObjectStoreKeys sets the bucket's key in the environment.
 func setObjectStoreKeys(t *testing.T) {
 	t.Helper()

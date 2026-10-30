@@ -21,6 +21,8 @@ export type HistogramView =
   | { status: 'running' }
   | { status: 'cancelled' }
   | { status: 'error'; message: string }
+  /** EventStore didn't run the Query: the histogram follows its run. */
+  | { status: 'refused' }
   | { status: 'done'; histogram: Histogram; from: Date; to: Date }
 
 const STRIP_HEIGHT = 48
@@ -54,6 +56,16 @@ interface HistogramStripProps {
   onLevel: ((level: HistogramLevel) => void) | null
 }
 
+/** What the strip says while it has no counts. */
+function notCounted(view: Exclude<HistogramView, { status: 'done' }>): string {
+  switch (view.status) {
+    case 'running': return 'Counting Logs…'
+    case 'cancelled': return 'Not counted.'
+    case 'refused': return "Not counted: the Query wasn't run."
+    case 'error': return `Not counted: ${view.message}`
+  }
+}
+
 /** The summary line and a slim histogram of the run's Logs, stacked by Level. */
 export function HistogramStrip({ view, onZoom, onLevel }: HistogramStripProps) {
   return (
@@ -67,7 +79,7 @@ export function HistogramStrip({ view, onZoom, onLevel }: HistogramStripProps) {
         <>
           {/* At least the summary line's height, growing when a long message wraps on a phone. */}
           <div className="min-h-5 text-[11px] leading-5 text-muted-foreground">
-            {view.status === 'running' ? 'Counting Logs…' : view.status === 'cancelled' ? 'Not counted.' : `Not counted: ${view.message}`}
+            {notCounted(view)}
           </div>
           {view.status === 'running' && (
             <div className="flex items-end gap-px pt-1 pb-4" style={{ height: STRIP_HEIGHT + 16 }}>

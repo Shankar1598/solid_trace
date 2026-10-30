@@ -26,6 +26,11 @@ x-console: &console
     # Console writes its own line per request, with its user (RequestLog), so
     # Thruster writes none.
     LOG_REQUESTS: "false"
+    # Well above a run's 30 s timeout (EventStoreProxy::RUN_TIMEOUT_SECONDS).
+    # At Thruster's default, also 30 s, it closed the connection just before a
+    # timed-out run answered, so the client got an empty error, not the
+    # timeout's advice.
+    HTTP_WRITE_TIMEOUT: "60"
     # Optional: only Sentry's DSN is in the credentials, which SENTRY_DSN overrides.
     RAILS_MASTER_KEY: ${RAILS_MASTER_KEY:-}
     # The Meta Project's DSN and the share of requests and jobs Console traces
