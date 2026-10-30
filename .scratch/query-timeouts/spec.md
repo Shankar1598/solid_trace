@@ -9,7 +9,7 @@
 - [04](issues/04-heavy-read-slots.md): one or two heavy reads at a time, resolved.
 - [05](issues/05-volumes-in-list-projects.md): live volumes in `list_projects`, resolved.
 - [06](issues/06-planning-stalls.md): planning stalls: cause found (Attribute sizing), fix written, claimed.
-- [07](issues/07-budget-on-settings-page.md): the text-match budget on Settings → Instance, ready-for-agent.
+- [07](issues/07-budget-on-settings-page.md): the text-match budget on Settings → Instance, resolved.
 
 Planned with the user on 2026-10-30, after checking the slowest Queries on production. In three days, 18 Log reads hit the 30 s timeout, nearly all of them agents' Queries over MCP. The user wants no timeouts, and asked whether to change ClickHouse's sort key or to give agents better instructions.
 
