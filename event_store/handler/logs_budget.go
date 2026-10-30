@@ -32,8 +32,13 @@ import (
 // The answers, each with elapsed_ms:
 //
 //   - a refusal, to a run with check_budget and no force:
-//     {"refusal": {"message", "estimate", "largest_range", "top_files",
-//     "narrower_query"}} (ReadRefusal), status 200: an answer, not an error;
+//     {"refusal": {"message", "busy", "estimate", "largest_range",
+//     "top_files", "narrower_query"}} (ReadRefusal), status 200: an answer,
+//     not an error;
+//   - a busy refusal, to a heavy run with check_budget or force while the
+//     instance's heavy reads hold every slot (logs_heavy_reads.go): the same,
+//     with busy true, the message to run them one at a time and no ways to
+//     read less;
 //   - to a run with estimate: {"estimate": {…}, "refusal": {…} or null}, the
 //     estimate (ReadEstimate) and the refusal a checked run would get.
 //
@@ -72,7 +77,11 @@ type ReadEstimate struct {
 // ReadRefusal is a refused run's answer: why, as text a person or an agent
 // reads, and the ways to read less. It never mentions force.
 type ReadRefusal struct {
-	Message  string       `json:"message"`
+	Message string `json:"message"`
+	// Busy says the run was refused because other heavy reads hold every
+	// slot, not for its size: it runs once they end, and has no ways to read
+	// less. Forcing it doesn't help, as a forced read is heavy too.
+	Busy     bool         `json:"busy"`
 	Estimate ReadEstimate `json:"estimate"`
 	// LargestRange is the longest range ending where the Query's does whose
 	// read fits the budget, or nil if not even its last minute does.
