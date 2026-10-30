@@ -98,6 +98,7 @@ test('a search that reads too much shows the refusal; a busy file filters it, an
   await expect(refused(page).getByRole('button', { name: 'Run anyway' })).toBeVisible()
   await expect(page.getByText("Not counted: the Query wasn't run.")).toBeVisible()
   await expect(page.getByText(/The Query failed/)).toHaveCount(0)
+
   // A busy file: a Where chip in the Builder, and the search runs on that file.
   await runBy(page, () => refused(page).getByRole('button', { name: /^api\.log/ }).click())
   await expect(builderRow(page, 'Where').getByRole('button', { name: 'file == "api.log"', exact: true })).toBeVisible()
@@ -157,5 +158,6 @@ test('while another large Query runs, the refusal is its message alone, without 
 
   await expect(refused(page)).toHaveText('Another large Query is running. Run them one at a time.')
   await expect(refused(page).getByRole('button')).toHaveCount(0)
-  await expect(page.getByText("Not counted: the Query wasn't run.")).toBeVisible()  expect(errors).toEqual([])
+  await expect(page.getByText("Not counted: the Query wasn't run.")).toBeVisible()
+  expect(errors).toEqual([])
 })
