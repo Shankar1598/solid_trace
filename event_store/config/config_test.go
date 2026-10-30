@@ -175,18 +175,19 @@ func TestTheBinCacheTakes64MiBUnlessTheConfigFileSays(t *testing.T) {
 	}
 }
 
-func TestAQueryThatMatchesTextMayRead4GiBUnlessTheConfigFileSays(t *testing.T) {
-	if got := loadFrom(t, filepath.Join(t.TempDir(), "missing.yml")).LogsTextMatchBudgetBytes; got != 4<<30 {
-		t.Errorf("Default text-match budget = %d bytes, want 4 GiB", got)
-	}
-	if got := loadFrom(t, writeConfig(t, "logs_text_match_budget_mb: 8192\n")).LogsTextMatchBudgetBytes; got != 8<<30 {
-		t.Errorf("Text-match budget = %d bytes, want 8 GiB", got)
-	}
-	if got := loadFrom(t, writeConfig(t, "logs_text_match_budget_mb: 0\n")).LogsTextMatchBudgetBytes; got != 0 {
-		t.Errorf("Text-match budget = %d bytes, want 0, refusing none", got)
-	}
-	if _, err := config.LoadFile(writeConfig(t, "logs_text_match_budget_mb: -1\n")); err == nil || !strings.Contains(err.Error(), "logs_text_match_budget_mb can't be negative") {
-		t.Errorf("Expected a negative text-match budget to fail, got %v", err)
+// The budget of a Query that matches text is set on Console's Settings →
+// Instance now. A config that still sets it, as v0.17.0's could, loads
+// with a warning that says so.
+func TestATextMatchBudgetInTheConfigFileIsIgnoredWithAWarning(t *testing.T) {
+	for _, value := range []string{"10240", "0", "-1"} {
+		cfg := loadFrom(t, writeConfig(t, "logs_text_match_budget_mb: "+value+"\nlogs_bin_cache_mb: 128\n"))
+		if len(cfg.Warnings) != 1 || !strings.HasPrefix(cfg.Warnings[0], "logs_text_match_budget_mb is ignored") ||
+			!strings.Contains(cfg.Warnings[0], "Settings → Instance") {
+			t.Errorf("logs_text_match_budget_mb: %s: expected a warning naming Settings → Instance, got %q", value, cfg.Warnings)
+		}
+		if cfg.LogsBinCacheBytes != 128<<20 {
+			t.Errorf("logs_text_match_budget_mb: %s: expected the rest of the file loaded, got a bin cache of %d bytes", value, cfg.LogsBinCacheBytes)
+		}
 	}
 }
 

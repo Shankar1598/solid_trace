@@ -15,6 +15,9 @@ const (
 	defaultSQLQueriesEnabled  = true
 	defaultLogRetentionDays   = 30
 	defaultTraceRetentionDays = 14
+	// DefaultTextMatchBudgetBytes is the budget of a Query that matches
+	// text: logs_text_match_budget_mb's default, 4096 MiB.
+	DefaultTextMatchBudgetBytes int64 = 4096 << 20
 )
 
 // instanceSettingsID is the one instance_settings row (InstanceSetting::ID in
@@ -73,6 +76,28 @@ func (s *ConsoleSettings) Instance() (InstanceSettings, error) {
 		return InstanceSettings{}, err
 	}
 	return settings, nil
+}
+
+// TextMatchBudgetBytes returns the most kept bytes a Query that matches text
+// may read before a run that asks is refused; 0 refuses none. It's read apart
+// from Instance, so that a Console that hasn't added the column yet fails
+// only this. A negative budget, which only Console's validations prevent, is
+// an error.
+func (s *ConsoleSettings) TextMatchBudgetBytes() (int64, error) {
+	var mb int64
+	err := s.db.QueryRow(
+		"SELECT logs_text_match_budget_mb FROM instance_settings WHERE id = ?", instanceSettingsID,
+	).Scan(&mb)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DefaultTextMatchBudgetBytes, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if mb < 0 {
+		return 0, fmt.Errorf("the text-match budget is %d MiB", mb)
+	}
+	return mb << 20, nil
 }
 
 // LogRetentionDays returns a Project's effective Retention in whole days: its

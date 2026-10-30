@@ -38,6 +38,7 @@ interface InstanceSettings {
     log_mcp_reads: boolean
     send_console_issues: boolean
     trace_console: boolean
+    logs_text_match_budget_mb: number
   }
   sign_up: { open: boolean, command: string }
   restart_to_change: RestartGroup[]
@@ -60,6 +61,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     log_mcp_reads: editable.log_mcp_reads,
     send_console_issues: editable.send_console_issues,
     trace_console: editable.trace_console,
+    logs_text_match_budget_mb: String(editable.logs_text_match_budget_mb),
   })
   const sampleRate = settings.restart_to_change
     .find((group) => group.name === 'Console')?.settings
@@ -135,6 +137,26 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                 )}
                 <p className="text-xs text-muted-foreground">
                   Whole days that traces' Spans are kept, for Projects that set none of their own. EventStore's next Retention run deletes older Spans.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="logs_text_match_budget_mb">Text-match budget (MiB)</Label>
+                <Input
+                  id="logs_text_match_budget_mb"
+                  inputMode="numeric"
+                  className="max-w-32"
+                  value={data.logs_text_match_budget_mb}
+                  onChange={(e) => setData('logs_text_match_budget_mb', e.target.value)}
+                />
+                {errors.logs_text_match_budget_mb && (
+                  <p className="text-sm font-medium text-destructive">{errors.logs_text_match_budget_mb}</p>
+                )}
+                <p className="text-xs text-muted-foreground" data-testid="text-match-budget-description">
+                  The most a Query that matches text (search, or contains, startswith or =~ on message) may read, in MiB of Logs over
+                  its range and the files its filters on service and file keep. The Logs explorer and the MCP server refuse a Query over it, with
+                  narrower ways to run it. Dashboard Charts and Monitors are never refused. A Query over a quarter of it is a heavy
+                  read, limited by Heavy Log reads at once below. 0 refuses no Query.
                 </p>
               </div>
 

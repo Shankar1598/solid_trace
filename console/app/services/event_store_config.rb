@@ -31,6 +31,7 @@ class EventStoreConfig
       row("Log file store", "logs_parquet_path", @config["logs_parquet_path"]),
       row("Disk limit", "logs_disk_limit_gb", disk_limit),
       row("Bin cache", "logs_bin_cache_mb", bin_cache),
+      row("Heavy Log reads at once", "logs_heavy_read_slots", heavy_read_slots),
       row("Most ingest requests waiting", "ingest_max_waiting", @config["ingest_max_waiting"]),
       *bucket_rows,
       row("CPU profile directory", "cpu_profile_dir", @config["cpu_profile_dir"]),
@@ -81,5 +82,13 @@ class EventStoreConfig
   def bin_cache
     bytes = @config.fetch("logs_bin_cache_bytes")
     bytes.zero? ? "Off" : "#{bytes >> 20} MiB"
+  end
+
+  # How many heavy Log reads, Queries that match text over a quarter of the
+  # text-match budget and forced runs, may run at once. Left out of the file,
+  # it's from EventStore's CPU count.
+  def heavy_read_slots
+    slots = @config.fetch("logs_heavy_read_slots")
+    slots.zero? ? "No cap" : slots
   end
 end
