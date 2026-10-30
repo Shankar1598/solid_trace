@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,9 @@ type LogsHandler struct {
 	// read before a run that asks is refused (logs_budget.go); 0 refuses
 	// none.
 	TextMatchBudget int64
+	// HeavyReads are the slots heavy reads hold while they run
+	// (logs_heavy_reads.go).
+	HeavyReads *HeavyReads
 }
 
 // NewLogsHandler serves the Logs in clickHouse, and SQL queries through sql;
@@ -56,6 +60,7 @@ func NewLogsHandler(clickHouse *storage.ClickHouseLogs, sql *storage.ClickHouseS
 	return &LogsHandler{
 		clickHouse: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget,
 		TextMatchBudget: config.DefaultLogsTextMatchBudgetMB << 20,
+		HeavyReads:      NewHeavyReads(config.DefaultLogsHeavyReadSlots(runtime.NumCPU())),
 	}
 }
 
@@ -181,6 +186,12 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	budget.CheckBudget = budget.CheckBudget && req.Cursor == ""
 	if answered, err := h.sizeUp(c, run, projectID, req.Query, query, from, to, budget); answered {
 		return err
+	}
+	// A page after the first is never refused.
+	if req.Cursor == "" {
+		if answered, err := h.holdSlot(c, run, projectID, req.Query, budget); answered {
+			return err
+		}
 	}
 	if query.Table() {
 		run.ctx = storage.TagRead(run.ctx, projectID, storage.ReadTable)
