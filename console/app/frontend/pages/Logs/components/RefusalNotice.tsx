@@ -38,7 +38,7 @@ export function RefusalNotice({ refusal, onRange, onFile, onRunAnyway }: Refusal
               <span className="text-muted-foreground">A Query that matches text may read {view.estimate.budget}</span>
             </div>
             {/* The whole bar is the read; its first part is what the budget allows. */}
-            <div className="h-1.5 w-full bg-destructive/50" aria-hidden>
+            <div className="h-1.5 w-full bg-warning/50" aria-hidden>
               <div className="h-full bg-muted-foreground/60" style={{ width: `${view.estimate.budgetShare * 100}%` }} />
             </div>
           </div>
