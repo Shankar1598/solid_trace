@@ -84,6 +84,42 @@ func TestTheHistogramOfAHeavyQueryRunsBesideItsRun(t *testing.T) {
 	busyRefusalOf(t, "the Query over another range", histogram(lastTwoHours.from.Add(30*time.Minute)))
 }
 
+// The Logs explorer's user edits a large search while its read runs on:
+// Console still waits on it after the browser has gone.
+func TestAnExplorerRunReplacesItsUsersOlderHeavyReadAndNoOneElses(t *testing.T) {
+	env := heavyReadsTestEnv(t)
+	defer env.Cleanup()
+	from, to := lastTwoHours.from, lastTwoHours.to
+	query := `search "timeout" | summarize count() by file`
+	olderStopped := false
+	older := func() {
+		olderStopped = false
+		env.LogsHandler.HeavyReads.Replace("user 7", func() { olderStopped = true }, 123, `search "deadlock"`, from, to)
+	}
+	older()
+
+	busyRefusalOf(t, "an MCP run, which replaces nothing", checkedRun(t, env, query, from, to, nil))
+	busyRefusalOf(t, "another user's explorer run", checkedRun(t, env, query, from, to, map[string]any{"replaces_reads_of": "user 8"}))
+	if olderStopped {
+		t.Fatal("Expected the older read left running by reads that may not replace it")
+	}
+
+	ran(t, "the user's newer explorer run", checkedRun(t, env, query, from, to, map[string]any{"replaces_reads_of": "user 7"}))
+	if !olderStopped {
+		t.Error("Expected the user's older read stopped by their newer run")
+	}
+	if held := env.LogsHandler.HeavyReads.Held(); held != 0 {
+		t.Errorf("Expected no slot held once the newer run ended, got %d", held)
+	}
+
+	older()
+	answer := answerOf(t, env, "/api/123/logs/histogram", map[string]any{
+		"query": query, "from": from, "to": to, "check_budget": true, "force": true, "replaces_reads_of": "user 7"}, 200)
+	if answer["buckets"] == nil || !olderStopped {
+		t.Errorf("Expected Run anyway's histogram to replace the user's older read, got stopped %v and %s", olderStopped, mustMarshal(t, answer))
+	}
+}
+
 func TestReadsThatArentHeavyOrArentCheckedRunWhileAHeavyReadDoes(t *testing.T) {
 	env := heavyReadsTestEnv(t)
 	defer env.Cleanup()

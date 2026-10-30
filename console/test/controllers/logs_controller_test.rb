@@ -192,6 +192,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
         cursor: "older",
         timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
         check_budget: true,
+        replaces_reads_of: @member.id.to_s,
       }.to_json)
       .to_return(status: 200, body: { logs: [ { id: "log-1", message: "boom" } ], next_cursor: "older-still" }.to_json)
 
@@ -413,6 +414,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
         bucket_seconds: 60,
         timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
         check_budget: true,
+        replaces_reads_of: @member.id.to_s,
       }.to_json)
       .to_return(status: 200, body: {
         bucket_seconds: 60,
