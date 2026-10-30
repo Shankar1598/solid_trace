@@ -6,8 +6,9 @@ module McpTools
   class ListProjects < Base
     description "Lists an Organization's Projects: the slug other tools take, the name, the description " \
                 "of what the Project holds, to pick the Project to query, log_retention_days, how many days back its Logs go, " \
-                "trace_retention_days, how many days back its traces' Spans go, and its volume over the last 24 hours: " \
-                "logs_per_hour, bytes_per_hour (each Log's message and Attributes' JSON) and files (its Services' files with Logs). " \
+                "trace_retention_days, how many days back its traces' Spans go, and its volume: logs_per_hour and " \
+                "bytes_per_hour (each Log's message and Attributes' JSON) over the last 24 hours, and files, its Services' files " \
+                "with Logs on the whole UTC days those 24 hours touch (usually yesterday and today). " \
                 "Use the volume to size a Query's range before running it: a search reads every byte of its range, " \
                 "so on a busy Project search a few hours, or filter on service or file first. The volume is null when EventStore can't answer."
     read_only!
