@@ -25,7 +25,7 @@ export function RefusalNotice({ refusal, onRange, onFile, onRunAnyway }: Refusal
   const files = view.files
   return (
     <div role="status" className="h-full overflow-y-auto p-6 text-sm sm:p-10" data-refusal>
-      <div className="mx-auto max-w-2xl space-y-5">
+      <div className="mx-auto w-fit max-w-2xl space-y-5">
         <div className="flex gap-2.5">
           <CircleSlash className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
           <p className="whitespace-pre-wrap break-words">{view.message}</p>
