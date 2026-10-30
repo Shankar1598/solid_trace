@@ -51,6 +51,7 @@ import { editAsBuilder, pivotQuery, toBuilder } from '@/lib/logs/queryMode'
 import { discardSql, enterSql, leaveSql } from '@/lib/logs/sqlMode'
 import { PAGE_LOGS, fillStream, keepsFetching, seekLog, startStream, streamEnd, wantOlder, type Log, type Stream } from '@/lib/logs/stream'
 import { aroundLog, aroundMissed, narrowAround } from '@/lib/logs/inspector'
+import type { Refusal } from '@/lib/logs/refusal'
 import type { LogTable } from '@/lib/logs/table'
 import { registerPaletteSource } from '@/lib/palette'
 import { readLogsAutoRefresh, saveLogsAutoRefresh, type AutoRefresh } from '@/lib/autoRefresh'
@@ -66,6 +67,7 @@ import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
 import { LogStream, StreamSkeleton } from './components/LogStream'
 import { LogTableView, type TableChart } from './components/LogTableView'
+import { RefusalNotice, type RefusalNoticeProps } from './components/RefusalNotice'
 import { ModeSwitch } from './components/ModeSwitch'
 import { QueryBox, type LeavingQuery } from './components/QueryBox'
 import { SqlBox } from './components/SqlBox'
@@ -86,6 +88,8 @@ type Result =
   | { status: 'running' }
   | { status: 'cancelled' }
   | { status: 'error'; message: string; sql?: string }
+  /** EventStore didn't run the Query, as it would read too much, or another large one is running. */
+  | { status: 'refused'; refusal: Refusal }
   | { status: 'done'; stream: Stream; loadingOlder: boolean; olderError: string | null }
   | { status: 'table'; table: LogTable; elapsedMs: number | null }
 
@@ -95,6 +99,8 @@ interface Run {
   query: string
   from: Date
   to: Date
+  /** Run anyway: the Query runs as written, past EventStore's read budget, its histogram and older pages too. */
+  force: boolean
 }
 
 export default function LogsIndex({ project, projects, sql_queries_enabled, ingest, has_logs }: LogsIndexProps) {
@@ -141,7 +147,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
     }
     show(stream)
     fillStream(stream, cursor => fetchLogPage({
-      orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, cursor, signal: run.controller.signal,
+      orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, cursor, force: run.force, signal: run.controller.signal,
     }), show)
       .catch((error: Error) => {
         if (currentRun.current !== run || run.controller.signal.aborted) return
@@ -151,11 +157,12 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
 
   /**
    * Runs `state`. An auto-refresh is quiet: the last answers stay until the
-   * new ones arrive, and it isn't another recent Query.
+   * new ones arrive, and it isn't another recent Query. force runs it past
+   * EventStore's read budget, as Run anyway does.
    */
-  const start = useCallback((state: ExplorerState, quiet = false) => {
+  const start = useCallback((state: ExplorerState, quiet = false, force = false) => {
     currentRun.current?.controller.abort()
-    const run: Run = { controller: new AbortController(), query: state.query, ...resolveRange(state.range, new Date()) }
+    const run: Run = { controller: new AbortController(), query: state.query, ...resolveRange(state.range, new Date()), force }
     currentRun.current = run
     if (!quiet) setResult({ status: 'running' })
     // Each run of a Query is a recent one; the Project's Logs unfiltered are not.
@@ -177,22 +184,25 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
 
     if (!quiet) setHistogram({ status: 'running' })
 
-    // The histogram and summary count the same filters over the same range.
+    // The histogram and summary count the same filters over the same range,
+    // and are refused, or forced, with the run.
     fetchHistogram({
       orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to,
-      bucketSeconds: bucketSeconds(run.from, run.to), signal: run.controller.signal,
+      bucketSeconds: bucketSeconds(run.from, run.to), force: run.force, signal: run.controller.signal,
     })
-      .then(histogram => {
-        if (currentRun.current === run) setHistogram({ status: 'done', histogram, from: run.from, to: run.to })
+      .then(answer => {
+        if (currentRun.current !== run) return
+        setHistogram(answer.kind === 'refused' ? { status: 'refused' } : { status: 'done', histogram: answer.histogram, from: run.from, to: run.to })
       })
       .catch((error: Error) => {
         if (currentRun.current === run && !run.controller.signal.aborted) setHistogram({ status: 'error', message: error.message })
       })
 
-    fetchRun({ orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, totals: true, signal: run.controller.signal })
+    fetchRun({ orgSlug, projectSlug: project.slug, query: run.query, from: run.from, to: run.to, totals: true, force: run.force, signal: run.controller.signal })
       .then(answer => {
         if (currentRun.current !== run) return
-        if (answer.kind === 'table') setResult({ status: 'table', table: answer.table, elapsedMs: answer.elapsedMs })
+        if (answer.kind === 'refused') setResult({ status: 'refused', refusal: answer.refusal })
+        else if (answer.kind === 'table') setResult({ status: 'table', table: answer.table, elapsedMs: answer.elapsedMs })
         else fill(run, startStream(answer.page))
       })
       .catch((error: Error) => {
@@ -456,6 +466,11 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
   // SQL runs only on Run, so in SQL mode a picked range waits for it.
   const pickBarRange = (range: TimeRange) => sqlMode ? setExplorer(pickRange(explorer, range)) : commit(pickRange(explorer, range))
 
+  // A refused run's ways on: a range that fits, a filter on a busy file (a
+  // chip in the Builder), or Run anyway, the same run again past the budget.
+  const filterOnFile = filterWith && ((file: string) => filterWith({ field: 'file', op: '==', value: file }))
+  const runAnyway = () => start(latest.current.current, false, true)
+
   const closeInspector = useCallback(() => setInspected(null), [])
 
   /** Copies a link to what ran: as shown, over the range the run used, or live. */
@@ -596,6 +611,9 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
   let refreshPaused: string | null = null
   if (sqlMode) refreshPaused = 'SQL runs only on Run'
   else if (explorer.current.range.kind === 'absolute') refreshPaused = 'the range is fixed'
+  else if (result.status === 'refused') refreshPaused = "the Query wasn't run"
+  // A forced read is heavy: it runs again only on Run anyway.
+  else if (currentRun.current?.force) refreshPaused = 'the Query was run anyway'
   else if (inspected) refreshPaused = 'a Log is open'
   else if (result.status === 'done' && result.stream.target > PAGE_LOGS) refreshPaused = 'older Logs are loaded'
   else if (result.status === 'cancelled') refreshPaused = 'the run was cancelled'
@@ -699,6 +717,7 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
               getStarted={getStarted}
               sql={sqlMode}
               chart={tableChart}
+              refused={{ onRange: pickBarRange, onFile: filterOnFile, onRunAnyway: runAnyway }}
               onLoadOlder={loadOlder}
               selectedId={inspected?.id ?? null}
               onSelect={setInspected}
@@ -727,9 +746,9 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
 }
 
 /** The run's result; `sql` while SQL mode's SQL ran, which answers a table rather than Logs. */
-function ResultArea({ result, getStarted, sql, chart, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
-  result: Result; getStarted: React.ReactNode; sql: boolean; chart: TableChart; onLoadOlder: () => void; selectedId: string | null
-  onSelect: (log: Log) => void; columns: string[]; onColumns: (columns: string[]) => void
+function ResultArea({ result, getStarted, sql, chart, refused, onLoadOlder, selectedId, onSelect, columns, onColumns }: {
+  result: Result; getStarted: React.ReactNode; sql: boolean; chart: TableChart; refused: Omit<RefusalNoticeProps, 'refusal'>
+  onLoadOlder: () => void; selectedId: string | null; onSelect: (log: Log) => void; columns: string[]; onColumns: (columns: string[]) => void
 }) {
   switch (result.status) {
     case 'waiting':
@@ -740,6 +759,8 @@ function ResultArea({ result, getStarted, sql, chart, onLoadOlder, selectedId, o
       return <Notice>{sql ? 'SQL cancelled. Run it again.' : 'Query cancelled. Run it again to see Logs.'}</Notice>
     case 'error':
       return <ErrorNotice message={result.message} sql={result.sql} />
+    case 'refused':
+      return <RefusalNotice refusal={result.refusal} {...refused} />
     case 'table':
       return <LogTableView table={result.table} elapsedMs={result.elapsedMs} chart={chart} />
     case 'done':
