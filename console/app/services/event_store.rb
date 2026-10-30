@@ -130,6 +130,15 @@ class EventStore
       post!("#{base_url}/overview", body, read_timeout: read_timeout, open_timeout: read_timeout)
     end
 
+    # Each Project of project_ids' volume over the last 24 hours, from the
+    # counts, as EventStore's POST /volumes answers it: {"projects" =>
+    # [{"project_id", "logs_per_hour", "bytes_per_hour", "files"}]} in the
+    # order of project_ids. Raises Unavailable when EventStore can't answer
+    # within read_timeout seconds.
+    def volumes!(project_ids:, read_timeout: 3)
+      post!("#{base_url}/volumes", { project_ids: project_ids }, read_timeout: read_timeout, open_timeout: read_timeout)
+    end
+
     # A trace among project_ids', an Organization's, as EventStore's POST
     # /trace answers it: {"trace_id", "spans" => [...] in start order,
     # "logs" => [...] in time order, "more_logs", "logs_from", "logs_to",

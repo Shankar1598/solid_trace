@@ -117,6 +117,14 @@ func onStoragePolicy(steps []clickHouseMigration, policy string) []clickHouseMig
 // JSON and Dynamic columns are sent flattened: clickhouse-go 2.49 can't read
 // the form 26.8 sends a JSON column in once a sort has merged blocks of
 // several parts. The SQL users' profile fixes the same setting.
+//
+// Nor are an Attribute's sizes worked out part by part. To order a read's
+// conditions, 26.8 sizes each Attribute it names in every part of the table,
+// reading the part's JSON structure without the filesystem cache. For parts
+// in the bucket that's a few GETs per part, one after another, and a Query
+// naming new Attributes spent 10–80 s planning. Each Attribute is sized as
+// the whole attributes column instead, so the planning reads nothing. The
+// SQL users' profile fixes it too.
 func openClickHouseConn(cfg config.ClickHouse, database string) (driver.Conn, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{cfg.Address},
@@ -125,7 +133,10 @@ func openClickHouseConn(cfg config.ClickHouse, database string) (driver.Conn, er
 			Username: cfg.User,
 			Password: cfg.Password,
 		},
-		Settings:    clickhouse.Settings{"output_format_native_use_flattened_dynamic_and_json_serialization": 1},
+		Settings: clickhouse.Settings{
+			"output_format_native_use_flattened_dynamic_and_json_serialization": 1,
+			"allow_calculating_subcolumns_sizes_for_merge_tree_reading":         0,
+		},
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
