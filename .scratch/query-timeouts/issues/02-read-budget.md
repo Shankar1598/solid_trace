@@ -29,7 +29,7 @@ A `force` parameter skips the check. MCP `query_logs` passes the refusal back as
   - a `file ==` Query over the same range runs;
   - `force` runs the refused Query;
   - an estimate over a range that crosses days adds up the days.
-- [ ] **On production after a release:** the `search` Queries that timed out on 2026-10-28 and 2026-10-30 (in the spec) are refused within a second, with alternatives.
+- [x] **On production after a release:** the `search` Queries that timed out on 2026-10-28 and 2026-10-30 (in the spec) are refused within a second, with alternatives.
 
 ## Comments
 
@@ -72,3 +72,10 @@ So non-text Queries log their estimate and run. Tests: a plain Log list over 7 d
 - **To watch:**
   - A Log-row search on `tagalys-verbose` (about 10 GB an hour) is refused even over the last hour, though a common term would find its page fast. That's the spec's out-of-scope "searching in slices".
   - Until 03 lands, the explorer shows "The Query failed (HTTP 200)" for a refused Query.
+
+**2026-10-30, checked on production after v0.17.0 was installed (by the solid-trace-09 session, over MCP).**
+- `search "ShopifyCollectionUpdatesWorker" | summarize count() by file` on `tagalys` over 4 days, one of the timed-out Queries in the spec, is refused in 0.14 s. The estimate is 139.4 GiB in 359.6M Logs. The refusal gives the last 3 h as the largest range that fits, the five busiest files (`indexer` / `sidekiq.log` first, 33.1 GiB) and the same Query over 3 h.
+- `estimate: true` answers in 0.09 s. Run for real, the narrowed Query (`indexer` / `sidekiq.log`, 6 h, 2.1 GiB) answers in 2.35 s.
+- `force: true` on the 4-day Query runs it, and the run stops at its 30 s timeout with the timeout message (01).
+- `list_projects` gives `tagalys` about 4.0M Logs and 1.6 GB an hour over 588 files, and `tagalys-verbose` 11.1M Logs and 10.5 GB an hour in 1 file (05).
+- An MCP client that loaded the tool list before the install doesn't know `force` and `estimate`: it sends them as strings, and the server answers "value at `/estimate` is not a boolean". Reconnecting the client fixes it.

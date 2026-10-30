@@ -9,8 +9,8 @@
 - [x] The console service in `deploy/docker-compose.yml` sets `HTTP_WRITE_TIMEOUT=60`, with a comment saying why it must stay above `RUN_TIMEOUT_SECONDS`.
 - [x] The 30 s run timeout is unchanged.
 - [x] Check that nothing else on the path cuts first: Thruster's `HTTP_READ_TIMEOUT` and `HTTP_IDLE_TIMEOUT`, and Caddy's `reverse_proxy` timeouts.
-- [ ] On the dev stack, a run that times out (for example, a Query with the run timeout lowered for the test) answers over MCP with EventStore's timeout message, and Caddy logs no `EOF`.
-- [ ] After a release on production, a timed-out MCP `query_logs` returns "The run was stopped after 30 s…" to the agent.
+- [ ] On the dev stack, a run that times out (for example, a Query with the run timeout lowered for the test) answers over MCP with EventStore's timeout message, and Caddy logs no `EOF`. Not done: the production check below covers it.
+- [x] After a release on production, a timed-out MCP `query_logs` returns "The run was stopped after 30 s…" to the agent.
 
 ## Comments
 
@@ -21,3 +21,5 @@
 - Caddy's `reverse_proxy` sets no response timeout, only `keepalive 5s`.
 - `docker compose config` renders the variable.
 - Not checked on a dev stack, which may not run Thruster. The production check waits for a release.
+
+**2026-10-30, checked on production after v0.17.0 was installed (by the solid-trace-09 session).** A forced `query_logs` over MCP (`search "ShopifyCollectionUpdatesWorker" | summarize count() by file`, `tagalys`, 4 days) answered after 30.06 s with HTTP 200 and "The run was stopped after 30 s, its timeout: try a shorter time range.", not an empty `Error POSTing to endpoint:`. Caddy's log wasn't read; the full answer arriving means it wasn't cut.
