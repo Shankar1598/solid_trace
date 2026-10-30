@@ -62,6 +62,11 @@ class LogsController < ApplicationController
   # The explorer's runs are checked against EventStore's read budget: a Query
   # over it answers EventStore's {"refusal" => {...}} in place of Logs or a
   # table, still 200. force=1, as Run anyway asks, runs it as written.
+  #
+  # A large read replaces the user's older large read (replaces_reads_of):
+  # when they edit a search, the explorer aborts its fetch, but this request
+  # waits on EventStore regardless (ChartRuns), and the read would otherwise
+  # hold EventStore's one heavy-read slot against their next search.
   def query
     render json: ChartRuns.hold {
       EventStore.query_logs(
@@ -73,7 +78,8 @@ class LogsController < ApplicationController
         totals: params[:totals] == "1",
         timeout_seconds: RUN_TIMEOUT_SECONDS,
         check_budget: true,
-        force: forced?
+        force: forced?,
+        replaces_reads_of: current_user.id.to_s
       )
     }
   end
@@ -81,7 +87,8 @@ class LogsController < ApplicationController
   # GET with query, from and to (ISO 8601) and an optional bucket_seconds:
   # the Logs that pass the Query's filters counted per bucket and Level, for
   # the histogram and summary line, as EventStore answers them. Checked
-  # against the read budget as the run is, with force=1 too.
+  # against the read budget as the run is, with force=1 too, and replaces
+  # the user's older large read as the run does.
   def histogram
     bucket = params[:bucket_seconds].presence
     bucket_seconds = bucket && Integer(bucket, 10, exception: false)
@@ -96,7 +103,8 @@ class LogsController < ApplicationController
         bucket_seconds: bucket_seconds,
         timeout_seconds: RUN_TIMEOUT_SECONDS,
         check_budget: true,
-        force: forced?
+        force: forced?,
+        replaces_reads_of: current_user.id.to_s
       )
     }
   end
