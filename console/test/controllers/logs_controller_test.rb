@@ -191,6 +191,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
         to: "2026-10-03T10:30:00.250Z",
         cursor: "older",
         timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
+        check_budget: true,
       }.to_json)
       .to_return(status: 200, body: { logs: [ { id: "log-1", message: "boom" } ], next_cursor: "older-still" }.to_json)
 
@@ -204,6 +205,26 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal [ "boom" ], response.parsed_body["logs"].map { |log| log["message"] }
     assert_equal "older-still", response.parsed_body["next_cursor"]
+  end
+
+  test "the explorer's run and histogram answer EventStore's refusal of a Query over the budget, and run it as written with force" do
+    refusal = { message: "Not run: this Query matches text …", narrower_query: { query: "where file == \"a.log\" | search \"boom\"" } }
+    range = { query: "search \"boom\"", from: "2026-10-03T09:00:00Z", to: "2026-10-10T09:00:00Z" }
+    [ [ "query", ->(params) { query_project_logs_url(@project, org_slug: @organization.slug, **params) } ],
+      [ "histogram", ->(params) { histogram_project_logs_url(@project, org_slug: @organization.slug, **params) } ] ].each do |run, url|
+      stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/#{run}").with(body: hash_including(check_budget: true))
+        .to_return(status: 200, body: { refusal: refusal, elapsed_ms: 2 }.to_json)
+      forced = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/#{run}").with(body: hash_including(check_budget: true, force: true))
+        .to_return(status: 200, body: { logs: [], next_cursor: nil, buckets: [] }.to_json)
+
+      get url.call(range)
+      assert_response :success
+      assert_equal "Not run: this Query matches text …", response.parsed_body.dig("refusal", "message"), run
+
+      get url.call(range.merge(force: "1"))
+      assert_response :success
+      assert_requested forced
+    end
   end
 
   test "a tabular Query answers EventStore's table" do
@@ -391,6 +412,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
         to: "2026-10-03T10:00:00.000Z",
         bucket_seconds: 60,
         timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS,
+        check_budget: true,
       }.to_json)
       .to_return(status: 200, body: {
         bucket_seconds: 60,
