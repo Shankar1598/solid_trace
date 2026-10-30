@@ -97,6 +97,10 @@ func (sqlOn) Instance() (storage.InstanceSettings, error) {
 	return storage.InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 30}, nil
 }
 
+func (sqlOn) TextMatchBudgetBytes() (int64, error) {
+	return storage.DefaultTextMatchBudgetBytes, nil
+}
+
 func (sqlOn) ProjectSlug(uint32) (string, error) {
 	return "", nil
 }
@@ -183,21 +187,23 @@ func TestLogQueryRoutesAreOnlyOnTheQueryApp(t *testing.T) {
 
 // servedConfig is the config the test query apps say EventStore loaded at
 // start, with every secret set. Its disk limit is left at the default, half
-// of ClickHouse's disk, which servedDiskLimit says came to 50 GB.
+// of ClickHouse's disk, which servedDiskLimit says came to 50 GB. Its 3
+// heavy-read slots are more than the default on any machine.
 var servedConfig = &config.Config{
-	Port:              "4000",
-	QueryPort:         "4100",
-	PebblePath:        "/storage/pebble",
-	LogsDuckDBPath:    "/storage/duckdb/logs.duckdb",
-	LogsParquetPath:   "/storage/duckdb/logs_parquet",
-	LogsBinCacheBytes: 64 << 20,
-	SQLitePath:        "/storage/sqlite/solid_trace.sqlite3",
-	MessageQueuePath:  "/storage/sqlite/message_queue.sqlite3",
-	IngestMaxWaiting:  10000,
-	StorageTiers:      []config.StorageTier{{Kind: "local", Locator: "/storage/tier"}},
-	CPUProfileDir:     "/storage/profiles",
-	Debug:             true,
-	Warnings:          []string{"duckdb_path is used only to find a DuckDB release's logs.duckdb"},
+	Port:               "4000",
+	QueryPort:          "4100",
+	PebblePath:         "/storage/pebble",
+	LogsDuckDBPath:     "/storage/duckdb/logs.duckdb",
+	LogsParquetPath:    "/storage/duckdb/logs_parquet",
+	LogsBinCacheBytes:  64 << 20,
+	LogsHeavyReadSlots: 3,
+	SQLitePath:         "/storage/sqlite/solid_trace.sqlite3",
+	MessageQueuePath:   "/storage/sqlite/message_queue.sqlite3",
+	IngestMaxWaiting:   10000,
+	StorageTiers:       []config.StorageTier{{Kind: "local", Locator: "/storage/tier"}},
+	CPUProfileDir:      "/storage/profiles",
+	Debug:              true,
+	Warnings:           []string{"duckdb_path is used only to find a DuckDB release's logs.duckdb"},
 	ObjectStore: &config.ObjectStore{
 		Kind: "gcs", Bucket: "acme-logs", Prefix: "solidtrace/", Region: "auto",
 		Endpoint: "https://storage.googleapis.com", LocalCacheHours: 24,
@@ -239,8 +245,9 @@ func TestConfigAnswersTheLoadedConfigWithoutSecrets(t *testing.T) {
 			"configured_bytes": float64(0),
 			"effective_bytes":  float64(50_000_000_000),
 		},
-		"logs_bin_cache_bytes": float64(64 << 20),
-		"ingest_max_waiting":   float64(10000),
+		"logs_bin_cache_bytes":  float64(64 << 20),
+		"logs_heavy_read_slots": float64(3),
+		"ingest_max_waiting":    float64(10000),
 		"clickhouse": map[string]any{
 			"address": "127.0.0.1:4200", "database": "solidtrace", "user": "solidtrace",
 			"password_set": true, "config_dir": "/storage/clickhouse/conf.d",

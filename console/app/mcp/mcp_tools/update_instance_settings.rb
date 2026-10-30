@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 module McpTools
-  # Changes the install's settings that apply at once, as Settings → Instance
-  # does. For instance admins. Sign-up and the settings read at start can't
+  # Changes the install's settings that apply at once (InstanceSetting::EDITABLE),
+  # as Settings → Instance does. For instance admins. Sign-up and the settings read at start can't
   # change here.
   class UpdateInstanceSettings < Base
     include InstanceSettingsTool
@@ -30,6 +30,11 @@ module McpTools
       description: "true, the default, traces the share of Console's requests and jobs SENTRY_TRACES_SAMPLE_RATE " \
                    "gives into its Sentry DSN, the Meta Project on an install. false traces none, from the next " \
                    "request or job on." }
+    argument :logs_text_match_budget_mb, { type: "integer",
+      description: "The most a Query that matches text (search, or contains, startswith or =~ on message) may read, " \
+                   "in MiB of kept bytes over its range and the files its filters keep, before the Logs explorer and " \
+                   "query_logs refuse it with narrower ways to run it. Dashboard Charts and Monitors are never " \
+                   "refused. 0 refuses none. Default 4096. It applies from the next Query." }
 
     def run
       require_instance_admin!("change the instance settings")

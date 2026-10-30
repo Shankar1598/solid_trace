@@ -16,6 +16,7 @@ CREATE TABLE instance_settings (
 	id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
 	created_at DATETIME NOT NULL,
 	default_log_retention_days INTEGER DEFAULT 30 NOT NULL,
+	logs_text_match_budget_mb INTEGER DEFAULT 4096 NOT NULL,
 	sql_queries_enabled BOOLEAN DEFAULT FALSE NOT NULL,
 	updated_at DATETIME NOT NULL
 );
@@ -205,4 +206,44 @@ func TestConsoleSettings_ReadsAProjectsSlug(t *testing.T) {
 			t.Errorf("ProjectSlug(%d) = %q, want %q", id, got, want)
 		}
 	}
+}
+
+func assertTextMatchBudget(t *testing.T, settings *ConsoleSettings, want int64) {
+	t.Helper()
+	got, err := settings.TextMatchBudgetBytes()
+	if err != nil {
+		t.Fatalf("TextMatchBudgetBytes: %v", err)
+	}
+	if got != want {
+		t.Errorf("TextMatchBudgetBytes() = %d, want %d", got, want)
+	}
+}
+
+func TestConsoleSettings_TheTextMatchBudgetIs4GiBUntilAnInstanceAdminSetsIt(t *testing.T) {
+	path, console := newConsoleDB(t)
+	settings := openConsoleSettings(t, path)
+	assertTextMatchBudget(t, settings, 4<<30)
+
+	// A row saved for another setting has the column's default.
+	setInstanceSettings(t, console, true, 30)
+	assertTextMatchBudget(t, settings, 4<<30)
+
+	consoleExec(t, console, `UPDATE instance_settings SET logs_text_match_budget_mb = 10240`)
+	assertTextMatchBudget(t, settings, 10<<30)
+	consoleExec(t, console, `UPDATE instance_settings SET logs_text_match_budget_mb = 0`)
+	assertTextMatchBudget(t, settings, 0)
+}
+
+// A Console that hasn't run its migration yet has no budget column: reading
+// the budget fails, and the other instance settings still read.
+func TestConsoleSettings_AConsoleWithoutTheBudgetColumnFailsOnlyTheBudget(t *testing.T) {
+	path, console := newConsoleDB(t)
+	setInstanceSettings(t, console, true, 14)
+	consoleExec(t, console, `ALTER TABLE instance_settings DROP COLUMN logs_text_match_budget_mb`)
+	settings := openConsoleSettings(t, path)
+
+	if budget, err := settings.TextMatchBudgetBytes(); err == nil {
+		t.Errorf("TextMatchBudgetBytes() = %d, want an error", budget)
+	}
+	assertInstanceSettings(t, settings, InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 14})
 }
