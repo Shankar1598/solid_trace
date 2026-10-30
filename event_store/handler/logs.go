@@ -11,6 +11,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/logquery"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -42,13 +43,20 @@ type LogsHandler struct {
 	// ScanBudget is how long a run of Log rows reads before it answers with
 	// what it has found and a next_cursor.
 	ScanBudget time.Duration
+	// TextMatchBudget is the most kept bytes a Query that matches text may
+	// read before a run that asks is refused (logs_budget.go); 0 refuses
+	// none.
+	TextMatchBudget int64
 }
 
 // NewLogsHandler serves the Logs in clickHouse, and SQL queries through sql;
 // settings say whether SQL runs and what each Project's Logs are named in
 // Queries; clock is the time ago() and now() read.
 func NewLogsHandler(clickHouse *storage.ClickHouseLogs, sql *storage.ClickHouseSQL, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
-	return &LogsHandler{clickHouse: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget}
+	return &LogsHandler{
+		clickHouse: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget,
+		TextMatchBudget: config.DefaultLogsTextMatchBudgetMB << 20,
+	}
 }
 
 // queryRequest is the body of a run.
@@ -67,6 +75,8 @@ type queryRequest struct {
 	// Parameters are the values of the Dashboard filters the Query names,
 	// by name. A filter without values is All.
 	Parameters map[string][]string `json:"parameters"`
+	// check_budget, force and estimate say how the read is sized.
+	budgetOptions
 }
 
 // The most values a run takes for one Dashboard filter, and the longest
@@ -109,6 +119,12 @@ func parametersProblem(parameters map[string][]string) fiber.Map {
 // ignores limit and cursor. Either answer carries "elapsed_ms", how long the
 // run took. A Query with mistakes answers 400 with {"errors": […]}, as
 // validate lists them.
+//
+// Before it runs, the read is sized from the counts: "check_budget" refuses
+// a Query over the budget, answering {"refusal": …} instead; "force" runs
+// it as written; "estimate" answers {"estimate", "refusal"} without running
+// it (logs_budget.go). A page after the first, with a cursor, is never
+// refused: its range is within the first page's.
 //
 // The scan goes on if the client goes away, as Fiber gives the handler no
 // context that ends with the connection: it stops at limit Logs, the end of
@@ -161,6 +177,11 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	}
 
 	from, to := query.Range()
+	budget := req.budgetOptions
+	budget.CheckBudget = budget.CheckBudget && req.Cursor == ""
+	if answered, err := h.sizeUp(c, run, projectID, req.Query, query, from, to, budget); answered {
+		return err
+	}
 	if query.Table() {
 		run.ctx = storage.TagRead(run.ctx, projectID, storage.ReadTable)
 		return h.table(c, run, projectID, query, from, to, req.Totals)
