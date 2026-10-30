@@ -54,6 +54,11 @@ type histogramBucket struct {
 // mistakes answers 400 with {"errors": […]}, and a run past its timeout 504
 // with {"errors": [{"message"}]}.
 //
+// Its read of the Query's filters is sized first, as a run's is:
+// "check_budget", "force" and "estimate" work as they do for a run
+// (logs_budget.go), so that the Logs explorer's histogram of a search over
+// the budget is refused with its run.
+//
 // Like a table, it reads the whole range as it was when the read began.
 func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
@@ -66,6 +71,7 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 		To             time.Time `json:"to"`
 		BucketSeconds  int64     `json:"bucket_seconds"`
 		TimeoutSeconds *float64  `json:"timeout_seconds"`
+		budgetOptions
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with query, from and to"})
@@ -92,10 +98,13 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
+	from, to := query.Range()
+	if answered, err := h.sizeUp(c, run, projectID, req.Query, query.Histogram(bucket), from, to, req.budgetOptions); answered {
+		return err
+	}
 
 	var counted []storage.LevelCount
 	limit := len(starts) * len(histogramLevels)
-	from, to := query.Range()
 	if !query.Filters() && bucket%time.Minute == 0 {
 		// Every Log counts, by minute: the counts kept by minute serve from
 		// where they hold every Log. The buckets before it are counted from

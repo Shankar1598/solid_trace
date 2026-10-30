@@ -300,6 +300,35 @@ func TestAnEstimateOverARangeThatCrossesDaysAddsUpTheDays(t *testing.T) {
 	}
 }
 
+// The Logs explorer's histogram counts the Logs that pass the Query's
+// filters, so a search reads as much for it as for the run.
+func TestTheHistogramOfASearchOverTheBudgetIsRefusedToo(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	histogram := func(query string, force bool) map[string]json.RawMessage {
+		return answerOf(t, env, "/api/123/logs/histogram", map[string]any{
+			"query": query, "from": lastWeek.from, "to": lastWeek.to, "check_budget": true, "force": force}, 200)
+	}
+
+	refused := histogram(`search "timeout"`, false)
+	if _, counted := refused["buckets"]; counted {
+		t.Errorf("Expected no buckets with a refusal, got %s", mustMarshal(t, refused))
+	}
+	if refusal := refusalOf(t, refused); refusal.NarrowerQuery == nil || !refusal.Estimate.OverBudget {
+		t.Errorf("Expected a refusal over the budget with a narrower Query, got %+v", refusal)
+	}
+	for _, run := range []struct {
+		query string
+		force bool
+	}{{`search "timeout"`, true}, {``, false}, {`where level == "error"`, false}} {
+		if answer := histogram(run.query, run.force); answer["buckets"] == nil {
+			t.Errorf("Expected the histogram of %q (force %v), got %s", run.query, run.force, mustMarshal(t, answer))
+		}
+	}
+}
+
 // Dashboard Charts and Monitors don't ask to be checked: their runs log the
 // estimate, refused or not, so the budget can be checked against them.
 func TestARunThatDoesntAskToBeCheckedRunsAndLogsItsEstimate(t *testing.T) {
