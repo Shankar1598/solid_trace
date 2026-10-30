@@ -42,6 +42,9 @@ type run struct {
 	userEmail  string
 	userName   string
 	statements *storage.ReadStatements
+	// estimate is how much the run's read was sized at, once sized
+	// (sizeUp): whether it is heavy, for one.
+	estimate ReadEstimate
 }
 
 // readKinds are the kinds of the runs whose ClickHouse statements are tagged
