@@ -228,6 +228,10 @@ func (h *LogsHandler) refusal(ctx context.Context, projectID uint32, text string
 	r.LargestRange = largest
 	e := size.estimate
 	for _, f := range r.TopFiles {
+		// Logs with no file aren't kept by file == "".
+		if f.File == "" {
+			continue
+		}
 		if _, bytes := volumeIn(size.volume, size.scope.OnFile(f.File)); round(bytes) <= e.BudgetBytes {
 			r.NarrowerQuery = &NarrowerQuery{Query: logquery.OnFile(text, f.File), From: e.From, To: e.To}
 			break
