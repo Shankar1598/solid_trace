@@ -216,6 +216,9 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		if run.timedOut() {
 			return run.stopped(c, shorterRange)
 		}
+		if run.replaced() {
+			return run.answerReplaced(c)
+		}
 		logger.L.Error("Log query failed", "project_id", projectID, "error", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
@@ -408,10 +411,13 @@ func (h *LogsHandler) scanTable(run *run, projectID uint32, query *logquery.Quer
 }
 
 // tableFailed answers a run whose table failed: 504 once it has timed out,
-// else 500.
+// a busy refusal once a newer run has replaced it, else 500.
 func (h *LogsHandler) tableFailed(c *fiber.Ctx, run *run, projectID uint32, err error) error {
 	if run.timedOut() {
 		return run.stopped(c, shorterRange)
+	}
+	if run.replaced() {
+		return run.answerReplaced(c)
 	}
 	logger.L.Error("Log table query failed", "project_id", projectID, "error", err)
 	return c.Status(500).JSON(fiber.Map{"error": "Internal error"})

@@ -38,7 +38,8 @@ import (
 //   - a busy refusal, to a heavy run with check_budget or force while the
 //     instance's heavy reads hold every slot (logs_heavy_reads.go): the same,
 //     with busy true, the message to run them one at a time and no ways to
-//     read less;
+//     read less; also the answer to a heavy run stopped for a newer one of
+//     its user's (replaces_reads_of), with a message that says so;
 //   - to a run with estimate: {"estimate": {…}, "refusal": {…} or null}, the
 //     estimate (ReadEstimate) and the refusal a checked run would get.
 //
@@ -55,6 +56,12 @@ type budgetOptions struct {
 	Force bool `json:"force"`
 	// Estimate answers the estimate without running the Query.
 	Estimate bool `json:"estimate"`
+	// ReplacesReadsOf, when set, is who the run is for: a heavy run
+	// replaces their older heavy runs of other Queries or ranges, stopping
+	// them and taking their slot (HeavyReads.Replace). The Logs explorer
+	// sets it, as its user has left the Query they edited; the MCP server
+	// doesn't, so an agent's heavy reads run one at a time.
+	ReplacesReadsOf string `json:"replaces_reads_of"`
 }
 
 // ReadEstimate is how much a run of a Query would read over [From, To), by
