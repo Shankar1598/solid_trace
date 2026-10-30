@@ -290,12 +290,14 @@ func (s *ClickHouseSQL) DropProjectUser(projectID uint32) error {
 //
 // JSON and Dynamic columns are sent flattened: clickhouse-go 2.49 can't read
 // the form 26.8 sends a JSON column in once a sort has merged blocks of
-// several parts ("unsupported column type" naming a path).
+// several parts ("unsupported column type" naming a path). Attributes aren't
+// sized part by part, as on EventStore's own connection (openClickHouseConn).
 func (s *ClickHouseSQL) profileStatement() string {
 	empty := chsql.String(chsql.TimeText(time.Unix(0, 0)))
 	return fmt.Sprintf(`CREATE SETTINGS PROFILE OR REPLACE %s SETTINGS
 		readonly = 1 CONST,
 		output_format_native_use_flattened_dynamic_and_json_serialization = 1 CONST,
+		allow_calculating_subcolumns_sizes_for_merge_tree_reading = 0 CONST,
 		max_execution_time = %s CONST,
 		max_memory_usage = %d CONST,
 		max_temporary_data_on_disk_size_for_query = %d CONST,
