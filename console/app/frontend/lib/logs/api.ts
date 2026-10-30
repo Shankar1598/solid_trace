@@ -2,6 +2,7 @@
 // signal: the server may still finish the scan, so cancel only drops the answer.
 import type { Chips } from './builder'
 import type { Histogram } from './histogram'
+import { refusalOf, type Refusal } from './refusal'
 import { elapsedOf } from './runLine'
 import type { Log, LogPage } from './stream'
 import type { LogTable } from './table'
@@ -33,6 +34,8 @@ export interface LogPageRequest {
   cursor?: string | null
   /** Asks for a time chart's totals with its table, as the explorer's run does. */
   totals?: boolean
+  /** Runs the Query as written, past EventStore's read budget: Run anyway. */
+  force?: boolean
   signal?: AbortSignal
 }
 
@@ -42,31 +45,39 @@ export interface TableAnswer {
   elapsedMs: number | null
 }
 
-/** What a run answers: Log rows, or a table for a tabular Query. */
-export type RunAnswer = { kind: 'logs'; page: LogPage } | ({ kind: 'table' } & TableAnswer)
+/** A run EventStore didn't run, and why: an answer, not an error. */
+export type Refused = { kind: 'refused'; refusal: Refusal }
 
-/** A run's first answer: its newest page of Logs, or its table. */
+/** What a run answers: Log rows, a table for a tabular Query, or a refusal. */
+export type RunAnswer = { kind: 'logs'; page: LogPage } | ({ kind: 'table' } & TableAnswer) | Refused
+
+/** A run's first answer: its newest page of Logs, its table, or EventStore's refusal to run it. */
 export async function fetchRun(request: LogPageRequest): Promise<RunAnswer> {
   const body = await runQuery(request)
+  const refusal = refusalOf(body)
+  if (refusal) return { kind: 'refused', refusal }
   if (body && typeof body.table === 'object' && body.table !== null) return { kind: 'table', table: body.table as LogTable, elapsedMs: elapsedOf(body) }
   return { kind: 'logs', page: body as LogPage }
 }
 
-/** A page of Logs: older ones, from a run's cursor. */
+/** A page of Logs: older ones, from a run's cursor. A refusal is an error here, its message. */
 export async function fetchLogPage(request: LogPageRequest): Promise<LogPage> {
   const body = await runQuery(request)
   if (Array.isArray(body?.logs)) return body as LogPage
+  const refusal = refusalOf(body)
+  if (refusal) throw new RunError(refusal.message)
   throw new RunError('The Query answered a table where Logs were expected.')
 }
 
-async function runQuery({ orgSlug, projectSlug, query, from, to, cursor, totals, signal }: LogPageRequest) {
+async function runQuery({ orgSlug, projectSlug, query, from, to, cursor, totals, force, signal }: LogPageRequest) {
   const params = new URLSearchParams({ query, from: from.toISOString(), to: to.toISOString() })
   if (cursor) params.set('cursor', cursor)
   if (totals) params.set('totals', '1')
+  if (force) params.set('force', '1')
 
   const response = await callConsole(`/${orgSlug}/projects/${projectSlug}/logs/query?${params}`, signal)
   const body = await response.json().catch(() => null)
-  if (response.ok && body && (Array.isArray(body.logs) || (body.table && typeof body.table === 'object'))) return body
+  if (response.ok && body && (Array.isArray(body.logs) || (body.table && typeof body.table === 'object') || refusalOf(body))) return body
   throw runFailure(body, response.status)
 }
 
@@ -77,17 +88,25 @@ export interface HistogramRequest {
   from: Date
   to: Date
   bucketSeconds: number
+  /** Counts as written, past EventStore's read budget, as its run is with Run anyway. */
+  force?: boolean
   signal?: AbortSignal
 }
 
+/** A histogram's counts, or the refusal its Query got: the histogram follows its run. */
+export type HistogramAnswer = { kind: 'counts'; histogram: Histogram } | Refused
+
 /** The Logs of a run's range that pass its Query's filters, counted per bucket and Level. */
-export async function fetchHistogram({ orgSlug, projectSlug, query, from, to, bucketSeconds, signal }: HistogramRequest): Promise<Histogram> {
+export async function fetchHistogram({ orgSlug, projectSlug, query, from, to, bucketSeconds, force, signal }: HistogramRequest): Promise<HistogramAnswer> {
   const params = new URLSearchParams({
     query, from: from.toISOString(), to: to.toISOString(), bucket_seconds: String(bucketSeconds),
   })
+  if (force) params.set('force', '1')
   const response = await callConsole(`/${orgSlug}/projects/${projectSlug}/logs/histogram?${params}`, signal)
   const body = await response.json().catch(() => null)
-  if (response.ok && body && Array.isArray(body.buckets)) return body as Histogram
+  const refusal = response.ok ? refusalOf(body) : null
+  if (refusal) return { kind: 'refused', refusal }
+  if (response.ok && body && Array.isArray(body.buckets)) return { kind: 'counts', histogram: body as Histogram }
   throw runFailure(body, response.status)
 }
 
