@@ -9,7 +9,7 @@ module McpTools
                 "trace_retention_days, how many days back its traces' Spans go, and its volume over the last 24 hours: " \
                 "logs_per_hour, bytes_per_hour (each Log's message and Attributes' JSON) and files (its Services' files with Logs). " \
                 "Use the volume to size a Query's range before running it: a search reads every byte of its range, " \
-                "so on a busy Project search a few hours, or filter on service or file first."
+                "so on a busy Project search a few hours, or filter on service or file first. The volume is null when EventStore can't answer."
     read_only!
     takes_organization
 
