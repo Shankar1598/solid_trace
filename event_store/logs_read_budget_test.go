@@ -206,3 +206,124 @@ func TestASearchOverMoreThanTheBudgetIsRefusedWithANarrowerQueryThatFits(t *test
 		t.Errorf("Expected the narrower Query %q to find the timeout in cron.log, got %s", narrower.Query, answer["table"])
 	}
 }
+
+func TestQueriesThatFitTheBudgetOrDontMatchTextRunOverABusyWeek(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	postAndProcessTo(t, env, 123, "test_public_key",
+		logJSON(t, "a timeout in cron", testNow.Add(-time.Hour), map[string]any{"service": "worker", "file": "cron.log", "level": "error"}))
+
+	for _, query := range []string{
+		// Files whose week fits the budget.
+		`where file == "cron.log" | search "timeout"`,
+		`where service == "worker" and file in ("cron.log", "mailer.log") and message contains "timeout"`,
+		// A plain Log list reads only the newest page, however busy.
+		``,
+		`where file == "access.log" and level == "error"`,
+		// A table that matches no text.
+		`summarize count() by service`,
+	} {
+		ran(t, query, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
+	}
+}
+
+func TestForceRunsARefusedQueryAtALowerPriority(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	// The query_log keeps the reads of earlier runs of the test.
+	project := freshProjectIDs(1)[0]
+	seedProject(t, env.SQLitePath, project, 0)
+	seedBusyProject(t, env, project, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	path := fmt.Sprintf("/api/%d/logs/query", project)
+	query := `search "timeout" | summarize count() by file`
+	run := func(force bool) map[string]json.RawMessage {
+		return answerOf(t, env, path, map[string]any{
+			"query": query, "from": lastWeek.from, "to": lastWeek.to, "check_budget": true, "force": force}, 200)
+	}
+	refusalOf(t, run(false))
+	ran(t, "the forced Query", run(true))
+
+	flushQueryLog(t, env)
+	var priorities []string
+	rows, err := env.ClickHouse.Conn().Query(context.Background(), `
+		SELECT DISTINCT Settings['priority'] FROM system.query_log
+		WHERE current_database = currentDatabase() AND type = 'QueryFinish'
+			AND JSONExtractUInt(log_comment, 'project_id') = ? AND JSONExtractBool(log_comment, 'forced')`, project)
+	if err != nil {
+		t.Fatalf("Read the forced read's statements: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var priority string
+		if err := rows.Scan(&priority); err != nil {
+			t.Fatal(err)
+		}
+		priorities = append(priorities, priority)
+	}
+	if len(priorities) != 1 || priorities[0] != "10" {
+		t.Errorf("Expected the forced read's statements at priority 10, below other Log reads' 1, got %v", priorities)
+	}
+}
+
+func TestAnEstimateOverARangeThatCrossesDaysAddsUpTheDays(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	// Yesterday had twice the Logs of the day before.
+	yesterday := testNow.Truncate(24*time.Hour).AddDate(0, 0, -1)
+	seedBusyProject(t, env, 123, yesterday.AddDate(0, 0, -1), yesterday, []busySource{{"web", "access.log", 7_000, 400}})
+	seedBusyProject(t, env, 123, yesterday, yesterday.AddDate(0, 0, 1), []busySource{{"web", "access.log", 14_000, 400}})
+
+	// The last 6 hours of the one day and the first 6 of the next.
+	from, to := yesterday.Add(-6*time.Hour), yesterday.Add(6*time.Hour)
+	answer := checkedRun(t, env, `search "timeout"`, from, to, map[string]any{"estimate": true})
+	if _, ran := answer["logs"]; ran {
+		t.Errorf("Expected the estimate without the Query run, got %s", mustMarshal(t, answer))
+	}
+	var estimate budgetEstimate
+	if err := json.Unmarshal(answer["estimate"], &estimate); err != nil {
+		t.Fatalf("Decode the estimate %s: %v", answer["estimate"], err)
+	}
+	// 360 minutes of 7,000 Logs, and 360 of 14,000, 400 bytes each.
+	if estimate.Logs != 7_560_000 || estimate.Bytes != 3_024_000_000 ||
+		!estimate.TextMatch || estimate.OverBudget || !estimate.From.Equal(from) || !estimate.To.Equal(to) {
+		t.Errorf("Expected 7,560,000 Logs and 3,024,000,000 bytes, within the budget, got %+v", estimate)
+	}
+	if string(answer["refusal"]) != "null" {
+		t.Errorf("Expected no refusal within the budget, got %s", answer["refusal"])
+	}
+	// A heavy read is one over a quarter of the budget.
+	if !estimate.Heavy {
+		t.Errorf("Expected 3,024,000,000 bytes, over a quarter of 4 GiB, heavy, got %+v", estimate)
+	}
+}
+
+// Dashboard Charts and Monitors don't ask to be checked: their runs log the
+// estimate, refused or not, so the budget can be checked against them.
+func TestARunThatDoesntAskToBeCheckedRunsAndLogsItsEstimate(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	logs := captureLogs(t)
+
+	answer := answerOf(t, env, "/api/123/logs/query", map[string]any{
+		"query": `search "timeout" | summarize count() by bin_auto(time)`, "from": lastWeek.from, "to": lastWeek.to}, 200)
+	ran(t, "a Chart's Query", answer)
+	var line string
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, `message="Log read estimate"`) {
+			line = l
+		}
+	}
+	for _, field := range []string{
+		"kind=log_read_estimate", "project_id=123", "text_match=true", fmt.Sprintf("bytes=%d", 7*1440*26_770_000),
+		"over_budget=true", "checked=false", "refused=false",
+	} {
+		if !strings.Contains(line, field) {
+			t.Errorf("Expected %s in the estimate's log line, got %q", field, line)
+		}
+	}
+}
