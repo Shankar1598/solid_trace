@@ -45,6 +45,9 @@ type run struct {
 	// estimate is how much the run's read was sized at, once sized
 	// (sizeUp): whether it is heavy, for one.
 	estimate ReadEstimate
+	// release gives back the heavy-read slot the run holds, if it holds one
+	// (holdSlot).
+	release func()
 }
 
 // readKinds are the kinds of the runs whose ClickHouse statements are tagged
@@ -86,11 +89,14 @@ func startRun(c *fiber.Ctx, read string, timeoutSeconds *float64) (*run, fiber.M
 	return r, nil
 }
 
-// end ends the run's context and, if it was asked to, logs each statement
-// it ran: its SQL, how long it took, its error and who it ran for, numbered
-// in the order they ran.
+// end ends the run's context, gives back its heavy-read slot and, if it was
+// asked to, logs each statement it ran: its SQL, how long it took, its error
+// and who it ran for, numbered in the order they ran.
 func (r *run) end() {
 	r.cancel()
+	if r.release != nil {
+		r.release()
+	}
 	if r.statements == nil {
 		return
 	}
