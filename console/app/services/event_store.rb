@@ -130,6 +130,15 @@ class EventStore
       post!("#{base_url}/overview", body, read_timeout: read_timeout, open_timeout: read_timeout)
     end
 
+    # Each Project of project_ids' volume over the last 24 hours, from the
+    # counts, as EventStore's POST /volumes answers it: {"projects" =>
+    # [{"project_id", "logs_per_hour", "bytes_per_hour", "files"}]} in the
+    # order of project_ids. Raises Unavailable when EventStore can't answer
+    # within read_timeout seconds.
+    def volumes!(project_ids:, read_timeout: 3)
+      post!("#{base_url}/volumes", { project_ids: project_ids }, read_timeout: read_timeout, open_timeout: read_timeout)
+    end
+
     # A trace among project_ids', an Organization's, as EventStore's POST
     # /trace answers it: {"trace_id", "spans" => [...] in start order,
     # "logs" => [...] in time order, "more_logs", "logs_from", "logs_to",
@@ -170,13 +179,24 @@ class EventStore
     # comes first. parameters are the values of the Dashboard filters the
     # Query names, { name => [value, ...] }; EventStore runs any it lacks as
     # All.
-    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil, totals: false, timeout_seconds: nil, parameters: nil)
+    #
+    # EventStore sizes the read first, from its counts (budget_body). With
+    # check_budget, a Query over the budget isn't run: the answer is
+    # {"refusal" => {"message", "estimate", "largest_range", "top_files",
+    # "narrower_query"}} instead. force runs it as written, at a lower
+    # priority. estimate answers {"estimate" => {...}, "refusal" => {...} |
+    # nil} without running it. A large read takes one of EventStore's few
+    # heavy-read slots; with replaces_reads_of, who it is for, it stops their
+    # older large read and takes its slot, rather than being refused as busy.
+    def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil, totals: false, timeout_seconds: nil, parameters: nil,
+                   check_budget: false, force: false, estimate: false, replaces_reads_of: nil)
       body = { query: query, from: utc(from), to: utc(to) }
       body[:cursor] = cursor if cursor.present?
       body[:limit] = limit if limit
       body[:totals] = true if totals
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
       body[:parameters] = parameters if parameters.present?
+      body.merge!(budget_body(check_budget: check_budget, force: force, estimate: estimate, replaces_reads_of: replaces_reads_of))
       CallTimings.log_read("query", project_id: project_id, query: query, from: from, to: to) do
         post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
       end
@@ -232,11 +252,15 @@ class EventStore
     # and Level: {"bucket_seconds", "buckets" => [{"time", "count",
     # "levels"}], "count", "levels"}. levels has every Level and "none" for
     # Logs with no Level. Without bucket_seconds EventStore picks the size.
-    # timeout_seconds works as in query_logs.
-    def logs_histogram(project_id:, query:, from:, to:, bucket_seconds: nil, timeout_seconds: nil)
+    # timeout_seconds, check_budget, force and replaces_reads_of work as in
+    # query_logs: the histogram of a Query over the budget answers
+    # {"refusal" => {...}}.
+    def logs_histogram(project_id:, query:, from:, to:, bucket_seconds: nil, timeout_seconds: nil, check_budget: false, force: false,
+                       replaces_reads_of: nil)
       body = { query: query, from: utc(from), to: utc(to) }
       body[:bucket_seconds] = bucket_seconds if bucket_seconds
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
+      body.merge!(budget_body(check_budget: check_budget, force: force, replaces_reads_of: replaces_reads_of))
       CallTimings.log_read("histogram", project_id: project_id, query: query, from: from, to: to) do
         post!("#{base_url}/api/#{project_id}/logs/histogram", body, read_timeout: read_timeout(timeout_seconds))
       end
@@ -336,6 +360,14 @@ class EventStore
 
     def utc(time)
       time.utc.iso8601(3)
+    end
+
+    # A run's fields that say how EventStore sizes its read, and whose older
+    # large read it replaces, only those set. A run without check_budget, as
+    # a Dashboard's Chart or a Monitor's, is never refused: EventStore only
+    # logs its estimate.
+    def budget_body(check_budget: false, force: false, estimate: false, replaces_reads_of: nil)
+      { check_budget: check_budget, force: force, estimate: estimate, replaces_reads_of: replaces_reads_of }.select { |_, value| value }
     end
 
     # How long Console waits for a run given timeout_seconds: a little

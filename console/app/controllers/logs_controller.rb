@@ -58,6 +58,15 @@ class LogsController < ApplicationController
   # one page of Logs, newest first, or a tabular Query's table, as EventStore
   # answers it. totals=1, as the explorer's run asks, adds a time chart's
   # totals over the range to its table.
+  #
+  # The explorer's runs are checked against EventStore's read budget: a Query
+  # over it answers EventStore's {"refusal" => {...}} in place of Logs or a
+  # table, still 200. force=1, as Run anyway asks, runs it as written.
+  #
+  # A large read replaces the user's older large read (replaces_reads_of):
+  # when they edit a search, the explorer aborts its fetch, but this request
+  # waits on EventStore regardless (ChartRuns), and the read would otherwise
+  # hold EventStore's one heavy-read slot against their next search.
   def query
     render json: ChartRuns.hold {
       EventStore.query_logs(
@@ -67,14 +76,19 @@ class LogsController < ApplicationController
         to: @to,
         cursor: params[:cursor].presence,
         totals: params[:totals] == "1",
-        timeout_seconds: RUN_TIMEOUT_SECONDS
+        timeout_seconds: RUN_TIMEOUT_SECONDS,
+        check_budget: true,
+        force: forced?,
+        replaces_reads_of: current_user.id.to_s
       )
     }
   end
 
   # GET with query, from and to (ISO 8601) and an optional bucket_seconds:
   # the Logs that pass the Query's filters counted per bucket and Level, for
-  # the histogram and summary line, as EventStore answers them.
+  # the histogram and summary line, as EventStore answers them. Checked
+  # against the read budget as the run is, with force=1 too, and replaces
+  # the user's older large read as the run does.
   def histogram
     bucket = params[:bucket_seconds].presence
     bucket_seconds = bucket && Integer(bucket, 10, exception: false)
@@ -87,7 +101,10 @@ class LogsController < ApplicationController
         from: @from,
         to: @to,
         bucket_seconds: bucket_seconds,
-        timeout_seconds: RUN_TIMEOUT_SECONDS
+        timeout_seconds: RUN_TIMEOUT_SECONDS,
+        check_budget: true,
+        force: forced?,
+        replaces_reads_of: current_user.id.to_s
       )
     }
   end
@@ -128,6 +145,11 @@ class LogsController < ApplicationController
   end
 
   private
+
+  # Whether a run asks to run its Query as written, past the read budget.
+  def forced?
+    params[:force] == "1"
+  end
 
   # The Project each Organization's Logs were last opened on, by Organization
   # id, kept in the session as the last Organization is.
