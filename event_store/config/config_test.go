@@ -190,6 +190,23 @@ func TestAQueryThatMatchesTextMayRead4GiBUnlessTheConfigFileSays(t *testing.T) {
 	}
 }
 
+func TestHeavyLogReadsRunOneAtATimeBelow8CoresUnlessTheConfigFileSays(t *testing.T) {
+	for cpus, want := range map[int]int{1: 1, 2: 1, 4: 1, 7: 1, 8: 2, 16: 2, 64: 2} {
+		if got := config.DefaultLogsHeavyReadSlots(cpus); got != want {
+			t.Errorf("Heavy-read slots on %d cores = %d, want %d", cpus, got, want)
+		}
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_heavy_read_slots: 3\n")).LogsHeavyReadSlots; got != 3 {
+		t.Errorf("Heavy-read slots = %d, want 3", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_heavy_read_slots: 0\n")).LogsHeavyReadSlots; got != 0 {
+		t.Errorf("Heavy-read slots = %d, want 0, capping none", got)
+	}
+	if _, err := config.LoadFile(writeConfig(t, "logs_heavy_read_slots: -1\n")); err == nil || !strings.Contains(err.Error(), "logs_heavy_read_slots can't be negative") {
+		t.Errorf("Expected negative heavy-read slots to fail, got %v", err)
+	}
+}
+
 // setObjectStoreKeys sets the bucket's key in the environment.
 func setObjectStoreKeys(t *testing.T) {
 	t.Helper()

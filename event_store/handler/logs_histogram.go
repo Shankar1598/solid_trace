@@ -102,6 +102,9 @@ func (h *LogsHandler) Histogram(c *fiber.Ctx) error {
 	if answered, err := h.sizeUp(c, run, projectID, req.Query, query.Histogram(bucket), from, to, req.budgetOptions); answered {
 		return err
 	}
+	if answered, err := h.holdSlot(c, run, projectID, req.Query, req.budgetOptions); answered {
+		return err
+	}
 
 	var counted []storage.LevelCount
 	limit := len(starts) * len(histogramLevels)
