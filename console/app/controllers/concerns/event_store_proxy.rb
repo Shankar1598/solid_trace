@@ -7,7 +7,9 @@ module EventStoreProxy
   extend ActiveSupport::Concern
 
   # How long a run for the browser may take before EventStore stops it: the
-  # explorer's runs, a Dashboard's charts and a Monitor's preview.
+  # explorer's runs, a Dashboard's charts and a Monitor's preview. Thruster's
+  # HTTP_WRITE_TIMEOUT (deploy/docker-compose.yml) must stay well above it, or
+  # a timed-out run's answer is cut off.
   RUN_TIMEOUT_SECONDS = 30
 
   # How long a SQL query may take before EventStore stops it, from the
