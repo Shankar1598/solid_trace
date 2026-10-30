@@ -185,7 +185,7 @@ Every Project's Logs are sorted by `service`, then by the `file` Attribute, then
 - **Use `where`, not `search`**, which reads `message` and every string Attribute.
 - **Keep the range short.** A read skips the days outside it, and a Dashboard refresh reads again only the bins of hours that haven't ended or have new Logs.
 
-A Query that matches text, with `search` or with `contains`, `startswith`, `=~` or `matches regex` on `message`, reads the text of every Log its `service` and `file` filters keep, so it may read only so much: 4 GiB by default. The Logs explorer and `query_logs` size it first, from the Logs and bytes each file sends, and don't run one over that. They answer instead with how much it would read, the largest range that fits, the busiest files to filter on, and a narrower Query that fits. Dashboard Charts and Monitors always run.
+A Query that matches text, with `search` or with `contains`, `startswith`, `=~` or `matches regex` on `message`, reads the text of every Log its `service` and `file` filters keep, so it may read only so much: 4 GiB by default, which an Instance admin changes on Settings → Instance. The Logs explorer and `query_logs` size it first, from the Logs and bytes each file sends, and don't run one over that. They answer instead with how much it would read, the largest range that fits, the busiest files to filter on, and a narrower Query that fits. Dashboard Charts and Monitors always run.
 
 In SQL, the same holds: a condition on `service` and `file` reads less, and `attributes.name.:String` reads that Attribute alone.
 

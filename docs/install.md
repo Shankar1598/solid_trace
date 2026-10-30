@@ -26,7 +26,7 @@ With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile)) gets a
 
 Sign-up works only until the install has a user, so sign up as soon as it is running; after that, people join by Invite. To let anyone sign up, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set SIGN_UP_OPEN=true`, and `=false` to close it again.
 
-The first user to sign up is an instance admin; on an install that already had users, the oldest is. To make someone else one, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_admins:grant EMAIL=<their email>`; `instance_admins:revoke` and `instance_admins:list` do the rest. Instance admins change the install's settings on Settings → Instance.
+The first user to sign up is an instance admin; on an install that already had users, the oldest is. To make someone else one, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_admins:grant EMAIL=<their email>`; `instance_admins:revoke` and `instance_admins:list` do the rest. Instance admins change the install's settings on Settings → Instance, with no restart: SQL queries, the default Retention of Logs and of traces, log-all-reads, log-MCP-reads, whether Console sends its own Issues and traces, and the text-match budget, the most a Query that matches text may read before the Logs explorer and the MCP server refuse it (4 GiB by default, and 0 refuses none). The page also shows what Console and EventStore read at start.
 
 ## Email
 

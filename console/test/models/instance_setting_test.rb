@@ -123,4 +123,17 @@ class InstanceSettingTest < ActiveSupport::TestCase
 
     assert_not InstanceSetting.current.smtp_password_saved?
   end
+
+  test "the text-match budget is 4096 MiB until changed, a whole number of MiB from 0, and changes at once" do
+    assert_equal 4096, InstanceSetting.current.logs_text_match_budget_mb
+    [ -1, "1.5", "lots", nil ].each do |mb|
+      settings = InstanceSetting.new(logs_text_match_budget_mb: mb)
+      assert_not settings.valid?, "budget #{mb.inspect}"
+      assert settings.errors[:logs_text_match_budget_mb].any?, "budget #{mb.inspect}"
+    end
+    assert InstanceSetting.new(logs_text_match_budget_mb: 0).valid?
+
+    assert InstanceSetting.current.update_editable(logs_text_match_budget_mb: "10240")
+    assert_equal 10_240, InstanceSetting.current.logs_text_match_budget_mb
+  end
 end

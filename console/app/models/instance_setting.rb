@@ -3,7 +3,8 @@
 # The install's settings: one record. Instance admins set email (the SMTP
 # server and the sender) on the Email settings page or over the MCP server,
 # and the settings that apply at once (EDITABLE: SQL queries, the default
-# Retention of Logs and of traces, log-all-reads, log-MCP-reads) on Settings → Instance or over the MCP server.
+# Retention of Logs and of traces, log-all-reads, log-MCP-reads, the
+# text-match budget) on Settings → Instance or over the MCP server.
 # Sign-up has no UI on purpose: opening it lets anyone who can reach Console
 # make an account, so it changes only from a shell on the server, with
 # `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
@@ -18,7 +19,7 @@ class InstanceSetting < ApplicationRecord
   # The settings that apply at once, so instance admins change them on
   # Settings → Instance and over the MCP server.
   EDITABLE = %i[sql_queries_enabled default_log_retention_days default_trace_retention_days log_all_reads
-                log_mcp_reads send_console_issues trace_console].freeze
+                log_mcp_reads send_console_issues trace_console logs_text_match_budget_mb].freeze
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
@@ -49,6 +50,11 @@ class InstanceSetting < ApplicationRecord
   validates :trace_console, inclusion: { in: [ true, false ] }
   validates :default_log_retention_days, numericality: { only_integer: true, greater_than: 0 }
   validates :default_trace_retention_days, numericality: { only_integer: true, greater_than: 0 }
+  # The most a Query that matches text may read, in MiB of the kept bytes in
+  # its range and the files its filters keep, before the Logs explorer and
+  # the MCP server refuse it; 0 refuses none. EventStore reads it on each
+  # Query it sizes (event_store/handler/logs_budget.go).
+  validates :logs_text_match_budget_mb, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
 
   # Console's Sentry reads these settings once in a while; this process reads
   # them again at once.

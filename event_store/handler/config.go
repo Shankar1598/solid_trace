@@ -13,19 +13,20 @@ type ConfigHandler struct {
 }
 
 type configAnswer struct {
-	IngestPort        string             `json:"ingest_port"`
-	QueryPort         string             `json:"query_port"`
-	PebblePath        string             `json:"pebble_path"`
-	MessageQueuePath  string             `json:"message_queue_path"`
-	SQLitePath        string             `json:"sqlite_path"`
-	LogsParquetPath   string             `json:"logs_parquet_path"`
-	LogsDiskLimit     diskLimitAnswer    `json:"logs_disk_limit"`
-	LogsBinCacheBytes int64              `json:"logs_bin_cache_bytes"`
-	IngestMaxWaiting  int                `json:"ingest_max_waiting"`
-	ClickHouse        clickHouseAnswer   `json:"clickhouse"`
-	ObjectStore       *objectStoreAnswer `json:"object_store"`
-	CPUProfileDir     string             `json:"cpu_profile_dir"`
-	Debug             bool               `json:"debug"`
+	IngestPort         string             `json:"ingest_port"`
+	QueryPort          string             `json:"query_port"`
+	PebblePath         string             `json:"pebble_path"`
+	MessageQueuePath   string             `json:"message_queue_path"`
+	SQLitePath         string             `json:"sqlite_path"`
+	LogsParquetPath    string             `json:"logs_parquet_path"`
+	LogsDiskLimit      diskLimitAnswer    `json:"logs_disk_limit"`
+	LogsBinCacheBytes  int64              `json:"logs_bin_cache_bytes"`
+	LogsHeavyReadSlots int                `json:"logs_heavy_read_slots"`
+	IngestMaxWaiting   int                `json:"ingest_max_waiting"`
+	ClickHouse         clickHouseAnswer   `json:"clickhouse"`
+	ObjectStore        *objectStoreAnswer `json:"object_store"`
+	CPUProfileDir      string             `json:"cpu_profile_dir"`
+	Debug              bool               `json:"debug"`
 	// Defaults are the file's keys whose value is EventStore's default
 	// (config.Defaults), so the page can say so.
 	Defaults []string `json:"defaults"`
@@ -61,15 +62,16 @@ type objectStoreAnswer struct {
 // (storage.ClickHouseLogs.DiskLimit).
 func NewConfigHandler(cfg *config.Config, diskLimitBytes int64) *ConfigHandler {
 	answer := configAnswer{
-		IngestPort:        cfg.Port,
-		QueryPort:         cfg.QueryPort,
-		PebblePath:        cfg.PebblePath,
-		MessageQueuePath:  cfg.MessageQueuePath,
-		SQLitePath:        cfg.SQLitePath,
-		LogsParquetPath:   cfg.LogsParquetPath,
-		LogsDiskLimit:     diskLimitAnswer{ConfiguredBytes: cfg.LogsDiskLimitBytes, EffectiveBytes: diskLimitBytes},
-		LogsBinCacheBytes: cfg.LogsBinCacheBytes,
-		IngestMaxWaiting:  cfg.IngestMaxWaiting,
+		IngestPort:         cfg.Port,
+		QueryPort:          cfg.QueryPort,
+		PebblePath:         cfg.PebblePath,
+		MessageQueuePath:   cfg.MessageQueuePath,
+		SQLitePath:         cfg.SQLitePath,
+		LogsParquetPath:    cfg.LogsParquetPath,
+		LogsDiskLimit:      diskLimitAnswer{ConfiguredBytes: cfg.LogsDiskLimitBytes, EffectiveBytes: diskLimitBytes},
+		LogsBinCacheBytes:  cfg.LogsBinCacheBytes,
+		LogsHeavyReadSlots: cfg.LogsHeavyReadSlots,
+		IngestMaxWaiting:   cfg.IngestMaxWaiting,
 		ClickHouse: clickHouseAnswer{
 			Address:     cfg.ClickHouse.Address,
 			Database:    cfg.ClickHouse.Database,
@@ -112,6 +114,7 @@ func defaultKeys(cfg *config.Config) []string {
 		{"logs_parquet_path", cfg.LogsParquetPath == d.LogsParquetPath},
 		{"logs_disk_limit_gb", cfg.LogsDiskLimitBytes == d.LogsDiskLimitBytes},
 		{"logs_bin_cache_mb", cfg.LogsBinCacheBytes == d.LogsBinCacheBytes},
+		{"logs_heavy_read_slots", cfg.LogsHeavyReadSlots == d.LogsHeavyReadSlots},
 		{"ingest_max_waiting", cfg.IngestMaxWaiting == d.IngestMaxWaiting},
 		{"clickhouse.address", cfg.ClickHouse.Address == d.ClickHouse.Address},
 		{"clickhouse.database", cfg.ClickHouse.Database == d.ClickHouse.Database},

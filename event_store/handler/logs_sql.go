@@ -12,9 +12,11 @@ import (
 )
 
 // ConsoleSettings reads what Logs need from Console: the instance settings
-// the operator sets, and the slug a Project's Logs are named by in Queries.
+// the operator sets, the budget of a Query that matches text, and the slug
+// a Project's Logs are named by in Queries.
 type ConsoleSettings interface {
 	Instance() (storage.InstanceSettings, error)
+	TextMatchBudgetBytes() (int64, error)
 	ProjectSlug(projectID uint32) (string, error)
 }
 

@@ -17,7 +17,7 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
         "message_queue_path" => "/storage/mq.sqlite3", "sqlite_path" => "/storage/console.sqlite3",
         "logs_parquet_path" => "/storage/logs_parquet",
         "logs_disk_limit" => { "configured_bytes" => 0, "effective_bytes" => 50_000_000_000 },
-        "logs_bin_cache_bytes" => 64 << 20, "ingest_max_waiting" => 10_000,
+        "logs_bin_cache_bytes" => 64 << 20, "logs_heavy_read_slots" => 1, "ingest_max_waiting" => 10_000,
         "clickhouse" => { "address" => "clickhouse:9000", "database" => "solidtrace", "user" => "solidtrace",
           "password_set" => true, "config_dir" => "" },
         "object_store" => nil, "cpu_profile_dir" => "", "debug" => false, "defaults" => [] }.to_json)
@@ -38,7 +38,8 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_not answer.error?, answer.text
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
       "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
-      "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true }, answer.json["editable"])
+      "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
+      "logs_text_match_budget_mb" => 4096 }, answer.json["editable"])
     assert_equal({ "open" => false, "command" => "bin/rails instance_settings:set SIGN_UP_OPEN=true|false" },
       answer.json["sign_up"])
     console = answer.json["restart_to_change"].find { |group| group["name"] == "Console" }
@@ -74,6 +75,23 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     refused = call_tool(:update_instance_settings, user: @instance_admin, default_trace_retention_days: 0)
     assert_equal "Not saved: Default trace retention days must be greater than 0.", refused.text
     assert_equal 3, InstanceSetting.current.default_trace_retention_days
+  end
+
+  test "update_instance_settings changes the text-match budget, to 0 too, and refuses a negative one" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, logs_text_match_budget_mb: 10_240)
+
+    assert_not answer.error?, answer.text
+    assert_equal 10_240, InstanceSetting.current.logs_text_match_budget_mb
+    assert_equal 10_240, answer.json.dig("editable", "logs_text_match_budget_mb")
+
+    assert_not call_tool(:update_instance_settings, user: @instance_admin, logs_text_match_budget_mb: 0).error?
+    assert_equal 0, InstanceSetting.current.logs_text_match_budget_mb
+
+    refused = call_tool(:update_instance_settings, user: @instance_admin, logs_text_match_budget_mb: -1)
+    assert_equal "Not saved: Text-match budget (MiB) must be greater than or equal to 0.", refused.text
+    assert_equal 0, InstanceSetting.current.logs_text_match_budget_mb
+    schema = McpTools::UpdateInstanceSettings.input_schema_value.to_h
+    assert_equal "integer", schema.dig(:properties, :logs_text_match_budget_mb, :type)
   end
 
   test "update_instance_settings turns MCP reads' logging off, even while log-all-reads is on" do

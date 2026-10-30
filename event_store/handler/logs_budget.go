@@ -19,8 +19,9 @@ import (
 // A run's read is sized before it runs, from the counts Log processing keeps
 // (storage.LogVolume), without reading the Logs. A Query that matches text in
 // Logs' messages reads the text of every Log its filters on service and file
-// keep, so it is held to a budget of bytes; any other Query reads little
-// enough, or only the newest page, and is never refused.
+// keep, so it is held to a budget of bytes, which an Instance admin sets on
+// Console's Settings → Instance; any other Query reads little enough, or
+// only the newest page, and is never refused.
 //
 // A run asks with check_budget to be refused over the budget: the Logs
 // explorer and the MCP server ask, as they show the refusal; Dashboard
@@ -133,13 +134,14 @@ const maxTopFiles = 5
 // runs unsized, unless it has passed its timeout. Otherwise it logs the
 // estimate, and the run goes on.
 func (h *LogsHandler) sizeUp(c *fiber.Ctx, run *run, projectID uint32, text string, query *logquery.Query, from, to time.Time, opts budgetOptions) (answered bool, err error) {
+	budget := h.textMatchBudget()
 	if opts.Force && !opts.Estimate {
 		run.ctx = storage.ForceRead(run.ctx)
-		run.estimate = ReadEstimate{From: from, To: to, TextMatch: query.MatchesText(), BudgetBytes: h.TextMatchBudget, Heavy: true, Forced: true}
+		run.estimate = ReadEstimate{From: from, To: to, TextMatch: query.MatchesText(), BudgetBytes: budget, Heavy: true, Forced: true}
 		h.logEstimate(run, opts, false)
 		return false, nil
 	}
-	size, err := h.sizeRead(run.ctx, projectID, query, from, to)
+	size, err := h.sizeRead(run.ctx, projectID, query, from, to, budget)
 	if err != nil {
 		if run.timedOut() {
 			return true, run.stopped(c, shorterRange)
@@ -171,6 +173,19 @@ func (h *LogsHandler) sizeUp(c *fiber.Ctx, run *run, projectID uint32, text stri
 	return false, nil
 }
 
+// textMatchBudget is the budget an Instance admin set on Settings →
+// Instance, read for each run so that a change applies from the next one.
+// If it can't be read, it's the default, so that no run fails for it.
+func (h *LogsHandler) textMatchBudget() int64 {
+	budget, err := h.settings.TextMatchBudgetBytes()
+	if err != nil {
+		logger.L.Error("Reading the text-match budget failed, so the default applies",
+			"budget_bytes", storage.DefaultTextMatchBudgetBytes, "error", err)
+		return storage.DefaultTextMatchBudgetBytes
+	}
+	return budget
+}
+
 // logEstimate logs a run's estimate, and whether it was refused.
 func (h *LogsHandler) logEstimate(run *run, opts budgetOptions, refused bool) {
 	e := run.estimate
@@ -190,8 +205,9 @@ type readSize struct {
 	scope    logquery.ReadScope
 }
 
-// sizeRead sizes a read of query over [from, to).
-func (h *LogsHandler) sizeRead(ctx context.Context, projectID uint32, query *logquery.Query, from, to time.Time) (readSize, error) {
+// sizeRead sizes a read of query over [from, to) against budget, the most
+// kept bytes a Query that matches text may read.
+func (h *LogsHandler) sizeRead(ctx context.Context, projectID uint32, query *logquery.Query, from, to time.Time, budget int64) (readSize, error) {
 	volume, err := h.clickHouse.LogVolume(ctx, projectID, from, to)
 	if err != nil {
 		return readSize{}, err
@@ -200,7 +216,7 @@ func (h *LogsHandler) sizeRead(ctx context.Context, projectID uint32, query *log
 	logs, bytes := volumeIn(volume, size.scope)
 	e := ReadEstimate{
 		From: from, To: to, TextMatch: query.MatchesText(),
-		Logs: round(logs), Bytes: round(bytes), BudgetBytes: h.TextMatchBudget,
+		Logs: round(logs), Bytes: round(bytes), BudgetBytes: budget,
 	}
 	budgeted := e.TextMatch && e.BudgetBytes > 0
 	e.OverBudget = budgeted && e.Bytes > e.BudgetBytes
