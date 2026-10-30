@@ -175,6 +175,21 @@ func TestTheBinCacheTakes64MiBUnlessTheConfigFileSays(t *testing.T) {
 	}
 }
 
+func TestAQueryThatMatchesTextMayRead4GiBUnlessTheConfigFileSays(t *testing.T) {
+	if got := loadFrom(t, filepath.Join(t.TempDir(), "missing.yml")).LogsTextMatchBudgetBytes; got != 4<<30 {
+		t.Errorf("Default text-match budget = %d bytes, want 4 GiB", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_text_match_budget_mb: 8192\n")).LogsTextMatchBudgetBytes; got != 8<<30 {
+		t.Errorf("Text-match budget = %d bytes, want 8 GiB", got)
+	}
+	if got := loadFrom(t, writeConfig(t, "logs_text_match_budget_mb: 0\n")).LogsTextMatchBudgetBytes; got != 0 {
+		t.Errorf("Text-match budget = %d bytes, want 0, refusing none", got)
+	}
+	if _, err := config.LoadFile(writeConfig(t, "logs_text_match_budget_mb: -1\n")); err == nil || !strings.Contains(err.Error(), "logs_text_match_budget_mb can't be negative") {
+		t.Errorf("Expected a negative text-match budget to fail, got %v", err)
+	}
+}
+
 // setObjectStoreKeys sets the bucket's key in the environment.
 func setObjectStoreKeys(t *testing.T) {
 	t.Helper()
