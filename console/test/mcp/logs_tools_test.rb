@@ -32,7 +32,7 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     travel_to NOW do
       stub_request(:post, @query_url)
         .with(body: { query: "where level == \"error\"", from: "2026-10-17T09:00:00.000Z", to: "2026-10-17T10:00:00.000Z",
-                      limit: 50, timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS }.to_json)
+                      limit: 50, timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, check_budget: true }.to_json)
         .to_return(status: 200, body: { logs: [ ERROR_LOG, BARE_LOG ], next_cursor: "c2", elapsed_ms: 12 }.to_json)
 
       answer = call_tool(:query_logs, user: @user, project: "shop", query: "where level == \"error\"")
@@ -110,6 +110,69 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     answer = call_tool(:query_logs, user: @user, project: "shop", query: query)
 
     assert_equal [ [ "#{stack[0, 500]}…", 12 ], [ "timeout", 3 ] ], answer.json["rows"]
+  end
+
+  # EventStore's refusal of a Query over the budget, as it answers it.
+  REFUSAL = {
+    "message" => "Not run: this Query matches text … past the 4 GiB a Query that matches text may read.\n" \
+                 "A narrower Query that fits, over the same range:\nwhere file == \"cron.log\" | search \"timeout\"",
+    "estimate" => { "from" => "2026-10-10T10:00:00Z", "to" => "2026-10-17T10:00:00Z", "text_match" => true, "logs" => 612_864_000,
+                    "bytes" => 269_841_600_000, "budget_bytes" => 4 << 30, "over_budget" => true, "heavy" => true, "forced" => false },
+    "largest_range" => { "from" => "2026-10-17T07:20:00Z", "to" => "2026-10-17T10:00:00Z", "bytes" => 4_283_200_000 },
+    "top_files" => [ { "service" => "web", "file" => "access.log", "logs" => 252_000_000, "bytes" => 100_800_000_000 } ],
+    "narrower_query" => { "query" => "where file == \"cron.log\" | search \"timeout\"",
+                          "from" => "2026-10-10T10:00:00Z", "to" => "2026-10-17T10:00:00Z" },
+  }.freeze
+
+  test "query_logs answers a Query over the budget with EventStore's refusal and the narrower Query's arguments, not an error" do
+    travel_to NOW do
+      stub_request(:post, @query_url).with(body: hash_including(query: "search \"timeout\"", check_budget: true))
+        .to_return(status: 200, body: { refusal: REFUSAL, elapsed_ms: 3 }.to_json)
+
+      answer = call_tool(:query_logs, user: @user, project: "shop", query: "search \"timeout\"", range: "7d")
+
+      assert_not answer.error?
+      assert answer.body.start_with?(REFUSAL["message"]), answer.body
+      assert_equal "To run the narrower Query: call query_logs with query \"where file == \\\"cron.log\\\" | search \\\"timeout\\\"\", " \
+                   "from 2026-10-10T10:00:00Z and to 2026-10-17T10:00:00Z.", answer.body.lines(chomp: true).last
+      assert_no_match(/force/i, answer.body)
+      assert_explorer({ "range" => "7d", "mode" => "query", "q" => "search \"timeout\"" }, answer.link)
+    end
+  end
+
+  test "query_logs with force runs the Query as written, which EventStore runs at a lower priority" do
+    run = stub_request(:post, @query_url).with(body: hash_including(query: "search \"timeout\"", check_budget: true, force: true))
+      .to_return(status: 200, body: { logs: [ BARE_LOG ], next_cursor: nil }.to_json)
+
+    answer = call_tool(:query_logs, user: @user, project: "shop", query: "search \"timeout\"", range: "7d", force: true)
+
+    assert_not answer.error?
+    assert_requested run
+    assert_equal 2, answer.body.lines.size
+  end
+
+  test "query_logs with estimate answers how much the Query would read, without running it" do
+    stub_request(:post, @query_url).with(body: hash_including(query: "search \"timeout\"", estimate: true))
+      .to_return(status: 200, body: { estimate: REFUSAL["estimate"], refusal: REFUSAL }.to_json)
+
+    answer = call_tool(:query_logs, user: @user, project: "shop", query: "search \"timeout\"", range: "7d", estimate: true)
+
+    assert_not answer.error?
+    assert_equal "Estimate, not run: the Query would read about 612,864,000 Logs, 251.3 GiB of their text and Attributes, " \
+                 "from 2026-10-10T10:00:00Z to 2026-10-17T10:00:00Z. It matches text, so it may read 4 GiB: it would be refused, as below.",
+                 answer.body.lines(chomp: true).first
+    assert_includes answer.body, REFUSAL["message"]
+
+    stub_request(:post, @query_url).with(body: hash_including(query: "", estimate: true))
+      .to_return(status: 200, body: { estimate: REFUSAL["estimate"].merge("text_match" => false, "over_budget" => false), refusal: nil }.to_json)
+    plain = call_tool(:query_logs, user: @user, project: "shop", range: "7d", estimate: true)
+    assert_match(/It matches no text, so it is never refused\.\z/, plain.body)
+  end
+
+  test "query_logs says force is only for when the user asks for the Query to run as written" do
+    assert_includes McpTools::QueryLogs.description_value, "Pass force only when the user asks for the Query to run as written"
+    assert_equal "boolean", McpTools::QueryLogs.input_schema_value.to_h.dig(:properties, :force, :type)
+    assert_equal "boolean", McpTools::QueryLogs.input_schema_value.to_h.dig(:properties, :estimate, :type)
   end
 
   test "query_logs answers a Query's mistakes with their positions" do
