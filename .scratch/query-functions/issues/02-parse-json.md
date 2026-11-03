@@ -1,6 +1,6 @@
 # 02: parse_json(message) in Queries
 
-**What to build:** many Logs' messages are JSON, and agents read their fields with `run_sql`'s `JSONExtractString(message, ...)`. Add KQL's `parse_json`, with `.name`, `["name"]` and `[0]` to reach into its value, and `array_length`, so that `parse_json(message).result.cache_keys_expired` works in a Query. See the [spec](../spec.md) (decision 2: member access, not `extract_json`).
+**What to build:** many Logs' messages are JSON, and agents read their fields with `run_sql`'s `JSONExtractString(message, ...)`. Add KQL's `parse_json`, with `.name`, `["name"]` and `[0]` to reach into its value, and `array_length`, so that `parse_json(message).result.cache_keys_expired` works in a Query. See the [spec](../spec.md)'s Implementation Decisions (`parse_json` with member access, not `extract_json`).
 
 **Blocked by:** 01 (it changes the same function table, `MatchesText` and docs sections)
 
