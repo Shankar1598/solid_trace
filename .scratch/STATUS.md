@@ -1,6 +1,6 @@
 # Project status
 
-Updated: 2026-10-30
+Updated: 2026-11-03
 
 SolidTrace: self-hosted error tracking with two services, Console (Rails) and EventStore (Go), and embedded databases. Terms are in [GLOSSARY.md](../GLOSSARY.md).
 
@@ -56,6 +56,7 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 
 ## Next
 
+- **Query functions** ([spec](query-functions/spec.md), [tickets](query-functions/issues/), 0 / 2): asked for by the user on 2026-11-03, after production's call timings showed agents using `run_sql` mostly to take values out of messages (40 of 105 calls), which skips the text-match budget. Both languages stay; the Query language gains KQL's functions. [01](query-functions/issues/01-extract-substring-round.md) (`ready-for-agent`): `extract`, `substring` and `round`, and a function of `message` counts as a text match. [02](query-functions/issues/02-parse-json.md) (`ready-for-agent`, blocked by 01): `parse_json(message)` with `.name`, `["name"]` and `[0]`, and `array_length`.
 - **Query timeouts** ([spec](query-timeouts/spec.md), [tickets](query-timeouts/issues/), 5 / 6, built on `feature/query-timeouts` and merged into `main` on 2026-10-30, released in v0.17.0): planned with the user on 2026-10-30, after 18 Log reads on production hit the 30 s timeout in three days, nearly all agents' Queries over MCP.
   - [01](query-timeouts/issues/01-thruster-write-timeout.md): Thruster's write timeout is 60 s, so a timed-out run's advice reaches the client, not a bare `Error POSTing to endpoint:`.
   - [02](query-timeouts/issues/02-read-budget.md): EventStore sizes a Query from the counts tables. A text-match Query (`search`, or `contains` and the like on `message`) from the explorer or MCP is refused over 4 GiB (`logs_text_match_budget_mb`), with the largest range that fits, the busiest files and a narrower Query. `force` runs it anyway at a lower ClickHouse priority; `estimate` sizes without running. Other Queries, Charts and Monitors are never refused, only logged.
@@ -134,7 +135,11 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 **Logs path** (a ticket opens when the ones before it are done):
 01–16 (done) → logs v1 tickets M1-01 … M3-04
 
-## Last session (2026-10-30, Query timeouts build)
+## Last session (2026-11-03, MCP call timings)
+
+Checked production's MCP calls from the call timings (v0.17.0, the 10 GiB budget from the VM's `event_store.yml`). `query_logs`' median went from 2.2 s to 0.6 s since v0.15.1, and `run_sql` had no timeouts. The two real timeouts on 11-03 were cold bucket reads under the budget, with no planning time: parts move to the bucket within about 3 hours, and the number of GCS GETs, not the bytes, sets the time. One ClickHouse run went on 17 s past EventStore's 30 s timeout. Planned Query functions (above) with the user. Not changed: v0.18.0 is still unpublished (the tag and release were blocked), so the VM still runs v0.17.0.
+
+## Earlier session (2026-10-30, Query timeouts build)
 
 Built tickets 01 to 05 with `/implement-spec` on `feature/query-timeouts`:
 - 01 by the orchestrator;
