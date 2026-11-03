@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 
-Asked for by the user on 2026-11-03, after a check of production's MCP calls. Tickets: [01](issues/01-extract-substring-round.md) (`extract`, `substring`, `round`, and a function of `message` counts as matching text) and [02](issues/02-parse-json.md) (`parse_json` and `array_length`, blocked by 01).
+Asked for by the user on 2026-11-03, after a check of production's MCP calls. Tickets: [01](issues/01-function-of-message-is-a-text-match.md) (a function of `message` counts as matching text), then, side by side, [02](issues/02-extract-substring-round.md) (`extract`, `substring`, `round`) and [03](issues/03-parse-json.md) (`parse_json` with `.name`, `["name"]` and `[0]`, and `array_length`).
 
 ## Problem Statement
 
