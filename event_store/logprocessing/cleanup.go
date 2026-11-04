@@ -21,8 +21,8 @@ type CleanupStore interface {
 	// DeleteProjectDays deletes every day of a family of a Project.
 	DeleteProjectDays(f storage.DayFamily, projectID uint32) error
 	// EnforceDiskLimit keeps the families' days on local disk within limit:
-	// it moves the oldest days to the bucket, if there is one, and deletes
-	// them if that fails or there is none.
+	// it moves the oldest days to the bucket, if there is one, and answers
+	// an error if that fails; with none, it deletes them.
 	EnforceDiskLimit(limit storage.LogDiskLimit, families []storage.DayFamily) error
 }
 
