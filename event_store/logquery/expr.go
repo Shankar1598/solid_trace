@@ -839,6 +839,8 @@ var scalarFunctions = map[string]function{
 
 	"extract": {args: []valueType{stringType, numberType, stringType}, result: fixed(stringType),
 		usage: `a regex, a capture group and a string, as in extract("store_id=([0-9]+)", 1, message)`},
+	"substring": {args: []valueType{stringType, numberType, numberType}, result: fixed(stringType), optional: 1,
+		usage: "a string, a start and an optional length, as in substring(message, 0, 160)"},
 }
 
 var aggregateFunctions = map[string]bool{
@@ -969,6 +971,15 @@ func checkCall(name string, e *parser.CallExpr, args []expr) error {
 		}
 		if args[2].typ() != stringType {
 			return errorAt(e.Args[2], "extract takes a string, not a %s", args[2].typ())
+		}
+	case "substring":
+		if args[0].typ() != stringType {
+			return errorAt(e.Args[0], "substring takes a string, not a %s", args[0].typ())
+		}
+		for i, arg := range args[1:] {
+			if arg.typ() != numberType {
+				return errorAt(e.Args[i+1], "substring's %s is a number, not a %s", []string{"start", "length"}[i], arg.typ())
+			}
 		}
 	}
 	return nil

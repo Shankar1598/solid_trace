@@ -375,6 +375,8 @@ func writeCall(c call, f fields) string {
 		return "(floor(" + arg(0) + " / " + arg(1) + ") * " + arg(1) + ")"
 	case "extract":
 		return writeExtract(c, f)
+	case "substring":
+		return writeSubstring(c, f)
 	}
 	panic("logquery: unknown function " + c.fn)
 }
@@ -441,6 +443,25 @@ func writeExtract(c call, f fields) string {
 		return "CAST(NULL AS Nullable(String))"
 	}
 	return fmt.Sprintf("nullIf(regexpExtract(%s, %s, %d), '')", writeValue(c.args[2], f), chsql.String(regex), int(group))
+}
+
+// writeSubstring writes substring(source, start [, length]) in characters.
+// KQL's start counts from 0, or back from the end when negative, and never
+// before the first character; ClickHouse's counts from 1. A range past the
+// end stops there, and a length below zero takes nothing.
+func writeSubstring(c call, f fields) string {
+	s := writeValue(c.args[0], f)
+	var from string
+	if l, ok := c.args[1].(literal); ok && l.Number >= 0 && l.Number < 1<<53 {
+		from = strconv.FormatInt(int64(l.Number)+1, 10)
+	} else {
+		start := "toInt64(" + writeValue(c.args[1], f) + ")"
+		from = fmt.Sprintf("if(%[2]s < 0, greatest(toInt64(lengthUTF8(%[1]s)) + %[2]s, 0), %[2]s) + 1", s, start)
+	}
+	if len(c.args) == 2 {
+		return "substringUTF8(" + s + ", " + from + ")"
+	}
+	return "substringUTF8(" + s + ", " + from + ", greatest(toInt64(" + writeValue(c.args[2], f) + "), 0))"
 }
 
 // writeAggregate writes one of summarize's functions. Over no rows, or no
