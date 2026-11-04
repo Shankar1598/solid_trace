@@ -1,7 +1,9 @@
 package main_test
 
 import (
+	"strings"
 	"testing"
+	"time"
 )
 
 // seedMessageLogs stores three Logs whose messages hold values to take out:
@@ -112,6 +114,57 @@ func TestRoundTakesHalvesAwayFromZero(t *testing.T) {
 			[]string{`[5,50]`}, false},
 		`where message in ("a", "b") | summarize mean = round(avg(x), 2)`: {"mean", []string{`[2.57]`}, false},
 	}, "once stored")
+}
+
+// extract, substring and round of message read the text of every Log they
+// scan, as a search does, so they are held to the same budget.
+func TestExtractOfMessageOverABusyWeekIsRefusedWithANarrowerQueryThatFits(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	cron := map[string]any{"service": "worker", "file": "cron.log"}
+	postAndProcessTo(t, env, 123, "test_public_key",
+		logJSON(t, "flushed store_id=494", testNow.Add(-time.Hour), cron),
+		logJSON(t, "flushed store_id=494 again", testNow.Add(-2*time.Hour), cron))
+	search := refusalOf(t, checkedRun(t, env, `search "timeout"`, lastWeek.from, lastWeek.to, nil))
+	const query = `summarize count() by store = extract("store_id=([0-9]+)", 1, message)`
+	const counted = `["494",2]`
+
+	refusal := refusalOf(t, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
+	if e := refusal.Estimate; e != search.Estimate || !e.TextMatch || !e.OverBudget || !e.Heavy {
+		t.Errorf("Expected the estimate of a search over the week, %+v, got %+v", search.Estimate, e)
+	}
+	if r := refusal.LargestRange; r == nil || *r != *search.LargestRange {
+		t.Errorf("Expected the largest range that fits to be a search's, %+v, got %+v", search.LargestRange, r)
+	}
+	narrower := refusal.NarrowerQuery
+	if narrower == nil {
+		t.Fatalf("Expected a narrower Query, got %+v", refusal)
+	}
+	answer := checkedRun(t, env, narrower.Query, narrower.From, narrower.To, nil)
+	ran(t, "the narrower Query "+narrower.Query, answer)
+	if !strings.Contains(string(answer["table"]), counted) {
+		t.Errorf("Expected the narrower Query %q to count cron.log's store, got %s", narrower.Query, mustMarshal(t, answer))
+	}
+
+	// On one file that fits, it runs over the week.
+	onFile := `where file == "cron.log" | ` + query
+	answer = checkedRun(t, env, onFile, lastWeek.from, lastWeek.to, nil)
+	ran(t, onFile, answer)
+	if !strings.Contains(string(answer["table"]), counted) {
+		t.Errorf("%s: expected cron.log's store counted, got %s", onFile, mustMarshal(t, answer))
+	}
+
+	for _, query := range []string{
+		`where extract("store_id=([0-9]+)", 0, message) == "store_id=494"`,
+		`project service, short = substring(message, 0, 160)`,
+		`summarize avg(round(strlen(message), -2))`,
+	} {
+		if e := estimateOf(t, env, query, lastWeek.from, lastWeek.to); !e.TextMatch || !e.OverBudget {
+			t.Errorf("%s: expected a text match over the budget, got %+v", query, e)
+		}
+	}
 }
 
 func TestValidatePlacesMistakesInExtractSubstringAndRound(t *testing.T) {
