@@ -124,6 +124,9 @@ Both take no arguments. They are not the same as `summarize n = count() by bin(t
 | `toint(x)`, `tolong(x)` | x as a whole number, rounded toward zero. A string that isn't a number gives no value. |
 | `todouble(x)`, `toreal(x)` | x as a number. |
 | `tolower(s)`, `toupper(s)`, `strlen(s)` | A string in lower case, in upper case, and its length. |
+| `extract(regex, group, s)` | What the regex's capture group matched at its first match in s: `extract("store_id=([0-9]+)", 1, message)` gives `494` from `store_id=494`. Group 0 is the whole match. No match, or a group the regex doesn't have, gives no value, so `isempty()` is true. The regex (RE2 syntax) and the group are written in the Query; in a string, `\d` is written `\\d`. `toint(extract(…))` gives a number to sum or compare. |
+| `substring(s, start [, length])` | length characters of s from start, counted from 0: `substring(message, 0, 160)` gives the first 160. A negative start counts back from the end, as in `substring(message, -10)`. Without a length, or with one past the end, it runs to the end. |
+| `round(x [, precision])` | x rounded to precision digits after the point, or before it when negative: `round(avg(duration), 2)`, and `round(1250, -2)` is 1300. Without a precision, to a whole number. A half rounds away from zero: `round(2.5)` is 3 and `round(-2.5)` is -3. |
 
 Arithmetic: `+`, `-`, `*`, `/` and `%` work on numbers. You can add a timespan to a datetime or subtract one from it, as in `now() - 1h`.
 
