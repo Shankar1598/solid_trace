@@ -38,6 +38,11 @@ func TestParseJSONReadsAMessagesMembersAsAnAttributeIsRead(t *testing.T) {
 			"resource_type,expired", []string{`["product",5]`, `["category",5]`, `[null,null]`}, true},
 		`summarize count() by tostring(parse_json(message).resource_type)`: {
 			"resource_type,count_", []string{`["product",2]`, `["category",1]`, `[null,2]`}, true},
+		`summarize count() by parse_json(message).resource_type`: {
+			"resource_type,count_", []string{`["product",2]`, `["category",1]`, `[null,2]`}, true},
+		// As a Chart over time, in bins.
+		`summarize n = avg(parse_json(message).result.cache_keys_expired) by bin(time, 1h), tostring(parse_json(message).resource_type)`: {
+			"time,resource_type,n", []string{`["2026-10-02T10:00:00Z","product",3]`, `["2026-10-02T10:00:00Z","category",5]`, `["2026-10-02T10:00:00Z",null,null]`}, true},
 	}, "once stored")
 }
 
