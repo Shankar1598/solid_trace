@@ -149,6 +149,8 @@ func readsMessageText(x expr) bool {
 		return readsMessage(x.x)
 	case call:
 		return slices.ContainsFunc(x.args, readsMessage)
+	case parsedJSON:
+		return readsMessage(x.x)
 	}
 	return false
 }
@@ -183,6 +185,8 @@ func anyOf(x expr, f func(expr) bool) bool {
 	case call:
 		return slices.ContainsFunc(x.args, func(arg expr) bool { return anyOf(arg, f) })
 	case aggregate:
+		return anyOf(x.x, f)
+	case parsedJSON:
 		return anyOf(x.x, f)
 	case member:
 		return anyOf(x.x, f)

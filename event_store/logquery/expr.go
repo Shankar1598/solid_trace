@@ -221,6 +221,10 @@ type call struct {
 	t    valueType
 }
 
+// parsedJSON is parse_json(x): the value x, JSON text, holds, a dynamic
+// value; or, as KQL has it, x itself as a string where x isn't JSON.
+type parsedJSON struct{ x expr }
+
 // member is the value at path in x's value, a dynamic value: a member of an
 // object, an element of an array, and so on into it. It is dynamic too.
 type member struct {
@@ -261,6 +265,7 @@ func (e arith) typ() valueType       { return e.t }
 func (e negative) typ() valueType    { return e.x.typ() }
 func (e call) typ() valueType        { return e.t }
 func (e aggregate) typ() valueType   { return e.t }
+func (parsedJSON) typ() valueType    { return dynamicType }
 func (member) typ() valueType        { return dynamicType }
 func (jsonValueText) typ() valueType { return stringType }
 
@@ -612,11 +617,9 @@ func (c *compiler) textOperand(e parser.Expr, opSpan parser.Span, text textOp, a
 
 // isJSONValue reports whether x is a value parse_json or a path gives.
 func isJSONValue(x expr) bool {
-	switch x := x.(type) {
-	case member:
+	switch x.(type) {
+	case parsedJSON, member:
 		return true
-	case call:
-		return x.fn == "parse_json"
 	}
 	return false
 }
@@ -1048,6 +1051,9 @@ func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates *rateBasi
 	if err := checkCall(name, e, args); err != nil {
 		return nil, err
 	}
+	if name == "parse_json" {
+		return parsedJSON{x: args[0]}, nil
+	}
 	return call{fn: name, args: args, t: fn.result(args)}, nil
 }
 
@@ -1279,6 +1285,8 @@ func fieldName(x expr) string {
 		}
 		return fieldName(x.y)
 	case negative:
+		return fieldName(x.x)
+	case parsedJSON:
 		return fieldName(x.x)
 	case member:
 		// The last name on the path, as resource_type in
