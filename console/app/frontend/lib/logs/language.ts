@@ -59,6 +59,8 @@ export const SCALAR_FUNCTIONS: FunctionInfo[] = [
   { name: 'extract', args: 'regex, group, s', info: "What the regex's group matched in s; 0 is the whole match.", write: 'extract("|", 1, message)' },
   { name: 'substring', args: 's, start [, length]', info: 'length characters of s from start, counted from 0; to the end without a length.' },
   { name: 'round', args: 'x [, precision]', info: 'x rounded to precision digits after the point, 0 if left out; halves away from zero.' },
+  { name: 'parse_json', args: 's', info: 'A JSON string, such as message, as a value; reach into it with .name, ["name"] and [0].', write: 'parse_json(message)|' },
+  { name: 'array_length', args: 'x', info: 'The length of an array, as array_length(parse_json(message).ids); no value for anything else.' },
   { name: 'isempty', args: 'x', info: 'Whether x is missing or an empty string.' },
   { name: 'isnotempty', args: 'x', info: 'Whether x is there and not an empty string.' },
   { name: 'isnull', args: 'x', info: 'Whether x is missing or an empty string.' },

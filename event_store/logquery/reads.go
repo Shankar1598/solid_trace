@@ -182,6 +182,10 @@ func anyOf(x expr, f func(expr) bool) bool {
 		return slices.ContainsFunc(x.args, func(arg expr) bool { return anyOf(arg, f) })
 	case aggregate:
 		return anyOf(x.x, f)
+	case member:
+		return anyOf(x.x, f)
+	case jsonValueText:
+		return anyOf(x.x, f)
 	}
 	return false
 }
