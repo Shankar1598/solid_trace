@@ -90,10 +90,12 @@ type attributeText struct{ name string }
 // or object.
 type jsonValueText struct{ x expr }
 
-// columnRef is a column of a table, or one extend added to Logs.
+// columnRef is a column of a table, or one extend added to Logs. message is
+// set when it holds the Log's message as it is.
 type columnRef struct {
-	name string
-	t    valueType
+	name    string
+	t       valueType
+	message bool
 }
 
 // partOf is the part of a dynamic column holding values of type t.
@@ -322,7 +324,7 @@ func (c *compiler) name(id *parser.Ident, want valueType) (expr, error) {
 		name = alias
 	}
 	if col, ok := c.scope.lookup(name); ok {
-		ref := columnRef{name: col.name, t: col.t}
+		ref := columnRef{name: col.name, t: col.t, message: col.message}
 		if col.t == dynamicType {
 			if _, ok := want.attributeType(); ok {
 				return partOf{x: ref, t: want}, nil

@@ -98,11 +98,23 @@ func conjuncts(p expr) []expr {
 	return []expr{p}
 }
 
-// readsMessage reports whether x reads a Log's message.
-func readsMessage(x expr) bool {
+// isMessage reports whether x is a Log's message as it is: the built-in
+// field, or a column a stage copied it to, renamed or not.
+func isMessage(x expr) bool {
 	switch x := x.(type) {
 	case fieldRef:
 		return x.builtIn && x.name == "message"
+	case columnRef:
+		return x.message
+	}
+	return false
+}
+
+// readsMessage reports whether x reads a Log's message.
+func readsMessage(x expr) bool {
+	switch x := x.(type) {
+	case fieldRef, columnRef:
+		return isMessage(x)
 	case partOf:
 		return readsMessage(x.x)
 	case compare:

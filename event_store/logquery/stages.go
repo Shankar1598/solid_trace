@@ -261,7 +261,7 @@ func uniqueNames(columns []namedValue) error {
 func columnsOf(values []namedValue) []column {
 	columns := make([]column, len(values))
 	for i, v := range values {
-		columns[i] = column{name: v.name, t: v.x.typ()}
+		columns[i] = column{name: v.name, t: v.x.typ(), message: isMessage(v.x)}
 	}
 	return columns
 }
