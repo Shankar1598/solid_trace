@@ -6,7 +6,7 @@ import { watchErrors } from '../support/screens'
 
 // Settings → Instance: the seeded admin, an instance admin, changes
 // log-all-reads, log-MCP-reads, the default Retention, whether Console
-// sends its own Issues and traces, and the text-match budget, and sees them after a reload. Log MCP reads shows checked and can't change while Log all reads
+// sends its own Issues and traces, the text-match budget and the Log read threads, and sees them after a reload. Log MCP reads shows checked and can't change while Log all reads
 // is on.
 // Sign-up is read-only, and Console's environment and EventStore's config
 // (from its GET /config) show with secrets only as set or not. A member who isn't an instance admin sees no Instance link. The
@@ -21,16 +21,16 @@ let saved = '{}'
 
 test.beforeAll(() => {
   saved = rails('print InstanceSetting.current.slice(:log_all_reads, :log_mcp_reads, :default_log_retention_days, ' +
-    ':send_console_issues, :trace_console, :logs_text_match_budget_mb).to_json')
+    ':send_console_issues, :trace_console, :logs_text_match_budget_mb, :logs_read_threads).to_json')
   rails('InstanceSetting.current.update!(log_all_reads: false, log_mcp_reads: true, default_log_retention_days: 30, ' +
-    'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096)')
+    'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096, logs_read_threads: 0)')
 })
 
 test.afterAll(() => {
   rails(`InstanceSetting.current.update!(JSON.parse(${JSON.stringify(saved)}))`)
 })
 
-test('an instance admin changes log-all-reads, log-MCP-reads, the default Retention, Console\'s Sentry and the text-match budget, and sees Sign-up read-only', async ({ page }) => {
+test('an instance admin changes log-all-reads, log-MCP-reads, the default Retention, Console\'s Sentry, the text-match budget and the Log read threads, and sees Sign-up read-only', async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto(`/${ORG}/settings/organization`)
   await page.getByRole('link', { name: 'Instance', exact: true }).click()
@@ -50,12 +50,17 @@ test('an instance admin changes log-all-reads, log-MCP-reads, the default Retent
   const budget = page.getByLabel('Text-match budget (MiB)')
   await expect(budget).toHaveValue('4096')
   await expect(page.getByTestId('text-match-budget-description')).toContainText('Dashboard Charts and Monitors are never refused')
+  const readThreads = page.getByLabel('Log read threads')
+  await expect(readThreads).toHaveValue('0')
+  await expect(page.getByTestId('read-threads-description')).toContainText('use more CPU, which ingest shares')
 
   await page.getByLabel('Default Log Retention (days)').fill('0')
   await budget.fill('-1')
+  await readThreads.fill('65')
   await page.getByRole('button', { name: 'Save changes' }).click()
   await expect(page.getByText('must be greater than 0')).toBeVisible()
   await expect(page.getByText('must be greater than or equal to 0')).toBeVisible()
+  await expect(page.getByText('must be in 0..64')).toBeVisible()
 
   await logMcpReads.click()
   await expect(logMcpReads).not.toBeChecked()
@@ -64,6 +69,7 @@ test('an instance admin changes log-all-reads, log-MCP-reads, the default Retent
   await expect(logMcpReads).toBeDisabled()
   await page.getByLabel('Default Log Retention (days)').fill('21')
   await budget.fill('10240')
+  await readThreads.fill('8')
   await sendIssues.click()
   await traceConsole.click()
   await page.getByRole('button', { name: 'Save changes' }).click()
@@ -75,6 +81,7 @@ test('an instance admin changes log-all-reads, log-MCP-reads, the default Retent
   await expect(logMcpReads).toBeDisabled()
   await expect(page.getByLabel('Default Log Retention (days)')).toHaveValue('21')
   await expect(budget).toHaveValue('10240')
+  await expect(readThreads).toHaveValue('8')
   await expect(sendIssues).not.toBeChecked()
   await expect(traceConsole).not.toBeChecked()
 

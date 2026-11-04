@@ -34,3 +34,4 @@ en:
       instance_setting:
         # As Settings → Instance labels it, for update_instance_settings' errors.
         logs_text_match_budget_mb: "Text-match budget (MiB)"
+        logs_read_threads: "Log read threads"

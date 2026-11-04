@@ -40,7 +40,13 @@ func RegisterIngestRoutes(app *fiber.App, ingestHandler *IngestHandler, healthHa
 // and EventStore's config. They have no authentication, so they must only be
 // served on the loopback query listener, where the console is the only
 // client.
+//
+// Every route, and those mounted after them on the app, as the performance
+// routes are, runs its tagged Log reads with the instance's Log read threads
+// (LogsHandler.readThreads).
 func RegisterQueryRoutes(app *fiber.App, eventsHandler *EventsHandler, logsHandler *LogsHandler, transformHandler *LogTransformHandler, overviewHandler *OverviewHandler, tracesHandler *TracesHandler, healthHandler *HealthHandler, configHandler *ConfigHandler) {
+	app.Use(logsHandler.readThreads)
+
 	app.Get("/health", healthHandler.Health)
 	app.Get("/config", configHandler.Config)
 

@@ -16,6 +16,7 @@ CREATE TABLE instance_settings (
 	id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
 	created_at DATETIME NOT NULL,
 	default_log_retention_days INTEGER DEFAULT 30 NOT NULL,
+	logs_read_threads INTEGER DEFAULT 0 NOT NULL,
 	logs_text_match_budget_mb INTEGER DEFAULT 4096 NOT NULL,
 	sql_queries_enabled BOOLEAN DEFAULT FALSE NOT NULL,
 	updated_at DATETIME NOT NULL
@@ -244,6 +245,56 @@ func TestConsoleSettings_AConsoleWithoutTheBudgetColumnFailsOnlyTheBudget(t *tes
 
 	if budget, err := settings.TextMatchBudgetBytes(); err == nil {
 		t.Errorf("TextMatchBudgetBytes() = %d, want an error", budget)
+	}
+	assertInstanceSettings(t, settings, InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 14})
+}
+
+func assertLogReadThreads(t *testing.T, settings *ConsoleSettings, want int) {
+	t.Helper()
+	got, err := settings.LogReadThreads()
+	if err != nil {
+		t.Fatalf("LogReadThreads: %v", err)
+	}
+	if got != want {
+		t.Errorf("LogReadThreads() = %d, want %d", got, want)
+	}
+}
+
+func TestConsoleSettings_TheLogReadThreadsAre0UntilAnInstanceAdminSetsThem(t *testing.T) {
+	path, console := newConsoleDB(t)
+	settings := openConsoleSettings(t, path)
+	assertLogReadThreads(t, settings, 0)
+
+	// A row saved for another setting has the column's default.
+	setInstanceSettings(t, console, true, 30)
+	assertLogReadThreads(t, settings, 0)
+
+	consoleExec(t, console, `UPDATE instance_settings SET logs_read_threads = 8`)
+	assertLogReadThreads(t, settings, 8)
+	consoleExec(t, console, `UPDATE instance_settings SET logs_read_threads = 64`)
+	assertLogReadThreads(t, settings, 64)
+	consoleExec(t, console, `UPDATE instance_settings SET logs_read_threads = 0`)
+	assertLogReadThreads(t, settings, 0)
+}
+
+// Threads outside 0 to 64, which only Console's validations prevent, and a
+// Console that hasn't run its migration yet are errors, which the query app
+// takes as 0.
+func TestConsoleSettings_LogReadThreadsOutOfRangeOrMissingAreAnError(t *testing.T) {
+	path, console := newConsoleDB(t)
+	setInstanceSettings(t, console, true, 14)
+	settings := openConsoleSettings(t, path)
+
+	for _, threads := range []int{-1, 65} {
+		consoleExec(t, console, `UPDATE instance_settings SET logs_read_threads = ?`, threads)
+		if got, err := settings.LogReadThreads(); err == nil {
+			t.Errorf("LogReadThreads() with %d = %d, want an error", threads, got)
+		}
+	}
+
+	consoleExec(t, console, `ALTER TABLE instance_settings DROP COLUMN logs_read_threads`)
+	if got, err := settings.LogReadThreads(); err == nil {
+		t.Errorf("LogReadThreads() without the column = %d, want an error", got)
 	}
 	assertInstanceSettings(t, settings, InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 14})
 }

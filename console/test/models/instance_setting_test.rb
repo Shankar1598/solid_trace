@@ -136,4 +136,17 @@ class InstanceSettingTest < ActiveSupport::TestCase
     assert InstanceSetting.current.update_editable(logs_text_match_budget_mb: "10240")
     assert_equal 10_240, InstanceSetting.current.logs_text_match_budget_mb
   end
+
+  test "the Log read threads are 0, ClickHouse's default, until changed, a whole number from 0 to 64, and change at once" do
+    assert_equal 0, InstanceSetting.current.logs_read_threads
+    [ -1, 65, "1.5", "lots", nil ].each do |threads|
+      settings = InstanceSetting.new(logs_read_threads: threads)
+      assert_not settings.valid?, "threads #{threads.inspect}"
+      assert settings.errors[:logs_read_threads].any?, "threads #{threads.inspect}"
+    end
+    [ 0, 64 ].each { |threads| assert InstanceSetting.new(logs_read_threads: threads).valid?, "threads #{threads}" }
+
+    assert InstanceSetting.current.update_editable(logs_read_threads: "8")
+    assert_equal 8, InstanceSetting.current.logs_read_threads
+  end
 end
