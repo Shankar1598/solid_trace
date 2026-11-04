@@ -64,6 +64,12 @@ func TestPathsReachMembersAndElementsAndGiveNoValueWhereThereIsNone(t *testing.T
 		`parse_json(message).result.cache_keys_expired > 2`:           {"ada", "cy"},
 		`toint(parse_json(message).result.cache_keys_expired) >= 2`:   {"ada", "bob", "cy"},
 		`substring(parse_json(message).resource_type, 0, 3) == "pro"`: {"ada", "bob"},
+		// contains looks in a string, and in an array's or object's JSON
+		// text, as on an Attribute.
+		`parse_json(message).ids contains "8"`:            {"ada", "cy"},
+		`parse_json(message).result.keys contains "B"`:    {"cy"},
+		`parse_json(message).result !contains_cs "keys"`:  {"di", "ed"},
+		`parse_json(message).resource_type contains "RO"`: {"ada", "bob"},
 		// Brackets, and elements from the start and from the end.
 		`parse_json(message)["store-id"] == "s-1"`:           {"ada"},
 		`parse_json(message)['resource_type'] == "category"`: {"cy"},

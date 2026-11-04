@@ -130,7 +130,7 @@ Both take no arguments. They are not the same as `summarize n = count() by bin(t
 | `parse_json(s)` | The JSON value a string, usually `message`, holds: a string, a number, a bool, an array or an object. A string that isn't JSON gives itself. After it, `.name`, `["name"]` and `[0]` reach a member or an element, to any depth: `["store-id"]` for a name that isn't a plain word, and `[-1]` for an array's last element. A missing member, an index past the end, or reaching into what isn't an object or array gives no value. |
 | `array_length(x)` | The number of elements of an array, as in `array_length(parse_json(message).ids)`. Anything else gives no value. |
 
-**JSON messages.** A value from `parse_json` is read as an Attribute is: `parse_json(message).store_id == 494` matches the number and `== "494"` the string, and `toint()`, `tostring()`, `isempty()`, the aggregates and `summarize … by` work on it. Over messages such as `{"resource_type":"product","result":{"cache_keys_expired":3}}`, this adds up `cache_keys_expired` for each `resource_type`, the `by` column named after the path's last name:
+**JSON messages.** A value from `parse_json` is read as an Attribute is: `parse_json(message).store_id == 494` matches the number and `== "494"` the string, `contains` looks in an array's JSON text too, and `toint()`, `tostring()`, `isempty()`, the aggregates and `summarize … by` work on it. Over messages such as `{"resource_type":"product","result":{"cache_keys_expired":3}}`, this adds up `cache_keys_expired` for each `resource_type`, the `by` column named after the path's last name:
 
 ```
 summarize expired = sum(toint(parse_json(message).result.cache_keys_expired))

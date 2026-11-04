@@ -85,6 +85,11 @@ type fieldRef struct {
 // value contains can search.
 type attributeText struct{ name string }
 
+// jsonValueText is a value parse_json or a path gives, read as text by
+// contains as an Attribute is: its string, or else the JSON text of an array
+// or object.
+type jsonValueText struct{ x expr }
+
 // columnRef is a column of a table, or one extend added to Logs.
 type columnRef struct {
 	name string
@@ -255,6 +260,7 @@ func (e negative) typ() valueType    { return e.x.typ() }
 func (e call) typ() valueType        { return e.t }
 func (e aggregate) typ() valueType   { return e.t }
 func (member) typ() valueType        { return dynamicType }
+func (jsonValueText) typ() valueType { return stringType }
 
 // condition compiles an expression that must be a condition.
 func (c *compiler) condition(e parser.Expr) (expr, error) {
@@ -596,7 +602,21 @@ func (c *compiler) textOperand(e parser.Expr, opSpan parser.Span, text textOp, a
 		c.read(storage.JSONAttribute, ref.name)
 		x = attributeText{name: ref.name}
 	}
+	if part, ok := x.(partOf); ok && isJSONValue(part.x) && text.op == matchContains {
+		x = jsonValueText{part.x}
+	}
 	return x, nil
+}
+
+// isJSONValue reports whether x is a value parse_json or a path gives.
+func isJSONValue(x expr) bool {
+	switch x := x.(type) {
+	case member:
+		return true
+	case call:
+		return x.fn == "parse_json"
+	}
+	return false
 }
 
 // predicate compiles a where's condition, in which a Dashboard filter may be
