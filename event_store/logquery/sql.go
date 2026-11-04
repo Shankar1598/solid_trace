@@ -2,6 +2,7 @@ package logquery
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -385,6 +386,12 @@ func writeCall(c call, f fields) string {
 			return "toStartOfInterval(" + arg(0) + ", " + arg(1) + ")"
 		}
 		return "(floor(" + arg(0) + " / " + arg(1) + ") * " + arg(1) + ")"
+	case "extract":
+		return writeExtract(c, f)
+	case "substring":
+		return writeSubstring(c, f)
+	case "round":
+		return writeRound(c, f)
 	case "parse_json":
 		return dynamicOf(partsOf(c, f))
 	case "array_length":
@@ -528,6 +535,56 @@ func writeToNumber(x expr, f fields) string {
 			part(storage.NumberAttribute), part(storage.StringAttribute), part(storage.BoolAttribute))
 	}
 	return "toFloat64OrNull(toString(" + writeValue(x, f) + "))"
+}
+
+// writeExtract writes extract(regex, group, source): what the group matched
+// at the regex's first match. No match, an empty one, and a group the regex
+// doesn't have give no value, as KQL's null, which for a string is its
+// empty string.
+func writeExtract(c call, f fields) string {
+	regex, group := c.args[0].(literal).String, c.args[1].(literal).Number
+	if group > float64(regexp.MustCompile(regex).NumSubexp()) {
+		return "CAST(NULL AS Nullable(String))"
+	}
+	return fmt.Sprintf("nullIf(regexpExtract(%s, %s, %d), '')", writeValue(c.args[2], f), chsql.String(regex), int(group))
+}
+
+// writeSubstring writes substring(source, start [, length]) in characters.
+// KQL's start counts from 0, or back from the end when negative, and never
+// before the first character; ClickHouse's counts from 1. A range past the
+// end stops there, and a length below zero takes nothing.
+func writeSubstring(c call, f fields) string {
+	s := writeValue(c.args[0], f)
+	var from string
+	if l, ok := c.args[1].(literal); ok && l.Number >= 0 && l.Number < 1<<53 {
+		from = strconv.FormatInt(int64(l.Number)+1, 10)
+	} else {
+		start := "toInt64(" + writeValue(c.args[1], f) + ")"
+		from = fmt.Sprintf("if(%[2]s < 0, greatest(toInt64(lengthUTF8(%[1]s)) + %[2]s, 0), %[2]s) + 1", s, start)
+	}
+	if len(c.args) == 2 {
+		return "substringUTF8(" + s + ", " + from + ")"
+	}
+	return "substringUTF8(" + s + ", " + from + ", greatest(toInt64(" + writeValue(c.args[2], f) + "), 0))"
+}
+
+// writeRound writes round(number [, precision]) as KQL rounds: to precision
+// digits after the point, or before it when negative, with halves away from
+// zero, where ClickHouse's round takes a Float64's halves to even. The
+// number is scaled by an exact power of ten, multiplied for digits after the
+// point and divided for digits before it, so that 2.15 to one digit scales
+// to 21.5 and rounds to 2.2, as in KQL. Scaled to 2^52 or more, it has no
+// fraction left to round.
+func writeRound(c call, f fields) string {
+	x, digits := writeValue(c.args[0], f), "0"
+	if len(c.args) == 2 {
+		digits = "trunc(" + writeValue(c.args[1], f) + ")"
+	}
+	scale := "pow(10, least(abs(" + digits + "), 308))"
+	scaled := fmt.Sprintf("if(%[1]s < 0, %[2]s / %[3]s, %[2]s * %[3]s)", digits, x, scale)
+	rounded := fmt.Sprintf("(trunc(%[1]s) + sign(%[1]s) * (abs(%[1]s - trunc(%[1]s)) >= 0.5))", scaled)
+	return fmt.Sprintf("if(abs(%[1]s) >= 4503599627370496, %[2]s, if(%[3]s < 0, %[4]s * %[5]s, %[4]s / %[5]s))",
+		scaled, x, digits, rounded, scale)
 }
 
 // writeAggregate writes one of summarize's functions. Over no rows, or no
