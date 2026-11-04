@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -12,10 +13,11 @@ func seedJSONLogs(t *testing.T, env *TestEnv) {
 	env.Clock.Set(languageAt(11, 29))
 	named := func(name string) map[string]any { return map[string]any{"name": name} }
 	postAndProcess(t, env,
-		logJSON(t, `{"resource_type":"product","result":{"cache_keys_expired":3},"store_id":494,"ids":[7,8,9],"ok":true}`,
-			languageAt(10, 10), named("ada")),
+		logJSON(t, `{"resource_type":"product","result":{"cache_keys_expired":3},"store_id":494,"ids":[7,8,9],"ok":true,`+
+			`"store-id":"s-1","it's.$[0]":1,"a\\b":2}`,
+			languageAt(10, 10), map[string]any{"name": "ada", "tags": map[string]any{"store_id": 7}}),
 		logJSON(t, `{"resource_type":"product","result":{"cache_keys_expired":"2"},"store_id":"494","ids":[],"ok":"true"}`,
-			languageAt(10, 20), named("bob")),
+			languageAt(10, 20), map[string]any{"name": "bob", "codes": []any{1, 2}}),
 		logJSON(t, `{"resource_type":"category","result":{"cache_keys_expired":5,"keys":["a","b"]},"ids":"7 8"}`,
 			languageAt(10, 30), named("cy")),
 		logJSON(t, `not json: {"resource_type":"product"}`, languageAt(10, 40), named("di")),
@@ -34,6 +36,71 @@ func TestParseJSONReadsAMessagesMembersAsAnAttributeIsRead(t *testing.T) {
 			"resource_type,expired", []string{`["product",5]`, `["category",5]`, `[null,null]`}, true},
 		`summarize count() by tostring(parse_json(message).resource_type)`: {
 			"resource_type,count_", []string{`["product",2]`, `["category",1]`, `[null,2]`}, true},
+	}, "once stored")
+}
+
+func TestPathsReachMembersAndElementsAndGiveNoValueWhereThereIsNone(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedJSONLogs(t, env)
+
+	for condition, want := range map[string][]string{
+		// A member of each type matches a value of its own type.
+		`parse_json(message).store_id == 494`:                       {"ada"},
+		`parse_json(message).store_id == "494"`:                     {"bob"},
+		`494 == parse_json(message).store_id`:                       {"ada"},
+		`parse_json(message).store_id != 494`:                       {"bob", "cy", "di", "ed"},
+		`parse_json(message).store_id in (494, "494")`:              {"ada", "bob"},
+		`parse_json(message).ok == true`:                            {"ada"},
+		`parse_json(message).ok == "true"`:                          {"bob"},
+		`parse_json(message).resource_type == "category"`:           {"cy"},
+		`parse_json(message).result.cache_keys_expired > 2`:         {"ada", "cy"},
+		`toint(parse_json(message).result.cache_keys_expired) >= 2`: {"ada", "bob", "cy"},
+		// Brackets, and elements from the start and from the end.
+		`parse_json(message)["store-id"] == "s-1"`:           {"ada"},
+		`parse_json(message)['resource_type'] == "category"`: {"cy"},
+		`parse_json(message).ids[0] == 7`:                    {"ada"},
+		`parse_json(message).ids[-1] == 9`:                   {"ada"},
+		`parse_json(message)[0].id == 1`:                     {"ed"},
+		`parse_json(message)[-1]["id"] == 2`:                 {"ed"},
+		`parse_json(message).result.keys[1] == "b"`:          {"cy"},
+		// No value: past the end, a missing member, a message that isn't
+		// JSON, a member of what isn't an object, an element of what isn't
+		// an array.
+		`isnotempty(parse_json(message).ids[2])`:             {"ada"},
+		`isnotempty(parse_json(message).ids[3])`:             {},
+		`isnotempty(parse_json(message).ids[0])`:             {"ada"},
+		`isnotempty(parse_json(message).missing)`:            {},
+		`isempty(parse_json(message).missing)`:               {"ada", "bob", "cy", "di", "ed"},
+		`isnotempty(parse_json(message).resource_type)`:      {"ada", "bob", "cy"},
+		`isnotempty(parse_json(message).resource_type.kind)`: {},
+		`isnotempty(parse_json(message).result[0])`:          {},
+		// The path is data: a name's quotes, dots, $ and brackets are its own.
+		`parse_json(message)["it's.$[0]"] == 1`: {"ada"},
+		`parse_json(message)["a\\b"] == 2`:      {"ada"},
+		// A dotted name on its own is still an Attribute's, and an Attribute
+		// that holds an array is reached into too.
+		`tags.store_id == 7`:       {"ada"},
+		`codes[1] == 2`:            {"bob"},
+		`array_length(codes) == 2`: {"bob"},
+	} {
+		if got := namesWhere(t, env, condition); !slices.Equal(got, want) {
+			t.Errorf("where %s: expected %v, got %v", condition, want, got)
+		}
+	}
+
+	assertTables(t, env, map[string]tableCase{
+		// Each value as it is, and a message that isn't JSON as itself.
+		`where name == "ada" | project ids = parse_json(message).ids, ok = parse_json(message).ok, ` +
+			`id = parse_json(message).store_id, type = parse_json(message).resource_type, none = parse_json(message).missing`: {
+			"ids,ok,id,type,none", []string{`[[7,8,9],true,494,"product",null]`}, false},
+		`where name in ("di", "ed") | sort by name asc | project name, text = tostring(parse_json(message)), first = parse_json(message)[0]`: {
+			"name,text,first", []string{`["di","not json: {\"resource_type\":\"product\"}",null]`, `["ed","[{\"id\":1},{\"id\":2}]",{"id":1}]`}, false},
+		// array_length is an array's length, and no value for anything else.
+		`sort by name asc | project name, n = array_length(parse_json(message).ids), all = array_length(parse_json(message))`: {
+			"name,n,all", []string{`["ada",3,null]`, `["bob",0,null]`, `["cy",null,null]`, `["di",null,null]`, `["ed",null,2]`}, false},
+		`summarize ids = sum(array_length(parse_json(message).ids)), stores = dcount(parse_json(message).store_id)`: {
+			"ids,stores", []string{`[3,2]`}, false},
 	}, "once stored")
 }
 
