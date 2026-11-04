@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // seedJSONLogs stores Logs whose messages are JSON, but di's, each named by
@@ -103,6 +104,50 @@ func TestPathsReachMembersAndElementsAndGiveNoValueWhereThereIsNone(t *testing.T
 		`summarize ids = sum(array_length(parse_json(message).ids)), stores = dcount(parse_json(message).store_id)`: {
 			"ids,stores", []string{`[3,2]`}, false},
 	}, "once stored")
+}
+
+func TestParseJSONOfMessageOverABusyWeekIsRefusedAndRunsOnAFileThatFits(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	cron := map[string]any{"service": "worker", "file": "cron.log"}
+	postAndProcessTo(t, env, 123, "test_public_key",
+		logJSON(t, `{"resource_type":"product","store_id":494,"result":{"cache_keys_expired":3}}`, testNow.Add(-time.Hour), cron),
+		logJSON(t, `{"resource_type":"product","result":{"cache_keys_expired":2}}`, testNow.Add(-2*time.Hour), cron))
+	search := refusalOf(t, checkedRun(t, env, `search "timeout"`, lastWeek.from, lastWeek.to, nil))
+
+	for _, c := range []struct {
+		query string
+		// found is what the Query's answer holds on cron.log.
+		found string
+	}{
+		{`summarize expired = sum(toint(parse_json(message).result.cache_keys_expired)) by tostring(parse_json(message).resource_type)`, `["product",5]`},
+		{`where parse_json(message).store_id == 494 | project name = parse_json(message)["resource_type"]`, `["product"]`},
+	} {
+		// Over the week it reads as much as a search would, and is refused.
+		refusal := refusalOf(t, checkedRun(t, env, c.query, lastWeek.from, lastWeek.to, nil))
+		if e := refusal.Estimate; e != search.Estimate || !e.TextMatch || !e.OverBudget {
+			t.Errorf("%s: expected the estimate of a search over the week, %+v, got %+v", c.query, search.Estimate, e)
+		}
+		narrower := refusal.NarrowerQuery
+		if narrower == nil {
+			t.Fatalf("%s: expected a narrower Query, got %+v", c.query, refusal)
+		}
+		answer := checkedRun(t, env, narrower.Query, narrower.From, narrower.To, nil)
+		ran(t, "the narrower Query "+narrower.Query, answer)
+		if !strings.Contains(string(answer["table"]), c.found) {
+			t.Errorf("%s: expected the narrower Query %q to find %s, got %s", c.query, narrower.Query, c.found, mustMarshal(t, answer))
+		}
+
+		// On cron.log, whose week fits, it runs.
+		onFile := `where file == "cron.log" | ` + c.query
+		answer = checkedRun(t, env, onFile, lastWeek.from, lastWeek.to, nil)
+		ran(t, onFile, answer)
+		if !strings.Contains(string(answer["table"]), c.found) {
+			t.Errorf("%s: expected %s, got %s", onFile, c.found, mustMarshal(t, answer))
+		}
+	}
 }
 
 // namesWhere runs where condition over all time and returns the names of the
