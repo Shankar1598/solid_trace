@@ -214,6 +214,21 @@ type call struct {
 	t    valueType
 }
 
+// member is the value at path in x's value, a dynamic value: a member of an
+// object, an element of an array, and so on into it. It is dynamic too.
+type member struct {
+	x    expr
+	path []pathStep
+}
+
+// pathStep is one step of a path into a dynamic value: a member's name, or
+// an element's index, from 0, or from the end when negative.
+type pathStep struct {
+	key     string
+	index   int
+	element bool
+}
+
 // aggregate is one of summarize's functions.
 type aggregate struct {
 	fn string
@@ -239,6 +254,7 @@ func (e arith) typ() valueType       { return e.t }
 func (e negative) typ() valueType    { return e.x.typ() }
 func (e call) typ() valueType        { return e.t }
 func (e aggregate) typ() valueType   { return e.t }
+func (member) typ() valueType        { return dynamicType }
 
 // condition compiles an expression that must be a condition.
 func (c *compiler) condition(e parser.Expr) (expr, error) {
@@ -270,7 +286,13 @@ func (c *compiler) expr(e parser.Expr, want valueType, aggregates *rateBasis) (e
 	case *parser.BinaryExpr:
 		return c.binary(e, aggregates)
 	case *parser.CallExpr:
-		return c.call(e, want, aggregates)
+		x, err := c.call(e, want, aggregates)
+		if err != nil {
+			return nil, err
+		}
+		return typed(x, want), nil
+	case *parser.MemberExpr, *parser.IndexExpr:
+		return c.member(e, want, aggregates)
 	case *parser.ListExpr:
 		return nil, errorAt(e, "a list only follows in or !in")
 	case *parser.Param:
@@ -317,6 +339,65 @@ func (c *compiler) name(id *parser.Ident, want valueType) (expr, error) {
 		c.read(t, name)
 	}
 	return fieldRef{name: name, t: dynamicType}, nil
+}
+
+// typed is x read as want asks: the part of a dynamic value that holds
+// values of that type, when want asks for a type an Attribute can hold, as a
+// name of no fixed type is read.
+func typed(x expr, want valueType) expr {
+	if _, ok := want.attributeType(); ok && x.typ() == dynamicType {
+		return partOf{x: x, t: want}
+	}
+	return x
+}
+
+// member compiles x.name, x["name"] or x[index]: the member or element of
+// x's value, a dynamic value, read as want asks. A path into a path is one
+// path.
+func (c *compiler) member(e parser.Expr, want valueType, aggregates *rateBasis) (expr, error) {
+	var of, index parser.Expr
+	var accessor parser.Span
+	var step pathStep
+	switch e := e.(type) {
+	case *parser.MemberExpr:
+		of, accessor, step = e.X, e.Accessor(), pathStep{key: e.Name.Name}
+	case *parser.IndexExpr:
+		of, accessor, index = e.X, e.Accessor(), e.Index
+	}
+	x, err := c.expr(of, anyType, aggregates)
+	if err != nil {
+		return nil, err
+	}
+	if x.typ() != dynamicType {
+		return nil, &Error{Span: accessor, Message: fmt.Sprintf("can't reach into a %s; .name and […] follow a dynamic value, such as parse_json(message)", x.typ())}
+	}
+	if index != nil {
+		if step, err = c.pathStep(index); err != nil {
+			return nil, err
+		}
+	}
+	m := member{x: x, path: []pathStep{step}}
+	if inner, ok := x.(member); ok {
+		m = member{x: inner.x, path: append(slices.Clone(inner.path), step)}
+	}
+	return typed(m, want), nil
+}
+
+// pathStep compiles what is in the brackets of x[…]: a name in quotes, or a
+// whole number, written in the Query.
+func (c *compiler) pathStep(e parser.Expr) (pathStep, error) {
+	x, err := c.expr(e, anyType, nil)
+	if err != nil {
+		return pathStep{}, err
+	}
+	l, ok := x.(literal)
+	switch {
+	case ok && l.Kind == parser.StringLiteral:
+		return pathStep{key: l.String}, nil
+	case ok && l.Kind == parser.NumberLiteral && l.Number == math.Trunc(l.Number) && math.Abs(l.Number) < math.MaxInt32:
+		return pathStep{index: int(l.Number), element: true}, nil
+	}
+	return pathStep{}, errorAt(e, `expected an index written in the Query: a whole number, such as [0], or a name in quotes, such as ["store-id"]`)
 }
 
 // literal compiles a literal as written.
@@ -821,6 +902,10 @@ var scalarFunctions = map[string]function{
 	"toreal":   {args: []valueType{anyType}, result: fixed(numberType)},
 	"bin":      {args: []valueType{numberType, anyType}, result: func(args []expr) valueType { return args[0].typ() }},
 	"floor":    {args: []valueType{numberType, anyType}, result: func(args []expr) valueType { return args[0].typ() }},
+
+	// A dynamic value read from JSON text, and an array's length.
+	"parse_json":   {args: []valueType{stringType}, result: fixed(dynamicType)},
+	"array_length": {args: []valueType{anyType}, result: fixed(numberType)},
 }
 
 var aggregateFunctions = map[string]bool{
@@ -934,6 +1019,14 @@ func checkCall(name string, e *parser.CallExpr, args []expr) error {
 		}
 		if l, ok := args[1].(literal); !ok || (l.Timespan <= 0 && l.Number <= 0) {
 			return errorAt(e.Args[1], "%s needs a size above zero written in the Query", name)
+		}
+	case "parse_json":
+		if args[0].typ() != stringType {
+			return errorAt(e.Args[0], "parse_json takes a string, such as message, not a %s", args[0].typ())
+		}
+	case "array_length":
+		if args[0].typ() != dynamicType {
+			return errorAt(e.Args[0], "array_length takes a dynamic value, such as parse_json(message).ids, not a %s", args[0].typ())
 		}
 	}
 	return nil
@@ -1107,6 +1200,15 @@ func fieldName(x expr) string {
 		}
 		return fieldName(x.y)
 	case negative:
+		return fieldName(x.x)
+	case member:
+		// The last name on the path, as resource_type in
+		// parse_json(message).resource_type.
+		for i := len(x.path) - 1; i >= 0; i-- {
+			if !x.path[i].element {
+				return x.path[i].key
+			}
+		}
 		return fieldName(x.x)
 	}
 	return ""

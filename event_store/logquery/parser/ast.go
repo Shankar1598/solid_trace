@@ -179,6 +179,46 @@ func (e *CallExpr) Span() Span {
 	return unionSpans(e.Func.Span(), e.Lparen, e.Rparen)
 }
 
+// MemberExpr is X.name, the member name of X's value, after a value that
+// isn't a name, such as parse_json(message).store_id. After a name, the dot
+// is part of the name, as in http.status.
+type MemberExpr struct {
+	X    Expr
+	Dot  Span
+	Name *Ident
+}
+
+func (e *MemberExpr) expr() {}
+
+func (e *MemberExpr) Span() Span {
+	return unionSpans(nodeSpan(e.X), e.Dot, e.Name.Span())
+}
+
+// Accessor is .name, the part after X.
+func (e *MemberExpr) Accessor() Span {
+	return unionSpans(e.Dot, e.Name.Span())
+}
+
+// IndexExpr is X[index], an element of X's value, as in ids[0], or a
+// member, as in parse_json(message)["store-id"].
+type IndexExpr struct {
+	X      Expr
+	Lbrack Span
+	Index  Expr
+	Rbrack Span
+}
+
+func (e *IndexExpr) expr() {}
+
+func (e *IndexExpr) Span() Span {
+	return unionSpans(nodeSpan(e.X), e.Lbrack, e.Rbrack)
+}
+
+// Accessor is [index], the part after X.
+func (e *IndexExpr) Accessor() Span {
+	return unionSpans(e.Lbrack, e.Rbrack)
+}
+
 // ListExpr is a parenthesised list of values, (a, b, …), the right side of
 // in and !in.
 type ListExpr struct {
