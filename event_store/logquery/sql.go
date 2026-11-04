@@ -2,6 +2,7 @@ package logquery
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -372,6 +373,8 @@ func writeCall(c call, f fields) string {
 			return "toStartOfInterval(" + arg(0) + ", " + arg(1) + ")"
 		}
 		return "(floor(" + arg(0) + " / " + arg(1) + ") * " + arg(1) + ")"
+	case "extract":
+		return writeExtract(c, f)
 	}
 	panic("logquery: unknown function " + c.fn)
 }
@@ -426,6 +429,18 @@ func writeToNumber(x expr, f fields) string {
 			part(storage.NumberAttribute), part(storage.StringAttribute), part(storage.BoolAttribute))
 	}
 	return "toFloat64OrNull(toString(" + writeValue(x, f) + "))"
+}
+
+// writeExtract writes extract(regex, group, source): what the group matched
+// at the regex's first match. No match, an empty one, and a group the regex
+// doesn't have give no value, as KQL's null, which for a string is its
+// empty string.
+func writeExtract(c call, f fields) string {
+	regex, group := c.args[0].(literal).String, c.args[1].(literal).Number
+	if group > float64(regexp.MustCompile(regex).NumSubexp()) {
+		return "CAST(NULL AS Nullable(String))"
+	}
+	return fmt.Sprintf("nullIf(regexpExtract(%s, %s, %d), '')", writeValue(c.args[2], f), chsql.String(regex), int(group))
 }
 
 // writeAggregate writes one of summarize's functions. Over no rows, or no

@@ -483,13 +483,22 @@ func (c *compiler) binary(e *parser.BinaryExpr, aggregates *rateBasis) (expr, er
 			return nil, errorAt(e.Y, "expected a quoted string after %s", c.source(e.OpSpan))
 		}
 		if text.op == matchRegex {
-			if _, err := regexp.Compile(lit.Value); err != nil {
-				return nil, errorAt(lit, "invalid regular expression: %s", strings.TrimPrefix(err.Error(), "error parsing regexp: "))
+			if err := checkRegex(lit, lit.Value); err != nil {
+				return nil, err
 			}
 		}
 		return text.match(x, lit.Value), nil
 	}
 	return nil, &Error{Span: e.OpSpan, Message: "unsupported operator"}
+}
+
+// checkRegex checks a regular expression written in the Query at node, as
+// ClickHouse will run it: Go's regexp and ClickHouse both take RE2's syntax.
+func checkRegex(node parser.Node, pattern string) error {
+	if _, err := regexp.Compile(pattern); err != nil {
+		return errorAt(node, "invalid regular expression: %s", strings.TrimPrefix(err.Error(), "error parsing regexp: "))
+	}
+	return nil
 }
 
 // textOperand compiles the string a text operator tests. contains reads an
@@ -804,6 +813,12 @@ func (c *compiler) arith(e *parser.BinaryExpr, aggregates *rateBasis) (expr, err
 type function struct {
 	args   []valueType
 	result func(args []expr) valueType
+
+	// optional is how many of args, at the end, a call may leave out.
+	optional int
+	// usage says what the function takes, such as "a number and an optional
+	// precision", for a call with the wrong number of arguments.
+	usage string
 }
 
 func fixed(t valueType) func([]expr) valueType {
@@ -821,6 +836,9 @@ var scalarFunctions = map[string]function{
 	"toreal":   {args: []valueType{anyType}, result: fixed(numberType)},
 	"bin":      {args: []valueType{numberType, anyType}, result: func(args []expr) valueType { return args[0].typ() }},
 	"floor":    {args: []valueType{numberType, anyType}, result: func(args []expr) valueType { return args[0].typ() }},
+
+	"extract": {args: []valueType{stringType, numberType, stringType}, result: fixed(stringType),
+		usage: `a regex, a capture group and a string, as in extract("store_id=([0-9]+)", 1, message)`},
 }
 
 var aggregateFunctions = map[string]bool{
@@ -900,7 +918,10 @@ func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates *rateBasi
 	if !ok {
 		return nil, errorAt(e.Func, "unknown function %q", name)
 	}
-	if len(e.Args) != len(fn.args) {
+	if n := len(e.Args); n > len(fn.args) || n < len(fn.args)-fn.optional {
+		if fn.usage != "" {
+			return nil, errorAt(e, "%s takes %s", name, fn.usage)
+		}
 		return nil, errorAt(e, "%s takes %d arguments", name, len(fn.args))
 	}
 	args := make([]expr, len(e.Args))
@@ -934,6 +955,20 @@ func checkCall(name string, e *parser.CallExpr, args []expr) error {
 		}
 		if l, ok := args[1].(literal); !ok || (l.Timespan <= 0 && l.Number <= 0) {
 			return errorAt(e.Args[1], "%s needs a size above zero written in the Query", name)
+		}
+	case "extract":
+		regex, ok := args[0].(literal)
+		if !ok || regex.Kind != parser.StringLiteral {
+			return errorAt(e.Args[0], "extract needs its regex written in the Query, as a quoted string")
+		}
+		if err := checkRegex(e.Args[0], regex.String); err != nil {
+			return err
+		}
+		if group, ok := args[1].(literal); !ok || group.Kind != parser.NumberLiteral || group.Number < 0 || group.Number != math.Trunc(group.Number) {
+			return errorAt(e.Args[1], "extract needs its capture group written in the Query, as a whole number of 0 or more")
+		}
+		if args[2].typ() != stringType {
+			return errorAt(e.Args[2], "extract takes a string, not a %s", args[2].typ())
 		}
 	}
 	return nil
