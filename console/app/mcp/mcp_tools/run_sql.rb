@@ -21,7 +21,7 @@ module McpTools
       attributes['customer']). The SQL runs as a read-only database user that sees only those three tables of this
       Project: other tables, system tables, files, URLs and setting changes are refused, and a query stops after 10
       seconds. query_logs does most things more simply.
-      It takes values out of messages too, with extract.
+      It takes values out of messages too, with extract and parse_json.
     TEXT
     read_only!
     needs_sql_queries!
