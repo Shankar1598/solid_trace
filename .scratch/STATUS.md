@@ -135,9 +135,9 @@ SolidTrace: self-hosted error tracking with two services, Console (Rails) and Ev
 **Logs path** (a ticket opens when the ones before it are done):
 01–16 (done) → logs v1 tickets M1-01 … M3-04
 
-## Last session (2026-11-03, MCP call timings)
+## Last session (2026-11-03 to 04, MCP call timings, then Query functions)
 
-Checked production's MCP calls from the call timings (v0.17.0, the 10 GiB budget from the VM's `event_store.yml`). `query_logs`' median went from 2.2 s to 0.6 s since v0.15.1, and `run_sql` had no timeouts. The two real timeouts on 11-03 were cold bucket reads under the budget, with no planning time: parts move to the bucket within about 3 hours, and the number of GCS GETs, not the bytes, sets the time. One ClickHouse run went on 17 s past EventStore's 30 s timeout. Planned Query functions (above) with the user. Not changed: v0.18.0 is still unpublished (the tag and release were blocked), so the VM still runs v0.17.0.
+Checked production's MCP calls from the call timings (v0.17.0, the 10 GiB budget from the VM's `event_store.yml`). `query_logs`' median went from 2.2 s to 0.6 s since v0.15.1, and `run_sql` had no timeouts. The two real timeouts on 11-03 were cold bucket reads under the budget, with no planning time: parts move to the bucket within about 3 hours, and the number of GCS GETs, not the bytes, sets the time. One ClickHouse run went on 17 s past EventStore's 30 s timeout. Planned Query functions (above) with the user, then built it with `/implement-spec` on `feature/query-functions` (worktree `.claude/worktrees/query-functions`): 01 alone, then 02 and 03 side by side, each by an implementer agent in a harness worktree and merged by a merger agent; then a `/code-review` and one fix pass. Targeted tests only; the full suites are still to run. Shared notes are in `~/.cache/solid-trace/query-functions-notes/`. Not merged into `main` yet. Not changed: v0.18.0 is still unpublished (the tag and release were blocked), so the VM still runs v0.17.0.
 
 ## Earlier session (2026-10-30, Query timeouts build)
 
