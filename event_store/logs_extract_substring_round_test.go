@@ -41,7 +41,7 @@ func TestExtractTakesWhatARegexsGroupMatched(t *testing.T) {
 		`summarize n = count() by store = extract("store_id=([0-9]+)", 1, message)`: {"store,n",
 			[]string{`["494",1]`, `["7",1]`, `[null,1]`}, true},
 		// toint gives a number to sum.
-		`summarize keys = sum(toint(extract("keys=([0-9]+)", 1, message)))`:       {"keys", []string{`[15]`}, false},
+		`summarize keys = sum(toint(extract("keys=(\\d+)", 1, message)))`:         {"keys", []string{`[15]`}, false},
 		`where toint(extract("keys=([0-9]+)", 1, message)) > 5 | project message`: {"message", []string{`["flushed store_id=494 keys=12"]`}, false},
 	}, "once stored")
 }
