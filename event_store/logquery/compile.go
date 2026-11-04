@@ -226,6 +226,9 @@ type scope struct {
 type column struct {
 	name string
 	t    valueType
+	// message is set when the column holds the Log's message as it is,
+	// renamed or not, so that a text match on it reads message's text.
+	message bool
 }
 
 func logScope() scope {

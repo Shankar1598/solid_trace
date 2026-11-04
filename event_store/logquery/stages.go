@@ -242,6 +242,8 @@ func hasAggregate(x expr, fn string) bool {
 		return hasAggregate(x.x, fn)
 	case call:
 		return slices.ContainsFunc(x.args, func(arg expr) bool { return hasAggregate(arg, fn) })
+	case parsedJSON:
+		return hasAggregate(x.x, fn)
 	}
 	return false
 }
@@ -261,7 +263,7 @@ func uniqueNames(columns []namedValue) error {
 func columnsOf(values []namedValue) []column {
 	columns := make([]column, len(values))
 	for i, v := range values {
-		columns[i] = column{name: v.name, t: v.x.typ()}
+		columns[i] = column{name: v.name, t: v.x.typ(), message: isMessage(v.x)}
 	}
 	return columns
 }

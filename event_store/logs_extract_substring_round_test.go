@@ -1,7 +1,6 @@
 package main_test
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -127,34 +126,8 @@ func TestExtractOfMessageOverABusyWeekIsRefusedWithANarrowerQueryThatFits(t *tes
 	postAndProcessTo(t, env, 123, "test_public_key",
 		logJSON(t, "flushed store_id=494", testNow.Add(-time.Hour), cron),
 		logJSON(t, "flushed store_id=494 again", testNow.Add(-2*time.Hour), cron))
-	search := refusalOf(t, checkedRun(t, env, `search "timeout"`, lastWeek.from, lastWeek.to, nil))
-	const query = `summarize count() by store = extract("store_id=([0-9]+)", 1, message)`
-	const counted = `["494",2]`
 
-	refusal := refusalOf(t, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
-	if e := refusal.Estimate; e != search.Estimate || !e.TextMatch || !e.OverBudget || !e.Heavy {
-		t.Errorf("Expected the estimate of a search over the week, %+v, got %+v", search.Estimate, e)
-	}
-	if r := refusal.LargestRange; r == nil || *r != *search.LargestRange {
-		t.Errorf("Expected the largest range that fits to be a search's, %+v, got %+v", search.LargestRange, r)
-	}
-	narrower := refusal.NarrowerQuery
-	if narrower == nil {
-		t.Fatalf("Expected a narrower Query, got %+v", refusal)
-	}
-	answer := checkedRun(t, env, narrower.Query, narrower.From, narrower.To, nil)
-	ran(t, "the narrower Query "+narrower.Query, answer)
-	if !strings.Contains(string(answer["table"]), counted) {
-		t.Errorf("Expected the narrower Query %q to count cron.log's store, got %s", narrower.Query, mustMarshal(t, answer))
-	}
-
-	// On one file that fits, it runs over the week.
-	onFile := `where file == "cron.log" | ` + query
-	answer = checkedRun(t, env, onFile, lastWeek.from, lastWeek.to, nil)
-	ran(t, onFile, answer)
-	if !strings.Contains(string(answer["table"]), counted) {
-		t.Errorf("%s: expected cron.log's store counted, got %s", onFile, mustMarshal(t, answer))
-	}
+	assertRefusedAsASearchIs(t, env, `summarize count() by store = extract("store_id=([0-9]+)", 1, message)`, tableHolds(`["494",2]`))
 
 	for _, query := range []string{
 		`where extract("store_id=([0-9]+)", 0, message) == "store_id=494"`,

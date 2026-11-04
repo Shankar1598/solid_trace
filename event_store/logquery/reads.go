@@ -98,7 +98,9 @@ func intersect(a, b []string) []string {
 // that it reads the text of every Log it scans: it has a search, tests
 // message with contains, startswith, =~, matches regex or their negations,
 // or calls a scalar function with message among its arguments, anywhere in
-// the Query. message alone, as project message reads it, doesn't match text.
+// the Query. A column a stage copied message to, renamed or not, is message
+// here too, as in project message | where strlen(message) > 1000. message
+// alone, as project message reads it, doesn't match text.
 func (q *Query) MatchesText() bool {
 	for _, s := range slices.Concat(q.head, q.tail) {
 		var exprs []expr
@@ -147,6 +149,8 @@ func readsMessageText(x expr) bool {
 		return readsMessage(x.x)
 	case call:
 		return slices.ContainsFunc(x.args, readsMessage)
+	case parsedJSON:
+		return readsMessage(x.x)
 	}
 	return false
 }
@@ -181,6 +185,8 @@ func anyOf(x expr, f func(expr) bool) bool {
 	case call:
 		return slices.ContainsFunc(x.args, func(arg expr) bool { return anyOf(arg, f) })
 	case aggregate:
+		return anyOf(x.x, f)
+	case parsedJSON:
 		return anyOf(x.x, f)
 	case member:
 		return anyOf(x.x, f)
