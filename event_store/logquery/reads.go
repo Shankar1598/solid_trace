@@ -98,7 +98,9 @@ func intersect(a, b []string) []string {
 // that it reads the text of every Log it scans: it has a search, tests
 // message with contains, startswith, =~, matches regex or their negations,
 // or calls a scalar function with message among its arguments, anywhere in
-// the Query. message alone, as project message reads it, doesn't match text.
+// the Query. A column a stage copied message to, renamed or not, is message
+// here too, as in project message | where strlen(message) > 1000. message
+// alone, as project message reads it, doesn't match text.
 func (q *Query) MatchesText() bool {
 	for _, s := range slices.Concat(q.head, q.tail) {
 		var exprs []expr
