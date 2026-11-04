@@ -30,7 +30,7 @@ function overBudget(from: number, to: number) {
   const iso = (ms: number) => new Date(ms).toISOString().replace('.000Z', 'Z')
   return {
     message: [
-      'Not run: this Query matches text (search, or contains, startswith or =~ on message), so it reads the text of every Log '
+      'Not run: this Query matches text (search, contains, startswith or =~ on message, or a function of message), so it reads the text of every Log '
         + `that its filters on service and file keep: about 12.3 GiB in 31.2M Logs from ${iso(from)} to ${iso(to)}, `
         + 'past the 4 GiB a Query that matches text may read.',
       `The largest range that fits ends where this one does: the last 2h, from ${iso(to - 2 * HOUR)} to ${iso(to)}.`,
