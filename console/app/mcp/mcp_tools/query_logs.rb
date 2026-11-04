@@ -17,6 +17,8 @@ module McpTools
       summarize count() by bin_auto(time) counts over time; summarize count() by service | sort by count_ desc | take 10
       gives the top Services; avg, sum, min, max, dcount and percentile(x, 95) work too,
       and rate() and peak_rate() give Logs per second, averaged over each time bin and in its busiest second.
+      extract("store_id=([0-9]+)", 1, message) takes a value out of a message, substring(message, 0, 160) cuts one short,
+      and round(x, 2) rounds a number.
       A Query of only where, search, take and sort by time desc answers Logs, newest first, one a line, limit at a time,
       with a cursor for older ones. Any other stage, such as summarize, project, extend, top, count or distinct,
       answers a table, of which you get #{Table::SHAPE}.
