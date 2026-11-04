@@ -7,7 +7,9 @@ import { watchErrors } from '../support/screens'
 // Settings → Instance: the seeded admin, an instance admin, changes
 // log-all-reads, log-MCP-reads, the default Retention, whether Console
 // sends its own Issues and traces, the text-match budget and the Log read threads, and sees them after a reload. Log MCP reads shows checked and can't change while Log all reads
-// is on.
+// is on. Changing the hours on local disk asks first, saying what it does:
+// Cancel leaves it unsaved, confirming saves it. Without a bucket it can't
+// change, and says it does nothing.
 // Sign-up is read-only, and Console's environment and EventStore's config
 // (from its GET /config) show with secrets only as set or not. A member who isn't an instance admin sees no Instance link. The
 // settings are put back as they were after.
@@ -21,9 +23,9 @@ let saved = '{}'
 
 test.beforeAll(() => {
   saved = rails('print InstanceSetting.current.slice(:log_all_reads, :log_mcp_reads, :default_log_retention_days, ' +
-    ':send_console_issues, :trace_console, :logs_text_match_budget_mb, :logs_read_threads).to_json')
+    ':send_console_issues, :trace_console, :logs_text_match_budget_mb, :logs_read_threads, :local_cache_hours).to_json')
   rails('InstanceSetting.current.update!(log_all_reads: false, log_mcp_reads: true, default_log_retention_days: 30, ' +
-    'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096, logs_read_threads: 0)')
+    'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096, logs_read_threads: 0, local_cache_hours: 24)')
 })
 
 test.afterAll(() => {
@@ -111,6 +113,41 @@ test('an instance admin changes log-all-reads, log-MCP-reads, the default Retent
   await expect(eventStoreGroup.getByTestId('setting-logs_disk_limit_gb')).toContainText(' bytes)')
   await expect(eventStoreGroup.getByTestId('setting-logs_heavy_read_slots')).toHaveText(/^(\d+|No cap)$/)
   await expect(eventStoreGroup.getByTestId('setting-SOLIDTRACE_CLICKHOUSE_PASSWORD')).toHaveText(/^(Set|Not set)$/)
+
+  expect(errors).toEqual([])
+})
+
+test('changing the hours on local disk asks first: Cancel leaves them unsaved, confirming saves them', async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${ORG}/settings/instance`)
+  const hours = page.getByLabel('Hours on local disk')
+  await expect(hours).toHaveValue('24')
+  await expect(page.getByTestId('local-cache-hours-description')).toContainText('before they move to the bucket')
+  // The dev stack's EventStore may have no bucket.
+  if (await hours.isDisabled()) {
+    await expect(page.getByTestId('local-cache-hours-no-bucket')).toContainText('this does nothing')
+    expect(errors).toEqual([])
+    return
+  }
+
+  await hours.fill('6')
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  const confirm = page.getByRole('alertdialog')
+  await expect(confirm).toContainText('from 24 to 6')
+  await expect(confirm).toContainText('Logs older than 6 hours are read from the bucket, which is slower than local disk')
+  await expect(confirm).toContainText('counts toward the disk limit; parts already in the bucket stay there')
+  await expect(confirm).toContainText('so change it rarely')
+  await confirm.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirm).toBeHidden()
+  await page.reload()
+  await expect(hours).toHaveValue('24')
+
+  await hours.fill('6')
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await page.getByRole('button', { name: 'Change to 6 hours' }).click()
+  await expect(page.getByText('Instance settings saved')).toBeVisible()
+  await page.reload()
+  await expect(hours).toHaveValue('6')
 
   expect(errors).toEqual([])
 })

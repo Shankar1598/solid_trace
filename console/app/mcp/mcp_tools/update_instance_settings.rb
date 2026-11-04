@@ -41,6 +41,11 @@ module McpTools
                    "by id, Match monitor runs, traces and Transactions; not SQL queries), 0 to 64. More threads read " \
                    "the bucket faster but use more CPU, which ingest shares. 0, the default, is ClickHouse's own " \
                    "default of one per CPU core. It applies from the next read." }
+    argument :local_cache_hours, { type: "integer",
+      description: "Hours that Logs and Spans stay on local disk before their parts move to the bucket, 0 to 720; " \
+                   "0 moves each part once stored. Default 24. It does nothing without a bucket (restart_to_change's " \
+                   "EventStore group names it), and applies within a minute. Before changing it, tell the user: " \
+                   "#{InstanceSetting::LOCAL_CACHE_HOURS_WARNING}" }
 
     def run
       require_instance_admin!("change the instance settings")

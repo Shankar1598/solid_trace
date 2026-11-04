@@ -22,7 +22,7 @@ type OverviewHandler struct {
 	// Storage's (overview_storage.go).
 	diskLimit       storage.LogDiskLimit
 	retention       RetentionReader
-	localCacheHours int
+	localCacheHours func() int
 }
 
 // OverviewConfig is what the Overview reads.
@@ -36,8 +36,9 @@ type OverviewConfig struct {
 	DiskLimit storage.LogDiskLimit
 	Retention RetentionReader
 	// LocalCacheHours is how long Logs stay on local disk before they move
-	// to the bucket, with one.
-	LocalCacheHours int
+	// to the bucket, with one, as now (storage.ClickHouse.LocalCacheHours):
+	// an Instance admin changes it on Settings → Instance.
+	LocalCacheHours func() int
 }
 
 // NewOverviewHandler answers the Overview from cfg.
@@ -269,7 +270,7 @@ func (h *OverviewHandler) Overview(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 	a := assembleOverview(q, d)
-	a.Storage = assembleStorage(q, h.diskLimit, h.localCacheHours, d.storage)
+	a.Storage = assembleStorage(q, h.diskLimit, h.localCacheHours(), d.storage)
 	return c.JSON(a)
 }
 

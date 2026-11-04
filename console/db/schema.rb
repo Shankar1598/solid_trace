@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_04_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_04_130000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -104,6 +104,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_04_120000) do
     t.datetime "created_at", null: false
     t.integer "default_log_retention_days", default: 30, null: false
     t.integer "default_trace_retention_days", default: 14, null: false
+    t.integer "local_cache_hours", default: 24, null: false
     t.boolean "log_all_reads", default: false, null: false
     t.boolean "log_mcp_reads", default: true, null: false
     t.integer "logs_read_threads", default: 0, null: false
