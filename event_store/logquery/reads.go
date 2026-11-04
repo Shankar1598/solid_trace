@@ -95,9 +95,10 @@ func intersect(a, b []string) []string {
 }
 
 // MatchesText reports whether the Query matches text in Logs' messages, so
-// that it reads the text of every Log it scans: it has a search, or tests
+// that it reads the text of every Log it scans: it has a search, tests
 // message with contains, startswith, =~, matches regex or their negations,
-// anywhere in the Query.
+// or calls a scalar function with message among its arguments, anywhere in
+// the Query. message alone, as project message reads it, doesn't match text.
 func (q *Query) MatchesText() bool {
 	for _, s := range slices.Concat(q.head, q.tail) {
 		var exprs []expr
@@ -122,7 +123,7 @@ func (q *Query) MatchesText() bool {
 			exprs = []expr{s.key.x}
 		}
 		for _, x := range exprs {
-			if anyOf(x, isMessageMatch) {
+			if anyOf(x, readsMessageText) {
 				return true
 			}
 		}
@@ -138,10 +139,16 @@ func valuesOf(columns []namedValue) []expr {
 	return exprs
 }
 
-// isMessageMatch reports whether x tests message against a pattern.
-func isMessageMatch(x expr) bool {
-	m, ok := x.(textMatch)
-	return ok && readsMessage(m.x)
+// readsMessageText reports whether x works on the text of message: tests it
+// against a pattern, or is a scalar function of it, such as strlen(message).
+func readsMessageText(x expr) bool {
+	switch x := x.(type) {
+	case textMatch:
+		return readsMessage(x.x)
+	case call:
+		return slices.ContainsFunc(x.args, readsMessage)
+	}
+	return false
 }
 
 // anyOf reports whether f holds for x or any expression within it.
