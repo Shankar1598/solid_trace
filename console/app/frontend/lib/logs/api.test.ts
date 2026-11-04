@@ -8,7 +8,7 @@ const range = { orgSlug: 'acme', projectSlug: 'shop', from: new Date('2026-10-23
 
 /** EventStore's refusal of a search over its budget, as Console passes it on. */
 const refusal = {
-  message: 'Not run: this Query matches text (search, or contains, startswith or =~ on message), so it reads the text of every Log '
+  message: 'Not run: this Query matches text (search, contains, startswith or =~ on message, or a function of message), so it reads the text of every Log '
     + 'that its filters on service and file keep: about 12.4 GiB in 31.2M Logs from 2026-10-23T09:00:00Z to 2026-10-30T09:00:00Z, '
     + 'past the 4 GiB a Query that matches text may read.',
   estimate: {
