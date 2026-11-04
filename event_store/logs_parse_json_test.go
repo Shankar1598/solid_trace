@@ -53,16 +53,17 @@ func TestPathsReachMembersAndElementsAndGiveNoValueWhereThereIsNone(t *testing.T
 
 	for condition, want := range map[string][]string{
 		// A member of each type matches a value of its own type.
-		`parse_json(message).store_id == 494`:                       {"ada"},
-		`parse_json(message).store_id == "494"`:                     {"bob"},
-		`494 == parse_json(message).store_id`:                       {"ada"},
-		`parse_json(message).store_id != 494`:                       {"bob", "cy", "di", "ed"},
-		`parse_json(message).store_id in (494, "494")`:              {"ada", "bob"},
-		`parse_json(message).ok == true`:                            {"ada"},
-		`parse_json(message).ok == "true"`:                          {"bob"},
-		`parse_json(message).resource_type == "category"`:           {"cy"},
-		`parse_json(message).result.cache_keys_expired > 2`:         {"ada", "cy"},
-		`toint(parse_json(message).result.cache_keys_expired) >= 2`: {"ada", "bob", "cy"},
+		`parse_json(message).store_id == 494`:                         {"ada"},
+		`parse_json(message).store_id == "494"`:                       {"bob"},
+		`494 == parse_json(message).store_id`:                         {"ada"},
+		`parse_json(message).store_id != 494`:                         {"bob", "cy", "di", "ed"},
+		`parse_json(message).store_id in (494, "494")`:                {"ada", "bob"},
+		`parse_json(message).ok == true`:                              {"ada"},
+		`parse_json(message).ok == "true"`:                            {"bob"},
+		`parse_json(message).resource_type == "category"`:             {"cy"},
+		`parse_json(message).result.cache_keys_expired > 2`:           {"ada", "cy"},
+		`toint(parse_json(message).result.cache_keys_expired) >= 2`:   {"ada", "bob", "cy"},
+		`substring(parse_json(message).resource_type, 0, 3) == "pro"`: {"ada", "bob"},
 		// Brackets, and elements from the start and from the end.
 		`parse_json(message)["store-id"] == "s-1"`:           {"ada"},
 		`parse_json(message)['resource_type'] == "category"`: {"cy"},
