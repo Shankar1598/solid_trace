@@ -22,9 +22,9 @@ module McpTools
       answers a table, of which you get #{Table::SHAPE}.
       list_fields lists the Project's Fields, and query_language_reference gives the whole language.
       #{READING_LESS}
-      A Query that matches text (search, or contains, startswith or =~ on message) may read only so much:
-      one that would read more isn't run, and the answer says how much it would read, the largest range that fits,
-      the busiest files to filter on, and a narrower Query to run instead.
+      A Query that matches text (search, contains, startswith or =~ on message, or a function of message)
+      may read only so much: one that would read more isn't run, and the answer says how much it would read,
+      the largest range that fits, the busiest files to filter on, and a narrower Query to run instead.
       estimate answers how much a Query would read without running it.
       Pass force only when the user asks for the Query to run as written.
     TEXT
