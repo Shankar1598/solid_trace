@@ -3,6 +3,7 @@ package main_test
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -118,4 +119,72 @@ func namesWhere(t *testing.T, env *TestEnv, condition string) []string {
 		names = append(names, cells[0])
 	}
 	return names
+}
+
+func TestValidatePlacesMistakesInPathsAndJSONFunctions(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+
+	mistakes := map[string]queryProblem{
+		// .name and […] only follow a dynamic value.
+		`where strlen(message).a == 1`: {Message: `can't reach into a number; .name and […] follow a dynamic value, such as parse_json(message)`,
+			Line: 1, Column: 22, EndLine: 1, EndColumn: 24},
+		`where message["a"] == 1`: {Message: `can't reach into a string; .name and […] follow a dynamic value, such as parse_json(message)`,
+			Line: 1, Column: 14, EndLine: 1, EndColumn: 19},
+		`where tostring(parse_json(message)).a == 1`: {Message: `can't reach into a string; .name and […] follow a dynamic value, such as parse_json(message)`,
+			Line: 1, Column: 36, EndLine: 1, EndColumn: 38},
+		// An index is a whole number or a name, written in the Query.
+		`where parse_json(message)[x] == 1`: {Message: `expected an index written in the Query: a whole number, such as [0], or a name in quotes, such as ["store-id"]`,
+			Line: 1, Column: 27, EndLine: 1, EndColumn: 28},
+		`where parse_json(message)[1.5] == 1`: {Message: `expected an index written in the Query: a whole number, such as [0], or a name in quotes, such as ["store-id"]`,
+			Line: 1, Column: 27, EndLine: 1, EndColumn: 30},
+		// The functions' arguments.
+		`where parse_json(5).a == 1`: {Message: `parse_json takes a string, such as message, not a number`,
+			Line: 1, Column: 18, EndLine: 1, EndColumn: 19},
+		`where array_length(message) > 1`: {Message: `array_length takes a dynamic value, such as parse_json(message).ids, not a string`,
+			Line: 1, Column: 20, EndLine: 1, EndColumn: 27},
+		// What follows a value.
+		`where parse_json(message). == 1`: {Message: `expected a name after the dot; write other names in brackets, as in ["store-id"]`,
+			Line: 1, Column: 26, EndLine: 1, EndColumn: 27},
+		`where parse_json(message)[] == 1`: {Message: `expected an index or a name in quotes after [, as in [0] or ["store-id"]`,
+			Line: 1, Column: 26, EndLine: 1, EndColumn: 27},
+		`summarize count() by parse_json(message)[0`: {Message: `expected ], got the end of the Query`,
+			Line: 1, Column: 43, EndLine: 1, EndColumn: 43},
+	}
+	for query, want := range mistakes {
+		v := validateQuery(t, env, query)
+		if len(v.Errors) != 1 || v.Errors[0] != want {
+			t.Errorf("%q: expected %+v, got %+v", query, want, v.Errors)
+		}
+	}
+
+	// A wrong count of arguments, at the call.
+	for query, want := range map[string]queryProblem{
+		`where parse_json(message, 1) == 1`: {Line: 1, Column: 7, EndLine: 1, EndColumn: 29},
+		`where parse_json() == 1`:           {Line: 1, Column: 7, EndLine: 1, EndColumn: 19},
+		`where array_length() == 1`:         {Line: 1, Column: 7, EndLine: 1, EndColumn: 21},
+	} {
+		v := validateQuery(t, env, query)
+		if len(v.Errors) != 1 {
+			t.Fatalf("%q: expected a mistake, got %+v", query, v.Errors)
+		}
+		got := v.Errors[0]
+		name, _, _ := strings.Cut(strings.TrimPrefix(query, "where "), "(")
+		place := queryProblem{Line: got.Line, Column: got.Column, EndLine: got.EndLine, EndColumn: got.EndColumn}
+		if !strings.HasPrefix(got.Message, name+" takes") || place != want {
+			t.Errorf("%q: expected %q at %+v, got %+v", query, name+" takes …", want, got)
+		}
+	}
+
+	// Queries with them are valid, and the Builder can't show them.
+	for _, query := range []string{
+		`where parse_json(message).store_id == 494`,
+		`where tags.store_id == 7 and ['tags'][0] == 1`,
+		`summarize count() by tostring(parse_json(message)["resource-type"])`,
+		`extend j = parse_json(message) | where j["a"].b[-1] == 2 | project n = array_length(j["ids"])`,
+	} {
+		if v := validateQuery(t, env, query); len(v.Errors) != 0 || builderChips(v) != "null" {
+			t.Errorf("%q: expected no chips and no errors, got %+v", query, v)
+		}
+	}
 }
