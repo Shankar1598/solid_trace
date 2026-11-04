@@ -841,6 +841,8 @@ var scalarFunctions = map[string]function{
 		usage: `a regex, a capture group and a string, as in extract("store_id=([0-9]+)", 1, message)`},
 	"substring": {args: []valueType{stringType, numberType, numberType}, result: fixed(stringType), optional: 1,
 		usage: "a string, a start and an optional length, as in substring(message, 0, 160)"},
+	"round": {args: []valueType{numberType, numberType}, result: fixed(numberType), optional: 1,
+		usage: "a number and an optional precision, as in round(duration, 2)"},
 }
 
 var aggregateFunctions = map[string]bool{
@@ -980,6 +982,13 @@ func checkCall(name string, e *parser.CallExpr, args []expr) error {
 			if arg.typ() != numberType {
 				return errorAt(e.Args[i+1], "substring's %s is a number, not a %s", []string{"start", "length"}[i], arg.typ())
 			}
+		}
+	case "round":
+		if args[0].typ() != numberType {
+			return errorAt(e.Args[0], "round takes a number, not a %s", args[0].typ())
+		}
+		if len(args) == 2 && args[1].typ() != numberType {
+			return errorAt(e.Args[1], "round's precision is a number, not a %s", args[1].typ())
 		}
 	}
 	return nil

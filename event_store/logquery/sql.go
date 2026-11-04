@@ -377,6 +377,8 @@ func writeCall(c call, f fields) string {
 		return writeExtract(c, f)
 	case "substring":
 		return writeSubstring(c, f)
+	case "round":
+		return writeRound(c, f)
 	}
 	panic("logquery: unknown function " + c.fn)
 }
@@ -462,6 +464,25 @@ func writeSubstring(c call, f fields) string {
 		return "substringUTF8(" + s + ", " + from + ")"
 	}
 	return "substringUTF8(" + s + ", " + from + ", greatest(toInt64(" + writeValue(c.args[2], f) + "), 0))"
+}
+
+// writeRound writes round(number [, precision]) as KQL rounds: to precision
+// digits after the point, or before it when negative, with halves away from
+// zero, where ClickHouse's round takes a Float64's halves to even. The
+// number is scaled by an exact power of ten, multiplied for digits after the
+// point and divided for digits before it, so that 2.15 to one digit scales
+// to 21.5 and rounds to 2.2, as in KQL. Scaled to 2^52 or more, it has no
+// fraction left to round.
+func writeRound(c call, f fields) string {
+	x, digits := writeValue(c.args[0], f), "0"
+	if len(c.args) == 2 {
+		digits = "trunc(" + writeValue(c.args[1], f) + ")"
+	}
+	scale := "pow(10, least(abs(" + digits + "), 308))"
+	scaled := fmt.Sprintf("if(%[1]s < 0, %[2]s / %[3]s, %[2]s * %[3]s)", digits, x, scale)
+	rounded := fmt.Sprintf("(trunc(%[1]s) + sign(%[1]s) * (abs(%[1]s - trunc(%[1]s)) >= 0.5))", scaled)
+	return fmt.Sprintf("if(abs(%[1]s) >= 4503599627370496, %[2]s, if(%[3]s < 0, %[4]s * %[5]s, %[4]s / %[5]s))",
+		scaled, x, digits, rounded, scale)
 }
 
 // writeAggregate writes one of summarize's functions. Over no rows, or no
