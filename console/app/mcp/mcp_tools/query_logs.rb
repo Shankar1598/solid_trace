@@ -17,14 +17,18 @@ module McpTools
       summarize count() by bin_auto(time) counts over time; summarize count() by service | sort by count_ desc | take 10
       gives the top Services; avg, sum, min, max, dcount and percentile(x, 95) work too,
       and rate() and peak_rate() give Logs per second, averaged over each time bin and in its busiest second.
+      extract("store_id=([0-9]+)", 1, message) takes a value out of a message, substring(message, 0, 160) cuts one short,
+      and round(x, 2) rounds a number.
+      parse_json(message).result.count reads a member of a JSON message, as an Attribute is read; ["name"] and [0] reach in too,
+      and array_length(parse_json(message).ids) gives an array's length.
       A Query of only where, search, take and sort by time desc answers Logs, newest first, one a line, limit at a time,
       with a cursor for older ones. Any other stage, such as summarize, project, extend, top, count or distinct,
       answers a table, of which you get #{Table::SHAPE}.
       list_fields lists the Project's Fields, and query_language_reference gives the whole language.
       #{READING_LESS}
-      A Query that matches text (search, or contains, startswith or =~ on message) may read only so much:
-      one that would read more isn't run, and the answer says how much it would read, the largest range that fits,
-      the busiest files to filter on, and a narrower Query to run instead.
+      A Query that matches text (search, contains, startswith or =~ on message, or a function of message)
+      may read only so much: one that would read more isn't run, and the answer says how much it would read,
+      the largest range that fits, the busiest files to filter on, and a narrower Query to run instead.
       estimate answers how much a Query would read without running it.
       Pass force only when the user asks for the Query to run as written.
     TEXT

@@ -7,7 +7,7 @@ import { refusalView, type Refusal } from './refusal'
 /** A search over a week of a busy Project, refused for reading 12.3 GiB, as EventStore writes it. */
 const overBudget: Refusal = {
   message: [
-    'Not run: this Query matches text (search, or contains, startswith or =~ on message), so it reads the text of every Log that its '
+    'Not run: this Query matches text (search, contains, startswith or =~ on message, or a function of message), so it reads the text of every Log that its '
       + 'filters on service and file keep: about 12.3 GiB in 31.2M Logs from 2026-10-23T09:00:00Z to 2026-10-30T09:00:00Z, past the '
       + '4 GiB a Query that matches text may read.',
     'The largest range that fits ends where this one does: the last 2d 1h, from 2026-10-28T07:12:00Z to 2026-10-30T09:00:00Z.',
@@ -36,7 +36,7 @@ describe('a refusal in the explorer', () => {
 
     // The rest of the message is the buttons below it.
     expect(view.message).toBe(
-      'Not run: this Query matches text (search, or contains, startswith or =~ on message), so it reads the text of every Log that its '
+      'Not run: this Query matches text (search, contains, startswith or =~ on message, or a function of message), so it reads the text of every Log that its '
         + 'filters on service and file keep: about 12.3 GiB in 31.2M Logs from 2026-10-23T09:00:00Z to 2026-10-30T09:00:00Z, past the '
         + '4 GiB a Query that matches text may read.')
     // Figures as EventStore writes them, to a tenth, so they agree with the message.

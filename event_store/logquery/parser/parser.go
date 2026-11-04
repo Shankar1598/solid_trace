@@ -435,7 +435,55 @@ func (p *parser) unaryExpr() (Expr, error) {
 	return p.primaryExpr()
 }
 
+// primaryExpr parses an operand and what reaches into its value after it:
+// .name, ["name"] and [index], any number of them.
 func (p *parser) primaryExpr() (Expr, error) {
+	x, err := p.operand()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		tok, ok := p.peek()
+		_, isName := x.(*Ident)
+		switch {
+		case ok && tok.Kind == TokenDot && !isName && tok.Span.Start == x.Span().End:
+			// After a name, a dot touching it is part of the name.
+			p.pos++
+			name, ok := p.next()
+			isPart := name.Kind == TokenIdentifier || name.Kind == TokenAnd || name.Kind == TokenOr
+			if !ok || !isPart || name.Span.Start != tok.Span.End {
+				return nil, p.errorf(tok.Span, `expected a name after the dot; write other names in brackets, as in ["store-id"]`)
+			}
+			x = &MemberExpr{X: x, Dot: tok.Span, Name: &Ident{Name: name.Value, NameSpan: name.Span}}
+		case ok && tok.Kind == TokenQuotedIdentifier:
+			// ["name"] and ['name'] scan as one token.
+			p.pos++
+			s := tok.Span
+			key := &BasicLit{ValueSpan: newSpan(s.Start+1, s.End-1), Kind: StringLiteral, Value: tok.Value}
+			x = &IndexExpr{X: x, Lbrack: newSpan(s.Start, s.Start+1), Index: key, Rbrack: newSpan(s.End-1, s.End)}
+		case ok && tok.Kind == TokenLBracket:
+			p.pos++
+			if next, ok := p.peek(); !ok || next.Kind == TokenRBracket {
+				return nil, p.errorf(tok.Span, `expected an index or a name in quotes after [, as in [0] or ["store-id"]`)
+			}
+			index, err := p.expr(0)
+			if err != nil {
+				return nil, err
+			}
+			end, ok := p.next()
+			if !ok || end.Kind != TokenRBracket {
+				return nil, p.errorf(end.Span, "expected ], got %s", p.describe(end, ok))
+			}
+			x = &IndexExpr{X: x, Lbrack: tok.Span, Index: index, Rbrack: end.Span}
+		default:
+			return x, nil
+		}
+	}
+}
+
+// operand parses a value: a literal, a name, a call, a Dashboard filter or
+// an expression in parentheses.
+func (p *parser) operand() (Expr, error) {
 	tok, ok := p.next()
 	if !ok {
 		return nil, p.errorf(tok.Span, "expected an expression, got the end of the Query")

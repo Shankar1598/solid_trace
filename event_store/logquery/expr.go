@@ -85,10 +85,17 @@ type fieldRef struct {
 // value contains can search.
 type attributeText struct{ name string }
 
-// columnRef is a column of a table, or one extend added to Logs.
+// jsonValueText is a value parse_json or a path gives, read as text by
+// contains as an Attribute is: its string, or else the JSON text of an array
+// or object.
+type jsonValueText struct{ x expr }
+
+// columnRef is a column of a table, or one extend added to Logs. message is
+// set when it holds the Log's message as it is.
 type columnRef struct {
-	name string
-	t    valueType
+	name    string
+	t       valueType
+	message bool
 }
 
 // partOf is the part of a dynamic column holding values of type t.
@@ -214,6 +221,25 @@ type call struct {
 	t    valueType
 }
 
+// parsedJSON is parse_json(x): the value x, JSON text, holds, a dynamic
+// value; or, as KQL has it, x itself as a string where x isn't JSON.
+type parsedJSON struct{ x expr }
+
+// member is the value at path in x's value, a dynamic value: a member of an
+// object, an element of an array, and so on into it. It is dynamic too.
+type member struct {
+	x    expr
+	path []pathStep
+}
+
+// pathStep is one step of a path into a dynamic value: a member's name, or
+// an element's index, from 0, or from the end when negative.
+type pathStep struct {
+	key     string
+	index   int
+	element bool
+}
+
 // aggregate is one of summarize's functions.
 type aggregate struct {
 	fn string
@@ -239,6 +265,9 @@ func (e arith) typ() valueType       { return e.t }
 func (e negative) typ() valueType    { return e.x.typ() }
 func (e call) typ() valueType        { return e.t }
 func (e aggregate) typ() valueType   { return e.t }
+func (parsedJSON) typ() valueType    { return dynamicType }
+func (member) typ() valueType        { return dynamicType }
+func (jsonValueText) typ() valueType { return stringType }
 
 // condition compiles an expression that must be a condition.
 func (c *compiler) condition(e parser.Expr) (expr, error) {
@@ -270,7 +299,13 @@ func (c *compiler) expr(e parser.Expr, want valueType, aggregates *rateBasis) (e
 	case *parser.BinaryExpr:
 		return c.binary(e, aggregates)
 	case *parser.CallExpr:
-		return c.call(e, want, aggregates)
+		x, err := c.call(e, want, aggregates)
+		if err != nil {
+			return nil, err
+		}
+		return typed(x, want), nil
+	case *parser.MemberExpr, *parser.IndexExpr:
+		return c.member(e, want, aggregates)
 	case *parser.ListExpr:
 		return nil, errorAt(e, "a list only follows in or !in")
 	case *parser.Param:
@@ -294,7 +329,7 @@ func (c *compiler) name(id *parser.Ident, want valueType) (expr, error) {
 		name = alias
 	}
 	if col, ok := c.scope.lookup(name); ok {
-		ref := columnRef{name: col.name, t: col.t}
+		ref := columnRef{name: col.name, t: col.t, message: col.message}
 		if col.t == dynamicType {
 			if _, ok := want.attributeType(); ok {
 				return partOf{x: ref, t: want}, nil
@@ -317,6 +352,65 @@ func (c *compiler) name(id *parser.Ident, want valueType) (expr, error) {
 		c.read(t, name)
 	}
 	return fieldRef{name: name, t: dynamicType}, nil
+}
+
+// typed is x read as want asks: the part of a dynamic value that holds
+// values of that type, when want asks for a type an Attribute can hold, as a
+// name of no fixed type is read.
+func typed(x expr, want valueType) expr {
+	if _, ok := want.attributeType(); ok && x.typ() == dynamicType {
+		return partOf{x: x, t: want}
+	}
+	return x
+}
+
+// member compiles x.name, x["name"] or x[index]: the member or element of
+// x's value, a dynamic value, read as want asks. A path into a path is one
+// path.
+func (c *compiler) member(e parser.Expr, want valueType, aggregates *rateBasis) (expr, error) {
+	var of, index parser.Expr
+	var accessor parser.Span
+	var step pathStep
+	switch e := e.(type) {
+	case *parser.MemberExpr:
+		of, accessor, step = e.X, e.Accessor(), pathStep{key: e.Name.Name}
+	case *parser.IndexExpr:
+		of, accessor, index = e.X, e.Accessor(), e.Index
+	}
+	x, err := c.expr(of, anyType, aggregates)
+	if err != nil {
+		return nil, err
+	}
+	if x.typ() != dynamicType {
+		return nil, &Error{Span: accessor, Message: fmt.Sprintf("can't reach into a %s; .name and […] follow a dynamic value, such as parse_json(message)", x.typ())}
+	}
+	if index != nil {
+		if step, err = c.pathStep(index); err != nil {
+			return nil, err
+		}
+	}
+	m := member{x: x, path: []pathStep{step}}
+	if inner, ok := x.(member); ok {
+		m = member{x: inner.x, path: append(slices.Clone(inner.path), step)}
+	}
+	return typed(m, want), nil
+}
+
+// pathStep compiles what is in the brackets of x[…]: a name in quotes, or a
+// whole number, written in the Query.
+func (c *compiler) pathStep(e parser.Expr) (pathStep, error) {
+	x, err := c.expr(e, anyType, nil)
+	if err != nil {
+		return pathStep{}, err
+	}
+	l, ok := x.(literal)
+	switch {
+	case ok && l.Kind == parser.StringLiteral:
+		return pathStep{key: l.String}, nil
+	case ok && l.Kind == parser.NumberLiteral && l.Number == math.Trunc(l.Number) && math.Abs(l.Number) < math.MaxInt32:
+		return pathStep{index: int(l.Number), element: true}, nil
+	}
+	return pathStep{}, errorAt(e, `expected an index written in the Query: a whole number, such as [0], or a name in quotes, such as ["store-id"]`)
 }
 
 // literal compiles a literal as written.
@@ -483,13 +577,22 @@ func (c *compiler) binary(e *parser.BinaryExpr, aggregates *rateBasis) (expr, er
 			return nil, errorAt(e.Y, "expected a quoted string after %s", c.source(e.OpSpan))
 		}
 		if text.op == matchRegex {
-			if _, err := regexp.Compile(lit.Value); err != nil {
-				return nil, errorAt(lit, "invalid regular expression: %s", strings.TrimPrefix(err.Error(), "error parsing regexp: "))
+			if err := checkRegex(lit, lit.Value); err != nil {
+				return nil, err
 			}
 		}
 		return text.match(x, lit.Value), nil
 	}
 	return nil, &Error{Span: e.OpSpan, Message: "unsupported operator"}
+}
+
+// checkRegex checks a regular expression written in the Query at node, as
+// ClickHouse will run it: Go's regexp and ClickHouse both take RE2's syntax.
+func checkRegex(node parser.Node, pattern string) error {
+	if _, err := regexp.Compile(pattern); err != nil {
+		return errorAt(node, "invalid regular expression: %s", strings.TrimPrefix(err.Error(), "error parsing regexp: "))
+	}
+	return nil
 }
 
 // textOperand compiles the string a text operator tests. contains reads an
@@ -506,7 +609,19 @@ func (c *compiler) textOperand(e parser.Expr, opSpan parser.Span, text textOp, a
 		c.read(storage.JSONAttribute, ref.name)
 		x = attributeText{name: ref.name}
 	}
+	if part, ok := x.(partOf); ok && isJSONValue(part.x) && text.op == matchContains {
+		x = jsonValueText{part.x}
+	}
 	return x, nil
+}
+
+// isJSONValue reports whether x is a value parse_json or a path gives.
+func isJSONValue(x expr) bool {
+	switch x.(type) {
+	case parsedJSON, member:
+		return true
+	}
+	return false
 }
 
 // predicate compiles a where's condition, in which a Dashboard filter may be
@@ -804,6 +919,12 @@ func (c *compiler) arith(e *parser.BinaryExpr, aggregates *rateBasis) (expr, err
 type function struct {
 	args   []valueType
 	result func(args []expr) valueType
+
+	// optional is how many of args, at the end, a call may leave out.
+	optional int
+	// usage says what the function takes, such as "a number and an optional
+	// precision", for a call with the wrong number of arguments.
+	usage string
 }
 
 func fixed(t valueType) func([]expr) valueType {
@@ -821,6 +942,19 @@ var scalarFunctions = map[string]function{
 	"toreal":   {args: []valueType{anyType}, result: fixed(numberType)},
 	"bin":      {args: []valueType{numberType, anyType}, result: func(args []expr) valueType { return args[0].typ() }},
 	"floor":    {args: []valueType{numberType, anyType}, result: func(args []expr) valueType { return args[0].typ() }},
+
+	"extract": {args: []valueType{stringType, numberType, stringType}, result: fixed(stringType),
+		usage: `a regex, a capture group and a string, as in extract("store_id=([0-9]+)", 1, message)`},
+	"substring": {args: []valueType{stringType, numberType, numberType}, result: fixed(stringType), optional: 1,
+		usage: "a string, a start and an optional length, as in substring(message, 0, 160)"},
+	"round": {args: []valueType{numberType, numberType}, result: fixed(numberType), optional: 1,
+		usage: "a number and an optional precision, as in round(duration, 2)"},
+
+	// A dynamic value read from JSON text, and an array's length.
+	"parse_json": {args: []valueType{stringType}, result: fixed(dynamicType),
+		usage: "one string, as in parse_json(message)"},
+	"array_length": {args: []valueType{anyType}, result: fixed(numberType),
+		usage: "one dynamic value, as in array_length(parse_json(message).ids)"},
 }
 
 var aggregateFunctions = map[string]bool{
@@ -900,7 +1034,10 @@ func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates *rateBasi
 	if !ok {
 		return nil, errorAt(e.Func, "unknown function %q", name)
 	}
-	if len(e.Args) != len(fn.args) {
+	if n := len(e.Args); n > len(fn.args) || n < len(fn.args)-fn.optional {
+		if fn.usage != "" {
+			return nil, errorAt(e, "%s takes %s", name, fn.usage)
+		}
 		return nil, errorAt(e, "%s takes %d arguments", name, len(fn.args))
 	}
 	args := make([]expr, len(e.Args))
@@ -913,6 +1050,9 @@ func (c *compiler) call(e *parser.CallExpr, want valueType, aggregates *rateBasi
 	}
 	if err := checkCall(name, e, args); err != nil {
 		return nil, err
+	}
+	if name == "parse_json" {
+		return parsedJSON{x: args[0]}, nil
 	}
 	return call{fn: name, args: args, t: fn.result(args)}, nil
 }
@@ -934,6 +1074,44 @@ func checkCall(name string, e *parser.CallExpr, args []expr) error {
 		}
 		if l, ok := args[1].(literal); !ok || (l.Timespan <= 0 && l.Number <= 0) {
 			return errorAt(e.Args[1], "%s needs a size above zero written in the Query", name)
+		}
+	case "extract":
+		regex, ok := args[0].(literal)
+		if !ok || regex.Kind != parser.StringLiteral {
+			return errorAt(e.Args[0], "extract needs its regex written in the Query, as a quoted string")
+		}
+		if err := checkRegex(e.Args[0], regex.String); err != nil {
+			return err
+		}
+		if group, ok := args[1].(literal); !ok || group.Kind != parser.NumberLiteral || group.Number < 0 || group.Number != math.Trunc(group.Number) {
+			return errorAt(e.Args[1], "extract needs its capture group written in the Query, as a whole number of 0 or more")
+		}
+		if args[2].typ() != stringType {
+			return errorAt(e.Args[2], "extract takes a string, not a %s", args[2].typ())
+		}
+	case "substring":
+		if args[0].typ() != stringType {
+			return errorAt(e.Args[0], "substring takes a string, not a %s", args[0].typ())
+		}
+		for i, arg := range args[1:] {
+			if arg.typ() != numberType {
+				return errorAt(e.Args[i+1], "substring's %s is a number, not a %s", []string{"start", "length"}[i], arg.typ())
+			}
+		}
+	case "round":
+		if args[0].typ() != numberType {
+			return errorAt(e.Args[0], "round takes a number, not a %s", args[0].typ())
+		}
+		if len(args) == 2 && args[1].typ() != numberType {
+			return errorAt(e.Args[1], "round's precision is a number, not a %s", args[1].typ())
+		}
+	case "parse_json":
+		if args[0].typ() != stringType {
+			return errorAt(e.Args[0], "parse_json takes a string, such as message, not a %s", args[0].typ())
+		}
+	case "array_length":
+		if args[0].typ() != dynamicType {
+			return errorAt(e.Args[0], "array_length takes a dynamic value, such as parse_json(message).ids, not a %s", args[0].typ())
 		}
 	}
 	return nil
@@ -1107,6 +1285,17 @@ func fieldName(x expr) string {
 		}
 		return fieldName(x.y)
 	case negative:
+		return fieldName(x.x)
+	case parsedJSON:
+		return fieldName(x.x)
+	case member:
+		// The last name on the path, as resource_type in
+		// parse_json(message).resource_type.
+		for i := len(x.path) - 1; i >= 0; i-- {
+			if !x.path[i].element {
+				return x.path[i].key
+			}
+		}
 		return fieldName(x.x)
 	}
 	return ""

@@ -124,6 +124,20 @@ Both take no arguments. They are not the same as `summarize n = count() by bin(t
 | `toint(x)`, `tolong(x)` | x as a whole number, rounded toward zero. A string that isn't a number gives no value. |
 | `todouble(x)`, `toreal(x)` | x as a number. |
 | `tolower(s)`, `toupper(s)`, `strlen(s)` | A string in lower case, in upper case, and its length. |
+| `extract(regex, group, s)` | What the regex's capture group matched at its first match in s: `extract("store_id=([0-9]+)", 1, message)` gives `494` from `store_id=494`. Group 0 is the whole match. No match, or a group the regex doesn't have, gives no value, so `isempty()` is true. The regex (RE2 syntax) and the group are written in the Query; in a string, `\d` is written `\\d`. `toint(extract(…))` gives a number to sum or compare. |
+| `substring(s, start [, length])` | length characters of s from start, counted from 0: `substring(message, 0, 160)` gives the first 160. A negative start counts back from the end, as in `substring(message, -10)`. Without a length, or with one past the end, it runs to the end. |
+| `round(x [, precision])` | x rounded to precision digits after the point, or before it when negative: `round(avg(duration), 2)`, and `round(1250, -2)` is 1300. Without a precision, to a whole number. A half rounds away from zero: `round(2.5)` is 3 and `round(-2.5)` is -3. |
+| `parse_json(s)` | The JSON value a string, usually `message`, holds: a string, a number, a bool, an array or an object. A string that isn't JSON gives itself. After it, `.name`, `["name"]` and `[0]` reach a member or an element, to any depth: `["store-id"]` for a name that isn't a plain word, and `[-1]` for an array's last element. A missing member, an index past the end, or reaching into what isn't an object or array gives no value. |
+| `array_length(x)` | The number of elements of an array, as in `array_length(parse_json(message).ids)`. Anything else gives no value. |
+
+**JSON messages.** A value from `parse_json` is read as an Attribute is: `parse_json(message).store_id == 494` matches the number and `== "494"` the string, `contains` looks in an array's JSON text too, and `toint()`, `tostring()`, `isempty()`, the aggregates and `summarize … by` work on it. Over messages such as `{"resource_type":"product","result":{"cache_keys_expired":3}}`, this adds up `cache_keys_expired` for each `resource_type`, the `by` column named after the path's last name:
+
+```
+summarize expired = sum(toint(parse_json(message).result.cache_keys_expired))
+  by tostring(parse_json(message).resource_type)
+```
+
+A dotted name on its own, such as `tags.store_id`, is still one Attribute. `[…]` reaches into an Attribute or a column that holds an array or object too, as in `ids[0]`. Like any function of `message`, `parse_json(message)` matches text: see Reading less, below.
 
 Arithmetic: `+`, `-`, `*`, `/` and `%` work on numbers. You can add a timespan to a datetime or subtract one from it, as in `now() - 1h`.
 
@@ -185,7 +199,7 @@ Every Project's Logs are sorted by `service`, then by the `file` Attribute, then
 - **Use `where`, not `search`**, which reads `message` and every string Attribute.
 - **Keep the range short.** A read skips the days outside it, and a Dashboard refresh reads again only the bins of hours that haven't ended or have new Logs.
 
-A Query that matches text, with `search` or with `contains`, `startswith`, `=~` or `matches regex` on `message`, reads the text of every Log its `service` and `file` filters keep, so it may read only so much: 4 GiB by default, which an Instance admin changes on Settings → Instance. The Logs explorer and `query_logs` size it first, from the Logs and bytes each file sends, and don't run one over that. They answer instead with how much it would read, the largest range that fits, the busiest files to filter on, and a narrower Query that fits. Dashboard Charts and Monitors always run.
+A Query that matches text, with `search`, with `contains`, `startswith`, `=~` or `matches regex` on `message`, or with a function of `message` anywhere in it, such as `where strlen(message) > 1000` or `summarize count() by tolower(message)`, reads the text of every Log its `service` and `file` filters keep, so it may read only so much: 4 GiB by default, which an Instance admin changes on Settings → Instance. The Logs explorer and `query_logs` size it first, from the Logs and bytes each file sends, and don't run one over that. They answer instead with how much it would read, the largest range that fits, the busiest files to filter on, and a narrower Query that fits. Dashboard Charts and Monitors always run. `message` on its own, as in `project message`, doesn't match text. A column that holds `message` as it is, renamed or not, counts as `message`: `extend m = message | where m contains "timeout"` matches text.
 
 In SQL, the same holds: a condition on `service` and `file` reads less, and `attributes.name.:String` reads that Attribute alone.
 

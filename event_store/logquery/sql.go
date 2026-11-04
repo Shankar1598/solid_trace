@@ -2,6 +2,7 @@ package logquery
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -97,11 +98,23 @@ func conjuncts(p expr) []expr {
 	return []expr{p}
 }
 
-// readsMessage reports whether x reads a Log's message.
-func readsMessage(x expr) bool {
+// isMessage reports whether x is a Log's message as it is: the built-in
+// field, or a column a stage copied it to, renamed or not.
+func isMessage(x expr) bool {
 	switch x := x.(type) {
 	case fieldRef:
 		return x.builtIn && x.name == "message"
+	case columnRef:
+		return x.message
+	}
+	return false
+}
+
+// readsMessage reports whether x reads a Log's message.
+func readsMessage(x expr) bool {
+	switch x := x.(type) {
+	case fieldRef, columnRef:
+		return isMessage(x)
 	case partOf:
 		return readsMessage(x.x)
 	case compare:
@@ -126,6 +139,12 @@ func readsMessage(x expr) bool {
 				return true
 			}
 		}
+	case parsedJSON:
+		return readsMessage(x.x)
+	case member:
+		return readsMessage(x.x)
+	case jsonValueText:
+		return readsMessage(x.x)
 	}
 	return false
 }
@@ -267,7 +286,12 @@ func writeValue(x expr, f fields) string {
 		return "coalesce(" + f.Attribute(storage.StringAttribute, x.name) + ", " + f.Attribute(storage.JSONAttribute, x.name) + ")"
 	case partOf:
 		t, _ := x.t.attributeType()
-		return dynamicPart(writeValue(x.x, f), t)
+		return partsOf(x.x, f)(t)
+	case parsedJSON, member:
+		return dynamicOf(partsOf(x, f))
+	case jsonValueText:
+		part := partsOf(x.x, f)
+		return "coalesce(" + part(storage.StringAttribute) + ", " + part(storage.JSONAttribute) + ")"
 	case literal:
 		return writeLiteral(x.Literal)
 	case compare, isEmpty, and, or, not, textMatch:
@@ -291,6 +315,15 @@ func writeValue(x expr, f fields) string {
 // ClickHouse has no NULL tuple.
 func dynamicValue(parts []string) string {
 	return "tuple(" + strings.Join(parts, ", ") + ")"
+}
+
+// dynamicOf writes a dynamic value from its parts by type.
+func dynamicOf(part func(storage.AttributeType) string) string {
+	parts := make([]string, len(dynamicParts))
+	for i, t := range dynamicParts {
+		parts[i] = part(t)
+	}
+	return dynamicValue(parts)
 }
 
 // dynamicPart writes the part of v, a dynamic value, that holds values of
@@ -372,6 +405,15 @@ func writeCall(c call, f fields) string {
 			return "toStartOfInterval(" + arg(0) + ", " + arg(1) + ")"
 		}
 		return "(floor(" + arg(0) + " / " + arg(1) + ") * " + arg(1) + ")"
+	case "extract":
+		return writeExtract(c, f)
+	case "substring":
+		return writeSubstring(c, f)
+	case "round":
+		return writeRound(c, f)
+	case "array_length":
+		j := jsonText(c.args[0], f)
+		return "if(JSONType(" + j + ") = 'Array', toFloat64(JSONLength(" + j + ")), NULL)"
 	}
 	panic("logquery: unknown function " + c.fn)
 }
@@ -397,13 +439,93 @@ func writeToString(x expr, f fields) string {
 }
 
 // partsOf returns the parts of x, a dynamic value, by type: an Attribute's
-// typed values, or the elements of a dynamic column's tuple.
+// typed values, those of the JSON value parse_json reads or a path reaches,
+// or the elements of a dynamic column's tuple.
 func partsOf(x expr, f fields) func(storage.AttributeType) string {
-	if ref, ok := x.(fieldRef); ok {
-		return func(t storage.AttributeType) string { return f.Attribute(t, ref.name) }
+	switch x := x.(type) {
+	case fieldRef:
+		return func(t storage.AttributeType) string { return f.Attribute(t, x.name) }
+	case parsedJSON:
+		return parsedParts(writeValue(x.x, f))
+	case member:
+		v := writeMember(x, f)
+		return jsonParts(v, v)
 	}
 	v := writeValue(x, f)
 	return func(t storage.AttributeType) string { return dynamicPart(v, t) }
+}
+
+// jsonParts returns the parts by type of the value that v, JSON text, holds:
+// its string, number or bool, or raw, the JSON text of an array or object.
+// The others are NULL, and all are where v holds null or isn't JSON. Each
+// is read only once its type is known, since ClickHouse reads a string such
+// as "12" as a number.
+func jsonParts(v, raw string) func(storage.AttributeType) string {
+	is := "JSONType(" + v + ")"
+	return func(t storage.AttributeType) string {
+		switch t {
+		case storage.StringAttribute:
+			return "if(" + is + " = 'String', JSONExtractString(" + v + "), NULL)"
+		case storage.NumberAttribute:
+			return "if(" + is + " IN ('Int64', 'UInt64', 'Double'), JSONExtractFloat(" + v + "), NULL)"
+		case storage.BoolAttribute:
+			return "if(" + is + " = 'Bool', toBool(JSONExtractBool(" + v + ")), NULL)"
+		}
+		return "if(" + is + " IN ('Array', 'Object'), " + raw + ", NULL)"
+	}
+}
+
+// parsedParts returns the parts by type of parse_json(s): those of the JSON
+// value s holds, an array or object as its JSON text without spaces, or, as
+// KQL has it, s itself as a string where s isn't JSON.
+func parsedParts(s string) func(storage.AttributeType) string {
+	parts := jsonParts(s, "JSONExtractRaw("+s+")")
+	return func(t storage.AttributeType) string {
+		if t == storage.StringAttribute {
+			return "if(isValidJSON(" + s + "), " + parts(t) + ", " + s + ")"
+		}
+		return parts(t)
+	}
+}
+
+// jsonText writes the JSON text of x, a dynamic value, that a path reaches
+// into: the text parse_json reads, the value a path reached, or an array's
+// or object's JSON text. Anything else holds no member or element.
+func jsonText(x expr, f fields) string {
+	switch x := x.(type) {
+	case parsedJSON:
+		return writeValue(x.x, f)
+	case member:
+		return writeMember(x, f)
+	}
+	return partsOf(x, f)(storage.JSONAttribute)
+}
+
+// writeMember writes the JSON text of the value at m's path, or the empty
+// string where there is none. Each name and index on the path is one argument of
+// ClickHouse's JSON functions, never part of a path's text. An index reaches
+// only into an array, as ClickHouse's would take an object's nth member too.
+func writeMember(m member, f fields) string {
+	args := []string{jsonText(m.x, f)}
+	var arrays []string
+	for _, step := range m.path {
+		if !step.element {
+			args = append(args, chsql.String(step.key))
+			continue
+		}
+		arrays = append(arrays, "JSONType("+strings.Join(args, ", ")+") = 'Array'")
+		// ClickHouse counts elements from 1, and from the end from -1.
+		index := step.index
+		if index >= 0 {
+			index++
+		}
+		args = append(args, strconv.Itoa(index))
+	}
+	raw := "JSONExtractRaw(" + strings.Join(args, ", ") + ")"
+	if len(arrays) == 0 {
+		return raw
+	}
+	return "if(" + strings.Join(arrays, " AND ") + ", " + raw + ", '')"
 }
 
 func numberText(n string) string {
@@ -426,6 +548,56 @@ func writeToNumber(x expr, f fields) string {
 			part(storage.NumberAttribute), part(storage.StringAttribute), part(storage.BoolAttribute))
 	}
 	return "toFloat64OrNull(toString(" + writeValue(x, f) + "))"
+}
+
+// writeExtract writes extract(regex, group, source): what the group matched
+// at the regex's first match. No match, an empty one, and a group the regex
+// doesn't have give no value, as KQL's null, which for a string is its
+// empty string.
+func writeExtract(c call, f fields) string {
+	regex, group := c.args[0].(literal).String, c.args[1].(literal).Number
+	if group > float64(regexp.MustCompile(regex).NumSubexp()) {
+		return "CAST(NULL AS Nullable(String))"
+	}
+	return fmt.Sprintf("nullIf(regexpExtract(%s, %s, %d), '')", writeValue(c.args[2], f), chsql.String(regex), int(group))
+}
+
+// writeSubstring writes substring(source, start [, length]) in characters.
+// KQL's start counts from 0, or back from the end when negative, and never
+// before the first character; ClickHouse's counts from 1. A range past the
+// end stops there, and a length below zero takes nothing.
+func writeSubstring(c call, f fields) string {
+	s := writeValue(c.args[0], f)
+	var from string
+	if l, ok := c.args[1].(literal); ok && l.Number >= 0 && l.Number < 1<<53 {
+		from = strconv.FormatInt(int64(l.Number)+1, 10)
+	} else {
+		start := "toInt64(" + writeValue(c.args[1], f) + ")"
+		from = fmt.Sprintf("if(%[2]s < 0, greatest(toInt64(lengthUTF8(%[1]s)) + %[2]s, 0), %[2]s) + 1", s, start)
+	}
+	if len(c.args) == 2 {
+		return "substringUTF8(" + s + ", " + from + ")"
+	}
+	return "substringUTF8(" + s + ", " + from + ", greatest(toInt64(" + writeValue(c.args[2], f) + "), 0))"
+}
+
+// writeRound writes round(number [, precision]) as KQL rounds: to precision
+// digits after the point, or before it when negative, with halves away from
+// zero, where ClickHouse's round takes a Float64's halves to even. The
+// number is scaled by an exact power of ten, multiplied for digits after the
+// point and divided for digits before it, so that 2.15 to one digit scales
+// to 21.5 and rounds to 2.2, as in KQL. Scaled to 2^52 or more, it has no
+// fraction left to round.
+func writeRound(c call, f fields) string {
+	x, digits := writeValue(c.args[0], f), "0"
+	if len(c.args) == 2 {
+		digits = "trunc(" + writeValue(c.args[1], f) + ")"
+	}
+	scale := "pow(10, least(abs(" + digits + "), 308))"
+	scaled := fmt.Sprintf("if(%[1]s < 0, %[2]s / %[3]s, %[2]s * %[3]s)", digits, x, scale)
+	rounded := fmt.Sprintf("(trunc(%[1]s) + sign(%[1]s) * (abs(%[1]s - trunc(%[1]s)) >= 0.5))", scaled)
+	return fmt.Sprintf("if(abs(%[1]s) >= 4503599627370496, %[2]s, if(%[3]s < 0, %[4]s * %[5]s, %[4]s / %[5]s))",
+		scaled, x, digits, rounded, scale)
 }
 
 // writeAggregate writes one of summarize's functions. Over no rows, or no
