@@ -4,7 +4,7 @@ EventStore keeps Logs and Events in ClickHouse, on local disk. With a bucket, Cl
 
 ## What goes in the bucket
 
-- **Logs older than `local_cache_hours`.** ClickHouse keeps Logs in parts, each of one Project's UTC day. A part moves to the bucket once its newest Log is `local_cache_hours` old (24 by default). A Log that old when it is stored goes straight to the bucket. The bucket holds them under `<prefix>clickhouse/`, in ClickHouse's own layout, and ClickHouse reads them in place, with a read cache of up to 10 GiB on local disk.
+- **Logs older than the hours on local disk.** ClickHouse keeps Logs in parts, each of one Project's UTC day. A part moves to the bucket once its newest Log is as many hours old as **Hours on local disk** on Console's Settings → Instance says (`local_cache_hours`, 24 by default; see [Changing the hours on local disk](#changing-the-hours-on-local-disk)). A Log that old when it is stored goes straight to the bucket. The bucket holds them under `<prefix>clickhouse/`, in ClickHouse's own layout, and ClickHouse reads them in place, with a read cache of up to 10 GiB on local disk.
 - **Log files from before the switch to ClickHouse.** The Log files written before the switch stay where they were, under `<prefix>logs/`, and are read in place until Retention deletes them. Nothing new is written there.
 
 Everything else stays on local disk: the histogram's counts, the Fields' counts, Events, Pebble and the databases. ClickHouse keeps on local disk the list of the parts it moved, so a backup or a disk snapshot must include ClickHouse's data directory: the bucket alone can't be restored from.
@@ -18,7 +18,6 @@ object_store:
   kind: gcs
   bucket: acme-solidtrace
   prefix: solidtrace/
-  local_cache_hours: 24
 ```
 
 | Key | Default | What it does |
@@ -28,7 +27,8 @@ object_store:
 | `prefix` | `solidtrace/` | Goes before every key, so the bucket can hold other things too. A `/` is added at the end if it's missing. Set it to `""` to use the whole bucket. |
 | `region` | `auto` for `gcs`; `us-east-1` with an `endpoint` | The bucket's region. It is required for AWS S3. |
 | `endpoint` | AWS's own for `s3`; `https://storage.googleapis.com` for `gcs` | The URL of the S3 API, for MinIO, R2 and other stores. When it is set, requests use path-style URLs. |
-| `local_cache_hours` | `24` | How many hours after its newest Log a part of ClickHouse's Logs moves to the bucket. `0` moves each part once it is stored. |
+
+How long Logs stay on local disk isn't in the file: an Instance admin sets it on Settings → Instance. A file that still sets `local_cache_hours`, which v0.18.0 and earlier read, loads with a warning naming Settings → Instance, and the value is ignored.
 
 - The bucket's key comes from the environment, never from the file: `SOLIDTRACE_OBJECT_STORE_KEY_ID` and `SOLIDTRACE_OBJECT_STORE_SECRET`. `deploy/docker-compose.yml` passes both to EventStore and to ClickHouse. EventStore takes the key only from these, not from an instance role or `~/.aws`.
 - EventStore doesn't start if the block is wrong: a misspelt key, an empty block, an unknown `kind`, a missing `bucket`, or a missing key in the environment. To keep everything on local disk, remove the block.
@@ -139,10 +139,9 @@ The dev ClickHouse and MinIO (`docker-compose.dev.yml`, started by `bin/clickhou
      bucket: solidtrace-dev
      prefix: dev/
      endpoint: http://127.0.0.1:9000
-     local_cache_hours: 0
    ```
 
-   With `local_cache_hours: 0`, every part moves to MinIO once it is stored.
+   With **Hours on local disk** at 0 on Settings → Instance, every part moves to MinIO once it is stored.
 
 2. Start EventStore with the same key in the same two variables.
 
@@ -161,13 +160,23 @@ go test -p 1 -count=1 -run 'Bucket|MinIO|OldLogFiles' . ./storage/
 ## When the bucket is down
 
 - Ingest carries on: a `200` still means the Logs or Event are in Pebble.
-- Reads of Logs in the bucket fail: Logs older than `local_cache_hours`, and the old Log files whose only copy is there. Recent Logs, Events, the histogram's counts and the Fields still answer.
+- Reads of Logs in the bucket fail: Logs older than the hours on local disk, and the old Log files whose only copy is there. Recent Logs, Events, the histogram's counts and the Fields still answer.
 - Parts wait on local disk to move. If they pass the disk limit, EventStore deletes the oldest days and logs an error.
 
 ## Changing the block later
 
-- **Adding a bucket** to an install that already has Logs: at its next start, EventStore adds the bucket to ClickHouse's storage policy, and parts older than `local_cache_hours` move to it.
-- **Changing `local_cache_hours`** takes effect at EventStore's next start, which changes when each part moves; a part already in the bucket stays there.
+- **Adding a bucket** to an install that already has Logs: at its next start, EventStore adds the bucket to ClickHouse's storage policy, and parts older than the hours on local disk move to it.
 - **Removing the block** stops parts moving. The Logs already moved stay in the bucket, and ClickHouse needs the bucket to read them, so keep the block while any are there. ClickHouse can't drop the bucket's volume while it runs, and logs an error until it restarts. Old Log files whose only copy is in the bucket aren't read any more; EventStore warns at every start how many there are.
 - **Changing the bucket or the prefix** would lose what ClickHouse moved there. Don't.
 - **Don't delete or change objects under the prefix** yourself or with lifecycle rules. ClickHouse's parts would be lost, and EventStore still lists the old Log files. Retention and Project deletion delete Logs, in ClickHouse and in old Log files, for you.
+
+## Changing the hours on local disk
+
+**Hours on local disk** on Settings → Instance, or `local_cache_hours` over the MCP server's `update_instance_settings`, is 0 to 720 hours; 0 moves each part once it is stored. It does nothing without a bucket. EventStore reads it from Console at start and every minute, and when it changed sets the TTL of the `logs` and `spans` tables (`ALTER TABLE … MODIFY TTL`), so a change applies within a minute or two, with no restart. Settings → Instance asks before it saves a change:
+
+- Logs older than the new hours are read from the bucket, which is slower than local disk. Lowering it moves more of the recent Logs there within a minute or two.
+- Raising it keeps more on local disk, which counts toward the disk limit. Parts already in the bucket stay there.
+- ClickHouse then recomputes every part's move time in the background, reading each part's time column, from the bucket too, so change it rarely. On the dev MinIO, for a table of 5 parts, 223 MiB, all in the bucket, the ALTER returned in 0.37 s, and the background mutation read 3.5 MB (the `time` column) in 12 GETs and wrote about 3.5 MB of part metadata; no data column was read.
+
+If EventStore can't read the setting, or it's out of range, the tables keep the hours they had, and EventStore logs it each minute.
+

@@ -89,6 +89,10 @@ func main() {
 	}
 	defer consoleSettings.Close()
 
+	// With a bucket, the day tables' parts move there once as old as
+	// Settings → Instance says, read now and every minute.
+	localCache := storage.FollowLocalCacheHours(clickHouse, consoleSettings, storage.LocalCacheHoursInterval)
+
 	// Prepare must run before the worker starts. The Event cleanup never
 	// runs inside a batch: they share batchLock.
 	var batchLock sync.Mutex
@@ -157,7 +161,7 @@ func main() {
 	transformHandler := handler.NewLogTransformHandler(logTransforms)
 	overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{
 		Logs: clickHouseLogs, Clock: clock.System{}, DiskLimit: diskLimit, Retention: consoleSettings,
-		LocalCacheHours: cfg.ObjectStore.LocalHours(),
+		LocalCacheHours: clickHouse.LocalCacheHours,
 	})
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
@@ -213,6 +217,7 @@ func main() {
 	logProcessor.Stop()
 	spanProcessor.Stop()
 	logCleanup.Stop()
+	localCache.Stop()
 	eventCleanup.Stop()
 	if profiler != nil {
 		profiler.Stop()

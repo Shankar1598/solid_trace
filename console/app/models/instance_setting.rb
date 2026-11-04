@@ -4,7 +4,7 @@
 # server and the sender) on the Email settings page or over the MCP server,
 # and the settings that apply at once (EDITABLE: SQL queries, the default
 # Retention of Logs and of traces, log-all-reads, log-MCP-reads, the
-# text-match budget, the Log read threads) on Settings → Instance or over the MCP server.
+# text-match budget, the Log read threads, the hours on local disk) on Settings → Instance or over the MCP server.
 # Sign-up has no UI on purpose: opening it lets anyone who can reach Console
 # make an account, so it changes only from a shell on the server, with
 # `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
@@ -19,7 +19,8 @@ class InstanceSetting < ApplicationRecord
   # The settings that apply at once, so instance admins change them on
   # Settings → Instance and over the MCP server.
   EDITABLE = %i[sql_queries_enabled default_log_retention_days default_trace_retention_days log_all_reads
-                log_mcp_reads send_console_issues trace_console logs_text_match_budget_mb logs_read_threads].freeze
+                log_mcp_reads send_console_issues trace_console logs_text_match_budget_mb logs_read_threads
+                local_cache_hours].freeze
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
@@ -60,6 +61,21 @@ class InstanceSetting < ApplicationRecord
   # each request that reads Logs (event_store/handler/logs_budget.go), and
   # takes a value out of this range as 0 (storage.MaxLogReadThreads).
   validates :logs_read_threads, numericality: { only_integer: true, in: 0..64 }
+  # How long Logs and Spans stay on local disk before their parts move to the
+  # bucket, with one; 0 moves each part once stored. EventStore reads it at
+  # start and every minute, and sets the day tables' TTL when it changed
+  # (event_store/storage/local_cache_hours.go). Without a bucket it does
+  # nothing.
+  validates :local_cache_hours, numericality: { only_integer: true, in: 0..720 }
+
+  # What changing local_cache_hours does, for update_instance_settings'
+  # description. Settings → Instance's confirmation says the same, with the
+  # old and new hours (Settings/Instance.tsx).
+  LOCAL_CACHE_HOURS_WARNING = "Logs older than this are read from the bucket, which is slower than local disk; " \
+                              "lowering it moves more of the recent Logs there within a minute or two. Raising it " \
+                              "keeps more on local disk, which counts toward the disk limit; parts already in the " \
+                              "bucket stay there. ClickHouse recomputes every part's move time in the background, " \
+                              "reading each part's time column from the bucket, so change it rarely."
 
   # Console's Sentry reads these settings once in a while; this process reads
   # them again at once.

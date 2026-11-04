@@ -21,6 +21,12 @@ const (
 	// MaxLogReadThreads is the most threads logs_read_threads may give a
 	// tagged Log read, as Console's validation allows.
 	MaxLogReadThreads = 64
+	// DefaultLocalCacheHours is how long Logs and Spans stay on local disk
+	// before they move to the bucket, with one: local_cache_hours' default.
+	DefaultLocalCacheHours = 24
+	// MaxLocalCacheHours is the most local_cache_hours may be, 30 days, as
+	// Console's validation allows.
+	MaxLocalCacheHours = 720
 )
 
 // instanceSettingsID is the one instance_settings row (InstanceSetting::ID in
@@ -124,6 +130,28 @@ func (s *ConsoleSettings) LogReadThreads() (int, error) {
 		return 0, fmt.Errorf("the Log read threads are %d, outside 0 to %d", threads, MaxLogReadThreads)
 	}
 	return threads, nil
+}
+
+// LocalCacheHours returns how long Logs and Spans stay on local disk before
+// their parts move to the bucket, with one: DefaultLocalCacheHours until an
+// Instance admin sets it, and 0 moves them once stored. It's read apart from
+// Instance, as TextMatchBudgetBytes is. A value outside 0 to
+// MaxLocalCacheHours, which only Console's validations prevent, is an error.
+func (s *ConsoleSettings) LocalCacheHours() (int, error) {
+	var hours int
+	err := s.db.QueryRow(
+		"SELECT local_cache_hours FROM instance_settings WHERE id = ?", instanceSettingsID,
+	).Scan(&hours)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DefaultLocalCacheHours, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if hours < 0 || hours > MaxLocalCacheHours {
+		return 0, fmt.Errorf("the hours on local disk are %d, outside 0 to %d", hours, MaxLocalCacheHours)
+	}
+	return hours, nil
 }
 
 // LogRetentionDays returns a Project's effective Retention in whole days: its

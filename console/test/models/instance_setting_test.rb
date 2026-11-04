@@ -149,4 +149,17 @@ class InstanceSettingTest < ActiveSupport::TestCase
     assert InstanceSetting.current.update_editable(logs_read_threads: "8")
     assert_equal 8, InstanceSetting.current.logs_read_threads
   end
+
+  test "the hours on local disk are 24 until changed, a whole number from 0 to 720, and change at once" do
+    assert_equal 24, InstanceSetting.current.local_cache_hours
+    [ -1, 721, "1.5", "lots", nil ].each do |hours|
+      settings = InstanceSetting.new(local_cache_hours: hours)
+      assert_not settings.valid?, "hours #{hours.inspect}"
+      assert settings.errors[:local_cache_hours].any?, "hours #{hours.inspect}"
+    end
+    [ 0, 720 ].each { |hours| assert InstanceSetting.new(local_cache_hours: hours).valid?, "hours #{hours}" }
+
+    assert InstanceSetting.current.update_editable(local_cache_hours: "6")
+    assert_equal 6, InstanceSetting.current.local_cache_hours
+  end
 end

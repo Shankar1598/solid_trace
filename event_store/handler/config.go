@@ -48,14 +48,13 @@ type clickHouseAnswer struct {
 }
 
 type objectStoreAnswer struct {
-	Kind            string `json:"kind"`
-	Bucket          string `json:"bucket"`
-	Prefix          string `json:"prefix"`
-	Region          string `json:"region"`
-	Endpoint        string `json:"endpoint"`
-	LocalCacheHours int    `json:"local_cache_hours"`
-	KeyIDSet        bool   `json:"key_id_set"`
-	SecretSet       bool   `json:"secret_set"`
+	Kind      string `json:"kind"`
+	Bucket    string `json:"bucket"`
+	Prefix    string `json:"prefix"`
+	Region    string `json:"region"`
+	Endpoint  string `json:"endpoint"`
+	KeyIDSet  bool   `json:"key_id_set"`
+	SecretSet bool   `json:"secret_set"`
 }
 
 // NewConfigHandler answers cfg, with diskLimitBytes the disk limit in effect
@@ -84,14 +83,13 @@ func NewConfigHandler(cfg *config.Config, diskLimitBytes int64) *ConfigHandler {
 	}
 	if store := cfg.ObjectStore; store != nil {
 		answer.ObjectStore = &objectStoreAnswer{
-			Kind:            store.Kind,
-			Bucket:          store.Bucket,
-			Prefix:          store.Prefix,
-			Region:          store.Region,
-			Endpoint:        store.Endpoint,
-			LocalCacheHours: store.LocalCacheHours,
-			KeyIDSet:        store.KeyID != "",
-			SecretSet:       store.Secret != "",
+			Kind:      store.Kind,
+			Bucket:    store.Bucket,
+			Prefix:    store.Prefix,
+			Region:    store.Region,
+			Endpoint:  store.Endpoint,
+			KeyIDSet:  store.KeyID != "",
+			SecretSet: store.Secret != "",
 		}
 	}
 	answer.Defaults = defaultKeys(cfg)

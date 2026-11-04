@@ -3,7 +3,7 @@
 # Settings → Instance: the install's settings, for instance admins. SQL
 # queries, the default Retention of Logs and traces, log-all-reads,
 # log-MCP-reads, whether Console sends its own Issues and traces, the
-# text-match budget and the Log read threads apply at once, so they change here. Sign-up and everything that needs a restart are shown read-only
+# text-match budget, the Log read threads and the hours on local disk apply at once, so they change here. Sign-up and everything that needs a restart are shown read-only
 # (InstanceSettingsAnswer builds what's shown).
 class InstanceSettingsController < ApplicationController
   layout "dashboard"

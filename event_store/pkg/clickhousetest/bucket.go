@@ -99,13 +99,12 @@ func UserFiles(t testing.TB) string {
 func s3StandIn(t testing.TB) *config.ObjectStore {
 	t.Helper()
 	bucket := &config.ObjectStore{
-		Kind:            config.ObjectStoreS3,
-		Bucket:          os.Getenv("SOLIDTRACE_TEST_S3_BUCKET"),
-		Region:          "us-east-1",
-		Endpoint:        os.Getenv("SOLIDTRACE_TEST_S3_ENDPOINT"),
-		KeyID:           os.Getenv("SOLIDTRACE_OBJECT_STORE_KEY_ID"),
-		Secret:          os.Getenv("SOLIDTRACE_OBJECT_STORE_SECRET"),
-		LocalCacheHours: 24,
+		Kind:     config.ObjectStoreS3,
+		Bucket:   os.Getenv("SOLIDTRACE_TEST_S3_BUCKET"),
+		Region:   "us-east-1",
+		Endpoint: os.Getenv("SOLIDTRACE_TEST_S3_ENDPOINT"),
+		KeyID:    os.Getenv("SOLIDTRACE_OBJECT_STORE_KEY_ID"),
+		Secret:   os.Getenv("SOLIDTRACE_OBJECT_STORE_SECRET"),
 	}
 	if bucket.Bucket == "" {
 		bucket.Bucket = "solidtrace-test"

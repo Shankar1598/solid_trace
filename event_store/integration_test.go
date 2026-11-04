@@ -94,8 +94,13 @@ type TestEnv struct {
 	Clock *clock.Manual
 
 	// BucketConfig, if set, is the object_store: the logs table's parts
-	// move to its bucket (logs_bucket_test.go).
+	// move to its bucket (logs_bucket_test.go) once as old as Console's
+	// local_cache_hours (setLocalCacheHours).
 	BucketConfig *config.ObjectStore
+	// LocalCacheInterval is how often LocalCache reads local_cache_hours:
+	// a minute, as in main, unless a test changes it.
+	LocalCacheInterval time.Duration
+	LocalCache         *storage.LocalCacheFollower
 	// BinCacheBytes is the bin cache's size, 64 MiB unless a test changes
 	// it; 0 turns it off.
 	BinCacheBytes int64
@@ -410,9 +415,10 @@ func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 		Clock:            clock.NewManual(testNow),
 		ClickHouseConfig: clickhousetest.Config(),
 
-		BinCacheBytes:    config.DefaultLogsBinCacheMB << 20,
-		SQLLimits:        storage.DefaultSQLLimits(),
-		IngestMaxWaiting: 100,
+		BinCacheBytes:      config.DefaultLogsBinCacheMB << 20,
+		LocalCacheInterval: storage.LocalCacheHoursInterval,
+		SQLLimits:          storage.DefaultSQLLimits(),
+		IngestMaxWaiting:   100,
 	}
 	if configure != nil {
 		configure(env)
@@ -471,6 +477,8 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to open Console settings: %v", err)
 	}
 
+	env.LocalCache = storage.FollowLocalCacheHours(clickHouse, consoleSettings, env.LocalCacheInterval)
+
 	env.PebbleWriter = pebbleWriter
 	env.ClickHouse = clickHouse
 	env.ClickHouseLogs = clickHouseLogs
@@ -526,7 +534,7 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
 		handler.NewOverviewHandler(handler.OverviewConfig{
 			Logs: env.ClickHouseLogs, Clock: env.Clock, DiskLimit: env.LogDiskLimit, Retention: consoleSettings,
-			LocalCacheHours: env.BucketConfig.LocalHours(),
+			LocalCacheHours: clickHouse.LocalCacheHours,
 		}), handler.NewTracesHandler(clickHouse), healthHandler, handler.NewConfigHandler(&config.Config{}, 0))
 	handler.RegisterPerformanceRoutes(env.QueryApp, handler.NewPerformanceHandler(clickHouse))
 
@@ -536,6 +544,7 @@ func (env *TestEnv) open(t *testing.T) {
 		env.LogProcessor.Stop()
 		env.SpanProcessor.Stop()
 
+		env.LocalCache.Stop()
 		pebbleWriter.Close()
 		clickHouse.Close()
 		sqliteWriter.Close()
