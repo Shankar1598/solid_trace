@@ -153,9 +153,9 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                   <p className="text-sm font-medium text-destructive">{errors.logs_text_match_budget_mb}</p>
                 )}
                 <p className="text-xs text-muted-foreground" data-testid="text-match-budget-description">
-                  The most a Query that matches text (search, or contains, startswith or =~ on message) may read, in MiB of Logs over
-                  its range and the files its filters on service and file keep. The Logs explorer and the MCP server refuse a Query over it, with
-                  narrower ways to run it. Dashboard Charts and Monitors are never refused. A Query over a quarter of it is a heavy
+                  The most a Query that matches text (search, contains, startswith or =~ on message, or a function of message)
+                  may read, in MiB of Logs over its range and the files its filters on service and file keep. The Logs explorer
+                  and the MCP server refuse a Query over it, with narrower ways to run it. Dashboard Charts and Monitors are never refused. A Query over a quarter of it is a heavy
                   read, limited by Heavy Log reads at once below. 0 refuses no Query.
                 </p>
               </div>
