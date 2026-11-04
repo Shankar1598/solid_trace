@@ -184,6 +184,8 @@ func anyOf(x expr, f func(expr) bool) bool {
 		return anyOf(x.x, f)
 	case member:
 		return anyOf(x.x, f)
+	case jsonValueText:
+		return anyOf(x.x, f)
 	}
 	return false
 }

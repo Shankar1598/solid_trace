@@ -129,6 +129,8 @@ func readsMessage(x expr) bool {
 		}
 	case member:
 		return readsMessage(x.x)
+	case jsonValueText:
+		return readsMessage(x.x)
 	}
 	return false
 }
@@ -273,6 +275,9 @@ func writeValue(x expr, f fields) string {
 		return partsOf(x.x, f)(t)
 	case member:
 		return dynamicOf(partsOf(x, f))
+	case jsonValueText:
+		part := partsOf(x.x, f)
+		return "coalesce(" + part(storage.StringAttribute) + ", " + part(storage.JSONAttribute) + ")"
 	case literal:
 		return writeLiteral(x.Literal)
 	case compare, isEmpty, and, or, not, textMatch:
