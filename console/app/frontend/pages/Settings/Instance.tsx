@@ -39,6 +39,7 @@ interface InstanceSettings {
     send_console_issues: boolean
     trace_console: boolean
     logs_text_match_budget_mb: number
+    logs_read_threads: number
   }
   sign_up: { open: boolean, command: string }
   restart_to_change: RestartGroup[]
@@ -62,6 +63,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     send_console_issues: editable.send_console_issues,
     trace_console: editable.trace_console,
     logs_text_match_budget_mb: String(editable.logs_text_match_budget_mb),
+    logs_read_threads: String(editable.logs_read_threads),
   })
   const sampleRate = settings.restart_to_change
     .find((group) => group.name === 'Console')?.settings
@@ -157,6 +159,25 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                   may read, in MiB of Logs over its range and the files its filters on service and file keep. The Logs explorer
                   and the MCP server refuse a Query over it, with narrower ways to run it. Dashboard Charts and Monitors are never refused. A Query over a quarter of it is a heavy
                   read, limited by Heavy Log reads at once below. 0 refuses no Query.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="logs_read_threads">Log read threads</Label>
+                <Input
+                  id="logs_read_threads"
+                  inputMode="numeric"
+                  className="max-w-32"
+                  value={data.logs_read_threads}
+                  onChange={(e) => setData('logs_read_threads', e.target.value)}
+                />
+                {errors.logs_read_threads && (
+                  <p className="text-sm font-medium text-destructive">{errors.logs_read_threads}</p>
+                )}
+                <p className="text-xs text-muted-foreground" data-testid="read-threads-description">
+                  The threads ClickHouse may use for each Log read: Queries, histograms, Fields, Monitors, traces and
+                  Transactions, not SQL queries. More threads read the bucket faster but use more CPU, which ingest shares.
+                  0 to 64; 0 is ClickHouse's default of one per CPU core. It applies from the next read.
                 </p>
               </div>
 

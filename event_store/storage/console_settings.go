@@ -18,6 +18,9 @@ const (
 	// DefaultTextMatchBudgetBytes is the budget of a Query that matches
 	// text: logs_text_match_budget_mb's default, 4096 MiB.
 	DefaultTextMatchBudgetBytes int64 = 4096 << 20
+	// MaxLogReadThreads is the most threads logs_read_threads may give a
+	// tagged Log read, as Console's validation allows.
+	MaxLogReadThreads = 64
 )
 
 // instanceSettingsID is the one instance_settings row (InstanceSetting::ID in
@@ -98,6 +101,29 @@ func (s *ConsoleSettings) TextMatchBudgetBytes() (int64, error) {
 		return 0, fmt.Errorf("the text-match budget is %d MiB", mb)
 	}
 	return mb << 20, nil
+}
+
+// LogReadThreads returns the ClickHouse max_threads of each tagged Log read,
+// or 0 for ClickHouse's own default, one per CPU core: 0 until an Instance
+// admin sets it. It's read apart from Instance, as TextMatchBudgetBytes is,
+// so that a Console that hasn't added the column yet fails only this. A
+// value outside 0 to MaxLogReadThreads, which only Console's validations
+// prevent, is an error.
+func (s *ConsoleSettings) LogReadThreads() (int, error) {
+	var threads int
+	err := s.db.QueryRow(
+		"SELECT logs_read_threads FROM instance_settings WHERE id = ?", instanceSettingsID,
+	).Scan(&threads)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if threads < 0 || threads > MaxLogReadThreads {
+		return 0, fmt.Errorf("the Log read threads are %d, outside 0 to %d", threads, MaxLogReadThreads)
+	}
+	return threads, nil
 }
 
 // LogRetentionDays returns a Project's effective Retention in whole days: its

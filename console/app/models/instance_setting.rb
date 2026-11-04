@@ -4,7 +4,7 @@
 # server and the sender) on the Email settings page or over the MCP server,
 # and the settings that apply at once (EDITABLE: SQL queries, the default
 # Retention of Logs and of traces, log-all-reads, log-MCP-reads, the
-# text-match budget) on Settings → Instance or over the MCP server.
+# text-match budget, the Log read threads) on Settings → Instance or over the MCP server.
 # Sign-up has no UI on purpose: opening it lets anyone who can reach Console
 # make an account, so it changes only from a shell on the server, with
 # `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
@@ -19,7 +19,7 @@ class InstanceSetting < ApplicationRecord
   # The settings that apply at once, so instance admins change them on
   # Settings → Instance and over the MCP server.
   EDITABLE = %i[sql_queries_enabled default_log_retention_days default_trace_retention_days log_all_reads
-                log_mcp_reads send_console_issues trace_console logs_text_match_budget_mb].freeze
+                log_mcp_reads send_console_issues trace_console logs_text_match_budget_mb logs_read_threads].freeze
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
@@ -55,6 +55,11 @@ class InstanceSetting < ApplicationRecord
   # the MCP server refuse it; 0 refuses none. EventStore reads it on each
   # Query it sizes (event_store/handler/logs_budget.go).
   validates :logs_text_match_budget_mb, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
+  # ClickHouse's max_threads for each tagged Log read; 0 sets none, so
+  # ClickHouse's default of one per CPU core applies. EventStore reads it on
+  # each request that reads Logs (event_store/handler/logs_budget.go), and
+  # takes a value out of this range as 0 (storage.MaxLogReadThreads).
+  validates :logs_read_threads, numericality: { only_integer: true, in: 0..64 }
 
   # Console's Sentry reads these settings once in a while; this process reads
   # them again at once.

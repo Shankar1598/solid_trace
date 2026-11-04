@@ -101,6 +101,10 @@ func (sqlOn) TextMatchBudgetBytes() (int64, error) {
 	return storage.DefaultTextMatchBudgetBytes, nil
 }
 
+func (sqlOn) LogReadThreads() (int, error) {
+	return 0, nil
+}
+
 func (sqlOn) ProjectSlug(uint32) (string, error) {
 	return "", nil
 }

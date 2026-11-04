@@ -64,7 +64,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
       "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
       "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
-      "logs_text_match_budget_mb" => 4096 }, settings["editable"])
+      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0 }, settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")
 
@@ -234,6 +234,22 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "must be greater than or equal to 0" ],
       response.parsed_body.dig("props", "errors", "logs_text_match_budget_mb")
     assert_equal 10_240, InstanceSetting.current.logs_text_match_budget_mb
+  end
+
+  test "saving changes the Log read threads, and more than 64 comes back as a form error and saves nothing" do
+    sign_in_as(@instance_admin)
+
+    save(logs_read_threads: "8")
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal 8, response.parsed_body.dig("props", "settings", "editable", "logs_read_threads")
+
+    save(logs_read_threads: "65")
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ "must be in 0..64" ], response.parsed_body.dig("props", "errors", "logs_read_threads")
+    assert_equal 8, InstanceSetting.current.logs_read_threads
   end
 
   test "a trace Retention below one day comes back as a form error and saves nothing" do
