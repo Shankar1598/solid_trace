@@ -366,7 +366,7 @@ func earliest(a, b time.Time) time.Time {
 func refusalMessage(r ReadRefusal) string {
 	e := r.Estimate
 	var b strings.Builder
-	fmt.Fprintf(&b, "Not run: this Query matches text (search, or contains, startswith or =~ on message), so it reads the text of every Log "+
+	fmt.Fprintf(&b, "Not run: this Query matches text (search, contains, startswith or =~ on message, or a function of message), so it reads the text of every Log "+
 		"that its filters on service and file keep: about %s in %s Logs from %s to %s, past the %s a Query that matches text may read.",
 		bytesText(e.Bytes), countText(e.Logs), timeText(e.From), timeText(e.To), bytesText(e.BudgetBytes))
 	if l := r.LargestRange; l != nil {

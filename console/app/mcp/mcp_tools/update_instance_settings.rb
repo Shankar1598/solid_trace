@@ -31,7 +31,8 @@ module McpTools
                    "gives into its Sentry DSN, the Meta Project on an install. false traces none, from the next " \
                    "request or job on." }
     argument :logs_text_match_budget_mb, { type: "integer",
-      description: "The most a Query that matches text (search, or contains, startswith or =~ on message) may read, " \
+      description: "The most a Query that matches text (search, contains, startswith or =~ on message, " \
+                   "or a function of message) may read, " \
                    "in MiB of kept bytes over its range and the files its filters keep, before the Logs explorer and " \
                    "query_logs refuse it with narrower ways to run it. Dashboard Charts and Monitors are never " \
                    "refused. 0 refuses none. Default 4096. It applies from the next Query." }

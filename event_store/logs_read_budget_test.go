@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -227,6 +228,187 @@ func TestQueriesThatFitTheBudgetOrDontMatchTextRunOverABusyWeek(t *testing.T) {
 		`summarize count() by service`,
 	} {
 		ran(t, query, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
+	}
+}
+
+// A function of message reads the text of every Log it scans, as a search
+// does, so it is held to the same budget.
+func TestAFunctionOfMessageOverMoreThanTheBudgetIsRefusedAsASearchIs(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	long := "A Timeout in cron: " + strings.Repeat("retrying ", 120)
+	cron := map[string]any{"service": "worker", "file": "cron.log"}
+	postAndProcessTo(t, env, 123, "test_public_key",
+		logJSON(t, long, testNow.Add(-time.Hour), cron),
+		logJSON(t, "A Timeout in cron", testNow.Add(-2*time.Hour), cron))
+
+	assertRefusedAsASearchIs(t, env, `where strlen(message) > 1000`, func(answer map[string]json.RawMessage) bool {
+		var logs []listedLog
+		return json.Unmarshal(answer["logs"], &logs) == nil && len(logs) == 1 && logs[0].Message == long
+	})
+	assertRefusedAsASearchIs(t, env, `summarize count() by tolower(message)`, tableHolds(`["a timeout in cron",1]`))
+}
+
+// assertRefusedAsASearchIs checks a Query over the busy week of a Project
+// seeded with tagalysSources, whose cron.log has the Logs the Query finds.
+// Over the week, it is refused as search "timeout" is: with a search's
+// estimate, a text match over the budget and heavy; the last 160 minutes as
+// the largest range that fits; and the 5 busiest files. The narrower Query
+// it offers runs. On cron.log, whose week fits, it runs too, with a search's
+// estimate there, within the budget and heavy. found says whether an answer
+// holds what the Query finds in cron.log.
+func assertRefusedAsASearchIs(t *testing.T, env *TestEnv, query string, found func(answer map[string]json.RawMessage) bool) {
+	t.Helper()
+	search := refusalOf(t, checkedRun(t, env, `search "timeout"`, lastWeek.from, lastWeek.to, nil))
+	searchOnFile := estimateOf(t, env, `where file == "cron.log" | search "timeout"`, lastWeek.from, lastWeek.to)
+
+	refusal := refusalOf(t, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
+	if e := refusal.Estimate; e != search.Estimate || !e.TextMatch || !e.OverBudget || !e.Heavy {
+		t.Errorf("%s: expected the estimate of a search over the week, %+v, got %+v", query, search.Estimate, e)
+	}
+	if r := refusal.LargestRange; r == nil || *r != *search.LargestRange || !r.From.Equal(testNow.Add(-160*time.Minute)) {
+		t.Errorf("%s: expected the largest range that fits to be a search's, the last 160 minutes, got %+v", query, r)
+	}
+	if !reflect.DeepEqual(refusal.TopFiles, search.TopFiles) || len(refusal.TopFiles) != 5 {
+		t.Errorf("%s: expected a search's 5 busiest files, %+v, got %+v", query, search.TopFiles, refusal.TopFiles)
+	}
+	if !strings.Contains(refusal.Message, "function of message") {
+		t.Errorf("%s: expected the message to say a function of message matches text, got %q", query, refusal.Message)
+	}
+
+	// The narrower Query runs on cron.log, whose week fits.
+	narrower := refusal.NarrowerQuery
+	if narrower == nil {
+		t.Fatalf("%s: expected a narrower Query, got %+v", query, refusal)
+	}
+	answer := checkedRun(t, env, narrower.Query, narrower.From, narrower.To, nil)
+	ran(t, "the narrower Query "+narrower.Query, answer)
+	if !found(answer) {
+		t.Errorf("%s: expected the narrower Query %q to find the Logs in cron.log, got %s", query, narrower.Query, mustMarshal(t, answer))
+	}
+
+	// On one file that fits, it runs, a heavy read past a quarter of the
+	// budget.
+	onFile := `where file == "cron.log" | ` + query
+	answer = checkedRun(t, env, onFile, lastWeek.from, lastWeek.to, nil)
+	ran(t, onFile, answer)
+	if !found(answer) {
+		t.Errorf("%s: expected the Logs in cron.log found, got %s", onFile, mustMarshal(t, answer))
+	}
+	// cron.log's week of about 1,512,000,000 bytes is past 1 GiB.
+	if e := estimateOf(t, env, onFile, lastWeek.from, lastWeek.to); e != searchOnFile || !e.TextMatch || e.OverBudget || !e.Heavy {
+		t.Errorf("%s: expected a search's estimate on cron.log, within the budget and heavy, %+v, got %+v", onFile, searchOnFile, e)
+	}
+}
+
+// tableHolds is a found for assertRefusedAsASearchIs: whether a table's rows
+// hold row, as JSON.
+func tableHolds(row string) func(answer map[string]json.RawMessage) bool {
+	return func(answer map[string]json.RawMessage) bool {
+		return strings.Contains(string(answer["table"]), row)
+	}
+}
+
+// A column that holds message as it is, renamed or not, is message through
+// the stages that carry it: a function of it, or contains on it, reads the
+// text of every Log, as a search does.
+func TestMessageCarriedThroughAStageIsRefusedAsASearchIs(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	long := "A Timeout in cron: " + strings.Repeat("retrying ", 120)
+	cron := map[string]any{"service": "worker", "file": "cron.log"}
+	postAndProcessTo(t, env, 123, "test_public_key",
+		logJSON(t, long, testNow.Add(-time.Hour), cron),
+		logJSON(t, "A Timeout in cron", testNow.Add(-2*time.Hour), cron))
+
+	assertRefusedAsASearchIs(t, env, `project time, message | where strlen(message) > 1000`, func(answer map[string]json.RawMessage) bool {
+		var table struct {
+			Rows [][]any `json:"rows"`
+		}
+		return json.Unmarshal(answer["table"], &table) == nil && len(table.Rows) == 1 && table.Rows[0][1] == long
+	})
+	assertRefusedAsASearchIs(t, env, `project message | extend s = substring(message, 0, 160)`,
+		tableHolds(`["A Timeout in cron","A Timeout in cron"]`))
+	assertRefusedAsASearchIs(t, env, `extend m = message | where m contains "timeout"`, tableHolds(`"A Timeout in cron"]`))
+
+	for _, query := range []string{
+		`summarize count() by message | where message contains "timeout"`,
+		`summarize count() by m = message | where strlen(m) > 1000`,
+		`distinct message | where message startswith "a"`,
+		`extend m = message | project m | extend n = m | where n =~ "a timeout in cron"`,
+	} {
+		if e := estimateOf(t, env, query, lastWeek.from, lastWeek.to); !e.TextMatch || !e.OverBudget {
+			t.Errorf("%s: expected a text match over the budget, got %+v", query, e)
+		}
+	}
+
+	for _, query := range []string{
+		// message carried on, with no function or text match on it.
+		`project time, message | take 10`,
+		`extend m = message | project m`,
+		// A column named message that holds another Field.
+		`project time, message = service | where message contains "worker"`,
+	} {
+		if e := estimateOf(t, env, query, lastWeek.from, lastWeek.to); e.TextMatch || e.OverBudget || e.Heavy {
+			t.Errorf("%s: expected no text match, got %+v", query, e)
+		}
+		ran(t, query, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
+	}
+}
+
+func TestAFunctionOfMessageMatchesTextInAnyStageAndOtherQueriesRunAsBefore(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+	seedBusyProject(t, env, 123, lastWeek.from.Truncate(24*time.Hour), testNow, tagalysSources)
+	postAndProcessTo(t, env, 123, "test_public_key",
+		logJSON(t, "a timeout in cron", testNow.Add(-time.Hour), map[string]any{"service": "worker", "file": "cron.log"}))
+
+	for _, query := range []string{
+		`where toint(strlen(message)) > 1000`,
+		`where not(strlen(message) > 1000) and level == "error"`,
+		`extend n = strlen(message)`,
+		`project service, n = strlen(message)`,
+		`summarize avg(strlen(message)) by service`,
+		`summarize countif(tolower(message) == "ok")`,
+		`sort by strlen(message) desc`,
+		`top 5 by strlen(message)`,
+		`distinct toupper(message)`,
+		`where level == "error" | extend m = tostring(message) | project m`,
+	} {
+		if e := estimateOf(t, env, query, lastWeek.from, lastWeek.to); !e.TextMatch || !e.OverBudget {
+			t.Errorf("%s: expected a text match over the budget, got %+v", query, e)
+		}
+	}
+
+	for _, query := range []string{
+		// message alone, and plain Log lists.
+		`project message`,
+		`project time, service, message`,
+		``,
+		`where level == "error"`,
+		// Functions of other Fields.
+		`summarize count() by tolower(service)`,
+		`where strlen(service) > 3 | project service, message`,
+	} {
+		if e := estimateOf(t, env, query, lastWeek.from, lastWeek.to); e.TextMatch || e.OverBudget || e.Heavy {
+			t.Errorf("%s: expected no text match, got %+v", query, e)
+		}
+		ran(t, query, checkedRun(t, env, query, lastWeek.from, lastWeek.to, nil))
+	}
+
+	// A Chart or a Monitor, which doesn't ask to be checked, runs and logs
+	// its estimate.
+	logs := captureLogs(t)
+	ran(t, "a Chart's Query", answerOf(t, env, "/api/123/logs/query", map[string]any{
+		"query": `summarize count() by tolower(message)`, "from": lastWeek.from, "to": lastWeek.to}, 200))
+	if line := logs.String(); !strings.Contains(line, "text_match=true") || !strings.Contains(line, "over_budget=true") ||
+		!strings.Contains(line, "refused=false") {
+		t.Errorf("Expected the Chart's estimate logged as a text match over the budget, not refused, got %q", line)
 	}
 }
 
