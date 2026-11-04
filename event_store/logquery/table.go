@@ -245,14 +245,9 @@ func orderBy(keys []sortKey, f fields) string {
 			terms = append(terms, writeValue(k.x, f)+direction+nulls)
 			continue
 		}
+		part := partsOf(k.x, f)
 		for _, t := range []storage.AttributeType{storage.NumberAttribute, storage.StringAttribute, storage.BoolAttribute, storage.JSONAttribute} {
-			var part string
-			if ref, ok := k.x.(fieldRef); ok {
-				part = f.Attribute(t, ref.name)
-			} else {
-				part = dynamicPart(writeValue(k.x, f), t)
-			}
-			terms = append(terms, part+direction+nulls)
+			terms = append(terms, part(t)+direction+nulls)
 		}
 	}
 	return strings.Join(terms, ", ")
