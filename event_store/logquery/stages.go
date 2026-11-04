@@ -242,6 +242,8 @@ func hasAggregate(x expr, fn string) bool {
 		return hasAggregate(x.x, fn)
 	case call:
 		return slices.ContainsFunc(x.args, func(arg expr) bool { return hasAggregate(arg, fn) })
+	case parsedJSON:
+		return hasAggregate(x.x, fn)
 	}
 	return false
 }

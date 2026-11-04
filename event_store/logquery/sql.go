@@ -139,6 +139,8 @@ func readsMessage(x expr) bool {
 				return true
 			}
 		}
+	case parsedJSON:
+		return readsMessage(x.x)
 	case member:
 		return readsMessage(x.x)
 	case jsonValueText:
@@ -285,7 +287,7 @@ func writeValue(x expr, f fields) string {
 	case partOf:
 		t, _ := x.t.attributeType()
 		return partsOf(x.x, f)(t)
-	case member:
+	case parsedJSON, member:
 		return dynamicOf(partsOf(x, f))
 	case jsonValueText:
 		part := partsOf(x.x, f)
@@ -409,8 +411,6 @@ func writeCall(c call, f fields) string {
 		return writeSubstring(c, f)
 	case "round":
 		return writeRound(c, f)
-	case "parse_json":
-		return dynamicOf(partsOf(c, f))
 	case "array_length":
 		j := jsonText(c.args[0], f)
 		return "if(JSONType(" + j + ") = 'Array', toFloat64(JSONLength(" + j + ")), NULL)"
@@ -445,13 +445,11 @@ func partsOf(x expr, f fields) func(storage.AttributeType) string {
 	switch x := x.(type) {
 	case fieldRef:
 		return func(t storage.AttributeType) string { return f.Attribute(t, x.name) }
+	case parsedJSON:
+		return parsedParts(writeValue(x.x, f))
 	case member:
 		v := writeMember(x, f)
 		return jsonParts(v, v)
-	case call:
-		if x.fn == "parse_json" {
-			return parsedParts(writeValue(x.args[0], f))
-		}
 	}
 	v := writeValue(x, f)
 	return func(t storage.AttributeType) string { return dynamicPart(v, t) }
@@ -495,18 +493,16 @@ func parsedParts(s string) func(storage.AttributeType) string {
 // or object's JSON text. Anything else holds no member or element.
 func jsonText(x expr, f fields) string {
 	switch x := x.(type) {
-	case call:
-		if x.fn == "parse_json" {
-			return writeValue(x.args[0], f)
-		}
+	case parsedJSON:
+		return writeValue(x.x, f)
 	case member:
 		return writeMember(x, f)
 	}
 	return partsOf(x, f)(storage.JSONAttribute)
 }
 
-// writeMember writes the JSON text of the value at m's path, or ” where
-// there is none. Each name and index on the path is one argument of
+// writeMember writes the JSON text of the value at m's path, or the empty
+// string where there is none. Each name and index on the path is one argument of
 // ClickHouse's JSON functions, never part of a path's text. An index reaches
 // only into an array, as ClickHouse's would take an object's nth member too.
 func writeMember(m member, f fields) string {
