@@ -50,15 +50,16 @@ message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 #   prefix: solidtrace/        # before every key; the default
 #   region: us-east-1          # needed for AWS S3; gcs defaults to auto
 #   endpoint: http://127.0.0.1:9000   # MinIO, R2 and others; set for you for gcs
-#   local_cache_hours: 24      # hours Logs stay on ClickHouse's local disk before they move to the bucket; 0 allowed
-# MinIO on a development machine, with every Log moved to it at once:
+# How long Logs stay on local disk before they move to the bucket is set on
+# Console's Settings → Instance (Hours on local disk), with no restart.
+# MinIO on a development machine; set Hours on local disk to 0 to move every
+# Log to it at once:
 # object_store:
 #   kind: s3
 #   bucket: solidtrace-dev
 #   prefix: dev/
 #   region: us-east-1
 #   endpoint: http://127.0.0.1:9000
-#   local_cache_hours: 0
 
 # Requests waiting to store their Event or Logs before ingest answers 503.
 # ingest_max_waiting: 10000

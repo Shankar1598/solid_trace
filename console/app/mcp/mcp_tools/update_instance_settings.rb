@@ -36,6 +36,16 @@ module McpTools
                    "in MiB of kept bytes over its range and the files its filters keep, before the Logs explorer and " \
                    "query_logs refuse it with narrower ways to run it. Dashboard Charts and Monitors are never " \
                    "refused. 0 refuses none. Default 4096. It applies from the next Query." }
+    argument :logs_read_threads, { type: "integer",
+      description: "The threads ClickHouse may use for each Log read (Queries, tables, histograms, Fields, a Log " \
+                   "by id, Match monitor runs, traces and Transactions; not SQL queries), 0 to 64. More threads read " \
+                   "the bucket faster but use more CPU, which ingest shares. 0, the default, is ClickHouse's own " \
+                   "default of one per CPU core. It applies from the next read." }
+    argument :local_cache_hours, { type: "integer",
+      description: "Hours that Logs and Spans stay on local disk before their parts move to the bucket, 0 to 720; " \
+                   "0 moves each part once stored. Default 24. It does nothing without a bucket (restart_to_change's " \
+                   "EventStore group names it), and applies within a minute. Before changing it, tell the user: " \
+                   "#{InstanceSetting::LOCAL_CACHE_HOURS_WARNING}" }
 
     def run
       require_instance_admin!("change the instance settings")

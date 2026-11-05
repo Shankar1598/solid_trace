@@ -54,7 +54,8 @@ const (
 // table is, keeps the run and changes the kind.
 //
 // It sets the context's whole ClickHouse settings, which no tagged read sets
-// otherwise: the log_comment, and the read's priority. SQL queries aren't
+// otherwise: the log_comment, the read's priority, and its max_threads when
+// the context has Log read threads (WithReadThreads). SQL queries aren't
 // tagged: their Project's SQL user names the Project in query_log, and its
 // profile allows no log_comment.
 func TagRead(ctx context.Context, projectID uint32, kind string) context.Context {
@@ -75,6 +76,16 @@ func ForceRead(ctx context.Context) context.Context {
 	return withTag(ctx, tag)
 }
 
+// WithReadThreads returns a context whose tagged reads, as tagged from it
+// and again, run with ClickHouse's max_threads at threads(), when that's
+// more than 0; at 0 ClickHouse's own default applies, one thread per CPU
+// core. threads is called each time a read is tagged, so the caller memoizes
+// it: the query app reads the instance's Log read threads at most once a
+// request, and only for a request that tags a read.
+func WithReadThreads(ctx context.Context, threads func() int) context.Context {
+	return context.WithValue(ctx, readThreadsKey{}, threads)
+}
+
 // withTag tags ctx's statements with tag, in a run of their own if it has
 // none yet.
 func withTag(ctx context.Context, tag readTag) context.Context {
@@ -88,8 +99,16 @@ func withTag(ctx context.Context, tag readTag) context.Context {
 	if tag.Forced {
 		priority = forcedReadPriority
 	}
+	settings := clickhouse.Settings{"log_comment": string(comment), "priority": priority}
+	if threads, ok := ctx.Value(readThreadsKey{}).(func() int); ok {
+		if n := threads(); n > 0 {
+			settings["max_threads"] = n
+		}
+	}
 	ctx = context.WithValue(ctx, readTagKey{}, tag)
-	return clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"log_comment": string(comment), "priority": priority}))
+	return clickhouse.Context(ctx, clickhouse.WithSettings(settings))
 }
 
 type readTagKey struct{}
+
+type readThreadsKey struct{}

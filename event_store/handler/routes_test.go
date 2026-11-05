@@ -101,6 +101,10 @@ func (sqlOn) TextMatchBudgetBytes() (int64, error) {
 	return storage.DefaultTextMatchBudgetBytes, nil
 }
 
+func (sqlOn) LogReadThreads() (int, error) {
+	return 0, nil
+}
+
 func (sqlOn) ProjectSlug(uint32) (string, error) {
 	return "", nil
 }
@@ -206,8 +210,8 @@ var servedConfig = &config.Config{
 	Warnings:           []string{"duckdb_path is used only to find a DuckDB release's logs.duckdb"},
 	ObjectStore: &config.ObjectStore{
 		Kind: "gcs", Bucket: "acme-logs", Prefix: "solidtrace/", Region: "auto",
-		Endpoint: "https://storage.googleapis.com", LocalCacheHours: 24,
-		KeyID: "GOOG1EKEYIDVALUE", Secret: "s3cr3t-bucket-value",
+		Endpoint: "https://storage.googleapis.com",
+		KeyID:    "GOOG1EKEYIDVALUE", Secret: "s3cr3t-bucket-value",
 	},
 	ClickHouse: config.ClickHouse{
 		Address: "127.0.0.1:4200", Database: "solidtrace", User: "solidtrace",
@@ -254,7 +258,7 @@ func TestConfigAnswersTheLoadedConfigWithoutSecrets(t *testing.T) {
 		},
 		"object_store": map[string]any{
 			"kind": "gcs", "bucket": "acme-logs", "prefix": "solidtrace/", "region": "auto",
-			"endpoint": "https://storage.googleapis.com", "local_cache_hours": float64(24),
+			"endpoint":   "https://storage.googleapis.com",
 			"key_id_set": true, "secret_set": true,
 		},
 		"cpu_profile_dir": "/storage/profiles",

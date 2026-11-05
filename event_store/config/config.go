@@ -80,15 +80,6 @@ func DefaultLogsHeavyReadSlots(cpus int) int {
 	return min(2, max(1, cpus/4))
 }
 
-// LocalHours is how long Logs stay on local disk before they move to the
-// bucket: LocalCacheHours, or 0 with no bucket.
-func (o *ObjectStore) LocalHours() int {
-	if o == nil {
-		return 0
-	}
-	return o.LocalCacheHours
-}
-
 // ObjectStore kinds.
 const (
 	ObjectStoreS3  = "s3"
@@ -111,10 +102,6 @@ type ObjectStore struct {
 	// empty for AWS's own. It is GCSEndpoint when Kind is gcs and none is
 	// given.
 	Endpoint string
-	// LocalCacheHours is how long Logs stay on local disk: a part of
-	// ClickHouse's logs table moves to the bucket once its newest Log is
-	// this many hours old, and 0 moves it at once.
-	LocalCacheHours int
 	// KeyID and Secret come from SOLIDTRACE_OBJECT_STORE_KEY_ID and
 	// SOLIDTRACE_OBJECT_STORE_SECRET, never from the file.
 	KeyID  string
@@ -152,12 +139,15 @@ type clickHouseFile struct {
 
 // objectStoreFile is the object_store block as written in the file.
 type objectStoreFile struct {
-	Kind            string  `yaml:"kind"`
-	Bucket          string  `yaml:"bucket"`
-	Prefix          *string `yaml:"prefix"`
-	Region          string  `yaml:"region"`
-	Endpoint        string  `yaml:"endpoint"`
-	LocalCacheHours *int    `yaml:"local_cache_hours"`
+	Kind     string  `yaml:"kind"`
+	Bucket   string  `yaml:"bucket"`
+	Prefix   *string `yaml:"prefix"`
+	Region   string  `yaml:"region"`
+	Endpoint string  `yaml:"endpoint"`
+	// v0.18.0's hours on local disk, which an Instance admin sets on
+	// Console's Settings → Instance now. It loads with a warning, and does
+	// nothing.
+	LocalCacheHours yaml.Node `yaml:"local_cache_hours"`
 }
 
 type fileConfig struct {
@@ -321,6 +311,10 @@ func applyFileConfig(cfg *Config, path string) error {
 			return fmt.Errorf("object_store: %w", err)
 		}
 		cfg.ObjectStore = store
+		if hasKey(&config.ObjectStore, "local_cache_hours") {
+			cfg.Warnings = append(cfg.Warnings, "object_store.local_cache_hours is ignored: how long Logs stay on local disk "+
+				"is set on Console's Settings → Instance now, and applies with no restart. Remove it from the config")
+		}
 	}
 	if config.ClickHouse.Kind != 0 {
 		if err := clickHouse(&cfg.ClickHouse, &config.ClickHouse); err != nil {
@@ -440,14 +434,13 @@ func objectStore(node *yaml.Node) (*ObjectStore, error) {
 	}
 
 	store := &ObjectStore{
-		Kind:            file.Kind,
-		Bucket:          file.Bucket,
-		Prefix:          "solidtrace/",
-		Region:          file.Region,
-		Endpoint:        strings.TrimSuffix(file.Endpoint, "/"),
-		LocalCacheHours: 24,
-		KeyID:           os.Getenv("SOLIDTRACE_OBJECT_STORE_KEY_ID"),
-		Secret:          os.Getenv("SOLIDTRACE_OBJECT_STORE_SECRET"),
+		Kind:     file.Kind,
+		Bucket:   file.Bucket,
+		Prefix:   "solidtrace/",
+		Region:   file.Region,
+		Endpoint: strings.TrimSuffix(file.Endpoint, "/"),
+		KeyID:    os.Getenv("SOLIDTRACE_OBJECT_STORE_KEY_ID"),
+		Secret:   os.Getenv("SOLIDTRACE_OBJECT_STORE_SECRET"),
 	}
 	switch store.Kind {
 	case ObjectStoreS3:
@@ -486,12 +479,6 @@ func objectStore(node *yaml.Node) (*ObjectStore, error) {
 	if store.Region == "" {
 		return nil, fmt.Errorf("region is required for AWS S3, such as us-east-1")
 	}
-	if file.LocalCacheHours != nil {
-		if *file.LocalCacheHours < 0 {
-			return nil, fmt.Errorf("local_cache_hours can't be negative, got %d", *file.LocalCacheHours)
-		}
-		store.LocalCacheHours = *file.LocalCacheHours
-	}
 	if store.KeyID == "" || store.Secret == "" {
 		return nil, fmt.Errorf("set the bucket's key in SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET")
 	}
@@ -516,4 +503,14 @@ func onlyKnownKeys(node *yaml.Node, fields any) error {
 		}
 	}
 	return nil
+}
+
+// hasKey says whether the mapping node has key.
+func hasKey(node *yaml.Node, key string) bool {
+	for i := 0; i < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }

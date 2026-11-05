@@ -21,7 +21,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     "clickhouse" => { "address" => "clickhouse:9000", "database" => "solidtrace", "user" => "solidtrace",
       "password_set" => true, "config_dir" => "/storage/clickhouse/conf.d" },
     "object_store" => { "kind" => "gcs", "bucket" => "acme-logs", "prefix" => "solidtrace/", "region" => "auto",
-      "endpoint" => "https://storage.googleapis.com", "local_cache_hours" => 24, "key_id_set" => true, "secret_set" => true },
+      "endpoint" => "https://storage.googleapis.com", "key_id_set" => true, "secret_set" => true },
     "cpu_profile_dir" => "", "debug" => false,
     "defaults" => [ "ingest_port", "query_port", "logs_disk_limit_gb", "logs_bin_cache_mb", "logs_heavy_read_slots",
       "ingest_max_waiting", "clickhouse.database", "clickhouse.user", "cpu_profile_dir", "debug" ],
@@ -64,7 +64,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
       "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
       "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
-      "logs_text_match_budget_mb" => 4096 }, settings["editable"])
+      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24 }, settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")
 
@@ -118,7 +118,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
       "logs_parquet_path", "logs_disk_limit_gb", "logs_bin_cache_mb", "logs_heavy_read_slots", "ingest_max_waiting",
       "object_store.kind",
       "object_store.bucket", "object_store.prefix", "object_store.region", "object_store.endpoint",
-      "object_store.local_cache_hours", "SOLIDTRACE_OBJECT_STORE_KEY_ID", "SOLIDTRACE_OBJECT_STORE_SECRET",
+      "SOLIDTRACE_OBJECT_STORE_KEY_ID", "SOLIDTRACE_OBJECT_STORE_SECRET",
       "cpu_profile_dir", "debug" ], rows.pluck("source")
     rows = rows.index_by { |row| row["source"] }
     assert_equal({ "label" => "ClickHouse address", "source" => "clickhouse.address", "value" => "clickhouse:9000",
@@ -131,7 +131,6 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
       rows["logs_heavy_read_slots"].values_at("label", "value", "default")
     assert_equal [ 10_000, true ], rows["ingest_max_waiting"].values_at("value", "default")
     assert_equal [ "acme-logs", false ], rows["object_store.bucket"].values_at("value", "default")
-    assert_equal 24, rows["object_store.local_cache_hours"]["value"]
     assert_nil rows["cpu_profile_dir"]["value"]
     assert_equal [ false, true ], rows["debug"].values_at("value", "default")
     %w[SOLIDTRACE_CLICKHOUSE_PASSWORD SOLIDTRACE_OBJECT_STORE_KEY_ID SOLIDTRACE_OBJECT_STORE_SECRET].each do |source|
@@ -234,6 +233,38 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "must be greater than or equal to 0" ],
       response.parsed_body.dig("props", "errors", "logs_text_match_budget_mb")
     assert_equal 10_240, InstanceSetting.current.logs_text_match_budget_mb
+  end
+
+  test "saving changes the Log read threads, and more than 64 comes back as a form error and saves nothing" do
+    sign_in_as(@instance_admin)
+
+    save(logs_read_threads: "8")
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal 8, response.parsed_body.dig("props", "settings", "editable", "logs_read_threads")
+
+    save(logs_read_threads: "65")
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ "must be in 0..64" ], response.parsed_body.dig("props", "errors", "logs_read_threads")
+    assert_equal 8, InstanceSetting.current.logs_read_threads
+  end
+
+  test "saving changes the hours on local disk, and more than 720 comes back as a form error and saves nothing" do
+    sign_in_as(@instance_admin)
+
+    save(local_cache_hours: "6")
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal 6, response.parsed_body.dig("props", "settings", "editable", "local_cache_hours")
+
+    save(local_cache_hours: "721")
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ "must be in 0..720" ], response.parsed_body.dig("props", "errors", "local_cache_hours")
+    assert_equal 6, InstanceSetting.current.local_cache_hours
   end
 
   test "a trace Retention below one day comes back as a form error and saves nothing" do

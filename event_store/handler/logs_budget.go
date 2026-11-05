@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -184,6 +185,23 @@ func (h *LogsHandler) textMatchBudget() int64 {
 		return storage.DefaultTextMatchBudgetBytes
 	}
 	return budget
+}
+
+// readThreads gives the request's tagged Log reads the threads an Instance
+// admin set on Settings → Instance (storage.WithReadThreads), read when the
+// request first tags a read, so that a change applies from the next request
+// and a request that tags none doesn't read it. A value that can't be read,
+// or is out of range, is 0, ClickHouse's own default, and is logged.
+func (h *LogsHandler) readThreads(c *fiber.Ctx) error {
+	c.SetUserContext(storage.WithReadThreads(c.UserContext(), sync.OnceValue(func() int {
+		threads, err := h.settings.LogReadThreads()
+		if err != nil {
+			logger.L.Error("Reading the Log read threads failed, so ClickHouse's default applies", "error", err)
+			return 0
+		}
+		return threads
+	})))
+	return c.Next()
 }
 
 // logEstimate logs a run's estimate, and whether it was refused.

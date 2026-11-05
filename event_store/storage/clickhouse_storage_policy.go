@@ -7,7 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/solidtrace/event_store/config"
@@ -114,37 +118,108 @@ func bucketTTL(timeColumn string, localCacheHours int) string {
 	return fmt.Sprintf("toDateTime(%s) + toIntervalHour(%d) TO VOLUME '%s'", timeColumn, localCacheHours, ClickHouseBucketVolume)
 }
 
-// useBucket sets the TTL of each family's main table for bucket (dayFamilies,
-// by each one's time column): with one, parts move to it after
-// its local_cache_hours; with none, they stay on local disk. It alters a
-// table only when its TTL differs, since ClickHouse then works out every
-// part's TTL again.
-//
-// Parts move there earlier too: ClickHouse moves the largest once its local
-// disk is 90% full (the policy's move_factor, 0.1 by default), and the disk
-// limit moves the oldest days (EnforceDiskLimit).
+// localCache is how long the day families' main tables keep their parts on
+// local disk before they move to the bucket: Console's local_cache_hours,
+// which UseLocalCacheHours sets as it changes.
+type localCache struct {
+	// mu holds UseLocalCacheHours to one at a time.
+	mu sync.Mutex
+	// set is the hours this process last set every main table's TTL to, or
+	// -1 before it has.
+	set int
+	// hours is what LocalCacheHours answers.
+	hours atomic.Int64
+}
+
+// useBucket, at start, sets the TTL of each family's main table
+// (dayFamilies) with no bucket: none, so parts stay on local disk. With a
+// bucket it leaves each TTL as it is, for UseLocalCacheHours to set from
+// Console's setting, and takes the hours the logs table's TTL has for
+// LocalCacheHours until then.
 func (ch *ClickHouse) useBucket(ctx context.Context, bucket *config.ObjectStore) error {
-	for _, f := range dayFamilies {
-		if err := ch.useBucketFor(ctx, f.Tables[0], f.TimeColumn, bucket); err != nil {
-			return err
+	ch.localCache.set = -1
+	ch.localCache.hours.Store(DefaultLocalCacheHours)
+	if bucket == nil {
+		for _, f := range dayFamilies {
+			if err := ch.setTTL(ctx, f.Tables[0], ""); err != nil {
+				return err
+			}
 		}
+		return nil
+	}
+	have, err := ch.tableTTL(ctx, LogDays.Tables[0])
+	if err != nil {
+		return err
+	}
+	if m := ttlHours.FindStringSubmatch(have); m != nil {
+		hours, _ := strconv.Atoi(m[1])
+		ch.localCache.hours.Store(int64(hours))
 	}
 	return nil
 }
 
-// useBucketFor sets one table's TTL for bucket, as useBucket.
-func (ch *ClickHouse) useBucketFor(ctx context.Context, table, timeColumn string, bucket *config.ObjectStore) error {
+// ttlHours finds the hours in a TTL bucketTTL wrote.
+var ttlHours = regexp.MustCompile(`toIntervalHour\((\d+)\)`)
+
+// LocalCacheHours is how long Logs and Spans stay on local disk before their
+// parts move to the bucket, as last set (UseLocalCacheHours), or 0 with no
+// bucket. Before this process has set it, it's the hours the logs table's
+// TTL has, else the default.
+func (ch *ClickHouse) LocalCacheHours() int {
+	if !ch.bucket {
+		return 0
+	}
+	return int(ch.localCache.hours.Load())
+}
+
+// UseLocalCacheHours sets each family's main table's TTL so that a part
+// moves to the bucket once its newest row is hours old, and 0 moves it once
+// stored. It touches ClickHouse only when hours differ from those it last
+// set, and alters a table only when its TTL differs, since ClickHouse then
+// works out every part's move time again in the background, reading each
+// part's time column, from the bucket too. With no bucket it does nothing.
+//
+// Parts move there earlier too: ClickHouse moves the largest once its local
+// disk is 90% full (the policy's move_factor, 0.1 by default), and the disk
+// limit moves the oldest days (EnforceDiskLimit).
+func (ch *ClickHouse) UseLocalCacheHours(ctx context.Context, hours int) error {
+	if !ch.bucket {
+		return nil
+	}
+	ch.localCache.mu.Lock()
+	defer ch.localCache.mu.Unlock()
+	if ch.localCache.set == hours {
+		return nil
+	}
+	for _, f := range dayFamilies {
+		if err := ch.setTTL(ctx, f.Tables[0], bucketTTL(f.TimeColumn, hours)); err != nil {
+			return err
+		}
+	}
+	ch.localCache.set = hours
+	ch.localCache.hours.Store(int64(hours))
+	return nil
+}
+
+// tableTTL is a table's TTL as system.tables writes it, or "" for none.
+func (ch *ClickHouse) tableTTL(ctx context.Context, table string) (string, error) {
 	var engine string
 	if err := ch.conn.QueryRow(ctx,
 		"SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = ?", table).Scan(&engine); err != nil {
-		return fmt.Errorf("reading the %s table's TTL: %w", table, err)
+		return "", fmt.Errorf("reading the %s table's TTL: %w", table, err)
 	}
-	var have, want string
+	var have string
 	if _, rest, ok := strings.Cut(engine, " TTL "); ok {
 		have, _, _ = strings.Cut(rest, " SETTINGS ")
 	}
-	if bucket != nil {
-		want = bucketTTL(timeColumn, bucket.LocalCacheHours)
+	return have, nil
+}
+
+// setTTL sets a table's TTL to want, or removes it for "", when it differs.
+func (ch *ClickHouse) setTTL(ctx context.Context, table, want string) error {
+	have, err := ch.tableTTL(ctx, table)
+	if err != nil {
+		return err
 	}
 	if have == want {
 		return nil

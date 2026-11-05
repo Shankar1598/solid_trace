@@ -26,7 +26,7 @@ type DayFamily struct {
 	Name string
 	// Tables are its tables, its main one first. The disk limit counts the
 	// main table's local disk and moves its days to the bucket, where its
-	// parts also move once local_cache_hours old (useBucket). The others
+	// parts also move once local_cache_hours old (UseLocalCacheHours). The others
 	// hold what is counted from it, which takes far less and stays on local
 	// disk.
 	Tables []string
