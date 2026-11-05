@@ -39,7 +39,7 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
       "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
       "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
-      "logs_text_match_budget_mb" => 4096 }, answer.json["editable"])
+      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24 }, answer.json["editable"])
     assert_equal({ "open" => false, "command" => "bin/rails instance_settings:set SIGN_UP_OPEN=true|false" },
       answer.json["sign_up"])
     console = answer.json["restart_to_change"].find { |group| group["name"] == "Console" }
@@ -92,6 +92,41 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_equal 0, InstanceSetting.current.logs_text_match_budget_mb
     schema = McpTools::UpdateInstanceSettings.input_schema_value.to_h
     assert_equal "integer", schema.dig(:properties, :logs_text_match_budget_mb, :type)
+  end
+
+  test "update_instance_settings changes the Log read threads, back to 0 too, and refuses more than 64" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, logs_read_threads: 16)
+
+    assert_not answer.error?, answer.text
+    assert_equal 16, InstanceSetting.current.logs_read_threads
+    assert_equal 16, answer.json.dig("editable", "logs_read_threads")
+
+    assert_not call_tool(:update_instance_settings, user: @instance_admin, logs_read_threads: 0).error?
+    assert_equal 0, InstanceSetting.current.logs_read_threads
+
+    refused = call_tool(:update_instance_settings, user: @instance_admin, logs_read_threads: 65)
+    assert_equal "Not saved: Log read threads must be in 0..64.", refused.text
+    assert_equal 0, InstanceSetting.current.logs_read_threads
+    schema = McpTools::UpdateInstanceSettings.input_schema_value.to_h
+    assert_equal "integer", schema.dig(:properties, :logs_read_threads, :type)
+  end
+
+  test "update_instance_settings changes the hours on local disk, to 0 too, refuses more than 720, and warns first" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, local_cache_hours: 6)
+
+    assert_not answer.error?, answer.text
+    assert_equal 6, InstanceSetting.current.local_cache_hours
+    assert_equal 6, answer.json.dig("editable", "local_cache_hours")
+
+    assert_not call_tool(:update_instance_settings, user: @instance_admin, local_cache_hours: 0).error?
+    assert_equal 0, InstanceSetting.current.local_cache_hours
+
+    refused = call_tool(:update_instance_settings, user: @instance_admin, local_cache_hours: 721)
+    assert_equal "Not saved: Hours on local disk must be in 0..720.", refused.text
+    assert_equal 0, InstanceSetting.current.local_cache_hours
+    property = McpTools::UpdateInstanceSettings.input_schema_value.to_h.dig(:properties, :local_cache_hours)
+    assert_equal "integer", property[:type]
+    assert_includes property[:description], InstanceSetting::LOCAL_CACHE_HOURS_WARNING
   end
 
   test "update_instance_settings turns MCP reads' logging off, even while log-all-reads is on" do

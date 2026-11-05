@@ -34,6 +34,8 @@ class InstanceSettingsAnswer
         send_console_issues: @settings.send_console_issues,
         trace_console: @settings.trace_console,
         logs_text_match_budget_mb: @settings.logs_text_match_budget_mb,
+        logs_read_threads: @settings.logs_read_threads,
+        local_cache_hours: @settings.local_cache_hours,
       },
       sign_up: {
         open: @settings.sign_up_open,

@@ -2,10 +2,12 @@ package main_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,19 +22,47 @@ import (
 // ClickHouse moves parts by its own clock, so their Logs are of now.
 
 // setupBucketTestEnv is setupTestEnv with a bucket, Logs staying on local
-// disk for localCacheHours, and the clock at now.
+// disk for localCacheHours, as set on Settings → Instance before the start,
+// and the clock at now.
 func setupBucketTestEnv(t *testing.T, localCacheHours int) (*TestEnv, time.Time) {
 	t.Helper()
+	return setupBucketTestEnvWith(t, localCacheHours, nil)
+}
+
+// setupBucketTestEnvWith is setupBucketTestEnv, with configure, if set,
+// changing the environment before its stores open.
+func setupBucketTestEnvWith(t *testing.T, localCacheHours int, configure func(*TestEnv)) (*TestEnv, time.Time) {
+	t.Helper()
 	bucket := clickhousetest.Bucket(t)
-	bucket.LocalCacheHours = localCacheHours
 	env := newTestEnv(t, func(env *TestEnv) {
 		env.ClickHouseConfig.StoragePolicy = clickhousetest.BucketPolicy
 		env.BucketConfig = bucket
+		setLocalCacheHours(t, env, localCacheHours)
+		if configure != nil {
+			configure(env)
+		}
 	})
 	now := time.Now().UTC().Truncate(time.Second)
 	env.Clock.Set(now)
 	seedProject(t, env.SQLitePath, 123, 0)
 	return env, now
+}
+
+// setLocalCacheHours sets how long Logs stay on local disk, as an Instance
+// admin does on Settings → Instance.
+func setLocalCacheHours(t *testing.T, env *TestEnv, hours int) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Failed to open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		INSERT INTO instance_settings (id, local_cache_hours, created_at, updated_at) VALUES (1, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET local_cache_hours = excluded.local_cache_hours`,
+		hours, time.Now(), time.Now()); err != nil {
+		t.Fatalf("Failed to set the hours on local disk: %v", err)
+	}
 }
 
 // dayKey is a Project's day as localDiskUse names it.
@@ -162,5 +192,70 @@ func TestWithABucketTheDiskLimitDeletesNothingWhenAMoveFails(t *testing.T) {
 	}
 	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"today", "yesterday"}) {
 		t.Errorf("Expected no Logs deleted, got %v", got)
+	}
+}
+
+// dayTablesTTL is the TTL of each family's main table, as system.tables
+// writes it, by table.
+func dayTablesTTL(t *testing.T, env *TestEnv) map[string]string {
+	t.Helper()
+	ttls := map[string]string{}
+	for _, f := range []storage.DayFamily{storage.LogDays, storage.SpanDays} {
+		var engine string
+		if err := env.ClickHouse.Conn().QueryRow(context.Background(),
+			"SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = ?", f.Tables[0]).Scan(&engine); err != nil {
+			t.Fatalf("Read the %s table's TTL: %v", f.Tables[0], err)
+		}
+		_, ttl, _ := strings.Cut(engine, " TTL ")
+		ttl, _, _ = strings.Cut(ttl, " SETTINGS ")
+		ttls[f.Tables[0]] = ttl
+	}
+	return ttls
+}
+
+// Every day table moves its parts by the hours on local disk Console has,
+// set at start, and again within the poll when an Instance admin changes
+// them, with no restart.
+func TestAChangeOfTheHoursOnLocalDiskMovesOlderPartsToTheBucketWithoutARestart(t *testing.T) {
+	env, now := setupBucketTestEnvWith(t, 24*30, func(env *TestEnv) { env.LocalCacheInterval = 100 * time.Millisecond })
+	defer env.Cleanup()
+
+	hoursIn := func(ttls map[string]string, hours int) bool {
+		for _, ttl := range ttls {
+			if !strings.Contains(ttl, fmt.Sprintf("toIntervalHour(%d) TO VOLUME 'bucket'", hours)) {
+				return false
+			}
+		}
+		return true
+	}
+	if ttls := dayTablesTTL(t, env); !hoursIn(ttls, 720) || env.ClickHouse.LocalCacheHours() != 720 {
+		t.Fatalf("Expected 720 hours on local disk from the start, got %v and %d", ttls, env.ClickHouse.LocalCacheHours())
+	}
+	recent, old := now.Add(-time.Hour), now.AddDate(0, 0, -3)
+	postAndProcess(t, env, logJSON(t, "recent", recent, nil), logJSON(t, "old", old, nil))
+	if use, _ := localDiskUse(t, env); len(use) != 2 {
+		t.Fatalf("Expected both days on local disk under 720 hours, got %v", use)
+	}
+
+	setLocalCacheHours(t, env, 24)
+	waitFor(t, 10*time.Second, "the day tables' TTL at 24 hours", func() bool { return hoursIn(dayTablesTTL(t, env), 24) })
+	if got := env.ClickHouse.LocalCacheHours(); got != 24 {
+		t.Errorf("Expected the Overview's hours on local disk at 24, got %d", got)
+	}
+	// ClickHouse moves the old day's part in the background.
+	waitFor(t, 30*time.Second, "the old day moved to the bucket", func() bool {
+		use, _ := localDiskUse(t, env)
+		return maps.Equal(use, map[string]int64{dayKey(123, recent): use[dayKey(123, recent)]})
+	})
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"recent", "old"}) {
+		t.Errorf("Expected both Logs read, the old one from the bucket, got %v", got)
+	}
+
+	// Hours out of range, which only Console's validations prevent, leave
+	// the TTL as it was.
+	setLocalCacheHours(t, env, 721)
+	time.Sleep(500 * time.Millisecond)
+	if ttls := dayTablesTTL(t, env); !hoursIn(ttls, 24) || env.ClickHouse.LocalCacheHours() != 24 {
+		t.Errorf("Expected 24 hours kept past hours out of range, got %v and %d", ttls, env.ClickHouse.LocalCacheHours())
 	}
 }

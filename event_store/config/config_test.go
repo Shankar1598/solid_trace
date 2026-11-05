@@ -230,31 +230,50 @@ func TestAGCSObjectStoreGetsGCSsEndpointAndTheDefaults(t *testing.T) {
 
 	want := config.ObjectStore{
 		Kind: "gcs", Bucket: "acme-logs", Prefix: "solidtrace/", Region: "auto",
-		Endpoint: "https://storage.googleapis.com", LocalCacheHours: 24,
-		KeyID: "GOOG1EXAMPLE", Secret: "example-secret",
+		Endpoint: "https://storage.googleapis.com",
+		KeyID:    "GOOG1EXAMPLE", Secret: "example-secret",
 	}
 	if cfg.ObjectStore == nil || *cfg.ObjectStore != want {
 		t.Errorf("object store = %+v, want %+v", cfg.ObjectStore, want)
 	}
 }
 
-func TestAnS3ObjectStoreTakesItsEndpointPrefixAndCacheHoursFromTheFile(t *testing.T) {
+func TestAnS3ObjectStoreTakesItsEndpointAndPrefixFromTheFile(t *testing.T) {
 	setObjectStoreKeys(t)
 	cfg := loadFrom(t, writeConfig(t, `object_store:
   kind: s3
   bucket: logs
   prefix: /team/solidtrace
   endpoint: http://127.0.0.1:9000/
-  local_cache_hours: 0
 `))
 
 	want := config.ObjectStore{
 		Kind: "s3", Bucket: "logs", Prefix: "team/solidtrace/", Region: "us-east-1",
-		Endpoint: "http://127.0.0.1:9000", LocalCacheHours: 0,
-		KeyID: "GOOG1EXAMPLE", Secret: "example-secret",
+		Endpoint: "http://127.0.0.1:9000",
+		KeyID:    "GOOG1EXAMPLE", Secret: "example-secret",
 	}
 	if cfg.ObjectStore == nil || *cfg.ObjectStore != want {
 		t.Errorf("object store = %+v, want %+v", cfg.ObjectStore, want)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Errorf("Expected no warnings, got %q", cfg.Warnings)
+	}
+}
+
+// v0.18.0's object_store.local_cache_hours is set on Settings → Instance
+// now: a file that still sets it loads, with a warning, whatever its value.
+func TestLocalCacheHoursInTheConfigFileAreIgnoredWithAWarning(t *testing.T) {
+	setObjectStoreKeys(t)
+	for _, value := range []string{"24", "0", "-1", "many"} {
+		cfg := loadFrom(t, writeConfig(t, "object_store:\n  kind: gcs\n  bucket: logs\n  local_cache_hours: "+value+"\nlogs_bin_cache_mb: 128\n"))
+		if len(cfg.Warnings) != 1 || !strings.HasPrefix(cfg.Warnings[0], "object_store.local_cache_hours is ignored") ||
+			!strings.Contains(cfg.Warnings[0], "Settings → Instance") {
+			t.Errorf("local_cache_hours: %s: expected a warning naming Settings → Instance, got %q", value, cfg.Warnings)
+		}
+		if cfg.ObjectStore == nil || cfg.ObjectStore.Bucket != "logs" || cfg.LogsBinCacheBytes != 128<<20 {
+			t.Errorf("local_cache_hours: %s: expected the rest of the file loaded, got %+v and a bin cache of %d bytes",
+				value, cfg.ObjectStore, cfg.LogsBinCacheBytes)
+		}
 	}
 }
 
@@ -278,7 +297,6 @@ func TestABadObjectStoreFailsToLoadSayingWhatIsWrong(t *testing.T) {
 		{"a path for a bucket", "object_store:\n  kind: gcs\n  bucket: gs://logs\n", `object_store: bucket must be a bucket's name, with no / or spaces, got "gs://logs"`, false},
 		{"an endpoint with no scheme", "object_store:\n  kind: s3\n  bucket: logs\n  endpoint: minio:9000\n", `object_store: endpoint must be a URL such as https://s3.example.com or http://127.0.0.1:9000, got "minio:9000"`, false},
 		{"AWS with no region", "object_store:\n  kind: s3\n  bucket: logs\n", "object_store: region is required for AWS S3, such as us-east-1", false},
-		{"negative cache hours", "object_store:\n  kind: gcs\n  bucket: logs\n  local_cache_hours: -1\n", "object_store: local_cache_hours can't be negative, got -1", false},
 		{"a misspelt key", "object_store:\n  kind: gcs\n  bucket: logs\n  local_cache_hour: 2\n", "field local_cache_hour not found", false},
 		{"an empty block", "object_store:\n", "object_store: the block is empty; remove it to keep everything on local disk", false},
 		{"no keys", "object_store:\n  kind: gcs\n  bucket: logs\n", "object_store: set the bucket's key in SOLIDTRACE_OBJECT_STORE_KEY_ID and SOLIDTRACE_OBJECT_STORE_SECRET", true},
@@ -303,7 +321,7 @@ func TestAnObjectStoreErrorGivesTheLineInTheFile(t *testing.T) {
 	setObjectStoreKeys(t)
 	cases := []struct{ name, block, want string }{
 		{"a misspelt key", "  kind: gcs\n  bucket: logs\n  local_cache_hour: 2\n", "line 8: field local_cache_hour not found"},
-		{"a value of the wrong type", "  kind: gcs\n  bucket: logs\n  local_cache_hours: many\n", "line 8: cannot unmarshal"},
+		{"a value of the wrong type", "  kind: gcs\n  bucket: logs\n  prefix: [a]\n", "line 8: cannot unmarshal"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

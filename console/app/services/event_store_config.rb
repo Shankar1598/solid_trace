@@ -63,7 +63,6 @@ class EventStoreConfig
       row("Bucket prefix", "object_store.prefix", store["prefix"]),
       row("Bucket region", "object_store.region", store["region"]),
       row("Bucket endpoint", "object_store.endpoint", store["endpoint"]),
-      row("Hours on local disk", "object_store.local_cache_hours", store["local_cache_hours"]),
       secret_row("Bucket key id", "SOLIDTRACE_OBJECT_STORE_KEY_ID", store["key_id_set"]),
       secret_row("Bucket secret", "SOLIDTRACE_OBJECT_STORE_SECRET", store["secret_set"])
     ]

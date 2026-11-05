@@ -23,6 +23,8 @@ type ClickHouse struct {
 	// bucket is whether the tables' storage policy has a bucket volume,
 	// which the logs table's parts move to.
 	bucket bool
+	// localCache is when the day tables' parts move there.
+	localCache localCache
 }
 
 // clickHouseMigration is one step of making EventStore's tables. Its
@@ -54,8 +56,9 @@ const clickHousePingTimeout = 3 * time.Second
 // EventStore's database if it is missing. With cfg.ConfigDir set, it first
 // writes the tables' storage policy for bucket (nil for none) and waits for
 // ClickHouse to load it. Then it runs the migrations the database hasn't had,
-// making the tables on cfg's storage policy, and with a bucket sets when the
-// day tables' parts move to it (useBucket).
+// making the tables on cfg's storage policy, and with no bucket keeps the day
+// tables' parts on local disk (useBucket). With a bucket, UseLocalCacheHours
+// sets when they move to it.
 func OpenClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHouse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

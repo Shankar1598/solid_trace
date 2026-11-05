@@ -1,7 +1,17 @@
+import { useState } from 'react'
 import { useForm, usePage } from '@inertiajs/react'
 import { Lock, TriangleAlert } from 'lucide-react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
 import { PageHeader } from '@/components/PageHeader'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -39,6 +49,8 @@ interface InstanceSettings {
     send_console_issues: boolean
     trace_console: boolean
     logs_text_match_budget_mb: number
+    logs_read_threads: number
+    local_cache_hours: number
   }
   sign_up: { open: boolean, command: string }
   restart_to_change: RestartGroup[]
@@ -62,19 +74,34 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     send_console_issues: editable.send_console_issues,
     trace_console: editable.trace_console,
     logs_text_match_budget_mb: String(editable.logs_text_match_budget_mb),
+    logs_read_threads: String(editable.logs_read_threads),
+    local_cache_hours: String(editable.local_cache_hours),
   })
   const sampleRate = settings.restart_to_change
     .find((group) => group.name === 'Console')?.settings
     ?.find((setting) => setting.source === 'SENTRY_TRACES_SAMPLE_RATE')?.value
+  const bucket = hasBucket(settings.restart_to_change)
+  const [confirmingHours, setConfirmingHours] = useState(false)
+  const oldHours = editable.local_cache_hours
+  const newHours = Number(data.local_cache_hours)
 
   transform((data) => ({ instance_settings: data }))
 
-  const save: React.FormEventHandler = (e) => {
-    e.preventDefault()
+  const send = () => {
+    setConfirmingHours(false)
     put(path, {
       preserveScroll: true,
       onError: () => toast.error("Instance settings weren't saved"),
     })
+  }
+
+  // A change of the hours on local disk, to a value that would save, is
+  // confirmed first; any other value is sent for its error.
+  const save: React.FormEventHandler = (e) => {
+    e.preventDefault()
+    const hoursChange = /^\d+$/.test(data.local_cache_hours.trim()) && newHours !== oldHours && newHours <= 720
+    if (hoursChange) setConfirmingHours(true)
+    else send()
   }
 
   return (
@@ -161,6 +188,54 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="logs_read_threads">Log read threads</Label>
+                <Input
+                  id="logs_read_threads"
+                  inputMode="numeric"
+                  className="max-w-32"
+                  value={data.logs_read_threads}
+                  onChange={(e) => setData('logs_read_threads', e.target.value)}
+                />
+                {errors.logs_read_threads && (
+                  <p className="text-sm font-medium text-destructive">{errors.logs_read_threads}</p>
+                )}
+                <p className="text-xs text-muted-foreground" data-testid="read-threads-description">
+                  The threads ClickHouse may use for each Log read: Queries, histograms, Fields, Monitors, traces and
+                  Transactions, not SQL queries. More threads read the bucket faster but use more CPU, which ingest shares.
+                  0 to 64; 0 is ClickHouse's default of one per CPU core. It applies from the next read.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="local_cache_hours">Hours on local disk</Label>
+                <Input
+                  id="local_cache_hours"
+                  inputMode="numeric"
+                  className="max-w-32"
+                  disabled={bucket === false}
+                  value={data.local_cache_hours}
+                  onChange={(e) => setData('local_cache_hours', e.target.value)}
+                />
+                {errors.local_cache_hours && (
+                  <p className="text-sm font-medium text-destructive">{errors.local_cache_hours}</p>
+                )}
+                <p className="text-xs text-muted-foreground" data-testid="local-cache-hours-description">
+                  How long Logs and Spans stay on local disk before they move to the bucket, 0 to 720; 0 moves each part
+                  once stored. Older Logs are read from the bucket, which is slower. It applies within a minute.
+                </p>
+                {bucket === false && (
+                  <p className="text-xs text-muted-foreground" data-testid="local-cache-hours-no-bucket">
+                    EventStore has no bucket, so every Log stays on local disk and this does nothing.
+                  </p>
+                )}
+                {bucket === null && (
+                  <p className="text-xs text-muted-foreground" data-testid="local-cache-hours-no-bucket">
+                    EventStore's config couldn't be read, so whether it has a bucket isn't known. Without one this does nothing.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <Checkbox
                     aria-label="Log all reads"
@@ -234,6 +309,29 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
           </form>
         </Card>
 
+        <AlertDialog open={confirmingHours} onOpenChange={setConfirmingHours}>
+          <AlertDialogContent data-testid="local-cache-hours-confirm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Change Hours on local disk from {oldHours} to {newHours}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Logs older than {newHours} hours are read from the bucket, which is slower than local disk;
+                lowering it moves more of the recent Logs there within a minute or two.
+              </AlertDialogDescription>
+              <p className="text-sm text-muted-foreground">
+                Raising it keeps more on local disk, which counts toward the disk limit; parts already in the bucket stay there.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                ClickHouse recomputes every part's move time in the background, reading each part's time column from the
+                bucket, so change it rarely.
+              </p>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button onClick={send}>Change to {newHours} hours</Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         <Card data-testid="sign-up">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Lock className="h-4 w-4" />Sign-up</CardTitle>
@@ -302,4 +400,14 @@ function display(setting: RestartSetting): string {
   if (setting.secret) return setting.value ? 'Set' : 'Not set'
   if (setting.value === null || setting.value === '') return 'Not set'
   return String(setting.value)
+}
+
+/**
+ * Whether EventStore has a bucket, from its config's rows: true or false, or
+ * null when its config couldn't be read.
+ */
+function hasBucket(groups: RestartGroup[]): boolean | null {
+  const eventStore = groups.find((group) => group.name === 'EventStore')?.settings
+  if (!eventStore) return null
+  return eventStore.some((setting) => setting.source === 'object_store.bucket')
 }
