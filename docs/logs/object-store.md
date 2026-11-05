@@ -41,7 +41,7 @@ Other settings that matter with a bucket:
 
 ## The disk limit
 
-`logs_disk_limit_gb` caps how much of ClickHouse's local disk every Project's Logs take together; by default, half of that disk. EventStore checks it a few minutes past each hour. Past it, with a bucket, it moves the oldest days to the bucket first, and deletes a day only if that isn't enough, which means the bucket is failing; it logs an error when it does. Without a bucket, it deletes the oldest days, of any Project. ClickHouse also moves the largest parts to the bucket by itself once its local disk is 90% full.
+`logs_disk_limit_gb` caps how much of ClickHouse's local disk every Project's Logs take together; by default, half of that disk. EventStore checks it a few minutes past each hour. Past it, with a bucket, it moves the oldest days to the bucket and deletes none: if a move fails, it logs an error and tries again a minute later, and Logs wait on local disk until the bucket takes them. Without a bucket, it deletes the oldest days, of any Project. ClickHouse also moves the largest parts to the bucket by itself once its local disk is 90% full.
 
 ## GCS
 
@@ -162,7 +162,7 @@ go test -p 1 -count=1 -run 'Bucket|MinIO|OldLogFiles' . ./storage/
 
 - Ingest carries on: a `200` still means the Logs or Event are in Pebble.
 - Reads of Logs in the bucket fail: Logs older than `local_cache_hours`, and the old Log files whose only copy is there. Recent Logs, Events, the histogram's counts and the Fields still answer.
-- Parts wait on local disk to move. If they pass the disk limit, EventStore deletes the oldest days and logs an error.
+- Parts wait on local disk to move. Past the disk limit, EventStore logs an error each minute and deletes nothing; if the disk fills, ClickHouse stores no more Logs until the bucket answers.
 
 ## Changing the block later
 
