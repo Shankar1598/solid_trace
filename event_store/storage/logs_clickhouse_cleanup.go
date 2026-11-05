@@ -352,12 +352,14 @@ func (s *ClickHouseLogs) LogDiskUse() ([]LogDayUse, error) {
 //
 // First it deletes the local copies of the oldest old files that the bucket
 // has, which reads then read there. With a bucket, it then moves the oldest
-// days of any Project there, as they would move once local_cache_hours old.
-// If the days on local disk are still past the limit, the bucket must be
-// failing: it deletes the oldest days, and logs each as an error. Without a
-// bucket, it deletes the oldest days. Either way, the oldest days of old
-// files go before the oldest partitions. A Project's day goes from every
-// family at once, each main table's partition with what is counted from it.
+// days of any Project there, as they would move once local_cache_hours old,
+// and deletes none: if the days on local disk are still past the limit, a
+// move failed, and it answers an error for the cleanup to try again soon.
+// Deleting would lose the day being written, the oldest left on local disk
+// once the older days are in the bucket. Without a bucket, it deletes the
+// oldest days, those of old files before the oldest partitions. A Project's
+// day goes from every family at once, each main table's partition with what
+// is counted from it.
 func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit, families []DayFamily) error {
 	if limit.Bytes <= 0 {
 		return fmt.Errorf("no Log disk limit: %d bytes", limit.Bytes)
@@ -382,22 +384,19 @@ func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit, families []DayFami
 	}
 	if s.bucket {
 		s.moveForTheDiskLimit(ctx, days, total, limit.Bytes)
-	}
-	// Measured again: a move or a deletion may have failed, or the TTL
-	// moved parts meanwhile.
-	if days, oldDays, total, err = measure(); err != nil {
-		return err
+		// Measured again: a move may have failed, or the TTL moved parts
+		// meanwhile.
+		if _, _, total, err = measure(); err != nil || total <= limit.Bytes {
+			return err
+		}
+		return fmt.Errorf("%d bytes on local disk past the %d-byte disk limit, as the oldest days didn't move to the bucket", total, limit.Bytes)
 	}
 	for _, day := range oldDays {
 		if total <= limit.Bytes {
 			break
 		}
-		args := []any{"project_id", day.projectID, "day", day.day.Format(time.DateOnly), "bytes", day.bytes, "limit", limit.Bytes}
-		if s.bucket {
-			logger.L.Error("Deleting the oldest day of old Log files past the disk limit, as their local copies didn't go", args...)
-		} else {
-			logger.L.Info("Deleting the oldest day of old Log files past the disk limit", args...)
-		}
+		logger.L.Info("Deleting the oldest day of old Log files past the disk limit",
+			"project_id", day.projectID, "day", day.day.Format(time.DateOnly), "bytes", day.bytes, "limit", limit.Bytes)
 		if err := s.deleteOldDays(day.projectID, day.day.Equal); err != nil {
 			return err
 		}
@@ -407,12 +406,8 @@ func (s *ClickHouseLogs) EnforceDiskLimit(limit LogDiskLimit, families []DayFami
 		if total <= limit.Bytes {
 			break
 		}
-		args := []any{"project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "bytes", day.Bytes, "limit", limit.Bytes}
-		if s.bucket {
-			logger.L.Error("Deleting the oldest day past the disk limit, as it didn't move to the bucket", args...)
-		} else {
-			logger.L.Info("Deleting the oldest day past the disk limit", args...)
-		}
+		logger.L.Info("Deleting the oldest day past the disk limit",
+			"project_id", day.ProjectID, "day", day.Day.Format(time.DateOnly), "bytes", day.Bytes, "limit", limit.Bytes)
 		if err := s.dropPartitions(ctx, day.partitions); err != nil {
 			return err
 		}

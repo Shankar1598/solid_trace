@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"reflect"
@@ -9,11 +10,12 @@ import (
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/clickhousetest"
+	"github.com/solidtrace/event_store/storage"
 )
 
 // The bucket tier: with an object_store, a part of the logs table moves to
 // the bucket once its newest Log is local_cache_hours old, and the disk
-// limit moves the oldest days there before it deletes any. These tests run
+// limit moves the oldest days there and deletes none. These tests run
 // against the S3 stand-in (clickhousetest.Bucket), and skip without one.
 // ClickHouse moves parts by its own clock, so their Logs are of now.
 
@@ -135,4 +137,30 @@ func TestWithABucketTheDiskLimitMovesTheOldestDaysThereAndDeletesNone(t *testing
 	}
 	week := struct{ from, to time.Time }{now.AddDate(0, 0, -7).Truncate(24 * time.Hour), now.AddDate(0, 0, 1).Truncate(24 * time.Hour)}
 	assertCountedIn(t, env, 123, week.from, week.to, 3, "with the older days in the bucket")
+}
+
+func TestWithABucketTheDiskLimitDeletesNothingWhenAMoveFails(t *testing.T) {
+	env, now := setupBucketTestEnv(t, 24*30)
+	defer env.Cleanup()
+
+	postAndProcess(t, env,
+		logJSON(t, "today", now, map[string]any{"user": "ada", "n": 1}),
+		logJSON(t, "yesterday", now.AddDate(0, 0, -1), map[string]any{"user": "bob", "n": 2}))
+	use, _ := localDiskUse(t, env)
+	conn := env.ClickHouse.Conn()
+	// A move then fails, as one to the bucket can.
+	if err := conn.Exec(context.Background(), "SYSTEM STOP MOVES logs"); err != nil {
+		t.Fatalf("Stopping moves failed: %v", err)
+	}
+	defer conn.Exec(context.Background(), "SYSTEM START MOVES logs")
+
+	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: 1}, []storage.DayFamily{storage.LogDays}); err == nil {
+		t.Error("Expected an error past the disk limit with the moves failing")
+	}
+	if after, _ := localDiskUse(t, env); !maps.Equal(after, use) {
+		t.Errorf("Expected every day kept on local disk, got %v, want %v", after, use)
+	}
+	if got := messages(latestLogs(t, env, 123, 10)); !slices.Equal(got, []string{"today", "yesterday"}) {
+		t.Errorf("Expected no Logs deleted, got %v", got)
+	}
 }
