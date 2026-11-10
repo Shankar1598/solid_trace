@@ -5,7 +5,9 @@ class OrganizationMailer < ApplicationMailer
   # Console's URL as it is when the email is sent (User#invite_url,
   # PublicUrls.console_url). request_url, the address the admin invited from,
   # is the URL when no Console URL is saved or set.
-  def invite_link_email(user:, organization:, invited_by:, request_url:)
+  def invite_link_email(user:, organization:, invited_by:, request_url: nil, console_url: nil)
+    # console_url: is the old name, still in invite emails queued before v0.20.
+    request_url ||= console_url
     @user = user
     @organization = organization
     @invited_by = invited_by
