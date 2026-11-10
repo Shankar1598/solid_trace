@@ -13,6 +13,8 @@ namespace :instance_settings do
     puts "Log all reads: #{settings.log_all_reads? ? "on: every Log read and its SQL is timed into the Meta Organization's Project" : "off"}"
     puts "Log MCP reads: #{settings.log_mcp_reads? ? "on: the MCP server's Log reads and their SQL are timed" : "off"}" \
       "#{" (Log all reads times them while it's on)" if settings.log_all_reads?}"
+    puts "Console URL: #{settings.console_url || "blank: #{PublicUrls.console_url_fallback&.fetch(:url) || "the address a request reaches Console at"}"}"
+    puts "Ingest URL: #{settings.ingest_url || "blank: #{PublicUrls.ingest_url_fallback(settings: settings)&.fetch(:url) || "Console's host at port 4000"}"}"
     puts
     puts InstanceSetting::SQL_QUERIES_DESCRIPTION
   end
@@ -22,8 +24,9 @@ namespace :instance_settings do
     print_settings.call(InstanceSetting.current)
   end
 
-  desc "Change the instance settings: SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false, LOG_ALL_READS=true|false, LOG_MCP_READS=true|false " \
-    "and/or DEFAULT_LOG_RETENTION_DAYS=<whole days>. Read what SQL queries allow first (instance_settings:show)"
+  desc "Change the instance settings: SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false, LOG_ALL_READS=true|false, LOG_MCP_READS=true|false, " \
+    "DEFAULT_LOG_RETENTION_DAYS=<whole days>, CONSOLE_URL_SETTING=<url or blank> and/or INGEST_URL_SETTING=<url or blank>. " \
+    "Read what SQL queries allow first (instance_settings:show)"
   task set: :environment do
     changes = {}
 
@@ -43,9 +46,14 @@ namespace :instance_settings do
     if ENV.key?("DEFAULT_LOG_RETENTION_DAYS")
       changes[:default_log_retention_days] = ENV["DEFAULT_LOG_RETENTION_DAYS"]
     end
+    # Not CONSOLE_URL and PUBLIC_INGEST_URL, which Console's container already
+    # has. Any scheme saves here, unlike on the page, to recover from a Console
+    # URL that doesn't work; blank clears one.
+    changes[:console_url] = ENV["CONSOLE_URL_SETTING"] if ENV.key?("CONSOLE_URL_SETTING")
+    changes[:ingest_url] = ENV["INGEST_URL_SETTING"] if ENV.key?("INGEST_URL_SETTING")
 
-    abort "Nothing to change. Give SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false, LOG_ALL_READS=true|false, LOG_MCP_READS=true|false " \
-      "and/or DEFAULT_LOG_RETENTION_DAYS=<whole days>." if changes.empty?
+    abort "Nothing to change. Give SQL_QUERIES_ENABLED=true|false, SIGN_UP_OPEN=true|false, LOG_ALL_READS=true|false, LOG_MCP_READS=true|false, " \
+      "DEFAULT_LOG_RETENTION_DAYS=<whole days>, CONSOLE_URL_SETTING=<url or blank> and/or INGEST_URL_SETTING=<url or blank>." if changes.empty?
 
     settings = InstanceSetting.current
     abort "Not changed: #{settings.errors.full_messages.to_sentence}" unless settings.update(changes)
