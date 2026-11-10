@@ -22,6 +22,8 @@ ClickHouse gets half the machine's memory (`max_server_memory_usage`), set by `d
 
 With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile)) gets a Let's Encrypt certificate for the machine's public IP or domain: Console is on `https://<host>`, ingest on `https://<host>:4443`. Ports 80, 443 and 4443 must be open to the internet, and 3000 and 4000 closed; setup prints the GCP firewall and static-IP commands. An IP's certificate lasts 160 hours, and Caddy renews it ([ADR 0010](adr/0010-caddy-terminates-tls.md)).
 
+Setup writes Console's and ingest's URLs to `deploy/.env` as `CONSOLE_URL` and `PUBLIC_INGEST_URL`. After that, an instance admin can change them on Settings → Instance (Console URL, Ingest URL) with no restart, for emails, invite links, the MCP URL, DSNs and the Logs snippets; blank keeps the `.env` value, then the address Console was reached at (Console) or Console's host at port 4000 (ingest). Whether Console serves HTTPS still follows `CONSOLE_URL`'s scheme when it starts, so the page refuses a Console URL with the other scheme: change `CONSOLE_URL` and restart for that. To recover from a Console URL that doesn't work, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set CONSOLE_URL_SETTING=` clears it ([ADR 0017](adr/0017-public-urls-are-instance-settings.md)).
+
 ## Users and instance admins
 
 Sign-up works only until the install has a user, so sign up as soon as it is running; after that, people join by Invite. To let anyone sign up, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set SIGN_UP_OPEN=true`, and `=false` to close it again.
