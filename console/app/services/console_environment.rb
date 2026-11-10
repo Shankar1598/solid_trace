@@ -14,17 +14,17 @@ class ConsoleEnvironment
   # The secrets, whose values never leave the server.
   SECRETS = { "SECRET_KEY_BASE" => "Secret key base", "SENTRY_DSN" => "Sentry DSN" }.freeze
 
-  # console_url is the URL this request reached Console at, which ingest's
-  # public URL falls back to (EventStore.public_ingest_url).
-  def initialize(console_url:, env: ENV)
-    @console_url = console_url
+  def initialize(env: ENV)
     @env = env
   end
 
+  # Console's URL and ingest's are instance settings (InstanceSettingsAnswer
+  # shows them with what a blank one falls back to), so CONSOLE_URL and
+  # PUBLIC_INGEST_URL aren't rows. Only HTTPS, which follows CONSOLE_URL's
+  # scheme at boot, is.
   def settings
     [
-      row("Console URL", "CONSOLE_URL", @env["CONSOLE_URL"].presence),
-      row("Public ingest URL", "PUBLIC_INGEST_URL", EventStore.public_ingest_url(@console_url)),
+      row("HTTPS", "CONSOLE_URL", PublicUrls.https? ? "On" : "Off"),
       row("EventStore query API", "EVENT_STORE_URL", EventStore.base_url),
       row("EventStore ingest", "EVENT_STORE_INGEST_URL", EventStore.ingest_url),
       row("Version", "SOLIDTRACE_VERSION", Rails.application.config.x.solidtrace_version),

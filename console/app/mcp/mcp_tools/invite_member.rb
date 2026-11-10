@@ -15,7 +15,7 @@ module McpTools
 
     def run
       invite = MemberInvite.call(organization: organization, inviter: user, email: arguments[:email], name: arguments[:name],
-        console_url: console_url)
+        request_url: request_url)
       raise ToolError, "Not invited: #{invite.error}." unless invite.done?
 
       member = invite.membership

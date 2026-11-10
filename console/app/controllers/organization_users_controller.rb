@@ -8,7 +8,7 @@ class OrganizationUsersController < ApplicationController
   def index
     render inertia: "Settings/Members", props: {
       organization: OrganizationSerializer.new(@current_org, include_members: true,
-        invite_base_url: (request.base_url if @current_org_user.admin?)).as_json,
+        invite_base_url: (console_url if @current_org_user.admin?)).as_json,
       can_manage_members: @current_org_user.admin?,
     }
   end
@@ -39,7 +39,7 @@ class OrganizationUsersController < ApplicationController
 
   def create
     invite = MemberInvite.call(organization: @current_org, inviter: current_user,
-      email: create_params[:email], name: create_params[:name], console_url: request.base_url)
+      email: create_params[:email], name: create_params[:name], request_url: request.base_url)
     members = organization_users_path(org_slug: @current_org.slug)
 
     name = invite.membership&.user&.name

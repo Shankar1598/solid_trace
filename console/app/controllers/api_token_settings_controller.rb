@@ -10,8 +10,8 @@ class ApiTokenSettingsController < ApplicationController
   def show
     render inertia: "Settings/ApiTokens", props: {
       api_tokens: current_user.api_tokens.order(created_at: :desc, id: :desc).map { |t| ApiTokenSerializer.new(t).as_json },
-      # Where a client adds the MCP server, as this request reaches Console.
-      mcp_url: "#{request.base_url}/mcp",
+      # Where a client adds the MCP server, at Console's URL.
+      mcp_url: "#{console_url}/mcp",
     }
   end
 end

@@ -9,6 +9,13 @@ class ApplicationMailer < ActionMailer::Base
     delivery_method_options: -> { InstanceSetting.current.smtp_options if delivery_method == :smtp }
   layout "mailer"
 
+  # Links in every message are to Console's URL as it is when the message is
+  # built: the Console URL instance setting, else CONSOLE_URL (PublicUrls).
+  # With neither, they keep the environment's default_url_options.
+  def default_url_options
+    @default_url_options ||= super.merge(PublicUrls.console_url_options || {})
+  end
+
   # Whether mail can be sent: in production, once an instance admin has set up
   # email; always in development and test.
   def self.configured?

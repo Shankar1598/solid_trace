@@ -46,6 +46,17 @@ module McpTools
                    "0 moves each part once stored. Default 24. It does nothing without a bucket (restart_to_change's " \
                    "EventStore group names it), and applies within a minute. Before changing it, tell the user: " \
                    "#{InstanceSetting::LOCAL_CACHE_HOURS_WARNING}" }
+    argument :console_url, { type: "string",
+      description: "Console's URL, http(s)://host[:port] with no path, which emails, invite links, the MCP URL and " \
+                   "these answers' links use from now on. Its scheme must match the HTTPS mode Console started in " \
+                   "(restart_to_change's HTTPS row), which changes only with CONSOLE_URL in deploy/.env and a " \
+                   "restart. An empty string clears it, falling back to CONSOLE_URL, then the address the request " \
+                   "reached Console at (editable.console_url_fallback)." }
+    argument :ingest_url, { type: "string",
+      description: "Ingest's URL as SDKs and shippers reach it, http(s)://host[:port][/path], which DSNs, the Logs " \
+                   "snippets and get_project_setup use from now on; DSNs already in apps don't change. An empty " \
+                   "string clears it, falling back to PUBLIC_INGEST_URL, then Console's host at port 4000 " \
+                   "(editable.ingest_url_fallback)." }
 
     def run
       require_instance_admin!("change the instance settings")

@@ -129,6 +129,18 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/projects/shop", answer.link
   end
 
+  test "get_project_setup follows the Ingest URL setting before PUBLIC_INGEST_URL" do
+    ENV["PUBLIC_INGEST_URL"] = "https://ingest.example.com/"
+    InstanceSetting.current.update!(ingest_url: "https://35.214.179.92:4443")
+
+    setup = call_tool(:get_project_setup, user: @member, project: "shop").json
+
+    assert_equal "https://#{@key.public_key}@35.214.179.92:4443/#{@key.project_id}", setup["dsn"]
+    assert_equal "https://35.214.179.92:4443/api/logs", setup.dig("logs", "url")
+  ensure
+    ENV.delete("PUBLIC_INGEST_URL")
+  end
+
   test "get_project_setup follows PUBLIC_INGEST_URL, and says when a Project has no key" do
     ENV["PUBLIC_INGEST_URL"] = "https://ingest.example.com/"
     @key.destroy!

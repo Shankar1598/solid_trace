@@ -27,8 +27,11 @@ class ApiTokensControllerTest < ActionDispatch::IntegrationTest
                    "last_used_at" => mine.reload.last_used_at.iso8601 }, listed)
   end
 
-  test "the page gives the MCP URL as the request sees it" do
+  test "the page gives the MCP URL at Console's URL: the setting, else as the request sees it" do
     assert_equal "http://www.example.com/mcp", inertia_props(tokens_page_url)["mcp_url"]
+
+    InstanceSetting.current.update!(console_url: "https://solid-trace.example.ts.net")
+    assert_equal "https://solid-trace.example.ts.net/mcp", inertia_props(tokens_page_url)["mcp_url"]
   end
 
   test "Account no longer lists the tokens" do

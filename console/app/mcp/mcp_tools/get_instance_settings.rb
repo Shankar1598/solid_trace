@@ -12,7 +12,9 @@ module McpTools
                 "Console sends its own Issues and traces to the Meta Project, logs_text_match_budget_mb for the most " \
                 "a Query that matches text may read before query_logs refuses it, logs_read_threads for the threads " \
                 "ClickHouse may use for each Log read, 0 for its default of one per CPU core, local_cache_hours for the " \
-                "hours Logs and Spans stay on local disk before they move to the bucket, with one). sign_up: whether Sign-up is open; it changes only " \
+                "hours Logs and Spans stay on local disk before they move to the bucket, with one, console_url and " \
+                "ingest_url for the URLs links and DSNs use, null when blank, with the *_fallback { url, source } " \
+                "a blank one uses). sign_up: whether Sign-up is open; it changes only " \
                 "from a shell on the server, with the command given. restart_to_change: groups of settings Console " \
                 "and EventStore read at start, each row naming its env var or event_store.yml key and whether it's " \
                 "the default; a secret's value is only whether it's set. They're the install's, so they take no " \

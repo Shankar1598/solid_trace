@@ -275,13 +275,9 @@ module Notifiers
 
       # The Logs explorer on the Monitor's Project and Query, over [from, to).
       def explorer_url(monitor, from, to)
-        params = { org_slug: monitor["organization_slug"], host: host, mode: "query", q: monitor["query"] }
+        params = { org_slug: monitor["organization_slug"], **PublicUrls.link_options, mode: "query", q: monitor["query"] }
         params.merge!(from: from, to: to) if from.present? && to.present?
         Rails.application.routes.url_helpers.project_logs_url(monitor["project_slug"], **params)
-      end
-
-      def host
-        SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000"
       end
     end
   end

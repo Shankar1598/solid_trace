@@ -68,16 +68,6 @@ class EventStore
     ENV.fetch("EVENT_STORE_INGEST_URL", DEFAULT_INGEST_URL)
   end
 
-  # Ingest as SDKs and shippers reach it: PUBLIC_INGEST_URL, or else
-  # Console's host, as console_url names it, at EventStore's ingest port. The
-  # Logs snippets, the Project page's DSN and the MCP server send there.
-  def self.public_ingest_url(console_url)
-    return ENV["PUBLIC_INGEST_URL"].chomp("/") if ENV["PUBLIC_INGEST_URL"].present?
-
-    console = URI(console_url)
-    "#{console.scheme}://#{console.host}:4000"
-  end
-
   # ============================================================================
   # Class Methods - Direct API Access
   # ============================================================================
