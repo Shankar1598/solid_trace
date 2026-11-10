@@ -45,19 +45,15 @@ module Notifiers
     end
 
     def issue_url(issue)
-      url_helpers.project_issue_url(issue.project, issue, org_slug: issue.project.organization.slug, host: host)
+      url_helpers.project_issue_url(issue.project, issue, org_slug: issue.project.organization.slug, **PublicUrls.link_options)
     end
 
     def issues_url(issue)
-      url_helpers.issues_url(org_slug: issue.project.organization.slug, host: host)
+      url_helpers.issues_url(org_slug: issue.project.organization.slug, **PublicUrls.link_options)
     end
 
     def url_helpers
       Rails.application.routes.url_helpers
-    end
-
-    def host
-      SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000"
     end
   end
 end

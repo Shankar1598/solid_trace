@@ -30,6 +30,8 @@ Rails.application.configure do
 
   # With HTTPS on in deploy/setup-gcp, CONSOLE_URL is https:// and Caddy terminates
   # TLS in front of Thruster. Without it, Thruster serves plain HTTP on port 3000.
+  # HTTPS stays a deploy choice, read once here (ADR 0017): Settings → Instance
+  # refuses a Console URL with the other scheme (PublicUrls.https?).
   console_url = URI(ENV["CONSOLE_URL"].presence || "http://example.com")
   if console_url.scheme == "https"
     # Every request came through Caddy, so URLs and redirects are https://.
@@ -68,10 +70,12 @@ Rails.application.configure do
   # Set this to true and configure the email server for immediate delivery to raise delivery errors.
   # config.action_mailer.raise_delivery_errors = false
 
-  # Links in emails point at Console's public URL, which deploy/setup-gcp writes
-  # to deploy/.env. The SMTP server and the sender are instance settings, which
-  # an instance admin sets on the Email settings page (ApplicationMailer).
-  config.action_mailer.default_url_options = { host: console_url.host, port: console_url.port, protocol: console_url.scheme }
+  # Links in emails and Notifiers point at Console's URL as it is when they're
+  # built: the Console URL instance setting, else CONSOLE_URL (PublicUrls,
+  # ApplicationMailer). This is for an install with neither. The SMTP server
+  # and the sender are instance settings, which an instance admin sets on the
+  # Email settings page (ApplicationMailer).
+  config.action_mailer.default_url_options = { host: "localhost", port: 3000 }
 
   # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
   # the I18n.default_locale when a translation cannot be found).

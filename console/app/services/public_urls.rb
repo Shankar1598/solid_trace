@@ -67,6 +67,13 @@ module PublicUrls
     { host: uri.host, port: uri.port, protocol: uri.scheme }
   end
 
+  # url_for's options for a link built with no request, outside a mailer (the
+  # Notifiers): console_url_options, or with no Console URL, the
+  # environment's default_url_options, as mailers fall back to.
+  def link_options
+    console_url_options || ActionMailer::Base.default_url_options
+  end
+
   # Whether Console started with HTTPS on, from CONSOLE_URL's scheme
   # (config/environments/production.rb). It changes only with a restart.
   def https?
