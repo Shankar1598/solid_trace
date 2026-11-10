@@ -36,3 +36,5 @@ en:
         logs_text_match_budget_mb: "Text-match budget (MiB)"
         logs_read_threads: "Log read threads"
         local_cache_hours: "Hours on local disk"
+        console_url: "Console URL"
+        ingest_url: "Ingest URL"

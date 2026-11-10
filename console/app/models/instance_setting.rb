@@ -4,7 +4,8 @@
 # server and the sender) on the Email settings page or over the MCP server,
 # and the settings that apply at once (EDITABLE: SQL queries, the default
 # Retention of Logs and of traces, log-all-reads, log-MCP-reads, the
-# text-match budget, the Log read threads, the hours on local disk) on Settings → Instance or over the MCP server.
+# text-match budget, the Log read threads, the hours on local disk, Console's
+# and ingest's URLs) on Settings → Instance or over the MCP server.
 # Sign-up has no UI on purpose: opening it lets anyone who can reach Console
 # make an account, so it changes only from a shell on the server, with
 # `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
@@ -20,7 +21,7 @@ class InstanceSetting < ApplicationRecord
   # Settings → Instance and over the MCP server.
   EDITABLE = %i[sql_queries_enabled default_log_retention_days default_trace_retention_days log_all_reads
                 log_mcp_reads send_console_issues trace_console logs_text_match_budget_mb logs_read_threads
-                local_cache_hours].freeze
+                local_cache_hours console_url ingest_url].freeze
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
@@ -68,6 +69,19 @@ class InstanceSetting < ApplicationRecord
   # nothing.
   validates :local_cache_hours, numericality: { only_integer: true, in: 0..720 }
 
+  # Console's URL and ingest's URL, as people, links and SDKs reach them, or
+  # nil to fall back to CONSOLE_URL and PUBLIC_INGEST_URL, then the request's
+  # address (PublicUrls, ADR 0017). Console's has no path; ingest's may.
+  normalizes :console_url, :ingest_url, with: ->(value) { value.strip.sub(%r{/+\z}, "").presence }
+  validate -> { url_problem(:console_url, path: false) }, if: -> { console_url.present? }
+  validate -> { url_problem(:ingest_url, path: true) }, if: -> { ingest_url.present? }
+  # Saved from the page or MCP (update_editable), Console's URL must keep the
+  # scheme of the HTTPS mode Console started in, so the dashboard can't lock
+  # its admin out. The mode changes only with CONSOLE_URL in deploy/.env and a
+  # restart; a shell's instance_settings:set saves any scheme, for recovery.
+  validate :console_url_keeps_https_mode, on: :editable,
+    if: -> { console_url.present? && will_save_change_to_console_url? && errors[:console_url].empty? }
+
   # What changing local_cache_hours does, for update_instance_settings'
   # description. Settings → Instance's confirmation says the same, with the
   # old and new hours (Settings/Instance.tsx).
@@ -102,7 +116,8 @@ class InstanceSetting < ApplicationRecord
   # Changes the settings that apply at once, as Settings → Instance and the MCP
   # server do: only those given change, and any other key is ignored.
   def update_editable(changes)
-    update(changes.to_h.symbolize_keys.slice(*EDITABLE))
+    assign_attributes(changes.to_h.symbolize_keys.slice(*EDITABLE))
+    save(context: :editable)
   end
 
   # Changes the email settings as the Email settings page and the MCP server
@@ -163,6 +178,31 @@ class InstanceSetting < ApplicationRecord
   end
 
   private
+
+  URL_FORMATS = {
+    false => "must be http:// or https:// and a host, with a port if needed and no path, like https://console.example.com",
+    true => "must be http:// or https:// and a host, with a port and a path if needed, like https://ingest.example.com:4443",
+  }.freeze
+
+  # attribute's URL is http(s)://host[:port], and [/path] when path is true:
+  # no user, query or fragment.
+  def url_problem(attribute, path:)
+    uri = URI.parse(self[attribute])
+    return if uri.is_a?(URI::HTTP) && uri.host.present? && uri.userinfo.nil? && uri.query.nil? && uri.fragment.nil? &&
+      (path || uri.path.empty?)
+
+    errors.add(attribute, URL_FORMATS[path])
+  rescue URI::InvalidURIError
+    errors.add(attribute, URL_FORMATS[path])
+  end
+
+  def console_url_keeps_https_mode
+    https = PublicUrls.https?
+    return if URI.parse(console_url).scheme == (https ? "https" : "http")
+
+    errors.add(:console_url, "must start with #{https ? "https" : "http"}://, as Console started with#{"out" unless https} " \
+                             "HTTPS. HTTPS changes only with CONSOLE_URL's scheme in deploy/.env and a restart")
+  end
 
   # One address, with or without a name, as in SolidTrace <alerts@example.com>.
   def mail_from_is_an_address
