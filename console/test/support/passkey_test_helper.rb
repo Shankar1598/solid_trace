@@ -35,11 +35,12 @@ module PasskeyTestHelper
   # answer, the Passkey's name, and proof that it's the user: their password
   # for a first factor; a code, a Recovery code or a Passkey's answer
   # (passkey_proof) once they have Two-factor. Returns the options. A first
-  # factor's Recovery codes, shown next, are kept in @recovery_codes.
-  def add_passkey(name: "MacBook", client: passkey_client, user_verified: true, proof: { password: "password" })
+  # factor's Recovery codes, shown next, are kept in @recovery_codes. org: the
+  # Organization Settings → User was opened for, to return to.
+  def add_passkey(name: "MacBook", client: passkey_client, user_verified: true, proof: { password: "password" }, org: nil)
     options = creation_options
     credential = client.create(challenge: options["challenge"], rp_id: options.dig("rp", "id"), user_verified: user_verified)
-    post passkeys_url, params: { name: name, credential: credential, proof: proof }, as: :json
+    post passkeys_url, params: { name: name, credential: credential, proof: proof, org: org }.compact, as: :json
     @recovery_codes = flash[:recovery_codes]["codes"] if response.redirect? && response.location == recovery_codes_url
     options
   end

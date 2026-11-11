@@ -240,7 +240,13 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_authenticator_app_url(org: "acme")
     assert_equal true, set_up_page["passkeys_here"]
 
-    add_passkey
+    # Settings → User, opened from the set-up page, keeps the Organization,
+    # and Continue after the Recovery codes returns to it.
+    get user_settings_url(org: "acme"), headers: inertia
+    assert_equal({ "name" => "Acme", "slug" => "acme" }, response.parsed_body.dig("props", "return_organization"))
+    add_passkey(org: "acme")
+    assert_redirected_to recovery_codes_url
+    assert_equal overview_path(org_slug: "acme"), recovery_codes_page["continue_to"]
 
     get overview_url(org_slug: "acme"), headers: inertia
     assert_response :success

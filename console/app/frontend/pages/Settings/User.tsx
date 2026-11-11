@@ -21,9 +21,12 @@ interface SettingsUserProps {
   // those for another host too.
   passkey_offer: PasskeyOfferHere
   passkeys: PasskeyRow[]
+  // The Organization the set-up page sent the user from (?org=), which
+  // adding a first Passkey returns to.
+  return_organization: { name: string; slug: string } | null
 }
 
-export default function SettingsUser({ user, authenticator_app, recovery_codes_left, passkey_offer, passkeys }: SettingsUserProps) {
+export default function SettingsUser({ user, authenticator_app, recovery_codes_left, passkey_offer, passkeys, return_organization }: SettingsUserProps) {
   const { url } = usePage()
   // How the user can prove it's them: a code, a Recovery code (always), or
   // one of their Passkeys for this host, on a page opened there.
@@ -93,7 +96,13 @@ export default function SettingsUser({ user, authenticator_app, recovery_codes_l
         </Card>
         <TwoFactorCard authenticatorApp={authenticator_app} hasPasskeys={passkeys.length > 0} proof={proof} />
         {recovery_codes_left !== null && <RecoveryCodesCard left={recovery_codes_left} proof={proof} />}
-        <PasskeysCard offer={passkey_offer} passkeys={passkeys} proof={proof} twoFactor={!!authenticator_app || passkeys.length > 0} />
+        <PasskeysCard
+          offer={passkey_offer}
+          passkeys={passkeys}
+          proof={proof}
+          twoFactor={!!authenticator_app || passkeys.length > 0}
+          returnOrganization={return_organization?.slug}
+        />
       </div>
     </SettingsLayout>
   )

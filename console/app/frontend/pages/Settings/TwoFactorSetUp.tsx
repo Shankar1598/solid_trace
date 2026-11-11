@@ -126,11 +126,15 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
           Once it's on, you'll go back to {return_organization.name}.
         </p>
       )}
-      {/* A Passkey is Two-factor too, and meets Require two-factor. */}
+      {/* A Passkey is Two-factor too, and meets Require two-factor; the
+          Organization goes along, so a first Passkey returns there too. */}
       {passkeys_here && (
         <p className="mt-4 text-sm text-muted-foreground">
           Rather use your fingerprint, face or PIN?{' '}
-          <Link href="/user_settings" className="underline underline-offset-2 hover:text-foreground">
+          <Link
+            href={return_organization ? `/user_settings?org=${encodeURIComponent(return_organization.slug)}` : '/user_settings'}
+            className="underline underline-offset-2 hover:text-foreground"
+          >
             Add a passkey on Settings → User
           </Link>{' '}
           instead.

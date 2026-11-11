@@ -9,11 +9,11 @@
 class AuthenticatorAppsController < ApplicationController
   include ShowsRecoveryCodes
   include UsesPasskeys
+  include ReturnsToOrganization
 
   layout "dashboard"
   rate_limit to: 10, within: 3.minutes, only: [ :create, :destroy ],
     with: -> { redirect_back_or_to user_settings_path, alert: "Too many tries. Try again in a few minutes." }
-  before_action :set_return_organization, only: [ :new, :create ]
 
   def new
     if current_user.authenticator_app?
@@ -28,10 +28,10 @@ class AuthenticatorAppsController < ApplicationController
       qr_code: RQRCode::QRCode.new(current_user.authenticator_uri).as_svg(module_size: 4, use_path: true, viewbox: true).sub(/\A<\?xml[^>]*>/, ""),
       # requires_two_factor says it was the Organization's Require two-factor
       # that sent the user here.
-      return_organization: @return_organization && {
-        name: @return_organization.name,
-        slug: @return_organization.slug,
-        requires_two_factor: @return_organization.require_two_factor,
+      return_organization: return_organization && {
+        name: return_organization.name,
+        slug: return_organization.slug,
+        requires_two_factor: return_organization.require_two_factor,
       },
       # A Passkey, added on Settings → User, is Two-factor too.
       passkeys_here: passkeys_here?,
@@ -50,10 +50,10 @@ class AuthenticatorAppsController < ApplicationController
     if current_user.add_factor(factor_proof, keep_session: Current.session) { current_user.confirm_authenticator_app(params[:code]) }
       redirect_showing_recovery_codes current_user.new_recovery_codes, continue_to: return_url, notice: "Two-factor is on."
     else
-      redirect_to new_authenticator_app_path(org: @return_organization&.slug), alert: "That code didn't work. Try the newest one from your app."
+      redirect_to new_authenticator_app_path(org: return_organization&.slug), alert: "That code didn't work. Try the newest one from your app."
     end
   rescue User::TwoFactor::WrongProof
-    redirect_to new_authenticator_app_path(org: @return_organization&.slug), alert: factor_proof_refused
+    redirect_to new_authenticator_app_path(org: return_organization&.slug), alert: factor_proof_refused
   end
 
   def destroy
@@ -65,15 +65,5 @@ class AuthenticatorAppsController < ApplicationController
     end
   rescue User::TwoFactor::Required => e
     redirect_back_or_to user_settings_path, alert: e.message
-  end
-
-  private
-
-  def set_return_organization
-    @return_organization = current_user.organizations.find_by(slug: params[:org].to_s) if params[:org].present?
-  end
-
-  def return_url
-    @return_organization ? overview_path(org_slug: @return_organization.slug) : user_settings_path
   end
 end
