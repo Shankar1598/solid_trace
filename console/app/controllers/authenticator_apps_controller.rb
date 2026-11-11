@@ -6,6 +6,8 @@
 # one of the user's Organizations to return to once it's set up. Confirming
 # and removing are rate-limited as signing in is.
 class AuthenticatorAppsController < ApplicationController
+  include ShowsRecoveryCodes
+
   layout "dashboard"
   rate_limit to: 10, within: 3.minutes, only: [ :create, :destroy ],
     with: -> { redirect_back_or_to user_settings_path, alert: "Too many tries. Try again in a few minutes." }
@@ -28,7 +30,7 @@ class AuthenticatorAppsController < ApplicationController
 
   def create
     if current_user.gaining_two_factor(keep: Current.session) { current_user.confirm_authenticator_app(params[:code]) }
-      redirect_to return_url, notice: "Two-factor is on."
+      redirect_showing_recovery_codes current_user.new_recovery_codes, continue_to: return_url, notice: "Two-factor is on."
     else
       redirect_to new_authenticator_app_path(org: @return_organization&.slug), alert: "That code didn't work. Try the newest one from your app."
     end
