@@ -18,16 +18,23 @@ class SecondStepsController < ApplicationController
   end
 
   def create
-    if @user.pass_second_step(params)
+    if (accepted = @user.pass_second_step(params))
       clear_second_step
       start_new_session_for @user, remember_me: @remember_me
-      redirect_to after_authentication_url
+      redirect_to after_authentication_url, notice: (recovery_codes_left_notice if accepted == :recovery_code)
     else
       redirect_to second_step_path, alert: "That code didn't work. Try the newest one from your app."
     end
   end
 
   private
+
+  def recovery_codes_left_notice
+    left = @user.recovery_codes_left
+    return "Signed in with your last Recovery code. Make new ones on Settings → User." if left.zero?
+
+    "Signed in with a Recovery code. #{left} left."
+  end
 
   def set_pending_step
     @user, @remember_me = pending_second_step

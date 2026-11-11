@@ -27,6 +27,7 @@ Rails.application.routes.draw do
   # Setting up, confirming and removing the Authenticator app, outside any
   # Organization (AuthenticatorAppsController).
   resource :authenticator_app, only: [ :new, :create, :destroy ]
+  resource :recovery_codes, only: [ :show, :create ]
   resources :api_tokens, only: [ :create, :destroy ]
   # The MCP server (McpController).
   post "mcp", to: "mcp#create", as: :mcp, format: false

@@ -9,6 +9,7 @@ class UserSettingsController < ApplicationController
       user: UserSerializer.new(current_user).as_json,
       # Two-factor: the Authenticator app once set up, never its secret.
       authenticator_app: (current_user.authenticator_app? ? { set_up_at: current_user.authenticator_confirmed_at.iso8601 } : nil),
+      recovery_codes_left: (current_user.recovery_codes_left if current_user.two_factor?),
     }
   end
 

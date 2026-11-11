@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_11_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_11_143000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -312,6 +312,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_130000) do
     t.index ["slug"], name: "index_projects_on_slug"
   end
 
+  create_table "recovery_codes", force: :cascade do |t|
+    t.integer "user_id", null: false
+    t.string "digest", null: false
+    t.datetime "used_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id"], name: "index_recovery_codes_on_user_id"
+  end
+
   create_table "sessions", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "ip_address"
@@ -367,5 +376,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_130000) do
   add_foreign_key "project_keys", "projects"
   add_foreign_key "project_seen_cursors", "projects"
   add_foreign_key "projects", "organizations"
+  add_foreign_key "recovery_codes", "users"
   add_foreign_key "sessions", "users"
 end
