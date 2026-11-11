@@ -327,6 +327,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_143000) do
     t.datetime "updated_at", null: false
     t.string "user_agent"
     t.integer "user_id", null: false
+    t.datetime "expires_at", null: false
     t.index ["user_id"], name: "index_sessions_on_user_id"
   end
 

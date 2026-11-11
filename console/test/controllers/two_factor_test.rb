@@ -8,6 +8,7 @@ require "test_helper"
 class TwoFactorTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
   include TwoFactorTestHelper
+  include SessionCookieHelper
 
   # Time stands still unless a test moves it, so a code's step is certain.
   setup do
@@ -52,6 +53,20 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
     assert_redirected_to user_settings_url
     get user_settings_url, headers: inertia
     assert_response :success
+  end
+
+  test "Remember me, ticked with the password, makes the Session the second step signs in to last 7 days" do
+    secret = with_authenticator_app
+
+    post login_url, params: { email: @user.email, password: "password", remember_me: "1" }
+    post second_step_url, params: { code: code_for(secret) }
+    assert_equal 7.days.from_now, session_cookie_expires
+
+    delete session_url
+    travel 30.seconds
+    start_sign_in
+    post second_step_url, params: { code: code_for(secret) }
+    assert_equal 24.hours.from_now, session_cookie_expires
   end
 
   test "a wrong code makes no Session and leaves the step to try again" do
