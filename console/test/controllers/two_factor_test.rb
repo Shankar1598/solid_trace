@@ -150,6 +150,134 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
     assert_predicate cookies[:session_id], :blank?
   end
 
+  test "getting Two-factor ends the user's other Sessions and keeps this one" do
+    other_browser = open_session
+    other_browser.post login_url, params: { email: @user.email, password: "password" }
+    other_browser.get user_settings_url, headers: inertia
+    other_browser.assert_response :success
+
+    sign_in_as @user
+    secret = set_up_page["secret"]
+    post authenticator_app_url, params: { code: wrong_code(secret) }
+    assert_redirected_to new_authenticator_app_url
+    assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
+    other_browser.get user_settings_url, headers: inertia
+    other_browser.assert_response :success
+
+    post authenticator_app_url, params: { code: code_for(secret) }
+    other_browser.get user_settings_url, headers: inertia
+    other_browser.assert_redirected_to login_url
+    get user_settings_url, headers: inertia
+    assert_response :success
+  end
+
+  test "the set-up page returns to the Organization it is told of, once set up" do
+    organization = create(:organization)
+    organization.users << @user
+    sign_in_as @user
+
+    get new_authenticator_app_url(org: organization.slug), headers: inertia
+    assert_equal({ "name" => organization.name, "slug" => organization.slug }, response.parsed_body.dig("props", "return_organization"))
+    secret = response.parsed_body.dig("props", "secret")
+
+    post authenticator_app_url, params: { code: wrong_code(secret), org: organization.slug }
+    assert_redirected_to new_authenticator_app_url(org: organization.slug)
+    post authenticator_app_url, params: { code: code_for(secret), org: organization.slug }
+    assert_redirected_to overview_url(org_slug: organization.slug)
+
+    # Another's Organization isn't named or returned to.
+    get new_authenticator_app_url(org: create(:organization).slug)
+    assert_redirected_to user_settings_url
+  end
+
+  test "Settings → User says whether the Authenticator app is set up, outside and inside an Organization" do
+    organization = create(:organization)
+    organization.users << @user
+    sign_in_as @user
+
+    get user_settings_url, headers: inertia
+    assert_nil response.parsed_body.dig("props", "authenticator_app")
+
+    secret = set_up_page["secret"]
+    get user_settings_url, headers: inertia
+    assert_nil response.parsed_body.dig("props", "authenticator_app"), "being set up isn't set up"
+
+    post authenticator_app_url, params: { code: code_for(secret) }
+    get user_path(org_slug: organization.slug), headers: inertia
+    assert_equal Time.current.iso8601, response.parsed_body.dig("props", "authenticator_app", "set_up_at")
+    assert_not response.parsed_body.to_s.include?(secret), "the secret is shown only while setting up"
+  end
+
+  test "removing the Authenticator app needs a code in the same request, and then a password alone signs in" do
+    secret = with_authenticator_app
+    sign_in_as @user
+    travel 30.seconds
+
+    delete authenticator_app_url, params: {}
+    assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
+    delete authenticator_app_url, params: { code: wrong_code(secret) }
+    assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
+    delete session_url
+    start_sign_in
+
+    post second_step_url, params: { code: code_for(secret) }
+    assert_redirected_to root_url
+    travel 30.seconds
+    delete authenticator_app_url, params: { code: code_for(secret) }
+    assert_redirected_to user_settings_url
+    assert_equal "Authenticator app removed. Two-factor is off.", flash[:notice]
+
+    delete session_url
+    post login_url, params: { email: @user.email, password: "password" }
+    assert_redirected_to root_url
+  end
+
+  test "a new phone: the app is removed and set up again with a new secret" do
+    secret = with_authenticator_app
+    sign_in_as @user
+    travel 30.seconds
+    delete authenticator_app_url, params: { code: code_for(secret) }
+
+    new_secret = set_up_page["secret"]
+    assert_not_equal secret, new_secret
+    post authenticator_app_url, params: { code: code_for(new_secret) }
+    assert_equal "Two-factor is on.", flash[:notice]
+  end
+
+  test "the set-up page of a user who has the app sends them back to Settings → User" do
+    with_authenticator_app
+    sign_in_as @user
+
+    get new_authenticator_app_url
+    assert_redirected_to user_settings_url
+    assert_equal "Your authenticator app is already set up.", flash[:notice]
+  end
+
+  test "the secret is encrypted at rest" do
+    secret = with_authenticator_app
+
+    stored = User.connection.select_value("SELECT authenticator_secret FROM users WHERE id = #{@user.id}")
+    assert_not_includes stored, secret
+  end
+
+  test "a password reset keeps Two-factor, and still ends Sessions and revokes API tokens" do
+    secret = with_authenticator_app
+    sign_in_as @user
+    ApiToken.issue!(user: @user, name: "Laptop")
+
+    put password_url(@user.reload.password_reset_token), params: { password: "new-password", password_confirmation: "new-password" }
+    assert_redirected_to login_url
+    get user_settings_url, headers: inertia
+    assert_redirected_to login_url
+    assert_empty @user.api_tokens.reload
+
+    post login_url, params: { email: @user.email, password: "new-password" }
+    assert_redirected_to second_step_url
+    travel 30.seconds
+    post second_step_url, params: { code: code_for(secret) }
+    assert_redirected_to user_settings_url
+  end
+
   private
 
   # Sets up the Authenticator app as the user would, signs out, and moves on
