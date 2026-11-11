@@ -45,6 +45,21 @@ class PasskeyOffer
     WebAuthn::RelyingParty.new(id: host, name: NAME, allowed_origins: [ origin(url) ])
   end
 
+  # What moving to other (another offer) strands: the Passkeys made for this
+  # host, when other's host differs or other offers none, as a sentence with
+  # their count and their users'; nil when it strands none.
+  def stranded_by(other)
+    return if !offered? || other.host == host
+
+    passkeys = Passkey.where(host: host)
+    count = passkeys.count
+    return if count.zero?
+
+    users = passkeys.distinct.count(:user_id)
+    "#{count} #{"Passkey".pluralize(count)} of #{users} #{"user".pluralize(users)} would stop working: " \
+      "they're made for #{host}, the Console URL's host now, and work only there."
+  end
+
   # Settings → Instance's and get_instance_settings' row: { offered: true,
   # host:, url: } or { offered: false, reason: }.
   def as_json(*)

@@ -96,6 +96,16 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
     assert_includes out, "Console URL: blank"
   end
 
+  # The page and MCP ask first (ADR 0018); a shell is for recovery.
+  test "the operator moves Console's URL to another host without being asked about its Passkeys" do
+    InstanceSetting.current.update!(console_url: "https://console.example.com")
+    create(:user).passkeys.create!(credential_id: "a", public_key: "public key", name: "MacBook", host: "console.example.com")
+
+    run_task("instance_settings:set", "CONSOLE_URL_SETTING" => "https://solid-trace.example.ts.net")
+
+    assert_equal "https://solid-trace.example.ts.net", InstanceSetting.current.console_url
+  end
+
   test "invalid values are rejected and change nothing" do
     [ "0", "-1", "1.5", "two" ].each do |days|
       assert_raises(SystemExit, "#{days.inspect} should be rejected") do

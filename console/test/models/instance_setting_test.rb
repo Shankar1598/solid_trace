@@ -133,7 +133,7 @@ class InstanceSettingTest < ActiveSupport::TestCase
     end
     assert InstanceSetting.new(logs_text_match_budget_mb: 0).valid?
 
-    assert InstanceSetting.current.update_editable(logs_text_match_budget_mb: "10240")
+    assert InstanceSetting.current.update_editable({ logs_text_match_budget_mb: "10240" })
     assert_equal 10_240, InstanceSetting.current.logs_text_match_budget_mb
   end
 
@@ -146,7 +146,7 @@ class InstanceSettingTest < ActiveSupport::TestCase
     end
     [ 0, 64 ].each { |threads| assert InstanceSetting.new(logs_read_threads: threads).valid?, "threads #{threads}" }
 
-    assert InstanceSetting.current.update_editable(logs_read_threads: "8")
+    assert InstanceSetting.current.update_editable({ logs_read_threads: "8" })
     assert_equal 8, InstanceSetting.current.logs_read_threads
   end
 
@@ -159,7 +159,7 @@ class InstanceSettingTest < ActiveSupport::TestCase
     end
     [ 0, 720 ].each { |hours| assert InstanceSetting.new(local_cache_hours: hours).valid?, "hours #{hours}" }
 
-    assert InstanceSetting.current.update_editable(local_cache_hours: "6")
+    assert InstanceSetting.current.update_editable({ local_cache_hours: "6" })
     assert_equal 6, InstanceSetting.current.local_cache_hours
   end
 
@@ -167,13 +167,13 @@ class InstanceSettingTest < ActiveSupport::TestCase
     assert_nil InstanceSetting.current.console_url
     assert_nil InstanceSetting.current.ingest_url
 
-    assert InstanceSetting.current.update_editable(console_url: " http://console.example.com:3000/ ",
-      ingest_url: "https://ingest.example.com:4443/sentry/")
+    assert InstanceSetting.current.update_editable({ console_url: " http://console.example.com:3000/ ",
+      ingest_url: "https://ingest.example.com:4443/sentry/" })
     settings = InstanceSetting.current
     assert_equal [ "http://console.example.com:3000", "https://ingest.example.com:4443/sentry" ],
       [ settings.console_url, settings.ingest_url ]
 
-    assert settings.update_editable(console_url: "", ingest_url: "  ")
+    assert settings.update_editable({ console_url: "", ingest_url: "  " })
     assert_equal [ nil, nil ], InstanceSetting.current.slice(:console_url, :ingest_url).values
   end
 
@@ -204,24 +204,24 @@ class InstanceSettingTest < ActiveSupport::TestCase
   test "the page and MCP refuse a Console URL whose scheme isn't the HTTPS mode Console started in, and a shell doesn't" do
     PublicUrls.stub(:https?, false) do
       settings = InstanceSetting.current
-      assert_not settings.update_editable(console_url: "https://console.example.com", log_all_reads: true)
+      assert_not settings.update_editable({ console_url: "https://console.example.com", log_all_reads: true })
       assert_equal [ "must start with http://, as Console started without HTTPS. HTTPS changes only with " \
                      "CONSOLE_URL's scheme in deploy/.env and a restart" ], settings.errors[:console_url]
       assert_nil InstanceSetting.current.console_url
       assert_not InstanceSetting.current.log_all_reads?
 
-      assert InstanceSetting.current.update_editable(console_url: "http://console.example.com")
+      assert InstanceSetting.current.update_editable({ console_url: "http://console.example.com" })
     end
 
     PublicUrls.stub(:https?, true) do
       settings = InstanceSetting.current
-      assert_not settings.update_editable(console_url: "http://console.example.com:8080")
+      assert_not settings.update_editable({ console_url: "http://console.example.com:8080" })
       assert_equal [ "must start with https://, as Console started with HTTPS. HTTPS changes only with " \
                      "CONSOLE_URL's scheme in deploy/.env and a restart" ], settings.errors[:console_url]
 
       # An unchanged one isn't checked again, so the other settings still save.
-      assert InstanceSetting.current.update_editable(log_all_reads: true)
-      assert InstanceSetting.current.update_editable(console_url: "https://console.example.com")
+      assert InstanceSetting.current.update_editable({ log_all_reads: true })
+      assert InstanceSetting.current.update_editable({ console_url: "https://console.example.com" })
       # bin/rails instance_settings:set saves any scheme, for recovery.
       assert InstanceSetting.current.update(console_url: "http://console.example.com")
     end
