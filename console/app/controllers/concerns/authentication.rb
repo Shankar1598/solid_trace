@@ -61,6 +61,11 @@ module Authentication
       end
     end
 
+    # The sign-in page's Remember me, for a password or a Passkey.
+    def remember_me?
+      ActiveModel::Type::Boolean.new.cast(params[:remember_me]) || false
+    end
+
     # Signing in's second step, pending after a right password from a user
     # with Two-factor: the user, when, and Remember me, in the Rails session
     # for SECOND_STEP_LASTS. Success or a new sign-in clears it.

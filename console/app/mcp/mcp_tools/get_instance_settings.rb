@@ -15,7 +15,9 @@ module McpTools
                 "hours Logs and Spans stay on local disk before they move to the bucket, with one, console_url and " \
                 "ingest_url for the URLs links and DSNs use, null when blank, with the *_fallback { url, source } " \
                 "a blank one uses). sign_up: whether Sign-up is open; it changes only " \
-                "from a shell on the server, with the command given. restart_to_change: groups of settings Console " \
+                "from a shell on the server, with the command given. passkeys: whether Passkeys are offered, " \
+                "{ offered: true, host, url } or { offered: false, reason }, from the Console URL (or CONSOLE_URL): " \
+                "an https:// URL on a domain, or http://localhost; it changes only with the Console URL. restart_to_change: groups of settings Console " \
                 "and EventStore read at start, each row naming its env var or event_store.yml key and whether it's " \
                 "the default; a secret's value is only whether it's set. They're the install's, so they take no " \
                 "Organization. Only an instance admin can; whoami says whether you are one."

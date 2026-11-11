@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_11_144000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -281,6 +281,20 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_144000) do
     t.index ["user_id"], name: "index_organizations_users_on_user_id"
   end
 
+  create_table "passkeys", force: :cascade do |t|
+    t.integer "user_id", null: false
+    t.string "credential_id", null: false
+    t.string "public_key", null: false
+    t.bigint "sign_count", default: 0, null: false
+    t.string "name", null: false
+    t.string "host", null: false
+    t.datetime "last_used_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["credential_id"], name: "index_passkeys_on_credential_id", unique: true
+    t.index ["user_id"], name: "index_passkeys_on_user_id"
+  end
+
   create_table "project_issue_counters", primary_key: "project_id", force: :cascade do |t|
     t.bigint "value", default: 0, null: false
     t.index ["project_id"], name: "index_project_issue_counters_on_project_id"
@@ -345,8 +359,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_144000) do
     t.string "authenticator_secret"
     t.datetime "authenticator_confirmed_at"
     t.integer "authenticator_last_step"
+    t.string "webauthn_id"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["name"], name: "index_users_on_name"
+    t.index ["webauthn_id"], name: "index_users_on_webauthn_id", unique: true
   end
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
@@ -375,6 +391,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_144000) do
   add_foreign_key "notifications", "integrations"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
+  add_foreign_key "passkeys", "users"
   add_foreign_key "project_issue_counters", "projects"
   add_foreign_key "project_keys", "projects"
   add_foreign_key "project_seen_cursors", "projects"

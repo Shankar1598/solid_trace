@@ -52,6 +52,15 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/settings/instance", answer.link
   end
 
+  test "get_instance_settings says where Passkeys are offered, from the Console URL, not the request's address" do
+    assert_equal({ "offered" => false, "reason" => "Console has no fixed Console URL. Set the Console URL, or CONSOLE_URL in deploy/.env." },
+      call_tool(:get_instance_settings, user: @instance_admin).json["passkeys"])
+
+    InstanceSetting.current.update!(console_url: "https://solid-trace.example.ts.net")
+    assert_equal({ "offered" => true, "host" => "solid-trace.example.ts.net", "url" => "https://solid-trace.example.ts.net" },
+      call_tool(:get_instance_settings, user: @instance_admin).json["passkeys"])
+  end
+
   test "update_instance_settings changes the settings given, and answers the settings" do
     answer = call_tool(:update_instance_settings, user: @instance_admin, sql_queries_enabled: false,
       default_log_retention_days: 7, log_all_reads: true)
