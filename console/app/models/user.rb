@@ -2,6 +2,7 @@
 
 class User < ApplicationRecord
   include ActionText::Attachable
+  include User::TwoFactor
 
   has_secure_password
 
