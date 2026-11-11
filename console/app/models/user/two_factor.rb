@@ -21,12 +21,15 @@ module User::TwoFactor
   # Two-factor; the message names them.
   class Required < StandardError; end
 
+  # Adding a factor with a wrong second-step answer or password.
+  class WrongProof < StandardError; end
+
   included do
     encrypts :authenticator_secret
     has_many :recovery_codes, dependent: :delete_all
   end
 
-  # The Recovery codes gaining_two_factor made, to show the user once.
+  # The Recovery codes add_factor made, to show the user once.
   attr_reader :new_recovery_codes
 
   # Whether a password alone no longer signs the user in.
@@ -53,19 +56,33 @@ module User::TwoFactor
     end
   end
 
-  # Yields the change that may give the user Two-factor, and when it does
-  # (they had none before) ends their other Sessions, keeping keep, and makes
-  # a set of Recovery codes, left in new_recovery_codes to show once. Returns
-  # what the block returns.
-  def gaining_two_factor(keep:)
+  # Adds one of the user's factors, the block's change, for proof given in
+  # the same request: the one place a user adds a factor, so a Session alone
+  # can't. The proof is a second-step answer (pass_second_step) once the user
+  # has Two-factor, else their password (answer[:password]); a wrong one
+  # raises WrongProof, changing nothing. Returns what the block returns; when
+  # that is falsy, the proof isn't used up. A change that gives the user
+  # Two-factor (they had none before) ends their other Sessions, keeping
+  # keep_session, and makes a set of Recovery codes, left in
+  # new_recovery_codes to show once.
+  def add_factor(answer, keep_session:)
     had = two_factor?
     @new_recovery_codes = nil
-    yield.tap do |changed|
-      if changed && !had && two_factor?
-        sessions.where.not(id: keep).destroy_all
-        @new_recovery_codes = make_recovery_codes
-      end
+    added = transaction do
+      raise WrongProof unless had ? pass_second_step(answer) : authenticate_password(answer[:password].to_s)
+
+      yield || raise(ActiveRecord::Rollback)
     end
+    unless added
+      reload # forgets the rolled-back proof
+      return added
+    end
+
+    if !had && two_factor?
+      sessions.where.not(id: keep_session).destroy_all
+      @new_recovery_codes = make_recovery_codes
+    end
+    added
   end
 
   # Replaces the user's Recovery codes with a new set. Returns the codes,

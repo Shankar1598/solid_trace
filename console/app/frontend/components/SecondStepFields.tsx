@@ -38,6 +38,49 @@ export async function sendWithPasskeyProof(method: 'post' | 'delete', path: stri
   if (credential) router.visit(path, { method, data: { credential }, preserveScroll: true })
 }
 
+// Proof that it's the user, for adding a factor (User#add_factor): their
+// password while they have no Two-factor, else a second-step answer. Sent
+// as `proof`, beside the factor's own fields.
+export type FactorProof = SecondStepAnswer & { password: string }
+
+export const emptyFactorProof: FactorProof = { ...emptySecondStepAnswer, password: '' }
+
+export function FactorProofFields({ twoFactor, proof, answer, onChange, id, onPasskey }: {
+  // Whether the user has Two-factor already.
+  twoFactor: boolean
+  proof: SecondStepProof
+  answer: FactorProof
+  onChange: (answer: FactorProof) => void
+  id: string
+  // "Use a passkey", when one of the user's Passkeys can answer here.
+  onPasskey?: () => void
+}) {
+  if (twoFactor) {
+    return (
+      <SecondStepFields
+        id={id}
+        answer={answer}
+        onChange={(changed) => onChange({ ...answer, ...changed })}
+        authenticatorApp={proof.authenticatorApp}
+        onPasskey={proof.passkey ? onPasskey : undefined}
+      />
+    )
+  }
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={`${id}-password`}>Your password</Label>
+      <Input
+        id={`${id}-password`}
+        type="password"
+        autoComplete="current-password"
+        value={answer.password}
+        onChange={(e) => onChange({ ...answer, password: e.target.value })}
+        required
+      />
+    </div>
+  )
+}
+
 export function SecondStepFields({ answer, onChange, id = 'code', autoFocus, authenticatorApp = true, onPasskey }: {
   answer: SecondStepAnswer
   onChange: (answer: SecondStepAnswer) => void

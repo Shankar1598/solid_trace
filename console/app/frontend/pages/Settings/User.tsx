@@ -93,7 +93,7 @@ export default function SettingsUser({ user, authenticator_app, recovery_codes_l
         </Card>
         <TwoFactorCard authenticatorApp={authenticator_app} hasPasskeys={passkeys.length > 0} proof={proof} />
         {recovery_codes_left !== null && <RecoveryCodesCard left={recovery_codes_left} proof={proof} />}
-        <PasskeysCard offer={passkey_offer} passkeys={passkeys} proof={proof} />
+        <PasskeysCard offer={passkey_offer} passkeys={passkeys} proof={proof} twoFactor={!!authenticator_app || passkeys.length > 0} />
       </div>
     </SettingsLayout>
   )

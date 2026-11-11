@@ -51,13 +51,20 @@ test('an authenticator app is set up with a code, asked for after the password, 
   await expect(page.getByRole('img', { name: 'QR code for your authenticator app' }).locator('svg')).toBeVisible()
   const secret = (await page.getByLabel('Secret key').textContent())!.replace(/\s/g, '')
 
-  // A wrong code doesn't turn it on.
+  // Turning it on needs the password too, so a Session alone can't; a wrong
+  // code doesn't turn it on.
   await page.getByLabel('2. Enter the code the app shows').fill('000000')
+  await page.getByLabel('Your password').fill('not-the-password')
+  await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
+  await expect(page.getByText("That password didn't work.")).toBeVisible()
+  await page.getByLabel('2. Enter the code the app shows').fill('000000')
+  await page.getByLabel('Your password').fill(password)
   await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
   await expect(page.getByText("That code didn't work. Try the newest one from your app.")).toBeVisible()
 
   let used = await codeAfter(secret, -1)
   await page.getByLabel('2. Enter the code the app shows').fill(used.code)
+  await page.getByLabel('Your password').fill(password)
   await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
 
   // The Recovery codes, shown once, downloaded as a text file.

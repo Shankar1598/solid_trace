@@ -65,6 +65,8 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
   // Named by default from the browser and OS.
   await expect(card.getByLabel('Name')).toHaveValue(/^Chrome on /)
   await card.getByLabel('Name').fill('Flow laptop')
+  // A first factor needs the password, so a Session alone can't add one.
+  await card.getByLabel('Your password').fill(password)
   await card.getByRole('button', { name: 'Add a passkey' }).click()
   // The first factor: Two-factor is on, and its Recovery codes are shown once.
   await page.waitForURL(url => url.pathname === '/recovery_codes')

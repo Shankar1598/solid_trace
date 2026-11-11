@@ -81,6 +81,7 @@ test('an admin requires Two-factor, and a member without it sets it up and reach
   const secret = (await page.getByLabel('Secret key').textContent())!.replace(/\s/g, '')
   const memberCode = await codeAfter(secret, -1)
   await page.getByLabel('2. Enter the code the app shows').fill(memberCode.code)
+  await page.getByLabel('Your password').fill(password)
   await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
 
   // The Recovery codes, shown once, then on to the Organization.
