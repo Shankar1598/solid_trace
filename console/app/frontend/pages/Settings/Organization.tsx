@@ -101,7 +101,7 @@ function RequireTwoFactorCard({ organization, requirement }: { organization: Org
   }
 
   return (
-    <Card className="mt-6" aria-label="Require two-factor">
+    <Card className="mt-6" role="region" aria-label="Require two-factor">
       <CardHeader>
         <CardTitle>Require two-factor</CardTitle>
       </CardHeader>
