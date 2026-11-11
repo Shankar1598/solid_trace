@@ -170,3 +170,14 @@ Anyone who has a user's password can sign in to Console as them: there is no sec
 - Tagalys' install: Console at `https://solid-trace.bluebuck-viper.ts.net` (Tailscale) once public-urls ships, so Passkeys are offered there; ingest stays on the IP, which Passkeys don't touch.
 - A changed `SECRET_KEY_BASE` makes Authenticator app secrets unreadable, as it does the SMTP password: those users sign in with a Recovery code or a Passkey, or the operator resets them.
 - Decisions made while writing the spec rather than in the grilling: Passkeys for another host still count as Two-factor; `update_instance_settings` needs a confirmation argument for a host change that strands Passkeys; one Authenticator app per user; 10 Recovery codes, a new set needing proof; a 5-minute second step; 24-hour Sessions from the Invite link and Sign-up; the operator reset ends Sessions.
+
+## Review fixes
+
+From the code review of `feature/two-factor` (2026-11-11), on `two-factor/review-fixes`:
+
+- Adding a factor needs the password, or a second-step answer once the user has Two-factor (`User#add_factor`, replacing `gaining_two_factor`); Passkey challenges are kept one per purpose, so a Passkey can prove adding another. See Implementation Decisions → Two-factor.
+- The set-up page's Passkey route keeps `?org=`, so Continue after the Recovery codes returns to the requiring Organization (`ReturnsToOrganization`).
+- `/` opens an Organization the user can open, past one whose Require two-factor they don't meet.
+- `Passkey.read_answer` rescues the webauthn gem's errors (and the NoMethodError/TypeError it raises on a malformed field) only around the gem's calls, after checking the answer is a public-key credential.
+- UI copy capitalises Passkey and Authenticator app; GLOSSARY has Console URL and Ingest URL; ADRs 0010 and 0015 note ADR 0017's amendment.
+- `limit_tries`, one wrong-answer message, `PublicUrls.clean`, `redirect_removing_factor`, `PasskeyOffer.stranded_by_change`, and URL formats keyed by attribute.
