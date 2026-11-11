@@ -5,8 +5,8 @@
 # in alone, from the sign-in page, with no password and no email typed.
 # The user's WebAuthn user handle, webauthn_id, is made with their first.
 #
-# Removing one needs the Passkey itself here (remove_passkey). Whether a
-# Passkey counts as Two-factor is User::TwoFactor's question, not this one's.
+# A Passkey is a factor of the user's Two-factor: counting it, accepting one
+# at the second step and removing one are User::TwoFactor's.
 module User::Passkeys
   extend ActiveSupport::Concern
 
@@ -42,14 +42,5 @@ module User::Passkeys
       host: offer.host, name: name.to_s.strip.presence || "Passkey")
   rescue *REFUSED
     nil
-  end
-
-  # Removes passkey, for an answer to challenge from that same Passkey.
-  # Returns whether it did.
-  def remove_passkey(passkey, credential, challenge:, offer:)
-    return false unless passkeys.where(id: passkey.id).accept(credential, challenge: challenge, offer: offer)
-
-    passkey.destroy!
-    true
   end
 end

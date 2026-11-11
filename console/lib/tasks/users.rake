@@ -4,7 +4,7 @@
 # a user's Two-factor, so a stolen admin Session or API token can't either:
 # a user who has lost every factor and every Recovery code asks the operator.
 namespace :users do
-  desc "Remove a user's Two-factor and end their Sessions: EMAIL=<their email>"
+  desc "Remove a user's Two-factor (Authenticator app, Passkeys, Recovery codes) and end their Sessions: EMAIL=<their email>"
   task reset_two_factor: :environment do
     email = ENV["EMAIL"].to_s.strip.downcase
     abort "Give EMAIL=<a user's email>." if email.empty?

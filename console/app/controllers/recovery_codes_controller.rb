@@ -6,6 +6,7 @@
 # Rate-limited as signing in is.
 class RecoveryCodesController < ApplicationController
   include ShowsRecoveryCodes
+  include UsesPasskeys
 
   layout "dashboard"
   rate_limit to: 10, within: 3.minutes, only: :create,
@@ -19,11 +20,11 @@ class RecoveryCodesController < ApplicationController
   end
 
   def create
-    if current_user.pass_second_step(params)
+    if current_user.pass_second_step(second_step_answer(:proof))
       redirect_showing_recovery_codes current_user.make_recovery_codes, continue_to: user_settings_path,
         notice: "New Recovery codes made. The old ones no longer work."
     else
-      redirect_back_or_to user_settings_path, alert: "That code didn't work. Try the newest one from your app."
+      redirect_back_or_to user_settings_path, alert: second_step_refused
     end
   end
 end

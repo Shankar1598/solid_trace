@@ -115,13 +115,21 @@ module User::TwoFactor
     remove_factor(answer) { forget_authenticator_app }
   end
 
+  # Removes passkey, one of the user's, made for any host, for a right
+  # second-step answer (remove_factor), which may come from that Passkey.
+  def remove_passkey(passkey, answer)
+    remove_factor(answer) { passkey.destroy! }
+  end
+
   # The operator's reset (users:reset_two_factor), for a user who has lost
-  # every factor and every Recovery code: removes them all and ends the
-  # user's Sessions, so they next sign in with their password alone. Require
-  # two-factor doesn't stop it; the user is asked to set it up again.
+  # every factor and every Recovery code: removes them all (the Authenticator
+  # app, every Passkey, the Recovery codes) and ends the user's Sessions, so
+  # they next sign in with their password alone. Require two-factor doesn't
+  # stop it; the user is asked to set it up again.
   def reset_two_factor
     transaction do
       forget_authenticator_app
+      passkeys.delete_all
       recovery_codes.delete_all
       sessions.destroy_all
     end

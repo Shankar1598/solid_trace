@@ -91,7 +91,95 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal 9, user_settings_page["recovery_codes_left"]
   end
 
+  test "a Passkey is removed for a code, a Passkey or a Recovery code, and not for a wrong one" do
+    secret = with_authenticator_app
+    sign_in_as @user
+    tablet = WebAuthn::FakeClient.new(CONSOLE_URL)
+    stranger = WebAuthn::FakeClient.new(CONSOLE_URL)
+    stranger.create(challenge: "unregistered", rp_id: "console.example.com", user_verified: true)
+    add_passkey(name: "MacBook")
+    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL))
+    add_passkey(name: "Tablet", client: tablet)
+    macbook, phone, tablet_id = user_settings_page["passkeys"].pluck("id")
+    travel 30.seconds
+
+    delete passkey_url(macbook), params: { code: wrong_code(secret) }
+    assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
+    delete passkey_url(macbook), params: { credential: stranger.get(challenge: proof_challenge, user_verified: true) }, as: :json
+    assert_equal "That passkey didn't work. Try again.", flash[:alert]
+    delete passkey_url(macbook)
+    assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
+    assert_equal 3, user_settings_page["passkeys"].size
+
+    delete passkey_url(macbook), params: { code: code_for(secret) }
+    assert_equal "Passkey removed.", flash[:notice]
+    # The proof asks for any of the user's Passkeys here, the one going too.
+    delete passkey_url(phone), params: { credential: passkey_proof(tablet) }, as: :json
+    assert_equal "Passkey removed.", flash[:notice]
+    delete passkey_url(tablet_id), params: { credential: passkey_proof(tablet) }, as: :json
+    assert_equal "Passkey removed.", flash[:notice]
+    assert_empty user_settings_page["passkeys"]
+    assert_equal 10, user_settings_page["recovery_codes_left"]
+  end
+
+  test "removing the last factor turns Two-factor off and throws the Recovery codes away" do
+    sign_in_as @user
+    add_passkey
+    passkey = user_settings_page["passkeys"].sole["id"]
+    codes = @recovery_codes
+
+    delete passkey_url(passkey), params: { recovery_code: codes.first }
+
+    assert_equal "Passkey removed. Two-factor is off.", flash[:notice]
+    assert_nil user_settings_page["recovery_codes_left"]
+    delete session_url
+    post login_url, params: { email: @user.email, password: "password" }
+    assert_redirected_to root_url
+  end
+
+  test "the Authenticator app is removed, and new Recovery codes made, for a Passkey" do
+    with_authenticator_app
+    sign_in_as @user
+    add_passkey
+
+    post proof_options_passkeys_url, as: :json
+    assert_equal 1, response.parsed_body["allowCredentials"].size
+    post recovery_codes_url, params: { credential: passkey_proof }, as: :json
+    assert_redirected_to recovery_codes_url
+    delete authenticator_app_url, params: { credential: passkey_proof }, as: :json
+    assert_equal "Authenticator app removed.", flash[:notice]
+    assert_nil user_settings_page["authenticator_app"]
+    assert_equal 10, user_settings_page["recovery_codes_left"]
+
+    # A password alone still doesn't sign in: the Passkey is Two-factor.
+    delete session_url
+    post login_url, params: { email: @user.email, password: "password" }
+    assert_redirected_to second_step_url
+  end
+
+  test "a Passkey's last factor isn't removed while an Organization of the user's requires Two-factor" do
+    organization = create(:organization, name: "Acme", slug: "acme")
+    create(:organization_user, organization: organization, user: @user, role: :member)
+    sign_in_as @user
+    add_passkey
+    organization.update!(require_two_factor: true)
+    passkey = user_settings_page["passkeys"].sole["id"]
+
+    delete passkey_url(passkey), params: { credential: passkey_proof }, as: :json
+    assert_equal "Acme requires Two-factor, so you can't remove your last factor.", flash[:alert]
+    delete passkey_url(passkey), params: { recovery_code: @recovery_codes.first }
+    assert_equal "Acme requires Two-factor, so you can't remove your last factor.", flash[:alert]
+
+    assert_equal 1, user_settings_page["passkeys"].size
+    assert_equal 10, user_settings_page["recovery_codes_left"]
+  end
+
   private
+
+  def proof_challenge
+    post proof_options_passkeys_url, as: :json
+    response.parsed_body["challenge"]
+  end
 
   # Another browser, opened at the Console URL.
   def browser_at_console
