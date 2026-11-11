@@ -27,7 +27,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
       options["authenticatorSelection"])
     assert_equal [ "ada@example.com", "Ada" ], options["user"].values_at("name", "displayName")
     assert_equal [], options["excludeCredentials"]
-    assert_redirected_to user_settings_url
+    assert_redirected_to recovery_codes_url
     assert_equal "Passkey added.", flash[:notice]
 
     page = user_settings_page
@@ -100,7 +100,8 @@ class PasskeysTest < ActionDispatch::IntegrationTest
 
     assert_redirected_to login_url
     assert_predicate cookies[:session_id], :blank?
-    sign_in_as @user
+    post login_url, params: { email: @user.email, password: "password" }
+    post second_step_url, params: { recovery_code: @recovery_codes.first }
     assert_equal({ "offered" => true, "host" => "solid-trace.example.ts.net", "url" => "https://solid-trace.example.ts.net", "here" => true },
       user_settings_page["passkey_offer"])
   end

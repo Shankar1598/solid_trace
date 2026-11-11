@@ -21,6 +21,7 @@ Rails.application.routes.draw do
   # Signing in's second step, for a user with Two-factor (SecondStepsController).
   get "login/second_step", to: "second_steps#new", as: :second_step
   post "login/second_step", to: "second_steps#create"
+  post "login/second_step/passkey_options", to: "second_steps#passkey_options", as: :second_step_passkey_options
   # Signing in with a Passkey alone (PasskeySignInsController).
   post "login/passkey/options", to: "passkey_sign_ins#options", as: :passkey_sign_in_options
   post "login/passkey", to: "passkey_sign_ins#create", as: :passkey_sign_in
