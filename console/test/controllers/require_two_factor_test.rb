@@ -24,7 +24,7 @@ class RequireTwoFactorTest < ActionDispatch::IntegrationTest
     give_two_factor @admin
 
     settings = organization_settings
-    assert_equal({ "on" => false, "can_change" => true, "members_without_two_factor" => 1 }, settings["require_two_factor"])
+    assert_equal({ "on" => false, "can_change" => true, "you_have_two_factor" => true, "members_without_two_factor" => 1 }, settings["require_two_factor"])
 
     patch organization_path(org_slug: "acme"), params: { organization: { require_two_factor: true } }
     assert_redirected_to organization_path(org_slug: "acme")
@@ -46,7 +46,7 @@ class RequireTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal false, organization_settings.dig("require_two_factor", "can_change")
     patch organization_path(org_slug: "acme"), params: { organization: { require_two_factor: true, name: "Renamed" } }
     assert_equal "Only an admin who has Two-factor can change Require two-factor.", flash[:alert]
-    assert_equal({ "on" => false, "can_change" => false, "members_without_two_factor" => 1 },
+    assert_equal({ "on" => false, "can_change" => false, "you_have_two_factor" => true, "members_without_two_factor" => 1 },
       organization_settings["require_two_factor"])
     assert_equal "Acme", organization_settings.dig("organization", "name")
   end
