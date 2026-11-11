@@ -18,9 +18,15 @@ Rails.application.routes.draw do
   root "home#index"
   get "login", to: "sessions#new"
   post "login", to: "sessions#create"
+  # Signing in's second step, for a user with Two-factor (SecondStepsController).
+  get "login/second_step", to: "second_steps#new", as: :second_step
+  post "login/second_step", to: "second_steps#create"
   resource :session
   resource :registration, only: [ :new, :create ]
   resource :user_settings, only: [ :show, :update ], controller: "user_settings"
+  # Setting up, confirming and removing the Authenticator app, outside any
+  # Organization (AuthenticatorAppsController).
+  resource :authenticator_app, only: [ :new, :create, :destroy ]
   resources :api_tokens, only: [ :create, :destroy ]
   # The MCP server (McpController).
   post "mcp", to: "mcp#create", as: :mcp, format: false

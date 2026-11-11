@@ -44,11 +44,35 @@ module Authentication
       session.delete(:return_to_after_authenticating) || root_url
     end
 
-    def start_new_session_for(user)
+    # remember_me is carried through for Session lifetimes (ticket 01).
+    def start_new_session_for(user, remember_me: false)
       user.sessions.create!(user_agent: request.user_agent, ip_address: request.remote_ip).tap do |session|
         Current.session = session
         cookies.signed.permanent[:session_id] = { value: session.id, httponly: true, same_site: :lax }
       end
+    end
+
+    # Signing in's second step, pending after a right password from a user
+    # with Two-factor: the user, when, and Remember me, in the Rails session
+    # for SECOND_STEP_LASTS. Success or a new sign-in clears it.
+    SECOND_STEP_LASTS = 5.minutes
+
+    def start_second_step_for(user, remember_me:)
+      session[:second_step] = { "user_id" => user.id, "started_at" => Time.current.to_i, "remember_me" => remember_me }
+    end
+
+    # The pending second step's user and Remember me, or nil when none is
+    # pending or it has expired.
+    def pending_second_step
+      pending = session[:second_step]
+      return unless pending.is_a?(Hash) && Time.at(pending["started_at"].to_i) > SECOND_STEP_LASTS.ago
+
+      user = User.find_by(id: pending["user_id"])
+      [ user, pending["remember_me"] == true ] if user
+    end
+
+    def clear_second_step
+      session.delete(:second_step)
     end
 
     def terminate_session
