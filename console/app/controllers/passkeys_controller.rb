@@ -12,8 +12,7 @@ class PasskeysController < ApplicationController
   include ShowsRecoveryCodes
   include ReturnsToOrganization
 
-  rate_limit to: 10, within: 3.minutes, only: [ :create, :destroy ],
-    with: -> { redirect_back_or_to user_settings_path, alert: "Too many tries. Try again in a few minutes." }
+  limit_tries only: [ :create, :destroy ]
   before_action :refuse_passkey_options_elsewhere, only: [ :creation_options, :proof_options ]
   before_action :set_passkey, only: [ :update, :destroy ]
 
@@ -57,14 +56,7 @@ class PasskeysController < ApplicationController
   # Any of the user's Passkeys can be removed, those made for another host
   # too, for a second-step answer.
   def destroy
-    if current_user.remove_passkey(@passkey, second_step_answer(:proof))
-      notice = current_user.two_factor? ? "Passkey removed." : "Passkey removed. Two-factor is off."
-      redirect_back_or_to user_settings_path, notice: notice
-    else
-      redirect_back_or_to user_settings_path, alert: second_step_refused
-    end
-  rescue User::TwoFactor::Required => e
-    redirect_back_or_to user_settings_path, alert: e.message
+    redirect_removing_factor("Passkey") { current_user.remove_passkey(@passkey, second_step_answer(:proof)) }
   end
 
   private

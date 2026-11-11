@@ -78,10 +78,24 @@ module UsesPasskeys
   # What a wrong second-step answer is told, by the kind it was.
   def second_step_refused(given = params)
     if given[:credential].present?
-      "That Passkey didn't work. Try again."
+      "That Passkey didn't work. Try again, or use a Recovery code."
     else
       "That code didn't work. Try the newest one from your app."
     end
+  end
+
+  # Removes one of the user's factors, named what, as the block does (a
+  # User#remove_* call, true when the second-step answer was right), and says
+  # whether Two-factor is still on, or why not.
+  def redirect_removing_factor(what)
+    if yield
+      notice = current_user.two_factor? ? "#{what} removed." : "#{what} removed. Two-factor is off."
+      redirect_back_or_to user_settings_path, notice: notice
+    else
+      redirect_back_or_to user_settings_path, alert: second_step_refused
+    end
+  rescue User::TwoFactor::Required => e
+    redirect_back_or_to user_settings_path, alert: e.message
   end
 
   # The request's proof for adding a factor (User#add_factor), under proof:

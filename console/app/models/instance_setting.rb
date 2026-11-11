@@ -72,7 +72,7 @@ class InstanceSetting < ApplicationRecord
   # Console's URL and ingest's URL, as people, links and SDKs reach them, or
   # nil to fall back to CONSOLE_URL and PUBLIC_INGEST_URL, then the request's
   # address (PublicUrls, ADR 0017). Console's has no path; ingest's may.
-  normalizes :console_url, :ingest_url, with: ->(value) { value.strip.sub(%r{/+\z}, "").presence }
+  normalizes :console_url, :ingest_url, with: ->(value) { PublicUrls.clean(value) }
   validate -> { url_problem(:console_url, path: false) }, if: -> { console_url.present? }
   validate -> { url_problem(:ingest_url, path: true) }, if: -> { ingest_url.present? }
   # Saved from the page or MCP (update_editable), Console's URL must keep the

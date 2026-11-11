@@ -80,9 +80,9 @@ module PublicUrls
     Rails.application.config.force_ssl == true
   end
 
-  # A URL from an env var or a request, without blanks or a trailing slash.
+  # A URL from a setting, an env var or a request, without blanks or a
+  # trailing slash; nil when blank.
   def clean(url)
     url.to_s.strip.sub(%r{/+\z}, "").presence
   end
-  private_class_method :clean
 end

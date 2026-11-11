@@ -12,8 +12,7 @@ class AuthenticatorAppsController < ApplicationController
   include ReturnsToOrganization
 
   layout "dashboard"
-  rate_limit to: 10, within: 3.minutes, only: [ :create, :destroy ],
-    with: -> { redirect_back_or_to user_settings_path, alert: "Too many tries. Try again in a few minutes." }
+  limit_tries only: [ :create, :destroy ]
 
   def new
     if current_user.authenticator_app?
@@ -57,13 +56,6 @@ class AuthenticatorAppsController < ApplicationController
   end
 
   def destroy
-    if current_user.remove_authenticator_app(second_step_answer(:proof))
-      notice = current_user.two_factor? ? "Authenticator app removed." : "Authenticator app removed. Two-factor is off."
-      redirect_back_or_to user_settings_path, notice: notice
-    else
-      redirect_back_or_to user_settings_path, alert: second_step_refused
-    end
-  rescue User::TwoFactor::Required => e
-    redirect_back_or_to user_settings_path, alert: e.message
+    redirect_removing_factor("Authenticator app") { current_user.remove_authenticator_app(second_step_answer(:proof)) }
   end
 end

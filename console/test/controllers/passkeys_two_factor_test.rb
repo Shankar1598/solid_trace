@@ -149,7 +149,7 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     delete passkey_url(macbook), params: { code: wrong_code(secret) }
     assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
     delete passkey_url(macbook), params: { credential: stranger.get(challenge: proof_challenge, user_verified: true) }, as: :json
-    assert_equal "That Passkey didn't work. Try again.", flash[:alert]
+    assert_equal "That Passkey didn't work. Try again, or use a Recovery code.", flash[:alert]
     delete passkey_url(macbook)
     assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
     assert_equal 3, user_settings_page["passkeys"].size
