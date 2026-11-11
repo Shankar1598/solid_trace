@@ -10,6 +10,7 @@
 class PasskeysController < ApplicationController
   include UsesPasskeys
   include ShowsRecoveryCodes
+  include ReturnsToOrganization
 
   rate_limit to: 10, within: 3.minutes, only: [ :create, :destroy ],
     with: -> { redirect_back_or_to user_settings_path, alert: "Too many tries. Try again in a few minutes." }
@@ -22,13 +23,14 @@ class PasskeysController < ApplicationController
 
   # Adding one needs proof it's the user (User#add_factor). A first Passkey,
   # as the user's first factor, gives them Two-factor: their other Sessions
-  # end and their Recovery codes are shown once.
+  # end and their Recovery codes are shown once, continuing to the
+  # Organization org names, as from the set-up page.
   def create
     passkey = passkeys_here? && current_user.add_factor(factor_proof, keep_session: Current.session) {
       current_user.add_passkey(passkey_credential, challenge: take_passkey_challenge(:add), offer: passkey_offer, name: params[:name])
     }
     if passkey && current_user.new_recovery_codes
-      redirect_showing_recovery_codes current_user.new_recovery_codes, continue_to: user_settings_path, notice: "Passkey added."
+      redirect_showing_recovery_codes current_user.new_recovery_codes, continue_to: return_url, notice: "Passkey added."
     elsif passkey
       redirect_back_or_to user_settings_path, notice: "Passkey added."
     else

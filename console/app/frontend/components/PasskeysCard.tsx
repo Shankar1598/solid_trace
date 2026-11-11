@@ -58,12 +58,14 @@ function failed(error: unknown) {
  * code. Opened at an address other than the Console URL, it says where
  * Passkeys work instead of adding them.
  */
-export function PasskeysCard({ offer, passkeys, proof, twoFactor }: {
+export function PasskeysCard({ offer, passkeys, proof, twoFactor, returnOrganization }: {
   offer: PasskeyOfferHere
   passkeys: PasskeyRow[]
   proof: SecondStepProof
   // Whether the user has Two-factor, which decides how adding proves it's them.
   twoFactor: boolean
+  // The slug of the Organization a first Passkey returns to, from set-up.
+  returnOrganization?: string
 }) {
   const usable = offer.here && passkeysSupported()
   const [name, setName] = useState(() => (typeof navigator === 'undefined' ? 'Passkey' : defaultPasskeyName()))
@@ -83,7 +85,7 @@ export function PasskeysCard({ offer, passkeys, proof, twoFactor }: {
       }
       const options = await passkeyOptions<PublicKeyCredentialCreationOptionsJSON>('/passkeys/creation_options')
       const credential = await createPasskey(options)
-      router.post('/passkeys', { name, credential, proof: given }, {
+      router.post('/passkeys', { name, credential, proof: given, org: returnOrganization ?? null }, {
         preserveScroll: true,
         onFinish: () => setAnswer(emptyFactorProof),
       })
