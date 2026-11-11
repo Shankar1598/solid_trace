@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# A user's Two-factor (GLOSSARY): for now an Authenticator app, one per user,
-# with Recovery codes. "Has Two-factor" (two_factor?) and "what the second
-# step accepts" (pass_second_step) are each answered here alone, so Passkeys
-# join them without their callers changing.
+# A user's Two-factor (GLOSSARY): an Authenticator app, one per user, any
+# Passkey (User::Passkeys, whatever host it was made for, ADR 0018), or
+# both, with Recovery codes. "Has Two-factor" (two_factor?) and "what the
+# second step accepts" (pass_second_step) are each answered here alone.
 #
 # The Authenticator app is TOTP per RFC 6238 (6 digits, 30 s, SHA-1). Its
 # secret is encrypted as the SMTP password is (ADR 0015): a changed
@@ -31,19 +31,23 @@ module User::TwoFactor
 
   # Whether a password alone no longer signs the user in.
   def two_factor?
-    authenticator_app?
+    authenticator_app? || passkeys.exists?
   end
 
-  # Checks an answer to the second step, the params of the request that
-  # gives it: :recovery_code, one of the user's Recovery codes, else :code, a
-  # code from the Authenticator app. Returns what was accepted
-  # (:recovery_code or :authenticator_app), or nil. An accepted answer is
-  # used up.
+  # Checks an answer to the second step (the request's, as
+  # UsesPasskeys#second_step_answer gives it): :recovery_code, one of the
+  # user's Recovery codes; else :passkey, an answer from one of the user's
+  # Passkeys ({credential:, challenge:, offer:}, Passkey.accept); else :code,
+  # a code from the Authenticator app. Returns what was accepted
+  # (:recovery_code, :passkey or :authenticator_app), or nil. An accepted
+  # answer is used up.
   def pass_second_step(answer)
     return unless two_factor?
 
     if answer[:recovery_code].present?
       :recovery_code if accept_recovery_code(answer[:recovery_code])
+    elsif (passkey = answer[:passkey])
+      :passkey if passkeys.accept(passkey[:credential], challenge: passkey[:challenge], offer: passkey[:offer])
     elsif authenticator_app? && accept_authenticator_code(answer[:code])
       :authenticator_app
     end
@@ -111,13 +115,21 @@ module User::TwoFactor
     remove_factor(answer) { forget_authenticator_app }
   end
 
+  # Removes passkey, one of the user's, made for any host, for a right
+  # second-step answer (remove_factor), which may come from that Passkey.
+  def remove_passkey(passkey, answer)
+    remove_factor(answer) { passkey.destroy! }
+  end
+
   # The operator's reset (users:reset_two_factor), for a user who has lost
-  # every factor and every Recovery code: removes them all and ends the
-  # user's Sessions, so they next sign in with their password alone. Require
-  # two-factor doesn't stop it; the user is asked to set it up again.
+  # every factor and every Recovery code: removes them all (the Authenticator
+  # app, every Passkey, the Recovery codes) and ends the user's Sessions, so
+  # they next sign in with their password alone. Require two-factor doesn't
+  # stop it; the user is asked to set it up again.
   def reset_two_factor
     transaction do
       forget_authenticator_app
+      passkeys.delete_all
       recovery_codes.delete_all
       sessions.destroy_all
     end

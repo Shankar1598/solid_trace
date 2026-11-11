@@ -7,6 +7,7 @@
 # and removing are rate-limited as signing in is.
 class AuthenticatorAppsController < ApplicationController
   include ShowsRecoveryCodes
+  include UsesPasskeys
 
   layout "dashboard"
   rate_limit to: 10, within: 3.minutes, only: [ :create, :destroy ],
@@ -31,6 +32,8 @@ class AuthenticatorAppsController < ApplicationController
         slug: @return_organization.slug,
         requires_two_factor: @return_organization.require_two_factor,
       },
+      # A Passkey, added on Settings → User, is Two-factor too.
+      passkeys_here: passkeys_here?,
     }
   end
 
@@ -43,10 +46,11 @@ class AuthenticatorAppsController < ApplicationController
   end
 
   def destroy
-    if current_user.remove_authenticator_app(params)
-      redirect_back_or_to user_settings_path, notice: "Authenticator app removed. Two-factor is off."
+    if current_user.remove_authenticator_app(second_step_answer(:proof))
+      notice = current_user.two_factor? ? "Authenticator app removed." : "Authenticator app removed. Two-factor is off."
+      redirect_back_or_to user_settings_path, notice: notice
     else
-      redirect_back_or_to user_settings_path, alert: "That code didn't work. Try the newest one from your app."
+      redirect_back_or_to user_settings_path, alert: second_step_refused
     end
   rescue User::TwoFactor::Required => e
     redirect_back_or_to user_settings_path, alert: e.message

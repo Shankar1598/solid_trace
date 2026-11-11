@@ -6,11 +6,13 @@ import { watchErrors } from '../support/screens'
 
 // Passkeys with Chromium's virtual authenticator, over CDP: on
 // http://localhost, where Passkeys are offered once the Console URL says so,
-// add one on Settings → User, sign out, and sign in with it alone: from the
-// email field's autofill, which the virtual authenticator answers as soon as
-// the page asks, then, in a browser without autofill, from "Sign in with a
-// passkey", with Remember me. The run sets the Console URL to the flow's own address and
-// puts back what was there afterwards. Each run makes its own user, a member
+// add one on Settings → User (the user's first factor, so Recovery codes
+// follow), sign out, and sign in with it alone: from the email field's
+// autofill, which the virtual authenticator answers as soon as the page
+// asks, then, in a browser without autofill, from "Sign in with a passkey",
+// with Remember me. Last, the password, then the Passkey at the second
+// step. The run sets the Console URL to the flow's own address and puts back
+// what was there afterwards. Each run makes its own user, a member
 // of the seed Organization so that signing in lands on its Overview.
 
 const email = `flow-passkeys-${Date.now()}@solidtrace.local`
@@ -38,7 +40,7 @@ test.afterAll(() => {
     `User.where(email: ${JSON.stringify(email)}).each { |user| OrganizationUser.where(user: user).delete_all; user.destroy! }`)
 })
 
-test('a Passkey is added on Settings → User and signs in alone, with Remember me', async ({ page }) => {
+test('a Passkey is added on Settings → User and signs in alone, with Remember me, or after the password', async ({ page }) => {
   test.setTimeout(120_000)
   const errors = watchErrors(page)
 
@@ -64,7 +66,13 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
   await expect(card.getByLabel('Name')).toHaveValue(/^Chrome on /)
   await card.getByLabel('Name').fill('Flow laptop')
   await card.getByRole('button', { name: 'Add a passkey' }).click()
+  // The first factor: Two-factor is on, and its Recovery codes are shown once.
+  await page.waitForURL(url => url.pathname === '/recovery_codes')
   await expect(page.getByText('Passkey added.')).toBeVisible()
+  await expect(page.getByRole('list', { name: 'Recovery codes' }).getByRole('listitem')).toHaveCount(10)
+  await page.getByRole('link', { name: 'Continue' }).click()
+  await page.waitForURL(url => url.pathname === '/user_settings')
+  await expect(page.getByText(/^On with your passkeys/)).toBeVisible()
   const item = card.getByRole('listitem', { name: 'Flow laptop' })
   await expect(item.getByText('Never used')).toBeVisible()
 
@@ -96,6 +104,16 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
 
   await page.goto('/user_settings')
   await expect(card.getByRole('listitem', { name: 'Flow laptop' }).getByText(/Last used/)).toBeVisible()
+
+  // The password alone doesn't sign in: the second step asks for the Passkey.
+  await page.context().clearCookies()
+  await page.goto('/login')
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Log in' }).click()
+  await page.waitForURL(url => url.pathname === '/login/second_step')
+  await page.getByRole('button', { name: 'Use a passkey' }).click()
+  await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
   expect(errors).toEqual([])
 })
