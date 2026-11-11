@@ -4,6 +4,8 @@ require "test_helper"
 
 # JSON-RPC to POST /mcp, as Claude Code and Cursor send it with an API token.
 class McpTest < ActionDispatch::IntegrationTest
+  include IntegrationTestHelper
+
   setup do
     @user = create(:user, name: "Ada", email: "ada@example.com")
     @organization = create(:organization, name: "Acme", slug: "acme")
@@ -121,6 +123,30 @@ class McpTest < ActionDispatch::IntegrationTest
     mcp "tools/call", name: "invite_member", arguments: { email: "grace@example.com" }
     assert_not tool_result.first
     assert @organization.users.exists?(email: "grace@example.com")
+  end
+
+  test "a requiring Organization refuses a user without Two-factor, and their other Organizations answer" do
+    freeze_time
+    beta = create(:organization, name: "Beta", slug: "beta")
+    create(:organization_user, organization: beta, user: @user, role: :member)
+    @organization.update!(require_two_factor: true)
+
+    mcp "tools/call", name: "list_members", arguments: { organization: "acme" }
+    assert_equal [ true, "Acme requires Two-factor. Set it up in Console on Settings → User, then try again." ], tool_result
+    mcp "tools/call", name: "get_project_setup", arguments: { organization: "acme", project: "shop" }
+    assert_equal [ true, "Acme requires Two-factor. Set it up in Console on Settings → User, then try again." ], tool_result
+    mcp "tools/call", name: "list_members", arguments: { organization: "beta" }
+    assert_not tool_result.first
+    mcp "tools/call", name: "whoami", arguments: {}
+    assert_not tool_result.first
+
+    # Once the user sets up Two-factor in Console, the token works on Acme.
+    sign_in_as @user
+    get new_authenticator_app_url, headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    post authenticator_app_url, params: { code: ROTP::TOTP.new(response.parsed_body.dig("props", "secret")).at(Time.current) }
+    mcp "tools/call", name: "list_members", arguments: { organization: "acme" }
+    assert_equal false, tool_result.first
+    assert_match "ada@example.com", tool_result.last
   end
 
   test "a body that isn't JSON gets JSON-RPC's parse error" do

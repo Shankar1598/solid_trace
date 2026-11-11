@@ -44,4 +44,16 @@ class Organization < ApplicationRecord
   def add_admin(user)
     organization_users.create!(user: user, role: :admin)
   end
+
+  # Whether user may turn Require two-factor on or off: an admin of this
+  # Organization who has Two-factor, so no one requires what they lack.
+  def can_require_two_factor?(user)
+    user.two_factor? && organization_users.find_by(user: user)&.admin? || false
+  end
+
+  # How many members, Invited ones too, Require two-factor would ask to set
+  # it up. Each is asked two_factor?, which alone says what counts.
+  def members_without_two_factor
+    users.count { |user| !user.two_factor? }
+  end
 end

@@ -17,6 +17,10 @@ module User::TwoFactor
   ISSUER = "SolidTrace"
   STEP = 30
 
+  # Removing the user's last factor while Organizations of theirs require
+  # Two-factor; the message names them.
+  class Required < StandardError; end
+
   included do
     encrypts :authenticator_secret
     has_many :recovery_codes, dependent: :delete_all
@@ -101,27 +105,59 @@ module User::TwoFactor
     update!(authenticator_confirmed_at: Time.current)
   end
 
-  # Removes the Authenticator app; when it was the last factor, the Recovery
-  # codes go with it.
-  def remove_authenticator_app
-    transaction do
-      update!(authenticator_secret: nil, authenticator_confirmed_at: nil, authenticator_last_step: nil)
-      recovery_codes.delete_all unless two_factor?
-    end
+  # Removes the Authenticator app, for a right second-step answer
+  # (remove_factor).
+  def remove_authenticator_app(answer)
+    remove_factor(answer) { forget_authenticator_app }
   end
 
   # The operator's reset (users:reset_two_factor), for a user who has lost
   # every factor and every Recovery code: removes them all and ends the
-  # user's Sessions, so they next sign in with their password alone.
+  # user's Sessions, so they next sign in with their password alone. Require
+  # two-factor doesn't stop it; the user is asked to set it up again.
   def reset_two_factor
     transaction do
-      remove_authenticator_app
+      forget_authenticator_app
       recovery_codes.delete_all
       sessions.destroy_all
     end
   end
 
+  # The Organizations of the user's that have Require two-factor, by name.
+  def organizations_requiring_two_factor
+    organizations.where(require_two_factor: true).order(:name)
+  end
+
   private
+
+  # Removes one of the user's factors, the block's change, for a right
+  # second-step answer given in the same request: the one place a user
+  # removes a factor. Returns whether it did, false for a wrong answer.
+  # Removing the last factor throws the Recovery codes away, and is refused
+  # while any of the user's Organizations requires Two-factor: then nothing
+  # changes, the answer isn't used up, and it raises Required naming them.
+  def remove_factor(answer)
+    transaction do
+      next false unless pass_second_step(answer)
+
+      yield
+      unless two_factor?
+        requiring = organizations_requiring_two_factor.pluck(:name)
+        raise Required, "#{requiring.to_sentence} #{requiring.one? ? 'requires' : 'require'} Two-factor, " \
+                        "so you can't remove your last factor." if requiring.any?
+
+        recovery_codes.delete_all
+      end
+      true
+    end
+  rescue Required
+    reload
+    raise
+  end
+
+  def forget_authenticator_app
+    update!(authenticator_secret: nil, authenticator_confirmed_at: nil, authenticator_last_step: nil)
+  end
 
   # Marks the Recovery code used, only if it is unused, in one UPDATE, so two
   # requests with one code can't both pass.
