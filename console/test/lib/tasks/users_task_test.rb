@@ -14,9 +14,9 @@ class UsersTaskTest < ActiveSupport::TestCase
     ada = create(:user, email: "ada@example.com")
     ada.update!(authenticator_secret: ROTP::Base32.random)
     ada.gaining_two_factor(keep: nil) { ada.confirm_authenticator_app(ROTP::TOTP.new(ada.authenticator_secret).now) }
-    ada.sessions.create!(user_agent: "Laptop", ip_address: "127.0.0.1")
+    ada.sessions.create!(user_agent: "Laptop", ip_address: "127.0.0.1", expires_at: 1.day.from_now)
     grace = create(:user, email: "grace@example.com")
-    grace.sessions.create!(user_agent: "Phone", ip_address: "127.0.0.1")
+    grace.sessions.create!(user_agent: "Phone", ip_address: "127.0.0.1", expires_at: 1.day.from_now)
 
     out = run_task("users:reset_two_factor", "EMAIL" => " Ada@Example.com ")
 
