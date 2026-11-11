@@ -28,7 +28,16 @@ end
 Dir[File.expand_path("support/**/*.rb", __dir__)].each { |file| require file }
 
 module IntegrationTestHelper
+  # Signs in through the sign-in page. For a user with Two-factor it finishes
+  # the second step, as the user's Authenticator app would, with a code for
+  # the newest step not yet used: now's, or the next one's when now's was.
+  # Signing in twice within two steps needs a travel in between.
   def sign_in_as(user, password: "password")
     post login_url, params: { email: user.email, password: password }
+    return unless response.redirect? && response.location == second_step_url
+
+    user.reload
+    step = [ Time.current.to_i / User::TwoFactor::STEP, user.authenticator_last_step.to_i + 1 ].max
+    post second_step_url, params: { code: ROTP::TOTP.new(user.authenticator_secret).at(step * User::TwoFactor::STEP) }
   end
 end

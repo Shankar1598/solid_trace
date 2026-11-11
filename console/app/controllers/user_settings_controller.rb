@@ -7,6 +7,8 @@ class UserSettingsController < ApplicationController
   def show
     render inertia: "Settings/User", props: {
       user: UserSerializer.new(current_user).as_json,
+      # Two-factor: the Authenticator app once set up, never its secret.
+      authenticator_app: (current_user.authenticator_app? ? { set_up_at: current_user.authenticator_confirmed_at.iso8601 } : nil),
     }
   end
 
