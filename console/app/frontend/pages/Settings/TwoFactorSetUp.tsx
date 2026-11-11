@@ -52,7 +52,7 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
     <SettingsLayout>
       <PageHeader
         title="Set up Two-factor"
-        description="Once it's on, signing in asks for a code from your authenticator app after your password."
+        description="Once it's on, signing in asks for a code from your Authenticator app after your password."
       />
       {return_organization?.requires_two_factor && (
         <p role="status" className="mb-4 max-w-xl rounded-md border px-4 py-3 text-sm">
@@ -67,13 +67,13 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
           <CardContent className="space-y-6">
             <div className="space-y-3">
               <p className="text-sm">
-                1. Scan this QR code with an authenticator app, such as 1Password, Google Authenticator or Authy.
+                1. Scan this QR code with an Authenticator app, such as 1Password, Google Authenticator or Authy.
               </p>
               {/* Dark on light in both themes, so every camera reads it. */}
               <div
                 className="w-48 bg-white p-3 [&_svg]:h-auto [&_svg]:w-full"
                 role="img"
-                aria-label="QR code for your authenticator app"
+                aria-label="QR code for your Authenticator app"
                 dangerouslySetInnerHTML={{ __html: qr_code }}
               />
               <p className="text-sm text-muted-foreground">
@@ -135,7 +135,7 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
             href={return_organization ? `/user_settings?org=${encodeURIComponent(return_organization.slug)}` : '/user_settings'}
             className="underline underline-offset-2 hover:text-foreground"
           >
-            Add a passkey on Settings → User
+            Add a Passkey on Settings → User
           </Link>{' '}
           instead.
         </p>

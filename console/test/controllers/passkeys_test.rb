@@ -84,7 +84,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
     sign_in_with_passkey(sign_count: 3)
 
     assert_redirected_to login_url
-    assert_equal "That passkey didn't sign you in. Try again, or use your password.", flash[:alert]
+    assert_equal "That Passkey didn't sign you in. Try again, or use your password.", flash[:alert]
     assert_predicate cookies[:session_id], :blank?
   end
 
@@ -93,7 +93,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
     add_passkey
     creation_options
     post passkeys_url, params: { name: "Broken", credential: { "type" => "public-key" }, proof: { credential: passkey_proof } }, as: :json
-    assert_equal "That passkey couldn't be added. Try again.", flash[:alert]
+    assert_equal "That Passkey couldn't be added. Try again.", flash[:alert]
     delete session_url
     good = sign_in_answer
     encode = ->(json) { Base64.urlsafe_encode64(json, padding: false) }
@@ -105,7 +105,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
       sign_in_answer
       post passkey_sign_in_url, params: { credential: credential }, as: :json
       assert_redirected_to login_url, credential.inspect
-      assert_equal "That passkey didn't sign you in. Try again, or use your password.", flash[:alert]
+      assert_equal "That Passkey didn't sign you in. Try again, or use your password.", flash[:alert]
     end
   end
 
@@ -188,7 +188,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
 
     add_passkey(user_verified: false)
 
-    assert_equal "That passkey couldn't be added. Try again.", flash[:alert]
+    assert_equal "That Passkey couldn't be added. Try again.", flash[:alert]
     assert_empty user_settings_page["passkeys"]
   end
 

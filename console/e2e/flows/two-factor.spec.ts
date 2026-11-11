@@ -46,9 +46,9 @@ test('an authenticator app is set up with a code, asked for after the password, 
   await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
   await page.goto('/user_settings')
-  await page.getByRole('link', { name: 'Set up an authenticator app' }).click()
+  await page.getByRole('link', { name: 'Set up an Authenticator app' }).click()
   await expect(page.getByRole('heading', { name: 'Set up Two-factor' })).toBeVisible()
-  await expect(page.getByRole('img', { name: 'QR code for your authenticator app' }).locator('svg')).toBeVisible()
+  await expect(page.getByRole('img', { name: 'QR code for your Authenticator app' }).locator('svg')).toBeVisible()
   const secret = (await page.getByLabel('Secret key').textContent())!.replace(/\s/g, '')
 
   // Turning it on needs the password too, so a Session alone can't; a wrong
@@ -92,7 +92,7 @@ test('an authenticator app is set up with a code, asked for after the password, 
   await signIn()
   await page.waitForURL(url => url.pathname === '/login/second_step')
   used = await codeAfter(secret, used.step)
-  await page.getByLabel('Code from your authenticator app').fill(used.code)
+  await page.getByLabel('Code from your Authenticator app').fill(used.code)
   await page.getByRole('button', { name: 'Continue' }).click()
   await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
@@ -107,12 +107,12 @@ test('an authenticator app is set up with a code, asked for after the password, 
 
   await page.goto('/user_settings')
   await expect(page.getByText(/You have 9 Recovery codes left/)).toBeVisible()
-  const removeForm = page.getByRole('form', { name: 'Remove authenticator app' })
+  const removeForm = page.getByRole('form', { name: 'Remove Authenticator app' })
   used = await codeAfter(secret, used.step)
-  await removeForm.getByLabel('Code from your authenticator app').fill(used.code)
-  await removeForm.getByRole('button', { name: 'Remove authenticator app' }).click()
+  await removeForm.getByLabel('Code from your Authenticator app').fill(used.code)
+  await removeForm.getByRole('button', { name: 'Remove Authenticator app' }).click()
   await expect(page.getByText('Authenticator app removed. Two-factor is off.')).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Set up an authenticator app' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Set up an Authenticator app' })).toBeVisible()
 
   expect(errors).toEqual([])
 })

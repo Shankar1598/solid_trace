@@ -78,7 +78,7 @@ module UsesPasskeys
   # What a wrong second-step answer is told, by the kind it was.
   def second_step_refused(given = params)
     if given[:credential].present?
-      "That passkey didn't work. Try again."
+      "That Passkey didn't work. Try again."
     else
       "That code didn't work. Try the newest one from your app."
     end

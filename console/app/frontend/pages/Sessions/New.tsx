@@ -49,7 +49,7 @@ export default function Login({ sign_up_allowed, passkey_offer }: { sign_up_allo
   }
 
   const failed = (error: unknown) => {
-    if (!passkeyCancelled(error)) setPasskeyError(error instanceof Error ? error.message : "That passkey didn't work.")
+    if (!passkeyCancelled(error)) setPasskeyError(error instanceof Error ? error.message : "That Passkey didn't work.")
   }
 
   // The email field's autofill offers the user's Passkeys, where the browser can.
@@ -140,7 +140,7 @@ export default function Login({ sign_up_allowed, passkey_offer }: { sign_up_allo
         {passkeysHere && (
           <Button type="button" variant="outline" className="w-full" onClick={signInWithPasskey} disabled={passkeyBusy}>
             <KeyRound className="h-4 w-4" />
-            Sign in with a passkey
+            Sign in with a Passkey
           </Button>
         )}
         {passkeyError && <p className="text-sm font-medium text-destructive" role="alert">{passkeyError}</p>}

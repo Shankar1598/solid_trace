@@ -25,7 +25,7 @@ class PasskeySignInsController < ApplicationController
       start_new_session_for passkey.user, remember_me: remember_me?
       redirect_to after_authentication_url
     else
-      redirect_to login_path, alert: "That passkey didn't sign you in. Try again, or use your password."
+      redirect_to login_path, alert: "That Passkey didn't sign you in. Try again, or use your password."
     end
   end
 end

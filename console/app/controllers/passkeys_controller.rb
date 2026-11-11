@@ -34,7 +34,7 @@ class PasskeysController < ApplicationController
     elsif passkey
       redirect_back_or_to user_settings_path, notice: "Passkey added."
     else
-      redirect_back_or_to user_settings_path, alert: passkeys_here? ? "That passkey couldn't be added. Try again." : passkeys_elsewhere
+      redirect_back_or_to user_settings_path, alert: passkeys_here? ? "That Passkey couldn't be added. Try again." : passkeys_elsewhere
     end
   rescue User::TwoFactor::WrongProof
     redirect_back_or_to user_settings_path, alert: factor_proof_refused

@@ -45,9 +45,9 @@ const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { date
 function failed(error: unknown) {
   if (passkeyCancelled(error)) return
   if (error instanceof DOMException && error.name === 'InvalidStateError') {
-    toast.error('This device already has one of your passkeys.')
+    toast.error('This device already has one of your Passkeys.')
   } else {
-    toast.error(error instanceof Error ? error.message : "That passkey didn't work.")
+    toast.error(error instanceof Error ? error.message : "That Passkey didn't work.")
   }
 }
 
@@ -108,7 +108,7 @@ export function PasskeysCard({ offer, passkeys, proof, twoFactor, returnOrganiza
       </CardHeader>
       <CardContent className="space-y-4">
         {passkeys.length > 0 && (
-          <ul className="divide-y" aria-label="Your passkeys">
+          <ul className="divide-y" aria-label="Your Passkeys">
             {passkeys.map((passkey) => (
               <PasskeyItem key={passkey.id} passkey={passkey} proof={proof} />
             ))}
@@ -118,7 +118,7 @@ export function PasskeysCard({ offer, passkeys, proof, twoFactor, returnOrganiza
           <form
             onSubmit={(e) => { e.preventDefault(); add(false) }}
             className="space-y-3"
-            aria-label="Add a passkey"
+            aria-label="Add a Passkey"
           >
             <div className="max-w-xs space-y-2">
               <Label htmlFor="passkey-name">Name</Label>
@@ -134,11 +134,11 @@ export function PasskeysCard({ offer, passkeys, proof, twoFactor, returnOrganiza
                 onPasskey={() => add(true)}
               />
             </div>
-            <Button type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add a passkey'}</Button>
+            <Button type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add a Passkey'}</Button>
           </form>
         )}
         {offer.here && !passkeysSupported() && (
-          <p className="text-sm text-muted-foreground">This browser can't use passkeys.</p>
+          <p className="text-sm text-muted-foreground">This browser can't use Passkeys.</p>
         )}
       </CardContent>
     </Card>
@@ -203,7 +203,7 @@ function PasskeyItem({ passkey, proof }: { passkey: PasskeyRow, proof: SecondSte
           </div>
           <div className="flex gap-2">
             <Button type="submit" size="sm" variant="destructive" disabled={removal.processing}>
-              {removal.processing ? 'Removing…' : 'Remove passkey'}
+              {removal.processing ? 'Removing…' : 'Remove Passkey'}
             </Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => { removal.setData(emptySecondStepAnswer); setRemoving(false) }}>
               Cancel
