@@ -6,14 +6,15 @@
 module TwoFactorTestHelper
   private
 
-  # Sets up the Authenticator app as the user would, signs out, and moves on
-  # to the next step, as the code that confirmed it is used up. Returns the
-  # secret.
+  # Sets up the Authenticator app as the user would, keeps the Recovery
+  # codes it shows in @recovery_codes, signs out, and moves on to the next
+  # step, as the code that confirmed it is used up. Returns the secret.
   def with_authenticator_app
     sign_in_as @user
     secret = set_up_page["secret"]
     post authenticator_app_url, params: { code: code_for(secret) }
     assert_equal "Two-factor is on.", flash[:notice]
+    @recovery_codes = recovery_codes_page["codes"]
     delete session_url
     travel 30.seconds
     secret
@@ -32,6 +33,12 @@ module TwoFactorTestHelper
   def set_up_page
     get new_authenticator_app_url, headers: inertia
     assert_equal "Settings/TwoFactorSetUp", response.parsed_body["component"]
+    response.parsed_body["props"]
+  end
+
+  def recovery_codes_page
+    get recovery_codes_url, headers: inertia
+    assert_equal "Settings/RecoveryCodes", response.parsed_body["component"]
     response.parsed_body["props"]
   end
 

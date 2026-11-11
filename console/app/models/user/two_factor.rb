@@ -101,8 +101,24 @@ module User::TwoFactor
     update!(authenticator_confirmed_at: Time.current)
   end
 
+  # Removes the Authenticator app; when it was the last factor, the Recovery
+  # codes go with it.
   def remove_authenticator_app
-    update!(authenticator_secret: nil, authenticator_confirmed_at: nil, authenticator_last_step: nil)
+    transaction do
+      update!(authenticator_secret: nil, authenticator_confirmed_at: nil, authenticator_last_step: nil)
+      recovery_codes.delete_all unless two_factor?
+    end
+  end
+
+  # The operator's reset (users:reset_two_factor), for a user who has lost
+  # every factor and every Recovery code: removes them all and ends the
+  # user's Sessions, so they next sign in with their password alone.
+  def reset_two_factor
+    transaction do
+      remove_authenticator_app
+      recovery_codes.delete_all
+      sessions.destroy_all
+    end
   end
 
   private
