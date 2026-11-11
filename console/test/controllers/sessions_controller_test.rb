@@ -48,6 +48,28 @@ class SessionsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to user_settings_url
   end
 
+  test "with Remember me, a Session lasts 7 days from signing in, however much Console is used" do
+    freeze_time
+    post login_url, params: { email: @user.email, password: "password123", remember_me: "1" }
+
+    assert_equal 7.days.from_now, session_cookie_expires
+    copied_cookie = { "Cookie" => "session_id=#{cookies[:session_id]}" }
+
+    6.times do
+      travel 1.day
+      get user_settings_url
+      assert_response :success
+    end
+
+    travel 1.day - 1.minute
+    get user_settings_url
+    assert_response :success
+
+    travel 2.minutes
+    get user_settings_url, headers: copied_cookie
+    assert_redirected_to login_url
+  end
+
   test "a Session signed in before Sessions expired keeps working until the expiry it was given, then is refused and ended" do
     freeze_time
     session_record = @user.sessions.create!(expires_at: 7.days.from_now)

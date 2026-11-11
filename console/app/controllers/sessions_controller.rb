@@ -13,7 +13,7 @@ class SessionsController < ApplicationController
 
   def create
     if user = User.authenticate_by(email: params[:email], password: params[:password])
-      start_new_session_for user
+      start_new_session_for user, remember_me: ActiveModel::Type::Boolean.new.cast(params[:remember_me])
       redirect_to after_authentication_url
     else
       redirect_to login_path, alert: "Try another email address or password."
