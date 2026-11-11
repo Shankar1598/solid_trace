@@ -24,7 +24,13 @@ class AuthenticatorAppsController < ApplicationController
       secret: current_user.authenticator_secret,
       uri: current_user.authenticator_uri,
       qr_code: RQRCode::QRCode.new(current_user.authenticator_uri).as_svg(module_size: 4, use_path: true, viewbox: true).sub(/\A<\?xml[^>]*>/, ""),
-      return_organization: @return_organization&.as_json(only: [ :name, :slug ]),
+      # requires_two_factor says it was the Organization's Require two-factor
+      # that sent the user here.
+      return_organization: @return_organization && {
+        name: @return_organization.name,
+        slug: @return_organization.slug,
+        requires_two_factor: @return_organization.require_two_factor,
+      },
     }
   end
 
