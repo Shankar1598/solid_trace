@@ -18,6 +18,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SharedProps } from '@/types'
+import { fallbackHint, requiredScheme, type UrlFallback } from '@/lib/publicUrls'
+import type { PasskeyOffer } from '@/lib/passkeys'
 import { toast } from 'sonner'
 
 /** One setting read at start: where it comes from and the value in effect. A secret's value is only whether it's set. */
@@ -51,14 +53,20 @@ interface InstanceSettings {
     logs_text_match_budget_mb: number
     logs_read_threads: number
     local_cache_hours: number
+    /** null when blank; the fallback is what a blank one uses. */
+    console_url: string | null
+    console_url_fallback: UrlFallback | null
+    ingest_url: string | null
+    ingest_url_fallback: UrlFallback | null
   }
   sign_up: { open: boolean, command: string }
+  passkeys: PasskeyOffer
   restart_to_change: RestartGroup[]
 }
 
 /**
  * Settings → Instance, for instance admins: the settings that apply at once,
- * Sign-up (read-only), and what the install read at start.
+ * Sign-up and Passkeys (read-only), and what the install read at start.
  */
 export default function SettingsInstance({ settings }: { settings: InstanceSettings }) {
   const { current_org } = usePage<SharedProps>().props
@@ -76,22 +84,33 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     logs_text_match_budget_mb: String(editable.logs_text_match_budget_mb),
     logs_read_threads: String(editable.logs_read_threads),
     local_cache_hours: String(editable.local_cache_hours),
+    console_url: editable.console_url ?? '',
+    ingest_url: editable.ingest_url ?? '',
   })
-  const sampleRate = settings.restart_to_change
-    .find((group) => group.name === 'Console')?.settings
-    ?.find((setting) => setting.source === 'SENTRY_TRACES_SAMPLE_RATE')?.value
+  const consoleRows = settings.restart_to_change.find((group) => group.name === 'Console')?.settings
+  const sampleRate = consoleRows?.find((setting) => setting.source === 'SENTRY_TRACES_SAMPLE_RATE')?.value
+  const scheme = requiredScheme(consoleRows?.find((setting) => setting.label === 'HTTPS')?.value)
   const bucket = hasBucket(settings.restart_to_change)
   const [confirmingHours, setConfirmingHours] = useState(false)
   const oldHours = editable.local_cache_hours
   const newHours = Number(data.local_cache_hours)
+  // What a Console URL on another host would strand, as the save that was
+  // refused said it: the Passkeys made for the current host, with the counts.
+  const [strandedPasskeys, setStrandedPasskeys] = useState<string | null>(null)
 
-  transform((data) => ({ instance_settings: data }))
-
-  const send = () => {
+  const send = (confirmPasskeysStopWorking = false) => {
     setConfirmingHours(false)
+    setStrandedPasskeys(null)
+    transform((data) => ({
+      instance_settings: data,
+      ...(confirmPasskeysStopWorking && { confirm_passkeys_stop_working: true }),
+    }))
     put(path, {
       preserveScroll: true,
-      onError: () => toast.error("Instance settings weren't saved"),
+      onError: (errors) => {
+        if (errors.passkeys_stop_working) setStrandedPasskeys(errors.passkeys_stop_working)
+        else toast.error("Instance settings weren't saved")
+      },
     })
   }
 
@@ -118,6 +137,45 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
               <CardDescription>A saved change takes effect immediately, with no restart.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6 pb-2">
+              <div className="space-y-2">
+                <Label htmlFor="console_url">Console URL</Label>
+                <Input
+                  id="console_url"
+                  inputMode="url"
+                  placeholder={editable.console_url_fallback?.url ?? 'https://console.example.com'}
+                  value={data.console_url}
+                  onChange={(e) => setData('console_url', e.target.value)}
+                />
+                {errors.console_url && <p className="text-sm font-medium text-destructive">{errors.console_url}</p>}
+                <p className="text-xs text-muted-foreground" data-testid="console-url-description">
+                  Where people reach Console, as http(s)://host[:port] with no path. Emails, invite links, the MCP URL
+                  and the MCP server&apos;s links use it from the next one.
+                  {scheme && ` It starts with ${scheme}://, as Console runs ${scheme === 'https' ? 'with' : 'without'} HTTPS, which changes only with CONSOLE_URL and a restart (below).`}
+                </p>
+                <p className="text-xs text-muted-foreground" data-testid="console-url-fallback">
+                  {fallbackHint(editable.console_url_fallback)}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ingest_url">Ingest URL</Label>
+                <Input
+                  id="ingest_url"
+                  inputMode="url"
+                  placeholder={editable.ingest_url_fallback?.url ?? 'https://ingest.example.com:4443'}
+                  value={data.ingest_url}
+                  onChange={(e) => setData('ingest_url', e.target.value)}
+                />
+                {errors.ingest_url && <p className="text-sm font-medium text-destructive">{errors.ingest_url}</p>}
+                <p className="text-xs text-muted-foreground" data-testid="ingest-url-description">
+                  Where SDKs and shippers send, as http(s)://host[:port][/path]. DSNs, the Logs snippets and the MCP
+                  server&apos;s get_project_setup use it at once; DSNs already in apps don&apos;t change.
+                </p>
+                <p className="text-xs text-muted-foreground" data-testid="ingest-url-fallback">
+                  {fallbackHint(editable.ingest_url_fallback)}
+                </p>
+              </div>
+
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <Checkbox
@@ -327,7 +385,24 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button onClick={send}>Change to {newHours} hours</Button>
+              <Button onClick={() => send()}>Change to {newHours} hours</Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={strandedPasskeys !== null} onOpenChange={(open) => !open && setStrandedPasskeys(null)}>
+          <AlertDialogContent data-testid="passkeys-stop-working-confirm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Change the Console URL&apos;s host?</AlertDialogTitle>
+              <AlertDialogDescription>{strandedPasskeys}</AlertDialogDescription>
+              <p className="text-sm text-muted-foreground">
+                Their users then sign in with another factor or a Recovery code, and can add Passkeys for the new host
+                on Settings → User.
+              </p>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button variant="destructive" onClick={() => send(true)}>Change the host</Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -347,6 +422,21 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
               Then a stolen instance admin session or API token can't open the install.
             </p>
             <pre className="bg-muted px-3 py-2 text-xs overflow-x-auto">{sign_up.command}</pre>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="passkeys">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Lock className="h-4 w-4" />Passkeys</CardTitle>
+            <CardDescription>
+              {settings.passkeys.offered
+                ? `Offered at ${settings.passkeys.host}: users add them on Settings → User and sign in with them at ${settings.passkeys.url}.`
+                : `Not offered. ${settings.passkeys.reason}`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Passkeys are made for the Console URL's host: they need it on https:// with a domain (or http://localhost),
+            and stop working if the host changes.
           </CardContent>
         </Card>
 

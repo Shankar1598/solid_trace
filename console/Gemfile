@@ -106,3 +106,8 @@ gem "mcp", "~> 1.8"
 
 # One JSON log line per request in production (lib/request_log.rb)
 gem "lograge", "~> 0.15"
+
+gem "rotp", "~> 6.4"
+gem "rqrcode", "~> 3.2"
+
+gem "webauthn", "~> 3.5"

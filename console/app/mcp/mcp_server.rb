@@ -67,14 +67,15 @@ module McpServer
   TEXT
 
   # A server for one request, with the tools listed now: one that needs SQL
-  # queries only while they're on.
-  def self.build(user:, console_url:)
+  # queries only while they're on. request_url is the address the request
+  # reached Console at, which the tools' links fall back to (PublicUrls).
+  def self.build(user:, request_url:)
     MCP::Server.new(
       name: "solidtrace",
       title: "SolidTrace",
       instructions: INSTRUCTIONS,
       tools: TOOLS.select(&:listed?),
-      server_context: { user: user, console_url: console_url },
+      server_context: { user: user, request_url: request_url },
     )
   end
 end

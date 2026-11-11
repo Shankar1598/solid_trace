@@ -64,7 +64,10 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
       "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
       "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
-      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24 }, settings["editable"])
+      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24,
+      "console_url" => nil, "console_url_fallback" => { "url" => "http://www.example.com", "source" => "request" },
+      "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://www.example.com:4000", "source" => "console_url" } },
+      settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")
 
@@ -72,7 +75,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     version = console["settings"].find { |row| row["source"] == "SOLIDTRACE_VERSION" }
     assert_equal({ "label" => "Version", "source" => "SOLIDTRACE_VERSION", "value" => "dev", "default" => true,
       "secret" => false }, version)
-    assert_equal [ "CONSOLE_URL", "PUBLIC_INGEST_URL", "EVENT_STORE_URL", "EVENT_STORE_INGEST_URL", "SOLIDTRACE_VERSION",
+    assert_equal [ "CONSOLE_URL", "EVENT_STORE_URL", "EVENT_STORE_INGEST_URL", "SOLIDTRACE_VERSION",
       "RAILS_MAX_THREADS", "JOB_CONCURRENCY", "RAILS_LOG_LEVEL", "SENTRY_TRACES_SAMPLE_RATE", "SECRET_KEY_BASE",
       "SENTRY_DSN" ],
       console["settings"].pluck("source")
@@ -267,6 +270,123 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 6, InstanceSetting.current.local_cache_hours
   end
 
+  test "HTTPS shows as a restart-to-change row from CONSOLE_URL, and CONSOLE_URL's URL isn't one" do
+    sign_in_as(@instance_admin)
+
+    with_env("CONSOLE_URL" => "https://console.example.com") do
+      PublicUrls.stub(:https?, true) { get instance_settings_url(org_slug: @organization.slug), headers: inertia }
+    end
+
+    assert_equal({ "label" => "HTTPS", "source" => "CONSOLE_URL", "value" => "On", "default" => false, "secret" => false },
+      console_rows["CONSOLE_URL"])
+    assert_nil console_rows["PUBLIC_INGEST_URL"]
+    assert_equal({ "url" => "https://console.example.com", "source" => "CONSOLE_URL" },
+      response.parsed_body.dig("props", "settings", "editable", "console_url_fallback"))
+  end
+
+  # ADR 0018: from the Console URL setting, else CONSOLE_URL, never the
+  # address the page was opened at.
+  test "the Passkeys row says where Passkeys are offered, from the fixed Console URL alone" do
+    sign_in_as(@instance_admin)
+    passkeys = lambda do |setting, env|
+      InstanceSetting.current.update!(console_url: setting)
+      with_env("CONSOLE_URL" => env) { get instance_settings_url(org_slug: @organization.slug), headers: inertia }
+      response.parsed_body.dig("props", "settings", "passkeys")
+    end
+
+    assert_equal({ "offered" => false, "reason" => "Console has no fixed Console URL. Set the Console URL, or CONSOLE_URL in deploy/.env." },
+      passkeys.call(nil, nil))
+    assert_equal({ "offered" => true, "host" => "solid-trace.example.ts.net", "url" => "https://solid-trace.example.ts.net" },
+      passkeys.call("https://solid-trace.example.ts.net", "https://console.example.com"))
+    assert_equal({ "offered" => true, "host" => "console.example.com", "url" => "https://console.example.com" },
+      passkeys.call(nil, "https://console.example.com"))
+    assert_equal({ "offered" => true, "host" => "localhost", "url" => "http://localhost:4001" },
+      passkeys.call("http://localhost:4001", nil))
+    assert_equal({ "offered" => false, "reason" => "The Console URL, http://console.example.com, isn't HTTPS." },
+      passkeys.call("http://console.example.com", nil))
+    assert_equal({ "offered" => false, "reason" => "The Console URL, https://35.214.179.92, is an IP address, not a domain." },
+      passkeys.call(nil, "https://35.214.179.92"))
+    assert_equal({ "offered" => false, "reason" => "The Console URL, http://35.214.179.92, is an IP address, not a domain." },
+      passkeys.call("http://35.214.179.92", nil))
+  end
+
+  test "saving Console's and ingest's URLs shows them, and the Project page's DSN follows ingest's at once" do
+    project = create(:project, organization: @organization)
+    key = create(:project_key, project: project)
+    sign_in_as(@instance_admin)
+
+    save(console_url: "http://solid-trace.example.ts.net/", ingest_url: "https://35.214.179.92:4443/")
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    editable = response.parsed_body.dig("props", "settings", "editable")
+    assert_equal [ "http://solid-trace.example.ts.net", "https://35.214.179.92:4443" ],
+      editable.values_at("console_url", "ingest_url")
+    assert_equal({ "url" => "http://solid-trace.example.ts.net:4000", "source" => "console_url" }, editable["ingest_url_fallback"])
+
+    get project_url(project, org_slug: @organization.slug), headers: inertia
+    assert_equal "https://#{key.public_key}@35.214.179.92:4443/#{project.id}",
+      response.parsed_body.dig("props", "project", "keys").sole["dsn"]
+  end
+
+  test "a Console URL with the other scheme than Console's HTTPS mode, or a path, comes back as a form error" do
+    sign_in_as(@instance_admin)
+
+    save(console_url: "https://console.example.com", log_all_reads: true)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ "must start with http://, as Console started without HTTPS. HTTPS changes only with CONSOLE_URL's " \
+                   "scheme in deploy/.env and a restart" ], response.parsed_body.dig("props", "errors", "console_url")
+    assert_nil InstanceSetting.current.console_url
+    assert_not InstanceSetting.current.log_all_reads?
+
+    save(console_url: "http://console.example.com/app")
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_match(/no path/, response.parsed_body.dig("props", "errors", "console_url").first)
+  end
+
+  # Passkeys are made for the Console URL's host (ADR 0018), so changing it
+  # strands them: the page asks first, with the counts.
+  test "changing the Console URL's host while Passkeys exist for it asks first, with the counts, and saves once confirmed" do
+    InstanceSetting.current.update!(console_url: "http://localhost:4001")
+    2.times { make_passkey(@org_admin, "localhost") }
+    make_passkey(create(:user), "localhost")
+    make_passkey(create(:user), "old.example.com")
+    sign_in_as(@instance_admin)
+
+    save(console_url: "http://console.example.com", log_all_reads: true)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal({ "passkeys_stop_working" => [ "3 Passkeys of 2 users would stop working: they're made for localhost, " \
+                                                "the Console URL's host now, and work only there." ] },
+      response.parsed_body.dig("props", "errors"))
+    assert_equal "http://localhost:4001", InstanceSetting.current.console_url
+    assert_not InstanceSetting.current.log_all_reads?
+
+    patch instance_settings_url(org_slug: @organization.slug), as: :json,
+      params: { instance_settings: { console_url: "http://console.example.com" }, confirm_passkeys_stop_working: true }
+
+    assert_equal "Instance settings saved", flash[:notice]
+    assert_equal "http://console.example.com", InstanceSetting.current.console_url
+  end
+
+  test "the Console URL saves without asking when its host stays, or no Passkey is made for its host" do
+    InstanceSetting.current.update!(console_url: "http://localhost:4001")
+    make_passkey(@org_admin, "localhost")
+    sign_in_as(@instance_admin)
+
+    save(console_url: "http://localhost:3000")
+    assert_equal "Instance settings saved", flash[:notice]
+    save(log_all_reads: true)
+    assert_equal "Instance settings saved", flash[:notice]
+
+    @org_admin.passkeys.delete_all
+    make_passkey(@org_admin, "old.example.com")
+    save(console_url: "http://console.example.com")
+    assert_equal "Instance settings saved", flash[:notice]
+    assert_equal "http://console.example.com", InstanceSetting.current.console_url
+  end
+
   test "a trace Retention below one day comes back as a form error and saves nothing" do
     sign_in_as(@instance_admin)
 
@@ -343,6 +463,11 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     yield
   ensure
     previous.each { |key, value| ENV[key] = value }
+  end
+
+  # A Passkey of user's made for host, as Settings → User adds one there.
+  def make_passkey(user, host)
+    user.passkeys.create!(credential_id: SecureRandom.base64(16), public_key: "public key", name: "MacBook", host: host)
   end
 
   def save(**settings)

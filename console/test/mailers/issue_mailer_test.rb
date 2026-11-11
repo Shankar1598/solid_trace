@@ -31,4 +31,21 @@ class IssueMailerTest < ActionMailer::TestCase
     assert_equal recipients, mail.to
     assert_match "Issue One", mail.body.encoded
   end
+
+  test "Issue links are to the Console URL saved when the email is sent" do
+    organization = Organization.create!(name: "Test Org", slug: "test-org")
+    project = organization.projects.create!(name: "Test Project")
+    issue = project.issues.create!(title: "Test Issue", kind: "error")
+    assert_match %r{http://example\.com/test-org/projects/}, IssueMailer.notify(issue, [ "a@example.com" ]).text_part.body.to_s
+
+    InstanceSetting.current.update!(console_url: "https://solid-trace.example.ts.net")
+
+    [ IssueMailer.notify(issue, [ "a@example.com" ]), IssueMailer.batch_notify([ issue ], [ "a@example.com" ]),
+      IssueMailer.assignment_updated(issue, [ "a@example.com" ], previous_assignee_name: nil, new_assignee_name: "Ada") ].each do |mail|
+      [ mail.text_part, mail.html_part ].each do |part|
+        assert_match %r{https://solid-trace\.example\.ts\.net/test-org/projects/}, part.body.to_s, mail.subject
+        assert_no_match %r{example\.com/test-org}, part.body.to_s.gsub("solid-trace.example.ts.net", ""), mail.subject
+      end
+    end
+  end
 end

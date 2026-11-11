@@ -3,7 +3,8 @@
 module McpTools
   # Changes the install's settings that apply at once (InstanceSetting::EDITABLE),
   # as Settings → Instance does. For instance admins. Sign-up and the settings read at start can't
-  # change here.
+  # change here. A Console URL on another host that strands Passkeys needs
+  # confirm_passkeys_stop_working, so an agent can't break them by accident.
   class UpdateInstanceSettings < Base
     include InstanceSettingsTool
 
@@ -46,11 +47,33 @@ module McpTools
                    "0 moves each part once stored. Default 24. It does nothing without a bucket (restart_to_change's " \
                    "EventStore group names it), and applies within a minute. Before changing it, tell the user: " \
                    "#{InstanceSetting::LOCAL_CACHE_HOURS_WARNING}" }
+    argument :console_url, { type: "string",
+      description: "Console's URL, http(s)://host[:port] with no path, which emails, invite links, the MCP URL and " \
+                   "these answers' links use from now on. Its scheme must match the HTTPS mode Console started in " \
+                   "(restart_to_change's HTTPS row), which changes only with CONSOLE_URL in deploy/.env and a " \
+                   "restart. An empty string clears it, falling back to CONSOLE_URL, then the address the request " \
+                   "reached Console at (editable.console_url_fallback)." }
+    argument :ingest_url, { type: "string",
+      description: "Ingest's URL as SDKs and shippers reach it, http(s)://host[:port][/path], which DSNs, the Logs " \
+                   "snippets and get_project_setup use from now on; DSNs already in apps don't change. An empty " \
+                   "string clears it, falling back to PUBLIC_INGEST_URL, then Console's host at port 4000 " \
+                   "(editable.ingest_url_fallback)." }
+    argument :confirm_passkeys_stop_working, { type: "boolean",
+      description: "true changes console_url to another host even though Passkeys made for the current host would " \
+                   "stop working; their users then sign in with another factor or a Recovery code. Without it, " \
+                   "such a change is refused with the count of Passkeys and users. Tell the user the counts and " \
+                   "set it only once they agree." }
 
     def run
       require_instance_admin!("change the instance settings")
       settings = InstanceSetting.current
-      raise ToolError, "Not saved: #{settings.errors.full_messages.join('; ')}." unless settings.update_editable(arguments)
+      unless settings.update_editable(arguments, confirm_passkeys_stop_working: arguments[:confirm_passkeys_stop_working] == true)
+        if settings.errors.of_kind?(:base, :passkeys_stop_working)
+          raise ToolError, "Not saved: #{settings.errors[:base].first} Tell the user, and call again with " \
+                           "confirm_passkeys_stop_working: true to change it anyway."
+        end
+        raise ToolError, "Not saved: #{settings.errors.full_messages.join('; ')}."
+      end
 
       settings_answer(settings)
     end

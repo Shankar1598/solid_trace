@@ -13,6 +13,11 @@ module SolidTrace
     # Initialize configuration defaults for originally generated Rails version.
     config.load_defaults 8.1
 
+    # Tries allowed in 3 minutes at sign-in and the other limited actions
+    # (ApplicationController.limit_tries). Development raises it, since the
+    # Playwright flows sign in many times from one address.
+    config.x.tries_allowed = 10
+
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.
     # Common ones are `templates`, `generators`, or `middleware`, for example.

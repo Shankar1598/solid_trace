@@ -1,13 +1,15 @@
 # frozen_string_literal: true
 
 # The install's settings as Settings → Instance and the MCP server show them,
-# in three sections:
+# in four sections:
 #
 # - editable: the settings that apply at once, which an instance admin changes
-#   (InstanceSetting#update_editable).
+#   (InstanceSetting#update_editable). Console's and ingest's URLs come with
+#   what a blank one falls back to.
 # - sign_up: whether Sign-up is open. It's read-only: it changes only from a
 #   shell on the server, so a stolen instance admin session or API token can't
 #   open the install to anyone.
+# - passkeys: where Passkeys are offered, or why not (PasskeyOffer).
 # - restart_to_change: groups of settings read at start, each
 #   { name:, settings: [{ label:, source:, value:, default:, secret: }] }, or
 #   { name:, unavailable: reason } when they can't be read. A secret's value
@@ -15,10 +17,11 @@
 class InstanceSettingsAnswer
   SIGN_UP_COMMAND = "bin/rails instance_settings:set SIGN_UP_OPEN=true|false"
 
-  # console_url is the URL the request reached Console at.
-  def initialize(settings = InstanceSetting.current, console_url:, env: ENV)
+  # request_url is the address the request reached Console at, which a blank
+  # Console URL falls back to after CONSOLE_URL (PublicUrls).
+  def initialize(settings = InstanceSetting.current, request_url:, env: ENV)
     @settings = settings
-    @console_url = console_url
+    @request_url = request_url
     @env = env
   end
 
@@ -36,13 +39,22 @@ class InstanceSettingsAnswer
         logs_text_match_budget_mb: @settings.logs_text_match_budget_mb,
         logs_read_threads: @settings.logs_read_threads,
         local_cache_hours: @settings.local_cache_hours,
+        # nil when blank; the fallback is what a blank one uses, { url:,
+        # source: }, or nil when there's none (PublicUrls).
+        console_url: @settings.console_url,
+        console_url_fallback: PublicUrls.console_url_fallback(@request_url, env: @env),
+        ingest_url: @settings.ingest_url,
+        ingest_url_fallback: PublicUrls.ingest_url_fallback(@request_url, settings: @settings, env: @env),
       },
       sign_up: {
         open: @settings.sign_up_open,
         command: SIGN_UP_COMMAND,
       },
+      # Read-only: where Passkeys are offered, from the fixed Console URL
+      # (PasskeyOffer), which changes with the Console URL above.
+      passkeys: PasskeyOffer.current(settings: @settings, env: @env).as_json,
       restart_to_change: [
-        { name: "Console", settings: ConsoleEnvironment.new(console_url: @console_url, env: @env).settings },
+        { name: "Console", settings: ConsoleEnvironment.new(env: @env).settings },
         event_store_group
       ],
     }

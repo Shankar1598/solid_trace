@@ -6,6 +6,8 @@ require "test_helper"
 # up, and the person who set up the instance signs up first (ADR 0011). After
 # that, sign-up is closed unless the operator opens it: people join by Invite.
 class RegistrationsControllerTest < ActionDispatch::IntegrationTest
+  include SessionCookieHelper
+
   CLOSED = "Ask an admin of your Organization to invite you."
 
   test "while the Meta Organization has no member, the first to sign up joins it as admin" do
@@ -83,6 +85,14 @@ class RegistrationsControllerTest < ActionDispatch::IntegrationTest
 
     assert_redirected_to root_url
     assert User.exists?(email: "grace@example.com")
+  end
+
+  test "signing up signs in for 24 hours" do
+    freeze_time
+
+    sign_up("grace@example.com")
+
+    assert_equal 24.hours.from_now, session_cookie_expires
   end
 
   test "too many tries are sent back to the form, told to wait" do

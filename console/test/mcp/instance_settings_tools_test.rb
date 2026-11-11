@@ -39,7 +39,10 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
       "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
       "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
-      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24 }, answer.json["editable"])
+      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24,
+      "console_url" => nil, "console_url_fallback" => { "url" => "http://console.test", "source" => "request" },
+      "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://console.test:4000", "source" => "console_url" } },
+      answer.json["editable"])
     assert_equal({ "open" => false, "command" => "bin/rails instance_settings:set SIGN_UP_OPEN=true|false" },
       answer.json["sign_up"])
     console = answer.json["restart_to_change"].find { |group| group["name"] == "Console" }
@@ -47,6 +50,15 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_not_includes answer.text, "k3y-base-v4lue"
     assert_not_includes answer.text, "s3cret"
     assert_equal "http://console.test/acme/settings/instance", answer.link
+  end
+
+  test "get_instance_settings says where Passkeys are offered, from the Console URL, not the request's address" do
+    assert_equal({ "offered" => false, "reason" => "Console has no fixed Console URL. Set the Console URL, or CONSOLE_URL in deploy/.env." },
+      call_tool(:get_instance_settings, user: @instance_admin).json["passkeys"])
+
+    InstanceSetting.current.update!(console_url: "https://solid-trace.example.ts.net")
+    assert_equal({ "offered" => true, "host" => "solid-trace.example.ts.net", "url" => "https://solid-trace.example.ts.net" },
+      call_tool(:get_instance_settings, user: @instance_admin).json["passkeys"])
   end
 
   test "update_instance_settings changes the settings given, and answers the settings" do
@@ -127,6 +139,55 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     property = McpTools::UpdateInstanceSettings.input_schema_value.to_h.dig(:properties, :local_cache_hours)
     assert_equal "integer", property[:type]
     assert_includes property[:description], InstanceSetting::LOCAL_CACHE_HOURS_WARNING
+  end
+
+  test "update_instance_settings sets Console's and ingest's URLs, the links follow, and empty clears them" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, console_url: "http://solid-trace.example.ts.net/",
+      ingest_url: "https://35.214.179.92:4443")
+
+    assert_not answer.error?, answer.text
+    assert_equal [ "http://solid-trace.example.ts.net", "https://35.214.179.92:4443" ],
+      answer.json["editable"].values_at("console_url", "ingest_url")
+    assert_equal "http://solid-trace.example.ts.net/acme/settings/instance", call_tool(:get_instance_settings, user: @instance_admin).link
+
+    answer = call_tool(:update_instance_settings, user: @instance_admin, console_url: "", ingest_url: "")
+    assert_equal [ nil, nil ], answer.json["editable"].values_at("console_url", "ingest_url")
+    assert_equal "http://console.test/acme/settings/instance", answer.link
+    schema = McpTools::UpdateInstanceSettings.input_schema_value.to_h
+    assert_equal [ "string", "string" ], schema[:properties].values_at(:console_url, :ingest_url).pluck(:type)
+  end
+
+  test "update_instance_settings refuses a Console URL with the other scheme than Console's HTTPS mode" do
+    refused = call_tool(:update_instance_settings, user: @instance_admin, console_url: "https://console.example.com")
+
+    assert refused.error?
+    assert_equal "Not saved: Console URL must start with http://, as Console started without HTTPS. HTTPS changes " \
+                 "only with CONSOLE_URL's scheme in deploy/.env and a restart.", refused.text
+    assert_nil InstanceSetting.current.console_url
+  end
+
+  # Passkeys are made for the Console URL's host (ADR 0018): an agent can't
+  # strand them by accident.
+  test "update_instance_settings refuses a Console URL on another host while Passkeys exist for it, unless confirmed" do
+    InstanceSetting.current.update!(console_url: "http://localhost:4001")
+    @org_admin.passkeys.create!(credential_id: "a", public_key: "public key", name: "MacBook", host: "localhost")
+
+    refused = call_tool(:update_instance_settings, user: @instance_admin, console_url: "http://console.example.com")
+
+    assert refused.error?
+    assert_equal "Not saved: 1 Passkey of 1 user would stop working: they're made for localhost, the Console URL's " \
+                 "host now, and work only there. Tell the user, and call again with confirm_passkeys_stop_working: " \
+                 "true to change it anyway.", refused.text
+    assert_equal "http://localhost:4001", InstanceSetting.current.console_url
+    assert_not call_tool(:update_instance_settings, user: @instance_admin, console_url: "http://localhost:3000").error?
+
+    answer = call_tool(:update_instance_settings, user: @instance_admin, console_url: "http://console.example.com",
+      confirm_passkeys_stop_working: true)
+
+    assert_not answer.error?, answer.text
+    assert_equal "http://console.example.com", answer.json.dig("editable", "console_url")
+    property = McpTools::UpdateInstanceSettings.input_schema_value.to_h[:properties][:confirm_passkeys_stop_working]
+    assert_equal "boolean", property[:type]
   end
 
   test "update_instance_settings turns MCP reads' logging off, even while log-all-reads is on" do

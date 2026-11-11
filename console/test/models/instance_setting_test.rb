@@ -133,7 +133,7 @@ class InstanceSettingTest < ActiveSupport::TestCase
     end
     assert InstanceSetting.new(logs_text_match_budget_mb: 0).valid?
 
-    assert InstanceSetting.current.update_editable(logs_text_match_budget_mb: "10240")
+    assert InstanceSetting.current.update_editable({ logs_text_match_budget_mb: "10240" })
     assert_equal 10_240, InstanceSetting.current.logs_text_match_budget_mb
   end
 
@@ -146,7 +146,7 @@ class InstanceSettingTest < ActiveSupport::TestCase
     end
     [ 0, 64 ].each { |threads| assert InstanceSetting.new(logs_read_threads: threads).valid?, "threads #{threads}" }
 
-    assert InstanceSetting.current.update_editable(logs_read_threads: "8")
+    assert InstanceSetting.current.update_editable({ logs_read_threads: "8" })
     assert_equal 8, InstanceSetting.current.logs_read_threads
   end
 
@@ -159,7 +159,71 @@ class InstanceSettingTest < ActiveSupport::TestCase
     end
     [ 0, 720 ].each { |hours| assert InstanceSetting.new(local_cache_hours: hours).valid?, "hours #{hours}" }
 
-    assert InstanceSetting.current.update_editable(local_cache_hours: "6")
+    assert InstanceSetting.current.update_editable({ local_cache_hours: "6" })
     assert_equal 6, InstanceSetting.current.local_cache_hours
+  end
+
+  test "Console's and ingest's URLs are blank until saved, drop a trailing slash, and blank saves as none" do
+    assert_nil InstanceSetting.current.console_url
+    assert_nil InstanceSetting.current.ingest_url
+
+    assert InstanceSetting.current.update_editable({ console_url: " http://console.example.com:3000/ ",
+      ingest_url: "https://ingest.example.com:4443/sentry/" })
+    settings = InstanceSetting.current
+    assert_equal [ "http://console.example.com:3000", "https://ingest.example.com:4443/sentry" ],
+      [ settings.console_url, settings.ingest_url ]
+
+    assert settings.update_editable({ console_url: "", ingest_url: "  " })
+    assert_equal [ nil, nil ], InstanceSetting.current.slice(:console_url, :ingest_url).values
+  end
+
+  test "Console's URL is a scheme and a host, with a port but no path; ingest's may have a path" do
+    [ "console.example.com", "ftp://console.example.com", "http://", "http://console.example.com/app",
+      "http://user:pass@console.example.com", "http://console.example.com?x=1", "http://console.example.com#top",
+      "http://exa mple.com" ].each do |url|
+      settings = InstanceSetting.new(console_url: url)
+      assert_not settings.valid?, url
+      assert_equal [ "must be http:// or https:// and a host, with a port if needed and no path, like " \
+                     "https://console.example.com" ], settings.errors[:console_url], url
+    end
+    [ "http://localhost:3000", "https://solid-trace.example.ts.net", "http://[::1]:3000" ].each do |url|
+      assert InstanceSetting.new(console_url: url).valid?, url
+    end
+
+    [ "ingest.example.com", "ftp://ingest.example.com", "https://ingest.example.com?x=1" ].each do |url|
+      settings = InstanceSetting.new(ingest_url: url)
+      assert_not settings.valid?, url
+      assert_equal [ "must be http:// or https:// and a host, with a port and a path if needed, like " \
+                     "https://ingest.example.com:4443" ], settings.errors[:ingest_url], url
+    end
+    [ "https://35.214.179.92:4443", "https://example.com/ingest" ].each do |url|
+      assert InstanceSetting.new(ingest_url: url).valid?, url
+    end
+  end
+
+  test "the page and MCP refuse a Console URL whose scheme isn't the HTTPS mode Console started in, and a shell doesn't" do
+    PublicUrls.stub(:https?, false) do
+      settings = InstanceSetting.current
+      assert_not settings.update_editable({ console_url: "https://console.example.com", log_all_reads: true })
+      assert_equal [ "must start with http://, as Console started without HTTPS. HTTPS changes only with " \
+                     "CONSOLE_URL's scheme in deploy/.env and a restart" ], settings.errors[:console_url]
+      assert_nil InstanceSetting.current.console_url
+      assert_not InstanceSetting.current.log_all_reads?
+
+      assert InstanceSetting.current.update_editable({ console_url: "http://console.example.com" })
+    end
+
+    PublicUrls.stub(:https?, true) do
+      settings = InstanceSetting.current
+      assert_not settings.update_editable({ console_url: "http://console.example.com:8080" })
+      assert_equal [ "must start with https://, as Console started with HTTPS. HTTPS changes only with " \
+                     "CONSOLE_URL's scheme in deploy/.env and a restart" ], settings.errors[:console_url]
+
+      # An unchanged one isn't checked again, so the other settings still save.
+      assert InstanceSetting.current.update_editable({ log_all_reads: true })
+      assert InstanceSetting.current.update_editable({ console_url: "https://console.example.com" })
+      # bin/rails instance_settings:set saves any scheme, for recovery.
+      assert InstanceSetting.current.update(console_url: "http://console.example.com")
+    end
   end
 end

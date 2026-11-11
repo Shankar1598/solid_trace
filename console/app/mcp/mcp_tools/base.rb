@@ -59,7 +59,7 @@ module McpTools
       def call(server_context:, **arguments)
         user = server_context[:user]
         CallTimings.mcp_tool(name_value, arguments, user) do
-          new(user: user, console_url: server_context[:console_url], arguments: arguments).answer
+          new(user: user, request_url: server_context[:request_url], arguments: arguments).answer
         end
       end
 
@@ -131,12 +131,18 @@ module McpTools
       end
     end
 
-    attr_reader :user, :console_url, :arguments
+    # request_url is the address the MCP request reached Console at.
+    attr_reader :user, :request_url, :arguments
 
-    def initialize(user:, console_url:, arguments: {})
+    def initialize(user:, request_url:, arguments: {})
       @user = user
-      @console_url = console_url
+      @request_url = request_url
       @arguments = arguments
+    end
+
+    # Console's URL, which the answers' links start with (PublicUrls).
+    def console_url
+      @console_url ||= PublicUrls.console_url(request_url)
     end
 
     # The tool's answer: what #run answers, or a tool error.
@@ -173,14 +179,16 @@ module McpTools
     private
 
     # The Organization the organization argument names, among the user's.
-    # It may be left out when the user belongs to exactly one.
+    # It may be left out when the user belongs to exactly one. Every tool on
+    # an Organization asks for it here, so an Organization with Require
+    # two-factor refuses a user without Two-factor here alone.
     def organization
       @organization ||= begin
         slug = arguments[:organization].presence
         organizations = user.organizations.order(:slug).to_a
         slugs = organizations.map(&:slug).join(", ")
 
-        if slug
+        found = if slug
           organizations.find { |org| org.slug == slug } ||
             raise(ToolError, "No Organization #{slug} among yours: #{slugs.presence || 'you belong to none'}.")
         elsif organizations.one?
@@ -188,6 +196,12 @@ module McpTools
         else
           raise ToolError, organizations.empty? ? "You don't belong to an Organization." : "Give organization, one of: #{slugs}."
         end
+
+        if found.require_two_factor && !user.two_factor?
+          raise ToolError, "#{found.name} requires Two-factor. Set it up in Console on Settings → User, then try again."
+        end
+
+        found
       end
     end
 
