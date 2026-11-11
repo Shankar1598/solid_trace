@@ -29,7 +29,7 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
     # The page keeps the secret being set up, so a reload shows the same one.
     assert_equal page["secret"], set_up_page["secret"]
     post authenticator_app_url, params: { code: code_for(page["secret"]) }
-    assert_redirected_to user_settings_url
+    assert_redirected_to recovery_codes_url
     assert_equal "Two-factor is on.", flash[:notice]
 
     delete session_url
@@ -184,7 +184,8 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
     post authenticator_app_url, params: { code: wrong_code(secret), org: organization.slug }
     assert_redirected_to new_authenticator_app_url(org: organization.slug)
     post authenticator_app_url, params: { code: code_for(secret), org: organization.slug }
-    assert_redirected_to overview_url(org_slug: organization.slug)
+    assert_redirected_to recovery_codes_url
+    assert_equal overview_path(org_slug: organization.slug), recovery_codes_page["continue_to"]
 
     # Another's Organization isn't named or returned to.
     get new_authenticator_app_url(org: create(:organization).slug)
