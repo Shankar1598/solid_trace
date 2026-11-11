@@ -12,6 +12,10 @@ Instance admins now change SQL queries, the default Retention, log-all-reads and
 
 Sign-up stays shell-only on purpose: the page shows whether it's open and the `bin/rails instance_settings:set` command that changes it, and neither the page nor MCP can change it. Opening it lets anyone who can reach Console make an account, so a stolen instance admin session or API token mustn't be able to open the install. `instance_settings:show` and `:set` keep working for every setting. ([spec](../../.scratch/instance-settings/spec.md))
 
+## Amended: the Console URL is a setting too (2026-11-10)
+
+`CONSOLE_URL` no longer has to stay in the environment for links: the Console URL and the Ingest URL are instance settings, and `CONSOLE_URL` is the fallback for a blank Console URL and what sets Console's HTTPS mode at boot. See [ADR 0017](0017-public-urls-are-instance-settings.md).
+
 ## Considered options
 
 - **Env vars as they are:** the operator needs a shell on the VM and a restart to change email, and the password sits in plain text in `deploy/.env`.
