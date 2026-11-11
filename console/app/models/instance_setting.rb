@@ -190,9 +190,10 @@ class InstanceSetting < ApplicationRecord
 
   private
 
+  # What each URL must look like: Console's has no path, ingest's may.
   URL_FORMATS = {
-    false => "must be http:// or https:// and a host, with a port if needed and no path, like https://console.example.com",
-    true => "must be http:// or https:// and a host, with a port and a path if needed, like https://ingest.example.com:4443",
+    console_url: "must be http:// or https:// and a host, with a port if needed and no path, like https://console.example.com",
+    ingest_url: "must be http:// or https:// and a host, with a port and a path if needed, like https://ingest.example.com:4443",
   }.freeze
 
   # attribute's URL is http(s)://host[:port], and [/path] when path is true:
@@ -202,9 +203,9 @@ class InstanceSetting < ApplicationRecord
     return if uri.is_a?(URI::HTTP) && uri.host.present? && uri.userinfo.nil? && uri.query.nil? && uri.fragment.nil? &&
       (path || uri.path.empty?)
 
-    errors.add(attribute, URL_FORMATS[path])
+    errors.add(attribute, URL_FORMATS.fetch(attribute))
   rescue URI::InvalidURIError
-    errors.add(attribute, URL_FORMATS[path])
+    errors.add(attribute, URL_FORMATS.fetch(attribute))
   end
 
   def console_url_keeps_https_mode
