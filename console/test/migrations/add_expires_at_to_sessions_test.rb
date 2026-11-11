@@ -9,13 +9,12 @@ class AddExpiresAtToSessionsTest < ActiveSupport::TestCase
   test "a Session from before gets an expiry 7 days from the migration, and every Session needs one" do
     user = create(:user)
     migration = AddExpiresAtToSessions.new
-    migration.verbose = false
-    migration.migrate(:down)
+    ActiveRecord::Migration.suppress_messages { migration.migrate(:down) }
     Session.reset_column_information
     connection.execute("INSERT INTO sessions (user_id, created_at, updated_at) VALUES (#{user.id}, '2026-01-01', '2026-01-01')")
 
     freeze_time
-    migration.migrate(:up)
+    ActiveRecord::Migration.suppress_messages { migration.migrate(:up) }
     Session.reset_column_information
 
     assert_equal 7.days.from_now, user.sessions.sole.expires_at
