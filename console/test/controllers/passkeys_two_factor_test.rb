@@ -174,6 +174,41 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal 10, user_settings_page["recovery_codes_left"]
   end
 
+  test "a Passkey meets an Organization's Require two-factor, and counts for its admins and members" do
+    organization = create(:organization, name: "Acme", slug: "acme")
+    create(:organization_user, organization: organization, user: @user, role: :admin)
+    sign_in_as @user
+    add_passkey
+    get organization_path(org_slug: "acme"), headers: inertia
+    assert_equal({ "on" => false, "can_change" => true, "you_have_two_factor" => true, "members_without_two_factor" => 0 },
+      response.parsed_body.dig("props", "require_two_factor"))
+
+    patch organization_path(org_slug: "acme"), params: { organization: { require_two_factor: true } }
+    assert_redirected_to organization_path(org_slug: "acme")
+    get overview_url(org_slug: "acme"), headers: inertia
+    assert_response :success
+  end
+
+  test "a Passkey made for another host still counts, is listed as unusable here, and is removed with a Recovery code" do
+    sign_in_as @user
+    add_passkey(name: "MacBook")
+    delete session_url
+
+    open_console_at "https://solid-trace.example.ts.net"
+    post login_url, params: { email: @user.email, password: "password" }
+    assert_redirected_to second_step_url
+    get second_step_url, headers: inertia
+    assert_equal({ "authenticator_app" => false, "passkey" => false }, response.parsed_body["props"].slice("authenticator_app", "passkey"))
+    post second_step_url, params: { recovery_code: @recovery_codes.first }
+    assert_redirected_to root_url
+
+    passkey = user_settings_page["passkeys"].sole
+    assert_equal [ "MacBook", "console.example.com", true ], passkey.values_at("name", "host", "other_host")
+    delete passkey_url(passkey["id"]), params: { recovery_code: @recovery_codes.second }
+    assert_equal "Passkey removed. Two-factor is off.", flash[:notice]
+    assert_empty user_settings_page["passkeys"]
+  end
+
   private
 
   def proof_challenge
