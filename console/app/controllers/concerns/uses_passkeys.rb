@@ -67,6 +67,15 @@ module UsesPasskeys
     answer
   end
 
+  # What a wrong second-step answer is told, by the kind it was.
+  def second_step_refused
+    if params[:credential].present?
+      "That passkey didn't work. Try again."
+    else
+      "That code didn't work. Try the newest one from your app."
+    end
+  end
+
   # Options asking for an answer from one of user's Passkeys for this host,
   # with user verification, its challenge kept for purpose.
   def passkey_proof_options(user, purpose)

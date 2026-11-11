@@ -35,7 +35,7 @@ Rails.application.routes.draw do
   # The user's Passkeys on Settings → User (PasskeysController).
   resources :passkeys, only: [ :create, :update, :destroy ] do
     post :creation_options, on: :collection
-    post :removal_options, on: :member
+    post :proof_options, on: :collection
   end
   resources :api_tokens, only: [ :create, :destroy ]
   # The MCP server (McpController).

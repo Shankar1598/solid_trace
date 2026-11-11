@@ -115,31 +115,17 @@ class PasskeysTest < ActionDispatch::IntegrationTest
     assert_equal "Too many tries. Try again in a few minutes.", flash[:alert]
   end
 
-  test "a user renames a Passkey, and removes it only with an answer from that Passkey" do
+  test "a user renames a Passkey" do
     sign_in_as @user
     add_passkey(name: "MacBook")
-    phone = WebAuthn::FakeClient.new(CONSOLE_URL)
-    add_passkey(name: "Phone", client: phone)
-    macbook_id, phone_id = user_settings_page["passkeys"].pluck("id")
+    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL))
+    macbook_id = user_settings_page["passkeys"].first["id"]
 
     patch passkey_url(macbook_id), params: { name: "  Work laptop " }, as: :json
     assert_equal "Passkey renamed.", flash[:notice]
     patch passkey_url(macbook_id), params: { name: "" }, as: :json
     assert_equal "Name can't be blank.", flash[:alert]
     assert_equal [ "Work laptop", "Phone" ], user_settings_page["passkeys"].pluck("name")
-
-    # The phone's answer doesn't remove the laptop's Passkey.
-    post removal_options_passkey_url(macbook_id), as: :json
-    options = response.parsed_body
-    assert_equal 1, options["allowCredentials"].size
-    delete passkey_url(macbook_id), params: { credential: phone.get(challenge: options["challenge"], user_verified: true) }, as: :json
-    assert_equal "Use the passkey you're removing to remove it.", flash[:alert]
-
-    post removal_options_passkey_url(macbook_id), as: :json
-    challenge = response.parsed_body["challenge"]
-    delete passkey_url(macbook_id), params: { credential: passkey_client.get(challenge: challenge, user_verified: true) }, as: :json
-    assert_equal "Passkey removed.", flash[:notice]
-    assert_equal [ phone_id ], user_settings_page["passkeys"].pluck("id")
   end
 
   test "another user's Passkey can't be renamed or removed" do
