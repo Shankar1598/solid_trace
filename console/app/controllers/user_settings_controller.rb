@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class UserSettingsController < ApplicationController
+  include UsesPasskeys
+
   layout "dashboard"
   before_action :set_current_org, if: -> { params[:org_slug] }
 
@@ -10,6 +12,12 @@ class UserSettingsController < ApplicationController
       # Two-factor: the Authenticator app once set up, never its secret.
       authenticator_app: (current_user.authenticator_app? ? { set_up_at: current_user.authenticator_confirmed_at.iso8601 } : nil),
       recovery_codes_left: (current_user.recovery_codes_left if current_user.two_factor?),
+      # Where Passkeys are offered and whether here, and the user's Passkeys
+      # for that host.
+      passkey_offer: passkey_offer_prop,
+      passkeys: current_user.passkeys.where(host: passkey_offer.host).order(:created_at).map { |passkey|
+        { id: passkey.id, name: passkey.name, created_at: passkey.created_at.iso8601, last_used_at: passkey.last_used_at&.iso8601 }
+      },
     }
   end
 

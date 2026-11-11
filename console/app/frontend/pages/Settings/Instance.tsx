@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SharedProps } from '@/types'
 import { fallbackHint, requiredScheme, type UrlFallback } from '@/lib/publicUrls'
+import type { PasskeyOffer } from '@/lib/passkeys'
 import { toast } from 'sonner'
 
 /** One setting read at start: where it comes from and the value in effect. A secret's value is only whether it's set. */
@@ -59,12 +60,13 @@ interface InstanceSettings {
     ingest_url_fallback: UrlFallback | null
   }
   sign_up: { open: boolean, command: string }
+  passkeys: PasskeyOffer
   restart_to_change: RestartGroup[]
 }
 
 /**
  * Settings → Instance, for instance admins: the settings that apply at once,
- * Sign-up (read-only), and what the install read at start.
+ * Sign-up and Passkeys (read-only), and what the install read at start.
  */
 export default function SettingsInstance({ settings }: { settings: InstanceSettings }) {
   const { current_org } = usePage<SharedProps>().props
@@ -394,6 +396,21 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
               Then a stolen instance admin session or API token can't open the install.
             </p>
             <pre className="bg-muted px-3 py-2 text-xs overflow-x-auto">{sign_up.command}</pre>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="passkeys">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Lock className="h-4 w-4" />Passkeys</CardTitle>
+            <CardDescription>
+              {settings.passkeys.offered
+                ? `Offered at ${settings.passkeys.host}: users add them on Settings → User and sign in with them at ${settings.passkeys.url}.`
+                : `Not offered. ${settings.passkeys.reason}`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Passkeys are made for the Console URL's host: they need it on https:// with a domain (or http://localhost),
+            and stop working if the host changes.
           </CardContent>
         </Card>
 

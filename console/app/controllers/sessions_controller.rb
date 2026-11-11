@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class SessionsController < ApplicationController
+  include UsesPasskeys
+
   layout "auth"
   allow_browser versions: :modern
   skip_before_action :authenticate_user!, only: [ :new, :create ]
@@ -8,7 +10,12 @@ class SessionsController < ApplicationController
     with: -> { redirect_to login_path, alert: "Too many tries. Try again in a few minutes." }
 
   def new
-    render inertia: "Sessions/New", props: { sign_up_allowed: InstanceSetting.current.sign_up_allowed? }
+    render inertia: "Sessions/New", props: {
+      sign_up_allowed: InstanceSetting.current.sign_up_allowed?,
+      # Whether "Sign in with a passkey" and the email field's autofill work
+      # here (PasskeySignInsController).
+      passkey_offer: passkey_offer_prop,
+    }
   end
 
   # A right password signs in a user without Two-factor; one with it gets
@@ -31,11 +38,5 @@ class SessionsController < ApplicationController
   def destroy
     terminate_session
     redirect_to login_path
-  end
-
-  private
-
-  def remember_me?
-    ActiveModel::Type::Boolean.new.cast(params[:remember_me]) || false
   end
 end

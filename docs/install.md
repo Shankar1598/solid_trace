@@ -24,6 +24,8 @@ With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile)) gets a
 
 Setup writes Console's and ingest's URLs to `deploy/.env` as `CONSOLE_URL` and `PUBLIC_INGEST_URL`. After that, an instance admin can change them on Settings → Instance (Console URL, Ingest URL) with no restart, for emails, invite links, the MCP URL, DSNs and the Logs snippets; blank keeps the `.env` value, then the address Console was reached at (Console) or Console's host at port 4000 (ingest). Whether Console serves HTTPS still follows `CONSOLE_URL`'s scheme when it starts, so the page refuses a Console URL with the other scheme: change `CONSOLE_URL` and restart for that. To recover from a Console URL that doesn't work, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set CONSOLE_URL_SETTING=` clears it ([ADR 0017](adr/0017-public-urls-are-instance-settings.md)).
 
+Passkeys are offered only where the Console URL (the setting, else `CONSOLE_URL`) is `https://` on a domain, as with Tailscale's `https://<machine>.<tailnet>.ts.net`: each one is made for that host, and works only on pages opened there. On a bare-IP install they aren't offered. Settings → Instance shows whether they are, and why not ([ADR 0018](adr/0018-passkeys-count-as-two-factor-on-the-console-urls-domain.md)).
+
 ## Users and instance admins
 
 Sign-up works only until the install has a user, so sign up as soon as it is running; after that, people join by Invite. To let anyone sign up, `sudo docker compose -f deploy/docker-compose.yml exec console bin/rails instance_settings:set SIGN_UP_OPEN=true`, and `=false` to close it again.

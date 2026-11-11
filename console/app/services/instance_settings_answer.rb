@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # The install's settings as Settings → Instance and the MCP server show them,
-# in three sections:
+# in four sections:
 #
 # - editable: the settings that apply at once, which an instance admin changes
 #   (InstanceSetting#update_editable). Console's and ingest's URLs come with
@@ -9,6 +9,7 @@
 # - sign_up: whether Sign-up is open. It's read-only: it changes only from a
 #   shell on the server, so a stolen instance admin session or API token can't
 #   open the install to anyone.
+# - passkeys: where Passkeys are offered, or why not (PasskeyOffer).
 # - restart_to_change: groups of settings read at start, each
 #   { name:, settings: [{ label:, source:, value:, default:, secret: }] }, or
 #   { name:, unavailable: reason } when they can't be read. A secret's value
@@ -49,6 +50,9 @@ class InstanceSettingsAnswer
         open: @settings.sign_up_open,
         command: SIGN_UP_COMMAND,
       },
+      # Read-only: where Passkeys are offered, from the fixed Console URL
+      # (PasskeyOffer), which changes with the Console URL above.
+      passkeys: PasskeyOffer.current(settings: @settings, env: @env).as_json,
       restart_to_change: [
         { name: "Console", settings: ConsoleEnvironment.new(env: @env).settings },
         event_store_group
