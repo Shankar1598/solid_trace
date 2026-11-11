@@ -109,3 +109,5 @@ gem "lograge", "~> 0.15"
 
 gem "rotp", "~> 6.4"
 gem "rqrcode", "~> 3.2"
+
+gem "webauthn", "~> 3.5"
