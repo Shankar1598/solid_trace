@@ -17,12 +17,14 @@ interface TwoFactorSetUpProps {
   // The Organization to return to once it's set up, from ?org=;
   // requires_two_factor when its Require two-factor sent the user here.
   return_organization: { name: string; slug: string; requires_two_factor: boolean } | null
+  // Whether Passkeys can be added on a page opened here (the Console URL).
+  passkeys_here: boolean
 }
 
 // The Authenticator app's set-up page (AuthenticatorAppsController), outside
 // any Organization: scan the QR code or type the secret, then confirm with a
 // code. Until a code confirms it, it isn't Two-factor.
-export default function TwoFactorSetUp({ secret, uri, qr_code, return_organization }: TwoFactorSetUpProps) {
+export default function TwoFactorSetUp({ secret, uri, qr_code, return_organization, passkeys_here }: TwoFactorSetUpProps) {
   const { data, setData, post, processing } = useForm({ code: '', org: return_organization?.slug ?? '' })
 
   const submit: FormEventHandler = (e) => {
@@ -95,6 +97,16 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
       {return_organization && (
         <p className="mt-4 text-sm text-muted-foreground">
           Once it's on, you'll go back to {return_organization.name}.
+        </p>
+      )}
+      {/* A Passkey is Two-factor too, and meets Require two-factor. */}
+      {passkeys_here && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          Rather use your fingerprint, face or PIN?{' '}
+          <Link href="/user_settings" className="underline underline-offset-2 hover:text-foreground">
+            Add a passkey on Settings → User
+          </Link>{' '}
+          instead.
         </p>
       )}
       {/* Pages outside an Organization have no sidebar, so no other way out. */}

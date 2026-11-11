@@ -189,6 +189,20 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
+  test "a member sent to set up Two-factor is offered a Passkey, and one lets them into the Organization" do
+    organization = create(:organization, name: "Acme", slug: "acme", require_two_factor: true)
+    create(:organization_user, organization: organization, user: @user, role: :member)
+    sign_in_as @user
+    get overview_url(org_slug: "acme")
+    assert_redirected_to new_authenticator_app_url(org: "acme")
+    assert_equal true, set_up_page["passkeys_here"]
+
+    add_passkey
+
+    get overview_url(org_slug: "acme"), headers: inertia
+    assert_response :success
+  end
+
   test "a Passkey made for another host still counts, is listed as unusable here, and is removed with a Recovery code" do
     sign_in_as @user
     add_passkey(name: "MacBook")
