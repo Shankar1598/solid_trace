@@ -114,9 +114,20 @@ class InstanceSetting < ApplicationRecord
   end
 
   # Changes the settings that apply at once, as Settings → Instance and the MCP
-  # server do: only those given change, and any other key is ignored.
-  def update_editable(changes)
+  # server do: only those given change, and any other key is ignored. A
+  # Console URL on another host strands the Passkeys made for the current one
+  # (ADR 0018), so a change that would otherwise save is refused with their
+  # counts, as the :passkeys_stop_working error on base, unless
+  # confirm_passkeys_stop_working. A shell's instance_settings:set doesn't ask.
+  def update_editable(changes, confirm_passkeys_stop_working: false)
     assign_attributes(changes.to_h.symbolize_keys.slice(*EDITABLE))
+    return false unless valid?(:editable)
+
+    stranded = PasskeyOffer.current(settings: InstanceSetting.current).stranded_by(PasskeyOffer.current(settings: self))
+    if stranded && !confirm_passkeys_stop_working
+      errors.add(:base, :passkeys_stop_working, message: stranded)
+      return false
+    end
     save(context: :editable)
   end
 

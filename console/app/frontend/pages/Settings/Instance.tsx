@@ -94,14 +94,23 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
   const [confirmingHours, setConfirmingHours] = useState(false)
   const oldHours = editable.local_cache_hours
   const newHours = Number(data.local_cache_hours)
+  // What a Console URL on another host would strand, as the save that was
+  // refused said it: the Passkeys made for the current host, with the counts.
+  const [strandedPasskeys, setStrandedPasskeys] = useState<string | null>(null)
 
-  transform((data) => ({ instance_settings: data }))
-
-  const send = () => {
+  const send = (confirmPasskeysStopWorking = false) => {
     setConfirmingHours(false)
+    setStrandedPasskeys(null)
+    transform((data) => ({
+      instance_settings: data,
+      ...(confirmPasskeysStopWorking && { confirm_passkeys_stop_working: true }),
+    }))
     put(path, {
       preserveScroll: true,
-      onError: () => toast.error("Instance settings weren't saved"),
+      onError: (errors) => {
+        if (errors.passkeys_stop_working) setStrandedPasskeys(errors.passkeys_stop_working)
+        else toast.error("Instance settings weren't saved")
+      },
     })
   }
 
@@ -376,7 +385,24 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button onClick={send}>Change to {newHours} hours</Button>
+              <Button onClick={() => send()}>Change to {newHours} hours</Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={strandedPasskeys !== null} onOpenChange={(open) => !open && setStrandedPasskeys(null)}>
+          <AlertDialogContent data-testid="passkeys-stop-working-confirm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Change the Console URL&apos;s host?</AlertDialogTitle>
+              <AlertDialogDescription>{strandedPasskeys}</AlertDialogDescription>
+              <p className="text-sm text-muted-foreground">
+                Their users then sign in with another factor or a Recovery code, and can add Passkeys for the new host
+                on Settings → User.
+              </p>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button variant="destructive" onClick={() => send(true)}>Change the host</Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
