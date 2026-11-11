@@ -5,6 +5,7 @@ require "test_helper"
 # JSON-RPC to POST /mcp, as Claude Code and Cursor send it with an API token.
 class McpTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
+  include PasskeyTestHelper
 
   setup do
     @user = create(:user, name: "Ada", email: "ada@example.com")
@@ -145,6 +146,18 @@ class McpTest < ActionDispatch::IntegrationTest
     get new_authenticator_app_url, headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
     post authenticator_app_url, params: { code: ROTP::TOTP.new(response.parsed_body.dig("props", "secret")).at(Time.current) }
     mcp "tools/call", name: "list_members", arguments: { organization: "acme" }
+    assert_equal false, tool_result.first
+    assert_match "ada@example.com", tool_result.last
+  end
+
+  test "a Passkey meets an Organization's Require two-factor over MCP" do
+    open_console_at
+    sign_in_as @user
+    add_passkey
+    @organization.update!(require_two_factor: true)
+
+    mcp "tools/call", name: "list_members", arguments: { organization: "acme" }
+
     assert_equal false, tool_result.first
     assert_match "ada@example.com", tool_result.last
   end
