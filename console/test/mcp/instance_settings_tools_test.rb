@@ -166,6 +166,30 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_nil InstanceSetting.current.console_url
   end
 
+  # Passkeys are made for the Console URL's host (ADR 0018): an agent can't
+  # strand them by accident.
+  test "update_instance_settings refuses a Console URL on another host while Passkeys exist for it, unless confirmed" do
+    InstanceSetting.current.update!(console_url: "http://localhost:4001")
+    @org_admin.passkeys.create!(credential_id: "a", public_key: "public key", name: "MacBook", host: "localhost")
+
+    refused = call_tool(:update_instance_settings, user: @instance_admin, console_url: "http://console.example.com")
+
+    assert refused.error?
+    assert_equal "Not saved: 1 Passkey of 1 user would stop working: they're made for localhost, the Console URL's " \
+                 "host now, and work only there. Tell the user, and call again with confirm_passkeys_stop_working: " \
+                 "true to change it anyway.", refused.text
+    assert_equal "http://localhost:4001", InstanceSetting.current.console_url
+    assert_not call_tool(:update_instance_settings, user: @instance_admin, console_url: "http://localhost:3000").error?
+
+    answer = call_tool(:update_instance_settings, user: @instance_admin, console_url: "http://console.example.com",
+      confirm_passkeys_stop_working: true)
+
+    assert_not answer.error?, answer.text
+    assert_equal "http://console.example.com", answer.json.dig("editable", "console_url")
+    property = McpTools::UpdateInstanceSettings.input_schema_value.to_h[:properties][:confirm_passkeys_stop_working]
+    assert_equal "boolean", property[:type]
+  end
+
   test "update_instance_settings turns MCP reads' logging off, even while log-all-reads is on" do
     InstanceSetting.current.update!(log_all_reads: true)
 
