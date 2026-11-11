@@ -32,10 +32,4 @@ class SessionsController < ApplicationController
     terminate_session
     redirect_to login_path
   end
-
-  private
-
-  def remember_me?
-    ActiveModel::Type::Boolean.new.cast(params[:remember_me]) || false
-  end
 end

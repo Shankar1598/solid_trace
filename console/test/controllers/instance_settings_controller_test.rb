@@ -284,6 +284,32 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
       response.parsed_body.dig("props", "settings", "editable", "console_url_fallback"))
   end
 
+  # ADR 0018: from the Console URL setting, else CONSOLE_URL, never the
+  # address the page was opened at.
+  test "the Passkeys row says where Passkeys are offered, from the fixed Console URL alone" do
+    sign_in_as(@instance_admin)
+    passkeys = lambda do |setting, env|
+      InstanceSetting.current.update!(console_url: setting)
+      with_env("CONSOLE_URL" => env) { get instance_settings_url(org_slug: @organization.slug), headers: inertia }
+      response.parsed_body.dig("props", "settings", "passkeys")
+    end
+
+    assert_equal({ "offered" => false, "reason" => "Console has no fixed Console URL. Set the Console URL, or CONSOLE_URL in deploy/.env." },
+      passkeys.call(nil, nil))
+    assert_equal({ "offered" => true, "host" => "solid-trace.example.ts.net", "url" => "https://solid-trace.example.ts.net" },
+      passkeys.call("https://solid-trace.example.ts.net", "https://console.example.com"))
+    assert_equal({ "offered" => true, "host" => "console.example.com", "url" => "https://console.example.com" },
+      passkeys.call(nil, "https://console.example.com"))
+    assert_equal({ "offered" => true, "host" => "localhost", "url" => "http://localhost:4001" },
+      passkeys.call("http://localhost:4001", nil))
+    assert_equal({ "offered" => false, "reason" => "The Console URL, http://console.example.com, isn't HTTPS." },
+      passkeys.call("http://console.example.com", nil))
+    assert_equal({ "offered" => false, "reason" => "The Console URL, https://35.214.179.92, is an IP address, not a domain." },
+      passkeys.call(nil, "https://35.214.179.92"))
+    assert_equal({ "offered" => false, "reason" => "The Console URL, http://35.214.179.92, is an IP address, not a domain." },
+      passkeys.call("http://35.214.179.92", nil))
+  end
+
   test "saving Console's and ingest's URLs shows them, and the Project page's DSN follows ingest's at once" do
     project = create(:project, organization: @organization)
     key = create(:project_key, project: project)
