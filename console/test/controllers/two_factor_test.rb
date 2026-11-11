@@ -29,7 +29,7 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
 
     # The page keeps the secret being set up, so a reload shows the same one.
     assert_equal page["secret"], set_up_page["secret"]
-    post authenticator_app_url, params: { code: code_for(page["secret"]) }
+    post authenticator_app_url, params: { code: code_for(page["secret"]), proof: { password: "password" } }
     assert_redirected_to recovery_codes_url
     assert_equal "Two-factor is on.", flash[:notice]
 
@@ -174,17 +174,34 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
 
     sign_in_as @user
     secret = set_up_page["secret"]
-    post authenticator_app_url, params: { code: wrong_code(secret) }
+    post authenticator_app_url, params: { code: wrong_code(secret), proof: { password: "password" } }
     assert_redirected_to new_authenticator_app_url
     assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
     other_browser.get user_settings_url, headers: inertia
     other_browser.assert_response :success
 
-    post authenticator_app_url, params: { code: code_for(secret) }
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "password" } }
     other_browser.get user_settings_url, headers: inertia
     other_browser.assert_redirected_to login_url
     get user_settings_url, headers: inertia
     assert_response :success
+  end
+
+  test "setting up the app needs the user's password in the same request, so a Session alone can't add a factor" do
+    sign_in_as @user
+    secret = set_up_page["secret"]
+
+    post authenticator_app_url, params: { code: code_for(secret) }
+    assert_redirected_to new_authenticator_app_url
+    assert_equal "That password didn't work.", flash[:alert]
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "wrong" } }
+    assert_equal "That password didn't work.", flash[:alert]
+    get user_settings_url, headers: inertia
+    assert_nil response.parsed_body.dig("props", "authenticator_app")
+
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "password" } }
+    assert_redirected_to recovery_codes_url
+    assert_equal "Two-factor is on.", flash[:notice]
   end
 
   test "the set-up page returns to the Organization it is told of, once set up" do
@@ -196,9 +213,9 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal({ "name" => organization.name, "slug" => organization.slug, "requires_two_factor" => false }, response.parsed_body.dig("props", "return_organization"))
     secret = response.parsed_body.dig("props", "secret")
 
-    post authenticator_app_url, params: { code: wrong_code(secret), org: organization.slug }
+    post authenticator_app_url, params: { code: wrong_code(secret), org: organization.slug, proof: { password: "password" } }
     assert_redirected_to new_authenticator_app_url(org: organization.slug)
-    post authenticator_app_url, params: { code: code_for(secret), org: organization.slug }
+    post authenticator_app_url, params: { code: code_for(secret), org: organization.slug, proof: { password: "password" } }
     assert_redirected_to recovery_codes_url
     assert_equal overview_path(org_slug: organization.slug), recovery_codes_page["continue_to"]
 
@@ -219,7 +236,7 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
     get user_settings_url, headers: inertia
     assert_nil response.parsed_body.dig("props", "authenticator_app"), "being set up isn't set up"
 
-    post authenticator_app_url, params: { code: code_for(secret) }
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "password" } }
     get user_path(org_slug: organization.slug), headers: inertia
     assert_equal Time.current.iso8601, response.parsed_body.dig("props", "authenticator_app", "set_up_at")
     assert_not response.parsed_body.to_s.include?(secret), "the secret is shown only while setting up"
@@ -257,7 +274,7 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
 
     new_secret = set_up_page["secret"]
     assert_not_equal secret, new_secret
-    post authenticator_app_url, params: { code: code_for(new_secret) }
+    post authenticator_app_url, params: { code: code_for(new_secret), proof: { password: "password" } }
     assert_equal "Two-factor is on.", flash[:notice]
   end
 

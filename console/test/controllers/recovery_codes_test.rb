@@ -18,7 +18,7 @@ class RecoveryCodesTest < ActionDispatch::IntegrationTest
   test "getting Two-factor shows 10 Recovery codes once, and Console keeps only their digests" do
     sign_in_as @user
     secret = set_up_page["secret"]
-    post authenticator_app_url, params: { code: code_for(secret) }
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "password" } }
     assert_redirected_to recovery_codes_url
     assert_equal "Two-factor is on.", flash[:notice]
 
@@ -130,7 +130,7 @@ class RecoveryCodesTest < ActionDispatch::IntegrationTest
     assert_equal 0, @user.recovery_codes.count
 
     secret = set_up_page["secret"]
-    post authenticator_app_url, params: { code: code_for(secret) }
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "password" } }
     assert_redirected_to recovery_codes_url
     fresh = recovery_codes_page["codes"]
     assert_empty fresh & @recovery_codes

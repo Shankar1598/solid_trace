@@ -12,7 +12,7 @@ module TwoFactorTestHelper
   def with_authenticator_app
     sign_in_as @user
     secret = set_up_page["secret"]
-    post authenticator_app_url, params: { code: code_for(secret) }
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "password" } }
     assert_equal "Two-factor is on.", flash[:notice]
     @recovery_codes = recovery_codes_page["codes"]
     delete session_url

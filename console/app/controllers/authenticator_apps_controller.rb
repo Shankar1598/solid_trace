@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 # The Authenticator app, outside any Organization's pages: the set-up page
-# shows a QR code and the secret as text, a code from the app confirms it,
-# and removing it needs a second-step answer in the same request. ?org= names
+# shows a QR code and the secret as text, a code from the app confirms it
+# with proof it's the user (User#add_factor), and removing it needs a
+# second-step answer in the same request. ?org= names
 # one of the user's Organizations to return to once it's set up. Confirming
 # and removing are rate-limited as signing in is.
 class AuthenticatorAppsController < ApplicationController
@@ -34,15 +35,25 @@ class AuthenticatorAppsController < ApplicationController
       },
       # A Passkey, added on Settings → User, is Two-factor too.
       passkeys_here: passkeys_here?,
+      # How confirming proves it's the user (User#add_factor): their
+      # password, or, once they have Two-factor (Passkeys), a Recovery code
+      # or one of their Passkeys for this host.
+      proof: {
+        two_factor: current_user.two_factor?,
+        passkey: passkeys_here? && current_user.passkeys.exists?(host: passkey_offer.host),
+      },
     }
   end
 
+  # Confirming needs proof it's the user too (User#add_factor).
   def create
-    if current_user.gaining_two_factor(keep: Current.session) { current_user.confirm_authenticator_app(params[:code]) }
+    if current_user.add_factor(factor_proof, keep_session: Current.session) { current_user.confirm_authenticator_app(params[:code]) }
       redirect_showing_recovery_codes current_user.new_recovery_codes, continue_to: return_url, notice: "Two-factor is on."
     else
       redirect_to new_authenticator_app_path(org: @return_organization&.slug), alert: "That code didn't work. Try the newest one from your app."
     end
+  rescue User::TwoFactor::WrongProof
+    redirect_to new_authenticator_app_path(org: @return_organization&.slug), alert: factor_proof_refused
   end
 
   def destroy

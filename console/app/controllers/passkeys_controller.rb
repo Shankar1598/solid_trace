@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 # The user's Passkeys on Settings → User: adding one (the browser's options,
-# then the Passkey it made), renaming, and removing one, which needs a
-# second-step answer in the same request (a code, a Recovery code, or an
-# answer from one of the user's Passkeys to the proof options). Only a page
+# then the Passkey it made, with proof it's the user: User#add_factor),
+# renaming, and removing one, which needs a second-step answer in the same
+# request (a code, a Recovery code, or an answer from one of the user's
+# Passkeys to the proof options). Only a page
 # opened at the Console URL can add Passkeys or answer with one
 # (UsesPasskeys). Adding and removing are rate-limited as signing in is.
 class PasskeysController < ApplicationController
@@ -19,10 +20,11 @@ class PasskeysController < ApplicationController
     render json: remember_passkey_challenge(:add, current_user.passkey_creation_options(passkey_offer))
   end
 
-  # A first Passkey, as the user's first factor, gives them Two-factor:
-  # their other Sessions end and their Recovery codes are shown once.
+  # Adding one needs proof it's the user (User#add_factor). A first Passkey,
+  # as the user's first factor, gives them Two-factor: their other Sessions
+  # end and their Recovery codes are shown once.
   def create
-    passkey = passkeys_here? && current_user.gaining_two_factor(keep: Current.session) {
+    passkey = passkeys_here? && current_user.add_factor(factor_proof, keep_session: Current.session) {
       current_user.add_passkey(passkey_credential, challenge: take_passkey_challenge(:add), offer: passkey_offer, name: params[:name])
     }
     if passkey && current_user.new_recovery_codes
@@ -32,6 +34,8 @@ class PasskeysController < ApplicationController
     else
       redirect_back_or_to user_settings_path, alert: passkeys_here? ? "That passkey couldn't be added. Try again." : passkeys_elsewhere
     end
+  rescue User::TwoFactor::WrongProof
+    redirect_back_or_to user_settings_path, alert: factor_proof_refused
   end
 
   def update

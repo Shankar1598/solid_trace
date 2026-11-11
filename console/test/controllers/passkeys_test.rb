@@ -46,7 +46,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
   test "a Passkey alone signs its user in, with Remember me, even with an Authenticator app, and records when" do
     @user.update!(authenticator_secret: ROTP::Base32.random, authenticator_confirmed_at: Time.current)
     sign_in_as @user
-    add_passkey
+    add_passkey(proof: { code: ROTP::TOTP.new(@user.authenticator_secret).at(30.seconds.from_now) })
     delete session_url
 
     sign_in_with_passkey(remember_me: true)
@@ -118,7 +118,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
   test "a user renames a Passkey" do
     sign_in_as @user
     add_passkey(name: "MacBook")
-    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL))
+    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL), proof: { credential: passkey_proof })
     macbook_id = user_settings_page["passkeys"].first["id"]
 
     patch passkey_url(macbook_id), params: { name: "  Work laptop " }, as: :json

@@ -1,5 +1,7 @@
-import { Link, useForm } from '@inertiajs/react'
+import { Link, router, useForm } from '@inertiajs/react'
 import { FormEventHandler } from 'react'
+import { FactorProofFields, emptyFactorProof, passkeyAnswer } from '@/components/SecondStepFields'
+import { passkeysSupported } from '@/lib/passkeys'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -19,17 +21,31 @@ interface TwoFactorSetUpProps {
   return_organization: { name: string; slug: string; requires_two_factor: boolean } | null
   // Whether Passkeys can be added on a page opened here (the Console URL).
   passkeys_here: boolean
+  // How confirming proves it's the user: their password, or once they have
+  // Two-factor (Passkeys), a Recovery code or, when passkey, a Passkey here.
+  proof: { two_factor: boolean; passkey: boolean }
 }
 
 // The Authenticator app's set-up page (AuthenticatorAppsController), outside
 // any Organization: scan the QR code or type the secret, then confirm with a
-// code. Until a code confirms it, it isn't Two-factor.
-export default function TwoFactorSetUp({ secret, uri, qr_code, return_organization, passkeys_here }: TwoFactorSetUpProps) {
-  const { data, setData, post, processing } = useForm({ code: '', org: return_organization?.slug ?? '' })
+// code and proof it's the user. Until a code confirms it, it isn't Two-factor.
+export default function TwoFactorSetUp({ secret, uri, qr_code, return_organization, passkeys_here, proof }: TwoFactorSetUpProps) {
+  const { data, setData, post, processing } = useForm({
+    code: '',
+    org: return_organization?.slug ?? '',
+    proof: emptyFactorProof,
+  })
+  const reset = () => setData((data) => ({ ...data, code: '', proof: emptyFactorProof }))
 
   const submit: FormEventHandler = (e) => {
     e.preventDefault()
-    post('/authenticator_app', { onFinish: () => setData('code', '') })
+    post('/authenticator_app', { onFinish: reset })
+  }
+
+  // The code, with an answer from one of the user's Passkeys as the proof.
+  const confirmWithPasskey = async () => {
+    const credential = await passkeyAnswer('/passkeys/proof_options')
+    if (credential) router.post('/authenticator_app', { code: data.code, org: data.org, proof: { credential } }, { onFinish: reset })
   }
 
   return (
@@ -81,6 +97,17 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
                 value={data.code}
                 onChange={(e) => setData('code', e.target.value)}
                 required
+              />
+            </div>
+
+            <div className="max-w-xs">
+              <FactorProofFields
+                id="set-up-proof"
+                twoFactor={proof.two_factor}
+                proof={{ authenticatorApp: false, passkey: proof.passkey && passkeysSupported() }}
+                answer={data.proof}
+                onChange={(answer) => setData('proof', answer)}
+                onPasskey={confirmWithPasskey}
               />
             </div>
           </CardContent>

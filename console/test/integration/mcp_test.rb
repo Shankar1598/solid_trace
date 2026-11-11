@@ -144,7 +144,7 @@ class McpTest < ActionDispatch::IntegrationTest
     # Once the user sets up Two-factor in Console, the token works on Acme.
     sign_in_as @user
     get new_authenticator_app_url, headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
-    post authenticator_app_url, params: { code: ROTP::TOTP.new(response.parsed_body.dig("props", "secret")).at(Time.current) }
+    post authenticator_app_url, params: { code: ROTP::TOTP.new(response.parsed_body.dig("props", "secret")).at(Time.current), proof: { password: "password" } }
     mcp "tools/call", name: "list_members", arguments: { organization: "acme" }
     assert_equal false, tool_result.first
     assert_match "ada@example.com", tool_result.last
