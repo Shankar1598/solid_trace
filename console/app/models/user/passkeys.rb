@@ -10,11 +10,6 @@
 module User::Passkeys
   extend ActiveSupport::Concern
 
-  # What a malformed or wrong answer from a browser raises while it's read
-  # and checked: refused, not an error.
-  REFUSED = [ WebAuthn::Error, CBOR::MalformedFormatError, ArgumentError, TypeError, KeyError, NoMethodError,
-              EOFError, OpenSSL::PKey::PKeyError, COSE::Error ].freeze
-
   included do
     has_many :passkeys, dependent: :delete_all
   end
@@ -37,10 +32,10 @@ module User::Passkeys
   def add_passkey(credential, challenge:, offer:, name:)
     return unless challenge && (relying_party = offer.relying_party)
 
-    made = relying_party.verify_registration(credential, challenge, user_verification: true)
+    made = Passkey.read_answer(credential) { relying_party.verify_registration(credential, challenge, user_verification: true) }
+    return unless made
+
     passkeys.create!(credential_id: made.id, public_key: made.public_key, sign_count: made.sign_count,
       host: offer.host, name: name.to_s.strip.presence || "Passkey")
-  rescue *REFUSED
-    nil
   end
 end
