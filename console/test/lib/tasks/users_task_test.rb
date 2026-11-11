@@ -28,6 +28,20 @@ class UsersTaskTest < ActiveSupport::TestCase
     assert_equal "Two-factor is off for ada@example.com, and their Sessions have ended: they sign in with their password alone.\n", out
   end
 
+  test "the reset removes the user's Passkeys, for every host" do
+    ada = create(:user, email: "ada@example.com")
+    ada.passkeys.create!(credential_id: "here", public_key: "key", name: "MacBook", host: "console.example.com")
+    ada.passkeys.create!(credential_id: "old", public_key: "key", name: "Phone", host: "old.example.com")
+    ada.make_recovery_codes
+
+    run_task("users:reset_two_factor", "EMAIL" => "ada@example.com")
+
+    ada.reload
+    assert_not ada.two_factor?
+    assert_empty ada.passkeys
+    assert_equal 0, ada.recovery_codes.count
+  end
+
   test "a user without Two-factor is reset all the same" do
     create(:user, email: "ada@example.com")
 
