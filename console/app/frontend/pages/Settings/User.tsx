@@ -6,6 +6,8 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SecondStepFields, emptySecondStepAnswer } from '@/components/SecondStepFields'
+import { PasskeysCard, type PasskeyRow } from '@/components/PasskeysCard'
+import type { PasskeyOfferHere } from '@/lib/passkeys'
 import { User } from '@/types'
 import { toast } from 'sonner'
 
@@ -15,9 +17,12 @@ interface SettingsUserProps {
   authenticator_app: { set_up_at: string } | null
   // How many Recovery codes are unused, or null without Two-factor.
   recovery_codes_left: number | null
+  // Where Passkeys are offered and whether here, and the user's for that host.
+  passkey_offer: PasskeyOfferHere
+  passkeys: PasskeyRow[]
 }
 
-export default function SettingsUser({ user, authenticator_app, recovery_codes_left }: SettingsUserProps) {
+export default function SettingsUser({ user, authenticator_app, recovery_codes_left, passkey_offer, passkeys }: SettingsUserProps) {
   const { url } = usePage()
   const { data, setData, put, processing, errors, transform } = useForm({
     name: user.name,
@@ -81,6 +86,7 @@ export default function SettingsUser({ user, authenticator_app, recovery_codes_l
         </Card>
         <TwoFactorCard authenticatorApp={authenticator_app} />
         {recovery_codes_left !== null && <RecoveryCodesCard left={recovery_codes_left} />}
+        <PasskeysCard offer={passkey_offer} passkeys={passkeys} />
       </div>
     </SettingsLayout>
   )
