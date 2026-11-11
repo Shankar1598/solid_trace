@@ -123,7 +123,7 @@ class InstanceSetting < ApplicationRecord
     assign_attributes(changes.to_h.symbolize_keys.slice(*EDITABLE))
     return false unless valid?(:editable)
 
-    stranded = PasskeyOffer.current(settings: InstanceSetting.current).stranded_by(PasskeyOffer.current(settings: self))
+    stranded = PasskeyOffer.stranded_by_change(saved: InstanceSetting.current, changed: self)
     if stranded && !confirm_passkeys_stop_working
       errors.add(:base, :passkeys_stop_working, message: stranded)
       return false
