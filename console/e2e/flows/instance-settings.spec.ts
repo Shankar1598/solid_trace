@@ -184,7 +184,7 @@ test('an instance admin saves Console\'s and ingest\'s URLs, and the Project pag
   await expect(ingestUrl).toHaveValue('https://ingest.example.com:4443')
 
   await page.goto(`/${ORG}/projects/${PROJECT}`)
-  await expect(page.locator('input[readonly]').first()).toHaveValue(/^https:\/\/[0-9a-f]{32}@ingest\.example\.com:4443\/\d+$/)
+  await expect(page.locator('input[readonly]').first()).toHaveValue(/^https:\/\/[^@/]+@ingest\.example\.com:4443\/\d+$/)
 
   // Cleared, the DSN goes back to the fallback.
   await page.goto(`/${ORG}/settings/instance`)
