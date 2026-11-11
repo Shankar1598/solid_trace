@@ -2,15 +2,19 @@ import { Link, useForm } from '@inertiajs/react'
 import { FormEventHandler } from 'react'
 import AuthLayout from '@/components/layouts/AuthLayout'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 // Sign-up is offered only while RegistrationsController allows it: on an
-// install with users, once the operator has opened it.
+// install with users, once the operator has opened it. The Session lasts 24
+// hours, or 7 days with Remember me, which is unticked so that a shared
+// computer gets the shorter one.
 export default function Login({ sign_up_allowed }: { sign_up_allowed: boolean }) {
   const { data, setData, post, processing, errors } = useForm({
     email: '',
     password: '',
+    remember_me: false,
   })
 
   const submit: FormEventHandler = (e) => {
@@ -57,6 +61,15 @@ export default function Login({ sign_up_allowed }: { sign_up_allowed: boolean })
             <p className="text-sm font-medium text-destructive">{errors.password}</p>
           )}
         </div>
+
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox
+            aria-label="Remember me"
+            checked={data.remember_me}
+            onCheckedChange={(checked) => setData('remember_me', checked === true)}
+          />
+          Remember me
+        </label>
 
         <Button type="submit" className="w-full" disabled={processing}>
           {processing ? 'Logging in…' : 'Log in'}
