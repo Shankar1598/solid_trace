@@ -61,6 +61,8 @@ test('an authenticator app is set up with a code, asked for after the password, 
   await expect(page.getByText('Two-factor is on.')).toBeVisible()
   await expect(page.getByText(/^On: signing in asks for a code/)).toBeVisible()
 
+  // Pages outside an Organization have no sidebar, so sign out from one in it.
+  await page.goto(`/${ORG}/overview`)
   await page.getByTitle('Sign out').click()
   await page.waitForURL(url => url.pathname === '/login')
 
