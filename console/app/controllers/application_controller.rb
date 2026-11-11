@@ -16,12 +16,13 @@ class ApplicationController < ActionController::Base
 
   TOO_MANY_TRIES = "Too many tries. Try again in a few minutes."
 
-  # Allows 10 tries in 3 minutes at only's actions, as signing in does. Past
+  # Allows config.x.tries_allowed tries (10, more in development) in 3
+  # minutes at only's actions, as signing in does. Past
   # that, the request goes to the path the block gives (run in the
   # controller), or without one back to its page (else Settings → User),
   # told to wait.
   def self.limit_tries(only:, &to)
-    rate_limit to: 10, within: 3.minutes, only: only, with: -> {
+    rate_limit to: Rails.configuration.x.tries_allowed, within: 3.minutes, only: only, with: -> {
       if to
         redirect_to instance_exec(&to), alert: TOO_MANY_TRIES
       else
