@@ -106,6 +106,19 @@ class RequireTwoFactorTest < ActionDispatch::IntegrationTest
     assert_response :forbidden
   end
 
+  test "an Invited member sets their password from the Invite link and lands on the set-up page" do
+    @organization.update!(require_two_factor: true)
+    grace = MemberInvite.call(organization: @organization, inviter: @admin, email: "grace@example.com",
+      console_url: "http://www.example.com").membership.user
+
+    put grace.invite_path(@organization), params: { password: "new-password", password_confirmation: "new-password" }
+    follow_redirect!
+    assert_redirected_to new_authenticator_app_url(org: "acme")
+    get new_authenticator_app_url(org: "acme"), headers: inertia
+    assert_equal "Settings/TwoFactorSetUp", response.parsed_body["component"]
+    assert_equal true, response.parsed_body.dig("props", "return_organization", "requires_two_factor")
+  end
+
   private
 
   # Sets up an Authenticator app for user through its set-up page, as they
