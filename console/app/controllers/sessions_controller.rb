@@ -11,10 +11,18 @@ class SessionsController < ApplicationController
     render inertia: "Sessions/New", props: { sign_up_allowed: InstanceSetting.current.sign_up_allowed? }
   end
 
+  # A right password signs in a user without Two-factor; one with it gets
+  # no Session yet, but the second step.
   def create
+    clear_second_step
     if user = User.authenticate_by(email: params[:email], password: params[:password])
-      start_new_session_for user, remember_me: ActiveModel::Type::Boolean.new.cast(params[:remember_me])
-      redirect_to after_authentication_url
+      if user.two_factor?
+        start_second_step_for user, remember_me: remember_me?
+        redirect_to second_step_path
+      else
+        start_new_session_for user, remember_me: remember_me?
+        redirect_to after_authentication_url
+      end
     else
       redirect_to login_path, alert: "Try another email address or password."
     end
@@ -23,5 +31,11 @@ class SessionsController < ApplicationController
   def destroy
     terminate_session
     redirect_to login_path
+  end
+
+  private
+
+  def remember_me?
+    ActiveModel::Type::Boolean.new.cast(params[:remember_me]) || false
   end
 end
