@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# A user's Two-factor (GLOSSARY): for now an Authenticator app, one per user.
-# "Has Two-factor" (two_factor?) and "what the second step accepts"
-# (pass_second_step) are each answered here alone, so Recovery codes and
-# Passkeys join them without their callers changing.
+# A user's Two-factor (GLOSSARY): for now an Authenticator app, one per user,
+# with Recovery codes. "Has Two-factor" (two_factor?) and "what the second
+# step accepts" (pass_second_step) are each answered here alone, so Passkeys
+# join them without their callers changing.
 #
 # The Authenticator app is TOTP per RFC 6238 (6 digits, 30 s, SHA-1). Its
 # secret is encrypted as the SMTP password is (ADR 0015): a changed
@@ -19,7 +19,11 @@ module User::TwoFactor
 
   included do
     encrypts :authenticator_secret
+    has_many :recovery_codes, dependent: :delete_all
   end
+
+  # The Recovery codes gaining_two_factor made, to show the user once.
+  attr_reader :new_recovery_codes
 
   # Whether a password alone no longer signs the user in.
   def two_factor?
@@ -27,20 +31,48 @@ module User::TwoFactor
   end
 
   # Checks an answer to the second step, the params of the request that
-  # gives it: :code, a code from the Authenticator app. Returns what was
-  # accepted (:authenticator_app), or nil. An accepted answer is used up.
+  # gives it: :recovery_code, one of the user's Recovery codes, else :code, a
+  # code from the Authenticator app. Returns what was accepted
+  # (:recovery_code or :authenticator_app), or nil. An accepted answer is
+  # used up.
   def pass_second_step(answer)
-    :authenticator_app if authenticator_app? && accept_authenticator_code(answer[:code])
+    return unless two_factor?
+
+    if answer[:recovery_code].present?
+      :recovery_code if accept_recovery_code(answer[:recovery_code])
+    elsif authenticator_app? && accept_authenticator_code(answer[:code])
+      :authenticator_app
+    end
   end
 
   # Yields the change that may give the user Two-factor, and when it does
-  # (they had none before) ends their other Sessions, keeping keep. Returns
+  # (they had none before) ends their other Sessions, keeping keep, and makes
+  # a set of Recovery codes, left in new_recovery_codes to show once. Returns
   # what the block returns.
   def gaining_two_factor(keep:)
     had = two_factor?
+    @new_recovery_codes = nil
     yield.tap do |changed|
-      sessions.where.not(id: keep).destroy_all if changed && !had && two_factor?
+      if changed && !had && two_factor?
+        sessions.where.not(id: keep).destroy_all
+        @new_recovery_codes = make_recovery_codes
+      end
     end
+  end
+
+  # Replaces the user's Recovery codes with a new set. Returns the codes,
+  # which Console doesn't keep.
+  def make_recovery_codes
+    codes = Array.new(RecoveryCode::SET_SIZE) { RecoveryCode.generate }
+    transaction do
+      recovery_codes.delete_all
+      recovery_codes.insert_all!(codes.map { |code| { digest: RecoveryCode.digest(code) } })
+    end
+    codes
+  end
+
+  def recovery_codes_left
+    recovery_codes.unused.count
   end
 
   def authenticator_app?
@@ -74,6 +106,12 @@ module User::TwoFactor
   end
 
   private
+
+  # Marks the Recovery code used, only if it is unused, in one UPDATE, so two
+  # requests with one code can't both pass.
+  def accept_recovery_code(code)
+    recovery_codes.unused.where(digest: RecoveryCode.digest(code)).update_all(used_at: Time.current) == 1
+  end
 
   def authenticator_totp
     ROTP::TOTP.new(authenticator_secret, issuer: ISSUER, interval: STEP)
