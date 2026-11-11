@@ -16,6 +16,8 @@ import { watchErrors } from '../support/screens'
 // Console URL and Ingest URL show what a blank one uses; a Console URL with
 // the other scheme than Console's HTTPS mode is refused, and a saved Ingest
 // URL is the Project page's DSN at once. HTTPS is a restart-to-change row.
+// Changing the Console URL's host while a Passkey is made for it asks first,
+// with the counts; Cancel leaves it unsaved.
 
 const rails = (code: string) =>
   execFileSync('mise', ['exec', '--', 'bin/rails', 'runner', code], {
@@ -31,8 +33,11 @@ test.beforeAll(() => {
     'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096, logs_read_threads: 0, local_cache_hours: 24, console_url: nil, ingest_url: nil)')
 })
 
+const passkeyEmail = 'flow-instance-passkey@example.com'
+
 test.afterAll(() => {
-  rails(`InstanceSetting.current.update!(JSON.parse(${JSON.stringify(saved)}))`)
+  rails(`InstanceSetting.current.update!(JSON.parse(${JSON.stringify(saved)})); ` +
+    `User.where(email: ${JSON.stringify(passkeyEmail)}).each(&:destroy!)`)
 })
 
 test('an instance admin changes log-all-reads, log-MCP-reads, the default Retention, Console\'s Sentry, the text-match budget and the Log read threads, and sees Sign-up read-only', async ({ page }) => {
@@ -193,6 +198,32 @@ test('an instance admin saves Console\'s and ingest\'s URLs, and the Project pag
   await expect(page.getByText('Instance settings saved')).toBeVisible()
   await page.goto(`/${ORG}/projects/${PROJECT}`)
   await expect(page.locator('input[readonly]').first()).not.toHaveValue(/ingest\.example\.com/)
+
+  expect(errors).toEqual([])
+})
+
+test('changing the Console URL\'s host while a Passkey is made for it asks first, and Cancel leaves it unsaved', async ({ page }) => {
+  const errors = watchErrors(page)
+  // Passkeys are offered at the flow's origin, and one user has one there.
+  const origin = new URL(process.env.E2E_BASE_URL ?? 'http://localhost:4001')
+  rails(`InstanceSetting.current.update!(console_url: ${JSON.stringify(origin.origin)}); ` +
+    `User.create!(name: "Flow Instance Passkey", email: ${JSON.stringify(passkeyEmail)}, password: "flow-passkey-password-1")` +
+    `.passkeys.create!(credential_id: SecureRandom.base64(16), public_key: "public key", name: "MacBook", ` +
+    `host: ${JSON.stringify(origin.hostname)})`)
+
+  await page.goto(`/${ORG}/settings/instance`)
+  const consoleUrl = page.getByLabel('Console URL')
+  await expect(consoleUrl).toHaveValue(origin.origin)
+  await consoleUrl.fill(`${origin.protocol}//console.example.com`)
+  await page.getByRole('button', { name: 'Save changes' }).click()
+
+  const confirm = page.getByRole('alertdialog')
+  await expect(confirm).toContainText('Change the Console URL\'s host?')
+  await expect(confirm).toContainText(`1 Passkey of 1 user would stop working: they're made for ${origin.hostname}`)
+  await confirm.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirm).toBeHidden()
+  await page.reload()
+  await expect(consoleUrl).toHaveValue(origin.origin)
 
   expect(errors).toEqual([])
 })

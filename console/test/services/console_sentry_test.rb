@@ -73,23 +73,23 @@ class ConsoleSentryTest < ActiveSupport::TestCase
   end
 
   test "with Send Console's Issues off, no Event is sent, from the next one on, until it's on again" do
-    InstanceSetting.current.update_editable(send_console_issues: false)
+    InstanceSetting.current.update_editable({ send_console_issues: false })
     Sentry.capture_exception(RuntimeError.new("off"))
     assert_empty sentry_events
 
-    InstanceSetting.current.update_editable(send_console_issues: true)
+    InstanceSetting.current.update_editable({ send_console_issues: true })
     Sentry.capture_exception(RuntimeError.new("on"))
     assert_equal 1, sentry_events.size
   end
 
   test "with Trace Console off, nothing is traced, even a trace sampled upstream" do
     tracing_at(1.0)
-    InstanceSetting.current.update_editable(trace_console: false)
+    InstanceSetting.current.update_editable({ trace_console: false })
 
     assert_not transaction("LogsController#index", op: "http.server").sampled
     assert_not transaction("LogsController#index", op: "http.server", parent_sampled: true).sampled
 
-    InstanceSetting.current.update_editable(trace_console: true)
+    InstanceSetting.current.update_editable({ trace_console: true })
     assert transaction("LogsController#index", op: "http.server").sampled
   end
 

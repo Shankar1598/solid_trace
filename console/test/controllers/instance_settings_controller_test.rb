@@ -345,6 +345,48 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_match(/no path/, response.parsed_body.dig("props", "errors", "console_url").first)
   end
 
+  # Passkeys are made for the Console URL's host (ADR 0018), so changing it
+  # strands them: the page asks first, with the counts.
+  test "changing the Console URL's host while Passkeys exist for it asks first, with the counts, and saves once confirmed" do
+    InstanceSetting.current.update!(console_url: "http://localhost:4001")
+    2.times { make_passkey(@org_admin, "localhost") }
+    make_passkey(create(:user), "localhost")
+    make_passkey(create(:user), "old.example.com")
+    sign_in_as(@instance_admin)
+
+    save(console_url: "http://console.example.com", log_all_reads: true)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal({ "passkeys_stop_working" => [ "3 Passkeys of 2 users would stop working: they're made for localhost, " \
+                                                "the Console URL's host now, and work only there." ] },
+      response.parsed_body.dig("props", "errors"))
+    assert_equal "http://localhost:4001", InstanceSetting.current.console_url
+    assert_not InstanceSetting.current.log_all_reads?
+
+    patch instance_settings_url(org_slug: @organization.slug), as: :json,
+      params: { instance_settings: { console_url: "http://console.example.com" }, confirm_passkeys_stop_working: true }
+
+    assert_equal "Instance settings saved", flash[:notice]
+    assert_equal "http://console.example.com", InstanceSetting.current.console_url
+  end
+
+  test "the Console URL saves without asking when its host stays, or no Passkey is made for its host" do
+    InstanceSetting.current.update!(console_url: "http://localhost:4001")
+    make_passkey(@org_admin, "localhost")
+    sign_in_as(@instance_admin)
+
+    save(console_url: "http://localhost:3000")
+    assert_equal "Instance settings saved", flash[:notice]
+    save(log_all_reads: true)
+    assert_equal "Instance settings saved", flash[:notice]
+
+    @org_admin.passkeys.delete_all
+    make_passkey(@org_admin, "old.example.com")
+    save(console_url: "http://console.example.com")
+    assert_equal "Instance settings saved", flash[:notice]
+    assert_equal "http://console.example.com", InstanceSetting.current.console_url
+  end
+
   test "a trace Retention below one day comes back as a form error and saves nothing" do
     sign_in_as(@instance_admin)
 
@@ -421,6 +463,11 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     yield
   ensure
     previous.each { |key, value| ENV[key] = value }
+  end
+
+  # A Passkey of user's made for host, as Settings → User adds one there.
+  def make_passkey(user, host)
+    user.passkeys.create!(credential_id: SecureRandom.base64(16), public_key: "public key", name: "MacBook", host: host)
   end
 
   def save(**settings)
