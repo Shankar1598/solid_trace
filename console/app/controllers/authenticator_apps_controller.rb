@@ -32,6 +32,8 @@ class AuthenticatorAppsController < ApplicationController
         slug: @return_organization.slug,
         requires_two_factor: @return_organization.require_two_factor,
       },
+      # A Passkey, added on Settings → User, is Two-factor too.
+      passkeys_here: passkeys_here?,
     }
   end
 

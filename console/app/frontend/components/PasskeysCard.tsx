@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { router } from '@inertiajs/react'
+import { router, useForm } from '@inertiajs/react'
 import { KeyRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
@@ -7,9 +7,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  SecondStepFields,
+  emptySecondStepAnswer,
+  sendWithPasskeyProof,
+  type SecondStepProof,
+} from '@/components/SecondStepFields'
+import {
   createPasskey,
   defaultPasskeyName,
-  getPasskey,
   passkeyCancelled,
   passkeyOptions,
   passkeysElsewhere,
@@ -17,10 +22,16 @@ import {
   type PasskeyOfferHere,
 } from '@/lib/passkeys'
 
-/** One of the user's Passkeys for the Console URL's host. */
+/**
+ * One of the user's Passkeys, made for host. other_host: made for a host
+ * other than the Console URL's, so it can't be used, only removed, and
+ * still counts as Two-factor.
+ */
 export interface PasskeyRow {
   id: number
   name: string
+  host: string
+  other_host: boolean
   created_at: string
   last_used_at: string | null
 }
@@ -39,10 +50,11 @@ function failed(error: unknown) {
 /**
  * Settings → User → Passkeys (PasskeysController): add one, named with a
  * default from the browser and OS, list them with when each was made and
- * last used, rename, and remove one with an answer from it. Opened at an
- * address other than the Console URL, it says where Passkeys work instead.
+ * last used, rename, and remove one for a code, a Passkey or a Recovery
+ * code. Opened at an address other than the Console URL, it says where
+ * Passkeys work instead of adding them.
  */
-export function PasskeysCard({ offer, passkeys }: { offer: PasskeyOfferHere, passkeys: PasskeyRow[] }) {
+export function PasskeysCard({ offer, passkeys, proof }: { offer: PasskeyOfferHere, passkeys: PasskeyRow[], proof: SecondStepProof }) {
   const usable = offer.here && passkeysSupported()
   const [name, setName] = useState(() => (typeof navigator === 'undefined' ? 'Passkey' : defaultPasskeyName()))
   const [busy, setBusy] = useState(false)
@@ -75,7 +87,7 @@ export function PasskeysCard({ offer, passkeys }: { offer: PasskeyOfferHere, pas
         {passkeys.length > 0 && (
           <ul className="divide-y" aria-label="Your passkeys">
             {passkeys.map((passkey) => (
-              <PasskeyItem key={passkey.id} passkey={passkey} removable={usable} />
+              <PasskeyItem key={passkey.id} passkey={passkey} proof={proof} />
             ))}
           </ul>
         )}
@@ -96,55 +108,71 @@ export function PasskeysCard({ offer, passkeys }: { offer: PasskeyOfferHere, pas
   )
 }
 
-function PasskeyItem({ passkey, removable }: { passkey: PasskeyRow, removable: boolean }) {
+function PasskeyItem({ passkey, proof }: { passkey: PasskeyRow, proof: SecondStepProof }) {
   const [renaming, setRenaming] = useState(false)
+  const [removing, setRemoving] = useState(false)
   const [name, setName] = useState(passkey.name)
-  const [busy, setBusy] = useState(false)
+  const removal = useForm(emptySecondStepAnswer)
 
   const rename: React.FormEventHandler = (e) => {
     e.preventDefault()
     router.patch(`/passkeys/${passkey.id}`, { name }, { preserveScroll: true, onSuccess: () => setRenaming(false) })
   }
 
-  // Proves it's the user with an answer from the Passkey being removed.
-  const remove = async () => {
-    setBusy(true)
-    try {
-      const options = await passkeyOptions<PublicKeyCredentialRequestOptionsJSON>(`/passkeys/${passkey.id}/removal_options`)
-      const credential = await getPasskey(options)
-      router.delete(`/passkeys/${passkey.id}`, { data: { credential }, preserveScroll: true })
-    } catch (error) {
-      failed(error)
-    } finally {
-      setBusy(false)
-    }
+  // Proves it's the user with a code, a Recovery code or a Passkey.
+  const remove: React.FormEventHandler = (e) => {
+    e.preventDefault()
+    removal.delete(`/passkeys/${passkey.id}`, { preserveScroll: true, onFinish: () => removal.setData(emptySecondStepAnswer) })
   }
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-2 py-3" aria-label={passkey.name}>
-      {renaming ? (
-        <form onSubmit={rename} className="flex flex-wrap items-center gap-2" aria-label={`Rename ${passkey.name}`}>
-          <Input aria-label="Name" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} required className="w-56" />
-          <Button type="submit" size="sm">Save</Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => { setName(passkey.name); setRenaming(false) }}>Cancel</Button>
-        </form>
-      ) : (
-        <div>
-          <div className="text-sm font-medium">{passkey.name}</div>
-          <div className="text-xs text-muted-foreground">
-            Added {date(passkey.created_at)} · {passkey.last_used_at ? `Last used ${date(passkey.last_used_at)}` : 'Never used'}
+    <li className="space-y-3 py-3" aria-label={passkey.name}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {renaming ? (
+          <form onSubmit={rename} className="flex flex-wrap items-center gap-2" aria-label={`Rename ${passkey.name}`}>
+            <Input aria-label="Name" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} required className="w-56" />
+            <Button type="submit" size="sm">Save</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => { setName(passkey.name); setRenaming(false) }}>Cancel</Button>
+          </form>
+        ) : (
+          <div>
+            <div className="text-sm font-medium">{passkey.name}</div>
+            <div className="text-xs text-muted-foreground">
+              {passkey.other_host
+                ? `Made for ${passkey.host}; can't be used here`
+                : `Added ${date(passkey.created_at)} · ${passkey.last_used_at ? `Last used ${date(passkey.last_used_at)}` : 'Never used'}`}
+            </div>
           </div>
-        </div>
-      )}
-      {!renaming && (
-        <div className="flex gap-2">
-          <Button type="button" size="sm" variant="outline" onClick={() => setRenaming(true)}>Rename</Button>
-          {removable && (
-            <Button type="button" size="sm" variant="destructive" onClick={remove} disabled={busy}>
-              {busy ? 'Removing…' : 'Remove'}
+        )}
+        {!renaming && !removing && (
+          <div className="flex gap-2">
+            {!passkey.other_host && (
+              <Button type="button" size="sm" variant="outline" onClick={() => setRenaming(true)}>Rename</Button>
+            )}
+            <Button type="button" size="sm" variant="destructive" onClick={() => setRemoving(true)}>Remove</Button>
+          </div>
+        )}
+      </div>
+      {removing && (
+        <form onSubmit={remove} className="space-y-3" aria-label={`Remove ${passkey.name}`}>
+          <div className="max-w-xs">
+            <SecondStepFields
+              id={`remove-passkey-${passkey.id}`}
+              answer={removal.data}
+              onChange={removal.setData}
+              authenticatorApp={proof.authenticatorApp}
+              onPasskey={proof.passkey ? () => sendWithPasskeyProof('delete', `/passkeys/${passkey.id}`) : undefined}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" variant="destructive" disabled={removal.processing}>
+              {removal.processing ? 'Removing…' : 'Remove passkey'}
             </Button>
-          )}
-        </div>
+            <Button type="button" size="sm" variant="ghost" onClick={() => { removal.setData(emptySecondStepAnswer); setRemoving(false) }}>
+              Cancel
+            </Button>
+          </div>
+        </form>
       )}
     </li>
   )
