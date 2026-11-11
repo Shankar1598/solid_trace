@@ -204,6 +204,14 @@ _Avoid_: registration, self-serve sign-up
 A user who changes the install's settings that apply to every **Organization**, such as email. The first user to sign up is one, or on an install that already had users, the oldest; the operator grants or removes it from the command line. Being an Organization's admin isn't enough.
 _Avoid_: superuser, super admin, site admin, root
 
+**Console URL**:
+The address people and links reach **Console** at, set by an **Instance admin**: emails, invite links and the MCP server's links point there, and **Passkeys** work only on pages opened there.
+_Avoid_: base URL, host, domain (for the whole address)
+
+**Ingest URL**:
+The address SDKs send **Events**, **Logs** and traces to, which the DSNs Console shows are built from, set by an **Instance admin**. Changing it changes only the DSNs shown from then on.
+_Avoid_: DSN host, EventStore URL
+
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization. Its description says what it holds, so agents over MCP can tell which Project to query.
 _Avoid_: app, tenant
@@ -219,6 +227,30 @@ _Avoid_: agent API, bot, integration
 **API token**:
 A secret a user makes in their settings that lets a client act as that user through the **MCP server**, with the user's role in each organization checked on every call. Console keeps only its digest.
 _Avoid_: API key, project key, access token
+
+**Session**:
+A browser signed in as a user. It lasts 24 hours from signing in, or 7 days if they ticked Remember me, and ends sooner when they sign out or reset their password.
+_Avoid_: login
+
+**Two-factor**:
+Having an **Authenticator app** or a **Passkey**, so that a password alone no longer signs the user in: after it, they give a code, a **Recovery code** or a Passkey.
+_Avoid_: 2FA (in prose), MFA, two-step verification
+
+**Authenticator app**:
+An app on the user's phone or computer that shows a new six-digit code every 30 seconds; one way to have **Two-factor**.
+_Avoid_: OTP, TOTP (in prose)
+
+**Passkey**:
+A way to sign in without a password, kept on the user's device and unlocked with its fingerprint, face or PIN; also one way to have **Two-factor**. It works only where Console is on a domain over HTTPS, and stops working if that domain changes.
+_Avoid_: security key, WebAuthn credential
+
+**Recovery code**:
+One of a set of single-use codes a user gets when they first turn on **Two-factor**, accepted in place of a code or a **Passkey** when they can use neither.
+_Avoid_: backup code
+
+**Require two-factor**:
+An **Organization**'s setting that keeps its members without **Two-factor** out of its pages and its **MCP server** calls until they turn it on.
+_Avoid_: mandatory 2FA, enforced 2FA
 
 ## Relationships
 
@@ -245,6 +277,7 @@ _Avoid_: API key, project key, access token
 - An **Invite** to an **Organization** makes someone without a password an **Invited** member, whom an **Invite link** lets set a password
 - An **MCP server** call acts as the user of its **API token**, with what that user's role allows in the organization it acts on
 - An **Instance admin** sets the install's email, which every **Organization**'s mail is sent with
+- An **Organization** with **Require two-factor** admits only members who have **Two-factor**, with an **Authenticator app** or a **Passkey**
 
 ## Example dialogue
 

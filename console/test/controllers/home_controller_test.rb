@@ -72,6 +72,19 @@ class HomeControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to overview_url(org_slug: @acme.slug)
   end
 
+  test "home passes over an Organization whose Require two-factor the user doesn't meet, for one they can open" do
+    get projects_url(org_slug: @meta.slug)
+    @meta.update!(require_two_factor: true)
+
+    get root_url
+    assert_redirected_to overview_url(org_slug: @acme.slug)
+
+    # With none they can open, the last used one, which sends them to set-up.
+    @acme.update!(require_two_factor: true)
+    get root_url
+    assert_redirected_to overview_url(org_slug: @meta.slug)
+  end
+
   test "every Organization page shares the user's Organizations by name, in any case, and only theirs" do
     create(:organization, name: "Elsewhere")
     beta = create(:organization, name: "beta")

@@ -4,8 +4,9 @@
 # page or the MCP server's invite_member. It finds the user by email, or
 # makes an Invited one with a random password nobody knows; then brings back
 # their archived membership, or adds one. An Invited user is emailed their
-# Invite link to the Console at console_url when mail is set up
-# (ApplicationMailer.configured?).
+# Invite link when mail is set up (ApplicationMailer.configured?), at Console's
+# URL as it is when the email is sent; request_url, the address the admin
+# invited from, is the last fallback (PublicUrls.console_url).
 #
 # Only the Organization's admins invite (UserPolicy and
 # OrganizationUserPolicy): anyone else's invite raises
@@ -22,16 +23,16 @@ class MemberInvite
     end
   end
 
-  def self.call(organization:, inviter:, email:, console_url:, name: nil)
-    new(organization: organization, inviter: inviter, email: email.to_s.strip, name: name, console_url: console_url).call
+  def self.call(organization:, inviter:, email:, request_url:, name: nil)
+    new(organization: organization, inviter: inviter, email: email.to_s.strip, name: name, request_url: request_url).call
   end
 
-  def initialize(organization:, inviter:, email:, name:, console_url:)
+  def initialize(organization:, inviter:, email:, name:, request_url:)
     @organization = organization
     @inviter = inviter
     @email = email
     @name = name
-    @console_url = console_url
+    @request_url = request_url
   end
 
   def call
@@ -75,7 +76,7 @@ class MemberInvite
     emailed = ApplicationMailer.configured?
     if emailed
       OrganizationMailer.invite_link_email(user: membership.user, organization: @organization,
-        invited_by: @inviter, console_url: @console_url).deliver_later
+        invited_by: @inviter, request_url: @request_url).deliver_later
     end
     Result.new(outcome: :invited, membership: membership, emailed: emailed, error: nil)
   end

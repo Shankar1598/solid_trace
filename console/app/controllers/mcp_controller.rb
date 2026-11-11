@@ -10,7 +10,7 @@ class McpController < ActionController::API
   before_action :authenticate_token!
 
   def create
-    server = McpServer.build(user: @token.user, console_url: request.base_url)
+    server = McpServer.build(user: @token.user, request_url: request.base_url)
     transport = MCP::Server::Transports::StreamableHTTPTransport.new(
       server,
       stateless: true,

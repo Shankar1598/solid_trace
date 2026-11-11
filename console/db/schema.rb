@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_04_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -101,9 +101,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_04_130000) do
   end
 
   create_table "instance_settings", force: :cascade do |t|
+    t.string "console_url"
     t.datetime "created_at", null: false
     t.integer "default_log_retention_days", default: 30, null: false
     t.integer "default_trace_retention_days", default: 14, null: false
+    t.string "ingest_url"
     t.integer "local_cache_hours", default: 24, null: false
     t.boolean "log_all_reads", default: false, null: false
     t.boolean "log_mcp_reads", default: true, null: false
@@ -263,6 +265,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_04_130000) do
     t.string "name"
     t.string "slug"
     t.datetime "updated_at", null: false
+    t.boolean "require_two_factor", default: false, null: false
     t.index ["slug"], name: "index_organizations_on_slug"
   end
 
@@ -276,6 +279,20 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_04_130000) do
     t.index ["organization_id", "discarded_at"], name: "index_organizations_users_on_organization_id_and_discarded_at"
     t.index ["organization_id", "user_id"], name: "index_organizations_users_on_organization_id_and_user_id", unique: true
     t.index ["user_id"], name: "index_organizations_users_on_user_id"
+  end
+
+  create_table "passkeys", force: :cascade do |t|
+    t.integer "user_id", null: false
+    t.string "credential_id", null: false
+    t.string "public_key", null: false
+    t.bigint "sign_count", default: 0, null: false
+    t.string "name", null: false
+    t.string "host", null: false
+    t.datetime "last_used_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["credential_id"], name: "index_passkeys_on_credential_id", unique: true
+    t.index ["user_id"], name: "index_passkeys_on_user_id"
   end
 
   create_table "project_issue_counters", primary_key: "project_id", force: :cascade do |t|
@@ -312,12 +329,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_04_130000) do
     t.index ["slug"], name: "index_projects_on_slug"
   end
 
+  create_table "recovery_codes", force: :cascade do |t|
+    t.integer "user_id", null: false
+    t.string "digest", null: false
+    t.datetime "used_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id"], name: "index_recovery_codes_on_user_id"
+  end
+
   create_table "sessions", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "ip_address"
     t.datetime "updated_at", null: false
     t.string "user_agent"
     t.integer "user_id", null: false
+    t.datetime "expires_at", null: false
     t.index ["user_id"], name: "index_sessions_on_user_id"
   end
 
@@ -329,8 +356,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_04_130000) do
     t.string "name"
     t.string "password_digest"
     t.datetime "updated_at", null: false
+    t.string "authenticator_secret"
+    t.datetime "authenticator_confirmed_at"
+    t.integer "authenticator_last_step"
+    t.string "webauthn_id"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["name"], name: "index_users_on_name"
+    t.index ["webauthn_id"], name: "index_users_on_webauthn_id", unique: true
   end
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
@@ -359,9 +391,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_04_130000) do
   add_foreign_key "notifications", "integrations"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
+  add_foreign_key "passkeys", "users"
   add_foreign_key "project_issue_counters", "projects"
   add_foreign_key "project_keys", "projects"
   add_foreign_key "project_seen_cursors", "projects"
   add_foreign_key "projects", "organizations"
+  add_foreign_key "recovery_codes", "users"
   add_foreign_key "sessions", "users"
 end

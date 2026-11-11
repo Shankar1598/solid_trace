@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
-import { MEMBER, ORG } from '../support/data'
+import { MEMBER, ORG, PROJECT } from '../support/data'
 import { watchErrors } from '../support/screens'
 
 // Settings → Instance: the seeded admin, an instance admin, changes
@@ -13,6 +13,11 @@ import { watchErrors } from '../support/screens'
 // Sign-up is read-only, and Console's environment and EventStore's config
 // (from its GET /config) show with secrets only as set or not. A member who isn't an instance admin sees no Instance link. The
 // settings are put back as they were after.
+// Console URL and Ingest URL show what a blank one uses; a Console URL with
+// the other scheme than Console's HTTPS mode is refused, and a saved Ingest
+// URL is the Project page's DSN at once. HTTPS is a restart-to-change row.
+// Changing the Console URL's host while a Passkey is made for it asks first,
+// with the counts; Cancel leaves it unsaved.
 
 const rails = (code: string) =>
   execFileSync('mise', ['exec', '--', 'bin/rails', 'runner', code], {
@@ -23,13 +28,16 @@ let saved = '{}'
 
 test.beforeAll(() => {
   saved = rails('print InstanceSetting.current.slice(:log_all_reads, :log_mcp_reads, :default_log_retention_days, ' +
-    ':send_console_issues, :trace_console, :logs_text_match_budget_mb, :logs_read_threads, :local_cache_hours).to_json')
+    ':send_console_issues, :trace_console, :logs_text_match_budget_mb, :logs_read_threads, :local_cache_hours, :console_url, :ingest_url).to_json')
   rails('InstanceSetting.current.update!(log_all_reads: false, log_mcp_reads: true, default_log_retention_days: 30, ' +
-    'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096, logs_read_threads: 0, local_cache_hours: 24)')
+    'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096, logs_read_threads: 0, local_cache_hours: 24, console_url: nil, ingest_url: nil)')
 })
 
+const passkeyEmail = 'flow-instance-passkey@example.com'
+
 test.afterAll(() => {
-  rails(`InstanceSetting.current.update!(JSON.parse(${JSON.stringify(saved)}))`)
+  rails(`InstanceSetting.current.update!(JSON.parse(${JSON.stringify(saved)})); ` +
+    `User.where(email: ${JSON.stringify(passkeyEmail)}).each(&:destroy!)`)
 })
 
 test('an instance admin changes log-all-reads, log-MCP-reads, the default Retention, Console\'s Sentry, the text-match budget and the Log read threads, and sees Sign-up read-only', async ({ page }) => {
@@ -148,6 +156,74 @@ test('changing the hours on local disk asks first: Cancel leaves them unsaved, c
   await expect(page.getByText('Instance settings saved')).toBeVisible()
   await page.reload()
   await expect(hours).toHaveValue('6')
+
+  expect(errors).toEqual([])
+})
+
+test('an instance admin saves Console\'s and ingest\'s URLs, and the Project page\'s DSN follows ingest\'s', async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${ORG}/settings/instance`)
+  const consoleUrl = page.getByLabel('Console URL')
+  const ingestUrl = page.getByLabel('Ingest URL')
+  await expect(consoleUrl).toHaveValue('')
+  await expect(ingestUrl).toHaveValue('')
+  await expect(page.getByTestId('console-url-fallback')).toContainText(/^Blank uses (CONSOLE_URL|the address Console was reached at): http/)
+  await expect(page.getByTestId('ingest-url-fallback')).toContainText(/^Blank uses (PUBLIC_INGEST_URL|Console's host at port 4000): http/)
+
+  const consoleGroup = page.getByRole('region', { name: 'Console' })
+  const https = consoleGroup.getByTestId('setting-CONSOLE_URL')
+  await expect(https).toHaveText(/^(On|Off)$/)
+  await expect(consoleGroup.getByTestId('setting-PUBLIC_INGEST_URL')).toHaveCount(0)
+  const otherScheme = (await https.textContent()) === 'On' ? 'http' : 'https'
+
+  // The other scheme than Console started in is refused, and nothing saves.
+  await consoleUrl.fill(`${otherScheme}://console.example.com`)
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByText('HTTPS changes only with CONSOLE_URL\'s scheme in deploy/.env and a restart')).toBeVisible()
+  await consoleUrl.fill('')
+
+  await ingestUrl.fill('https://ingest.example.com:4443/')
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByText('Instance settings saved')).toBeVisible()
+  await page.reload()
+  await expect(ingestUrl).toHaveValue('https://ingest.example.com:4443')
+
+  await page.goto(`/${ORG}/projects/${PROJECT}`)
+  await expect(page.locator('input[readonly]').first()).toHaveValue(/^https:\/\/[^@/]+@ingest\.example\.com:4443\/\d+$/)
+
+  // Cleared, the DSN goes back to the fallback.
+  await page.goto(`/${ORG}/settings/instance`)
+  await ingestUrl.fill('')
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByText('Instance settings saved')).toBeVisible()
+  await page.goto(`/${ORG}/projects/${PROJECT}`)
+  await expect(page.locator('input[readonly]').first()).not.toHaveValue(/ingest\.example\.com/)
+
+  expect(errors).toEqual([])
+})
+
+test('changing the Console URL\'s host while a Passkey is made for it asks first, and Cancel leaves it unsaved', async ({ page }) => {
+  const errors = watchErrors(page)
+  // Passkeys are offered at the flow's origin, and one user has one there.
+  const origin = new URL(process.env.E2E_BASE_URL ?? 'http://localhost:4001')
+  rails(`InstanceSetting.current.update!(console_url: ${JSON.stringify(origin.origin)}); ` +
+    `User.create!(name: "Flow Instance Passkey", email: ${JSON.stringify(passkeyEmail)}, password: "flow-passkey-password-1")` +
+    `.passkeys.create!(credential_id: SecureRandom.base64(16), public_key: "public key", name: "MacBook", ` +
+    `host: ${JSON.stringify(origin.hostname)})`)
+
+  await page.goto(`/${ORG}/settings/instance`)
+  const consoleUrl = page.getByLabel('Console URL')
+  await expect(consoleUrl).toHaveValue(origin.origin)
+  await consoleUrl.fill(`${origin.protocol}//console.example.com`)
+  await page.getByRole('button', { name: 'Save changes' }).click()
+
+  const confirm = page.getByRole('alertdialog')
+  await expect(confirm).toContainText('Change the Console URL\'s host?')
+  await expect(confirm).toContainText(`1 Passkey of 1 user would stop working: they're made for ${origin.hostname}`)
+  await confirm.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirm).toBeHidden()
+  await page.reload()
+  await expect(consoleUrl).toHaveValue(origin.origin)
 
   expect(errors).toEqual([])
 })

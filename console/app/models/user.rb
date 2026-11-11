@@ -2,6 +2,8 @@
 
 class User < ApplicationRecord
   include ActionText::Attachable
+  include User::TwoFactor
+  include User::Passkeys
 
   has_secure_password
 
@@ -21,10 +23,9 @@ class User < ApplicationRecord
   has_many :organizations, through: :organization_users
 
   # A fresh Invite link to organization, for an Invited user, on the Console
-  # at console_url. That is the URL the admin reached Console on
-  # (request.base_url), as the MCP server's other links are: it is right
-  # behind a proxy, on any port and without CONSOLE_URL set. Older links keep
-  # working until one is used or they expire.
+  # at console_url, which callers take from PublicUrls.console_url, as the
+  # MCP server's other links do. Older links keep working until one is used
+  # or they expire.
   def invite_url(organization, console_url:)
     console_url.chomp("/") + invite_path(organization)
   end

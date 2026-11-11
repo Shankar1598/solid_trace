@@ -7,6 +7,7 @@ require "test_helper"
 # works once, for seven days, and only while they're still a member there.
 class InvitesControllerTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
+  include SessionCookieHelper
 
   EXPIRED = "That invite link has expired or was already used. Ask an admin for a new one."
 
@@ -15,7 +16,7 @@ class InvitesControllerTest < ActionDispatch::IntegrationTest
     @admin = create(:user, email: "admin@example.com")
     create(:organization_user, organization: @organization, user: @admin, role: :admin)
     @membership = MemberInvite.call(organization: @organization, inviter: @admin, email: "grace@example.com",
-      console_url: "http://www.example.com").membership
+      request_url: "http://www.example.com").membership
     @grace = @membership.user
   end
 
@@ -56,6 +57,15 @@ class InvitesControllerTest < ActionDispatch::IntegrationTest
 
     get path, headers: inertia
     assert_expired
+  end
+
+  test "the Session setting a password signs in to lasts 24 hours" do
+    freeze_time
+
+    put @grace.invite_path(@organization), params: { password: "new-password", password_confirmation: "new-password" },
+      as: :json, headers: inertia
+
+    assert_equal 24.hours.from_now, session_cookie_expires
   end
 
   test "setting the password while someone else is signed in signs them out" do

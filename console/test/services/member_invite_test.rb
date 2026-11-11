@@ -23,7 +23,7 @@ class MemberInviteTest < ActiveSupport::TestCase
   test "an unknown email gets an Invited user, named from the email, a membership and an email with their invite link" do
     invite = nil
     assert_enqueued_emails 1 do
-      invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
+      invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
     end
 
     assert invite.done?
@@ -38,7 +38,7 @@ class MemberInviteTest < ActiveSupport::TestCase
 
   test "the invite link email carries the invite link, on the Console the admin invited on, and no password" do
     perform_enqueued_jobs do
-      MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
+      MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
     end
 
     mail = ActionMailer::Base.deliveries.last
@@ -48,11 +48,20 @@ class MemberInviteTest < ActiveSupport::TestCase
     assert_no_match(/password:/i, body)
   end
 
+  test "the invite link email takes the Console URL saved by the time it's sent" do
+    MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
+    InstanceSetting.current.update!(console_url: "https://solid-trace.example.ts.net")
+    perform_enqueued_jobs
+
+    body = ActionMailer::Base.deliveries.last.text_part.body.to_s
+    assert_match %r{https://solid-trace\.example\.ts\.net/invites/[^?\s"]+\?org=#{@organization.slug}}, body
+  end
+
   test "without mail set up, an Invited user is made and not emailed" do
     invite = nil
     Rails.stub(:env, ActiveSupport::EnvironmentInquirer.new("production")) do
       assert_enqueued_emails 0 do
-        invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
+        invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
       end
     end
 
@@ -62,9 +71,9 @@ class MemberInviteTest < ActiveSupport::TestCase
   end
 
   test "an Invited member invited again is told to copy their link" do
-    MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
+    MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
 
-    invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
+    invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
 
     assert invite.done?
     assert_equal :already_invited, invite.outcome
@@ -74,15 +83,15 @@ class MemberInviteTest < ActiveSupport::TestCase
 
   test "someone Invited elsewhere, or whose invite was revoked, is invited again" do
     other = create(:organization)
-    MemberInvite.call(console_url: CONSOLE, organization: other, inviter: create(:organization_user, organization: other, role: :admin).user,
+    MemberInvite.call(request_url: CONSOLE, organization: other, inviter: create(:organization_user, organization: other, role: :admin).user,
       email: "grace@example.com")
 
-    invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
+    invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
     assert_equal :invited, invite.outcome
     assert invite.emailed
 
     invite.membership.discard!
-    invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
+    invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "grace@example.com")
     assert_equal :invited, invite.outcome
     assert invite.membership.kept?
   end
@@ -93,7 +102,7 @@ class MemberInviteTest < ActiveSupport::TestCase
 
     invite = nil
     assert_no_difference -> { User.count } do
-      invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "BOB@example.com")
+      invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "BOB@example.com")
     end
 
     assert_not invite.done?
@@ -105,7 +114,7 @@ class MemberInviteTest < ActiveSupport::TestCase
 
     invite = nil
     assert_no_enqueued_emails do
-      invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: " grace@example.com ", name: "Ignored")
+      invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: " grace@example.com ", name: "Ignored")
     end
 
     assert_equal :added, invite.outcome
@@ -120,18 +129,18 @@ class MemberInviteTest < ActiveSupport::TestCase
     membership = create(:organization_user, organization: @organization, user: grace)
     membership.discard!
 
-    invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: grace.email)
+    invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: grace.email)
 
     assert_equal :reactivated, invite.outcome
     assert membership.reload.kept?
   end
 
   test "a member already in the Organization, or an email that won't do, is not invited" do
-    invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: @member.email)
+    invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: @member.email)
     assert_not invite.done?
     assert_equal "User is already a member of this organization", invite.error
 
-    invite = MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @admin, email: "not an email")
+    invite = MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @admin, email: "not an email")
     assert_not invite.done?
     assert_equal "Email is invalid", invite.error
   end
@@ -144,7 +153,7 @@ class MemberInviteTest < ActiveSupport::TestCase
     assert_no_difference [ "User.count", "OrganizationUser.count" ] do
       [ "new@example.com", grace.email, archived.user.email, @admin.email ].each do |email|
         assert_raises(Pundit::NotAuthorizedError) do
-          MemberInvite.call(console_url: CONSOLE, organization: @organization, inviter: @member, email: email)
+          MemberInvite.call(request_url: CONSOLE, organization: @organization, inviter: @member, email: email)
         end
       end
     end

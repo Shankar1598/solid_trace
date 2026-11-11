@@ -18,9 +18,25 @@ Rails.application.routes.draw do
   root "home#index"
   get "login", to: "sessions#new"
   post "login", to: "sessions#create"
+  # Signing in's second step, for a user with Two-factor (SecondStepsController).
+  get "login/second_step", to: "second_steps#new", as: :second_step
+  post "login/second_step", to: "second_steps#create"
+  post "login/second_step/passkey_options", to: "second_steps#passkey_options", as: :second_step_passkey_options
+  # Signing in with a Passkey alone (PasskeySignInsController).
+  post "login/passkey/options", to: "passkey_sign_ins#options", as: :passkey_sign_in_options
+  post "login/passkey", to: "passkey_sign_ins#create", as: :passkey_sign_in
   resource :session
   resource :registration, only: [ :new, :create ]
   resource :user_settings, only: [ :show, :update ], controller: "user_settings"
+  # Setting up, confirming and removing the Authenticator app, outside any
+  # Organization (AuthenticatorAppsController).
+  resource :authenticator_app, only: [ :new, :create, :destroy ]
+  resource :recovery_codes, only: [ :show, :create ]
+  # The user's Passkeys on Settings → User (PasskeysController).
+  resources :passkeys, only: [ :create, :update, :destroy ] do
+    post :creation_options, on: :collection
+    post :proof_options, on: :collection
+  end
   resources :api_tokens, only: [ :create, :destroy ]
   # The MCP server (McpController).
   post "mcp", to: "mcp#create", as: :mcp, format: false
