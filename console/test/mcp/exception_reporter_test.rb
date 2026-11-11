@@ -49,7 +49,7 @@ class McpExceptionReporterTest < ActiveSupport::TestCase
 
   # Handles one JSON-RPC request as the server does for POST /mcp.
   def handle(method, **params)
-    server = McpServer.build(user: @user, console_url: "http://console.test")
+    server = McpServer.build(user: @user, request_url: "http://console.test")
     reporting { server.handle({ jsonrpc: "2.0", id: 1, method: method, params: params }) }
   end
 end

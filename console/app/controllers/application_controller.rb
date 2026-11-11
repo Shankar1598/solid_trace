@@ -16,8 +16,15 @@ class ApplicationController < ActionController::Base
 
   private
 
+  # Console's URL, for the links a page hands out (PublicUrls).
+  def console_url
+    PublicUrls.console_url(request.base_url)
+  end
+
+  # Where SDKs and shippers reach ingest, for DSNs and the Logs snippets
+  # (PublicUrls).
   def public_ingest_url
-    EventStore.public_ingest_url(request.base_url)
+    PublicUrls.ingest_url(request.base_url)
   end
 
   # The install's settings apply to every Organization, so only an instance

@@ -10,7 +10,7 @@ module McpTools
     # The settings as Settings → Instance shows them (InstanceSettingsAnswer),
     # linking to that page.
     def settings_answer(settings = InstanceSetting.current)
-      json(InstanceSettingsAnswer.new(settings, console_url: console_url).as_json,
+      json(InstanceSettingsAnswer.new(settings, request_url: request_url).as_json,
         link: instance_page_link(:instance_settings))
     end
   end

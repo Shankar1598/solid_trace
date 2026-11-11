@@ -40,7 +40,7 @@ module McpTestHelper
   # client. Fails the test on a JSON-RPC error, which a tool answers only for
   # a failure it didn't expect.
   def call_tool(name, user:, **arguments)
-    server = McpServer.build(user: user, console_url: CONSOLE_URL)
+    server = McpServer.build(user: user, request_url: CONSOLE_URL)
     response = server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: name.to_s, arguments: arguments } })
     flunk "tools/call #{name} failed: #{response[:error].inspect}" if response[:error]
 
@@ -50,6 +50,6 @@ module McpTestHelper
   # Runs a tool class as user, as the server calls it but without checking
   # its input schema: for tools the server doesn't list, such as a test's.
   def run_tool(tool, user:, **arguments)
-    ToolAnswer.new(tool.call(server_context: { user: user, console_url: CONSOLE_URL }, **arguments).to_h)
+    ToolAnswer.new(tool.call(server_context: { user: user, request_url: CONSOLE_URL }, **arguments).to_h)
   end
 end

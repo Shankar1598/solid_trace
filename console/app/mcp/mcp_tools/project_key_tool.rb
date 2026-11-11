@@ -27,7 +27,7 @@ module McpTools
 
     # Where SDKs and shippers reach ingest, as the Project and Logs pages say.
     def ingest_url
-      EventStore.public_ingest_url(console_url)
+      PublicUrls.ingest_url(request_url)
     end
 
     # A key with its DSN, without its secret.

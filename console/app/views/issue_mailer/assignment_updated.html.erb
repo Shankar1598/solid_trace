@@ -6,6 +6,6 @@
 <p><strong>To:</strong> <%= @new_assignee_name %></p>
 
 <p>
-  <%= link_to "View Issue", project_issue_url(@project, @issue, org_slug: @project.organization.slug, host: SolidTrace::Application.config.action_mailer.default_url_options[:host] || "localhost:3000") %>
+  <%= link_to "View Issue", project_issue_url(@project, @issue, org_slug: @project.organization.slug) %>
 </p>
 

@@ -18,4 +18,17 @@ class PasswordsMailerTest < ActionMailer::TestCase
       assert_match "15 minutes", part.body.to_s
     end
   end
+
+  test "the link is to Console's URL as it is when the email is built: the setting, then CONSOLE_URL" do
+    user = create(:user)
+
+    ENV["CONSOLE_URL"] = "http://10.0.0.5:3000"
+    assert_match %r{\Ahttp://10\.0\.0\.5:3000/passwords/[^/]+/edit\z}, PasswordsMailer.reset(user).text_part.body.to_s[%r{\S+/edit}]
+
+    InstanceSetting.current.update!(console_url: "https://solid-trace.example.ts.net")
+    assert_match %r{\Ahttps://solid-trace\.example\.ts\.net/passwords/[^/]+/edit\z},
+      PasswordsMailer.reset(user).text_part.body.to_s[%r{\S+/edit}]
+  ensure
+    ENV.delete("CONSOLE_URL")
+  end
 end

@@ -82,6 +82,20 @@ class InstanceSettingsTaskTest < ActiveSupport::TestCase
     assert_includes out, "Default Log Retention: 14 days"
   end
 
+  test "the operator sets Console's URL with any scheme, for recovery, and clears it" do
+    out = run_task("instance_settings:set", "CONSOLE_URL_SETTING" => "https://console.example.com/",
+      "INGEST_URL_SETTING" => "https://ingest.example.com:4443")
+
+    assert_equal [ "https://console.example.com", "https://ingest.example.com:4443" ],
+      InstanceSetting.current.slice(:console_url, :ingest_url).values
+    assert_includes out, "Console URL: https://console.example.com"
+    assert_includes out, "Ingest URL: https://ingest.example.com:4443"
+
+    out = run_task("instance_settings:set", "CONSOLE_URL_SETTING" => "", "INGEST_URL_SETTING" => "")
+    assert_nil InstanceSetting.current.console_url
+    assert_includes out, "Console URL: blank"
+  end
+
   test "invalid values are rejected and change nothing" do
     [ "0", "-1", "1.5", "two" ].each do |days|
       assert_raises(SystemExit, "#{days.inspect} should be rejected") do
