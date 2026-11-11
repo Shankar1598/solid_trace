@@ -56,6 +56,26 @@ module UsesPasskeys
     credential.respond_to?(:to_unsafe_h) ? credential.to_unsafe_h : {}
   end
 
+  # The request's answer to the second step, for User#pass_second_step: a
+  # code, a Recovery code, or an answer from a Passkey to the challenge kept
+  # for purpose, which only a page opened at the Console URL can give.
+  def second_step_answer(purpose)
+    answer = { code: params[:code], recovery_code: params[:recovery_code] }
+    if params[:credential].present? && passkeys_here?
+      answer[:passkey] = { credential: passkey_credential, challenge: take_passkey_challenge(purpose), offer: passkey_offer }
+    end
+    answer
+  end
+
+  # Options asking for an answer from one of user's Passkeys for this host,
+  # with user verification, its challenge kept for purpose.
+  def passkey_proof_options(user, purpose)
+    options = passkey_offer.relying_party.options_for_authentication(
+      allow: user.passkeys.where(host: passkey_offer.host).pluck(:credential_id), user_verification: "required",
+    )
+    remember_passkey_challenge(purpose, options)
+  end
+
   # The options endpoints answer JSON; a page opened elsewhere gets why.
   def refuse_passkey_options_elsewhere
     render json: { error: passkeys_elsewhere }, status: :unprocessable_entity unless passkeys_here?
