@@ -14,8 +14,9 @@ interface TwoFactorSetUpProps {
   uri: string
   // The QR code, an SVG drawn by Console.
   qr_code: string
-  // The Organization to return to once it's set up, from ?org=.
-  return_organization: { name: string; slug: string } | null
+  // The Organization to return to once it's set up, from ?org=;
+  // requires_two_factor when its Require two-factor sent the user here.
+  return_organization: { name: string; slug: string; requires_two_factor: boolean } | null
 }
 
 // The Authenticator app's set-up page (AuthenticatorAppsController), outside
@@ -35,6 +36,11 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
         title="Set up Two-factor"
         description="Once it's on, signing in asks for a code from your authenticator app after your password."
       />
+      {return_organization?.requires_two_factor && (
+        <p role="status" className="mb-4 max-w-xl rounded-md border px-4 py-3 text-sm">
+          {return_organization.name} requires Two-factor. Set it up to open {return_organization.name}.
+        </p>
+      )}
       <Card className="max-w-xl">
         <form onSubmit={submit}>
           <CardHeader>
@@ -91,6 +97,13 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
           Once it's on, you'll go back to {return_organization.name}.
         </p>
       )}
+      {/* Pages outside an Organization have no sidebar, so no other way out. */}
+      <p className="mt-4 text-sm text-muted-foreground">
+        Not now?{' '}
+        <Link href="/session" method="delete" as="button" className="underline underline-offset-2 hover:text-foreground">
+          Sign out
+        </Link>
+      </p>
     </SettingsLayout>
   )
 }

@@ -14,6 +14,7 @@ class OrganizationSettingsController < ApplicationController
       require_two_factor: {
         on: @current_org.require_two_factor,
         can_change: @current_org.can_require_two_factor?(current_user),
+        you_have_two_factor: current_user.two_factor?,
         members_without_two_factor: @current_org.members_without_two_factor,
       },
     }
