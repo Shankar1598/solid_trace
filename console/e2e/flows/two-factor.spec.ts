@@ -1,13 +1,15 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 import { codeAfter } from '../support/totp'
 
 // Two-factor with an Authenticator app: set it up on Settings → User with a
-// code computed from the secret the page shows, sign out, sign in with the
-// password and a code, then remove it with a code. Each run makes its own
+// code computed from the secret the page shows, keep the Recovery codes it
+// shows once, sign out, sign in with the password and a code, then with a
+// Recovery code, then remove it with a code. Each run makes its own
 // user, a member of the seed Organization so that signing in lands on its
 // Overview; the seeded admin never gets Two-factor.
 
@@ -30,7 +32,7 @@ test.afterAll(() => {
   rails(`User.where(email: ${JSON.stringify(email)}).each { |user| OrganizationUser.where(user: user).delete_all; user.destroy! }`)
 })
 
-test('an authenticator app is set up with a code, asked for after the password, and removed with a code', async ({ page }) => {
+test('an authenticator app is set up with a code, asked for after the password, passed with a Recovery code, and removed with a code', async ({ page }) => {
   test.setTimeout(120_000)
   const errors = watchErrors(page)
   const signIn = async () => {
@@ -57,15 +59,29 @@ test('an authenticator app is set up with a code, asked for after the password, 
   let used = await codeAfter(secret, -1)
   await page.getByLabel('2. Enter the code the app shows').fill(used.code)
   await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
-  await page.waitForURL(url => url.pathname === '/user_settings')
+
+  // The Recovery codes, shown once, downloaded as a text file.
+  await page.waitForURL(url => url.pathname === '/recovery_codes')
   await expect(page.getByText('Two-factor is on.')).toBeVisible()
+  const recoveryCodes = await page.getByRole('list', { name: 'Recovery codes' }).getByRole('listitem').allTextContents()
+  expect(recoveryCodes).toHaveLength(10)
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download' }).click()
+  const file = readFileSync(await (await download).path(), 'utf8')
+  for (const code of recoveryCodes) expect(file).toContain(code)
+  await page.getByRole('link', { name: 'Continue' }).click()
+  await page.waitForURL(url => url.pathname === '/user_settings')
   await expect(page.getByText(/^On: signing in asks for a code/)).toBeVisible()
+  await expect(page.getByText(/You have 10 Recovery codes left/)).toBeVisible()
 
-  // Pages outside an Organization have no sidebar, so sign out from one in it.
-  await page.goto(`/${ORG}/overview`)
-  await page.getByTitle('Sign out').click()
-  await page.waitForURL(url => url.pathname === '/login')
+  const signOut = async () => {
+    // Pages outside an Organization have no sidebar, so sign out from one in it.
+    await page.goto(`/${ORG}/overview`)
+    await page.getByTitle('Sign out').click()
+    await page.waitForURL(url => url.pathname === '/login')
+  }
 
+  await signOut()
   await signIn()
   await page.waitForURL(url => url.pathname === '/login/second_step')
   used = await codeAfter(secret, used.step)
@@ -73,10 +89,21 @@ test('an authenticator app is set up with a code, asked for after the password, 
   await page.getByRole('button', { name: 'Continue' }).click()
   await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
+  await signOut()
+  await signIn()
+  await page.waitForURL(url => url.pathname === '/login/second_step')
+  await page.getByRole('button', { name: 'Use a Recovery code instead' }).click()
+  await page.getByLabel('Recovery code').fill(recoveryCodes[0])
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
+  await expect(page.getByText('Signed in with a Recovery code. 9 left.')).toBeVisible()
+
   await page.goto('/user_settings')
+  await expect(page.getByText(/You have 9 Recovery codes left/)).toBeVisible()
+  const removeForm = page.getByRole('form', { name: 'Remove authenticator app' })
   used = await codeAfter(secret, used.step)
-  await page.getByLabel('Code from your authenticator app').fill(used.code)
-  await page.getByRole('button', { name: 'Remove authenticator app' }).click()
+  await removeForm.getByLabel('Code from your authenticator app').fill(used.code)
+  await removeForm.getByRole('button', { name: 'Remove authenticator app' }).click()
   await expect(page.getByText('Authenticator app removed. Two-factor is off.')).toBeVisible()
   await expect(page.getByRole('link', { name: 'Set up an authenticator app' })).toBeVisible()
 

@@ -13,9 +13,11 @@ interface SettingsUserProps {
   user: User
   // The Authenticator app once set up, or null.
   authenticator_app: { set_up_at: string } | null
+  // How many Recovery codes are unused, or null without Two-factor.
+  recovery_codes_left: number | null
 }
 
-export default function SettingsUser({ user, authenticator_app }: SettingsUserProps) {
+export default function SettingsUser({ user, authenticator_app, recovery_codes_left }: SettingsUserProps) {
   const { url } = usePage()
   const { data, setData, put, processing, errors, transform } = useForm({
     name: user.name,
@@ -78,6 +80,7 @@ export default function SettingsUser({ user, authenticator_app }: SettingsUserPr
           </form>
         </Card>
         <TwoFactorCard authenticatorApp={authenticator_app} />
+        {recovery_codes_left !== null && <RecoveryCodesCard left={recovery_codes_left} />}
       </div>
     </SettingsLayout>
   )
@@ -90,7 +93,7 @@ function TwoFactorCard({ authenticatorApp }: { authenticatorApp: SettingsUserPro
 
   const remove: React.FormEventHandler = (e) => {
     e.preventDefault()
-    destroy('/authenticator_app', { preserveScroll: true, onFinish: () => setData('code', '') })
+    destroy('/authenticator_app', { preserveScroll: true, onFinish: () => setData(emptySecondStepAnswer) })
   }
 
   if (!authenticatorApp) {
@@ -113,7 +116,7 @@ function TwoFactorCard({ authenticatorApp }: { authenticatorApp: SettingsUserPro
 
   return (
     <Card>
-      <form onSubmit={remove}>
+      <form onSubmit={remove} aria-label="Remove authenticator app">
         <CardHeader>
           <CardTitle>Two-factor</CardTitle>
         </CardHeader>
@@ -121,7 +124,7 @@ function TwoFactorCard({ authenticatorApp }: { authenticatorApp: SettingsUserPro
           <p className="text-sm text-muted-foreground">
             On: signing in asks for a code from the authenticator app you set up on{' '}
             {new Date(authenticatorApp.set_up_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}.
-            To move to a new phone, remove it and set it up again.
+            To move to a new phone, remove it and set it up again. Removing it turns Two-factor off and throws away your Recovery codes.
           </p>
           <div className="max-w-xs">
             <SecondStepFields id="remove-code" answer={data} onChange={setData} />
@@ -130,6 +133,44 @@ function TwoFactorCard({ authenticatorApp }: { authenticatorApp: SettingsUserPro
         <CardFooter className="justify-end">
           <Button type="submit" variant="destructive" disabled={processing}>
             {processing ? 'Removing…' : 'Remove authenticator app'}
+          </Button>
+        </CardFooter>
+      </form>
+    </Card>
+  )
+}
+
+// Recovery codes: how many are left, and a new set, which replaces the old,
+// for a code or a Recovery code (RecoveryCodesController). The new set is
+// shown once on its own page.
+function RecoveryCodesCard({ left }: { left: number }) {
+  const { data, setData, post, processing } = useForm(emptySecondStepAnswer)
+
+  const makeNew: React.FormEventHandler = (e) => {
+    e.preventDefault()
+    post('/recovery_codes', { preserveScroll: true, onFinish: () => setData(emptySecondStepAnswer) })
+  }
+
+  return (
+    <Card>
+      <form onSubmit={makeNew} aria-label="Make new Recovery codes">
+        <CardHeader>
+          <CardTitle>Recovery codes</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 pb-2">
+          <p className="text-sm text-muted-foreground">
+            {left === 0
+              ? 'You have no Recovery codes left. Make new ones, so you can still sign in if you lose your phone.'
+              : `You have ${left} Recovery code${left === 1 ? '' : 's'} left. Each signs you in once if you can't use your authenticator app.`}
+            {' '}A new set replaces the old one.
+          </p>
+          <div className="max-w-xs">
+            <SecondStepFields id="new-codes-code" answer={data} onChange={setData} />
+          </div>
+        </CardContent>
+        <CardFooter className="justify-end">
+          <Button type="submit" variant="outline" disabled={processing}>
+            {processing ? 'Making…' : 'Make new Recovery codes'}
           </Button>
         </CardFooter>
       </form>
