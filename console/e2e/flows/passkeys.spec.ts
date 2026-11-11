@@ -9,7 +9,7 @@ import { watchErrors } from '../support/screens'
 // add one on Settings → User (the user's first factor, so Recovery codes
 // follow), sign out, and sign in with it alone: from the email field's
 // autofill, which the virtual authenticator answers as soon as the page
-// asks, then, in a browser without autofill, from "Sign in with a passkey",
+// asks, then, in a browser without autofill, from "Sign in with a Passkey",
 // with Remember me. Last, the password, then the Passkey at the second
 // step. The run sets the Console URL to the flow's own address and puts back
 // what was there afterwards. Each run makes its own user, a member
@@ -67,14 +67,14 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
   await card.getByLabel('Name').fill('Flow laptop')
   // A first factor needs the password, so a Session alone can't add one.
   await card.getByLabel('Your password').fill(password)
-  await card.getByRole('button', { name: 'Add a passkey' }).click()
+  await card.getByRole('button', { name: 'Add a Passkey' }).click()
   // The first factor: Two-factor is on, and its Recovery codes are shown once.
   await page.waitForURL(url => url.pathname === '/recovery_codes')
   await expect(page.getByText('Passkey added.')).toBeVisible()
   await expect(page.getByRole('list', { name: 'Recovery codes' }).getByRole('listitem')).toHaveCount(10)
   await page.getByRole('link', { name: 'Continue' }).click()
   await page.waitForURL(url => url.pathname === '/user_settings')
-  await expect(page.getByText(/^On with your passkeys/)).toBeVisible()
+  await expect(page.getByText(/^On with your Passkeys/)).toBeVisible()
   const item = card.getByRole('listitem', { name: 'Flow laptop' })
   await expect(item.getByText('Never used')).toBeVisible()
 
@@ -100,7 +100,7 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
   await page.goto('/login')
   await page.getByRole('checkbox', { name: 'Remember me' }).click()
   signedInAt = Date.now() / 1000
-  await page.getByRole('button', { name: 'Sign in with a passkey' }).click()
+  await page.getByRole('button', { name: 'Sign in with a Passkey' }).click()
   await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
   expect(Math.abs(await sessionLasts(signedInAt) - 7 * day)).toBeLessThan(60)
 
@@ -114,7 +114,7 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
   await page.getByLabel('Password').fill(password)
   await page.getByRole('button', { name: 'Log in' }).click()
   await page.waitForURL(url => url.pathname === '/login/second_step')
-  await page.getByRole('button', { name: 'Use a passkey' }).click()
+  await page.getByRole('button', { name: 'Use a Passkey' }).click()
   await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
   expect(errors).toEqual([])

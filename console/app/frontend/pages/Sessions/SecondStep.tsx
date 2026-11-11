@@ -30,8 +30,8 @@ export default function SecondStep({ authenticator_app, passkey }: SecondStepPro
   }
 
   const ways = [
-    authenticator_app && 'enter the code your authenticator app shows for SolidTrace',
-    passkey && 'use one of your passkeys',
+    authenticator_app && 'enter the code your Authenticator app shows for SolidTrace',
+    passkey && 'use one of your Passkeys',
   ].filter(Boolean)
   const description = [...ways, `${ways.length ? 'or ' : ''}give one of your Recovery codes.`]
     .join(', ').replace(/^./, (first) => first.toUpperCase())

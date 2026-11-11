@@ -24,7 +24,7 @@ export async function passkeyAnswer(optionsPath: string): Promise<PublicKeyCrede
   try {
     return await getPasskey(await passkeyOptions<PublicKeyCredentialRequestOptionsJSON>(optionsPath))
   } catch (error) {
-    if (!passkeyCancelled(error)) toast.error(error instanceof Error ? error.message : "That passkey didn't work.")
+    if (!passkeyCancelled(error)) toast.error(error instanceof Error ? error.message : "That Passkey didn't work.")
     return null
   }
 }
@@ -103,7 +103,7 @@ export function SecondStepFields({ answer, onChange, id = 'code', autoFocus, aut
       {onPasskey && (
         <div className="pb-2">
           <Button type="button" variant="outline" className="w-full" onClick={onPasskey}>
-            <KeyRound className="mr-2 h-4 w-4" />Use a passkey
+            <KeyRound className="mr-2 h-4 w-4" />Use a Passkey
           </Button>
         </div>
       )}
@@ -125,7 +125,7 @@ export function SecondStepFields({ answer, onChange, id = 'code', autoFocus, aut
         </>
       ) : (
         <>
-          <Label htmlFor={id}>Code from your authenticator app</Label>
+          <Label htmlFor={id}>Code from your Authenticator app</Label>
           <Input
             id={id}
             inputMode="numeric"
@@ -145,7 +145,7 @@ export function SecondStepFields({ answer, onChange, id = 'code', autoFocus, aut
           className="text-sm text-muted-foreground underline-offset-2 hover:underline"
           onClick={() => switchTo(!recovery)}
         >
-          {recovery ? 'Use your authenticator app instead' : 'Use a Recovery code instead'}
+          {recovery ? 'Use your Authenticator app instead' : 'Use a Recovery code instead'}
         </button>
       )}
     </div>

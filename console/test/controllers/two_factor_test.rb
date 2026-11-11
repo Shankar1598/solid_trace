@@ -284,7 +284,7 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
 
     get new_authenticator_app_url
     assert_redirected_to user_settings_url
-    assert_equal "Your authenticator app is already set up.", flash[:notice]
+    assert_equal "Your Authenticator app is already set up.", flash[:notice]
   end
 
   test "the secret is encrypted at rest" do

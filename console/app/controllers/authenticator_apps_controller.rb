@@ -17,7 +17,7 @@ class AuthenticatorAppsController < ApplicationController
 
   def new
     if current_user.authenticator_app?
-      redirect_to return_url, notice: "Your authenticator app is already set up."
+      redirect_to return_url, notice: "Your Authenticator app is already set up."
       return
     end
 

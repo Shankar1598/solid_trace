@@ -127,7 +127,7 @@ function RequireTwoFactorCard({ organization, requirement }: { organization: Org
       <CardFooter className="justify-end">
         {requirement.can_change ? (
           requirement.on ? (
-            <Button variant="outline" onClick={() => change(false)}>Stop requiring two-factor</Button>
+            <Button variant="outline" onClick={() => change(false)}>Stop requiring Two-factor</Button>
           ) : (
             <Button onClick={() => change(true)}>Require two-factor</Button>
           )

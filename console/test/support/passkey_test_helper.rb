@@ -31,7 +31,7 @@ module PasskeyTestHelper
     @passkey_clients[origin] ||= WebAuthn::FakeClient.new(origin)
   end
 
-  # Settings → User's "Add a passkey": the options, the authenticator's
+  # Settings → User's "Add a Passkey": the options, the authenticator's
   # answer, the Passkey's name, and proof that it's the user: their password
   # for a first factor; a code, a Recovery code or a Passkey's answer
   # (passkey_proof) once they have Two-factor. Returns the options. A first
@@ -59,7 +59,7 @@ module PasskeyTestHelper
     response.parsed_body
   end
 
-  # The sign-in page's "Sign in with a passkey". get_options go to the
+  # The sign-in page's "Sign in with a Passkey". get_options go to the
   # authenticator (sign_count:, rp_id:, user_verified:).
   def sign_in_with_passkey(client: passkey_client, remember_me: false, **get_options)
     post passkey_sign_in_options_url, as: :json

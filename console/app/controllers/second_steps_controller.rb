@@ -37,7 +37,7 @@ class SecondStepsController < ApplicationController
       start_new_session_for @user, remember_me: @remember_me
       redirect_to after_authentication_url, notice: (recovery_codes_left_notice if accepted == :recovery_code)
     elsif params[:credential].present?
-      redirect_to second_step_path, alert: "That passkey didn't work. Try again, or use a Recovery code."
+      redirect_to second_step_path, alert: "That Passkey didn't work. Try again, or use a Recovery code."
     else
       redirect_to second_step_path, alert: "That code didn't work. Try the newest one from your app."
     end
