@@ -7,8 +7,7 @@ class RegistrationsController < ApplicationController
 
   layout "auth"
   skip_before_action :authenticate_user!, only: [ :new, :create ]
-  rate_limit to: 10, within: 3.minutes, only: :create,
-    with: -> { redirect_to new_registration_path, alert: "Too many tries. Try again in a few minutes." }
+  limit_tries(only: :create) { new_registration_path }
   before_action :require_sign_up_allowed
 
   def new

@@ -9,8 +9,7 @@ class PasskeySignInsController < ApplicationController
   include UsesPasskeys
 
   allow_unauthenticated_access
-  rate_limit to: 10, within: 3.minutes, only: :create,
-    with: -> { redirect_to login_path, alert: "Too many tries. Try again in a few minutes." }
+  limit_tries(only: :create) { login_path }
   before_action :refuse_passkey_options_elsewhere, only: :options
 
   def options
