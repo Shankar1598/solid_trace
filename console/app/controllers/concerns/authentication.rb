@@ -29,9 +29,16 @@ module Authentication
       end
     end
 
+    # An expired Session is refused and ended, whatever the cookie says, so a
+    # copied cookie stops working on time.
     def find_session_by_cookie
-      if token = cookies.signed[:session_id]
-        Session.find_by(id: token)
+      session_record = Session.find_by(id: cookies.signed[:session_id]) if cookies.signed[:session_id]
+      if session_record&.expired?
+        session_record.destroy
+        cookies.delete(:session_id)
+        nil
+      else
+        session_record
       end
     end
 
@@ -44,10 +51,13 @@ module Authentication
       session.delete(:return_to_after_authenticating) || root_url
     end
 
-    def start_new_session_for(user)
-      user.sessions.create!(user_agent: request.user_agent, ip_address: request.remote_ip).tap do |session|
+    # The Session and its cookie expire together, 24 hours from now or 7 days
+    # with Remember me.
+    def start_new_session_for(user, remember_me: false)
+      expires_at = Session.lifetime(remember_me: remember_me).from_now
+      user.sessions.create!(user_agent: request.user_agent, ip_address: request.remote_ip, expires_at: expires_at).tap do |session|
         Current.session = session
-        cookies.signed.permanent[:session_id] = { value: session.id, httponly: true, same_site: :lax }
+        cookies.signed[:session_id] = { value: session.id, expires: expires_at, httponly: true, same_site: :lax }
       end
     end
 
