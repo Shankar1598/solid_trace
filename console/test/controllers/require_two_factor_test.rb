@@ -119,6 +119,43 @@ class RequireTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal true, response.parsed_body.dig("props", "return_organization", "requires_two_factor")
   end
 
+  test "removing the last factor is refused while any of the user's Organizations requires Two-factor, naming them" do
+    beta = create(:organization, name: "Beta", slug: "beta")
+    create(:organization_user, organization: beta, user: @member, role: :member)
+    @organization.update!(require_two_factor: true)
+    beta.update!(require_two_factor: true)
+    secret = give_two_factor @member
+    recovery_codes = recovery_codes_page["codes"]
+    travel 30.seconds
+
+    refused = "Acme and Beta require Two-factor, so you can't remove your last factor."
+    delete authenticator_app_url, params: { code: code_for(secret) }
+    assert_equal refused, flash[:alert]
+    delete authenticator_app_url, params: { recovery_code: recovery_codes.first }
+    assert_equal refused, flash[:alert]
+
+    # Nothing was removed, and the Recovery code given wasn't used up.
+    get user_settings_url, headers: inertia
+    assert_not_nil response.parsed_body.dig("props", "authenticator_app")
+    assert_equal 10, response.parsed_body.dig("props", "recovery_codes_left")
+    get overview_url(org_slug: "acme"), headers: inertia
+    assert_response :success
+
+    # A wrong answer is still told it's wrong.
+    delete authenticator_app_url, params: { code: wrong_code(secret) }
+    assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
+
+    # Once no Organization of theirs requires it, the factor goes.
+    @organization.update!(require_two_factor: false)
+    travel 30.seconds
+    delete authenticator_app_url, params: { code: code_for(secret) }
+    assert_equal "Beta requires Two-factor, so you can't remove your last factor.", flash[:alert]
+    beta.update!(require_two_factor: false)
+    travel 30.seconds
+    delete authenticator_app_url, params: { code: code_for(secret) }
+    assert_equal "Authenticator app removed. Two-factor is off.", flash[:notice]
+  end
+
   private
 
   # Sets up an Authenticator app for user through its set-up page, as they

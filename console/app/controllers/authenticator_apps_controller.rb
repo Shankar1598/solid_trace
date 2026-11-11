@@ -43,12 +43,13 @@ class AuthenticatorAppsController < ApplicationController
   end
 
   def destroy
-    if current_user.pass_second_step(params)
-      current_user.remove_authenticator_app
+    if current_user.remove_authenticator_app(params)
       redirect_back_or_to user_settings_path, notice: "Authenticator app removed. Two-factor is off."
     else
       redirect_back_or_to user_settings_path, alert: "That code didn't work. Try the newest one from your app."
     end
+  rescue User::TwoFactor::Required => e
+    redirect_back_or_to user_settings_path, alert: e.message
   end
 
   private
