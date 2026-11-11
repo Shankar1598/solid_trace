@@ -59,7 +59,7 @@ module McpTools
       def call(server_context:, **arguments)
         user = server_context[:user]
         CallTimings.mcp_tool(name_value, arguments, user) do
-          new(user: user, console_url: server_context[:console_url], arguments: arguments).answer
+          new(user: user, request_url: server_context[:request_url], arguments: arguments).answer
         end
       end
 
@@ -131,12 +131,18 @@ module McpTools
       end
     end
 
-    attr_reader :user, :console_url, :arguments
+    # request_url is the address the MCP request reached Console at.
+    attr_reader :user, :request_url, :arguments
 
-    def initialize(user:, console_url:, arguments: {})
+    def initialize(user:, request_url:, arguments: {})
       @user = user
-      @console_url = console_url
+      @request_url = request_url
       @arguments = arguments
+    end
+
+    # Console's URL, which the answers' links start with (PublicUrls).
+    def console_url
+      @console_url ||= PublicUrls.console_url(request_url)
     end
 
     # The tool's answer: what #run answers, or a tool error.

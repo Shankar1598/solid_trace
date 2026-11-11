@@ -101,9 +101,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_144000) do
   end
 
   create_table "instance_settings", force: :cascade do |t|
+    t.string "console_url"
     t.datetime "created_at", null: false
     t.integer "default_log_retention_days", default: 30, null: false
     t.integer "default_trace_retention_days", default: 14, null: false
+    t.string "ingest_url"
     t.integer "local_cache_hours", default: 24, null: false
     t.boolean "log_all_reads", default: false, null: false
     t.boolean "log_mcp_reads", default: true, null: false

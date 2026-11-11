@@ -64,7 +64,10 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "sql_queries_enabled" => false, "sql_queries_description" => InstanceSetting::SQL_QUERIES_DESCRIPTION,
       "default_log_retention_days" => 14, "default_trace_retention_days" => 14, "log_all_reads" => false,
       "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
-      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24 }, settings["editable"])
+      "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24,
+      "console_url" => nil, "console_url_fallback" => { "url" => "http://www.example.com", "source" => "request" },
+      "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://www.example.com:4000", "source" => "console_url" } },
+      settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")
 
@@ -72,7 +75,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     version = console["settings"].find { |row| row["source"] == "SOLIDTRACE_VERSION" }
     assert_equal({ "label" => "Version", "source" => "SOLIDTRACE_VERSION", "value" => "dev", "default" => true,
       "secret" => false }, version)
-    assert_equal [ "CONSOLE_URL", "PUBLIC_INGEST_URL", "EVENT_STORE_URL", "EVENT_STORE_INGEST_URL", "SOLIDTRACE_VERSION",
+    assert_equal [ "CONSOLE_URL", "EVENT_STORE_URL", "EVENT_STORE_INGEST_URL", "SOLIDTRACE_VERSION",
       "RAILS_MAX_THREADS", "JOB_CONCURRENCY", "RAILS_LOG_LEVEL", "SENTRY_TRACES_SAMPLE_RATE", "SECRET_KEY_BASE",
       "SENTRY_DSN" ],
       console["settings"].pluck("source")
@@ -265,6 +268,55 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     get instance_settings_url(org_slug: @organization.slug), headers: inertia
     assert_equal [ "must be in 0..720" ], response.parsed_body.dig("props", "errors", "local_cache_hours")
     assert_equal 6, InstanceSetting.current.local_cache_hours
+  end
+
+  test "HTTPS shows as a restart-to-change row from CONSOLE_URL, and CONSOLE_URL's URL isn't one" do
+    sign_in_as(@instance_admin)
+
+    with_env("CONSOLE_URL" => "https://console.example.com") do
+      PublicUrls.stub(:https?, true) { get instance_settings_url(org_slug: @organization.slug), headers: inertia }
+    end
+
+    assert_equal({ "label" => "HTTPS", "source" => "CONSOLE_URL", "value" => "On", "default" => false, "secret" => false },
+      console_rows["CONSOLE_URL"])
+    assert_nil console_rows["PUBLIC_INGEST_URL"]
+    assert_equal({ "url" => "https://console.example.com", "source" => "CONSOLE_URL" },
+      response.parsed_body.dig("props", "settings", "editable", "console_url_fallback"))
+  end
+
+  test "saving Console's and ingest's URLs shows them, and the Project page's DSN follows ingest's at once" do
+    project = create(:project, organization: @organization)
+    key = create(:project_key, project: project)
+    sign_in_as(@instance_admin)
+
+    save(console_url: "http://solid-trace.example.ts.net/", ingest_url: "https://35.214.179.92:4443/")
+
+    assert_equal "Instance settings saved", flash[:notice]
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    editable = response.parsed_body.dig("props", "settings", "editable")
+    assert_equal [ "http://solid-trace.example.ts.net", "https://35.214.179.92:4443" ],
+      editable.values_at("console_url", "ingest_url")
+    assert_equal({ "url" => "http://solid-trace.example.ts.net:4000", "source" => "console_url" }, editable["ingest_url_fallback"])
+
+    get project_url(project, org_slug: @organization.slug), headers: inertia
+    assert_equal "https://#{key.public_key}@35.214.179.92:4443/#{project.id}",
+      response.parsed_body.dig("props", "project", "keys").sole["dsn"]
+  end
+
+  test "a Console URL with the other scheme than Console's HTTPS mode, or a path, comes back as a form error" do
+    sign_in_as(@instance_admin)
+
+    save(console_url: "https://console.example.com", log_all_reads: true)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ "must start with http://, as Console started without HTTPS. HTTPS changes only with CONSOLE_URL's " \
+                   "scheme in deploy/.env and a restart" ], response.parsed_body.dig("props", "errors", "console_url")
+    assert_nil InstanceSetting.current.console_url
+    assert_not InstanceSetting.current.log_all_reads?
+
+    save(console_url: "http://console.example.com/app")
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_match(/no path/, response.parsed_body.dig("props", "errors", "console_url").first)
   end
 
   test "a trace Retention below one day comes back as a form error and saves nothing" do

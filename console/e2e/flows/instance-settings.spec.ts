@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
-import { MEMBER, ORG } from '../support/data'
+import { MEMBER, ORG, PROJECT } from '../support/data'
 import { watchErrors } from '../support/screens'
 
 // Settings → Instance: the seeded admin, an instance admin, changes
@@ -13,6 +13,9 @@ import { watchErrors } from '../support/screens'
 // Sign-up is read-only, and Console's environment and EventStore's config
 // (from its GET /config) show with secrets only as set or not. A member who isn't an instance admin sees no Instance link. The
 // settings are put back as they were after.
+// Console URL and Ingest URL show what a blank one uses; a Console URL with
+// the other scheme than Console's HTTPS mode is refused, and a saved Ingest
+// URL is the Project page's DSN at once. HTTPS is a restart-to-change row.
 
 const rails = (code: string) =>
   execFileSync('mise', ['exec', '--', 'bin/rails', 'runner', code], {
@@ -23,9 +26,9 @@ let saved = '{}'
 
 test.beforeAll(() => {
   saved = rails('print InstanceSetting.current.slice(:log_all_reads, :log_mcp_reads, :default_log_retention_days, ' +
-    ':send_console_issues, :trace_console, :logs_text_match_budget_mb, :logs_read_threads, :local_cache_hours).to_json')
+    ':send_console_issues, :trace_console, :logs_text_match_budget_mb, :logs_read_threads, :local_cache_hours, :console_url, :ingest_url).to_json')
   rails('InstanceSetting.current.update!(log_all_reads: false, log_mcp_reads: true, default_log_retention_days: 30, ' +
-    'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096, logs_read_threads: 0, local_cache_hours: 24)')
+    'send_console_issues: true, trace_console: true, logs_text_match_budget_mb: 4096, logs_read_threads: 0, local_cache_hours: 24, console_url: nil, ingest_url: nil)')
 })
 
 test.afterAll(() => {
@@ -148,6 +151,48 @@ test('changing the hours on local disk asks first: Cancel leaves them unsaved, c
   await expect(page.getByText('Instance settings saved')).toBeVisible()
   await page.reload()
   await expect(hours).toHaveValue('6')
+
+  expect(errors).toEqual([])
+})
+
+test('an instance admin saves Console\'s and ingest\'s URLs, and the Project page\'s DSN follows ingest\'s', async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${ORG}/settings/instance`)
+  const consoleUrl = page.getByLabel('Console URL')
+  const ingestUrl = page.getByLabel('Ingest URL')
+  await expect(consoleUrl).toHaveValue('')
+  await expect(ingestUrl).toHaveValue('')
+  await expect(page.getByTestId('console-url-fallback')).toContainText(/^Blank uses (CONSOLE_URL|the address Console was reached at): http/)
+  await expect(page.getByTestId('ingest-url-fallback')).toContainText(/^Blank uses (PUBLIC_INGEST_URL|Console's host at port 4000): http/)
+
+  const consoleGroup = page.getByRole('region', { name: 'Console' })
+  const https = consoleGroup.getByTestId('setting-CONSOLE_URL')
+  await expect(https).toHaveText(/^(On|Off)$/)
+  await expect(consoleGroup.getByTestId('setting-PUBLIC_INGEST_URL')).toHaveCount(0)
+  const otherScheme = (await https.textContent()) === 'On' ? 'http' : 'https'
+
+  // The other scheme than Console started in is refused, and nothing saves.
+  await consoleUrl.fill(`${otherScheme}://console.example.com`)
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByText('HTTPS changes only with CONSOLE_URL\'s scheme in deploy/.env and a restart')).toBeVisible()
+  await consoleUrl.fill('')
+
+  await ingestUrl.fill('https://ingest.example.com:4443/')
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByText('Instance settings saved')).toBeVisible()
+  await page.reload()
+  await expect(ingestUrl).toHaveValue('https://ingest.example.com:4443')
+
+  await page.goto(`/${ORG}/projects/${PROJECT}`)
+  await expect(page.locator('input[readonly]').first()).toHaveValue(/^https:\/\/[^@/]+@ingest\.example\.com:4443\/\d+$/)
+
+  // Cleared, the DSN goes back to the fallback.
+  await page.goto(`/${ORG}/settings/instance`)
+  await ingestUrl.fill('')
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByText('Instance settings saved')).toBeVisible()
+  await page.goto(`/${ORG}/projects/${PROJECT}`)
+  await expect(page.locator('input[readonly]').first()).not.toHaveValue(/ingest\.example\.com/)
 
   expect(errors).toEqual([])
 })
