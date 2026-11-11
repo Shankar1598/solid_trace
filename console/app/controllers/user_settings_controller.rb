@@ -2,6 +2,7 @@
 
 class UserSettingsController < ApplicationController
   include UsesPasskeys
+  include ReturnsToOrganization
 
   layout "dashboard"
   before_action :set_current_org, if: -> { params[:org_slug] }
@@ -20,6 +21,8 @@ class UserSettingsController < ApplicationController
         { id: passkey.id, name: passkey.name, host: passkey.host, other_host: passkey.host != passkey_offer.host,
           created_at: passkey.created_at.iso8601, last_used_at: passkey.last_used_at&.iso8601 }
       },
+      # From the set-up page (?org=): where adding a first Passkey returns.
+      return_organization: return_organization&.then { |organization| { name: organization.name, slug: organization.slug } },
     }
   end
 

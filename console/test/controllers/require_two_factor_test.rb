@@ -68,7 +68,7 @@ class RequireTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal({ "name" => "Acme", "slug" => "acme", "requires_two_factor" => true },
       response.parsed_body.dig("props", "return_organization"))
     secret = response.parsed_body.dig("props", "secret")
-    post authenticator_app_url, params: { code: code_for(secret), org: "acme" }
+    post authenticator_app_url, params: { code: code_for(secret), org: "acme", proof: { password: "password" } }
     assert_equal overview_path(org_slug: "acme"), recovery_codes_page["continue_to"]
     get overview_url(org_slug: "acme"), headers: inertia
     assert_response :success
@@ -163,7 +163,7 @@ class RequireTwoFactorTest < ActionDispatch::IntegrationTest
   def give_two_factor(user)
     sign_in_as user
     secret = set_up_page["secret"]
-    post authenticator_app_url, params: { code: code_for(secret) }
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "password" } }
     assert_equal "Two-factor is on.", flash[:notice]
     secret
   end

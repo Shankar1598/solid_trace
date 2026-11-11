@@ -38,9 +38,13 @@ module CurrentOrganization
   end
 
   # The last used Organization while the user is still in it, otherwise their
-  # first by name, or nil for a user in none.
+  # first by name, or nil for a user in none; of those they can open first,
+  # passing over any whose Require two-factor they don't meet.
   def home_organization
-    current_user.organizations.find_by(id: session[:last_organization_id]) ||
-      current_user.organizations_by_name.first
+    candidates = current_user.organizations_by_name.to_a
+      .partition { |organization| organization.id == session[:last_organization_id] }.flatten
+    return candidates.first if current_user.two_factor?
+
+    candidates.find { |organization| !organization.require_two_factor } || candidates.first
   end
 end

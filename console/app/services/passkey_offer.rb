@@ -20,6 +20,12 @@ class PasskeyOffer
     new(PublicUrls.console_url(nil, settings: settings, env: env))
   end
 
+  # What changing the instance settings from saved to changed (an unsaved
+  # InstanceSetting) strands, as stranded_by says; nil when nothing.
+  def self.stranded_by_change(saved:, changed:)
+    current(settings: saved).stranded_by(current(settings: changed))
+  end
+
   def initialize(url)
     @url = url
     @reason = refusal

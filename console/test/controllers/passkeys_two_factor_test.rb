@@ -41,7 +41,7 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal "required", options["userVerification"]
     post second_step_url, params: { credential: stranger.get(challenge: options["challenge"], user_verified: true) }, as: :json
     assert_redirected_to second_step_url
-    assert_equal "That passkey didn't work. Try again, or use a Recovery code.", flash[:alert]
+    assert_equal "That Passkey didn't work. Try again, or use a Recovery code.", flash[:alert]
 
     post second_step_passkey_options_url, as: :json
     challenge = response.parsed_body["challenge"]
@@ -68,7 +68,7 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
 
     other_browser.post login_url, params: { email: @user.email, password: "password" }
     other_browser.post second_step_url, params: { recovery_code: page["codes"].first }
-    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL))
+    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL), proof: { credential: passkey_proof })
     assert_redirected_to user_settings_url
     assert_equal "Passkey added.", flash[:notice]
     other_browser.get user_settings_url, headers: inertia
@@ -76,14 +76,57 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal 9, user_settings_page["recovery_codes_left"]
   end
 
+  test "a first Passkey needs the user's password in the same request, and a further one a Recovery code, a code or a Passkey" do
+    sign_in_as @user
+
+    add_passkey(name: "MacBook", client: WebAuthn::FakeClient.new(CONSOLE_URL), proof: {})
+    assert_equal "That password didn't work.", flash[:alert]
+    add_passkey(name: "MacBook", client: WebAuthn::FakeClient.new(CONSOLE_URL), proof: { password: "wrong" })
+    assert_equal "That password didn't work.", flash[:alert]
+    assert_empty user_settings_page["passkeys"]
+    add_passkey(name: "MacBook")
+    assert_redirected_to recovery_codes_url
+
+    # Once the user has Two-factor, a stolen Session and password aren't enough.
+    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL), proof: { password: "password" })
+    assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
+    assert_equal [ "MacBook" ], user_settings_page["passkeys"].pluck("name")
+    phone = WebAuthn::FakeClient.new(CONSOLE_URL)
+    add_passkey(name: "Phone", client: phone, proof: { recovery_code: @recovery_codes.first })
+    assert_redirected_to user_settings_url
+    add_passkey(name: "Tablet", client: WebAuthn::FakeClient.new(CONSOLE_URL), proof: { credential: passkey_proof(phone) })
+    assert_redirected_to user_settings_url
+    assert_equal [ "MacBook", "Phone", "Tablet" ], user_settings_page["passkeys"].pluck("name")
+    assert_equal 9, user_settings_page["recovery_codes_left"]
+  end
+
+  test "a user with a Passkey sets up the Authenticator app for a Recovery code or a Passkey, not their password" do
+    sign_in_as @user
+    add_passkey
+    secret = set_up_page["secret"]
+
+    post authenticator_app_url, params: { code: code_for(secret), proof: { password: "password" } }
+    assert_redirected_to new_authenticator_app_url
+    assert_nil user_settings_page["authenticator_app"]
+    # A wrong code from the app doesn't use the Recovery code up.
+    post authenticator_app_url, params: { code: wrong_code(secret), proof: { recovery_code: @recovery_codes.first } }
+    assert_redirected_to new_authenticator_app_url
+    assert_equal 10, user_settings_page["recovery_codes_left"]
+
+    post authenticator_app_url, params: { code: code_for(secret), proof: { credential: passkey_proof } }, as: :json
+    assert_redirected_to user_settings_url
+    assert_equal "Two-factor is on.", flash[:notice]
+    assert_not_nil user_settings_page["authenticator_app"]
+  end
+
   test "a Passkey added after the Authenticator app ends no Session and keeps the Recovery codes" do
-    with_authenticator_app
+    secret = with_authenticator_app
     other_browser = browser_at_console
     other_browser.post login_url, params: { email: @user.email, password: "password" }
     other_browser.post second_step_url, params: { recovery_code: @recovery_codes.first }
     sign_in_as @user
 
-    add_passkey
+    add_passkey(proof: { code: code_for(secret, at: 30.seconds.from_now) })
 
     assert_redirected_to user_settings_url
     other_browser.get user_settings_url, headers: inertia
@@ -97,16 +140,16 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     tablet = WebAuthn::FakeClient.new(CONSOLE_URL)
     stranger = WebAuthn::FakeClient.new(CONSOLE_URL)
     stranger.create(challenge: "unregistered", rp_id: "console.example.com", user_verified: true)
-    add_passkey(name: "MacBook")
-    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL))
-    add_passkey(name: "Tablet", client: tablet)
+    add_passkey(name: "MacBook", proof: { code: code_for(secret, at: 30.seconds.from_now) })
+    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL), proof: { credential: passkey_proof })
+    add_passkey(name: "Tablet", client: tablet, proof: { credential: passkey_proof })
     macbook, phone, tablet_id = user_settings_page["passkeys"].pluck("id")
-    travel 30.seconds
+    travel 60.seconds
 
     delete passkey_url(macbook), params: { code: wrong_code(secret) }
     assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
     delete passkey_url(macbook), params: { credential: stranger.get(challenge: proof_challenge, user_verified: true) }, as: :json
-    assert_equal "That passkey didn't work. Try again.", flash[:alert]
+    assert_equal "That Passkey didn't work. Try again, or use a Recovery code.", flash[:alert]
     delete passkey_url(macbook)
     assert_equal "That code didn't work. Try the newest one from your app.", flash[:alert]
     assert_equal 3, user_settings_page["passkeys"].size
@@ -138,9 +181,9 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
   end
 
   test "the Authenticator app is removed, and new Recovery codes made, for a Passkey" do
-    with_authenticator_app
+    secret = with_authenticator_app
     sign_in_as @user
-    add_passkey
+    add_passkey(proof: { code: code_for(secret, at: 30.seconds.from_now) })
 
     post proof_options_passkeys_url, as: :json
     assert_equal 1, response.parsed_body["allowCredentials"].size
@@ -197,7 +240,13 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_authenticator_app_url(org: "acme")
     assert_equal true, set_up_page["passkeys_here"]
 
-    add_passkey
+    # Settings → User, opened from the set-up page, keeps the Organization,
+    # and Continue after the Recovery codes returns to it.
+    get user_settings_url(org: "acme"), headers: inertia
+    assert_equal({ "name" => "Acme", "slug" => "acme" }, response.parsed_body.dig("props", "return_organization"))
+    add_passkey(org: "acme")
+    assert_redirected_to recovery_codes_url
+    assert_equal overview_path(org_slug: "acme"), recovery_codes_page["continue_to"]
 
     get overview_url(org_slug: "acme"), headers: inertia
     assert_response :success

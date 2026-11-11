@@ -204,6 +204,14 @@ _Avoid_: registration, self-serve sign-up
 A user who changes the install's settings that apply to every **Organization**, such as email. The first user to sign up is one, or on an install that already had users, the oldest; the operator grants or removes it from the command line. Being an Organization's admin isn't enough.
 _Avoid_: superuser, super admin, site admin, root
 
+**Console URL**:
+The address people and links reach **Console** at, set by an **Instance admin**: emails, invite links and the MCP server's links point there, and **Passkeys** work only on pages opened there.
+_Avoid_: base URL, host, domain (for the whole address)
+
+**Ingest URL**:
+The address SDKs send **Events**, **Logs** and traces to, which the DSNs Console shows are built from, set by an **Instance admin**. Changing it changes only the DSNs shown from then on.
+_Avoid_: DSN host, EventStore URL
+
 **Project**:
 The namespace that owns project keys and groups Issues inside an organization. Its description says what it holds, so agents over MCP can tell which Project to query.
 _Avoid_: app, tenant

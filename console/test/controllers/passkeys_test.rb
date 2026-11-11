@@ -46,7 +46,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
   test "a Passkey alone signs its user in, with Remember me, even with an Authenticator app, and records when" do
     @user.update!(authenticator_secret: ROTP::Base32.random, authenticator_confirmed_at: Time.current)
     sign_in_as @user
-    add_passkey
+    add_passkey(proof: { code: ROTP::TOTP.new(@user.authenticator_secret).at(30.seconds.from_now) })
     delete session_url
 
     sign_in_with_passkey(remember_me: true)
@@ -84,8 +84,40 @@ class PasskeysTest < ActionDispatch::IntegrationTest
     sign_in_with_passkey(sign_count: 3)
 
     assert_redirected_to login_url
-    assert_equal "That passkey didn't sign you in. Try again, or use your password.", flash[:alert]
+    assert_equal "That Passkey didn't sign you in. Try again, or use your password.", flash[:alert]
     assert_predicate cookies[:session_id], :blank?
+  end
+
+  test "a malformed answer from the browser is refused, not an error" do
+    sign_in_as @user
+    add_passkey
+    creation_options
+    post passkeys_url, params: { name: "Broken", credential: { "type" => "public-key" }, proof: { credential: passkey_proof } }, as: :json
+    assert_equal "That Passkey couldn't be added. Try again.", flash[:alert]
+    delete session_url
+    good = sign_in_answer
+    encode = ->(json) { Base64.urlsafe_encode64(json, padding: false) }
+
+    [ {}, { "type" => "public-key" }, good.merge("type" => "password"), good.merge("response" => "garbage"),
+      good.merge("response" => good["response"].merge("authenticatorData" => "!!!")),
+      good.merge("response" => good["response"].merge("clientDataJSON" => encode.('{"type":"webauthn.get","challenge":5}'))),
+      good.merge("response" => good["response"].merge("clientDataJSON" => encode.("[1]"))) ].each do |credential|
+      sign_in_answer
+      post passkey_sign_in_url, params: { credential: credential }, as: :json
+      assert_redirected_to login_url, credential.inspect
+      assert_equal "That Passkey didn't sign you in. Try again, or use your password.", flash[:alert]
+    end
+  end
+
+  test "a bug in Console's own code while checking a Passkey's answer isn't read as a refused passkey" do
+    sign_in_as @user
+    add_passkey
+    delete session_url
+    credential = sign_in_answer
+
+    Passkey.stub(:where, ->(*) { raise NoMethodError, "a bug" }) do
+      assert_raises(NoMethodError) { post passkey_sign_in_url, params: { credential: credential }, as: :json }
+    end
   end
 
   test "a Passkey made for the Console URL's old host doesn't sign in at the new one" do
@@ -118,7 +150,7 @@ class PasskeysTest < ActionDispatch::IntegrationTest
   test "a user renames a Passkey" do
     sign_in_as @user
     add_passkey(name: "MacBook")
-    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL))
+    add_passkey(name: "Phone", client: WebAuthn::FakeClient.new(CONSOLE_URL), proof: { credential: passkey_proof })
     macbook_id = user_settings_page["passkeys"].first["id"]
 
     patch passkey_url(macbook_id), params: { name: "  Work laptop " }, as: :json
@@ -156,7 +188,15 @@ class PasskeysTest < ActionDispatch::IntegrationTest
 
     add_passkey(user_verified: false)
 
-    assert_equal "That passkey couldn't be added. Try again.", flash[:alert]
+    assert_equal "That Passkey couldn't be added. Try again.", flash[:alert]
     assert_empty user_settings_page["passkeys"]
+  end
+
+  private
+
+  # The authenticator's answer to new sign-in options.
+  def sign_in_answer
+    post passkey_sign_in_options_url, as: :json
+    passkey_client.get(challenge: response.parsed_body["challenge"], user_verified: true)
   end
 end

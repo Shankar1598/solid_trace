@@ -9,7 +9,7 @@ module ShowsRecoveryCodes
   private
 
   # Redirects to continue_to, by way of the Recovery codes page when codes is
-  # a new set (User#new_recovery_codes, once gaining_two_factor gave
+  # a new set (User#new_recovery_codes, once add_factor gave
   # Two-factor).
   def redirect_showing_recovery_codes(codes, continue_to:, **flash_messages)
     return redirect_to(continue_to, flash_messages) unless codes

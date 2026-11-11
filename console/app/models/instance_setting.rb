@@ -72,7 +72,7 @@ class InstanceSetting < ApplicationRecord
   # Console's URL and ingest's URL, as people, links and SDKs reach them, or
   # nil to fall back to CONSOLE_URL and PUBLIC_INGEST_URL, then the request's
   # address (PublicUrls, ADR 0017). Console's has no path; ingest's may.
-  normalizes :console_url, :ingest_url, with: ->(value) { value.strip.sub(%r{/+\z}, "").presence }
+  normalizes :console_url, :ingest_url, with: ->(value) { PublicUrls.clean(value) }
   validate -> { url_problem(:console_url, path: false) }, if: -> { console_url.present? }
   validate -> { url_problem(:ingest_url, path: true) }, if: -> { ingest_url.present? }
   # Saved from the page or MCP (update_editable), Console's URL must keep the
@@ -123,7 +123,7 @@ class InstanceSetting < ApplicationRecord
     assign_attributes(changes.to_h.symbolize_keys.slice(*EDITABLE))
     return false unless valid?(:editable)
 
-    stranded = PasskeyOffer.current(settings: InstanceSetting.current).stranded_by(PasskeyOffer.current(settings: self))
+    stranded = PasskeyOffer.stranded_by_change(saved: InstanceSetting.current, changed: self)
     if stranded && !confirm_passkeys_stop_working
       errors.add(:base, :passkeys_stop_working, message: stranded)
       return false
@@ -190,9 +190,10 @@ class InstanceSetting < ApplicationRecord
 
   private
 
+  # What each URL must look like: Console's has no path, ingest's may.
   URL_FORMATS = {
-    false => "must be http:// or https:// and a host, with a port if needed and no path, like https://console.example.com",
-    true => "must be http:// or https:// and a host, with a port and a path if needed, like https://ingest.example.com:4443",
+    console_url: "must be http:// or https:// and a host, with a port if needed and no path, like https://console.example.com",
+    ingest_url: "must be http:// or https:// and a host, with a port and a path if needed, like https://ingest.example.com:4443",
   }.freeze
 
   # attribute's URL is http(s)://host[:port], and [/path] when path is true:
@@ -202,9 +203,9 @@ class InstanceSetting < ApplicationRecord
     return if uri.is_a?(URI::HTTP) && uri.host.present? && uri.userinfo.nil? && uri.query.nil? && uri.fragment.nil? &&
       (path || uri.path.empty?)
 
-    errors.add(attribute, URL_FORMATS[path])
+    errors.add(attribute, URL_FORMATS.fetch(attribute))
   rescue URI::InvalidURIError
-    errors.add(attribute, URL_FORMATS[path])
+    errors.add(attribute, URL_FORMATS.fetch(attribute))
   end
 
   def console_url_keeps_https_mode

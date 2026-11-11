@@ -114,6 +114,7 @@ Anyone who has a user's password can sign in to Console as them: there is no sec
 - **Authenticator app:** TOTP per RFC 6238 (6 digits, 30 s, SHA-1) with `rotp`; the QR code is an inline SVG drawn server-side with `rqrcode` from the `otpauth://` URI (issuer "SolidTrace", the user's email). On the user: the secret, encrypted with Active Record Encryption as the SMTP password is (ADR 0015); when it was confirmed (unconfirmed means set-up in progress, not Two-factor); and the last accepted time step. A code is accepted for its step ±1, and only for a step later than the last accepted one. One Authenticator app per user.
 - **Recovery codes:** a `recovery_codes` table (user, digest, used at). 10 per set, made when the user first gets Two-factor, shown once; a new set replaces the old. Removing the last factor deletes them.
 - **Getting Two-factor** (the transition from not having it) ends the user's other Sessions, keeping the current one.
+- **Adding a factor** (confirming the Authenticator app, adding a Passkey) needs proof in the same request, so a stolen Session can't add one: a second-step answer once the user has Two-factor, else their password (a member sent to set-up by Require two-factor too). A wrong answer changes nothing; a factor that then fails to add doesn't use the answer up. (Added after the code review.)
 - **Removing a factor** needs a second-step answer in the same request. Removing the last one is refused while any of the user's Organizations has Require two-factor, naming them.
 - **Sign-in:** after a right password, a user with Two-factor gets no Session. Their id, the time and Remember me go in the Rails session; the browser goes to the second-step page. The pending step lasts 5 minutes and is cleared by success or a new sign-in. The second-step action is rate-limited as sign-in is (10 in 3 minutes). A Recovery code sign-in's notice says how many are left.
 - **Password reset** is unchanged: it ends Sessions and revokes API tokens, and leaves Two-factor.
@@ -169,3 +170,14 @@ Anyone who has a user's password can sign in to Console as them: there is no sec
 - Tagalys' install: Console at `https://solid-trace.bluebuck-viper.ts.net` (Tailscale) once public-urls ships, so Passkeys are offered there; ingest stays on the IP, which Passkeys don't touch.
 - A changed `SECRET_KEY_BASE` makes Authenticator app secrets unreadable, as it does the SMTP password: those users sign in with a Recovery code or a Passkey, or the operator resets them.
 - Decisions made while writing the spec rather than in the grilling: Passkeys for another host still count as Two-factor; `update_instance_settings` needs a confirmation argument for a host change that strands Passkeys; one Authenticator app per user; 10 Recovery codes, a new set needing proof; a 5-minute second step; 24-hour Sessions from the Invite link and Sign-up; the operator reset ends Sessions.
+
+## Review fixes
+
+From the code review of `feature/two-factor` (2026-11-11), on `two-factor/review-fixes`:
+
+- Adding a factor needs the password, or a second-step answer once the user has Two-factor (`User#add_factor`, replacing `gaining_two_factor`); Passkey challenges are kept one per purpose, so a Passkey can prove adding another. See Implementation Decisions → Two-factor.
+- The set-up page's Passkey route keeps `?org=`, so Continue after the Recovery codes returns to the requiring Organization (`ReturnsToOrganization`).
+- `/` opens an Organization the user can open, past one whose Require two-factor they don't meet.
+- `Passkey.read_answer` rescues the webauthn gem's errors (and the NoMethodError/TypeError it raises on a malformed field) only around the gem's calls, after checking the answer is a public-key credential.
+- UI copy capitalises Passkey and Authenticator app; GLOSSARY has Console URL and Ingest URL; ADRs 0010 and 0015 note ADR 0017's amendment.
+- `limit_tries`, one wrong-answer message, `PublicUrls.clean`, `redirect_removing_factor`, `PasskeyOffer.stranded_by_change`, and URL formats keyed by attribute.

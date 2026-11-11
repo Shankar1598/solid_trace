@@ -6,8 +6,7 @@ class SessionsController < ApplicationController
   layout "auth"
   allow_browser versions: :modern
   skip_before_action :authenticate_user!, only: [ :new, :create ]
-  rate_limit to: 10, within: 3.minutes, only: :create,
-    with: -> { redirect_to login_path, alert: "Too many tries. Try again in a few minutes." }
+  limit_tries(only: :create) { login_path }
 
   def new
     render inertia: "Sessions/New", props: {
