@@ -16,7 +16,10 @@ module PasskeyTestHelper
     send_requests_to(url)
   end
 
+  # A browser opening Console at url: a new integration session, with no
+  # cookies, whose URL helpers build links to url.
   def send_requests_to(url)
+    reset!
     uri = URI(url)
     host! uri.port == uri.default_port ? uri.host : "#{uri.host}:#{uri.port}"
     https!(uri.scheme == "https")
@@ -54,8 +57,12 @@ module PasskeyTestHelper
   end
 
   def user_settings_page
-    get user_settings_url, headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    get user_settings_url, headers: inertia_headers
     assert_equal "Settings/User", response.parsed_body["component"]
     response.parsed_body["props"]
+  end
+
+  def inertia_headers
+    { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
   end
 end
