@@ -9,8 +9,7 @@ class RecoveryCodesController < ApplicationController
   include UsesPasskeys
 
   layout "dashboard"
-  rate_limit to: 10, within: 3.minutes, only: :create,
-    with: -> { redirect_back_or_to user_settings_path, alert: "Too many tries. Try again in a few minutes." }
+  limit_tries only: :create
 
   def show
     shown = flash[:recovery_codes]

@@ -48,7 +48,7 @@ module IntegrationTestHelper
     end
   end
 
-  # The second step's "Use a passkey", answered by client, a
+  # The second step's "Use a Passkey", answered by client, a
   # WebAuthn::FakeClient holding one of the user's Passkeys.
   def finish_second_step_with_passkey(client)
     post second_step_passkey_options_url, as: :json

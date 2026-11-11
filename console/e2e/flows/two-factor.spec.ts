@@ -46,18 +46,25 @@ test('an authenticator app is set up with a code, asked for after the password, 
   await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
   await page.goto('/user_settings')
-  await page.getByRole('link', { name: 'Set up an authenticator app' }).click()
+  await page.getByRole('link', { name: 'Set up an Authenticator app' }).click()
   await expect(page.getByRole('heading', { name: 'Set up Two-factor' })).toBeVisible()
-  await expect(page.getByRole('img', { name: 'QR code for your authenticator app' }).locator('svg')).toBeVisible()
+  await expect(page.getByRole('img', { name: 'QR code for your Authenticator app' }).locator('svg')).toBeVisible()
   const secret = (await page.getByLabel('Secret key').textContent())!.replace(/\s/g, '')
 
-  // A wrong code doesn't turn it on.
+  // Turning it on needs the password too, so a Session alone can't; a wrong
+  // code doesn't turn it on.
   await page.getByLabel('2. Enter the code the app shows').fill('000000')
+  await page.getByLabel('Your password').fill('not-the-password')
+  await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
+  await expect(page.getByText("That password didn't work.")).toBeVisible()
+  await page.getByLabel('2. Enter the code the app shows').fill('000000')
+  await page.getByLabel('Your password').fill(password)
   await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
   await expect(page.getByText("That code didn't work. Try the newest one from your app.")).toBeVisible()
 
   let used = await codeAfter(secret, -1)
   await page.getByLabel('2. Enter the code the app shows').fill(used.code)
+  await page.getByLabel('Your password').fill(password)
   await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
 
   // The Recovery codes, shown once, downloaded as a text file.
@@ -85,7 +92,7 @@ test('an authenticator app is set up with a code, asked for after the password, 
   await signIn()
   await page.waitForURL(url => url.pathname === '/login/second_step')
   used = await codeAfter(secret, used.step)
-  await page.getByLabel('Code from your authenticator app').fill(used.code)
+  await page.getByLabel('Code from your Authenticator app').fill(used.code)
   await page.getByRole('button', { name: 'Continue' }).click()
   await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
@@ -100,12 +107,12 @@ test('an authenticator app is set up with a code, asked for after the password, 
 
   await page.goto('/user_settings')
   await expect(page.getByText(/You have 9 Recovery codes left/)).toBeVisible()
-  const removeForm = page.getByRole('form', { name: 'Remove authenticator app' })
+  const removeForm = page.getByRole('form', { name: 'Remove Authenticator app' })
   used = await codeAfter(secret, used.step)
-  await removeForm.getByLabel('Code from your authenticator app').fill(used.code)
-  await removeForm.getByRole('button', { name: 'Remove authenticator app' }).click()
+  await removeForm.getByLabel('Code from your Authenticator app').fill(used.code)
+  await removeForm.getByRole('button', { name: 'Remove Authenticator app' }).click()
   await expect(page.getByText('Authenticator app removed. Two-factor is off.')).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Set up an authenticator app' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Set up an Authenticator app' })).toBeVisible()
 
   expect(errors).toEqual([])
 })

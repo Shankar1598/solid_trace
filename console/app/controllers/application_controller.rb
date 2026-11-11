@@ -14,6 +14,22 @@ class ApplicationController < ActionController::Base
 
   before_action :authenticate_user!
 
+  TOO_MANY_TRIES = "Too many tries. Try again in a few minutes."
+
+  # Allows 10 tries in 3 minutes at only's actions, as signing in does. Past
+  # that, the request goes to the path the block gives (run in the
+  # controller), or without one back to its page (else Settings → User),
+  # told to wait.
+  def self.limit_tries(only:, &to)
+    rate_limit to: 10, within: 3.minutes, only: only, with: -> {
+      if to
+        redirect_to instance_exec(&to), alert: TOO_MANY_TRIES
+      else
+        redirect_back_or_to user_settings_path, alert: TOO_MANY_TRIES
+      end
+    }
+  end
+
   private
 
   # Console's URL, for the links a page hands out (PublicUrls).

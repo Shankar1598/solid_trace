@@ -12,8 +12,7 @@ class SecondStepsController < ApplicationController
 
   layout "auth"
   allow_unauthenticated_access
-  rate_limit to: 10, within: 3.minutes, only: :create,
-    with: -> { redirect_to second_step_path, alert: "Too many tries. Try again in a few minutes." }
+  limit_tries(only: :create) { second_step_path }
   before_action :set_pending_step
   before_action :refuse_passkey_options_elsewhere, only: :passkey_options
 
@@ -36,10 +35,8 @@ class SecondStepsController < ApplicationController
       clear_second_step
       start_new_session_for @user, remember_me: @remember_me
       redirect_to after_authentication_url, notice: (recovery_codes_left_notice if accepted == :recovery_code)
-    elsif params[:credential].present?
-      redirect_to second_step_path, alert: "That passkey didn't work. Try again, or use a Recovery code."
     else
-      redirect_to second_step_path, alert: "That code didn't work. Try the newest one from your app."
+      redirect_to second_step_path, alert: second_step_refused
     end
   end
 

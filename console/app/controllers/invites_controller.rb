@@ -10,8 +10,7 @@ class InvitesController < ApplicationController
 
   layout "auth"
   allow_unauthenticated_access
-  rate_limit to: 10, within: 3.minutes, only: :update,
-    with: -> { redirect_to invite_path(params[:token], org: params[:org]), alert: "Too many tries. Try again in a few minutes." }
+  limit_tries(only: :update) { invite_path(params[:token], org: params[:org]) }
   before_action :resume_session
   before_action :set_invite
 

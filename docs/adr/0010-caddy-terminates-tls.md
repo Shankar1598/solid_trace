@@ -4,6 +4,10 @@ When an install turns on HTTPS, Caddy runs in front of Console and ingest and ge
 
 Let's Encrypt gives an IP address only a 160-hour certificate, from its `shortlived` profile. Caddy uses that profile for every certificate, IP or domain, so moving to a domain changes only the host setup asks for. One host means one name, so ingest has its own port instead of a hostname. A future reader may wonder why ingest isn't on 443: it's this. Moving it to `ingest.<domain>` would change every DSN already handed out.
 
+## Amended: Console's URL can move on its own (2026-11-10)
+
+Console and ingest no longer share one host for good: the Console URL and the Ingest URL are instance settings, so Console can move, to a Tailscale domain say, while ingest and the DSNs already handed out stay on the IP. HTTPS is still a deploy choice. See [ADR 0017](0017-public-urls-are-instance-settings.md).
+
 ## Considered options
 
 - **Thruster's `TLS_DOMAIN`:** no new service, but it covers only Console, and needs a domain. Ingest would stay plain HTTP, or EventStore would need TLS of its own.

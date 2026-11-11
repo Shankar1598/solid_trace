@@ -55,7 +55,7 @@ test('an admin requires Two-factor, and a member without it sets it up and reach
   await signIn(page, adminEmail)
   await page.waitForURL(url => url.pathname === '/login/second_step')
   const adminCode = await codeAfter(adminSecret, -1)
-  await page.getByLabel('Code from your authenticator app').fill(adminCode.code)
+  await page.getByLabel('Code from your Authenticator app').fill(adminCode.code)
   await page.getByRole('button', { name: 'Continue' }).click()
   await page.waitForURL(url => url.pathname === `/${slug}/overview`)
 
@@ -64,7 +64,7 @@ test('an admin requires Two-factor, and a member without it sets it up and reach
   await expect(card.getByText("1 member doesn’t have Two-factor yet, and would be asked to set it up.")).toBeVisible()
   await card.getByRole('button', { name: 'Require two-factor' }).click()
   await expect(card.getByText(/^On\./)).toBeVisible()
-  await expect(card.getByRole('button', { name: 'Stop requiring two-factor' })).toBeVisible()
+  await expect(card.getByRole('button', { name: 'Stop requiring Two-factor' })).toBeVisible()
   await page.goto(`/${slug}/overview`)
   await page.getByTitle('Sign out').click()
   await page.waitForURL(url => url.pathname === '/login')
@@ -81,6 +81,7 @@ test('an admin requires Two-factor, and a member without it sets it up and reach
   const secret = (await page.getByLabel('Secret key').textContent())!.replace(/\s/g, '')
   const memberCode = await codeAfter(secret, -1)
   await page.getByLabel('2. Enter the code the app shows').fill(memberCode.code)
+  await page.getByLabel('Your password').fill(password)
   await page.getByRole('button', { name: 'Turn on Two-factor' }).click()
 
   // The Recovery codes, shown once, then on to the Organization.

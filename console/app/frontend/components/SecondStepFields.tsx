@@ -24,7 +24,7 @@ export async function passkeyAnswer(optionsPath: string): Promise<PublicKeyCrede
   try {
     return await getPasskey(await passkeyOptions<PublicKeyCredentialRequestOptionsJSON>(optionsPath))
   } catch (error) {
-    if (!passkeyCancelled(error)) toast.error(error instanceof Error ? error.message : "That passkey didn't work.")
+    if (!passkeyCancelled(error)) toast.error(error instanceof Error ? error.message : "That Passkey didn't work.")
     return null
   }
 }
@@ -36,6 +36,49 @@ export type SecondStepProof = { authenticatorApp: boolean; passkey: boolean }
 export async function sendWithPasskeyProof(method: 'post' | 'delete', path: string) {
   const credential = await passkeyAnswer('/passkeys/proof_options')
   if (credential) router.visit(path, { method, data: { credential }, preserveScroll: true })
+}
+
+// Proof that it's the user, for adding a factor (User#add_factor): their
+// password while they have no Two-factor, else a second-step answer. Sent
+// as `proof`, beside the factor's own fields.
+export type FactorProof = SecondStepAnswer & { password: string }
+
+export const emptyFactorProof: FactorProof = { ...emptySecondStepAnswer, password: '' }
+
+export function FactorProofFields({ twoFactor, proof, answer, onChange, id, onPasskey }: {
+  // Whether the user has Two-factor already.
+  twoFactor: boolean
+  proof: SecondStepProof
+  answer: FactorProof
+  onChange: (answer: FactorProof) => void
+  id: string
+  // "Use a passkey", when one of the user's Passkeys can answer here.
+  onPasskey?: () => void
+}) {
+  if (twoFactor) {
+    return (
+      <SecondStepFields
+        id={id}
+        answer={answer}
+        onChange={(changed) => onChange({ ...answer, ...changed })}
+        authenticatorApp={proof.authenticatorApp}
+        onPasskey={proof.passkey ? onPasskey : undefined}
+      />
+    )
+  }
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={`${id}-password`}>Your password</Label>
+      <Input
+        id={`${id}-password`}
+        type="password"
+        autoComplete="current-password"
+        value={answer.password}
+        onChange={(e) => onChange({ ...answer, password: e.target.value })}
+        required
+      />
+    </div>
+  )
 }
 
 export function SecondStepFields({ answer, onChange, id = 'code', autoFocus, authenticatorApp = true, onPasskey }: {
@@ -60,7 +103,7 @@ export function SecondStepFields({ answer, onChange, id = 'code', autoFocus, aut
       {onPasskey && (
         <div className="pb-2">
           <Button type="button" variant="outline" className="w-full" onClick={onPasskey}>
-            <KeyRound className="mr-2 h-4 w-4" />Use a passkey
+            <KeyRound className="mr-2 h-4 w-4" />Use a Passkey
           </Button>
         </div>
       )}
@@ -82,7 +125,7 @@ export function SecondStepFields({ answer, onChange, id = 'code', autoFocus, aut
         </>
       ) : (
         <>
-          <Label htmlFor={id}>Code from your authenticator app</Label>
+          <Label htmlFor={id}>Code from your Authenticator app</Label>
           <Input
             id={id}
             inputMode="numeric"
@@ -102,7 +145,7 @@ export function SecondStepFields({ answer, onChange, id = 'code', autoFocus, aut
           className="text-sm text-muted-foreground underline-offset-2 hover:underline"
           onClick={() => switchTo(!recovery)}
         >
-          {recovery ? 'Use your authenticator app instead' : 'Use a Recovery code instead'}
+          {recovery ? 'Use your Authenticator app instead' : 'Use a Recovery code instead'}
         </button>
       )}
     </div>

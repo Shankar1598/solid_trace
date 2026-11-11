@@ -21,9 +21,12 @@ interface SettingsUserProps {
   // those for another host too.
   passkey_offer: PasskeyOfferHere
   passkeys: PasskeyRow[]
+  // The Organization the set-up page sent the user from (?org=), which
+  // adding a first Passkey returns to.
+  return_organization: { name: string; slug: string } | null
 }
 
-export default function SettingsUser({ user, authenticator_app, recovery_codes_left, passkey_offer, passkeys }: SettingsUserProps) {
+export default function SettingsUser({ user, authenticator_app, recovery_codes_left, passkey_offer, passkeys, return_organization }: SettingsUserProps) {
   const { url } = usePage()
   // How the user can prove it's them: a code, a Recovery code (always), or
   // one of their Passkeys for this host, on a page opened there.
@@ -93,7 +96,13 @@ export default function SettingsUser({ user, authenticator_app, recovery_codes_l
         </Card>
         <TwoFactorCard authenticatorApp={authenticator_app} hasPasskeys={passkeys.length > 0} proof={proof} />
         {recovery_codes_left !== null && <RecoveryCodesCard left={recovery_codes_left} proof={proof} />}
-        <PasskeysCard offer={passkey_offer} passkeys={passkeys} proof={proof} />
+        <PasskeysCard
+          offer={passkey_offer}
+          passkeys={passkeys}
+          proof={proof}
+          twoFactor={!!authenticator_app || passkeys.length > 0}
+          returnOrganization={return_organization?.slug}
+        />
       </div>
     </SettingsLayout>
   )
@@ -123,12 +132,12 @@ function TwoFactorCard({ authenticatorApp, hasPasskeys, proof }: {
         <CardContent className="pb-2">
           <p className="text-sm text-muted-foreground">
             {hasPasskeys
-              ? 'On with your passkeys: after your password, signing in asks for one of them. An authenticator app works too.'
-              : 'Off: your password alone signs you in. With an authenticator app or a passkey, signing in also asks for a code from the app, or for the passkey.'}
+              ? 'On with your Passkeys: after your password, signing in asks for one of them. An Authenticator app works too.'
+              : 'Off: your password alone signs you in. With an Authenticator app or a Passkey, signing in also asks for a code from the app, or for the Passkey.'}
           </p>
         </CardContent>
         <CardFooter className="justify-end">
-          <Link href="/authenticator_app/new" className={buttonVariants()}>Set up an authenticator app</Link>
+          <Link href="/authenticator_app/new" className={buttonVariants()}>Set up an Authenticator app</Link>
         </CardFooter>
       </Card>
     )
@@ -136,7 +145,7 @@ function TwoFactorCard({ authenticatorApp, hasPasskeys, proof }: {
 
   return (
     <Card>
-      <form onSubmit={remove} aria-label="Remove authenticator app">
+      <form onSubmit={remove} aria-label="Remove Authenticator app">
         <CardHeader>
           <CardTitle>Two-factor</CardTitle>
         </CardHeader>
@@ -145,7 +154,7 @@ function TwoFactorCard({ authenticatorApp, hasPasskeys, proof }: {
             On: signing in asks for a code from the authenticator app you set up on{' '}
             {new Date(authenticatorApp.set_up_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}.
             To move to a new phone, remove it and set it up again.
-            {hasPasskeys ? ' Your passkeys keep Two-factor on.' : ' Removing it turns Two-factor off and throws away your Recovery codes.'}
+            {hasPasskeys ? ' Your Passkeys keep Two-factor on.' : ' Removing it turns Two-factor off and throws away your Recovery codes.'}
           </p>
           <div className="max-w-xs">
             <SecondStepFields
@@ -159,7 +168,7 @@ function TwoFactorCard({ authenticatorApp, hasPasskeys, proof }: {
         </CardContent>
         <CardFooter className="justify-end">
           <Button type="submit" variant="destructive" disabled={processing}>
-            {processing ? 'Removing…' : 'Remove authenticator app'}
+            {processing ? 'Removing…' : 'Remove Authenticator app'}
           </Button>
         </CardFooter>
       </form>
@@ -187,8 +196,8 @@ function RecoveryCodesCard({ left, proof }: { left: number, proof: SecondStepPro
         <CardContent className="space-y-4 pb-2">
           <p className="text-sm text-muted-foreground">
             {left === 0
-              ? 'You have no Recovery codes left. Make new ones, so you can still sign in if you lose your phone or passkeys.'
-              : `You have ${left} Recovery code${left === 1 ? '' : 's'} left. Each signs you in once if you can't use your authenticator app or passkeys.`}
+              ? 'You have no Recovery codes left. Make new ones, so you can still sign in if you lose your phone or Passkeys.'
+              : `You have ${left} Recovery code${left === 1 ? '' : 's'} left. Each signs you in once if you can't use your Authenticator app or Passkeys.`}
             {' '}A new set replaces the old one.
           </p>
           <div className="max-w-xs">

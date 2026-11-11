@@ -7,9 +7,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  FactorProofFields,
   SecondStepFields,
+  emptyFactorProof,
   emptySecondStepAnswer,
+  passkeyAnswer,
   sendWithPasskeyProof,
+  type FactorProof,
   type SecondStepProof,
 } from '@/components/SecondStepFields'
 import {
@@ -41,9 +45,9 @@ const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { date
 function failed(error: unknown) {
   if (passkeyCancelled(error)) return
   if (error instanceof DOMException && error.name === 'InvalidStateError') {
-    toast.error('This device already has one of your passkeys.')
+    toast.error('This device already has one of your Passkeys.')
   } else {
-    toast.error(error instanceof Error ? error.message : "That passkey didn't work.")
+    toast.error(error instanceof Error ? error.message : "That Passkey didn't work.")
   }
 }
 
@@ -54,18 +58,37 @@ function failed(error: unknown) {
  * code. Opened at an address other than the Console URL, it says where
  * Passkeys work instead of adding them.
  */
-export function PasskeysCard({ offer, passkeys, proof }: { offer: PasskeyOfferHere, passkeys: PasskeyRow[], proof: SecondStepProof }) {
+export function PasskeysCard({ offer, passkeys, proof, twoFactor, returnOrganization }: {
+  offer: PasskeyOfferHere
+  passkeys: PasskeyRow[]
+  proof: SecondStepProof
+  // Whether the user has Two-factor, which decides how adding proves it's them.
+  twoFactor: boolean
+  // The slug of the Organization a first Passkey returns to, from set-up.
+  returnOrganization?: string
+}) {
   const usable = offer.here && passkeysSupported()
   const [name, setName] = useState(() => (typeof navigator === 'undefined' ? 'Passkey' : defaultPasskeyName()))
+  const [answer, setAnswer] = useState(emptyFactorProof)
   const [busy, setBusy] = useState(false)
 
-  const add: React.FormEventHandler = async (e) => {
-    e.preventDefault()
+  // Adding needs proof it's the user in the same request: the typed answer,
+  // or an answer from one of their Passkeys, asked for first.
+  const add = async (withPasskey: boolean) => {
     setBusy(true)
     try {
+      let given: FactorProof | { credential: PublicKeyCredentialJSON } = answer
+      if (withPasskey) {
+        const credential = await passkeyAnswer('/passkeys/proof_options')
+        if (!credential) return
+        given = { credential }
+      }
       const options = await passkeyOptions<PublicKeyCredentialCreationOptionsJSON>('/passkeys/creation_options')
       const credential = await createPasskey(options)
-      router.post('/passkeys', { name, credential }, { preserveScroll: true })
+      router.post('/passkeys', { name, credential, proof: given, org: returnOrganization ?? null }, {
+        preserveScroll: true,
+        onFinish: () => setAnswer(emptyFactorProof),
+      })
     } catch (error) {
       failed(error)
     } finally {
@@ -85,23 +108,37 @@ export function PasskeysCard({ offer, passkeys, proof }: { offer: PasskeyOfferHe
       </CardHeader>
       <CardContent className="space-y-4">
         {passkeys.length > 0 && (
-          <ul className="divide-y" aria-label="Your passkeys">
+          <ul className="divide-y" aria-label="Your Passkeys">
             {passkeys.map((passkey) => (
               <PasskeyItem key={passkey.id} passkey={passkey} proof={proof} />
             ))}
           </ul>
         )}
         {usable && (
-          <form onSubmit={add} className="flex flex-wrap items-end gap-2" aria-label="Add a passkey">
-            <div className="space-y-2">
+          <form
+            onSubmit={(e) => { e.preventDefault(); add(false) }}
+            className="space-y-3"
+            aria-label="Add a Passkey"
+          >
+            <div className="max-w-xs space-y-2">
               <Label htmlFor="passkey-name">Name</Label>
               <Input id="passkey-name" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} required />
             </div>
-            <Button type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add a passkey'}</Button>
+            <div className="max-w-xs">
+              <FactorProofFields
+                id="add-passkey"
+                twoFactor={twoFactor}
+                proof={proof}
+                answer={answer}
+                onChange={setAnswer}
+                onPasskey={() => add(true)}
+              />
+            </div>
+            <Button type="submit" disabled={busy}>{busy ? 'Adding…' : 'Add a Passkey'}</Button>
           </form>
         )}
         {offer.here && !passkeysSupported() && (
-          <p className="text-sm text-muted-foreground">This browser can't use passkeys.</p>
+          <p className="text-sm text-muted-foreground">This browser can't use Passkeys.</p>
         )}
       </CardContent>
     </Card>
@@ -166,7 +203,7 @@ function PasskeyItem({ passkey, proof }: { passkey: PasskeyRow, proof: SecondSte
           </div>
           <div className="flex gap-2">
             <Button type="submit" size="sm" variant="destructive" disabled={removal.processing}>
-              {removal.processing ? 'Removing…' : 'Remove passkey'}
+              {removal.processing ? 'Removing…' : 'Remove Passkey'}
             </Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => { removal.setData(emptySecondStepAnswer); setRemoving(false) }}>
               Cancel

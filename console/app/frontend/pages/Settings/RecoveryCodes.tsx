@@ -20,7 +20,7 @@ interface RecoveryCodesProps {
 export default function RecoveryCodes({ codes, continue_to }: RecoveryCodesProps) {
   const text = [
     `SolidTrace Recovery codes for ${window.location.host}`,
-    'Each works once, in place of a code from your authenticator app.',
+    'Each works once, in place of a code from your Authenticator app.',
     '',
     ...codes,
     '',
@@ -47,7 +47,7 @@ export default function RecoveryCodes({ codes, continue_to }: RecoveryCodesProps
     <SettingsLayout>
       <PageHeader
         title="Your Recovery codes"
-        description="If you can't use your authenticator app, a Recovery code signs you in instead. Each works once."
+        description="If you can't use your Authenticator app, a Recovery code signs you in instead. Each works once."
       />
       <Card className="max-w-xl">
         <CardHeader>
