@@ -40,6 +40,7 @@ A tool acts as the token's user, with that user's rights. In each Organization i
 - **Only an Organization admin** can create, rotate and delete a Project's keys, change a Project's Log transform, and invite members. A member's agent is told so.
 - **Only an instance admin** can read and change the install's email settings and its other settings, which apply to every Organization, and send a test email. `whoami` says whether you are one.
 - Other Organizations' records are not found.
+- An Organization with **Require two-factor** refuses every tool on it from a user without Two-factor, telling the agent to have them set it up in Console. Their other Organizations answer as before. No tool reads or changes Require two-factor: only an admin who has Two-factor changes it, on the Organization's settings page.
 
 The **API tokens & MCP** settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
 
