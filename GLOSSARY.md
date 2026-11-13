@@ -124,6 +124,10 @@ _Avoid_: log viewer, log search, logs page
 The Logs explorer's default way to make a Query without typing it: filter chips plus a search box. It can show only Queries made of equality filters and one search.
 _Avoid_: query builder, visual mode, simple mode
 
+**Live tail**:
+The Logs explorer's way of showing a Project's Logs as they arrive, in place of a time range: the newest Logs matching the current Query, in the order they were ingested, newest first, with each Log's own time. Only a Query that returns Logs can be tailed.
+_Avoid_: live stream, streaming, live mode
+
 **Chart**:
 A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single number. A time series needs the last summarize's time bins, which are its x; its number columns are the series and its by columns split them. Bars need a summarize with no time bin. Any table of one row and one number is a single number. The Logs explorer shows it above the table.
 _Avoid_: graph, plot, visualization
