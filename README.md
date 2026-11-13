@@ -22,7 +22,9 @@ SolidTrace groups your application's errors into Issues and keeps its Logs, with
 
 ## Scale
 
-One machine goes a long way. A production install on a GCP n4a-highmem-2 VM (2 Arm vCPUs, 16 GB) takes about 330 million Logs a day, 230 GiB as received: about 3,900 a second on average, 9,200 at the 99th percentile, and bursts of nearly 100,000 a second while shippers catch up after an outage. Its CPU averages 45%, and its memory is about 20% used.
+One machine goes a long way. A production install on a GCP n4a-highmem-2 VM (2 Arm vCPUs, 16 GB) ingests about **10 billion Logs a month**, 6.7 TiB as received: about 3,900 a second on average, 9,200 at the 99th percentile, and bursts of nearly 100,000 a second while shippers catch up after an outage. Its CPU averages 45%, and its memory is about 20% used.
+
+It saves on egress too. Shippers compress those Logs to about 680 GiB a month on the wire. Sent to a hosted tool, that leaves the cloud as internet egress: about $81 a month at GCP's Premium Tier price. Sent to SolidTrace in the same region, it stays on the private network: free within a zone, and about $7 a month at most between zones.
 
 ## Install
 
