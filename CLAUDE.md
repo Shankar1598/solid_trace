@@ -1,5 +1,7 @@
 # SolidTrace
 
+Always talk in ASD-STE100 Simplified Technical English. Always read GLOSSARY.md, and use their ubiquitous language.
+
 ## Agent skills
 
 ### Issue tracker
