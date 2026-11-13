@@ -81,8 +81,8 @@ group :test do
   gem "webmock"
 end
 
-gem "tailwindcss-ruby", "~> 4.1"
-gem "tailwindcss-rails", "~> 4.4"
+gem "tailwindcss-ruby", "~> 4.3"
+gem "tailwindcss-rails", "~> 4.7"
 
 gem "sentry-ruby", "~> 6.2"
 gem "sentry-rails", "~> 6.2"
@@ -90,8 +90,8 @@ gem "sentry-rails", "~> 6.2"
 gem "msgpack"
 gem "zstd-ruby"
 
-gem "vite_rails", "~> 3.0"
-gem "inertia_rails", "~> 3.16"
+gem "vite_rails", "~> 3.11"
+gem "inertia_rails", "~> 3.23"
 
 gem "connection_pool"
 gem "rest-client"
@@ -102,7 +102,7 @@ gem "discard"
 gem "pundit", "~> 2.5"
 
 # Model Context Protocol server at /mcp
-gem "mcp", "~> 1.8"
+gem "mcp", "~> 1.9"
 
 # One JSON log line per request in production (lib/request_log.rb)
 gem "lograge", "~> 0.15"
