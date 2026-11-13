@@ -44,3 +44,9 @@ It asks a few questions, installs Docker if it's missing and starts SolidTrace. 
 - [Logs](docs/logs/README.md), [Traces](docs/traces.md) and [MCP](docs/mcp.md)
 - [Development](docs/development.md)
 - [Release notes](docs/changelogs/)
+
+## Licence
+
+SolidTrace is free software under the [GNU Affero General Public License, version 3](LICENSE). You can run it, change it and self-host it. If you change it and let others use your version over a network, you must offer them your version's source.
+
+Copyright © 2025–2026 Shankar Thyagarajan.
