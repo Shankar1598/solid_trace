@@ -9,7 +9,7 @@
 - [x] Write the watch query: tagged Log reads (`log_comment` JSON) whose `QueryPlanOptimizeMicroseconds` is over 3 s, with their `S3GetObject` count. Record it here with today's baseline. The baseline is 19 reads over 3 s in 3 days: 14 of them over 9 s, and 7 timed out during or just after planning. See Comments.
 - [x] ~~EventStore's Log reads set `use_statistics_for_part_pruning=0`, and `allow_statistics_optimize=0` if the first isn't enough.~~ Statistics aren't the cause (see Comments). Instead, EventStore's connection and the SQL users' profile set `allow_calculating_subcolumns_sizes_for_merge_tree_reading=0` (`event_store/storage/clickhouse.go`, `clickhouse_sql.go`), committed on `query-timeouts/06-planning-stalls` at `5f09e985`.
 - [x] Check first, on the dev stack and in production `query_log`, that this doesn't slow normal reads, comparing median read times before and after. Dev: no change, except Attribute aggregations, 13–21% slower. Production (2026-10-30, with the user's go-ahead): 5 recent Log reads, each as fast or faster with the setting off. See Comments.
-- [ ] After a release on production, run the watch query daily for a week. If stalls go on, capture one with trace logs (`send_logs_level='trace'` on a Log read tagged for the purpose, or `text_log` turned on briefly), and record where the planning time goes.
+- [ ] After a release on production, run the watch query daily for a week. If stalls go on, capture one with trace logs (`send_logs_level='trace'` on a Log read tagged for the purpose, or `text_log` turned on briefly), and record where the planning time goes. Released in v0.17.0 on 2026-10-30 at about 15:45 UTC, so the week runs to 2026-11-06. See Comments.
 - [x] Record the outcome in the spec: the cause, or what was ruled out.
 
 ## Comments
@@ -91,3 +91,20 @@ ORDER BY event_time
 ```
 
 **Baseline, 2026-10-27 to 30.** 19 reads planned for over 3 s, 14 of them over 9 s. 7 timed out with 17–80 s of planning: 13:32:32 and 13:33:52 on 10-28; 07:44:38 (two reads), 07:45:25, 07:50:22 and 08:35:04 on 10-30. Codes 159, 210 and 236. Two more were big scans that also planned for 4.6 s and 11.8 s, then timed out reading (13:22:59 on 10-28, 05:21:37 on 10-30). All 19 were `table` reads of Projects 2 and 3.
+
+### 2026-10-30: released, the week's watch begins
+
+**Installed on production in v0.17.0, at about 15:45 UTC** (solid-trace-09 installed it and confirmed `SOLIDTRACE_VERSION` with `get_instance_settings`). Both halves of the fix are live:
+- EventStore's connection: the two tagged Log reads since the install have `allow_calculating_subcolumns_sizes_for_merge_tree_reading = 0` in `query_log`'s `Settings`. The 49 tagged reads earlier today don't.
+- The SQL users' profile: EventStore replaces it on the first SQL run after a start. After one `run_sql` at 15:52 UTC (a count of `solidtrace`'s last 15 minutes), `solidtrace_sql` has the setting at 0 `CONST`, and that run's `query_log` row has it too.
+
+**The week's check** (`~/.cache/solid-trace/query-timeouts/watch-week.sql`) gives, per day since the install:
+- the number of tagged Log reads, and how many ran without the fix;
+- how many planned for over 3 s, and how many of those failed;
+- the highest and median planning times, and the most GETs.
+
+The read count matters: production had no tagged Log reads from 08:35 to 15:49 today, and a day without reads proves nothing. For any stall it finds, `watch-stalls.sql` lists the reads one by one.
+
+**Not a stall:** solid-trace-09's forced check run at 15:49:45 (Project 3, a 4-day `search "ShopifyCollectionUpdatesWorker"`) stopped at 30 s on purpose, code 236. It planned in 0.04 s, with 186 GETs while reading, so it falls outside both queries anyway.
+
+**Day 0 (15:45 to 16:00, 2026-10-30):** 2 reads, both with the fix, none planning over 3 s.
