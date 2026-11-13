@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# Renders "<dir> (<branch>) · <model display name> (<effort>) · <tokens> tokens · <used>% · cache <Xm|Xs>[/ttl] · usage 5h <pct>% (<reset>) 7d <pct>% (<reset>) · <session name>"
+# using the fields Claude Code provides on stdin. The session name is the
+# one peer sessions message it by (e.g. solid-trace-1c), read from the
+# session's entry in ~/.claude/sessions/, and is omitted when there is no
+# entry. The branch segment is
+# omitted when the directory isn't a git repo, the effort parenthetical is
+# omitted when no effort level can be determined, the tokens/percentage
+# segment is omitted when no usage data is available yet, the cache
+# segment is omitted until the main conversation's first API response
+# (prompt_cache is absent until then), and the rate limit segment is
+# omitted (per window, or entirely) until rate_limits data is available.
+input=$(cat)
+
+DIM=$'\033[2m'
+YELLOW=$'\033[33m'
+RESET=$'\033[0m'
+
+model=$(echo "$input" | jq -r '.model.display_name')
+tokens=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty')
+used=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
+dir=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty')
+session_id=$(echo "$input" | jq -r '.session_id // empty')
+
+# Session name: each running session has ~/.claude/sessions/<pid>.json
+# holding its sessionId and name; grep narrows to the matching file so jq
+# reads only that one.
+session_name=""
+if [ -n "$session_id" ]; then
+  session_file=$(grep -l -F "\"$session_id\"" "$HOME"/.claude/sessions/*.json 2>/dev/null | head -n 1)
+  if [ -n "$session_file" ]; then
+    session_name=$(jq -r --arg id "$session_id" 'select(.sessionId == $id) | .name // empty' "$session_file" 2>/dev/null)
+  fi
+fi
+
+# Effort level: prefer the live value from the status line JSON (this
+# reflects mid-session /effort changes immediately), then the env var, then
+# effortLevel in project-local, project, and user settings (first one that
+# sets it wins) — those fallbacks are the ones that can go stale.
+effort=$(echo "$input" | jq -r '.effort.level // empty')
+
+if [ -z "$effort" ]; then
+  effort="$CLAUDE_CODE_EFFORT_LEVEL"
+fi
+
+if [ -z "$effort" ]; then
+  project_dir=$(echo "$input" | jq -r '.workspace.project_dir // empty')
+  for settings_file in \
+    "$project_dir/.claude/settings.local.json" \
+    "$project_dir/.claude/settings.json" \
+    "$HOME/.claude/settings.json"
+  do
+    if [ -n "$settings_file" ] && [ -f "$settings_file" ]; then
+      effort=$(jq -r '.effortLevel // empty' "$settings_file" 2>/dev/null)
+      [ -n "$effort" ] && break
+    fi
+  done
+fi
+
+if [ -n "$effort" ]; then
+  model_segment="$model ($effort)"
+else
+  model_segment="$model"
+fi
+
+if [ -n "$dir" ]; then
+  if [ "$dir" = "$HOME" ]; then
+    dir_display="~"
+  else
+    dir_display=$(basename "$dir")
+  fi
+
+  branch=""
+  if git -C "$dir" --no-optional-locks rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    branch=$(git -C "$dir" --no-optional-locks branch --show-current 2>/dev/null)
+    if [ -z "$branch" ]; then
+      branch=$(git -C "$dir" --no-optional-locks rev-parse --short HEAD 2>/dev/null)
+    fi
+  fi
+
+  if [ -n "$branch" ]; then
+    dir_segment="$dir_display ($branch)"
+  else
+    dir_segment="$dir_display"
+  fi
+fi
+
+if [ -n "$tokens" ] && [ -n "$used" ]; then
+  tokens_fmt=$(awk -v t="$tokens" 'BEGIN {
+    if (t >= 1000000) printf "%.1fM", t / 1000000
+    else if (t >= 1000) printf "%.1fk", t / 1000
+    else printf "%d", t
+  }')
+  pct=$(printf '%.0f' "$used")
+  usage_segment="$model_segment · $tokens_fmt tokens · $pct%"
+else
+  usage_segment="$model_segment"
+fi
+
+# Cache segment: "cache <remaining>[/ttl]" while the prefix is warm, else
+# "cache cold" (highlighted, since a cold cache means the next request pays
+# full input-token price). Absent entirely until prompt_cache shows up.
+has_cache=$(echo "$input" | jq -r 'if .prompt_cache then "1" else empty end')
+
+if [ -n "$has_cache" ]; then
+  warm=$(echo "$input" | jq -r '.prompt_cache.warm // empty')
+  ttl=$(echo "$input" | jq -r '.prompt_cache.ttl // empty')
+  expires_at=$(echo "$input" | jq -r '.prompt_cache.expires_at // empty')
+
+  if [ "$warm" = "true" ] && [ -n "$expires_at" ]; then
+    remaining=$(( expires_at - $(date +%s) ))
+    [ "$remaining" -lt 0 ] && remaining=0
+    if [ "$remaining" -ge 60 ]; then
+      remaining_fmt="$((remaining / 60))m"
+    else
+      remaining_fmt="${remaining}s"
+    fi
+    if [ -n "$ttl" ]; then
+      cache_segment="cache ${remaining_fmt}/${ttl}"
+    else
+      cache_segment="cache ${remaining_fmt}"
+    fi
+  else
+    cache_segment="${YELLOW}cache cold${RESET}${DIM}"
+  fi
+fi
+
+# Rate limit segment: "usage 5h <pct>% (<reset>) 7d <pct>% (<reset>)" from the
+# Claude.ai subscription (or gateway spend limit) usage windows. Only present
+# for subscribers after the first API response; each window is independently
+# absent and disappears once its resets_at passes, so each is formatted (and
+# highlighted past 80% usage) on its own, the pair is joined with a single
+# space when both exist, and the "usage" label is prefixed once (and stays
+# dim even if a window is yellow) whenever at least one window is present.
+format_reset() {
+  local resets_at="$1"
+  [ -z "$resets_at" ] && return
+  local remaining=$(( resets_at - $(date +%s) ))
+  [ "$remaining" -lt 0 ] && remaining=0
+  local days=$(( remaining / 86400 ))
+  local hours=$(( (remaining % 86400) / 3600 ))
+  local minutes=$(( (remaining % 3600) / 60 ))
+  if [ "$days" -ge 1 ]; then
+    echo "${days}d${hours}h"
+  elif [ "$hours" -ge 1 ]; then
+    echo "${hours}h${minutes}m"
+  else
+    echo "${minutes}m"
+  fi
+}
+
+format_rate_window() {
+  local label="$1" pct="$2" resets_at="$3"
+  [ -z "$pct" ] && return
+  local rounded reset_fmt text
+  rounded=$(printf '%.0f' "$pct")
+  reset_fmt=$(format_reset "$resets_at")
+  if [ -n "$reset_fmt" ]; then
+    text="$label ${rounded}% (${reset_fmt})"
+  else
+    text="$label ${rounded}%"
+  fi
+  if [ "$rounded" -ge 80 ]; then
+    text="${YELLOW}${text}${RESET}${DIM}"
+  fi
+  echo "$text"
+}
+
+five_hour=$(format_rate_window "5h" \
+  "$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')" \
+  "$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')")
+seven_day=$(format_rate_window "7d" \
+  "$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')" \
+  "$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')")
+
+if [ -n "$five_hour" ] && [ -n "$seven_day" ]; then
+  rate_segment="$five_hour $seven_day"
+else
+  rate_segment="${five_hour}${seven_day}"
+fi
+
+[ -n "$rate_segment" ] && rate_segment="usage $rate_segment"
+
+# The last usage windows seen, for an agent that has to pace a long run against them.
+rate_limits=$(echo "$input" | jq -c '.rate_limits // empty')
+if [ -n "$rate_limits" ]; then
+  usage_file="${XDG_CACHE_HOME:-$HOME/.cache}/solid-trace/usage.json"
+  mkdir -p "$(dirname "$usage_file")"
+  echo "$rate_limits" | jq -c --arg at "$(date -u +%FT%TZ)" '. + {seen_at: $at}' > "$usage_file.tmp" \
+    && mv -f "$usage_file.tmp" "$usage_file"
+fi
+
+if [ -n "$dir_segment" ]; then
+  line="$dir_segment · $usage_segment"
+else
+  line="$usage_segment"
+fi
+
+[ -n "$cache_segment" ] && line="$line · $cache_segment"
+[ -n "$rate_segment" ] && line="$line · $rate_segment"
+[ -n "$session_name" ] && line="$line · $session_name"
+
+printf '%s%s%s' "$DIM" "$line" "$RESET"
