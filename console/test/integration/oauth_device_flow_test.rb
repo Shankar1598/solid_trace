@@ -336,6 +336,31 @@ class OauthDeviceFlowTest < ActionDispatch::IntegrationTest
     assert_oauth_error "access_denied"
   end
 
+  test "a host that does not answer shows the error page, and the device code still waits and works later" do
+    answer = device_code_answer
+    sign_in_as @user
+    [
+      [ -> { stub_request(:get, CLIENT_ID).to_timeout }, "within 5 seconds" ],
+      [ -> { stub_request(:get, CLIENT_ID).to_raise(Errno::ECONNREFUSED) }, "could not fetch" ],
+      [ -> { stub_request(:get, CLIENT_ID).to_return(status: 503) }, "HTTP 503" ]
+    ].each do |stub, message|
+      stub.call
+
+      enter answer["user_code"]
+
+      assert_response :bad_request, message
+      assert_equal "Oauth/Error", response.parsed_body["component"]
+      assert_match message, response.parsed_body.dig("props", "message")
+      assert_match "Try again later", response.parsed_body.dig("props", "message")
+      travel 5.seconds
+      poll answer["device_code"]
+      assert_oauth_error "authorization_pending"
+    end
+
+    publish
+    assert_equal "Trace CLI", approval_page(answer["user_code"]).dig("client", "name")
+  end
+
   test "while another fetch of the description runs, the page says to try again and the device code still waits" do
     Oauth::Client.create!(kind: "cimd", client_id: CLIENT_ID, name: "cli.example.com", redirect_uris: [], grant_types: [],
                           fetch_started_at: Time.current)

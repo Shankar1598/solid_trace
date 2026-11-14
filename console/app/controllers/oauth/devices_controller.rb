@@ -9,7 +9,9 @@ module Oauth
   # codes are slowed down by the limit on entries. After a right code,
   # Console fetches or reads the client's published description
   # (PublishedDescription.device_client); a bad one shows the error page and
-  # denies the device code. A good one keeps a PendingRequest for the
+  # denies the device code. A host that does not answer, or another fetch
+  # that runs, shows the error page, and the device code still waits, so
+  # the user can type it again. A good one keeps a PendingRequest for the
   # device code, whose key alone goes into the Rails session, and the page
   # shows the client, where its description is published, and when and
   # from which IP address the program asked, as the approval page does.

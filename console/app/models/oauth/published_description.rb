@@ -46,9 +46,10 @@ module Oauth
     # error page.
     class Problem < StandardError; end
 
-    # A Problem that passes: another fetch runs, or the user fetched too
-    # much. The description is not bad, so the device page does not deny
-    # the device code for it.
+    # A Problem that passes: another fetch runs, the user fetched too much,
+    # or the host did not answer (a timeout, no connection, a TLS error, a
+    # failed address lookup or an HTTP 5xx). It says nothing bad about the
+    # description, so the device page does not deny the device code for it.
     class TryAgain < Problem; end
 
     # Raised when a connection reads more than MAX_BYTES + HEADER_BYTES.
@@ -198,7 +199,10 @@ module Oauth
       end
 
       addresses.first
-    rescue SocketError, IPAddr::InvalidAddressError
+    rescue SocketError
+      raise TryAgain, "Console could not find the address of #{host}, which publishes the client's description. " \
+                      "Try again later."
+    rescue IPAddr::InvalidAddressError
       raise Problem, "Console could not find the address of #{host}, which publishes the client's description."
     end
 
@@ -230,10 +234,11 @@ module Oauth
     rescue TooMuchRead
       raise Problem, too_large(uri)
     rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout, Timeout::Error
-      raise Problem, too_slow(uri)
-    rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError, Net::HTTPBadResponse, Net::ProtocolError,
-           Net::HTTPHeaderSyntaxError, Zlib::Error
-      raise Problem, "Console could not fetch the client's description from #{uri.host}. Try again later."
+      raise TryAgain, too_slow(uri)
+    rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError
+      raise TryAgain, "Console could not fetch the client's description from #{uri.host}. Try again later."
+    rescue Net::HTTPBadResponse, Net::ProtocolError, Net::HTTPHeaderSyntaxError, Zlib::Error
+      raise Problem, "Console could not fetch the client's description from #{uri.host}: its answer is not valid HTTP."
     end
 
     def check_status(answer, uri)
@@ -241,6 +246,10 @@ module Oauth
 
       if answer.is_a?(Net::HTTPRedirection)
         raise Problem, "#{uri.host} answered the client's description with a redirect. Console follows no redirects."
+      end
+
+      if answer.is_a?(Net::HTTPServerError)
+        raise TryAgain, "#{uri.host} answered the client's description with HTTP #{answer.code}. Try again later."
       end
 
       raise Problem, "#{uri.host} answered the client's description with HTTP #{answer.code}."
