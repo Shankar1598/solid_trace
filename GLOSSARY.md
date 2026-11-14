@@ -305,7 +305,7 @@ The **Project** of an **Organization** that holds the **Agent sessions** of its 
 _Avoid_: transcripts project, sessions project
 
 **Captured repository**:
-A repository whose engineers' **Agent sessions** an **Organization** records. An Agent session in any other repository, or in no repository, never leaves the engineer's machine.
+A repository whose engineers' **Agent sessions** an **Organization** records. An Admin lists it in the **Agent Project**'s settings as `host/workspace/name`, or `host/workspace/*` for a whole workspace, and each member can read the list and the Agent sessions. An Agent session in any other repository, or in no repository, never leaves the engineer's machine.
 _Avoid_: tracked repo, allowed repo
 
 **Redaction pattern**:
