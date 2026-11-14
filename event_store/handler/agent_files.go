@@ -159,12 +159,16 @@ func (h *AgentHandler) UploadAgentFile(c *fiber.Ctx) error {
 	if len(body) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "The body is empty: send the bytes of the unit."})
 	}
-	if body, problem = cutUnit(&unit, body); problem != "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": problem})
-	}
-	if unit.Flags&storage.AgentFlagCut == 0 && strings.HasSuffix(unit.Path, ".jsonl") && body[len(body)-1] != '\n' {
+	// The body is the whole unit unless the client sent its first 32 MiB
+	// with a larger size. A whole .jsonl unit ends with a newline, also when
+	// the server cuts it, so that each end offset is on a line boundary.
+	whole := unit.Size == 0 || unit.Size == uint64(len(body))
+	if whole && strings.HasSuffix(unit.Path, ".jsonl") && body[len(body)-1] != '\n' {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "A unit of a .jsonl file is whole lines: send the bytes up to the last newline."})
+	}
+	if body, problem = cutUnit(&unit, body); problem != "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": problem})
 	}
 	unit.SessionID = sessionID
 	unit.Bytes = body

@@ -253,6 +253,16 @@ func TestAgentSessionUnitsOver32MiB(t *testing.T) {
 		}
 	})
 
+	t.Run("a .jsonl body over 32 MiB once decoded with no newline at its end is refused", func(t *testing.T) {
+		unit := bytes.Repeat([]byte("c"), 33*mib)
+		answer := uploadUnit(t, env, o.secret, cutSession, unitUpload{path: "subagents/agent-a2.jsonl",
+			body: zstdCompressed(t, unit), headers: map[string]string{"Content-Encoding": "zstd"}})
+		expectStatus(t, answer, 400)
+		answer = uploadUnit(t, env, o.secret, cutSession, unitUpload{path: "subagents/agent-a2.jsonl", size: len(unit),
+			body: zstdCompressed(t, unit), headers: map[string]string{"Content-Encoding": "zstd"}})
+		expectStatus(t, answer, 400)
+	})
+
 	t.Run("a size that does not fit the body is refused", func(t *testing.T) {
 		for _, u := range []unitUpload{
 			{path: "other.jsonl", size: 10, body: lines("Longer than ten bytes")},
