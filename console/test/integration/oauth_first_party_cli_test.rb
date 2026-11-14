@@ -268,6 +268,15 @@ class OauthFirstPartyCliTest < ActionDispatch::IntegrationTest
     assert_error_page "a redirect URI written into the row"
     assert_equal "SolidTrace CLI", cli_approval_page.dig("client", "name")
     cli_tokens
+    assert_equal [ "authorization_code", "refresh_token", DEVICE_GRANT ], Oauth::Client.named(CLI).grant_types
+  end
+
+  test "the built-in client's row lists the code, refresh and device grants, so it has the device grant" do
+    client = Oauth::Client.first_party
+    assert_equal [ "authorization_code", "refresh_token", DEVICE_GRANT ], client.grant_types
+    assert_equal [ "http://127.0.0.1/callback" ], client.redirect_uris
+    assert_equal "none", client.token_endpoint_auth_method
+    assert client.device_grant?
   end
 
   test "only the built-in client can have the solidtrace-cli client_id, and it can have no other" do
