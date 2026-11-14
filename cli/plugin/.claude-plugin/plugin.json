@@ -1,0 +1,7 @@
+{
+  "name": "solidtrace",
+  "displayName": "SolidTrace capture",
+  "description": "Uploads your Claude Code Agent sessions in the repositories that your Organization captures to SolidTrace. It needs the solidtrace CLI and 'solidtrace login'.",
+  "author": { "name": "SolidTrace" },
+  "homepage": "https://github.com/Shankar1598/solid_trace"
+}
