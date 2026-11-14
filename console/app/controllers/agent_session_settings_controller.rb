@@ -35,11 +35,13 @@ class AgentSessionSettingsController < ApplicationController
 
   private
 
+  # A refused write shows the page again with its errors: rendered, not
+  # redirected, as the errors of many entries overflow the session's cookie.
   def answer(result, notice)
     if result.done?
       redirect_to page_path, notice: notice
     else
-      redirect_to page_path, inertia: { errors: result.errors }
+      render inertia: "Settings/AgentSessions", props: page_props.merge(errors: result.errors)
     end
   end
 

@@ -48,6 +48,17 @@ class AgentSessionSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 0, @organization.projects.count
   end
 
+  test "a refused turn-on with many malformed entries shows the page with its error" do
+    sign_in_as(@admin)
+    entries = (1..120).map { |n| "https://github.com/acme/repository-number-#{n}.git" }
+
+    turn_on(entries, confirmed: "1")
+
+    assert_response :success
+    assert_match "https://github.com/acme/repository-number-120", inertia_errors["captured_repositories"].first
+    assert_equal 0, @organization.projects.count
+  end
+
   test "a second turn-on makes no second Agent Project and keeps the list" do
     sign_in_as(@admin)
     turn_on([ "github.com/acme/shop" ], confirmed: "1")
@@ -189,19 +200,25 @@ class AgentSessionSettingsControllerTest < ActionDispatch::IntegrationTest
     AgentSessionsSettings.turn_on(organization: @organization, user: @admin, entries: [ "github.com/acme/shop" ], confirmed: true).project
   end
 
+  # A new hash each time, as a request changes the headers it is given.
+  def inertia
+    { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+  end
+
+  # The errors of the last refused write, which renders the page again.
   def inertia_errors
-    follow_redirect!(headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest })
+    follow_redirect!(headers: inertia) if response.redirect?
     JSON.parse(response.body)["props"]["errors"] || {}
   end
 
   def turn_on(entries, confirmed: nil)
     post agent_session_settings_path(org_slug: @organization.slug),
-      params: { captured_repositories: entries, confirmed: confirmed }.compact
+      params: { captured_repositories: entries, confirmed: confirmed }.compact, headers: inertia
   end
 
   def save_list(entries, confirmed: nil)
     patch agent_session_settings_path(org_slug: @organization.slug),
-      params: { captured_repositories: entries.presence || [ "" ], confirmed: confirmed }.compact
+      params: { captured_repositories: entries.presence || [ "" ], confirmed: confirmed }.compact, headers: inertia
   end
 
   def settings_page
