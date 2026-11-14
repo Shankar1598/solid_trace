@@ -2,7 +2,7 @@
 // the MCP server: making one, and the snippets that add the MCP server with it.
 
 /** docs/mcp.md, where the README's repository keeps it. */
-export const MCP_DOCS = 'https://github.com/solidtrace/solid_trace/blob/main/docs/mcp.md'
+export const MCP_DOCS = 'https://github.com/Shankar1598/solid_trace/blob/main/docs/mcp.md'
 
 /** An API token as Settings → API tokens & MCP lists it. Its secret is answered once, when it is made. */
 export interface ApiToken {

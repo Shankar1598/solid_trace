@@ -1,9 +1,19 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createApiToken, mcpSnippets, signInSnippets } from './apiTokens'
+import { createApiToken, MCP_DOCS, mcpSnippets, signInSnippets } from './apiTokens'
 
 const url = 'https://console.example.com/mcp'
 const secret = 'st_abc123'
 const code = (id: string) => mcpSnippets(url, secret).find(s => s.id === id)!.code
+
+describe('MCP_DOCS', () => {
+  it("is docs/mcp.md on main in the repository that the README clones", () => {
+    const readme = readFileSync(resolve(import.meta.dirname, '../../../../README.md'), 'utf8')
+    const repository = readme.match(/git clone [^\n]*?(https:\/\/github\.com\/[^\s]+?)\.git/)![1]
+    expect(MCP_DOCS).toBe(`${repository}/blob/main/docs/mcp.md`)
+  })
+})
 
 describe('sign-in snippets', () => {
   const signIn = (id: string) => signInSnippets(url).find(s => s.id === id)!
