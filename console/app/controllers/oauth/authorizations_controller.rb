@@ -19,6 +19,8 @@ module Oauth
   # decision. Approve makes a Grant and a code; both answers go back to the
   # redirect URI that GET checked, never to one read from a parameter.
   class AuthorizationsController < ApplicationController
+    include ReturnsToOrganization
+
     layout "auth"
     skip_before_action :authenticate_user!
     before_action :require_oauth_on
@@ -216,6 +218,8 @@ module Oauth
 
     def approve(pending)
       organization = current_user.organizations.find_by!(id: params[:organization_id])
+      return send_to_set_up_two_factor(pending, organization) if organization.require_two_factor && !current_user.two_factor?
+
       chosen = scopes(pending)
       resource = resource(pending)
       grant = Grant.create!(
@@ -227,6 +231,14 @@ module Oauth
       _code, secret = Code.issue_authorization!(grant: grant, code_challenge: pending.code_challenge,
                                                 redirect_uri: pending.redirect_uri, resource: resource)
       back_to_client(pending, code: secret)
+    end
+
+    # Require two-factor, as on every Console page: no Grant, but the
+    # Authenticator app set-up for the Organization, which comes back to
+    # this approval page once Two-factor is on.
+    def send_to_set_up_two_factor(pending, organization)
+      keep_return_after_set_up(oauth_authorize_path(request: pending.key), organization)
+      redirect_to new_authenticator_app_path(org: organization.slug)
     end
 
     # Sends the browser to the request's checked redirect URI with the
