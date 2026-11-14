@@ -27,6 +27,15 @@ module Oauth
       user.organization_users.find_by(organization_id: organization_id)
     end
 
+    # The Grants of the relation that the user sees as Signed-in clients, as
+    # user.oauth_grants.signed_in_clients: live, and have had a token,
+    # newest first.
+    def self.signed_in_clients(issuer: Issuer.current)
+      where(revoked_at: nil).where.not(first_token_at: nil)
+        .includes(:client, :organization, :user).order(approved_at: :desc, id: :desc)
+        .select { |grant| grant.live?(issuer: issuer) }
+    end
+
     # Revokes every Grant in the relation that is not revoked yet, as
     # user.oauth_grants.revoke_all!.
     def self.revoke_all!
