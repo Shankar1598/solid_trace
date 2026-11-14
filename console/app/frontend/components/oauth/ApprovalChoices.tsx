@@ -11,6 +11,16 @@ export type ApprovalOrganization = {
   slug: string
   scopes: string[]
   two_factor_note: string | null
+  capture_notice?: CaptureNotice | null
+}
+
+// The engineer's notice (CaptureNotice), for a sign-in that uploads Agent
+// sessions: which repositories upload, to which Organization, and that each
+// member reads them. closing is null when nothing uploads.
+export type CaptureNotice = {
+  lead: string
+  repositories: string[]
+  closing: string | null
 }
 
 type Props = {
@@ -54,6 +64,17 @@ export default function ApprovalChoices({ organizations, no_organization, revoke
           <ul className="list-disc space-y-1 pl-5">
             {organization?.scopes.map((text) => <li key={text}>{text}</li>)}
           </ul>
+          {organization?.capture_notice && (
+            <div role="note" aria-label="What uploads" className="space-y-2 border border-amber-500/50 bg-amber-500/10 p-3">
+              <p>{organization.capture_notice.lead}</p>
+              {organization.capture_notice.repositories.length > 0 && (
+                <ul className="space-y-0.5 pl-2 font-mono text-xs">
+                  {organization.capture_notice.repositories.map((entry) => <li key={entry}>{entry}</li>)}
+                </ul>
+              )}
+              {organization.capture_notice.closing && <p>{organization.capture_notice.closing}</p>}
+            </div>
+          )}
           {organization?.two_factor_note && (
             <p role="note" className="border border-amber-500/50 bg-amber-500/10 p-3">{organization.two_factor_note}</p>
           )}

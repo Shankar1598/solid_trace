@@ -314,7 +314,7 @@ class OauthDeviceFlowTest < ActionDispatch::IntegrationTest
     assert_equal [ { "id" => @acme.id, "name" => "Acme", "slug" => "acme",
                      "scopes" => [ "Use the MCP server as you, in Acme: read its Logs and Issues, and change its " \
                                    "Dashboards, Monitors, Issues and Projects as your role allows." ],
-                     "two_factor_note" => nil } ], props["organizations"]
+                     "two_factor_note" => nil, "capture_notice" => nil } ], props["organizations"]
     assert_nil props["no_organization"]
     assert_equal "You can revoke this in Settings → User.", props["revoke_hint"]
     assert_not_includes response.body, answer["user_code"].delete("-")

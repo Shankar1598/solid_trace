@@ -137,6 +137,7 @@ module Oauth
             scopes: Scopes.requested(pending.scope).map { |scope| format(scope.text, organization: organization.name) },
             two_factor_note: (format(AuthorizationsController::TWO_FACTOR_FIRST, organization: organization.name) if
               sets_up_two_factor_first?(organization)),
+            capture_notice: CaptureNotice.for_scopes(organization, Scopes.requested(pending.scope)),
           }
         end,
         no_organization: (AuthorizationsController::NO_ORGANIZATION if organizations.empty?),
