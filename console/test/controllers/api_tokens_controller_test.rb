@@ -34,6 +34,21 @@ class ApiTokensControllerTest < ActionDispatch::IntegrationTest
     assert_equal "https://solid-trace.example.ts.net/mcp", inertia_props(tokens_page_url)["mcp_url"]
   end
 
+  test "the page notes that sign-in through the browser needs an HTTPS Console URL while OAuth is off, and not when on" do
+    note = inertia_props(tokens_page_url)["browser_sign_in_note"]
+    assert_match "Sign-in through the browser needs an HTTPS Console URL", note
+
+    InstanceSetting.current.tap { |settings| settings.console_url = "http://console.example.com" }.save!(validate: false)
+    assert_equal note, inertia_props(tokens_page_url)["browser_sign_in_note"]
+
+    [ "https://console.example.com", "http://localhost:4001" ].each do |url|
+      InstanceSetting.current.update!(console_url: url)
+      props = inertia_props(tokens_page_url)
+      assert props.key?("browser_sign_in_note")
+      assert_nil props["browser_sign_in_note"], url
+    end
+  end
+
   test "Account no longer lists the tokens" do
     ApiToken.issue!(user: @user, name: "Laptop")
 
