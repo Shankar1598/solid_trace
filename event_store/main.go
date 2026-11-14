@@ -167,6 +167,14 @@ func main() {
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
 	app := handler.NewIngestApp(ingestHandler, healthHandler)
+	// The agent ingest API checks the tokens that Console makes, from its
+	// database, as Project keys are checked.
+	agentTokens, err := auth.NewTokens(cfg.SQLitePath)
+	if err != nil {
+		logger.L.Fatal("Failed to open Console's tokens", "error", err)
+	}
+	defer agentTokens.Close()
+	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(agentTokens, consoleSettings, clock.System{}, serverVersion()))
 
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -222,4 +230,13 @@ func main() {
 	if profiler != nil {
 		profiler.Stop()
 	}
+}
+
+// serverVersion is the release that this binary is, as the image build sets
+// SOLIDTRACE_VERSION (v0.19.0); dev for a build from a checkout.
+func serverVersion() string {
+	if version := os.Getenv("SOLIDTRACE_VERSION"); version != "" {
+		return version
+	}
+	return "dev"
 }

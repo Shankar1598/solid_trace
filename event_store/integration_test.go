@@ -84,6 +84,9 @@ type TestEnv struct {
 	MQWriter   *storage.MessageQueueWriter
 	MQPath     string
 	SQLitePath string
+	// ServerVersion is the version that the agent ingest API says it is,
+	// v0.19.0 unless a test changes it.
+	ServerVersion string
 
 	// LogTransforms runs each Project's Log transform in Log processing.
 	// Restart keeps it; Reopen makes a new one.
@@ -419,6 +422,7 @@ func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 		LocalCacheInterval: storage.LocalCacheHoursInterval,
 		SQLLimits:          storage.DefaultSQLLimits(),
 		IngestMaxWaiting:   100,
+		ServerVersion:      "v0.19.0",
 	}
 	if configure != nil {
 		configure(env)
@@ -530,6 +534,11 @@ func (env *TestEnv) open(t *testing.T) {
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
 	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
+	agentTokens, err := auth.NewTokens(env.SQLitePath)
+	if err != nil {
+		t.Fatalf("Failed to open Console's tokens: %v", err)
+	}
+	handler.RegisterAgentRoutes(env.App, handler.NewAgentHandler(agentTokens, consoleSettings, env.Clock, env.ServerVersion))
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
 		handler.NewOverviewHandler(handler.OverviewConfig{
@@ -550,6 +559,7 @@ func (env *TestEnv) open(t *testing.T) {
 		sqliteWriter.Close()
 		mqWriter.Close()
 		projectAuth.Close()
+		agentTokens.Close()
 		env.LogTransforms.Close()
 		consoleSettings.Close()
 	}

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -187,6 +188,31 @@ func (s *ConsoleSettings) ProjectSlug(projectID uint32) (string, error) {
 		return "", nil
 	}
 	return slug.String, err
+}
+
+// CapturedRepositories returns the captured repositories of an
+// Organization's Agent Project (projects.agent), as Console saved them
+// (Project.normalise_captured_repository). It is an empty list when the
+// Organization has no Agent Project, as Agent sessions are then off.
+func (s *ConsoleSettings) CapturedRepositories(organizationID int64) ([]string, error) {
+	var raw string
+	err := s.db.QueryRow(
+		"SELECT captured_repositories FROM projects WHERE organization_id = ? AND agent = 1", organizationID,
+	).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var entries []string
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return nil, fmt.Errorf("captured repositories of Organization %d: %w", organizationID, err)
+	}
+	if entries == nil {
+		entries = []string{}
+	}
+	return entries, nil
 }
 
 // ProjectLogRetention returns the effective Retention, in whole days, of every
