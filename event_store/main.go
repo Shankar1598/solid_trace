@@ -193,6 +193,7 @@ func main() {
 	})
 	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, overviewHandler, handler.NewTracesHandler(clickHouse), healthHandler, handler.NewConfigHandler(cfg, diskLimit.Bytes))
 	handler.RegisterPerformanceRoutes(queryApp, handler.NewPerformanceHandler(clickHouse))
+	handler.RegisterRedactionRoutes(queryApp)
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort

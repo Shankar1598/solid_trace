@@ -11,6 +11,7 @@ import (
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/pkg/clock"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/redaction"
 )
 
 // AgentAPIPath is where the agent ingest API is on the ingest listener. A
@@ -38,10 +39,11 @@ type AgentTokens interface {
 
 // AgentSettings is what the agent ingest API reads of Console's settings
 // (storage.ConsoleSettings): an Organization's captured repositories and
-// its Agent Project.
+// its Agent Project, and the extra Redaction patterns.
 type AgentSettings interface {
 	CapturedRepositories(organizationID int64) ([]string, error)
 	AgentProject(organizationID int64) (uint32, bool, error)
+	RedactionPatterns() ([]string, error)
 }
 
 // AgentConfig is what the agent ingest API is built on.
@@ -69,6 +71,9 @@ type AgentHandler struct {
 	clock       clock.Clock
 	version     string
 	minimum     *clientVersion
+	// redaction gives the Redaction patterns that each unit goes through
+	// before it is stored.
+	redaction *redaction.Follower
 }
 
 // NewAgentHandler returns the agent ingest API of cfg.
@@ -81,6 +86,7 @@ func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 		clock:       cfg.Clock,
 		version:     cfg.Version,
 		minimum:     minimumClientVersion(cfg.Version),
+		redaction:   redaction.NewFollower(cfg.Settings.RedactionPatterns),
 	}
 }
 
