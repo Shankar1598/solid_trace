@@ -155,6 +155,28 @@ func (s *ConsoleSettings) LocalCacheHours() (int, error) {
 	return hours, nil
 }
 
+// RedactionPatterns returns the extra Redaction patterns that an Instance
+// admin added on Settings → Instance, after the default list
+// (redaction.Defaults): none until one is saved. It's read apart from
+// Instance, as TextMatchBudgetBytes is.
+func (s *ConsoleSettings) RedactionPatterns() ([]string, error) {
+	var raw string
+	err := s.db.QueryRow(
+		"SELECT redaction_patterns FROM instance_settings WHERE id = ?", instanceSettingsID,
+	).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var patterns []string
+	if err := json.Unmarshal([]byte(raw), &patterns); err != nil {
+		return nil, fmt.Errorf("the Redaction patterns: %w", err)
+	}
+	return patterns, nil
+}
+
 // LogRetentionDays returns a Project's effective Retention in whole days: its
 // own, else the instance default. A Project with no row in projects gets the
 // instance default; telling a deleted Project apart is the caller's job. A
