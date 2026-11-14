@@ -14,7 +14,7 @@ on:
   schedule:
     - cron: "17 4 * * 1"
   workflow_run:
-    workflows: [Release images]
+    workflows: [Release images and the agent CLI]
     types: [completed]
   workflow_dispatch:
 
