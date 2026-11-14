@@ -39,6 +39,13 @@ module ReturnsToOrganization
     session[KEPT_RETURN] = { "path" => path, "organization_id" => organization.id, "at" => Time.current.to_i }
   end
 
+  # Deletes the kept path when it is path: the place it returns to has
+  # ended, so the set-up returns as if nothing was kept.
+  def drop_kept_return(path)
+    kept = session[KEPT_RETURN]
+    session.delete(KEPT_RETURN) if kept.is_a?(Hash) && kept["path"] == path
+  end
+
   # The kept path, when org names its Organization and it is less than 10
   # minutes old, else nil.
   def kept_return_path

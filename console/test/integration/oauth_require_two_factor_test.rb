@@ -144,6 +144,32 @@ class OauthRequireTwoFactorTest < ActionDispatch::IntegrationTest
     assert_redirected_to overview_url(org_slug: "acme")
   end
 
+  test "Deny after Approve sent to the set-up ends the return: a later set-up for the Organization goes to its Overview" do
+    key = signed_in_approval_page
+    approve(key, @acme)
+    assert_redirected_to new_authenticator_app_url(org: "acme")
+
+    post oauth_authorize_url, params: { request: key, decision: "deny" }, headers: inertia_headers
+    assert_response :conflict
+    assert_equal "access_denied", redirect_query["error"]
+    assert_nil session[:return_after_set_up]
+
+    set_up_two_factor(org: "acme")
+    assert_equal overview_path(org_slug: "acme"), recovery_codes_page["continue_to"]
+  end
+
+  test "the end of another request keeps the return to the request that sent to the set-up" do
+    key = signed_in_approval_page
+    approve(key, @acme)
+    other = approval_page(@client_id)["request"]
+
+    post oauth_authorize_url, params: { request: other, decision: "deny" }, headers: inertia_headers
+    assert_response :conflict
+
+    set_up_two_factor(org: "acme")
+    assert_equal oauth_authorize_path(request: key), recovery_codes_page["continue_to"]
+  end
+
   test "a first Passkey added from the set-up comes back to the approval page too" do
     key = signed_in_approval_page
     approve(key, @acme)

@@ -253,10 +253,12 @@ module Oauth
     # Sends the browser to the request's checked redirect URI with the
     # answer, state and iss (RFC 9207), and ends the request. An Inertia
     # request gets 409 with X-Inertia-Location, which makes the browser open
-    # the URL; a plain one a 302.
+    # the URL; a plain one a 302. A set-up that this request sent the user
+    # to then no longer returns to it.
     def back_to_client(pending, **answer)
       url = with_query(pending.redirect_uri, **answer, state: pending.state.presence, iss: issuer.url)
       pending.finish(session)
+      drop_kept_return(oauth_authorize_path(request: pending.key))
       if request.inertia?
         inertia_location(url)
       else
