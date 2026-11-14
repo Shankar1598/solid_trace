@@ -289,6 +289,7 @@ func TestAgentSessionDownloadThatFailsAfterItsFirstByte(t *testing.T) {
 const (
 	pendingSession = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
 	retainSession  = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c02"
+	cutLastSession = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c03"
 )
 
 // transcriptText writes size bytes of .jsonl lines, about 2 KB each, of
@@ -562,7 +563,7 @@ func TestAgentSessionDownloadOfWhatIsNotWhole(t *testing.T) {
 	defer env.Cleanup()
 	o := newAgentOrganization(t, env)
 	reader, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization, scopes: []string{"sessions:read"},
-		sessionIDs: []string{pendingSession, cutSession, trimSession, retainSession}})
+		sessionIDs: []string{pendingSession, cutSession, cutLastSession, trimSession, retainSession}})
 	upload := func(sessionID string, u unitUpload) {
 		t.Helper()
 		expectStatus(t, uploadUnit(t, env, o.secret, sessionID, u), 200)
@@ -604,6 +605,34 @@ func TestAgentSessionDownloadOfWhatIsNotWhole(t *testing.T) {
 			"SOLIDTRACE.version":      "1",
 			"SOLIDTRACE.start_offset": "0",
 			"SOLIDTRACE.end_offset":   fmt.Sprint(len(longLine) + len(next)),
+			"SOLIDTRACE.flags":        "cut",
+			"SOLIDTRACE.missing":      fmt.Sprintf("%d-%d", 32*mib, len(longLine)),
+		}
+		for key, value := range want {
+			if f.records[key] != value {
+				t.Errorf("Expected %s %q, got %q", key, value, f.records[key])
+			}
+		}
+		if got := d.header.Get("SolidTrace-Agent-Session-Flags"); got != "cut" {
+			t.Errorf("Expected the Agent session flagged cut, got %q", got)
+		}
+	})
+
+	t.Run("a cut unit at the end of a file is marked cut up to the unit's end", func(t *testing.T) {
+		const mib = 1 << 20
+		longLine := append(bytes.Repeat([]byte("b"), 40*mib), '\n')
+		upload(cutLastSession, unitUpload{path: "session.jsonl", size: len(longLine), body: longLine[:32*mib]})
+		env.ProcessAgentFiles(t)
+
+		d := downloadSession(t, env, reader, cutLastSession)
+		expectDownloadStatus(t, d, 200)
+		f := d.files["session.jsonl"]
+		if f.bytes != string(longLine[:32*mib]) {
+			t.Errorf("Expected the stored 32 MiB, got %d bytes", len(f.bytes))
+		}
+		want := map[string]string{
+			"SOLIDTRACE.start_offset": "0",
+			"SOLIDTRACE.end_offset":   fmt.Sprint(len(longLine)),
 			"SOLIDTRACE.flags":        "cut",
 			"SOLIDTRACE.missing":      fmt.Sprintf("%d-%d", 32*mib, len(longLine)),
 		}
