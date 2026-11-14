@@ -30,6 +30,7 @@ type transcriptLine struct {
 	Content          json.RawMessage `json:"content"`
 	Attachment       json.RawMessage `json:"attachment"`
 	AiTitle          string          `json:"aiTitle"`
+	Origin           *lineOrigin     `json:"origin"`
 	// A queue-operation line.
 	Operation   string `json:"operation"`
 	Reason      string `json:"reason"`
@@ -81,10 +82,30 @@ type contentBlock struct {
 }
 
 type attachment struct {
-	Type       string          `json:"type"`
-	Prompt     json.RawMessage `json:"prompt"`
-	SourceUUID string          `json:"source_uuid"`
+	Type        string          `json:"type"`
+	Prompt      json.RawMessage `json:"prompt"`
+	SourceUUID  string          `json:"source_uuid"`
+	CommandMode string          `json:"commandMode"`
+	IsMeta      bool            `json:"isMeta"`
+	Origin      *lineOrigin     `json:"origin"`
 }
+
+// lineOrigin is who gave Claude Code a message: "human" for a person, or
+// another kind, as "task-notification" for the end of a background task or
+// "peer" for a subagent's hand-back. Older versions of Claude Code do not
+// write it.
+type lineOrigin struct {
+	Kind string `json:"kind"`
+}
+
+// fromAnotherOrigin is true for an origin that is not a person.
+func fromAnotherOrigin(o *lineOrigin) bool {
+	return o != nil && o.Kind != "" && o.Kind != "human"
+}
+
+// taskNotification is the start of the text of the notice that Claude Code
+// gives the agent when a background task ends.
+const taskNotification = "<task-notification>"
 
 // The roles of user lines (spec, Storage): a message that a person sent,
 // and a user line that Claude Code or an agent wrote, as hook feedback, a
@@ -301,6 +322,9 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 				role = roleNotPerson
 			}
 		}
+		if line.Type == "user" && fromAnotherOrigin(line.Origin) {
+			role = roleNotPerson
+		}
 		var msg transcriptMessage
 		if s, ok := stringValue(line.Message); ok {
 			text.WriteString(s)
@@ -313,6 +337,9 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 			}
 			s, blocks := contentOf(msg.Content)
 			text.WriteString(s)
+			if role == rolePerson && strings.HasPrefix(s, taskNotification) {
+				role = roleNotPerson
+			}
 			for i, b := range blocks {
 				if i > 0 || s != "" {
 					text.WriteByte('\n')
@@ -359,11 +386,14 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 			kind = "attachment/" + a.Type
 			if a.Type == "queued_command" {
 				// A message that was queued while the agent worked: a
-				// person's message, at the time of its delivery.
+				// person's message, at the time of its delivery. Claude
+				// Code also queues the notice of a background task's end
+				// and a subagent's hand-back in this way.
 				s, _ := contentOf(a.Prompt)
 				text.WriteString(s)
 				role = rolePerson
-				if line.IsSidechain || subagent {
+				if line.IsSidechain || subagent || a.IsMeta || a.CommandMode == "task-notification" ||
+					fromAnotherOrigin(a.Origin) || fromAnotherOrigin(line.Origin) || strings.HasPrefix(s, taskNotification) {
 					role = roleNotPerson
 				}
 				set("agent.source_uuid", a.SourceUUID)

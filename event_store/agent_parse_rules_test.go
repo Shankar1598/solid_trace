@@ -112,6 +112,16 @@ func TestWhoSentEachUserLine(t *testing.T) {
 		`{"type":"user","uuid":"u1","timestamp":"2026-10-02T11:00:00Z","message":{"role":"user","content":"Add a cart page"}}`,
 		`{"type":"user","uuid":"u2","timestamp":"2026-10-02T11:00:01Z","message":{"role":"user","content":[{"type":"text","text":"Use the shop style"}]}}`,
 		`{"type":"user","uuid":"u3","isMeta":true,"timestamp":"2026-10-02T11:00:02Z","message":{"role":"user","content":"Stop hook feedback: run the report"}}`,
+		// The shapes of real transcripts: a person's message with its origin,
+		// the notice of a background task's end as a user line and as a
+		// queued message, and a subagent's hand-back.
+		`{"type":"user","uuid":"u4","timestamp":"2026-10-02T11:00:02.1Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"Run the tests"}}`,
+		`{"type":"user","uuid":"u5","timestamp":"2026-10-02T11:00:02.2Z","origin":{"kind":"task-notification"},"promptSource":"system","message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"}}`,
+		`{"type":"user","uuid":"u6","timestamp":"2026-10-02T11:00:02.3Z","message":{"role":"user","content":"<task-notification>\n<task-id>b2</task-id>\n</task-notification>"}}`,
+		`{"type":"attachment","uuid":"q1","timestamp":"2026-10-02T11:00:02.4Z","attachment":{"type":"queued_command","prompt":"Also check the footer","source_uuid":"c1","commandMode":"prompt","origin":{"kind":"human"}}}`,
+		`{"type":"attachment","uuid":"q2","timestamp":"2026-10-02T11:00:02.5Z","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>b3</task-id>\n</task-notification>","source_uuid":"c2","commandMode":"task-notification","origin":{"kind":"task-notification","producer":"session-task"}}}`,
+		`{"type":"attachment","uuid":"q3","timestamp":"2026-10-02T11:00:02.6Z","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>b4</task-id>\n</task-notification>","source_uuid":"c3","commandMode":"task-notification"}}`,
+		`{"type":"attachment","uuid":"q4","timestamp":"2026-10-02T11:00:02.7Z","attachment":{"type":"queued_command","prompt":"<agent-message from=\"a0\">The report</agent-message>","source_uuid":"c4","commandMode":"prompt","isMeta":true,"origin":{"kind":"peer","from":"a0"}}}`,
 	}
 	subagent := []string{
 		`{"type":"user","uuid":"s1","isSidechain":true,"timestamp":"2026-10-02T11:00:03Z","message":{"role":"user","content":"Find the cart code"}}`,
@@ -121,7 +131,8 @@ func TestWhoSentEachUserLine(t *testing.T) {
 	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "subagents/agent-a1.jsonl", body: jsonl(subagent...)}), 200)
 
 	logs := sessionLogs(t, env, o.project, laptopSession)
-	want := []string{"person", "person", "not from a person", "not from a person", "tool"}
+	want := []string{"person", "person", "not from a person", "person", "not from a person", "not from a person",
+		"person", "not from a person", "not from a person", "not from a person", "not from a person", "tool"}
 	if len(logs) != len(want) {
 		t.Fatalf("Expected %d Logs, got %+v", len(want), logs)
 	}
