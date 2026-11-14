@@ -63,7 +63,7 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
       "https://[::1]/client.json",
       "https://[::ffff:127.0.0.1]/client.json",
       "https://0.0.0.0/client.json",
-      long,
+      long
     ].each do |client_id|
       get oauth_authorize_url(authorize_params(client_id: client_id))
 
@@ -91,7 +91,7 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
       { redirect_uris: [ "https://client.example.com/callback" ] },
       { redirect_uris: nil },
       { redirect_uris: "http://localhost:4567/callback" },
-      { token_endpoint_auth_method: "client_secret_basic" },
+      { token_endpoint_auth_method: "client_secret_basic" }
     ].each do |changes|
       stub_request(:get, CLIENT_ID).to_return(status: 200, body: description(**changes).to_json,
                                               headers: { "Content-Type" => "application/json" })
@@ -121,7 +121,7 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     [
       [ "127.0.0.1" ], [ "10.0.0.5" ], [ "172.16.0.1" ], [ "192.168.1.1" ], [ "169.254.169.254" ], [ "224.0.0.1" ],
       [ "0.0.0.0" ], [ "::1" ], [ "fc00::1" ], [ "fe80::1" ], [ "ff02::1" ], [ "::ffff:10.0.0.5" ],
-      [ PUBLIC_ADDRESS, "10.0.0.5" ],
+      [ PUBLIC_ADDRESS, "10.0.0.5" ]
     ].each do |addresses|
       @addresses["client.example.com"] = addresses
 

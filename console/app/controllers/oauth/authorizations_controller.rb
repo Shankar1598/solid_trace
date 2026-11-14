@@ -8,7 +8,11 @@ module Oauth
   # shows an error page and never redirects. It then keeps the request as a
   # PendingRequest, whose key alone goes into the Rails session, and with no
   # Session sends the browser only to /login, which comes back to the short
-  # path ?request=<key>. With a Session it checks the other parameters (an
+  # path ?request=<key>. A client_id that is an HTTPS URL (a published
+  # description) gets only the form check before sign-in; with a Session,
+  # Console fetches or reads the description (PublishedDescription) and
+  # checks the redirect URI against it, with the error page on a problem.
+  # With a Session it then checks the other parameters (an
   # error there goes back to the client) and shows the page.
   #
   # POST takes only the request's key, the Organization's id and the

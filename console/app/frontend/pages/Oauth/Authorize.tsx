@@ -9,7 +9,7 @@ type Organization = { id: number; name: string; slug: string; scopes: string[] }
 
 type Props = {
   request: string
-  client: { name: string; name_note: string; redirect_host: string }
+  client: { name: string; name_checked: boolean; name_note: string; redirect_host: string }
   loopback_warning: string | null
   organizations: Organization[]
   revoke_hint: string
@@ -37,7 +37,10 @@ export default function Authorize({ request, client, loopback_warning, organizat
       <div className="space-y-5 text-sm">
         <div className="space-y-1">
           <p className="text-base font-medium">{client.name}</p>
-          <p className="text-muted-foreground">{client.name_note}</p>
+          {/* A published name: the client owns the host that publishes it. A registered name is only its claim. */}
+          <p className={client.name_checked ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}>
+            {client.name_note}
+          </p>
           <p>
             After you decide, Console sends you to <span className="font-mono">{client.redirect_host}</span>.
           </p>
