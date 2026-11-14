@@ -116,6 +116,10 @@ func (f *AgentAPI) upload(w http.ResponseWriter, r *http.Request) {
 		strings.Contains("/"+path+"/", "/../") || q.Get("harness") == "" || len(strings.Split(repository, "/")) < 3:
 		fail(http.StatusBadRequest, "The query is bad.")
 		return
+	case q.Get("run_id") != "" || q.Get("project") != "":
+		// The fake's tokens are a person's sign-in, not a Run's.
+		fail(http.StatusBadRequest, "Only a token of a Run sends run_id and project.")
+		return
 	case len(body) == 0:
 		fail(http.StatusBadRequest, "The body is empty: send the bytes of the unit.")
 		return

@@ -1,0 +1,168 @@
+{
+  "about": "The request cases of the agent ingest API. They run against the CLI's fake (cli/internal/fake/cases_test.go) and against the real API in EventStore's test environment (event_store/agent_cases_test.go), so the fake cannot drift from the real API. Each case has a new Agent session id, written {session} in a path. A step's token is member (a sessions:write token of a member of Acme), none or wrong; its user_agent is solidtrace/0.19.0 unless set. The server is v0.19.0, so it accepts solidtrace 0.16.0 or later. A step checks the status, the server's version header, the keys of body (a subset: an object needs each key, a list needs each item in order), and that the error text has error_has.",
+  "server_version": "v0.19.0",
+  "organization": "Acme",
+  "captured_repositories": ["bitbucket.org/acme/shop", "bitbucket.org/acme-tools/*"],
+  "cases": [
+    {
+      "name": "the captured repositories list",
+      "steps": [
+        {"method": "GET", "path": "/captured-repositories", "status": 200,
+         "body": {"organization": {"name": "Acme"}, "captured_repositories": ["bitbucket.org/acme/shop", "bitbucket.org/acme-tools/*"]}}
+      ]
+    },
+    {
+      "name": "no token or a wrong token is refused",
+      "steps": [
+        {"method": "GET", "path": "/captured-repositories", "token": "none", "status": 401},
+        {"method": "GET", "path": "/captured-repositories", "token": "wrong", "status": 401},
+        {"method": "GET", "path": "/agent-sessions/{session}/files", "token": "wrong", "status": 401},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "token": "none", "status": 401,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":1}\n"}
+      ]
+    },
+    {
+      "name": "a client older than the minimum version hears the minimum version, before the token check",
+      "steps": [
+        {"method": "GET", "path": "/captured-repositories", "user_agent": "solidtrace/0.15.9", "status": 426,
+         "body": {"minimum_version": "0.16.0"}, "error_has": "0.16.0"},
+        {"method": "GET", "path": "/captured-repositories", "user_agent": "solidtrace/0.15.9", "token": "none", "status": 426,
+         "body": {"minimum_version": "0.16.0"}},
+        {"method": "GET", "path": "/agent-sessions/{session}/files", "user_agent": "solidtrace/0.12.0", "status": 426},
+        {"method": "GET", "path": "/captured-repositories", "user_agent": "solidtrace/0.16.0", "status": 200}
+      ]
+    },
+    {
+      "name": "the server has nothing of a new Agent session",
+      "steps": [
+        {"method": "GET", "path": "/agent-sessions/{session}/files", "status": 200, "body": {"agent_session": null, "files": []}}
+      ]
+    },
+    {
+      "name": "whole lines append by offset, and a repeat stores nothing",
+      "steps": [
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "folder": "services/api"},
+         "body_text": "{\"n\":1}\n", "body": {"path": "{session}.jsonl", "version": 1, "end_offset": 8, "stored": true}},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200, "gzip": true,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "8", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "folder": "services/api"},
+         "body_text": "{\"n\":2}\n{\"n\":3}\n", "body": {"version": 1, "end_offset": 24, "stored": true}},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "folder": "services/api"},
+         "body_text": "{\"n\":1}\n", "body": {"version": 1, "end_offset": 24, "stored": false}},
+        {"method": "GET", "path": "/agent-sessions/{session}/files", "status": 200,
+         "body": {"agent_session": {"id": "{session}", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "folder": "services/api"},
+                  "files": [{"path": "{session}.jsonl", "version": 1, "end_offset": 24}]}}
+      ]
+    },
+    {
+      "name": "a unit that leaves a gap is refused with the stored end",
+      "steps": [
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 409,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "20", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":3}\n", "body": {"version": 1, "end_offset": 8}},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 409,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "4", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":3}\n", "body": {"version": 1, "end_offset": 8}}
+      ]
+    },
+    {
+      "name": "a trimmed file goes again as a new version from offset 0",
+      "steps": [
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":1}\n{\"n\":2}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 409,
+         "query": {"path": "{session}.jsonl", "version": "2", "offset": "8", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":9}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}.jsonl", "version": "2", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":9}\n", "body": {"version": 2, "end_offset": 8, "stored": true}},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 409,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "16", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":3}\n", "body": {"version": 2, "end_offset": 8}},
+        {"method": "GET", "path": "/agent-sessions/{session}/files", "status": 200,
+         "body": {"files": [{"path": "{session}.jsonl", "version": 2, "end_offset": 8}]}}
+      ]
+    },
+    {
+      "name": "a file that is not .jsonl goes whole with its hash; the same hash does nothing; a new hash is a new version",
+      "steps": [
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}/tool-results/t1.txt", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "first output"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}/tool-results/t1.txt", "version": "1", "offset": "3", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "content_hash": "sha256:aa"},
+         "body_text": "first output"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}/tool-results/t1.txt", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "content_hash": "sha256:aa"},
+         "body_text": "first output", "body": {"version": 1, "end_offset": 12, "stored": true}},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}/tool-results/t1.txt", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "content_hash": "sha256:aa"},
+         "body_text": "first output", "body": {"version": 1, "end_offset": 12, "stored": false}},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 409,
+         "query": {"path": "{session}/tool-results/t1.txt", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "content_hash": "sha256:bb"},
+         "body_text": "other output"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}/tool-results/t1.txt", "version": "2", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "content_hash": "sha256:bb"},
+         "body_text": "the second output", "body": {"version": 2, "end_offset": 17, "stored": true}},
+        {"method": "GET", "path": "/agent-sessions/{session}/files", "status": 200,
+         "body": {"files": [{"path": "{session}/tool-results/t1.txt", "version": 2, "end_offset": 17, "content_hash": "sha256:bb"}]}}
+      ]
+    },
+    {
+      "name": "a repository not in the list is refused; the host's letter case, .git and a workspace entry match",
+      "steps": [
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 403,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "github.com/someone/private"},
+         "body_text": "{\"n\":1}\n", "error_has": "captured repositories"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 403,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme-toolsets/x"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "BitBucket.org/acme/shop.git"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}/a.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme-tools/deploy"},
+         "body_text": "{\"n\":1}\n"}
+      ]
+    },
+    {
+      "name": "a bad unit or query is refused",
+      "steps": [
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":1}"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": ""},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}.jsonl", "version": "0", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "../{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "repository": "bitbucket.org/acme/shop"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/shop"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "run_id": "r1", "project": "shop"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "size": "4"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 400,
+         "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme/shop", "size": "40000000"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "GET", "path": "/agent-sessions/{session}/files", "status": 200, "body": {"agent_session": null, "files": []}}
+      ]
+    }
+  ]
+}
