@@ -3,6 +3,7 @@ package redaction_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -126,5 +127,18 @@ func TestCheckRefusesAClassThatStartsOrEndsOnAQuoteOrABackslash(t *testing.T) {
 		if err := redaction.Check(expr); err != nil {
 			t.Errorf("Expected %s to pass, got %v", expr, err)
 		}
+	}
+}
+
+func TestNewTakesAtMostMaxPatterns(t *testing.T) {
+	patterns := make([]string, redaction.MaxPatterns+1)
+	for i := range patterns {
+		patterns[i] = fmt.Sprintf("p%d_[a-z]{4}", i)
+	}
+	if _, err := redaction.New(patterns[:redaction.MaxPatterns]); err != nil {
+		t.Errorf("Expected %d patterns to pass, got %v", redaction.MaxPatterns, err)
+	}
+	if _, err := redaction.New(patterns); err == nil {
+		t.Errorf("Expected %d patterns to be refused", len(patterns))
 	}
 }
