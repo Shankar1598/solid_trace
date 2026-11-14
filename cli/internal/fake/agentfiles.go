@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // files answers what the fake has of an Agent session, as the real
@@ -88,12 +89,21 @@ func (f *AgentAPI) upload(w http.ResponseWriter, r *http.Request) {
 	request.Body = body
 
 	f.mu.Lock()
+	delay := f.UploadDelay
+	f.mu.Unlock()
+	time.Sleep(delay)
+
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.UploadsDown {
 		fail(http.StatusInternalServerError, "The unit could not be stored. Try again later.")
 		return
 	}
 	path, hash, repository := q.Get("path"), q.Get("content_hash"), q.Get("repository")
+	if status := f.Refuse[path]; status != 0 {
+		fail(status, "This fake refuses "+path+".")
+		return
+	}
 	version, errVersion := strconv.ParseUint(q.Get("version"), 10, 32)
 	offset, errOffset := strconv.ParseUint(q.Get("offset"), 10, 64)
 	size := uint64(len(body))

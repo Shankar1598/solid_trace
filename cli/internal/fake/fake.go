@@ -450,6 +450,10 @@ type AgentAPI struct {
 	Down bool
 	// UploadsDown answers 500 to each upload.
 	UploadsDown bool
+	// Refuse answers the status to each upload of a path.
+	Refuse map[string]int
+	// UploadDelay is how long each upload waits before it answers.
+	UploadDelay time.Duration
 	// Requests are the offsets calls and uploads, in order.
 	Requests []Request
 	// Sessions are the stored Agent sessions, by id.

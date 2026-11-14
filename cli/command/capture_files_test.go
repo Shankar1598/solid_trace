@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -240,5 +241,51 @@ func TestALineOrAFileOver32MiBIsSentAsItsFirst32MiBWithItsFullSize(t *testing.T)
 	if huge == nil || len(huge.Bytes) != fake.UnitLimit || huge.End != fake.UnitLimit+5 ||
 		huge.ContentHash != sha256Of(strings.Repeat("z", fake.UnitLimit+5)) {
 		t.Errorf("huge file: %+v", huge)
+	}
+}
+
+func TestARefusalOfOnePathLetsTheOtherPathsGo(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusConflict} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			w := newWorld(t, acme)
+			s := w.capturedSession()
+			s.write("", "{\"main\":1}\n")
+			s.write("subagents/agent-a1.jsonl", "{\"sub\":1}\n")
+			s.write("tool-results/t1.txt", "out")
+			w.agent.Set(func(f *fake.AgentAPI) { f.Refuse = map[string]int{s.main(): status} })
+			s.hook("SessionEnd")
+			if s.stored(s.id+"/subagents/agent-a1.jsonl") != "{\"sub\":1}\n" || s.stored(s.id+"/tool-results/t1.txt") != "out" {
+				t.Errorf("the other paths did not go; log: %s", w.captureLog())
+			}
+			if !strings.Contains(w.captureLog(), s.main()) || !strings.Contains(w.captureLog(), strconv.Itoa(status)) {
+				t.Errorf("the refusal is not in the log: %s", w.captureLog())
+			}
+		})
+	}
+}
+
+func TestAForbiddenOrFailedUploadStopsTheCall(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			w := newWorld(t, acme)
+			s := w.capturedSession()
+			s.write("", "{\"main\":1}\n")
+			s.write("subagents/agent-a1.jsonl", "{\"sub\":1}\n")
+			s.write("tool-results/t1.txt", "out")
+			w.agent.Set(func(f *fake.AgentAPI) { f.Refuse = map[string]int{s.main(): status} })
+			s.hook("SessionEnd")
+			posts := 0
+			for _, r := range w.agent.AllRequests() {
+				if r.Method == http.MethodPost {
+					posts++
+				}
+			}
+			if posts != 1 {
+				t.Errorf("uploads after a %d: %d, want only the refused one", status, posts)
+			}
+			if !strings.Contains(w.captureLog(), strconv.Itoa(status)) {
+				t.Errorf("log: %s", w.captureLog())
+			}
+		})
 	}
 }
