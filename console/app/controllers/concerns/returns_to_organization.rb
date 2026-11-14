@@ -25,9 +25,12 @@ module ReturnsToOrganization
 
   # Where the user goes once Two-factor is on: the kept path when it applies
   # (#kept_return_path), else the Organization's Overview, else Settings →
-  # User.
+  # User. The kept path is deleted in both cases: once Two-factor is on, the
+  # user needs no return to set it up again.
   def return_url
-    kept_return_path || (return_organization ? overview_path(org_slug: return_organization.slug) : user_settings_path)
+    path = kept_return_path
+    session.delete(KEPT_RETURN)
+    path || (return_organization ? overview_path(org_slug: return_organization.slug) : user_settings_path)
   end
 
   # Keeps path, which Console made, as the place to return to once
@@ -37,10 +40,9 @@ module ReturnsToOrganization
   end
 
   # The kept path, when org names its Organization and it is less than 10
-  # minutes old, else nil. It is deleted in both cases: once Two-factor is
-  # on, the user needs no return to set it up again.
+  # minutes old, else nil.
   def kept_return_path
-    kept = session.delete(KEPT_RETURN)
+    kept = session[KEPT_RETURN]
     return unless kept.is_a?(Hash) && return_organization
     return unless kept["organization_id"] == return_organization.id
     return unless Time.current.to_i - kept["at"].to_i < KEPT_RETURN_LASTS

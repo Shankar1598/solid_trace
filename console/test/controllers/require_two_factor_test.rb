@@ -65,7 +65,7 @@ class RequireTwoFactorTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_authenticator_app_url(org: "acme")
 
     get new_authenticator_app_url(org: "acme"), headers: inertia
-    assert_equal({ "name" => "Acme", "slug" => "acme", "requires_two_factor" => true },
+    assert_equal({ "name" => "Acme", "slug" => "acme", "requires_two_factor" => true, "to_approval_page" => false },
       response.parsed_body.dig("props", "return_organization"))
     secret = response.parsed_body.dig("props", "secret")
     post authenticator_app_url, params: { code: code_for(secret), org: "acme", proof: { password: "password" } }

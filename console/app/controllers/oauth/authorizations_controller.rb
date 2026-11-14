@@ -39,6 +39,7 @@ module Oauth
     REVOKE_HINT = "You can revoke this in Settings → User."
     NO_ORGANIZATION = "You are in no Organization, so there is nothing to approve. Ask an Organization admin to " \
                       "add you, then start the sign-in again."
+    TWO_FACTOR_FIRST = "%{organization} requires Two-factor. Approve sends you to set it up first, then back to this page."
     TOO_MANY_DECISIONS = "Too many approvals and denials. Try again in a few minutes."
     MAX_STATE = 512
     # An S256 code_challenge: the base64url SHA-256 of the verifier, 43
@@ -202,6 +203,7 @@ module Oauth
           {
             id: organization.id, name: organization.name, slug: organization.slug,
             scopes: scopes(pending).map { |scope| format(scope.text, organization: organization.name) },
+            two_factor_note: (format(TWO_FACTOR_FIRST, organization: organization.name) if sets_up_two_factor_first?(organization)),
           }
         end,
         no_organization: (NO_ORGANIZATION if organizations.empty?),
@@ -218,7 +220,7 @@ module Oauth
 
     def approve(pending)
       organization = current_user.organizations.find_by!(id: params[:organization_id])
-      return send_to_set_up_two_factor(pending, organization) if organization.require_two_factor && !current_user.two_factor?
+      return send_to_set_up_two_factor(pending, organization) if sets_up_two_factor_first?(organization)
 
       chosen = scopes(pending)
       resource = resource(pending)
@@ -231,6 +233,10 @@ module Oauth
       _code, secret = Code.issue_authorization!(grant: grant, code_challenge: pending.code_challenge,
                                                 redirect_uri: pending.redirect_uri, resource: resource)
       back_to_client(pending, code: secret)
+    end
+
+    def sets_up_two_factor_first?(organization)
+      organization.require_two_factor && !current_user.two_factor?
     end
 
     # Require two-factor, as on every Console page: no Grant, but the

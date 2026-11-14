@@ -26,11 +26,13 @@ class AuthenticatorAppsController < ApplicationController
       uri: current_user.authenticator_uri,
       qr_code: RQRCode::QRCode.new(current_user.authenticator_uri).as_svg(module_size: 4, use_path: true, viewbox: true).sub(/\A<\?xml[^>]*>/, ""),
       # requires_two_factor says it was the Organization's Require two-factor
-      # that sent the user here.
+      # that sent the user here; to_approval_page, that the set-up returns
+      # to the approval page that sent them (ReturnsToOrganization).
       return_organization: return_organization && {
         name: return_organization.name,
         slug: return_organization.slug,
         requires_two_factor: return_organization.require_two_factor,
+        to_approval_page: kept_return_path.present?,
       },
       # A Passkey, added on Settings → User, is Two-factor too.
       passkeys_here: passkeys_here?,

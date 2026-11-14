@@ -45,9 +45,19 @@ class OauthRequireTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal "/authenticator_app/new?org=acme", URI(response.location).request_uri
   end
 
+  test "the approval page tells which Organizations send to the set-up first" do
+    sign_in_as @user
+    notes = approval_page(registered_client)["organizations"].to_h { |organization| [ organization["slug"], organization["two_factor_note"] ] }
+
+    assert_equal({ "acme" => "Acme requires Two-factor. Approve sends you to set it up first, then back to this page.",
+                   "beta" => nil }, notes)
+  end
+
   test "after the set-up the user comes back to the same approval page, and Approve then makes the Grant" do
     key = signed_in_approval_page
     approve(key, @acme)
+    assert_equal({ "name" => "Acme", "slug" => "acme", "requires_two_factor" => true, "to_approval_page" => true },
+      set_up_page_for("acme")["return_organization"])
 
     set_up_two_factor(org: "acme")
 
@@ -83,6 +93,7 @@ class OauthRequireTwoFactorTest < ActionDispatch::IntegrationTest
 
   test "a set-up for another Organization, or for none, returns as before, and the kept path is deleted" do
     approve(signed_in_approval_page, @acme)
+    assert_equal false, set_up_page_for("beta").dig("return_organization", "to_approval_page")
     set_up_two_factor(org: "beta")
     assert_equal overview_path(org_slug: "beta"), recovery_codes_page["continue_to"]
     assert_nil session[:return_after_set_up]
