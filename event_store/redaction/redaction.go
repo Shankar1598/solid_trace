@@ -26,9 +26,11 @@ import (
 type Pattern struct {
 	Name, Expr string
 	// WordStart keeps only a match that starts at a word boundary: at the
-	// start, or after a byte that is not a letter, a digit or '_'. It is
-	// \b at the start of Expr, but Expr without it keeps its literal prefix,
-	// which Go's regexp finds about 100 times faster.
+	// start, or after a character that is not a letter, a digit or '_'. It
+	// is \b at the start of Expr, but Expr without it keeps its literal
+	// prefix, which Go's regexp finds about 100 times faster. The character
+	// before is read as JSON text decodes it, so a match after \n, \t or
+	// \u003e (a line break, a tab, '>') starts at a word boundary.
 	WordStart bool
 }
 
@@ -156,6 +158,46 @@ func isWordByte(b byte) bool {
 	return b == '_' || ('0' <= b && b <= '9') || ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z')
 }
 
+// wordStart reports whether offset i of piece starts a word: the character
+// before i, decoded as in a JSON string, is not a letter, a digit or '_'.
+// An escape can end in a word byte (the n of \n, the last hex digit of
+// \u003e), but the character that it gives is not one.
+func wordStart(piece []byte, i int) bool {
+	if i == 0 || !isWordByte(piece[i-1]) {
+		return true
+	}
+	if strings.IndexByte("nrtbf", piece[i-1]) >= 0 && escapeAt(piece, i-2) {
+		return true
+	}
+	if i >= 6 && piece[i-5] == 'u' && escapeAt(piece, i-6) {
+		var r rune
+		for _, h := range piece[i-4 : i] {
+			switch {
+			case '0' <= h && h <= '9':
+				r = r<<4 | rune(h-'0')
+			case 'a' <= h && h <= 'f':
+				r = r<<4 | rune(h-'a'+10)
+			case 'A' <= h && h <= 'F':
+				r = r<<4 | rune(h-'A'+10)
+			default:
+				return false
+			}
+		}
+		return r >= 0x80 || !isWordByte(byte(r))
+	}
+	return false
+}
+
+// escapeAt reports whether the backslash at offset i starts an escape: an
+// odd count of backslashes ends at i, so it is not itself escaped (\\).
+func escapeAt(piece []byte, i int) bool {
+	n := 0
+	for ; i >= 0 && piece[i] == '\\'; i-- {
+		n++
+	}
+	return n%2 == 1
+}
+
 // Unit replaces in place each byte of unit that a pattern matches with '*'.
 // A unit of a .jsonl file (jsonl) is whole lines, and each line is
 // redacted alone; another file is redacted whole.
@@ -183,7 +225,7 @@ func (s *Set) piece(piece []byte) {
 	var spans [][]int
 	for _, p := range s.patterns {
 		for _, m := range p.re.FindAllIndex(piece, -1) {
-			if m[1] > m[0] && !(p.wordStart && m[0] > 0 && isWordByte(piece[m[0]-1])) {
+			if m[1] > m[0] && (!p.wordStart || wordStart(piece, m[0])) {
 				spans = append(spans, m)
 			}
 		}

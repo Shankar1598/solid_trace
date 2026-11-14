@@ -142,6 +142,27 @@ func TestAgentSessionRedactionOnUpload(t *testing.T) {
 		}
 	})
 
+	t.Run("a secret right after a JSON escape, as at the start of a line of output, is replaced", func(t *testing.T) {
+		for name, secret := range defaultSecrets() {
+			// json.Marshal writes \n, \t and > (for '>').
+			for _, before := range []string{"pw:\n", "user\tpw\t", ">"} {
+				line := textLine(before + secret + "\n")
+				want := strings.ReplaceAll(line, secret, stars(secret))
+				if got := upload(t, line, nil); got != want {
+					t.Errorf("%s after %q: expected %q, got %q", name, before, want, got)
+				}
+			}
+		}
+		// The decoded text has a word character before the app password:
+		// a backslash and an n (\\n), or an A (A).
+		app := defaultSecrets()["Bitbucket app password"]
+		for _, line := range []string{textLine(`pw:\n` + app), `{"text":"pw:\u0041` + app + `"}` + "\n"} {
+			if got := upload(t, line, nil); got != line {
+				t.Errorf("Expected no change, got %q", got)
+			}
+		}
+	})
+
 	t.Run("a secret at the start and at the end of a unit is replaced", func(t *testing.T) {
 		key := defaultSecrets()["Anthropic API key"]
 		body := `{"` + key + `":1}` + "\n" + textLine("first") + `{"text":"` + key + `"}` + "\n"
