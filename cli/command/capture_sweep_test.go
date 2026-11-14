@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -374,5 +375,109 @@ func TestTheSweepSendsTheNewLinesOfATranscriptWithNoWorkingDirectory(t *testing.
 	}
 	if line := w.statusOf(crashedID); !strings.Contains(line, "uploaded") {
 		t.Errorf("status: %q", line)
+	}
+}
+
+// holdLock holds a lock of capture as another process does, until the
+// returned function is called.
+func (w *world) holdLock(name string) func() {
+	w.t.Helper()
+	dir := filepath.Join(w.dir, "capture")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		w.t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, name+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		w.t.Fatal(err)
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+			f.Close()
+		}
+	}
+	w.t.Cleanup(release)
+	return release
+}
+
+func TestOnlyOneSweepRunsAtATime(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
+	s := w.sessionWithID(crashedID, repo)
+	s.begin("{\"n\":1}\n")
+	s.age(time.Hour)
+
+	release := w.holdLock("sweep")
+	start := time.Now()
+	w.startSession(repo)
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("the sweep waited %s for the other sweep", d)
+	}
+	if n := len(w.agent.AllRequests()); n != 0 {
+		t.Errorf("the second sweep sent %d requests", n)
+	}
+	if !strings.Contains(w.captureLog(), "another sweep runs") {
+		t.Errorf("log: %s", w.captureLog())
+	}
+
+	release()
+	w.startSession(repo)
+	if got := s.stored(s.main()); got != s.started("{\"n\":1}\n") {
+		t.Errorf("stored after the next sweep: %q", got)
+	}
+}
+
+func TestTheSweepSkipsAnAgentSessionThatAHookUploads(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
+	busy := w.sessionWithID(crashedID, repo)
+	busy.begin("{\"a\":1}\n")
+	busy.age(time.Hour)
+	other := w.sessionWithID(otherID, repo)
+	other.begin("{\"b\":1}\n")
+	other.age(time.Hour)
+
+	release := w.holdLock(crashedID)
+	start := time.Now()
+	w.startSession(repo)
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("the sweep waited %s for the hook's call", d)
+	}
+	for _, r := range w.agent.AllRequests() {
+		if r.SessionID == crashedID {
+			t.Errorf("the sweep sent %s for an Agent session that a hook uploads", r.Method)
+		}
+	}
+	if got := other.stored(other.main()); got != other.started("{\"b\":1}\n") {
+		t.Errorf("the other Agent session after the sweep: %q", got)
+	}
+
+	release()
+	w.startSession(repo)
+	if got := busy.stored(busy.main()); got != busy.started("{\"a\":1}\n") {
+		t.Errorf("stored at the next sweep: %q\nlog: %s", got, w.captureLog())
+	}
+}
+
+func TestCaptureStatusWithNoNetworkShowsTheListKeptOnThisMachine(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	s := w.sessionWithID(crashedID, w.gitRepo("origin=https://bitbucket.org/acme/shop.git"))
+	s.begin("{\"n\":1}\n")
+	s.stop()
+
+	w.agent.Set(func(f *fake.AgentAPI) { f.Down = true })
+	out := w.status()
+	for _, want := range []string{"could not be read", "The list kept on this machine is from", "bitbucket.org/acme/shop"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("capture status has no %q:\n%s", want, out)
+		}
 	}
 }
