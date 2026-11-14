@@ -137,7 +137,10 @@ func TestLoginRefusesAnIngestURLThatIsNotHTTPS(t *testing.T) {
 	w := newWorld(t, acme)
 
 	// The access token goes to the Ingest URL, as to the Console URL.
-	for _, bad := range []string{"http://ingest.example.com", "http://10.100.0.3:4000", "ftp://ingest.example.com"} {
+	// It must not carry credentials, a query or a fragment to the token's
+	// requests either.
+	for _, bad := range []string{"http://ingest.example.com", "http://10.100.0.3:4000", "ftp://ingest.example.com",
+		"https://user:pw@ingest.example.com", "https://ingest.example.com/?a=b", "https://ingest.example.com/#f"} {
 		if code := w.run("login", "--ingest-url", bad, w.oauth.URL()); code != 2 {
 			t.Errorf("--ingest-url %s: exit %d, want 2", bad, code)
 		}
