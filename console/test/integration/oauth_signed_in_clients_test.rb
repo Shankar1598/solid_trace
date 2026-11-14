@@ -161,6 +161,20 @@ class OauthSignedInClientsTest < ActionDispatch::IntegrationTest
     assert_equal 1, signed_in_clients.size
   end
 
+  test "a Grant whose only refresh token was used, with no replacement, is not listed: that token cannot act any more" do
+    signed_in
+    Oauth::Token.refresh.update_all(used_at: 2.minutes.ago)
+
+    assert_equal [], signed_in_clients
+  end
+
+  test "a Grant whose only refresh token was revoked is not listed" do
+    signed_in
+    Oauth::Token.refresh.update_all(revoked_at: Time.current)
+
+    assert_equal [], signed_in_clients
+  end
+
   test "another user's Grants are not listed" do
     grace_signs_in
 

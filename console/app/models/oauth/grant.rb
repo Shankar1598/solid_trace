@@ -28,12 +28,14 @@ module Oauth
     end
 
     # The Grants of the relation that the user sees as Signed-in clients, as
-    # user.oauth_grants.signed_in_clients: live, and have had a token and
-    # still have a refresh token that works (a Grant not used for
-    # Token::REFRESH_LASTS expired and cannot act any more), newest first.
+    # user.oauth_grants.signed_in_clients: live, and still have a refresh
+    # token that works, newest first. A Grant with a refresh token has had a
+    # token; a Grant not used for Token::REFRESH_LASTS expired and cannot act
+    # any more. #live? decides; where(revoked_at: nil) only stops the load of
+    # revoked Grants, whose tokens stay for CleanupJob::KEEP_TOKENS.
     def self.signed_in_clients(issuer: Issuer.current)
       working = Token.refresh.where(used_at: nil, revoked_at: nil).where(Token.arel_table[:expires_at].gt(Time.current))
-      where(revoked_at: nil).where.not(first_token_at: nil).where(id: working.select(:oauth_grant_id))
+      where(revoked_at: nil).where(id: working.select(:oauth_grant_id))
         .includes(:client, :organization, :user).order(approved_at: :desc, id: :desc)
         .select { |grant| grant.live?(issuer: issuer) }
     end
