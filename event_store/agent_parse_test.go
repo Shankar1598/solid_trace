@@ -63,7 +63,7 @@ func TestTheParseMakesOneLogForEachLineOfAnAgentSession(t *testing.T) {
 	body := jsonl(transcript...)
 	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", folder: "web", body: body}), 200)
 	// A file that is not .jsonl has no Logs.
-	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "tool-results/r1.txt", body: []byte("package cart\n")}), 200)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "tool-results/r1.txt", contentHash: "sha256:ee", body: []byte("package cart\n")}), 200)
 
 	logs := sessionLogs(t, env, o.project, laptopSession)
 	if len(logs) != len(transcript) {
