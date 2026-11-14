@@ -61,7 +61,9 @@ func (c *Capturer) Sweep(ctx context.Context, projectsDir string) error {
 			r.Fingerprint == fingerprint(filepath.Dir(s.TranscriptPath), s.ID) {
 			continue
 		}
-		in := Input{SessionID: s.ID, TranscriptPath: s.TranscriptPath, HookEventName: SessionStart}
+		// The sweep has no hook cwd: when no line of the transcript has a
+		// cwd, the start directory that an earlier call found is used.
+		in := Input{SessionID: s.ID, TranscriptPath: s.TranscriptPath, Cwd: r.StartDir, HookEventName: SessionStart}
 		if err := c.one(ctx, in, list, p); err != nil {
 			c.Log("sweep: %s: %v", s.ID, err)
 			if p.stopped == nil && stopsTheSweep(err) {

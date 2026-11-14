@@ -356,3 +356,23 @@ func TestWithNoListTheSweepMarksTheChangedAgentSessionsOfACapturedRepositoryFail
 		t.Errorf("status of an Agent session not in the list: %q", line)
 	}
 }
+
+func TestTheSweepSendsTheNewLinesOfATranscriptWithNoWorkingDirectory(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
+	s := w.sessionWithID(crashedID, repo)
+	// No line has a cwd: the hook's cwd matched the repository.
+	s.write("", "{\"n\":1}\n")
+	s.stop()
+	s.add("", "{\"n\":2}\n")
+	s.age(time.Hour)
+
+	w.startSession(repo)
+	if got := s.stored(s.main()); got != "{\"n\":1}\n{\"n\":2}\n" {
+		t.Errorf("stored after the sweep: %q\nlog: %s", got, w.captureLog())
+	}
+	if line := w.statusOf(crashedID); !strings.Contains(line, "uploaded") {
+		t.Errorf("status: %q", line)
+	}
+}
