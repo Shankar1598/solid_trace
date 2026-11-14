@@ -92,6 +92,7 @@ func parseUnit(unit storage.AgentFileUnit, retentionDays int) []models.Log {
 		} else {
 			object["time"] = previous
 		}
+		keepOnStoredDay(object, receipt.At)
 		addSource(object, unit, offset, len(raw))
 		log, outcome := normalise.JSON(object, receipt)
 		if outcome == normalise.Dropped {
@@ -103,6 +104,32 @@ func parseUnit(unit storage.AgentFileUnit, retentionDays int) []models.Log {
 		logs = append(logs, log)
 	}
 	return logs
+}
+
+// keepOnStoredDay keeps a Log on the UTC day on which the server stored
+// its unit, which is the day of its raw row, so that Retention and the disk
+// limit drop the raw record and its Logs together (spec, Storage). A line
+// whose own time is on a different day, as in an old Agent session uploaded
+// late, gets the stored time, and its own time stays in original.time, as
+// normalise keeps a time that it does not use.
+func keepOnStoredDay(object map[string]json.RawMessage, storedAt time.Time) {
+	raw, ok := object["time"]
+	if !ok {
+		return
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return
+	}
+	if t.UTC().Format(time.DateOnly) == storedAt.UTC().Format(time.DateOnly) {
+		return
+	}
+	delete(object, "time")
+	object["original.time"] = raw
 }
 
 // lineObject is the Log of one line as a JSON object for normalise: the

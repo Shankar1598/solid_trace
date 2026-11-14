@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/solidtrace/event_store/storage"
 )
 
 // The background parse: after the raw layer has a unit of a .jsonl file,
@@ -232,4 +234,44 @@ func TestANewVersionAfterATrimIsParsedFromItsStartAndTheOldLogsStay(t *testing.T
 	if !slices.Equal(got, want) {
 		t.Errorf("Expected the Logs of both versions %v, got %v", want, got)
 	}
+}
+
+// A line written on an earlier day than the day the server stored it, as in
+// an old Agent session that uploads late, has its Log on the day of its raw
+// row, so that the disk limit and Retention drop the two together.
+func TestALineOfAnEarlierDayHasItsLogOnTheDayOfItsRawRow(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	old := `{"type":"user","timestamp":"2026-10-01T09:00:00Z","message":{"role":"user","content":"October 1"}}`
+	env.Clock.Set(time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(old)}), 200)
+	env.ProcessAgentFiles(t)
+	env.Clock.Set(time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC))
+	body := lines("October 21")
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(old) + 1, body: body}), 200)
+
+	logs := sessionLogs(t, env, o.project, laptopSession)
+	if len(logs) != 2 {
+		t.Fatalf("Expected 2 Logs, got %+v", logs)
+	}
+	if want := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC); !logs[0].Time.Equal(want) || logs[0].Attributes["original.time"] != "2026-10-01T09:00:00Z" {
+		t.Errorf("Expected the Log at the stored time %s with its own time in original.time, got %+v", want, logs[0])
+	}
+
+	expectKept := func(days []string, messages []string, when string) {
+		t.Helper()
+		if got := agentDaysKept(t, env, o.project); !slices.Equal(got, days) {
+			t.Errorf("Expected the raw days %v %s, got %v", days, when, got)
+		}
+		if got := agentLogMessages(t, env, o.project); !slices.Equal(got, messages) {
+			t.Errorf("Expected the Logs %v %s, got %v", messages, when, got)
+		}
+	}
+	_, total := agentDiskUse(t, env)
+	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: total - 1}, []storage.DayFamily{storage.LogDays, storage.AgentDays}); err != nil {
+		t.Fatalf("Enforcing the disk limit failed: %v", err)
+	}
+	expectKept([]string{"2026-10-21"}, []string{"October 21"}, "after the disk limit")
 }
