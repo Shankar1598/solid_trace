@@ -227,6 +227,18 @@ class OauthIntrospectionTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "an introspection call records a use of the caller's API token" do
+    _, secret = ApiToken.issue!(user: @user, name: "Laptop")
+    caller_token = ApiToken.find_by_secret(@caller)
+    caller_token.update_column(:last_used_at, nil)
+
+    freeze_time
+    introspect(secret)
+
+    assert_response :ok
+    assert_equal Time.current, caller_token.reload.last_used_at
+  end
+
   test "a caller's API token answers without a Console URL, as OAuth is off" do
     InstanceSetting.current.update!(console_url: nil)
     assert_not Oauth::Issuer.current.on?
