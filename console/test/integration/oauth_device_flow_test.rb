@@ -477,6 +477,21 @@ class OauthDeviceFlowTest < ActionDispatch::IntegrationTest
       [ grant.approved_via, grant.user, grant.organization, grant.user_agent ]
   end
 
+  test "the refresh token from the device flow gets a new pair, with no fetch of the description" do
+    publish
+    answer = device_code_answer
+    sign_in_as @user
+    decide approval_page(answer["user_code"])["request"], "approve"
+    poll answer["device_code"]
+    refresh_token = response.parsed_body["refresh_token"]
+
+    post oauth_token_url, params: { grant_type: "refresh_token", refresh_token: refresh_token, client_id: CLIENT_ID }
+
+    assert_response :ok
+    assert_match(/\Asto_/, response.parsed_body["access_token"])
+    assert_requested :get, CLIENT_ID, times: 1
+  end
+
   test "polling answers authorization_pending before a decision, and access_denied after Deny" do
     publish
     answer = device_code_answer
