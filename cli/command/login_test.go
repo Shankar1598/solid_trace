@@ -2,6 +2,7 @@ package command_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"io"
 	"net/http"
@@ -19,17 +20,19 @@ import (
 // world is one engineer's machine and one SolidTrace: the fake OAuth server
 // and the fake agent ingest API.
 type world struct {
-	t       *testing.T
-	oauth   *fake.OAuth
-	agent   *fake.AgentAPI
-	dir     string
-	stdout  *syncBuffer
-	stderr  *syncBuffer
-	browser func(url string) error
-	opened  []string
-	clock   *clock
-	slept   []time.Duration
-	version string
+	t      *testing.T
+	oauth  *fake.OAuth
+	agent  *fake.AgentAPI
+	dir    string
+	stdout *syncBuffer
+	stderr *syncBuffer
+	// httpTimeout is the HTTP client's Timeout; 0 is 10 s.
+	httpTimeout time.Duration
+	browser     func(url string) error
+	opened      []string
+	clock       *clock
+	slept       []time.Duration
+	version     string
 }
 
 type syncBuffer struct {
@@ -103,7 +106,7 @@ func (w *world) env() command.Env {
 		Stdout:      w.stdout,
 		Stderr:      w.stderr,
 		ConfigDir:   w.dir,
-		HTTP:        &http.Client{Timeout: 10 * time.Second},
+		HTTP:        &http.Client{Timeout: cmp.Or(w.httpTimeout, 10*time.Second)},
 		OpenBrowser: w.browser,
 		Now:         w.clock.Now,
 		Sleep: func(ctx context.Context, d time.Duration) error {

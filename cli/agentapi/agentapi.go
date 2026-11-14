@@ -6,14 +6,19 @@
 package agentapi
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Path is where the agent ingest API is under the ingest URL.
@@ -86,12 +91,110 @@ func (c *Client) CapturedRepositories(ctx context.Context) (CapturedRepositories
 	return list, err
 }
 
+// AgentSessionFile is what the server has of one path of an Agent
+// session: its highest version, the end offset of that version and, for a
+// file that is not .jsonl, its content hash.
+type AgentSessionFile struct {
+	Path        string `json:"path"`
+	Version     uint32 `json:"version"`
+	EndOffset   uint64 `json:"end_offset"`
+	ContentHash string `json:"content_hash"`
+}
+
+// AgentSessionFiles asks what the server has of an Agent session.
+func (c *Client) AgentSessionFiles(ctx context.Context, sessionID string) ([]AgentSessionFile, error) {
+	var answer struct {
+		Files []AgentSessionFile `json:"files"`
+	}
+	err := c.call(ctx, http.MethodGet, "/agent-sessions/"+url.PathEscape(sessionID)+"/files", nil, &answer)
+	return answer.Files, err
+}
+
+// Unit is one upload of a file of an Agent session: Bytes from Offset of
+// the Path's Version. Size is the size of the unit on disk when Bytes are
+// only its first 32 MiB, else 0.
+type Unit struct {
+	Path        string
+	Version     uint32
+	Offset      uint64
+	Size        uint64
+	ContentHash string
+	Harness     string
+	Repository  string
+	Folder      string
+	Bytes       []byte
+}
+
+// Uploaded is the server's answer to an upload.
+type Uploaded struct {
+	Path      string `json:"path"`
+	Version   uint32 `json:"version"`
+	EndOffset uint64 `json:"end_offset"`
+	Stored    bool   `json:"stored"`
+}
+
+// UploadBase and UploadRate give an upload its time limit: UploadBase, and
+// one more second for each UploadRate bytes of the gzip body (a 32 MiB
+// body has about 9 minutes). The HTTP client's Timeout, which is for the
+// small calls, does not apply to an upload.
+const (
+	UploadBase = 30 * time.Second
+	UploadRate = 64 << 10
+)
+
+// Upload sends one unit, gzip-compressed. A 409 (a gap, an overlap or an
+// older version) is an *Error with Status 409.
+func (c *Client) Upload(ctx context.Context, sessionID string, unit Unit) (Uploaded, error) {
+	query := url.Values{
+		"path":       {unit.Path},
+		"version":    {strconv.FormatUint(uint64(unit.Version), 10)},
+		"offset":     {strconv.FormatUint(unit.Offset, 10)},
+		"harness":    {unit.Harness},
+		"repository": {unit.Repository},
+	}
+	if unit.Folder != "" {
+		query.Set("folder", unit.Folder)
+	}
+	if unit.ContentHash != "" {
+		query.Set("content_hash", unit.ContentHash)
+	}
+	if unit.Size != 0 {
+		query.Set("size", strconv.FormatUint(unit.Size, 10))
+	}
+	var body bytes.Buffer
+	zw := gzip.NewWriter(&body)
+	if _, err := zw.Write(unit.Bytes); err != nil {
+		return Uploaded{}, err
+	}
+	if err := zw.Close(); err != nil {
+		return Uploaded{}, err
+	}
+	limit := UploadBase + time.Duration(body.Len()/UploadRate)*time.Second
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	hc := *c.HTTP
+	hc.Timeout = 0
+	var answer Uploaded
+	err := c.callWith(ctx, &hc, http.MethodPost, "/agent-sessions/"+url.PathEscape(sessionID)+"/files?"+query.Encode(),
+		body.Bytes(), &answer)
+	return answer, err
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, into any) error {
+	return c.call(ctx, http.MethodGet, path, nil, into)
+}
+
+// call sends one request; body nil is a GET with no body, else a gzip body.
+func (c *Client) call(ctx context.Context, method, path string, body []byte, into any) error {
+	return c.callWith(ctx, c.HTTP, method, path, body, into)
+}
+
+func (c *Client) callWith(ctx context.Context, hc *http.Client, method, path string, body []byte, into any) error {
 	token, err := c.Tokens.Token(ctx)
 	if err != nil {
 		return err
 	}
-	resp, err := c.get(ctx, path, token)
+	resp, err := c.send(ctx, hc, method, path, body, token)
 	if err != nil {
 		return err
 	}
@@ -100,41 +203,49 @@ func (c *Client) getJSON(ctx context.Context, path string, into any) error {
 		if token, err = c.Tokens.Refreshed(ctx, token); err != nil {
 			return err
 		}
-		if resp, err = c.get(ctx, path, token); err != nil {
+		if resp, err = c.send(ctx, hc, method, path, body, token); err != nil {
 			return err
 		}
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		var answer struct {
+		var problem struct {
 			Error          string `json:"error"`
 			MinimumVersion string `json:"minimum_version"`
 		}
-		_ = json.Unmarshal(body, &answer)
-		return &Error{Status: resp.StatusCode, Message: answer.Error, MinimumVersion: answer.MinimumVersion}
+		_ = json.Unmarshal(answer, &problem)
+		return &Error{Status: resp.StatusCode, Message: problem.Error, MinimumVersion: problem.MinimumVersion}
 	}
-	if err := json.Unmarshal(body, into); err != nil {
+	if err := json.Unmarshal(answer, into); err != nil {
 		return fmt.Errorf("read the answer of %s: %w", path, err)
 	}
 	return nil
 }
 
-func (c *Client) get(ctx context.Context, path, token string) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, hc *http.Client, method, path string, body []byte, token string) (*http.Response, error) {
 	if c.IngestURL == "" {
 		return nil, errors.New("no ingest URL: run 'solidtrace login' again")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.IngestURL, "/")+Path+path, nil)
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.IngestURL, "/")+Path+path, reader)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "solidtrace/"+c.Version)
-	resp, err := c.HTTP.Do(req)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.Header.Set("Content-Encoding", "gzip")
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("reach the agent ingest API at %s: %w", c.IngestURL, err)
 	}
