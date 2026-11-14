@@ -1,13 +1,16 @@
 package command_test
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/solidtrace/cli/capture"
 	"github.com/solidtrace/cli/internal/fake"
 )
 
@@ -118,6 +121,28 @@ func TestTheSweepWaitsForAFileThatChangesNow(t *testing.T) {
 	}
 	if got := open.stored(open.main()); got != open.started("{\"n\":1}\n") {
 		t.Errorf("stored lines: %q", got)
+	}
+}
+
+// A file that was not settled at the first sweep stays pending: the next
+// sweep sends it when it settles, also when nothing changed in between.
+func TestTheNextSweepSendsAFileThatSettledWithNoChange(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
+	open := w.sessionWithID(otherID, repo)
+	open.begin("{\"n\":1}\n")
+	open.write("tool-results/t1.txt", "being written")
+	open.age(0)
+
+	w.startSession(repo)
+	if got := open.stored(open.id + "/tool-results/t1.txt"); got != "" {
+		t.Fatalf("the first sweep sent a file that changed at once: %q", got)
+	}
+	w.clock.Add(2 * capture.SettleAfter)
+	w.sessionWithID(newID, repo).hook("SessionStart")
+	if got := open.stored(open.id + "/tool-results/t1.txt"); got != "being written" {
+		t.Errorf("the second sweep did not send the settled file: %q\nlog: %s", got, w.captureLog())
 	}
 }
 
@@ -259,6 +284,57 @@ func TestTheSweepStopsAtAFailureOfEachUploadAndMarksTheRestFailed(t *testing.T) 
 		if line := w.statusOf(id); !strings.Contains(line, "failed") || !strings.Contains(line, "500") {
 			t.Errorf("status of %s: %q", id, line)
 		}
+	}
+}
+
+// A refusal of one Agent session (400, 403, 404, 409) does not stop the
+// sweep. A failure that the next Agent session would get too (401, 500)
+// stops it, and the next Agent session gets that failure with no request.
+func TestWhichRefusalsStopTheSweep(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		stops  bool
+	}{
+		{http.StatusBadRequest, false},
+		{http.StatusForbidden, false},
+		{http.StatusNotFound, false},
+		{http.StatusConflict, false},
+		{http.StatusUnauthorized, true},
+		{http.StatusInternalServerError, true},
+	} {
+		t.Run(strconv.Itoa(tc.status), func(t *testing.T) {
+			w := newWorld(t, acme)
+			w.signIn()
+			repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
+			// The sweep reads the files of a project directory in name
+			// order: a comes before b.
+			a := w.sessionWithID(crashedID, repo)
+			a.begin("{\"a\":1}\n")
+			b := w.sessionWithID(otherID, repo)
+			b.begin("{\"b\":1}\n")
+			w.agent.Set(func(f *fake.AgentAPI) { f.Refuse = map[string]int{a.main(): tc.status} })
+
+			w.startSession(repo)
+			sentB := false
+			for _, r := range w.agent.AllRequests() {
+				if r.SessionID == otherID {
+					sentB = true
+				}
+			}
+			if !tc.stops {
+				if got := b.stored(b.main()); got != b.started("{\"b\":1}\n") {
+					t.Errorf("after a %d for another Agent session, stored lines: %q\nlog: %s", tc.status, got, w.captureLog())
+				}
+				return
+			}
+			if sentB {
+				t.Errorf("the sweep went on after a %d", tc.status)
+			}
+			// The next Agent session gets the failure of the upload of a.
+			if line := w.statusOf(otherID); !strings.Contains(line, "failed") || !strings.Contains(line, a.main()) {
+				t.Errorf("status of the next Agent session: %q", line)
+			}
+		})
 	}
 }
 
