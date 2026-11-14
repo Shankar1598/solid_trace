@@ -1,0 +1,247 @@
+# frozen_string_literal: true
+
+require "ipaddr"
+require "net/http"
+
+module Oauth
+  # A client's published description: a Client ID Metadata Document, whose
+  # HTTPS URL is the client's client_id (as Claude Code uses). Console
+  # knows the client from this address, so the approval page says the name
+  # is checked: the client must own the host that publishes it.
+  #
+  # A URL from a stranger is only given the form check (.well_formed?).
+  # Console fetches the description (.client) only for a signed-in user,
+  # and keeps the copy on the client row until its HTTP cache time ends (at
+  # least 5 minutes, at most 24 hours). The token endpoint and the other
+  # JSON endpoints never fetch: they read the copy.
+  #
+  # The fetch guards against SSRF: it resolves the host first, refuses a
+  # loopback, private, link-local, multicast or unspecified address, and
+  # connects to the checked address, with no proxy. HTTPS only, no
+  # redirects, 5 seconds, at most 64 KB, a JSON object only.
+  module PublishedDescription
+    MAX_URL = 512
+    MAX_BYTES = 64.kilobytes
+    TIMEOUT = 5
+    MIN_FRESH = 5.minutes
+    MAX_FRESH = 24.hours
+    # A fetch that started this long ago has stopped, so another can start.
+    FETCH_LASTS = 30.seconds
+    # Fetches for each user.
+    LIMIT = 10
+    LIMIT_WITHIN = 3.minutes
+    # Addresses that IPAddr does not name but that reach this computer or
+    # its network: the unspecified ones (0.0.0.0 reaches loopback on Linux)
+    # and multicast.
+    REFUSED_RANGES = %w[0.0.0.0/8 ::/128 224.0.0.0/4 255.255.255.255/32 ff00::/8].map { |range| IPAddr.new(range) }.freeze
+
+    BUSY = "Console is checking this client now. Try again in a moment."
+    TOO_MANY = "Console checked too many clients for you. Try again in a few minutes."
+
+    # A problem with the description or its fetch, said in words for the
+    # error page.
+    class Problem < StandardError; end
+
+    # The host's addresses, as strings. Tests replace it.
+    mattr_accessor :resolver, default: ->(host) {
+      Addrinfo.getaddrinfo(host, 443, nil, :STREAM, timeout: TIMEOUT).map(&:ip_address).uniq
+    }
+    # The store that counts each user's fetches; nil is Rails.cache.
+    mattr_accessor :limit_store
+
+    module_function
+
+    # Whether client_id claims to be a published description's URL, so it
+    # gets the form check and not a look-up of a registered client.
+    def url?(client_id)
+      client_id.to_s.match?(%r{\Ahttps?://}i)
+    end
+
+    # The form check: https, a host name or a public address, a path, no
+    # user info, no fragment, no dot segments, at most 512 characters.
+    def well_formed?(url)
+      return false unless url.is_a?(String) && url.length <= MAX_URL
+
+      uri = URI(url)
+      return false unless uri.scheme == "https" && uri.host.present? && uri.userinfo.nil? && uri.fragment.nil?
+      return false if uri.path.blank? || uri.path == "/" || uri.path.split("/").intersect?(%w[. ..])
+
+      address = ip_literal(uri.hostname)
+      address.nil? || public_address?(address)
+    rescue URI::InvalidURIError
+      false
+    end
+
+    # Whether address (an IPAddr) is one that Console may connect to.
+    def public_address?(address)
+      address = address.native
+      !(address.loopback? || address.private? || address.link_local? ||
+        REFUSED_RANGES.any? { |range| range.family == address.family && range.include?(address) })
+    end
+
+    # The client for url with a fresh copy of its description, fetched for
+    # user if the kept copy is old or missing. Only one fetch at a time runs
+    # for one client_id: another request in that time gets the old copy, or
+    # Problem (BUSY) when there is none. Raises Problem when the fetch or the
+    # description fails.
+    def client(url, user:)
+      client = Client.find_by(client_id: url) || placeholder(url)
+      return client if client.fresh?
+
+      unless client.start_fetch!
+        return client if client.fetched?
+
+        raise Problem, BUSY
+      end
+
+      begin
+        raise Problem, TOO_MANY if over_limit?(user)
+
+        document, lasts = fetch(url)
+        client.keep_description!(document, fresh_for: lasts)
+      ensure
+        client.end_fetch!
+      end
+      client
+    end
+
+    # The description at url, checked, and how long it stays fresh.
+    def fetch(url)
+      uri = URI(url)
+      address = checked_address(uri.hostname)
+      response, body = get(uri, address)
+      document = parse(body, uri)
+      check(document, url, uri)
+      [ document, fresh_for(response["Cache-Control"]) ]
+    end
+
+    # A connection to uri's host at address, the checked address, with no
+    # proxy, so DNS is not asked again and cannot give another address.
+    def connection(uri, address)
+      Net::HTTP.new(uri.hostname, uri.port, nil).tap do |http|
+        http.ipaddr = address
+        http.use_ssl = true
+        http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+        http.open_timeout = http.read_timeout = http.write_timeout = http.ssl_timeout = TIMEOUT
+        http.max_retries = 0
+      end
+    end
+
+    # A row for url, with no copy yet, so the fetch can lock it. Only a
+    # signed-in user's request makes one.
+    def placeholder(url)
+      Client.create!(kind: "cimd", client_id: url, name: URI(url).host, redirect_uris: [], grant_types: [])
+    rescue ActiveRecord::RecordNotUnique
+      Client.find_by!(client_id: url)
+    end
+
+    def over_limit?(user)
+      count = (limit_store || Rails.cache).increment("oauth/published-description-fetches/#{user.id}", 1,
+                                                     expires_in: LIMIT_WITHIN)
+      count.to_i > LIMIT
+    end
+
+    def checked_address(host)
+      addresses = ip_literal(host) ? [ host ] : resolver.call(host)
+      if addresses.blank?
+        raise Problem, "Console could not find the address of #{host}, which publishes the client's description."
+      end
+      unless addresses.all? { |address| public_address?(IPAddr.new(address)) }
+        raise Problem, "#{host} has a private or local address, so Console does not fetch the client's description."
+      end
+
+      addresses.first
+    rescue SocketError, IPAddr::InvalidAddressError
+      raise Problem, "Console could not find the address of #{host}, which publishes the client's description."
+    end
+
+    def get(uri, address)
+      http = connection(uri, address)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + TIMEOUT
+      body = +""
+      response = nil
+      http.start do
+        request = Net::HTTP::Get.new(uri, "Accept" => "application/json", "User-Agent" => "SolidTrace")
+        http.request(request) do |answer|
+          response = answer
+          check_status(answer, uri)
+          raise Problem, too_large(uri) if answer.content_length.to_i > MAX_BYTES
+
+          answer.read_body do |chunk|
+            body << chunk
+            raise Problem, too_large(uri) if body.bytesize > MAX_BYTES
+            raise Problem, too_slow(uri) if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+          end
+        end
+      end
+      [ response, body ]
+    rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout, Timeout::Error
+      raise Problem, too_slow(uri)
+    rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError, Net::HTTPBadResponse, Net::ProtocolError
+      raise Problem, "Console could not fetch the client's description from #{uri.host}. Try again later."
+    end
+
+    def check_status(answer, uri)
+      return if answer.is_a?(Net::HTTPOK)
+
+      if answer.is_a?(Net::HTTPRedirection)
+        raise Problem, "#{uri.host} answered the client's description with a redirect. Console follows no redirects."
+      end
+
+      raise Problem, "#{uri.host} answered the client's description with HTTP #{answer.code}."
+    end
+
+    def parse(body, uri)
+      document = JSON.parse(body)
+      return document if document.is_a?(Hash)
+
+      raise Problem, not_json(uri)
+    rescue JSON::ParserError, EncodingError
+      raise Problem, not_json(uri)
+    end
+
+    def check(document, url, uri)
+      unless document["client_id"] == url
+        raise Problem, "The description at #{uri.host} names another client_id, so Console does not use it."
+      end
+
+      redirect_uris = document["redirect_uris"]
+      unless redirect_uris.is_a?(Array) && redirect_uris.any? { |redirect| Client.allowed_redirect_uri?(redirect) }
+        raise Problem, "The description at #{uri.host} gives no https:// or loopback redirect_uris."
+      end
+
+      unless document["token_endpoint_auth_method"].nil? || document["token_endpoint_auth_method"] == "none"
+        raise Problem, "The description at #{uri.host} is for a confidential client. Console accepts only " \
+                       "token_endpoint_auth_method none, with PKCE."
+      end
+    end
+
+    # The HTTP cache time from Cache-Control's max-age, held between 5
+    # minutes and 24 hours; no max-age (or no-store, no-cache) is 5 minutes.
+    def fresh_for(cache_control)
+      directives = cache_control.to_s.downcase.split(",").map(&:strip)
+      max_age = directives.filter_map { |directive| directive[/\Amax-age=(\d+)\z/, 1] }.first
+      return MIN_FRESH if max_age.nil? || directives.intersect?(%w[no-store no-cache])
+
+      max_age.to_i.seconds.clamp(MIN_FRESH, MAX_FRESH)
+    end
+
+    def ip_literal(host)
+      IPAddr.new(host.to_s)
+    rescue IPAddr::InvalidAddressError
+      nil
+    end
+
+    def too_large(uri)
+      "The client's description at #{uri.host} is larger than 64 KB, so Console does not read it."
+    end
+
+    def too_slow(uri)
+      "#{uri.host} did not send the client's description within #{TIMEOUT} seconds. Try again later."
+    end
+
+    def not_json(uri)
+      "The client's description at #{uri.host} is not a JSON object."
+    end
+  end
+end

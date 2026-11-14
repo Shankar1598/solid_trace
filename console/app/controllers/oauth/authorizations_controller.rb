@@ -25,6 +25,11 @@ module Oauth
     NAME_NOT_CHECKED = "Not checked: the client gave this name"
     REVOKE_HINT = "You can revoke this in Settings → User."
     MAX_STATE = 512
+    BAD_PUBLISHED_CLIENT_ID = "The client_id is not a usable address of a published client description: it must be an " \
+                              "https:// URL with a path and a public host, at most 512 characters."
+    BAD_REDIRECT = "Console sends you back only to an https:// redirect URI, or an http:// one at localhost, 127.0.0.1 " \
+                   "or [::1]."
+    UNPUBLISHED_REDIRECT = "The client's description does not give this redirect URI, so Console does not send you back to it."
 
     def show
       pending = params[:request].present? ? PendingRequest.find_in_session(session, params[:request]) : start_request
@@ -32,6 +37,7 @@ module Oauth
       return error_page(UNKNOWN_REQUEST) unless pending
 
       return send_to_sign_in(pending) unless resume_session
+      return unless published_client_checked(pending)
 
       problem = request_problem(pending)
       return back_to_client(pending, error: problem[0], error_description: problem[1]) if problem
@@ -43,6 +49,7 @@ module Oauth
       pending = PendingRequest.find_in_session(session, params[:request])
       return error_page(UNKNOWN_REQUEST) unless pending
       return send_to_sign_in(pending) unless resume_session
+      return error_page(UNKNOWN_REQUEST) unless pending.client
 
       problem = request_problem(pending)
       return back_to_client(pending, error: problem[0], error_description: problem[1]) if problem
@@ -64,8 +71,12 @@ module Oauth
       error_page(Issuer::OFF_DESCRIPTION) unless issuer.on?
     end
 
-    # The checked request, kept, or nil after an error page.
+    # The checked request, kept, or nil after an error page. A published
+    # client_id gets only the form check here: Console fetches its
+    # description only after sign-in.
     def start_request
+      return start_published_request if PublishedDescription.url?(params[:client_id])
+
       client = Client.find_by(client_id: params[:client_id].to_s)
       return error_page("Console does not know this client. Start the sign-in again from the program.") unless client
 
@@ -74,12 +85,43 @@ module Oauth
         return error_page("The client did not register this redirect URI, so Console does not send you back to it.")
       end
 
+      keep_request(client: client)
+    end
+
+    def start_published_request
+      client_id = params[:client_id]
+      return error_page(BAD_PUBLISHED_CLIENT_ID) unless PublishedDescription.well_formed?(client_id)
+      return error_page(BAD_REDIRECT) unless Client.allowed_redirect_uri?(params[:redirect_uri])
+
+      keep_request(client_id: client_id)
+    end
+
+    def keep_request(**client)
       PendingRequest.keep!(
-        client: client, redirect_uri: redirect_uri,
+        **client, redirect_uri: params[:redirect_uri],
         response_type: params[:response_type], code_challenge: params[:code_challenge],
         code_challenge_method: params[:code_challenge_method], scope: params[:scope], resource: params[:resource],
         state: params[:state]
       ).tap { |pending| pending.remember(session) }
+    end
+
+    # For a request from a published client_id, after sign-in: the client
+    # with a fresh copy of its description (fetched now if needed), whose
+    # redirect_uris must hold the request's. False after an error page,
+    # which never redirects.
+    def published_client_checked(pending)
+      return true unless pending.published?
+
+      client = PublishedDescription.client(pending.client_id, user: current_user)
+      unless client.redirect_uri_registered?(pending.redirect_uri)
+        error_page(UNPUBLISHED_REDIRECT)
+        return false
+      end
+
+      pending.update!(client: client)
+    rescue PublishedDescription::Problem => problem
+      error_page(problem.message)
+      false
     end
 
     # Sign-in (password and second step, or a Passkey) comes back to the
@@ -129,7 +171,8 @@ module Oauth
         request: pending.key,
         client: {
           name: client.name,
-          name_note: NAME_NOT_CHECKED,
+          name_checked: client.name_checked?,
+          name_note: client.name_checked? ? "Checked: published at #{client.published_host}" : NAME_NOT_CHECKED,
           redirect_host: URI(pending.redirect_uri).host,
         },
         loopback_warning: (LOOPBACK_WARNING if client.loopback_only?),

@@ -6,13 +6,20 @@ module Oauth
   # deletes the expired ones (.keep!). The browser's Rails session holds
   # only the keys of its own requests, at most 3 (#remember), so the cookie
   # stays small and another browser cannot use a key.
+  #
+  # A request from a client with a published description keeps only its
+  # client_id (the URL) until the user signs in: Console fetches nothing
+  # before sign-in. The approval page then finds the client and sets it.
   class PendingRequest < ApplicationRecord
     LASTS = 10.minutes
     # How many pending requests one browser keeps.
     KEEP = 3
     SESSION_KEY = :oauth_requests
 
-    belongs_to :client, class_name: "Oauth::Client", foreign_key: :oauth_client_id, inverse_of: :pending_requests
+    belongs_to :client, class_name: "Oauth::Client", foreign_key: :oauth_client_id, inverse_of: :pending_requests,
+                        optional: true
+
+    validates :client, presence: true, unless: :client_id?
 
     before_validation -> { self.key ||= Secret.generate }, on: :create
 
@@ -31,6 +38,12 @@ module Oauth
       return unless key.is_a?(String) && Array(session[SESSION_KEY]).include?(key)
 
       fresh.find_by(key: key)
+    end
+
+    # Whether the client is not known yet: its published description is
+    # fetched only after sign-in.
+    def published?
+      client_id.present?
     end
 
     # Adds the request's key to session, dropping the oldest key, and its
