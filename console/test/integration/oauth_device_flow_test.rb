@@ -577,6 +577,25 @@ class OauthDeviceFlowTest < ActionDispatch::IntegrationTest
     assert_requested :get, CLIENT_ID, times: 1
   end
 
+  test "a poll after the Grant was revoked or the user left the Organization gets invalid_grant and no tokens" do
+    publish
+    sign_in_as @user
+    revoked = device_code_answer
+    decide approval_page(revoked["user_code"])["request"], "approve"
+    left = device_code_answer
+    decide approval_page(left["user_code"])["request"], "approve"
+    revoked_grant, = Oauth::Grant.order(:id).to_a
+
+    revoked_grant.revoke!
+    poll revoked["device_code"]
+    assert_oauth_error "invalid_grant"
+
+    OrganizationUser.where(user: @user, organization: @acme).delete_all
+    poll left["device_code"]
+    assert_oauth_error "invalid_grant"
+    assert_equal 0, Oauth::Token.count
+  end
+
   test "polling answers authorization_pending before a decision, and access_denied after Deny" do
     publish
     answer = device_code_answer
