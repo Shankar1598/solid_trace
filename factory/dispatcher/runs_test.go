@@ -3,6 +3,7 @@ package dispatcher_test
 import (
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -237,5 +238,23 @@ func TestStartRefusesABodyThatIsNotAStartRunObject(t *testing.T) {
 	ana.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
 	if len(runs.Runs) != 0 {
 		t.Errorf("%d Runs are queued after bad bodies, want 0", len(runs.Runs))
+	}
+}
+
+func TestTheRunsListGivesTheNewest100Runs(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	var newest dispatcherapi.Run
+	for i := range 101 {
+		env.Clock.Advance(time.Second)
+		ana.API("POST", "/api/v1/runs", dispatcherapi.StartRun{Project: "checkout", Prompt: "Run " + strconv.Itoa(i)}).JSON(t, &newest)
+	}
+	var runs dispatcherapi.Runs
+	ana.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
+	if len(runs.Runs) != 100 {
+		t.Fatalf("the list has %d Runs, want 100", len(runs.Runs))
+	}
+	if runs.Runs[0].ID != newest.ID || runs.Runs[99].Prompt != "Run 1" {
+		t.Errorf("the list goes from %q to %q, want from the newest Run %q to \"Run 1\"", runs.Runs[0].Prompt, runs.Runs[99].Prompt, newest.Prompt)
 	}
 }
