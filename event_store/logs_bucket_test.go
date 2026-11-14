@@ -200,7 +200,7 @@ func TestWithABucketTheDiskLimitDeletesNothingWhenAMoveFails(t *testing.T) {
 func dayTablesTTL(t *testing.T, env *TestEnv) map[string]string {
 	t.Helper()
 	ttls := map[string]string{}
-	for _, f := range []storage.DayFamily{storage.LogDays, storage.SpanDays} {
+	for _, f := range []storage.DayFamily{storage.LogDays, storage.SpanDays, storage.AgentDays} {
 		var engine string
 		if err := env.ClickHouse.Conn().QueryRow(context.Background(),
 			"SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = ?", f.Tables[0]).Scan(&engine); err != nil {

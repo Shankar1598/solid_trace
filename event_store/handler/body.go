@@ -21,8 +21,7 @@ const (
 	// eventBodyLimit caps the body of the Event routes, as sent. It is Fiber's
 	// default, which every ingest route had before the Log route.
 	eventBodyLimit = 4 << 20
-	// logBodyLimit caps the body of the Log route, as sent. It is also the
-	// ingest app's limit, so the server reads no larger body for any route.
+	// logBodyLimit caps the body of the Log route, as sent.
 	logBodyLimit = 10 << 20
 	// decodedBodyLimit caps every ingest body once decoded. Decoding stops at
 	// it rather than inflating the whole body.

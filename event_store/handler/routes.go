@@ -10,9 +10,10 @@ import (
 func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler) *fiber.App {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
-		// The server reads no larger body, as sent, for any route. The Event
-		// routes refuse more than their own, smaller cap themselves.
-		BodyLimit: logBodyLimit,
+		// The server reads no larger body, as sent, for any route: an upload
+		// of one unit of an Agent session's file. The Event and Log routes
+		// refuse more than their own, smaller cap themselves.
+		BodyLimit: agentBodyLimit,
 		// Ingest faces clients directly, or through Caddy, which streams
 		// requests without buffering them. Either way no proxy absorbs slow
 		// clients, so it bounds a request and an idle connection. Fiber's
