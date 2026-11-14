@@ -132,6 +132,27 @@ class OauthSignedInClientsTest < ActionDispatch::IntegrationTest
     assert_equal 1, signed_in_clients.size
   end
 
+  test "a Grant not used for 30 days is not listed: its refresh token expired, so it cannot act any more" do
+    tokens = signed_in
+    travel Oauth::Token::REFRESH_LASTS + 1.second
+    refresh(tokens["refresh_token"])
+    assert_response :bad_request
+
+    sign_in_as @user
+    assert_equal [], signed_in_clients
+  end
+
+  test "a Grant that refreshes stays listed after 30 days" do
+    tokens = signed_in
+    travel Oauth::Token::REFRESH_LASTS - 1.day
+    refresh(tokens["refresh_token"])
+    assert_response :ok
+    travel 2.days
+
+    sign_in_as @user
+    assert_equal 1, signed_in_clients.size
+  end
+
   test "another user's Grants are not listed" do
     grace_signs_in
 
