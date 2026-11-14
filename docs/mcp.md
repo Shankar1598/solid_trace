@@ -14,7 +14,7 @@ Add the server with only its URL. You copy no secret.
 claude mcp add --transport http solidtrace https://console.example.com/mcp
 ```
 
-Then sign in: type `/mcp` in Claude Code and pick `solidtrace`, or run `claude mcp login solidtrace`. On a machine where Claude Code can't open a browser, `claude mcp login solidtrace --no-browser` prints the URL to open.
+Then sign in: type `/mcp` in Claude Code and pick `solidtrace`, or run `claude mcp login solidtrace`. On a machine where Claude Code can't open a browser, `claude mcp login solidtrace --no-browser` prints the URL to open. Open it in a browser on any computer and approve. If the browser then can't reach Claude Code's `localhost` address, paste the address that the browser shows into Claude Code.
 
 **Cursor**, in `~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project, then sign in from Cursor's MCP settings:
 
