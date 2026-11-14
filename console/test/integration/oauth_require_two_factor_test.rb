@@ -138,6 +138,7 @@ class OauthRequireTwoFactorTest < ActionDispatch::IntegrationTest
     approve(key, @acme)
     set_up_two_factor(org: "acme")
     assert_equal oauth_authorize_path(request: key), recovery_codes_page["continue_to"]
+    assert_nil session[:return_after_set_up]
 
     get new_authenticator_app_url(org: "acme")
     assert_redirected_to overview_url(org_slug: "acme")
