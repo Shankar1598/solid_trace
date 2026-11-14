@@ -498,6 +498,18 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     assert_requested :get, CLIENT_ID, times: 1
   end
 
+  test "Settings → User lists a published client as checked, with the host that publishes it" do
+    publish
+    exchange(approved_code)
+    assert_response :ok
+
+    get user_settings_url, headers: inertia_headers
+
+    rows = response.parsed_body.dig("props", "signed_in_clients")
+    assert_equal [ { "name" => "Claude Code", "name_checked" => true, "host" => "client.example.com" } ],
+                 rows.map { |row| row["client"] }
+  end
+
   private
 
   def description(**changes)
