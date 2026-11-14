@@ -48,10 +48,7 @@ class BearerToken
   # The names among names whose Scope is for resource: an access token gets
   # only the Grant's Scopes for its own resource (RFC 8707 §2.2).
   def self.scopes_for(names, resource, issuer)
-    names.select do |name|
-      scope = Oauth::Scopes.find(name)
-      scope && Oauth::Issuer.same_resource?(scope.resource(issuer), resource)
-    end
+    Oauth::Scopes.for_resource(names, resource, issuer: issuer)
   end
 
   # The resource of an API token's Scopes: one, a list of several, or nil

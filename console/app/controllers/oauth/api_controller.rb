@@ -59,7 +59,7 @@ module Oauth
       else
         client_id, secret = params[:client_id], params[:client_secret]
       end
-      client = Client.find_by(client_id: client_id) if client_id.is_a?(String) && client_id.present?
+      client = Client.named(client_id)
       client&.authenticates?(secret) ? client : invalid_client
     end
 
