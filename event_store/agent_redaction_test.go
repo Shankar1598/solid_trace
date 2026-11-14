@@ -199,7 +199,7 @@ func TestAgentSessionRedactionOnUpload(t *testing.T) {
 		key, app := defaultSecrets()["Anthropic API key"], defaultSecrets()["Bitbucket app password"]
 		path := "tool-results/toolu_01.txt"
 		body := key + "\nANTHROPIC_API_KEY=" + key + "\npassword " + app
-		answer := uploadUnit(t, env, o.secret, session, unitUpload{path: path, body: []byte(body)})
+		answer := uploadUnit(t, env, o.secret, session, unitUpload{path: path, contentHash: "sha256:ee", body: []byte(body)})
 		expectStatus(t, answer, 200)
 		if answer.body["end_offset"] != float64(len(body)) {
 			t.Errorf("Expected the end offset %d, got %s", len(body), answer.raw)
