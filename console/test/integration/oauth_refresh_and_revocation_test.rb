@@ -261,6 +261,139 @@ class OauthRefreshAndRevocationTest < ActionDispatch::IntegrationTest
     assert_equal "unauthorized_client", response.parsed_body["error"]
   end
 
+  # Sign-out: /oauth/revoke
+
+  test "revoking an access token revokes the whole Grant and answers 200" do
+    tokens = signed_in_tokens
+
+    revoke(tokens["access_token"])
+
+    assert_response :ok
+    assert_equal "*", response.headers["Access-Control-Allow-Origin"]
+    assert_mcp_refused tokens["access_token"]
+    refresh(tokens["refresh_token"])
+    assert_invalid_grant
+  end
+
+  test "revoking a refresh token revokes the whole Grant, also with a token_type_hint" do
+    tokens = signed_in_tokens
+
+    revoke(tokens["refresh_token"], token_type_hint: "refresh_token")
+
+    assert_response :ok
+    assert_mcp_refused tokens["access_token"]
+    refresh(tokens["refresh_token"])
+    assert_invalid_grant
+  end
+
+  test "revoking a used refresh token, or one of an older pair, revokes the Grant" do
+    tokens = signed_in_tokens
+    refresh(tokens["refresh_token"])
+    newest = response.parsed_body
+
+    revoke(tokens["access_token"])
+
+    assert_response :ok
+    assert_mcp_refused newest["access_token"]
+  end
+
+  test "an unknown token answers 200, and a revoked Grant's token answers 200 again" do
+    tokens = signed_in_tokens
+
+    revoke("sto_unknown")
+    assert_response :ok
+    revoke("anything")
+    assert_response :ok
+    2.times do
+      revoke(tokens["access_token"])
+      assert_response :ok
+    end
+  end
+
+  test "an API token is ignored, answers 200, and still works" do
+    signed_in_tokens
+    _api_token, secret = ApiToken.issue!(user: @user, name: "Script")
+
+    revoke(secret)
+
+    assert_response :ok
+    assert_mcp_works secret
+  end
+
+  test "another client's token answers 200 and its Grant goes on" do
+    tokens = signed_in_tokens
+    other = registered_client
+
+    revoke(tokens["access_token"], client_id: other)
+
+    assert_response :ok
+    assert_mcp_works tokens["access_token"]
+  end
+
+  test "a revocation with no token answers invalid_request, and an unknown client invalid_client" do
+    tokens = signed_in_tokens
+
+    revoke(nil)
+    assert_response :bad_request
+    assert_equal "invalid_request", response.parsed_body["error"]
+
+    revoke(tokens["access_token"], client_id: "nobody")
+    assert_response :unauthorized
+    assert_equal "invalid_client", response.parsed_body["error"]
+    assert_mcp_works tokens["access_token"]
+  end
+
+  test "a confidential client authenticates to revoke" do
+    register(client_name: "Server app", redirect_uris: [ REDIRECT_URI ], token_endpoint_auth_method: "client_secret_basic")
+    client = response.parsed_body
+    @client_id = client["client_id"]
+    sign_in_as @user
+    approve(approval_page(@client_id)["request"], @acme)
+    basic = { "Authorization" => "Basic #{Base64.strict_encode64("#{@client_id}:#{client["client_secret"]}")}" }
+    post oauth_token_url, params: { grant_type: "authorization_code", code: redirect_query["code"], code_verifier: VERIFIER,
+                                    redirect_uri: REDIRECT_URI }, headers: basic
+    access = response.parsed_body["access_token"]
+
+    revoke(access)
+    assert_response :unauthorized
+    assert_mcp_works access
+
+    post oauth_revoke_url, params: { token: access }, headers: basic
+    assert_response :ok
+    assert_mcp_refused access
+  end
+
+  test "revocation answers a CORS preflight, and 400 with OAuth off" do
+    process :options, oauth_revoke_url
+    assert_response :no_content
+    assert_equal "*", response.headers["Access-Control-Allow-Origin"]
+
+    InstanceSetting.current.update!(console_url: nil)
+    revoke("sto_x", client_id: "x")
+    assert_response :bad_request
+    assert_equal "invalid_request", response.parsed_body["error"]
+  end
+
+  test "revocation is limited to 60 a minute for each IP address and for each client_id" do
+    store = ActiveSupport::Cache::MemoryStore.new
+    Oauth::RevocationsController.cache_store.stub(:increment, ->(*args, **options) { store.increment(*args, **options) }) do
+      60.times { revoke("sto_x", client_id: "a") }
+      assert_response :unauthorized
+      revoke("sto_x", client_id: "a")
+      assert_response :too_many_requests
+      assert_equal "invalid_request", response.parsed_body["error"]
+      # The same client_id from another address.
+      revoke("sto_x", client_id: "a", headers: { "REMOTE_ADDR" => "198.51.100.92" })
+      assert_response :too_many_requests
+
+      store.clear
+      61.times { |n| revoke("sto_x", client_id: "c#{n}", headers: { "REMOTE_ADDR" => "198.51.100.92" }) }
+      assert_response :too_many_requests
+      revoke("sto_x", client_id: "c0", headers: { "REMOTE_ADDR" => "10.100.0.3" })
+      assert_response :unauthorized
+    end
+  end
+
   private
 
   # The token answer of a sign-in for @acme, with @client_id its client.
@@ -275,8 +408,8 @@ class OauthRefreshAndRevocationTest < ActionDispatch::IntegrationTest
                                     .merge(params).compact
   end
 
-  def revoke(token, client_id: @client_id, **params)
-    post oauth_revoke_url, params: { token: token, client_id: client_id }.merge(params).compact
+  def revoke(token, client_id: @client_id, headers: {}, **params)
+    post oauth_revoke_url, params: { token: token, client_id: client_id }.merge(params).compact, headers: headers
   end
 
   def assert_invalid_grant
