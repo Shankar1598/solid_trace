@@ -74,26 +74,89 @@ func (c *Capturer) Capture(ctx context.Context, in Input) error {
 	}
 	list, err := c.list(ctx)
 	if err != nil {
-		return fmt.Errorf("no captured repositories list, so nothing is sent: %w", err)
+		err = fmt.Errorf("no captured repositories list, so nothing is sent: %w", err)
+		c.recordFailed(in.SessionID, Record{}, err)
+		return err
 	}
+	return c.one(ctx, in, list, &pass{})
+}
+
+// pass is one call of capture: a hook's call for its Agent session, or a
+// sweep of each Agent session on the machine.
+type pass struct {
+	sweep bool
+	// settledBefore: in a sweep, a file that did not change since then is
+	// sent whole, as at SessionEnd.
+	settledBefore time.Time
+	// matches keeps the match of each start directory in a sweep.
+	matches map[string]match
+	// stopped is the failure that stopped a sweep: each later Agent session
+	// with bytes to send gets it, with no request.
+	stopped error
+}
+
+type match struct {
+	repo Repository
+	ok   bool
+	err  error
+}
+
+func (p *pass) match(ctx context.Context, start string, list []string) (Repository, bool, error) {
+	if p.matches == nil {
+		repo, ok, err := Match(ctx, start, list)
+		return repo, ok, err
+	}
+	m, seen := p.matches[start]
+	if !seen {
+		m.repo, m.ok, m.err = Match(ctx, start, list)
+		p.matches[start] = m
+	}
+	return m.repo, m.ok, m.err
+}
+
+// one captures one Agent session with the list in hand and keeps its
+// record. Nothing is sent before the match passes.
+func (c *Capturer) one(ctx context.Context, in Input, list []string, p *pass) error {
 	start := StartDir(in.TranscriptPath, in.Cwd)
-	repo, ok, err := Match(ctx, start, list)
+	repo, ok, err := p.match(ctx, start, list)
 	if err != nil {
-		return fmt.Errorf("read the git remotes of %s: %w", start, err)
+		err = fmt.Errorf("read the git remotes of %s: %w", start, err)
+		c.recordFailed(in.SessionID, Record{StartDir: start}, err)
+		return err
 	}
 	if !ok {
-		c.Log("%s: not in the captured repositories (%s), nothing sent", in.SessionID, start)
+		if !p.sweep {
+			c.Log("%s: not in the captured repositories (%s), nothing sent", in.SessionID, start)
+		}
+		c.record(in.SessionID, Record{Status: NotInList, StartDir: start})
+		return nil
+	}
+	rec := Record{Repository: repo.Name, StartDir: start}
+	if p.stopped != nil {
+		c.recordFailed(in.SessionID, rec, p.stopped)
 		return nil
 	}
 
-	unlock, err := c.lock(ctx, in.SessionID)
+	unlock, err := c.lock(ctx, in.SessionID, !p.sweep)
+	if errors.Is(err, errBusy) {
+		// A hook's call uploads it now.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	defer unlock()
 
-	u := &upload{c: c, in: in, repo: repo, root: filepath.Dir(in.TranscriptPath)}
-	return u.run(ctx)
+	root := filepath.Dir(in.TranscriptPath)
+	rec.Fingerprint = fingerprint(root, in.SessionID)
+	u := &upload{c: c, in: in, repo: repo, root: root, settledBefore: p.settledBefore}
+	if err := u.run(ctx); err != nil {
+		c.recordFailed(in.SessionID, rec, err)
+		return err
+	}
+	rec.Status, rec.Pending = Uploaded, u.pending
+	c.record(in.SessionID, rec)
+	return nil
 }
 
 // startLines and startBytes limit how much of <id>.jsonl StartDir reads.
@@ -127,13 +190,18 @@ func StartDir(transcriptPath, hookCwd string) string {
 	return hookCwd
 }
 
-// lock waits until this process alone uploads the Agent session.
-func (c *Capturer) lock(ctx context.Context, sessionID string) (func(), error) {
+// errBusy is the answer of a lock that does not wait, when another
+// process holds it.
+var errBusy = errors.New("another capture holds the lock")
+
+// lock waits until this process alone uploads the Agent session. With
+// wait false it answers errBusy at once when another process holds it.
+func (c *Capturer) lock(ctx context.Context, name string, wait bool) (func(), error) {
 	dir := filepath.Join(c.Dir, "capture")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, sessionID+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(filepath.Join(dir, name+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +218,10 @@ func (c *Capturer) lock(ctx context.Context, sessionID string) (func(), error) {
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
 			f.Close()
 			return nil, fmt.Errorf("lock %s: %w", f.Name(), err)
+		}
+		if !wait && errors.Is(err, syscall.EWOULDBLOCK) {
+			f.Close()
+			return nil, errBusy
 		}
 		select {
 		case <-ctx.Done():

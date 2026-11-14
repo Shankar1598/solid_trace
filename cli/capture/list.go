@@ -47,6 +47,18 @@ func (c *Capturer) list(ctx context.Context) ([]string, error) {
 	return answer.Repositories, nil
 }
 
+// CachedList is the list kept on the machine for the sign-in: the
+// Organization's slug, the entries and when they came. ok is false when
+// none is kept.
+func CachedList(dir, signin string) (organization string, entries []string, fetchedAt time.Time, ok bool) {
+	data, err := os.ReadFile(filepath.Join(dir, ListFile))
+	var cached cachedList
+	if err != nil || json.Unmarshal(data, &cached) != nil || cached.Signin != signin || cached.Repositories == nil {
+		return "", nil, time.Time{}, false
+	}
+	return cached.Organization, cached.Repositories, cached.FetchedAt, true
+}
+
 // writeFile replaces a file in one step, with mode 0600.
 func writeFile(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
