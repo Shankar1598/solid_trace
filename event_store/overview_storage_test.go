@@ -208,3 +208,27 @@ func TestStorageAnswersTheOldLogFilesKeptAndWhenRetentionDeletesTheLast(t *testi
 		t.Errorf("Expected no old Log files past Retention, got %+v", *got.OldFiles)
 	}
 }
+
+func TestStorageProjectsTheRawDaysOfAnAgentProjectAtItsRetention(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	consoleExec(t, env, "UPDATE projects SET log_retention_days = 90 WHERE id = ?", o.project)
+
+	// 30 September is in the last 7 days of 2 October.
+	env.Clock.Set(time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: lines("a raw line")}), 200)
+	env.ProcessAgentFiles(t)
+	env.Clock.Set(testNow)
+
+	_, raw := agentDiskUse(t, env)
+	if raw <= 0 {
+		t.Fatalf("Expected the raw layer on local disk, got %d bytes", raw)
+	}
+	got := overviewStorageOf(t, env, testNow, testNow, uint32(o.project))
+	// With no bucket, the raw days stay on local disk for the Agent
+	// Project's Retention, as the disk limit counts them.
+	if want := int64(float64(raw) / 7 * 90); math.Abs(float64(got.ProjectedBytes-want)) > 1 {
+		t.Errorf("Expected the raw layer's %d bytes on local disk at steady state, got %d", want, got.ProjectedBytes)
+	}
+}
