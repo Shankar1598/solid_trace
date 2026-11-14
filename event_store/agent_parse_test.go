@@ -74,7 +74,7 @@ func TestTheParseMakesOneLogForEachLineOfAnAgentSession(t *testing.T) {
 		message, role, tool string
 		time                time.Time
 	}{
-		{"Add a cart page", "user", "", time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC)},
+		{"Add a cart page", "person", "", time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC)},
 		{`Read {"file_path":"cart.go"}`, "assistant", "Read", time.Date(2026, 10, 2, 11, 0, 5, 0, time.UTC)},
 		{"package cart", "tool", "Read", time.Date(2026, 10, 2, 11, 0, 6, 0, time.UTC)},
 		// A line with no timestamp has the time of the line before it.

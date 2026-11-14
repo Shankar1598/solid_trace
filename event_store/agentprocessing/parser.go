@@ -107,11 +107,14 @@ func (p *Parser) parseUnits(projectID uint32) (more bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("read retention: %w", err)
 	}
+	units := make([]storage.AgentFileUnit, len(batches))
+	for i, batch := range batches {
+		units[i] = batch.Unit
+	}
 	var parsed []storage.LogBatch
-	for _, batch := range batches {
-		logs := parseUnit(batch.Unit, retentionDays)
+	for i, logs := range parseUnits(units, retentionDays) {
 		if len(logs) > 0 {
-			parsed = append(parsed, storage.LogBatch{ID: batch.ID, Logs: logs})
+			parsed = append(parsed, storage.LogBatch{ID: batches[i].ID, Logs: logs})
 		}
 	}
 	insert := storage.LogInsert{After: cursor, UpTo: last, Batches: parsed, Again: again, Range: "agent"}
