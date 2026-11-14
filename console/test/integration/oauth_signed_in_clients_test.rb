@@ -169,6 +169,21 @@ class OauthSignedInClientsTest < ActionDispatch::IntegrationTest
     assert_equal [ "Beta" ], signed_in_clients.map { |r| r.dig("organization", "name") }
   end
 
+  test "the daily cleanup deletes a revoked Grant's tokens 7 days after Revoke, and keeps them until then" do
+    signed_in
+    grant = Oauth::Grant.find(signed_in_clients.first["id"])
+    delete signed_in_client_url(grant.id)
+    assert_equal 2, grant.tokens.count
+
+    travel Oauth::CleanupJob::KEEP_TOKENS - 1.second
+    Oauth::CleanupJob.perform_now
+    assert_equal 2, grant.tokens.count
+
+    travel 2.seconds
+    Oauth::CleanupJob.perform_now
+    assert_equal 0, grant.tokens.count
+  end
+
   test "Revoke of one of two sign-ins of the same client leaves the other working" do
     sign_in_as @user
     client_id = registered_client

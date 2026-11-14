@@ -121,6 +121,23 @@ module Oauth
       assert Token.exists?(young.id)
     end
 
+    test "deletes the tokens of a Grant revoked more than 7 days ago, and keeps those of a Grant revoked less long ago" do
+      old = grant(client(age: 60.days), age: 60.days, first_token_at: 60.days.ago)
+      old_tokens = [ token(old, expires_at: 20.days.from_now), token(old, expires_at: 1.hour.from_now) ]
+      young = grant(client(age: 60.days), age: 60.days, first_token_at: 60.days.ago)
+      young_token = token(young, expires_at: 20.days.from_now)
+      old.revoke!
+      travel 2.seconds
+      young.revoke!
+      travel 7.days - 1.second
+
+      CleanupJob.perform_now
+
+      old_tokens.each { |token| assert_not Token.exists?(token.id) }
+      assert Token.exists?(young_token.id)
+      assert Grant.exists?(old.id)
+    end
+
     test "deletes an old used refresh token whose replacement is live, and keeps the replacement" do
       grant = grant(client(age: 60.days), age: 60.days, first_token_at: 60.days.ago)
       replacement = token(grant, expires_at: 20.days.from_now)
