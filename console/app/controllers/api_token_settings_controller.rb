@@ -7,8 +7,12 @@ class ApiTokenSettingsController < ApplicationController
   layout "dashboard"
   before_action :set_current_org
 
+  # Settings → Instance cannot turn HTTPS on: its Console URL keeps the
+  # scheme that CONSOLE_URL gave at the start (InstanceSetting).
   BROWSER_SIGN_IN_NOTE = "Sign-in through the browser needs an HTTPS Console URL, so MCP clients use API tokens here. " \
-                         "An Instance admin sets the Console URL on Settings → Instance, or CONSOLE_URL in deploy/.env."
+                         "To turn it on, the operator sets CONSOLE_URL to an https:// address in deploy/.env and " \
+                         "restarts Console. If Settings → Instance has an http:// Console URL, an Instance admin then " \
+                         "changes it to https:// or clears it."
 
   def show
     render inertia: "Settings/ApiTokens", props: {

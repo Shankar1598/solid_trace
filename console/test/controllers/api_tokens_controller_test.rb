@@ -37,6 +37,12 @@ class ApiTokensControllerTest < ActionDispatch::IntegrationTest
   test "the page notes that sign-in through the browser needs an HTTPS Console URL while OAuth is off, and not when on" do
     note = inertia_props(tokens_page_url)["browser_sign_in_note"]
     assert_match "Sign-in through the browser needs an HTTPS Console URL", note
+    # Settings → Instance cannot save an https:// Console URL while Console
+    # runs without HTTPS, so the note gives CONSOLE_URL and a restart.
+    assert_match "sets CONSOLE_URL to an https:// address in deploy/.env and restarts Console", note
+    settings = InstanceSetting.current.tap { |s| s.console_url = "https://console.example.com" }
+    assert_not settings.valid?(:editable)
+    assert_match "must start with http://", settings.errors[:console_url].first
 
     InstanceSetting.current.tap { |settings| settings.console_url = "http://console.example.com" }.save!(validate: false)
     assert_equal note, inertia_props(tokens_page_url)["browser_sign_in_note"]
