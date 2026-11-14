@@ -29,7 +29,8 @@ class OauthDiscoveryTest < ActionDispatch::IntegrationTest
 
   test "OAuth is on at an HTTPS Console URL and at a loopback http:// one, from the setting or CONSOLE_URL" do
     [ "https://console.example.com", "https://console.example.com:8443", "http://localhost:4001",
-      "http://127.0.0.1:3000", "http://[::1]:3000", "http://localhost" ].each do |url|
+      "http://127.0.0.1:3000", "http://[::1]:3000", "http://localhost", "http://LOCALHOST:3000",
+      "HTTPS://Console.Example.com" ].each do |url|
       assert_equal [ 200, 200 ], metadata_statuses(setting: url), "setting #{url}"
       assert_equal [ 200, 200 ], metadata_statuses(env: url), "CONSOLE_URL #{url}"
       assert_equal "#{url}/mcp", response.parsed_body["resource"]
