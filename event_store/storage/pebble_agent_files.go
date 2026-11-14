@@ -349,7 +349,12 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 		session = unit.Session
 		session.Flags = 0
 	}
-	if flags := session.Flags | unit.Flags; !known || flags != session.Flags {
+	// An uploader can learn the parent after the first upload.
+	newParent := known && session.ParentSessionID == "" && unit.Session.ParentSessionID != ""
+	if newParent {
+		session.ParentSessionID = unit.Session.ParentSessionID
+	}
+	if flags := session.Flags | unit.Flags; !known || newParent || flags != session.Flags {
 		session.Flags = flags
 		encodedSession, err := msgpack.Marshal(session)
 		if err != nil {
