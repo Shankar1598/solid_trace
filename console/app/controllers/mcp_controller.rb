@@ -10,7 +10,7 @@ class McpController < ActionController::API
   before_action :authenticate_token!
 
   def create
-    server = McpServer.build(user: @bearer.user, request_url: request.base_url)
+    server = McpServer.build(user: @bearer.user, request_url: request.base_url, organization: @bearer.organization)
     transport = MCP::Server::Transports::StreamableHTTPTransport.new(
       server,
       stateless: true,
@@ -47,6 +47,8 @@ class McpController < ActionController::API
   def authenticate_token!
     secret = request.authorization.to_s[/\ABearer +(\S+)\z/i, 1]
     @bearer = BearerToken.authenticate(secret, issuer: issuer)
+    # An OAuth token works only at the resource it was given for.
+    @bearer = nil if @bearer&.oauth? && !Oauth::Issuer.same_resource?(@bearer.resource, issuer.mcp_resource)
     if @bearer
       @bearer.record_use
     else
