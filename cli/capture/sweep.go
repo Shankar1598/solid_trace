@@ -28,7 +28,8 @@ const SettleAfter = time.Minute
 // and that did not change gets no request. A failure that is not of one
 // Agent session (no network, the sign-in, the server's version) stops the
 // sweep, and each later Agent session with bytes to send gets it as its
-// failure. Only one sweep runs at a time.
+// failure. With no list in hand, the changed Agent sessions of a captured
+// repository get that failure. Only one sweep runs at a time.
 func (c *Capturer) Sweep(ctx context.Context, projectsDir string) error {
 	unlock, err := c.lock(ctx, "sweep", false)
 	if errors.Is(err, errBusy) {
@@ -46,14 +47,17 @@ func (c *Capturer) Sweep(ctx context.Context, projectsDir string) error {
 	}
 	list, err := c.list(ctx)
 	if err != nil {
-		return fmt.Errorf("sweep: no captured repositories list, so nothing is sent: %w", err)
+		err = fmt.Errorf("no captured repositories list, so nothing is sent: %w", err)
+		c.markFailed(sessions, err)
+		return fmt.Errorf("sweep: %w", err)
 	}
 	p := &pass{sweep: true, settledBefore: c.Now().Add(-SettleAfter), matches: map[string]match{}}
 	for _, s := range sessions {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if r, ok := RecordOf(c.Dir, s.ID); ok && r.Status == Uploaded && !r.Pending &&
+		r, seen := RecordOf(c.Dir, s.ID)
+		if seen && r.Status == Uploaded && !r.Pending &&
 			r.Fingerprint == fingerprint(filepath.Dir(s.TranscriptPath), s.ID) {
 			continue
 		}
@@ -69,6 +73,22 @@ func (c *Capturer) Sweep(ctx context.Context, projectsDir string) error {
 		return fmt.Errorf("sweep stopped: %w", p.stopped)
 	}
 	return nil
+}
+
+// markFailed gives err to each Agent session that an earlier call matched
+// to a captured repository and that changed since its last upload. With no
+// list in hand the sweep cannot match the others, so their records stay.
+func (c *Capturer) markFailed(sessions []FoundSession, err error) {
+	for _, s := range sessions {
+		r, ok := RecordOf(c.Dir, s.ID)
+		if !ok || r.Status == NotInList || r.Repository == "" {
+			continue
+		}
+		if r.Status == Uploaded && !r.Pending && r.Fingerprint == fingerprint(filepath.Dir(s.TranscriptPath), s.ID) {
+			continue
+		}
+		c.recordFailed(s.ID, r, err)
+	}
 }
 
 // stopsTheSweep is true for a failure that the next Agent session would

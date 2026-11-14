@@ -328,3 +328,31 @@ func TestCaptureStatusWithNoSignIn(t *testing.T) {
 		t.Errorf("out: %s %s", w.stdout, w.stderr)
 	}
 }
+
+func TestWithNoListTheSweepMarksTheChangedAgentSessionsOfACapturedRepositoryFailed(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
+	crashed := w.sessionWithID(crashedID, repo)
+	crashed.begin("{\"n\":1}\n")
+	crashed.stop()
+	private := w.sessionWithID(otherID, t.TempDir())
+	private.begin("{\"n\":1}\n")
+	private.stop()
+	// Claude Code crashed after these lines.
+	crashed.add("", "{\"n\":2}\n")
+	private.add("", "{\"n\":2}\n")
+	crashed.age(time.Hour)
+	private.age(time.Hour)
+
+	// The cached list expires, and the sweep has no network.
+	w.clock.Add(10 * time.Minute)
+	w.agent.Set(func(f *fake.AgentAPI) { f.Down = true })
+	w.startSession(repo)
+	if line := w.statusOf(crashedID); !strings.Contains(line, "failed") {
+		t.Errorf("status of an Agent session with bytes not sent, after a sweep with no list: %q", line)
+	}
+	if line := w.statusOf(otherID); !strings.Contains(line, "not in the list") {
+		t.Errorf("status of an Agent session not in the list: %q", line)
+	}
+}
