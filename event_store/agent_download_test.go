@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -215,6 +217,131 @@ func TestAgentSessionDownload(t *testing.T) {
 		}
 		if d := downloadSession(t, env, token, "not-a-uuid"); d.status != 400 {
 			t.Errorf("Expected 400 for an id that is not a UUID, got %d: %s", d.status, d.raw)
+		}
+	})
+}
+
+const (
+	pendingSession = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
+	retainSession  = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c02"
+)
+
+func TestAgentSessionDownloadOfWhatIsNotWhole(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	reader, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization, scopes: []string{"sessions:read"},
+		sessionIDs: []string{pendingSession, cutSession, trimSession, retainSession}})
+	upload := func(sessionID string, u unitUpload) {
+		t.Helper()
+		expectStatus(t, uploadUnit(t, env, o.secret, sessionID, u), 200)
+	}
+
+	t.Run("a unit that is stored but not yet in ClickHouse makes the download wait", func(t *testing.T) {
+		first := lines("The first prompt")
+		upload(pendingSession, unitUpload{path: "session.jsonl", body: first})
+		env.ProcessAgentFiles(t)
+		upload(pendingSession, unitUpload{path: "session.jsonl", offset: len(first), body: lines("The last prompt")})
+
+		d := downloadSession(t, env, reader, pendingSession)
+		if d.status != 503 || d.header.Get("Retry-After") != "1" || d.files != nil {
+			t.Errorf("Expected 503 with Retry-After 1, got %d %q: %s", d.status, d.header.Get("Retry-After"), d.raw)
+		}
+		env.ProcessAgentFiles(t)
+		d = downloadSession(t, env, reader, pendingSession)
+		expectDownloadStatus(t, d, 200)
+		if got, want := d.files["session.jsonl"].bytes, string(first)+string(lines("The last prompt")); got != want {
+			t.Errorf("Expected %q, got %q", want, got)
+		}
+	})
+
+	t.Run("a cut unit is marked cut with the range that has no bytes", func(t *testing.T) {
+		const mib = 1 << 20
+		longLine := append(bytes.Repeat([]byte("a"), 40*mib), '\n')
+		next := lines("After the long line")
+		upload(cutSession, unitUpload{path: "session.jsonl", size: len(longLine), body: longLine[:32*mib]})
+		upload(cutSession, unitUpload{path: "session.jsonl", offset: len(longLine), body: next})
+		env.ProcessAgentFiles(t)
+
+		d := downloadSession(t, env, reader, cutSession)
+		expectDownloadStatus(t, d, 200)
+		f := d.files["session.jsonl"]
+		if f.bytes != string(longLine[:32*mib])+string(next) {
+			t.Errorf("Expected the stored 32 MiB and the next line, got %d bytes", len(f.bytes))
+		}
+		want := map[string]string{
+			"SOLIDTRACE.version":      "1",
+			"SOLIDTRACE.start_offset": "0",
+			"SOLIDTRACE.end_offset":   fmt.Sprint(len(longLine) + len(next)),
+			"SOLIDTRACE.flags":        "cut",
+			"SOLIDTRACE.missing":      fmt.Sprintf("%d-%d", 32*mib, len(longLine)),
+		}
+		for key, value := range want {
+			if f.records[key] != value {
+				t.Errorf("Expected %s %q, got %q", key, value, f.records[key])
+			}
+		}
+		if got := d.header.Get("SolidTrace-Agent-Session-Flags"); got != "cut" {
+			t.Errorf("Expected the Agent session flagged cut, got %q", got)
+		}
+	})
+
+	t.Run("a trimmed .jsonl file comes back as its new version", func(t *testing.T) {
+		upload(trimSession, unitUpload{path: "session.jsonl", body: lines("A long first version", "of two lines")})
+		short := lines("Short")
+		upload(trimSession, unitUpload{path: "session.jsonl", version: 2, body: short})
+		env.ProcessAgentFiles(t)
+
+		d := downloadSession(t, env, reader, trimSession)
+		expectDownloadStatus(t, d, 200)
+		if f := d.files["session.jsonl"]; f.bytes != string(short) || f.records["SOLIDTRACE.version"] != "2" {
+			t.Errorf("Expected version 2 %q, got version %s %q", short, f.records["SOLIDTRACE.version"], f.bytes)
+		}
+		if got := d.header.Get("SolidTrace-Agent-Session-Flags"); got != "trimmed" {
+			t.Errorf("Expected the Agent session flagged trimmed, got %q", got)
+		}
+	})
+
+	t.Run("after Retention drops the first days, a file is partial from the offset where it starts", func(t *testing.T) {
+		consoleExec(t, env, "UPDATE projects SET log_retention_days = 2 WHERE id = ?", o.project)
+		// With no Project left, the cleanup deletes nothing.
+		o.rows.project(o.organization)
+		at := func(day int) time.Time { return time.Date(2026, 10, day, 12, 0, 0, 0, time.UTC) }
+		env.Clock.Set(at(1))
+		subagent := lines("A subagent of October 1st")
+		upload(retainSession, unitUpload{path: "subagents/agent-a1.jsonl", body: subagent})
+		offset := 0
+		var kept []byte
+		for _, day := range []int{1, 3, 4} {
+			env.Clock.Set(at(day))
+			kept = lines(fmt.Sprintf("October %d", day))
+			upload(retainSession, unitUpload{path: "session.jsonl", offset: offset, body: kept})
+			offset += len(kept)
+			env.ProcessAgentFiles(t)
+		}
+		env.Clock.Set(at(6))
+		env.DeleteLogsPastRetention(t)
+
+		d := downloadSession(t, env, reader, retainSession)
+		expectDownloadStatus(t, d, 200)
+		f := d.files["session.jsonl"]
+		start := offset - len(kept)
+		if f.bytes != string(kept) || f.records["SOLIDTRACE.flags"] != "partial" ||
+			f.records["SOLIDTRACE.start_offset"] != fmt.Sprint(start) || f.records["SOLIDTRACE.end_offset"] != fmt.Sprint(offset) {
+			t.Errorf("Expected October 4th, partial from %d to %d, got %q %v", start, offset, f.bytes, f.records)
+		}
+		// A file that Retention dropped whole is there with no bytes,
+		// partial at its end.
+		s, ok := d.files["subagents/agent-a1.jsonl"]
+		if !ok || s.bytes != "" || s.records["SOLIDTRACE.flags"] != "partial" ||
+			s.records["SOLIDTRACE.start_offset"] != fmt.Sprint(len(subagent)) {
+			t.Errorf("Expected the dropped subagent file empty and partial at %d, got %v %+v", len(subagent), ok, s)
+		}
+		if !slices.Equal(d.order, []string{"session.jsonl", "subagents/agent-a1.jsonl"}) {
+			t.Errorf("Expected the files in path order, got %v", d.order)
+		}
+		if got := d.header.Get("SolidTrace-Agent-Session-Flags"); got != "partial" {
+			t.Errorf("Expected the Agent session flagged partial, got %q", got)
 		}
 	})
 }
