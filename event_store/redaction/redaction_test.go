@@ -44,6 +44,9 @@ func TestAppPasswordStartsAWordAfterAJSONEscape(t *testing.T) {
 	for before, replaced := range map[string]bool{
 		`\n`: true, `\r`: true, `\t`: true, `\b`: true, `\f`: true, `\\\n`: true,
 		`\u002b`: true, `\u002B`: true, `\u00e9`: true,
+		// Ł and ş are letters, but not word characters of \b: their low
+		// bytes (A, _) are.
+		`\u0141`: true, `\u015f`: true,
 		`\\n`: false, `\u0041`: false, `\u005f`: false, `\\u002b`: false, `n`: false,
 	} {
 		line := []byte(`{"text":"` + before + app + `"}`)
