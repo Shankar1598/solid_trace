@@ -69,6 +69,20 @@ class BearerTokenTest < ActiveSupport::TestCase
     assert_nil BearerToken.authenticate(scoped)
   end
 
+  # The discard of a membership deletes its tokens; live? is the check for
+  # each other path that removes a membership.
+  test "a scoped API token whose user's membership is gone without a discard answers nil" do
+    token, scoped = ApiToken.issue!(user: @user, name: "Run", scopes: [ "factory" ], organization_id: @beta.id)
+    _, unscoped_secret = ApiToken.issue!(user: @user, name: "Laptop 2")
+
+    OrganizationUser.where(user: @user, organization: @beta).delete_all
+
+    assert ApiToken.exists?(token.id)
+    assert_not token.reload.live?
+    assert_nil BearerToken.authenticate(scoped)
+    assert_not_nil BearerToken.authenticate(unscoped_secret)
+  end
+
   test "mcp:read alone is read only; with mcp it is not" do
     _, read = ApiToken.issue!(user: @user, name: "Read", scopes: [ "mcp:read" ], organization_id: @acme.id)
     _, both = ApiToken.issue!(user: @user, name: "Both", scopes: [ "mcp:read", "mcp" ], organization_id: @acme.id)
