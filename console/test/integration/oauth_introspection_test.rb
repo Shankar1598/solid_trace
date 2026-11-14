@@ -38,7 +38,7 @@ class OauthIntrospectionTest < ActionDispatch::IntegrationTest
                    "iat" => token.created_at.to_i, "limits" => {},
                    "organizations" => [
                      { "id" => @acme.id, "slug" => "acme", "name" => "Acme", "role" => "admin" },
-                     { "id" => @beta.id, "slug" => "beta", "name" => "Beta", "role" => "member" },
+                     { "id" => @beta.id, "slug" => "beta", "name" => "Beta", "role" => "member" }
                    ] },
                  sorted(response.parsed_body))
   end
