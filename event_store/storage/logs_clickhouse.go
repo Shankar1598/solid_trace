@@ -128,10 +128,11 @@ func (s *ClickHouseLogs) Ping() error {
 	return s.conn.Ping(ctx)
 }
 
-// LogProcessingCursor returns the id of the last Log batch whose Logs Log
-// processing has stored for a Project, or uuid.Nil if it has stored none.
-func (s *ClickHouseLogs) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
-	return s.pebble.LogProcessingCursor(projectID)
+// LogIngestCursor returns a Project's ingest cursor, which covers both
+// Log processing and the parse (PebbleWriter.LogIngestCursor), or uuid.Nil
+// if neither has stored Logs for it.
+func (s *ClickHouseLogs) LogIngestCursor(projectID uint32) (uuid.UUID, error) {
+	return s.pebble.LogIngestCursor(projectID)
 }
 
 // LogInsert is one insert of a Project's Log batches: those after the
@@ -147,11 +148,18 @@ type LogInsert struct {
 	// Dropped is how many Logs of the range the Log transform dropped, by
 	// the source each arrived with.
 	Dropped map[LogSource]int64
+	// Range names the kind of batches that After and UpTo are, in the dedup
+	// token: "" for Log batches, "agent" for the Agent file batches that the
+	// parse makes into Logs.
+	Range string
 }
 
 // token is the insert's dedup token, the same each time its range is
 // inserted.
 func (i LogInsert) token(projectID uint32) string {
+	if i.Range != "" {
+		return fmt.Sprintf("logs-%s-%d-%s-%s", i.Range, projectID, i.After, i.UpTo)
+	}
 	return fmt.Sprintf("logs-%d-%s-%s", projectID, i.After, i.UpTo)
 }
 

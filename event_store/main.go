@@ -120,11 +120,18 @@ func main() {
 	}
 	spanProcessor.Start()
 
-	agentFileProcessor := agentprocessing.New(pebbleWriter, clickHouse)
+	// The parse makes each line that Agent file processing stores into a
+	// Log of the Agent Project, with no Log transform.
+	agentParser := agentprocessing.NewParser(pebbleWriter, clickHouseLogs, consoleSettings)
+	agentFileProcessor := agentprocessing.New(pebbleWriter, clickHouse, agentParser.Notify)
 	if err := agentFileProcessor.Prepare(); err != nil {
 		logger.L.Fatal("Failed to prepare Agent file processing", "error", err)
 	}
+	if err := agentParser.Prepare(); err != nil {
+		logger.L.Fatal("Failed to prepare the parse of Agent sessions", "error", err)
+	}
 	agentFileProcessor.Start()
+	agentParser.Start()
 
 	// Retention and deleted Projects once a day, the disk limit hourly.
 	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
@@ -238,6 +245,7 @@ func main() {
 	logProcessor.Stop()
 	spanProcessor.Stop()
 	agentFileProcessor.Stop()
+	agentParser.Stop()
 	logCleanup.Stop()
 	localCache.Stop()
 	eventCleanup.Stop()
