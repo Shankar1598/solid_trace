@@ -61,6 +61,26 @@ type Runs struct {
 // Problem is the body of an answer that is not a success.
 type Problem struct {
 	Error string `json:"error"`
+	// MinimumVersion is the oldest solidtrace CLI that the Dispatcher
+	// accepts, on a 426 to an older CLI.
+	MinimumVersion string `json:"minimum_version,omitempty"`
+}
+
+// Status is the answer of GET /status: the Dispatcher's version, and
+// whether SolidTrace accepts the Dispatcher's own token. It needs no
+// token, so it can say when the Dispatcher cannot check tokens.
+type Status struct {
+	Version    string           `json:"version"`
+	SolidTrace SolidTraceStatus `json:"solidtrace"`
+}
+
+// SolidTraceStatus is the state of the Dispatcher's link to SolidTrace.
+type SolidTraceStatus struct {
+	URL string `json:"url"`
+	// TokenActive is true when SolidTrace accepts the Dispatcher's token.
+	TokenActive bool `json:"token_active"`
+	// Error says what is wrong when TokenActive is false.
+	Error string `json:"error,omitempty"`
 }
 
 // Tokens gives the access token (signin.Source).
@@ -81,10 +101,16 @@ type Client struct {
 type Error struct {
 	Status  int
 	Message string
+	// MinimumVersion is the oldest CLI version that the Dispatcher
+	// accepts, on a 426.
+	MinimumVersion string
 }
 
 func (e *Error) Error() string {
 	switch {
+	case e.Status == http.StatusUpgradeRequired && e.MinimumVersion != "":
+		return fmt.Sprintf("the Dispatcher refuses this solidtrace version: install solidtrace %s or later",
+			e.MinimumVersion)
 	case e.Status == http.StatusUnauthorized:
 		return fmt.Sprintf("the Dispatcher refused the sign-in (%s): run 'solidtrace login' again", e.Message)
 	case e.Message != "":
@@ -148,7 +174,7 @@ func (c *Client) call(ctx context.Context, method, path string, body, into any) 
 	if resp.StatusCode/100 != 2 {
 		var problem Problem
 		_ = json.Unmarshal(answer, &problem)
-		return &Error{Status: resp.StatusCode, Message: problem.Error}
+		return &Error{Status: resp.StatusCode, Message: problem.Error, MinimumVersion: problem.MinimumVersion}
 	}
 	if err := json.Unmarshal(answer, into); err != nil {
 		return fmt.Errorf("read the Dispatcher's answer to %s %s: %w", method, path, err)

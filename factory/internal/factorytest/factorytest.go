@@ -53,6 +53,9 @@ type Env struct {
 	SolidTrace *recorder.Recorder
 	Clock      *Clock
 	Config     dispatcher.Config
+	// Version is the Dispatcher's version ("" is a build from a
+	// checkout). A change applies at the next Restart.
+	Version string
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
@@ -68,6 +71,14 @@ func New(t testing.TB) *Env {
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
 	t.Cleanup(e.SolidTrace.Close)
+	// The Dispatcher's own token: an Admin made it. Revoke it for an Admin
+	// who left the Organization.
+	e.SolidTrace.Token(DispatcherToken, recorder.Answer{
+		Sub:           "1",
+		Username:      "dana@example.com",
+		Scope:         "run_events:write issues:comment tokens:create",
+		Organizations: []recorder.Organization{{ID: Organization.ID, Slug: Organization.Slug, Name: Organization.Name, Role: "admin"}},
+	})
 	e.Config = dispatcher.Config{
 		SolidTraceURL:   e.SolidTrace.URL(),
 		SolidTraceToken: DispatcherToken,
@@ -84,7 +95,7 @@ func New(t testing.TB) *Env {
 
 func (e *Env) start() {
 	e.t.Helper()
-	d, err := dispatcher.Open(e.Config, dispatcher.Options{Now: e.Clock.Now})
+	d, err := dispatcher.Open(e.Config, dispatcher.Options{Now: e.Clock.Now, Version: e.Version})
 	if err != nil {
 		e.t.Fatalf("start the Dispatcher: %v", err)
 	}
@@ -105,9 +116,11 @@ func (e *Env) Restart() {
 
 // Person is a SolidTrace user with a token, on a machine of their own.
 type Person struct {
-	env       *Env
-	Token     string
-	Answer    recorder.Answer
+	env    *Env
+	Token  string
+	Answer recorder.Answer
+	// Version is the version of the person's solidtrace CLI.
+	Version   string
 	configDir string
 }
 
@@ -134,6 +147,7 @@ func (e *Env) PersonIn(name string, org recorder.Organization, role string) *Per
 			Scope:         "sessions:write factory",
 			Organizations: []recorder.Organization{org},
 		},
+		Version:   "0.0.0-test",
 		configDir: e.t.TempDir(),
 	}
 	e.SolidTrace.Token(p.Token, p.Answer)
@@ -172,7 +186,7 @@ func (p *Person) CLI(args ...string) Result {
 		HTTP:      &http.Client{Timeout: 10 * time.Second},
 		Now:       p.env.Clock.Now,
 		Sleep:     func(context.Context, time.Duration) error { return nil },
-		Version:   "0.0.0-test",
+		Version:   p.Version,
 	})
 	return Result{stdout.String(), stderr.String(), code}
 }
@@ -202,6 +216,12 @@ func (p *Person) API(method, path string, body any) Answer {
 // JSON.
 func (e *Env) API(token, method, path string, body any) Answer {
 	e.t.Helper()
+	return e.APIAs("", token, method, path, body)
+}
+
+// APIAs is API with userAgent as the User-Agent ("" sends Go's own).
+func (e *Env) APIAs(userAgent, token, method, path string, body any) Answer {
+	e.t.Helper()
 	var reader io.Reader
 	if raw, ok := body.([]byte); ok {
 		reader = bytes.NewReader(raw)
@@ -218,6 +238,9 @@ func (e *Env) API(token, method, path string, body any) Answer {
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -84,6 +84,8 @@ func TestTheConsoleLinkFollowsTheOrganizationsCurrentSlug(t *testing.T) {
 	renamed := ana.Answer
 	renamed.Organizations = []recorder.Organization{{ID: 7, Slug: "example-co", Name: "Example", Role: "member"}}
 	env.SolidTrace.Token(ana.Token, renamed)
+	// The Dispatcher keeps the answer of a token check for 60 seconds.
+	env.Clock.Advance(time.Minute)
 
 	link := env.SolidTrace.URL() + "/example-co/runs/" + id
 	if got := ana.CLI("runs", "get", id); got.Code != 0 || !strings.Contains(got.Stdout, link) {

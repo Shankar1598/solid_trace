@@ -5,6 +5,7 @@ package dispatcher
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base32"
 	"encoding/json"
 	"errors"
@@ -24,11 +25,16 @@ type Options struct {
 	HTTP *http.Client
 	// Log gets the Dispatcher's own log lines (slog.Default when nil).
 	Log *slog.Logger
+	// Version is the Dispatcher's release, such as v0.19.0 ("" or dev for
+	// a build from a checkout). A release refuses a solidtrace CLI that
+	// is older than SupportedMinorVersions minors.
+	Version string
 }
 
 // Dispatcher is one open Dispatcher.
 type Dispatcher struct {
 	config  Config
+	version string
 	now     func() time.Time
 	log     *slog.Logger
 	store   *store
@@ -50,25 +56,31 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	if options.Log == nil {
 		options.Log = slog.Default()
 	}
+	if options.Version == "" {
+		options.Version = "dev"
+	}
 	s, err := openStore(config.Database)
 	if err != nil {
 		return nil, err
 	}
 	d := &Dispatcher{
-		config: config,
-		now:    options.Now,
-		log:    options.Log,
-		store:  s,
-		tokens: &tokenCheck{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP},
+		config:  config,
+		version: options.Version,
+		now:     options.Now,
+		log:     options.Log,
+		store:   s,
+		tokens: &tokenCheck{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP,
+			now: options.Now, kept: map[[sha256.Size]byte]keptAnswer{}},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs", d.person(d.listRuns))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs/{id}", d.person(d.getRun))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/status", d.status)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "no such path: "+r.Method+" "+r.URL.Path)
 	})
-	d.handler = mux
+	d.handler = d.refuseOldCLIs(mux)
 	return d, nil
 }
 
@@ -87,6 +99,8 @@ const maxBody = 1 << 20
 type personHandler func(w http.ResponseWriter, r *http.Request, p person)
 
 // person checks the request's token and gives the handler its person.
+// The token needs the factory scope; each member of its one Organization
+// can use the handler.
 func (d *Dispatcher) person(next personHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -98,10 +112,18 @@ func (d *Dispatcher) person(next personHandler) http.HandlerFunc {
 		p, err := d.tokens.check(r.Context(), strings.TrimSpace(token))
 		var refused *refusal
 		if errors.As(err, &refused) {
-			if refused.status == http.StatusUnauthorized {
+			switch {
+			case refused.status == http.StatusUnauthorized:
 				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+			case refused.scope:
+				w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="`+FactoryScope+`"`)
 			}
 			writeProblem(w, refused.status, refused.message)
+			return
+		}
+		if errors.Is(err, errCallerRefused) {
+			d.log.Error("SolidTrace refuses the Dispatcher's own token")
+			writeProblem(w, http.StatusServiceUnavailable, callerRefused)
 			return
 		}
 		if err != nil {
@@ -111,6 +133,36 @@ func (d *Dispatcher) person(next personHandler) http.HandlerFunc {
 		}
 		next(w, r, p)
 	}
+}
+
+// admin lets only an Admin of the token's Organization use next. Each
+// Admin action is under person, then admin.
+func (d *Dispatcher) admin(next personHandler) personHandler {
+	return func(w http.ResponseWriter, r *http.Request, p person) {
+		if !p.admin() {
+			writeProblem(w, http.StatusForbidden, "only an Admin of the Organization "+p.organization.slug+" can do this")
+			return
+		}
+		next(w, r, p)
+	}
+}
+
+// status says whether SolidTrace accepts the Dispatcher's own token. It
+// needs no person's token: when SolidTrace refuses the Dispatcher's
+// token, the Dispatcher cannot check a person's token. It is on the
+// private listener only, and it gives no person's data.
+func (d *Dispatcher) status(w http.ResponseWriter, r *http.Request) {
+	status := dispatcherapi.Status{
+		Version:    d.version,
+		SolidTrace: dispatcherapi.SolidTraceStatus{URL: d.config.SolidTraceURL, TokenActive: true},
+	}
+	code := http.StatusOK
+	if err := d.tokens.ownToken(r.Context()); err != nil {
+		status.SolidTrace.TokenActive = false
+		status.SolidTrace.Error = err.Error()
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, status)
 }
 
 func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) {
