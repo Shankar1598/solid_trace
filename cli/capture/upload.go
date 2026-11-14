@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/solidtrace/cli/agentapi"
@@ -68,9 +67,10 @@ func (u *upload) run(ctx context.Context) error {
 			err = u.whole(ctx, path, previous, next)
 		}
 		var answer *agentapi.Error
-		if errors.As(err, &answer) && answer.Status == http.StatusConflict {
-			// The server has other bytes than the offsets call said: the
-			// next call asks again.
+		if errors.As(err, &answer) && (answer.Status == http.StatusConflict || answer.Status == http.StatusBadRequest) {
+			// The server has other bytes than the offsets call said (the
+			// next call asks again), or refuses this path: the other paths
+			// still go.
 			u.c.Log("%s: %s: %v", u.in.SessionID, path, err)
 			continue
 		}
@@ -113,7 +113,7 @@ func (u *upload) paths() ([]string, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("read the Agent session directory: %w", err)
 	}
-	sort.Strings(paths[min(1, len(paths)):])
+	// WalkDir gives the files under <id>/ in lexical order.
 	return paths, nil
 }
 
