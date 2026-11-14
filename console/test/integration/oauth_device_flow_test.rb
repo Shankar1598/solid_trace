@@ -60,6 +60,19 @@ class OauthDeviceFlowTest < ActionDispatch::IntegrationTest
     assert_equal "*", response.headers["Access-Control-Allow-Origin"]
   end
 
+  test "a device code and its user code are kept only as digests" do
+    answer = device_code_answer
+
+    code = Oauth::Code.sole
+    user_code = answer["user_code"].delete("-")
+    assert_equal Oauth::Secret.digest(answer["device_code"]), code.code_digest
+    assert_equal Oauth::Secret.digest(user_code), code.user_code_digest
+    values = code.attributes.values.map(&:to_s)
+    [ answer["device_code"], answer["user_code"], user_code ].each do |secret|
+      assert values.none? { |value| value.include?(secret) }, "#{secret} is kept in plain text"
+    end
+  end
+
   test "a new device code deletes the device codes that expired more than an hour ago" do
     old = device_code_answer
     travel 70.minutes
