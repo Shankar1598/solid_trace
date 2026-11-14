@@ -438,6 +438,15 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
     assert_response :ok
     assert response.parsed_body["access_token"].start_with?("sto_")
 
+    # The scheme name is case-insensitive (RFC 9110 §11.1).
+    %w[basic BASIC].each do |scheme|
+      client_id, secret = confidential_client("client_secret_basic")
+      headers = { "Authorization" => basic(client_id, secret)["Authorization"].sub("Basic", scheme) }
+      exchange(confidential_code(client_id), client_id: nil, headers: headers)
+      assert_response :ok, scheme
+      assert response.parsed_body["access_token"].start_with?("sto_"), scheme
+    end
+
     client_id, secret = confidential_client("client_secret_post")
     post oauth_token_url, params: token_params(confidential_code(client_id), client_id).merge(client_secret: secret)
     assert_response :ok
@@ -456,16 +465,20 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
       assert_response :unauthorized, headers.inspect
       assert_equal "invalid_client", response.parsed_body["error"], headers.inspect
       assert response.parsed_body["error_description"].present?
+      # RFC 6749 §5.2: a 401 invalid_client has a challenge for the Basic scheme.
+      assert_equal 'Basic realm="SolidTrace"', response.headers["WWW-Authenticate"], headers.inspect
     end
 
     post oauth_token_url, params: token_params(code, client_id).merge(client_secret: "#{secret}x")
     assert_response :unauthorized
     assert_equal "invalid_client", response.parsed_body["error"]
+    assert_equal 'Basic realm="SolidTrace"', response.headers["WWW-Authenticate"]
 
     # Basic for one client with the client_id of another.
     exchange(code, client_id: registered_client, headers: basic(client_id, secret))
     assert_response :unauthorized
     assert_equal "invalid_client", response.parsed_body["error"]
+    assert_equal 'Basic realm="SolidTrace"', response.headers["WWW-Authenticate"]
 
     exchange(code, client_id: nil, headers: basic(client_id, secret))
     assert_response :ok
@@ -485,6 +498,7 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
     exchange(code, client_id: nil, headers: basic(@client_id, "secret"))
     assert_response :unauthorized
     assert_equal "invalid_client", response.parsed_body["error"]
+    assert_equal 'Basic realm="SolidTrace"', response.headers["WWW-Authenticate"]
 
     post oauth_token_url, params: token_params(code, @client_id).merge(client_secret: "secret")
     assert_response :unauthorized
