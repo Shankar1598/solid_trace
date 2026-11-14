@@ -43,7 +43,7 @@ class UserSettingsController < ApplicationController
     client = grant.client
     {
       id: grant.id,
-      client: { name: client.name, name_checked: client.name_checked?, host: client.host },
+      client: { name: client.name, name_checked: client.name_checked?, host: client.host, first_party: client.first_party? },
       organization: { name: grant.organization.name, slug: grant.organization.slug },
       approved_via: grant.approved_via,
       user_agent: grant.user_agent,

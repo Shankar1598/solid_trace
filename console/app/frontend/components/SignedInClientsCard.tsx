@@ -23,9 +23,10 @@ import type { SharedProps } from '@/types'
  */
 export interface SignedInClientRow {
   id: number
-  // name_checked: the name comes from a published description at host;
+  // name_checked: the name comes from a published description at host, or
+  // first_party: the client is solidtrace-cli, part of Console (no host);
   // else the client gave it (DCR), and host is its redirect URIs' host.
-  client: { name: string, name_checked: boolean, host: string }
+  client: { name: string, name_checked: boolean, host: string | null, first_party: boolean }
   organization: { name: string, slug: string }
   approved_via: 'browser' | 'device'
   user_agent: string | null
@@ -36,9 +37,10 @@ export interface SignedInClientRow {
 const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' })
 
 /**
- * Settings → User → Signed-in clients: each MCP client that the user
- * signed in through the browser or a device code, one row for each
- * sign-in, and Revoke, which asks first (SignedInClientsController).
+ * Settings → User → Signed-in clients: each MCP client, and the SolidTrace
+ * CLI (solidtrace-cli), that the user signed in through the browser or a
+ * device code, one row for each sign-in, and Revoke, which asks first
+ * (SignedInClientsController).
  */
 export function SignedInClientsCard({ clients }: { clients: SignedInClientRow[] }) {
   const { current_org: currentOrg } = usePage<SharedProps>().props
@@ -52,7 +54,7 @@ export function SignedInClientsCard({ clients }: { clients: SignedInClientRow[] 
     <Card data-testid="signed-in-clients">
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><MonitorSmartphone className="h-4 w-4" />Signed-in clients</CardTitle>
-        <CardDescription>MCP clients that act as you, each in one Organization. Revoke one to sign it out at once.</CardDescription>
+        <CardDescription>MCP clients and the SolidTrace CLI that act as you, each in one Organization. Revoke one to sign it out at once.</CardDescription>
       </CardHeader>
       <CardContent>
         {clients.length === 0 ? (
@@ -69,7 +71,9 @@ export function SignedInClientsCard({ clients }: { clients: SignedInClientRow[] 
                 <div className="min-w-0 space-y-0.5">
                   <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     <span className="break-all">{client.client.name}</span>
-                    {client.client.name_checked
+                    {client.client.first_party
+                      ? <span className="text-xs font-normal text-muted-foreground">First-party</span>
+                      : client.client.name_checked
                       ? <span className="font-mono text-xs font-normal text-muted-foreground">{client.client.host}</span>
                       : <Badge variant="warn">Not checked</Badge>}
                   </div>

@@ -8,7 +8,8 @@ module Oauth
   # sends cannot make the approval one click (device-code phishing). Wrong
   # codes are slowed down by the limit on entries. After a right code,
   # Console fetches or reads the client's published description
-  # (PublishedDescription.device_client); a bad one shows the error page and
+  # (PublishedDescription.device_client), or takes solidtrace-cli, the
+  # client built into Console; a bad description shows the error page and
   # denies the device code. A host that does not answer, or another fetch
   # that runs, shows the error page, and the device code still waits, so
   # the user can type it again. A good one keeps a PendingRequest for the
@@ -94,7 +95,7 @@ module Oauth
       code = DeviceCode.find_waiting(params[:user_code])
       return render_entry(error: WRONG_CODE, status: :unprocessable_entity) unless code
 
-      client = PublishedDescription.device_client(code.client_id, user: current_user)
+      client = device_client(code)
       code.update!(client: client)
       pending = PendingRequest.keep!(client: client, code: code, scope: code.scopes.join(" "), resource: code.resource)
       pending.remember(session)
@@ -104,6 +105,15 @@ module Oauth
     rescue PublishedDescription::Problem => problem
       code.deny!
       error_page(problem.message)
+    end
+
+    # The client of the device code: solidtrace-cli, built into Console, or
+    # the client with a checked published description that lists the
+    # device grant (fetched now if needed).
+    def device_client(code)
+      return Client.first_party if code.client_id == Client::FIRST_PARTY_ID
+
+      PublishedDescription.device_client(code.client_id, user: current_user)
     end
 
     # The request in params, if this browser holds it and its device code
@@ -118,7 +128,7 @@ module Oauth
       organizations = organizations_last_used_first
       {
         request: pending.key,
-        client: { name: pending.client.name, name_note: "Published at #{pending.client.published_host}" },
+        client: { name: pending.client.name, name_note: device_name_note(pending.client) },
         asked_at: code.created_at.iso8601,
         asked_from: code.ip_address,
         organizations: organizations.map do |organization|
@@ -132,6 +142,10 @@ module Oauth
         no_organization: (AuthorizationsController::NO_ORGANIZATION if organizations.empty?),
         revoke_hint: AuthorizationsController::REVOKE_HINT,
       }
+    end
+
+    def device_name_note(client)
+      client.first_party? ? Client::FIRST_PARTY_NOTE : "Published at #{client.published_host}"
     end
 
     # The user's Organizations, the last used one first, as on the approval
