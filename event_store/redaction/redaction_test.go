@@ -57,3 +57,35 @@ func TestAppPasswordStartsAWordAfterAJSONEscape(t *testing.T) {
 		}
 	}
 }
+
+// Each default pattern replaces a credential of its shortest length, and
+// leaves the same text with one character less. The prefixes are joined at
+// run time, so that the source holds no text in a credential's format.
+func TestEachDefaultPatternHasItsMinimumLength(t *testing.T) {
+	set, err := redaction.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, prefix string
+		min          int
+	}{
+		{"Anthropic", "sk-" + "ant-", 20},
+		{"Bitbucket access token", "ATCTT" + "3xFfGN0", 20},
+		{"Bitbucket app password", "AT" + "BB", 28},
+		{"Atlassian API token", "ATATT" + "3xFfGF0", 20},
+	} {
+		for n, replaced := range map[int]bool{c.min - 1: false, c.min: true} {
+			secret := c.prefix + strings.Repeat("a", n)
+			text := []byte("key " + secret + " end")
+			set.Unit(text, false)
+			want := "key " + secret + " end"
+			if replaced {
+				want = "key " + strings.Repeat("*", len(secret)) + " end"
+			}
+			if string(text) != want {
+				t.Errorf("%s with %d characters: expected %q, got %q", c.name, n, want, text)
+			}
+		}
+	}
+}
