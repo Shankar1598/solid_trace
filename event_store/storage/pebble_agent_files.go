@@ -37,6 +37,9 @@ type AgentSession struct {
 	// and its Project in the factory.
 	RunID   string `msgpack:"run_id"`
 	Project string `msgpack:"project"`
+	// ParentSessionID is the Agent session that this one was forked or
+	// cleared from, when the uploader recorded one; "" for none.
+	ParentSessionID string `msgpack:"parent_session_id,omitempty"`
 	// Flags are the AgentFlag bits of each unit stored of the Agent
 	// session: it has a cut unit, or a trimmed .jsonl file.
 	Flags uint8 `msgpack:"flags"`

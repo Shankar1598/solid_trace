@@ -26,7 +26,9 @@ type Retention interface {
 // batches after its own cursor, up to Agent file processing's cursor, and
 // makes each Log exactly once:
 //  1. it records in Pebble the range of batches it is about to parse;
-//  2. it inserts their Logs, with a dedup token made from the range;
+//  2. it inserts their Logs, and what they add to the totals of each
+//     Agent session (agent_sessions), with a dedup token made from the
+//     range;
 //  3. it moves its cursor past the range and deletes the batches.
 //
 // After a crash or a failed insert, the recorded range is parsed and
@@ -119,7 +121,7 @@ func (p *Parser) parseUnits(projectID uint32) (more bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	logsOfUnits, state := parseUnits(units, retentionDays, state)
+	logsOfUnits, sessionDays, state := parseUnits(units, retentionDays, state)
 	encoded, err = state.encode()
 	if err != nil {
 		return false, err
@@ -130,7 +132,8 @@ func (p *Parser) parseUnits(projectID uint32) (more bool, err error) {
 			parsed = append(parsed, storage.LogBatch{ID: batches[i].ID, Logs: logs})
 		}
 	}
-	insert := storage.LogInsert{After: cursor, UpTo: last, Batches: parsed, Again: again, Range: "agent"}
+	insert := storage.LogInsert{After: cursor, UpTo: last, Batches: parsed, Again: again, Range: "agent",
+		AgentSessions: sessionDays}
 	if err := p.logs.InsertLogBatches(projectID, insert); err != nil {
 		return false, fmt.Errorf("insert the Logs of agent sessions: %w", err)
 	}

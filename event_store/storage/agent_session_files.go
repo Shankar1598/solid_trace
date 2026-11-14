@@ -52,9 +52,9 @@ var agentSessionFilesMigration = clickHouseMigration{version: 10601, statements:
 }}
 
 // AgentDays are the raw layer of the Agent sessions of each Agent Project,
-// kept for its Retention. Its parts move to the bucket by the time that the
-// server stored them.
-var AgentDays = DayFamily{Name: "Agent sessions", Tables: []string{"agent_session_files"}, TimeColumn: "stored_at"}
+// and their totals in agent_sessions, kept for its Retention. Its parts
+// move to the bucket by the time that the server stored them.
+var AgentDays = DayFamily{Name: "Agent sessions", Tables: []string{"agent_session_files", "agent_sessions"}, TimeColumn: "stored_at"}
 
 // agentFileRowBytes is the most bytes of one row of agent_session_files: a
 // unit larger than this is stored as several rows.
