@@ -100,7 +100,7 @@ module Oauth
     def start_request
       return start_published_request if PublishedDescription.url?(params[:client_id])
 
-      client = Client.find_by(client_id: params[:client_id].to_s)
+      client = Client.named(params[:client_id])
       return error_page("Console does not know this client. Start the sign-in again from the program.") unless client
 
       redirect_uri = params[:redirect_uri]
@@ -192,7 +192,7 @@ module Oauth
         client: {
           name: client.name,
           name_checked: client.name_checked?,
-          name_note: client.name_checked? ? "Checked: published at #{client.published_host}" : NAME_NOT_CHECKED,
+          name_note: client.name_note || NAME_NOT_CHECKED,
           redirect_host: URI(pending.redirect_uri).host,
         },
         loopback_warning: (LOOPBACK_WARNING if client.loopback_only?),

@@ -9,12 +9,26 @@ module Oauth
   # client_id; the row keeps the last fetched copy (PublishedDescription),
   # and its name counts as checked, because the client owns the host that
   # publishes it.
+  #
+  # One client is built into Console (kind first_party): solidtrace-cli,
+  # the SolidTrace CLI that `solidtrace login` runs. It is public, its only
+  # redirect URI is loopback (any port, RFC 8252 §7.3), and it is the only
+  # client that is not published and still gets the device flow. Its row is
+  # made at its first use (.first_party). No other row can have its
+  # client_id: a registered client_id is random, a published one is an
+  # https:// URL, and the validation refuses it for each other kind.
   class Client < ApplicationRecord
-    KINDS = %w[dcr cimd].freeze
+    KINDS = %w[dcr cimd first_party].freeze
     AUTH_METHODS = %w[none client_secret_basic client_secret_post].freeze
     UNNAMED = "Unnamed client"
     MAX_URI = 512
     DEFAULT_GRANT_TYPES = %w[authorization_code refresh_token].freeze
+    FIRST_PARTY_ID = "solidtrace-cli"
+    FIRST_PARTY = {
+      kind: "first_party", name: "SolidTrace CLI", redirect_uris: [ "http://127.0.0.1/callback" ],
+      grant_types: [ *DEFAULT_GRANT_TYPES, DeviceCode::GRANT_TYPE ], token_endpoint_auth_method: "none",
+    }.freeze
+    FIRST_PARTY_NOTE = "Checked: the SolidTrace CLI, part of Console"
 
     has_many :grants, class_name: "Oauth::Grant", foreign_key: :oauth_client_id, dependent: :destroy, inverse_of: :client
     has_many :codes, class_name: "Oauth::Code", foreign_key: :oauth_client_id, dependent: :delete_all, inverse_of: :client
@@ -24,6 +38,28 @@ module Oauth
     validates :kind, inclusion: { in: KINDS }
     validates :client_id, presence: true, uniqueness: true
     validates :name, presence: true, length: { maximum: 100 }
+    validate :first_party_id_only_for_first_party
+
+    # The client that a request names: the built-in solidtrace-cli (its row
+    # made at first use), or the kept row; nil when there is none.
+    def self.named(client_id)
+      return unless client_id.is_a?(String) && client_id.present?
+      return first_party if client_id == FIRST_PARTY_ID
+
+      find_by(client_id: client_id)
+    end
+
+    # The built-in solidtrace-cli, with today's name, redirect URI and grant
+    # types.
+    def self.first_party
+      client = find_by(client_id: FIRST_PARTY_ID) ||
+               create_or_find_by!(client_id: FIRST_PARTY_ID) { |row| row.assign_attributes(FIRST_PARTY) }
+      raise "The oauth_clients row #{FIRST_PARTY_ID} is not the built-in client" unless client.first_party?
+
+      kept = FIRST_PARTY.keys.to_h { |key| [ key, client.public_send(key) ] }
+      client.update!(FIRST_PARTY) unless kept == FIRST_PARTY
+      client
+    end
 
     # Whether uri is an allowed redirect URI: https:// with a host, or
     # http:// at a loopback host, with no fragment, at most 512 characters.
@@ -63,9 +99,32 @@ module Oauth
     end
 
     # Whether Console checked the name: it comes from a published
-    # description. A registered (DCR) name is the client's own claim.
+    # description, or the client is built into Console. A registered (DCR)
+    # name is the client's own claim.
     def name_checked?
-      kind == "cimd"
+      kind == "cimd" || first_party?
+    end
+
+    # Whether this is solidtrace-cli, the client built into Console.
+    def first_party?
+      kind == "first_party"
+    end
+
+    # What the approval page and the device page say of a checked name; nil
+    # for a registered (DCR) one.
+    def name_note
+      if first_party?
+        FIRST_PARTY_NOTE
+      elsif name_checked?
+        "Checked: published at #{published_host}"
+      end
+    end
+
+    # Whether the client can use the device flow: its grant types list the
+    # device grant. A registration cannot list it, so only solidtrace-cli
+    # and published clients can.
+    def device_grant?
+      grant_types.include?(DeviceCode::GRANT_TYPE)
     end
 
     # The host that publishes the description, for a cimd client.
@@ -75,8 +134,10 @@ module Oauth
 
     # Where the client is, for Settings → User: the host that publishes the
     # description, or for a registered client the hosts of its redirect
-    # URIs.
+    # URIs. solidtrace-cli has none: it is part of Console.
     def host
+      return if first_party?
+
       published_host || redirect_uris.filter_map { |uri| uri_host(uri) }.uniq.join(", ")
     end
 
@@ -131,6 +192,12 @@ module Oauth
     end
 
     private
+
+    def first_party_id_only_for_first_party
+      return if (client_id == FIRST_PARTY_ID) == first_party?
+
+      errors.add(:client_id, "is #{FIRST_PARTY_ID} for the built-in client, and only for it")
+    end
 
     def uri_host(uri)
       URI(uri).host

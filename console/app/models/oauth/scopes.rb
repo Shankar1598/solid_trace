@@ -138,6 +138,16 @@ module Oauth
       resources.find { |candidate| Issuer.same_resource?(candidate, resource) }
     end
 
+    # The names among names whose Scope is for resource. An access token
+    # carries only these of its Grant's Scopes (RFC 8707 §2.2), and the
+    # token endpoint answers them as its scope.
+    def for_resource(names, resource, issuer:)
+      names.select do |name|
+        scope = find(name)
+        scope && Issuer.same_resource?(scope.resource(issuer), resource)
+      end
+    end
+
     # The names of the Scopes for the resource at path under the issuer
     # that an OAuth client can ask for.
     def names_for(resource_path)

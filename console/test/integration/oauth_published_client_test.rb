@@ -506,7 +506,8 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     get user_settings_url, headers: inertia_headers
 
     rows = response.parsed_body.dig("props", "signed_in_clients")
-    assert_equal [ { "name" => "Claude Code", "name_checked" => true, "host" => "client.example.com" } ],
+    assert_equal [ { "name" => "Claude Code", "name_checked" => true, "host" => "client.example.com",
+                     "first_party" => false } ],
                  rows.map { |row| row["client"] }
   end
 
