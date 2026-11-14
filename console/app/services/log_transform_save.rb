@@ -11,10 +11,17 @@
 # Only the Organization's admins save (ProjectPolicy#update?): anyone else's
 # save raises Pundit::NotAuthorizedError before it checks or changes
 # anything.
+#
+# The Agent Project gets no Log transform: its Logs are transcript lines,
+# which the background parse makes (ADR 0020). Its save is refused before
+# the check.
 class LogTransformSave
+  AGENT_PROJECT = "The Agent Project gets no Log transform: its Logs are the lines of Agent sessions' transcripts."
+
   # What the save did: :saved, with the new version; :unchanged, with the
   # current version (nil when there's none), when the program is the current
-  # one; or nil, with the check's errors, each {"message", "code", "start",
+  # one; or nil, with the check's errors (or the Agent Project's refusal,
+  # with its "text" only), each {"message", "code", "start",
   # "end", "text"}.
   Result = Data.define(:outcome, :version, :errors) do
     def done?
@@ -34,6 +41,7 @@ class LogTransformSave
 
   def call
     Pundit.authorize(@user, @project, :update?)
+    return Result.new(outcome: nil, version: nil, errors: [ { "text" => AGENT_PROJECT } ]) if @project.agent?
 
     current = @project.log_transform
     return Result.new(outcome: :unchanged, version: current, errors: []) if current&.program.to_s == @program

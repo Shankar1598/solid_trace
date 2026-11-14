@@ -2,6 +2,10 @@
 
 class Organization < ApplicationRecord
   has_many :projects, dependent: :destroy
+  # The Agent Project (GLOSSARY): the one Project with agent set, made when an
+  # Admin turns on Agent sessions (AgentSessionsSettings). Only it has
+  # captured repositories.
+  has_one :agent_project, -> { where(agent: true) }, class_name: "Project"
   has_many :organization_users, -> { kept }, class_name: "OrganizationUser", dependent: :restrict_with_error
   has_many :all_organization_users, class_name: "OrganizationUser", dependent: :restrict_with_error
   has_many :users, through: :organization_users

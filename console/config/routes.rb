@@ -134,6 +134,8 @@ Rails.application.routes.draw do
       resource :organization, only: [ :show, :update ], controller: "organization_settings"
       resources :organization_users, only: [ :index, :create, :update, :destroy ]
       resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
+      # The turn-on of Agent sessions and the captured repositories (AgentSessionSettingsController).
+      resource :agent_session_settings, only: [ :show, :create, :update ], path: "agent_sessions", controller: "agent_session_settings"
       resource :user, only: [ :show, :update ], controller: "user_settings"
       # The user's API tokens and the MCP server's URL (ApiTokenSettingsController).
       resource :api_token_settings, only: [ :show ], path: "api_tokens", controller: "api_token_settings"

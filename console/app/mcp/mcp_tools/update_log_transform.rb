@@ -18,6 +18,8 @@ module McpTools
 
     def run
       authorize!(project, :update?, "change a Project's Log transform")
+      raise ToolError, LogTransformSave::AGENT_PROJECT if project.agent?
+
       save = LogTransformSave.call(project: project, user: user, program: arguments[:program])
       compile_errors!("Not saved: the program doesn't compile.", save.errors) unless save.done?
 

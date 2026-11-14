@@ -18,9 +18,23 @@ class Project < ApplicationRecord
   has_one :seen_cursor, class_name: "ProjectSeenCursor", dependent: :delete
   # Rows EventStore reads for the Project (ADR 0001).
   has_many :log_transform_versions, dependent: :delete_all
+  # The Agent Project's confirms of the capture notice.
+  has_many :capture_confirmations, dependent: :delete_all
+
+  # A captured repository: host/workspace/name, or host/workspace/* for each
+  # repository of a workspace. The host is in lower case, as `capture`
+  # normalises each remote's host before it matches.
+  CAPTURED_REPOSITORY = %r{\A[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[A-Za-z0-9_.-]+/([A-Za-z0-9_.-]+|\*)\z}
 
   before_validation :generate_slug, on: :create
   normalizes :description, with: ->(description) { description.strip.presence }
+  # Each entry without spaces or a .git ending, its host in lower case, and
+  # each entry once.
+  normalizes :captured_repositories, with: ->(entries) {
+    Array(entries).map { |entry| Project.normalise_captured_repository(entry) }.reject(&:empty?).uniq
+  }
+
+  validate :captured_repositories_well_formed
 
   validates :name, presence: true
   validate :slug_reachable, on: :create
@@ -35,6 +49,11 @@ class Project < ApplicationRecord
   # once, as Console makes one.
   def self.build_with_key(attributes = {})
     new(attributes).tap { |project| project.project_keys.build }
+  end
+
+  def self.normalise_captured_repository(entry)
+    host, rest = entry.to_s.strip.split("/", 2)
+    [ host.to_s.downcase, rest ].compact.join("/").delete_suffix(".git")
   end
 
   def to_param
@@ -65,6 +84,18 @@ class Project < ApplicationRecord
 
   def generate_slug
     self.slug ||= name.to_s.parameterize
+  end
+
+  def captured_repositories_well_formed
+    if !agent? && captured_repositories.any?
+      errors.add(:captured_repositories, "are a setting of the Agent Project only")
+      return
+    end
+
+    bad = captured_repositories.reject { |entry| entry.match?(CAPTURED_REPOSITORY) && entry.split("/").none? { |part| part.in?([ ".", ".." ]) } }
+    return if bad.empty?
+
+    errors.add(:captured_repositories, "must each be host/workspace/name or host/workspace/*, not #{bad.to_sentence}")
   end
 
   # A Project is found by its slug in its Organization, and its page is
