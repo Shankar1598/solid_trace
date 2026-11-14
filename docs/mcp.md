@@ -1,6 +1,6 @@
 # The MCP server
 
-SolidTrace has an [MCP](https://modelcontextprotocol.io) server, so an agent such as Claude Code or Cursor can read a Project's Logs and Issues, build Dashboards and Monitors, and set up Projects for you. It is part of Console, at `/mcp` on Console's address. An agent signs in through the browser, or a script uses an API token. Why the server is built this way is in [ADR 0009](adr/0009-mcp-server-in-console-with-api-tokens.md), and why sign-in works this way is in [ADR 0019](adr/0021-mcp-clients-sign-in-with-oauth-in-console.md).
+SolidTrace has an [MCP](https://modelcontextprotocol.io) server, so an agent such as Claude Code or Cursor can read a Project's Logs and Issues, build Dashboards and Monitors, and set up Projects for you. It is part of Console, at `/mcp` on Console's address. An agent signs in through the browser, or a script uses an API token. Why the server is built this way is in [ADR 0009](adr/0009-mcp-server-in-console-with-api-tokens.md), and why sign-in works this way is in [ADR 0021](adr/0021-mcp-clients-sign-in-with-oauth-in-console.md).
 
 ## Connecting
 
