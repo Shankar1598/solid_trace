@@ -259,6 +259,17 @@ class OauthFirstPartyCliTest < ActionDispatch::IntegrationTest
     assert_equal FIRST_PARTY_NOTE, cli_approval_page.dig("client", "name_note")
   end
 
+  test "the built-in client's row gets back its own redirect URI and grant types at each use" do
+    Oauth::Client.first_party.update_columns(redirect_uris: [ "https://cli.example.com/callback" ], grant_types: [],
+                                             token_endpoint_auth_method: "client_secret_basic")
+
+    get oauth_authorize_url(authorize_params(CLI, redirect_uri: "https://cli.example.com/callback", scope: LOGIN_SCOPE,
+                                                  resource: nil)), headers: inertia_headers
+    assert_error_page "a redirect URI written into the row"
+    assert_equal "SolidTrace CLI", cli_approval_page.dig("client", "name")
+    cli_tokens
+  end
+
   test "only the built-in client can have the solidtrace-cli client_id, and it can have no other" do
     Oauth::Client.first_party
     %w[dcr cimd].each do |kind|
