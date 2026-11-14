@@ -156,6 +156,12 @@ func (c *Client) Discover(ctx context.Context, instanceURL string) (Server, erro
 	if !contains(meta.Methods, "S256") || meta.TokenEndpoint == "" {
 		return Server{}, fmt.Errorf("%s does not give the sign-in that the CLI needs (PKCE S256 and a token endpoint)", instanceURL)
 	}
+	// The codes and tokens go only to the issuer that the person named.
+	for _, endpoint := range []string{meta.AuthorizationEndpoint, meta.TokenEndpoint, meta.DeviceAuthorizationEndpoint} {
+		if endpoint != "" && !strings.HasPrefix(endpoint, instanceURL+"/") {
+			return Server{}, fmt.Errorf("%s names an OAuth endpoint at another address (%q): the sign-in stopped", instanceURL, endpoint)
+		}
+	}
 	return Server{
 		Issuer:                      instanceURL,
 		AuthorizationEndpoint:       meta.AuthorizationEndpoint,

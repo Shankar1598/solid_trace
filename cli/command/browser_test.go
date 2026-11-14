@@ -90,6 +90,22 @@ func TestLoginRefusesAConsoleURLThatIsNotHTTPS(t *testing.T) {
 	w.assertNotSignedIn()
 }
 
+func TestLoginRefusesMetadataThatSendsTheTokensElsewhere(t *testing.T) {
+	w := newWorld(t, acme)
+	w.oauth.TokenEndpoint = "http://198.51.100.92/oauth/token"
+
+	if code := w.login(); code == 0 {
+		t.Fatal("login passed with a token endpoint at another address")
+	}
+	if !strings.Contains(w.stderr.String(), "another address") {
+		t.Errorf("stderr: %s", w.stderr)
+	}
+	if len(w.opened) != 0 {
+		t.Errorf("browser opened")
+	}
+	w.assertNotSignedIn()
+}
+
 func TestLoginRefusesMetadataThatNamesAnotherIssuer(t *testing.T) {
 	w := newWorld(t, acme)
 	// localhost reaches the fake at 127.0.0.1, but the metadata names

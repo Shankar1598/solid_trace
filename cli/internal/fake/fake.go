@@ -98,6 +98,8 @@ type OAuth struct {
 	DeviceExpiresIn int
 	// RefreshDown makes the token endpoint answer 503 to a refresh.
 	RefreshDown bool
+	// TokenEndpoint is the metadata's token endpoint; "" names the fake's.
+	TokenEndpoint string
 
 	Authorizations   []AuthorizeRequest
 	DeviceRequests   []url.Values
@@ -208,10 +210,16 @@ func (f *OAuth) DeviceCodes() []string {
 
 func (f *OAuth) metadata(w http.ResponseWriter, r *http.Request) {
 	issuer := f.URL()
+	f.mu.Lock()
+	tokenEndpoint := f.TokenEndpoint
+	f.mu.Unlock()
+	if tokenEndpoint == "" {
+		tokenEndpoint = issuer + "/oauth/token"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issuer":                                         issuer,
 		"authorization_endpoint":                         issuer + "/oauth/authorize",
-		"token_endpoint":                                 issuer + "/oauth/token",
+		"token_endpoint":                                 tokenEndpoint,
 		"revocation_endpoint":                            issuer + "/oauth/revoke",
 		"device_authorization_endpoint":                  issuer + "/oauth/device_authorization",
 		"code_challenge_methods_supported":               []string{"S256"},
