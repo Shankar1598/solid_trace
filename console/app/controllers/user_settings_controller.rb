@@ -21,6 +21,9 @@ class UserSettingsController < ApplicationController
         { id: passkey.id, name: passkey.name, host: passkey.host, other_host: passkey.host != passkey_offer.host,
           created_at: passkey.created_at.iso8601, last_used_at: passkey.last_used_at&.iso8601 }
       },
+      # The live Grants that have had a token, newest first, each with Revoke
+      # (SignedInClientsController).
+      signed_in_clients: current_user.oauth_grants.signed_in_clients.map { |grant| signed_in_client(grant) },
       # From the set-up page (?org=): where adding a first Passkey returns.
       return_organization: return_organization&.then { |organization| { name: organization.name, slug: organization.slug } },
     }
@@ -35,6 +38,19 @@ class UserSettingsController < ApplicationController
   end
 
   private
+
+  def signed_in_client(grant)
+    client = grant.client
+    {
+      id: grant.id,
+      client: { name: client.name, name_checked: client.name_checked?, host: client.host },
+      organization: { name: grant.organization.name, slug: grant.organization.slug },
+      approved_via: grant.approved_via,
+      user_agent: grant.user_agent,
+      approved_at: grant.approved_at.iso8601,
+      last_used_at: grant.last_used_at&.iso8601,
+    }
+  end
 
   def user_params
     params.require(:user).permit(:name)

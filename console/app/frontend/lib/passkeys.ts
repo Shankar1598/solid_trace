@@ -1,4 +1,5 @@
 import { csrfToken } from './apiTokens'
+import { shortUserAgent } from './userAgent'
 
 /** Where Passkeys are offered (PasskeyOffer): at the Console URL's host, or not, with why. */
 export type PasskeyOffer =
@@ -74,22 +75,7 @@ export function passkeyCancelled(error: unknown): boolean {
 
 /** A default name for a new Passkey, from the browser and OS, as "Chrome on macOS". */
 export function defaultPasskeyName(userAgent: string = navigator.userAgent): string {
-  const browser =
-    /Edg\//.test(userAgent) ? 'Edge'
-      : /OPR\//.test(userAgent) ? 'Opera'
-        : /Firefox\/|FxiOS/.test(userAgent) ? 'Firefox'
-          : /Chrome\/|CriOS/.test(userAgent) ? 'Chrome'
-            : /Safari\//.test(userAgent) ? 'Safari'
-              : 'Browser'
-  const os =
-    /iPhone|iPad|iPod/.test(userAgent) ? 'iOS'
-      : /Android/.test(userAgent) ? 'Android'
-        : /Mac OS X|Macintosh/.test(userAgent) ? 'macOS'
-          : /Windows/.test(userAgent) ? 'Windows'
-            : /CrOS/.test(userAgent) ? 'ChromeOS'
-              : /Linux/.test(userAgent) ? 'Linux'
-                : null
-  return os ? `${browser} on ${os}` : browser
+  return shortUserAgent(userAgent)
 }
 
 // Browsers without the native JSON helpers (parse*FromJSON, toJSON): the

@@ -296,7 +296,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_153000) do
   create_table "oauth_codes", force: :cascade do |t|
     t.string "kind", null: false
     t.string "code_digest", null: false
-    t.integer "oauth_client_id", null: false
+    t.integer "oauth_client_id"
     t.integer "oauth_grant_id"
     t.string "code_challenge"
     t.string "redirect_uri"
@@ -306,9 +306,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_153000) do
     t.datetime "used_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "client_id"
+    t.string "user_code_digest"
+    t.string "ip_address"
+    t.datetime "denied_at"
+    t.datetime "last_poll_at"
+    t.integer "poll_interval"
     t.index ["code_digest"], name: "index_oauth_codes_on_code_digest", unique: true
     t.index ["oauth_client_id"], name: "index_oauth_codes_on_oauth_client_id"
     t.index ["oauth_grant_id"], name: "index_oauth_codes_on_oauth_grant_id"
+    t.index ["user_code_digest"], name: "index_oauth_codes_on_user_code_digest"
   end
 
   create_table "oauth_grants", force: :cascade do |t|
@@ -334,7 +341,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_153000) do
   create_table "oauth_pending_requests", force: :cascade do |t|
     t.string "key", null: false
     t.integer "oauth_client_id"
-    t.string "redirect_uri", null: false
+    t.string "redirect_uri"
     t.string "response_type"
     t.string "code_challenge"
     t.string "code_challenge_method"
@@ -344,8 +351,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_153000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.string "client_id"
+    t.integer "oauth_code_id"
     t.index ["key"], name: "index_oauth_pending_requests_on_key", unique: true
     t.index ["oauth_client_id"], name: "index_oauth_pending_requests_on_oauth_client_id"
+    t.index ["oauth_code_id"], name: "index_oauth_pending_requests_on_oauth_code_id"
   end
 
   create_table "oauth_tokens", force: :cascade do |t|
@@ -358,7 +367,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_153000) do
     t.datetime "revoked_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "replaced_by_id"
+    t.text "kept_access_token"
+    t.text "kept_refresh_token"
     t.index ["oauth_grant_id"], name: "index_oauth_tokens_on_oauth_grant_id"
+    t.index ["replaced_by_id"], name: "index_oauth_tokens_on_replaced_by_id"
     t.index ["token_digest"], name: "index_oauth_tokens_on_token_digest", unique: true
   end
 
@@ -505,6 +518,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_153000) do
   add_foreign_key "oauth_grants", "users"
   add_foreign_key "oauth_pending_requests", "oauth_clients"
   add_foreign_key "oauth_tokens", "oauth_grants"
+  add_foreign_key "oauth_tokens", "oauth_tokens", column: "replaced_by_id", on_delete: :nullify
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
   add_foreign_key "passkeys", "users"

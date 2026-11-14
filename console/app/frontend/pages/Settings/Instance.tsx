@@ -152,6 +152,10 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                   and the MCP server&apos;s links use it from the next one.
                   {scheme && ` It starts with ${scheme}://, as Console runs ${scheme === 'https' ? 'with' : 'without'} HTTPS, which changes only with CONSOLE_URL and a restart (below).`}
                 </p>
+                <p className="text-xs text-muted-foreground" data-testid="console-url-signs-out-clients">
+                  A change signs out every Signed-in client (MCP clients that signed in through the browser): each
+                  one signs in again at the new URL. API tokens keep working.
+                </p>
                 <p className="text-xs text-muted-foreground" data-testid="console-url-fallback">
                   {fallbackHint(editable.console_url_fallback)}
                 </p>
