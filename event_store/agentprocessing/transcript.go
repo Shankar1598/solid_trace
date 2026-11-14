@@ -145,7 +145,8 @@ var agentLogIDs = uuid.MustParse("5b0f3c1e-8f53-4d0e-9a52-6c1d2b7e4a90")
 // parseUnits makes one Log for each line of the units of .jsonl files in a
 // range of the parse, by Log ingest's normalise, at the Agent Project's
 // Retention: the Logs of units[i] are logs[i]. A unit of another file has
-// no Logs.
+// no Logs. It reads the parse state that the range before left, and gives
+// the state after this range.
 //
 // Some rules read more than one line, so the parse reads the whole range
 // before it makes a Log:
@@ -154,10 +155,18 @@ var agentLogIDs = uuid.MustParse("5b0f3c1e-8f53-4d0e-9a52-6c1d2b7e4a90")
 //   - a message delivered in the middle of a turn has the time of its
 //     remove line, which comes after its queued_command attachment.
 //
-// A rule cannot see a line in another range. The lines of one reply are
-// written together, and a remove line follows its attachment at once, so
-// that needs an upload cut between them at the end of a range.
-func parseUnits(units []storage.AgentFileUnit, retentionDays int) [][]models.Log {
+// Claude Code writes the lines of one reply up to some seconds apart, so a
+// reply can continue in the next range. The state keeps the tokens that
+// the last reply of each file has had, and a line of that reply in a later
+// range gets only the tokens that its reply did not have yet: usually
+// none, as each line repeats the same usage. So the sum of the tokens of a
+// reply's Logs is always the usage of its last line.
+//
+// A remove line follows its attachment at once, so the mid-turn rule needs
+// an upload cut between them at the end of a range, and then the message
+// has the time of its attachment.
+func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseState) ([][]models.Log, parseState) {
+	state = state.clone()
 	var lines []parsedLine
 	lastLineOfReply := map[string]int{}
 	deliveredAt := map[string]json.RawMessage{}
@@ -208,8 +217,12 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int) [][]models.Log
 		}
 		object, f := line.object, line.facts
 		file := fmt.Sprintf("%s/%d/%s", unit.SessionID, unit.Version, unit.Path)
-		if f.usage != nil && (f.messageID == "" || lastLineOfReply[file+"/"+f.messageID] == i) {
-			addTokens(object, f.model, f.usage.tokens())
+		if f.usage != nil && f.messageID == "" {
+			t := f.usage.tokens()
+			cost, hasCost := estimatedCost(f.model, t)
+			addTokens(object, t, cost, hasCost)
+		} else if f.usage != nil && lastLineOfReply[file+"/"+f.messageID] == i {
+			state.addReply(object, file, f, unit.StoredAt)
 		}
 		if f.queued != "" {
 			if at, ok := deliveredAt[unit.SessionID.String()+"/"+f.queued]; ok {
@@ -232,7 +245,8 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int) [][]models.Log
 		log.ID = uuid.NewSHA1(agentLogIDs, fmt.Appendf(nil, "%s/%d/%d/%s", unit.SessionID, unit.Version, line.offset, unit.Path))
 		logs[line.unit] = append(logs[line.unit], log)
 	}
-	return logs
+	state.dropOld()
+	return logs, state
 }
 
 // isSubagentFile is true for the transcript of a subagent, which Claude
@@ -243,13 +257,13 @@ func isSubagentFile(path string) bool {
 
 // addTokens adds the tokens of a request by kind, and its estimated cost
 // when its model has a price.
-func addTokens(object map[string]json.RawMessage, model string, t tokens) {
+func addTokens(object map[string]json.RawMessage, t tokens, cost float64, hasCost bool) {
 	number := func(n int64) json.RawMessage { return json.RawMessage(strconv.FormatInt(n, 10)) }
 	object["agent.tokens.input"] = number(t.input)
 	object["agent.tokens.output"] = number(t.output)
 	object["agent.tokens.cache_read"] = number(t.cacheRead)
 	object["agent.tokens.cache_write"] = number(t.cacheWrite5m + t.cacheWrite1h)
-	if cost, ok := estimatedCost(model, t); ok {
+	if hasCost {
 		object["agent.cost_usd"] = json.RawMessage(strconv.FormatFloat(cost, 'g', -1, 64))
 	}
 }

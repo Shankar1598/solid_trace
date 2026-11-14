@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -73,6 +74,71 @@ func TestTheTokensOfAReplyOfSeveralLinesAreOnItsLastLineOnly(t *testing.T) {
 	// Claude Opus 5.5: $4 input, $20 output, $0.20 cache read and $5 a
 	// 5-minute cache write, for each million tokens.
 	expectCost(t, "The last line of the reply", last, 10*4e-6+50*20e-6+1000*0.2e-6+100*5e-6)
+}
+
+func TestAReplyThatTheParseReadsInTwoRangesHasItsTokensOnce(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	usage := func(output int) string {
+		return fmt.Sprintf(`{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"output_tokens":%d}`, output)
+	}
+	// The wrapper uploads every few seconds, and the parse runs after each
+	// upload, between two lines of one reply. The second reply's last line
+	// has more output tokens than its first line.
+	ranges := [][]string{
+		{reply("a1", "msg_r", "claude-opus-5-5", `{"type":"text","text":"I read the cart."}`, usage(50))},
+		{
+			reply("a2", "msg_r", "claude-opus-5-5", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}`, usage(50)),
+			`{"type":"user","uuid":"u1","timestamp":"2026-10-02T11:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"package cart"}]}}`,
+			reply("a3", "msg_s", "claude-opus-5-5", `{"type":"text","text":"The cart"}`, usage(20)),
+		},
+		{reply("a4", "msg_s", "claude-opus-5-5", `{"type":"text","text":"is fine."}`, usage(30))},
+	}
+	offset := 0
+	var logs []listedLog
+	for _, lines := range ranges {
+		body := jsonl(lines...)
+		expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: offset, body: body}), 200)
+		offset += len(body)
+		logs = sessionLogs(t, env, o.project, laptopSession)
+	}
+	if len(logs) != 5 {
+		t.Fatalf("Expected 5 Logs, got %+v", logs)
+	}
+	sums := map[string]map[string]float64{}
+	withTokens := 0
+	for _, log := range logs {
+		id, _ := log.Attributes["agent.message_id"].(string)
+		if _, ok := log.Attributes["agent.tokens.output"]; ok {
+			withTokens++
+		}
+		if sums[id] == nil {
+			sums[id] = map[string]float64{}
+		}
+		for _, name := range tokenAttributes {
+			v, _ := number(log.Attributes, name)
+			sums[id][name] += v
+		}
+	}
+	// msg_r has its tokens once, on its first line; msg_s on both lines,
+	// 20 and then 10 more output tokens.
+	if withTokens != 3 {
+		t.Errorf("Expected 3 Logs with tokens, got %d: %+v", withTokens, logs)
+	}
+	for id, output := range map[string]float64{"msg_r": 50, "msg_s": 30} {
+		want := map[string]float64{"agent.tokens.input": 10, "agent.tokens.output": output, "agent.tokens.cache_read": 1000, "agent.tokens.cache_write": 0}
+		for name, v := range want {
+			if sums[id][name] != v {
+				t.Errorf("%s: expected %v %s in all, got %v", id, v, name, sums[id][name])
+			}
+		}
+		// Claude Opus 5.5: $4 input, $20 output and $0.20 cache read.
+		if cost := 10*4e-6 + output*20e-6 + 1000*0.2e-6; math.Abs(sums[id]["agent.cost_usd"]-cost) > 1e-12 {
+			t.Errorf("%s: expected the cost %v USD in all, got %v", id, cost, sums[id]["agent.cost_usd"])
+		}
+	}
 }
 
 func TestAModelWithNoPriceHasItsTokensAndNoCost(t *testing.T) {

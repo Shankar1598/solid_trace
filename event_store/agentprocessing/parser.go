@@ -111,8 +111,21 @@ func (p *Parser) parseUnits(projectID uint32) (more bool, err error) {
 	for i, batch := range batches {
 		units[i] = batch.Unit
 	}
+	encoded, err := p.batches.AgentParseState(projectID)
+	if err != nil {
+		return false, fmt.Errorf("read the parse state: %w", err)
+	}
+	state, err := decodeParseState(encoded)
+	if err != nil {
+		return false, err
+	}
+	logsOfUnits, state := parseUnits(units, retentionDays, state)
+	encoded, err = state.encode()
+	if err != nil {
+		return false, err
+	}
 	var parsed []storage.LogBatch
-	for i, logs := range parseUnits(units, retentionDays) {
+	for i, logs := range logsOfUnits {
 		if len(logs) > 0 {
 			parsed = append(parsed, storage.LogBatch{ID: batches[i].ID, Logs: logs})
 		}
@@ -121,7 +134,7 @@ func (p *Parser) parseUnits(projectID uint32) (more bool, err error) {
 	if err := p.logs.InsertLogBatches(projectID, insert); err != nil {
 		return false, fmt.Errorf("insert the Logs of agent sessions: %w", err)
 	}
-	if err := p.batches.SetAgentParseCursor(projectID, last); err != nil {
+	if err := p.batches.SetAgentParseCursor(projectID, last, encoded); err != nil {
 		return false, fmt.Errorf("move the parse cursor: %w", err)
 	}
 	if err := p.batches.DeleteAgentFileBatchesUpTo(projectID, last); err != nil {

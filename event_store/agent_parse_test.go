@@ -256,7 +256,7 @@ func TestTheParseStoppedBetweenTheCursorAndTheDeleteDeletesTheParsedBatchesAtSta
 	// before it deletes the batches.
 	crashed := make(chan struct{})
 	env.FlakyLogs.failAfterInsert(connectionLost, func() {
-		if err := env.PebbleWriter.SetAgentParseCursor(project, batches[0].ID); err != nil {
+		if err := env.PebbleWriter.SetAgentParseCursor(project, batches[0].ID, nil); err != nil {
 			t.Error(err)
 		}
 		env.FlakyLogs.goDown()
