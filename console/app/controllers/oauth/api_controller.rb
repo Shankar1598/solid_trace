@@ -70,6 +70,16 @@ module Oauth
       basic.is_a?(Array) ? basic[0] : params[:client_id].to_s.presence
     end
 
+    # The key of the "client" limit for client_id. Every user of the
+    # instance has the same solidtrace-cli client_id, which is public, so its
+    # count is for each IP address, as for a request with no client_id.
+    # Otherwise a sender with no credentials could use up the count for all.
+    def client_limit_key(client_id)
+      return "ip:#{request.remote_ip}" if client_id.blank? || client_id == Client::FIRST_PARTY_ID
+
+      "client:#{client_id}"
+    end
+
     # client_secret_basic (RFC 6749 §2.3.1): the form-encoded client_id and
     # secret, or :malformed (also when a part is not UTF-8); nil with no
     # Basic header.

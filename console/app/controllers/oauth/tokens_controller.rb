@@ -22,11 +22,12 @@ module Oauth
   # 10 minutes, and the tokens once, with one conditional update.
   class TokensController < ApiController
     TOO_MANY = "Too many token requests. Try again in a minute."
-    # 60 a minute for each IP address and for each client_id.
+    # 60 a minute for each IP address and for each client_id (for
+    # solidtrace-cli, for each IP address: see client_limit_key).
     rate_limit to: 60, within: 1.minute, only: :create, name: "ip",
                with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
     rate_limit to: 60, within: 1.minute, only: :create, name: "client",
-               by: -> { asking_client_id.then { |id| id ? "client:#{id}" : "ip:#{request.remote_ip}" } },
+               by: -> { client_limit_key(asking_client_id) },
                with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
 
     # A code_verifier: 43 to 128 unreserved characters (RFC 7636 §4.1).

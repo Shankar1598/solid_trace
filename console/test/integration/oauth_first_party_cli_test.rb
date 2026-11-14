@@ -306,6 +306,31 @@ class OauthFirstPartyCliTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # The limits
+
+  test "the limits of solidtrace-cli count by IP address: other addresses cannot use up the count of a user" do
+    tokens = cli_tokens
+    with_limits(Oauth::TokensController) do
+      60.times { |n| post oauth_token_url, params: { grant_type: "refresh_token", refresh_token: "str_x", client_id: CLI },
+                                           headers: { "REMOTE_ADDR" => "203.0.113.#{n + 100}" } }
+      60.times { |n| ask_for_device_code(ip: "203.0.113.#{n + 100}") }
+      60.times { |n| post oauth_revoke_url, params: { token: "sto_x", client_id: CLI },
+                                            headers: { "REMOTE_ADDR" => "203.0.113.#{n + 100}" } }
+
+      refresh tokens["refresh_token"]
+      assert_response :ok
+      access = response.parsed_body["access_token"]
+      cli_device_code
+      post oauth_revoke_url, params: { token: access, client_id: CLI }
+      assert_response :ok
+      assert_not introspect(access)["active"]
+
+      # One address still has its limit.
+      60.times { ask_for_device_code(ip: "203.0.113.100") }
+      assert_oauth_error "invalid_request", status: :too_many_requests
+    end
+  end
+
   # Signed-in clients
 
   test "Settings → User lists each solidtrace-cli sign-in, and Revoke stops it at once" do
@@ -365,9 +390,14 @@ class OauthFirstPartyCliTest < ActionDispatch::IntegrationTest
                                     **params }
   end
 
-  def ask_for_device_code(client_id: CLI, scope: LOGIN_SCOPE)
-    post oauth_device_authorization_url, params: { client_id: client_id, scope: scope },
-                                         headers: { "REMOTE_ADDR" => PROGRAM_ADDRESS }
+  def ask_for_device_code(client_id: CLI, scope: LOGIN_SCOPE, ip: PROGRAM_ADDRESS)
+    post oauth_device_authorization_url, params: { client_id: client_id, scope: scope }, headers: { "REMOTE_ADDR" => ip }
+  end
+
+  # Counts the rate limits of controller in memory (the test cache is a null store).
+  def with_limits(controller, &block)
+    store = ActiveSupport::Cache::MemoryStore.new
+    controller.cache_store.stub(:increment, ->(*args, **options) { store.increment(*args, **options) }, &block)
   end
 
   def cli_device_code

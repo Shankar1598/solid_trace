@@ -14,11 +14,12 @@ module Oauth
   # are public, so no client authentication is needed.
   class DeviceAuthorizationsController < ApiController
     TOO_MANY = "Too many device code requests. Try again in a minute."
-    # 60 a minute for each IP address and for each client_id.
+    # 60 a minute for each IP address and for each client_id (for
+    # solidtrace-cli, for each IP address: see client_limit_key).
     rate_limit to: 60, within: 1.minute, only: :create, name: "ip",
                with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
     rate_limit to: 60, within: 1.minute, only: :create, name: "client",
-               by: -> { params[:client_id].is_a?(String) ? "client:#{params[:client_id]}" : "ip:#{request.remote_ip}" },
+               by: -> { client_limit_key(params[:client_id].is_a?(String) ? params[:client_id] : nil) },
                with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
 
     NOT_PUBLISHED = "The device flow is only for #{Client::FIRST_PARTY_ID} and for a client whose client_id is the " \
