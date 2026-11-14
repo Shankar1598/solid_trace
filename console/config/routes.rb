@@ -63,6 +63,8 @@ Rails.application.routes.draw do
   match "oauth/device_authorization", to: "oauth/device_authorizations#preflight", via: :options, as: nil, format: false
   match "oauth/token", to: "oauth/tokens#preflight", via: :options, as: nil, format: false
   match "oauth/register", to: "oauth/registrations#preflight", via: :options, as: nil, format: false
+  post "oauth/revoke", to: "oauth/revocations#create", as: :oauth_revoke, format: false
+  match "oauth/revoke", to: "oauth/revocations#preflight", via: :options, as: nil, format: false
   resources :passwords, param: :token
   # An Invite link, where an Invited member sets a password (InvitesController).
   get "invites/:token", to: "invites#edit", as: :invite

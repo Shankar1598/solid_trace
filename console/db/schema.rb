@@ -351,7 +351,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_150000) do
     t.datetime "revoked_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.integer "replaced_by_id"
+    t.text "kept_access_token"
+    t.text "kept_refresh_token"
     t.index ["oauth_grant_id"], name: "index_oauth_tokens_on_oauth_grant_id"
+    t.index ["replaced_by_id"], name: "index_oauth_tokens_on_replaced_by_id"
     t.index ["token_digest"], name: "index_oauth_tokens_on_token_digest", unique: true
   end
 
@@ -491,6 +495,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_150000) do
   add_foreign_key "oauth_grants", "users"
   add_foreign_key "oauth_pending_requests", "oauth_clients"
   add_foreign_key "oauth_tokens", "oauth_grants"
+  add_foreign_key "oauth_tokens", "oauth_tokens", column: "replaced_by_id", on_delete: :nullify
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
   add_foreign_key "passkeys", "users"
