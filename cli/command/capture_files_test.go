@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -306,5 +308,115 @@ func TestAnUploadIsNotStoppedByTheTimeoutOfTheSmallCalls(t *testing.T) {
 		if s.stored(path) == "" {
 			t.Errorf("%s did not upload; log: %s", path, w.captureLog())
 		}
+	}
+}
+
+// posts are the upload requests for a path, also the refused ones.
+func (w *world) posts(path string) []fake.Request {
+	var posts []fake.Request
+	for _, r := range w.agent.AllRequests() {
+		if r.Method == http.MethodPost && r.Query.Get("path") == path {
+			posts = append(posts, r)
+		}
+	}
+	return posts
+}
+
+// A call that stops early keeps what the last call saw of the paths that
+// it did not reach: a file that did not change goes at the next call, and
+// does not wait one more call as if it were new.
+func TestACallThatStopsEarlyKeepsWhatItDidNotReach(t *testing.T) {
+	w := newWorld(t, acme)
+	s := w.capturedSession()
+	s.write("", "{\"main\":1}\n")
+	s.write("tool-results/a.txt", "first")
+	s.write("tool-results/b.txt", "second")
+	s.stop()
+
+	a, b := s.id+"/tool-results/a.txt", s.id+"/tool-results/b.txt"
+	w.agent.Set(func(f *fake.AgentAPI) { f.Refuse = map[string]int{a: http.StatusInternalServerError} })
+	s.stop()
+	if len(w.posts(b)) != 0 {
+		t.Fatalf("the call did not stop at the failed path")
+	}
+
+	w.agent.Set(func(f *fake.AgentAPI) { f.Refuse = nil })
+	s.stop()
+	if got := s.stored(b); got != "second" {
+		t.Errorf("%s after the call that follows the failure: %q; log: %s", b, got, w.captureLog())
+	}
+	if got := s.stored(a); got != "first" {
+		t.Errorf("%s after the call that follows the failure: %q", a, got)
+	}
+}
+
+func TestAnEmptyFileIsNotUploaded(t *testing.T) {
+	w := newWorld(t, acme)
+	s := w.capturedSession()
+	s.write("", "{\"main\":1}\n")
+	s.write("tool-results/empty.txt", "")
+	s.hook("SessionEnd")
+	if posts := w.posts(s.id + "/tool-results/empty.txt"); len(posts) != 0 {
+		t.Errorf("an empty file was sent %d times", len(posts))
+	}
+	if s.stored(s.main()) == "" {
+		t.Errorf("the main file did not upload; log: %s", w.captureLog())
+	}
+}
+
+// outside is a file out of the Claude projects directory, such as a
+// secrets file.
+func (w *world) outside(content string) string {
+	w.t.Helper()
+	path := filepath.Join(w.t.TempDir(), "secrets")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+	return path
+}
+
+func (w *world) noBodyHas(secret string) {
+	w.t.Helper()
+	for _, r := range w.agent.AllRequests() {
+		if bytes.Contains(r.Body, []byte(secret)) {
+			w.t.Errorf("an upload of %s has the bytes of the file outside", r.Query.Get("path"))
+		}
+	}
+}
+
+func TestCaptureDoesNotFollowASymlinkAsTheMainFile(t *testing.T) {
+	w := newWorld(t, acme)
+	s := w.capturedSession()
+	secret := "{\"secret\":\"main\"}\n"
+	if err := os.Symlink(w.outside(secret), s.file("")); err != nil {
+		t.Fatal(err)
+	}
+	s.hook("SessionEnd")
+	if posts := w.posts(s.main()); len(posts) != 0 {
+		t.Errorf("the symlink %s was sent %d times", s.main(), len(posts))
+	}
+	w.noBodyHas("secret")
+}
+
+func TestCaptureSkipsASymlinkUnderTheAgentSessionDirectory(t *testing.T) {
+	w := newWorld(t, acme)
+	s := w.capturedSession()
+	s.write("", "{\"main\":1}\n")
+	s.write("tool-results/t1.txt", "out")
+	if err := os.Symlink(w.outside("secret tool output"), s.file("tool-results/link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(w.outside("{\"secret\":\"sub\"}\n"), s.file("tool-results/link.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	s.hook("SessionEnd")
+	for _, path := range []string{s.id + "/tool-results/link.txt", s.id + "/tool-results/link.jsonl"} {
+		if posts := w.posts(path); len(posts) != 0 {
+			t.Errorf("the symlink %s was sent %d times", path, len(posts))
+		}
+	}
+	w.noBodyHas("secret")
+	if s.stored(s.id+"/tool-results/t1.txt") != "out" {
+		t.Errorf("the regular file did not upload; log: %s", w.captureLog())
 	}
 }
