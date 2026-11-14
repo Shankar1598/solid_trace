@@ -71,13 +71,36 @@ func browser() func(string) error {
 	if err != nil {
 		return nil
 	}
+	return opener(path, OpenerWait)
+}
+
+// OpenerWait is how long the CLI waits for open or xdg-open to exit.
+const OpenerWait = 5 * time.Second
+
+// opener runs the program at path with the URL. When the program exits
+// with an error in the first wait (xdg-open with no browser handler, open
+// over ssh), the browser did not open, and the CLI uses the device flow.
+// A program that is still running after wait (xdg-open can wait for the
+// browser) has opened it, and the CLI does not stop it.
+func opener(path string, wait time.Duration) func(string) error {
 	return func(url string) error {
 		cmd := exec.Command(path, url)
 		if err := cmd.Start(); err != nil {
 			return err
 		}
-		go func() { _ = cmd.Wait() }()
-		return nil
+		exited := make(chan error, 1)
+		go func() { exited <- cmd.Wait() }()
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case err := <-exited:
+			if err != nil {
+				return fmt.Errorf("%s: %w", filepath.Base(path), err)
+			}
+			return nil
+		case <-timer.C:
+			return nil
+		}
 	}
 }
 

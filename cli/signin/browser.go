@@ -66,7 +66,7 @@ func (c *Client) Browser(ctx context.Context, server Server, open func(string) e
 	go func() { _ = httpServer.Serve(listener) }()
 	defer httpServer.Close()
 
-	fmt.Fprintf(out, "Opening the approval page in your browser. If it does not open, open this URL:\n%s\n", authorize)
+	fmt.Fprintf(out, "Opening the approval page in your browser. If it does not open, open this URL, or run 'solidtrace login --device':\n%s\n", authorize)
 	if err := open(authorize.String()); err != nil {
 		return Tokens{}, fmt.Errorf("%w: %v", ErrNoBrowser, err)
 	}
