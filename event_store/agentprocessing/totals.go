@@ -30,7 +30,7 @@ type sessionDay struct {
 	hasLine bool
 	// storedFirst and storedLast are the times that the server stored the
 	// units, for a day with no lines.
-	storedFirst, storedLast time.Time
+	storedFirst, storedLast  time.Time
 	subagents, files, starts map[string]bool
 }
 
