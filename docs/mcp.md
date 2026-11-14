@@ -1,10 +1,75 @@
 # The MCP server
 
-SolidTrace has an [MCP](https://modelcontextprotocol.io) server, so an agent such as Claude Code or Cursor can read a Project's Logs and Issues, build Dashboards and Monitors, and set up Projects for you. It is part of Console, at `/mcp` on Console's address, and an agent reaches it with an API token. Why it is built this way is in [ADR 0009](adr/0009-mcp-server-in-console-with-api-tokens.md).
+SolidTrace has an [MCP](https://modelcontextprotocol.io) server, so an agent such as Claude Code or Cursor can read a Project's Logs and Issues, build Dashboards and Monitors, and set up Projects for you. It is part of Console, at `/mcp` on Console's address. An agent signs in through the browser, or a script uses an API token. Why the server is built this way is in [ADR 0009](adr/0009-mcp-server-in-console-with-api-tokens.md), and why sign-in works this way is in [ADR 0019](adr/0021-mcp-clients-sign-in-with-oauth-in-console.md).
 
 ## Connecting
 
-1. In Console, open **Settings → API tokens & MCP** and make a token with a name that says where it is used, such as "Laptop, Claude Code".
+### Sign in through the browser
+
+Add the server with only its URL. You copy no secret.
+
+**Claude Code**, in a terminal:
+
+```bash
+claude mcp add --transport http solidtrace https://console.example.com/mcp
+```
+
+Then sign in: type `/mcp` in Claude Code and pick `solidtrace`, or run `claude mcp login solidtrace`. On a machine where Claude Code can't open a browser, `claude mcp login solidtrace --no-browser` prints the URL to open.
+
+**Cursor**, in `~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project, then sign in from Cursor's MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "solidtrace": { "url": "https://console.example.com/mcp" }
+  }
+}
+```
+
+Settings → API tokens & MCP shows both snippets with Console's address filled in. Web connectors that sign in with OAuth, such as claude.ai's and ChatGPT's, connect the same way, with the same URL, when they can reach Console's URL from the internet.
+
+What happens:
+
+1. The client calls `POST /mcp` with no token. The 401 tells it where Console's OAuth metadata is (RFC 9728), and from there it finds how to sign in.
+2. The client registers itself, and opens Console's **approval page** in your browser. You sign in if you have no Session, with Two-factor where you have it.
+3. The approval page shows the client's name, where the name comes from, and the host that it sends you back to. "Checked: published at *host*" means that the client publishes its description at that host. "Not checked: the client gave this name" means that any program can give that name. A client that runs on your computer gets the warning "This program runs on a computer. Approve only if you started it."
+4. You pick one Organization, and approve. The client acts as you only in that Organization.
+5. The client gets an access token that works for one hour, and a refresh token. It gets new tokens by itself while you use it. A client that you don't use for 30 days must sign in again.
+
+Two rules for the URL:
+
+- **The Console URL must be HTTPS** (or `http://localhost`, for development). It is the Console URL setting on Settings → Instance, or `CONSOLE_URL` in `deploy/.env`. On an install with no Console URL, or with an `http://` one, sign-in through the browser is off: Settings → API tokens & MCP says so, Console's OAuth metadata is not found, the 401 from `/mcp` tells the client to send an API token, and the approval page and the `/oauth` endpoints say to set an HTTPS Console URL or to use an API token.
+- **The MCP URL in the client must use the Console URL's host.** Console names `<Console URL>/mcp` as the server in its metadata and in each token, and a client refuses a server that has another host. If you open Console at `https://console.example.com`, add `https://console.example.com/mcp`, not an IP address or another name for the same machine.
+
+A change of the Console URL signs out every Signed-in client: each must sign in again at the new URL. Settings → Instance says so beside the field.
+
+An Organization with **Require two-factor** asks you to set up Two-factor before you can approve a client for it, and then brings you back to the approval page.
+
+### On a machine with no browser: the device flow
+
+A program on a machine with no browser can sign in with a short code (RFC 8628). The program shows a code such as `BCDF-GHJK` and the URL `<Console URL>/device`. Open that URL on your phone or laptop, sign in, and type the code. The device page shows where the program publishes its description, and when and from which IP address it asked for the code. Then you approve as on the approval page. A code works for 10 minutes.
+
+Type a code only from a program that you started yourself. A code that someone sends you can sign their program in as you. No link fills the code in.
+
+Only a client that publishes its description at an HTTPS URL (a Client ID Metadata Document) can use the device flow. A client that registers itself can't, because any program can register with any name. Claude Code doesn't use the device flow: `claude mcp login --no-browser` gives a URL to open.
+
+### Signed-in clients
+
+**Settings → User** lists your Signed-in clients: each client, its host, the Organization, whether you approved it in the browser or with a device code, the browser that approved it, when, and when it was last used. Each sign-in is its own row, also for the same client on two computers. **Revoke** stops a client's tokens at once, and your other clients keep working.
+
+`claude mcp logout solidtrace` revokes the client's sign-in at Console too. `claude mcp remove` only removes the server from Claude Code's configuration: revoke the client on Settings → User after it.
+
+Console also revokes Signed-in clients by itself:
+
+- all of yours when you reset your password, or when the operator resets your Two-factor;
+- yours for an Organization when you are removed from it. They stay revoked if you are added again;
+- a client's sign-in when a refresh token is used again more than a minute after it was replaced, which tells Console that someone copied it. Inside that minute, the same new tokens are given again, so two copies of one client that refresh together stay signed in.
+
+### API tokens, for scripts
+
+A script, or a client that can't sign in through the browser, sends an API token.
+
+1. In Console, open **Settings → API tokens & MCP** and make a token with a name that says where it is used, such as "Nightly report script".
 2. Copy the token when it is shown. SolidTrace keeps only its digest, so it is shown this once.
 3. Add the server to your client. The page shows both snippets with your token and Console's address filled in.
 
@@ -30,11 +95,23 @@ claude mcp add --transport http solidtrace https://console.example.com/mcp \
 
 Any client that speaks MCP's Streamable HTTP transport and can send a header works the same way. The server answers each request with one JSON response, and keeps no session.
 
-Web connectors that sign in with OAuth, such as claude.ai's and ChatGPT's, can't connect yet: the server takes only API tokens.
+The **API tokens & MCP** settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
+
+### Who a token is: introspection
+
+A service that holds an API token, and gets a token from a user, can ask Console who that token is (RFC 7662):
+
+```bash
+curl -X POST https://console.example.com/oauth/introspect \
+  -H "Authorization: Bearer st_…" \
+  -d "token=<the user's token>"
+```
+
+An API token or an OAuth access token that works answers `active: true`, with `token_type` (`api_token` or `access_token`), `sub` (the user's id), `username` (their email), `scope`, `aud` (`<Console URL>/mcp`), `iat`, `organizations` (each with `id`, `slug`, `name` and the user's `role` now; one for an OAuth token), `limits`, and for an OAuth token also `client_id` and `exp`. Every other token, such as an expired, revoked or refresh token, answers only `active: false`. The caller must send its own API token; an OAuth access token gets a 401, because it works only at the MCP server. Introspection works also with sign-in through the browser off, and takes 120 calls a minute for each caller token.
 
 ## Who the agent acts as
 
-A tool acts as the token's user, with that user's rights. In each Organization it acts on, it has the role the user has there, and it can do what that role can do in Console:
+A tool acts as the signed-in user, with that user's rights. In each Organization it acts on, it has the role the user has there, and it can do what that role can do in Console:
 
 - **Any member** can read Logs and Issues, make and change Dashboards, Charts and Monitors, resolve, assign and comment on Issues, and make Projects.
 - **Only an Organization admin** can create, rotate and delete a Project's keys, change a Project's Log transform, and invite members. A member's agent is told so.
@@ -42,7 +119,7 @@ A tool acts as the token's user, with that user's rights. In each Organization i
 - Other Organizations' records are not found.
 - An Organization with **Require two-factor** refuses every tool on it from a user without Two-factor, telling the agent to have them set it up in Console. Their other Organizations answer as before. No tool reads or changes Require two-factor: only an admin who has Two-factor changes it, on the Organization's settings page.
 
-The **API tokens & MCP** settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
+A client signed in through the browser acts only in the Organization you approved it for: `whoami` lists only it, a tool needs no `organization`, and another Organization's slug is a tool error that says to sign in again. The install's tools (`get_instance_settings`, `update_instance_settings`, `get_email_settings`, `update_email_settings`, `send_test_email`) are not offered to it: an instance admin uses an API token for them. An API token acts in every Organization you belong to.
 
 ## Tools
 
