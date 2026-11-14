@@ -33,3 +33,29 @@ func TestTheEstimatedCostOfEachModelFamily(t *testing.T) {
 		}
 	}
 }
+
+// Claude Haiku 5.5 has the long price for a prompt of more than 100,000
+// tokens. The prompt is the input, cache-read and cache-write tokens.
+func TestTheLongPriceStartsAbove100000PromptTokens(t *testing.T) {
+	cases := []struct {
+		prompt                          tokens
+		input, output, cacheRead, write float64
+	}{
+		// Exactly 100,000: the standard price.
+		{tokens{input: 40_000, output: 100, cacheRead: 50_000, cacheWrite5m: 10_000}, 0.10, 0.50, 0.01, 0.10 * 1.25},
+		// One more token of each kind gives the long price.
+		{tokens{input: 40_001, output: 100, cacheRead: 50_000, cacheWrite5m: 10_000}, 0.50, 2.50, 0.05, 0.50 * 1.25},
+		{tokens{input: 40_000, output: 100, cacheRead: 50_001, cacheWrite5m: 10_000}, 0.50, 2.50, 0.05, 0.50 * 1.25},
+		{tokens{input: 40_000, output: 100, cacheRead: 50_000, cacheWrite5m: 10_001}, 0.50, 2.50, 0.05, 0.50 * 1.25},
+		{tokens{input: 40_000, output: 100, cacheRead: 50_000, cacheWrite5m: 9_000, cacheWrite1h: 1_001}, 0.50, 2.50, 0.05, 0.50 * 1.25},
+	}
+	for i, c := range cases {
+		p := c.prompt
+		want := (float64(p.input)*c.input + float64(p.output)*c.output + float64(p.cacheRead)*c.cacheRead +
+			float64(p.cacheWrite5m)*c.write + float64(p.cacheWrite1h)*c.input*2) / 1e6
+		got, ok := estimatedCost("claude-haiku-5-5", p)
+		if !ok || math.Abs(got-want) > 1e-12 {
+			t.Errorf("Case %d: expected %v USD, got %v (%v)", i, want, got, ok)
+		}
+	}
+}
