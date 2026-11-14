@@ -448,6 +448,82 @@ func TestAgentSessionDownloadMemory(t *testing.T) {
 	}
 }
 
+// TestAgentSessionDownloadThatTheClientLeaves reads the start of a large
+// download and then closes the connection, as a wrapper on a Spot VM that
+// stops. The download's ClickHouse query must stop too, and not read the
+// rest of the Agent session.
+func TestAgentSessionDownloadThatTheClientLeaves(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	reader, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization, scopes: []string{"sessions:read"},
+		sessionIDs: []string{laptopSession}})
+	// 49 MB in 96 rows: much more than the buffers between ClickHouse and
+	// the client hold. The native protocol sends the bytes with no
+	// compression.
+	// transcriptText writes lines of 2000 bytes, and a unit ends at a line.
+	const files, units, unitSize = 24, 4, 256 * 2000
+	for i := range files {
+		var content bytes.Buffer
+		transcriptText(&content, uint64(i+1), units*unitSize)
+		body := content.Bytes()
+		for u := range units {
+			expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: fmt.Sprintf("subagents/agent-%02d.jsonl", i),
+				offset: u * unitSize, body: body[u*unitSize : (u+1)*unitSize]}), 200)
+		}
+	}
+	env.ProcessAgentFiles(t)
+
+	app := newAgentAppWith(t, env, "dev", env.ClickHouse)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go app.Listener(listener)
+	defer app.Shutdown()
+	req, _ := http.NewRequest("GET", "http://"+listener.Addr().String()+agentDownloadPath(laptopSession), nil)
+	req.Header.Set("Authorization", "Bearer "+reader)
+	started := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+	if _, err := io.ReadFull(resp.Body, make([]byte, 64<<10)); err != nil {
+		t.Fatalf("Read the start of the download: %v", err)
+	}
+	// A close before the end of the body closes the connection.
+	resp.Body.Close()
+
+	conn := env.ClickHouse.Conn()
+	var sent uint64
+	var kind string
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		if err := conn.Exec(context.Background(), "SYSTEM FLUSH LOGS"); err != nil {
+			t.Fatal(err)
+		}
+		err := conn.QueryRow(context.Background(), `
+			SELECT toString(type), result_rows FROM system.query_log
+			WHERE type != 'QueryStart' AND current_database = currentDatabase() AND log_comment = ?
+				AND event_date >= yesterday() AND query_start_time_microseconds >= fromUnixTimestamp64Micro(?)
+			ORDER BY event_time_microseconds DESC LIMIT 1`,
+			storage.AgentDownloadLogComment, started.Add(-time.Second).UnixMicro()).Scan(&kind, &sent)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Expected the download's query to end after the client left: %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Logf("The download's query ended as %s after it sent %d of %d rows", kind, sent, files*units)
+	if kind == "QueryFinish" && sent >= files*units {
+		t.Errorf("Expected the query to stop when the client left, but it sent all %d rows", sent)
+	}
+}
+
 func TestAgentSessionDownloadOfWhatIsNotWhole(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()

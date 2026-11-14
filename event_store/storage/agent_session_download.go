@@ -124,6 +124,10 @@ func (ch *ClickHouse) ReadAgentDownload(ctx context.Context, projectID uint32, s
 	for i, f := range files {
 		paths[i], versions[i] = f.Path, f.Version
 	}
+	// When the download stops before the last row, rows.Close reads all
+	// the rest of the query. The cancel before it stops the query in
+	// ClickHouse first.
+	ctx, cancel := context.WithCancel(ctx)
 	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
 		"max_block_size":              16,
 		"read_in_order_use_buffering": 0,
@@ -135,9 +139,13 @@ func (ch *ClickHouse) ReadAgentDownload(ctx context.Context, projectID uint32, s
 		WHERE project_id = ? AND session_id = ? AND has(?, path) AND version = transform(path, ?, ?, toUInt32(0))
 		ORDER BY path, version, offset`, projectID, sessionID, paths, paths, versions)
 	if err != nil {
+		cancel()
 		return fmt.Errorf("read the bytes of agent session %s: %w", sessionID, err)
 	}
-	defer rows.Close()
+	defer func() {
+		cancel()
+		rows.Close()
+	}()
 	file, row := 0, 0
 	for rows.Next() {
 		var path, data string
