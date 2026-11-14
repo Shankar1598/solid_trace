@@ -6,6 +6,11 @@ module Oauth
   # (str_). The request must give the code's client_id, the same
   # redirect_uri, the code's resource or none, and the code_verifier whose
   # S256 is the code's code_challenge; any difference is invalid_grant.
+  #
+  # The refresh_token grant gives a new pair for a refresh token, which
+  # works once (Token#rotate!). Its Grant must be live and the Grant's
+  # client must ask. A used refresh token in the 60 seconds after its first
+  # use gets the same pair again; after that, it revokes the Grant.
   class TokensController < ApiController
     TOO_MANY = "Too many token requests. Try again in a minute."
     # 60 a minute for each IP address and for each client_id.
@@ -21,13 +26,68 @@ module Oauth
     def create
       case params[:grant_type]
       when "authorization_code" then exchange_code
-      when nil, "" then oauth_error("invalid_request", "Send a grant_type: authorization_code with the code from the approval page.")
+      when "refresh_token" then refresh
+      when nil, "" then oauth_error("invalid_request", "Send a grant_type: authorization_code with the code from the " \
+                                                       "approval page, or refresh_token.")
       else
-        oauth_error("unsupported_grant_type", "Send grant_type=authorization_code with the code from the approval page.")
+        oauth_error("unsupported_grant_type", "Send grant_type=authorization_code with the code from the approval " \
+                                              "page, or grant_type=refresh_token with a refresh token.")
       end
     end
 
     private
+
+    def refresh
+      client = authenticated_client
+      return unless client
+
+      token = Token.find_refresh(params[:refresh_token])
+      grant = token&.grant
+      return invalid_refresh unless grant && grant.oauth_client_id == client.id
+      unless client.grant_types.include?("refresh_token")
+        return oauth_error("unauthorized_client", "This client did not register the refresh_token grant. Sign in again.")
+      end
+      return invalid_refresh unless grant.live?(issuer: issuer) && token.revoked_at.nil?
+      return invalid_target unless resource_in_grant?(grant)
+      return invalid_scope unless scope_in_grant?(grant)
+      return invalid_refresh if token.used_at.nil? && token.expired?
+
+      tokens = token.rotate!(resource: grant_resource(grant))
+      # A used refresh token after the window: a copy is in other hands.
+      return invalid_refresh(revoke: grant) unless tokens
+
+      grant.touch_last_used
+      render json: {
+        access_token: tokens[:access_token],
+        token_type: "Bearer",
+        expires_in: tokens[:expires_in],
+        refresh_token: tokens[:refresh_token],
+        scope: grant.scopes.join(" "),
+      }
+    end
+
+    # The Grant's resource that the request names, else the Grant's first.
+    def grant_resource(grant)
+      return grant.resources.first if params[:resource].blank?
+
+      grant.resources.find { |resource| Issuer.same_resource?(params[:resource], resource) }
+    end
+
+    # Whether the request names no scope, or only Scopes of the Grant. The
+    # new pair always has every Scope of the Grant.
+    def scope_in_grant?(grant)
+      params[:scope].blank? || (params[:scope].is_a?(String) && (params[:scope].split - grant.scopes).empty?)
+    end
+
+    def invalid_scope
+      oauth_error("invalid_scope", "Send no scope, or only the Scopes of the sign-in.")
+    end
+
+    def invalid_refresh(revoke: nil)
+      revoke&.revoke!
+      oauth_error("invalid_grant", "The refresh token is wrong, expired, used or revoked, or is for another client. " \
+                                   "Sign in again.")
+    end
 
     def exchange_code
       client = authenticated_client
