@@ -91,6 +91,34 @@ func TestAnExpiredAccessTokenIsRefreshedWithTheRotatingRefreshToken(t *testing.T
 	}
 }
 
+func TestAnAccessTokenIsRefreshedInTheLastMinuteBeforeItsExpiry(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	expires, err := time.Parse(time.RFC3339Nano, w.stored()["access_token_expires_at"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 61 seconds before the expiry, the token is live.
+	w.clock.Add(expires.Sub(w.clock.Now()) - 61*time.Second)
+	if _, err := w.signedInToken(); err != nil {
+		t.Fatal(err)
+	}
+	if w.oauth.RefreshRequests != 0 {
+		t.Fatalf("refreshed %d times 61 seconds before the expiry, want 0", w.oauth.RefreshRequests)
+	}
+
+	// 59 seconds before it, the token could expire on the way to the
+	// server, so the CLI refreshes it first.
+	w.clock.Add(2 * time.Second)
+	if _, err := w.signedInToken(); err != nil {
+		t.Fatal(err)
+	}
+	if w.oauth.RefreshRequests != 1 {
+		t.Errorf("refreshed %d times 59 seconds before the expiry, want 1", w.oauth.RefreshRequests)
+	}
+}
+
 func TestARefusedRefreshTokenTellsThePersonToSignInAgain(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()
