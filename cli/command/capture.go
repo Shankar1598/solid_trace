@@ -31,17 +31,49 @@ func captureHook(ctx context.Context, env Env) int {
 	return 0
 }
 
-func runCapture(ctx context.Context, env Env, log *localLog) error {
+// detachHook is the plugin's hook: it reads the hook input, starts
+// `solidtrace capture` in the background with it, and returns at once. So
+// a hook never makes Claude Code wait for the network. It sends no request
+// itself, and it exits 0 also when the start fails (the local log says why).
+func detachHook(env Env) int {
+	log := &localLog{path: filepath.Join(env.ConfigDir, LogFile), now: env}
+	in, err := readHookInput(env)
+	if err == nil && env.Detach == nil {
+		err = fmt.Errorf("capture: this machine cannot start a background capture")
+	}
+	if err == nil {
+		// Only the four fields: the hook input of Stop also holds the
+		// last reply, which the background capture does not need.
+		data, _ := json.Marshal(in)
+		if err = env.Detach(data); err != nil {
+			err = fmt.Errorf("capture %s: start in the background: %w", in.SessionID, err)
+		}
+	}
+	if err != nil {
+		log.Printf("%v", err)
+	}
+	return 0
+}
+
+func readHookInput(env Env) (capture.Input, error) {
+	var in capture.Input
 	if env.Stdin == nil {
-		return fmt.Errorf("capture: no hook input")
+		return in, fmt.Errorf("capture: no hook input")
 	}
 	data, err := io.ReadAll(io.LimitReader(env.Stdin, 1<<20))
 	if err != nil {
-		return fmt.Errorf("capture: read the hook input: %w", err)
+		return in, fmt.Errorf("capture: read the hook input: %w", err)
 	}
-	var in capture.Input
 	if err := json.Unmarshal(data, &in); err != nil {
-		return fmt.Errorf("capture: the hook input is not JSON: %w", err)
+		return in, fmt.Errorf("capture: the hook input is not JSON: %w", err)
+	}
+	return in, nil
+}
+
+func runCapture(ctx context.Context, env Env, log *localLog) error {
+	in, err := readHookInput(env)
+	if err != nil {
+		return err
 	}
 	c, err := env.capturer(log)
 	if err != nil {

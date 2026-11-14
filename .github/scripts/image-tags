@@ -1,0 +1,19 @@
+#!/bin/sh
+# Prints the --tag flags that the release job puts on an image.
+# Usage: image-tags IMAGE TAG EVENT PRERELEASE
+#
+# Each image gets the release's tag. Only a published release that is not a
+# pre-release also moves latest, which deploy/install pulls. A run by hand, a
+# release marked as a pre-release, and a tag with a pre-release part (such as
+# v0.20.0-rc.1) do not move latest.
+set -eu
+image=$1 tag=$2 event=$3 prerelease=$4
+
+printf -- '--tag %s:%s' "$image" "$tag"
+case $tag in
+*-*) ;;
+*) if [ "$event" = release ] && [ "$prerelease" = false ]; then
+	printf -- ' --tag %s:latest' "$image"
+fi ;;
+esac
+printf '\n'
