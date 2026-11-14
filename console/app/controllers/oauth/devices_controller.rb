@@ -41,6 +41,7 @@ module Oauth
     TOO_MANY = "Too many codes, approvals and denials. Try again in a few minutes."
     APPROVED = "Approved. Go back to the program: it signs in within a few seconds."
     DENIED = "Denied. The program gets no access."
+    ERROR_DESCRIPTION = "The program did not get access."
 
     def show
       return send_to_sign_in unless current_user
@@ -181,7 +182,7 @@ module Oauth
     end
 
     def error_page(message, status: :bad_request)
-      render inertia: "Oauth/Error", props: { message: message }, status: status
+      render inertia: "Oauth/Error", props: { message: message, description: ERROR_DESCRIPTION }, status: status
     end
   end
 end

@@ -382,6 +382,18 @@ class OauthDeviceFlowTest < ActionDispatch::IntegrationTest
     assert_equal 0, Oauth::Grant.count
   end
 
+  test "a device page request does not work on the approval page" do
+    publish
+    key = approval_page_for_new_code["request"]
+
+    get oauth_authorize_url(request: key), headers: inertia_headers
+    assert_equal "Oauth/Error", response.parsed_body["component"]
+    post oauth_authorize_url, params: { request: key, organization_id: @acme.id, decision: "approve" },
+                              headers: inertia_headers
+    assert_equal "Oauth/Error", response.parsed_body["component"]
+    assert_equal 0, Oauth::Grant.count
+  end
+
   test "Approve after the device code expired shows the error page and makes no Grant" do
     publish
     answer = device_code_answer
