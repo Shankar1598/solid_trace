@@ -42,7 +42,12 @@ A tool acts as the token's user, with that user's rights. In each Organization i
 - Other Organizations' records are not found.
 - An Organization with **Require two-factor** refuses every tool on it from a user without Two-factor, telling the agent to have them set it up in Console. Their other Organizations answer as before. No tool reads or changes Require two-factor: only an admin who has Two-factor changes it, on the Organization's settings page.
 
-The **API tokens & MCP** settings page lists your tokens with when each was last used. A token works until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere. There are no scopes and no expiry: a token can do whatever you can do, in every Organization you belong to, so keep it as you would a password.
+The **API tokens & MCP** settings page lists your tokens with their scopes, Organization, limits and expiry, and when each was last used. A token works until its expiry or until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere.
+
+- **A token with no scope** can do whatever you can do over the MCP server. With no Organization, it acts in every Organization you belong to, so keep it as you would a password.
+- **A token with scopes** can do only what they give, in its one Organization. If you leave that Organization, the token stops working (401). The MCP server needs `mcp` or `mcp:read`; a token with neither gets 403 with `error="insufficient_scope"`.
+- **`mcp:read`** gives only the read tools: `tools/list` leaves out each tool that makes or changes things, and a call of one gets 403 with `error="insufficient_scope"`. `mcp` holds `mcp:read`. The MCP server does not yet read with an `mcp:read` Project limit: such a token gets 403.
+- The other scopes are for the factory: `sessions:write`, `sessions:read` (always with a list of Agent session ids), `run_events:write`, `factory` and `issues:comment`. The page says what each gives.
 
 ## Tools
 

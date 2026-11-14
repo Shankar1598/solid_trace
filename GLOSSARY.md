@@ -245,7 +245,7 @@ An access token or a refresh token that Console gives under a **Grant**. An acce
 _Avoid_: API token (that is the secret a user makes by hand)
 
 **Scope**:
-A named right that an **OAuth token** carries, for one resource, with the text the approval page shows. The first is `mcp`, for the **MCP server**.
+A named right that an **OAuth token** or an **API token** carries, for one resource, with the text the approval page shows. The first is `mcp`, for the **MCP server**; `mcp:read` gives only its read tools. The **Factory** adds `sessions:write`, `sessions:read`, `run_events:write`, `factory`, `issues:comment` and `tokens:create`.
 _Avoid_: permission, role
 
 **Session**:
