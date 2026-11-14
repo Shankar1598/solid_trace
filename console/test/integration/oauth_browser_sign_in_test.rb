@@ -273,6 +273,86 @@ class OauthBrowserSignInTest < ActionDispatch::IntegrationTest
     assert_equal "invalid_grant", response.parsed_body["error"]
   end
 
+  test "a code used a second time revokes its Grant, so the tokens of the first exchange stop" do
+    code = approved_code
+    exchange(code)
+    token = response.parsed_body["access_token"]
+    mcp "tools/call", token: token, name: "whoami", arguments: {}
+    assert_response :ok
+
+    exchange(code)
+    assert_equal "invalid_grant", response.parsed_body["error"]
+
+    mcp "tools/call", token: token, name: "whoami", arguments: {}
+    assert_response :unauthorized
+    assert_includes response.headers["WWW-Authenticate"], 'error="invalid_token"'
+  end
+
+  test "the code exchange refuses a redirect_uri that is not the authorization request's, or none" do
+    code = approved_code
+
+    [ "http://localhost:4567/other", "https://client.example.com/cb", nil ].each do |redirect_uri|
+      exchange(code, redirect_uri: redirect_uri)
+      assert_response :bad_request, redirect_uri.inspect
+      assert_equal "invalid_grant", response.parsed_body["error"], redirect_uri.inspect
+      assert_nil response.parsed_body["access_token"]
+    end
+  end
+
+  test "a code works only for the client that got it" do
+    code = approved_code
+    other_client_id = registered_client
+
+    exchange(code, client_id: other_client_id)
+
+    assert_response :bad_request
+    assert_equal "invalid_grant", response.parsed_body["error"]
+    assert_nil response.parsed_body["access_token"]
+  end
+
+  test "a user who leaves the Organization gets the 401 at /mcp, and an unused code is invalid_grant" do
+    token = access_token(organization: @acme)
+    code = approved_code(organization: @acme)
+    # With no callback, so the live-Grant check at use is what refuses.
+    OrganizationUser.where(user: @user, organization: @acme).delete_all
+
+    mcp "tools/call", token: token, name: "whoami", arguments: {}
+    assert_response :unauthorized
+    assert_includes response.headers["WWW-Authenticate"], 'error="invalid_token"'
+
+    exchange(code)
+    assert_equal "invalid_grant", response.parsed_body["error"]
+  end
+
+  test "a Grant whose resources are not under the current issuer is not live" do
+    code = approved_code
+    InstanceSetting.current.update!(console_url: "https://new-console.example.com")
+
+    exchange(code)
+    assert_equal "invalid_grant", response.parsed_body["error"]
+
+    InstanceSetting.current.update!(console_url: ISSUER)
+    token = access_token(organization: @acme)
+    Oauth::Grant.update_all(resources: [])
+    mcp "tools/call", token: token, name: "whoami", arguments: {}
+    assert_response :unauthorized
+  end
+
+  test "Approve refuses an Organization that the user is not a member of" do
+    other = create(:organization, name: "Other", slug: "other")
+    sign_in_as @user
+    client_id = registered_client
+    key = approval_page(client_id)["request"]
+
+    approve(key, other)
+
+    assert_response :not_found
+    assert_nil response.headers["X-Inertia-Location"]
+    assert_nil response.location
+    assert_equal 0, Oauth::Grant.count
+    assert_equal 0, Oauth::Code.count
+  end
+
   # POST /mcp with the access token
 
   test "whoami with the access token answers only the picked Organization" do
@@ -428,9 +508,10 @@ class OauthBrowserSignInTest < ActionDispatch::IntegrationTest
     redirect_query["code"]
   end
 
-  def exchange(code, verifier: VERIFIER, client_id: @client_id)
+  # A redirect_uri of nil is not sent.
+  def exchange(code, verifier: VERIFIER, client_id: @client_id, redirect_uri: REDIRECT_URI)
     post oauth_token_url, params: { grant_type: "authorization_code", code: code, code_verifier: verifier,
-                                    client_id: client_id, redirect_uri: REDIRECT_URI, resource: RESOURCE }
+                                    client_id: client_id, redirect_uri: redirect_uri, resource: RESOURCE }.compact
   end
 
   def access_token(organization:)
