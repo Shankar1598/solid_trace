@@ -18,11 +18,14 @@ module Oauth
   # The fetch guards against SSRF: it resolves the host first, refuses a
   # loopback, private, link-local, multicast or unspecified address, and
   # connects to the checked address, with no proxy. HTTPS only, no
-  # redirects, 5 seconds for the full fetch, at most 64 KB, a JSON object
-  # only.
+  # redirects, 5 seconds for the full fetch, at most 64 KB of body and 80
+  # KB from the socket in all, a JSON object only.
   module PublishedDescription
     MAX_URL = 512
     MAX_BYTES = 64.kilobytes
+    # The bytes that the status line, the headers and the chunk sizes may add
+    # to the body.
+    HEADER_BYTES = 16.kilobytes
     TIMEOUT = 5
     MIN_FRESH = 5.minutes
     MAX_FRESH = 24.hours
@@ -42,6 +45,31 @@ module Oauth
     # A problem with the description or its fetch, said in words for the
     # error page.
     class Problem < StandardError; end
+
+    # Raised when a connection reads more than MAX_BYTES + HEADER_BYTES.
+    class TooMuchRead < StandardError; end
+
+    # Counts the bytes that a Net::BufferedIO reads from the socket, and
+    # stops at MAX_BYTES + HEADER_BYTES. Net::HTTP reads the status line and
+    # each header line until a newline, with no limit on their size.
+    module ReadCap
+      def rbuf_fill
+        before = rbuf_size
+        super
+        @bytes_read = @bytes_read.to_i + rbuf_size - before
+        raise TooMuchRead if @bytes_read > MAX_BYTES + HEADER_BYTES
+      end
+    end
+
+    # Gives a Net::HTTP's socket the ReadCap.
+    module CappedConnection
+      private
+
+      def connect
+        super
+        @socket.extend(ReadCap)
+      end
+    end
 
     # The host's addresses, as strings. Tests replace it.
     mattr_accessor :resolver, default: ->(host) {
@@ -159,12 +187,13 @@ module Oauth
       raise Problem, "Console could not find the address of #{host}, which publishes the client's description."
     end
 
-    # One time limit covers the full fetch: read_timeout starts again on
-    # each read, and Net::HTTP reads the status line and the headers with no
-    # limit on their size, so a host that sends them slowly could hold a
-    # Puma thread or fill memory.
+    # Two guards stop a host that sends without end. The time limit covers
+    # the full fetch (read_timeout starts again on each read), so a slow host
+    # cannot hold a Puma thread. ReadCap limits all the bytes read from the
+    # socket, so a long status line or long headers cannot fill memory; the
+    # 64 KB check on the body cannot do this.
     def get(uri, address)
-      http = connection(uri, address)
+      http = connection(uri, address).extend(CappedConnection)
       body = +""
       response = nil
       Timeout.timeout(time_limit) do
@@ -183,6 +212,8 @@ module Oauth
         end
       end
       [ response, body ]
+    rescue TooMuchRead
+      raise Problem, too_large(uri)
     rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout, Timeout::Error
       raise Problem, too_slow(uri)
     rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError, Net::HTTPBadResponse, Net::ProtocolError,

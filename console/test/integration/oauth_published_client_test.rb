@@ -191,6 +191,38 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 1.5
   end
 
+  test "a host that sends a status line or headers without end is stopped at the byte limit, before the time limit" do
+    sign_in_as @user
+    Oauth::PublishedDescription.time_limit = 2
+    endless_header = lambda do |socket|
+      socket.write("HTTP/1.1 200 OK\r\nX-Big: ")
+      200.times { socket.write("a" * 64.kilobytes) }
+    end
+    endless_headers = lambda do |socket|
+      socket.write("HTTP/1.1 200 OK\r\n")
+      20_000.times { |index| socket.write("X-Header-#{index}: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n") }
+    end
+
+    [ endless_header, endless_headers ].each do |reply|
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      message = serve_locally(reply) { error_page }
+
+      assert_match(/larger than 64 KB/, message)
+      assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 1
+    end
+  end
+
+  test "a document of exactly 64 KB, with usual headers, is read from the socket" do
+    sign_in_as @user
+    body = description.to_json
+    body = body.sub(/\}\z/, %(,"padding":"#{'a' * (64.kilobytes - body.bytesize - 13)}"}))
+    headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: max-age=3600\r\n" \
+              "X-Padding: #{'a' * 8.kilobytes}\r\nContent-Length: #{body.bytesize}\r\n\r\n"
+    reply = ->(socket) { socket.write(headers + body) }
+
+    assert_equal "Claude Code", serve_locally(reply) { approval_page }.dig("client", "name")
+  end
+
   test "a reply with a gzip body that does not inflate is refused" do
     sign_in_as @user
     reply = ->(socket) { socket.write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 9\r\n\r\nnot gzip!") }
