@@ -162,7 +162,7 @@ func TestTheAPIRefusesNoTokenAndATokenThatIsNotActive(t *testing.T) {
 func TestStartRefusesARunWithNoProjectOrPrompt(t *testing.T) {
 	env := factorytest.New(t)
 	ana := env.Member("Ana")
-	for _, body := range []dispatcherapi.StartRun{{Project: "checkout"}, {Prompt: "Fix it"}, {Project: " ", Prompt: "Fix it"}} {
+	for _, body := range []dispatcherapi.StartRun{{Project: "checkout"}, {Prompt: "Fix it"}, {Project: " ", Prompt: "Fix it"}, {Project: "checkout", Prompt: "  \n\t"}} {
 		if a := ana.API("POST", "/api/v1/runs", body); a.Status != http.StatusBadRequest {
 			t.Errorf("%+v: %d %s, want 400", body, a.Status, a.Body)
 		}
