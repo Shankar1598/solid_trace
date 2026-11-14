@@ -36,7 +36,7 @@ class OauthSignedInClientsTest < ActionDispatch::IntegrationTest
     assert_equal 1, rows.size
     row = rows.first
     assert_kind_of Integer, row["id"]
-    assert_equal({ "name" => "Claude Code", "name_checked" => false, "host" => "localhost" }, row["client"])
+    assert_equal({ "name" => "Claude Code", "name_checked" => false, "host" => "localhost", "first_party" => false }, row["client"])
     assert_equal({ "name" => "Acme", "slug" => "acme" }, row["organization"])
     assert_equal "browser", row["approved_via"]
     assert_equal FIREFOX, row["user_agent"]

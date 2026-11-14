@@ -7,6 +7,9 @@ module Oauth
   # redirect_uri, the code's resource or none, and the code_verifier whose
   # S256 is the code's code_challenge; any difference is invalid_grant.
   #
+  # Each answer's scope is the access token's Scopes: the sign-in's Scopes
+  # for the token's resource (RFC 8707 §2.2).
+  #
   # The refresh_token grant gives a new pair for a refresh token, which
   # works once (Token#rotate!). Its Grant must be live and the Grant's
   # client must ask. A used refresh token in the 60 seconds after its first
@@ -19,11 +22,12 @@ module Oauth
   # 10 minutes, and the tokens once, with one conditional update.
   class TokensController < ApiController
     TOO_MANY = "Too many token requests. Try again in a minute."
-    # 60 a minute for each IP address and for each client_id.
+    # 60 a minute for each IP address and for each client_id (for
+    # solidtrace-cli, for each IP address: see client_limit_key).
     rate_limit to: 60, within: 1.minute, only: :create, name: "ip",
                with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
     rate_limit to: 60, within: 1.minute, only: :create, name: "client",
-               by: -> { asking_client_id.then { |id| id ? "client:#{id}" : "ip:#{request.remote_ip}" } },
+               by: -> { client_limit_key(asking_client_id) },
                with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
 
     # A code_verifier: 43 to 128 unreserved characters (RFC 7636 §4.1).
@@ -59,7 +63,8 @@ module Oauth
       return invalid_scope unless scope_in_grant?(grant)
       return invalid_refresh if token.used_at.nil? && token.expired?
 
-      tokens = token.rotate!(resource: grant_resource(grant))
+      resource = grant_resource(grant)
+      tokens = token.rotate!(resource: resource)
       # A used refresh token after the window: a copy is in other hands.
       return invalid_refresh(revoke: grant) unless tokens
 
@@ -69,7 +74,7 @@ module Oauth
         token_type: "Bearer",
         expires_in: tokens[:expires_in],
         refresh_token: tokens[:refresh_token],
-        scope: grant.scopes.join(" "),
+        scope: Scopes.for_resource(grant.scopes, resource, issuer: issuer).join(" "),
       }
     end
 
@@ -138,7 +143,8 @@ module Oauth
     end
 
     # An access token for the code's resource and a refresh token, under
-    # the code's Grant.
+    # the code's Grant. The scope is the access token's: the code's Scopes
+    # for its resource.
     def render_tokens(code)
       tokens = Token.issue_pair!(grant: code.grant, resource: code.resource)
       render json: {
@@ -146,7 +152,7 @@ module Oauth
         token_type: "Bearer",
         expires_in: tokens[:expires_in],
         refresh_token: tokens[:refresh_token],
-        scope: code.scopes.join(" "),
+        scope: Scopes.for_resource(code.scopes, code.resource, issuer: issuer).join(" "),
       }
     end
 

@@ -2,37 +2,33 @@
 
 module Oauth
   # Device authorization (RFC 8628 §3.1), for a program with no browser
-  # whose client_id is the URL of its published description. It answers a
+  # whose client_id is the URL of its published description, or that is
+  # solidtrace-cli, the client built into Console. It answers a
   # device code to poll the token endpoint with, the user code to type and
   # the device page's URL, and never a URL with the code filled in. It reads
   # only the kept copy of the description, and fetches nothing: the device
   # page checks the description once a signed-in user types the code.
   #
   # A registered (DCR) client, and a fresh kept copy that does not list the
-  # device grant, get unauthorized_client. CIMD clients are public, so no
-  # client authentication is needed.
+  # device grant, get unauthorized_client. CIMD clients and solidtrace-cli
+  # are public, so no client authentication is needed.
   class DeviceAuthorizationsController < ApiController
     TOO_MANY = "Too many device code requests. Try again in a minute."
-    # 60 a minute for each IP address and for each client_id.
+    # 60 a minute for each IP address and for each client_id (for
+    # solidtrace-cli, for each IP address: see client_limit_key).
     rate_limit to: 60, within: 1.minute, only: :create, name: "ip",
                with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
     rate_limit to: 60, within: 1.minute, only: :create, name: "client",
-               by: -> { params[:client_id].is_a?(String) ? "client:#{params[:client_id]}" : "ip:#{request.remote_ip}" },
+               by: -> { client_limit_key(params[:client_id].is_a?(String) ? params[:client_id] : nil) },
                with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
 
-    NOT_PUBLISHED = "The device flow is only for a client whose client_id is the https:// URL of its published " \
-                    "description, with #{DeviceCode::GRANT_TYPE} in its grant_types."
+    NOT_PUBLISHED = "The device flow is only for #{Client::FIRST_PARTY_ID} and for a client whose client_id is the " \
+                    "https:// URL of its published description, with #{DeviceCode::GRANT_TYPE} in its grant_types."
 
     def create
       client_id = params[:client_id]
       return unknown_client unless client_id.is_a?(String) && client_id.present?
-
-      kept = Client.find_by(client_id: client_id)
-      return oauth_error("unauthorized_client", NOT_PUBLISHED) if kept && !kept.name_checked?
-      return unknown_client unless PublishedDescription.url?(client_id) && PublishedDescription.well_formed?(client_id)
-      if kept&.fresh? && !kept.grant_types.include?(DeviceCode::GRANT_TYPE)
-        return oauth_error("unauthorized_client", NOT_PUBLISHED)
-      end
+      return unless client_id == Client::FIRST_PARTY_ID || published_client_allowed?(client_id)
 
       scopes = Scopes.requested(params[:scope])
       unless scopes
@@ -53,6 +49,23 @@ module Oauth
     end
 
     private
+
+    # Whether client_id is the well-formed URL of a published description
+    # whose fresh kept copy, if any, lists the device grant. Else false,
+    # after the error answer.
+    def published_client_allowed?(client_id)
+      kept = Client.find_by(client_id: client_id)
+      if kept && !kept.name_checked?
+        oauth_error("unauthorized_client", NOT_PUBLISHED)
+      elsif !(PublishedDescription.url?(client_id) && PublishedDescription.well_formed?(client_id))
+        unknown_client
+      elsif kept&.fresh? && !kept.device_grant?
+        oauth_error("unauthorized_client", NOT_PUBLISHED)
+      else
+        return true
+      end
+      false
+    end
 
     def unknown_client
       oauth_error("invalid_client", NOT_PUBLISHED, status: :unauthorized)
