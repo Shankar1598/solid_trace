@@ -286,7 +286,7 @@ func (h *LogsHandler) afterBatch(c *fiber.Ctx, run *run, projectID uint32, req q
 	var found storage.IngestedLogs
 	if afterBatch == "" {
 		found.Logs = []models.Log{}
-		found.Cursor, err = h.clickHouse.LogProcessingCursor(projectID)
+		found.Cursor, err = h.clickHouse.LogIngestCursor(projectID)
 	} else {
 		found, err = h.clickHouse.ScanLogsIngestedAfter(run.ctx, storage.IngestedLogScan{
 			ProjectID: projectID,
