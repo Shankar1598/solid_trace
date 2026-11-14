@@ -201,6 +201,7 @@ module Oauth
             id: organization.id, name: organization.name, slug: organization.slug,
             scopes: scopes(pending).map { |scope| format(scope.text, organization: organization.name) },
             two_factor_note: (format(TWO_FACTOR_FIRST, organization: organization.name) if sets_up_two_factor_first?(organization)),
+            capture_notice: CaptureNotice.for_scopes(organization, scopes(pending)),
           }
         end,
         no_organization: (NO_ORGANIZATION if organizations.empty?),
