@@ -21,6 +21,7 @@ class ProjectsController < ApplicationController
       can_manage_project: policy(@project).update?,
       can_delete_project: policy(@project).destroy?,
       can_manage_keys: policy(ProjectKey.new(project: @project)).create?,
+      no_keys_text: @project.agent? ? ProjectKeyPolicy::AGENT_PROJECT : nil,
     }
   end
 
