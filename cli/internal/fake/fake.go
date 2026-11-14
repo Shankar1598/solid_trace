@@ -188,6 +188,16 @@ func (f *OAuth) Check(secret string) (*Organization, bool) {
 	return f.Organizations[token.grant.org], true
 }
 
+// AccessToken is a live access token of a new Grant in the Organization,
+// as a sign-in gives it.
+func (f *OAuth) AccessToken(slug string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g := &grant{org: slug}
+	f.grants = append(f.grants, g)
+	return f.newPair(g, f.Resource()).access
+}
+
 // RevokeGrants revokes every Grant, as Revoke on Settings → User does.
 func (f *OAuth) RevokeGrants() {
 	f.mu.Lock()

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/solidtrace/cli/agentapi"
 )
@@ -41,6 +42,11 @@ type upload struct {
 	// root is the Claude project directory: the paths are relative to it.
 	root   string
 	server map[string]agentapi.AgentSessionFile
+	// settledBefore: a file that did not change since then is sent whole
+	// (the sweep). Zero in a hook's call.
+	settledBefore time.Time
+	// pending is true when a file is left for a later call.
+	pending bool
 }
 
 func (u *upload) run(ctx context.Context) error {
@@ -72,6 +78,7 @@ func (u *upload) run(ctx context.Context) error {
 			// next call asks again), or refuses this path: the other paths
 			// still go.
 			u.c.Log("%s: %s: %v", u.in.SessionID, path, err)
+			u.pending = true
 			continue
 		}
 		if err != nil {
@@ -221,8 +228,10 @@ func (u *upload) whole(ctx context.Context, path string, previous, next state) e
 	if known && have.ContentHash == seen.Hash {
 		return nil
 	}
-	if previous.Seen[path] != seen && u.in.HookEventName != SessionEnd {
+	settled := !u.settledBefore.IsZero() && info.ModTime().Before(u.settledBefore)
+	if previous.Seen[path] != seen && u.in.HookEventName != SessionEnd && !settled {
 		// It may still change: it goes at the next call if it does not.
+		u.pending = true
 		return nil
 	}
 	body := make([]byte, min(info.Size(), UnitLimit))
