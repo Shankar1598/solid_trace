@@ -2,7 +2,9 @@ name: Release images and the agent CLI
 
 # Builds Console's and EventStore's images for a published release, for amd64
 # and arm64 (GCP's T2A, AWS's Graviton), and pushes them to GitHub Container
-# Registry, tagged with the release's tag and latest. deploy/install pulls them.
+# Registry, tagged with the release's tag. A published release that is not a
+# pre-release also moves latest, which deploy/install pulls
+# (.github/scripts/image-tags).
 #
 # The cli job adds the agent CLI's files to the release: the solidtrace
 # binary for each OS and architecture, SHA256SUMS, install.sh, the Claude
@@ -14,9 +16,10 @@ name: Release images and the agent CLI
 # EventStore's Dockerfile builds the VRL runtime in a Rust stage, so the
 # runners need no Rust; the build cache keeps that stage's dependency layer
 # with every other layer (mode=max).
-# Run it by hand with a release's tag to rebuild that release's images and
-# files. For a test release, make a draft or pre-release first: the cli
-# job uploads to an existing release, and replaces files of the same name.
+# Run it by hand with a release's tag to rebuild that release's CLI files.
+# The cli job uploads to an existing release, and replaces files of the same
+# name. For a test release, make a draft or pre-release first. A run by hand
+# builds the images only when "images" is set, and never moves latest.
 
 on:
   release:
@@ -26,6 +29,10 @@ on:
       tag:
         description: The release tag to build, such as v0.2.0
         required: true
+      images:
+        description: Also build and push the images (tagged with the release's tag only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -65,6 +72,7 @@ jobs:
         run: gh release upload "$TAG" cli/dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
   build:
+    if: github.event_name == 'release' || inputs.images
     strategy:
       matrix:
         app: [console, event_store]
@@ -134,6 +142,13 @@ jobs:
       matrix:
         app: [console, event_store]
     steps:
+      # The workflow's own commit, so that a run by hand for an older tag
+      # also has the script.
+      - name: Checkout the tag script
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Download the digests
         uses: actions/download-artifact@v4
         with:
@@ -158,9 +173,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Tag both architectures as one image
+        env:
+          PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           image='${{ steps.name.outputs.image }}'
           docker buildx imagetools create \
-            --tag "$image:$TAG" --tag "$image:latest" \
+            $(sh .github/scripts/image-tags "$image" "$TAG" "$GITHUB_EVENT_NAME" "$PRERELEASE") \
             $(for f in digests/*; do echo "$image@$(cat "$f")"; done)
           docker buildx imagetools inspect "$image:$TAG"
