@@ -59,6 +59,12 @@ module McpTools
                    "snippets and get_project_setup use from now on; DSNs already in apps don't change. An empty " \
                    "string clears it, falling back to PUBLIC_INGEST_URL, then Console's host at port 4000 " \
                    "(editable.ingest_url_fallback)." }
+    argument :redaction_patterns, { type: "array", items: { type: "string" },
+      description: "The whole list of extra Redaction patterns, Go regular expressions (RE2 syntax), after the " \
+                   "defaults (editable.redaction_defaults). Before EventStore stores a transcript unit of an Agent " \
+                   "session, each byte that a pattern matches becomes '*'. A pattern must not be able to match a " \
+                   "quote or a backslash, so [^ ]+ and .+ are refused. They apply from the next upload; stored " \
+                   "units don't change. An empty list removes them." }
     argument :confirm_passkeys_stop_working, { type: "boolean",
       description: "true changes console_url to another host even though Passkeys made for the current host would " \
                    "stop working; their users then sign in with another factor or a Recovery code. Without it, " \

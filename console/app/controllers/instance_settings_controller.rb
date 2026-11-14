@@ -3,14 +3,17 @@
 # Settings → Instance: the install's settings, for instance admins. SQL
 # queries, the default Retention of Logs and traces, log-all-reads,
 # log-MCP-reads, whether Console sends its own Issues and traces, the
-# text-match budget, the Log read threads, the hours on local disk, and
-# Console's and ingest's URLs apply at once, so they change here. Sign-up and
+# text-match budget, the Log read threads, the hours on local disk,
+# Console's and ingest's URLs, and the extra Redaction patterns apply at
+# once, so they change here. Sign-up and
 # everything that needs a restart, HTTPS among them, are shown read-only
 # (InstanceSettingsAnswer builds what's shown).
 class InstanceSettingsController < ApplicationController
   layout "dashboard"
   before_action :set_current_org
-  before_action :require_instance_admin
+  before_action :require_instance_admin, only: :show
+  # A save by anyone else is 403, with nothing changed.
+  before_action -> { head :forbidden unless current_user.instance_admin? }, only: :update
 
   def show
     render inertia: "Settings/Instance", props: {
@@ -24,7 +27,9 @@ class InstanceSettingsController < ApplicationController
   # for the page to confirm and send again with confirm_passkeys_stop_working.
   def update
     settings = InstanceSetting.current
-    if settings.update_editable(params.fetch(:instance_settings, {}).permit(*InstanceSetting::EDITABLE),
+    changes = params.fetch(:instance_settings, {})
+      .permit(*(InstanceSetting::EDITABLE - [ :redaction_patterns ]), redaction_patterns: [])
+    if settings.update_editable(changes,
         confirm_passkeys_stop_working: params[:confirm_passkeys_stop_working].to_s == "true")
       redirect_to instance_settings_path(org_slug: @current_org.slug), notice: "Instance settings saved"
     else
