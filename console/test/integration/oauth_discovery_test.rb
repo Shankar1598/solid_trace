@@ -77,7 +77,89 @@ class OauthDiscoveryTest < ActionDispatch::IntegrationTest
                    "authorization_response_iss_parameter_supported" => true }, response.parsed_body)
   end
 
+  test "POST /mcp with no token gets a 401 that points to the protected resource metadata, and the API token hint" do
+    InstanceSetting.current.update!(console_url: ISSUER)
+    host! "10.100.0.3:3000"
+
+    mcp_tools_list(token: nil)
+
+    assert_response :unauthorized
+    assert_equal %(Bearer resource_metadata="#{ISSUER}/.well-known/oauth-protected-resource/mcp", scope="mcp"),
+                 response.headers["WWW-Authenticate"]
+    assert_equal({ "error" => "Send an API token as Authorization: Bearer st_…. Make one in Settings → API tokens & MCP." },
+                 response.parsed_body)
+    assert_nil response.headers["Access-Control-Allow-Origin"]
+  end
+
+  test "POST /mcp with a header that holds no Bearer token is answered as with no token" do
+    InstanceSetting.current.update!(console_url: ISSUER)
+
+    [ "Basic #{Base64.strict_encode64("ada:password")}", "Bearer", "Bearer ", "st_#{"a" * 43}" ].each do |header|
+      mcp_tools_list(token: nil, headers: { "Authorization" => header })
+
+      assert_response :unauthorized
+      assert_equal %(Bearer resource_metadata="#{ISSUER}/.well-known/oauth-protected-resource/mcp", scope="mcp"),
+                   response.headers["WWW-Authenticate"], header
+    end
+  end
+
+  test "POST /mcp with a bad or revoked token gets the same 401 with invalid_token" do
+    InstanceSetting.current.update!(console_url: ISSUER)
+    token, secret = ApiToken.issue!(user: create(:user), name: "Laptop")
+    token.destroy!
+
+    [ "st_unknown", secret, "sto_#{"a" * 43}", "str_#{"a" * 43}", "#{secret}x", "not-a-token" ].each do |sent|
+      mcp_tools_list(token: sent)
+
+      assert_response :unauthorized
+      assert_equal %(Bearer error="invalid_token", resource_metadata="#{ISSUER}/.well-known/oauth-protected-resource/mcp", scope="mcp"),
+                   response.headers["WWW-Authenticate"], sent
+      assert_match "Send an API token", response.parsed_body["error"]
+    end
+  end
+
+  test "a token in the query string is not read" do
+    InstanceSetting.current.update!(console_url: ISSUER)
+    _, secret = ApiToken.issue!(user: create(:user), name: "Laptop")
+
+    mcp_tools_list(token: nil, query: "?access_token=#{secret}")
+
+    assert_response :unauthorized
+    assert_equal %(Bearer resource_metadata="#{ISSUER}/.well-known/oauth-protected-resource/mcp", scope="mcp"),
+                 response.headers["WWW-Authenticate"]
+  end
+
+  test "with OAuth on, an API token works as before" do
+    InstanceSetting.current.update!(console_url: ISSUER)
+    _, secret = ApiToken.issue!(user: create(:user), name: "Laptop")
+
+    mcp_tools_list(token: secret)
+
+    assert_response :ok
+    assert response.parsed_body.dig("result", "tools").any? { |tool| tool["name"] == "whoami" }
+  end
+
+  test "with OAuth off, the 401 sends only Bearer, with no token and with a bad one" do
+    [ nil, "http://console.example.com" ].each do |url|
+      InstanceSetting.current.tap { |settings| settings.console_url = url }.save!(validate: false)
+
+      [ nil, "st_unknown" ].each do |sent|
+        mcp_tools_list(token: sent)
+
+        assert_response :unauthorized
+        assert_equal "Bearer", response.headers["WWW-Authenticate"], "#{url.inspect} #{sent.inspect}"
+        assert_match "Send an API token", response.parsed_body["error"]
+      end
+    end
+  end
+
   private
+
+  def mcp_tools_list(token:, headers: {}, query: "")
+    headers = { "Accept" => "application/json, text/event-stream", "Content-Type" => "application/json" }.merge(headers)
+    headers["Authorization"] = "Bearer #{token}" if token
+    post "/mcp#{query}", params: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }.to_json, headers: headers
+  end
 
   # The statuses of the authorization server metadata and the protected
   # resource metadata (in that order, so response is the second), with the
