@@ -105,7 +105,7 @@ module Oauth
       name = name.is_a?(String) && name.strip.present? ? name.strip.first(100) : UNNAMED
       grant_types = Array(document["grant_types"]).select { |type| type.is_a?(String) }.presence || DEFAULT_GRANT_TYPES
       now = Time.current
-      update!(name: name, redirect_uris: document["redirect_uris"].select { |uri| self.class.allowed_redirect_uri?(uri) },
+      update!(name: name, redirect_uris: Array(document["redirect_uris"]).select { |uri| self.class.allowed_redirect_uri?(uri) },
               grant_types: grant_types, token_endpoint_auth_method: "none", metadata: document,
               fetched_at: now, fresh_until: now + fresh_for)
     end

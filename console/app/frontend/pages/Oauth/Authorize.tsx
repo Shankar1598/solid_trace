@@ -1,19 +1,13 @@
 import { router } from '@inertiajs/react'
 import { useState } from 'react'
 import AuthLayout from '@/components/layouts/AuthLayout'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-
-// two_factor_note: the Organization has Require two-factor and the user has
-// no Two-factor, so Approve sends them to set it up first.
-type Organization = { id: number; name: string; slug: string; scopes: string[]; two_factor_note: string | null }
+import ApprovalChoices, { type ApprovalOrganization } from '@/components/oauth/ApprovalChoices'
 
 type Props = {
   request: string
   client: { name: string; name_checked: boolean; name_note: string; redirect_host: string }
   loopback_warning: string | null
-  organizations: Organization[]
+  organizations: ApprovalOrganization[]
   no_organization: string | null
   revoke_hint: string
 }
@@ -21,15 +15,11 @@ type Props = {
 // The approval page (Oauth::AuthorizationsController): an OAuth client asks
 // to act as the user in one Organization. The form sends only the pending
 // request's key, the Organization's id and the decision; Console sends the
-// browser back to the client. The first Organization is the last used one.
-// A user in no Organization sees why, and only Deny.
+// browser back to the client.
 export default function Authorize({ request, client, loopback_warning, organizations, no_organization, revoke_hint }: Props) {
-  const [organizationId, setOrganizationId] = useState(organizations[0]?.id.toString() ?? '')
   const [processing, setProcessing] = useState(false)
-  const organization = organizations.find((o) => o.id.toString() === organizationId)
-  const items = organizations.map((o) => ({ value: o.id.toString(), label: o.name }))
 
-  const decide = (decision: 'approve' | 'deny') => {
+  const decide = (decision: 'approve' | 'deny', organizationId: string) => {
     setProcessing(true)
     router.post('/oauth/authorize', { request, organization_id: organizationId, decision }, {
       onFinish: () => setProcessing(false),
@@ -54,42 +44,13 @@ export default function Authorize({ request, client, loopback_warning, organizat
           <p role="alert" className="border border-amber-500/50 bg-amber-500/10 p-3">{loopback_warning}</p>
         )}
 
-        {no_organization ? (
-          <p role="note">{no_organization}</p>
-        ) : (
-          <>
-            {organizations.length > 1 && (
-              <div className="space-y-2">
-                <Label htmlFor="organization">Organization</Label>
-                <Select value={organizationId} onValueChange={(value) => setOrganizationId(value ?? '')} items={items}>
-                  <SelectTrigger id="organization">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {items.map((item) => (
-                      <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            <ul className="list-disc space-y-1 pl-5">
-              {organization?.scopes.map((text) => <li key={text}>{text}</li>)}
-            </ul>
-            {organization?.two_factor_note && (
-              <p role="note" className="border border-amber-500/50 bg-amber-500/10 p-3">{organization.two_factor_note}</p>
-            )}
-          </>
-        )}
-
-        {!no_organization && <p className="text-muted-foreground">{revoke_hint}</p>}
-
-        <div className="flex gap-2">
-          {!no_organization && (
-            <Button type="button" disabled={processing} onClick={() => decide('approve')}>Approve</Button>
-          )}
-          <Button type="button" variant="outline" disabled={processing} onClick={() => decide('deny')}>Deny</Button>
-        </div>
+        <ApprovalChoices
+          organizations={organizations}
+          no_organization={no_organization}
+          revoke_hint={revoke_hint}
+          processing={processing}
+          onDecide={decide}
+        />
       </div>
     </AuthLayout>
   )
