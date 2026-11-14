@@ -237,6 +237,50 @@ func TestTheParseStoppedBetweenTheInsertAndTheCursorMakesEachLogOnce(t *testing.
 	}
 }
 
+func TestTheParseStoppedBetweenTheCursorAndTheDeleteDeletesTheParsedBatchesAtStartup(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	project := uint32(o.project)
+
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(transcript[:2]...)}), 200)
+	if err := env.AgentFileProcessor.ProcessUntilCaughtUp(); err != nil {
+		t.Fatal(err)
+	}
+	batches, err := env.PebbleWriter.AgentFileBatchesAfter(project, uuid.Nil, 1<<20)
+	if err != nil || len(batches) != 1 {
+		t.Fatalf("Expected 1 Agent file batch, got %d: %v", len(batches), err)
+	}
+
+	// The parse inserts the Logs and moves its cursor, and EventStore stops
+	// before it deletes the batches.
+	crashed := make(chan struct{})
+	env.FlakyLogs.failAfterInsert(connectionLost, func() {
+		if err := env.PebbleWriter.SetAgentParseCursor(project, batches[0].ID); err != nil {
+			t.Error(err)
+		}
+		env.FlakyLogs.goDown()
+		close(crashed)
+	})
+	done := make(chan error, 1)
+	go func() { done <- env.AgentParser.ProcessUntilCaughtUp() }()
+	select {
+	case <-crashed:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Expected the parse to insert the Logs")
+	}
+	env.Restart(t)
+	<-done
+	env.FlakyLogs.recover()
+
+	if left, err := env.PebbleWriter.AgentFileBatchesAfter(project, uuid.Nil, 1<<20); err != nil || len(left) != 0 {
+		t.Errorf("Expected startup to delete the parsed batches, got %d left: %v", len(left), err)
+	}
+	if logs := sessionLogs(t, env, o.project, laptopSession); len(logs) != 2 {
+		t.Errorf("Expected each line once, 2 Logs, got %d", len(logs))
+	}
+}
+
 func TestANewVersionAfterATrimIsParsedFromItsStartAndTheOldLogsStay(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
