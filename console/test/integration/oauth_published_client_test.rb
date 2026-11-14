@@ -87,18 +87,42 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
 
   test "a description that names another client_id, lacks the redirect URI, or is for a confidential client shows the error page" do
     sign_in_as @user
-    [
-      { client_id: "https://other.example.com/client.json" },
-      { redirect_uris: [ "https://client.example.com/callback" ] },
-      { redirect_uris: nil },
-      { redirect_uris: "http://localhost:4567/callback" },
-      { token_endpoint_auth_method: "client_secret_basic" }
-    ].each do |changes|
-      stub_request(:get, CLIENT_ID).to_return(status: 200, body: description(**changes).to_json,
+    {
+      { client_id: "https://other.example.com/client.json" } => /names another client_id/,
+      { redirect_uris: [ "https://client.example.com/callback" ] } => /does not give this redirect URI/,
+      { redirect_uris: nil } => /no https:\/\/ or loopback redirect_uris/,
+      { redirect_uris: "http://localhost:4567/callback" } => /no https:\/\/ or loopback redirect_uris/,
+      { redirect_uris: [ "http://client.example.com/callback" ] } => /no https:\/\/ or loopback redirect_uris/,
+      { token_endpoint_auth_method: "client_secret_basic" } => /confidential client/,
+      { token_endpoint_auth_method: "client_secret_post" } => /confidential client/,
+      { token_endpoint_auth_method: "private_key_jwt" } => /confidential client/,
+    }.each_with_index do |(changes, message), index|
+      # Each case has its own client_id, so no earlier case's copy is used.
+      client_id = "https://client.example.com/clients/#{index}.json"
+      stub_request(:get, client_id).to_return(status: 200, body: description(client_id: client_id, **changes).to_json,
                                               headers: { "Content-Type" => "application/json" })
 
-      assert error_page.present?, changes.inspect
+      assert_match message, error_page(client_id: client_id), changes.inspect
+      assert_requested :get, client_id, times: 1
+      assert_not Oauth::Client.find_by(client_id: client_id)&.fetched?, changes.inspect if index != 1
     end
+  end
+
+  test "a description with token_endpoint_auth_method none is a public client" do
+    publish(token_endpoint_auth_method: "none")
+    sign_in_as @user
+
+    assert_equal "Claude Code", approval_page.dig("client", "name")
+    assert Oauth::Client.find_by!(client_id: CLIENT_ID).public_client?
+  end
+
+  test "the kept copy holds only the description's allowed redirect URIs" do
+    allowed = [ REDIRECT_URI, "https://client.example.com/callback" ]
+    publish(redirect_uris: allowed + [ "http://evil.example.com/callback", "javascript:alert(1)", 7 ])
+    sign_in_as @user
+    approval_page
+
+    assert_equal allowed, Oauth::Client.find_by!(client_id: CLIENT_ID).redirect_uris
   end
 
   test "a description with no token_endpoint_auth_method is a public client" do
@@ -145,6 +169,7 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     assert_equal PUBLIC_ADDRESS, http.ipaddr
     assert_equal "client.example.com", http.address
     assert http.use_ssl?
+    assert_equal OpenSSL::SSL::VERIFY_PEER, http.verify_mode
     assert_not http.proxy?
   end
 
@@ -378,6 +403,37 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     publish
 
     assert_equal "Claude Code", approval_page.dig("client", "name")
+  end
+
+  test "a fetch that started more than 30 seconds ago no longer blocks a new one" do
+    sign_in_as @user
+    publish
+    client = Oauth::PublishedDescription.placeholder(CLIENT_ID)
+
+    client.update_columns(fetch_started_at: Oauth::PublishedDescription::FETCH_LASTS.ago + 1.second)
+    assert_match(/Try again in a moment/, error_page)
+    assert_not_requested :get, CLIENT_ID
+
+    client.update_columns(fetch_started_at: Oauth::PublishedDescription::FETCH_LASTS.ago - 1.second)
+    assert_equal "Claude Code", approval_page.dig("client", "name")
+    assert_requested :get, CLIENT_ID, times: 1
+  end
+
+  test "an Approve for a published request whose client is not set yet shows the error page and makes no grant" do
+    sign_in_as @user
+    stub_request(:get, CLIENT_ID).to_raise(Errno::ECONNREFUSED)
+    error_page
+    pending = Oauth::PendingRequest.find_by!(client_id: CLIENT_ID)
+    assert_nil pending.client
+
+    assert_no_difference -> { Oauth::Grant.count } do
+      approve(pending.key)
+    end
+
+    assert_response :bad_request
+    assert_equal "Oauth/Error", response.parsed_body["component"]
+    assert_match(/unknown or older than 10 minutes/, response.parsed_body.dig("props", "message"))
+    assert_nil response.headers["X-Inertia-Location"]
   end
 
   # The full browser grant
