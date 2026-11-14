@@ -279,6 +279,16 @@ class OauthFirstPartyCliTest < ActionDispatch::IntegrationTest
     assert client.device_grant?
   end
 
+  test "a solidtrace-cli row that is not the built-in client stops each use, and is not changed" do
+    Oauth::Client.first_party.update_columns(kind: "dcr", grant_types: [], redirect_uris: [ CLI_REDIRECT ])
+
+    error = assert_raises(RuntimeError) { Oauth::Client.first_party }
+    assert_match "is not the built-in client", error.message
+    assert_raises(RuntimeError) { Oauth::Client.named(CLI) }
+    row = Oauth::Client.find_by!(client_id: CLI)
+    assert_equal [ "dcr", [] ], [ row.kind, row.grant_types ]
+  end
+
   test "only the built-in client can have the solidtrace-cli client_id, and it can have no other" do
     Oauth::Client.first_party
     %w[dcr cimd].each do |kind|
