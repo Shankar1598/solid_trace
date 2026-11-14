@@ -41,6 +41,9 @@ Rails.application.routes.draw do
   # The MCP server (McpController).
   post "mcp", to: "mcp#create", as: :mcp, format: false
   match "mcp", to: "mcp#method_not_allowed", via: [ :get, :delete ], as: nil, format: false
+  # How an MCP client finds where to sign in (Oauth::MetadataController).
+  get ".well-known/oauth-protected-resource(/mcp)", to: "oauth/metadata#protected_resource", format: false
+  get ".well-known/oauth-authorization-server", to: "oauth/metadata#authorization_server", format: false
   resources :passwords, param: :token
   # An Invite link, where an Invited member sets a password (InvitesController).
   get "invites/:token", to: "invites#edit", as: :invite
