@@ -81,20 +81,20 @@ func TestAReplyThatTheParseReadsInTwoRangesHasItsTokensOnce(t *testing.T) {
 	defer env.Cleanup()
 	o := newAgentOrganization(t, env)
 
-	usage := func(output int) string {
-		return fmt.Sprintf(`{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"output_tokens":%d}`, output)
+	usage := func(output, cacheWrite int) string {
+		return fmt.Sprintf(`{"input_tokens":10,"cache_creation_input_tokens":%d,"cache_read_input_tokens":1000,"output_tokens":%d}`, cacheWrite, output)
 	}
 	// The wrapper uploads every few seconds, and the parse runs after each
 	// upload, between two lines of one reply. The second reply's last line
-	// has more output tokens than its first line.
+	// has more output and cache-write tokens than its first line.
 	ranges := [][]string{
-		{reply("a1", "msg_r", "claude-opus-5-5", `{"type":"text","text":"I read the cart."}`, usage(50))},
+		{reply("a1", "msg_r", "claude-opus-5-5", `{"type":"text","text":"I read the cart."}`, usage(50, 0))},
 		{
-			reply("a2", "msg_r", "claude-opus-5-5", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}`, usage(50)),
+			reply("a2", "msg_r", "claude-opus-5-5", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}`, usage(50, 0)),
 			`{"type":"user","uuid":"u1","timestamp":"2026-10-02T11:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"package cart"}]}}`,
-			reply("a3", "msg_s", "claude-opus-5-5", `{"type":"text","text":"The cart"}`, usage(20)),
+			reply("a3", "msg_s", "claude-opus-5-5", `{"type":"text","text":"The cart"}`, usage(20, 100)),
 		},
-		{reply("a4", "msg_s", "claude-opus-5-5", `{"type":"text","text":"is fine."}`, usage(30))},
+		{reply("a4", "msg_s", "claude-opus-5-5", `{"type":"text","text":"is fine."}`, usage(30, 300))},
 	}
 	offset := 0
 	var logs []listedLog
@@ -123,19 +123,22 @@ func TestAReplyThatTheParseReadsInTwoRangesHasItsTokensOnce(t *testing.T) {
 		}
 	}
 	// msg_r has its tokens once, on its first line; msg_s on both lines,
-	// 20 and then 10 more output tokens.
+	// 20 and then 10 more output tokens, 100 and then 200 more cache-write
+	// tokens.
 	if withTokens != 3 {
 		t.Errorf("Expected 3 Logs with tokens, got %d: %+v", withTokens, logs)
 	}
-	for id, output := range map[string]float64{"msg_r": 50, "msg_s": 30} {
-		want := map[string]float64{"agent.tokens.input": 10, "agent.tokens.output": output, "agent.tokens.cache_read": 1000, "agent.tokens.cache_write": 0}
+	for id, last := range map[string]struct{ output, cacheWrite float64 }{"msg_r": {50, 0}, "msg_s": {30, 300}} {
+		output := last.output
+		want := map[string]float64{"agent.tokens.input": 10, "agent.tokens.output": output, "agent.tokens.cache_read": 1000, "agent.tokens.cache_write": last.cacheWrite}
 		for name, v := range want {
 			if sums[id][name] != v {
 				t.Errorf("%s: expected %v %s in all, got %v", id, v, name, sums[id][name])
 			}
 		}
-		// Claude Opus 5.5: $4 input, $20 output and $0.20 cache read.
-		if cost := 10*4e-6 + output*20e-6 + 1000*0.2e-6; math.Abs(sums[id]["agent.cost_usd"]-cost) > 1e-12 {
+		// Claude Opus 5.5: $4 input, $20 output, $0.20 cache read and $5 a
+		// 5-minute cache write.
+		if cost := 10*4e-6 + output*20e-6 + 1000*0.2e-6 + last.cacheWrite*5e-6; math.Abs(sums[id]["agent.cost_usd"]-cost) > 1e-12 {
 			t.Errorf("%s: expected the cost %v USD in all, got %v", id, cost, sums[id]["agent.cost_usd"])
 		}
 	}
@@ -169,6 +172,28 @@ func TestAModelWithNoPriceHasItsTokensAndNoCost(t *testing.T) {
 	expectCost(t, "A dated Claude Haiku 4.5", logs[1].Attributes, 1000*1e-6+100*5e-6)
 }
 
+func TestASyntheticReplyHasNoTokensAndNoCost(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	// Claude Code writes a synthetic reply itself, as when a request
+	// fails. Its usage is not a request's.
+	usage := `{"input_tokens":1000,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":100}`
+	lines := []string{reply("a1", "msg_syn", "<synthetic>", `{"type":"text","text":"API Error"}`, usage)}
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(lines...)}), 200)
+
+	logs := sessionLogs(t, env, o.project, laptopSession)
+	if len(logs) != 1 {
+		t.Fatalf("Expected 1 Log, got %+v", logs)
+	}
+	for _, name := range tokenAttributes {
+		if v, ok := logs[0].Attributes[name]; ok {
+			t.Errorf("Expected no %s on a synthetic reply, got %v", name, v)
+		}
+	}
+}
+
 func TestWhoSentEachUserLine(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
@@ -187,7 +212,12 @@ func TestWhoSentEachUserLine(t *testing.T) {
 		`{"type":"attachment","uuid":"q1","timestamp":"2026-10-02T11:00:02.4Z","attachment":{"type":"queued_command","prompt":"Also check the footer","source_uuid":"c1","commandMode":"prompt","origin":{"kind":"human"}}}`,
 		`{"type":"attachment","uuid":"q2","timestamp":"2026-10-02T11:00:02.5Z","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>b3</task-id>\n</task-notification>","source_uuid":"c2","commandMode":"task-notification","origin":{"kind":"task-notification","producer":"session-task"}}}`,
 		`{"type":"attachment","uuid":"q3","timestamp":"2026-10-02T11:00:02.6Z","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>b4</task-id>\n</task-notification>","source_uuid":"c3","commandMode":"task-notification"}}`,
+		// A queued notice that only its commandMode marks.
+		`{"type":"attachment","uuid":"q5","timestamp":"2026-10-02T11:00:02.65Z","attachment":{"type":"queued_command","prompt":"Background task b5 is done","source_uuid":"c5","commandMode":"task-notification"}}`,
 		`{"type":"attachment","uuid":"q4","timestamp":"2026-10-02T11:00:02.7Z","attachment":{"type":"queued_command","prompt":"<agent-message from=\"a0\">The report</agent-message>","source_uuid":"c4","commandMode":"prompt","isMeta":true,"origin":{"kind":"peer","from":"a0"}}}`,
+		// A sidechain line, as a subagent's prompt, in a file that is not
+		// under subagents/.
+		`{"type":"user","uuid":"u7","isSidechain":true,"timestamp":"2026-10-02T11:00:02.8Z","message":{"role":"user","content":"Find the cart code"}}`,
 	}
 	subagent := []string{
 		`{"type":"user","uuid":"s1","isSidechain":true,"timestamp":"2026-10-02T11:00:03Z","message":{"role":"user","content":"Find the cart code"}}`,
@@ -198,7 +228,8 @@ func TestWhoSentEachUserLine(t *testing.T) {
 
 	logs := sessionLogs(t, env, o.project, laptopSession)
 	want := []string{"person", "person", "not from a person", "person", "not from a person", "not from a person",
-		"person", "not from a person", "not from a person", "not from a person", "not from a person", "tool"}
+		"person", "not from a person", "not from a person", "not from a person", "not from a person", "not from a person",
+		"not from a person", "tool"}
 	if len(logs) != len(want) {
 		t.Fatalf("Expected %d Logs, got %+v", len(want), logs)
 	}
