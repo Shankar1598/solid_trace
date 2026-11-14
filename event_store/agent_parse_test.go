@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -8,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -274,4 +277,76 @@ func TestALineOfAnEarlierDayHasItsLogOnTheDayOfItsRawRow(t *testing.T) {
 		t.Fatalf("Enforcing the disk limit failed: %v", err)
 	}
 	expectKept([]string{"2026-10-21"}, []string{"October 21"}, "after the disk limit")
+}
+
+// A Match monitor on the Agent Project reads each Log that the parse makes
+// exactly once, also when Log batches of the same Project, such as run
+// events, are stored before the parse has caught up.
+func TestAMatchMonitorOnTheAgentProjectReadsEachParsedLogOnce(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	project := uint32(o.project)
+
+	run := func(cursor string) ingestedPage {
+		t.Helper()
+		answer := answerOf(t, env, fmt.Sprintf("/api/%d/logs/query", o.project), map[string]any{"query": "", "after_batch": cursor}, 200)
+		var page ingestedPage
+		if err := json.Unmarshal(mustMarshal(t, answer), &page); err != nil {
+			t.Fatal(err)
+		}
+		return page
+	}
+	runEvent := func(message string) {
+		t.Helper()
+		storeRunEvent(t, env, project, message)
+		env.ProcessLogs(t)
+	}
+	cursor := run("").IngestCursor
+	got := map[string]int{}
+	read := func() {
+		t.Helper()
+		page := run(cursor)
+		for _, m := range messages(page.Logs) {
+			got[m]++
+		}
+		cursor = page.IngestCursor
+	}
+
+	// A unit is stored, and a run event comes after it before the parse.
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: lines("line 1")}), 200)
+	if err := env.AgentFileProcessor.ProcessUntilCaughtUp(); err != nil {
+		t.Fatal(err)
+	}
+	runEvent("event 1")
+	read()
+	if err := env.AgentParser.ProcessUntilCaughtUp(); err != nil {
+		t.Fatal(err)
+	}
+	read()
+	// A run event waits for Log processing while the parse goes on.
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(lines("line 1")), body: lines("line 2")}), 200)
+	storeRunEvent(t, env, project, "event 2")
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(lines("line 1", "line 2")), body: lines("line 3")}), 200)
+	env.ProcessAgentFiles(t)
+	read()
+	env.ProcessLogs(t)
+	read()
+	read()
+
+	want := map[string]int{"line 1": 1, "event 1": 1, "line 2": 1, "event 2": 1, "line 3": 1}
+	if !maps.Equal(got, want) {
+		t.Errorf("Expected the Monitor to read each Log once, %v, got %v", want, got)
+	}
+}
+
+// storeRunEvent stores a Log batch of one Log in a Project, as Log ingest
+// does, for Log processing.
+func storeRunEvent(t *testing.T, env *TestEnv, projectID uint32, message string) {
+	t.Helper()
+	log := models.Log{ID: uuid.Must(uuid.NewV7()), Time: env.Clock.Now(), Message: message}
+	if err := env.PebbleWriter.WriteLogBatch(projectID, []models.Log{log}, env.Clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	env.LogProcessor.Notify(projectID)
 }

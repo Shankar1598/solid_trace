@@ -128,10 +128,11 @@ func (s *ClickHouseLogs) Ping() error {
 	return s.conn.Ping(ctx)
 }
 
-// LogProcessingCursor returns the id of the last Log batch whose Logs Log
-// processing has stored for a Project, or uuid.Nil if it has stored none.
-func (s *ClickHouseLogs) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {
-	return s.pebble.LogProcessingCursor(projectID)
+// LogIngestCursor returns a Project's ingest cursor, which covers both
+// Log processing and the parse (PebbleWriter.LogIngestCursor), or uuid.Nil
+// if neither has stored Logs for it.
+func (s *ClickHouseLogs) LogIngestCursor(projectID uint32) (uuid.UUID, error) {
+	return s.pebble.LogIngestCursor(projectID)
 }
 
 // LogInsert is one insert of a Project's Log batches: those after the
