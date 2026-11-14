@@ -372,31 +372,36 @@ type IngestedLogs struct {
 	Logs []models.Log
 	// Total counts every Log the scan found, past Limit too.
 	Total int
-	// Cursor is the Project's Log processing cursor when the scan began:
-	// the scan read the batches after After up to it, and the next scan
-	// starts after it. It is the nil UUID while Log processing has stored
-	// nothing for the Project.
+	// Cursor is the Project's ingest cursor when the scan began
+	// (PebbleWriter.LogIngestCursor): the scan read the batches after After
+	// up to it, and the next scan starts after it. It is the nil UUID while
+	// neither Log processing nor the parse has stored Logs for the Project.
 	Cursor uuid.UUID
 }
 
-// ScanLogsIngestedAfter returns the Logs of a Project's Log batches after
-// scan.After, up to its Log processing cursor, that meet the condition,
-// whatever their time. The batch index skips the parts and granules of Logs
-// ingested before After.
+// ScanLogsIngestedAfter returns the Logs of a Project's Log batches and
+// Agent file batches after scan.After, up to its ingest cursor, that meet
+// the condition, whatever their time. The batch index skips the parts and
+// granules of Logs ingested before After.
 //
-// Within a Project, Log processing inserts batches in id order, and moves its
-// cursor only once their insert has returned, so a scan that reads the
-// cursor first, and then the batches up to it, reads each Log exactly once,
-// even one Log processing stored after a Log with a later id. A batch past
+// No Log of a batch up to the ingest cursor comes after the cursor is read,
+// so a scan that reads the cursor first, and then the batches up to it,
+// reads each Log exactly once, even one stored after a Log with a later id. A batch past
 // the cursor, stored while the scan runs, waits for the next scan. Cancelling
 // ctx stops it.
 func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan IngestedLogScan) (IngestedLogs, error) {
-	cursor, err := s.pebble.LogProcessingCursor(scan.ProjectID)
+	cursor, err := s.pebble.LogIngestCursor(scan.ProjectID)
 	if err != nil {
 		return IngestedLogs{}, err
 	}
 	found := IngestedLogs{Logs: []models.Log{}, Cursor: cursor}
+	// The ingest cursor can be lower than After, a cursor that an earlier
+	// read gave: when one worker goes past a batch of the other that waits,
+	// the cursor can fall back to the lower worker's cursor. After stays a
+	// valid cursor, so the scan gives it again and the next scan does not
+	// read the batches up to After a second time.
 	if bytes.Compare(scan.After[:], cursor[:]) >= 0 {
+		found.Cursor = scan.After
 		return found, nil
 	}
 	conditions := []string{

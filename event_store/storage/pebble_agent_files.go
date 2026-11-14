@@ -141,7 +141,11 @@ type AgentUpload struct {
 //   - "agentfile/" + Project + session id + path: an AgentFileState;
 //   - "agentsession/" + Project + session id: an AgentSession;
 //   - "agentcursor/" and "agentinsert/" + Project: Agent file
-//     processing's cursor and recorded range.
+//     processing's cursor and recorded range;
+//   - "agentparsecursor/" and "agentparseinsert/" + Project: the parse's
+//     cursor and recorded range. The parse reads only the batches that
+//     Agent file processing has stored, so its cursor is never past that
+//     cursor, and it deletes the batches it has parsed.
 var (
 	agentFileBatchKeyspace    = append(eventKeyPrefix(0), "agentunits/"...)
 	agentFileBatchKeyspaceEnd = append(eventKeyPrefix(0), "agentunits0"...)
@@ -178,6 +182,38 @@ func agentFileCursorKey(projectID uint32) []byte {
 
 func agentFileInsertKey(projectID uint32) []byte {
 	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentinsert/"...), projectID)
+}
+
+func agentParseCursorKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentparsecursor/"...), projectID)
+}
+
+func agentParseInsertKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentparseinsert/"...), projectID)
+}
+
+// AgentParseCursor returns the id of the last Agent file batch whose lines
+// the parse has made into Logs for a Project, or uuid.Nil.
+func (w *PebbleWriter) AgentParseCursor(projectID uint32) (uuid.UUID, error) {
+	return w.logBatchID(agentParseCursorKey(projectID))
+}
+
+// SetAgentParseCursor moves a Project's parse cursor once the Logs of its
+// range are inserted. NoSync, as SetLogProcessingCursor.
+func (w *PebbleWriter) SetAgentParseCursor(projectID uint32, cursor uuid.UUID) error {
+	return w.db.Set(agentParseCursorKey(projectID), cursor[:], pebble.NoSync)
+}
+
+// RecordAgentParseInsert records, synced, the last batch of the range that
+// the parse is about to insert, as RecordLogInsert.
+func (w *PebbleWriter) RecordAgentParseInsert(projectID uint32, upTo uuid.UUID) error {
+	return w.db.Set(agentParseInsertKey(projectID), upTo[:], pebble.Sync)
+}
+
+// RecordedAgentParseInsert returns the last batch of the range that the
+// parse last recorded for a Project, or uuid.Nil.
+func (w *PebbleWriter) RecordedAgentParseInsert(projectID uint32) (uuid.UUID, error) {
+	return w.logBatchID(agentParseInsertKey(projectID))
 }
 
 // agentFileBatchFormat is the first byte of every Agent file batch value.
@@ -486,4 +522,68 @@ func (w *PebbleWriter) RecordAgentFileInsert(projectID uint32, upTo uuid.UUID) e
 // processing last recorded for a Project, or uuid.Nil.
 func (w *PebbleWriter) RecordedAgentFileInsert(projectID uint32) (uuid.UUID, error) {
 	return w.logBatchID(agentFileInsertKey(projectID))
+}
+
+// LogIngestCursor returns a Project's ingest cursor: the highest batch id
+// such that every Log of a batch up to it is in ClickHouse, and no Log of a
+// batch up to it comes later. The read of the Logs ingested after a batch
+// reads up to it. Two workers insert a Project's Logs: Log processing, from
+// Log batches, and the parse, from Agent file batches. Both take their ids
+// from one sequence, and each inserts in id order and moves its cursor after
+// the insert. So the ingest cursor is the higher of the two cursors that no
+// batch of the other worker, still waiting, comes before. A batch written
+// after this read has a higher id than every batch now in Pebble. It is
+// uuid.Nil while neither worker has inserted Logs for the Project. It can be
+// lower than a cursor it gave before, when the worker of that cursor has
+// gone past a batch of the other that waits; that cursor stays valid
+// (ClickHouseLogs.ScanLogsIngestedAfter).
+func (w *PebbleWriter) LogIngestCursor(projectID uint32) (uuid.UUID, error) {
+	logs, err := w.LogProcessingCursor(projectID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	firstLogBatch, logsWait, err := w.firstBatchAfter(logBatchPrefix(projectID), logBatchUpperBound(projectID), logs)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	parse, err := w.AgentParseCursor(projectID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	firstAgentBatch, parseWaits, err := w.firstBatchAfter(agentFileBatchPrefix(projectID), agentFileBatchUpperBound(projectID), parse)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	cursor := uuid.Nil
+	if !parseWaits || bytes.Compare(logs[:], firstAgentBatch[:]) < 0 {
+		cursor = logs
+	}
+	if (!logsWait || bytes.Compare(parse[:], firstLogBatch[:]) < 0) && bytes.Compare(parse[:], cursor[:]) > 0 {
+		cursor = parse
+	}
+	return cursor, nil
+}
+
+// firstBatchAfter returns the id of the first batch in [prefix, upper)
+// after the batch with id after, and whether there is one. Each key ends
+// with its batch id.
+func (w *PebbleWriter) firstBatchAfter(prefix, upper []byte, after uuid.UUID) (uuid.UUID, bool, error) {
+	lower := prefix
+	if after != uuid.Nil {
+		lower = append(append(bytes.Clone(prefix), after[:]...), 0)
+	}
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	defer iter.Close()
+	if !iter.First() {
+		return uuid.Nil, false, iter.Error()
+	}
+	key := iter.Key()
+	id, err := uuid.FromBytes(key[len(key)-16:])
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("batch key %x: %w", key, err)
+	}
+	return id, true, nil
 }
