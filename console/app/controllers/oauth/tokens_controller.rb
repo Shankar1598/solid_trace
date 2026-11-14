@@ -7,6 +7,14 @@ module Oauth
   # redirect_uri, the code's resource or none, and the code_verifier whose
   # S256 is the code's code_challenge; any difference is invalid_grant.
   class TokensController < ApiController
+    TOO_MANY = "Too many token requests. Try again in a minute."
+    # 60 a minute for each IP address and for each client_id.
+    rate_limit to: 60, within: 1.minute, only: :create, name: "ip",
+               with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
+    rate_limit to: 60, within: 1.minute, only: :create, name: "client",
+               by: -> { asking_client_id.then { |id| id ? "client:#{id}" : "ip:#{request.remote_ip}" } },
+               with: -> { oauth_error("invalid_request", TOO_MANY, status: :too_many_requests) }
+
     # A code_verifier: 43 to 128 unreserved characters (RFC 7636 §4.1).
     VERIFIER = /\A[A-Za-z0-9\-._~]{43,128}\z/
 
@@ -22,8 +30,8 @@ module Oauth
     private
 
     def exchange_code
-      client = Client.find_by(client_id: params[:client_id].to_s)
-      return oauth_error("invalid_client", "Send the client_id that the client registered with.", status: :unauthorized) unless client
+      client = authenticated_client
+      return unless client
 
       code = Code.find_by_secret(params[:code])
       return invalid_grant unless code && code.kind == "authorization" && code.oauth_client_id == client.id

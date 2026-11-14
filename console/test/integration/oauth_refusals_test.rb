@@ -26,7 +26,7 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
       authorize_params("nobody"),
       authorize_params(nil).except(:client_id),
       authorize_params(client_id, redirect_uri: "https://evil.example.com/callback"),
-      authorize_params(client_id).except(:redirect_uri),
+      authorize_params(client_id).except(:redirect_uri)
     ]
 
     [ false, true ].each do |signed_in|
@@ -384,7 +384,180 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
     assert_equal "unsupported_grant_type", response.parsed_body["error"]
   end
 
+  # Confidential clients
+
+  test "a confidential client gets its client_secret once, with client_secret_expires_at 0" do
+    %w[client_secret_basic client_secret_post].each do |method|
+      register(client_name: "Server app", redirect_uris: [ "https://app.example.com/callback" ], token_endpoint_auth_method: method)
+      assert_response :created, method
+      body = response.parsed_body
+      assert_equal method, body["token_endpoint_auth_method"]
+      assert_match(/\A[\w-]{43}\z/, body["client_secret"])
+      assert_equal 0, body["client_secret_expires_at"]
+    end
+
+    register(client_name: "CLI", redirect_uris: [ REDIRECT_URI ])
+    assert_not response.parsed_body.key?("client_secret")
+    assert_not response.parsed_body.key?("client_secret_expires_at")
+  end
+
+  test "a registration with another token_endpoint_auth_method, or that asks for the device grant, gets invalid_client_metadata" do
+    [ { token_endpoint_auth_method: "private_key_jwt" }, { token_endpoint_auth_method: "client_secret_jwt" },
+      { grant_types: [ "authorization_code", "urn:ietf:params:oauth:grant-type:device_code" ] },
+      { grant_types: [ "urn:ietf:params:oauth:grant-type:device_code" ] }, { grant_types: "authorization_code" } ].each do |metadata|
+      register(redirect_uris: [ REDIRECT_URI ], **metadata)
+      assert_response :bad_request, metadata.inspect
+      assert_equal "invalid_client_metadata", response.parsed_body["error"], metadata.inspect
+      assert response.parsed_body["error_description"].present?
+    end
+    assert_equal 0, Oauth::Client.count
+  end
+
+  test "a confidential client authenticates with client_secret_basic or client_secret_post" do
+    client_id, secret = confidential_client("client_secret_basic")
+    exchange(confidential_code(client_id), client_id: nil, headers: basic(client_id, secret))
+    assert_response :ok
+    assert response.parsed_body["access_token"].start_with?("sto_")
+
+    client_id, secret = confidential_client("client_secret_post")
+    post oauth_token_url, params: token_params(confidential_code(client_id), client_id).merge(client_secret: secret)
+    assert_response :ok
+    assert response.parsed_body["access_token"].start_with?("sto_")
+  end
+
+  test "a wrong or missing client secret answers invalid_client, and the code still works for the client" do
+    client_id, secret = confidential_client("client_secret_basic")
+    code = confidential_code(client_id)
+
+    [ basic(client_id, "#{secret}x"), basic(client_id, ""), basic("nobody", secret), {},
+      { "Authorization" => "Basic not-base64!" }, { "Authorization" => "Bearer #{secret}" } ].each do |headers|
+      exchange(code, client_id: (client_id unless headers.key?("Authorization")), headers: headers)
+      assert_response :unauthorized, headers.inspect
+      assert_equal "invalid_client", response.parsed_body["error"], headers.inspect
+      assert response.parsed_body["error_description"].present?
+    end
+
+    post oauth_token_url, params: token_params(code, client_id).merge(client_secret: "#{secret}x")
+    assert_response :unauthorized
+    assert_equal "invalid_client", response.parsed_body["error"]
+
+    # Basic for one client with the client_id of another.
+    exchange(code, client_id: registered_client, headers: basic(client_id, secret))
+    assert_response :unauthorized
+    assert_equal "invalid_client", response.parsed_body["error"]
+
+    exchange(code, client_id: nil, headers: basic(client_id, secret))
+    assert_response :ok
+  end
+
+  test "a client that sends its secret two ways answers invalid_request" do
+    client_id, secret = confidential_client("client_secret_basic")
+    post oauth_token_url, params: token_params(confidential_code(client_id), client_id).merge(client_secret: secret),
+                          headers: basic(client_id, secret)
+
+    assert_response :bad_request
+    assert_equal "invalid_request", response.parsed_body["error"]
+  end
+
+  test "a public client that sends a client secret answers invalid_client" do
+    code = approved_code
+    exchange(code, client_id: nil, headers: basic(@client_id, "secret"))
+    assert_response :unauthorized
+    assert_equal "invalid_client", response.parsed_body["error"]
+
+    post oauth_token_url, params: token_params(code, @client_id).merge(client_secret: "secret")
+    assert_response :unauthorized
+    assert_equal "invalid_client", response.parsed_body["error"]
+  end
+
+  # Limits and errors
+
+  test "/oauth/token is limited to 60 a minute for each IP address and for each client_id" do
+    store = ActiveSupport::Cache::MemoryStore.new
+    Oauth::TokensController.cache_store.stub(:increment, ->(*args, **options) { store.increment(*args, **options) }) do
+      60.times do
+        exchange("unknown", client_id: "client-a")
+        assert_response :unauthorized
+      end
+
+      exchange("unknown", client_id: "client-a")
+      assert_response :too_many_requests
+      assert_equal "invalid_request", response.parsed_body["error"]
+      assert response.parsed_body["error_description"].present?
+
+      # The same client_id from another address.
+      exchange("unknown", client_id: "client-a", headers: { "REMOTE_ADDR" => "198.51.100.92" })
+      assert_response :too_many_requests
+
+      # The client_id in Basic counts as the client_id.
+      exchange("unknown", client_id: nil, headers: basic("client-a", "x").merge("REMOTE_ADDR" => "198.51.100.92"))
+      assert_response :too_many_requests
+
+      # Another client_id from the same address.
+      exchange("unknown", client_id: "client-b")
+      assert_response :too_many_requests
+
+      # Another client_id from another address.
+      exchange("unknown", client_id: "client-b", headers: { "REMOTE_ADDR" => "10.100.0.3" })
+      assert_response :unauthorized
+    end
+  end
+
+  test "every OAuth JSON error has error and an error_description that says what to do" do
+    answers = []
+    record = -> { answers << [ request.path, response.status, response.parsed_body ] }
+
+    post oauth_token_url
+    record.call
+    post oauth_token_url, params: { grant_type: "authorization_code", client_id: "nobody", code: "x" }
+    record.call
+    post oauth_token_url, params: { grant_type: "authorization_code", client_id: registered_client, code: "x" }
+    record.call
+    post oauth_token_url, params: { grant_type: "refresh_token[]" }
+    record.call
+    post oauth_register_url, params: "{not json", headers: { "Content-Type" => "application/json" }
+    record.call
+    post oauth_register_url, params: "[]", headers: { "Content-Type" => "application/json" }
+    record.call
+    register(redirect_uris: "https://app.example.com/callback")
+    record.call
+    register(redirect_uris: [ REDIRECT_URI ], client_name: "n" * 101)
+    record.call
+    register(redirect_uris: [ REDIRECT_URI ], client_name: 7)
+    record.call
+
+    answers.each do |path, status, body|
+      assert_includes 400..401, status, [ path, body ].inspect
+      assert body["error"].present?, [ path, body ].inspect
+      assert body["error_description"].is_a?(String) && body["error_description"].length > 10, [ path, body ].inspect
+    end
+  end
+
   private
+
+  def confidential_client(method)
+    register(client_name: "Server app", redirect_uris: [ REDIRECT_URI ], token_endpoint_auth_method: method)
+    assert_response :created
+    response.parsed_body.values_at("client_id", "client_secret")
+  end
+
+  def confidential_code(client_id)
+    sign_in_as @user
+    approve(approval_page(client_id)["request"], @acme)
+    assert_response :conflict
+    redirect_query["code"]
+  end
+
+  def token_params(code, client_id)
+    { grant_type: "authorization_code", code: code, code_verifier: VERIFIER, client_id: client_id,
+      redirect_uri: REDIRECT_URI, resource: RESOURCE }
+  end
+
+  # client_secret_basic: the form-encoded client_id and secret (RFC 6749 §2.3.1).
+  def basic(client_id, secret)
+    pair = [ client_id, secret ].map { |value| URI.encode_www_form_component(value) }.join(":")
+    { "Authorization" => "Basic #{Base64.strict_encode64(pair)}" }
+  end
 
   # A code from a signed-in Approve with this PKCE challenge.
   def approved_code(organization: @acme, challenge: CHALLENGE)
