@@ -26,9 +26,10 @@ type price struct {
 var prices = map[string]price{
 	"claude-fable-5-2":  {input: 8, output: 40, cacheRead: 0.20, fast: true},
 	"claude-mythos-5-2": {input: 8, output: 40, cacheRead: 0.20, fast: true},
-	"claude-fable-5-1":  {input: 10, output: 50, cacheRead: 1},
-	"claude-mythos-5-1": {input: 10, output: 50, cacheRead: 1},
+	"claude-fable-5-1":  {input: 10, output: 50, cacheRead: 0.25},
+	"claude-mythos-5-1": {input: 10, output: 50, cacheRead: 0.25},
 	"claude-fable-5":    {input: 10, output: 50, cacheRead: 1},
+	"claude-mythos-5":   {input: 10, output: 50, cacheRead: 1},
 	"claude-opus-5-5":   {input: 4, output: 20, cacheRead: 0.20, fast: true},
 	"claude-opus-5":     {input: 5, output: 25, cacheRead: 0.50, fast: true},
 	"claude-opus-4-8":   {input: 5, output: 25, cacheRead: 0.50, fast: true},
