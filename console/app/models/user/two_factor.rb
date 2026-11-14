@@ -140,8 +140,8 @@ module User::TwoFactor
 
   # The operator's reset (users:reset_two_factor), for a user who has lost
   # every factor and every Recovery code: removes them all (the Authenticator
-  # app, every Passkey, the Recovery codes) and ends the user's Sessions, so
-  # they next sign in with their password alone. Require two-factor doesn't
+  # app, every Passkey, the Recovery codes), ends the user's Sessions and
+  # revokes their Grants, so they next sign in with their password alone. Require two-factor doesn't
   # stop it; the user is asked to set it up again.
   def reset_two_factor
     transaction do
@@ -149,6 +149,7 @@ module User::TwoFactor
       passkeys.delete_all
       recovery_codes.delete_all
       sessions.destroy_all
+      oauth_grants.revoke_all!
     end
   end
 

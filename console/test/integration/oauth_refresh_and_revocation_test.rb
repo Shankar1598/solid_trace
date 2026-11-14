@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "rake"
 
 # A client keeps its sign-in with refresh tokens that work once, and a
 # Grant stops when a refresh token comes back late, when the client signs
@@ -394,11 +395,175 @@ class OauthRefreshAndRevocationTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # When the user, the member or the Console URL changes
+
+  test "a password reset revokes every Grant of the user, and another user's Grant goes on" do
+    first = signed_in_tokens
+    first_client = @client_id
+    second = signed_in_tokens
+    grace_tokens = grace_signed_in_tokens
+
+    put password_url(@user.reload.password_reset_token), params: { password: "new-password", password_confirmation: "new-password" }
+    assert_redirected_to login_url
+
+    [ first, second ].each { |tokens| assert_mcp_refused tokens["access_token"] }
+    refresh(first["refresh_token"], client_id: first_client)
+    assert_invalid_grant
+    refresh(second["refresh_token"])
+    assert_invalid_grant
+    assert_mcp_works grace_tokens["access_token"]
+  end
+
+  test "the operator's users:reset_two_factor revokes every Grant of the user, and another user's Grant goes on" do
+    tokens = signed_in_tokens
+    grace_tokens = grace_signed_in_tokens
+
+    reset_two_factor_of(@user)
+
+    assert_mcp_refused tokens["access_token"]
+    refresh(tokens["refresh_token"])
+    assert_invalid_grant
+    assert_mcp_works grace_tokens["access_token"]
+  end
+
+  test "getting Two-factor does not revoke Grants" do
+    freeze_time
+    tokens = signed_in_tokens
+
+    with_authenticator_app
+
+    assert @user.reload.two_factor?
+    assert_mcp_works tokens["access_token"]
+    refresh(tokens["refresh_token"])
+    assert_response :ok
+  end
+
+  test "removing a member revokes their Grants for that Organization, and adding the member again does not bring them back" do
+    beta = create(:organization, name: "Beta", slug: "beta")
+    create(:organization_user, organization: beta, user: @user, role: :admin)
+    create(:dashboard, organization: beta, name: "Shop errors")
+    beta_tokens = signed_in_tokens(organization: beta)
+    beta_client = @client_id
+    tokens = signed_in_tokens
+    admin = create(:user, name: "Grace", email: "grace@example.com")
+    create(:organization_user, organization: @acme, user: admin, role: :admin)
+    membership = @acme.organization_users.find_by!(user: @user)
+
+    sign_in_as admin
+    delete organization_user_url(org_slug: @acme.slug, id: membership.id)
+    assert membership.reload.discarded?
+    assert_mcp_refused tokens["access_token"]
+    refresh(tokens["refresh_token"])
+    assert_invalid_grant
+
+    post organization_users_url(org_slug: @acme.slug), params: { member: { email: @user.email } }
+    assert_equal "Ada reactivated", flash[:notice]
+    assert membership.reload.kept?
+    assert_mcp_refused tokens["access_token"]
+    refresh(tokens["refresh_token"])
+    assert_invalid_grant
+
+    # The Grant for the other Organization goes on.
+    assert_mcp_works beta_tokens["access_token"]
+    refresh(beta_tokens["refresh_token"], client_id: beta_client)
+    assert_response :ok
+  end
+
+  test "a deleted user's Grants stop" do
+    tokens = signed_in_tokens
+    OrganizationUser.where(user: @user).delete_all
+
+    @user.destroy!
+
+    assert_equal 0, Oauth::Grant.count
+    assert_equal 0, Oauth::Token.count
+    mcp("tools/list", token: tokens["access_token"])
+    assert_response :unauthorized
+    assert_includes response.headers["WWW-Authenticate"], 'error="invalid_token"'
+    refresh(tokens["refresh_token"])
+    assert_invalid_grant
+  end
+
+  test "a change of the Console URL on Settings → Instance stops every old access token and refresh token" do
+    tokens = signed_in_tokens
+    admin = create(:user, instance_admin: true)
+    create(:organization_user, organization: @acme, user: admin, role: :admin)
+    sign_in_as admin
+
+    # Console runs with HTTPS, so the setting must start with https://.
+    PublicUrls.stub(:https?, true) do
+      patch instance_settings_url(org_slug: @acme.slug), params: { instance_settings: { console_url: "https://observe.example.com" } }
+    end
+    assert_equal "Instance settings saved", flash[:notice]
+
+    assert_mcp_refused tokens["access_token"]
+    assert_includes response.headers["WWW-Authenticate"], "https://observe.example.com/.well-known/oauth-protected-resource/mcp"
+    refresh(tokens["refresh_token"])
+    assert_invalid_grant
+  end
+
+  test "a Console URL that differs only in the host's case or a trailing slash keeps the tokens working" do
+    tokens = signed_in_tokens
+
+    InstanceSetting.current.update!(console_url: "https://Console.Example.com/")
+
+    assert_mcp_works tokens["access_token"]
+    refresh(tokens["refresh_token"])
+    assert_response :ok
+  end
+
+  test "CONSOLE_URL with no setting is the issuer too: a change of it stops the old tokens" do
+    tokens = signed_in_tokens
+    InstanceSetting.current.update!(console_url: nil)
+
+    with_console_url_env(ISSUER) do
+      assert_mcp_works tokens["access_token"]
+    end
+    with_console_url_env("https://observe.example.com") do
+      assert_mcp_refused tokens["access_token"]
+      refresh(tokens["refresh_token"])
+      assert_invalid_grant
+    end
+  end
+
   private
 
-  # The token answer of a sign-in for @acme, with @client_id its client.
-  def signed_in_tokens
-    exchange(approved_code)
+  # The token answer of a sign-in for another user, Grace, in @acme. Leaves
+  # @client_id as it was.
+  def grace_signed_in_tokens
+    ada = @user
+    client_id = @client_id
+    @user = create(:user, name: "Grace", email: "grace@example.com")
+    create(:organization_user, organization: @acme, user: @user)
+    signed_in_tokens
+  ensure
+    @user = ada
+    @client_id = client_id
+  end
+
+  def reset_two_factor_of(user)
+    Rails.application.load_tasks unless Rake::Task.task_defined?("users:reset_two_factor")
+    task = Rake::Task["users:reset_two_factor"]
+    task.reenable
+    previous = ENV["EMAIL"]
+    ENV["EMAIL"] = user.email
+    capture_io { task.invoke }
+  ensure
+    ENV["EMAIL"] = previous
+  end
+
+  def with_console_url_env(url)
+    previous = ENV["CONSOLE_URL"]
+    ENV["CONSOLE_URL"] = url
+    yield
+  ensure
+    ENV["CONSOLE_URL"] = previous
+  end
+
+  # The token answer of a sign-in for organization, with @client_id its
+  # client.
+  def signed_in_tokens(organization: @acme)
+    exchange(approved_code(organization: organization))
     assert_response :ok
     response.parsed_body
   end

@@ -27,6 +27,12 @@ module Oauth
       user.organization_users.find_by(organization_id: organization_id)
     end
 
+    # Revokes every Grant in the relation that is not revoked yet, as
+    # user.oauth_grants.revoke_all!.
+    def self.revoke_all!
+      where(revoked_at: nil).update_all(revoked_at: Time.current)
+    end
+
     def revoke!
       update_column(:revoked_at, Time.current) if revoked_at.nil?
     end
