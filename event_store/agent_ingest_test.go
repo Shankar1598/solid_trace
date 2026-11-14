@@ -308,6 +308,20 @@ func TestAgentIngestCapturedRepositories(t *testing.T) {
 		expectStatus(t, capturedRepositories(t, env, oauth), 401)
 	})
 
+	t.Run("a token with no Organization reaches no Organization's list", func(t *testing.T) {
+		// Console gives each token with Scopes one Organization; a row
+		// without one is refused, not read as every Organization.
+		secret, _ := rows.apiToken(apiTokenRow{user: engineer, scopes: []string{"sessions:write"}})
+		expectStatus(t, capturedRepositories(t, env, secret), 401)
+	})
+
+	t.Run("an access token with no resource gets 401", func(t *testing.T) {
+		secret, id, _ := rows.accessToken(accessTokenRow{user: engineer, organization: acme,
+			scopes: []string{"sessions:write"}, resource: factoryResource, expiresAt: now.Add(time.Hour)})
+		rows.exec("UPDATE oauth_tokens SET resource = NULL WHERE id = ?", id)
+		expectStatus(t, capturedRepositories(t, env, secret), 401)
+	})
+
 	t.Run("no token gets 401", func(t *testing.T) {
 		answer := capturedRepositories(t, env, "")
 		expectStatus(t, answer, 401)
