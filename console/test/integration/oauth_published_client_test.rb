@@ -37,6 +37,7 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
   teardown do
     Oauth::PublishedDescription.resolver = @resolver
     Oauth::PublishedDescription.limit_store = nil
+    Oauth::PublishedDescription.time_limit = Oauth::PublishedDescription::TIMEOUT
   end
 
   # Before sign-in: the form check only
@@ -169,6 +170,24 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
 
     stub_request(:get, CLIENT_ID).to_raise(Errno::ECONNREFUSED)
     assert_match(/could not fetch/, error_page)
+  end
+
+  test "the time limit covers the full reply: a host that sends header lines slowly is refused at the limit" do
+    sign_in_as @user
+    Oauth::PublishedDescription.time_limit = 0.5
+    drip = lambda do |socket|
+      socket.write("HTTP/1.1 200 OK\r\n")
+      20.times do
+        socket.write("X-Drip: 1\r\n")
+        sleep 0.1
+      end
+    end
+
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    message = serve_locally(drip) { error_page }
+
+    assert_match(/within 0.5 seconds/, message)
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 1.5
   end
 
   test "a document of exactly 64 KB is read" do
@@ -420,6 +439,34 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     headers = { "Accept" => "application/json, text/event-stream", "Content-Type" => "application/json",
                 "Authorization" => "Bearer #{token}" }
     post mcp_url, params: { jsonrpc: "2.0", id: 1, method: method, params: params }.to_json, headers: headers
+  end
+
+  # Runs the block with a plain-HTTP host on this computer in place of the
+  # client's HTTPS host. The host reads the request, then reply writes the
+  # answer to the socket. The block's value is returned.
+  def serve_locally(reply)
+    server = TCPServer.new("127.0.0.1", 0)
+    host = Thread.new do
+      socket = server.accept
+      socket.gets("\r\n\r\n")
+      reply.call(socket)
+    rescue IOError, SystemCallError
+      nil
+    ensure
+      socket&.close
+    end
+    connection = lambda do |_uri, _address|
+      Net::HTTP.new("127.0.0.1", server.addr[1], nil).tap do |http|
+        http.open_timeout = http.read_timeout = Oauth::PublishedDescription::TIMEOUT
+        http.max_retries = 0
+      end
+    end
+    WebMock.disable_net_connect!(allow_localhost: true)
+    Oauth::PublishedDescription.stub(:connection, connection) { yield }
+  ensure
+    WebMock.disable_net_connect!
+    host&.kill
+    server&.close
   end
 
   # The error page's message, for a signed-in user; it never redirects.

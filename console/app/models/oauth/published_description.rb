@@ -48,6 +48,9 @@ module Oauth
     }
     # The store that counts each user's fetches; nil is Rails.cache.
     mattr_accessor :limit_store
+    # The seconds that one fetch may take, from the connection to the last
+    # byte. Tests make it shorter.
+    mattr_accessor :time_limit, default: TIMEOUT
 
     module_function
 
@@ -155,22 +158,26 @@ module Oauth
       raise Problem, "Console could not find the address of #{host}, which publishes the client's description."
     end
 
+    # One time limit covers the full fetch: read_timeout starts again on
+    # each read, and Net::HTTP reads the status line and the headers with no
+    # limit on their size, so a host that sends them slowly could hold a
+    # Puma thread or fill memory.
     def get(uri, address)
       http = connection(uri, address)
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + TIMEOUT
       body = +""
       response = nil
-      http.start do
-        request = Net::HTTP::Get.new(uri, "Accept" => "application/json", "User-Agent" => "SolidTrace")
-        http.request(request) do |answer|
-          response = answer
-          check_status(answer, uri)
-          raise Problem, too_large(uri) if answer.content_length.to_i > MAX_BYTES
+      Timeout.timeout(time_limit) do
+        http.start do
+          request = Net::HTTP::Get.new(uri, "Accept" => "application/json", "User-Agent" => "SolidTrace")
+          http.request(request) do |answer|
+            response = answer
+            check_status(answer, uri)
+            raise Problem, too_large(uri) if answer.content_length.to_i > MAX_BYTES
 
-          answer.read_body do |chunk|
-            body << chunk
-            raise Problem, too_large(uri) if body.bytesize > MAX_BYTES
-            raise Problem, too_slow(uri) if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+            answer.read_body do |chunk|
+              body << chunk
+              raise Problem, too_large(uri) if body.bytesize > MAX_BYTES
+            end
           end
         end
       end
@@ -237,7 +244,7 @@ module Oauth
     end
 
     def too_slow(uri)
-      "#{uri.host} did not send the client's description within #{TIMEOUT} seconds. Try again later."
+      "#{uri.host} did not send the client's description within #{time_limit} seconds. Try again later."
     end
 
     def not_json(uri)
