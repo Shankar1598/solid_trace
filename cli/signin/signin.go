@@ -102,13 +102,24 @@ func CleanURL(raw string) (string, error) {
 	switch strings.ToLower(u.Scheme) {
 	case "https":
 	case "http":
-		if !loopback(u.Hostname()) {
+		if !loopback(strings.ToLower(u.Hostname())) {
 			return "", fmt.Errorf("%s is not https://: the CLI sends tokens only over HTTPS, or to a loopback address", raw)
 		}
 	default:
 		return "", fmt.Errorf("%q is not a Console URL: it must start with https://", raw)
 	}
 	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
+}
+
+// canonical is raw with its scheme and host in lowercase, or "" when raw is
+// not an absolute URL.
+func canonical(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	u.Scheme, u.Host = strings.ToLower(u.Scheme), strings.ToLower(u.Host)
+	return u.String()
 }
 
 func loopback(host string) bool {
@@ -121,7 +132,10 @@ func loopback(host string) bool {
 
 // Discover reads the authorization server metadata of the Console at
 // instanceURL (from CleanURL). The metadata's issuer must be that URL
-// (RFC 8414 §3.3).
+// (RFC 8414 §3.3), with the letter case of the scheme and the host
+// ignored, as Console's Oauth::Issuer.same_resource? compares. Console
+// keeps the case of its Console URL setting, so Server.Issuer is the
+// metadata's issuer, as Console writes it in iss and reads the resource.
 func (c *Client) Discover(ctx context.Context, instanceURL string) (Server, error) {
 	var meta struct {
 		Issuer                      string   `json:"issuer"`
@@ -149,7 +163,8 @@ func (c *Client) Discover(ctx context.Context, instanceURL string) (Server, erro
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&meta); err != nil {
 		return Server{}, fmt.Errorf("read the OAuth metadata of %s: %w", instanceURL, err)
 	}
-	if strings.TrimRight(meta.Issuer, "/") != instanceURL {
+	issuer := strings.TrimRight(meta.Issuer, "/")
+	if canonical(issuer) != canonical(instanceURL) {
 		return Server{}, fmt.Errorf("%s names another issuer (%q): use the Console URL that Console's Settings → Instance shows",
 			instanceURL, meta.Issuer)
 	}
@@ -158,12 +173,12 @@ func (c *Client) Discover(ctx context.Context, instanceURL string) (Server, erro
 	}
 	// The codes and tokens go only to the issuer that the person named.
 	for _, endpoint := range []string{meta.AuthorizationEndpoint, meta.TokenEndpoint, meta.DeviceAuthorizationEndpoint} {
-		if endpoint != "" && !strings.HasPrefix(endpoint, instanceURL+"/") {
+		if endpoint != "" && !strings.HasPrefix(canonical(endpoint), canonical(issuer)+"/") {
 			return Server{}, fmt.Errorf("%s names an OAuth endpoint at another address (%q): the sign-in stopped", instanceURL, endpoint)
 		}
 	}
 	return Server{
-		Issuer:                      instanceURL,
+		Issuer:                      issuer,
 		AuthorizationEndpoint:       meta.AuthorizationEndpoint,
 		TokenEndpoint:               meta.TokenEndpoint,
 		DeviceAuthorizationEndpoint: meta.DeviceAuthorizationEndpoint,

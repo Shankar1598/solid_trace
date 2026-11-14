@@ -123,3 +123,21 @@ func TestLoginRefusesMetadataThatNamesAnotherIssuer(t *testing.T) {
 	}
 	w.assertNotSignedIn()
 }
+
+func TestLoginWorksWhenTheConsoleURLHasCapitalLetters(t *testing.T) {
+	w := newWorld(t, acme)
+	// Console keeps the Console URL setting as the operator typed it, and
+	// names it so as the issuer.
+	issuer := strings.Replace(w.oauth.URL(), "127.0.0.1", "LocalHost", 1)
+	w.oauth.Issuer = issuer
+
+	if code := w.run("login", "--ingest-url", w.agent.URL(), issuer); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+	if got := w.oauth.Authorizations[0].Query.Get("resource"); got != issuer+"/factory" {
+		t.Errorf("resource = %q, want the issuer's %q", got, issuer+"/factory")
+	}
+	if _, err := w.signedInToken(); err != nil {
+		t.Errorf("no sign-in: %v", err)
+	}
+}

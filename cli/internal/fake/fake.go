@@ -115,6 +115,10 @@ type OAuth struct {
 	DropRefreshAnswers int
 	// TokenEndpoint is the metadata's token endpoint; "" names the fake's.
 	TokenEndpoint string
+	// Issuer is the issuer that the metadata names, and the base of its
+	// endpoints; "" is the fake's URL. Console does not change the letter
+	// case of its Console URL setting.
+	Issuer string
 
 	Authorizations   []AuthorizeRequest
 	DeviceRequests   []url.Values
@@ -223,10 +227,17 @@ func (f *OAuth) DeviceCodes() []string {
 	return codes
 }
 
+// issuer is Issuer, else the fake's URL. Hold f.mu.
+func (f *OAuth) issuer() string {
+	if f.Issuer != "" {
+		return f.Issuer
+	}
+	return f.URL()
+}
+
 func (f *OAuth) metadata(w http.ResponseWriter, r *http.Request) {
-	issuer := f.URL()
 	f.mu.Lock()
-	tokenEndpoint := f.TokenEndpoint
+	issuer, tokenEndpoint := f.issuer(), f.TokenEndpoint
 	f.mu.Unlock()
 	if tokenEndpoint == "" {
 		tokenEndpoint = issuer + "/oauth/token"
@@ -260,7 +271,7 @@ func (f *OAuth) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	iss := f.Iss
 	if iss == "" {
-		iss = f.URL()
+		iss = f.issuer()
 	}
 	answer.Set("iss", iss)
 	if q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("response_type") != "code" {
@@ -295,7 +306,7 @@ func (f *OAuth) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"device_code":      code,
 		"user_code":        userCode,
-		"verification_uri": f.URL() + "/device",
+		"verification_uri": f.issuer() + "/device",
 		"expires_in":       f.DeviceExpiresIn,
 		"interval":         5,
 	})
