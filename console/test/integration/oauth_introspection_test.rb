@@ -115,6 +115,21 @@ class OauthIntrospectionTest < ActionDispatch::IntegrationTest
     assert_inactive
   end
 
+  # Ticket 06 revokes one access token alone (refresh rotation, /oauth/revoke)
+  # and keeps its Grant live.
+  test "a revoked access token under a live Grant is not active, and the MCP server refuses it" do
+    secret = access_token(organization: @acme)
+    Oauth::Token.access.sole.update_column(:revoked_at, Time.current)
+    assert Oauth::Grant.sole.live?(issuer: Oauth::Issuer.current)
+
+    introspect(secret)
+    assert_inactive
+
+    mcp "tools/call", token: secret, name: "whoami", arguments: {}
+    assert_response :unauthorized
+    assert_includes response.headers["WWW-Authenticate"], 'error="invalid_token"'
+  end
+
   test "a refresh token is not active" do
     exchange(approved_code(organization: @acme))
     refresh = response.parsed_body["refresh_token"]
