@@ -95,6 +95,19 @@ func TestTheConsoleLinkFollowsTheOrganizationsCurrentSlug(t *testing.T) {
 	}
 }
 
+func TestStartTakesEachWordAfterDoubleDashAsThePrompt(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+
+	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "--", "Fix", "the", "-race", "failure", "--project")
+
+	var run dispatcherapi.Run
+	ana.API("GET", "/api/v1/runs/"+id, nil).JSON(t, &run)
+	if run.Prompt != "Fix the -race failure --project" || run.Project != "checkout" {
+		t.Errorf("Run has project %q and prompt %q, want checkout and %q", run.Project, run.Prompt, "Fix the -race failure --project")
+	}
+}
+
 func TestTheDispatcherKeepsItsRunsAfterARestart(t *testing.T) {
 	env := factorytest.New(t)
 	ana := env.Member("Ana")

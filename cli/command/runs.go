@@ -124,14 +124,19 @@ func firstLine(s string, n int) string {
 }
 
 // parseInterspersed parses flags that come before, between or after the
-// positional arguments.
+// positional arguments. After "--", each argument is positional, also one
+// that starts with "-".
 func parseInterspersed(flags *flag.FlagSet, args []string) ([]string, bool) {
 	var positional []string
 	for {
 		if err := flags.Parse(args); err != nil {
 			return nil, false
 		}
-		args = flags.Args()
+		rest := flags.Args()
+		if parsed := len(args) - len(rest); parsed > 0 && args[parsed-1] == "--" {
+			return append(positional, rest...), true
+		}
+		args = rest
 		if len(args) == 0 {
 			return positional, true
 		}
