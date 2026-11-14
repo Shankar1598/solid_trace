@@ -193,3 +193,28 @@ func TestTheRecorderKeepsEachTokenCheckThatTheDispatcherSends(t *testing.T) {
 		t.Errorf("the check is %+v, want the Dispatcher's token as caller and Ana's token as the checked token", calls[0])
 	}
 }
+
+func TestTheAPIRefusesATokenThatActsInNoOrganizationOrInMoreThanOne(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	orgs := map[string][]recorder.Organization{
+		"no Organization": nil,
+		"two Organizations": {factorytest.Organization,
+			{ID: 8, Slug: "other", Name: "Other", Role: "member"}},
+	}
+	for name, organizations := range orgs {
+		answer := ana.Answer
+		answer.Organizations = organizations
+		env.SolidTrace.Token(ana.Token, answer)
+		for _, method := range []string{"POST", "GET"} {
+			var body any
+			if method == "POST" {
+				body = dispatcherapi.StartRun{Project: "checkout", Prompt: "Fix it"}
+			}
+			a := ana.API(method, "/api/v1/runs", body)
+			if a.Status != http.StatusForbidden || !strings.Contains(string(a.Body), "exactly one Organization") {
+				t.Errorf("%s, %s: %d %s, want 403 that names exactly one Organization", name, method, a.Status, a.Body)
+			}
+		}
+	}
+}
