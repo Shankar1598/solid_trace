@@ -1,6 +1,7 @@
 package redaction_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -90,5 +91,23 @@ func TestEachDefaultPatternHasItsMinimumLength(t *testing.T) {
 				t.Errorf("%s with %d characters: expected %q, got %q", c.name, n, want, text)
 			}
 		}
+	}
+}
+
+// A match that starts inside a \uXXXX escape keeps the escape, so the line
+// still decodes to the same characters where nothing was matched.
+func TestMatchInsideAUnicodeEscapeKeepsTheEscape(t *testing.T) {
+	set, err := redaction.New([]string{`[a-z0-9]{6,}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := []byte(`{"k":"abcdef\u003eghijkl"}`)
+	set.Unit(line, true)
+	if want := `{"k":"******\u003e******"}`; string(line) != want {
+		t.Errorf("Expected %s, got %s", want, line)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(line, &decoded); err != nil || decoded["k"] != "******>******" {
+		t.Errorf("Expected valid JSON that keeps the '>', got %s (%v)", line, err)
 	}
 }
