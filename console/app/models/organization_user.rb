@@ -21,6 +21,10 @@ class OrganizationUser < ApplicationRecord
   # work again with it.
   after_discard :delete_api_tokens
 
+  # A removed member's Grants for the Organization stop now, and stay
+  # revoked if the member is added again (undiscard).
+  after_discard { Oauth::Grant.where(user_id: user_id, organization_id: organization_id).revoke_all! }
+
   def admin?
     role == "admin"
   end

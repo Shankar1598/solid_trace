@@ -168,6 +168,7 @@ test('an instance admin saves Console\'s and ingest\'s URLs, and the Project pag
   await expect(consoleUrl).toHaveValue('')
   await expect(ingestUrl).toHaveValue('')
   await expect(page.getByTestId('console-url-fallback')).toContainText(/^Blank uses (CONSOLE_URL|the address Console was reached at): http/)
+  await expect(page.getByTestId('console-url-signs-out-clients')).toContainText('signs out every Signed-in client')
   await expect(page.getByTestId('ingest-url-fallback')).toContainText(/^Blank uses (PUBLIC_INGEST_URL|Console's host at port 4000): http/)
 
   const consoleGroup = page.getByRole('region', { name: 'Console' })

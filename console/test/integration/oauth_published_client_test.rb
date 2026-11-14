@@ -330,6 +330,22 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     assert_not_requested :get, CLIENT_ID
   end
 
+  test "a refresh uses the kept copy: with the description's host down and the copy past its cache time it still works" do
+    publish
+    exchange(approved_code)
+    old = response.parsed_body["refresh_token"]
+    stub_request(:get, CLIENT_ID).to_raise(Errno::ECONNREFUSED)
+    WebMock.reset_executed_requests!
+    travel 2.hours # The copy was fresh for 1 hour.
+    assert_not Oauth::Client.find_by!(client_id: CLIENT_ID).fresh?
+
+    post oauth_token_url, params: { grant_type: "refresh_token", refresh_token: old, client_id: CLIENT_ID }
+
+    assert_response :ok
+    assert_match(/\Astr_/, response.parsed_body["refresh_token"])
+    assert_not_requested :get, CLIENT_ID
+  end
+
   test "the token endpoint does not know a published client_id that no signed-in user has fetched" do
     publish
 
@@ -480,6 +496,18 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
     assert props.dig("client", "name_checked")
     assert_equal "localhost", props.dig("client", "redirect_host")
     assert_requested :get, CLIENT_ID, times: 1
+  end
+
+  test "Settings → User lists a published client as checked, with the host that publishes it" do
+    publish
+    exchange(approved_code)
+    assert_response :ok
+
+    get user_settings_url, headers: inertia_headers
+
+    rows = response.parsed_body.dig("props", "signed_in_clients")
+    assert_equal [ { "name" => "Claude Code", "name_checked" => true, "host" => "client.example.com" } ],
+                 rows.map { |row| row["client"] }
   end
 
   private

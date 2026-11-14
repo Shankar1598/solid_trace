@@ -46,6 +46,12 @@ module Oauth
     # error page.
     class Problem < StandardError; end
 
+    # A Problem that passes: another fetch runs, the user fetched too much,
+    # or the host did not answer (a timeout, no connection, a TLS error, a
+    # failed address lookup or an HTTP 5xx). It says nothing bad about the
+    # description, so the device page does not deny the device code for it.
+    class TryAgain < Problem; end
+
     # Raised when a connection reads more than MAX_BYTES + HEADER_BYTES.
     class TooMuchRead < StandardError; end
 
@@ -123,11 +129,11 @@ module Oauth
       unless client.start_fetch!
         return client if client.fetched?
 
-        raise Problem, BUSY
+        raise TryAgain, BUSY
       end
 
       begin
-        raise Problem, TOO_MANY if over_limit?(user)
+        raise TryAgain, TOO_MANY if over_limit?(user)
 
         document, lasts = fetch(url)
         client.keep_description!(document, fresh_for: lasts)
@@ -135,6 +141,16 @@ module Oauth
         client.end_fetch!
       end
       client
+    end
+
+    # The client for url, as .client gives it, whose description lists the
+    # device grant: for the device page. Raises Problem when it does not.
+    def device_client(url, user:)
+      client = client(url, user: user)
+      return client if client.grant_types.include?(DeviceCode::GRANT_TYPE)
+
+      raise Problem, "The description at #{client.published_host} does not list the device grant " \
+                     "(#{DeviceCode::GRANT_TYPE}) in its grant_types, so the program cannot sign in with a code."
     end
 
     # The description at url, checked, and how long it stays fresh.
@@ -183,7 +199,10 @@ module Oauth
       end
 
       addresses.first
-    rescue SocketError, IPAddr::InvalidAddressError
+    rescue SocketError
+      raise TryAgain, "Console could not find the address of #{host}, which publishes the client's description. " \
+                      "Try again later."
+    rescue IPAddr::InvalidAddressError
       raise Problem, "Console could not find the address of #{host}, which publishes the client's description."
     end
 
@@ -215,10 +234,11 @@ module Oauth
     rescue TooMuchRead
       raise Problem, too_large(uri)
     rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout, Timeout::Error
-      raise Problem, too_slow(uri)
-    rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError, Net::HTTPBadResponse, Net::ProtocolError,
-           Net::HTTPHeaderSyntaxError, Zlib::Error
-      raise Problem, "Console could not fetch the client's description from #{uri.host}. Try again later."
+      raise TryAgain, too_slow(uri)
+    rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError
+      raise TryAgain, "Console could not fetch the client's description from #{uri.host}. Try again later."
+    rescue Net::HTTPBadResponse, Net::ProtocolError, Net::HTTPHeaderSyntaxError, Zlib::Error
+      raise Problem, "Console could not fetch the client's description from #{uri.host}: its answer is not valid HTTP."
     end
 
     def check_status(answer, uri)
@@ -226,6 +246,10 @@ module Oauth
 
       if answer.is_a?(Net::HTTPRedirection)
         raise Problem, "#{uri.host} answered the client's description with a redirect. Console follows no redirects."
+      end
+
+      if answer.is_a?(Net::HTTPServerError)
+        raise TryAgain, "#{uri.host} answered the client's description with HTTP #{answer.code}. Try again later."
       end
 
       raise Problem, "#{uri.host} answered the client's description with HTTP #{answer.code}."
@@ -246,7 +270,8 @@ module Oauth
       end
 
       redirect_uris = document["redirect_uris"]
-      unless redirect_uris.is_a?(Array) && redirect_uris.any? { |redirect| Client.allowed_redirect_uri?(redirect) }
+      unless device_only?(document) ||
+             (redirect_uris.is_a?(Array) && redirect_uris.any? { |redirect| Client.allowed_redirect_uri?(redirect) })
         raise Problem, "The description at #{uri.host} gives no https:// or loopback redirect_uris."
       end
 
@@ -254,6 +279,14 @@ module Oauth
         raise Problem, "The description at #{uri.host} is for a confidential client. Console accepts only " \
                        "token_endpoint_auth_method none, with PKCE."
       end
+    end
+
+    # Whether the description is for the device flow and not for the
+    # approval page: its grant_types list the device grant and not
+    # authorization_code, so it needs no redirect URI.
+    def device_only?(document)
+      grant_types = document["grant_types"]
+      grant_types.is_a?(Array) && grant_types.include?(DeviceCode::GRANT_TYPE) && !grant_types.include?("authorization_code")
     end
 
     # The HTTP cache time from Cache-Control's max-age, held between 5

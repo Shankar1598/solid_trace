@@ -119,6 +119,25 @@ module Oauth
       ALL.select(&:person?)
     end
 
+    # The Scopes that a request's space-separated scope asks for (mcp when it
+    # names none), or nil when one is unknown or is not for OAuth.
+    def requested(scope)
+      names = scope.to_s.split
+      names = [ MCP ] if names.empty?
+      found = names.uniq.map { |name| find(name)&.then { |s| s if s.oauth? } }
+      found unless found.include?(nil)
+    end
+
+    # The resource that a code for scopes is for: the request's resource,
+    # when one of the Scopes is for it, else the Scopes' own; nil when no
+    # Scope is for it (RFC 8707).
+    def resource_for(scopes, resource, issuer:)
+      resources = scopes.map { |scope| scope.resource(issuer) }.uniq
+      return resources.first if resource.blank?
+
+      resources.find { |candidate| Issuer.same_resource?(candidate, resource) }
+    end
+
     # The names of the Scopes for the resource at path under the issuer
     # that an OAuth client can ask for.
     def names_for(resource_path)
