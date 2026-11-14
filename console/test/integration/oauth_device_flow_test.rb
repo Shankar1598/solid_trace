@@ -60,6 +60,21 @@ class OauthDeviceFlowTest < ActionDispatch::IntegrationTest
     assert_equal "*", response.headers["Access-Control-Allow-Origin"]
   end
 
+  test "a new device code deletes the device codes that expired more than an hour ago" do
+    old = device_code_answer
+    travel 70.minutes
+    recent = device_code_answer
+    travel 10.minutes + 1.second
+
+    ask_for_device_code
+
+    assert_response :ok
+    digests = Oauth::Code.where(kind: "device").pluck(:code_digest)
+    assert_not_includes digests, Oauth::Secret.digest(old["device_code"])
+    assert_includes digests, Oauth::Secret.digest(recent["device_code"])
+    assert_equal 2, digests.size
+  end
+
   test "device authorization fetches no description" do
     publish
 

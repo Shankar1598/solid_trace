@@ -11,6 +11,10 @@ module Oauth
   module DeviceCode
     GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
     LASTS = 10.minutes
+    # Device codes that expired longer ago than this are deleted when a new
+    # one is issued, so device authorization, which needs no sign-in, cannot
+    # fill the table. No poll reads a device code after it expires.
+    KEPT_AFTER_EXPIRY = 1.hour
     # The seconds that a program waits between two polls, and what slow_down
     # adds to them.
     INTERVAL = 5
@@ -26,6 +30,7 @@ module Oauth
     # description's URL), and returns it with its secret and its user code
     # as the program shows it.
     def issue!(client_id:, scopes:, resource:, ip_address:)
+      Code.where(kind: "device", expires_at: ...KEPT_AFTER_EXPIRY.ago).delete_all
       secret = Secret.generate
       user_code = new_user_code
       code = Code.create!(kind: "device", code_digest: Secret.digest(secret), client_id: client_id,
