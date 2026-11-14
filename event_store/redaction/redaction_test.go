@@ -111,3 +111,20 @@ func TestMatchInsideAUnicodeEscapeKeepsTheEscape(t *testing.T) {
 		t.Errorf("Expected valid JSON that keeps the '>', got %s (%v)", line, err)
 	}
 }
+
+// A character class that starts or ends on the quote or the backslash
+// can match it.
+func TestCheckRefusesAClassThatStartsOrEndsOnAQuoteOrABackslash(t *testing.T) {
+	for _, expr := range []string{
+		`[!-"]`, `["-#]`, `[#-\\]`, `[\\-^]`, `[^a-z]`, `[^ ]`, `(?i)"`, `(?i)\\`, `(?i)[!-"]`,
+	} {
+		if redaction.Check(expr) == nil {
+			t.Errorf("Expected %s to be refused", expr)
+		}
+	}
+	for _, expr := range []string{`[#-[]`, `[]-~]`, `(?i)[a-z]`, `(?i)k`} {
+		if err := redaction.Check(expr); err != nil {
+			t.Errorf("Expected %s to pass, got %v", expr, err)
+		}
+	}
+}
