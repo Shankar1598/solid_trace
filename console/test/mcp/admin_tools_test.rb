@@ -168,6 +168,18 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/projects/shop", answer.link
   end
 
+  test "create_key makes no key on the Agent Project, and its setup says why" do
+    create(:project, organization: @acme, name: "Agent sessions", slug: "agent-sessions", agent: true)
+
+    refused = call_tool(:create_key, user: @admin, project: "agent-sessions")
+    assert refused.error?
+    assert_equal ProjectKeyPolicy::AGENT_PROJECT, refused.text
+    assert_equal 1, ProjectKey.count
+
+    setup = call_tool(:get_project_setup, user: @admin, project: "agent-sessions").json
+    assert_equal ProjectKeyPolicy::AGENT_PROJECT, setup["note"]
+  end
+
   test "an admin's rotate_key gives the key new values; a member's is refused" do
     old = @key.public_key
 

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_14_100000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -58,6 +58,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
     t.integer "user_id", null: false
     t.index ["token_digest"], name: "index_api_tokens_on_token_digest", unique: true
     t.index ["user_id"], name: "index_api_tokens_on_user_id"
+  end
+
+  create_table "capture_confirmations", force: :cascade do |t|
+    t.integer "project_id", null: false
+    t.integer "user_id"
+    t.json "entries", default: [], null: false
+    t.datetime "created_at", null: false
+    t.index ["project_id"], name: "index_capture_confirmations_on_project_id"
+    t.index ["user_id"], name: "index_capture_confirmations_on_user_id"
   end
 
   create_table "comments", force: :cascade do |t|
@@ -325,7 +334,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
     t.string "slug"
     t.integer "trace_retention_days"
     t.datetime "updated_at", null: false
+    t.boolean "agent", default: false, null: false
+    t.json "captured_repositories", default: [], null: false
     t.index ["organization_id"], name: "index_projects_on_organization_id"
+    t.index ["organization_id"], name: "index_projects_one_agent_project", unique: true, where: "agent"
     t.index ["slug"], name: "index_projects_on_slug"
   end
 
@@ -368,6 +380,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "api_tokens", "users"
+  add_foreign_key "capture_confirmations", "projects", on_delete: :cascade
+  add_foreign_key "capture_confirmations", "users", on_delete: :nullify
   add_foreign_key "comments", "issues"
   add_foreign_key "comments", "organizations_users", column: "organization_user_id"
   add_foreign_key "dashboard_charts", "dashboards"

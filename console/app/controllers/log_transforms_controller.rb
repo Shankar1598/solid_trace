@@ -84,7 +84,7 @@ class LogTransformsController < ApplicationController
       program: @project.log_transform&.program.to_s,
       versions: @project.log_transform_versions.newest_first.includes(:user).limit(VERSIONS_SHOWN).map { |v| version_json(v) },
       stats: stats,
-      can_manage: policy(@project).update?,
+      can_manage: policy(@project).update? && !@project.agent?,
     }
   end
 

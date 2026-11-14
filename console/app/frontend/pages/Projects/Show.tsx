@@ -20,11 +20,13 @@ interface ProjectsShowProps {
   default_trace_retention_days: number
   can_manage_project: boolean
   can_manage_keys: boolean
+  // Why the Project has no keys and offers none (the Agent Project).
+  no_keys_text: string | null
   can_delete_project: boolean
 }
 
 export default function ProjectsShow({
-  project, default_log_retention_days, default_trace_retention_days, can_manage_project, can_manage_keys, can_delete_project,
+  project, default_log_retention_days, default_trace_retention_days, can_manage_project, can_manage_keys, no_keys_text, can_delete_project,
 }: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -117,7 +119,9 @@ export default function ProjectsShow({
                 <p className="text-sm text-muted-foreground mb-4">
                   This project doesn't have any client keys generated yet.
                 </p>
-                {can_manage_keys ? (
+                {no_keys_text ? (
+                  <p className="text-xs text-muted-foreground">{no_keys_text}</p>
+                ) : can_manage_keys ? (
                   <Button variant="outline" onClick={() => router.post(`/${current_org.slug}/projects/${project.slug}/keys`)}>
                     <RefreshCw className="h-4 w-4" />
                     Generate a key

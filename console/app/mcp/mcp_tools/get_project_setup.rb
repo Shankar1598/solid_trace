@@ -26,7 +26,7 @@ module McpTools
         curl: first && curl(logs_url, first.public_key),
         keys: keys.map { |key| key_json(key) },
       }
-      setup[:note] = "This Project has no key. create_key makes one." unless first
+      setup[:note] = project.agent? ? ProjectKeyPolicy::AGENT_PROJECT : "This Project has no key. create_key makes one." unless first
 
       json(setup, link: links.project(project))
     end

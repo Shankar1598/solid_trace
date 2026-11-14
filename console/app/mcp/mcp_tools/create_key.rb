@@ -12,6 +12,8 @@ module McpTools
     takes_project
 
     def run
+      raise ToolError, ProjectKeyPolicy::AGENT_PROJECT if project.agent?
+
       made = project.project_keys.build
       authorize!(made, :create?, "make a Project's keys")
       made.save!

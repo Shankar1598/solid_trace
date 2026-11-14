@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Link, usePage } from '@inertiajs/react'
-import { Building2, Users, Puzzle, UserCircle, KeyRound, Mail, Server } from 'lucide-react'
+import { Building2, Users, Puzzle, UserCircle, KeyRound, Mail, Server, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SharedProps } from '@/types'
 
@@ -31,6 +31,12 @@ function useSettingsItems() {
           href: `/${current_org.slug}/settings/integrations`,
           icon: Puzzle,
           active: url.includes('/settings/integrations')
+        },
+        {
+          label: 'Agent sessions',
+          href: `/${current_org.slug}/settings/agent_sessions`,
+          icon: Bot,
+          active: url.startsWith(`/${current_org.slug}/settings/agent_sessions`)
         }
       ]
     },

@@ -26,6 +26,21 @@ class ProjectKeysControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to project_url(@project, org_slug: @organization.slug)
   end
 
+  test "the Agent Project gets no key, and its page offers none" do
+    agent_project = create(:project, organization: @organization, name: "Agent sessions", agent: true)
+    sign_in_as(@admin)
+
+    assert_no_difference -> { ProjectKey.count } do
+      post project_keys_url(agent_project, org_slug: @organization.slug)
+    end
+
+    get project_url(agent_project, org_slug: @organization.slug),
+      headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    props = JSON.parse(response.body)["props"]
+    assert_equal false, props["can_manage_keys"]
+    assert_equal ProjectKeyPolicy::AGENT_PROJECT, props["no_keys_text"]
+  end
+
   test "an admin rotates a key: new values, so the old ones no longer send" do
     sign_in_as(@admin)
     old_public, old_secret = @key.public_key, @key.secret_key
