@@ -141,7 +141,9 @@ type AgentUpload struct {
 //   - "agentparsecursor/" and "agentparseinsert/" + Project: the parse's
 //     cursor and recorded range. The parse reads only the batches that
 //     Agent file processing has stored, so its cursor is never past that
-//     cursor, and it deletes the batches it has parsed.
+//     cursor, and it deletes the batches it has parsed;
+//   - "agentparsestate/" + Project: what the parse keeps from one range
+//     to the next, written with its cursor.
 var (
 	agentFileBatchKeyspace    = append(eventKeyPrefix(0), "agentunits/"...)
 	agentFileBatchKeyspaceEnd = append(eventKeyPrefix(0), "agentunits0"...)
@@ -184,6 +186,10 @@ func agentParseCursorKey(projectID uint32) []byte {
 	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentparsecursor/"...), projectID)
 }
 
+func agentParseStateKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentparsestate/"...), projectID)
+}
+
 func agentParseInsertKey(projectID uint32) []byte {
 	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentparseinsert/"...), projectID)
 }
@@ -195,9 +201,38 @@ func (w *PebbleWriter) AgentParseCursor(projectID uint32) (uuid.UUID, error) {
 }
 
 // SetAgentParseCursor moves a Project's parse cursor once the Logs of its
-// range are inserted. NoSync, as SetLogProcessingCursor.
-func (w *PebbleWriter) SetAgentParseCursor(projectID uint32, cursor uuid.UUID) error {
-	return w.db.Set(agentParseCursorKey(projectID), cursor[:], pebble.NoSync)
+// range are inserted, in one write with the parse state after the range.
+// NoSync, as SetLogProcessingCursor.
+func (w *PebbleWriter) SetAgentParseCursor(projectID uint32, cursor uuid.UUID, state []byte) error {
+	batch := w.db.NewBatch()
+	defer batch.Close()
+	if err := batch.Set(agentParseCursorKey(projectID), cursor[:], nil); err != nil {
+		return err
+	}
+	if len(state) == 0 {
+		if err := batch.Delete(agentParseStateKey(projectID), nil); err != nil {
+			return err
+		}
+	} else if err := batch.Set(agentParseStateKey(projectID), state, nil); err != nil {
+		return err
+	}
+	return batch.Commit(pebble.NoSync)
+}
+
+// AgentParseState returns what the parse keeps of a Project from one range
+// to the next, as the parse encoded it, or nil. It moves with the cursor,
+// so a range parsed again after a crash reads the state that it read the
+// first time.
+func (w *PebbleWriter) AgentParseState(projectID uint32) ([]byte, error) {
+	value, closer, err := w.db.Get(agentParseStateKey(projectID))
+	if errors.Is(err, pebble.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer closer.Close()
+	return bytes.Clone(value), nil
 }
 
 // RecordAgentParseInsert records, synced, the last batch of the range that
