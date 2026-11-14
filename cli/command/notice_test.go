@@ -113,3 +113,40 @@ func TestLoginWithAWrongIngestURLSaysSo(t *testing.T) {
 		t.Errorf("stderr: %s", w.stderr)
 	}
 }
+
+func TestLoginWithNoIngestURLAsksForIt(t *testing.T) {
+	w := newWorld(t, acme)
+
+	if code := w.run("login", w.oauth.URL()); code != 2 {
+		t.Fatalf("exit %d, want 2\nstderr: %s", code, w.stderr)
+	}
+	// The Ingest URL is not always the Console URL's host at a known port
+	// (an HTTPS install has it at 4443), so the CLI does not guess it.
+	for _, want := range []string{"--ingest-url", "capture setup page"} {
+		if !strings.Contains(w.stderr.String(), want) {
+			t.Errorf("stderr has no %q: %s", want, w.stderr)
+		}
+	}
+	if len(w.oauth.Authorizations) != 0 || len(w.oauth.DeviceRequests) != 0 {
+		t.Errorf("the sign-in started")
+	}
+	w.assertNotSignedIn()
+}
+
+func TestLoginRefusesAnIngestURLThatIsNotHTTPS(t *testing.T) {
+	w := newWorld(t, acme)
+
+	// The access token goes to the Ingest URL, as to the Console URL.
+	for _, bad := range []string{"http://ingest.example.com", "http://10.100.0.3:4000", "ftp://ingest.example.com"} {
+		if code := w.run("login", "--ingest-url", bad, w.oauth.URL()); code != 2 {
+			t.Errorf("--ingest-url %s: exit %d, want 2", bad, code)
+		}
+	}
+	if !strings.Contains(w.stderr.String(), "HTTPS") {
+		t.Errorf("stderr: %s", w.stderr)
+	}
+	if len(w.oauth.Authorizations) != 0 || len(w.oauth.DeviceRequests) != 0 {
+		t.Errorf("the sign-in started")
+	}
+	w.assertNotSignedIn()
+}

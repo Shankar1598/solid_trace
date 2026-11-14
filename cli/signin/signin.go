@@ -102,7 +102,7 @@ func CleanURL(raw string) (string, error) {
 	switch strings.ToLower(u.Scheme) {
 	case "https":
 	case "http":
-		if !loopback(strings.ToLower(u.Hostname())) {
+		if !Loopback(u.Hostname()) {
 			return "", fmt.Errorf("%s is not https://: the CLI sends tokens only over HTTPS, or to a loopback address", raw)
 		}
 	default:
@@ -122,8 +122,10 @@ func canonical(raw string) string {
 	return u.String()
 }
 
-func loopback(host string) bool {
-	if host == "localhost" {
+// Loopback is true for localhost and a loopback IP address: the only hosts
+// that the CLI sends tokens to over plain HTTP.
+func Loopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)

@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"strings"
 
@@ -14,11 +13,6 @@ import (
 	"github.com/solidtrace/cli/credentials"
 	"github.com/solidtrace/cli/signin"
 )
-
-// DefaultIngestPort is EventStore's ingest port. With no --ingest-url, the
-// ingest URL is the Console URL's host at this port, as Console's own
-// fallback for the Ingest URL builds it.
-const DefaultIngestPort = "4000"
 
 // login signs in, stores the sign-in, and prints the engineer's notice.
 func login(ctx context.Context, args []string, env Env) int {
@@ -127,21 +121,34 @@ func signIn(ctx context.Context, client *signin.Client, server signin.Server, de
 	return client.Device(ctx, server, env.Stdout)
 }
 
-// ingestURL is --ingest-url, else the stored one for the same instance,
-// else the Console URL's host at the ingest port.
+// ingestURL is --ingest-url, else the stored one for the same instance.
+// The CLI does not guess it from the Console URL: an install can have it
+// at another host or port (an HTTPS install has it at port 4443). The
+// login command on Console's capture setup page gives it. The access token
+// goes to it, so it must be https://, or http:// on a loopback host, as
+// the Console URL must.
 func ingestURL(flagValue, instance string, previous credentials.Credentials) (string, error) {
 	if flagValue != "" {
 		u, err := url.Parse(strings.TrimRight(strings.TrimSpace(flagValue), "/"))
-		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
+		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return "", fmt.Errorf("%q is not an Ingest URL: give it as Console's capture setup page shows it", flagValue)
+		}
+		u.Scheme = strings.ToLower(u.Scheme)
+		switch {
+		case u.Scheme == "https":
+		case u.Scheme == "http" && signin.Loopback(u.Hostname()):
+		case u.Scheme == "http":
+			return "", fmt.Errorf("--ingest-url %s is not https://: the CLI sends tokens only over HTTPS, or to a loopback address",
+				flagValue)
+		default:
+			return "", fmt.Errorf("%q is not an Ingest URL: it must start with https://", flagValue)
 		}
 		return u.String(), nil
 	}
 	if previous.InstanceURL == instance && previous.IngestURL != "" {
 		return previous.IngestURL, nil
 	}
-	u, _ := url.Parse(instance)
-	return u.Scheme + "://" + net.JoinHostPort(u.Hostname(), DefaultIngestPort), nil
+	return "", errors.New("give the Ingest URL with --ingest-url: the login command on Console's capture setup page has it")
 }
 
 // save replaces the stored sign-in, under the lock that a refresh takes.

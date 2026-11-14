@@ -35,7 +35,8 @@ const usage = `solidtrace: the SolidTrace agent CLI.
 Usage:
   solidtrace login [--device] [--ingest-url URL] [Console URL]
       Sign in through SolidTrace in your browser, or with a code (--device)
-      on a machine with no browser.
+      on a machine with no browser. The first sign-in to an instance needs
+      --ingest-url: Console's capture setup page gives the login command.
   solidtrace version
       Print the version of this solidtrace.
 `
