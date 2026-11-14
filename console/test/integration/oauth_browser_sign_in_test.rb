@@ -188,6 +188,25 @@ class OauthBrowserSignInTest < ActionDispatch::IntegrationTest
     assert_response :conflict
   end
 
+  test "a request older than 10 minutes is refused, and the next request deletes it" do
+    client_id = registered_client
+    get oauth_authorize_url(authorize_params(client_id))
+    assert_redirected_to login_url
+
+    travel 11.minutes
+    sign_in_as @user
+    assert_match %r{/oauth/authorize\?request=[\w-]+\z}, response.location
+    get response.location, headers: inertia_headers
+    assert_response :bad_request
+    assert_equal "Oauth/Error", response.parsed_body["component"]
+
+    # Another browser, with no cookie, starts a request.
+    send_requests_to(ISSUER)
+    get oauth_authorize_url(authorize_params(client_id))
+    assert_redirected_to login_url
+    assert_equal 1, Oauth::PendingRequest.count
+  end
+
   test "a request id that is not in this browser's session is refused" do
     sign_in_as @user
     client_id = registered_client

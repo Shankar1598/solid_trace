@@ -74,7 +74,7 @@ module Oauth
         return error_page("The client did not register this redirect URI, so Console does not send you back to it.")
       end
 
-      PendingRequest.create!(
+      PendingRequest.keep!(
         client: client, redirect_uri: redirect_uri,
         response_type: params[:response_type], code_challenge: params[:code_challenge],
         code_challenge_method: params[:code_challenge_method], scope: params[:scope], resource: params[:resource],
