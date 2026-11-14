@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -29,7 +30,9 @@ func TestMain(m *testing.M) {
 // command against an ingest address that takes connections and never
 // answers, as a network that is down or very slow does. Claude Code waits
 // until the hook exits and its stdout closes: both must come at once,
-// while the background capture still waits for the server.
+// while the background capture still waits for the server. The capture
+// must also live on when the hook's process group ends, as Claude Code or
+// a closed terminal can end it.
 func TestTheHookReturnsAtOnceWhenTheServerDoesNotAnswer(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -90,6 +93,9 @@ func TestTheHookReturnsAtOnceWhenTheServerDoesNotAnswer(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	// The hook gets a process group of its own, so that the test can end
+	// that group and not its own.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -107,11 +113,33 @@ func TestTheHookReturnsAtOnceWhenTheServerDoesNotAnswer(t *testing.T) {
 		t.Fatalf("the hook wrote %q and %q", out, stderr.String())
 	}
 
+	// End the hook's process group, as Claude Code can at SessionEnd. The
+	// capture is in a session of its own, so it is not in that group.
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+		t.Fatal(err)
+	}
+
 	// The background capture runs and waits for the server.
+	var c net.Conn
 	select {
-	case <-connected:
+	case c = <-connected:
 	case <-time.After(10 * time.Second):
 		log, _ := os.ReadFile(filepath.Join(config, "capture.log"))
 		t.Fatalf("the background capture did not reach the server\ncapture.log: %s", log)
+	}
+	// It still waits: its connection stays open (a read times out, and
+	// does not get EOF from a capture that was ended).
+	connected <- c
+	if err := c.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 4096)
+	for {
+		if _, err := c.Read(buf); err != nil {
+			if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+				t.Fatalf("the background capture ended with the hook's process group: %v", err)
+			}
+			break
+		}
 	}
 }
