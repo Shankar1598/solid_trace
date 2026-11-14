@@ -12,6 +12,7 @@ type Props = {
   client: { name: string; name_note: string; redirect_host: string }
   loopback_warning: string | null
   organizations: Organization[]
+  no_organization: string | null
   revoke_hint: string
 }
 
@@ -19,7 +20,8 @@ type Props = {
 // to act as the user in one Organization. The form sends only the pending
 // request's key, the Organization's id and the decision; Console sends the
 // browser back to the client. The first Organization is the last used one.
-export default function Authorize({ request, client, loopback_warning, organizations, revoke_hint }: Props) {
+// A user in no Organization sees why, and only Deny.
+export default function Authorize({ request, client, loopback_warning, organizations, no_organization, revoke_hint }: Props) {
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id.toString() ?? '')
   const [processing, setProcessing] = useState(false)
   const organization = organizations.find((o) => o.id.toString() === organizationId)
@@ -47,8 +49,8 @@ export default function Authorize({ request, client, loopback_warning, organizat
           <p role="alert" className="border border-amber-500/50 bg-amber-500/10 p-3">{loopback_warning}</p>
         )}
 
-        {organizations.length === 0 ? (
-          <p>You are in no Organization, so there is nothing to approve.</p>
+        {no_organization ? (
+          <p role="note">{no_organization}</p>
         ) : (
           <>
             {organizations.length > 1 && (
@@ -72,10 +74,10 @@ export default function Authorize({ request, client, loopback_warning, organizat
           </>
         )}
 
-        <p className="text-muted-foreground">{revoke_hint}</p>
+        {!no_organization && <p className="text-muted-foreground">{revoke_hint}</p>}
 
         <div className="flex gap-2">
-          {organizations.length > 0 && (
+          {!no_organization && (
             <Button type="button" disabled={processing} onClick={() => decide('approve')}>Approve</Button>
           )}
           <Button type="button" variant="outline" disabled={processing} onClick={() => decide('deny')}>Deny</Button>

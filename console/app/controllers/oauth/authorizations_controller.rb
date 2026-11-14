@@ -18,13 +18,26 @@ module Oauth
     layout "auth"
     skip_before_action :authenticate_user!
     before_action :require_oauth_on
+    before_action :resume_session, only: :create
+    # Approve and Deny: 10 in 3 minutes for each user and for each IP address.
+    rate_limit to: 10, within: 3.minutes, only: :create, name: "user",
+               by: -> { current_user ? "user:#{current_user.id}" : "ip:#{request.remote_ip}" },
+               with: -> { error_page(TOO_MANY_DECISIONS, status: :too_many_requests) }
+    rate_limit to: 10, within: 3.minutes, only: :create, name: "ip",
+               with: -> { error_page(TOO_MANY_DECISIONS, status: :too_many_requests) }
 
     UNKNOWN_REQUEST = "This sign-in request is unknown or older than 10 minutes, or was started in another browser. " \
                       "Start the sign-in again from the program."
     LOOPBACK_WARNING = "This program runs on a computer. Approve only if you started it."
     NAME_NOT_CHECKED = "Not checked: the client gave this name"
     REVOKE_HINT = "You can revoke this in Settings → User."
+    NO_ORGANIZATION = "You are in no Organization, so there is nothing to approve. Ask an Organization admin to " \
+                      "add you, then start the sign-in again."
+    TOO_MANY_DECISIONS = "Too many approvals and denials. Try again in a few minutes."
     MAX_STATE = 512
+    # An S256 code_challenge: the base64url SHA-256 of the verifier, 43
+    # characters (RFC 7636 §4.2).
+    S256_CHALLENGE = /\A[A-Za-z0-9_-]{43}\z/
 
     def show
       pending = params[:request].present? ? PendingRequest.find_in_session(session, params[:request]) : start_request
@@ -42,7 +55,7 @@ module Oauth
     def create
       pending = PendingRequest.find_in_session(session, params[:request])
       return error_page(UNKNOWN_REQUEST) unless pending
-      return send_to_sign_in(pending) unless resume_session
+      return send_to_sign_in(pending) unless current_user
 
       problem = request_problem(pending)
       return back_to_client(pending, error: problem[0], error_description: problem[1]) if problem
@@ -92,10 +105,12 @@ module Oauth
     # The first problem with the request's other parameters, as an OAuth
     # error and its description, or nil.
     def request_problem(pending)
-      if pending.response_type != "code"
+      if pending.response_type.blank?
+        [ "invalid_request", "Send response_type=code." ]
+      elsif pending.response_type != "code"
         [ "unsupported_response_type", "Send response_type=code." ]
-      elsif pending.code_challenge.blank? || pending.code_challenge_method != "S256"
-        [ "invalid_request", "Send a PKCE code_challenge with code_challenge_method=S256." ]
+      elsif !S256_CHALLENGE.match?(pending.code_challenge.to_s) || pending.code_challenge_method != "S256"
+        [ "invalid_request", "Send a PKCE code_challenge (43 characters, base64url) with code_challenge_method=S256." ]
       elsif pending.state.to_s.length > MAX_STATE
         [ "invalid_request", "Send a state of at most #{MAX_STATE} characters." ]
       elsif scopes(pending).nil?
@@ -125,6 +140,7 @@ module Oauth
 
     def page_props(pending)
       client = pending.client
+      organizations = organizations_last_used_first
       {
         request: pending.key,
         client: {
@@ -133,12 +149,13 @@ module Oauth
           redirect_host: URI(pending.redirect_uri).host,
         },
         loopback_warning: (LOOPBACK_WARNING if client.loopback_only?),
-        organizations: organizations_last_used_first.map do |organization|
+        organizations: organizations.map do |organization|
           {
             id: organization.id, name: organization.name, slug: organization.slug,
             scopes: scopes(pending).map { |scope| format(scope.text, organization: organization.name) },
           }
         end,
+        no_organization: (NO_ORGANIZATION if organizations.empty?),
         revoke_hint: REVOKE_HINT,
       }
     end
@@ -186,8 +203,8 @@ module Oauth
       parsed.to_s
     end
 
-    def error_page(message)
-      render inertia: "Oauth/Error", props: { message: message }, status: :bad_request
+    def error_page(message, status: :bad_request)
+      render inertia: "Oauth/Error", props: { message: message }, status: status
     end
   end
 end

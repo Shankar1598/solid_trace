@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 module Oauth
-  # An OAuth client. A registered (DCR) client is public: it sends its
-  # client_id and proves the code with PKCE. Its name is the one it gave,
-  # which Console cannot check.
+  # An OAuth client. A registered (DCR) client is public (it sends its
+  # client_id) or confidential (it also sends its client secret, which
+  # Console keeps as a SHA-256 digest); both prove the code with PKCE. Its
+  # name is the one it gave, which Console cannot check.
   class Client < ApplicationRecord
     KINDS = %w[dcr].freeze
+    AUTH_METHODS = %w[none client_secret_basic client_secret_post].freeze
     UNNAMED = "Unnamed client"
     MAX_URI = 512
     DEFAULT_GRANT_TYPES = %w[authorization_code refresh_token].freeze
@@ -64,6 +66,15 @@ module Oauth
 
     def public_client?
       token_endpoint_auth_method == "none"
+    end
+
+    # Whether secret authenticates the client: none for a public client;
+    # for a confidential client, the secret whose digest Console keeps.
+    def authenticates?(secret)
+      return secret.nil? if public_client?
+
+      secret.is_a?(String) && secret.present? && client_secret_digest.present? &&
+        ActiveSupport::SecurityUtils.secure_compare(Secret.digest(secret), client_secret_digest)
     end
 
     private
