@@ -391,7 +391,9 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                   Before EventStore stores a transcript of an Agent session, each character that a pattern matches
                   becomes *, so the length of each line stays the same. These are always on: {editable.redaction_defaults}.
                   Add one Go regular expression on each line. A pattern must not be able to match a quote or a
-                  backslash, so .+ and [^ ]+ are refused; use a class such as [A-Za-z0-9_-]+. It applies from the next
+                  backslash, so .+ and [^ ]+ are refused; use a class such as [A-Za-z0-9_-]+. A pattern reads each line
+                  as raw JSON text, so \b sees the n of a \n escape as a letter: start a pattern with its fixed
+                  prefix instead. It applies from the next
                   upload; stored transcripts don&apos;t change.
                 </p>
               </div>
