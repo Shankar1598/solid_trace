@@ -51,7 +51,8 @@ class OauthDiscoveryTest < ActionDispatch::IntegrationTest
     host! "www.example.com"
     [ "http://console.example.com", "http://10.100.0.3:3000", "http://198.51.100.92", "http://localhost.example.com",
       "http://127.0.0.1.example.com", "ftp://localhost", "console.example.com", "https://console.example.com/console",
-      "https://user@console.example.com", "not a url" ].each do |url|
+      "https://user@console.example.com", "https://console.example.com?x=1", "https://console.example.com#frag",
+      "not a url" ].each do |url|
       assert_equal [ 404, 404 ], metadata_statuses(env: url), "CONSOLE_URL #{url}"
     end
     assert_equal [ 404, 404 ], metadata_statuses(setting: "http://console.example.com"), "setting http://"
