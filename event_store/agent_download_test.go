@@ -4,11 +4,17 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"net"
 	"net/http"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -281,9 +287,165 @@ func TestAgentSessionDownloadThatFailsAfterItsFirstByte(t *testing.T) {
 }
 
 const (
-	pendingSession ="1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
+	pendingSession = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
 	retainSession  = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c02"
 )
+
+// transcriptText writes size bytes of .jsonl lines, about 2 KB each, of
+// words that a seeded generator picks, to w. Its text compresses about as
+// a real transcript does.
+func transcriptText(w io.Writer, seed uint64, size int) {
+	words := strings.Fields("the a function test file error return value config server request token line go " +
+		"build check path offset session agent tool result user assistant message content type run commit branch " +
+		"review fix issue change diff merge 0 1 2 3 4 5 6 7 8 9 x y z handler storage query table row")
+	state := seed*6364136223846793005 + 1442695040888963407
+	random := func() uint64 {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		return state
+	}
+	var line []byte
+	for size > 0 {
+		line = append(line[:0], `{"type":"assistant","message":{"content":"`...)
+		target := 2000
+		for len(line) < target {
+			line = append(line, words[random()%uint64(len(words))]...)
+			line = append(line, ' ')
+		}
+		line = append(line[:target-4], `"}}`...)
+		line = append(line, '\n')
+		if len(line) > size {
+			line = append(line[:size-1], '\n')
+		}
+		w.Write(line)
+		size -= len(line)
+	}
+}
+
+// TestAgentSessionDownloadMemory downloads an Agent session in the shape
+// of the prototype's largest (434 MB, 95% of it in 260 subagent files, 17
+// tool results), at a smaller size unless SOLIDTRACE_AGENT_DOWNLOAD_MB
+// sets it (434 for the prototype's size). The answer streams: the test
+// reads it over a socket and keeps only a hash of each file. The
+// download's ClickHouse query must stay within about 300 MB of memory.
+func TestAgentSessionDownloadMemory(t *testing.T) {
+	sizeMB := 48
+	if text := os.Getenv("SOLIDTRACE_AGENT_DOWNLOAD_MB"); text != "" {
+		n, err := strconv.Atoi(text)
+		if err != nil || n < 8 {
+			t.Fatalf("SOLIDTRACE_AGENT_DOWNLOAD_MB is a whole number of MB from 8, not %q", text)
+		}
+		sizeMB = n
+	}
+	const limit = 300_000_000
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	reader, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization, scopes: []string{"sessions:read"},
+		sessionIDs: []string{laptopSession}})
+
+	total := sizeMB * 1_000_000
+	subagents := max(4, 260*sizeMB/434)
+	type file struct {
+		path string
+		size int
+	}
+	files := []file{{"session.jsonl", total * 5 / 100}}
+	for i := range 17 {
+		files = append(files, file{fmt.Sprintf("tool-results/toolu_%02d.txt", i), 4000 + 300*i})
+	}
+	for i := range subagents {
+		files = append(files, file{fmt.Sprintf("subagents/agent-%03d.jsonl", i), total * 95 / 100 / subagents})
+	}
+	want := map[string]string{}
+	pending := 0
+	for i, f := range files {
+		var content bytes.Buffer
+		transcriptText(&content, uint64(i+1), f.size)
+		sum := sha256.Sum256(content.Bytes())
+		want[f.path] = hex.EncodeToString(sum[:])
+		body := content.Bytes()
+		if !strings.HasSuffix(f.path, ".jsonl") {
+			expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: f.path, contentHash: "sha256:" + want[f.path], body: body}), 200)
+			continue
+		}
+		for offset := 0; offset < len(body); {
+			n := min(8<<20, len(body)-offset)
+			if offset+n < len(body) {
+				n = bytes.LastIndexByte(body[offset:offset+n], '\n') + 1
+			}
+			expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: f.path, offset: offset, body: body[offset : offset+n]}), 200)
+			offset += n
+			// Several inserts, so that the rows are in several parts.
+			if pending += n; pending > total/12 {
+				env.ProcessAgentFiles(t)
+				pending = 0
+			}
+		}
+	}
+	env.ProcessAgentFiles(t)
+
+	app := newAgentAppWith(t, env, "dev", env.ClickHouse)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go app.Listener(listener)
+	defer app.Shutdown()
+	req, _ := http.NewRequest("GET", "http://"+listener.Addr().String()+agentDownloadPath(laptopSession), nil)
+	req.Header.Set("Authorization", "Bearer "+reader)
+	started := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 200, got %d: %s", resp.StatusCode, raw)
+	}
+	got := map[string]string{}
+	archive := tar.NewReader(resp.Body)
+	for {
+		h, err := archive.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read the archive: %v", err)
+		}
+		hash := sha256.New()
+		if _, err := io.Copy(hash, archive); err != nil {
+			t.Fatalf("Read %s: %v", h.Name, err)
+		}
+		got[h.Name] = hex.EncodeToString(hash.Sum(nil))
+	}
+	took := time.Since(started)
+	if !maps.Equal(got, want) {
+		t.Errorf("Expected %d files equal byte for byte, got %d files", len(want), len(got))
+	}
+
+	conn := env.ClickHouse.Conn()
+	if err := conn.Exec(context.Background(), "SYSTEM FLUSH LOGS"); err != nil {
+		t.Fatal(err)
+	}
+	var memory, parts uint64
+	if err := conn.QueryRow(context.Background(), `
+		SELECT toUInt64(max(memory_usage)) FROM system.query_log
+		WHERE type = 'QueryFinish' AND current_database = currentDatabase() AND log_comment = ? AND event_date >= yesterday()`,
+		storage.AgentDownloadLogComment).Scan(&memory); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(context.Background(), `
+		SELECT toUInt64(count()) FROM system.parts WHERE database = currentDatabase() AND table = 'agent_session_files' AND active`).Scan(&parts); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Downloaded %d MB in %d files and %d parts in %s, with %d MB of ClickHouse memory", sizeMB, len(got), parts, took, memory/1_000_000)
+	if memory == 0 || memory > limit {
+		t.Errorf("Expected the download's query to use at most %d MB of memory, got %d MB", limit/1_000_000, memory/1_000_000)
+	}
+}
 
 func TestAgentSessionDownloadOfWhatIsNotWhole(t *testing.T) {
 	env := setupTestEnv(t)
