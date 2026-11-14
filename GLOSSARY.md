@@ -233,7 +233,7 @@ A secret a user makes in their settings that lets a client act as that user thro
 _Avoid_: API key, project key, access token
 
 **OAuth client**:
-A program that asks a user, through Console's approval page or device page, to act as them, and gets **OAuth tokens** when the user approves. Console knows it from the address of its published description, or from its registration, whose name Console cannot check.
+A program that asks a user, through Console's approval page or device page, to act as them, and gets **OAuth tokens** when the user approves. Console knows it from the address of its published description, or from its registration, whose name Console cannot check. One OAuth client is part of Console: `solidtrace-cli`, the agent CLI that `solidtrace login` runs. Only it, and clients with a published description, can use the device page.
 _Avoid_: app, connected app, integration
 
 **Grant**:
