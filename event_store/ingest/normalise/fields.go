@@ -56,9 +56,9 @@ func hexID(digits int) func(json.RawMessage) (string, bool) {
 	}
 }
 
-// inWindow tells whether a Log's own time is believable: no older than the
+// InWindow tells whether a Log's own time is believable: no older than the
 // Project's Retention and at most maxAhead in the future.
-func (r Receipt) inWindow(t time.Time) bool {
+func (r Receipt) InWindow(t time.Time) bool {
 	oldest := r.At.AddDate(0, 0, -r.RetentionDays)
 	return !t.Before(oldest) && !t.After(r.At.Add(maxAhead))
 }

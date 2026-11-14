@@ -130,9 +130,10 @@ func TestAnAgentSessionOverTwoDaysSumsItsTokensCostAndCounts(t *testing.T) {
 	if !s.First.Equal(time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC)) || !s.Last.Equal(time.Date(2026, 10, 3, 9, 0, 20, 0, time.UTC)) {
 		t.Errorf("Expected the times of the first and the last line, got %s and %s", s.First, s.Last)
 	}
-	if s.Model != "claude-sonnet-5-5" || s.Harness != "claude-code" || s.Repository != "github.com/acme/shop" ||
+	// The subagent's model is not the model of the Agent session.
+	if s.Model != "claude-opus-5-5" || s.Harness != "claude-code" || s.Repository != "github.com/acme/shop" ||
 		s.UserID != o.user || s.RunID != "" || s.ParentSessionID != "" || len(s.Flags) != 0 {
-		t.Errorf("Expected the model of the last reply, who and where, and no flags, got %+v", s)
+		t.Errorf("Expected the model of the main transcript's last reply, who and where, and no flags, got %+v", s)
 	}
 }
 
@@ -339,4 +340,113 @@ func TestRetentionDropsTheTotalsOfTheSameDaysAsTheRawTable(t *testing.T) {
 	if totals := agentSessionTotals(t, env, o.project); len(totals) != 0 {
 		t.Errorf("Expected no totals after the Agent Project's deletion, got %+v", totals)
 	}
+}
+
+func TestTheCostStateIsLaterThanTheRepliesBeforeItInTheFile(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	// The replies are 1 ms out of order, as Claude Code writes them: the
+	// cost-state line after them is still later than the last reply.
+	body := jsonl(
+		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
+		replyAt("a1", "2026-10-02T11:00:05.110Z", "msg_1", "claude-opus-5-5", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}`),
+		toolResultAt("u2", "2026-10-02T11:00:05.109Z", "toolu_1"),
+		costState(0.5),
+	)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: body}), 200)
+	expectSessionCost(t, "the cost-state after a reply that is out of order", sessionTotalsOf(t, env, o.project, laptopSession), 0.5)
+}
+
+func TestACostStateThatStartsAUnitIsNotLaterThanTheRepliesAfterIt(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	env.Clock.Set(time.Date(2026, 10, 2, 11, 0, 10, 0, time.UTC))
+	first := jsonl(
+		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
+		replyAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", `{"type":"text","text":"Done."}`),
+	)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: first}), 200)
+	env.ProcessAgentFiles(t)
+
+	// An upload cut before the cost-state line, and the server stores the
+	// next units late: the cost-state line has the stored time, which is
+	// after the time of the reply that comes after it in the file.
+	env.Clock.Set(time.Date(2026, 10, 2, 11, 10, 0, 0, time.UTC))
+	second := jsonl(costState(0.5))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(first), body: second}), 200)
+	third := jsonl(
+		personAt("u2", "2026-10-02T11:01:00Z", "Go on"),
+		replyAt("a2", "2026-10-02T11:01:05Z", "msg_2", "claude-opus-5-5", `{"type":"text","text":"More."}`),
+	)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(first) + len(second), body: third}), 200)
+	expectSessionCost(t, "a reply after the cost-state line", sessionTotalsOf(t, env, o.project, laptopSession), 0.00174*2)
+}
+
+func TestTheTotalsOfATrimmedTranscriptCountItsNewVersionOnly(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	start := []string{
+		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
+		replyAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}`),
+	}
+	long := jsonl(append(start, personAt("u2", "2026-10-02T11:01:00Z", "Go on"))...)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: long}), 200)
+	env.ProcessAgentFiles(t)
+	// The transcript is trimmed: version 2 repeats its start.
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", version: 2, body: jsonl(start...)}), 200)
+
+	s := sessionTotalsOf(t, env, o.project, laptopSession)
+	want := sessionCounts{input: 10, output: 50, cacheRead: 1000, cacheWrite: 100, person: 1, turns: 1, toolCalls: 1}
+	if got := countsOf(s); got != want {
+		t.Errorf("Expected the counts of version 2 alone, %+v, got %+v", want, got)
+	}
+	expectSessionCost(t, "version 2 alone", s, 0.00174)
+	if !slices.Equal(s.Flags, []string{"trimmed"}) {
+		t.Errorf("Expected the flag trimmed, got %v", s.Flags)
+	}
+}
+
+func TestAParentSentOnALaterUploadIsKept(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	body := jsonl(personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"))
+	expectStatus(t, uploadUnit(t, env, o.secret, forkSession, unitUpload{path: "session.jsonl", body: body}), 200)
+	expectStatus(t, uploadUnit(t, env, o.secret, forkSession, unitUpload{path: "session.jsonl", offset: len(body), parent: laptopSession, body: jsonl(personAt("u2", "2026-10-02T11:01:00Z", "Go on"))}), 200)
+
+	if s := sessionTotalsOf(t, env, o.project, forkSession); s.ParentSessionID != laptopSession {
+		t.Errorf("Expected the parent %s on the totals, got %+v", laptopSession, s)
+	}
+	_, files := offsetsOf(t, env, o.secret, forkSession)
+	if files.AgentSession == nil || files.AgentSession.ParentSessionID != laptopSession {
+		t.Errorf("Expected the offsets call to give the parent, got %+v", files.AgentSession)
+	}
+}
+
+func TestLineTimesFarFromTheStoredTimeGiveTheStoredTime(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	stored := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	env.Clock.Set(stored)
+	// A laptop with a wrong clock, or a broken transcript.
+	body := jsonl(
+		personAt("u1", "0001-01-01T00:00:00Z", "Add a cart page"),
+		replyAt("a1", "1960-01-01T00:00:05Z", "msg_1", "claude-opus-5-5", `{"type":"text","text":"Done."}`),
+		personAt("u2", "2999-01-01T00:00:00Z", "Go on"),
+	)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: body}), 200)
+	s := sessionTotalsOf(t, env, o.project, laptopSession)
+	if !s.First.Equal(stored) || !s.Last.Equal(stored) {
+		t.Errorf("Expected the stored time %s as first and last, got %s and %s", stored, s.First, s.Last)
+	}
+	expectSessionCost(t, "a reply with an old time", s, 0.00174)
 }

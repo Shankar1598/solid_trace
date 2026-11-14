@@ -2,20 +2,22 @@ package agentprocessing
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/storage"
 )
 
 // sessionTotals is what one range of the parse adds to agent_sessions: a
 // row for each (Agent session, UTC day on which the server stored the
-// units). It reads each line's Log as the parse made it, so the totals
-// count what the Logs show: the tokens of a reply once, and who sent each
-// message.
+// units, file). It reads each line's Log as the parse made it, so the
+// totals count what the Logs show: the tokens of a reply once, and who
+// sent each message.
 type sessionTotals struct {
 	rows map[sessionDayKey]*sessionDay
 }
@@ -23,6 +25,8 @@ type sessionTotals struct {
 type sessionDayKey struct {
 	session uuid.UUID
 	day     time.Time
+	path    string
+	version uint32
 }
 
 type sessionDay struct {
@@ -30,25 +34,21 @@ type sessionDay struct {
 	hasLine bool
 	// storedFirst and storedLast are the times that the server stored the
 	// units, for a day with no lines.
-	storedFirst, storedLast  time.Time
-	subagents, files, starts map[string]bool
+	storedFirst, storedLast time.Time
 }
 
 // newSessionTotals starts the totals of a range with what each unit gives
-// with no lines read: its file, its start at offset 0 and its flags.
+// with no lines read: its start at offset 0, its flags and its parent.
 func newSessionTotals(units []storage.AgentFileUnit) *sessionTotals {
 	t := &sessionTotals{rows: map[sessionDayKey]*sessionDay{}}
 	for _, unit := range units {
 		row := t.row(unit)
-		file := storage.AgentFileName(unit.Version, unit.Path)
-		row.files[file] = true
 		if unit.Offset == 0 {
-			row.starts[file] = true
+			row.HasStart = true
 		}
 		row.Flags |= unit.Flags
-		if strings.HasSuffix(unit.Path, ".jsonl") && isSubagentFile(unit.Path) {
-			row.subagents[unit.Path] = true
-		}
+		// An uploader can learn the parent after the first upload.
+		row.Session.ParentSessionID = max(row.Session.ParentSessionID, unit.Session.ParentSessionID)
 		stored := unit.StoredAt.UTC()
 		if row.storedFirst.IsZero() || stored.Before(row.storedFirst) {
 			row.storedFirst = stored
@@ -61,25 +61,26 @@ func newSessionTotals(units []storage.AgentFileUnit) *sessionTotals {
 }
 
 func (t *sessionTotals) row(unit storage.AgentFileUnit) *sessionDay {
-	key := sessionDayKey{session: unit.SessionID, day: storage.LogDay(unit.StoredAt)}
+	key := sessionDayKey{session: unit.SessionID, day: storage.LogDay(unit.StoredAt), path: unit.Path, version: unit.Version}
 	row, ok := t.rows[key]
 	if !ok {
-		row = &sessionDay{
-			AgentSessionDay: storage.AgentSessionDay{SessionID: unit.SessionID, Day: key.day, Session: unit.Session},
-			subagents:       map[string]bool{}, files: map[string]bool{}, starts: map[string]bool{},
-		}
+		row = &sessionDay{AgentSessionDay: storage.AgentSessionDay{
+			SessionID: unit.SessionID, Day: key.day, Path: unit.Path, Version: unit.Version, Session: unit.Session,
+		}}
 		t.rows[key] = row
 	}
 	return row
 }
 
 // addLine adds one line's Log, before its time is kept on the stored day,
-// to its Agent session's row.
-func (t *sessionTotals) addLine(unit storage.AgentFileUnit, offset uint64, object map[string]json.RawMessage, f lineFacts) {
+// to its file's row. A line time that is not believable for the unit's
+// receipt, as Log ingest decides, gives the stored time. The line ends at
+// end, its offset after its last byte.
+func (t *sessionTotals) addLine(unit storage.AgentFileUnit, end uint64, object map[string]json.RawMessage, f lineFacts, receipt normalise.Receipt) {
 	row := t.row(unit)
 	at, ok := timeOf(object["time"])
-	if !ok {
-		at = unit.StoredAt.UTC()
+	if !ok || !receipt.InWindow(at) {
+		at = receipt.At
 	}
 	if !row.hasLine || at.Before(row.First) {
 		row.First = at
@@ -88,7 +89,6 @@ func (t *sessionTotals) addLine(unit storage.AgentFileUnit, offset uint64, objec
 		row.Last = at
 	}
 	row.hasLine = true
-	place := storage.AgentLinePlace{Time: at, Offset: offset}
 
 	role, line := stringOf(object["agent.role"]), stringOf(object["agent.line"])
 	if role == rolePerson {
@@ -107,6 +107,7 @@ func (t *sessionTotals) addLine(unit storage.AgentFileUnit, offset uint64, objec
 		row.Output += uintOf(object["agent.tokens.output"])
 		row.CacheRead += uintOf(object["agent.tokens.cache_read"])
 		row.CacheWrite += uintOf(object["agent.tokens.cache_write"])
+		row.Replies++
 		if cost, ok := object["agent.cost_usd"]; ok {
 			var c float64
 			_ = json.Unmarshal(cost, &c)
@@ -114,12 +115,12 @@ func (t *sessionTotals) addLine(unit storage.AgentFileUnit, offset uint64, objec
 		} else {
 			row.UnpricedReplies++
 		}
-		if later(place, row.LastReply) {
-			row.LastReply, row.LastModel = place, stringOf(object["agent.model"])
+		if end > row.LastReplyEnd {
+			row.LastReplyEnd, row.LastModel = end, stringOf(object["agent.model"])
 		}
 	}
-	if f.costState != nil && later(place, row.LastCostState) {
-		row.LastCostState, row.TotalCostUSD = place, *f.costState
+	if f.costState != nil && end > row.LastCostStateEnd {
+		row.LastCostStateEnd, row.TotalCostUSD = end, *f.costState
 	}
 }
 
@@ -134,7 +135,13 @@ func (t *sessionTotals) days() []storage.AgentSessionDay {
 		if c := bytes.Compare(a.session[:], b.session[:]); c != 0 {
 			return c
 		}
-		return a.day.Compare(b.day)
+		if c := a.day.Compare(b.day); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.path, b.path); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.version, b.version)
 	})
 	days := make([]storage.AgentSessionDay, len(keys))
 	for i, key := range keys {
@@ -142,26 +149,9 @@ func (t *sessionTotals) days() []storage.AgentSessionDay {
 		if !row.hasLine {
 			row.First, row.Last = row.storedFirst, row.storedLast
 		}
-		row.Subagents, row.Files, row.FileStarts = sortedKeys(row.subagents), sortedKeys(row.files), sortedKeys(row.starts)
 		days[i] = row.AgentSessionDay
 	}
 	return days
-}
-
-func later(a, b storage.AgentLinePlace) bool {
-	if b.Time.IsZero() {
-		return true
-	}
-	return a.Time.After(b.Time) || (a.Time.Equal(b.Time) && a.Offset > b.Offset)
-}
-
-func sortedKeys(set map[string]bool) []string {
-	keys := make([]string, 0, len(set))
-	for key := range set {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
 }
 
 func timeOf(raw json.RawMessage) (time.Time, bool) {

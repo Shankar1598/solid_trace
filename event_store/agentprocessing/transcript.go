@@ -239,7 +239,7 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 		} else {
 			object["time"] = previous
 		}
-		totals.addLine(unit, line.offset, object, f)
+		totals.addLine(unit, line.offset+uint64(line.length), object, f, receipt)
 		keepOnStoredDay(object, receipt.At)
 		addSource(object, unit, line.offset, line.length)
 		log, outcome := normalise.JSON(object, receipt)
@@ -255,11 +255,8 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 	return logs, totals.days(), state
 }
 
-// isSubagentFile is true for the transcript of a subagent, which Claude
-// Code writes under subagents/ in the Agent session's folder.
-func isSubagentFile(path string) bool {
-	return strings.HasPrefix(path, "subagents/") || strings.Contains(path, "/subagents/")
-}
+// isSubagentFile is true for the transcript of a subagent.
+var isSubagentFile = storage.IsSubagentFile
 
 // addTokens adds the tokens of a request by kind, and its estimated cost
 // when its model has a price.
