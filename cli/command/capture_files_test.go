@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/internal/fake"
 )
@@ -287,5 +288,23 @@ func TestAForbiddenOrFailedUploadStopsTheCall(t *testing.T) {
 				t.Errorf("log: %s", w.captureLog())
 			}
 		})
+	}
+}
+
+// The HTTP client's Timeout is for the small calls: an upload of a large
+// unit on a slow link can take longer.
+func TestAnUploadIsNotStoppedByTheTimeoutOfTheSmallCalls(t *testing.T) {
+	w := newWorld(t, acme)
+	s := w.capturedSession()
+	s.write("", "{\"main\":1}\n")
+	s.write("tool-results/t1.txt", "out")
+	s.write("workflows/wf_1.json", `{"status":"done"}`)
+	w.httpTimeout = 200 * time.Millisecond
+	w.agent.Set(func(f *fake.AgentAPI) { f.UploadDelay = 400 * time.Millisecond })
+	s.hook("SessionEnd")
+	for _, path := range []string{s.main(), s.id + "/tool-results/t1.txt", s.id + "/workflows/wf_1.json"} {
+		if s.stored(path) == "" {
+			t.Errorf("%s did not upload; log: %s", path, w.captureLog())
+		}
 	}
 }

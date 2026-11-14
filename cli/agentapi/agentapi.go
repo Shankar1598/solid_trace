@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Path is where the agent ingest API is under the ingest URL.
@@ -132,6 +133,15 @@ type Uploaded struct {
 	Stored    bool   `json:"stored"`
 }
 
+// UploadBase and UploadRate give an upload its time limit: UploadBase, and
+// one more second for each UploadRate bytes of the gzip body (a 32 MiB
+// body has about 9 minutes). The HTTP client's Timeout, which is for the
+// small calls, does not apply to an upload.
+const (
+	UploadBase = 30 * time.Second
+	UploadRate = 64 << 10
+)
+
 // Upload sends one unit, gzip-compressed. A 409 (a gap, an overlap or an
 // older version) is an *Error with Status 409.
 func (c *Client) Upload(ctx context.Context, sessionID string, unit Unit) (Uploaded, error) {
@@ -159,8 +169,13 @@ func (c *Client) Upload(ctx context.Context, sessionID string, unit Unit) (Uploa
 	if err := zw.Close(); err != nil {
 		return Uploaded{}, err
 	}
+	limit := UploadBase + time.Duration(body.Len()/UploadRate)*time.Second
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	hc := *c.HTTP
+	hc.Timeout = 0
 	var answer Uploaded
-	err := c.call(ctx, http.MethodPost, "/agent-sessions/"+url.PathEscape(sessionID)+"/files?"+query.Encode(),
+	err := c.callWith(ctx, &hc, http.MethodPost, "/agent-sessions/"+url.PathEscape(sessionID)+"/files?"+query.Encode(),
 		body.Bytes(), &answer)
 	return answer, err
 }
@@ -171,11 +186,15 @@ func (c *Client) getJSON(ctx context.Context, path string, into any) error {
 
 // call sends one request; body nil is a GET with no body, else a gzip body.
 func (c *Client) call(ctx context.Context, method, path string, body []byte, into any) error {
+	return c.callWith(ctx, c.HTTP, method, path, body, into)
+}
+
+func (c *Client) callWith(ctx context.Context, hc *http.Client, method, path string, body []byte, into any) error {
 	token, err := c.Tokens.Token(ctx)
 	if err != nil {
 		return err
 	}
-	resp, err := c.send(ctx, method, path, body, token)
+	resp, err := c.send(ctx, hc, method, path, body, token)
 	if err != nil {
 		return err
 	}
@@ -184,7 +203,7 @@ func (c *Client) call(ctx context.Context, method, path string, body []byte, int
 		if token, err = c.Tokens.Refreshed(ctx, token); err != nil {
 			return err
 		}
-		if resp, err = c.send(ctx, method, path, body, token); err != nil {
+		if resp, err = c.send(ctx, hc, method, path, body, token); err != nil {
 			return err
 		}
 	}
@@ -207,7 +226,7 @@ func (c *Client) call(ctx context.Context, method, path string, body []byte, int
 	return nil
 }
 
-func (c *Client) send(ctx context.Context, method, path string, body []byte, token string) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, hc *http.Client, method, path string, body []byte, token string) (*http.Response, error) {
 	if c.IngestURL == "" {
 		return nil, errors.New("no ingest URL: run 'solidtrace login' again")
 	}
@@ -226,7 +245,7 @@ func (c *Client) send(ctx context.Context, method, path string, body []byte, tok
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.Header.Set("Content-Encoding", "gzip")
 	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("reach the agent ingest API at %s: %w", c.IngestURL, err)
 	}
