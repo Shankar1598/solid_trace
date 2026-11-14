@@ -431,12 +431,45 @@ func TestAgentSessionDownloadMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	var memory, parts uint64
+	var query string
+	var settings map[string]string
 	if err := conn.QueryRow(context.Background(), `
-		SELECT toUInt64(max(memory_usage)) FROM system.query_log
+		SELECT toUInt64(memory_usage), query, Settings FROM system.query_log
 		WHERE type = 'QueryFinish' AND current_database = currentDatabase() AND log_comment = ?
-			AND event_date >= yesterday() AND query_start_time_microseconds >= fromUnixTimestamp64Micro(?)`,
-		storage.AgentDownloadLogComment, started.Add(-time.Second).UnixMicro()).Scan(&memory); err != nil {
+			AND event_date >= yesterday() AND query_start_time_microseconds >= fromUnixTimestamp64Micro(?)
+		ORDER BY memory_usage DESC LIMIT 1`,
+		storage.AgentDownloadLogComment, started.Add(-time.Second).UnixMicro()).Scan(&memory, &query, &settings); err != nil {
 		t.Fatal(err)
+	}
+	// At this test's usual size the query uses about the same memory with
+	// the defaults, so the memory limit alone does not show that the
+	// download keeps the prototype's 434 MB Agent session within it. The
+	// settings and the read in key order that the prototype measured must
+	// be there.
+	for name, value := range map[string]string{"max_block_size": "16", "read_in_order_use_buffering": "0"} {
+		if settings[name] != value {
+			t.Errorf("Expected the download's query to read with %s = %s, got %q", name, value, settings[name])
+		}
+	}
+	var plan []string
+	rows, err := conn.Query(context.Background(), "EXPLAIN PLAN actions = 1 "+query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, strings.TrimSpace(line))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Explain the download's query: %v", err)
+	}
+	rows.Close()
+	// ClickHouse versions name it "Read type" or "ReadType".
+	if !slices.Contains(plan, "Read type: InOrder") && !slices.Contains(plan, "ReadType: InOrder") {
+		t.Errorf("Expected the download's query to read in key order, got the plan:\n%s", strings.Join(plan, "\n"))
 	}
 	if err := conn.QueryRow(context.Background(), `
 		SELECT toUInt64(count()) FROM system.parts WHERE database = currentDatabase() AND table = 'agent_session_files' AND active`).Scan(&parts); err != nil {
