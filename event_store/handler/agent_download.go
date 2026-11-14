@@ -115,23 +115,34 @@ func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 	c.Set(AgentSessionFlagsHeader, strings.Join(flags, ", "))
 
 	reader, writer := io.Pipe()
-	go func() {
-		// Close of the reader (fasthttp closes it at the end of the
-		// answer, also when the client goes away) stops the writes, and so
-		// the read.
-		err := h.writeDownload(writer, projectID, sessionID, files)
-		if err != nil {
-			logger.L.Error("Failed to send an Agent session's download", "project_id", projectID, "session_id", sessionID, "error", err)
-		}
-		writer.CloseWithError(err)
-	}()
+	go h.sendDownload(writer, agentDownloadTimeout, projectID, sessionID, files)
 	c.Context().SetBodyStream(reader, -1)
 	return nil
 }
 
+// sendDownload writes the tar archive of files to w and then closes w,
+// with the error if there is one. The close of the reader (fasthttp closes
+// it at the end of the answer, also when the client goes away) makes the
+// next write fail: the read stops, and so does its ClickHouse query. A
+// client that stops reading but keeps its connection open must not keep
+// the query or this goroutine, because the ingest app has no write
+// timeout: after timeout, the close of w stops a write that waits for the
+// client.
+func (h *AgentHandler) sendDownload(w *io.PipeWriter, timeout time.Duration, projectID uint32, sessionID uuid.UUID, files []storage.AgentDownloadFile) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() { w.CloseWithError(ctx.Err()) })
+	defer stop()
+	err := h.writeDownload(ctx, w, projectID, sessionID, files)
+	if err != nil {
+		logger.L.Error("Failed to send an Agent session's download", "project_id", projectID, "session_id", sessionID, "error", err)
+	}
+	w.CloseWithError(err)
+}
+
 // writeDownload writes the tar archive of files to w. On an error it
 // writes no end of the archive.
-func (h *AgentHandler) writeDownload(w io.Writer, projectID uint32, sessionID uuid.UUID, files []storage.AgentDownloadFile) error {
+func (h *AgentHandler) writeDownload(ctx context.Context, w io.Writer, projectID uint32, sessionID uuid.UUID, files []storage.AgentDownloadFile) error {
 	buffered := bufio.NewWriterSize(w, 256<<10)
 	archive := tar.NewWriter(buffered)
 	next := 0
@@ -143,10 +154,6 @@ func (h *AgentHandler) writeDownload(w io.Writer, projectID uint32, sessionID uu
 		}
 		return nil
 	}
-	// A client that stops reading but keeps its connection open must not
-	// keep the ClickHouse query: the ingest app has no write timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), agentDownloadTimeout)
-	defer cancel()
 	err := h.downloads.ReadAgentDownload(ctx, projectID, sessionID, files, func(file int, bytes []byte) error {
 		if err := headersUpTo(file); err != nil {
 			return err
