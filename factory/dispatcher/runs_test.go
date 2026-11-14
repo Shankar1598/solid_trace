@@ -74,6 +74,27 @@ func TestRunsListShowsEachRunsStateProjectAndPromptNewestFirst(t *testing.T) {
 	}
 }
 
+func TestTheConsoleLinkFollowsTheOrganizationsCurrentSlug(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
+
+	// An Admin changes the Organization's slug in Console.
+	renamed := ana.Answer
+	renamed.Organizations = []recorder.Organization{{ID: 7, Slug: "example-co", Name: "Example", Role: "member"}}
+	env.SolidTrace.Token(ana.Token, renamed)
+
+	link := env.SolidTrace.URL() + "/example-co/runs/" + id
+	if got := ana.CLI("runs", "get", id); got.Code != 0 || !strings.Contains(got.Stdout, link) {
+		t.Errorf("runs get after a slug change: exit %d, want link %s:\n%s%s", got.Code, link, got.Stdout, got.Stderr)
+	}
+	var runs dispatcherapi.Runs
+	ana.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
+	if len(runs.Runs) != 1 || runs.Runs[0].URL != link || runs.Runs[0].Organization != "example-co" {
+		t.Errorf("runs list after a slug change: %+v, want link %s", runs.Runs, link)
+	}
+}
+
 func TestTheDispatcherKeepsItsRunsAfterARestart(t *testing.T) {
 	env := factorytest.New(t)
 	ana := env.Member("Ana")

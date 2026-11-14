@@ -14,6 +14,8 @@ import (
 // migrations are the database's schema steps, in order. PRAGMA user_version
 // is the count of steps that the database has. Add steps at the end only.
 var migrations = []string{
+	// organization_slug is the slug when the Run started; it is data only.
+	// The API gives the current slug from the token check.
 	`CREATE TABLE runs (
 		id TEXT PRIMARY KEY,
 		organization_id TEXT NOT NULL,

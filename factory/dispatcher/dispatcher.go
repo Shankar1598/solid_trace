@@ -142,7 +142,7 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		d.serverError(w, "start a Run", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, d.withURL(run.Run))
+	writeJSON(w, http.StatusCreated, d.withURL(run.Run, p))
 }
 
 func (d *Dispatcher) getRun(w http.ResponseWriter, r *http.Request, p person) {
@@ -155,7 +155,7 @@ func (d *Dispatcher) getRun(w http.ResponseWriter, r *http.Request, p person) {
 		d.serverError(w, "read a Run", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, d.withURL(run))
+	writeJSON(w, http.StatusOK, d.withURL(run, p))
 }
 
 func (d *Dispatcher) listRuns(w http.ResponseWriter, r *http.Request, p person) {
@@ -165,13 +165,17 @@ func (d *Dispatcher) listRuns(w http.ResponseWriter, r *http.Request, p person) 
 		return
 	}
 	for i := range runs {
-		runs[i] = d.withURL(runs[i])
+		runs[i] = d.withURL(runs[i], p)
 	}
 	writeJSON(w, http.StatusOK, dispatcherapi.Runs{Runs: runs})
 }
 
-// withURL sets the link to the Run's page in Console.
-func (d *Dispatcher) withURL(run dispatcherapi.Run) dispatcherapi.Run {
+// withURL sets the Organization and the link to the Run's page in Console
+// from the slug in the current token check, not the stored slug: an Admin
+// can change the slug, and Console routes are under the current slug. The
+// Run is in p's Organization, because the store reads by Organization id.
+func (d *Dispatcher) withURL(run dispatcherapi.Run, p person) dispatcherapi.Run {
+	run.Organization = p.organization.slug
 	run.URL = d.config.SolidTraceURL + "/" + run.Organization + "/runs/" + run.ID
 	return run
 }
