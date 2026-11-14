@@ -433,8 +433,9 @@ func TestAgentSessionDownloadMemory(t *testing.T) {
 	var memory, parts uint64
 	if err := conn.QueryRow(context.Background(), `
 		SELECT toUInt64(max(memory_usage)) FROM system.query_log
-		WHERE type = 'QueryFinish' AND current_database = currentDatabase() AND log_comment = ? AND event_date >= yesterday()`,
-		storage.AgentDownloadLogComment).Scan(&memory); err != nil {
+		WHERE type = 'QueryFinish' AND current_database = currentDatabase() AND log_comment = ?
+			AND event_date >= yesterday() AND query_start_time_microseconds >= fromUnixTimestamp64Micro(?)`,
+		storage.AgentDownloadLogComment, started.Add(-time.Second).UnixMicro()).Scan(&memory); err != nil {
 		t.Fatal(err)
 	}
 	if err := conn.QueryRow(context.Background(), `

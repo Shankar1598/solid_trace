@@ -20,6 +20,11 @@ import (
 // of Agent session ids. It always has a list.
 const ScopeSessionsRead = "sessions:read"
 
+// agentDownloadTimeout is the longest time that one download reads. The
+// prototype's largest Agent session (434 MB) streams in about 2 seconds
+// on the server; this lets a slow client have 1 MB a second.
+const agentDownloadTimeout = 10 * time.Minute
+
 // AgentSessionFlagsHeader carries the flags of the downloaded Agent
 // session: cut, partial and trimmed. A resume of a cut or partial Agent
 // session can fail.
@@ -138,7 +143,11 @@ func (h *AgentHandler) writeDownload(w io.Writer, projectID uint32, sessionID uu
 		}
 		return nil
 	}
-	err := h.downloads.ReadAgentDownload(context.Background(), projectID, sessionID, files, func(file int, bytes []byte) error {
+	// A client that stops reading but keeps its connection open must not
+	// keep the ClickHouse query: the ingest app has no write timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), agentDownloadTimeout)
+	defer cancel()
+	err := h.downloads.ReadAgentDownload(ctx, projectID, sessionID, files, func(file int, bytes []byte) error {
 		if err := headersUpTo(file); err != nil {
 			return err
 		}
