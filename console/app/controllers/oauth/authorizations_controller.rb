@@ -166,18 +166,18 @@ module Oauth
       elsif pending.state.to_s.length > MAX_STATE
         [ "invalid_request", "Send a state of at most #{MAX_STATE} characters." ]
       elsif scopes(pending).nil?
-        [ "invalid_scope", "Ask for the scopes in the metadata's scopes_supported: #{Scopes.names.join(', ')}." ]
+        [ "invalid_scope", "Ask for the scopes in the metadata's scopes_supported: #{Scopes.for_oauth.map(&:name).join(', ')}." ]
       elsif resource(pending).nil?
         [ "invalid_target", "Send resource=#{issuer.mcp_resource}, or no resource." ]
       end
     end
 
     # The Scopes the request asks for (mcp when it names none), or nil when
-    # one is unknown.
+    # one is unknown or is not for OAuth (Scopes::Scope#oauth?).
     def scopes(pending)
       names = pending.scope.to_s.split
-      names = [ "mcp" ] if names.empty?
-      found = names.uniq.map { |name| Scopes.find(name) }
+      names = [ Scopes::MCP ] if names.empty?
+      found = names.uniq.map { |name| Scopes.find(name)&.then { |scope| scope if scope.oauth? } }
       found unless found.include?(nil)
     end
 
