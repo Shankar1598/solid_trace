@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SecondStepFields, emptySecondStepAnswer, sendWithPasskeyProof, type SecondStepProof } from '@/components/SecondStepFields'
 import { PasskeysCard, type PasskeyRow } from '@/components/PasskeysCard'
+import { SignedInClientsCard, type SignedInClientRow } from '@/components/SignedInClientsCard'
 import { passkeysSupported, type PasskeyOfferHere } from '@/lib/passkeys'
 import { User } from '@/types'
 import { toast } from 'sonner'
@@ -21,12 +22,14 @@ interface SettingsUserProps {
   // those for another host too.
   passkey_offer: PasskeyOfferHere
   passkeys: PasskeyRow[]
+  // The live Grants that have had a token, newest first.
+  signed_in_clients: SignedInClientRow[]
   // The Organization the set-up page sent the user from (?org=), which
   // adding a first Passkey returns to.
   return_organization: { name: string; slug: string } | null
 }
 
-export default function SettingsUser({ user, authenticator_app, recovery_codes_left, passkey_offer, passkeys, return_organization }: SettingsUserProps) {
+export default function SettingsUser({ user, authenticator_app, recovery_codes_left, passkey_offer, passkeys, signed_in_clients, return_organization }: SettingsUserProps) {
   const { url } = usePage()
   // How the user can prove it's them: a code, a Recovery code (always), or
   // one of their Passkeys for this host, on a page opened there.
@@ -103,6 +106,7 @@ export default function SettingsUser({ user, authenticator_app, recovery_codes_l
           twoFactor={!!authenticator_app || passkeys.length > 0}
           returnOrganization={return_organization?.slug}
         />
+        <SignedInClientsCard clients={signed_in_clients} />
       </div>
     </SettingsLayout>
   )

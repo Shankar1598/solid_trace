@@ -73,6 +73,13 @@ module Oauth
       URI(client_id).host if kind == "cimd"
     end
 
+    # Where the client is, for Settings → User: the host that publishes the
+    # description, or for a registered client the hosts of its redirect
+    # URIs.
+    def host
+      published_host || redirect_uris.filter_map { |uri| uri_host(uri) }.uniq.join(", ")
+    end
+
     # Whether the kept copy of the description is fresh, so no fetch is
     # needed.
     def fresh?
@@ -124,6 +131,12 @@ module Oauth
     end
 
     private
+
+    def uri_host(uri)
+      URI(uri).host
+    rescue URI::InvalidURIError
+      nil
+    end
 
     def same_loopback_uri?(registered, uri)
       a = URI(registered)

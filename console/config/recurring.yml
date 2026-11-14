@@ -25,6 +25,10 @@ tasks: &tasks
     class: "Maintenance::NotificationCleanupJob"
     schedule: at 3am every day
 
+  oauth_cleanup:
+    class: "Oauth::CleanupJob"
+    schedule: at 3:30am every day
+
 development:
   <<: *tasks
 

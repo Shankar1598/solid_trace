@@ -38,6 +38,8 @@ Rails.application.routes.draw do
     post :proof_options, on: :collection
   end
   resources :api_tokens, only: [ :create, :destroy ]
+  # Revoking one of the user's Signed-in clients on Settings → User (SignedInClientsController).
+  resources :signed_in_clients, only: [ :destroy ]
   # The MCP server (McpController).
   post "mcp", to: "mcp#create", as: :mcp, format: false
   match "mcp", to: "mcp#method_not_allowed", via: [ :get, :delete ], as: nil, format: false
