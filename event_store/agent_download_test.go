@@ -3,6 +3,7 @@ package main_test
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/storage"
 )
 
 // The download of one Agent session directory, for a resume on another
@@ -221,8 +225,63 @@ func TestAgentSessionDownload(t *testing.T) {
 	})
 }
 
+// changingDownloads reads from ClickHouse, but its reads of the bytes fail
+// after the first file, as when Retention drops a day during a download.
+type changingDownloads struct {
+	*storage.ClickHouse
+}
+
+func (d changingDownloads) ReadAgentDownload(ctx context.Context, projectID uint32, sessionID uuid.UUID, files []storage.AgentDownloadFile, write func(int, []byte) error) error {
+	return d.ClickHouse.ReadAgentDownload(ctx, projectID, sessionID, files, func(file int, bytes []byte) error {
+		if file > 0 {
+			return storage.ErrAgentDownloadChanged
+		}
+		return write(file, bytes)
+	})
+}
+
+func TestAgentSessionDownloadThatFailsAfterItsFirstByte(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	reader, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization, scopes: []string{"sessions:read"},
+		sessionIDs: []string{laptopSession}})
+	for _, path := range []string{"session.jsonl", "subagents/agent-a1.jsonl"} {
+		expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: path, body: lines("A line of " + path)}), 200)
+	}
+	env.ProcessAgentFiles(t)
+	app := newAgentAppWith(t, env, "dev", changingDownloads{env.ClickHouse})
+
+	req, _ := http.NewRequest("GET", agentDownloadPath(laptopSession), nil)
+	req.Header.Set("Authorization", "Bearer "+reader)
+	resp, err := app.Test(req, 10000)
+	if err != nil {
+		return // The client sees the error.
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+	archive := tar.NewReader(bytes.NewReader(raw))
+	var names []string
+	for {
+		h, err := archive.Next()
+		if errors.Is(err, io.EOF) {
+			t.Fatalf("Expected an error, got a whole archive of %v", names)
+		}
+		if err != nil {
+			return
+		}
+		names = append(names, h.Name)
+		if _, err := io.ReadAll(archive); err != nil {
+			return
+		}
+	}
+}
+
 const (
-	pendingSession = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
+	pendingSession ="1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
 	retainSession  = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c02"
 )
 
