@@ -290,6 +290,7 @@ const (
 	pendingSession = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
 	retainSession  = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c02"
 	cutLastSession = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c03"
+	gapSession     = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c04"
 )
 
 // transcriptText writes size bytes of .jsonl lines, about 2 KB each, of
@@ -563,7 +564,7 @@ func TestAgentSessionDownloadOfWhatIsNotWhole(t *testing.T) {
 	defer env.Cleanup()
 	o := newAgentOrganization(t, env)
 	reader, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization, scopes: []string{"sessions:read"},
-		sessionIDs: []string{pendingSession, cutSession, cutLastSession, trimSession, retainSession}})
+		sessionIDs: []string{pendingSession, cutSession, cutLastSession, gapSession, trimSession, retainSession}})
 	upload := func(sessionID string, u unitUpload) {
 		t.Helper()
 		expectStatus(t, uploadUnit(t, env, o.secret, sessionID, u), 200)
@@ -643,6 +644,39 @@ func TestAgentSessionDownloadOfWhatIsNotWhole(t *testing.T) {
 		}
 		if got := d.header.Get("SolidTrace-Agent-Session-Flags"); got != "cut" {
 			t.Errorf("Expected the Agent session flagged cut, got %q", got)
+		}
+	})
+
+	t.Run("a row that is gone between two whole rows is marked cut with its range", func(t *testing.T) {
+		first, middle, last := lines("The first prompt"), lines("The middle prompt"), lines("The last prompt")
+		upload(gapSession, unitUpload{path: "session.jsonl", body: first})
+		upload(gapSession, unitUpload{path: "session.jsonl", offset: len(first), body: middle})
+		upload(gapSession, unitUpload{path: "session.jsonl", offset: len(first) + len(middle), body: last})
+		env.ProcessAgentFiles(t)
+		// The upload rules do not leave a hole; take the middle row away to
+		// make one.
+		if err := env.ClickHouse.Conn().Exec(context.Background(),
+			"DELETE FROM agent_session_files WHERE session_id = ? AND offset = ?", gapSession, len(first)); err != nil {
+			t.Fatal(err)
+		}
+
+		d := downloadSession(t, env, reader, gapSession)
+		expectDownloadStatus(t, d, 200)
+		f := d.files["session.jsonl"]
+		if f.bytes != string(first)+string(last) {
+			t.Errorf("Expected the first and the last prompt in order, got %q", f.bytes)
+		}
+		end := len(first) + len(middle) + len(last)
+		want := map[string]string{
+			"SOLIDTRACE.start_offset": "0",
+			"SOLIDTRACE.end_offset":   fmt.Sprint(end),
+			"SOLIDTRACE.flags":        "cut",
+			"SOLIDTRACE.missing":      fmt.Sprintf("%d-%d", len(first), len(first)+len(middle)),
+		}
+		for key, value := range want {
+			if f.records[key] != value {
+				t.Errorf("Expected %s %q, got %q", key, value, f.records[key])
+			}
 		}
 	})
 
