@@ -26,6 +26,13 @@ updates:
   groups:
     modules:
       update-types: [minor, patch]
+- package-ecosystem: gomod
+  directory: /cli
+  schedule:
+    interval: weekly
+  groups:
+    modules:
+      update-types: [minor, patch]
 - package-ecosystem: cargo
   directory: /event_store/vrl/rust
   schedule:
