@@ -82,6 +82,14 @@ class OauthSignedInClientsTest < ActionDispatch::IntegrationTest
     assert_equal "Unnamed client", signed_in_clients.first.dig("client", "name")
   end
 
+  test "a registered client's host lists each host of its redirect URIs once" do
+    sign_in_as @user
+    client_id = registered_client(redirect_uris: [ REDIRECT_URI, "http://localhost:5678/other", "http://127.0.0.1:4567/callback" ])
+    signed_in(client_id: client_id)
+
+    assert_equal "localhost, 127.0.0.1", signed_in_clients.first.dig("client", "host")
+  end
+
   test "a user with no Signed-in clients gets an empty list" do
     sign_in_as @user
 
