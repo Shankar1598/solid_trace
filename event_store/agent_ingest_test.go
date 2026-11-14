@@ -443,6 +443,31 @@ func TestAgentIngestCapturedRepositories(t *testing.T) {
 		}
 	})
 
+	t.Run("a trailing slash on an access token's resource is the same resource", func(t *testing.T) {
+		// Oauth::Issuer.normalize_resource removes trailing slashes.
+		secret, _, _ := rows.accessToken(accessTokenRow{user: engineer, organization: acme,
+			scopes: []string{"sessions:write", "mcp"}, resource: factoryResource + "/", expiresAt: now.Add(time.Hour)})
+		if got := repositoriesOf(t, capturedRepositories(t, env, secret)); len(got) != 2 {
+			t.Fatalf("Expected Acme's two entries, got %v", got)
+		}
+		secret, _, _ = rows.accessToken(accessTokenRow{user: engineer, organization: acme,
+			scopes: []string{"sessions:write", "mcp"}, resource: "https://console.example.com/mcp/", expiresAt: now.Add(time.Hour)})
+		expectStatus(t, capturedRepositories(t, env, secret), 403)
+	})
+
+	t.Run("an access token whose resource has a query or a fragment gets 401", func(t *testing.T) {
+		// Console keeps the query and the fragment when it compares
+		// resources, so such a resource is not the factory's.
+		for _, resource := range []string{factoryResource + "?x=1", factoryResource + "#f"} {
+			secret, _, _ := rows.accessToken(accessTokenRow{user: engineer, organization: acme,
+				scopes: []string{"sessions:write"}, resource: resource, expiresAt: now.Add(time.Hour)})
+			answer := capturedRepositories(t, env, secret)
+			if answer.status != 401 {
+				t.Errorf("%s: expected 401, got %d: %s", resource, answer.status, answer.raw)
+			}
+		}
+	})
+
 	t.Run("an access token for another resource has no sessions:write", func(t *testing.T) {
 		// The Grant has sessions:write, but this token is for the MCP
 		// server: a token gets only its Grant's Scopes for its own
@@ -471,6 +496,17 @@ func TestAgentIngestCapturedRepositories(t *testing.T) {
 		if got := repositoriesOf(t, capturedRepositories(t, env, secret)); len(got) != 1 {
 			t.Fatalf("Expected Strict's entry once the user has Two-factor, got %v", got)
 		}
+
+		// A passkey is Two-factor too, with no authenticator.
+		holder := rows.user()
+		rows.member(strict, holder)
+		rows.insert(`INSERT INTO passkeys (user_id, credential_id, public_key, name, host, created_at, updated_at)
+			VALUES (?, ?, 'key', 'Laptop', 'console.example.com', ?, ?)`, holder, fmt.Sprintf("credential-%d", holder),
+			railsTime(now), railsTime(now))
+		secret, _ = rows.apiToken(apiTokenRow{user: holder, organization: strict, scopes: []string{"sessions:write"}})
+		if got := repositoriesOf(t, capturedRepositories(t, env, secret)); len(got) != 1 {
+			t.Fatalf("Expected Strict's entry for a user with a passkey, got %v", got)
+		}
 	})
 
 	t.Run("an Organization with Agent sessions turned off gives an empty list", func(t *testing.T) {
@@ -478,6 +514,19 @@ func TestAgentIngestCapturedRepositories(t *testing.T) {
 		answer := capturedRepositories(t, env, secret)
 		if got := repositoriesOf(t, answer); got == nil || len(got) != 0 {
 			t.Fatalf("Expected an empty list, got %v", got)
+		}
+	})
+
+	t.Run("only the Agent Project's list is given, not another Project's", func(t *testing.T) {
+		// The ordinary Project comes first, with a value in its column.
+		mixed := rows.organization("Mixed")
+		ordinary := rows.project(mixed)
+		rows.exec(`UPDATE projects SET captured_repositories = '["github.com/mixed/ordinary"]' WHERE id = ?`, ordinary)
+		rows.agentProject(mixed, "github.com/mixed/agent")
+		rows.member(mixed, engineer)
+		secret, _ := rows.apiToken(apiTokenRow{user: engineer, organization: mixed, scopes: []string{"sessions:write"}})
+		if got := repositoriesOf(t, capturedRepositories(t, env, secret)); strings.Join(got, ",") != "github.com/mixed/agent" {
+			t.Fatalf("Expected only the Agent Project's entry, got %v", got)
 		}
 	})
 
