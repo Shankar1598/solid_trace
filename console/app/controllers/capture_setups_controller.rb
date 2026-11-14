@@ -12,7 +12,7 @@ class CaptureSetupsController < ApplicationController
     render inertia: "Settings/CaptureSetup", props: CaptureSetup.props(
       organization: @current_org,
       version: Rails.application.config.x.solidtrace_version,
-      console_url: Oauth::Issuer.current.url || PublicUrls.console_url(request.base_url),
+      console_url: PublicUrls.console_url(request.base_url),
       ingest_url: PublicUrls.ingest_url(request.base_url)
     )
   end

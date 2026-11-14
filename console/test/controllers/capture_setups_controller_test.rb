@@ -69,6 +69,14 @@ class CaptureSetupsControllerTest < ActionDispatch::IntegrationTest
     assert page["version_note"].present?
   end
 
+  test "with no Console URL saved or set, the login command uses the address the request reached Console at" do
+    InstanceSetting.current.update!(console_url: nil, ingest_url: nil)
+    sign_in_as(@member)
+
+    assert_equal "solidtrace login --ingest-url http://www.example.com:4000 http://www.example.com",
+                 with_env("CONSOLE_URL" => nil, "PUBLIC_INGEST_URL" => nil) { setup_page["login_command"] }
+  end
+
   test "with Agent sessions off the page says that nothing uploads" do
     sign_in_as(@member)
 
@@ -87,6 +95,14 @@ class CaptureSetupsControllerTest < ActionDispatch::IntegrationTest
   end
 
   private
+
+  def with_env(values)
+    previous = values.keys.index_with { |key| ENV[key] }
+    values.each { |key, value| ENV[key] = value }
+    yield
+  ensure
+    previous.each { |key, value| ENV[key] = value }
+  end
 
   def turn_on(entries)
     AgentSessionsSettings.turn_on(organization: @organization, user: @admin, entries: entries, confirmed: true)
