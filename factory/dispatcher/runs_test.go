@@ -1,11 +1,15 @@
 package dispatcher_test
 
 import (
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
+	"github.com/solidtrace/factory/internal/recorder"
 )
 
 var queuedLine = regexp.MustCompile(`(?m)^Run (\S+) is queued\.$`)
@@ -42,5 +46,116 @@ func TestStartMakesAQueuedRunAndPrintsItsIDAndConsoleLink(t *testing.T) {
 		if !strings.Contains(got.Stdout, want) {
 			t.Errorf("runs get has no %q:\n%s", want, got.Stdout)
 		}
+	}
+}
+
+func TestRunsListShowsEachRunsStateProjectAndPromptNewestFirst(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	first, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
+	env.Clock.Advance(time.Minute)
+	second, _ := start(t, ana, "--project", "search", "Add a synonym list")
+
+	list := ana.CLI("runs", "list")
+	if list.Code != 0 {
+		t.Fatalf("runs list: exit %d: %s", list.Code, list.Stderr)
+	}
+	lines := strings.Split(strings.TrimSpace(list.Stdout), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want a header and 2 Runs:\n%s", list.Stdout)
+	}
+	for i, want := range [][]string{{second, "queued", "search", "Add a synonym list"},
+		{first, "queued", "checkout", "Fix the flaky cart test"}} {
+		for _, w := range want {
+			if !strings.Contains(lines[i+1], w) {
+				t.Errorf("line %d has no %q: %s", i+1, w, lines[i+1])
+			}
+		}
+	}
+}
+
+func TestTheDispatcherKeepsItsRunsAfterARestart(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
+
+	env.Restart()
+
+	got := ana.CLI("runs", "get", id)
+	if got.Code != 0 || !strings.Contains(got.Stdout, "Fix the flaky cart test") {
+		t.Fatalf("after a restart, runs get: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	list := ana.CLI("runs", "list")
+	if !strings.Contains(list.Stdout, id) {
+		t.Errorf("after a restart, runs list has no %s:\n%s", id, list.Stdout)
+	}
+}
+
+func TestAPersonSeesOnlyTheRunsOfTheTokensOrganization(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
+	other := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
+
+	if a := other.API("GET", "/api/v1/runs/"+id, nil); a.Status != http.StatusNotFound {
+		t.Errorf("another Organization's get: %d %s, want 404", a.Status, a.Body)
+	}
+	var runs dispatcherapi.Runs
+	other.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
+	if len(runs.Runs) != 0 {
+		t.Errorf("another Organization lists %d Runs, want 0", len(runs.Runs))
+	}
+}
+
+func TestTheAPIRefusesNoTokenAndATokenThatIsNotActive(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	body := dispatcherapi.StartRun{Project: "checkout", Prompt: "x"}
+
+	for name, token := range map[string]string{"no token": "", "an unknown token": "stk_unknown"} {
+		a := env.API(token, "POST", "/api/v1/runs", body)
+		if a.Status != http.StatusUnauthorized || !strings.Contains(string(a.Body), "solidtrace login") {
+			t.Errorf("%s: %d %s, want 401 that names solidtrace login", name, a.Status, a.Body)
+		}
+	}
+	env.SolidTrace.Revoke(ana.Token)
+	result := ana.CLI("start", "--dispatcher", env.URL(), "--project", "checkout", "x")
+	if result.Code != 1 || !strings.Contains(result.Stderr, "solidtrace login") {
+		t.Errorf("a revoked token: exit %d, stderr %q", result.Code, result.Stderr)
+	}
+}
+
+func TestStartRefusesARunWithNoProjectOrPrompt(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	for _, body := range []dispatcherapi.StartRun{{Project: "checkout"}, {Prompt: "Fix it"}, {Project: " ", Prompt: "Fix it"}} {
+		if a := ana.API("POST", "/api/v1/runs", body); a.Status != http.StatusBadRequest {
+			t.Errorf("%+v: %d %s, want 400", body, a.Status, a.Body)
+		}
+	}
+	if r := ana.CLI("start", "--dispatcher", env.URL(), "Fix it"); r.Code != 2 {
+		t.Errorf("start with no --project: exit %d, want 2", r.Code)
+	}
+}
+
+func TestARunVerbWithNoDispatcherURLSaysHowToGiveIt(t *testing.T) {
+	env := factorytest.New(t)
+	r := env.Member("Ana").CLI("runs", "list")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "--dispatcher") {
+		t.Errorf("exit %d, stderr %q", r.Code, r.Stderr)
+	}
+}
+
+func TestTheRecorderKeepsEachTokenCheckThatTheDispatcherSends(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix it")
+
+	calls := env.SolidTrace.CallsTo("/oauth/introspect")
+	if len(calls) != 1 {
+		t.Fatalf("%d token checks, want 1: %+v", len(calls), env.SolidTrace.Calls())
+	}
+	if calls[0].Authorization != "Bearer "+factorytest.DispatcherToken || calls[0].Form.Get("token") != ana.Token {
+		t.Errorf("the check is %+v, want the Dispatcher's token as caller and Ana's token as the checked token", calls[0])
 	}
 }

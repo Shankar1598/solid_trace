@@ -108,11 +108,18 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 	answer, active := r.answers[call.Form.Get("token")]
 	r.mu.Unlock()
 
+	w.Header().Set("Content-Type", "application/json")
+	if req.Method == http.MethodPost && req.URL.Path == "/oauth/token" {
+		// The recorder gives no new tokens: a refresh (after a 401) ends
+		// the CLI's sign-in, as SolidTrace does for a revoked token.
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+		return
+	}
 	if req.Method != http.MethodPost || req.URL.Path != "/oauth/introspect" {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	if call.Authorization != "Bearer "+r.CallerToken {
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 		w.WriteHeader(http.StatusUnauthorized)
