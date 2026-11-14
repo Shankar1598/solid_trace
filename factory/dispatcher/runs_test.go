@@ -218,3 +218,24 @@ func TestTheAPIRefusesATokenThatActsInNoOrganizationOrInMoreThanOne(t *testing.T
 		}
 	}
 }
+
+func TestStartRefusesABodyThatIsNotAStartRunObject(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	big := `{"project":"checkout","prompt":"` + strings.Repeat("x", 1<<20) + `"}`
+	for name, body := range map[string]string{
+		"an unknown field":        `{"project":"checkout","prompt":"Fix it","extra":1}`,
+		"a misspelled field":      `{"projct":"checkout","prompt":"Fix it"}`,
+		"a body that is not JSON": `project=checkout&prompt=Fix+it`,
+		"a body over 1 MiB":       big,
+	} {
+		if a := ana.API("POST", "/api/v1/runs", []byte(body)); a.Status != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", name, a.Status, a.Body)
+		}
+	}
+	var runs dispatcherapi.Runs
+	ana.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
+	if len(runs.Runs) != 0 {
+		t.Errorf("%d Runs are queued after bad bodies, want 0", len(runs.Runs))
+	}
+}

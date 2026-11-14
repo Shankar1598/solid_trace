@@ -198,11 +198,14 @@ func (p *Person) API(method, path string, body any) Answer {
 }
 
 // API sends one request to the private listener with token ("" sends no
-// Authorization).
+// Authorization). A []byte body is sent as it is; another body is sent as
+// JSON.
 func (e *Env) API(token, method, path string, body any) Answer {
 	e.t.Helper()
 	var reader io.Reader
-	if body != nil {
+	if raw, ok := body.([]byte); ok {
+		reader = bytes.NewReader(raw)
+	} else if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
 			e.t.Fatal(err)
