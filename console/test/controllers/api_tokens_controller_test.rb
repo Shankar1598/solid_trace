@@ -55,6 +55,32 @@ class ApiTokensControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # The page shows the sign-in snippet with mcp_url when there is no note. A
+  # client signs in only at the Console URL's host, so mcp_url must be the
+  # resource that the 401 and the metadata name, also when the page is
+  # opened on another host and the Console URL comes from CONSOLE_URL.
+  test "with OAuth on, the MCP URL is the resource at the Console URL's host, not the request's" do
+    ENV["CONSOLE_URL"] = "https://console.example.com"
+    props = inertia_props(tokens_page_url)
+    assert_nil props["browser_sign_in_note"]
+    assert_equal "https://console.example.com/mcp", props["mcp_url"]
+
+    InstanceSetting.current.update!(console_url: "https://solid-trace.example.ts.net/")
+    props = inertia_props(tokens_page_url)
+    assert_nil props["browser_sign_in_note"]
+    assert_equal "https://solid-trace.example.ts.net/mcp", props["mcp_url"]
+
+    post "/mcp", params: { jsonrpc: "2.0", id: 1, method: "tools/list" }.to_json,
+      headers: { "Content-Type" => "application/json", "Accept" => "application/json, text/event-stream" }
+    assert_response :unauthorized
+    assert_includes response.headers["WWW-Authenticate"],
+      %(resource_metadata="https://solid-trace.example.ts.net/.well-known/oauth-protected-resource/mcp")
+    get "/.well-known/oauth-protected-resource/mcp"
+    assert_equal props["mcp_url"], response.parsed_body["resource"]
+  ensure
+    ENV.delete("CONSOLE_URL")
+  end
+
   test "Account no longer lists the tokens" do
     ApiToken.issue!(user: @user, name: "Laptop")
 
