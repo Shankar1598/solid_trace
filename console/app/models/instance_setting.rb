@@ -5,7 +5,8 @@
 # and the settings that apply at once (EDITABLE: SQL queries, the default
 # Retention of Logs and of traces, log-all-reads, log-MCP-reads, the
 # text-match budget, the Log read threads, the hours on local disk, Console's
-# and ingest's URLs) on Settings → Instance or over the MCP server.
+# and ingest's URLs, the extra Redaction patterns) on Settings → Instance or
+# over the MCP server.
 # Sign-up has no UI on purpose: opening it lets anyone who can reach Console
 # make an account, so it changes only from a shell on the server, with
 # `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
@@ -21,7 +22,12 @@ class InstanceSetting < ApplicationRecord
   # Settings → Instance and over the MCP server.
   EDITABLE = %i[sql_queries_enabled default_log_retention_days default_trace_retention_days log_all_reads
                 log_mcp_reads send_console_issues trace_console logs_text_match_budget_mb logs_read_threads
-                local_cache_hours console_url ingest_url].freeze
+                local_cache_hours console_url ingest_url redaction_patterns].freeze
+
+  # The credentials that EventStore's default Redaction patterns remove,
+  # always on (event_store/redaction, Defaults).
+  REDACTION_DEFAULTS = "Anthropic API keys and Claude OAuth tokens (sk-ant-…), Bitbucket access tokens and app " \
+                       "passwords, and Atlassian API tokens"
 
   # What turning SQL queries on allows (docs/adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
   SQL_QUERIES_DESCRIPTION = <<~TEXT
@@ -90,6 +96,16 @@ class InstanceSetting < ApplicationRecord
                               "keeps more on local disk, which counts toward the disk limit; parts already in the " \
                               "bucket stay there. ClickHouse recomputes every part's move time in the background, " \
                               "reading each part's time column from the bucket, so change it rarely."
+
+  # The extra Redaction patterns, after the defaults: Go regular expressions
+  # that EventStore applies to each unit of an Agent session's file before it
+  # stores it, from the next upload on. Each byte that one matches becomes
+  # '*'. Blank lines are dropped. EventStore checks new patterns before they
+  # save: each must be valid, and must not be able to match a quote or a
+  # backslash, so that a replacement cannot break a JSON line.
+  normalizes :redaction_patterns, apply_to_nil: true,
+    with: ->(patterns) { Array(patterns).map { |p| p.to_s.chomp("\r") }.reject(&:blank?) }
+  validate :redaction_patterns_pass_the_check, if: -> { will_save_change_to_redaction_patterns? && redaction_patterns.any? }
 
   # Console's Sentry reads these settings once in a while; this process reads
   # them again at once.
@@ -206,6 +222,21 @@ class InstanceSetting < ApplicationRecord
     errors.add(attribute, URL_FORMATS.fetch(attribute))
   rescue URI::InvalidURIError
     errors.add(attribute, URL_FORMATS.fetch(attribute))
+  end
+
+  # EventStore applies the patterns, so it checks them with its own regular
+  # expression syntax; each error names its pattern. update_editable
+  # validates two times, so the answer for the same list is kept.
+  def redaction_patterns_pass_the_check
+    unless @checked_redaction_patterns == redaction_patterns
+      @redaction_pattern_problems = EventStore.check_redaction_patterns(patterns: redaction_patterns)
+        .fetch("errors", []).map { |problem| "#{problem["pattern"]}: #{problem["error"].to_s.chomp(".")}" }
+      @checked_redaction_patterns = redaction_patterns.dup
+    end
+    @redaction_pattern_problems.each { |problem| errors.add(:redaction_patterns, problem) }
+  rescue EventStore::Unavailable, EventStore::Rejected => e
+    Rails.logger.error(e.message)
+    errors.add(:redaction_patterns, "couldn't be checked, as EventStore is unavailable. Try again shortly")
   end
 
   def console_url_keeps_https_mode

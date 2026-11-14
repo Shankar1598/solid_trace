@@ -46,7 +46,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
 
     patch instance_settings_url(org_slug: @organization.slug),
       params: { instance_settings: { sql_queries_enabled: false, log_all_reads: true, default_trace_retention_days: 3 } }
-    assert_redirected_to root_url
+    assert_response :forbidden
     assert_equal 14, InstanceSetting.current.default_trace_retention_days
     assert InstanceSetting.current.sql_queries_enabled?
     assert_not InstanceSetting.current.log_all_reads?
@@ -66,7 +66,8 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
       "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
       "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24,
       "console_url" => nil, "console_url_fallback" => { "url" => "http://www.example.com", "source" => "request" },
-      "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://www.example.com:4000", "source" => "console_url" } },
+      "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://www.example.com:4000", "source" => "console_url" },
+      "redaction_patterns" => [], "redaction_defaults" => InstanceSetting::REDACTION_DEFAULTS },
       settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")
@@ -446,7 +447,79 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_not settings.meta_organization_seeded?
   end
 
+  test "an instance admin saves extra Redaction patterns, which EventStore checks, and the page shows them" do
+    stub_pattern_check
+    sign_in_as(@instance_admin)
+
+    save(redaction_patterns: [ "acme_live_[a-z0-9]{16}", "", "shop_[A-Z]{8}\r" ])
+
+    assert_equal "Instance settings saved", flash[:notice]
+    assert_requested :post, %r{/redaction-patterns/check\z},
+      body: { patterns: [ "acme_live_[a-z0-9]{16}", "shop_[A-Z]{8}" ] }.to_json
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    editable = response.parsed_body.dig("props", "settings", "editable")
+    assert_equal [ "acme_live_[a-z0-9]{16}", "shop_[A-Z]{8}" ], editable["redaction_patterns"]
+    assert_includes editable["redaction_defaults"], "Claude OAuth tokens"
+
+    save(redaction_patterns: [])
+
+    assert_equal "Instance settings saved", flash[:notice]
+    assert_equal [], InstanceSetting.current.redaction_patterns
+  end
+
+  test "a pattern that EventStore refuses comes back as a form error that names it, and saves nothing" do
+    stub_pattern_check
+    InstanceSetting.current.update!(redaction_patterns: [ "acme_live_[a-z0-9]{16}" ])
+    refusal = 'The pattern can match a quote ("), so a replacement could break a JSON line.'
+    invalid = "This is not a valid pattern (Go regular expression syntax): missing closing )."
+    stub_pattern_check([ { index: 1, pattern: 'secret="[a-z]+"', error: refusal }, { index: 2, pattern: "sk_(", error: invalid } ])
+    sign_in_as(@instance_admin)
+
+    save(redaction_patterns: [ "shop_[A-Z]{8}", 'secret="[a-z]+"', "sk_(" ], log_all_reads: true)
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ "secret=\"[a-z]+\": #{refusal.chomp('.')}", "sk_(: #{invalid.chomp('.')}" ],
+      response.parsed_body.dig("props", "errors", "redaction_patterns")
+    assert_equal [ "acme_live_[a-z0-9]{16}" ], InstanceSetting.current.redaction_patterns
+    assert_not InstanceSetting.current.log_all_reads?
+  end
+
+  test "with EventStore unreachable, new patterns come back as a form error, and the other settings still save" do
+    stub_request(:post, %r{/redaction-patterns/check\z}).to_raise(Errno::ECONNREFUSED)
+    sign_in_as(@instance_admin)
+
+    save(redaction_patterns: [ "shop_[A-Z]{8}" ])
+
+    get instance_settings_url(org_slug: @organization.slug), headers: inertia
+    assert_equal [ "couldn't be checked, as EventStore is unavailable. Try again shortly" ],
+      response.parsed_body.dig("props", "errors", "redaction_patterns")
+    assert_equal [], InstanceSetting.current.redaction_patterns
+
+    save(log_all_reads: true)
+
+    assert_equal "Instance settings saved", flash[:notice]
+    assert InstanceSetting.current.log_all_reads?
+  end
+
+  test "a member who isn't an instance admin can't save Redaction patterns" do
+    member = create(:user)
+    @organization.organization_users.create!(user: member, role: :member)
+    [ member, @org_admin ].each do |user|
+      sign_in_as(user)
+      save(redaction_patterns: [ "shop_[A-Z]{8}" ])
+      assert_response :forbidden
+    end
+    assert_equal [], InstanceSetting.current.redaction_patterns
+    assert_not_requested :post, %r{/redaction-patterns/check\z}
+  end
+
   private
+
+  # EventStore's check of extra Redaction patterns, answering errors.
+  def stub_pattern_check(errors = [])
+    stub_request(:post, %r{/redaction-patterns/check\z}).to_return(status: 200, body: { errors: errors }.to_json,
+      headers: { "Content-Type" => "application/json" })
+  end
 
   def event_store_group
     response.parsed_body.dig("props", "settings", "restart_to_change").find { |group| group["name"] == "EventStore" }

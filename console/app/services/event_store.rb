@@ -316,6 +316,14 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/logs/transform/check", { program: program })
     end
 
+    # Checks extra Redaction patterns before they save: {"errors" => [{"index",
+    # "pattern", "error"}]}, with index from 0, and no error when each can be
+    # saved. A pattern must be a valid Go regular expression that can't match
+    # a quote or a backslash; at most 100 patterns.
+    def check_redaction_patterns(patterns:)
+      post!("#{base_url}/redaction-patterns/check", { patterns: patterns })
+    end
+
     # Runs a draft program on the Project's recent arrivals, or on up to 200
     # logs given as JSON objects, storing nothing: {"results" => [{"before",
     # "after"} | {"before", "dropped" => true} | {"before", "error"}], "kept",

@@ -573,6 +573,7 @@ func (env *TestEnv) open(t *testing.T) {
 			LocalCacheHours: clickHouse.LocalCacheHours,
 		}), handler.NewTracesHandler(clickHouse), healthHandler, handler.NewConfigHandler(&config.Config{}, 0))
 	handler.RegisterPerformanceRoutes(env.QueryApp, handler.NewPerformanceHandler(clickHouse))
+	handler.RegisterRedactionRoutes(env.QueryApp)
 
 	env.close = func() {
 		pebbleWriter.StopWrites()

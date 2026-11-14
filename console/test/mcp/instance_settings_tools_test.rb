@@ -41,7 +41,8 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
       "log_mcp_reads" => true, "send_console_issues" => true, "trace_console" => true,
       "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24,
       "console_url" => nil, "console_url_fallback" => { "url" => "http://console.test", "source" => "request" },
-      "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://console.test:4000", "source" => "console_url" } },
+      "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://console.test:4000", "source" => "console_url" },
+      "redaction_patterns" => [], "redaction_defaults" => InstanceSetting::REDACTION_DEFAULTS },
       answer.json["editable"])
     assert_equal({ "open" => false, "command" => "bin/rails instance_settings:set SIGN_UP_OPEN=true|false" },
       answer.json["sign_up"])
@@ -223,6 +224,23 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
     assert_equal "Not saved: Default log retention days must be greater than 0.", answer.text
     assert_not InstanceSetting.current.log_all_reads?
     assert_equal 30, InstanceSetting.current.default_log_retention_days
+  end
+
+  test "update_instance_settings saves extra Redaction patterns that EventStore passes, and refuses one it refuses" do
+    stub_request(:post, %r{/redaction-patterns/check\z}).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+      body: { errors: [] }.to_json)
+    answer = call_tool(:update_instance_settings, user: @instance_admin, redaction_patterns: [ "acme_live_[a-z0-9]{16}" ])
+
+    assert_not answer.error?, answer.text
+    assert_equal [ "acme_live_[a-z0-9]{16}" ], answer.json.dig("editable", "redaction_patterns")
+
+    stub_request(:post, %r{/redaction-patterns/check\z}).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+      body: { errors: [ { index: 0, pattern: "pw=.+", error: 'The pattern can match a quote (").' } ] }.to_json)
+    answer = call_tool(:update_instance_settings, user: @instance_admin, redaction_patterns: [ "pw=.+" ])
+
+    assert answer.error?
+    assert_equal 'Not saved: Redaction patterns pw=.+: The pattern can match a quote (").', answer.text
+    assert_equal [ "acme_live_[a-z0-9]{16}" ], InstanceSetting.current.redaction_patterns
   end
 
   test "update_instance_settings can't open Sign-up" do

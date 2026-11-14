@@ -45,6 +45,9 @@ class InstanceSettingsAnswer
         console_url_fallback: PublicUrls.console_url_fallback(@request_url, env: @env),
         ingest_url: @settings.ingest_url,
         ingest_url_fallback: PublicUrls.ingest_url_fallback(@request_url, settings: @settings, env: @env),
+        # The extra Redaction patterns, and what the default ones remove.
+        redaction_patterns: @settings.redaction_patterns,
+        redaction_defaults: InstanceSetting::REDACTION_DEFAULTS,
       },
       sign_up: {
         open: @settings.sign_up_open,

@@ -133,6 +133,10 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 // repeat of a unit, or a file with the stored hash, stores nothing new. An
 // upload that leaves a gap or overlaps the stored end offset gets 409 with
 // that end offset.
+//
+// Before it is stored, each byte of the unit that a Redaction pattern
+// matches becomes '*' (package redaction). So the stored unit has the
+// length of the original, and the end offset is the client's.
 func (h *AgentHandler) UploadAgentFile(c *fiber.Ctx) error {
 	token := agentToken(c)
 	projectID, sessionID, ok, err := h.agentSessionOf(c, token)
@@ -170,6 +174,18 @@ func (h *AgentHandler) UploadAgentFile(c *fiber.Ctx) error {
 	if body, problem = cutUnit(&unit, body); problem != "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": problem})
 	}
+	// The one Redaction point: after the body is decoded and cut, and
+	// before any byte is stored. A unit whose patterns cannot be read is
+	// not stored, as a secret could stay in it; the client sends it again
+	// later.
+	patterns, err := h.redaction.Current()
+	if err != nil {
+		logger.L.Error("Failed to read the Redaction patterns", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "The Redaction patterns could not be read, so nothing was stored. Try again later. " +
+				"If this goes on, an Instance admin checks the extra patterns on Settings → Instance."})
+	}
+	patterns.Unit(body, strings.HasSuffix(unit.Path, ".jsonl"))
 	unit.SessionID = sessionID
 	unit.Bytes = body
 	unit.StoredAt = h.clock.Now().UTC()

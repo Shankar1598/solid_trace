@@ -17,7 +17,9 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { SharedProps } from '@/types'
+import { parsePatterns } from '@/lib/redactionPatterns'
 import { fallbackHint, requiredScheme, type UrlFallback } from '@/lib/publicUrls'
 import type { PasskeyOffer } from '@/lib/passkeys'
 import { toast } from 'sonner'
@@ -58,6 +60,9 @@ interface InstanceSettings {
     console_url_fallback: UrlFallback | null
     ingest_url: string | null
     ingest_url_fallback: UrlFallback | null
+    /** The extra Redaction patterns, after the defaults that redaction_defaults names. */
+    redaction_patterns: string[]
+    redaction_defaults: string
   }
   sign_up: { open: boolean, command: string }
   passkeys: PasskeyOffer
@@ -86,7 +91,10 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     local_cache_hours: String(editable.local_cache_hours),
     console_url: editable.console_url ?? '',
     ingest_url: editable.ingest_url ?? '',
+    redaction_patterns: editable.redaction_patterns.join('\n'),
   })
+  // Each pattern EventStore refused, on its own line.
+  const patternErrors = ([] as string[]).concat((errors.redaction_patterns as string | string[] | undefined) ?? [])
   const consoleRows = settings.restart_to_change.find((group) => group.name === 'Console')?.settings
   const sampleRate = consoleRows?.find((setting) => setting.source === 'SENTRY_TRACES_SAMPLE_RATE')?.value
   const scheme = requiredScheme(consoleRows?.find((setting) => setting.label === 'HTTPS')?.value)
@@ -102,7 +110,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     setConfirmingHours(false)
     setStrandedPasskeys(null)
     transform((data) => ({
-      instance_settings: data,
+      instance_settings: { ...data, redaction_patterns: parsePatterns(data.redaction_patterns) },
       ...(confirmPasskeysStopWorking && { confirm_passkeys_stop_working: true }),
     }))
     put(path, {
@@ -361,6 +369,33 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                     : 'SENTRY_TRACES_SAMPLE_RATE is not set, so Console traces nothing whatever this says.'}
                 </p>
                 {errors.trace_console && <p className="text-sm font-medium text-destructive">{errors.trace_console}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="redaction_patterns">Extra Redaction patterns</Label>
+                <Textarea
+                  id="redaction_patterns"
+                  rows={4}
+                  spellCheck={false}
+                  className="font-mono text-sm"
+                  placeholder="acme_live_[a-z0-9]{32}"
+                  value={data.redaction_patterns}
+                  onChange={(e) => setData('redaction_patterns', e.target.value)}
+                />
+                {patternErrors.map((message) => (
+                  <p key={message} className="text-sm font-medium text-destructive" data-testid="redaction-pattern-error">
+                    {message}
+                  </p>
+                ))}
+                <p className="text-xs text-muted-foreground" data-testid="redaction-patterns-description">
+                  Before EventStore stores a transcript of an Agent session, each character that a pattern matches
+                  becomes *, so the length of each line stays the same. These are always on: {editable.redaction_defaults}.
+                  Add one Go regular expression on each line. A pattern must not be able to match a quote or a
+                  backslash, so .+ and [^ ]+ are refused; use a class such as [A-Za-z0-9_-]+. A pattern reads each line
+                  as raw JSON text, so \b sees the n of a \n escape as a letter: start a pattern with its fixed
+                  prefix instead. It applies from the next
+                  upload; stored transcripts don&apos;t change.
+                </p>
               </div>
             </CardContent>
             <CardFooter className="justify-end">
