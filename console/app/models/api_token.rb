@@ -29,7 +29,10 @@ class ApiToken < ApplicationRecord
 
   validates :name, presence: true, length: { maximum: 100 }
   validates :token_digest, presence: true, uniqueness: true
-  validate :scopes_in_registry, :organization_of_user, :expiry_in_future, :limits_fit_scopes
+  validate :scopes_in_registry, :limits_fit_scopes
+  # Checked at save of a new token: later the expiry passes, or the user
+  # leaves, and live? refuses the token then.
+  validate :organization_of_user, :expiry_in_future, on: :create
 
   # Makes a token for user and returns it with its secret, which is never
   # stored. Raises ActiveRecord::RecordInvalid when a field is refused.
