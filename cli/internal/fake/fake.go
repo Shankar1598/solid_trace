@@ -119,6 +119,8 @@ type OAuth struct {
 	// endpoints; "" is the fake's URL. Console does not change the letter
 	// case of its Console URL setting.
 	Issuer string
+	// EditMetadata, when set, changes the metadata before it is sent.
+	EditMetadata func(meta map[string]any)
 
 	Authorizations   []AuthorizeRequest
 	DeviceRequests   []url.Values
@@ -237,12 +239,12 @@ func (f *OAuth) issuer() string {
 
 func (f *OAuth) metadata(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	issuer, tokenEndpoint := f.issuer(), f.TokenEndpoint
+	issuer, tokenEndpoint, edit := f.issuer(), f.TokenEndpoint, f.EditMetadata
 	f.mu.Unlock()
 	if tokenEndpoint == "" {
 		tokenEndpoint = issuer + "/oauth/token"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	meta := map[string]any{
 		"issuer":                                         issuer,
 		"authorization_endpoint":                         issuer + "/oauth/authorize",
 		"token_endpoint":                                 tokenEndpoint,
@@ -250,7 +252,11 @@ func (f *OAuth) metadata(w http.ResponseWriter, r *http.Request) {
 		"device_authorization_endpoint":                  issuer + "/oauth/device_authorization",
 		"code_challenge_methods_supported":               []string{"S256"},
 		"authorization_response_iss_parameter_supported": true,
-	})
+	}
+	if edit != nil {
+		edit(meta)
+	}
+	writeJSON(w, http.StatusOK, meta)
 }
 
 // authorize is the approval page, with the person's choice made at once:
