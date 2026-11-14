@@ -16,6 +16,8 @@ import (
 
 // Env is the machine that the command runs on.
 type Env struct {
+	// Stdin is the hook input of `capture`.
+	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
 	// ConfigDir holds the credentials file.
@@ -37,6 +39,10 @@ Usage:
       Sign in through SolidTrace in your browser, or with a code (--device)
       on a machine with no browser. The first sign-in to an instance needs
       --ingest-url: Console's capture setup page gives the login command.
+  solidtrace capture
+      Upload the new bytes of the Agent session that the Claude Code hook
+      input on stdin names, when its repository is captured. It always
+      exits 0; a failure goes to capture.log in the config directory.
   solidtrace version
       Print the version of this solidtrace.
 `
@@ -50,6 +56,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 	switch args[0] {
 	case "login":
 		return login(ctx, args[1:], env)
+	case "capture":
+		return captureHook(ctx, env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0

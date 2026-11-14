@@ -446,6 +446,96 @@ type AgentAPI struct {
 	// Calls counts the calls of the captured repositories list.
 	Calls      int
 	UserAgents []string
+	// Down answers 503 to each call.
+	Down bool
+	// UploadsDown answers 500 to each upload.
+	UploadsDown bool
+	// Refuse answers the status to each upload of a path.
+	Refuse map[string]int
+	// UploadDelay is how long each upload waits before it answers.
+	UploadDelay time.Duration
+	// Requests are the offsets calls and uploads, in order.
+	Requests []Request
+	// Sessions are the stored Agent sessions, by id.
+	Sessions map[string]*Session
+}
+
+// Request is one offsets call or upload that the fake got.
+type Request struct {
+	Method    string
+	SessionID string
+	Query     url.Values
+	// Body is the decoded body of an upload.
+	Body   []byte
+	Status int
+}
+
+// Session is what the fake stores of one Agent session.
+type Session struct {
+	Harness, Repository, Folder string
+	Organization                string
+	Files                       map[string]*File
+}
+
+// File is the highest version of one path: its bytes as stored, from
+// offset 0. The bytes of a cut unit stop at its first 32 MiB, and End is
+// past them.
+type File struct {
+	Version     uint32
+	End         uint64
+	ContentHash string
+	Bytes       []byte
+	Cut         bool
+	// Versions counts the versions that the fake got.
+	Versions int
+}
+
+// UnitLimit is the largest unit that the server stores whole: 32 MiB.
+const UnitLimit = 32 << 20
+
+// Uploads are the upload requests that got 200.
+func (f *AgentAPI) Uploads() []Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Request
+	for _, r := range f.Requests {
+		if r.Method == http.MethodPost && r.Status == http.StatusOK {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// AllRequests are the offsets calls and uploads.
+func (f *AgentAPI) AllRequests() []Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Request(nil), f.Requests...)
+}
+
+// Stored is a copy of the stored file of a path, or nil.
+func (f *AgentAPI) Stored(sessionID, path string) *File {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.Sessions[sessionID]
+	if s == nil || s.Files[path] == nil {
+		return nil
+	}
+	c := *s.Files[path]
+	c.Bytes = append([]byte(nil), c.Bytes...)
+	return &c
+}
+
+// StoredSession is the stored Agent session's who and where, or nil.
+func (f *AgentAPI) StoredSession(sessionID string) *Session {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if s := f.Sessions[sessionID]; s != nil {
+		c := *s
+		c.Files = nil
+		return &c
+	}
+	return nil
 }
 
 // NewAgentAPI starts a fake agent ingest API that checks tokens with oauth.
@@ -453,6 +543,8 @@ func NewAgentAPI(oauth *OAuth) *AgentAPI {
 	f := &AgentAPI{OAuth: oauth}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/agent/v1/captured-repositories", f.capturedRepositories)
+	mux.HandleFunc("GET /api/agent/v1/agent-sessions/{id}/files", f.files)
+	mux.HandleFunc("POST /api/agent/v1/agent-sessions/{id}/files", f.upload)
 	f.Server = httptest.NewServer(mux)
 	return f
 }
@@ -470,30 +562,46 @@ func (f *AgentAPI) Set(change func(*AgentAPI)) {
 	change(f)
 }
 
-func (f *AgentAPI) capturedRepositories(w http.ResponseWriter, r *http.Request) {
+// check answers the down state, the version and the token, as each call
+// of the real API does. It is nil when it has answered.
+func (f *AgentAPI) check(w http.ResponseWriter, r *http.Request) *Organization {
 	f.mu.Lock()
-	f.Calls++
-	f.UserAgents = append(f.UserAgents, r.UserAgent())
-	version, minimum, refuse := f.Version, f.MinimumVersion, f.RefuseTokens
+	version, minimum, refuse, down := f.Version, f.MinimumVersion, f.RefuseTokens, f.Down
 	f.mu.Unlock()
 	if version != "" {
 		w.Header().Set("SolidTrace-Version", version)
+	}
+	if down {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "The fake is down."})
+		return nil
 	}
 	if minimum != "" && olderThan(r.UserAgent(), minimum) {
 		writeJSON(w, http.StatusUpgradeRequired, map[string]any{
 			"error":           "This solidtrace is too old for this server. Install " + minimum + " or later.",
 			"minimum_version": minimum,
 		})
-		return
+		return nil
 	}
 	secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Send a token."})
-		return
+		return nil
 	}
 	org, ok := f.OAuth.Check(secret)
 	if !ok || org == nil || refuse {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "The token is wrong, expired or revoked."})
+		return nil
+	}
+	return org
+}
+
+func (f *AgentAPI) capturedRepositories(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	f.Calls++
+	f.UserAgents = append(f.UserAgents, r.UserAgent())
+	f.mu.Unlock()
+	org := f.check(w, r)
+	if org == nil {
 		return
 	}
 	repositories := org.Repositories

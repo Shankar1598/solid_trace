@@ -27,6 +27,7 @@ func main() {
 		os.Exit(1)
 	}
 	env := command.Env{
+		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
 		ConfigDir:   dir,
