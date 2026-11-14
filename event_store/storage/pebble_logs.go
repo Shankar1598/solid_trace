@@ -122,11 +122,12 @@ func (w *PebbleWriter) KeepLogBatchIDsAbove(id uuid.UUID) {
 }
 
 // seedLogBatchFloor keeps new batch ids above the newest stored Log batch
-// and Transaction batch of every Project, reading one key per Project.
+// and Transaction batch and Agent file batch of every Project, reading one key per Project.
 func (w *PebbleWriter) seedLogBatchFloor() error {
 	for _, keyspace := range [][2][]byte{
 		{logBatchKeyspace, logBatchKeyspaceEnd},
 		{transactionBatchKeyspace, transactionBatchKeyspaceEnd},
+		{agentFileBatchKeyspace, agentFileBatchKeyspaceEnd},
 	} {
 		if err := w.seedBatchFloor(keyspace[0], keyspace[1]); err != nil {
 			return err

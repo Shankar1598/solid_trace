@@ -215,6 +215,21 @@ func (s *ConsoleSettings) CapturedRepositories(organizationID int64) ([]string, 
 	return entries, nil
 }
 
+// AgentProject returns the id of an Organization's Agent Project
+// (projects.agent), and false when it has none, as Agent sessions are then
+// off.
+func (s *ConsoleSettings) AgentProject(organizationID int64) (uint32, bool, error) {
+	var id uint32
+	err := s.db.QueryRow("SELECT id FROM projects WHERE organization_id = ? AND agent = 1", organizationID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
 // ProjectLogRetention returns the effective Retention, in whole days, of every
 // Project in Console's projects table, by id. A Project missing from it has
 // been deleted. A Project whose Retention is below one day, which only
