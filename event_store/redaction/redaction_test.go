@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/solidtrace/event_store/redaction"
 )
@@ -110,6 +111,16 @@ func TestMatchInsideAUnicodeEscapeKeepsTheEscape(t *testing.T) {
 	var decoded map[string]string
 	if err := json.Unmarshal(line, &decoded); err != nil || decoded["k"] != "******>******" {
 		t.Errorf("Expected valid JSON that keeps the '>', got %s (%v)", line, err)
+	}
+}
+
+// Check reads a literal as it is because no other character folds to a
+// quote or a backslash. If Unicode adds such a fold, Check must fold too.
+func TestNoCharacterFoldsToAQuoteOrABackslash(t *testing.T) {
+	for _, r := range []rune{'"', '\\'} {
+		if f := unicode.SimpleFold(r); f != r {
+			t.Errorf("Expected %q to fold to no other character, got %q", r, f)
+		}
 	}
 }
 

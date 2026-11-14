@@ -19,7 +19,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"unicode"
 )
 
 // Pattern is a default Redaction pattern and the credential it finds.
@@ -87,14 +86,16 @@ func Check(expr string) error {
 
 // canMatch reports whether some part of re matches the character r. It
 // looks at each part, reachable or not, so it can refuse a pattern that
-// never matches r, but never passes one that does.
+// never matches r, but never passes one that does. Case folding (?i) needs
+// no check: no other character folds to a quote or a backslash, and the
+// parser gives a folded class all the ranges that it matches.
 func canMatch(re *syntax.Regexp, r rune) bool {
 	switch re.Op {
 	case syntax.OpAnyChar, syntax.OpAnyCharNotNL:
 		return true
 	case syntax.OpLiteral:
 		for _, lit := range re.Rune {
-			if lit == r || (re.Flags&syntax.FoldCase != 0 && foldsTo(lit, r)) {
+			if lit == r {
 				return true
 			}
 		}
@@ -111,18 +112,6 @@ func canMatch(re *syntax.Regexp, r rune) bool {
 		}
 	}
 	return false
-}
-
-func foldsTo(lit, r rune) bool {
-	for f := lit; ; {
-		f = unicode.SimpleFold(f)
-		if f == lit {
-			return false
-		}
-		if f == r {
-			return true
-		}
-	}
 }
 
 // Set is the default patterns and the extra ones, compiled.
