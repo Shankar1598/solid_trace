@@ -542,11 +542,31 @@ func TestAgentIngestClientVersions(t *testing.T) {
 	old := callAgentAPI(t, env.App, capturedRepositoriesPath, map[string]string{"User-Agent": "solidtrace/0.15.0"})
 	expectStatus(t, old, 426)
 
-	// An older major version is older than any minor of this one.
-	major := newAgentApp(t, env, "v1.2.0")
-	expectStatus(t, call(major, "solidtrace/0.99.0"), 426)
-	if answer := call(major, "solidtrace/1.0.0"); answer.status != 200 {
-		t.Errorf("1.0.0 against 1.2.0: expected 200, got %d: %s", answer.status, answer.raw)
+	// A new major version on the same API path is not a breaking change:
+	// until the server has 3 minors of its own major, it also accepts the
+	// earlier major, whose last minor it does not know. After that, the
+	// earlier major is too old.
+	for _, tc := range []struct {
+		server, client string
+		status         int
+		minimum        string
+	}{
+		{"v1.0.0", "solidtrace/0.19.0", 200, ""},
+		{"v1.0.0", "solidtrace/0.0.1", 200, ""},
+		{"v1.2.0", "solidtrace/0.99.0", 200, ""},
+		{"v1.2.0", "solidtrace/1.0.0", 200, ""},
+		{"v1.3.0", "solidtrace/1.0.0", 200, ""},
+		{"v1.3.0", "solidtrace/0.99.0", 426, "1.0.0"},
+		{"v2.1.0", "solidtrace/0.99.0", 426, "1.0.0"},
+	} {
+		answer := call(newAgentApp(t, env, tc.server), tc.client)
+		if answer.status != tc.status {
+			t.Errorf("%s against %s: expected %d, got %d: %s", tc.client, tc.server, tc.status, answer.status, answer.raw)
+			continue
+		}
+		if tc.minimum != "" && answer.body["minimum_version"] != tc.minimum {
+			t.Errorf("%s against %s: expected the minimum version %s, got %s", tc.client, tc.server, tc.minimum, answer.raw)
+		}
 	}
 
 	// A development server, which has no release version, accepts each.

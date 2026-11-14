@@ -201,12 +201,19 @@ func (v clientVersion) less(other clientVersion) bool {
 }
 
 // minimumClientVersion is the oldest solidtrace a server of version
-// accepts: SupportedMinorVersions minors before its own, in its major
-// version. Nil for a server version that is not a release.
+// accepts: SupportedMinorVersions minors before its own. A new major
+// version on the same API path is not a breaking change (that needs a new
+// path, such as /api/agent/v2). So while the server has fewer than
+// SupportedMinorVersions minors in its major version, it also accepts all
+// of the earlier major version, because it does not know that major's
+// last minor. Nil for a server version that is not a release.
 func minimumClientVersion(version string) *clientVersion {
 	server := parseVersion(version)
 	if server == nil {
 		return nil
+	}
+	if server.minor < SupportedMinorVersions && server.major > 0 {
+		return &clientVersion{major: server.major - 1}
 	}
 	return &clientVersion{major: server.major, minor: max(server.minor-SupportedMinorVersions, 0)}
 }
