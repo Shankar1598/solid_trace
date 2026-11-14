@@ -18,7 +18,8 @@ module Oauth
   # The fetch guards against SSRF: it resolves the host first, refuses a
   # loopback, private, link-local, multicast or unspecified address, and
   # connects to the checked address, with no proxy. HTTPS only, no
-  # redirects, 5 seconds, at most 64 KB, a JSON object only.
+  # redirects, 5 seconds for the full fetch, at most 64 KB, a JSON object
+  # only.
   module PublishedDescription
     MAX_URL = 512
     MAX_BYTES = 64.kilobytes
