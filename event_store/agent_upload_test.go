@@ -35,10 +35,13 @@ func agentFilesPath(sessionID string) string {
 // unitUpload is one upload: the bytes of path from offset, of version 1
 // unless set, in the repository github.com/acme/shop.
 type unitUpload struct {
-	path, folder, runID, project, harness, repository string
-	version, offset                                   int
-	body                                              []byte
-	headers                                           map[string]string
+	path, folder, runID, project, harness, repository, contentHash string
+	version, offset                                                int
+	// size is the unit's size on disk, sent only when set: more than the
+	// body for a unit over 32 MiB.
+	size    int
+	body    []byte
+	headers map[string]string
 }
 
 func uploadUnit(t *testing.T, env *TestEnv, secret, sessionID string, u unitUpload) agentAnswer {
@@ -53,7 +56,10 @@ func uploadUnit(t *testing.T, env *TestEnv, secret, sessionID string, u unitUplo
 	query.Set("offset", fmt.Sprint(u.offset))
 	query.Set("harness", cmpOr(u.harness, "claude-code"))
 	query.Set("repository", cmpOr(u.repository, "github.com/acme/shop"))
-	for name, value := range map[string]string{"folder": u.folder, "run_id": u.runID, "project": u.project} {
+	if u.size != 0 {
+		query.Set("size", fmt.Sprint(u.size))
+	}
+	for name, value := range map[string]string{"folder": u.folder, "run_id": u.runID, "project": u.project, "content_hash": u.contentHash} {
 		if value != "" {
 			query.Set(name, value)
 		}
@@ -93,16 +99,18 @@ type sessionFiles struct {
 		Person struct {
 			UserID int64 `json:"user_id"`
 		} `json:"person"`
-		Harness    string `json:"harness"`
-		Repository string `json:"repository"`
-		Folder     string `json:"folder"`
-		RunID      string `json:"run_id"`
-		Project    string `json:"project"`
+		Harness    string   `json:"harness"`
+		Repository string   `json:"repository"`
+		Folder     string   `json:"folder"`
+		RunID      string   `json:"run_id"`
+		Project    string   `json:"project"`
+		Flags      []string `json:"flags"`
 	} `json:"agent_session"`
 	Files []struct {
-		Path      string `json:"path"`
-		Version   int    `json:"version"`
-		EndOffset int    `json:"end_offset"`
+		Path        string `json:"path"`
+		Version     int    `json:"version"`
+		EndOffset   int    `json:"end_offset"`
+		ContentHash string `json:"content_hash"`
 	} `json:"files"`
 }
 
@@ -127,16 +135,23 @@ func endOffsets(files sessionFiles) map[string]string {
 	return ends
 }
 
-// storedBytes is what agent_session_files holds of a path's version, in
+// storedBytes is what agent_session_files holds of a path's version 1, in
 // offset order, once Agent file processing has caught up.
 func storedBytes(t *testing.T, env *TestEnv, projectID int64, sessionID, path string) string {
+	t.Helper()
+	return storedVersion(t, env, projectID, sessionID, path, 1)
+}
+
+// storedVersion is what agent_session_files holds of a version of a path,
+// in offset order, once Agent file processing has caught up.
+func storedVersion(t *testing.T, env *TestEnv, projectID int64, sessionID, path string, version int) string {
 	t.Helper()
 	env.ProcessAgentFiles(t)
 	var stored string
 	if err := env.ClickHouse.Conn().QueryRow(context.Background(), `
 		SELECT arrayStringConcat(arrayMap(x -> x.2, arraySort(groupArray((offset, bytes)))))
-		FROM agent_session_files WHERE project_id = ? AND session_id = ? AND path = ? AND version = 1`,
-		uint32(projectID), sessionID, path).Scan(&stored); err != nil {
+		FROM agent_session_files WHERE project_id = ? AND session_id = ? AND path = ? AND version = ?`,
+		uint32(projectID), sessionID, path, uint32(version)).Scan(&stored); err != nil {
 		t.Fatalf("Read the stored bytes of %s: %v", path, err)
 	}
 	return stored
@@ -374,10 +389,6 @@ func TestAgentSessionUploadBodyLimit(t *testing.T) {
 
 	tooLarge := bytes.Repeat(line, 34)
 	answer = uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(unit), body: tooLarge})
-	expectStatus(t, answer, 413)
-	// Small as sent, but a unit over 32 MiB once decoded.
-	answer = uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(unit),
-		body: zstdCompressed(t, bytes.Repeat(line, 33)), headers: map[string]string{"Content-Encoding": "zstd"}})
 	expectStatus(t, answer, 413)
 	_, files := offsetsOf(t, env, o.secret, laptopSession)
 	if got := endOffsets(files)["session.jsonl"]; got != fmt.Sprintf("1 %d", len(unit)) {

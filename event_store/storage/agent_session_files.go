@@ -18,6 +18,9 @@ const agentFilesDedupWindow = 10000
 // same number of days after it was written. The version's band, 10000 and
 // up, is the factory effort's; its hundreds are the ticket (06).
 //
+// flags are the unit's AgentFlag bits (cut, trimmed). The last row of a
+// cut unit ends at the unit's end on disk, past its bytes.
+//
 // Past the spec's shape, each row also has who and where the Agent session
 // is (the person, the harness, the repository, the folder, and for a Run
 // its id and Project), so that the parse of the rows into Logs needs no
@@ -85,9 +88,15 @@ func (ch *ClickHouse) InsertAgentFiles(projectID uint32, insert AgentFileInsert)
 	defer block.Abort()
 	for _, u := range insert.Units {
 		stored := u.StoredAt.UTC()
-		for _, row := range agentFileRows(u.Offset, u.Bytes) {
+		rows := agentFileRows(u.Offset, u.Bytes)
+		for i, row := range rows {
+			end := row.offset + uint64(len(row.bytes))
+			if i == len(rows)-1 {
+				// The unit's end on disk: past the bytes for a cut unit.
+				end = u.End()
+			}
 			if err := block.Append(projectID, LogDay(stored), stored, u.SessionID, u.Path, u.Version, row.offset,
-				row.offset+uint64(len(row.bytes)), u.ContentHash, string(row.bytes), uint8(0), uint64(u.Session.UserID),
+				end, u.ContentHash, string(row.bytes), u.Flags, uint64(u.Session.UserID),
 				u.Session.Harness, u.Session.Repository, u.Session.Folder, u.Session.RunID, u.Session.Project); err != nil {
 				return fmt.Errorf("insert agent session files: %w", err)
 			}
