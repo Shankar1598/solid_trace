@@ -157,6 +157,44 @@ func TestTheReleaseRefusesATagThatIsNotAVersion(t *testing.T) {
 	}
 }
 
+func TestTheReleaseRefusesARepositoryThatIsNotOwnerName(t *testing.T) {
+	for _, repository := range []string{"", "owner", "a/b/c", "a/b/../../x", "a b/c", "o/n\nx"} {
+		err := write(options{Dist: t.TempDir(), Plugin: pluginDir, InstallScript: "../../install.sh",
+			Tag: "v0.19.0", Repository: repository})
+		if err == nil {
+			t.Errorf("repository %q: no error", repository)
+		}
+	}
+}
+
+// A symbolic link in the plugin directory can point at a file outside the
+// tree; the release must not put its target into the public zip.
+func TestTheReleaseRefusesAPluginFileThatIsNotARegularFile(t *testing.T) {
+	plugin := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(plugin, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugin, ".claude-plugin", "plugin.json"), []byte(`{"name":"solidtrace"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(plugin, "link")); err != nil {
+		t.Fatal(err)
+	}
+	dist := t.TempDir()
+	err := write(options{Dist: dist, Plugin: plugin, InstallScript: "../../install.sh",
+		Tag: "v0.19.0", Repository: "example/solid_trace"})
+	if err == nil {
+		t.Fatal("no error for a symbolic link in the plugin")
+	}
+	if _, err := os.Stat(filepath.Join(dist, PluginZip)); !os.IsNotExist(err) {
+		t.Fatalf("the release wrote a plugin zip: %v", err)
+	}
+}
+
 func TestEachHookOfThePluginStartsCaptureInTheBackground(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(pluginDir, "hooks", "hooks.json"))
 	if err != nil {
