@@ -210,7 +210,7 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
     sign_in_as @user
 
     get new_authenticator_app_url(org: organization.slug), headers: inertia
-    assert_equal({ "name" => organization.name, "slug" => organization.slug, "requires_two_factor" => false }, response.parsed_body.dig("props", "return_organization"))
+    assert_equal({ "name" => organization.name, "slug" => organization.slug, "requires_two_factor" => false, "to_approval_page" => false }, response.parsed_body.dig("props", "return_organization"))
     secret = response.parsed_body.dig("props", "secret")
 
     post authenticator_app_url, params: { code: wrong_code(secret), org: organization.slug, proof: { password: "password" } }

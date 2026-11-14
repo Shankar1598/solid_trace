@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
-type Organization = { id: number; name: string; slug: string; scopes: string[] }
+// two_factor_note: the Organization has Require two-factor and the user has
+// no Two-factor, so Approve sends them to set it up first.
+type Organization = { id: number; name: string; slug: string; scopes: string[]; two_factor_note: string | null }
 
 type Props = {
   request: string
@@ -74,6 +76,9 @@ export default function Authorize({ request, client, loopback_warning, organizat
             <ul className="list-disc space-y-1 pl-5">
               {organization?.scopes.map((text) => <li key={text}>{text}</li>)}
             </ul>
+            {organization?.two_factor_note && (
+              <p role="note" className="border border-amber-500/50 bg-amber-500/10 p-3">{organization.two_factor_note}</p>
+            )}
           </>
         )}
 

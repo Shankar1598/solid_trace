@@ -18,7 +18,12 @@ module Oauth
   # POST takes only the request's key, the Organization's id and the
   # decision. Approve makes a Grant and a code; both answers go back to the
   # redirect URI that GET checked, never to one read from a parameter.
+  # Approve for an Organization with Require two-factor, by a user with no
+  # Two-factor, makes no Grant: it sends them to the Authenticator app
+  # set-up, which comes back to this page (ReturnsToOrganization).
   class AuthorizationsController < ApplicationController
+    include ReturnsToOrganization
+
     layout "auth"
     skip_before_action :authenticate_user!
     before_action :require_oauth_on
@@ -37,6 +42,7 @@ module Oauth
     REVOKE_HINT = "You can revoke this in Settings → User."
     NO_ORGANIZATION = "You are in no Organization, so there is nothing to approve. Ask an Organization admin to " \
                       "add you, then start the sign-in again."
+    TWO_FACTOR_FIRST = "%{organization} requires Two-factor. Approve sends you to set it up first, then back to this page."
     TOO_MANY_DECISIONS = "Too many approvals and denials. Try again in a few minutes."
     MAX_STATE = 512
     # An S256 code_challenge: the base64url SHA-256 of the verifier, 43
@@ -200,6 +206,7 @@ module Oauth
           {
             id: organization.id, name: organization.name, slug: organization.slug,
             scopes: scopes(pending).map { |scope| format(scope.text, organization: organization.name) },
+            two_factor_note: (format(TWO_FACTOR_FIRST, organization: organization.name) if sets_up_two_factor_first?(organization)),
           }
         end,
         no_organization: (NO_ORGANIZATION if organizations.empty?),
@@ -216,6 +223,8 @@ module Oauth
 
     def approve(pending)
       organization = current_user.organizations.find_by!(id: params[:organization_id])
+      return send_to_set_up_two_factor(pending, organization) if sets_up_two_factor_first?(organization)
+
       chosen = scopes(pending)
       resource = resource(pending)
       grant = Grant.create!(
@@ -229,13 +238,27 @@ module Oauth
       back_to_client(pending, code: secret)
     end
 
+    def sets_up_two_factor_first?(organization)
+      organization.require_two_factor && !current_user.two_factor?
+    end
+
+    # Require two-factor, as on every Console page: no Grant, but the
+    # Authenticator app set-up for the Organization, which comes back to
+    # this approval page once Two-factor is on.
+    def send_to_set_up_two_factor(pending, organization)
+      keep_return_after_set_up(oauth_authorize_path(request: pending.key), organization)
+      redirect_to new_authenticator_app_path(org: organization.slug)
+    end
+
     # Sends the browser to the request's checked redirect URI with the
     # answer, state and iss (RFC 9207), and ends the request. An Inertia
     # request gets 409 with X-Inertia-Location, which makes the browser open
-    # the URL; a plain one a 302.
+    # the URL; a plain one a 302. A set-up that this request sent the user
+    # to then no longer returns to it.
     def back_to_client(pending, **answer)
       url = with_query(pending.redirect_uri, **answer, state: pending.state.presence, iss: issuer.url)
       pending.finish(session)
+      drop_kept_return(oauth_authorize_path(request: pending.key))
       if request.inertia?
         inertia_location(url)
       else
