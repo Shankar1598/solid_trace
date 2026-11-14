@@ -16,11 +16,20 @@ class OrganizationUser < ApplicationRecord
   validates :role, presence: true
   validate :organization_must_have_at_least_one_admin
 
+  # A member who leaves loses the tokens of this Organization. An invite
+  # brings back this same row (MemberInvite), and the old tokens must not
+  # work again with it.
+  after_discard :delete_api_tokens
+
   def admin?
     role == "admin"
   end
 
   private
+
+  def delete_api_tokens
+    ApiToken.where(user_id: user_id, organization_id: organization_id).delete_all
+  end
 
   def organization_must_have_at_least_one_admin
     return unless role_changed? && role_was == "admin"

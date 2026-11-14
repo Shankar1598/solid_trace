@@ -61,7 +61,8 @@ class ApiToken < ApplicationRecord
   end
 
   # Whether the token works now: not expired, and its user is still a
-  # member of its Organization. A revoked token has no row.
+  # member of its Organization. A revoked token has no row, and a member who
+  # leaves an Organization loses its tokens (OrganizationUser).
   def live?(now: Time.current)
     (expires_at.nil? || expires_at > now) &&
       (organization_id.nil? || user.organization_users.exists?(organization_id: organization_id))

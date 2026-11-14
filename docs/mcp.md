@@ -45,7 +45,7 @@ A tool acts as the token's user, with that user's rights. In each Organization i
 The **API tokens & MCP** settings page lists your tokens with their scopes, Organization, limits and expiry, and when each was last used. A token works until its expiry or until you revoke it there. Resetting your password revokes all of them, as well as signing you out everywhere.
 
 - **A token with no scope** can do whatever you can do over the MCP server. With no Organization, it acts in every Organization you belong to, so keep it as you would a password.
-- **A token with scopes** can do only what they give, in its one Organization. If you leave that Organization, the token stops working (401). The MCP server needs `mcp` or `mcp:read`; a token with neither gets 403 with `error="insufficient_scope"`.
+- **A token with scopes** can do only what they give, in its one Organization. If you leave that Organization, Console deletes the token (401), and it does not come back if you are invited again. The MCP server needs `mcp` or `mcp:read`; a token with neither gets 403 with `error="insufficient_scope"`.
 - **`mcp:read`** gives only the read tools: `tools/list` leaves out each tool that makes or changes things, and a call of one gets 403 with `error="insufficient_scope"`. `mcp` holds `mcp:read`. The MCP server does not yet read with an `mcp:read` Project limit: such a token gets 403.
 - The other scopes are for the factory: `sessions:write`, `sessions:read` (always with a list of Agent session ids), `run_events:write`, `factory` and `issues:comment`. The page says what each gives.
 

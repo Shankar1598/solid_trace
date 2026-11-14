@@ -68,6 +68,18 @@ class McpTokenScopesTest < ActionDispatch::IntegrationTest
     assert_match 'error="invalid_token"', response.headers["WWW-Authenticate"]
   end
 
+  # An invite brings back the same membership row (MemberInvite), so the
+  # token must not come back with it.
+  test "a token whose user left its Organization gets 401, also after the user is added again to it" do
+    _, secret = issue(scopes: [ "mcp" ])
+    membership = @user.organization_users.find_by!(organization: @acme)
+    membership.discard!
+    membership.undiscard!
+
+    mcp "tools/list", token: secret
+    assert_response :unauthorized
+  end
+
   test "a token with no Organization keeps working when its user leaves one of theirs" do
     _, secret = ApiToken.issue!(user: @user, name: "Laptop")
     @user.organization_users.find_by!(organization: @acme).discard!
