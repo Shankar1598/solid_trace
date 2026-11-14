@@ -340,6 +340,59 @@ func TestAMatchMonitorOnTheAgentProjectReadsEachParsedLogOnce(t *testing.T) {
 	}
 }
 
+// The ingest cursor that a read gives is never lower than the cursor that
+// the read started after. When Log processing has gone past a unit that
+// waits for the parse, the parse cursor can be lower than the cursor that
+// an earlier read gave.
+func TestTheIngestCursorOfAReadIsNotLowerThanTheCursorItStartedAfter(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	project := uint32(o.project)
+
+	run := func(cursor string) ingestedPage {
+		t.Helper()
+		answer := answerOf(t, env, fmt.Sprintf("/api/%d/logs/query", o.project), map[string]any{"query": "", "after_batch": cursor}, 200)
+		var page ingestedPage
+		if err := json.Unmarshal(mustMarshal(t, answer), &page); err != nil {
+			t.Fatal(err)
+		}
+		return page
+	}
+	cursor := run("").IngestCursor
+	got := map[string]int{}
+	read := func() {
+		t.Helper()
+		page := run(cursor)
+		for _, m := range messages(page.Logs) {
+			got[m]++
+		}
+		if page.IngestCursor < cursor {
+			t.Errorf("Expected an ingest cursor not lower than %s, got %s", cursor, page.IngestCursor)
+		}
+		cursor = page.IngestCursor
+	}
+
+	// The parse moves its cursor, then Log processing moves past it.
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: lines("line 1")}), 200)
+	env.ProcessAgentFiles(t)
+	storeRunEvent(t, env, project, "event 1")
+	env.ProcessLogs(t)
+	read()
+	// A unit waits for the parse, and a later run event is stored.
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(lines("line 1")), body: lines("line 2")}), 200)
+	storeRunEvent(t, env, project, "event 2")
+	env.ProcessLogs(t)
+	read()
+	env.ProcessAgentFiles(t)
+	read()
+
+	want := map[string]int{"line 1": 1, "event 1": 1, "line 2": 1, "event 2": 1}
+	if !maps.Equal(got, want) {
+		t.Errorf("Expected the reads to give each Log once, %v, got %v", want, got)
+	}
+}
+
 // storeRunEvent stores a Log batch of one Log in a Project, as Log ingest
 // does, for Log processing.
 func storeRunEvent(t *testing.T, env *TestEnv, projectID uint32, message string) {

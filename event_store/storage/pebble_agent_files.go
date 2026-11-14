@@ -438,7 +438,10 @@ func (w *PebbleWriter) RecordedAgentFileInsert(projectID uint32) (uuid.UUID, err
 // the insert. So the ingest cursor is the higher of the two cursors that no
 // batch of the other worker, still waiting, comes before. A batch written
 // after this read has a higher id than every batch now in Pebble. It is
-// uuid.Nil while neither worker has inserted Logs for the Project.
+// uuid.Nil while neither worker has inserted Logs for the Project. It can be
+// lower than a cursor it gave before, when the worker of that cursor has
+// gone past a batch of the other that waits; that cursor stays valid
+// (ClickHouseLogs.ScanLogsIngestedAfter).
 func (w *PebbleWriter) LogIngestCursor(projectID uint32) (uuid.UUID, error) {
 	logs, err := w.LogProcessingCursor(projectID)
 	if err != nil {

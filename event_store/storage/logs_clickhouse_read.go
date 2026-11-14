@@ -395,7 +395,13 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 		return IngestedLogs{}, err
 	}
 	found := IngestedLogs{Logs: []models.Log{}, Cursor: cursor}
+	// The ingest cursor can be lower than After, a cursor that an earlier
+	// read gave: when one worker goes past a batch of the other that waits,
+	// the cursor can fall back to the lower worker's cursor. After stays a
+	// valid cursor, so the scan gives it again and the next scan does not
+	// read the batches up to After a second time.
 	if bytes.Compare(scan.After[:], cursor[:]) >= 0 {
+		found.Cursor = scan.After
 		return found, nil
 	}
 	conditions := []string{
