@@ -53,27 +53,41 @@ func Match(ctx context.Context, cwd string, entries []string) (repo Repository, 
 		// Not a repository, or one that git refuses to read.
 		return repo, false, nil
 	}
-	out, err := git(ctx, cwd, "remote", "-v")
+	// The remotes as configured, then as git rewrites them (url.insteadOf).
+	// "origin" comes first in each, then the others in git's order.
+	configured, err := git(ctx, cwd, "config", "--get-regexp", `^remote\..*\.url$`)
+	if err != nil && configured != "" {
+		return repo, false, err
+	}
+	rewritten, err := git(ctx, cwd, "remote", "-v")
 	if err != nil {
 		return repo, false, err
 	}
-	// "origin" comes first, then the other remotes in git's order.
 	var names []string
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		name, ok := Normalise(fields[1])
+	add := func(remote, url string) {
+		name, ok := Normalise(url)
 		if !ok {
-			continue
+			return
 		}
-		if fields[0] == "origin" {
+		if remote == "origin" {
 			names = append([]string{name}, names...)
 		} else {
 			names = append(names, name)
 		}
 	}
+	for _, line := range strings.Split(configured, "\n") {
+		if key, url, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
+			add(strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url"), url)
+		}
+	}
+	first := names
+	names = nil
+	for _, line := range strings.Split(rewritten, "\n") {
+		if fields := strings.Fields(line); len(fields) >= 2 {
+			add(fields[0], fields[1])
+		}
+	}
+	names = append(first, names...)
 	for _, name := range names {
 		for _, entry := range entries {
 			if Matches(entry, name) {

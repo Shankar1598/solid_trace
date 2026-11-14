@@ -3,7 +3,6 @@ package command_test
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +30,9 @@ type agentSession struct {
 // name=url pairs, and returns its path.
 func (w *world) gitRepo(remotes ...string) string {
 	w.t.Helper()
+	// capture's git must not read the machine's own git config.
+	w.t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	w.t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	repo := filepath.Join(w.t.TempDir(), "repo")
 	w.git("", "init", "-q", repo)
 	for _, r := range remotes {
@@ -177,4 +179,143 @@ func TestCaptureUploadsTheNewLinesOfAnAgentSessionInACapturedRepository(t *testi
 	}
 }
 
-var _ = http.StatusOK
+func TestCaptureMatchesTheSSHAndHTTPSFormsOfARemote(t *testing.T) {
+	for _, remote := range []string{
+		"git@bitbucket.org:acme/shop.git",
+		"ssh://git@BitBucket.org/acme/shop",
+		"ssh://git@bitbucket.org:22/acme/shop.git/",
+		"https://someone@Bitbucket.ORG/acme/shop.git",
+		"git@bitbucket.org:acme-tools/deploy.git",
+	} {
+		t.Run(remote, func(t *testing.T) {
+			w := newWorld(t, acme)
+			w.signIn()
+			s := w.session(w.gitRepo("upstream=" + remote))
+			s.write("", "{\"n\":1}\n")
+			s.stop()
+			if s.stored(s.main()) != "{\"n\":1}\n" {
+				t.Fatalf("not uploaded; log: %s", w.captureLog())
+			}
+		})
+	}
+}
+
+func TestCaptureMatchesAWorktreeThroughItsRepositoryAndRecordsTheFolder(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.gitRepo("origin=https://bitbucket.org/acme/shop")
+	w.git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+	worktree := filepath.Join(t.TempDir(), "wt")
+	w.git(repo, "worktree", "add", "-q", worktree)
+	cwd := filepath.Join(worktree, "services", "api")
+	if err := os.MkdirAll(cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := w.session(cwd)
+	s.write("", "{\"n\":1}\n")
+	s.stop()
+	if s.stored(s.main()) != "{\"n\":1}\n" {
+		t.Fatalf("not uploaded; log: %s", w.captureLog())
+	}
+	if who := w.agent.StoredSession(s.id); who.Repository != "bitbucket.org/acme/shop" || who.Folder != "services/api" {
+		t.Errorf("who and where: %+v", who)
+	}
+}
+
+func TestCaptureSendsNothingOutsideACapturedRepository(t *testing.T) {
+	for name, cwd := range map[string]func(w *world) string{
+		"outside a git repository": func(w *world) string { return w.t.TempDir() },
+		"a repository not in the list": func(w *world) string {
+			return w.gitRepo("origin=https://github.com/someone/private.git")
+		},
+		"a repository with no remote": func(w *world) string { return w.gitRepo() },
+		"a workspace that only starts the same": func(w *world) string {
+			return w.gitRepo("origin=git@bitbucket.org:acme-toolsets/x.git")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, acme)
+			w.signIn()
+			s := w.session(cwd(w))
+			s.write("", "{\"secret\":1}\n")
+			s.write("tool-results/out.txt", "secret output")
+			s.stop()
+			s.hook("SessionEnd")
+			if requests := w.agent.AllRequests(); len(requests) != 0 {
+				t.Errorf("capture sent %d requests for an Agent session that is not captured", len(requests))
+			}
+			if !strings.Contains(w.captureLog(), "not in the captured repositories") {
+				t.Errorf("log: %s", w.captureLog())
+			}
+		})
+	}
+}
+
+func TestCaptureSendsNothingWithNoListInHand(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	s := w.session(w.gitRepo("origin=https://bitbucket.org/acme/shop"))
+	s.write("", "{\"n\":1}\n")
+	w.agent.Set(func(f *fake.AgentAPI) { f.Down = true })
+
+	s.stop()
+	if requests := w.agent.AllRequests(); len(requests) != 0 {
+		t.Errorf("capture sent %d requests with no list", len(requests))
+	}
+	if !strings.Contains(w.captureLog(), "no captured repositories list") {
+		t.Errorf("log: %s", w.captureLog())
+	}
+
+	w.agent.Set(func(f *fake.AgentAPI) { f.Down = false })
+	s.stop()
+	if s.stored(s.main()) != "{\"n\":1}\n" {
+		t.Fatalf("not uploaded when the list came; log: %s", w.captureLog())
+	}
+}
+
+func TestCaptureKeepsTheListForTenMinutes(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	s := w.session(w.gitRepo("origin=https://bitbucket.org/acme/shop"))
+	s.write("", "{\"n\":1}\n")
+	s.stop()
+	calls := w.agent.Calls
+
+	w.clock.Add(9 * time.Minute)
+	s.add("", "{\"n\":2}\n")
+	s.stop()
+	if w.agent.Calls != calls {
+		t.Errorf("the list was asked again in its 10 minutes")
+	}
+
+	// An Admin removes the repository: after 10 minutes, its uploads stop.
+	w.oauth.Lock()
+	w.oauth.Organizations["acme"].Repositories = []string{"bitbucket.org/acme/other"}
+	w.oauth.Unlock()
+	w.clock.Add(time.Minute)
+	s.add("", "{\"n\":3}\n")
+	before := len(w.agent.AllRequests())
+	s.stop()
+	if w.agent.Calls != calls+1 {
+		t.Errorf("the list was not asked again after 10 minutes")
+	}
+	if after := len(w.agent.AllRequests()); after != before {
+		t.Errorf("capture sent %d requests after the repository was removed", after-before)
+	}
+	if got := s.stored(s.main()); got != "{\"n\":1}\n{\"n\":2}\n" {
+		t.Errorf("stored: %q", got)
+	}
+}
+
+func TestCaptureMatchesARemoteThatGitRewrites(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.gitRepo("origin=bb:acme/shop")
+	w.git(repo, "config", "url.https://bitbucket.org/.insteadOf", "bb:")
+	s := w.session(repo)
+	s.write("", "{\"n\":1}\n")
+	s.stop()
+	if s.stored(s.main()) != "{\"n\":1}\n" {
+		t.Fatalf("not uploaded; log: %s", w.captureLog())
+	}
+}
