@@ -100,6 +100,32 @@ func TestTheParseMakesOneLogForEachLineOfAnAgentSession(t *testing.T) {
 	}
 }
 
+// A failed tool call and a system line of level error have the level
+// error, so that a Query or a Monitor on level finds them.
+func TestAFailedToolCallAndASystemErrorHaveTheLevelError(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	lines := []string{
+		`{"type":"user","timestamp":"2026-10-02T11:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"no such file","is_error":true}]}}`,
+		`{"type":"user","timestamp":"2026-10-02T11:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"package cart","is_error":false}]}}`,
+		`{"type":"system","subtype":"api_error","level":"error","timestamp":"2026-10-02T11:00:03Z","content":"API Error: overloaded"}`,
+		`{"type":"system","subtype":"informational","level":"info","timestamp":"2026-10-02T11:00:04Z","content":"Compacted"}`,
+	}
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(lines...)}), 200)
+
+	logs := sessionLogs(t, env, o.project, laptopSession)
+	if len(logs) != len(lines) {
+		t.Fatalf("Expected %d Logs, got %+v", len(lines), logs)
+	}
+	for i, wantError := range []bool{true, false, true, false} {
+		if isError := logs[i].Level == "error"; isError != wantError {
+			t.Errorf("Log %d (%q): expected the level error %v, got the level %q", i, logs[i].Message, wantError, logs[i].Level)
+		}
+	}
+}
+
 func TestTheLogsOfARunsAgentSessionCarryItsProjectRepositoryAndFolder(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
