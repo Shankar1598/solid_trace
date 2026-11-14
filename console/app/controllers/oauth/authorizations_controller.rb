@@ -18,6 +18,9 @@ module Oauth
   # POST takes only the request's key, the Organization's id and the
   # decision. Approve makes a Grant and a code; both answers go back to the
   # redirect URI that GET checked, never to one read from a parameter.
+  # Approve for an Organization with Require two-factor, by a user with no
+  # Two-factor, makes no Grant: it sends them to the Authenticator app
+  # set-up, which comes back to this page (ReturnsToOrganization).
   class AuthorizationsController < ApplicationController
     include ReturnsToOrganization
 
