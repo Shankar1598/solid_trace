@@ -33,6 +33,10 @@ type Env struct {
 	// ClaudeProjectsDir is where Claude Code keeps the transcripts, for
 	// `capture status`.
 	ClaudeProjectsDir string
+	// Detach starts `solidtrace capture` in the background with input on
+	// its stdin, and does not wait for it. The hook of the plugin
+	// (`capture --detach`) uses it.
+	Detach func(input []byte) error
 }
 
 const usage = `solidtrace: the SolidTrace agent CLI.
@@ -48,6 +52,10 @@ Usage:
       exits 0; a failure goes to capture.log in the config directory. At
       SessionStart it sweeps each Agent session on the machine and sends
       what was not sent.
+  solidtrace capture --detach
+      The same, in the background: it reads the hook input, starts
+      solidtrace capture with it, and returns at once. The hooks of the
+      SolidTrace plugin for Claude Code run this.
   solidtrace capture status
       Show the Organization, its captured repositories, and each Agent
       session on this machine as uploaded, not in the list, or failed.
@@ -67,6 +75,9 @@ func Run(ctx context.Context, args []string, env Env) int {
 	case "capture":
 		if len(args) > 1 && args[1] == "status" {
 			return captureStatus(ctx, env)
+		}
+		if len(args) > 1 && args[1] == "--detach" {
+			return detachHook(env)
 		}
 		return captureHook(ctx, env)
 	case "version", "--version":
