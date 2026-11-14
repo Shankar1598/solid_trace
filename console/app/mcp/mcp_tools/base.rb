@@ -59,7 +59,8 @@ module McpTools
       def call(server_context:, **arguments)
         user = server_context[:user]
         CallTimings.mcp_tool(name_value, arguments, user) do
-          new(user: user, request_url: server_context[:request_url], arguments: arguments).answer
+          new(user: user, request_url: server_context[:request_url], arguments: arguments,
+              signed_in_organization: server_context[:organization]).answer
         end
       end
 
@@ -115,6 +116,16 @@ module McpTools
         @needs_sql_queries || false
       end
 
+      # A tool on the install's settings, for an instance admin only. An
+      # OAuth token's server does not have it.
+      def instance_admin_only!
+        @instance_admin_only = true
+      end
+
+      def instance_admin_only?
+        @instance_admin_only || false
+      end
+
       # Whether the server lists the tool now.
       def listed?
         !needs_sql_queries? || InstanceSetting.current.sql_queries_enabled?
@@ -132,12 +143,15 @@ module McpTools
     end
 
     # request_url is the address the MCP request reached Console at.
-    attr_reader :user, :request_url, :arguments
+    # signed_in_organization is an OAuth token's one Organization, or nil
+    # for an API token.
+    attr_reader :user, :request_url, :arguments, :signed_in_organization
 
-    def initialize(user:, request_url:, arguments: {})
+    def initialize(user:, request_url:, arguments: {}, signed_in_organization: nil)
       @user = user
       @request_url = request_url
       @arguments = arguments
+      @signed_in_organization = signed_in_organization
     end
 
     # Console's URL, which the answers' links start with (PublicUrls).
@@ -181,11 +195,16 @@ module McpTools
     # The Organization the organization argument names, among the user's.
     # It may be left out when the user belongs to exactly one. Every tool on
     # an Organization asks for it here, so an Organization with Require
-    # two-factor refuses a user without Two-factor here alone.
+    # two-factor refuses a user without Two-factor here alone. An OAuth
+    # token acts only in its Grant's Organization.
     def organization
       @organization ||= begin
         slug = arguments[:organization].presence
-        organizations = user.organizations.order(:slug).to_a
+        if signed_in_organization && slug && slug != signed_in_organization.slug
+          raise ToolError, "This sign-in is for #{signed_in_organization.slug}. Sign in again to use another Organization."
+        end
+
+        organizations = signed_in_organization ? [ signed_in_organization ] : user.organizations.order(:slug).to_a
         slugs = organizations.map(&:slug).join(", ")
 
         found = if slug

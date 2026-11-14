@@ -10,7 +10,9 @@ module McpTools
     read_only!
 
     def run
-      memberships = user.organization_users.includes(:organization).sort_by { |membership| membership.organization.slug }
+      memberships = user.organization_users.includes(:organization)
+      memberships = memberships.where(organization: signed_in_organization) if signed_in_organization
+      memberships = memberships.sort_by { |membership| membership.organization.slug }
 
       json({
         user: { name: user.name, email: user.email, instance_admin: user.instance_admin? },

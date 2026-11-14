@@ -11,6 +11,7 @@ module McpTools
                 "to type it on Console's Email settings page instead. Answers the settings as get_email_settings " \
                 "does. Only an instance admin can."
     writes!
+    instance_admin_only!
     argument :smtp_address, { type: "string", description: "The SMTP host, such as smtp.example.com. Empty for none: no email is sent." }
     argument :smtp_port, { type: "integer", description: "The SMTP port: 465 uses TLS, any other STARTTLS when the server offers it." }
     argument :smtp_username, { type: "string", description: "The username to sign in with. Empty for none, which clears the password too." }
