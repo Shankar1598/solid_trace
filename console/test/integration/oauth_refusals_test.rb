@@ -430,7 +430,9 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
     code = confidential_code(client_id)
 
     [ basic(client_id, "#{secret}x"), basic(client_id, ""), basic("nobody", secret), {},
-      { "Authorization" => "Basic not-base64!" }, { "Authorization" => "Bearer #{secret}" } ].each do |headers|
+      { "Authorization" => "Basic not-base64!" }, { "Authorization" => "Bearer #{secret}" },
+      # Parts that are not UTF-8, form-encoded or raw.
+      raw_basic("%FF:x"), raw_basic("\xFF\xFE:x".b), raw_basic("#{client_id}:%FF") ].each do |headers|
       exchange(code, client_id: (client_id unless headers.key?("Authorization")), headers: headers)
       assert_response :unauthorized, headers.inspect
       assert_equal "invalid_client", response.parsed_body["error"], headers.inspect
@@ -556,6 +558,11 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
   # client_secret_basic: the form-encoded client_id and secret (RFC 6749 §2.3.1).
   def basic(client_id, secret)
     pair = [ client_id, secret ].map { |value| URI.encode_www_form_component(value) }.join(":")
+    { "Authorization" => "Basic #{Base64.strict_encode64(pair)}" }
+  end
+
+  # Authorization: Basic with pair as it is, not form-encoded.
+  def raw_basic(pair)
     { "Authorization" => "Basic #{Base64.strict_encode64(pair)}" }
   end
 

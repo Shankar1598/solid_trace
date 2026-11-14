@@ -71,13 +71,15 @@ module Oauth
     end
 
     # client_secret_basic (RFC 6749 §2.3.1): the form-encoded client_id and
-    # secret, or :malformed; nil with no Basic header.
+    # secret, or :malformed (also when a part is not UTF-8); nil with no
+    # Basic header.
     def basic_credentials
       scheme, value = request.authorization.to_s.split(" ", 2)
       return unless scheme&.casecmp?("basic")
 
-      Base64.strict_decode64(value.to_s).split(":", 2).then { |id, secret| [ id.to_s, secret.to_s ] }
+      parts = Base64.strict_decode64(value.to_s).split(":", 2).then { |id, secret| [ id.to_s, secret.to_s ] }
         .map { |part| URI.decode_www_form_component(part) }
+      parts.all?(&:valid_encoding?) ? parts : :malformed
     rescue ArgumentError
       :malformed
     end
