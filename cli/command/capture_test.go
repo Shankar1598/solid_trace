@@ -60,11 +60,26 @@ func (w *world) git(dir string, args ...string) string {
 // session is an Agent session that Claude Code started in cwd.
 func (w *world) session(cwd string) *agentSession {
 	w.t.Helper()
-	dir := filepath.Join(w.t.TempDir(), "claude", "projects", strings.ReplaceAll(cwd, "/", "-"))
+	return w.sessionWithID(sessionID, cwd)
+}
+
+// sessionWithID is an Agent session with its own id, in the machine's one
+// Claude projects directory.
+func (w *world) sessionWithID(id, cwd string) *agentSession {
+	w.t.Helper()
+	dir := filepath.Join(w.projectsDir(), strings.ReplaceAll(cwd, "/", "-"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		w.t.Fatal(err)
 	}
-	return &agentSession{w: w, id: sessionID, cwd: cwd, dir: dir}
+	return &agentSession{w: w, id: id, cwd: cwd, dir: dir}
+}
+
+// projectsDir is the machine's Claude projects directory.
+func (w *world) projectsDir() string {
+	if w.projects == "" {
+		w.projects = filepath.Join(w.t.TempDir(), "claude", "projects")
+	}
+	return w.projects
 }
 
 // write writes a file of the Agent session: "" is <id>.jsonl, other paths

@@ -37,6 +37,9 @@ func main() {
 		Sleep:       sleep,
 		Version:     version.Version,
 	}
+	if home, err := os.UserHomeDir(); err == nil || os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		env.ClaudeProjectsDir = command.ClaudeProjectsDir(os.Getenv, home)
+	}
 	os.Exit(command.Run(ctx, os.Args[1:], env))
 }
 

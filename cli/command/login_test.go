@@ -20,12 +20,14 @@ import (
 // world is one engineer's machine and one SolidTrace: the fake OAuth server
 // and the fake agent ingest API.
 type world struct {
-	t      *testing.T
-	oauth  *fake.OAuth
-	agent  *fake.AgentAPI
-	dir    string
-	stdout *syncBuffer
-	stderr *syncBuffer
+	t     *testing.T
+	oauth *fake.OAuth
+	agent *fake.AgentAPI
+	dir   string
+	// projects is the machine's Claude projects directory.
+	projects string
+	stdout   *syncBuffer
+	stderr   *syncBuffer
 	// httpTimeout is the HTTP client's Timeout; 0 is 10 s.
 	httpTimeout time.Duration
 	browser     func(url string) error
@@ -114,7 +116,8 @@ func (w *world) env() command.Env {
 			w.clock.Add(d)
 			return ctx.Err()
 		},
-		Version: w.version,
+		Version:           w.version,
+		ClaudeProjectsDir: w.projectsDir(),
 	}
 }
 
