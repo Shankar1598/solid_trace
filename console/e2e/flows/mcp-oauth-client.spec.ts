@@ -6,6 +6,7 @@ import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } fr
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
+import { MCP_DOCS } from '../../app/frontend/lib/apiTokens'
 import { ADMIN, ORG } from '../support/data'
 import { failedLoad, watchErrors } from '../support/screens'
 
@@ -130,6 +131,10 @@ test('the MCP SDK signs in from the 401, calls a tool, refreshes after its token
   await page.goto(`/${ORG}/settings/api_tokens`)
   const titles = page.locator('[data-slot="card-title"]')
   await expect(titles).toHaveText(['Sign in through the browser', 'API tokens'])
+  // It says where to revoke a client, and where the docs are.
+  const card = page.locator('[data-slot="card"]').filter({ has: titles.filter({ hasText: 'Sign in through the browser' }) })
+  await expect(card.getByRole('link', { name: 'Settings → User' })).toHaveAttribute('href', `/${ORG}/settings/user`)
+  await expect(card.getByRole('link', { name: 'How to connect, and what it can do' })).toHaveAttribute('href', MCP_DOCS)
   const signIn = page.getByRole('region', { name: 'Sign-in snippets' })
   await expect(signIn.getByRole('tabpanel')).toHaveText(new RegExp(`claude mcp add --transport http solidtrace ${mcpUrl}$`))
   await expect(signIn).not.toContainText('Bearer')
