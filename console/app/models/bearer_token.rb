@@ -11,12 +11,13 @@
 # - scopes: the names of its Scopes (Oauth::Scopes), mcp for an API token;
 # - limits: {} in this effort;
 # - expires_at: nil for an API token, which does not expire;
+# - issued_at: when the token was made;
 # - resource: the resource it is for, <issuer>/mcp for an API token;
 # - kind: :api_token or :access_token.
 class BearerToken
   Membership = Data.define(:organization, :role)
 
-  attr_reader :user, :scopes, :limits, :expires_at, :resource, :kind
+  attr_reader :user, :scopes, :limits, :expires_at, :issued_at, :resource, :kind
 
   # The token whose secret this is, or nil for a secret that is unknown,
   # revoked or not a String.
@@ -27,21 +28,22 @@ class BearerToken
     if (access = Oauth::Token.find_live_access(secret, issuer: issuer))
       grant = access.grant
       return new(user: grant.user, scopes: grant.scopes, limits: {}, expires_at: access.expires_at,
-                 resource: access.resource, kind: :access_token, record: grant)
+                 issued_at: access.created_at, resource: access.resource, kind: :access_token, record: grant)
     end
 
     api_token = ApiToken.find_by_secret(secret)
     return unless api_token
 
-    new(user: api_token.user, scopes: [ "mcp" ], limits: {}, expires_at: nil, resource: issuer.mcp_resource,
-        kind: :api_token, record: api_token)
+    new(user: api_token.user, scopes: [ "mcp" ], limits: {}, expires_at: nil, issued_at: api_token.created_at,
+        resource: issuer.mcp_resource, kind: :api_token, record: api_token)
   end
 
-  def initialize(user:, scopes:, limits:, expires_at:, resource:, kind:, record:)
+  def initialize(user:, scopes:, limits:, expires_at:, issued_at:, resource:, kind:, record:)
     @user = user
     @scopes = scopes
     @limits = limits
     @expires_at = expires_at
+    @issued_at = issued_at
     @resource = resource
     @kind = kind
     @record = record
@@ -63,6 +65,11 @@ class BearerToken
   # acts in each of the user's.
   def organization
     @record.organization if oauth?
+  end
+
+  # The client_id of an OAuth token's client; nil for an API token.
+  def client_id
+    @record.client.client_id if oauth?
   end
 
   # Records a use (at most once a minute): on the API token, or on the
