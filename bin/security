@@ -10,7 +10,8 @@
 #   gems     Console's Ruby gems with known CVEs (bundler-audit)
 #   rails    Console's Rails code, statically (brakeman)
 #   js       Console's JS packages with known CVEs (bun audit, high and up)
-#   go       EventStore's Go modules whose defects its code reaches (govulncheck)
+#   go       The Go modules of EventStore and of the solidtrace CLI whose
+#            defects their code reaches (govulncheck)
 #   rust     The VRL crate's dependencies with known CVEs (osv-scanner)
 #   secrets  Keys and passwords in git's history (gitleaks; .gitleaksignore
 #            lists the false alarms)
@@ -35,7 +36,12 @@ check_gems() { (cd "$root/console" && bin/bundler-audit check --update); }
 check_rails() { (cd "$root/console" && bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error); }
 check_js() { (cd "$root/console" && bun audit --audit-level=high); }
 check_go() {
-  (cd "$root/event_store" && mise x "go:golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK" -- govulncheck ./...)
+  local module status=0
+  for module in event_store cli; do
+    echo "== $module"
+    (cd "$root/$module" && mise x "go:golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK" -- govulncheck ./...) || status=1
+  done
+  return $status
 }
 check_rust() {
   mise x "osv-scanner@$OSV_SCANNER" -- osv-scanner scan source -L "$root/event_store/vrl/rust/Cargo.lock"

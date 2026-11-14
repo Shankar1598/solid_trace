@@ -40,6 +40,7 @@ EventStore listens on two ports. Ingest (`4000`) is public: SDKs and shippers se
 
 - `console/` — Rails app (UI, API, MCP server, user management)
 - `event_store/` — Go service (ingest, processing, the Log transform)
+- `cli/` — `solidtrace`, the agent CLI: a Go module of its own with no cgo. `solidtrace login` signs in through SolidTrace OAuth (the browser, or a code with `--device`) and keeps the sign-in in `credentials.json` in `SOLIDTRACE_CONFIG_DIR`, else in `solidtrace/` in the user's config directory, readable only by that user
 - `deploy/` — the install: Compose file, `setup-gcp`, `install`, and the Caddy, ClickHouse and Vector config
 - `docs/` — user docs, decisions in `adr/`, release notes in `changelogs/`
 - `bin/` — dev and release scripts

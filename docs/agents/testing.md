@@ -11,6 +11,12 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      vrl/build && go test -p 1 -count=1 -timeout 60m $(go list ./... | grep -v /bench/)
      ```
 
+   - The solidtrace CLI, from `cli/`, takes less than a minute. It needs no ClickHouse and no database, so it can run at any time. `cli/build` then builds the binary with no cgo for Linux and macOS on amd64 and arm64:
+
+     ```bash
+     go vet ./... && go test -race -count=1 ./... && ./build
+     ```
+
    - Playwright, from `console/`, takes about 10 min:
      - Run `bin/rails db:migrate` first, so the dev database has any new migration.
      - Then run `bun run e2e --reporter=line`.
