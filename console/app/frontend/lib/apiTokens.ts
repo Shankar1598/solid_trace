@@ -1,6 +1,9 @@
 // A user's API tokens, which let Claude Code or Cursor act as them through
 // the MCP server: making one, and the snippets that add the MCP server with it.
 
+/** docs/mcp.md, where the README's repository keeps it. */
+export const MCP_DOCS = 'https://github.com/Shankar1598/solid_trace/blob/main/docs/mcp.md'
+
 /** An API token as Settings → API tokens & MCP lists it. Its secret is answered once, when it is made. */
 export interface ApiToken {
   id: number
@@ -17,7 +20,28 @@ export interface McpSnippet {
   code: string
 }
 
-/** The snippets that add the MCP server at mcpUrl, signed in with secret. */
+/**
+ * The snippets that add the MCP server at mcpUrl with no token: the client
+ * finds how to sign in from the server's 401 and opens the browser.
+ */
+export function signInSnippets(mcpUrl: string): McpSnippet[] {
+  return [
+    {
+      id: 'claude-code',
+      label: 'Claude Code',
+      note: 'Run in a terminal. Then sign in through the browser: /mcp in Claude Code, or claude mcp login solidtrace.',
+      code: `claude mcp add --transport http solidtrace ${mcpUrl}`,
+    },
+    {
+      id: 'cursor',
+      label: 'Cursor',
+      note: "Add to ~/.cursor/mcp.json, or to .cursor/mcp.json in a project. Then sign in from Cursor's MCP settings.",
+      code: JSON.stringify({ mcpServers: { solidtrace: { url: mcpUrl } } }, null, 2),
+    },
+  ]
+}
+
+/** The snippets that add the MCP server at mcpUrl, signed in with secret: for scripts. */
 export function mcpSnippets(mcpUrl: string, secret: string): McpSnippet[] {
   const cursor = { mcpServers: { solidtrace: { url: mcpUrl, headers: { Authorization: `Bearer ${secret}` } } } }
   return [
