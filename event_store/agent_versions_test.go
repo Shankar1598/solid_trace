@@ -21,6 +21,7 @@ const (
 	caseSession   = "6c4a2e80-1b3d-4f5a-8e7c-9d0b1a2c3e74"
 	outerSession  = "d1e2f3a4-b5c6-4d7e-8f90-a1b2c3d4e585"
 	runOutSession = "8a7b6c5d-4e3f-4a1b-9c8d-7e6f5a4b3c96"
+	gitSession    = "3b9c1d7e-5f2a-4c8b-a6d0-e4f1a2b3c4d7"
 )
 
 // rowOf is one row of agent_session_files.
@@ -193,7 +194,10 @@ func TestAgentSessionPathVersions(t *testing.T) {
 			`["github.com/acme/shop","bitbucket.org/acme-team/*"]`, o.project)
 		expectStatus(t, uploadUnit(t, env, o.secret, teamSession, unitUpload{path: "session.jsonl", repository: "bitbucket.org/acme-team/api", body: before}), 200)
 		expectStatus(t, uploadUnit(t, env, o.secret, caseSession, unitUpload{path: "session.jsonl", repository: "GitHub.com/acme/shop", body: before}), 200)
-		expectStatus(t, uploadUnit(t, env, o.secret, outerSession, unitUpload{path: "session.jsonl", repository: "bitbucket.org/acme-other/api", body: before}), 403)
+		expectStatus(t, uploadUnit(t, env, o.secret, gitSession, unitUpload{path: "session.jsonl", repository: "github.com/acme/shop.git", body: before}), 200)
+		for _, repository := range []string{"bitbucket.org/acme-other/api", "bitbucket.org/acme-teamwork/api"} {
+			expectStatus(t, uploadUnit(t, env, o.secret, outerSession, unitUpload{path: "session.jsonl", repository: repository, body: before}), 403)
+		}
 	})
 
 	t.Run("a token limited to a Run's Agent sessions is not checked against the list", func(t *testing.T) {
