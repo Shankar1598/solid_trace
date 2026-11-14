@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The download of one Agent session directory, for a resume on another
@@ -132,6 +133,88 @@ func TestAgentSessionDownload(t *testing.T) {
 		}
 		if got := d.files["session.jsonl"].records["SOLIDTRACE.flags"]; got != "" {
 			t.Errorf("Expected no flags on a whole file, got %q", got)
+		}
+		if got := d.header.Get("SolidTrace-Agent-Session-Flags"); got != "" {
+			t.Errorf("Expected no flags on the Agent session, got %q", got)
+		}
+		if got := d.header.Get("Content-Type"); got != "application/x-tar" {
+			t.Errorf("Expected a tar archive, got %q", got)
+		}
+	})
+
+	t.Run("only a token with sessions:read that lists the Agent session downloads it", func(t *testing.T) {
+		expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: lines("A laptop's prompt")}), 200)
+		otherRun, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization,
+			scopes: []string{"sessions:write", "sessions:read"}, sessionIDs: []string{otherSession}})
+		expectStatus(t, uploadUnit(t, env, otherRun, otherSession, run(unitUpload{path: "session.jsonl", body: lines("Another Run")})), 200)
+		env.ProcessAgentFiles(t)
+
+		writeOnly, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization,
+			scopes: []string{"sessions:write"}, sessionIDs: []string{runSession}})
+		// Console never makes sessions:read with no list; a hand edit can.
+		noList, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization, scopes: []string{"sessions:read"}})
+		mcp, _ := o.rows.apiToken(apiTokenRow{user: o.user})
+		access, _, _ := o.rows.accessToken(accessTokenRow{user: o.user, organization: o.organization,
+			scopes: []string{"sessions:write", "sessions:read"}, resource: "http://console.test/factory",
+			expiresAt: o.rows.now.Add(time.Hour)})
+		expired := o.rows.now.Add(-time.Minute)
+		expiredRun, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization,
+			scopes: []string{"sessions:read"}, sessionIDs: []string{runSession}, expiresAt: &expired})
+
+		for _, c := range []struct {
+			name, secret, session string
+			status                int
+		}{
+			{"a token for another Agent session", otherRun, runSession, 403},
+			{"a token for another Agent session, the other way", runSecret, laptopSession, 403},
+			{"a token without sessions:read", writeOnly, runSession, 403},
+			{"the person's own sessions:write token", o.secret, laptopSession, 403},
+			{"a sessions:read token with no list", noList, laptopSession, 403},
+			{"an API token with no scope", mcp, runSession, 403},
+			{"an OAuth access token", access, runSession, 403},
+			{"an expired token", expiredRun, runSession, 401},
+			{"no token", "", runSession, 401},
+		} {
+			d := downloadSession(t, env, c.secret, c.session)
+			if d.status != c.status || d.files != nil {
+				t.Errorf("%s: expected %d and no files, got %d: %s", c.name, c.status, d.status, d.raw)
+			}
+		}
+		// The token's own Agent session still downloads, in either case of
+		// its id.
+		expectDownloadStatus(t, downloadSession(t, env, otherRun, strings.ToUpper(otherSession)), 200)
+		if d := downloadSession(t, env, otherRun, otherSession); d.files["session.jsonl"].bytes != string(lines("Another Run")) {
+			t.Errorf("Expected the other Run's Agent session, got %v", d.order)
+		}
+	})
+
+	t.Run("a token of another Organization does not reach the Agent session, with the same id in its list", func(t *testing.T) {
+		globex := o.rows.organization("Globex")
+		o.rows.agentProject(globex, "github.com/globex/shop")
+		o.rows.member(globex, o.otherUser)
+		globexRun, _ := o.rows.apiToken(apiTokenRow{user: o.otherUser, organization: globex,
+			scopes: []string{"sessions:read"}, sessionIDs: []string{runSession}})
+		if d := downloadSession(t, env, globexRun, runSession); d.status != 404 || d.files != nil {
+			t.Errorf("Expected 404 and no files, got %d: %s", d.status, d.raw)
+		}
+		initech := o.rows.organization("Initech")
+		o.rows.member(initech, o.user)
+		offRun, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: initech,
+			scopes: []string{"sessions:read"}, sessionIDs: []string{runSession}})
+		if d := downloadSession(t, env, offRun, runSession); d.status != 403 || d.files != nil {
+			t.Errorf("Expected 403 with Agent sessions off, got %d: %s", d.status, d.raw)
+		}
+	})
+
+	t.Run("an Agent session in the list that the server does not have is 404", func(t *testing.T) {
+		unknown := "5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f"
+		token, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization,
+			scopes: []string{"sessions:read"}, sessionIDs: []string{unknown}})
+		if d := downloadSession(t, env, token, unknown); d.status != 404 {
+			t.Errorf("Expected 404, got %d: %s", d.status, d.raw)
+		}
+		if d := downloadSession(t, env, token, "not-a-uuid"); d.status != 400 {
+			t.Errorf("Expected 400 for an id that is not a UUID, got %d: %s", d.status, d.raw)
 		}
 	})
 }
