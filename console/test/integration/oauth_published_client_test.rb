@@ -157,6 +157,7 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
       { status: 404 } => /HTTP 404/,
       { status: 200, body: big } => /64 KB/,
       { status: 200, body: big, headers: { "Content-Length" => "10" } } => /64 KB/,
+      { status: 200, body: description.to_json, headers: { "Content-Length" => "abc" } } => /could not fetch/,
       { status: 200, body: "<html>Claude Code</html>" } => /not a JSON object/,
       { status: 200, body: "[1, 2]" } => /not a JSON object/,
     }.each do |reply, message|
@@ -188,6 +189,13 @@ class OauthPublishedClientTest < ActionDispatch::IntegrationTest
 
     assert_match(/within 0.5 seconds/, message)
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 1.5
+  end
+
+  test "a reply with a gzip body that does not inflate is refused" do
+    sign_in_as @user
+    reply = ->(socket) { socket.write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 9\r\n\r\nnot gzip!") }
+
+    assert_match(/could not fetch/, serve_locally(reply) { error_page })
   end
 
   test "a document of exactly 64 KB is read" do

@@ -184,7 +184,8 @@ module Oauth
       [ response, body ]
     rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout, Timeout::Error
       raise Problem, too_slow(uri)
-    rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError, Net::HTTPBadResponse, Net::ProtocolError
+    rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError, Net::HTTPBadResponse, Net::ProtocolError,
+           Net::HTTPHeaderSyntaxError, Zlib::Error
       raise Problem, "Console could not fetch the client's description from #{uri.host}. Try again later."
     end
 
