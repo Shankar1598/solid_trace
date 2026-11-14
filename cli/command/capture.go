@@ -43,23 +43,42 @@ func runCapture(ctx context.Context, env Env, log *localLog) error {
 	if err := json.Unmarshal(data, &in); err != nil {
 		return fmt.Errorf("capture: the hook input is not JSON: %w", err)
 	}
-	source := env.Source()
-	creds, err := source.Credentials()
+	c, err := env.capturer(log)
 	if err != nil {
 		return fmt.Errorf("capture %s: %w", in.SessionID, err)
 	}
-	c := &capture.Capturer{
-		API: &agentapi.Client{IngestURL: creds.IngestURL, HTTP: env.HTTP, Tokens: source, Version: env.Version,
-			Warnings: log},
-		Dir:    env.ConfigDir,
-		Signin: creds.InstanceURL + " " + creds.IngestURL + " " + creds.Organization.Slug,
-		Now:    env.Now,
-		Log:    log.Printf,
+	if in.HookEventName == capture.SessionStart {
+		if !filepath.IsAbs(in.TranscriptPath) {
+			return fmt.Errorf("sweep: the transcript path %q is not absolute", in.TranscriptPath)
+		}
+		// <projects>/<project>/<id>.jsonl
+		return c.Sweep(ctx, filepath.Dir(filepath.Dir(in.TranscriptPath)))
 	}
 	if err := c.Capture(ctx, in); err != nil {
 		return fmt.Errorf("capture %s: %w", in.SessionID, err)
 	}
 	return nil
+}
+
+// capturer is the Capturer of the stored sign-in.
+func (env Env) capturer(log *localLog) (*capture.Capturer, error) {
+	source := env.Source()
+	creds, err := source.Credentials()
+	if err != nil {
+		return nil, err
+	}
+	return &capture.Capturer{
+		API: &agentapi.Client{IngestURL: creds.IngestURL, HTTP: env.HTTP, Tokens: source, Version: env.Version,
+			Warnings: log},
+		Dir:    env.ConfigDir,
+		Signin: signinName(creds.InstanceURL, creds.IngestURL, creds.Organization.Slug),
+		Now:    env.Now,
+		Log:    log.Printf,
+	}, nil
+}
+
+func signinName(instance, ingest, organization string) string {
+	return instance + " " + ingest + " " + organization
 }
 
 // localLog appends lines to capture's log. It is also the version
