@@ -69,13 +69,19 @@ module McpServer
   # A server for one request, with the tools listed now: one that needs SQL
   # queries only while they're on. request_url is the address the request
   # reached Console at, which the tools' links fall back to (PublicUrls).
-  def self.build(user:, request_url:)
+  #
+  # organization is an OAuth token's one Organization: the tools then act
+  # only in it, and the install's settings tools are not on the server, as
+  # the user approved acting in one Organization only.
+  def self.build(user:, request_url:, organization: nil)
+    tools = TOOLS.select(&:listed?)
+    tools = tools.reject(&:instance_admin_only?) if organization
     MCP::Server.new(
       name: "solidtrace",
       title: "SolidTrace",
       instructions: INSTRUCTIONS,
-      tools: TOOLS.select(&:listed?),
-      server_context: { user: user, request_url: request_url },
+      tools: tools,
+      server_context: { user: user, request_url: request_url, organization: organization },
     )
   end
 end

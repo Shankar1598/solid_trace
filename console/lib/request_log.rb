@@ -53,15 +53,18 @@ module RequestLog
     end
 
     # The line, with the time, Level and message every Log has, and its
-    # times named as the call timings name theirs.
+    # times named as the call timings name theirs. An OAuth answer's line
+    # has no location, as a redirect back to a client carries its code.
     def line(data, _payload)
       duration_ms = data[:duration]&.round(1)
+      dropped = [ :duration, :view, :db, :allocations ]
+      dropped << :location if data[:controller].to_s.start_with?("Oauth::")
       {
         time: Time.current.utc.iso8601(3),
         level: data[:status].to_i >= 500 ? "error" : "info",
         message: "#{data[:method]} #{data[:path]} #{data[:status]}, #{duration_ms} ms",
         kind: "request",
-        **data.except(:duration, :view, :db, :allocations),
+        **data.except(*dropped),
         duration_ms: duration_ms,
         view_ms: data[:view]&.round(1),
         db_ms: data[:db]&.round(1),

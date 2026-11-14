@@ -13,6 +13,7 @@ module McpTools
                 "a shell on the server, so a stolen session or API token can't open the install. Answers the " \
                 "settings as get_instance_settings does. Only an instance admin can."
     writes!
+    instance_admin_only!
     argument :sql_queries_enabled, { type: "boolean", description: "true turns SQL queries on. #{InstanceSetting::SQL_QUERIES_DESCRIPTION.squish}" }
     argument :default_log_retention_days, { type: "integer",
       description: "Whole days that Projects with no Retention of their own keep Logs, at least 1. EventStore's next " \

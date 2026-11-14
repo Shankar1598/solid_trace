@@ -10,7 +10,7 @@ class McpController < ActionController::API
   before_action :authenticate_token!
 
   def create
-    server = McpServer.build(user: @token.user, request_url: request.base_url)
+    server = McpServer.build(user: @bearer.user, request_url: request.base_url, organization: @bearer.organization)
     transport = MCP::Server::Transports::StreamableHTTPTransport.new(
       server,
       stateless: true,
@@ -38,20 +38,41 @@ class McpController < ActionController::API
 
   # The token's user, for the request's log line (RequestLog).
   def current_user
-    @token&.user
+    @bearer&.user
   end
 
   private
 
+  # The token comes only in Authorization: Bearer, never in the query string.
   def authenticate_token!
     secret = request.authorization.to_s[/\ABearer +(\S+)\z/i, 1]
-    @token = ApiToken.find_by_secret(secret)
-    if @token
-      @token.touch_last_used
+    @bearer = BearerToken.authenticate(secret, issuer: issuer)
+    # An OAuth token works only at the resource it was given for.
+    @bearer = nil if @bearer&.oauth? && !Oauth::Issuer.same_resource?(@bearer.resource, issuer.mcp_resource)
+    if @bearer
+      @bearer.record_use
     else
-      response.set_header("WWW-Authenticate", "Bearer")
+      response.set_header("WWW-Authenticate", challenge(token_sent: secret.present?))
       render json: { error: "Send an API token as Authorization: Bearer st_…. Make one in Settings → API tokens & MCP." },
         status: :unauthorized
     end
+  end
+
+  # With OAuth on, the challenge points to the protected resource metadata,
+  # where a client finds how to sign in (RFC 9728 §5.1), with the Scopes it
+  # needs, and says invalid_token when a token was sent (RFC 6750 §3.1).
+  # With OAuth off, it is a plain Bearer.
+  def challenge(token_sent:)
+    return "Bearer" unless issuer.on?
+
+    parts = []
+    parts << %(error="invalid_token") if token_sent
+    parts << %(resource_metadata="#{issuer.resource_metadata_url}")
+    parts << %(scope="#{Oauth::Scopes.names_for(Oauth::Issuer::MCP_PATH).join(" ")}")
+    "Bearer #{parts.join(", ")}"
+  end
+
+  def issuer
+    @issuer ||= Oauth::Issuer.current
   end
 end
