@@ -101,6 +101,23 @@ func TestAgentSessionPathVersions(t *testing.T) {
 		if got := storedVersion(t, env, o.project, trimSession, "session.jsonl", 1); got != string(before) {
 			t.Errorf("Expected version 1 to stay, got %q", got)
 		}
+		for _, r := range storedRows(t, env, o.project, trimSession, "session.jsonl", 1) {
+			if r.flags != 0 {
+				t.Errorf("Expected the rows of version 1 not flagged, got %+v", r)
+			}
+		}
+		rows := storedRows(t, env, o.project, trimSession, "session.jsonl", 2)
+		if len(rows) < 2 {
+			t.Fatalf("Expected the rows of two units of version 2, got %v", rows)
+		}
+		for _, r := range rows {
+			switch {
+			case r.offset < len(after) && r.flags&2 == 0:
+				t.Errorf("Expected the rows of the first unit of version 2 flagged trimmed, got %+v", r)
+			case r.offset >= len(after) && r.flags != 0:
+				t.Errorf("Expected the rows of the next unit of version 2 not flagged, got %+v", r)
+			}
+		}
 		answer = uploadUnit(t, env, o.secret, trimSession, unitUpload{path: "session.jsonl", offset: len(before), body: more})
 		expectStatus(t, answer, 409)
 	})
