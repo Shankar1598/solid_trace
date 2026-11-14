@@ -27,6 +27,8 @@ type ApiTokensProps = {
   api_tokens: ApiToken[]
   /** Where a client adds the MCP server, as the page's request reached Console. */
   mcp_url: string
+  /** Why MCP clients can't sign in through the browser on this install; null when they can. */
+  browser_sign_in_note: string | null
 }
 
 /**
@@ -35,7 +37,7 @@ type ApiTokensProps = {
  * revoke one.
  */
 export function ApiTokens() {
-  const { api_tokens: tokens, mcp_url: mcpUrl } = usePage<ApiTokensProps>().props
+  const { api_tokens: tokens, mcp_url: mcpUrl, browser_sign_in_note: browserSignInNote } = usePage<ApiTokensProps>().props
   const [name, setName] = useState('')
   const [making, setMaking] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,6 +74,8 @@ export function ApiTokens() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6 pb-6">
+        {browserSignInNote && <p role="note" className="border p-3 text-sm text-muted-foreground">{browserSignInNote}</p>}
+
         <form onSubmit={make} className="flex flex-wrap items-end gap-3">
           <div className="space-y-2">
             <Label htmlFor="api-token-name">Token name</Label>

@@ -225,12 +225,28 @@ The Organization SolidTrace makes for itself when it is installed, holding one P
 _Avoid_: system organization, internal organization, admin organization
 
 **MCP server**:
-The Console endpoint where an AI agent reads and changes Projects, Logs, Dashboards, Monitors and Issues over the Model Context Protocol, acting as the user whose **API token** it presents.
+The Console endpoint where an AI agent reads and changes Projects, Logs, Dashboards, Monitors and Issues over the Model Context Protocol, acting as the user whose **API token** or **OAuth token** it presents.
 _Avoid_: agent API, bot, integration
 
 **API token**:
 A secret a user makes in their settings that lets a client act as that user through the **MCP server**, with the user's role in each organization checked on every call. Console keeps only its digest.
 _Avoid_: API key, project key, access token
+
+**OAuth client**:
+A program that asks a user, through Console's approval page or device page, to act as them, and gets **OAuth tokens** when the user approves. Console knows it from the address of its published description, or from its registration, whose name Console cannot check.
+_Avoid_: app, connected app, integration
+
+**Grant**:
+One approval by a user of an **OAuth client**, for one **Organization** and some **Scopes**. Each sign-in is its own Grant. The user sees their Grants as Signed-in clients on Settings → User and revokes each one; revoking it stops its OAuth tokens at once.
+_Avoid_: connection, authorization, consent
+
+**OAuth token**:
+An access token or a refresh token that Console gives under a **Grant**. An access token works for one hour; a refresh token gets a new one, and works once. Console keeps only digests.
+_Avoid_: API token (that is the secret a user makes by hand)
+
+**Scope**:
+A named right that an **OAuth token** carries, for one resource, with the text the approval page shows. The first is `mcp`, for the **MCP server**.
+_Avoid_: permission, role
 
 **Session**:
 A browser signed in as a user. It lasts 24 hours from signing in, or 7 days if they ticked Remember me, and ends sooner when they sign out or reset their password.
@@ -280,6 +296,7 @@ _Avoid_: mandatory 2FA, enforced 2FA
 - The **Log file store** holds a **Project**'s **Logs** stored before the switch to ClickHouse, read with those stored since until **Retention** deletes them
 - An **Invite** to an **Organization** makes someone without a password an **Invited** member, whom an **Invite link** lets set a password
 - An **MCP server** call acts as the user of its **API token**, with what that user's role allows in the organization it acts on
+- An **OAuth client** gets **OAuth tokens** under a **Grant**; an **MCP server** call with an OAuth token acts only in the Grant's **Organization**
 - An **Instance admin** sets the install's email, which every **Organization**'s mail is sent with
 - An **Organization** with **Require two-factor** admits only members who have **Two-factor**, with an **Authenticator app** or a **Passkey**
 
