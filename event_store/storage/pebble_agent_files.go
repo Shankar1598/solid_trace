@@ -1,0 +1,394 @@
+package storage
+
+import (
+	"bytes"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"math"
+	"time"
+
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/google/uuid"
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+// The agent ingest API stores each unit of an Agent session's file that it
+// accepts as one Agent file batch in Pebble, as Log ingest stores a Log
+// batch, and Agent file processing inserts the batches into
+// agent_session_files about one time a second. In the same Pebble write it
+// keeps the state of the file (its highest version and its end offset) and
+// of the Agent session (who and where it is), which the upload checks and
+// the offsets call answers at once, before an insert.
+
+// AgentSession is who and where an Agent session is, as its first upload
+// gave it. The msgpack tags are the stored format: do not rename them.
+type AgentSession struct {
+	// UserID is the person: the user of the token that uploaded it.
+	UserID int64 `msgpack:"user_id"`
+	// Harness is the coding agent, as claude-code.
+	Harness string `msgpack:"harness"`
+	// Repository is the matched remote, as host/workspace/name.
+	Repository string `msgpack:"repository"`
+	// Folder is the path inside the repository, "" for its root.
+	Folder string `msgpack:"folder"`
+	// RunID and Project are set for the Agent session of a Run: its id
+	// and its Project in the factory.
+	RunID   string `msgpack:"run_id"`
+	Project string `msgpack:"project"`
+}
+
+// AgentFileUnit is one unit of a file of an Agent session: for a .jsonl
+// file, whole lines from Offset. The msgpack tags are the stored format.
+type AgentFileUnit struct {
+	SessionID   uuid.UUID    `msgpack:"session_id"`
+	Path        string       `msgpack:"path"`
+	Version     uint32       `msgpack:"version"`
+	Offset      uint64       `msgpack:"offset"`
+	ContentHash string       `msgpack:"content_hash"`
+	Bytes       []byte       `msgpack:"bytes"`
+	StoredAt    time.Time    `msgpack:"stored_at"`
+	Session     AgentSession `msgpack:"session"`
+}
+
+// AgentFileState is what the server has of one path of an Agent session:
+// its highest version, with the end offset and hash of what is stored of
+// it. The msgpack tags are the stored format.
+type AgentFileState struct {
+	Path        string `msgpack:"-"`
+	Version     uint32 `msgpack:"version"`
+	EndOffset   uint64 `msgpack:"end_offset"`
+	ContentHash string `msgpack:"content_hash"`
+}
+
+// AgentFileBatch is one stored unit, under its batch id.
+type AgentFileBatch struct {
+	ID   uuid.UUID
+	Unit AgentFileUnit
+}
+
+// AgentUploadConflict is an upload that does not continue what is stored:
+// State is what the server has of the path.
+type AgentUploadConflict struct {
+	Reason string
+	State  AgentFileState
+}
+
+func (c *AgentUploadConflict) Error() string { return c.Reason }
+
+// ErrAgentSessionOfAnotherPerson is an upload, or a read of the offsets,
+// from a person to an Agent session that another person uploaded.
+var ErrAgentSessionOfAnotherPerson = errors.New("the Agent session is another person's")
+
+// AgentUpload is a unit to store. AnyPerson lets the upload add to an
+// Agent session of another person: a token limited to a Run's Agent
+// sessions may, as different people continue a Run.
+type AgentUpload struct {
+	Unit      AgentFileUnit
+	AnyPerson bool
+}
+
+// Keyspaces, each the reserved Project id 0 and a prefix, apart from those
+// of Log and Transaction batches:
+//   - "agentunits/" + Project + batch id: the Agent file batches;
+//   - "agentfile/" + Project + session id + path: an AgentFileState;
+//   - "agentsession/" + Project + session id: an AgentSession;
+//   - "agentcursor/" and "agentinsert/" + Project: Agent file
+//     processing's cursor and recorded range.
+var (
+	agentFileBatchKeyspace    = append(eventKeyPrefix(0), "agentunits/"...)
+	agentFileBatchKeyspaceEnd = append(eventKeyPrefix(0), "agentunits0"...)
+)
+
+func agentFileBatchPrefix(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(bytes.Clone(agentFileBatchKeyspace), projectID)
+}
+
+func agentFileBatchUpperBound(projectID uint32) []byte {
+	if projectID == math.MaxUint32 {
+		return agentFileBatchKeyspaceEnd
+	}
+	return agentFileBatchPrefix(projectID + 1)
+}
+
+func agentFileBatchKey(projectID uint32, batchID uuid.UUID) []byte {
+	return append(agentFileBatchPrefix(projectID), batchID[:]...)
+}
+
+func agentFileStatePrefix(projectID uint32, sessionID uuid.UUID) []byte {
+	key := binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentfile/"...), projectID)
+	return append(key, sessionID[:]...)
+}
+
+func agentSessionKey(projectID uint32, sessionID uuid.UUID) []byte {
+	key := binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentsession/"...), projectID)
+	return append(key, sessionID[:]...)
+}
+
+func agentFileCursorKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentcursor/"...), projectID)
+}
+
+func agentFileInsertKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentinsert/"...), projectID)
+}
+
+// agentFileBatchFormat is the first byte of every Agent file batch value.
+const agentFileBatchFormat byte = 1
+
+// WriteAgentFileUnit stores a unit when it continues what the server has of
+// its path, in one Pebble write with the new state of the path and, for a
+// new Agent session, the Agent session:
+//   - at the stored end offset of the stored version, it is added;
+//   - at offset 0 of a version higher than the stored one (none is version
+//     0), it starts that version;
+//   - when it lies wholly within what is stored of the stored version, it
+//     is a repeat, and nothing is stored (stored false);
+//   - else it leaves a gap, overlaps the end, or is of an older version:
+//     an *AgentUploadConflict.
+//
+// The unit must not be empty. One mutex serialises the check and the
+// write, so two uploads of one path never both pass.
+func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) (state AgentFileState, stored bool, err error) {
+	unit := upload.Unit
+	var buf bytes.Buffer
+	buf.WriteByte(agentFileBatchFormat)
+	if err := msgpack.NewEncoder(&buf).Encode(unit); err != nil {
+		return state, false, fmt.Errorf("encode agent file batch: %w", err)
+	}
+
+	w.agentMu.Lock()
+	defer w.agentMu.Unlock()
+	session, known, err := w.agentSession(projectID, unit.SessionID)
+	if err != nil {
+		return state, false, err
+	}
+	if known && !upload.AnyPerson && session.UserID != unit.Session.UserID {
+		return state, false, ErrAgentSessionOfAnotherPerson
+	}
+	stateKey := append(agentFileStatePrefix(projectID, unit.SessionID), unit.Path...)
+	have, err := w.agentFileState(stateKey)
+	if err != nil {
+		return state, false, err
+	}
+	have.Path = unit.Path
+	end := unit.Offset + uint64(len(unit.Bytes))
+	switch {
+	case unit.Version > have.Version && unit.Offset == 0:
+		state = AgentFileState{Path: unit.Path, Version: unit.Version, EndOffset: end, ContentHash: unit.ContentHash}
+	case unit.Version > have.Version:
+		return have, false, &AgentUploadConflict{State: have, Reason: fmt.Sprintf(
+			"The server has no version %d of %s yet: a new version starts at offset 0, not %d.", unit.Version, unit.Path, unit.Offset)}
+	case unit.Version < have.Version:
+		return have, false, &AgentUploadConflict{State: have, Reason: fmt.Sprintf(
+			"The server has version %d of %s, which is newer than version %d.", have.Version, unit.Path, unit.Version)}
+	case end <= have.EndOffset:
+		return have, false, nil
+	case unit.Offset > have.EndOffset:
+		return have, false, &AgentUploadConflict{State: have, Reason: fmt.Sprintf(
+			"A gap: the server has version %d of %s up to offset %d, and this upload starts at offset %d. Upload from offset %d.",
+			have.Version, unit.Path, have.EndOffset, unit.Offset, have.EndOffset)}
+	case unit.Offset < have.EndOffset:
+		return have, false, &AgentUploadConflict{State: have, Reason: fmt.Sprintf(
+			"An overlap: the server has version %d of %s up to offset %d, and this upload starts at offset %d and ends at %d. Upload from offset %d.",
+			have.Version, unit.Path, have.EndOffset, unit.Offset, end, have.EndOffset)}
+	default:
+		state = AgentFileState{Path: unit.Path, Version: have.Version, EndOffset: end, ContentHash: unit.ContentHash}
+	}
+	encodedState, err := msgpack.Marshal(state)
+	if err != nil {
+		return have, false, fmt.Errorf("encode agent file state: %w", err)
+	}
+
+	batch := w.db.NewBatch()
+	defer batch.Close()
+	if !known {
+		encodedSession, err := msgpack.Marshal(unit.Session)
+		if err != nil {
+			return have, false, fmt.Errorf("encode agent session: %w", err)
+		}
+		if err := batch.Set(agentSessionKey(projectID, unit.SessionID), encodedSession, nil); err != nil {
+			return have, false, err
+		}
+	}
+	if err := batch.Set(stateKey, encodedState, nil); err != nil {
+		return have, false, err
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return have, false, ErrShuttingDown
+	}
+	batchID, err := newLogBatchID(unit.StoredAt)
+	if err != nil {
+		return have, false, fmt.Errorf("generate agent file batch id: %w", err)
+	}
+	if bytes.Compare(batchID[:], w.logBatchFloor[:]) <= 0 {
+		batchID = nextLogBatchID(w.logBatchFloor)
+	}
+	if err := batch.Set(agentFileBatchKey(projectID, batchID), buf.Bytes(), nil); err != nil {
+		return have, false, err
+	}
+	// NoSync, as for Logs: a 200 means stored as a Log batch is.
+	if err := batch.Commit(pebble.NoSync); err != nil {
+		return have, false, err
+	}
+	w.logBatchFloor = batchID
+	return state, true, nil
+}
+
+func (w *PebbleWriter) agentSession(projectID uint32, sessionID uuid.UUID) (AgentSession, bool, error) {
+	var session AgentSession
+	value, err := w.get(agentSessionKey(projectID, sessionID))
+	if err != nil || value == nil {
+		return session, false, err
+	}
+	if err := msgpack.Unmarshal(value, &session); err != nil {
+		return session, false, fmt.Errorf("agent session %s: %w", sessionID, err)
+	}
+	return session, true, nil
+}
+
+func (w *PebbleWriter) agentFileState(key []byte) (AgentFileState, error) {
+	var state AgentFileState
+	value, err := w.get(key)
+	if err != nil || value == nil {
+		return state, err
+	}
+	if err := msgpack.Unmarshal(value, &state); err != nil {
+		return state, fmt.Errorf("agent file state %x: %w", key, err)
+	}
+	return state, nil
+}
+
+// AgentSessionFiles returns what the server has of an Agent session: who
+// and where it is, and the state of each path, in path order. known is
+// false for an Agent session with no upload.
+func (w *PebbleWriter) AgentSessionFiles(projectID uint32, sessionID uuid.UUID) (session AgentSession, known bool, files []AgentFileState, err error) {
+	session, known, err = w.agentSession(projectID, sessionID)
+	if err != nil || !known {
+		return session, known, nil, err
+	}
+	prefix := agentFileStatePrefix(projectID, sessionID)
+	upper := append(bytes.Clone(prefix), 0xff)
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: prefix, UpperBound: upper})
+	if err != nil {
+		return session, known, nil, err
+	}
+	defer iter.Close()
+	files = []AgentFileState{}
+	for valid := iter.First(); valid; valid = iter.Next() {
+		var state AgentFileState
+		if err := msgpack.Unmarshal(iter.Value(), &state); err != nil {
+			return session, known, nil, fmt.Errorf("agent file state %x: %w", iter.Key(), err)
+		}
+		state.Path = string(iter.Key()[len(prefix):])
+		files = append(files, state)
+	}
+	return session, known, files, iter.Error()
+}
+
+// AgentFileBatchesAfter returns a Project's Agent file batches after the
+// batch with id after, in id order, uuid.Nil starting at its first. It
+// stops once they hold maxBytes or more, so it returns at least one batch
+// when there is one.
+func (w *PebbleWriter) AgentFileBatchesAfter(projectID uint32, after uuid.UUID, maxBytes int) ([]AgentFileBatch, error) {
+	lower := agentFileBatchPrefix(projectID)
+	if after != uuid.Nil {
+		lower = append(agentFileBatchKey(projectID, after), 0)
+	}
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: agentFileBatchUpperBound(projectID)})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	var batches []AgentFileBatch
+	size := 0
+	for valid := iter.First(); valid && size < maxBytes; valid = iter.Next() {
+		key := iter.Key()
+		batchID, err := uuid.FromBytes(key[len(key)-16:])
+		if err != nil {
+			return nil, fmt.Errorf("agent file batch key %x: %w", key, err)
+		}
+		value := iter.Value()
+		if len(value) == 0 || value[0] != agentFileBatchFormat {
+			return nil, fmt.Errorf("agent file batch %x: unknown format", key)
+		}
+		batch := AgentFileBatch{ID: batchID}
+		if err := msgpack.Unmarshal(value[1:], &batch.Unit); err != nil {
+			return nil, fmt.Errorf("agent file batch %x: %w", key, err)
+		}
+		batches = append(batches, batch)
+		size += len(value)
+	}
+	return batches, iter.Error()
+}
+
+// DeleteAgentFileBatchesUpTo deletes a Project's Agent file batches up to
+// and including the batch with id upTo. NoSync, as DeleteLogBatchesUpTo.
+func (w *PebbleWriter) DeleteAgentFileBatchesUpTo(projectID uint32, upTo uuid.UUID) error {
+	return w.db.DeleteRange(agentFileBatchPrefix(projectID), append(agentFileBatchKey(projectID, upTo), 0), pebble.NoSync)
+}
+
+// ProjectsWithAgentFileBatches returns every Project that has at least one
+// Agent file batch, reading one key per Project.
+func (w *PebbleWriter) ProjectsWithAgentFileBatches() ([]uint32, error) {
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: agentFileBatchKeyspace, UpperBound: agentFileBatchKeyspaceEnd})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	var projects []uint32
+	for valid := iter.First(); valid; {
+		projectID := binary.BigEndian.Uint32(iter.Key()[len(agentFileBatchKeyspace):])
+		projects = append(projects, projectID)
+		valid = iter.SeekGE(agentFileBatchUpperBound(projectID))
+	}
+	return projects, iter.Error()
+}
+
+// AgentFileCursor returns the id of the last Agent file batch whose unit
+// Agent file processing has stored for a Project, or uuid.Nil.
+func (w *PebbleWriter) AgentFileCursor(projectID uint32) (uuid.UUID, error) {
+	return w.logBatchID(agentFileCursorKey(projectID))
+}
+
+// SetAgentFileCursor moves a Project's Agent file processing cursor once
+// its range is stored. NoSync, as SetLogProcessingCursor.
+func (w *PebbleWriter) SetAgentFileCursor(projectID uint32, cursor uuid.UUID) error {
+	return w.db.Set(agentFileCursorKey(projectID), cursor[:], pebble.NoSync)
+}
+
+// KeepBatchIDsAboveAgentFileCursors makes every batch id written from now
+// on come after every Project's Agent file processing cursor.
+func (w *PebbleWriter) KeepBatchIDsAboveAgentFileCursors() error {
+	iter, err := w.db.NewIter(&pebble.IterOptions{
+		LowerBound: append(eventKeyPrefix(0), "agentcursor/"...),
+		UpperBound: append(eventKeyPrefix(0), "agentcursor0"...),
+	})
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+	for valid := iter.First(); valid; valid = iter.Next() {
+		cursor, err := uuid.FromBytes(iter.Value())
+		if err != nil {
+			return fmt.Errorf("agent file processing cursor %x: %w", iter.Key(), err)
+		}
+		w.KeepLogBatchIDsAbove(cursor)
+	}
+	return iter.Error()
+}
+
+// RecordAgentFileInsert records, synced, the last batch of the range Agent
+// file processing is about to insert, as RecordLogInsert.
+func (w *PebbleWriter) RecordAgentFileInsert(projectID uint32, upTo uuid.UUID) error {
+	return w.db.Set(agentFileInsertKey(projectID), upTo[:], pebble.Sync)
+}
+
+// RecordedAgentFileInsert returns the last batch of the range Agent file
+// processing last recorded for a Project, or uuid.Nil.
+func (w *PebbleWriter) RecordedAgentFileInsert(projectID uint32) (uuid.UUID, error) {
+	return w.logBatchID(agentFileInsertKey(projectID))
+}

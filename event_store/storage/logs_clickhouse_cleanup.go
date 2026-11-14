@@ -48,7 +48,7 @@ var LogDays = DayFamily{
 }
 
 // dayFamilies are EventStore's families of day tables.
-var dayFamilies = []DayFamily{LogDays, SpanDays}
+var dayFamilies = []DayFamily{LogDays, SpanDays, AgentDays}
 
 // cleanupTimeout bounds a deletion, or a pass of the disk limit, whose moves
 // of days to the bucket can take minutes each.

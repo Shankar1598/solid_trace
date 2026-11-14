@@ -642,6 +642,9 @@ func newAgentApp(t *testing.T, env *TestEnv, version string) *fiber.App {
 	}
 	t.Cleanup(func() { settings.Close() })
 	app := fiber.New()
-	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(tokens, settings, env.Clock, version))
+	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(handler.AgentConfig{
+		Tokens: tokens, Settings: settings, Files: env.PebbleWriter, NotifyFiles: env.AgentFileProcessor.Notify,
+		Clock: env.Clock, Version: version,
+	}))
 	return app
 }

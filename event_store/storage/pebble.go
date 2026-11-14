@@ -31,6 +31,9 @@ type PebbleWriter struct {
 	// logBatchFloor is the highest Log batch id written or seen, which
 	// every new one comes after.
 	logBatchFloor uuid.UUID
+	// agentMu serialises the check and the write of each Agent file unit
+	// (WriteAgentFileUnit).
+	agentMu sync.Mutex
 }
 
 func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {

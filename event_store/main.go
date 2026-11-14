@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/solidtrace/event_store/agentprocessing"
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
@@ -119,6 +120,12 @@ func main() {
 	}
 	spanProcessor.Start()
 
+	agentFileProcessor := agentprocessing.New(pebbleWriter, clickHouse)
+	if err := agentFileProcessor.Prepare(); err != nil {
+		logger.L.Fatal("Failed to prepare Agent file processing", "error", err)
+	}
+	agentFileProcessor.Start()
+
 	// Retention and deleted Projects once a day, the disk limit hourly.
 	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
 	if err != nil {
@@ -128,7 +135,9 @@ func main() {
 	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
 	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, diskLimit, clock.System{},
 		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
-		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention})
+		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
+		// The Agent Project's Log Retention, which its derived Logs keep too.
+		logprocessing.Family{Days: storage.AgentDays, Retention: consoleSettings.ProjectLogRetention})
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
@@ -174,7 +183,10 @@ func main() {
 		logger.L.Fatal("Failed to open Console's tokens", "error", err)
 	}
 	defer agentTokens.Close()
-	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(agentTokens, consoleSettings, clock.System{}, serverVersion()))
+	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(handler.AgentConfig{
+		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter, NotifyFiles: agentFileProcessor.Notify,
+		Clock: clock.System{}, Version: serverVersion(),
+	}))
 
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -224,6 +236,7 @@ func main() {
 	processor.Stop()
 	logProcessor.Stop()
 	spanProcessor.Stop()
+	agentFileProcessor.Stop()
 	logCleanup.Stop()
 	localCache.Stop()
 	eventCleanup.Stop()

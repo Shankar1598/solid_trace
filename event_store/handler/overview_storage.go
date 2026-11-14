@@ -52,7 +52,11 @@ func (h *OverviewHandler) storageParts(q overviewQuery, d *overviewStorageData) 
 				return err
 			}
 			spans, err := h.retention.ProjectTraceRetention()
-			d.retention = map[string]map[uint32]int{storage.LogDays.Name: logs, storage.SpanDays.Name: spans}
+			// The raw layer of an Agent Project is kept for its Log
+			// Retention, as main wires the AgentDays family.
+			d.retention = map[string]map[uint32]int{
+				storage.LogDays.Name: logs, storage.SpanDays.Name: spans, storage.AgentDays.Name: logs,
+			}
 			return err
 		},
 	}

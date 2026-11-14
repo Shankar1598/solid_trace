@@ -6,20 +6,32 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// minUploadBytesPerSecond is the slowest rate at which a client can send
+// the largest body the ingest app reads, one unit of an Agent session's file
+// as sent: 2 Mbit/s. A client that sends a unit with zstd (6.6 times on
+// transcripts) needs much less.
+const minUploadBytesPerSecond = 250_000
+
+// ingestReadTimeout is the time to read one request, its headers and body.
+// The body limit sets it, so that a full unit arrives in time at
+// minUploadBytesPerSecond: about 2 minutes 20 seconds.
+const ingestReadTimeout = time.Duration(agentBodyLimit/minUploadBytesPerSecond+1) * time.Second
+
 // NewIngestApp returns the public ingest app, serving the ingest routes.
 func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler) *fiber.App {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
-		// The server reads no larger body, as sent, for any route. The Event
-		// routes refuse more than their own, smaller cap themselves.
-		BodyLimit: logBodyLimit,
+		// The server reads no larger body, as sent, for any route: an upload
+		// of one unit of an Agent session's file. The Event and Log routes
+		// refuse more than their own, smaller cap themselves.
+		BodyLimit: agentBodyLimit,
 		// Ingest faces clients directly, or through Caddy, which streams
 		// requests without buffering them. Either way no proxy absorbs slow
 		// clients, so it bounds a request and an idle connection. Fiber's
 		// default is to wait forever. Caddy's keep-alive (deploy/caddy) is
 		// shorter than IdleTimeout.
-		ReadTimeout: 30 * time.Second, // headers and body of one request
-		IdleTimeout: 10 * time.Second, // between keep-alive requests
+		ReadTimeout: ingestReadTimeout, // headers and body of one request
+		IdleTimeout: 10 * time.Second,  // between keep-alive requests
 	})
 	RegisterIngestRoutes(app, ingestHandler, healthHandler)
 	return app

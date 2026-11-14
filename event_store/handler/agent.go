@@ -36,32 +36,51 @@ type AgentTokens interface {
 	Check(secret string, now time.Time) (auth.Token, bool, error)
 }
 
-// CapturedRepositories gives an Organization's captured repositories
-// (storage.ConsoleSettings).
-type CapturedRepositories interface {
+// AgentSettings is what the agent ingest API reads of Console's settings
+// (storage.ConsoleSettings): an Organization's captured repositories and
+// its Agent Project.
+type AgentSettings interface {
 	CapturedRepositories(organizationID int64) ([]string, error)
+	AgentProject(organizationID int64) (uint32, bool, error)
+}
+
+// AgentConfig is what the agent ingest API is built on.
+type AgentConfig struct {
+	Tokens   AgentTokens
+	Settings AgentSettings
+	// Files stores the units of Agent sessions' files, and NotifyFiles
+	// tells Agent file processing that a Project has new ones.
+	Files       AgentFiles
+	NotifyFiles func(projectID uint32)
+	Clock       clock.Clock
+	// Version is the server's version, as SOLIDTRACE_VERSION gives it
+	// (v0.19.0). A version that is not a release, such as dev, accepts a
+	// client of each version.
+	Version string
 }
 
 // AgentHandler serves the agent ingest API: the calls of the solidtrace CLI
 // and of the wrapper, behind the tokens that Console makes.
 type AgentHandler struct {
-	tokens       AgentTokens
-	repositories CapturedRepositories
-	clock        clock.Clock
-	version      string
-	minimum      *clientVersion
+	tokens      AgentTokens
+	settings    AgentSettings
+	files       AgentFiles
+	notifyFiles func(projectID uint32)
+	clock       clock.Clock
+	version     string
+	minimum     *clientVersion
 }
 
-// NewAgentHandler returns the agent ingest API of a server of version, as
-// SOLIDTRACE_VERSION gives it (v0.19.0). A version that is not a release,
-// such as dev, accepts a client of each version.
-func NewAgentHandler(tokens AgentTokens, repositories CapturedRepositories, clk clock.Clock, version string) *AgentHandler {
+// NewAgentHandler returns the agent ingest API of cfg.
+func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 	return &AgentHandler{
-		tokens:       tokens,
-		repositories: repositories,
-		clock:        clk,
-		version:      version,
-		minimum:      minimumClientVersion(version),
+		tokens:      cfg.Tokens,
+		settings:    cfg.Settings,
+		files:       cfg.Files,
+		notifyFiles: cfg.NotifyFiles,
+		clock:       cfg.Clock,
+		version:     cfg.Version,
+		minimum:     minimumClientVersion(cfg.Version),
 	}
 }
 
@@ -69,6 +88,8 @@ func NewAgentHandler(tokens AgentTokens, repositories CapturedRepositories, clk 
 func RegisterAgentRoutes(app *fiber.App, h *AgentHandler) {
 	api := app.Group(AgentAPIPath, h.sendVersion, h.refuseOldClients)
 	api.Get("/captured-repositories", h.requireScope(ScopeSessionsWrite), h.CapturedRepositories)
+	api.Get("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.AgentSessionFiles)
+	api.Post("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.UploadAgentFile)
 }
 
 func (h *AgentHandler) sendVersion(c *fiber.Ctx) error {
@@ -149,7 +170,7 @@ func agentToken(c *fiber.Ctx) auth.Token {
 // matches an entry.
 func (h *AgentHandler) CapturedRepositories(c *fiber.Ctx) error {
 	token := agentToken(c)
-	entries, err := h.repositories.CapturedRepositories(token.Organization.ID)
+	entries, err := h.settings.CapturedRepositories(token.Organization.ID)
 	if err != nil {
 		logger.L.Error("Failed to read the captured repositories", "organization_id", token.Organization.ID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The captured repositories could not be read. Try again later."})

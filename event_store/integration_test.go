@@ -22,6 +22,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/gofiber/fiber/v2"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/solidtrace/event_store/agentprocessing"
 	"github.com/solidtrace/event_store/auth"
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
@@ -74,6 +75,9 @@ type TestEnv struct {
 	// SpanProcessor is Span processing, which inserts into FlakySpans.
 	SpanProcessor *spanprocessing.Processor
 	FlakySpans    *flakySpanStore
+	// AgentFileProcessor is Agent file processing, which inserts the
+	// agent ingest API's units into agent_session_files.
+	AgentFileProcessor *agentprocessing.Processor
 	// LogCleanup cleans up every family of day tables, Spans' too.
 	LogCleanup  *logprocessing.Cleanup
 	LogsHandler *handler.LogsHandler
@@ -141,6 +145,15 @@ func (env *TestEnv) ProcessSpans(t *testing.T) {
 	}
 }
 
+// ProcessAgentFiles runs Agent file processing until every stored unit of
+// an Agent session's file is in ClickHouse.
+func (env *TestEnv) ProcessAgentFiles(t *testing.T) {
+	t.Helper()
+	if err := env.AgentFileProcessor.ProcessUntilCaughtUp(); err != nil {
+		t.Fatalf("Agent file processing failed: %v", err)
+	}
+}
+
 // flakySpanStore is ClickHouse's Span tables as Span processing uses them,
 // except that the next failAfterInsert inserts fail once they have stored
 // their Spans, as when ClickHouse's answer is lost.
@@ -170,8 +183,8 @@ func (env *TestEnv) DeleteLogsPastRetention(t *testing.T) {
 	}
 }
 
-// Restart starts a new Event processing and Log processing on the same
-// stores, as after an EventStore restart or crash.
+// Restart starts a new Event processing, Log processing and Agent file
+// processing on the same stores, as after an EventStore restart or crash.
 func (env *TestEnv) Restart(t *testing.T) {
 	t.Helper()
 	env.Processor.Stop()
@@ -183,6 +196,11 @@ func (env *TestEnv) Restart(t *testing.T) {
 	env.LogProcessor = logprocessing.New(env.PebbleWriter, env.FlakyLogs, env.LogTransforms, env.Clock)
 	if err := env.LogProcessor.Prepare(); err != nil {
 		t.Fatalf("Log processing Prepare failed: %v", err)
+	}
+	env.AgentFileProcessor.Stop()
+	env.AgentFileProcessor = agentprocessing.New(env.PebbleWriter, env.ClickHouse)
+	if err := env.AgentFileProcessor.Prepare(); err != nil {
+		t.Fatalf("Agent file processing Prepare failed: %v", err)
 	}
 }
 
@@ -505,11 +523,16 @@ func (env *TestEnv) open(t *testing.T) {
 	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
 	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock,
 		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
-		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention})
+		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
+		logprocessing.Family{Days: storage.AgentDays, Retention: consoleSettings.ProjectLogRetention})
 	env.FlakySpans = &flakySpanStore{ClickHouse: clickHouse}
 	env.SpanProcessor = spanprocessing.New(pebbleWriter, env.FlakySpans)
 	if err := env.SpanProcessor.Prepare(); err != nil {
 		t.Fatalf("Span processing Prepare failed: %v", err)
+	}
+	env.AgentFileProcessor = agentprocessing.New(pebbleWriter, clickHouse)
+	if err := env.AgentFileProcessor.Prepare(); err != nil {
+		t.Fatalf("Agent file processing Prepare failed: %v", err)
 	}
 
 	// Setup Handler
@@ -538,7 +561,11 @@ func (env *TestEnv) open(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open Console's tokens: %v", err)
 	}
-	handler.RegisterAgentRoutes(env.App, handler.NewAgentHandler(agentTokens, consoleSettings, env.Clock, env.ServerVersion))
+	handler.RegisterAgentRoutes(env.App, handler.NewAgentHandler(handler.AgentConfig{
+		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter,
+		NotifyFiles: func(projectID uint32) { env.AgentFileProcessor.Notify(projectID) },
+		Clock:       env.Clock, Version: env.ServerVersion,
+	}))
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
 		handler.NewOverviewHandler(handler.OverviewConfig{
@@ -552,6 +579,7 @@ func (env *TestEnv) open(t *testing.T) {
 		env.Processor.Stop()
 		env.LogProcessor.Stop()
 		env.SpanProcessor.Stop()
+		env.AgentFileProcessor.Stop()
 
 		env.LocalCache.Stop()
 		pebbleWriter.Close()
