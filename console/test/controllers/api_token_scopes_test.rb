@@ -132,7 +132,16 @@ class ApiTokenScopesTest < ActionDispatch::IntegrationTest
     assert_match "needs a list of Agent session ids", errors["limits"].join
 
     refused(scopes: [ "sessions:read" ], organization_id: @acme.id, agent_session_ids: [])
-    assert_match "needs a list of Agent session ids", errors["limits"].join
+    assert_match "Give the Agent session ids as a list", errors["limits"].join
+  end
+
+  # An empty list reaches no Agent session. If it became "no list", the
+  # token would reach every Agent session of the Organization.
+  test "an empty list of Agent session ids is refused, never made into no limit" do
+    [ [], [ nil ] ].each do |ids|
+      refused(scopes: [ "sessions:write" ], organization_id: @acme.id, agent_session_ids: ids)
+      assert_match "Give the Agent session ids as a list", errors["limits"].join, ids.inspect
+    end
   end
 
   test "Agent session ids must be well formed, and at most 100" do

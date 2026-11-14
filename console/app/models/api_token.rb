@@ -37,12 +37,14 @@ class ApiToken < ApplicationRecord
   # Makes a token for user and returns it with its secret, which is never
   # stored. Raises ActiveRecord::RecordInvalid when a field is refused.
   # scopes are names; organization_id, expires_at, agent_session_ids and
-  # project_id are as a form sends them.
+  # project_id are as a form sends them. agent_session_ids goes as it was
+  # sent: an empty list is refused, as no list would reach every Agent
+  # session.
   def self.issue!(user:, name:, scopes: [], organization_id: nil, expires_at: nil, agent_session_ids: nil, project_id: nil)
     secret = PREFIX + SecureRandom.urlsafe_base64(SECRET_BYTES)
     token = create!(user: user, name: name.to_s.strip, token_digest: digest(secret),
                     scopes: scopes.is_a?(Array) ? scopes.uniq : scopes, organization_id: organization_id.presence,
-                    expires_at: expires_at.presence, agent_session_ids: agent_session_ids.presence,
+                    expires_at: expires_at.presence, agent_session_ids: agent_session_ids,
                     project_id: project_id.presence)
     [ token, secret ]
   end
