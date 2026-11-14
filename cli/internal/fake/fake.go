@@ -2,8 +2,9 @@
 // OAuth server for the solidtrace-cli client, and the agent ingest API of
 // EventStore. They follow the rules of the real servers that the CLI must
 // see: one Organization for each Grant, PKCE S256, iss in the redirect,
-// refresh tokens that work once, and a reused refresh token that revokes
-// the Grant. They have no other rules.
+// refresh tokens that work once (a repeat in the next 60 seconds gets the
+// same pair again), and a reused refresh token that revokes the Grant after
+// those 60 seconds. They have no other rules.
 package fake
 
 import (
@@ -26,6 +27,10 @@ const ClientID = "solidtrace-cli"
 
 // AccessTokenLasts is how long an access token works, as in Console.
 const AccessTokenLasts = time.Hour
+
+// ReuseWindow is how long a used refresh token gets the same pair again,
+// as in Console. After it, a use revokes the Grant.
+const ReuseWindow = 60 * time.Second
 
 // Organization is one Organization of the signed-in user, with the
 // captured repositories of its Agent Project.
@@ -54,6 +59,13 @@ type refreshToken struct {
 	grant    *grant
 	resource string
 	used     bool
+	usedAt   time.Time
+	// next is the pair that the use gave, for a repeat in ReuseWindow.
+	next pair
+}
+
+type pair struct {
+	access, refresh string
 }
 
 type authCode struct {
@@ -98,6 +110,9 @@ type OAuth struct {
 	DeviceExpiresIn int
 	// RefreshDown makes the token endpoint answer 503 to a refresh.
 	RefreshDown bool
+	// DropRefreshAnswers is how many refreshes rotate the pair and then
+	// close the connection with no answer, as a lost answer does.
+	DropRefreshAnswers int
 	// TokenEndpoint is the metadata's token endpoint; "" names the fake's.
 	TokenEndpoint string
 
@@ -328,14 +343,27 @@ func (f *OAuth) token(w http.ResponseWriter, r *http.Request) {
 			oauthError(w, http.StatusBadRequest, "invalid_grant")
 			return
 		}
+		if token.used && f.Now().Sub(token.usedAt) < ReuseWindow {
+			// A repeat in the window gets the same pair again.
+			f.answer(w, token.next)
+			return
+		}
 		if token.used {
 			// A copy is in other hands: Console revokes the Grant.
 			token.grant.revoked = true
 			oauthError(w, http.StatusBadRequest, "invalid_grant")
 			return
 		}
-		token.used = true
-		f.issue(w, token.grant, token.resource)
+		token.used, token.usedAt = true, f.Now()
+		token.next = f.newPair(token.grant, token.resource)
+		if f.DropRefreshAnswers > 0 {
+			f.DropRefreshAnswers--
+			if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+				conn.Close()
+				return
+			}
+		}
+		f.answer(w, token.next)
 	case "urn:ietf:params:oauth:grant-type:device_code":
 		f.Polls = append(f.Polls, f.Now())
 		device := f.devices[form.Get("device_code")]
@@ -366,14 +394,22 @@ func (f *OAuth) token(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *OAuth) issue(w http.ResponseWriter, g *grant, resource string) {
-	access, refresh := "sto_"+random(), "str_"+random()
-	f.access[access] = &accessToken{grant: g, expires: f.Now().Add(AccessTokenLasts)}
-	f.refresh[refresh] = &refreshToken{grant: g, resource: resource}
+	f.answer(w, f.newPair(g, resource))
+}
+
+func (f *OAuth) newPair(g *grant, resource string) pair {
+	p := pair{access: "sto_" + random(), refresh: "str_" + random()}
+	f.access[p.access] = &accessToken{grant: g, expires: f.Now().Add(AccessTokenLasts)}
+	f.refresh[p.refresh] = &refreshToken{grant: g, resource: resource}
+	return p
+}
+
+func (f *OAuth) answer(w http.ResponseWriter, p pair) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"access_token":  access,
+		"access_token":  p.access,
 		"token_type":    "Bearer",
 		"expires_in":    int(AccessTokenLasts / time.Second),
-		"refresh_token": refresh,
+		"refresh_token": p.refresh,
 		"scope":         "sessions:write factory",
 	})
 }

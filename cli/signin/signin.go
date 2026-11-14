@@ -232,7 +232,19 @@ func oauthError(resp *http.Response, body []byte) error {
 	if json.Unmarshal(body, &answer) == nil && answer.Error != "" {
 		return &Error{Code: answer.Error, Description: answer.Description, Status: resp.StatusCode}
 	}
-	return fmt.Errorf("%s answered %s", resp.Request.URL.Redacted(), resp.Status)
+	return &StatusError{URL: resp.Request.URL.Redacted(), Status: resp.StatusCode, Text: resp.Status}
+}
+
+// StatusError is an answer of the token endpoint that is not a token and
+// not an OAuth error.
+type StatusError struct {
+	URL    string
+	Status int
+	Text   string
+}
+
+func (e *StatusError) Error() string {
+	return e.URL + " answered " + e.Text
 }
 
 func (c *Client) do(req *http.Request) (*http.Response, error) {

@@ -151,6 +151,41 @@ func TestARefreshWithNoAnswerKeepsTheSignIn(t *testing.T) {
 	}
 }
 
+func TestARefreshWhoseAnswerIsLostIsSentAgainAtOnceAndKeepsTheGrant(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	before := w.stored()
+	// Console rotates the pair, but its answer does not come back.
+	w.oauth.DropRefreshAnswers = 1
+	w.clock.Add(61 * time.Minute)
+
+	token, err := w.signedInToken()
+	if err != nil {
+		t.Fatalf("refresh with a lost answer: %v", err)
+	}
+	if w.oauth.RefreshRequests != 2 || w.oauth.SentRefreshToken[1] != before["refresh_token"] {
+		t.Fatalf("refreshes %d, sent %v: want the same refresh token again at once", w.oauth.RefreshRequests,
+			w.oauth.SentRefreshToken)
+	}
+	if w.oauth.GrantRevoked() {
+		t.Fatal("the Grant was revoked")
+	}
+	after := w.stored()
+	if after["access_token"] != token || after["refresh_token"] == before["refresh_token"] {
+		t.Errorf("the pair of the repeat is not stored")
+	}
+
+	// The stored pair is the live chain: a later capture, after the 60
+	// seconds of the repeat, refreshes with no reuse.
+	w.clock.Add(61 * time.Minute)
+	if _, err := w.api().CapturedRepositories(context.Background()); err != nil {
+		t.Fatalf("call after the next expiry: %v", err)
+	}
+	if w.oauth.GrantRevoked() {
+		t.Error("the Grant was revoked at the next refresh")
+	}
+}
+
 func TestTwoProcessesThatRefreshAtTheSameTimeUseTheRefreshTokenOnce(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()

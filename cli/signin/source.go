@@ -13,6 +13,12 @@ import (
 // so that it does not expire on the way to the server.
 const ExpiryMargin = time.Minute
 
+// RepeatWithin is how long after the first try a refresh with no answer is
+// sent once again. Console gives the same pair again for a repeat in the 60
+// seconds after a refresh token's use, and revokes the Grant for a use
+// after them, so the repeat must come well in those 60 seconds.
+const RepeatWithin = 40 * time.Second
+
 // refused are the token endpoint's errors that end a sign-in. Others (a
 // rate limit, a server error) do not: the refresh token stays.
 var refused = map[string]bool{"invalid_grant": true, "invalid_client": true, "unauthorized_client": true}
@@ -70,7 +76,13 @@ func (s *Source) Refreshed(ctx context.Context, rejected string) (string, error)
 	if c.AccessToken != rejected && s.live(c) {
 		return c.AccessToken, nil
 	}
+	start := s.Client.Now()
 	tokens, err := s.Client.Refresh(ctx, c.TokenEndpoint, c.RefreshToken, c.Resource)
+	if noAnswer(err) && ctx.Err() == nil && s.Client.Now().Sub(start) < RepeatWithin {
+		// Console may have rotated the pair and lost the answer. Send it
+		// again now, in Console's 60 seconds, not at the next CLI call.
+		tokens, err = s.Client.Refresh(ctx, c.TokenEndpoint, c.RefreshToken, c.Resource)
+	}
 	var oauthErr *Error
 	if errors.As(err, &oauthErr) && refused[oauthErr.Code] {
 		// The refresh token is used, expired or revoked. Forget the tokens,
@@ -82,8 +94,8 @@ func (s *Source) Refreshed(ctx context.Context, rejected string) (string, error)
 		return "", fmt.Errorf("%s refused the sign-in (%v): %w", c.InstanceURL, err, ErrSignInAgain)
 	}
 	if err != nil {
-		// No answer: the refresh token may be used or not. Keep it; Console
-		// gives the same pair again for a repeat in the next 60 seconds.
+		// Still no answer: the refresh token may be used or not. Keep it, as
+		// it is the only one that can still work.
 		return "", fmt.Errorf("refresh the sign-in at %s: %w", c.InstanceURL, err)
 	}
 	c.AccessToken, c.RefreshToken, c.AccessTokenExpiresAt = tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt
@@ -94,6 +106,23 @@ func (s *Source) Refreshed(ctx context.Context, rejected string) (string, error)
 		return "", fmt.Errorf("keep the new tokens in %s: %v: %w", s.Store.Path(), err, ErrSignInAgain)
 	}
 	return c.AccessToken, nil
+}
+
+// noAnswer is true for a refresh that got no answer from Console: no
+// response, or a server error.
+func noAnswer(err error) bool {
+	if err == nil {
+		return false
+	}
+	var oauthErr *Error
+	if errors.As(err, &oauthErr) {
+		return oauthErr.Status >= 500
+	}
+	var status *StatusError
+	if errors.As(err, &status) {
+		return status.Status >= 500
+	}
+	return true
 }
 
 func (s *Source) live(c credentials.Credentials) bool {
