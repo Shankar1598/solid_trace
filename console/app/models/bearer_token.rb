@@ -7,7 +7,8 @@
 # - user: the user the token acts as;
 # - memberships: each Organization it acts in, with the user's role there
 #   (every Organization of the user for an API token, the Grant's one for
-#   an OAuth token);
+#   an OAuth token), less each one that has Require two-factor while the
+#   user has no Two-factor, as McpTools::Base refuses the token there;
 # - scopes: the names of its Scopes (Oauth::Scopes), mcp for an API token;
 # - limits: {} in this effort;
 # - expires_at: nil for an API token, which does not expire;
@@ -53,6 +54,7 @@ class BearerToken
     @memberships ||= begin
       scope = user.organization_users.includes(:organization)
       scope = scope.where(organization_id: @record.organization_id) if oauth?
+      scope = scope.joins(:organization).where(organizations: { require_two_factor: false }) unless user.two_factor?
       scope.map { |membership| Membership.new(organization: membership.organization, role: membership.role) }
     end
   end

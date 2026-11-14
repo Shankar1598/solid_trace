@@ -52,6 +52,23 @@ class OauthIntrospectionTest < ActionDispatch::IntegrationTest
     assert_equal [ "acme" ], response.parsed_body["organizations"].pluck("slug")
   end
 
+  # The MCP server refuses a token in such an Organization (McpTools::Base),
+  # so introspection does not say that the token acts there.
+  test "an API token leaves out each Organization with Require two-factor until the user has Two-factor" do
+    _, secret = ApiToken.issue!(user: @user, name: "Laptop")
+    @acme.update_column(:require_two_factor, true)
+
+    introspect(secret)
+    assert_equal true, response.parsed_body["active"]
+    assert_equal [ "beta" ], response.parsed_body["organizations"].pluck("slug")
+
+    freeze_time
+    with_authenticator_app
+
+    introspect(secret)
+    assert_equal [ "acme", "beta" ], response.parsed_body["organizations"].pluck("slug").sort
+  end
+
   test "a deleted API token is not active" do
     token, secret = ApiToken.issue!(user: @user, name: "Laptop")
     sign_in_as @user
@@ -128,6 +145,16 @@ class OauthIntrospectionTest < ActionDispatch::IntegrationTest
     mcp "tools/call", token: secret, name: "whoami", arguments: {}
     assert_response :unauthorized
     assert_includes response.headers["WWW-Authenticate"], 'error="invalid_token"'
+  end
+
+  test "an access token lists no Organization when its Organization turns on Require two-factor after approval" do
+    secret = access_token(organization: @acme)
+    @acme.update_column(:require_two_factor, true)
+
+    introspect(secret)
+
+    assert_equal true, response.parsed_body["active"]
+    assert_equal [], response.parsed_body["organizations"]
   end
 
   test "a refresh token is not active" do
