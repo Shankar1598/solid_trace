@@ -59,6 +59,15 @@ Usage:
   solidtrace capture status
       Show the Organization, its captured repositories, and each Agent
       session on this machine as uploaded, not in the list, or failed.
+  solidtrace start --project PROJECT [--dispatcher URL] PROMPT
+      Start a Run: an agent works on PROMPT with the Factory settings of
+      PROJECT. It prints the Run's id and its link in Console. The first
+      Run verb needs --dispatcher with the Dispatcher's URL, which your
+      operator gives; later verbs use the same URL.
+  solidtrace runs list [--dispatcher URL]
+      List the Runs of your Organization, newest first.
+  solidtrace runs get [--dispatcher URL] RUN_ID
+      Show one Run: its state, Project and prompt.
   solidtrace version
       Print the version of this solidtrace.
 `
@@ -80,6 +89,10 @@ func Run(ctx context.Context, args []string, env Env) int {
 			return detachHook(env)
 		}
 		return captureHook(ctx, env)
+	case "start":
+		return start(ctx, args[1:], env)
+	case "runs":
+		return runs(ctx, args[1:], env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0
