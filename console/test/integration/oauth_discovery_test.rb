@@ -37,7 +37,18 @@ class OauthDiscoveryTest < ActionDispatch::IntegrationTest
   end
 
   test "OAuth is off with no Console URL, at a plain http:// one on another host, or at one that is not an origin" do
-    assert_equal [ 404, 404 ], metadata_statuses, "no Console URL: the request's host is never used"
+    assert_equal [ 404, 404 ], metadata_statuses, "no Console URL"
+    # The request's host is never used, also when it is HTTPS or loopback.
+    [ [ true, "console.example.com" ], [ false, "localhost:4001" ], [ false, "127.0.0.1:3000" ] ].each do |secure, host|
+      https!(secure)
+      host! host
+      assert_equal [ 404, 404 ], metadata_statuses, "no Console URL, request on #{host}"
+      mcp_tools_list(token: nil)
+      assert_response :unauthorized
+      assert_equal "Bearer", response.headers["WWW-Authenticate"], "no Console URL, request on #{host}"
+    end
+    https!(false)
+    host! "www.example.com"
     [ "http://console.example.com", "http://10.100.0.3:3000", "http://198.51.100.92", "http://localhost.example.com",
       "http://127.0.0.1.example.com", "ftp://localhost", "console.example.com", "https://console.example.com/console",
       "https://user@console.example.com", "not a url" ].each do |url|
