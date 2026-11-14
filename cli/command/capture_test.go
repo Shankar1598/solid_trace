@@ -319,3 +319,40 @@ func TestCaptureMatchesARemoteThatGitRewrites(t *testing.T) {
 		t.Fatalf("not uploaded; log: %s", w.captureLog())
 	}
 }
+
+// The match uses the directory where the Agent session started (the cwd of
+// the first line of <id>.jsonl that has one), not the hook's cwd, which
+// follows each cd of the agent.
+func TestCaptureMatchesTheDirectoryWhereTheAgentSessionStarted(t *testing.T) {
+	t.Run("started outside, the hook cwd is captured", func(t *testing.T) {
+		w := newWorld(t, acme)
+		w.signIn()
+		private := w.gitRepo("origin=https://github.com/someone/private.git")
+		s := w.session(w.gitRepo("origin=https://bitbucket.org/acme/shop.git"))
+		s.write("", `{"type":"summary"}`+"\n"+`{"cwd":"`+private+`","secret":1}`+"\n"+`{"cwd":"`+s.cwd+`"}`+"\n")
+		s.stop()
+		s.hook("SessionEnd")
+		if requests := w.agent.AllRequests(); len(requests) != 0 {
+			t.Errorf("capture sent %d requests for an Agent session that started outside the list", len(requests))
+		}
+	})
+	t.Run("started in a captured repository, the hook cwd is outside", func(t *testing.T) {
+		w := newWorld(t, acme)
+		w.signIn()
+		repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
+		sub := filepath.Join(repo, "services")
+		if err := os.MkdirAll(sub, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		s := w.session(t.TempDir())
+		line := `{"cwd":"` + sub + `"}` + "\n"
+		s.write("", line)
+		s.stop()
+		if s.stored(s.main()) != line {
+			t.Fatalf("not uploaded; log: %s", w.captureLog())
+		}
+		if who := w.agent.StoredSession(s.id); who.Repository != "bitbucket.org/acme/shop" || who.Folder != "services" {
+			t.Errorf("who and where: %+v", who)
+		}
+	})
+}

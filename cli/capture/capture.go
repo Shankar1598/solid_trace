@@ -3,7 +3,8 @@
 //
 // The order keeps each byte of another repository on the machine: get the
 // captured repositories list (a local cache of at most 10 minutes), match
-// the working directory's git remotes, and only then ask what the server
+// the git remotes of the directory where the Agent session started (not
+// the hook's cwd, which follows each cd), and only then ask what the server
 // has and send what is new. A .jsonl file goes as whole lines from the
 // server's end offset; another file goes whole, with its hash, when it did
 // not change since the last attempt, or at SessionEnd. One lock for each
@@ -11,9 +12,12 @@
 package capture
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,12 +76,13 @@ func (c *Capturer) Capture(ctx context.Context, in Input) error {
 	if err != nil {
 		return fmt.Errorf("no captured repositories list, so nothing is sent: %w", err)
 	}
-	repo, ok, err := Match(ctx, in.Cwd, list)
+	start := StartDir(in.TranscriptPath, in.Cwd)
+	repo, ok, err := Match(ctx, start, list)
 	if err != nil {
-		return fmt.Errorf("read the git remotes of %s: %w", in.Cwd, err)
+		return fmt.Errorf("read the git remotes of %s: %w", start, err)
 	}
 	if !ok {
-		c.Log("%s: not in the captured repositories (%s), nothing sent", in.SessionID, in.Cwd)
+		c.Log("%s: not in the captured repositories (%s), nothing sent", in.SessionID, start)
 		return nil
 	}
 
@@ -89,6 +94,37 @@ func (c *Capturer) Capture(ctx context.Context, in Input) error {
 
 	u := &upload{c: c, in: in, repo: repo, root: filepath.Dir(in.TranscriptPath)}
 	return u.run(ctx)
+}
+
+// startLines and startBytes limit how much of <id>.jsonl StartDir reads.
+const (
+	startLines = 64
+	startBytes = 8 << 20
+)
+
+// StartDir is the working directory where the Agent session started: the
+// cwd of the first line of the transcript that has one. The hook's cwd
+// follows each cd of the agent, so it is used only when no line has a cwd.
+func StartDir(transcriptPath, hookCwd string) string {
+	f, err := os.Open(transcriptPath)
+	if err != nil {
+		return hookCwd
+	}
+	defer f.Close()
+	r := bufio.NewReader(io.LimitReader(f, startBytes))
+	for range startLines {
+		line, err := r.ReadBytes('\n')
+		var l struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(line, &l) == nil && filepath.IsAbs(l.Cwd) {
+			return l.Cwd
+		}
+		if err != nil {
+			break
+		}
+	}
+	return hookCwd
 }
 
 // lock waits until this process alone uploads the Agent session.
