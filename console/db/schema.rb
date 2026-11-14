@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_14_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_14_130000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -271,6 +271,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_120000) do
     t.json "metadata", default: {}, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "fetched_at"
+    t.datetime "fresh_until"
+    t.datetime "fetch_started_at"
     t.index ["client_id"], name: "index_oauth_clients_on_client_id", unique: true
   end
 
@@ -314,7 +317,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_120000) do
 
   create_table "oauth_pending_requests", force: :cascade do |t|
     t.string "key", null: false
-    t.integer "oauth_client_id", null: false
+    t.integer "oauth_client_id"
     t.string "redirect_uri", null: false
     t.string "response_type"
     t.string "code_challenge"
@@ -324,6 +327,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_120000) do
     t.text "state"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "client_id"
     t.index ["key"], name: "index_oauth_pending_requests_on_key", unique: true
     t.index ["oauth_client_id"], name: "index_oauth_pending_requests_on_oauth_client_id"
   end
