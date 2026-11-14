@@ -229,7 +229,7 @@ The Console endpoint where an AI agent reads and changes Projects, Logs, Dashboa
 _Avoid_: agent API, bot, integration
 
 **API token**:
-A secret a user makes in their settings that lets a client act as that user through the **MCP server**, with the user's role in each organization checked on every call. Console keeps only its digest.
+A secret a user makes in their settings that lets a client act as that user through the **MCP server**, the upload of **Agent sessions** and the **Dispatcher**, with the user's role checked on every call. It can be limited to some actions and some **Projects**, and can expire. Console keeps only its digest.
 _Avoid_: API key, project key, access token
 
 **Session**:
@@ -255,6 +255,54 @@ _Avoid_: backup code
 **Require two-factor**:
 An **Organization**'s setting that keeps its members without **Two-factor** out of its pages and its **MCP server** calls until they turn it on.
 _Avoid_: mandatory 2FA, enforced 2FA
+
+**Agent session**:
+One conversation of one coding agent, kept as its transcript. A resume continues the same Agent session; a fork or a clear starts a new one. Its subagents are parts of it.
+_Avoid_: session (alone), conversation, thread, chat
+
+**Run**:
+One unit of work that the factory gives to a coding agent, from its trigger until its PR is merged or declined, or 30 days pass with no activity. It continues across stops, and records who stepped in and the outcome of its PR.
+_Avoid_: job, task, agent run
+
+**Active Run**:
+A **Run** that has an **Execution** waiting to start or working, or that waits on a person or an account limit, or whose PR is open.
+_Avoid_: open run, running run
+
+**Closed Run**:
+A **Run** that can no longer continue, because its PR is merged or declined, or 30 days have passed since its last activity (the end of an Execution or a message it accepted). A Run that is done with no PR, failed or stopped is neither active nor closed.
+_Avoid_: finished run, ended run
+
+**Execution**:
+One time that a **Run** works on a machine, until it ends, waits for a person or an account limit, or is stopped. An answer, PR feedback or a take-over continues the Run in a new Execution.
+_Avoid_: attempt, retry, allocation
+
+**Dispatcher**:
+The factory's service that queues **Runs**, starts their **Executions** and holds the factory's secrets.
+_Avoid_: orchestrator, scheduler
+
+**Factory**:
+The part of SolidTrace that gives work to coding agents on the team's own machines, lets people steer them, and records each **Run** in SolidTrace. It is off until the operator turns it on.
+_Avoid_: agent platform, orchestrator
+
+**Agent Project**:
+The **Project** of an **Organization** that holds the **Agent sessions** of its **Runs**, its engineers' Agent sessions in a **Captured repository**, and the record of its Runs.
+_Avoid_: transcripts project, sessions project
+
+**Captured repository**:
+A repository whose engineers' **Agent sessions** an **Organization** records. An Agent session in any other repository, or in no repository, never leaves the engineer's machine.
+_Avoid_: tracked repo, allowed repo
+
+**Factory settings**:
+A **Project**'s settings for the **Factory**: its repository and folder, the branch its Runs start from when none is given, and which tracker tickets go to it.
+_Avoid_: factory config, factory.yaml
+
+**Evidence**:
+What a **Run** shows to prove its work: the checks that the factory's tool ran, with their results and the end of their output, and the files that the agent attached.
+_Avoid_: proof, test results (alone)
+
+**Take-over**:
+A person's move from steering a **Run** by messages to working in its **Agent session** at a terminal. It continues the same Agent session in a new **Execution**.
+_Avoid_: attach, hijack
 
 ## Relationships
 
@@ -282,6 +330,11 @@ _Avoid_: mandatory 2FA, enforced 2FA
 - An **MCP server** call acts as the user of its **API token**, with what that user's role allows in the organization it acts on
 - An **Instance admin** sets the install's email, which every **Organization**'s mail is sent with
 - An **Organization** with **Require two-factor** admits only members who have **Two-factor**, with an **Authenticator app** or a **Passkey**
+- An **Agent session** belongs to its **Organization**'s **Agent Project**; an engineer's own Agent session has no **Run**, and is recorded only in a **Captured repository**
+- A **Run** works in the repository that its **Project**'s **Factory settings** name, and its record is in the **Agent Project**
+- A **Run** that reports done shows its **Evidence**; with no check that passed, it shows no Evidence
+- A **Run** has one or more **Executions**, and usually one **Agent session**, which each Execution continues
+- The **Dispatcher** starts each **Execution** of a **Run**; SolidTrace keeps the Run's record
 
 ## Example dialogue
 
@@ -292,3 +345,5 @@ _Avoid_: mandatory 2FA, enforced 2FA
 
 - "event store" was being used for both the Go tier and the Rails HTTP client; resolved: **EventStore** means the Go application, while the Rails client is just an adapter that talks to it.
 - "derived columns" from `message` were asked for; resolved: they are ordinary **Attributes** that a **Log transform** sets. And "editable in the dashboard" meant a Console page in the **Project**'s settings, not a **Dashboard**.
+- "session" was being used for a coding agent's conversation as well as a signed-in browser; resolved: **Session** stays the signed-in browser, and an agent's conversation is an **Agent session**.
+- "run" was being used for one time an agent works on a machine and for the whole piece of work across stops; resolved: the whole piece of work is a **Run**, and each time it works on a machine is an **Execution**. A **Monitor**'s run and a **Chart** run are plain verbs, not a **Run**.
