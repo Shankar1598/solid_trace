@@ -78,6 +78,11 @@ type TestEnv struct {
 	// AgentFileProcessor is Agent file processing, which inserts the
 	// agent ingest API's units into agent_session_files.
 	AgentFileProcessor *agentprocessing.Processor
+	// AgentParser is the parse, which makes each stored .jsonl line into a
+	// Log of the Agent Project, into FlakyLogs.
+	AgentParser *agentprocessing.Parser
+	// ConsoleSettings reads Console's settings, as Retention.
+	ConsoleSettings *storage.ConsoleSettings
 	// LogCleanup cleans up every family of day tables, Spans' too.
 	LogCleanup  *logprocessing.Cleanup
 	LogsHandler *handler.LogsHandler
@@ -152,6 +157,9 @@ func (env *TestEnv) ProcessAgentFiles(t *testing.T) {
 	if err := env.AgentFileProcessor.ProcessUntilCaughtUp(); err != nil {
 		t.Fatalf("Agent file processing failed: %v", err)
 	}
+	if err := env.AgentParser.ProcessUntilCaughtUp(); err != nil {
+		t.Fatalf("The parse of Agent sessions failed: %v", err)
+	}
 }
 
 // flakySpanStore is ClickHouse's Span tables as Span processing uses them,
@@ -198,9 +206,22 @@ func (env *TestEnv) Restart(t *testing.T) {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
 	env.AgentFileProcessor.Stop()
-	env.AgentFileProcessor = agentprocessing.New(env.PebbleWriter, env.ClickHouse)
+	env.AgentParser.Stop()
+	env.startAgentProcessing(t)
+}
+
+// startAgentProcessing makes and prepares new Agent file processing and a
+// new parse on the environment's stores, as at an EventStore start.
+func (env *TestEnv) startAgentProcessing(t *testing.T) {
+	t.Helper()
+	env.AgentParser = agentprocessing.NewParser(env.PebbleWriter, env.FlakyLogs, env.ConsoleSettings)
+	parser := env.AgentParser
+	env.AgentFileProcessor = agentprocessing.New(env.PebbleWriter, env.ClickHouse, parser.Notify)
 	if err := env.AgentFileProcessor.Prepare(); err != nil {
 		t.Fatalf("Agent file processing Prepare failed: %v", err)
+	}
+	if err := env.AgentParser.Prepare(); err != nil {
+		t.Fatalf("The parse's Prepare failed: %v", err)
 	}
 }
 
@@ -530,10 +551,8 @@ func (env *TestEnv) open(t *testing.T) {
 	if err := env.SpanProcessor.Prepare(); err != nil {
 		t.Fatalf("Span processing Prepare failed: %v", err)
 	}
-	env.AgentFileProcessor = agentprocessing.New(pebbleWriter, clickHouse)
-	if err := env.AgentFileProcessor.Prepare(); err != nil {
-		t.Fatalf("Agent file processing Prepare failed: %v", err)
-	}
+	env.ConsoleSettings = consoleSettings
+	env.startAgentProcessing(t)
 
 	// Setup Handler
 	env.EventWriter.setWriter(pebbleWriter)
@@ -580,6 +599,7 @@ func (env *TestEnv) open(t *testing.T) {
 		env.LogProcessor.Stop()
 		env.SpanProcessor.Stop()
 		env.AgentFileProcessor.Stop()
+		env.AgentParser.Stop()
 
 		env.LocalCache.Stop()
 		pebbleWriter.Close()

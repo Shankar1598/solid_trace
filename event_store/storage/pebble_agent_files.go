@@ -94,7 +94,11 @@ type AgentUpload struct {
 //   - "agentfile/" + Project + session id + path: an AgentFileState;
 //   - "agentsession/" + Project + session id: an AgentSession;
 //   - "agentcursor/" and "agentinsert/" + Project: Agent file
-//     processing's cursor and recorded range.
+//     processing's cursor and recorded range;
+//   - "agentparsecursor/" and "agentparseinsert/" + Project: the parse's
+//     cursor and recorded range. The parse reads only the batches that
+//     Agent file processing has stored, so its cursor is never past that
+//     cursor, and it deletes the batches it has parsed.
 var (
 	agentFileBatchKeyspace    = append(eventKeyPrefix(0), "agentunits/"...)
 	agentFileBatchKeyspaceEnd = append(eventKeyPrefix(0), "agentunits0"...)
@@ -131,6 +135,38 @@ func agentFileCursorKey(projectID uint32) []byte {
 
 func agentFileInsertKey(projectID uint32) []byte {
 	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentinsert/"...), projectID)
+}
+
+func agentParseCursorKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentparsecursor/"...), projectID)
+}
+
+func agentParseInsertKey(projectID uint32) []byte {
+	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "agentparseinsert/"...), projectID)
+}
+
+// AgentParseCursor returns the id of the last Agent file batch whose lines
+// the parse has made into Logs for a Project, or uuid.Nil.
+func (w *PebbleWriter) AgentParseCursor(projectID uint32) (uuid.UUID, error) {
+	return w.logBatchID(agentParseCursorKey(projectID))
+}
+
+// SetAgentParseCursor moves a Project's parse cursor once the Logs of its
+// range are inserted. NoSync, as SetLogProcessingCursor.
+func (w *PebbleWriter) SetAgentParseCursor(projectID uint32, cursor uuid.UUID) error {
+	return w.db.Set(agentParseCursorKey(projectID), cursor[:], pebble.NoSync)
+}
+
+// RecordAgentParseInsert records, synced, the last batch of the range that
+// the parse is about to insert, as RecordLogInsert.
+func (w *PebbleWriter) RecordAgentParseInsert(projectID uint32, upTo uuid.UUID) error {
+	return w.db.Set(agentParseInsertKey(projectID), upTo[:], pebble.Sync)
+}
+
+// RecordedAgentParseInsert returns the last batch of the range that the
+// parse last recorded for a Project, or uuid.Nil.
+func (w *PebbleWriter) RecordedAgentParseInsert(projectID uint32) (uuid.UUID, error) {
+	return w.logBatchID(agentParseInsertKey(projectID))
 }
 
 // agentFileBatchFormat is the first byte of every Agent file batch value.

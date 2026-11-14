@@ -147,11 +147,18 @@ type LogInsert struct {
 	// Dropped is how many Logs of the range the Log transform dropped, by
 	// the source each arrived with.
 	Dropped map[LogSource]int64
+	// Range names the kind of batches that After and UpTo are, in the dedup
+	// token: "" for Log batches, "agent" for the Agent file batches that the
+	// parse makes into Logs.
+	Range string
 }
 
 // token is the insert's dedup token, the same each time its range is
 // inserted.
 func (i LogInsert) token(projectID uint32) string {
+	if i.Range != "" {
+		return fmt.Sprintf("logs-%s-%d-%s-%s", i.Range, projectID, i.After, i.UpTo)
+	}
 	return fmt.Sprintf("logs-%d-%s-%s", projectID, i.After, i.UpTo)
 }
 

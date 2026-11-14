@@ -406,8 +406,9 @@ func agentDaysKept(t *testing.T, env *TestEnv, projectID int64) []string {
 }
 
 // Retention, Project deletion and the disk limit drop the raw days of the
-// Agent Project, as they drop Logs' days.
-func TestTheRawDaysOfAnAgentProjectFollowItsRetentionItsDeletionAndTheDiskLimit(t *testing.T) {
+// Agent Project and the Logs that the parse made of them, the same days
+// together, as they drop Logs' days.
+func TestTheRawDaysAndTheLogsOfAnAgentProjectFollowItsRetentionItsDeletionAndTheDiskLimit(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	o := newAgentOrganization(t, env)
@@ -424,9 +425,16 @@ func TestTheRawDaysOfAnAgentProjectFollowItsRetentionItsDeletionAndTheDiskLimit(
 		offset += len(body)
 		env.ProcessAgentFiles(t)
 	}
-	if got := agentDaysKept(t, env, o.project); !slices.Equal(got, []string{"2026-10-01", "2026-10-03", "2026-10-04"}) {
-		t.Fatalf("Expected three raw days, got %v", got)
+	expectKept := func(days []string, messages []string, when string) {
+		t.Helper()
+		if got := agentDaysKept(t, env, o.project); !slices.Equal(got, days) {
+			t.Errorf("Expected the raw days %v %s, got %v", days, when, got)
+		}
+		if got := agentLogMessages(t, env, o.project); !slices.Equal(got, messages) {
+			t.Errorf("Expected the Logs %v %s, got %v", messages, when, got)
+		}
 	}
+	expectKept([]string{"2026-10-01", "2026-10-03", "2026-10-04"}, []string{"October 1", "October 3", "October 4"}, "at first")
 
 	// The disk limit drops the oldest day first.
 	use, total := agentDiskUse(t, env)
@@ -436,16 +444,12 @@ func TestTheRawDaysOfAnAgentProjectFollowItsRetentionItsDeletionAndTheDiskLimit(
 	if err := env.ClickHouseLogs.EnforceDiskLimit(storage.LogDiskLimit{Bytes: total - 1}, []storage.DayFamily{storage.LogDays, storage.AgentDays}); err != nil {
 		t.Fatalf("Enforcing the disk limit failed: %v", err)
 	}
-	if got := agentDaysKept(t, env, o.project); !slices.Equal(got, []string{"2026-10-03", "2026-10-04"}) {
-		t.Errorf("Expected the disk limit to drop October 1st, got %v", got)
-	}
+	expectKept([]string{"2026-10-03", "2026-10-04"}, []string{"October 3", "October 4"}, "after the disk limit")
 
 	// Retention of 2 days on October 6th keeps October 4th.
 	env.Clock.Set(at(6))
 	env.DeleteLogsPastRetention(t)
-	if got := agentDaysKept(t, env, o.project); !slices.Equal(got, []string{"2026-10-04"}) {
-		t.Errorf("Expected Retention to keep only October 4th, got %v", got)
-	}
+	expectKept([]string{"2026-10-04"}, []string{"October 4"}, "after Retention")
 	// What the server has stays, so the next upload continues the file.
 	_, files := offsetsOf(t, env, o.secret, laptopSession)
 	if got := endOffsets(files)["session.jsonl"]; got != fmt.Sprintf("1 %d", offset) {
@@ -454,20 +458,28 @@ func TestTheRawDaysOfAnAgentProjectFollowItsRetentionItsDeletionAndTheDiskLimit(
 
 	consoleExec(t, env, "DELETE FROM projects WHERE id = ?", o.project)
 	env.DeleteLogsPastRetention(t)
-	if got := agentDaysKept(t, env, o.project); len(got) != 0 {
-		t.Errorf("Expected the deleted Agent Project to have no raw days, got %v", got)
-	}
+	expectKept([]string{}, []string{}, "after the Agent Project's deletion")
 }
 
-// agentDiskUse is how much local disk each day of the raw layer takes.
+// agentLogMessages is the message of each Log of the Agent Project, oldest
+// first.
+func agentLogMessages(t *testing.T, env *TestEnv, projectID int64) []string {
+	t.Helper()
+	got := messages(runQueryPages(t, env, uint32(projectID), queryRequest{From: allTime.from, To: allTime.to, Limit: 1000}))
+	slices.Reverse(got)
+	return got
+}
+
+// agentDiskUse is how much local disk each day of the raw layer and of the
+// Logs takes.
 func agentDiskUse(t *testing.T, env *TestEnv) (map[string]int64, int64) {
 	t.Helper()
 	rows, err := env.ClickHouse.Conn().Query(context.Background(), `
 		SELECT partition_id, toInt64(sum(bytes_on_disk)) FROM system.parts
-		WHERE database = currentDatabase() AND active AND table = 'agent_session_files'
+		WHERE database = currentDatabase() AND active AND table IN ('agent_session_files', 'logs')
 		GROUP BY partition_id`)
 	if err != nil {
-		t.Fatalf("Read the raw layer's disk use: %v", err)
+		t.Fatalf("Read the disk use: %v", err)
 	}
 	defer rows.Close()
 	use := map[string]int64{}
