@@ -25,6 +25,11 @@ import (
 // Pattern is a default Redaction pattern and the credential it finds.
 type Pattern struct {
 	Name, Expr string
+	// WordStart keeps only a match that starts at a word boundary: at the
+	// start, or after a byte that is not a letter, a digit or '_'. It is
+	// \b at the start of Expr, but Expr without it keeps its literal prefix,
+	// which Go's regexp finds about 100 times faster.
+	WordStart bool
 }
 
 // Defaults are the credential patterns that are always on.
@@ -36,12 +41,12 @@ type Pattern struct {
 var Defaults = []Pattern{
 	// sk-ant-api03-, sk-ant-admin01-, sk-ant-oat01- (CLAUDE_CODE_OAUTH_TOKEN),
 	// sk-ant-ort01- and any later kind of Anthropic key.
-	{"Anthropic API keys and Claude OAuth tokens", `sk-ant-[A-Za-z0-9_-]{20,}`},
+	{Name: "Anthropic API keys and Claude OAuth tokens", Expr: `sk-ant-[A-Za-z0-9_-]{20,}`},
 	// Repository, project and workspace access tokens.
-	{"Bitbucket access tokens", `ATCTT3xFfGN0[A-Za-z0-9_=-]{20,}`},
-	{"Bitbucket app passwords", `\bATBB[A-Za-z0-9]{28,}\b`},
+	{Name: "Bitbucket access tokens", Expr: `ATCTT3xFfGN0[A-Za-z0-9_=-]{20,}`},
+	{Name: "Bitbucket app passwords", Expr: `ATBB[A-Za-z0-9]{28,}\b`, WordStart: true},
 	// Atlassian API tokens, which the Bitbucket API also takes.
-	{"Atlassian API tokens", `ATATT3xFfGF0[A-Za-z0-9_=-]{20,}`},
+	{Name: "Atlassian API tokens", Expr: `ATATT3xFfGF0[A-Za-z0-9_=-]{20,}`},
 }
 
 // The limits on the extra patterns.
@@ -120,7 +125,12 @@ func foldsTo(lit, r rune) bool {
 
 // Set is the default patterns and the extra ones, compiled.
 type Set struct {
-	patterns []*regexp.Regexp
+	patterns []compiled
+}
+
+type compiled struct {
+	re        *regexp.Regexp
+	wordStart bool
 }
 
 // New compiles the default patterns and extra. It refuses an extra pattern
@@ -131,15 +141,19 @@ func New(extra []string) (*Set, error) {
 	}
 	set := &Set{}
 	for _, p := range Defaults {
-		set.patterns = append(set.patterns, regexp.MustCompile(p.Expr))
+		set.patterns = append(set.patterns, compiled{regexp.MustCompile(p.Expr), p.WordStart})
 	}
 	for i, expr := range extra {
 		if err := Check(expr); err != nil {
 			return nil, fmt.Errorf("extra pattern %d (%q): %w", i+1, expr, err)
 		}
-		set.patterns = append(set.patterns, regexp.MustCompile(expr))
+		set.patterns = append(set.patterns, compiled{re: regexp.MustCompile(expr)})
 	}
 	return set, nil
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || ('0' <= b && b <= '9') || ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z')
 }
 
 // Unit replaces in place each byte of unit that a pattern matches with '*'.
@@ -167,9 +181,9 @@ func (s *Set) Unit(unit []byte, jsonl bool) {
 
 func (s *Set) piece(piece []byte) {
 	var spans [][]int
-	for _, re := range s.patterns {
-		for _, m := range re.FindAllIndex(piece, -1) {
-			if m[1] > m[0] {
+	for _, p := range s.patterns {
+		for _, m := range p.re.FindAllIndex(piece, -1) {
+			if m[1] > m[0] && !(p.wordStart && m[0] > 0 && isWordByte(piece[m[0]-1])) {
 				spans = append(spans, m)
 			}
 		}

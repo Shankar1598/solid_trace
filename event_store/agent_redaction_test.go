@@ -130,6 +130,18 @@ func TestAgentSessionRedactionOnUpload(t *testing.T) {
 		}
 	})
 
+	t.Run("an app password's prefix inside a longer word, as in a base64 image, stays", func(t *testing.T) {
+		app := defaultSecrets()["Bitbucket app password"]
+		line := textLine("data:image/png;base64,iVBORw0KGgo" + app + "+/AAAA and " + app + "_tail")
+		if got := upload(t, line, nil); got != line {
+			t.Errorf("Expected no change, got %q", got)
+		}
+		line = textLine("(" + app + ")")
+		if got := upload(t, line, nil); got != textLine("("+stars(app)+")") {
+			t.Errorf("Expected the app password between brackets replaced, got %q", got)
+		}
+	})
+
 	t.Run("a secret at the start and at the end of a unit is replaced", func(t *testing.T) {
 		key := defaultSecrets()["Anthropic API key"]
 		body := `{"` + key + `":1}` + "\n" + textLine("first") + `{"text":"` + key + `"}` + "\n"

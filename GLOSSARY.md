@@ -308,6 +308,10 @@ _Avoid_: transcripts project, sessions project
 A repository whose engineers' **Agent sessions** an **Organization** records. An Agent session in any other repository, or in no repository, never leaves the engineer's machine.
 _Avoid_: tracked repo, allowed repo
 
+**Redaction pattern**:
+A pattern of a credential that the server removes from each **Agent session** before it stores it: each character that the pattern matches becomes `*`, so each line keeps its length and stays valid. A default list is always on, and an **Instance admin** adds patterns. A pattern cannot match a quote or a backslash.
+_Avoid_: scrub rule, secret filter
+
 **Factory settings**:
 A **Project**'s settings for the **Factory**: its repository and folder, the branch its Runs start from when none is given, and which tracker tickets go to it.
 _Avoid_: factory config, factory.yaml
