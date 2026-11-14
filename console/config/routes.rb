@@ -50,6 +50,9 @@ Rails.application.routes.draw do
   post "oauth/authorize", to: "oauth/authorizations#create", format: false
   post "oauth/token", to: "oauth/tokens#create", as: :oauth_token, format: false
   post "oauth/register", to: "oauth/registrations#create", as: :oauth_register, format: false
+  # Token introspection (Oauth::IntrospectionsController), for a service
+  # with an API token.
+  post "oauth/introspect", to: "oauth/introspections#create", as: :oauth_introspect, format: false
   match "oauth/token", to: "oauth/tokens#preflight", via: :options, as: nil, format: false
   match "oauth/register", to: "oauth/registrations#preflight", via: :options, as: nil, format: false
   resources :passwords, param: :token
