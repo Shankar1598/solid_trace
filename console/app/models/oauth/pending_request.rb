@@ -10,6 +10,10 @@ module Oauth
   # A request from a client with a published description keeps only its
   # client_id (the URL) until the user signs in: Console fetches nothing
   # before sign-in. The approval page then finds the client and sets it.
+  #
+  # A request on the device page keeps its device code (the code), and has
+  # no redirect URI: the program polls for its answer. Each page finds only
+  # its own kind of request.
   class PendingRequest < ApplicationRecord
     LASTS = 10.minutes
     # How many pending requests one browser keeps.
@@ -18,6 +22,7 @@ module Oauth
 
     belongs_to :client, class_name: "Oauth::Client", foreign_key: :oauth_client_id, inverse_of: :pending_requests,
                         optional: true
+    belongs_to :code, class_name: "Oauth::Code", foreign_key: :oauth_code_id, optional: true
 
     validates :client, presence: true, unless: :client_id?
 
@@ -33,11 +38,14 @@ module Oauth
       create!(**attributes)
     end
 
-    # The fresh request with key, if session holds key; else nil.
-    def self.find_in_session(session, key)
+    # The fresh request with key, if session holds key; else nil. A request
+    # of the device page only with device: true, one of the approval page
+    # only without.
+    def self.find_in_session(session, key, device: false)
       return unless key.is_a?(String) && Array(session[SESSION_KEY]).include?(key)
 
-      fresh.find_by(key: key)
+      requests = device ? fresh.where.not(oauth_code_id: nil) : fresh.where(oauth_code_id: nil)
+      requests.find_by(key: key)
     end
 
     # Whether the client is not known yet: its published description is

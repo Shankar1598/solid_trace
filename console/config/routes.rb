@@ -53,6 +53,14 @@ Rails.application.routes.draw do
   # Token introspection (Oauth::IntrospectionsController), for a service
   # with an API token.
   post "oauth/introspect", to: "oauth/introspections#create", as: :oauth_introspect, format: false
+  # The device flow: device authorization for a program with no browser
+  # (Oauth::DeviceAuthorizationsController), and the device page where the
+  # user types its code (Oauth::DevicesController).
+  post "oauth/device_authorization", to: "oauth/device_authorizations#create", as: :oauth_device_authorization,
+                                     format: false
+  get "device", to: "oauth/devices#show", as: :device, format: false
+  post "device", to: "oauth/devices#create", format: false
+  match "oauth/device_authorization", to: "oauth/device_authorizations#preflight", via: :options, as: nil, format: false
   match "oauth/token", to: "oauth/tokens#preflight", via: :options, as: nil, format: false
   match "oauth/register", to: "oauth/registrations#preflight", via: :options, as: nil, format: false
   resources :passwords, param: :token

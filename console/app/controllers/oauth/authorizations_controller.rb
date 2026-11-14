@@ -175,19 +175,13 @@ module Oauth
     # The Scopes the request asks for (mcp when it names none), or nil when
     # one is unknown.
     def scopes(pending)
-      names = pending.scope.to_s.split
-      names = [ "mcp" ] if names.empty?
-      found = names.uniq.map { |name| Scopes.find(name) }
-      found unless found.include?(nil)
+      Scopes.requested(pending.scope)
     end
 
     # The resource the code is for: the request's, when a Scope asked for is
     # for it, else the Scopes' own; nil when no Scope is for it.
     def resource(pending)
-      resources = scopes(pending).map { |scope| scope.resource(issuer) }.uniq
-      return resources.first if pending.resource.blank?
-
-      resources.find { |resource| Issuer.same_resource?(resource, pending.resource) }
+      Scopes.resource_for(scopes(pending), pending.resource, issuer: issuer)
     end
 
     def page_props(pending)

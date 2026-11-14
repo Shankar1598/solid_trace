@@ -6,6 +6,12 @@ module Oauth
   # (str_). The request must give the code's client_id, the same
   # redirect_uri, the code's resource or none, and the code_verifier whose
   # S256 is the code's code_challenge; any difference is invalid_grant.
+  #
+  # The device code grant (RFC 8628 §3.4) is the program's poll: it answers
+  # authorization_pending until the user approves on the device page,
+  # slow_down (and 5 seconds more on the interval) when the program polls
+  # faster than its interval, access_denied after Deny, expired_token after
+  # 10 minutes, and the tokens once, with one conditional update.
   class TokensController < ApiController
     TOO_MANY = "Too many token requests. Try again in a minute."
     # 60 a minute for each IP address and for each client_id.
@@ -21,6 +27,7 @@ module Oauth
     def create
       case params[:grant_type]
       when "authorization_code" then exchange_code
+      when DeviceCode::GRANT_TYPE then poll_device_code
       when nil, "" then oauth_error("invalid_request", "Send a grant_type: authorization_code with the code from the approval page.")
       else
         oauth_error("unsupported_grant_type", "Send grant_type=authorization_code with the code from the approval page.")
@@ -43,6 +50,36 @@ module Oauth
       return invalid_grant unless code.use!
       return invalid_grant unless code.grant&.live?(issuer: issuer)
 
+      render_tokens(code)
+    end
+
+    # A client with a published description is public: it sends its
+    # client_id in the body, and no secret. Its row may not exist before a
+    # user types the code, so the client_id is compared with the device
+    # code's, not looked up. Each answer to a poll is a 400 with its error
+    # (RFC 8628 §3.5).
+    def poll_device_code
+      client_id = params[:client_id]
+      return invalid_client unless client_id.is_a?(String) && client_id.present?
+      return invalid_client if basic_credentials || params.key?(:client_secret)
+
+      code = Code.find_by_secret(params[:device_code])
+      return invalid_device_code unless code && code.kind == "device" && code.client_id == client_id && code.used_at.nil?
+      return oauth_error("access_denied", "The user denied the sign-in. Ask for a new code to try again.") if code.denied_at
+      return oauth_error("expired_token", "The device code is older than 10 minutes. Ask for a new one.") if code.expired?
+      return oauth_error("slow_down", "Poll at most once in #{code.reload.poll_interval} seconds.") unless code.poll!
+      unless code.oauth_grant_id
+        return oauth_error("authorization_pending", "The user has not approved yet. Poll again in " \
+                                                    "#{code.poll_interval} seconds.")
+      end
+      return invalid_device_code unless code.use! && code.grant.live?(issuer: issuer)
+
+      render_tokens(code)
+    end
+
+    # An access token for the code's resource and a refresh token, under
+    # the code's Grant.
+    def render_tokens(code)
       tokens = Token.issue_pair!(grant: code.grant, resource: code.resource)
       render json: {
         access_token: tokens[:access_token],
@@ -51,6 +88,10 @@ module Oauth
         refresh_token: tokens[:refresh_token],
         scope: code.scopes.join(" "),
       }
+    end
+
+    def invalid_device_code
+      oauth_error("invalid_grant", "The device code is wrong or used. Ask for a new one.")
     end
 
     def code_matches?(code)
