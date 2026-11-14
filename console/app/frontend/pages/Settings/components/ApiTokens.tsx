@@ -14,11 +14,25 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { createApiToken, mcpSnippets, type ApiToken } from '@/lib/apiTokens'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  createApiToken,
+  DEFAULT_EXPIRY,
+  EXPIRY_CHOICES,
+  limitsText,
+  mcpSnippets,
+  tokenFields,
+  type ApiToken,
+  type NamedRecord,
+  type OfferedScope,
+  type TokenForm,
+} from '@/lib/apiTokens'
 
 // docs/mcp.md, where the README's repository keeps it.
 const MCP_DOCS = 'https://github.com/solidtrace/solid_trace/blob/main/docs/mcp.md'
@@ -29,29 +43,55 @@ type ApiTokensProps = {
   mcp_url: string
   /** Why MCP clients can't sign in through the browser on this install; null when they can. */
   browser_sign_in_note: string | null
+  /** The scopes you can put on your own token. */
+  scopes: OfferedScope[]
+  organizations: NamedRecord[]
+  /** Each Organization's Projects, for the mcp:read Project limit. */
+  projects: (NamedRecord & { organization_id: number })[]
 }
 
+const EMPTY_FORM: TokenForm = {
+  name: '', scopes: [], organizationId: '', expiry: DEFAULT_EXPIRY, agentSessionIds: '', projectId: '',
+}
+// Select values for "no choice", as an item value can't be ''.
+const EACH = 'each'
+const NONE = 'none'
+
 /**
- * User settings' API tokens: make one by name and see its secret once, with
- * the snippets that add the MCP server to Claude Code or Cursor; list them;
- * revoke one.
+ * User settings' API tokens: make one with a name, scopes, an Organization,
+ * limits and an expiry, and see its secret once, with the snippets that add
+ * the MCP server to Claude Code or Cursor; list them; revoke one.
  */
 export function ApiTokens() {
-  const { api_tokens: tokens, mcp_url: mcpUrl, browser_sign_in_note: browserSignInNote } = usePage<ApiTokensProps>().props
-  const [name, setName] = useState('')
+  const {
+    api_tokens: tokens, mcp_url: mcpUrl, browser_sign_in_note: browserSignInNote, scopes: offered, organizations, projects,
+  } = usePage<ApiTokensProps>().props
+  const [form, setForm] = useState<TokenForm>(EMPTY_FORM)
   const [making, setMaking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [made, setMade] = useState<{ name: string; secret: string } | null>(null)
   const [revoking, setRevoking] = useState<ApiToken | null>(null)
+
+  const set = (changes: Partial<TokenForm>) => setForm(current => ({ ...current, ...changes }))
+  const organization = organizations.find(o => String(o.id) === form.organizationId)
+  const hasSessionScope = form.scopes.some(scope => scope.startsWith('sessions:'))
+  const takesProject = form.scopes.includes('mcp:read') && !form.scopes.includes('mcp')
+
+  // A token with scopes needs one Organization: the first tick picks the first one.
+  const tick = (scope: string, on: boolean) => {
+    const scopes = on ? [...form.scopes, scope] : form.scopes.filter(s => s !== scope)
+    const organizationId = on && form.organizationId === '' && organizations[0] ? String(organizations[0].id) : form.organizationId
+    set({ scopes: offered.map(s => s.name).filter(name => scopes.includes(name)), organizationId })
+  }
 
   const make: React.FormEventHandler = async (e) => {
     e.preventDefault()
     setMaking(true)
     setError(null)
     try {
-      const { apiToken, secret } = await createApiToken(name)
+      const { apiToken, secret } = await createApiToken(tokenFields(form))
       setMade({ name: apiToken.name, secret })
-      setName('')
+      setForm(EMPTY_FORM)
       router.reload({ only: ['api_tokens'] })
     } catch (failure) {
       setError((failure as Error).message)
@@ -76,21 +116,103 @@ export function ApiTokens() {
       <CardContent className="space-y-6 pb-6">
         {browserSignInNote && <p role="note" className="border p-3 text-sm text-muted-foreground">{browserSignInNote}</p>}
 
-        <form onSubmit={make} className="flex flex-wrap items-end gap-3">
-          <div className="space-y-2">
-            <Label htmlFor="api-token-name">Token name</Label>
-            <Input
-              id="api-token-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Laptop, Claude Code"
-              className="w-64"
-            />
+        <form onSubmit={make} className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="api-token-name">Token name</Label>
+              <Input
+                id="api-token-name"
+                value={form.name}
+                onChange={(e) => set({ name: e.target.value })}
+                placeholder="Laptop, Claude Code"
+                className="w-64"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Organization</Label>
+              <Select
+                value={form.organizationId || EACH}
+                onValueChange={(value) => set({ organizationId: value === EACH || !value ? '' : String(value), projectId: '' })}
+                items={{ [EACH]: 'Each of yours', ...Object.fromEntries(organizations.map(o => [String(o.id), o.name])) }}
+              >
+                <SelectTrigger className="w-48" aria-label="Organization"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={EACH}>Each of yours</SelectItem>
+                  {organizations.map(o => <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Expiry</Label>
+              <Select value={form.expiry} onValueChange={(value) => set({ expiry: String(value ?? DEFAULT_EXPIRY) })} items={EXPIRY_CHOICES}>
+                <SelectTrigger className="w-36" aria-label="Expiry"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(EXPIRY_CHOICES).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <Button type="submit" disabled={making || name.trim() === ''}>
-            {making ? 'Making…' : 'Make token'}
-          </Button>
-          {error && <p role="alert" className="w-full text-sm text-destructive">{error}</p>}
+
+          <fieldset className="flex flex-col gap-2">
+            <legend className="mb-1 text-sm font-medium">Scopes</legend>
+            <p className="text-xs text-muted-foreground">
+              With no scope, the token acts as you over the MCP server. With scopes, it can do only what they give, in one Organization.
+            </p>
+            {offered.map(scope => (
+              <div key={scope.name} className="flex items-start gap-2">
+                <Checkbox
+                  id={`scope-${scope.name}`}
+                  checked={form.scopes.includes(scope.name)}
+                  onCheckedChange={(on) => tick(scope.name, !!on)}
+                />
+                <Label htmlFor={`scope-${scope.name}`} className="text-sm font-normal leading-snug">
+                  <span className="font-mono">{scope.name}</span>
+                  <span className="text-muted-foreground"> — {scope.text.replace('%{organization}', organization?.name ?? 'the Organization')}</span>
+                </Label>
+              </div>
+            ))}
+          </fieldset>
+
+          {hasSessionScope && (
+            <div className="space-y-2">
+              <Label htmlFor="api-token-agent-sessions">Agent session ids</Label>
+              <Textarea
+                id="api-token-agent-sessions"
+                value={form.agentSessionIds}
+                onChange={(e) => set({ agentSessionIds: e.target.value })}
+                placeholder="One a line"
+                className="max-w-md font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                sessions:read needs this list. sessions:write without a list uploads any Agent session.
+              </p>
+            </div>
+          )}
+
+          {takesProject && (
+            <div className="space-y-2">
+              <Label>Project limit for mcp:read</Label>
+              <Select
+                value={form.projectId || NONE}
+                onValueChange={(value) => set({ projectId: value === NONE || !value ? '' : String(value) })}
+                items={{ [NONE]: 'Every Project', ...Object.fromEntries(projects.map(p => [String(p.id), p.name])) }}
+              >
+                <SelectTrigger className="w-48" aria-label="Project limit"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Every Project</SelectItem>
+                  {projects.filter(p => String(p.organization_id) === form.organizationId)
+                    .map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div>
+            <Button type="submit" disabled={making || form.name.trim() === ''}>
+              {making ? 'Making…' : 'Make token'}
+            </Button>
+          </div>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         </form>
 
         {made && <MadeToken name={made.name} secret={made.secret} mcpUrl={mcpUrl} onDone={() => setMade(null)} />}
@@ -102,6 +224,10 @@ export function ApiTokens() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Scopes</TableHead>
+                <TableHead>Organization</TableHead>
+                <TableHead>Limits</TableHead>
+                <TableHead>Expires</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead>Last used</TableHead>
                 <TableHead className="w-0" />
@@ -111,6 +237,12 @@ export function ApiTokens() {
               {tokens.map(token => (
                 <TableRow key={token.id}>
                   <TableCell>{token.name}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {token.scopes.length > 0 ? token.scopes.join(' ') : <span className="font-sans text-muted-foreground">None (MCP as you)</span>}
+                  </TableCell>
+                  <TableCell>{token.organization?.name ?? <span className="text-muted-foreground">Each</span>}</TableCell>
+                  <TableCell className="text-muted-foreground">{limitsText(token.limits)}</TableCell>
+                  <TableCell className="text-muted-foreground">{expiry(token.expires_at)}</TableCell>
                   <TableCell className="text-muted-foreground">{ago(token.created_at)}</TableCell>
                   <TableCell className="text-muted-foreground">{token.last_used_at ? ago(token.last_used_at) : 'Never'}</TableCell>
                   <TableCell className="text-right">
@@ -130,7 +262,7 @@ export function ApiTokens() {
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke "{revoking?.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
-              Clients that use this token can no longer reach SolidTrace's MCP server. This can't be undone.
+              Clients that use this token can no longer reach SolidTrace. This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -185,4 +317,10 @@ function MadeToken({ name, secret, mcpUrl, onDone }: { name: string; secret: str
 
 function ago(iso: string): string {
   return `${formatDistanceToNow(new Date(iso))} ago`
+}
+
+function expiry(iso: string | null): string {
+  if (!iso) return 'No expiry'
+  const at = new Date(iso)
+  return at.getTime() > Date.now() ? `in ${formatDistanceToNow(at)}` : `Expired ${formatDistanceToNow(at)} ago`
 }

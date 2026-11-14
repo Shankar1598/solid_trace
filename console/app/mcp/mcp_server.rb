@@ -73,9 +73,13 @@ module McpServer
   # organization is an OAuth token's one Organization: the tools then act
   # only in it, and the install's settings tools are not on the server, as
   # the user approved acting in one Organization only.
-  def self.build(user:, request_url:, organization: nil)
+  #
+  # read_only is for a token with mcp:read and not mcp: the server then has
+  # only the read tools, so no write tool can run.
+  def self.build(user:, request_url:, organization: nil, read_only: false)
     tools = TOOLS.select(&:listed?)
     tools = tools.reject(&:instance_admin_only?) if organization
+    tools = tools.select(&:read_only?) if read_only
     MCP::Server.new(
       name: "solidtrace",
       title: "SolidTrace",

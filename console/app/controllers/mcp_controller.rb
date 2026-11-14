@@ -7,10 +7,11 @@
 class McpController < ActionController::API
   include TimesCalls
 
-  before_action :authenticate_token!
+  before_action :authenticate_token!, :require_mcp_scope!
 
   def create
-    server = McpServer.build(user: @bearer.user, request_url: request.base_url, organization: @bearer.organization)
+    server = McpServer.build(user: @bearer.user, request_url: request.base_url, organization: @bearer.organization,
+                             read_only: @bearer.read_only?)
     transport = MCP::Server::Transports::StreamableHTTPTransport.new(
       server,
       stateless: true,
@@ -58,6 +59,45 @@ class McpController < ActionController::API
     end
   end
 
+  # A token without mcp or mcp:read, or a call of a write tool with
+  # mcp:read only, gets 403 insufficient_scope (RFC 6750 §3.1), which asks
+  # for mcp, as the MCP specification's scope challenge does.
+  def require_mcp_scope!
+    problem = if (@bearer.scopes & Oauth::Scopes::FOR_MCP).empty?
+      "This token has the scopes #{@bearer.scopes.join(' ')}. The MCP server needs the mcp or mcp:read scope."
+    elsif @bearer.read_only? && @bearer.limits[:project]
+      # Ticket 81 makes the tools read only the limit's Project. Until
+      # then the token reads nothing, so it is never wider than its limit.
+      "The MCP server does not yet read with a Project limit. Make an mcp:read token without one."
+    elsif @bearer.read_only? && (tool = write_tool_called)
+      "#{tool} changes things, and this token has mcp:read, which reads only. It needs the mcp scope."
+    end
+    return unless problem
+
+    parts = [ %(error="insufficient_scope"), %(scope="#{Oauth::Scopes::MCP}") ]
+    parts << %(resource_metadata="#{issuer.resource_metadata_url}") if issuer.on?
+    response.set_header("WWW-Authenticate", "Bearer #{parts.join(", ")}")
+    render json: { error: problem }, status: :forbidden
+  end
+
+  # The name of the first tool that the request calls and that is not a
+  # read tool, in one JSON-RPC message or a batch; nil when there is none.
+  # A body that is not JSON goes to the transport, which answers its parse
+  # error; a name that is no tool gets the transport's "not found".
+  def write_tool_called
+    messages = Array.wrap(JSON.parse(request.raw_post))
+    messages.each do |message|
+      next unless message.is_a?(Hash) && message["method"] == "tools/call"
+
+      name = message.dig("params", "name") if message["params"].is_a?(Hash)
+      tool = McpServer::TOOLS.find { |candidate| candidate.name_value == name }
+      return name if tool && !tool.read_only?
+    end
+    nil
+  rescue JSON::ParserError
+    nil
+  end
+
   # With OAuth on, the challenge points to the protected resource metadata,
   # where a client finds how to sign in (RFC 9728 §5.1), with the Scopes it
   # needs, and says invalid_token when a token was sent (RFC 6750 §3.1).
@@ -68,7 +108,7 @@ class McpController < ActionController::API
     parts = []
     parts << %(error="invalid_token") if token_sent
     parts << %(resource_metadata="#{issuer.resource_metadata_url}")
-    parts << %(scope="#{Oauth::Scopes.names_for(Oauth::Issuer::MCP_PATH).join(" ")}")
+    parts << %(scope="#{Oauth::Scopes::MCP}")
     "Bearer #{parts.join(", ")}"
   end
 

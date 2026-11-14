@@ -348,7 +348,8 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
   end
 
   test "a resource that is not in the Grant answers invalid_target, and one in the Grant that is not the code's answers invalid_grant" do
-    logs = Oauth::Scopes::Scope.new(name: "logs", resource_path: "/logs", text: "Read the Logs of %{organization}.")
+    logs = Oauth::Scopes::Scope.new(name: "logs", resource_path: "/logs", text: "Read the Logs of %{organization}.",
+                                     oauth: true, person: true)
     find = ->(name) { name == "logs" ? logs : Oauth::Scopes::ALL.find { |scope| scope.name == name } }
     Oauth::Scopes.stub(:find, find) do
       sign_in_as @user

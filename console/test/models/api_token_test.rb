@@ -75,4 +75,23 @@ class ApiTokenTest < ActiveSupport::TestCase
       @user.destroy
     end
   end
+
+  # A limit never points to nothing: the token goes with its Project or
+  # its Organization.
+  test "a token goes with the Project of its limit and with its Organization" do
+    organization = create(:organization)
+    create(:organization_user, organization: organization, user: @user)
+    project = create(:project, organization: organization)
+    limited, = ApiToken.issue!(user: @user, name: "Issue Run", scopes: [ "mcp:read" ], organization_id: organization.id,
+                               project_id: project.id)
+    scoped, = ApiToken.issue!(user: @user, name: "Run", scopes: [ "factory" ], organization_id: organization.id)
+
+    project.destroy!
+    assert_not ApiToken.exists?(limited.id)
+    assert ApiToken.exists?(scoped.id)
+
+    OrganizationUser.where(organization: organization).delete_all
+    organization.destroy!
+    assert_not ApiToken.exists?(scoped.id)
+  end
 end

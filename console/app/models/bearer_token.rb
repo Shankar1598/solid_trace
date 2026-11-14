@@ -6,14 +6,17 @@
 #
 # - user: the user the token acts as;
 # - memberships: each Organization it acts in, with the user's role there
-#   (every Organization of the user for an API token, the Grant's one for
-#   an OAuth token), less each one that has Require two-factor while the
-#   user has no Two-factor, as McpTools::Base refuses the token there;
-# - scopes: the names of its Scopes (Oauth::Scopes), mcp for an API token;
-# - limits: {} in this effort;
-# - expires_at: nil for an API token, which does not expire;
+#   (the token's one Organization, or every Organization of the user for
+#   an API token with none), less each one that has Require two-factor
+#   while the user has no Two-factor, as McpTools::Base refuses the token
+#   there;
+# - scopes: the names of its Scopes (Oauth::Scopes): an API token's, or mcp
+#   for one with none; an OAuth token's Grant's Scopes for its resource;
+# - limits: an API token's limits (ApiToken#limits); {} for an OAuth token;
+# - expires_at: nil for an API token that does not expire;
 # - issued_at: when the token was made;
-# - resource: the resource it is for, <issuer>/mcp for an API token;
+# - resource: the resource it is for: an OAuth token's one; for an API
+#   token, the resource of its Scopes, or a list when they have several;
 # - kind: :api_token or :access_token.
 class BearerToken
   Membership = Data.define(:organization, :role)
@@ -21,23 +24,43 @@ class BearerToken
   attr_reader :user, :scopes, :limits, :expires_at, :issued_at, :resource, :kind
 
   # The token whose secret this is, or nil for a secret that is unknown,
-  # revoked or not a String.
+  # revoked, expired or not a String, or for an API token whose user left
+  # its Organization.
   # An OAuth access token is valid when it is not expired or revoked and
   # its Grant is live (Oauth::Token.find_live_access); its resource is for
   # the caller to compare with its own.
   def self.authenticate(secret, issuer: Oauth::Issuer.current)
     if (access = Oauth::Token.find_live_access(secret, issuer: issuer))
       grant = access.grant
-      return new(user: grant.user, scopes: grant.scopes, limits: {}, expires_at: access.expires_at,
-                 issued_at: access.created_at, resource: access.resource, kind: :access_token, record: grant)
+      return new(user: grant.user, scopes: scopes_for(grant.scopes, access.resource, issuer), limits: {},
+                 expires_at: access.expires_at, issued_at: access.created_at, resource: access.resource,
+                 kind: :access_token, record: grant)
     end
 
     api_token = ApiToken.find_by_secret(secret)
-    return unless api_token
+    return unless api_token&.live?
 
-    new(user: api_token.user, scopes: [ "mcp" ], limits: {}, expires_at: nil, issued_at: api_token.created_at,
-        resource: issuer.mcp_resource, kind: :api_token, record: api_token)
+    scopes = api_token.effective_scopes
+    new(user: api_token.user, scopes: scopes, limits: api_token.limits, expires_at: api_token.expires_at,
+        issued_at: api_token.created_at, resource: resource_of(scopes, issuer), kind: :api_token, record: api_token)
   end
+
+  # The names among names whose Scope is for resource: an access token gets
+  # only the Grant's Scopes for its own resource (RFC 8707 §2.2).
+  def self.scopes_for(names, resource, issuer)
+    names.select do |name|
+      scope = Oauth::Scopes.find(name)
+      scope && Oauth::Issuer.same_resource?(scope.resource(issuer), resource)
+    end
+  end
+
+  # The resource of an API token's Scopes: one, a list of several, or nil
+  # with no Console URL.
+  def self.resource_of(names, issuer)
+    resources = names.filter_map { |name| Oauth::Scopes.find(name)&.resource(issuer) }.uniq
+    resources.size > 1 ? resources : resources.first
+  end
+  private_class_method :scopes_for, :resource_of
 
   def initialize(user:, scopes:, limits:, expires_at:, issued_at:, resource:, kind:, record:)
     @user = user
@@ -53,7 +76,7 @@ class BearerToken
   def memberships
     @memberships ||= begin
       scope = user.organization_users.includes(:organization)
-      scope = scope.where(organization_id: @record.organization_id) if oauth?
+      scope = scope.where(organization_id: @record.organization_id) if @record.organization_id
       scope = scope.joins(:organization).where(organizations: { require_two_factor: false }) unless user.two_factor?
       scope.map { |membership| Membership.new(organization: membership.organization, role: membership.role) }
     end
@@ -63,10 +86,16 @@ class BearerToken
     kind == :access_token
   end
 
-  # The one Organization an OAuth token acts in; nil for an API token, which
-  # acts in each of the user's.
+  # The one Organization the token acts in; nil for an API token with none,
+  # which acts in each of the user's.
   def organization
-    @record.organization if oauth?
+    @record.organization
+  end
+
+  # Whether the token gives only the MCP server's read tools: it has
+  # mcp:read and not mcp, which holds mcp:read.
+  def read_only?
+    scopes.include?(Oauth::Scopes::MCP_READ) && !scopes.include?(Oauth::Scopes::MCP)
   end
 
   # The client_id of an OAuth token's client; nil for an API token.

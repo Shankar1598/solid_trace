@@ -21,7 +21,7 @@ class OauthDiscoveryTest < ActionDispatch::IntegrationTest
       assert_equal "*", response.headers["Access-Control-Allow-Origin"]
       assert_equal({ "resource" => "#{ISSUER}/mcp",
                      "authorization_servers" => [ ISSUER ],
-                     "scopes_supported" => [ "mcp" ],
+                     "scopes_supported" => [ "mcp", "mcp:read" ],
                      "bearer_methods_supported" => [ "header" ],
                      "resource_name" => "SolidTrace" }, response.parsed_body)
     end
@@ -85,7 +85,10 @@ class OauthDiscoveryTest < ActionDispatch::IntegrationTest
                                                 "urn:ietf:params:oauth:grant-type:device_code" ],
                    "code_challenge_methods_supported" => [ "S256" ],
                    "token_endpoint_auth_methods_supported" => [ "none", "client_secret_post", "client_secret_basic" ],
-                   "scopes_supported" => [ "mcp" ],
+                   # Only the Scopes that a sign-in can ask for: never
+                   # sessions:read, run_events:write, issues:comment or
+                   # tokens:create.
+                   "scopes_supported" => [ "mcp", "mcp:read", "sessions:write", "factory" ],
                    "client_id_metadata_document_supported" => true,
                    "authorization_response_iss_parameter_supported" => true }, response.parsed_body)
   end

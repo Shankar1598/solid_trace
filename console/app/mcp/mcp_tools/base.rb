@@ -69,6 +69,12 @@ module McpTools
         annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       end
 
+      # Whether the tool only reads: an mcp:read token gets only these. A
+      # tool that says nothing is not one.
+      def read_only?
+        annotations_value&.read_only_hint == true
+      end
+
       # A tool that makes or changes things without destroying any.
       # open_world says it also reaches outside SolidTrace, as a Monitor's
       # run tells its Integrations.

@@ -26,9 +26,10 @@ module OauthTestHelper
     response.parsed_body["client_id"]
   end
 
-  def authorize_params(client_id, redirect_uri: REDIRECT_URI, state: "state-1")
+  # changes replace parameters, such as scope; a nil one is not sent.
+  def authorize_params(client_id, redirect_uri: REDIRECT_URI, state: "state-1", **changes)
     { response_type: "code", client_id: client_id, redirect_uri: redirect_uri, code_challenge: CHALLENGE,
-      code_challenge_method: "S256", scope: "mcp", resource: RESOURCE, state: state }
+      code_challenge_method: "S256", scope: "mcp", resource: RESOURCE, state: state }.merge(changes).compact
   end
 
   # The approval page's props, for a signed-in user.
