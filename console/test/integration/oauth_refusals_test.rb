@@ -148,6 +148,23 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
 
     assert response.location.start_with?("#{REDIRECT_URI}?")
     assert_equal "invalid_request", URI.decode_www_form(URI(response.location).query).to_h["error"]
+    assert_equal 0, Oauth::PendingRequest.count
+  end
+
+  test "a POST of a request with a bad parameter goes back to the client with the error and deletes the request" do
+    client_id = registered_client
+    get oauth_authorize_url(authorize_params(client_id).merge(code_challenge_method: "plain"))
+    assert_redirected_to login_url
+    key = Oauth::PendingRequest.sole.key
+
+    sign_in_as @user
+    approve(key, @acme)
+
+    assert_response :conflict
+    assert response.headers["X-Inertia-Location"].start_with?("#{REDIRECT_URI}?")
+    assert_equal "invalid_request", redirect_query["error"]
+    assert_equal 0, Oauth::PendingRequest.count
+    assert_equal 0, Oauth::Grant.count
   end
 
   # Deny and the pending request
@@ -169,6 +186,7 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
     assert_nil answer["code"]
     assert_equal 0, Oauth::Grant.count
     assert_equal 0, Oauth::Code.count
+    assert_equal 0, Oauth::PendingRequest.count
 
     approve(key, @acme)
     assert_response :bad_request
@@ -204,6 +222,7 @@ class OauthRefusalsTest < ActionDispatch::IntegrationTest
     travel 9.minutes + 59.seconds
     approve(key, @acme)
     assert_response :conflict
+    assert_equal 0, Oauth::PendingRequest.count
 
     approve(key, @acme)
     assert_response :bad_request
