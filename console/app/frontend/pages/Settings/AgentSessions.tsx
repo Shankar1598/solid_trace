@@ -77,7 +77,8 @@ export default function SettingsAgentSessions({ agent_sessions, notice_text, can
             </Link>{' '}
             keeps its Logs for{' '}
             <span className="font-mono">{agent_sessions.project.log_retention_days ?? 'the default number of'}</span> days.
-            Change its Retention in its settings.
+            Change its Retention in its settings. Engineers turn on capture with the{' '}
+            <Link href={`${path}/setup`} className="font-medium underline underline-offset-4">Capture setup</Link>.
           </p>
         ) : (
           <p className="text-sm text-muted-foreground">

@@ -105,6 +105,10 @@ type AgentFileState struct {
 	Version     uint32 `msgpack:"version"`
 	EndOffset   uint64 `msgpack:"end_offset"`
 	ContentHash string `msgpack:"content_hash"`
+	// Batch is the Agent file batch of the last unit stored of the path,
+	// uuid.Nil in a state from before it was kept. Once Agent file
+	// processing's cursor is at it, the path's units are in ClickHouse.
+	Batch uuid.UUID `msgpack:"batch"`
 }
 
 // AgentFileBatch is one stored unit, under its batch id.
@@ -339,11 +343,6 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 			return have, false, err
 		}
 	}
-	encodedState, err := msgpack.Marshal(state)
-	if err != nil {
-		return have, false, fmt.Errorf("encode agent file state: %w", err)
-	}
-
 	batch := w.db.NewBatch()
 	defer batch.Close()
 	if !known {
@@ -360,9 +359,6 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 			return have, false, err
 		}
 	}
-	if err := batch.Set(stateKey, encodedState, nil); err != nil {
-		return have, false, err
-	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -377,6 +373,14 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 		batchID = nextLogBatchID(w.logBatchFloor)
 	}
 	if err := batch.Set(agentFileBatchKey(projectID, batchID), buf.Bytes(), nil); err != nil {
+		return have, false, err
+	}
+	state.Batch = batchID
+	encodedState, err := msgpack.Marshal(state)
+	if err != nil {
+		return have, false, fmt.Errorf("encode agent file state: %w", err)
+	}
+	if err := batch.Set(stateKey, encodedState, nil); err != nil {
 		return have, false, err
 	}
 	// NoSync, as for Logs: a 200 means stored as a Log batch is.
@@ -436,6 +440,22 @@ func (w *PebbleWriter) AgentSessionFiles(projectID uint32, sessionID uuid.UUID) 
 		files = append(files, state)
 	}
 	return session, known, files, iter.Error()
+}
+
+// AgentFilesInserted reports whether Agent file processing has inserted
+// into ClickHouse each unit stored of files, the states that
+// AgentSessionFiles gave: its cursor is at or after each one's batch.
+func (w *PebbleWriter) AgentFilesInserted(projectID uint32, files []AgentFileState) (bool, error) {
+	cursor, err := w.AgentFileCursor(projectID)
+	if err != nil {
+		return false, err
+	}
+	for _, f := range files {
+		if bytes.Compare(f.Batch[:], cursor[:]) > 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // AgentFileBatchesAfter returns a Project's Agent file batches after the

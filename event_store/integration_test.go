@@ -583,7 +583,7 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterAgentRoutes(env.App, handler.NewAgentHandler(handler.AgentConfig{
 		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter,
 		NotifyFiles: func(projectID uint32) { env.AgentFileProcessor.Notify(projectID) },
-		Clock:       env.Clock, Version: env.ServerVersion,
+		Downloads:   clickHouse, Clock: env.Clock, Version: env.ServerVersion,
 	}))
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),

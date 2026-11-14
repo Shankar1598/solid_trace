@@ -631,6 +631,12 @@ func TestAgentIngestClientVersions(t *testing.T) {
 // of version would serve it, on env's Console tables.
 func newAgentApp(t *testing.T, env *TestEnv, version string) *fiber.App {
 	t.Helper()
+	return newAgentAppWith(t, env, version, env.ClickHouse)
+}
+
+// newAgentAppWith is newAgentApp with downloads in place of ClickHouse.
+func newAgentAppWith(t *testing.T, env *TestEnv, version string, downloads handler.AgentDownloads) *fiber.App {
+	t.Helper()
 	tokens, err := auth.NewTokens(env.SQLitePath)
 	if err != nil {
 		t.Fatalf("Open Console's tokens: %v", err)
@@ -644,7 +650,7 @@ func newAgentApp(t *testing.T, env *TestEnv, version string) *fiber.App {
 	app := fiber.New()
 	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(handler.AgentConfig{
 		Tokens: tokens, Settings: settings, Files: env.PebbleWriter, NotifyFiles: env.AgentFileProcessor.Notify,
-		Clock: env.Clock, Version: version,
+		Downloads: downloads, Clock: env.Clock, Version: version,
 	}))
 	return app
 }

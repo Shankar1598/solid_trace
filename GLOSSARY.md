@@ -229,7 +229,7 @@ The Console endpoint where an AI agent reads and changes Projects, Logs, Dashboa
 _Avoid_: agent API, bot, integration
 
 **API token**:
-A secret a user makes in their settings that lets a client act as that user through the **MCP server**, the upload of **Agent sessions** and the **Dispatcher**, with the user's role checked on every call. It can be limited to some actions and some **Projects**, and can expire. Console keeps only its digest.
+A secret a user makes in their settings that lets a client act as that user through the **MCP server**, the upload of **Agent sessions** and the **Dispatcher**, with the user's role checked on every call. A token with no **Scope** acts as its user over the MCP server. A token with **Scopes** can do only what they give, in its one **Organization**. It can be limited to a list of **Agent sessions** (`sessions:read` always has this list), and an `mcp:read` token to one **Project**. It can expire. Console keeps only its digest.
 _Avoid_: API key, project key, access token
 
 **OAuth client**:
@@ -305,7 +305,7 @@ The **Project** of an **Organization** that holds the **Agent sessions** of its 
 _Avoid_: transcripts project, sessions project
 
 **Captured repository**:
-A repository whose engineers' **Agent sessions** an **Organization** records. An Agent session in any other repository, or in no repository, never leaves the engineer's machine.
+A repository whose engineers' **Agent sessions** an **Organization** records. An Admin lists it in the **Agent Project**'s settings as `host/workspace/name`, or `host/workspace/*` for a whole workspace, and each member can read the list and the Agent sessions. An Agent session in any other repository, or in no repository, never leaves the engineer's machine.
 _Avoid_: tracked repo, allowed repo
 
 **Redaction pattern**:

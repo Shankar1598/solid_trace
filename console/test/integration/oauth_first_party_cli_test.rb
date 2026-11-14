@@ -25,6 +25,7 @@ class OauthFirstPartyCliTest < ActionDispatch::IntegrationTest
   FACTORY_TEXT = "Use the Dispatcher as you, in Acme: start, message and stop Runs, and do the Admin actions " \
                  "that your role allows."
   FIRST_PARTY_NOTE = "Checked: the SolidTrace CLI, part of Console"
+  NOTHING_UPLOADS = "%s has no captured repositories, so no Agent session uploads from this machine."
 
   setup do
     @user = create(:user, name: "Ada", email: "ada@example.com")
@@ -158,6 +159,49 @@ class OauthFirstPartyCliTest < ActionDispatch::IntegrationTest
                    headers: { "Authorization" => "Basic #{Base64.strict_encode64("#{CLI}:secret")}" })
 
     assert_oauth_error "invalid_client", status: :unauthorized
+  end
+
+  # The engineer's notice: which repositories upload, to which Organization,
+  # and that each member reads them. The same text as `solidtrace login`
+  # prints after the sign-in.
+
+  test "the approval page says which repositories upload, to which Organization, and that each member reads them" do
+    beta = create(:organization, name: "Beta", slug: "beta")
+    create(:organization_user, organization: beta, user: @user, role: :member)
+    turn_on_agent_sessions(@acme, [ "github.com/acme/shop", "github.com/acme/*" ])
+
+    notices = cli_approval_page["organizations"].to_h { |organization| [ organization["slug"], organization["capture_notice"] ] }
+
+    assert_equal({ "lead" => "Your Claude Code Agent sessions in these repositories upload in full to Acme, " \
+                             "and each member of Acme can read them:",
+                   "repositories" => [ "github.com/acme/shop", "github.com/acme/*" ],
+                   "closing" => "Agent sessions in other repositories, or in no repository, do not upload." }, notices["acme"])
+    assert_equal({ "lead" => format(NOTHING_UPLOADS, "Beta"), "repositories" => [], "closing" => nil }, notices["beta"],
+                 "Agent sessions are off in Beta")
+  end
+
+  test "the device page shows the same notice, with the current list" do
+    agent_project = turn_on_agent_sessions(@acme, [ "github.com/acme/shop" ])
+    AgentSessionsSettings.save(project: agent_project, user: @user, entries: [ "github.com/acme/api" ], confirmed: true)
+
+    notice = device_approval_page(cli_device_code["user_code"])["organizations"].sole["capture_notice"]
+
+    assert_equal [ "github.com/acme/api" ], notice["repositories"]
+    assert_match "upload in full to Acme, and each member of Acme can read them", notice["lead"]
+  end
+
+  test "with no captured repository the notice says that no Agent session uploads, on both pages" do
+    turn_on_agent_sessions(@acme, [ "github.com/acme/shop" ]).update!(captured_repositories: [])
+    nothing = { "lead" => format(NOTHING_UPLOADS, "Acme"), "repositories" => [], "closing" => nil }
+
+    assert_equal nothing, cli_approval_page["organizations"].sole["capture_notice"]
+    assert_equal nothing, device_approval_page(cli_device_code["user_code"])["organizations"].sole["capture_notice"]
+  end
+
+  test "a sign-in that does not ask to upload Agent sessions shows no notice" do
+    turn_on_agent_sessions(@acme, [ "github.com/acme/shop" ])
+
+    assert_nil cli_approval_page(scope: "factory")["organizations"].sole["capture_notice"]
   end
 
   # The device flow
@@ -417,6 +461,13 @@ class OauthFirstPartyCliTest < ActionDispatch::IntegrationTest
   def with_limits(controller, &block)
     store = ActiveSupport::Cache::MemoryStore.new
     controller.cache_store.stub(:increment, ->(*args, **options) { store.increment(*args, **options) }, &block)
+  end
+
+  # Agent sessions on in organization, as one of its Admins turns them on.
+  def turn_on_agent_sessions(organization, entries)
+    admin = create(:user)
+    create(:organization_user, organization: organization, user: admin, role: :admin)
+    AgentSessionsSettings.turn_on(organization: organization, user: admin, entries: entries, confirmed: true).project
   end
 
   def cli_device_code

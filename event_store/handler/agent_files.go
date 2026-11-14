@@ -34,6 +34,7 @@ const (
 type AgentFiles interface {
 	WriteAgentFileUnit(projectID uint32, upload storage.AgentUpload) (storage.AgentFileState, bool, error)
 	AgentSessionFiles(projectID uint32, sessionID uuid.UUID) (storage.AgentSession, bool, []storage.AgentFileState, error)
+	AgentFilesInserted(projectID uint32, files []storage.AgentFileState) (bool, error)
 }
 
 // agentSessionOf checks the Agent session id of the path against the
