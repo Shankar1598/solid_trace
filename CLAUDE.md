@@ -6,7 +6,7 @@ Always talk in ASD-STE100 Simplified Technical English. Always read GLOSSARY.md,
 
 ### Issue tracker
 
-Issues live as markdown files under `.scratch/<feature-slug>/` in this repo. Project status: `.scratch/STATUS.md`. See `docs/agents/issue-tracker.md`.
+Issues live as markdown files under `.scratch/<feature-slug>/`. `.scratch/` is a private Git repository of its own, cloned into this checkout and ignored by this repo. Project status: `.scratch/STATUS.md`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

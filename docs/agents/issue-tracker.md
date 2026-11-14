@@ -2,6 +2,15 @@
 
 Issues and specs for this repo live as markdown files in `.scratch/`.
 
+## Where `.scratch/` lives
+
+- `.scratch/` is a private Git repository of its own. It is cloned into the root of the main checkout. This repo ignores it, because this repo is public.
+- Never add a `.scratch/` file to this repo.
+- To commit tracker changes, run Git inside `.scratch/`: `git -C .scratch add -A && git -C .scratch commit -m "<message>" && git -C .scratch push`.
+- A cron job commits and pushes `.scratch/` every 15 minutes, so the data stays durable when a session forgets to push.
+- Worktrees do not have `.scratch/`. An agent in a worktree reads tickets from the main checkout, at the absolute path, or from the text in its brief. Only a session in the main checkout commits to the tracker.
+- On a new machine, clone the private tracker repository into `.scratch/`.
+
 ## Conventions
 
 - One feature per directory: `.scratch/<feature-slug>/`

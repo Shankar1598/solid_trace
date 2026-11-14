@@ -41,3 +41,6 @@ local/*
 
 # docker-compose.dev.yml's variables, written by bin/clickhouse-dev.
 /.env
+
+# Private tracker: its own repository, cloned here (see docs/agents/issue-tracker.md)
+/.scratch/
