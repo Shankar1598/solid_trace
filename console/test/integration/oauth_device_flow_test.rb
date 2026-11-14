@@ -508,6 +508,26 @@ class OauthDeviceFlowTest < ActionDispatch::IntegrationTest
     assert_response :ok
   end
 
+  test "Approve ends the request, and the kept return to it from a Two-factor set-up" do
+    @acme.update!(require_two_factor: true)
+    beta = create(:organization, name: "Beta", slug: "beta")
+    create(:organization_user, organization: beta, user: @user, role: :admin)
+    publish
+    sign_in_as @user
+    key = approval_page(device_code_answer["user_code"])["request"]
+    decide key, "approve"
+    assert_redirected_to new_authenticator_app_url(org: "acme")
+
+    decide key, "approve", organization: beta
+
+    assert_equal "Oauth/Device", response.parsed_body["component"]
+    assert_equal 0, Oauth::PendingRequest.where(key: key).count
+    assert_not_includes Array(session[Oauth::PendingRequest::SESSION_KEY]), key
+    secret = set_up_page_for("acme")["secret"]
+    post authenticator_app_url, params: { code: code_for(secret), org: "acme", proof: { password: "password" } }
+    assert_not_equal device_path(request: key), recovery_codes_page["continue_to"]
+  end
+
   # Polling and the tokens
 
   test "after Approve the program gets its tokens once, and the access token works at POST /mcp" do
