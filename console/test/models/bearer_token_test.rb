@@ -41,6 +41,43 @@ class BearerTokenTest < ActiveSupport::TestCase
     assert_equal [ "acme" ], BearerToken.authenticate(@secret).memberships.map { |m| m.organization.slug }
   end
 
+  test "a scoped API token answers its Scopes, its one Organization, its limits and its expiry" do
+    expires_at = 1.day.from_now.change(usec: 0)
+    _, secret = ApiToken.issue!(user: @user, name: "Run", scopes: [ "sessions:write", "sessions:read" ],
+                                organization_id: @beta.id, expires_at: expires_at, agent_session_ids: [ "one", "two" ])
+
+    bearer = BearerToken.authenticate(secret, issuer: Oauth::Issuer.new("https://console.example.com"))
+
+    assert_equal [ "sessions:write", "sessions:read" ], bearer.scopes
+    assert_equal [ [ "beta", "member" ] ], bearer.memberships.map { |m| [ m.organization.slug, m.role ] }
+    assert_equal @beta, bearer.organization
+    assert_equal({ agent_session_ids: [ "one", "two" ] }, bearer.limits)
+    assert_equal expires_at, bearer.expires_at
+    assert_equal "https://console.example.com/factory", bearer.resource
+    assert_not bearer.read_only?
+  end
+
+  test "an expired API token, or one whose user left its Organization, answers nil" do
+    _, expiring = ApiToken.issue!(user: @user, name: "Run", scopes: [ "factory" ], organization_id: @acme.id,
+                                  expires_at: 1.hour.from_now.change(usec: 0))
+    _, scoped = ApiToken.issue!(user: @user, name: "Run", scopes: [ "factory" ], organization_id: @beta.id)
+
+    travel_to(ApiToken.find_by_secret(expiring).expires_at) do
+      assert_nil BearerToken.authenticate(expiring)
+    end
+    @user.organization_users.find_by!(organization: @beta).discard!
+    assert_nil BearerToken.authenticate(scoped)
+  end
+
+  test "mcp:read alone is read only; with mcp it is not" do
+    _, read = ApiToken.issue!(user: @user, name: "Read", scopes: [ "mcp:read" ], organization_id: @acme.id)
+    _, both = ApiToken.issue!(user: @user, name: "Both", scopes: [ "mcp:read", "mcp" ], organization_id: @acme.id)
+
+    assert BearerToken.authenticate(read).read_only?
+    assert_not BearerToken.authenticate(both).read_only?
+    assert_not BearerToken.authenticate(@secret).read_only?
+  end
+
   test "an unknown, revoked or malformed secret answers nil" do
     token, revoked = ApiToken.issue!(user: @user, name: "Old")
     token.destroy!

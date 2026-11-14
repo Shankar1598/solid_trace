@@ -80,6 +80,76 @@ class OauthIntrospectionTest < ActionDispatch::IntegrationTest
     assert_inactive
   end
 
+  # Scoped API tokens
+
+  test "a scoped API token answers its user, its one Organization with the role, the scopes, the limits and the expiry" do
+    shop = create(:project, organization: @acme, name: "Shop", slug: "shop")
+    expires_at = 7.days.from_now.change(usec: 0)
+    token, secret = ApiToken.issue!(user: @user, name: "Run", scopes: [ "sessions:write", "sessions:read", "mcp:read" ],
+                                    organization_id: @beta.id, expires_at: expires_at,
+                                    agent_session_ids: [ "0f8a5c1e-1b2c-4d3e-8f90-123456789abc" ])
+    _, limited = ApiToken.issue!(user: @user, name: "Issue Run", scopes: [ "mcp:read" ], organization_id: @acme.id,
+                                 project_id: shop.id)
+
+    introspect(secret)
+
+    assert_response :ok
+    assert_equal({ "active" => true, "token_type" => "api_token", "sub" => @user.id.to_s,
+                   "username" => "ada@example.com", "scope" => "sessions:write sessions:read mcp:read",
+                   "aud" => [ "#{ISSUER}/factory", RESOURCE ], "iat" => token.created_at.to_i, "exp" => expires_at.to_i,
+                   "limits" => { "agent_session_ids" => [ "0f8a5c1e-1b2c-4d3e-8f90-123456789abc" ] },
+                   "organizations" => [ { "id" => @beta.id, "slug" => "beta", "name" => "Beta", "role" => "member" } ] },
+                 sorted(response.parsed_body))
+
+    introspect(limited)
+    assert_equal({ "project" => { "id" => shop.id, "slug" => "shop", "name" => "Shop" } }, response.parsed_body["limits"])
+    assert_equal RESOURCE, response.parsed_body["aud"]
+  end
+
+  test "a scoped API token's role is read at the time of the call" do
+    _, secret = ApiToken.issue!(user: @user, name: "Run", scopes: [ "factory" ], organization_id: @beta.id)
+    @user.organization_users.find_by!(organization: @beta).update!(role: :admin)
+
+    introspect(secret)
+
+    assert_equal [ "admin" ], response.parsed_body["organizations"].pluck("role")
+    assert_equal "#{ISSUER}/factory", response.parsed_body["aud"]
+  end
+
+  test "an API token is active until its expiry, then not" do
+    expires_at = 1.hour.from_now.change(usec: 0)
+    _, secret = ApiToken.issue!(user: @user, name: "Run", scopes: [ "factory" ], organization_id: @acme.id,
+                                expires_at: expires_at)
+
+    travel_to(expires_at - 1.second) do
+      introspect(secret)
+      assert_equal true, response.parsed_body["active"]
+    end
+    travel_to(expires_at) do
+      introspect(secret)
+      assert_inactive
+    end
+  end
+
+  test "an API token whose user left its Organization is not active" do
+    _, secret = ApiToken.issue!(user: @user, name: "Run", scopes: [ "factory" ], organization_id: @acme.id)
+    @user.organization_users.find_by!(organization: @acme).discard!
+
+    introspect(secret)
+
+    assert_inactive
+  end
+
+  test "an expired API token cannot be the caller" do
+    _, caller = ApiToken.issue!(user: @user, name: "Caller", expires_at: 1.minute.from_now)
+    _, secret = ApiToken.issue!(user: @user, name: "Laptop")
+
+    travel 2.minutes do
+      introspect(secret, caller: caller)
+      assert_response :unauthorized
+    end
+  end
+
   # OAuth access tokens
 
   test "an active OAuth access token answers its user, client, the Grant's one Organization, mcp, the resource and the hour" do
