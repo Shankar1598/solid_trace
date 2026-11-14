@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/pebble/v2"
@@ -36,6 +37,35 @@ type AgentSession struct {
 	// and its Project in the factory.
 	RunID   string `msgpack:"run_id"`
 	Project string `msgpack:"project"`
+	// Flags are the AgentFlag bits of each unit stored of the Agent
+	// session: it has a cut unit, or a trimmed .jsonl file.
+	Flags uint8 `msgpack:"flags"`
+}
+
+// The flags of a unit (the flags column of agent_session_files) and of an
+// Agent session (each flag of one of its units). The values are stored:
+// do not change them.
+const (
+	// AgentFlagCut is a unit over agent ingest's 32 MiB limit, stored
+	// cut: its bytes are its first 32 MiB, and its last row's end offset
+	// is its end on disk. This is the marker of the cut.
+	AgentFlagCut uint8 = 1
+	// AgentFlagTrimmed is the first unit of a new version of a .jsonl
+	// file: the file became shorter than what the server had of it.
+	AgentFlagTrimmed uint8 = 2
+)
+
+// AgentFlagNames are the names of the flags set in flags, as the API
+// gives them.
+func AgentFlagNames(flags uint8) []string {
+	names := []string{}
+	if flags&AgentFlagCut != 0 {
+		names = append(names, "cut")
+	}
+	if flags&AgentFlagTrimmed != 0 {
+		names = append(names, "trimmed")
+	}
+	return names
 }
 
 // AgentFileUnit is one unit of a file of an Agent session: for a .jsonl
@@ -49,6 +79,19 @@ type AgentFileUnit struct {
 	Bytes       []byte       `msgpack:"bytes"`
 	StoredAt    time.Time    `msgpack:"stored_at"`
 	Session     AgentSession `msgpack:"session"`
+	// Size is the size of the unit on disk when it is more than Bytes (a
+	// cut unit), else 0.
+	Size uint64 `msgpack:"size,omitempty"`
+	// Flags are the unit's AgentFlag bits.
+	Flags uint8 `msgpack:"flags,omitempty"`
+}
+
+// End is the offset after the unit on disk.
+func (u AgentFileUnit) End() uint64 {
+	if u.Size > uint64(len(u.Bytes)) {
+		return u.Offset + u.Size
+	}
+	return u.Offset + uint64(len(u.Bytes))
 }
 
 // AgentFileState is what the server has of one path of an Agent session:
@@ -147,14 +190,28 @@ const agentFileBatchFormat byte = 1
 //   - else it leaves a gap, overlaps the end, or is of an older version:
 //     an *AgentUploadConflict.
 //
+// A file that is not .jsonl is uploaded whole with its content hash: with
+// the stored hash it is a repeat of any version from the stored one, and
+// with another hash it must be a higher version. The first unit of a new
+// version of a .jsonl file (a trim) is flagged AgentFlagTrimmed. The Agent
+// session gets the flags of each unit.
+//
 // The unit must not be empty. One mutex serialises the check and the
 // write, so two uploads of one path never both pass.
 func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) (state AgentFileState, stored bool, err error) {
 	unit := upload.Unit
-	var buf bytes.Buffer
-	buf.WriteByte(agentFileBatchFormat)
-	if err := msgpack.NewEncoder(&buf).Encode(unit); err != nil {
-		return state, false, fmt.Errorf("encode agent file batch: %w", err)
+	encode := func() (*bytes.Buffer, error) {
+		var buf bytes.Buffer
+		buf.WriteByte(agentFileBatchFormat)
+		if err := msgpack.NewEncoder(&buf).Encode(unit); err != nil {
+			return nil, fmt.Errorf("encode agent file batch: %w", err)
+		}
+		return &buf, nil
+	}
+	// Encoded before the lock; again in the rare case that the flags change.
+	buf, err := encode()
+	if err != nil {
+		return state, false, err
 	}
 
 	w.agentMu.Lock()
@@ -172,8 +229,15 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 		return state, false, err
 	}
 	have.Path = unit.Path
-	end := unit.Offset + uint64(len(unit.Bytes))
+	end := unit.End()
+	whole := !strings.HasSuffix(unit.Path, ".jsonl")
 	switch {
+	case whole && have.Version > 0 && unit.ContentHash == have.ContentHash && unit.Version >= have.Version:
+		return have, false, nil
+	case whole && unit.Version == have.Version:
+		return have, false, &AgentUploadConflict{State: have, Reason: fmt.Sprintf(
+			"Another hash: the server has version %d of %s with the hash %s. Upload a changed file as version %d.",
+			have.Version, unit.Path, have.ContentHash, have.Version+1)}
 	case unit.Version > have.Version && unit.Offset == 0:
 		state = AgentFileState{Path: unit.Path, Version: unit.Version, EndOffset: end, ContentHash: unit.ContentHash}
 	case unit.Version > have.Version:
@@ -195,6 +259,12 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 	default:
 		state = AgentFileState{Path: unit.Path, Version: have.Version, EndOffset: end, ContentHash: unit.ContentHash}
 	}
+	if !whole && have.Version > 0 && unit.Version > have.Version && unit.Flags&AgentFlagTrimmed == 0 {
+		unit.Flags |= AgentFlagTrimmed
+		if buf, err = encode(); err != nil {
+			return have, false, err
+		}
+	}
 	encodedState, err := msgpack.Marshal(state)
 	if err != nil {
 		return have, false, fmt.Errorf("encode agent file state: %w", err)
@@ -203,7 +273,12 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 	batch := w.db.NewBatch()
 	defer batch.Close()
 	if !known {
-		encodedSession, err := msgpack.Marshal(unit.Session)
+		session = unit.Session
+		session.Flags = 0
+	}
+	if flags := session.Flags | unit.Flags; !known || flags != session.Flags {
+		session.Flags = flags
+		encodedSession, err := msgpack.Marshal(session)
 		if err != nil {
 			return have, false, fmt.Errorf("encode agent session: %w", err)
 		}

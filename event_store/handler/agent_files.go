@@ -18,7 +18,8 @@ import (
 // The caps on an upload of a unit of an Agent session's file.
 const (
 	// agentUnitLimit is the most bytes of one unit once decoded: for a
-	// .jsonl file, whole lines up to the last newline.
+	// .jsonl file, whole lines up to the last newline. A larger unit is
+	// stored cut at this size, and flagged.
 	agentUnitLimit = 32 << 20
 	// agentBodyLimit caps the body of an upload as sent: one unit and at
 	// most 1 MiB of request overhead. It is also the ingest app's limit.
@@ -110,6 +111,7 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 		"folder":     session.Folder,
 		"run_id":     session.RunID,
 		"project":    session.Project,
+		"flags":      storage.AgentFlagNames(session.Flags),
 	}
 	answer["files"] = list
 	return c.JSON(answer)
@@ -117,15 +119,20 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 
 // UploadAgentFile stores one unit of a file of an Agent session: the body
 // is its bytes, from the offset in the query, of the path and version in
-// the query. For a .jsonl file a unit is whole lines. The query also names
-// the harness, the repository (host/workspace/name) and the folder inside
-// it; a token limited to a Run's Agent sessions also names the Run (run_id)
-// and its Project (project).
+// the query. For a .jsonl file a unit is whole lines; a trimmed file starts
+// a new version at offset 0. Another file is whole, at offset 0, with its
+// content_hash: a changed file is a new version. A unit over 32 MiB is
+// sent as its first 32 MiB with size, its size on disk. The query also
+// names the harness, the repository (host/workspace/name) and the folder
+// inside it; a token limited to a Run's Agent sessions also names the Run
+// (run_id) and its Project (project). Any other token's repository must
+// match the captured repositories, else 403.
 //
 // A 200 means the bytes are stored, as for Log ingest; Agent file
 // processing inserts them into ClickHouse about one time a second. A
-// repeat of a unit stores nothing new. An upload that leaves a gap or
-// overlaps the stored end offset gets 409 with that end offset.
+// repeat of a unit, or a file with the stored hash, stores nothing new. An
+// upload that leaves a gap or overlaps the stored end offset gets 409 with
+// that end offset.
 func (h *AgentHandler) UploadAgentFile(c *fiber.Ctx) error {
 	token := agentToken(c)
 	projectID, sessionID, ok, err := h.agentSessionOf(c, token)
@@ -136,21 +143,26 @@ func (h *AgentHandler) UploadAgentFile(c *fiber.Ctx) error {
 	if problem != "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": problem})
 	}
+	if token.AgentSessionIDs == nil {
+		if ok, err := h.capturedRepository(c, token, unit.Session.Repository); !ok {
+			return err
+		}
+	}
 	coding, err := contentCoding(c.Get(fiber.HeaderContentEncoding))
 	if err != nil {
 		return renderBodyError(c, err)
 	}
 	body, err := decodeBody(c.Request().Body(), coding)
-	if err == nil && len(body) > agentUnitLimit {
-		err = errBodyTooLarge
-	}
 	if err != nil {
 		return renderBodyError(c, err)
 	}
 	if len(body) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "The body is empty: send the bytes of the unit."})
 	}
-	if strings.HasSuffix(unit.Path, ".jsonl") && body[len(body)-1] != '\n' {
+	if body, problem = cutUnit(&unit, body); problem != "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": problem})
+	}
+	if unit.Flags&storage.AgentFlagCut == 0 && strings.HasSuffix(unit.Path, ".jsonl") && body[len(body)-1] != '\n' {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "A unit of a .jsonl file is whole lines: send the bytes up to the last newline."})
 	}
@@ -225,7 +237,72 @@ func agentUnitOf(c *fiber.Ctx, token auth.Token) (storage.AgentFileUnit, string)
 	if !limited && (unit.Session.RunID != "" || unit.Session.Project != "") {
 		return unit, "Only a token of a Run sends run_id and project."
 	}
+	if !strings.HasSuffix(unit.Path, ".jsonl") && (unit.Offset != 0 || unit.ContentHash == "") {
+		return unit, "A file that is not .jsonl is uploaded whole: send it at offset 0 with its content_hash."
+	}
+	if size := c.Query("size"); size != "" {
+		if unit.Size, err = strconv.ParseUint(size, 10, 64); err != nil {
+			return unit, "Send size, the size of the unit on disk: a whole number."
+		}
+	}
 	return unit, ""
+}
+
+// cutUnit cuts a unit over agentUnitLimit to its first agentUnitLimit
+// bytes, flags it cut and keeps its size on disk. The CLI sends such a unit
+// as its first 32 MiB with size, its full size; a body that decodes to more
+// is cut here. It answers what is wrong with a size that does not fit the
+// body.
+func cutUnit(unit *storage.AgentFileUnit, body []byte) ([]byte, string) {
+	size := max(unit.Size, uint64(len(body)))
+	if unit.Size != 0 && unit.Size < uint64(len(body)) {
+		return body, fmt.Sprintf("The size %d is less than the %d bytes of the body.", unit.Size, len(body))
+	}
+	if size > uint64(len(body)) && len(body) != agentUnitLimit {
+		return body, fmt.Sprintf("A unit over %d bytes is sent as its first %d bytes with its size; this body has %d bytes.",
+			agentUnitLimit, agentUnitLimit, len(body))
+	}
+	if size <= agentUnitLimit {
+		unit.Size = 0
+		return body, ""
+	}
+	unit.Size = size
+	unit.Flags |= storage.AgentFlagCut
+	return body[:agentUnitLimit], ""
+}
+
+// capturedRepository checks that a repository matches an entry of the
+// captured repositories, for a token that is not limited to a Run's Agent
+// sessions. This stops an old client that has no check, not a dishonest
+// one. ok is false when it has answered.
+func (h *AgentHandler) capturedRepository(c *fiber.Ctx, token auth.Token, repository string) (ok bool, err error) {
+	entries, err := h.settings.CapturedRepositories(token.Organization.ID)
+	if err != nil {
+		logger.L.Error("Failed to read the captured repositories", "organization_id", token.Organization.ID, "error", err)
+		return false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The captured repositories could not be read. Try again later."})
+	}
+	for _, entry := range entries {
+		if repositoryMatches(entry, repository) {
+			return true, nil
+		}
+	}
+	return false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": fmt.Sprintf(
+		"The repository %s is not in the captured repositories of %s, so its Agent sessions are not uploaded. An Admin adds it in Console on Settings → Agent sessions.",
+		repository, token.Organization.Name)})
+}
+
+// repositoryMatches reports whether a repository (host/workspace/name)
+// matches a captured repositories entry: host/workspace/name, or
+// host/workspace/* for each repository of the workspace. The host is
+// compared in lower case and a .git ending is ignored, as capture
+// normalises a remote and Console normalises an entry.
+func repositoryMatches(entry, repository string) bool {
+	host, rest, _ := strings.Cut(strings.TrimSuffix(repository, ".git"), "/")
+	repository = strings.ToLower(host) + "/" + rest
+	if workspace, ok := strings.CutSuffix(entry, "/*"); ok {
+		return strings.HasPrefix(repository, workspace+"/")
+	}
+	return repository == entry
 }
 
 // relativePathProblem is what is wrong with a path under a root, or "": it
