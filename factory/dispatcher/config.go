@@ -1,0 +1,121 @@
+package dispatcher
+
+import (
+	"bufio"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"strings"
+)
+
+// Config is the operator configuration. The Dispatcher reads it at start
+// from a file and from the environment. The file holds NAME=value lines
+// with the same names as the environment (blank lines and lines that start
+// with # are not read), and a name in the environment wins over the file.
+// Later tickets add the Nomad address and token, the machine kinds, the
+// default allowlist, the checkpoint interval, the public webhook URL, the
+// encryption key and the trigger word.
+type Config struct {
+	// SolidTraceURL is the Console URL: the OAuth issuer that checks
+	// tokens, and the base of each link to a Run's page.
+	SolidTraceURL string
+	// SolidTraceToken is the Dispatcher's own API token.
+	SolidTraceToken string
+	// Database is the path of the SQLite database.
+	Database string
+	// Listen is the address of the private listener.
+	Listen string
+}
+
+// The names of the operator configuration.
+const (
+	EnvConfigFile      = "DISPATCHER_CONFIG"
+	EnvSolidTraceURL   = "DISPATCHER_SOLIDTRACE_URL"
+	EnvSolidTraceToken = "DISPATCHER_SOLIDTRACE_TOKEN"
+	EnvDatabase        = "DISPATCHER_DATABASE"
+	EnvListen          = "DISPATCHER_LISTEN"
+)
+
+// DefaultListen is the private listener's address when none is set.
+const DefaultListen = "127.0.0.1:7600"
+
+// LoadConfig reads the operator configuration from the file at path ("" is
+// no file) and from getenv. It refuses a configuration with a necessary
+// value absent or wrong, and names each such value.
+func LoadConfig(path string, getenv func(string) string) (Config, error) {
+	values := map[string]string{}
+	if path != "" {
+		file, err := readConfigFile(path)
+		if err != nil {
+			return Config{}, err
+		}
+		values = file
+	}
+	value := func(name string) string {
+		if v := getenv(name); v != "" {
+			return v
+		}
+		return values[name]
+	}
+	c := Config{
+		SolidTraceURL:   strings.TrimRight(value(EnvSolidTraceURL), "/"),
+		SolidTraceToken: value(EnvSolidTraceToken),
+		Database:        value(EnvDatabase),
+		Listen:          value(EnvListen),
+	}
+	if c.Listen == "" {
+		c.Listen = DefaultListen
+	}
+	return c, c.Check()
+}
+
+// Check names each necessary value that is absent or wrong.
+func (c Config) Check() error {
+	var problems []string
+	if c.SolidTraceURL == "" {
+		problems = append(problems, EnvSolidTraceURL+" (SolidTrace's URL) is not set")
+	} else if u, err := url.Parse(c.SolidTraceURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		problems = append(problems, EnvSolidTraceURL+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", c.SolidTraceURL))
+	}
+	if c.SolidTraceToken == "" {
+		problems = append(problems, EnvSolidTraceToken+" (the Dispatcher's API token) is not set")
+	}
+	if c.Database == "" {
+		problems = append(problems, EnvDatabase+" (the path of the SQLite database) is not set")
+	}
+	if len(problems) > 0 {
+		return errors.New("the operator configuration is not complete: " + strings.Join(problems, "; ") +
+			". Set each in the configuration file or the environment")
+	}
+	return nil
+}
+
+func readConfigFile(path string) (map[string]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("read the configuration file: %w", err)
+	}
+	defer f.Close()
+	values := map[string]string{}
+	scanner := bufio.NewScanner(f)
+	for n := 1; scanner.Scan(); n++ {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("%s:%d: a line must be NAME=value", path, n)
+		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
+			value = value[1 : len(value)-1]
+		}
+		values[strings.TrimSpace(name)] = value
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read the configuration file: %w", err)
+	}
+	return values, nil
+}
