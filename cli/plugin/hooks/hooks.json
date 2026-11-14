@@ -1,0 +1,17 @@
+{
+  "description": "SolidTrace capture: uploads the Agent sessions of the captured repositories. Each hook starts 'solidtrace capture' in the background and returns at once.",
+  "hooks": {
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "solidtrace capture --detach", "timeout": 10 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "solidtrace capture --detach", "timeout": 10 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "solidtrace capture --detach", "timeout": 10 }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "solidtrace capture --detach", "timeout": 10 }] }
+    ]
+  }
+}
