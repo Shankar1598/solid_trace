@@ -332,14 +332,17 @@ func TestRedactionPatternCheck(t *testing.T) {
 		}
 	})
 
-	t.Run("more than 100 patterns are refused", func(t *testing.T) {
+	t.Run("100 patterns pass, and more than 100 are refused", func(t *testing.T) {
 		patterns := make([]string, 101)
 		for i := range patterns {
 			patterns[i] = fmt.Sprintf("p%d_[a-z]{4}", i)
 		}
+		if answer := checkPatterns(t, env, patterns[:100]...); len(answer.Errors) != 0 {
+			t.Errorf("Expected 100 patterns to pass, got %+v", answer.Errors)
+		}
 		answer := checkPatterns(t, env, patterns...)
-		if len(answer.Errors) != 1 || !strings.Contains(answer.Errors[0].Error, "100") {
-			t.Errorf("Expected one error naming the limit, got %+v", answer.Errors)
+		if len(answer.Errors) != 1 || answer.Errors[0].Index != 100 || !strings.Contains(answer.Errors[0].Error, "100") {
+			t.Errorf("Expected one error at index 100 naming the limit, got %+v", answer.Errors)
 		}
 	})
 }
