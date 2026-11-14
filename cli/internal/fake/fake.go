@@ -380,6 +380,8 @@ type AgentAPI struct {
 	Version string
 	// MinimumVersion refuses an older solidtrace client with 426.
 	MinimumVersion string
+	// RefuseTokens answers 401 to each token.
+	RefuseTokens bool
 	// Calls counts the calls of the captured repositories list.
 	Calls      int
 	UserAgents []string
@@ -411,7 +413,7 @@ func (f *AgentAPI) capturedRepositories(w http.ResponseWriter, r *http.Request) 
 	f.mu.Lock()
 	f.Calls++
 	f.UserAgents = append(f.UserAgents, r.UserAgent())
-	version, minimum := f.Version, f.MinimumVersion
+	version, minimum, refuse := f.Version, f.MinimumVersion, f.RefuseTokens
 	f.mu.Unlock()
 	if version != "" {
 		w.Header().Set("SolidTrace-Version", version)
@@ -429,7 +431,7 @@ func (f *AgentAPI) capturedRepositories(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	org, ok := f.OAuth.Check(secret)
-	if !ok || org == nil {
+	if !ok || org == nil || refuse {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "The token is wrong, expired or revoked."})
 		return
 	}
