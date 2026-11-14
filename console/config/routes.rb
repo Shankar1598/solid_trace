@@ -44,6 +44,14 @@ Rails.application.routes.draw do
   # How an MCP client finds where to sign in (Oauth::MetadataController).
   get ".well-known/oauth-protected-resource(/mcp)", to: "oauth/metadata#protected_resource", format: false
   get ".well-known/oauth-authorization-server", to: "oauth/metadata#authorization_server", format: false
+  # The approval page (Oauth::AuthorizationsController), and the token and
+  # registration endpoints, which any origin may call.
+  get "oauth/authorize", to: "oauth/authorizations#show", as: :oauth_authorize, format: false
+  post "oauth/authorize", to: "oauth/authorizations#create", format: false
+  post "oauth/token", to: "oauth/tokens#create", as: :oauth_token, format: false
+  post "oauth/register", to: "oauth/registrations#create", as: :oauth_register, format: false
+  match "oauth/token", to: "oauth/tokens#preflight", via: :options, as: nil, format: false
+  match "oauth/register", to: "oauth/registrations#preflight", via: :options, as: nil, format: false
   resources :passwords, param: :token
   # An Invite link, where an Invited member sets a password (InvitesController).
   get "invites/:token", to: "invites#edit", as: :invite
