@@ -19,7 +19,7 @@ module Oauth
         resource_path: Issuer::MCP_PATH,
         text: "Use the MCP server as you, in %{organization}: read its Logs and Issues, and change its Dashboards, " \
               "Monitors, Issues and Projects as your role allows.",
-      ),
+      )
     ].freeze
 
     module_function
