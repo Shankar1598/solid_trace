@@ -47,4 +47,5 @@ class User < ApplicationRecord
   validates :name, presence: true
   has_many :sessions, dependent: :destroy
   has_many :api_tokens, dependent: :delete_all
+  has_many :oauth_grants, class_name: "Oauth::Grant", dependent: :destroy
 end

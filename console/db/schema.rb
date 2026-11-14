@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_14_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -260,6 +260,88 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
     t.check_constraint "(issue_id IS NOT NULL AND monitor_id IS NULL AND group_key IS NULL) OR (issue_id IS NULL AND monitor_id IS NOT NULL AND group_key IS NOT NULL)", name: "notifications_one_subject"
   end
 
+  create_table "oauth_clients", force: :cascade do |t|
+    t.string "kind", null: false
+    t.string "client_id", null: false
+    t.string "name", null: false
+    t.json "redirect_uris", default: [], null: false
+    t.json "grant_types", default: [], null: false
+    t.string "token_endpoint_auth_method", default: "none", null: false
+    t.string "client_secret_digest"
+    t.json "metadata", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["client_id"], name: "index_oauth_clients_on_client_id", unique: true
+  end
+
+  create_table "oauth_codes", force: :cascade do |t|
+    t.string "kind", null: false
+    t.string "code_digest", null: false
+    t.integer "oauth_client_id", null: false
+    t.integer "oauth_grant_id"
+    t.string "code_challenge"
+    t.string "redirect_uri"
+    t.json "scopes", default: [], null: false
+    t.string "resource"
+    t.datetime "expires_at", null: false
+    t.datetime "used_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["code_digest"], name: "index_oauth_codes_on_code_digest", unique: true
+    t.index ["oauth_client_id"], name: "index_oauth_codes_on_oauth_client_id"
+    t.index ["oauth_grant_id"], name: "index_oauth_codes_on_oauth_grant_id"
+  end
+
+  create_table "oauth_grants", force: :cascade do |t|
+    t.integer "user_id", null: false
+    t.integer "oauth_client_id", null: false
+    t.integer "organization_id", null: false
+    t.json "scopes", default: [], null: false
+    t.json "resources", default: [], null: false
+    t.string "approved_via", null: false
+    t.string "user_agent"
+    t.string "ip_address"
+    t.datetime "approved_at", null: false
+    t.datetime "first_token_at"
+    t.datetime "last_used_at"
+    t.datetime "revoked_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["oauth_client_id"], name: "index_oauth_grants_on_oauth_client_id"
+    t.index ["organization_id"], name: "index_oauth_grants_on_organization_id"
+    t.index ["user_id"], name: "index_oauth_grants_on_user_id"
+  end
+
+  create_table "oauth_pending_requests", force: :cascade do |t|
+    t.string "key", null: false
+    t.integer "oauth_client_id", null: false
+    t.string "redirect_uri", null: false
+    t.string "response_type"
+    t.string "code_challenge"
+    t.string "code_challenge_method"
+    t.string "scope"
+    t.string "resource"
+    t.text "state"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["key"], name: "index_oauth_pending_requests_on_key", unique: true
+    t.index ["oauth_client_id"], name: "index_oauth_pending_requests_on_oauth_client_id"
+  end
+
+  create_table "oauth_tokens", force: :cascade do |t|
+    t.string "kind", null: false
+    t.string "token_digest", null: false
+    t.integer "oauth_grant_id", null: false
+    t.string "resource"
+    t.datetime "expires_at", null: false
+    t.datetime "used_at"
+    t.datetime "revoked_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["oauth_grant_id"], name: "index_oauth_tokens_on_oauth_grant_id"
+    t.index ["token_digest"], name: "index_oauth_tokens_on_token_digest", unique: true
+  end
+
   create_table "organizations", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "name"
@@ -389,6 +471,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
   add_foreign_key "monitors", "organizations"
   add_foreign_key "monitors", "projects"
   add_foreign_key "notifications", "integrations"
+  add_foreign_key "oauth_codes", "oauth_clients"
+  add_foreign_key "oauth_codes", "oauth_grants"
+  add_foreign_key "oauth_grants", "oauth_clients"
+  add_foreign_key "oauth_grants", "organizations"
+  add_foreign_key "oauth_grants", "users"
+  add_foreign_key "oauth_pending_requests", "oauth_clients"
+  add_foreign_key "oauth_tokens", "oauth_grants"
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
   add_foreign_key "passkeys", "users"

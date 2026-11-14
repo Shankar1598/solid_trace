@@ -16,6 +16,9 @@ module Oauth
     MCP_PATH = "/mcp"
     # Where the MCP server's protected resource metadata is (RFC 9728 §3.1).
     RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource#{MCP_PATH}".freeze
+    # What the OAuth endpoints and the approval page say with OAuth off.
+    OFF_DESCRIPTION = "Sign-in through the browser needs an HTTPS Console URL. Ask the operator to set one, " \
+                      "or use an API token from Settings → API tokens & MCP."
 
     attr_reader :url
 
