@@ -22,6 +22,8 @@ const (
 	outerSession  = "d1e2f3a4-b5c6-4d7e-8f90-a1b2c3d4e585"
 	runOutSession = "8a7b6c5d-4e3f-4a1b-9c8d-7e6f5a4b3c96"
 	gitSession    = "3b9c1d7e-5f2a-4c8b-a6d0-e4f1a2b3c4d7"
+	wholeSession  = "7c1e3a5b-9d2f-4b6a-8c0e-f1a2b3c4d5e8"
+	overSession   = "4e6a8c0b-2d4f-4a6c-9e1b-a3c5e7f9b1d9"
 )
 
 // rowOf is one row of agent_session_files.
@@ -248,6 +250,33 @@ func TestAgentSessionUnitsOver32MiB(t *testing.T) {
 		}
 		if last.offset != len(longLine) || last.flags != 0 || last.size != len(next) {
 			t.Errorf("Expected the next unit stored whole after the cut, got %+v", last)
+		}
+	})
+
+	t.Run("a unit of exactly 32 MiB is whole, and a unit of 32 MiB and 1 byte is cut", func(t *testing.T) {
+		whole := append(bytes.Repeat([]byte("w"), 32*mib-1), '\n')
+		expectStatus(t, uploadUnit(t, env, o.secret, wholeSession, unitUpload{path: "session.jsonl", body: whole}), 200)
+		rows := storedRows(t, env, o.project, wholeSession, "session.jsonl", 1)
+		if len(rows) == 0 || rows[len(rows)-1].endOffset != 32*mib {
+			t.Fatalf("Expected the rows of the unit to end at %d, got %v", 32*mib, rows)
+		}
+		for _, r := range rows {
+			if r.flags&1 != 0 {
+				t.Errorf("Expected no row of a unit of exactly 32 MiB marked cut, got %+v", r)
+			}
+		}
+		if got := flagsOf(t, env, o.secret, wholeSession); len(got) != 0 {
+			t.Errorf("Expected a unit of exactly 32 MiB not to flag the Agent session, got %v", got)
+		}
+
+		over := append(bytes.Repeat([]byte("o"), 32*mib), '\n')
+		answer := uploadUnit(t, env, o.secret, overSession, unitUpload{path: "session.jsonl", size: len(over), body: over[:32*mib]})
+		expectStatus(t, answer, 200)
+		if answer.body["end_offset"] != float64(32*mib+1) {
+			t.Errorf("Expected the end offset %d, got %s", 32*mib+1, answer.raw)
+		}
+		if got := flagsOf(t, env, o.secret, overSession); !slices.Equal(got, []string{"cut"}) {
+			t.Errorf("Expected a unit of 32 MiB and 1 byte to flag the Agent session cut, got %v", got)
 		}
 	})
 
