@@ -172,7 +172,51 @@ const (
 	// EndSetupFailed: the wrapper could not start the harness; Error says
 	// why.
 	EndSetupFailed = "the setup failed"
+	// EndPreempted: the Machine notice said that the machine will be
+	// taken back. The end call has the Preemption.
+	EndPreempted = "preempted"
+	// EndMachineStopped: the wrapper got a SIGTERM or a SIGINT with no stop
+	// command, and the Machine notice did not say that the machine will be
+	// taken back. The end call has the Preemption.
+	EndMachineStopped = "machine stopped"
 )
+
+// Preempting is the body of the wrapper's preempting call: the first step
+// of the preemption handler tells the Dispatcher that the machine goes.
+type Preempting struct {
+	// Reason is EndPreempted or EndMachineStopped.
+	Reason   string    `json:"reason"`
+	NoticeAt time.Time `json:"notice_at"`
+}
+
+// Preemption is what the preemption handler saved before the machine
+// went. It goes on the end call of a preempted or machine stopped
+// Execution, and the Dispatcher records it as a run event.
+type Preemption struct {
+	// Reason is EndPreempted or EndMachineStopped.
+	Reason string `json:"reason"`
+	// NoticeAt is when the wrapper got the notice or the signal.
+	NoticeAt time.Time `json:"notice_at"`
+	// SecondsToSaved is the time from the notice to the saved state: the
+	// end of the save and of the last upload.
+	SecondsToSaved float64 `json:"seconds_to_saved"`
+	// SecondsToEnd is the time from the notice to the end call.
+	SecondsToEnd float64 `json:"seconds_to_end"`
+	// WIPCommit is the commit of the work-in-progress save ("" when none
+	// was saved).
+	WIPCommit string `json:"wip_commit,omitempty"`
+	// Skipped are the files that the save left out.
+	Skipped []string `json:"skipped,omitempty"`
+	// TranscriptOffset is how many bytes of the Run's current Agent
+	// session's transcript SolidTrace has after the last upload (nil when
+	// it is not known).
+	TranscriptOffset *uint64 `json:"transcript_offset,omitempty"`
+	// CheckpointAgeSeconds is the age of the last checkpoint at the notice
+	// (nil when the Execution made none).
+	CheckpointAgeSeconds *float64 `json:"checkpoint_age_seconds,omitempty"`
+	// Problems are the steps that failed or passed their time limit.
+	Problems []string `json:"problems,omitempty"`
+}
 
 // ExecutionEnd is the body of the wrapper's end call.
 type ExecutionEnd struct {
@@ -185,6 +229,9 @@ type ExecutionEnd struct {
 	// BackgroundTasksKilled is the count of the agent's background tasks
 	// that still ran at the end, and that the end killed.
 	BackgroundTasksKilled int `json:"background_tasks_killed,omitempty"`
+	// Preemption is what the preemption handler saved, for EndPreempted
+	// and EndMachineStopped.
+	Preemption *Preemption `json:"preemption,omitempty"`
 }
 
 // StartRun is the body of a start.
