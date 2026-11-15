@@ -44,6 +44,14 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	if strings.ContainsAny(secrets, "'\n") {
 		return fmt.Errorf("the secrets directory %q has a quote or a new line", secrets)
 	}
+	// A wrapper that did not get to its clean-up (it was killed, or the
+	// machine lost its power) left its checkout and home at the fixed
+	// paths: git cannot clone into a folder that is not empty.
+	for _, dir := range []string{secrets, e.cfg.workspace, e.cfg.home} {
+		if err := removeAll(dir); err != nil {
+			return fmt.Errorf("delete what an earlier Execution left: %w", err)
+		}
+	}
 	for _, dir := range []string{secrets, e.cfg.workspace, e.cfg.home, e.cfg.cache} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
