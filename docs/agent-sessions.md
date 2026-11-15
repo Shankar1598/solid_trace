@@ -92,3 +92,11 @@ Click the person or the Run in the list to open the Agent session page.
 - A subagent shows inside the tool call that started it. Click it to open its steps.
 - A long Agent session loads in pages: click **Load more steps** at the end of the timeline.
 - A **cut** or **partial** flag means that the record is not complete, so a resume of this Agent session can fail. The page says so above the header. A value marked **cut** was cut at the Log limits; the raw line has all of it.
+- Click **Show full** on a cut value to read its raw line, as the record keeps it: with the secrets redacted.
+- To find a step, type in the search box above the timeline. The search shows the steps of this Agent session, and of its subagents, that have the text, with any case. Click **Clear** to see the timeline again.
+
+### Search across Agent sessions
+
+To find which Agent session did a thing, type in the search box at the top of the Agent sessions page. It opens the Logs explorer on the Agent Project, with your text as the search, over the last 7 days. Each line of a transcript is a Log there: `file` is the transcript's path, and the attributes under `agent.` hold the Agent session id, the role and the tool name. Choose a longer range in the explorer when you accept a longer wait.
+
+An agent can do the same over MCP: `query_logs` on the Agent Project runs a Query on the transcript Logs. `list_projects` names the Agent Project.

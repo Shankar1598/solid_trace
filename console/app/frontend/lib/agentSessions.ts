@@ -1,6 +1,8 @@
 // The Agent sessions page: its search (the range and the filters stay in
 // the URL, so that a filtered view can be shared), and how its numbers
 // read. The rows and totals come from AgentSessionsView.
+import { EMPTY_BUILDER, queryOf } from './logs/builder'
+import { searchOf } from './logs/explorerState'
 import type { TimeRange } from './timeRange'
 
 export type RunFilter = 'run' | 'none'
@@ -65,7 +67,26 @@ export function agentSessionsSearch(range: TimeRange, filters: AgentSessionFilte
   return `?${params}`
 }
 
-const shortNumber = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
+/** Where search across Agent sessions goes: the Agent Project's Logs explorer, over range. */
+export interface SearchAcross {
+  logs_path: string
+  /** The Agent Project's slug. */
+  project: string
+  /** A span, as 7d. */
+  range: string
+}
+
+/**
+ * Search across Agent sessions: the Logs explorer on the Agent Project,
+ * with the text as the Builder's search, over the range given (7 days).
+ * A member can make the range longer there.
+ */
+export function searchAcrossHref(search: SearchAcross, text: string): string {
+  const query = queryOf({ ...EMPTY_BUILDER, search: text }, search.project)
+  return search.logs_path + searchOf({ range: { kind: 'relative', span: search.range }, mode: 'builder', query, sql: '', viz: 'auto' })
+}
+
+const shortNumber =new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 /** A count of tokens, short: 12.3K, 4M. */

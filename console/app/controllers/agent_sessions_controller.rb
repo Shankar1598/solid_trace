@@ -34,6 +34,7 @@ class AgentSessionsController < ApplicationController
     props = view.to_h.merge(
       list_path: agent_sessions_path(org_slug: slug),
       timeline_path: agent_session_timeline_path(org_slug: slug, id: params[:id]),
+      line_path: agent_session_line_path(org_slug: slug, id: params[:id]),
       parent_path: parent && agent_session_path(org_slug: slug, id: parent),
     )
     render inertia: "AgentSessions/Show", props: { agent_session: props }

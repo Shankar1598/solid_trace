@@ -86,6 +86,7 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_equal [ { "path" => "subagents/agent-a1.jsonl", "agent_id" => "a1", "tool_use_id" => "toolu_9",
                      "first" => "2026-10-02T11:00:02Z", "last" => "2026-10-02T11:00:03Z" } ], view["subagents"]
     assert_equal "/acme/agent_sessions/#{CART}/timeline", view["timeline_path"]
+    assert_equal "/acme/agent_sessions/#{CART}/line", view["line_path"]
     assert_equal "/acme/agent_sessions/#{PARENT}", view["parent_path"]
   end
 
