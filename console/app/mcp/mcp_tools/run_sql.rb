@@ -24,6 +24,7 @@ module McpTools
       and takes values out of messages too, with extract and parse_json.
     TEXT
     read_only!
+    reads_one_project!
     needs_sql_queries!
     takes_project
     argument :sql, { type: "string", description: "The SQL, such as SELECT service, count(*) AS logs FROM logs GROUP BY service." },

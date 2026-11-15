@@ -6,6 +6,7 @@ module McpTools
     description "Answers one of a Project's Logs whole: its time, level, message, service, environment, trace_id, " \
                 "span_id and every Attribute, as EventStore keeps them. query_logs' lines give a Log's id and time."
     read_only!
+    reads_one_project!
     takes_project
     argument :log, { type: "string", description: "The Log's id, from a query_logs line." }, required: true
     argument :time, {

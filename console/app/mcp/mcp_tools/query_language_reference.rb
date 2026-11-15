@@ -11,6 +11,7 @@ module McpTools
                 "operators, aggregates and functions, how Fields' types are matched, how a table is charted, and how to " \
                 "write a Query that reads less."
     read_only!
+    reads_one_project!
 
     def run
       text(DOC.read)

@@ -16,6 +16,7 @@ module McpTools
                 "when EventStore can't give them; and how_to_write, how a VRL program is written and what Log processing does " \
                 "with it. Read it to learn why a Project's Fields look as they do, and before writing a program."
     read_only!
+    reads_one_project!
     takes_project
     argument :version, { type: "integer", description: "A version's id, from versions, for its program. The current one when left out." }
 

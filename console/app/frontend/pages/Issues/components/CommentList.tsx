@@ -1,4 +1,4 @@
-import { useForm, router } from '@inertiajs/react'
+import { useForm, router, Link } from '@inertiajs/react'
 import { Card, CardHeader, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { formatDistanceToNow } from 'date-fns'
@@ -56,13 +56,19 @@ export default function CommentList({ comments, currentUser, issueId, projectId,
           <Card key={comment.id} id={`comment-${comment.id}`} className="py-0">
             <CardHeader className="py-3 border-b flex flex-row items-center justify-between space-y-0">
               <div className="flex items-center gap-2 text-sm">
-                <span className="font-semibold">{comment.user.name}</span>
+                {comment.run ? (
+                  <Link href={comment.run.url} className="font-semibold hover:underline" title={`Run ${comment.run.id}`}>
+                    Factory
+                  </Link>
+                ) : (
+                  <span className="font-semibold">{comment.user?.name}</span>
+                )}
                 <span className="text-muted-foreground">commented</span>
                 <span className="text-muted-foreground">
                   {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
                 </span>
               </div>
-              {currentUser && currentUser.id === comment.user.id && (
+              {currentUser && comment.user && currentUser.id === comment.user.id && (
                 <Button
                   onClick={() => deleteComment(comment.id)}
                   variant="ghost"

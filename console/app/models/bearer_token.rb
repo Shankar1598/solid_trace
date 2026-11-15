@@ -113,6 +113,12 @@ class BearerToken
     @record if api_token?
   end
 
+  # The one Project an mcp:read API token reads (its Project limit); nil
+  # for a token with no such limit.
+  def project
+    api_token&.project
+  end
+
   # The token that made this child token; nil for every other token.
   def parent
     api_token&.parent
