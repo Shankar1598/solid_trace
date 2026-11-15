@@ -187,20 +187,100 @@ type agentFileTotals struct {
 // AgentSessionTotals reads the totals of a Project's Agent sessions,
 // latest activity first: of the sessions given, or of all when none are.
 func (s *ClickHouseLogs) AgentSessionTotals(ctx context.Context, projectID uint32, sessionIDs ...uuid.UUID) ([]AgentSessionTotals, error) {
+	if len(sessionIDs) == 0 {
+		return s.agentSessionTotals(ctx, projectID, "")
+	}
+	return s.agentSessionTotals(ctx, projectID, ` AND session_id IN ?`, sessionIDs)
+}
+
+// AgentSessionFilter selects the Agent sessions of a list. An Agent
+// session is in the range [From, To] when it has activity in it: one of
+// its files has a line in the range on one day. The other fields select
+// nothing when they are zero.
+type AgentSessionFilter struct {
+	From, To time.Time
+	// UserID is the person whose token uploaded the Agent session.
+	UserID int64
+	// Repository is the repository, as host/workspace/name.
+	Repository string
+	// Project is the factory Project of a Run's Agent session: it selects
+	// the Agent sessions of Runs only.
+	Project string
+	// Run is AgentSessionsOfRuns, AgentSessionsOfNoRun, or "" for both.
+	Run string
+}
+
+// The values of AgentSessionFilter.Run.
+const (
+	AgentSessionsOfRuns  = "run"
+	AgentSessionsOfNoRun = "none"
+)
+
+// AgentSessionList reads the totals of the Agent sessions of a Project
+// that the filter selects, latest activity first. The totals of each
+// Agent session are of all its days that are kept, not only of the range.
+func (s *ClickHouseLogs) AgentSessionList(ctx context.Context, projectID uint32, f AgentSessionFilter) ([]AgentSessionTotals, error) {
+	// A line's time is at most one hour after the time when the server
+	// stored it (normalise.Receipt), so a line in the range is on a day
+	// from the day of From less one hour. The read gets only those days.
+	selected := `SELECT session_id FROM agent_sessions WHERE project_id = ? AND day >= toDate(?)`
+	args := []any{projectID, f.From.Add(-time.Hour)}
+	if f.UserID != 0 {
+		selected += ` AND user_id = ?`
+		args = append(args, uint64(f.UserID))
+	}
+	if f.Repository != "" {
+		selected += ` AND repository = ?`
+		args = append(args, f.Repository)
+	}
+	if f.Project != "" {
+		selected += ` AND factory_project = ? AND run_id != ''`
+		args = append(args, f.Project)
+	}
+	switch f.Run {
+	case AgentSessionsOfRuns:
+		selected += ` AND run_id != ''`
+	case AgentSessionsOfNoRun:
+		selected += ` AND run_id = ''`
+	}
+	// Grouped by the key of the table, so that the times of a row are its
+	// merged times, when its parts are not merged yet too.
+	selected += ` GROUP BY session_id, day, path, version HAVING max(last_time) >= ? AND min(first_time) <= ?`
+	args = append(args, f.From, f.To)
+	return s.agentSessionTotals(ctx, projectID, ` AND session_id IN (`+selected+`)`, args...)
+}
+
+// AgentSessionRepositories are the repositories of the Agent sessions of
+// a Project that the server stored from the day of from, in name order.
+func (s *ClickHouseLogs) AgentSessionRepositories(ctx context.Context, projectID uint32, from time.Time) ([]string, error) {
+	rows, err := s.conn.Query(ctx, `SELECT DISTINCT repository FROM agent_sessions
+		WHERE project_id = ? AND day >= toDate(?) AND repository != '' ORDER BY repository`, projectID, from.Add(-time.Hour))
+	if err != nil {
+		return nil, fmt.Errorf("read agent session repositories: %w", err)
+	}
+	defer rows.Close()
+	repositories := []string{}
+	for rows.Next() {
+		var repository string
+		if err := rows.Scan(&repository); err != nil {
+			return nil, fmt.Errorf("read agent session repositories: %w", err)
+		}
+		repositories = append(repositories, repository)
+	}
+	return repositories, rows.Err()
+}
+
+// agentSessionTotals reads the totals of the Agent sessions of a Project
+// that the condition selects. The condition's args follow the Project.
+func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint32, condition string, conditionArgs ...any) ([]AgentSessionTotals, error) {
 	query := `SELECT session_id, path, version, min(first_time), max(last_time), any(user_id), any(harness),
 		any(repository), any(folder), any(run_id), any(factory_project), max(parent_session_id), sum(input_tokens),
 		sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens), sum(price_cost_usd), sum(replies),
 		sum(unpriced_replies), tupleElement(max(last_reply), 1), tupleElement(max(last_reply), 2),
 		tupleElement(max(last_cost_state), 1), tupleElement(max(last_cost_state), 2),
 		sum(person_messages), sum(turns), sum(tool_calls), max(has_start), groupBitOr(flags)
-		FROM agent_sessions WHERE project_id = ?`
-	args := []any{projectID}
-	if len(sessionIDs) > 0 {
-		query += ` AND session_id IN ?`
-		args = append(args, sessionIDs)
-	}
-	query += ` GROUP BY session_id, path, version ORDER BY session_id, path, version`
-	rows, err := s.conn.Query(ctx, query, args...)
+		FROM agent_sessions WHERE project_id = ?` + condition + ` GROUP BY session_id, path, version ORDER BY session_id, path, version`
+	rows, err := s.conn.Query(ctx, query, append([]any{projectID}, conditionArgs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("read agent sessions: %w", err)
 	}
