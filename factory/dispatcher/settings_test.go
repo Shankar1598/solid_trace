@@ -185,6 +185,20 @@ func TestAnAdminAddsABitbucketConnectionAndAMemberListsItWithNoToken(t *testing.
 	}
 }
 
+func TestAConnectionKeepsATokenOfAtMost8KiB(t *testing.T) {
+	env := factorytest.New(t)
+	dana := admin(t, env)
+	const maxToken = 8 << 10
+	if a := dana.API("PUT", "/api/v1/connections/big", dispatcherapi.SaveConnection{Kind: "bitbucket",
+		Token: strings.Repeat("x", maxToken+1)}); a.Status != http.StatusBadRequest || !strings.Contains(string(a.Body), "8 KiB") {
+		t.Errorf("a token of 8 KiB and 1 byte: %d %s, want 400", a.Status, a.Body)
+	}
+	if a := dana.API("PUT", "/api/v1/connections/big", dispatcherapi.SaveConnection{Kind: "bitbucket",
+		Token: strings.Repeat("x", maxToken)}); a.Status != http.StatusOK {
+		t.Errorf("a token of 8 KiB: %d %s, want 200", a.Status, a.Body)
+	}
+}
+
 func TestAProjectCanNameOnlyAConnectionThatTheOrganizationHas(t *testing.T) {
 	env := factorytest.New(t)
 	env.SolidTraceProject("checkout")
