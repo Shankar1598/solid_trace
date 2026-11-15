@@ -1,10 +1,12 @@
-import { Deferred, Link, useForm, usePage } from '@inertiajs/react'
+import { useRef } from 'react'
+import { Link, useForm, usePage } from '@inertiajs/react'
 import { TriangleAlert } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { factorySectionShown } from '@/lib/dispatcher'
 import type { FactorySectionData, FactorySectionPaths, FactorySettingsValues } from '@/lib/dispatcher'
 
 /**
@@ -12,8 +14,17 @@ import type { FactorySectionData, FactorySectionPaths, FactorySettingsValues } f
  * default base branch that the Project's Runs use. The page shows it only
  * with a Dispatcher URL; it loads the settings from the Dispatcher after
  * the page shows. Admins edit; members read.
+ *
+ * It does not use <Deferred>: after a save, the redirect has no `factory`
+ * until the page loads it again, and <Deferred> would then unmount the form
+ * with the Dispatcher's error and the typed values. The section shows the
+ * last settings in that time (factorySectionShown).
  */
 export function FactorySection({ paths, canEdit }: { paths: FactorySectionPaths; canEdit: boolean }) {
+  const { factory } = usePage<{ factory?: FactorySectionData }>().props
+  const last = useRef<FactorySectionData | undefined>(undefined)
+  const shown = factorySectionShown(factory, last.current)
+  last.current = shown
   return (
     <Card data-section="factory">
       <CardHeader>
@@ -22,9 +33,7 @@ export function FactorySection({ paths, canEdit }: { paths: FactorySectionPaths;
           The code that this Project's Runs work on. The Dispatcher keeps these settings.
         </CardDescription>
       </CardHeader>
-      <Deferred data="factory" fallback={<FactoryLoading />}>
-        <FactoryBody paths={paths} canEdit={canEdit} />
-      </Deferred>
+      {shown ? <FactoryBody factory={shown} paths={paths} canEdit={canEdit} /> : <FactoryLoading />}
     </Card>
   )
 }
@@ -39,9 +48,11 @@ function FactoryLoading() {
   )
 }
 
-function FactoryBody({ paths, canEdit }: { paths: FactorySectionPaths; canEdit: boolean }) {
-  const { factory } = usePage<{ factory?: FactorySectionData }>().props
-  if (!factory) return null
+function FactoryBody({ factory, paths, canEdit }: {
+  factory: FactorySectionData
+  paths: FactorySectionPaths
+  canEdit: boolean
+}) {
   if (!('settings' in factory)) {
     return (
       <>
