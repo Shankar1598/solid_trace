@@ -176,8 +176,8 @@ type execution struct {
 
 	needsPerson chan struct{}
 	// inbox holds the messages of the Execution (messages.go).
-	inbox *inbox
-	uploads     *uploads
+	inbox   *inbox
+	uploads *uploads
 	// stdin is the harness's stdin. writing holds each write to it, so
 	// that an interrupt never goes into the middle of a message. It is not
 	// mu: a write blocks while the harness does not read, and the end must

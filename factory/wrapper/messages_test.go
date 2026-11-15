@@ -2,12 +2,15 @@ package wrapper_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
+	"github.com/solidtrace/factory/internal/recorder"
 )
 
 // Lines of an agent that takes a person's message (message N of the
@@ -230,6 +233,133 @@ func TestAWrittenMessageWithNoEchoGoesToANewExecutionAfter30Seconds(t *testing.T
 	}
 	if second.TaskDeliveredAt != nil {
 		t.Errorf("the second Execution wrote the prompt again")
+	}
+}
+
+// compareEnd makes the wrapper's compare-and-end call of the Execution,
+// with its workload identity.
+func compareEnd(t *testing.T, env *factorytest.Env, execution string, after int64) dispatcherapi.CompareEndAnswer {
+	t.Helper()
+	got := env.API(env.Runner.Identity(factorytest.Workload(execution)), "POST",
+		"/api/v1/executions/"+execution+"/compare-end", dispatcherapi.CompareEnd{After: after})
+	if got.Status != http.StatusOK {
+		t.Fatalf("compare-end after %d: %d %s", after, got.Status, got.Body)
+	}
+	var answer dispatcherapi.CompareEndAnswer
+	got.JSON(t, &answer)
+	return answer
+}
+
+func TestCompareAndEndGivesALaterMessageAndAfterItsAgreementANewMessageGoesToANewExecution(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.KeepAgentSessions()
+	here, reached := marker(t)
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), here, wait, readMessage, deliverMidTurn(1),
+		reportStep("--outcome", "done", "--summary", "First"), reply, result, waitForEnd)
+	env.Runner.Agent(takeTask, reportStep("--outcome", "done", "--summary", "Second"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	reached()
+	execution := onlyExecution(t, getRun(t, ana, id)).ID
+
+	// The wrapper asks to end before it got the message: the Dispatcher
+	// gives the message, and does not agree.
+	first := send(t, env, ana, id, "Also fix the tax")
+	answer := compareEnd(t, env, execution, 0)
+	if answer.Agreed || len(answer.Commands) != 1 || answer.Commands[0].Message == nil ||
+		answer.Commands[0].Message.ID != first || answer.Commands[0].Message.Text != "Also fix the tax" {
+		t.Fatalf("compare-end with a later message: %+v", answer)
+	}
+	seen := answer.Commands[0].Seq
+	if answer := compareEnd(t, env, execution, seen); !answer.Agreed || len(answer.Commands) != 0 {
+		t.Fatalf("compare-end with no later message: %+v", answer)
+	}
+
+	// After the agreement, a message is kept for a new Execution.
+	second := send(t, env, ana, id, "And the shipping")
+	if answer := compareEnd(t, env, execution, seen); !answer.Agreed || len(answer.Commands) != 0 {
+		t.Errorf("compare-end gave a message after the agreement: %+v", answer)
+	}
+	open()
+
+	waitForExecutions(t, env, ana, id, 2)
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if run.Summary != "Second" || len(run.Executions) != 2 {
+		t.Fatalf("the Run is done with %q in %d Executions", run.Summary, len(run.Executions))
+	}
+	for message, execution := range map[string]string{first: run.Executions[0].ID, second: run.Executions[1].ID} {
+		delivered := messageEvents(env, id, message)["message_delivered"]
+		if len(delivered) != 1 || delivered[0]["execution.id"] != execution {
+			t.Errorf("the delivered events of %s: %v, want one in %s", message, delivered, execution)
+		}
+	}
+	if again := messageEvents(env, id, second)["message_sent_again"]; len(again) != 0 {
+		t.Errorf("a kept message counts as sent again: %v", again)
+	}
+}
+
+func TestOnlyTheReplayEchoOfAMessageCountsAndOnlyOneTime(t *testing.T) {
+	env, ana := newEnv(t)
+	here, reached := marker(t)
+	// An echo with a uuid that the wrapper did not write, the message's
+	// echo two times, and a synthetic user event.
+	foreign := `{"type":"user","isReplay":true,"message":{"role":"user","content":"Also fix the tax"},` +
+		`"parent_tool_use_id":null,"session_id":"","uuid":""}`
+	synthetic := `{"type":"user","isSynthetic":true,"message":{"role":"user","content":[{"type":"text",` +
+		`"text":"Not a message"}]},"parent_tool_use_id":null,"session_id":"","uuid":""}`
+	env.Runner.Agent(takeTask, initLine(t), here, readMessage, foreign, deliverMidTurn(1), deliverMidTurn(1),
+		synthetic, reportStep("--outcome", "done", "--summary", "Fixed"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	reached()
+	mid := send(t, env, ana, id, "Also fix the tax")
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 1 {
+		t.Errorf("the Run has %d Executions", len(run.Executions))
+	}
+	if delivered := messageEvents(env, id, mid)["message_delivered"]; len(delivered) != 1 {
+		t.Errorf("the delivered events: %v", delivered)
+	}
+	reports := eventsOf(env, id, "report")
+	if len(reports) != 1 || reports[0]["report.delivered_messages"] != float64(2) {
+		t.Errorf("the report's delivered-message counter (the task and the message): %v", reports)
+	}
+}
+
+func TestTheDispatcherRefusesAMessageItCannotTake(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	done := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, done, dispatcherapi.StateDone)
+	other := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
+
+	for name, c := range map[string]struct {
+		p      *factorytest.Person
+		run    string
+		text   string
+		status int
+	}{
+		"a done Run":                 {ana, done, "Also fix the tax", http.StatusConflict},
+		"a Run that does not exist":  {ana, "nosuchrun", "Also fix the tax", http.StatusNotFound},
+		"another Organization's Run": {other, done, "Also fix the tax", http.StatusForbidden},
+		"no text":                    {ana, done, "  \n", http.StatusBadRequest},
+		"a text of more than 64 KiB": {ana, done, strings.Repeat("x", dispatcherapi.MaxMessage+1), http.StatusBadRequest},
+	} {
+		got := c.p.API("POST", "/api/v1/runs/"+c.run+"/messages", dispatcherapi.SendMessage{Text: c.text})
+		if got.Status != c.status {
+			t.Errorf("a message to %s: %d %s, want %d", name, got.Status, got.Body, c.status)
+		}
+	}
+	for _, ev := range env.RunEvents(done) {
+		if ev["event.kind"] == "message_accepted" {
+			t.Errorf("a refused message is accepted: %v", ev)
+		}
+	}
+	// The CLI gives the Dispatcher's reason.
+	got := ana.CLI("message", "--dispatcher", env.URL(), done, "Also fix the tax")
+	if got.Code == 0 || !strings.Contains(got.Stderr, "the Run is done") {
+		t.Errorf("solidtrace message to a done Run: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
 	}
 }
 

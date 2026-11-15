@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 )
@@ -75,9 +74,6 @@ func (d *Dispatcher) sendMessage(w http.ResponseWriter, r *http.Request, p perso
 		return
 	case len(text) > dispatcherapi.MaxMessage:
 		writeProblem(w, http.StatusBadRequest, "a message can have at most 64 KiB")
-		return
-	case !utf8.ValidString(text):
-		writeProblem(w, http.StatusBadRequest, "a message must be UTF-8 text")
 		return
 	}
 	id := r.PathValue("id")
@@ -198,7 +194,7 @@ func (s *store) markMessage(executionID string, ev dispatcherapi.MessageEvent, a
 	if state != dispatcherapi.ExecutionRunning {
 		return errEnded
 	}
-	m :=dispatcherapi.MessageState{ID: ev.ID}
+	m := dispatcherapi.MessageState{ID: ev.ID}
 	wrapperAt := ev.At.UTC()
 	m.WrittenAt = &wrapperAt
 	if ev.Event == dispatcherapi.MessageDelivered {
