@@ -593,6 +593,7 @@ func (env *TestEnv) open(t *testing.T) {
 		}), handler.NewTracesHandler(clickHouse), healthHandler, handler.NewConfigHandler(&config.Config{}, 0))
 	handler.RegisterPerformanceRoutes(env.QueryApp, handler.NewPerformanceHandler(clickHouse))
 	handler.RegisterRedactionRoutes(env.QueryApp)
+	handler.RegisterAgentQueryRoutes(env.QueryApp, handler.NewAgentSessionsHandler(env.ClickHouseLogs))
 
 	env.close = func() {
 		pebbleWriter.StopWrites()

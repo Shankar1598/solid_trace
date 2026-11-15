@@ -1,7 +1,7 @@
 // Which sidebar entry a page belongs to, from its path alone: the search is
 // left out, since a Query in it can hold any text, such as "/issues".
 
-export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'projects' | 'settings'
+export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'agent_sessions' | 'projects' | 'settings'
 
 // The parts of a Console URL's path after its Organization.
 function pathParts(url: string): string[] {
@@ -18,6 +18,7 @@ export function navSection(url: string): NavSection | null {
     case 'performance':
     case 'dashboards':
     case 'monitors':
+    case 'agent_sessions':
     case 'settings':
       return first
     case 'projects':
