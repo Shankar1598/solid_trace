@@ -237,7 +237,7 @@ start_hc_core_as_the_wrapper_does() {
   as root sh -c 'rm -rf /home/agent && install -d -o agent -g agent -m 750 /home/agent'
   as root setpriv --reuid agent --regid agent --init-groups -- \
     env -i HOME=/home/agent USER=agent LOGNAME=agent SHELL=/bin/bash PATH=/usr/local/bin:/usr/bin:/bin \
-    HTTPS_PROXY=http://squid:3128 HTTP_PROXY=http://squid:3128 NO_PROXY=localhost,127.0.0.1 \
+    HTTPS_PROXY=http://squid:3128 HTTP_PROXY=http://squid:3128 NO_PROXY="$(as root printenv NO_PROXY)" \
     hc server start >/dev/null 2>&1 || true
   local core_pid
   core_pid="$(as agent hc server status | python3 -c 'import json,sys; print(json.load(sys.stdin)["pid"])')"
@@ -359,6 +359,20 @@ solidtrace_on_the_host_only_through_squid() {
   [[ $code =~ ^[1-5][0-9][0-9]$ ]] && ! grep -q -i 'X-Squid-Error' <<<"$headers" || want "a reply from the dev EventStore through Squid, got: $headers"
 }
 
+# A raw_exec task gets the Nomad client's environment. With it, a request to the Dispatcher's
+# private listener goes direct, not to Squid (Squid refuses port 7600).
+dispatcher_request_does_not_go_through_squid() {
+  local proxy_env verbose
+  proxy_env="$(as root sh -c "tr '\\0' '\\n' </proc/1/environ | grep -i -E '^(https?|no)_proxy='")"
+  grep -q '^NO_PROXY=.*dispatcher' <<<"$proxy_env" || want "dispatcher in the Nomad client's NO_PROXY, got: $proxy_env"
+  [ "$(grep -i '^no_proxy=' <<<"$proxy_env" | sort)" = "$(as root grep -i '^no_proxy=' /etc/environment | sort)" ] ||
+    want "the same NO_PROXY in /etc/environment as in the Nomad client"
+  # shellcheck disable=SC2086 # One variable per word.
+  verbose="$(as agent env -i $proxy_env curl -v -sS -o /dev/null --max-time 5 "http://dispatcher:${DISPATCHER_PORT:-7600}/" 2>&1)" || true
+  ! grep -q -i squid <<<"$verbose" || want "a direct request to the Dispatcher, got: $verbose"
+  ! compose logs --no-log-prefix squid | grep -q dispatcher || want "no request to the Dispatcher in Squid's log"
+}
+
 squid_logs_each_host() {
   local log
   log="$(compose logs --no-log-prefix squid)"
@@ -372,6 +386,7 @@ check "direct connections fail, except to Squid (3128) and Nomad RPC (4647)" dir
 check "the firewall allows out only Squid, Nomad RPC and the Dispatcher's port" firewall_allows_only_the_three_ports
 check "Nomad's API refuses the run user with no token" nomad_api_refuses_a_request_with_no_token
 check "the agent machine reaches the dev SolidTrace on the host only through Squid" solidtrace_on_the_host_only_through_squid
+check "a request to the Dispatcher's port, with the Nomad client's proxy settings, does not go through Squid" dispatcher_request_does_not_go_through_squid
 check "Squid logs each host" squid_logs_each_host
 
 # --- A raw_exec task at the kill boundary ----------------------------------------------

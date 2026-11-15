@@ -58,17 +58,19 @@ COPY managed-settings.json /etc/claude-code/managed-settings.json
 COPY claude.json /etc/factory/claude.json
 
 # The proxy settings. Tools read HTTPS_PROXY; git over ssh is rewritten to HTTPS.
+# NO_PROXY has the Dispatcher's host: the agent machine opens a direct connection to its
+# private listener (Squid refuses that port). On the local stack the host is "dispatcher".
 ENV HTTPS_PROXY=http://squid:3128 \
     HTTP_PROXY=http://squid:3128 \
     https_proxy=http://squid:3128 \
     http_proxy=http://squid:3128 \
-    NO_PROXY=localhost,127.0.0.1 \
-    no_proxy=localhost,127.0.0.1 \
+    NO_PROXY=localhost,127.0.0.1,dispatcher \
+    no_proxy=localhost,127.0.0.1,dispatcher \
     DISABLE_AUTOUPDATER=1
 RUN printf '%s\n' \
       'HTTPS_PROXY=http://squid:3128' 'HTTP_PROXY=http://squid:3128' \
       'https_proxy=http://squid:3128' 'http_proxy=http://squid:3128' \
-      'NO_PROXY=localhost,127.0.0.1' 'no_proxy=localhost,127.0.0.1' \
+      'NO_PROXY=localhost,127.0.0.1,dispatcher' 'no_proxy=localhost,127.0.0.1,dispatcher' \
       'DISABLE_AUTOUPDATER=1' >>/etc/environment \
  && git config --system url."https://github.com/".insteadOf "git@github.com:" \
  && git config --system --add url."https://github.com/".insteadOf "ssh://git@github.com/" \

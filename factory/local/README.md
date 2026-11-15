@@ -43,7 +43,7 @@ factory/local/stack shell agent         # a shell on the agent machine as the ru
 |---|---|
 | Squid (`squid:3128`) | Allowed |
 | Nomad RPC (`nomad:4647`) | Allowed |
-| The Dispatcher's private listener (port `DISPATCHER_PORT`, default 7600, as `DISPATCHER_LISTEN`) | Allowed |
+| The Dispatcher's private listener (port `DISPATCHER_PORT`, default 7600, as `DISPATCHER_LISTEN`), direct: `NO_PROXY` has its host, `dispatcher` | Allowed |
 | A host of the allowlist, through Squid (HTTPS on port 443, or HTTP on port 80) | Allowed |
 | The dev EventStore, through Squid (`http://host.docker.internal:4000`) | Allowed |
 | Each other host or port, through Squid | Squid refuses it (403) |
