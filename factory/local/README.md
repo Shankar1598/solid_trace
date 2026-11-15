@@ -56,7 +56,7 @@ Nomad's ACLs are on, so a process on the agent machine cannot use the local Noma
 
 ## A take-over on the local stack
 
-The wrapper starts the `hc` core as the run user. Then a person attaches as a member of the access group, `factory-access` (the user `engineer` on this stack):
+The wrapper starts the `hc` core as the run user. Then a person attaches as a member of the access group, `factory-access`. On this stack that is the user `engineer`, which only the Dockerfile's `local` target has; the `agent-vm` target (the image recipe) has no member of the group:
 
 ```sh
 docker exec -i -u engineer factory-local-agent-machine-1 sudo -u agent hc connect

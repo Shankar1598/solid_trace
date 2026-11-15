@@ -6,7 +6,10 @@
 # from Nomad's image, which only the local stack's compose file names.
 #
 # It has no credentials of any kind. A Run gets its Claude token from the Dispatcher.
-FROM debian:bookworm-slim
+#
+# Two targets: agent-vm (the image recipe) and local (agent-vm with the local stack's
+# take-over user). The local stack's compose file builds local.
+FROM debian:bookworm-slim AS agent-vm
 
 # The pinned versions, with the SHA-256 of each download (linux x86_64).
 ARG CLAUDE_CODE_VERSION=2.1.325
@@ -32,13 +35,11 @@ RUN curl -fsSL -o /tmp/hc.tar.gz \
  && chmod 755 /usr/local/bin/herdr-core \
  && ln -s herdr-core /usr/local/bin/hc
 
-# The run user (not root, in the docker group) and the access group. "engineer" is a
-# member of the access group on the local stack only: on a VM, OS Login gives the
-# group to each person of the Google group.
+# The run user (not root, in the docker group) and the access group. On a VM, OS Login
+# gives the access group to each person of the Google group.
 RUN groupadd --system docker \
  && groupadd --system factory-access \
  && useradd --create-home --shell /bin/bash --groups docker agent \
- && useradd --create-home --shell /bin/bash --groups factory-access engineer \
  && install -d -o agent -g agent -m 755 /work
 
 COPY sudoers /etc/sudoers.d/factory-take-over
@@ -79,3 +80,8 @@ COPY entrypoint.sh /usr/local/bin/agent-machine
 RUN chmod 755 /usr/local/bin/agent-machine && install -d -m 700 /var/lib/nomad
 
 CMD ["/usr/local/bin/agent-machine"]
+
+# The local stack only: "engineer", a member of the access group, attaches with
+# "docker exec" in place of ssh and OS Login. The agent-vm target has no such user.
+FROM agent-vm AS local
+RUN useradd --create-home --shell /bin/bash --groups factory-access engineer

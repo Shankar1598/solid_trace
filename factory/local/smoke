@@ -18,6 +18,8 @@ compose() { docker compose -p factory-local -f "$here/compose.yml" "$@"; }
 # A project name in the environment that is not the stack's. The stack and this script
 # must use factory-local all the same, and never touch the project of the environment.
 export COMPOSE_PROJECT_NAME=factory-local-smoke-decoy
+# The image recipe's target, built from the same cached layers as the local target.
+agent_vm_image=factory-local/agent-vm:smoke
 pinned() { sed -n "s/^ARG $1=//p" "$here/agent-machine/Dockerfile"; }
 
 passed=0
@@ -54,7 +56,7 @@ dev_containers() { docker ps -a --filter name=^solidtrace --format '{{.ID}} {{.S
 dev_before="$(dev_containers)"
 
 "$stack" down >/dev/null 2>&1
-trap '"$stack" down >/dev/null 2>&1' EXIT
+trap '"$stack" down >/dev/null 2>&1; docker rmi "$agent_vm_image" >/dev/null 2>&1' EXIT
 if ! "$stack" up; then
   echo "FAIL  the stack did not start"
   exit 1
@@ -186,7 +188,18 @@ take_over_rule_refuses_everything_else() {
   refused nobody -u agent hc connect
 }
 
+agent_vm_target_has_no_local_take_over_user() {
+  docker build -q --target agent-vm -t "$agent_vm_image" "$here/agent-machine" >/dev/null
+  vm() { docker run --rm --network none -m 64m --entrypoint "$1" "$agent_vm_image" "${@:2}"; }
+  vm getent passwd engineer && want "no user engineer in the agent-vm target"
+  vm getent group factory-access >/dev/null || want "the access group in the agent-vm target"
+  [ "$(vm getent group factory-access | cut -d: -f4)" = "" ] || want "no member of the access group in the agent-vm target"
+  vm getent passwd agent >/dev/null || want "the run user in the agent-vm target"
+  vm visudo -c >/dev/null || want "the take-over rule in the agent-vm target"
+}
+
 check "the run user is not root and is in the docker group" run_user_is_not_root_and_is_in_the_docker_group
+check "the image recipe's target (agent-vm) has no local take-over user" agent_vm_target_has_no_local_take_over_user
 check "visudo accepts the sudoers files" sudoers_is_valid
 check "'sudo -l' for a member of the access group shows one rule: hc connect as the run user, no password" access_group_member_has_exactly_one_rule
 check "the run user and other users have no sudo rule" no_other_user_has_a_sudo_rule
@@ -368,6 +381,7 @@ check "a raw_exec task as root starts the run user in a child cgroup, and cgroup
 # --- The end ---------------------------------------------------------------------------
 
 "$stack" down >/dev/null 2>&1
+docker rmi "$agent_vm_image" >/dev/null 2>&1
 trap - EXIT
 left="$(for project in factory-local "$COMPOSE_PROJECT_NAME"; do
   docker ps -a -q --filter label=com.docker.compose.project="$project"

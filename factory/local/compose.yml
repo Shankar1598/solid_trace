@@ -52,7 +52,10 @@ services:
     mem_limit: 32m
 
   agent-machine:
-    build: ./agent-machine
+    build:
+      context: ./agent-machine
+      # agent-vm with the local take-over user (agent-machine/Dockerfile).
+      target: local
     image: factory-local/agent-machine:dev
     network_mode: service:agent-firewall
     depends_on:
