@@ -1,0 +1,39 @@
+# The factory's default host allowlist for Squid (one Squid dstdomain on each line).
+# A name that starts with a dot also matches each subdomain. Squid refuses each
+# other host, and refuses CONNECT to a port other than 443.
+#
+# The Dispatcher writes Squid's allowlist as this list, plus SolidTrace's host from
+# the operator configuration, plus the extra hosts of each repository that a
+# Project names.
+
+# Claude Code: the API, the sign-in and token refresh, and the release downloads.
+api.anthropic.com
+claude.ai
+downloads.claude.ai
+platform.claude.com
+
+# Git forges. Tools rewrite git over ssh to HTTPS.
+.bitbucket.org
+.github.com
+.githubusercontent.com
+
+# Go modules: the module proxy, the checksum database and the vulnerability database.
+proxy.golang.org
+sum.golang.org
+vuln.go.dev
+
+# npm and Yarn.
+registry.npmjs.org
+registry.yarnpkg.com
+
+# RubyGems.
+.rubygems.org
+
+# Debian packages.
+deb.debian.org
+security.debian.org
+
+# Docker Hub.
+registry-1.docker.io
+auth.docker.io
+production.cloudflare.docker.com
