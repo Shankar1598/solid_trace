@@ -157,3 +157,36 @@ func TestShowFullGivesTheWholeRedactedRawLineOfACutStep(t *testing.T) {
 		}
 	}
 }
+
+func TestShowFullMarksALineCutWhenTheRawLayerDoesNotHoldAllOfIt(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	env.Clock.Set(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	o := newAgentOrganization(t, env)
+
+	// One unit of two 20 MiB lines, over 32 MiB, so the ingest API keeps
+	// only its first 32 MiB: the unit is cut, and it is the last unit of
+	// the file.
+	const mib = 1 << 20
+	first := strings.Repeat("a", 20*mib) + "\n"
+	second := strings.Repeat("b", 20*mib) + "\n"
+	unit := []byte(first + second)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", size: len(unit), body: unit[:32*mib]}), 200)
+	env.ProcessAgentFiles(t)
+
+	status, answer := readRawLine(t, env, o.project, laptopSession, map[string]any{"path": "session.jsonl", "version": 1, "offset": 0})
+	if status != 200 {
+		t.Fatalf("Expected 200, got %d", status)
+	}
+	if len(answer.Line) != 16*mib || !answer.Cut || strings.Trim(answer.Line, "a") != "" {
+		t.Errorf("Expected a line over 16 MiB cut at 16 MiB, got %d bytes (cut %v)", len(answer.Line), answer.Cut)
+	}
+
+	status, answer = readRawLine(t, env, o.project, laptopSession, map[string]any{"path": "session.jsonl", "version": 1, "offset": len(first)})
+	if status != 200 {
+		t.Fatalf("Expected 200, got %d", status)
+	}
+	if want := 32*mib - len(first); len(answer.Line) != want || !answer.Cut {
+		t.Errorf("Expected the %d stored bytes of a line in the missing part of a cut unit, marked cut, got %d bytes (cut %v)", want, len(answer.Line), answer.Cut)
+	}
+}
