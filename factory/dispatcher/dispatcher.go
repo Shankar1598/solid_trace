@@ -184,6 +184,8 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		backstopEvery:   cmp.Or(options.BackstopEvery, backstopEvery),
 		dispatchEvery:   options.DispatchEvery,
 	}
+	// The Bitbucket forge connections send the PR outcome webhooks.
+	d.kinds[dispatcherapi.ForgeBitbucket] = bitbucketWebhooks{d}
 	for _, kind := range options.WebhookKinds {
 		d.kinds[kind.Kind()] = kind
 	}
