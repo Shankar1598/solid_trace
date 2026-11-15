@@ -70,7 +70,7 @@ Start the core before the first `hc connect`. When no core runs, `hc connect` st
 - No autoscaling, and no Machine notice from the cloud.
 - No ssh: a take-over uses `docker exec`.
 - The agent machine container has `SYS_ADMIN` and no AppArmor profile, so that cgroup v2 is writable and the Nomad client can mount each task's secrets directory. It has no `NET_ADMIN`, so no process on it can change the firewall.
-- Root on the agent machine is root on the dev box, not root on a VM that holds one Run. The container shares the dev box's kernel with no user namespace, and `SYS_ADMIN` lets root remount `/proc/sys` and `/sys` writable. So the local stack never gives the run user a way to root: no Docker daemon in the container, no sudo for the run user, and no setuid or setgid program other than Debian's own and `sudo`. The smoke check proves this. If a later ticket needs Docker on the local stack, it uses a rootless daemon or a separate container, not a daemon in the agent machine container.
+- Root on the agent machine is root on the dev box, not root on a VM that holds one Run. The container shares the dev box's kernel with no user namespace, and `SYS_ADMIN` lets root remount `/proc/sys` and `/sys` writable. So the local stack never gives the run user a way to root: no Docker daemon in the container, no sudo for the run user, no setuid or setgid program other than Debian's own and `sudo`, and no program with a file capability. The smoke check proves this. If a later ticket needs Docker on the local stack, it uses a rootless daemon or a separate container, not a daemon in the agent machine container.
 
 ## Claude Code's first-run dialogs
 

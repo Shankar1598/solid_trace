@@ -146,12 +146,28 @@ run_user_is_not_root_and_is_in_the_docker_group() {
 
 sudoers_is_valid() { as root visudo -c; }
 
+# Lists each file with a file capability (security.capability), as "getcap -r /" does.
+# The image has no getcap: perl-base calls lgetxattr (192) and lsetxattr (189) on x86_64.
+# It first plants /root/smoke-capability (cap_setuid in the permitted set), and then deletes it.
+file_capability_scan='
+  cp /bin/true /root/smoke-capability
+  perl -e '"'"'my ($n, $v) = ("security.capability", pack("V5", 0x02000000, 1 << 7, 0, 0, 0));
+    syscall(189, $ARGV[0], $n, $v, length($v), 0) == 0 or die "lsetxattr: $!\n"'"'"' /root/smoke-capability
+  find / \( -path /proc -o -path /sys \) -prune -o -type f -print0 |
+    perl -0ne '"'"'chomp; my ($n, $b) = ("security.capability", "\0" x 64);
+      print "$_\n" if syscall(192, $_, $n, $b, 64) > 0'"'"' | sort | tr "\n" " "
+  rm -f /root/smoke-capability'
+
 # Root on the agent machine is root on the dev box (README), so the run user has no way to root.
 run_user_has_no_way_to_root() {
   local found expected
   found="$(as root find / \( -path /proc -o -path /sys \) -prune -o -type f -perm /6000 -print | sort | tr '\n' ' ')"
   expected="/usr/bin/chage /usr/bin/chfn /usr/bin/chsh /usr/bin/expiry /usr/bin/gpasswd /usr/bin/mount /usr/bin/newgrp /usr/bin/passwd /usr/bin/su /usr/bin/sudo /usr/bin/umount /usr/sbin/unix_chkpwd "
   [ "$found" = "$expected" ] || want "only Debian's setuid and setgid programs and sudo, got: $found"
+  # No file capability either: SYS_ADMIN is in the run user's bounding set, so a program
+  # with a file capability gives it root. A program planted in root's home proves the scan.
+  found="$(as root bash -c "$file_capability_scan")"
+  [ "$found" = "/root/smoke-capability " ] || want "no program with a file capability, got: $found"
   # su is setuid: root has no password that works.
   [[ "$(as root getent shadow root | cut -d: -f2)" =~ ^[*!] ]] || want "a locked password for root"
   [ -z "$(as root getent group sudo | cut -d: -f4)" ] || want "no member of the sudo group"
@@ -216,7 +232,7 @@ agent_vm_target_has_no_local_take_over_user() {
 check "the run user is not root and is in the docker group" run_user_is_not_root_and_is_in_the_docker_group
 check "the image recipe's target (agent-vm) has no local take-over user" agent_vm_target_has_no_local_take_over_user
 check "visudo accepts the sudoers files" sudoers_is_valid
-check "the run user has no way to root: no other setuid program, no password for root, no other sudo rule, no Docker daemon" run_user_has_no_way_to_root
+check "the run user has no way to root: no other setuid program, no file capability, no password for root, no other sudo rule, no Docker daemon" run_user_has_no_way_to_root
 check "'sudo -l' for a member of the access group shows one rule: hc connect as the run user, no password" access_group_member_has_exactly_one_rule
 check "the run user and other users have no sudo rule" no_other_user_has_a_sudo_rule
 check "sudo refuses each other command, user and option" take_over_rule_refuses_everything_else
