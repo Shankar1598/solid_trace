@@ -46,7 +46,8 @@ const (
 	// deletes it.
 	EnvHome = "WRAPPER_HOME"
 	// EnvCache is the caches folder (default /var/cache/factory), the
-	// harness's XDG_CACHE_HOME. It stays after the end.
+	// harness's XDG_CACHE_HOME. It stays after the end. The wrapper makes
+	// the workspace, the home and the caches folder for the run user.
 	EnvCache = "WRAPPER_CACHE"
 	// EnvUploadEvery is how often the wrapper uploads the Run's Agent
 	// sessions during the Execution, as a Go duration (default 5s).
