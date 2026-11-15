@@ -1,6 +1,7 @@
 package dispatcher_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,9 @@ func TestRunsChangeStateWhileEventStoreIsDownAndTheEventsArriveInOrderLater(t *t
 		if events[0]["event.kind"] != "created" || events[0]["run.seq"] != float64(1) ||
 			events[1]["event.kind"] != "queued" || events[1]["run.seq"] != float64(2) {
 			t.Errorf("the events of %s: %v", id, events)
+		}
+		if got := env.ArrivalSeqs(id); !slices.Equal(got, []int{1, 2}) {
+			t.Errorf("the events of %s arrived with run.seq %v, want 1, 2", id, got)
 		}
 	}
 }

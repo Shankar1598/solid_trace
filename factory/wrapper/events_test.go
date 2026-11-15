@@ -1,6 +1,7 @@
 package wrapper_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -46,6 +47,9 @@ func TestARunIsDoneWhileEventStoreIsDownAndItsEventsArriveInOrderWhenItIsBack(t 
 		if events[i]["event.kind"] != kind || events[i]["run.seq"] != float64(i+1) {
 			t.Errorf("event %d: %v %v, want %s with run.seq %d", i, events[i]["event.kind"], events[i]["run.seq"], kind, i+1)
 		}
+	}
+	if got := env.ArrivalSeqs(id); !slices.Equal(got, []int{1, 2, 3, 4, 5}) {
+		t.Errorf("the events arrived with run.seq %v, want 1 to 5 in order", got)
 	}
 	execution := onlyExecution(t, run).ID
 	common := map[string]any{"run.id": id, "factory.project": "shop", "repository": "bitbucket.org/example/shop",

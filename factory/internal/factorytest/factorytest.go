@@ -125,6 +125,23 @@ func (e *Env) RunEvents(runID string) []map[string]any {
 	return events
 }
 
+// ArrivalSeqs are the run.seq values of the Run's events in the order
+// that they first arrived at SolidTrace. A repeat that arrives again later
+// is not in the list. A sender that sends in order gives 1, 2, ..., n.
+func (e *Env) ArrivalSeqs(runID string) []int {
+	seen := map[float64]bool{}
+	var seqs []int
+	for _, ev := range e.SolidTrace.RunEvents() {
+		seq, _ := ev["run.seq"].(float64)
+		if ev["run.id"] != runID || seen[seq] {
+			continue
+		}
+		seen[seq] = true
+		seqs = append(seqs, int(seq))
+	}
+	return seqs
+}
+
 // WaitForRunEvents waits up to 10 s until SolidTrace has at least n run
 // events of the Run, and gives them (see RunEvents).
 func (e *Env) WaitForRunEvents(runID string, n int) []map[string]any {
