@@ -66,8 +66,10 @@ func TestABackstopThatFindsAChangeWithNoWebhookWritesAWarningWithTheTimeOfTheLas
 	warning := env.WaitForWarning("found a change that no webhook announced")
 	want := webhookAt.Format(time.RFC3339)
 	if warning["factory.last_webhook_at"] != want || !strings.Contains(warning["message"].(string), want) ||
-		warning["factory.connection"] != "tickets" || warning["factory.entities"] != "T-2" || warning["level"] != "warn" {
-		t.Errorf("the warning is %v, want one for tickets and T-2 with the last webhook %s", warning, want)
+		warning["factory.connection"] != "tickets" || warning["factory.entities"] != "T-2" || warning["level"] != "warn" ||
+		warning["organization"] != factorytest.Organization.Slug {
+		t.Errorf("the warning is %v, want one for tickets of %s and T-2 with the last webhook %s", warning,
+			factorytest.Organization.Slug, want)
 	}
 }
 

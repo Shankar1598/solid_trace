@@ -65,8 +65,8 @@ type WebhookSource struct {
 	Token string
 	// LastWebhook is the time of its last verified webhook (zero is
 	// none).
-	LastWebhook    time.Time
-	organizationID string
+	LastWebhook                      time.Time
+	organizationID, organizationSlug string
 	// hasSecret is true when the connection has a webhook secret (in
 	// Reconcile only).
 	hasSecret bool
@@ -374,7 +374,7 @@ func (d *Dispatcher) reconcile(ctx context.Context, job reconcileJob) {
 		}
 		d.warn("the backstop of the connection "+source.Name+" found a change that no webhook announced "+
 			"(last webhook: "+last+")",
-			"factory.connection", source.Name, "factory.connection_kind", source.Kind,
+			"organization", source.organizationSlug, "factory.connection", source.Name, "factory.connection_kind", source.Kind,
 			"factory.entities", strings.Join(missed, ", "), "factory.last_webhook_at", last)
 	}
 }

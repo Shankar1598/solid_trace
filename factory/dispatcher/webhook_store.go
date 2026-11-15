@@ -20,12 +20,12 @@ func (s *store) saveWebhookSecret(organizationID, name, secret string) error {
 	return err
 }
 
-const webhookSourceColumns = `id, name, kind, organization_id, last_webhook_at`
+const webhookSourceColumns = `id, name, kind, organization_id, organization_slug, last_webhook_at`
 
 func scanWebhookSource(row interface{ Scan(...any) error }) (WebhookSource, error) {
 	var source WebhookSource
 	var lastWebhook sql.NullInt64
-	err := row.Scan(&source.ID, &source.Name, &source.Kind, &source.organizationID, &lastWebhook)
+	err := row.Scan(&source.ID, &source.Name, &source.Kind, &source.organizationID, &source.organizationSlug, &lastWebhook)
 	if lastWebhook.Valid {
 		source.LastWebhook = time.UnixMicro(lastWebhook.Int64).UTC()
 	}

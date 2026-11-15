@@ -131,13 +131,13 @@ func (s *store) saveConnection(organizationID, name, kind, token string, by pers
 	switch {
 	case made:
 		id = newRunID()
-		_, err = tx.Exec(`INSERT INTO connections (id, organization_id, name, kind, token, updated_at, updated_by_id,
-			updated_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, organizationID, name, kind,
-			s.sealer.seal(connectionPurpose(id), []byte(token)), at.UnixMicro(), by.id, by.name)
+		_, err = tx.Exec(`INSERT INTO connections (id, organization_id, organization_slug, name, kind, token, updated_at,
+			updated_by_id, updated_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, organizationID, by.organization.slug,
+			name, kind, s.sealer.seal(connectionPurpose(id), []byte(token)), at.UnixMicro(), by.id, by.name)
 	case err == nil:
-		_, err = tx.Exec(`UPDATE connections SET kind = ?, token = ?, updated_at = ?, updated_by_id = ?,
-			updated_by_name = ? WHERE id = ?`, kind, s.sealer.seal(connectionPurpose(id), []byte(token)),
-			at.UnixMicro(), by.id, by.name, id)
+		_, err = tx.Exec(`UPDATE connections SET organization_slug = ?, kind = ?, token = ?, updated_at = ?,
+			updated_by_id = ?, updated_by_name = ? WHERE id = ?`, by.organization.slug, kind,
+			s.sealer.seal(connectionPurpose(id), []byte(token)), at.UnixMicro(), by.id, by.name, id)
 	}
 	if err != nil {
 		return false, err
