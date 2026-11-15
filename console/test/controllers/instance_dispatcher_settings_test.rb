@@ -37,6 +37,16 @@ class InstanceDispatcherSettingsTest < ActionDispatch::IntegrationTest
     assert_equal true, response.parsed_body.dig("props", "factory_on")
   end
 
+  test "a visitor who is not signed in gets factory_on false, also with a Dispatcher URL" do
+    InstanceSetting.current.update!(dispatcher_url: DISPATCHER)
+
+    get login_url, headers: inertia
+
+    assert_response :success
+    assert_equal "Sessions/New", response.parsed_body["component"]
+    assert_equal false, response.parsed_body.dig("props", "factory_on")
+  end
+
   test "a URL with a path saves; a URL that is not http(s), or has a user or a query, comes back as a form error" do
     sign_in_as(@instance_admin)
 
