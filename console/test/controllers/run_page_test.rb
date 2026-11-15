@@ -67,12 +67,12 @@ class RunPageTest < ActionDispatch::IntegrationTest
     ]
   end
 
-  def stub_run(list = events)
+  def stub_run(list = events, pr_url: "https://bitbucket.org/acme/shop/pull-requests/12")
     last = list.last[:attributes]
     run = { id: "run_1", seq: last["run.seq"], time: list.last[:time], kind: last["event.kind"], state: last["run.state"],
             reason: last["run.reason"], project: "shop", repository: "bitbucket.org/acme/shop", folder: "web",
             base_branch: "develop", trigger: "cli", title: "Fix the cart total", actor: { kind: "person", id: "7", name: "Ana" },
-            pr: { url: "https://bitbucket.org/acme/shop/pull-requests/12", outcome: "" }, executions: 1,
+            pr: { url: pr_url, outcome: "" }, executions: 1,
             active: true, closed: false }
     stub_request(:get, "#{EventStore.base_url}/api/#{@project.id}/runs/run_1")
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { run: run, events: list }.to_json)
@@ -206,8 +206,21 @@ class RunPageTest < ActionDispatch::IntegrationTest
     assert_equal false, view.dig("stop", "can")
   end
 
-  test "an Issue Run's report shows its cause report, and is not 'no Evidence'" do
+  test "an Issue Run's report with a cause report and no PR shows the cause report, and is not 'no Evidence'" do
     list = events(report_checks: [])
+    list[4][:attributes]["report.cause_report"] = "The cart rounded each line."
+    stub_run(list, pr_url: "")
+    stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
+    sign_in_as(@member)
+
+    report = page["report"]
+
+    assert_equal "The cart rounded each line.", report["cause_report"]
+    assert_equal false, report["no_evidence"]
+  end
+
+  test "an Issue Run's report with a cause report, a PR and no check that passed is 'no Evidence'" do
+    list = events(report_checks: checks(lint_status: 1).map { |c| c.merge(exit_status: 1) })
     list[4][:attributes]["report.cause_report"] = "The cart rounded each line."
     stub_run(list)
     stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
@@ -216,7 +229,7 @@ class RunPageTest < ActionDispatch::IntegrationTest
     report = page["report"]
 
     assert_equal "The cart rounded each line.", report["cause_report"]
-    assert_equal false, report["no_evidence"]
+    assert_equal true, report["no_evidence"]
   end
 
   test "an Evidence file of the report shows: an image inline with its type, another file as a download" do

@@ -179,7 +179,10 @@ class RunView
       evidence: Array(a["report.evidence"]).map do |p|
         { path: p, url: paths.call(:evidence, p), image: IMAGE_TYPES.include?(File.extname(p).downcase) }
       end,
-      no_evidence: a["report.outcome"] == "done" && cause.nil? && checks.none? { |c| c[:passed] },
+      # A cause report removes the flag only when the Run has no PR: a PR
+      # with no check that passed keeps "no Evidence".
+      no_evidence: a["report.outcome"] == "done" && checks.none? { |c| c[:passed] } &&
+        !(cause && run.dig("pr", "url").blank?),
       report_md: text, report_md_error: error,
     }
   end
