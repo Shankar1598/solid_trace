@@ -44,7 +44,13 @@ func TestAProjectsForgeUsesItsConnectionsToken(t *testing.T) {
 		t.Errorf("the default WIP ref is %s", ref)
 	}
 
+	// The API accepts only the kinds that the Dispatcher knows; a row of
+	// another kind (from a later version) is refused, not used as Bitbucket.
+	if _, err := d.store.saveConnection("7", "gitlab", "gitlab", f.Token, dana, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct{ org, name, want string }{
+		{"7", "gitlab", `of the kind "gitlab", which this Dispatcher does not know`},
 		{"7", "", "name no forge connection"},
 		{"7", "other", "no forge connection other"},
 		{"8", "bitbucket", "no forge connection bitbucket"},
