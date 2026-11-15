@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  agentSessionIds, createApiToken, expiresAt, limitsText, MCP_DOCS, mcpSnippets, signInSnippets, tokenFields,
+  agentSessionIds, createApiToken, dispatcherFields, expiresAt, limitsText, MCP_DOCS, mcpSnippets, signInSnippets, tokenFields, tokenLimitsText,
 } from './apiTokens'
 
 describe('tokenFields', () => {
@@ -32,6 +32,27 @@ describe('tokenFields', () => {
     expect(tokenFields({ ...form, scopes: ['mcp:read'], projectId: '7' }, now).project_id).toBe(7)
     expect(tokenFields({ ...form, scopes: ['mcp:read', 'mcp'], projectId: '7' }, now).project_id).toBeUndefined()
     expect(tokenFields({ ...form, scopes: ['factory'], projectId: '7' }, now).project_id).toBeUndefined()
+  })
+})
+
+describe('dispatcherFields', () => {
+  const choice = { scopes: ['run_events:write', 'issues:comment', 'tokens:create'], organizations: [] }
+  const now = new Date('2026-11-14T12:00:00Z')
+
+  it("sends the Dispatcher's fixed scopes, the Organization and the expiry", () => {
+    expect(dispatcherFields(choice, '3', '90', now)).toEqual({
+      name: 'Dispatcher', scopes: ['run_events:write', 'issues:comment', 'tokens:create'], organization_id: 3,
+      expires_at: '2027-02-12T12:00:00.000Z',
+    })
+    expect(dispatcherFields(choice, '3', 'never', now).expires_at).toBeUndefined()
+  })
+})
+
+describe('tokenLimitsText', () => {
+  it("shows the Dispatcher's live child tokens, and each other token's limits", () => {
+    expect(tokenLimitsText({ limits: {}, dispatcher: true, children: 1 })).toBe('1 child token')
+    expect(tokenLimitsText({ limits: {}, dispatcher: true, children: 0 })).toBe('0 child tokens')
+    expect(tokenLimitsText({ limits: { agent_session_ids: ['a', 'b'] }, dispatcher: false })).toBe('2 Agent sessions')
   })
 })
 

@@ -30,6 +30,18 @@ export interface ApiToken {
   limits: ApiTokenLimits
   /** null does not expire. */
   expires_at: string | null
+  /** The Dispatcher's token: the one that makes child tokens (tokens:create). */
+  dispatcher: boolean
+  /** For the Dispatcher's token, the count of its child tokens that have not expired. */
+  children?: number
+}
+
+/** What the page needs to make the Dispatcher's token. */
+export interface DispatcherChoice {
+  /** Its fixed scopes. */
+  scopes: string[]
+  /** The Organizations where you are an Admin: only an Admin makes it. */
+  organizations: NamedRecord[]
 }
 
 /** A scope that you can put on your own token, with the text that says what it gives. */
@@ -98,6 +110,23 @@ export function tokenFields(form: TokenForm, now: Date = new Date()): TokenField
     fields.project_id = Number(form.projectId)
   }
   return fields
+}
+
+/** The fields to send for the Dispatcher's token in organizationId, with its fixed scopes. */
+export function dispatcherFields(
+  choice: DispatcherChoice, organizationId: string, expiry: string, now: Date = new Date(),
+): TokenFields {
+  const fields: TokenFields = { name: 'Dispatcher', scopes: choice.scopes, organization_id: Number(organizationId) }
+  const expires = expiresAt(expiry, now)
+  if (expires) fields.expires_at = expires
+  return fields
+}
+
+/** What the Limits column shows for token: its limits, or for the Dispatcher's token its child tokens. */
+export function tokenLimitsText(token: Pick<ApiToken, 'limits' | 'dispatcher' | 'children'>): string {
+  if (!token.dispatcher) return limitsText(token.limits)
+  const count = token.children ?? 0
+  return `${count} child token${count === 1 ? '' : 's'}`
 }
 
 /** A token's limits in a few words. */

@@ -72,6 +72,8 @@ module Oauth
           { id: organization.id, slug: organization.slug, name: organization.name, role: membership.role }
         end,
         limits: bearer.limits,
+        # A child token names the Dispatcher's token that made it.
+        parent: bearer.parent&.then { |parent| { id: parent.id, name: parent.name, dispatcher: parent.dispatcher? } },
       }.compact
     end
   end

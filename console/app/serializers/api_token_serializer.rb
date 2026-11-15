@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 # An API token as User settings list it: its Scopes, Organization, limits
-# and expiry. Never its digest: the secret is answered once, when the token
+# and expiry; for the Dispatcher's token, the count of its live child
+# tokens. Never its digest: the secret is answered once, when the token
 # is made.
 class ApiTokenSerializer
   def initialize(api_token)
@@ -10,7 +11,7 @@ class ApiTokenSerializer
 
   def as_json(*)
     organization = @api_token.organization
-    {
+    answer = {
       id: @api_token.id,
       name: @api_token.name,
       created_at: @api_token.created_at.iso8601,
@@ -19,7 +20,11 @@ class ApiTokenSerializer
       organization: organization && { id: organization.id, slug: organization.slug, name: organization.name },
       limits: @api_token.limits,
       expires_at: @api_token.expires_at&.iso8601,
+      dispatcher: @api_token.dispatcher?,
     }
+    return answer unless @api_token.dispatcher?
+
+    answer.merge(children: @api_token.children.where(expires_at: Time.current..).count)
   end
 
   def to_json(*)

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_14_171500) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_15_090000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -61,7 +61,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_171500) do
     t.datetime "expires_at"
     t.json "agent_session_ids"
     t.integer "project_id"
+    t.integer "parent_id"
     t.index ["organization_id"], name: "index_api_tokens_on_organization_id"
+    t.index ["parent_id"], name: "index_api_tokens_on_parent_id"
     t.index ["project_id"], name: "index_api_tokens_on_project_id"
     t.index ["token_digest"], name: "index_api_tokens_on_token_digest", unique: true
     t.index ["user_id"], name: "index_api_tokens_on_user_id"
@@ -486,6 +488,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_14_171500) do
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
+  add_foreign_key "api_tokens", "api_tokens", column: "parent_id", on_delete: :cascade
   add_foreign_key "api_tokens", "organizations", on_delete: :cascade
   add_foreign_key "api_tokens", "projects", on_delete: :cascade
   add_foreign_key "api_tokens", "users"
