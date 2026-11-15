@@ -201,6 +201,32 @@ class McpTokenScopesTest < ActionDispatch::IntegrationTest
     assert_match '"state":"queued"', tool_text
   end
 
+  test "with mcp:read, tools/list shows list_agent_sessions and get_agent_session, and both answer" do
+    agent = create(:project, organization: @acme, name: "Agent sessions", slug: "agent-sessions", agent: true)
+    id = "0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41"
+    row = { id: id, first: "2026-11-15T10:00:00Z", last: "2026-11-15T10:05:00Z", user_id: @user.id, run_id: "", project: "",
+            repository: "github.com/acme/shop", flags: [] }
+    stub_request(:post, "#{EventStore.base_url}/api/#{agent.id}/agent-sessions")
+      .to_return(status: 200, body: { agent_sessions: [ row ], totals: { agent_sessions: 1 }, more: false, repositories: [] }.to_json)
+    stub_request(:post, "#{EventStore.base_url}/api/#{agent.id}/agent-sessions/#{id}")
+      .to_return(status: 200, body: { agent_session: row, subagents: [], steps: [], next_cursor: "" }.to_json)
+    _, secret = issue(scopes: [ "mcp:read" ])
+
+    mcp "tools/list", token: secret
+    tools = response.parsed_body.dig("result", "tools").index_by { |tool| tool["name"] }
+    %w[list_agent_sessions get_agent_session].each do |name|
+      assert_match "Agent session", tools.fetch(name)["description"]
+    end
+
+    mcp "tools/call", token: secret, name: "list_agent_sessions", arguments: {}
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+    assert_match %("id":"#{id}"), tool_text
+
+    mcp "tools/call", token: secret, name: "get_agent_session", arguments: { agent_session: id }
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+    assert_match %("name":"Ada"), tool_text
+  end
+
   test "mcp holds mcp:read: a token with both can call a write tool" do
     _, secret = issue(scopes: [ "mcp", "mcp:read" ])
 
