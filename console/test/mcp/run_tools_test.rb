@@ -114,6 +114,29 @@ class McpRunToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/runs/r1", got.link
   end
 
+  test "get_run answers the last of two reports, and each exit code as a number or nil" do
+    stub_run("r1", summary("r1", state: "done", seq: 7, kind: "report", executions: 2),
+      [ event(1, "2026-11-15T10:00:00Z", "execution_started", "execution.id" => "x1"),
+        event(2, "2026-11-15T10:10:00Z", "report", "execution.id" => "x1", "report.outcome" => "waiting", "report.summary" => "Asked a question.",
+              "report.question" => "Which currency?", "report.checks" => [ { "command" => "bin/rails test", "exit_status" => 1 } ]),
+        event(3, "2026-11-15T10:11:00Z", "execution_ended", "execution.id" => "x1", "execution.reason" => "killed", "execution.exit_code" => "137"),
+        event(4, "2026-11-15T10:30:00Z", "execution_started", "execution.id" => "x2"),
+        event(5, "2026-11-15T10:40:00Z", "report", "execution.id" => "x2", "report.outcome" => "done", "report.summary" => "Fixed the total.",
+              "report.checks" => [ { "command" => "bun run lint", "exit_status" => 0 } ]),
+        event(6, "2026-11-15T10:41:00Z", "execution_ended", "execution.id" => "x2", "execution.reason" => "lost") ])
+
+    got = call_tool(:get_run, user: @user, run: "r1")
+
+    report = got.json["report"]
+    assert_equal [ "x2", "done", "Fixed the total.", nil ], report.values_at("execution_id", "outcome", "summary", "question")
+    assert_equal [ [ "bun run lint", "pass" ] ], report["checks"].map { |check| check.values_at("command", "result") }
+
+    first, second = got.json["executions"]
+    assert_kind_of Integer, first["exit_code"]
+    assert_equal 137, first["exit_code"]
+    assert_nil second["exit_code"]
+  end
+
   test "get_run answers no report while the Run has none, and a tool error for a Run that has no events" do
     stub_run("r2", summary("r2", state: "queued", kind: "queued"), [ event(1, "2026-11-15T10:00:00Z", "created") ])
     got = call_tool(:get_run, user: @user, run: "r2")
