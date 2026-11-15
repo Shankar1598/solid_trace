@@ -23,6 +23,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,8 +33,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/solidtrace/cli/agentsocket"
 	"github.com/solidtrace/factory/internal/fakeharness"
 	"github.com/solidtrace/factory/internal/harnesscontract"
+	"github.com/solidtrace/factory/wrapper"
 )
 
 const maxCost = 0.05 // US dollars for one run of all the checks
@@ -303,6 +307,8 @@ type proc struct {
 type opts struct {
 	session, resume string
 	stopHook        bool
+	// env is added last to the environment of Claude Code.
+	env []string
 }
 
 func (p *place) run(o opts) *proc {
@@ -329,7 +335,7 @@ func (p *place) run(o opts) *proc {
 	c.cmd.Dir = p.checkout
 	// Claude Code 2.1.325 reads CLAUDE_CODE_PROJECT_DIR_NAME only when
 	// CLAUDE_CONFIG_DIR is set, so the check sets both, as the wrapper does.
-	c.cmd.Env = append(childEnv(), "CLAUDE_CONFIG_DIR="+p.config, "CLAUDE_CODE_PROJECT_DIR_NAME="+p.project)
+	c.cmd.Env = append(append(childEnv(), "CLAUDE_CONFIG_DIR="+p.config, "CLAUDE_CODE_PROJECT_DIR_NAME="+p.project), o.env...)
 	c.cmd.Stderr = &c.stderr
 	c.stdin, _ = c.cmd.StdinPipe()
 	stdout, _ := c.cmd.StdoutPipe()
@@ -1095,4 +1101,83 @@ func hasUserLine(lines []map[string]any, uuid string) bool {
 		}
 	}
 	return false
+}
+
+// The subprocess environment scrub, which the wrapper turns off
+// (wrapper.EnvSubprocessScrub=0). With it on, Claude Code forces the
+// permission mode to default, so a headless Execution cannot run Bash: no
+// check and no report. With it off, as the wrapper starts the harness, a
+// Bash call has the agent's socket and its evidence/ folder: it writes to
+// evidence/ and sends a report through the socket. When a new version no
+// longer forces the default mode, decide the scrub again.
+func TestContractSubprocessEnvScrub(t *testing.T) {
+	t.Run("on", func(t *testing.T) {
+		p := contract(t)
+		c := p.run(opts{session: newUUID(), env: []string{wrapper.EnvSubprocessScrub + "=1"}})
+		c.message(newUUID(), "Reply with the word OK.")
+		init := c.until("the init event", is("system", "init"), 90*time.Second)
+		c.until("the result", is("result", ""), 120*time.Second)
+		c.end()
+		if init.Data["permissionMode"] != "default" {
+			t.Errorf("with the scrub on, permissionMode %v; Claude Code 2.1.325 forces default. "+
+				"The scrub changed: decide again if the wrapper turns it off (wrapper.EnvSubprocessScrub)", init.Data["permissionMode"])
+		}
+	})
+
+	t.Run("off, as the wrapper starts the harness", func(t *testing.T) {
+		p := contract(t)
+		sockets, err := os.MkdirTemp("", "scrub-")
+		must(t, err)
+		t.Cleanup(func() { os.RemoveAll(sockets) })
+		socket := filepath.Join(sockets, "agent.sock")
+		listener, err := net.Listen("unix", socket)
+		must(t, err)
+		reports := make(chan string, 4)
+		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			reports <- r.Method + " " + r.URL.Path + " " + string(body)
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"ok":true}`)
+		})}
+		go server.Serve(listener)
+		t.Cleanup(func() { server.Close() })
+		evidence := filepath.Join(p.transcriptDir(), "evidence")
+		must(t, os.MkdirAll(evidence, 0o755))
+
+		c := p.run(opts{session: newUUID(), env: []string{
+			agentsocket.Env + "=" + socket, agentsocket.EvidenceEnv + "=" + evidence,
+			// The machine's environment turns the scrub on; the wrapper's
+			// value comes last.
+			wrapper.EnvSubprocessScrub + "=1", wrapper.EnvSubprocessScrub + "=0"}})
+		c.message(newUUID(), "Use Bash to run this one command exactly as written, then reply with the word DONE: "+
+			"env >\"$"+agentsocket.EvidenceEnv+"/env.txt\" && curl -sS --unix-socket \"$"+agentsocket.Env+"\" "+
+			"-H 'Content-Type: application/json' -d '{\"outcome\":\"done\",\"summary\":\"scrub\"}' "+
+			"http://agent"+agentsocket.ReportPath)
+		init := c.until("the init event", is("system", "init"), 90*time.Second)
+		c.until("the result", is("result", ""), 120*time.Second)
+		if code := c.end(); code != 0 {
+			t.Errorf("exit %d after stdin closed; want 0; stderr %q", code, c.stderr.String())
+		}
+
+		if init.Data["permissionMode"] != "bypassPermissions" {
+			t.Errorf("permissionMode %v; want bypassPermissions", init.Data["permissionMode"])
+		}
+		select {
+		case got := <-reports:
+			if !strings.HasPrefix(got, "POST "+agentsocket.ReportPath+" ") || !strings.Contains(got, `"scrub"`) {
+				t.Errorf("the socket got %q", got)
+			}
+		default:
+			t.Errorf("no report reached the agent's socket; events %v", c.all())
+		}
+		env, err := os.ReadFile(filepath.Join(evidence, "env.txt"))
+		if err != nil {
+			t.Fatalf("the Bash call wrote nothing in evidence/: %v", err)
+		}
+		for _, want := range []string{agentsocket.Env + "=" + socket, agentsocket.EvidenceEnv + "=" + evidence} {
+			if !strings.Contains("\n"+string(env), "\n"+want+"\n") {
+				t.Errorf("the Bash call has no %s", want)
+			}
+		}
+	})
 }

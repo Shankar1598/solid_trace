@@ -12,8 +12,8 @@ import (
 )
 
 // runSetupCommand runs the factory file's setup command with sh -c in
-// the agent's working directory, after the checkout and before the
-// harness. It runs in the Execution's kill boundary, so a process that it
+// the agent's working directory as the run user, after the checkout and
+// before the harness. It runs in the Execution's kill boundary, so a process that it
 // leaves goes at the end. A stop or a limit (ctx) kills its process
 // group. A failure gives the exit status and the end of the output.
 func (e *execution) runSetupCommand(ctx context.Context, environ []string) error {
@@ -21,6 +21,7 @@ func (e *execution) runSetupCommand(ctx context.Context, environ []string) error
 	cmd.Dir = e.workDir
 	cmd.Env = e.gitEnv(environ, "")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	e.runUser.start(cmd)
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	// A process that the command leaves can hold the output open.
 	cmd.WaitDelay = gitWait

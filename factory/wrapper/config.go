@@ -2,6 +2,7 @@ package wrapper
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,12 @@ const (
 	// on each call.
 	EnvIdentityFile = "WRAPPER_IDENTITY_FILE"
 	// EnvDir is the Execution's directory: it holds secrets/, the upload
-	// state and the agent's socket (default: the working directory).
+	// state and the agent's socket (default: the working directory). When
+	// it is not there, the wrapper makes it (0711) in its parent. The run
+	// user must be able to search it and each parent, and must not be able
+	// to change them (root owns them), or the wrapper stops. A Nomad task's
+	// directory is not such a directory: Nomad's data_dir is 0700. So the
+	// Nomad Runner names one under nomadrunner.DefaultExecutionsDir.
 	EnvDir = "WRAPPER_DIR"
 	// EnvHarness is the harness program (default claude).
 	EnvHarness = "WRAPPER_HARNESS"
@@ -40,7 +46,8 @@ const (
 	// deletes it.
 	EnvHome = "WRAPPER_HOME"
 	// EnvCache is the caches folder (default /var/cache/factory), the
-	// harness's XDG_CACHE_HOME. It stays after the end.
+	// harness's XDG_CACHE_HOME. It stays after the end. The wrapper makes
+	// the workspace, the home and the caches folder for the run user.
 	EnvCache = "WRAPPER_CACHE"
 	// EnvUploadEvery is how often the wrapper uploads the Run's Agent
 	// sessions during the Execution, as a Go duration (default 5s).
@@ -184,6 +191,19 @@ func loadConfig(getenv func(string) string) (config, error) {
 		c.claudeConfig = filepath.Join(c.home, ".claude")
 	}
 	return c, nil
+}
+
+// makeDir makes the Execution's directory when it is not there: root's,
+// and the run user can only search it.
+func (c config) makeDir() error {
+	err := os.Mkdir(c.dir, 0o711)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("make the Execution's directory (%s): %w", EnvDir, err)
+	}
+	return os.Chmod(c.dir, 0o711)
 }
 
 // checkout is the fixed checkout path of a repository (host/workspace/name).

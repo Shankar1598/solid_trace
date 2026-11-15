@@ -257,3 +257,28 @@ The Run page shows one Run from its run events:
 - Links to the Run's Agent sessions, and the CLI commands to message the Run, take it over or stop it.
 
 **Stop** ends a Run that goes wrong. It shows only when Settings → Instance has the Dispatcher's URL, and only on a Run that can stop (queued, running, taken over, or waiting on a person or an account limit). Console sends the stop to the Dispatcher as you, with a factory token that lasts 5 minutes. The page shows the state that the Dispatcher gives at once; the stop event shows when it arrives from the Dispatcher.
+
+## Try the factory with mock data
+
+To see the factory work with no Claude account, no forge and no Nomad, run the demo on the dev box, with the dev stack up (`bin/dev`):
+
+```bash
+bin/factory-demo up
+```
+
+The command starts the real Dispatcher and the real wrapper, with fakes for the agent (a scripted Claude Code), the forge and the machines. It connects them to your running Console and EventStore, then starts six Runs. It prints the Console links to open: the **Runs** list and the Project's **Factory** section. Sign in as `admin@solidtrace.local` (the default; give another Admin with `--admin`).
+
+The six Runs:
+
+- Done, with a PR, two checks that passed and one Evidence file.
+- Done, with no Evidence (a check failed).
+- Needs a person, with a question.
+- Failed (the agent's harness exited in the middle of a turn).
+- Stopped by the demo while it runs.
+- A Run that works until you press its **Stop** button on the Run page.
+
+Each Run has its Agent session, which opens from the Run page.
+
+The demo changes these settings: it turns on Agent sessions when they are off (with a captured repository, `factory-demo.example/demo/*`), sets Settings → Instance's Console URL and Dispatcher URL, and makes two API tokens (the Dispatcher's and an Admin's). Press Ctrl-C, or run `bin/factory-demo down` in another terminal, to stop the Dispatcher and the wrappers and to put back the URLs and delete the tokens. A Run that still works is stopped first. The Runs and their Agent sessions stay in SolidTrace, so you can look at them after the demo. A second `bin/factory-demo up` adds six new Runs. If a demo died with no clean-up, the next `up` or `down` puts its settings back.
+
+Options (after `up` or `down`): `--console-url` (default `http://localhost:4001`), `--ingest-url` (`http://localhost:4000`), `--org`, `--project` and `--admin`. The demo starts no Console and no EventStore.

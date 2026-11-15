@@ -123,7 +123,9 @@ func (r *Runner) Dispatch(ctx context.Context, e Execution) error {
 	r.record(e.ID, Event{State: Pending})
 	r.mu.Unlock()
 
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	// Others can reach the directory (a wrapper as root gives the run user
+	// its agent's socket there), and only its user changes it.
+	if err := os.MkdirAll(dir, 0o711); err != nil {
 		return r.failStart(e.ID, p, err)
 	}
 	out, err := os.Create(filepath.Join(dir, "output.log"))

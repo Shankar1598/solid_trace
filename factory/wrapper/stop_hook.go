@@ -189,10 +189,12 @@ func StopHook(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) str
 }
 
 // installStopHook writes the harness's settings with the Stop hook, and a
-// new run state file. Both are outside the checkout. The hook runs as the
-// harness's user: that user must read the settings and the wrapper's
-// program, and read and write the run state file (with the run user of
-// ticket 39, give both files to it).
+// new run state file. Both are outside the checkout, in the Execution's
+// directory (root's). The hook runs as the run user: it reads the
+// settings (0440) and changes the run state file (0660), both root's in
+// the run user's group. The run user cannot put another file in their
+// place. The run state is not a secret, and the hook is the agent's own
+// guard, so a change of it by the agent gives it nothing.
 func (e *execution) installStopHook() error {
 	program, err := ownProgram()
 	if err != nil {
@@ -204,10 +206,16 @@ func (e *execution) installStopHook() error {
 	if err := os.WriteFile(e.cfg.harnessSettings(), settings, 0o600); err != nil {
 		return fmt.Errorf("write the harness's settings: %w", err)
 	}
+	if err := e.runUser.share(e.cfg.harnessSettings(), 0o440); err != nil {
+		return fmt.Errorf("write the harness's settings: %w", err)
+	}
 	if err := os.Remove(e.cfg.runState()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove the old run state: %w", err)
 	}
 	if err := changeRunState(e.cfg.runState(), true, func(*runState) {}); err != nil {
+		return fmt.Errorf("write the run state: %w", err)
+	}
+	if err := e.runUser.share(e.cfg.runState(), 0o660); err != nil {
 		return fmt.Errorf("write the run state: %w", err)
 	}
 	return nil
