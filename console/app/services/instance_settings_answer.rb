@@ -45,6 +45,9 @@ class InstanceSettingsAnswer
         console_url_fallback: PublicUrls.console_url_fallback(@request_url, env: @env),
         ingest_url: @settings.ingest_url,
         ingest_url_fallback: PublicUrls.ingest_url_fallback(@request_url, settings: @settings, env: @env),
+        # The Dispatcher's private API URL, nil when blank: then Console
+        # shows no part of the Factory that needs the Dispatcher.
+        dispatcher_url: @settings.dispatcher_url,
         # The extra Redaction patterns, and what the default ones remove.
         redaction_patterns: @settings.redaction_patterns,
         redaction_defaults: InstanceSetting::REDACTION_DEFAULTS,

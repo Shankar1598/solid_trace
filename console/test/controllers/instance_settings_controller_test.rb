@@ -67,7 +67,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
       "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24,
       "console_url" => nil, "console_url_fallback" => { "url" => "http://www.example.com", "source" => "request" },
       "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://www.example.com:4000", "source" => "console_url" },
-      "redaction_patterns" => [], "redaction_defaults" => InstanceSetting::REDACTION_DEFAULTS },
+      "dispatcher_url" => nil, "redaction_patterns" => [], "redaction_defaults" => InstanceSetting::REDACTION_DEFAULTS },
       settings["editable"])
     assert_equal false, settings.dig("sign_up", "open")
     assert_equal "bin/rails instance_settings:set SIGN_UP_OPEN=true|false", settings.dig("sign_up", "command")

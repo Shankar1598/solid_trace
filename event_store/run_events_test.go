@@ -304,6 +304,14 @@ func TestRunsListAndOneRunFromRunEvents(t *testing.T) {
 		if got := runIDs(listRuns(t, env, o.project, map[string]any{"project": "search"})); len(got) != 0 {
 			t.Fatalf("Expected no Run of another Project, got %v", got)
 		}
+		// The Runs page's Project filter, alone and with 'waiting on a person'.
+		if got := runIDs(listRuns(t, env, o.project, map[string]any{"project": "checkout"})); len(got) != 5 {
+			t.Fatalf("Expected each Run of the Project in 30 days, got %v", got)
+		}
+		both := map[string]any{"project": "checkout", "state": "waiting_on_person"}
+		if got := runIDs(listRuns(t, env, o.project, both)); !slices.Equal(got, []string{waiting.id}) {
+			t.Fatalf("Expected the waiting Run of the Project only, got %v", got)
+		}
 		answer := listRuns(t, env, o.project, map[string]any{"limit": 2})
 		if got := runIDs(answer); !slices.Equal(got, []string{waiting.id, running.id}) || !answer.More {
 			t.Fatalf("Expected two Runs and more, got %v %v", got, answer.More)
