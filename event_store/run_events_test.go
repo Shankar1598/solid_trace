@@ -69,7 +69,8 @@ func runEvent(run runSnapshot, seq int, at time.Time, kind string) map[string]an
 		"run": map[string]any{
 			"id": run.id, "seq": seq, "state": run.state, "reason": run.reason, "trigger": "cli",
 			"title": run.title, "executions": run.executions,
-			"pr": map[string]any{"url": run.prURL, "outcome": run.prOutcome},
+			"pr":         map[string]any{"url": run.prURL, "outcome": run.prOutcome},
+			"started_by": map[string]any{"kind": "person", "id": "7", "name": "Ana"},
 		},
 		"event":           map[string]any{"id": fmt.Sprintf("%s-%d", run.id, seq), "kind": kind},
 		"execution":       map[string]any{"id": fmt.Sprintf("%s-x%d", run.id, run.executions)},
@@ -259,6 +260,8 @@ func TestRunsListAndOneRunFromRunEvents(t *testing.T) {
 		runEvent(waiting, 2, now.Add(-1*time.Hour), "report"), runEvent(queued(waiting), 1, now.Add(-2*day), "queued"),
 		runEvent(old, 1, now.Add(-29*day), "failed"),
 	}
+	// Bo caused the waiting Run's last event: the Run is still Ana's.
+	batch[9]["actor"] = map[string]any{"kind": "person", "id": "8", "name": "Bo"}
 	expectStatus(t, sendRunEvents(t, env, o.dispatcherSecret, batch...), 200)
 	// The sender loop sends a batch again when it did not get the answer.
 	expectStatus(t, sendRunEvents(t, env, o.dispatcherSecret, batch...), 200)

@@ -24,7 +24,12 @@ import (
 //   - run.pr.url, run.pr.outcome (merged or declined; empty while open)
 //   - execution.id, factory.project, repository, folder, run.base_branch
 //     (the branch that the Run starts from)
-//   - actor.kind, actor.id, actor.name
+//   - run.started_by.kind, run.started_by.id, run.started_by.name: the
+//     actor who started the Run
+//
+// Each event also names who caused it: actor.kind, actor.id and
+// actor.name. That is the actor who started the Run, or for an
+// intervention the actor who did it.
 //
 // An event also carries the details of its kind, which the Run page reads:
 //
@@ -42,7 +47,7 @@ import (
 //     agent.session_id (the Agent session that holds the Evidence files
 //     and evidence/report.md).
 //   - interventions (message_accepted, interrupt, stop, take_over,
-//     account_switched, continue): the actor who did it.
+//     account_switched, continue): actor.* is the actor who did it.
 //
 // Readers order by run.seq and drop repeats of (run.id, run.seq): the
 // Dispatcher's sender delivers at least once.
@@ -57,7 +62,7 @@ const (
 // live, or a wait on a person or an account limit.
 var liveRunStates = []string{"queued", "running", "waiting_on_person", "waiting_on_account_limit", "taken_over"}
 
-// RunActor is who caused a run event.
+// RunActor is an actor of a Run: who started it, or who caused an event.
 type RunActor struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id"`
@@ -85,9 +90,11 @@ type RunSummary struct {
 	BaseBranch string    `json:"base_branch"`
 	Trigger    string    `json:"trigger"`
 	Title      string    `json:"title"`
-	Actor      RunActor  `json:"actor"`
-	PR         RunPR     `json:"pr"`
-	Executions int64     `json:"executions"`
+	// Actor is who started the Run (run.started_by.*), not who caused
+	// the event.
+	Actor      RunActor `json:"actor"`
+	PR         RunPR    `json:"pr"`
+	Executions int64    `json:"executions"`
 	// Active: an Execution is queued or live, the Run waits on a person or
 	// an account limit, or its PR is open. Closed: the Run cannot continue.
 	// A Run that is done with no PR, failed or stopped is neither.
@@ -102,7 +109,8 @@ func RunSummaryOf(log models.Log) RunSummary {
 		ID: s["run.id"], Seq: int64(log.Attributes.Number["run.seq"]), Time: log.Time, Kind: s["event.kind"],
 		State: s["run.state"], Reason: s["run.reason"], Project: s["factory.project"], Repository: s["repository"],
 		Folder: s["folder"], BaseBranch: s["run.base_branch"], Trigger: s["run.trigger"], Title: s["run.title"],
-		Actor:      RunActor{Kind: s["actor.kind"], ID: s["actor.id"], Name: s["actor.name"]},
+		Actor: RunActor{Kind: s["run.started_by.kind"], ID: s["run.started_by.id"],
+			Name: s["run.started_by.name"]},
 		PR:         RunPR{URL: s["run.pr.url"], Outcome: s["run.pr.outcome"]},
 		Executions: int64(log.Attributes.Number["run.executions"]),
 	}

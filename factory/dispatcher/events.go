@@ -55,10 +55,11 @@ func title(prompt string) string {
 
 // recordEvent adds the next run event of the Run to the outbox, in tx: a
 // snapshot of the Run's list fields after the change, and details, the
-// Attributes of the kind. The actor is the person who started the Run,
-// unless details name another (an intervention names its actor). An
-// event of an Execution (with execution.id) also has the Run's Agent
-// session id.
+// Attributes of the kind. The snapshot names the person who started the
+// Run in run.started_by.*, and details cannot change it. actor.* is who
+// caused the event: the person who started the Run, unless details name
+// another (an intervention names its actor). An event of an Execution
+// (with execution.id) also has the Run's Agent session id.
 func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[string]any) error {
 	var seq int64
 	if err := tx.QueryRow(`UPDATE runs SET seq = seq + 1 WHERE id = ? RETURNING seq`, runID).Scan(&seq); err != nil {
@@ -102,6 +103,9 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	for k, v := range details {
 		event[k] = v
 	}
+	event["run.started_by.kind"] = actorPerson
+	event["run.started_by.id"] = actorID
+	event["run.started_by.name"] = actorName
 	return addToOutbox(tx, event)
 }
 
