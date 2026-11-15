@@ -85,7 +85,9 @@ func (e *execution) check(w http.ResponseWriter, r *http.Request, environ []stri
 // command replaces its record.
 type checkKey struct{ name, command string }
 
-func (k checkKey) is(r dispatcherapi.CheckResult) bool { return r.Name == k.name && r.Command == k.command }
+func (k checkKey) is(r dispatcherapi.CheckResult) bool {
+	return r.Name == k.name && r.Command == k.command
+}
 
 // hold holds a place for a run of the check key, and is false when the
 // Execution has MaxChecks other checks, recorded or running.
