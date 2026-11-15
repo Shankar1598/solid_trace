@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-
 	"github.com/hashicorp/nomad/api"
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
