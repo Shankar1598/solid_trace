@@ -319,3 +319,61 @@ func TestARunWithAnOpenPRKeepsItsDedupeKeyUntilThePRIsMerged(t *testing.T) {
 		t.Errorf("the dedupe_key of a Closed Run: %+v, want a new Run", next)
 	}
 }
+
+// A PR merged while an Execution runs gives the PR outcome at the next
+// check, but the Run stays open until the Execution ends: a WIP ref
+// that the Execution saves after the check is deleted at the close.
+func TestAPRMergedWhileAnExecutionRunsClosesTheRunWhenTheExecutionEnds(t *testing.T) {
+	env, ana := newEnv(t)
+	out := t.TempDir()
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), commitStep, recorded(out, "pr", `solidtrace pr --title "Fix the cart"`),
+		wait, reportStep("--outcome", "done", "--summary", "Fixed the cart test"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the flaky cart test")
+	deadline := time.Now().Add(30 * time.Second)
+	for len(env.Forge.PRs("example/shop")) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the agent opened no PR after 30 s\npr: %s", readRecorded(t, out, "pr"))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	pr := env.Forge.PRs("example/shop")[0]
+	env.Forge.SetState("example/shop", pr.ID, "MERGED")
+
+	env.Clock.Advance(prCheckEvery)
+	env.CheckClosedRuns()
+	events := waitForKind(t, env, id, "pr_outcome")
+	if got := ofKind(events, "pr_outcome"); len(got) != 1 || got[0]["pr.outcome"] != "merged" {
+		t.Errorf("want one merged PR outcome event, got %v", got)
+	}
+	if got := ofKind(events, "closed"); len(got) != 0 {
+		t.Errorf("the Run is closed while its Execution runs: %v", got)
+	}
+	run := getRun(t, ana, id)
+	if run.State != dispatcherapi.StateRunning || run.ClosedAt != nil || run.PROutcome != "merged" {
+		t.Errorf("the Run is %s, closed at %v, PR outcome %q; want running, not closed, merged", run.State,
+			run.ClosedAt, run.PROutcome)
+	}
+	// The Execution saves its work after the check.
+	wip := addWIPRef(t, env, id)
+
+	open()
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	env.Clock.Advance(time.Second)
+	env.CheckClosedRuns()
+	closed := waitForKind(t, env, id, "closed")
+	if last := closed[len(closed)-1]; last["event.kind"] != "closed" || last["run.state"] != dispatcherapi.StateDone ||
+		last["run.pr.outcome"] != "merged" || last["run.close_reason"] != "pr_merged" {
+		t.Errorf("the last event is not the close of the done Run with its merged PR: %v", last)
+	}
+	if got := ofKind(closed, "pr_outcome"); len(got) != 1 {
+		t.Errorf("want one PR outcome event, got %v", got)
+	}
+	run = getRun(t, ana, id)
+	if run.State != dispatcherapi.StateDone || run.ClosedAt == nil {
+		t.Errorf("the Run is %s, closed at %v; want done and closed", run.State, run.ClosedAt)
+	}
+	if _, ok := env.Forge.Ref("example/shop", wip); ok {
+		t.Errorf("the WIP ref %s that the Execution saved is not deleted at the close", wip)
+	}
+}

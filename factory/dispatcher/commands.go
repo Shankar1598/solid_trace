@@ -157,9 +157,9 @@ func (s *store) stopRun(organizationID, runID string, by actor, reason string, a
 	if !slices.Contains(stoppable, state) {
 		return &notStoppable{state: state}
 	}
-	// A Closed Run keeps its last state. A stop still ends an Execution
-	// that is queued or live.
-	if closed && !slices.Contains(liveStates, state) {
+	// A Closed Run keeps its last state. It has no Execution queued or
+	// live: the close waits for the end of the Execution.
+	if closed {
 		return &notStoppable{state: state, closed: true}
 	}
 	if err := stopInTx(tx, runID, by, reason, true, at); err != nil {
