@@ -276,9 +276,12 @@ func TestALinkThatTheRunUserPutsInPlaceOfTheProjectDirectoryMovesNoUpload(t *tes
 	execution := waitFor(t, env, ana, id, dispatcherapi.StateRunning).Executions[0].ID
 	session := firstToken(t, env).AgentSessionIDs[0]
 	// A directory of root's that the run user cannot read, with a
-	// transcript and an evidence/ file of that Agent session.
+	// transcript and an evidence/ file of that Agent session, and the
+	// transcript of an Agent session that only it has.
+	const onlyOutside = "0badc0de-0000-4000-8000-000000000001"
 	for name, content := range map[string]string{session + ".jsonl": `{"secret":"root's transcript"}` + "\n",
-		"evidence/secret.txt": "a secret of root's"} {
+		onlyOutside + ".jsonl": `{"secret":"root's other transcript"}` + "\n",
+		"evidence/secret.txt":  "a secret of root's"} {
 		path := filepath.Join(outside, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -300,6 +303,13 @@ func TestALinkThatTheRunUserPutsInPlaceOfTheProjectDirectoryMovesNoUpload(t *tes
 	for _, up := range env.SolidTrace.Uploads() {
 		if bytes.Contains(up.Bytes, []byte("root's")) || strings.Contains(up.Path, "secret") {
 			t.Errorf("an upload came from the link's target: %s", up.Path)
+		}
+	}
+	// The listing of Agent sessions reads the directory that the wrapper
+	// made too: the wrapper asks for no Agent session of the link's target.
+	for _, tok := range env.SolidTrace.ChildTokens() {
+		if slices.Contains(tok.AgentSessionIDs, onlyOutside) {
+			t.Errorf("the wrapper added the Agent session %s of the link's target to the Run", onlyOutside)
 		}
 	}
 	// The uploads read the project directory that the wrapper made.
