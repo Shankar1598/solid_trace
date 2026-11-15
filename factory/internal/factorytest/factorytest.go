@@ -452,7 +452,7 @@ func (e *Env) start() {
 		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) },
 		BackstopEvery: backstopEvery,
 		CloseEvery:    scheduleEvery, CloseChecked: func(at time.Time) { e.closeChecked.Store(&at) },
-		Trackers:      []dispatcher.Tracker{e.Tracker.Tracker()}, HTTP: e.http}
+		Trackers: []dispatcher.Tracker{e.Tracker.Tracker()}, HTTP: e.http}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner
