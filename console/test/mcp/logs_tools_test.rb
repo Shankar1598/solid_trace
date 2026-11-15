@@ -64,6 +64,23 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     assert_explorer({ "from" => "2026-10-17T07:00:00.000Z", "to" => "2026-10-17T08:00:00.000Z", "mode" => "query" }, answer.link)
   end
 
+  test "query_logs on the Agent Project returns transcript Logs" do
+    admin = create(:user)
+    create(:organization_user, organization: @acme, user: admin, role: :admin)
+    agent = AgentSessionsSettings.turn_on(organization: @acme, user: admin, entries: [ "github.com/acme/shop" ], confirmed: "1").project
+    transcript = { "id" => "0199a8b2-6a1e-7c3d-9f00-000000000003", "time" => "2026-10-17T09:40:00Z", "service" => "github.com/acme/shop",
+                   "message" => "Add a cart page", "attributes" => { "agent.role" => "person", "file" => "session.jsonl" } }
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{agent.id}/logs/query")
+      .with(body: hash_including(query: "search \"cart\""))
+      .to_return(status: 200, body: { logs: [ transcript ], next_cursor: nil }.to_json)
+
+    answer = call_tool(:query_logs, user: @user, project: agent.slug, query: "search \"cart\"", range: "7d")
+
+    assert_not answer.error?, answer.body
+    assert_requested run
+    assert_match(/github\.com\/acme\/shop .*"Add a cart page" agent\.role="person"/, answer.body)
+  end
+
   test "query_logs keeps a limit between 1 and 200" do
     run = stub_request(:post, @query_url)
 

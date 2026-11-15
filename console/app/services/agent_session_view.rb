@@ -24,15 +24,18 @@ class AgentSessionView
   STEP_KINDS = { "person" => "person", "assistant" => "agent", "tool" => "tool",
                  "not from a person" => "not from a person", "system" => "system" }.freeze
 
-  attr_reader :organization, :id, :path, :cursor
+  attr_reader :organization, :id, :path, :cursor, :search
 
   # path is the subagent transcript whose timeline the page gives, nil for
   # the main transcript; cursor, the next_cursor of the page before.
-  def initialize(organization:, id:, path: nil, cursor: nil)
+  # search, if given, keeps the steps whose text has it, with any case;
+  # with no path, from all the Agent session's transcripts.
+  def initialize(organization:, id:, path: nil, cursor: nil, search: nil)
     @organization = organization
     @id = id
     @path = path.presence
     @cursor = cursor.presence
+    @search = search.to_s.strip.presence
   end
 
   def project
@@ -73,6 +76,19 @@ class AgentSessionView
     RESUME_WARNING if (Array(header&.dig("flags")) & RESUME_FLAGS).any?
   end
 
+  # 'Show full' on a cut value: the raw line of the Agent session's file
+  # at path, version and offset, redacted as stored, as {"line", "cut"};
+  # nil when the Agent Project has no line there. Raises
+  # EventStore::Unavailable when EventStore cannot answer.
+  def raw_line(path:, version:, offset:)
+    return nil unless project
+
+    EventStore.agent_session_line!(project_id: project.id, id: id, path: path, version: version, offset: offset,
+      read_timeout: TIMEOUT_SECONDS)
+  rescue EventStore::NotFound
+    nil
+  end
+
   def steps
     Array(answer&.dig("steps")).map { |step| step.merge("from" => from(step["role"])) }
   end
@@ -91,7 +107,8 @@ class AgentSessionView
 
   def answer
     event_store_answer("Agent session") do
-      EventStore.agent_session!(project_id: project.id, id: id, path: path, cursor: cursor, read_timeout: TIMEOUT_SECONDS)
+      EventStore.agent_session!(project_id: project.id, id: id, path: path, cursor: cursor, search: search,
+        read_timeout: TIMEOUT_SECONDS)
     rescue EventStore::NotFound
       @not_found = true
       nil

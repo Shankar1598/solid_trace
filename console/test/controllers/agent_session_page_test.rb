@@ -133,6 +133,60 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_equal "c2", response.parsed_body["next_cursor"]
   end
 
+  test "a search inside the Agent session goes to EventStore and gives its matching steps as JSON" do
+    stub_session(body: { "search" => "cart" }, user_id: @member.id)
+    sign_in_as(@member)
+    get agent_session_timeline_path(org_slug: "acme", id: CART, search: "cart"), as: :json
+
+    assert_response :success
+    assert_equal "Add a cart page", response.parsed_body["steps"].first["text"]
+    assert_requested :post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}", body: hash_including("search" => "cart")
+  end
+
+  def stub_line(status: 200, project: @project)
+    stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/agent-sessions/#{CART}/line")
+      .with(body: { path: "session.jsonl", version: 1, offset: 120 }.to_json)
+      .to_return(status: status, headers: { "Content-Type" => "application/json" },
+                 body: status == 200 ? { line: '{"type":"user","message":"all of it"}', cut: false }.to_json : { error: "no such line" }.to_json)
+  end
+
+  def line(org_slug: "acme")
+    get agent_session_line_path(org_slug: org_slug, id: CART, path: "session.jsonl", version: 1, offset: 120), as: :json
+  end
+
+  test "'Show full' gives the raw line of a step as JSON" do
+    stub_line
+    sign_in_as(@member)
+    line
+
+    assert_response :success
+    assert_equal({ "line" => '{"type":"user","message":"all of it"}', "cut" => false }, response.parsed_body)
+  end
+
+  test "a raw line that the Agent Project does not have, or of another Organization's Agent Project, is 404" do
+    stub_line(status: 404)
+    sign_in_as(@member)
+    line
+    assert_response :not_found
+
+    other = create(:organization, slug: "other")
+    create(:organization_user, organization: other, user: @admin, role: :admin)
+    other_project = AgentSessionsSettings.turn_on(organization: other, user: @admin, entries: [ "github.com/other/app" ], confirmed: "1").project
+    stub_line(project: other_project)
+    line(org_slug: "other")
+    assert_response :not_found
+    assert_not_requested :post, "#{EventStore.base_url}/api/#{other_project.id}/agent-sessions/#{CART}/line"
+  end
+
+  test "EventStore down gives 503 on 'Show full'" do
+    stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}/line").to_return(status: 500, body: "boom")
+    sign_in_as(@member)
+    line
+
+    assert_response :service_unavailable
+    assert response.parsed_body["error"].present?
+  end
+
   test "an Agent session that the Agent Project does not have is 404" do
     stub_session(status: 404, user_id: @admin.id)
     sign_in_as(@member)

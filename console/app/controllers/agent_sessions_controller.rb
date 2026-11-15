@@ -11,10 +11,14 @@ class AgentSessionsController < ApplicationController
 
   before_action :set_current_org
 
+  # The range of a search across Agent sessions (story 29).
+  SEARCH_RANGE = "7d"
+
   def index
     view = AgentSessionsView.new(organization: @current_org, range: range, filters: AgentSessionsView.filters(params))
     props = view.to_h.merge(settings_path: agent_session_settings_path(org_slug: @current_org.slug))
     props[:can_turn_on] = admin? unless props[:on]
+    props[:search] = search_across(@current_org.agent_project)
     render inertia: "AgentSessions/Index", props: { agent_sessions: props }
   end
 
@@ -36,10 +40,12 @@ class AgentSessionsController < ApplicationController
   end
 
   # One page of the timeline as JSON: the main transcript's, or the
-  # subagent transcript's at path, after cursor. 503 when EventStore cannot
-  # answer.
+  # subagent transcript's at path, after cursor; with search, only the
+  # steps that have that text, from all transcripts when no path is given.
+  # 503 when EventStore cannot answer.
   def timeline
-    view = AgentSessionView.new(organization: @current_org, id: params[:id], path: params[:path], cursor: params[:cursor])
+    view = AgentSessionView.new(organization: @current_org, id: params[:id], path: params[:path], cursor: params[:cursor],
+      search: params[:search])
     raise ActiveRecord::RecordNotFound unless view.found?
 
     event_store = view.event_store
@@ -48,7 +54,31 @@ class AgentSessionsController < ApplicationController
     render json: view.timeline_h
   end
 
+  # 'Show full' on a cut value, as JSON: the raw line of a step by its path,
+  # version and offset, from the Organization's own Agent Project only.
+  # 404 when it has no line there; 503 when EventStore cannot answer.
+  def line
+    version = Integer(params[:version].to_s, 10, exception: false)
+    offset = Integer(params[:offset].to_s, 10, exception: false)
+    raise ActiveRecord::RecordNotFound if params[:path].blank? || version.nil? || offset.nil? || version.negative? || offset.negative?
+
+    raw = AgentSessionView.new(organization: @current_org, id: params[:id]).raw_line(path: params[:path], version: version, offset: offset)
+    raise ActiveRecord::RecordNotFound unless raw
+
+    render json: { line: raw["line"], cut: raw["cut"] == true }
+  rescue EventStore::Unavailable => e
+    Rails.logger.error("Agent session line: #{e.message}")
+    render json: { error: "EventStore can't read the line: #{e.message}" }, status: :service_unavailable
+  end
+
   private
+
+  # Where search across Agent sessions goes: a Query on the Agent Project
+  # in the Logs explorer, over SEARCH_RANGE, which the member can make
+  # longer there. nil without an Agent Project.
+  def search_across(project)
+    project && { logs_path: project_logs_path(project, org_slug: @current_org.slug), project: project.slug, range: SEARCH_RANGE }
+  end
 
   # The URL's range, or the default one when it names none that can be read.
   def range
