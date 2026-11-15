@@ -285,6 +285,49 @@ func TestTheWrapperFailsWhenTheEndProcedureLeavesTheExecutionsCgroup(t *testing.
 	}
 }
 
+// When the task call fails, the wrapper removes the child cgroup that it
+// made: a retry of the Execution can make it again.
+func TestWhenTheTaskCallFailsTheWrapperRemovesTheChildCgroup(t *testing.T) {
+	env, _ := newEnv(t)
+	// The wrapper runs in a cgroup of the test's own, to look into.
+	b, err := killboundary.Open("task-fails-" + strconv.Itoa(os.Getpid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(b.Dir(), wrapper.CgroupName("ex_unknown"))
+	t.Cleanup(func() {
+		os.Remove(child)
+		b.Kill()
+		b.Remove(2 * time.Second)
+	})
+	// The Dispatcher has no Execution ex_unknown, so it refuses the task
+	// call.
+	identity := filepath.Join(t.TempDir(), "identity.jwt")
+	if err := os.WriteFile(identity, []byte(env.Runner.Identity(factorytest.Workload("ex_unknown"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(env.Runner.Wrapper())
+	cmd.Dir = t.TempDir()
+	cmd.Env = []string{wrapper.EnvDispatcherURL + "=" + env.URL(), wrapper.EnvExecution + "=ex_unknown",
+		wrapper.EnvIdentityFile + "=" + identity, wrapper.EnvDocker + "=/no/docker", "PATH=" + os.Getenv("PATH")}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := b.Start(cmd); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+
+	if code := cmd.ProcessState.ExitCode(); code != 1 {
+		t.Errorf("exit %d, want 1; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "task call") {
+		t.Errorf("stderr %q does not say that the task call failed", stderr.String())
+	}
+	if _, err := os.Stat(child); !os.IsNotExist(err) {
+		t.Errorf("the child cgroup %s is left after the task call failed (%v)", child, err)
+	}
+}
+
 func TestTheWrapperRefusesToStartWhenItCannotMakeTheChildCgroup(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can write to each cgroup")
