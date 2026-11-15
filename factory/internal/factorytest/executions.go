@@ -44,6 +44,9 @@ const (
 func MainIfAsked() {
 	switch filepath.Base(os.Args[0]) {
 	case wrapperName:
+		if len(os.Args) > 1 && os.Args[1] == wrapper.StopHookCommand {
+			os.Exit(wrapper.StopHook(os.Stdin, os.Stdout, os.Stderr, os.Getenv))
+		}
 		os.Exit(wrapper.Main(context.Background(), os.Getenv, os.Environ(), os.Stderr))
 	case harnessName:
 		os.Exit(fakeharness.Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
