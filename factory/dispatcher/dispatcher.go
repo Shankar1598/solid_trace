@@ -79,6 +79,8 @@ type Dispatcher struct {
 
 	runner   Runner
 	identity *identityCheck
+	// allowlist writes Squid's allowlist.
+	allowlist *allowlist
 	// dispatching holds a channel for each Execution that the Runner is
 	// starting; it closes when the Runner gave the workload.
 	dispatching sync.Map
@@ -127,6 +129,10 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	list, err := newAllowlist(config)
+	if err != nil {
+		return nil, err
+	}
 	s, err := openStore(config.Database, key)
 	if err != nil {
 		return nil, err
@@ -143,6 +149,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		http:       options.HTTP,
 		eventRetry: cmp.Or(options.EventRetry, maxEventRetry),
 		runner:     options.Runner,
+		allowlist:  list,
 		wake:       make(chan struct{}, 1),
 
 		kinds:           map[string]WebhookKind{},
@@ -198,6 +205,8 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		writeProblem(w, http.StatusNotFound, "no such path: "+r.Method+" "+r.URL.Path)
 	})
 	d.handler = d.refuseOldCLIs(mux)
+	// The default list or SolidTrace's hosts can have changed.
+	d.refreshAllowlist()
 	ctx, stop := context.WithCancel(context.Background())
 	d.stop = stop
 	d.loops.Add(4)

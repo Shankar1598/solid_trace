@@ -316,6 +316,10 @@ _Avoid_: scrub rule, secret filter
 A **Project**'s settings for the **Factory**: its repository and folder, the branch its Runs start from when none is given, and which tracker tickets go to it.
 _Avoid_: factory config, factory.yaml
 
+**Factory file**:
+The file `.solidtrace/factory.toml` in a repository that says how the **Factory** works on it: the machine kind, the setup command, the named check commands, the extra hosts that agents can reach, the time limits of an **Execution** and more patterns that a work-in-progress save leaves out. The **Dispatcher** reads it from the default branch only, from the **Project**'s folder first and then from the root, when it starts each Execution, so a change applies after a person merges it. A file with an error fails the **Run** with the reason.
+_Avoid_: factory config, factory.yaml, Factory settings (those are in the Dispatcher)
+
 **Webhook sender**:
 A tool that starts **Runs** with signed requests to the **Dispatcher**'s generic webhook, with the secret that an Admin got when they made it. It belongs to one **Organization**, can be limited to some of its **Projects**, and is the actor of the Runs that it starts. A Log sender is not a Webhook sender.
 _Avoid_: webhook client, integration (alone)

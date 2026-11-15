@@ -39,6 +39,11 @@ type Forge interface {
 	// DeleteWIP deletes the Run's work-in-progress ref. A ref that is not
 	// there is not an error.
 	DeleteWIP(ctx context.Context, repository, runID string) error
+	// DefaultBranchFile reads the first of paths that is on the
+	// repository's default branch, all at the branch's one commit. It
+	// gives the path and the content, or "" and no error when none of
+	// the paths is there.
+	DefaultBranchFile(ctx context.Context, repository string, paths ...string) (string, []byte, error)
 }
 
 // PRState is the state of a PR.
