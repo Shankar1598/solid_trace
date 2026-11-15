@@ -206,7 +206,7 @@ func normaliseSent(s sent, r Receipt) (models.Log, Outcome) {
 
 	n.log.Time = r.At
 	if raw := s.fields[timeField]; raw != nil {
-		if t, ok := parseTime(raw); ok && r.inWindow(t) {
+		if t, ok := parseTime(raw); ok && r.InWindow(t) {
 			n.log.Time = t
 		} else {
 			n.setAttribute("original.time", raw)
