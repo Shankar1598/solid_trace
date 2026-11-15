@@ -54,12 +54,19 @@ const maxSleep = 200 * time.Millisecond
 //
 //   - the replay echo of a message that the check wrote becomes an
 //     await_message step (mid_turn when the turn had started), because the
-//     scripted Harness gives the echo itself;
+//     scripted Harness gives the echo itself. When an event names the
+//     message's uuid before its echo (command_lifecycle, the init event's
+//     user_message_uuids), the script takes the message there with
+//     await_message and echo false, and delivers it at the echo with a
+//     deliver step. In each event, the uuid of the N-th message becomes
+//     "$message:N", which the player fills;
 //   - the answer to an interrupt request becomes an await_interrupt step,
 //     and the answers to other control requests are dropped;
 //   - a gap of more than a second after a result becomes a short sleep;
 //   - session ids, uuids and the cwd become "", which the player fills;
-//     local paths become their replacements, and thinking signatures go;
+//     local paths become their replacements; thinking signatures, the
+//     credential's expiry and the local setup in the init event (socket,
+//     memory paths, plugins, skills, slash commands) go;
 //   - the end is an await_message with the exit code at stdin close, or
 //     an exit step when the process exited first.
 func Script(rec Recording) ([]byte, error) {
@@ -84,11 +91,29 @@ func Script(rec Recording) ([]byte, error) {
 	}
 	inTurn, afterResult := false, false
 	var last time.Duration
+	taken := map[string]int{} // the number of each message that the script took
 	for _, ev := range rec.Events {
 		e := ev.Data
+		echo := e["type"] == "user" && e["isReplay"] == true && rec.Sent[str(e["uuid"])]
+		if !echo {
+			for _, id := range sentIn(e, rec.Sent) {
+				if _, ok := taken[id]; !ok {
+					taken[id] = len(taken)
+					if err := enc(map[string]any{"fake": "await_message", "echo": false}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
 		switch {
-		case e["type"] == "user" && e["isReplay"] == true && rec.Sent[str(e["uuid"])]:
+		case echo:
+			id := str(e["uuid"])
 			step := map[string]any{"fake": "await_message"}
+			if n, ok := taken[id]; ok {
+				step = map[string]any{"fake": "deliver", "message": n}
+			} else {
+				taken[id] = len(taken)
+			}
 			if inTurn {
 				step["mid_turn"] = true
 			}
@@ -112,7 +137,7 @@ func Script(rec Recording) ([]byte, error) {
 				return nil, err
 			}
 		}
-		if err := enc(clean(e)); err != nil {
+		if err := enc(clean(e, taken)); err != nil {
 			return nil, err
 		}
 		last = ev.At
@@ -133,10 +158,15 @@ func Script(rec Recording) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// private holds the keys that the script drops: values of the machine
+// and the account that ran the check, which say nothing of the protocol.
+var private = map[string]bool{"signature": true, "credential_expires_at": true,
+	"messaging_socket_path": true, "memory_paths": true}
+
 // clean gives a copy of an event with the values that the player fills
-// set to "", and with no thinking signature.
-func clean(e map[string]any) map[string]any {
-	out := drop(e, "signature").(map[string]any)
+// set to "" or "$message:N", and with no private value.
+func clean(e map[string]any, taken map[string]int) map[string]any {
+	out := rewrite(e, taken).(map[string]any)
 	for _, k := range []string{"session_id", "uuid"} {
 		if _, ok := out[k]; ok {
 			out[k] = ""
@@ -145,29 +175,62 @@ func clean(e map[string]any) map[string]any {
 	if out["type"] == "system" && out["subtype"] == "init" {
 		out["cwd"] = ""
 		out["permissionMode"] = ""
+		for _, k := range []string{"plugins", "skills", "slash_commands", "terminal_slash_commands"} {
+			if _, ok := out[k]; ok {
+				out[k] = []any{}
+			}
+		}
 	}
 	return out
 }
 
-// drop gives a deep copy of v with no object key named key.
-func drop(v any, key string) any {
+// rewrite gives a deep copy of v with no private key, and with
+// "$message:N" in place of the uuid of each message that the script took.
+func rewrite(v any, taken map[string]int) any {
 	switch v := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(v))
 		for k, x := range v {
-			if k != key {
-				out[k] = drop(x, key)
+			if !private[k] {
+				out[k] = rewrite(x, taken)
 			}
 		}
 		return out
 	case []any:
 		out := make([]any, len(v))
 		for i, x := range v {
-			out[i] = drop(x, key)
+			out[i] = rewrite(x, taken)
 		}
 		return out
+	case string:
+		if n, ok := taken[v]; ok {
+			return fmt.Sprintf("$message:%d", n)
+		}
 	}
 	return v
+}
+
+// sentIn gives the uuids of sent messages that an event names, in the
+// order that they come in its JSON text.
+func sentIn(e map[string]any, sent map[string]bool) []string {
+	b, _ := json.Marshal(e)
+	s := string(b)
+	type at struct {
+		id  string
+		pos int
+	}
+	var found []at
+	for id := range sent {
+		if i := strings.Index(s, id); i >= 0 {
+			found = append(found, at{id, i})
+		}
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].pos < found[j].pos })
+	var ids []string
+	for _, f := range found {
+		ids = append(ids, f.id)
+	}
+	return ids
 }
 
 // replacePaths puts each replacement in place of its path, the longest

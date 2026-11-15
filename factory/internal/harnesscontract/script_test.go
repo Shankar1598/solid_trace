@@ -35,11 +35,13 @@ func sampleRecording(checkout string) harnesscontract.Recording {
 		Paths:   map[string]string{checkout: "/workspace/repo"},
 		Sent:    map[string]bool{"u-1": true, "u-2": true},
 		Events: []harnesscontract.Event{
-			ev(100, `{"type":"system","subtype":"init","cwd":"CHECKOUT","session_id":"SID","tools":["Bash","Read"],"model":"claude-haiku-5-5","permissionMode":"bypassPermissions","uuid":"x1"}`),
+			ev(90, `{"type":"command_lifecycle","command_uuid":"u-1","state":"queued","session_id":"SID","uuid":"x0"}`),
+			ev(100, `{"type":"system","subtype":"init","cwd":"CHECKOUT","session_id":"SID","tools":["Bash","Read"],"model":"claude-haiku-5-5","permissionMode":"bypassPermissions","uuid":"x1","user_message_uuids":["u-1"],"messaging_socket_path":"/run/user/1001/x.sock","plugins":[{"name":"a-plugin"}]}`),
 			ev(110, `{"type":"user","message":{"role":"user","content":"Run sleep."},"session_id":"SID","uuid":"u-1","isReplay":true,"parent_tool_use_id":null}`),
 			ev(900, `{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":"I sleep.","signature":"c2VjcmV0"}]},"session_id":"SID","uuid":"x2","parent_tool_use_id":null}`),
 			ev(950, `{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"cd CHECKOUT && sleep 12"}}]},"session_id":"SID","uuid":"x3","parent_tool_use_id":null}`),
 			ev(1000, `{"type":"control_response","response":{"subtype":"success","request_id":"other"}}`),
+			ev(3000, `{"type":"command_lifecycle","command_uuid":"u-2","state":"queued","session_id":"SID","uuid":"x8"}`),
 			ev(13000, `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":""}]},"session_id":"SID","uuid":"x4","parent_tool_use_id":null}`),
 			ev(13010, `{"type":"user","message":{"role":"user","content":"Also BANANA."},"session_id":"SID","uuid":"u-2","isReplay":true,"parent_tool_use_id":null}`),
 			ev(14000, `{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"BANANA"}]},"session_id":"SID","uuid":"x5","parent_tool_use_id":null}`),
@@ -63,17 +65,21 @@ func TestScriptPlaysTheRecordedEventsInOrder(t *testing.T) {
 	}
 
 	events, transcript, code := play(t, script, []string{"u-1", "u-2"})
-	want := []string{"system/init", "user", "assistant", "assistant", "user", "user", "assistant", "result/success", "system/task_notification"}
+	want := []string{"command_lifecycle", "system/init", "user", "assistant", "assistant", "command_lifecycle", "user", "user", "assistant", "result/success", "system/task_notification"}
 	if got := typesOf(events); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("played %v; want %v", got, want)
 	}
 	if code != 0 {
 		t.Errorf("exit %d; want 0, as the recorded process at stdin close", code)
 	}
-	// The echo of the second message comes after the tool result, as the
-	// real Claude Code gave it: a message during a tool call.
-	if events[5]["uuid"] != "u-2" || events[5]["isReplay"] != true {
-		t.Errorf("event 5 is %v; want the replay echo of u-2", events[5])
+	// Each event names the uuid that the wrapper gave, and the echo of the
+	// second message comes after the tool result, as the real Claude Code
+	// gave it: a message during a tool call.
+	if events[0]["command_uuid"] != "u-1" || events[1]["user_message_uuids"].([]any)[0] != "u-1" || events[5]["command_uuid"] != "u-2" {
+		t.Errorf("events %v; want the wrapper's uuids in the lifecycle and init events", events[:6])
+	}
+	if events[7]["uuid"] != "u-2" || events[7]["isReplay"] != true {
+		t.Errorf("event 7 is %v; want the replay echo of u-2", events[7])
 	}
 	var queued bool
 	for _, l := range transcript {
@@ -93,7 +99,7 @@ func TestScriptKeepsNoPrivateValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(script)
-	for _, bad := range []string{checkout, `"signature"`, "c2VjcmV0", "0f0f0f0f-1111", `"x3"`} {
+	for _, bad := range []string{checkout, `"signature"`, "c2VjcmV0", "0f0f0f0f-1111", `"x3"`, "/run/user", "a-plugin", `"u-1"`, `"u-2"`} {
 		if strings.Contains(s, bad) {
 			t.Errorf("the script has %q:\n%s", bad, s)
 		}

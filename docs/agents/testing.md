@@ -23,6 +23,12 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      go vet ./... && go test -race -count=1 ./...
      ```
 
+     The Harness contract checks (Seam 4, `factory/internal/harnesscontract`) are skipped there. They run the real Claude Code with Haiku, under your own Claude login, and save the streams that they record in `fakeharness/streams/`. Run them only when the pinned Claude Code version (`fakeharness.Version`) changes: change that constant first, then run the checks from `factory/` and commit the new streams. They take about 2 minutes and cost about 2 US cents:
+
+     ```bash
+     FACTORY_HARNESS_CONTRACT=1 go test -count=1 -v -timeout 15m ./internal/harnesscontract/
+     ```
+
    - Playwright, from `console/`, takes about 10 min:
      - Run `bin/rails db:migrate` first, so the dev database has any new migration.
      - Then run `bun run e2e --reporter=line`.

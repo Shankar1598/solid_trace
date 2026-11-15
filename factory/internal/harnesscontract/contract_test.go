@@ -43,6 +43,13 @@ var (
 
 func TestMain(m *testing.M) {
 	code := m.Run()
+	if madeGlobal != "" {
+		os.Remove(madeGlobal)
+		matches, _ := filepath.Glob(madeGlobal + ".backup*")
+		for _, m := range matches {
+			os.Remove(m)
+		}
+	}
 	if os.Getenv("FACTORY_HARNESS_CONTRACT") == "1" {
 		fmt.Printf("harness contract checks: the total cost is %.4f US dollars\n", totalCost)
 		if totalCost > maxCost {
@@ -52,6 +59,11 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(code)
 }
+
+var (
+	globalOnce sync.Once
+	madeGlobal string // the global settings file that this run made, if any
+)
 
 var versionOnce sync.Once
 var versionErr error
@@ -90,6 +102,14 @@ func contract(t *testing.T) *place {
 	if config == "" {
 		config = filepath.Join(home, ".claude")
 	}
+	// With CLAUDE_CONFIG_DIR set, Claude Code keeps its global settings in
+	// <config>/.claude.json. Remove that file at the end if this run made it.
+	globalOnce.Do(func() {
+		file := filepath.Join(config, ".claude.json")
+		if _, err := os.Stat(file); err != nil {
+			madeGlobal = file
+		}
+	})
 	root := t.TempDir()
 	p := &place{t: t, program: program, model: model, home: home, config: config,
 		origin:   filepath.Join(root, "origin.git"),
@@ -200,6 +220,9 @@ func (p *place) paths() map[string]string {
 		p.config:                         "/workspace/config",
 		p.home:                           "/workspace/home",
 		filepath.Dir(p.origin):           "/workspace",
+		// Claude Code writes a background task's output under the
+		// temporary directory, in a folder named after the checkout.
+		filepath.Join(os.TempDir(), fmt.Sprintf("claude-%d", os.Getuid()), fakeharness.ProjectDirName(p.checkout)): "/tmp/claude-1000/-workspace-repo",
 	}
 }
 
@@ -253,7 +276,9 @@ func (p *place) run(o opts) *proc {
 		sent: map[string]bool{}, ints: map[string]bool{}}
 	c.cmd = exec.Command(p.program, args...)
 	c.cmd.Dir = p.checkout
-	c.cmd.Env = append(childEnv(), "CLAUDE_CODE_PROJECT_DIR_NAME="+p.project)
+	// Claude Code 2.1.325 reads CLAUDE_CODE_PROJECT_DIR_NAME only when
+	// CLAUDE_CONFIG_DIR is set, so the check sets both, as the wrapper does.
+	c.cmd.Env = append(childEnv(), "CLAUDE_CONFIG_DIR="+p.config, "CLAUDE_CODE_PROJECT_DIR_NAME="+p.project)
 	c.cmd.Stderr = &c.stderr
 	c.stdin, _ = c.cmd.StdinPipe()
 	stdout, _ := c.cmd.StdoutPipe()
@@ -804,11 +829,13 @@ func TestContractInterrupt(t *testing.T) {
 }
 
 // A background task: the turn ends with a result while the task still
-// runs, and Claude Code gives the task events on the stream.
+// runs, and Claude Code gives the task events on the stream. When the task
+// ends, Claude Code starts a new turn by itself, with no message, and that
+// turn ends with a result of its own.
 func TestContractBackgroundTask(t *testing.T) {
 	p := contract(t)
 	c := p.run(opts{session: newUUID()})
-	c.save("background-task", "The agent starts a 20-second command as a background task. The turn ends with a result while the task still runs. The task events come on the stream; the events after the result are recorded until 30 seconds with no event.")
+	c.save("background-task", "The agent starts a 20-second command as a background task. The turn ends with a result while the task still runs. When the task ends, Claude Code gives the task events and starts a new turn by itself, with no message: init, an assistant reply and a second result.")
 	c.message(newUUID(), "Use Bash with run_in_background set to true to run exactly `sleep 20 && echo finished`. Do not wait for it and do not check it. Then reply with the word STARTED.")
 	result := c.until("the result", is("result", ""), 120*time.Second)
 	c.quiet(30 * time.Second)
@@ -831,6 +858,12 @@ func TestContractBackgroundTask(t *testing.T) {
 	}
 	if result.Data["subtype"] != "success" {
 		t.Errorf("result %s; want success", text(result.Data))
+	}
+	ended := index(events, is("system", "task_notification"))
+	if ended < resultAt {
+		t.Errorf("no task_notification after the result; events %v", events)
+	} else if n := count(events[ended:], is("result", "")); n != 1 {
+		t.Errorf("%d results after the task ended; want 1, from the turn that Claude Code starts by itself", n)
 	}
 	t.Logf("events: %v; exit %d", events, code)
 }

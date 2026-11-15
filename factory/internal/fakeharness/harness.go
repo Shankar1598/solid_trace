@@ -11,6 +11,9 @@
 //	{"fake":"await_message"}               wait for the next message and deliver it at a turn start
 //	{"fake":"await_message","mid_turn":true}  the same, delivered in the middle of a turn
 //	{"fake":"await_message","eof_code":1}  exit code if stdin closes first (default 0)
+//	{"fake":"await_message","echo":false}  wait for the next message, and deliver it later
+//	{"fake":"deliver","message":0}         deliver message 0 (the first message read)
+//	{"fake":"deliver","message":1,"mid_turn":true}  the same, in the middle of a turn
 //	{"fake":"await_interrupt"}             wait for the interrupt control request
 //	{"fake":"sleep","ms":100}              wait in real time
 //	{"fake":"exit","code":1}               exit at once
@@ -21,8 +24,10 @@
 // (the stream's init event, an assistant text and a success result), and
 // waits again, until stdin closes.
 // In each event, the
-// player sets "session_id" to the Agent session id and gives "uuid" a new
-// value; in the init event it also sets "cwd" and "permissionMode" and
+// player sets "session_id" to the Agent session id, gives "uuid" a new
+// value, and puts the uuid of message N in place of each string
+// "$message:N" (Claude Code names a message's uuid in events such as
+// command_lifecycle before it delivers the message); in the init event it also sets "cwd" and "permissionMode" and
 // removes the --disallowedTools from "tools".
 //
 // A test or the wrapper chooses the stream with FAKE_HARNESS_STREAM (a name
@@ -205,7 +210,7 @@ func ParseScript(b []byte) ([]map[string]any, error) {
 		}
 		if step, ok := o["fake"]; ok {
 			switch step {
-			case "about", "await_message", "await_interrupt", "sleep", "exit":
+			case "about", "await_message", "await_interrupt", "deliver", "sleep", "exit":
 			default:
 				return nil, fmt.Errorf("line %d: no step %q", n+1, step)
 			}
@@ -230,6 +235,7 @@ type harness struct {
 	lastUUID   any
 	in         chan inbound
 	interrupts chan struct{}
+	messages   []map[string]any // the messages read, in order
 }
 
 // openTranscript makes the transcript directory, as Claude Code does:
@@ -341,7 +347,17 @@ func (h *harness) play(script []map[string]any, stderr io.Writer) int {
 				h.in <- next
 				return intOf(line["eof_code"])
 			}
-			h.deliver(next.msg, line["mid_turn"] == true)
+			h.messages = append(h.messages, next.msg)
+			if line["echo"] != false {
+				h.deliver(next.msg, line["mid_turn"] == true)
+			}
+		case "deliver":
+			n := intOf(line["message"])
+			if n >= len(h.messages) {
+				fmt.Fprintf(stderr, "fake harness: deliver message %d, but %d messages were read\n", n, len(h.messages))
+				return 2
+			}
+			h.deliver(h.messages[n], line["mid_turn"] == true)
 		case "await_interrupt":
 			if _, ok := <-h.interrupts; !ok {
 				return intOf(line["eof_code"])
@@ -362,6 +378,7 @@ func (h *harness) play(script []map[string]any, stderr io.Writer) int {
 		if next.eof {
 			return intOf(last["eof_code"])
 		}
+		h.messages = append(h.messages, next.msg)
 		h.deliver(next.msg, false)
 	}
 }
@@ -414,10 +431,7 @@ func (h *harness) deliver(msg map[string]any, midTurn bool) {
 }
 
 func (h *harness) event(line map[string]any) {
-	e := make(map[string]any, len(line))
-	for k, v := range line {
-		e[k] = v
-	}
+	e := h.fill(line).(map[string]any)
 	if _, ok := e["session_id"]; ok {
 		e["session_id"] = h.sessionID
 	}
@@ -443,6 +457,32 @@ func (h *harness) event(line map[string]any) {
 	if (e["type"] == "assistant" || e["type"] == "user") && e["isSynthetic"] != true {
 		h.writeTranscript(map[string]any{"type": e["type"], "message": e["message"], "uuid": e["uuid"]})
 	}
+}
+
+// fill gives a deep copy of v with the uuid of message N in place of each
+// string "$message:N".
+func (h *harness) fill(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, x := range v {
+			out[k] = h.fill(x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, x := range v {
+			out[i] = h.fill(x)
+		}
+		return out
+	case string:
+		var n int
+		if _, err := fmt.Sscanf(v, "$message:%d", &n); err == nil && n < len(h.messages) {
+			id, _ := h.messages[n]["uuid"].(string)
+			return id
+		}
+	}
+	return v
 }
 
 func (h *harness) write(e map[string]any) {

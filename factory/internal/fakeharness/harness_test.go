@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -176,8 +177,10 @@ func TestReplayEchoCarriesTheUUIDOfTheMessage(t *testing.T) {
 	if e["isReplay"] != true || e["session_id"] != sessionID {
 		t.Fatalf("echo = %v; want isReplay true and the session id", e)
 	}
-	if got := types(echo); got[0] != "system/init" {
-		t.Fatalf("first event %q; want system/init", got[0])
+	// As Claude Code 2.1.325 does: the command_lifecycle events name the
+	// message's uuid, and the init event comes before the echo.
+	if got := strings.Join(types(echo), " "); !strings.HasSuffix(got, "system/init user") || echo[0]["command_uuid"] != first {
+		t.Fatalf("events before the echo %s (first %v); want the lifecycle events with the uuid, then init", got, echo[0])
 	}
 	s.until(is("result", "success"))
 	if code := s.end(); code != 0 {
@@ -201,11 +204,12 @@ func TestMessageAfterTheLastTurnGetsADefaultTurn(t *testing.T) {
 	s.until(is("result", "success"))
 	for _, id := range []string{second, "a1b2c3d4-0000-4000-8000-000000000003"} {
 		s.message(id, "And now?")
+		s.until(echoOf(id))
 		turn := s.until(is("result", "success"))
 		got := types(turn)
-		// As in the recorded second turn: the echo, then a new init event.
-		if turn[0]["uuid"] != id || got[1] != "system/init" || got[len(got)-2] != "assistant" {
-			t.Fatalf("turn for %s = %v; want the echo, init, an assistant reply and a success result", id, got)
+		// As in the recorded second turn: after the echo, a new init event.
+		if got[0] != "system/init" || got[len(got)-2] != "assistant" {
+			t.Fatalf("turn for %s = %v; want init, an assistant reply and a success result after the echo", id, got)
 		}
 		if r := turn[len(turn)-1]; r["session_id"] != sessionID || r["is_error"] != false {
 			t.Fatalf("result = %v", r)
@@ -230,8 +234,12 @@ func TestNoEchoWithoutReplayUserMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(out), first) {
-		t.Fatalf("stdout has the message's uuid with no --replay-user-messages:\n%s", out)
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		var e map[string]any
+		json.Unmarshal([]byte(l), &e)
+		if e["type"] == "user" && (e["isReplay"] == true || e["uuid"] == first) {
+			t.Fatalf("stdout has the echo with no --replay-user-messages: %s", l)
+		}
 	}
 }
 
@@ -342,16 +350,25 @@ func TestStopHookStreamHasTwoTurns(t *testing.T) {
 }
 
 func TestDisallowedToolIsNotInTheInitEvent(t *testing.T) {
-	s := start(t, "turn-with-tool-call", t.TempDir())
-	init := s.until(is("system", "init"))[0]
-	tools := init["tools"].([]any)
-	for _, tool := range tools {
-		if tool == "AskUserQuestion" {
-			t.Fatalf("init lists AskUserQuestion with --disallowedTools AskUserQuestion")
-		}
+	script := filepath.Join(t.TempDir(), "script.jsonl")
+	os.WriteFile(script, []byte(`{"type":"system","subtype":"init","cwd":"","session_id":"","permissionMode":"","tools":["AskUserQuestion","Bash","Read"],"uuid":""}`+"\n"), 0o600)
+	t.Setenv("FAKE_HARNESS_SCRIPT", script)
+	s := start(t, "", t.TempDir())
+	init := s.until(is("system", "init"))
+	e := init[len(init)-1]
+	if got := fmt.Sprint(e["tools"]); got != "[Bash Read]" || e["permissionMode"] != "bypassPermissions" || e["cwd"] != s.cwd {
+		t.Fatalf("init has tools %s, mode %v, cwd %v; want [Bash Read], bypassPermissions, %s", got, e["permissionMode"], e["cwd"], s.cwd)
 	}
-	if len(tools) != 25 || init["permissionMode"] != "bypassPermissions" || init["cwd"] != s.cwd {
-		t.Fatalf("init has %d tools, mode %v, cwd %v; want 25, bypassPermissions, %s", len(tools), init["permissionMode"], init["cwd"], s.cwd)
+}
+
+// The recorded init event, from the real Claude Code with --disallowedTools
+// AskUserQuestion in bypass mode, has no AskUserQuestion.
+func TestRecordedInitHasNoAskUserQuestion(t *testing.T) {
+	for _, name := range fakeharness.Names() {
+		b, _ := fakeharness.Stream(name)
+		if strings.Contains(string(b), `"AskUserQuestion"`) {
+			t.Errorf("stream %s lists AskUserQuestion", name)
+		}
 	}
 }
 
@@ -454,6 +471,38 @@ func TestScriptFromATestFile(t *testing.T) {
 	out, _ := cmd.Output()
 	if cmd.ProcessState.ExitCode() != 7 || !strings.Contains(string(out), `"init"`) {
 		t.Fatalf("exit %d, stdout %q; want 7 after the init event", cmd.ProcessState.ExitCode(), out)
+	}
+}
+
+// Claude Code names a message's uuid before it delivers the message (the
+// command_lifecycle events): the Harness takes the message, plays events
+// with its uuid, and gives the echo at the deliver step.
+func TestMessageNamedBeforeItsDelivery(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "script.jsonl")
+	os.WriteFile(script, []byte(strings.Join([]string{
+		`{"fake":"await_message","echo":false}`,
+		`{"type":"command_lifecycle","command_uuid":"$message:0","state":"queued","session_id":"","uuid":""}`,
+		`{"type":"system","subtype":"init","session_id":"","user_message_uuids":["$message:0"],"uuid":""}`,
+		`{"fake":"deliver","message":0}`,
+		`{"type":"result","subtype":"success","session_id":"","uuid":""}`,
+		`{"fake":"await_message","eof_code":0}`,
+	}, "\n")+"\n"), 0o600)
+	t.Setenv("FAKE_HARNESS_SCRIPT", script)
+	s := start(t, "", t.TempDir(), "--session-id", sessionID)
+	s.message(first, "Go.")
+	seen := s.until(echoOf(first))
+	if got := strings.Join(types(seen), " "); got != "command_lifecycle system/init user" {
+		t.Fatalf("events %s; want the lifecycle event and init before the echo", got)
+	}
+	if seen[0]["command_uuid"] != first || seen[1]["user_message_uuids"].([]any)[0] != first {
+		t.Fatalf("events %v; want the wrapper's uuid in place of $message:0", seen[:2])
+	}
+	s.until(is("result", "success"))
+	if code := s.end(); code != 0 {
+		t.Fatalf("exit %d; want 0", code)
+	}
+	if lines := s.transcript(sessionID); lines[0]["uuid"] != first {
+		t.Fatalf("first transcript line %v; want the user line at the deliver step", lines[0])
 	}
 }
 
