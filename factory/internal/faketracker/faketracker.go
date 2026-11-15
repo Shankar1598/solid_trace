@@ -96,6 +96,14 @@ func (t *Tracker) Put(connection string, tk Ticket, by User) {
 	t.tickets[connection][tk.ID] = &ticket{Ticket: tk, edit: t.edits, statusBy: by}
 }
 
+// Delete deletes a ticket of the connection, as the user. The tracker
+// then answers dispatcher.ErrNoTicket for it.
+func (t *Tracker) Delete(connection, id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.tickets[connection], id)
+}
+
 // SetStatus sets a ticket's status as the user. It is a new edit.
 func (t *Tracker) SetStatus(connection, id, status string, by User) {
 	t.change(connection, id, func(tk *ticket) { tk.Status, tk.statusBy = status, by })

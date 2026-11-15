@@ -329,3 +329,66 @@ func TestATicketThatRefusesCommentsDoesNotHoldBackAnotherRun(t *testing.T) {
 		t.Errorf("the comments are %+v, want only the started comment of T-2", got)
 	}
 }
+
+// waitForLog waits up to 10 s until the Dispatcher's log has part, and
+// gives the log.
+func waitForLog(t *testing.T, env *factorytest.Env, part string) string {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if logs := env.Logs(); strings.Contains(logs, part) {
+			return logs
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the Dispatcher's log does not have %q:\n%s", part, env.Logs())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+const gaveUp = "the Dispatcher gave it up"
+
+func TestAStepOfADeletedTicketIsGivenUpAtOnce(t *testing.T) {
+	env, ana := trackerEnv(t)
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), wait, reportStep("--outcome", "done", "--summary", "The total was right."),
+		reply, result, waitForEnd)
+	id := ticketRun(t, env, ana)
+	waitForWriteBack(t, env, 1, "Agent working")
+
+	env.Tracker.Delete("board", "T-1")
+	open()
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	logs := waitForLog(t, env, gaveUp)
+	// The waits of a retry are 250 ms and more: a retry comes in this
+	// time.
+	time.Sleep(600 * time.Millisecond)
+	logs = env.Logs()
+	if n := strings.Count(logs, gaveUp); n != 1 || strings.Contains(logs, "tries again") {
+		t.Errorf("the step of the deleted ticket was given up %d times, want 1 and no retry:\n%s", n, logs)
+	}
+	if got := env.Tracker.Comments("board"); len(got) != 1 {
+		t.Errorf("the comments are %+v, want only the started comment", got)
+	}
+}
+
+func TestAStepThatFailsForADayIsGivenUp(t *testing.T) {
+	env, ana := trackerEnv(t)
+	env.Tracker.RefuseComments("board", "T-1")
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "The total was right."),
+		reply, result, waitForEnd)
+	id := ticketRun(t, env, ana)
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	waitForLog(t, env, "tries again")
+	if strings.Contains(env.Logs(), gaveUp) {
+		t.Fatalf("a step was given up before a day:\n%s", env.Logs())
+	}
+
+	env.Clock.Advance(24 * time.Hour)
+	waitForLog(t, env, gaveUp)
+	env.Tracker.AcceptComments("board", "T-1")
+	time.Sleep(1500 * time.Millisecond)
+	if got := env.Tracker.Comments("board"); len(got) != 0 {
+		t.Errorf("a given-up step was sent: %+v", got)
+	}
+}
