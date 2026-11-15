@@ -3,10 +3,13 @@ package dispatcher
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/solidtrace/cli/capture"
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -93,10 +96,22 @@ func (d *Dispatcher) saveSettings(w http.ResponseWriter, r *http.Request, p pers
 		}
 		connectionID = id
 	}
-	if err := d.store.saveSettings(p.organization.id, project.id, project.slug, save, connectionID, p, d.now().UTC()); err != nil {
+	routes, ok := d.routes(w, p, save.Routes)
+	if !ok {
+		return
+	}
+	err := d.store.saveSettings(p.organization.id, project.id, project.slug, save, connectionID, routes, p, d.now().UTC())
+	var taken *routeTaken
+	if errors.As(err, &taken) {
+		writeProblem(w, http.StatusConflict, taken.Error())
+		return
+	}
+	if err != nil {
 		d.serverError(w, "save the Factory settings", err)
 		return
 	}
+	// A repository that no Project names now gives no more hosts.
+	d.refreshAllowlist()
 	settings, err := d.store.settings(p.organization.id, project.id)
 	if err != nil {
 		d.serverError(w, "read the Factory settings", err)
@@ -108,7 +123,12 @@ func (d *Dispatcher) saveSettings(w http.ResponseWriter, r *http.Request, p pers
 // project finds the Project of the request's {project} slug at
 // SolidTrace. It answers the request itself when it finds none.
 func (d *Dispatcher) project(w http.ResponseWriter, r *http.Request, p person) (solidTraceProject, bool) {
-	slug := r.PathValue("project")
+	return d.projectBySlug(w, r, p, r.PathValue("project"))
+}
+
+// projectBySlug finds the Project with slug at SolidTrace. It answers the
+// request itself when it finds none.
+func (d *Dispatcher) projectBySlug(w http.ResponseWriter, r *http.Request, p person, slug string) (solidTraceProject, bool) {
 	projects, err := d.listProjects(r.Context(), p.organization)
 	if err != nil {
 		d.solidTraceFailure(w, p.organization, err)
@@ -128,21 +148,22 @@ func (d *Dispatcher) project(w http.ResponseWriter, r *http.Request, p person) (
 
 // triggerSettings finds the Factory settings of the Project that a
 // trigger names. It refuses the trigger, with a warning, for a Project
-// that SolidTrace does not have or that has no Factory settings. The
-// settings of each Project that SolidTrace no longer has are marked
-// orphaned. It answers the request itself when it refuses.
-func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, p person, slug string) (storedSettings, bool) {
-	projects, err := d.listProjects(r.Context(), p.organization)
+// that SolidTrace does not have or that has no Factory settings, and with
+// 403 for a Project that is not in the starter's list. The settings of
+// each Project that SolidTrace no longer has are marked orphaned. It
+// answers the request itself when it refuses.
+func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, s starter, slug string) (storedSettings, bool) {
+	projects, err := d.listProjects(r.Context(), s.organization)
 	if err != nil {
-		d.solidTraceFailure(w, p.organization, err)
+		d.solidTraceFailure(w, s.organization, err)
 		return storedSettings{}, false
 	}
-	all, err := d.store.allSettings(p.organization.id)
+	all, err := d.store.allSettings(s.organization.id)
 	if err != nil {
 		d.serverError(w, "read the Factory settings", err)
 		return storedSettings{}, false
 	}
-	marked, err := d.markOrphans(p.organization, projects, all)
+	marked, err := d.markOrphans(s.organization, projects, all)
 	if err != nil {
 		d.serverError(w, "mark the Factory settings orphaned", err)
 		return storedSettings{}, false
@@ -150,18 +171,22 @@ func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, p p
 	i := slices.IndexFunc(projects, func(sp solidTraceProject) bool { return sp.slug == slug })
 	if i < 0 {
 		d.warn("a trigger names a Project that SolidTrace does not have: the Run is refused",
-			p.warnArgs(slug)...)
-		message := noProject(slug, p.organization.slug) + ": the Run is refused"
+			s.warnArgs(slug)...)
+		message := noProject(slug, s.organization.slug) + ": the Run is refused"
 		if slices.Contains(marked, slug) {
 			message += ", and its Factory settings are marked orphaned"
 		}
 		writeProblem(w, http.StatusUnprocessableEntity, message)
 		return storedSettings{}, false
 	}
-	settings, err := d.store.settings(p.organization.id, projects[i].id)
+	if s.projects != nil && !slices.Contains(s.projects, projects[i].id) {
+		writeProblem(w, http.StatusForbidden, "the "+s.kind+" "+s.name+" cannot start Runs in the Project "+slug)
+		return storedSettings{}, false
+	}
+	settings, err := d.store.settings(s.organization.id, projects[i].id)
 	if errors.Is(err, errNotFound) {
 		d.warn("a trigger names a Project that has no Factory settings: the Run is refused",
-			p.warnArgs(slug)...)
+			s.warnArgs(slug)...)
 		writeProblem(w, http.StatusUnprocessableEntity, noSettings(slug)+": the Run is refused")
 		return storedSettings{}, false
 	}
@@ -190,6 +215,9 @@ func (d *Dispatcher) markOrphans(org organization, projects []solidTraceProject,
 	marked, err := d.store.orphan(org.id, gone, d.now().UTC())
 	if err != nil {
 		return nil, err
+	}
+	if len(marked) > 0 {
+		d.refreshAllowlist()
 	}
 	for _, m := range marked {
 		d.warn("SolidTrace no longer has the Project: its Factory settings are marked orphaned",
@@ -249,14 +277,76 @@ func cleanSettings(s *dispatcherapi.SaveFactorySettings) string {
 	}
 	s.Folder = folder
 
-	branch := strings.TrimSpace(s.BaseBranch)
-	if branch != "" && (!baseBranchPattern.MatchString(branch) || strings.Contains(branch, "..") ||
-		strings.Contains(branch, "//") || strings.HasSuffix(branch, "/") || strings.HasSuffix(branch, ".lock")) {
+	branch, ok := cleanBranch(s.BaseBranch)
+	if !ok {
 		return "the base branch must be a branch name, such as main or release/2.0, not " + quote(s.BaseBranch)
 	}
 	s.BaseBranch = branch
 	s.Connection = strings.TrimSpace(s.Connection)
+	if s.Routes != nil {
+		seen := map[dispatcherapi.Route]bool{}
+		for i, r := range *s.Routes {
+			r = dispatcherapi.Route{Connection: strings.TrimSpace(r.Connection), Match: strings.TrimSpace(r.Match)}
+			switch {
+			case r.Connection == "":
+				return "a route needs the name of a tracker connection"
+			case utf8.RuneCountInString(r.Match) > maxMatch || strings.ContainsFunc(r.Match, unicode.IsControl):
+				return "a route's match value is one line of at most 200 characters, not " + quote(r.Match)
+			case seen[r]:
+				return "the route (" + r.Connection + ", " + quote(r.Match) + ") is in the list two times"
+			}
+			seen[r] = true
+			(*s.Routes)[i] = r
+		}
+	}
 	return ""
+}
+
+// validBranch is true for a branch name that a Run can start from.
+func validBranch(branch string) bool {
+	return baseBranchPattern.MatchString(branch) && !strings.Contains(branch, "..") &&
+		!strings.Contains(branch, "//") && !strings.HasSuffix(branch, "/") && !strings.HasSuffix(branch, ".lock")
+}
+
+// cleanBranch gives a base branch in its stored form ("" is none), and
+// false when it is not a branch name.
+func cleanBranch(branch string) (string, bool) {
+	branch = strings.TrimSpace(branch)
+	if branch != "" && !validBranch(branch) {
+		return "", false
+	}
+	return branch, true
+}
+
+// maxMatch is the most characters of a route's match value.
+const maxMatch = 200
+
+// routes finds the tracker connection of each route (nil for nil: the
+// save keeps the routes). It answers the request itself when a route names
+// no tracker connection of the Organization.
+func (d *Dispatcher) routes(w http.ResponseWriter, p person, routes *[]dispatcherapi.Route) ([]storedRoute, bool) {
+	if routes == nil {
+		return nil, true
+	}
+	stored := []storedRoute{}
+	for _, r := range *routes {
+		id, kind, err := d.store.connectionKind(p.organization.id, r.Connection)
+		switch {
+		case errors.Is(err, errNotFound):
+			writeProblem(w, http.StatusUnprocessableEntity, "no connection "+r.Connection+" in the Organization "+
+				p.organization.slug+": 'solidtrace connections list' lists them")
+			return nil, false
+		case err != nil:
+			d.serverError(w, "save the Factory settings", err)
+			return nil, false
+		case d.trackers[kind] == nil:
+			writeProblem(w, http.StatusUnprocessableEntity, "a route needs a tracker connection, and "+r.Connection+
+				" is a "+kind+" connection")
+			return nil, false
+		}
+		stored = append(stored, storedRoute{r, id})
+	}
+	return stored, true
 }
 
 func quote(s string) string {
@@ -265,7 +355,7 @@ func quote(s string) string {
 }
 
 func (d *Dispatcher) listConnections(w http.ResponseWriter, r *http.Request, p person) {
-	connections, err := d.store.connections(p.organization.id)
+	connections, err := d.connections(p.organization.id)
 	if err != nil {
 		d.serverError(w, "list the connections", err)
 		return
@@ -291,9 +381,13 @@ func (d *Dispatcher) saveConnection(w http.ResponseWriter, r *http.Request, p pe
 	}
 	save.Token = strings.TrimSpace(save.Token)
 	switch {
-	case save.Kind != dispatcherapi.ForgeBitbucket:
-		writeProblem(w, http.StatusBadRequest, "the kind of a connection must be "+dispatcherapi.ForgeBitbucket+
-			" (Bitbucket Cloud), not "+quote(save.Kind))
+	case save.Kind == dispatcherapi.TrackerLinear:
+		writeProblem(w, http.StatusBadRequest, "a Linear connection is an install of the Linear app, with no token "+
+			"to give: run 'solidtrace connections add linear "+name+" --client-id ID < client-secret-file'")
+		return
+	case save.Kind != dispatcherapi.ForgeBitbucket && d.kinds[save.Kind] == nil:
+		writeProblem(w, http.StatusBadRequest, "the kind of a connection must be "+
+			strings.Join(d.connectionKinds(), " or ")+", not "+quote(save.Kind))
 		return
 	case save.Token == "" || len(save.Token) > maxToken:
 		writeProblem(w, http.StatusBadRequest, "a connection needs its token (at most 8 KiB)")
@@ -306,7 +400,46 @@ func (d *Dispatcher) saveConnection(w http.ResponseWriter, r *http.Request, p pe
 	}
 	d.log.Info("an Admin saved a connection", "organization", p.organization.slug, "connection", name,
 		"kind", save.Kind, "made", made, "by", p.name)
-	connections, err := d.store.connections(p.organization.id)
+	d.writeConnection(w, p.organization.id, name)
+}
+
+// connectionKinds are the kinds that a connection can have.
+func (d *Dispatcher) connectionKinds() []string {
+	kinds := []string{dispatcherapi.ForgeBitbucket + " (Bitbucket Cloud)"}
+	for _, kind := range slices.Sorted(maps.Keys(d.kinds)) {
+		if kind != dispatcherapi.ForgeBitbucket {
+			kinds = append(kinds, kind)
+		}
+	}
+	return kinds
+}
+
+// connections reads the Organization's connections, with the webhook URL
+// of each connection whose kind sends webhooks.
+func (d *Dispatcher) connections(organizationID string) ([]dispatcherapi.Connection, error) {
+	stored, err := d.store.connections(organizationID)
+	connections := make([]dispatcherapi.Connection, 0, len(stored))
+	for _, c := range stored {
+		if _, ok := d.kinds[c.Kind]; ok && d.config.WebhookURL != "" {
+			c.WebhookURL = d.config.WebhookURL + webhookPath(c.Kind, c.id)
+		}
+		if t := d.trackers[c.Kind]; t != nil {
+			settings := trackerSettings(t, c.tracker)
+			c.Tracker = &settings
+		}
+		if c.Kind == dispatcherapi.TrackerLinear {
+			if credentials, err := d.store.linearCredentials(c.id); err == nil {
+				c.Team = credentials.Team.Key
+			}
+		}
+		connections = append(connections, c.Connection)
+	}
+	return connections, err
+}
+
+// writeConnection answers with the Organization's connection with name.
+func (d *Dispatcher) writeConnection(w http.ResponseWriter, organizationID, name string) {
+	connections, err := d.connections(organizationID)
 	if err != nil {
 		d.serverError(w, "read the connection", err)
 		return
@@ -318,6 +451,95 @@ func (d *Dispatcher) saveConnection(w http.ResponseWriter, r *http.Request, p pe
 		}
 	}
 	d.serverError(w, "read the connection", errNotFound)
+}
+
+// maxWebhookSecret is the longest webhook secret that a connection keeps.
+const maxWebhookSecret = 1 << 10
+
+// saveWebhookSecret makes or replaces the webhook secret of the
+// Organization's connection with the request's {name}: the secret that
+// the connection's service signs each webhook with.
+func (d *Dispatcher) saveWebhookSecret(w http.ResponseWriter, r *http.Request, p person) {
+	name := r.PathValue("name")
+	var save dispatcherapi.SaveWebhookSecret
+	if !decode(w, r, &save, "the body must be a JSON object with secret") {
+		return
+	}
+	save.Secret = strings.TrimSpace(save.Secret)
+	if save.Secret == "" || len(save.Secret) > maxWebhookSecret {
+		writeProblem(w, http.StatusBadRequest, "a webhook secret has 1 to 1024 characters")
+		return
+	}
+	kind, _, err := d.store.connection(p.organization.id, name)
+	switch {
+	case errors.Is(err, errNotFound):
+		writeProblem(w, http.StatusNotFound, "no connection "+name+" in the Organization "+p.organization.slug+
+			": 'solidtrace connections list' lists them")
+		return
+	case err != nil:
+		d.serverError(w, "read the connection", err)
+		return
+	case d.kinds[kind] == nil:
+		writeProblem(w, http.StatusUnprocessableEntity, "a "+kind+" connection gets no webhooks from this Dispatcher")
+		return
+	}
+	if err := d.store.saveWebhookSecret(p.organization.id, name, save.Secret); err != nil {
+		d.serverError(w, "save the webhook secret", err)
+		return
+	}
+	d.log.Info("an Admin saved a webhook secret", "organization", p.organization.slug, "connection", name, "by", p.name)
+	d.writeConnection(w, p.organization.id, name)
+}
+
+// maxTrackerSetting is the most characters of a tracker setting.
+const maxTrackerSetting = 200
+
+// saveTrackerSettings replaces the settings of the Organization's tracker
+// connection with the request's {name}. An empty value is the kind's
+// default.
+func (d *Dispatcher) saveTrackerSettings(w http.ResponseWriter, r *http.Request, p person) {
+	name := r.PathValue("name")
+	var save dispatcherapi.TrackerSettings
+	if !decode(w, r, &save, "the body must be a JSON object with ready_status, routing_field and database") {
+		return
+	}
+	save.ReadyStatus, save.RoutingField = strings.TrimSpace(save.ReadyStatus), strings.TrimSpace(save.RoutingField)
+	save.Database = strings.TrimSpace(save.Database)
+	for _, v := range []string{save.ReadyStatus, save.RoutingField, save.Database} {
+		if utf8.RuneCountInString(v) > maxTrackerSetting || strings.ContainsFunc(v, unicode.IsControl) {
+			writeProblem(w, http.StatusBadRequest, "a tracker setting is one line of at most 200 characters, not "+quote(v))
+			return
+		}
+	}
+	_, kind, err := d.store.connectionKind(p.organization.id, name)
+	switch {
+	case errors.Is(err, errNotFound):
+		writeProblem(w, http.StatusNotFound, "no connection "+name+" in the Organization "+p.organization.slug+
+			": 'solidtrace connections list' lists them")
+		return
+	case err != nil:
+		d.serverError(w, "read the connection", err)
+		return
+	case d.trackers[kind] == nil:
+		writeProblem(w, http.StatusUnprocessableEntity, "a "+kind+" connection is not a tracker connection")
+		return
+	}
+	if check, ok := d.trackers[kind].(settingsCheck); ok {
+		if save, err = check.checkSettings(save); err != nil {
+			writeProblem(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if save.Database != "" {
+		writeProblem(w, http.StatusBadRequest, "a "+kind+" connection has no database")
+		return
+	}
+	if err := d.store.saveTrackerSettings(p.organization.id, name, save); err != nil {
+		d.serverError(w, "save the tracker settings", err)
+		return
+	}
+	d.log.Info("an Admin saved the tracker settings of a connection", "organization", p.organization.slug,
+		"connection", name, "by", p.name)
+	d.writeConnection(w, p.organization.id, name)
 }
 
 // decode reads the request's JSON body into v, with no unknown field. It

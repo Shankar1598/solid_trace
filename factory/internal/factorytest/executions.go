@@ -89,6 +89,11 @@ func Executions(e *Env) {
 		e.t.Fatalf("start the fake Runner: %v", err)
 	}
 	e.Runner = r
+	// The wrappers' limits read the environment's clock.
+	e.Clock.mu.Lock()
+	e.Clock.machines, e.Clock.beforeMove = r.clockFile(), r.renewIdentities
+	writeClock(e.Clock.machines, e.Clock.now)
+	e.Clock.mu.Unlock()
 }
 
 // WithRunner gives the Dispatcher runner in place of the fake Runner,
@@ -118,9 +123,12 @@ type Runner struct {
 	mu         sync.Mutex
 	scripts    []string
 	executions []string
-	harness    string
-	broken     bool
-	noDocker   bool
+	// kinds are the machine kinds that the Dispatcher asked for, by
+	// Execution.
+	kinds    map[string]string
+	harness  string
+	broken   bool
+	noDocker bool
 }
 
 // BreakWrapper makes the next Execution's wrapper start with no Dispatcher
@@ -129,6 +137,30 @@ func (r *Runner) BreakWrapper() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.broken = true
+}
+
+// HoldClock stops the agent machines' clock at its time: the wrappers'
+// limits do not pass when the environment's clock moves, as when a
+// wrapper's timers fail. The Dispatcher's clock still moves.
+func (r *Runner) HoldClock() {
+	r.env.Clock.mu.Lock()
+	defer r.env.Clock.mu.Unlock()
+	r.env.Clock.held = true
+}
+
+// clockFile is the file of the agent machines' clock.
+func (r *Runner) clockFile() string { return filepath.Join(r.dir, "clock") }
+
+// renewIdentities renews the workload identity JWT of each Execution
+// before the environment's clock moves to next: each new JWT is valid
+// from now until 1 hour after next, so no call of a wrapper finds its JWT
+// not valid while the clock moves.
+func (r *Runner) renewIdentities(next time.Time) {
+	for _, execution := range r.Dispatched() {
+		claims := r.Claims(Workload(execution))
+		claims["exp"] = next.Add(time.Hour).Unix()
+		r.writeIdentity(execution, r.Sign(claims))
+	}
 }
 
 // Wrapper is the wrapper program.
@@ -245,6 +277,10 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		r.scripts = r.scripts[1:]
 	}
 	r.executions = append(r.executions, x.Execution)
+	if r.kinds == nil {
+		r.kinds = map[string]string{}
+	}
+	r.kinds[x.Execution] = x.MachineKind
 	program := r.harness
 	broken := r.broken
 	r.broken = false
@@ -264,6 +300,12 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// Never the dev box's real Docker: the end kills each container.
 		wrapper.EnvDocker + "=" + docker,
 		fakedocker.EnvDir + "=" + r.Docker.Dir(),
+		// Each Execution is on its own machine: its own workspace and run
+		// user's home. The caches are of the Runner, as on a VM that
+		// keeps them across Executions.
+		wrapper.EnvWorkspace + "=" + r.Workspace(x.Execution),
+		wrapper.EnvHome + "=" + r.Home(x.Execution),
+		wrapper.EnvCache + "=" + r.Cache(),
 		harness,
 		"PATH=" + r.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		// The agent's solidtrace has no sign-in of a person.
@@ -273,6 +315,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// notice.
 		wrapper.EnvMachineNotice + "=gce",
 		wrapper.EnvMetadataURL + "=" + r.Metadata.URL(x.Execution),
+		wrapper.EnvClockFile + "=" + r.clockFile(),
 		// The wrapper gives the harness its own Claude Code directories.
 		"CLAUDE_CONFIG_DIR=", "CLAUDE_CODE_PROJECT_DIR_NAME=",
 	}
@@ -303,8 +346,13 @@ func (r *Runner) Signal(execution string, sig os.Signal) {
 // Runner does before the old JWT expires.
 func (r *Runner) RenewIdentity(execution string) {
 	r.env.t.Helper()
+	r.writeIdentity(execution, r.Identity(Workload(execution)))
+}
+
+func (r *Runner) writeIdentity(execution, jwt string) {
+	r.env.t.Helper()
 	path := filepath.Join(r.dir, "identity-"+execution+".jwt")
-	if err := os.WriteFile(path+".new", []byte(r.Identity(Workload(execution))), 0o600); err != nil {
+	if err := os.WriteFile(path+".new", []byte(jwt), 0o600); err != nil {
 		r.env.t.Fatal(err)
 	}
 	if err := os.Rename(path+".new", path); err != nil {
@@ -356,13 +404,39 @@ func (r *Runner) Dispatched() []string {
 	return append([]string{}, r.executions...)
 }
 
+// MachineKind is the machine kind that the Dispatcher asked for when it
+// dispatched the Execution ("" is the operator's default kind).
+func (r *Runner) MachineKind(execution string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.kinds[execution]
+}
+
+// Workspace is the folder of an Execution's checkouts (WRAPPER_WORKSPACE).
+func (r *Runner) Workspace(execution string) string {
+	return filepath.Join(r.dir, "machines", execution, "workspace")
+}
+
+// Home is the run user's home of an Execution (WRAPPER_HOME).
+func (r *Runner) Home(execution string) string {
+	return filepath.Join(r.dir, "machines", execution, "home")
+}
+
+// Cache is the caches folder of each Execution (WRAPPER_CACHE).
+func (r *Runner) Cache() string { return filepath.Join(r.dir, "cache") }
+
 // UploadEvery is how often each wrapper uploads during an Execution.
 const UploadEvery = 100 * time.Millisecond
 
 // ProjectDir is the Claude Code project directory of an Execution: the
-// harness writes its Agent sessions there, and the agent its evidence/.
+// one folder in <wrapper dir>/claude/projects ("" when there is not one).
+// The wrapper does not delete it at the end.
 func (r *Runner) ProjectDir(execution string) string {
-	return filepath.Join(r.dir, "executions", execution, "claude", "projects", "run")
+	dirs, _ := filepath.Glob(filepath.Join(r.dir, "executions", execution, "claude", "projects", "*"))
+	if len(dirs) != 1 {
+		return ""
+	}
+	return dirs[0]
 }
 
 // Socket is the path of the agent's socket of an Execution.

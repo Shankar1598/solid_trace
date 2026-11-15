@@ -53,8 +53,8 @@ class FactorySectionTest < ActionDispatch::IntegrationTest
     assert_equal true, page.dig("props", "can_manage_project")
     assert_equal "/#{@organization.slug}/runs?project=#{@project.slug}", page.dig("props", "factory_section", "runs_path")
     assert_equal "/#{@organization.slug}/projects/#{@project.slug}/factory", page.dig("props", "factory_section", "path")
-    assert_equal({ "settings" => { "repository" => "bitbucket.org/example/shop", "folder" => "apps/shop",
-                                   "base_branch" => "develop" } }, factory_prop)
+    assert_equal({ "repository" => "bitbucket.org/example/shop", "folder" => "apps/shop", "base_branch" => "develop" },
+                 factory_prop["settings"])
   end
 
   test "a member sees the values and no edit control, and a write gets 403 with no call to the Dispatcher" do
@@ -75,7 +75,7 @@ class FactorySectionTest < ActionDispatch::IntegrationTest
     stub_list(settings("bitbucket.org/example/other", project: "other"))
     sign_in_as(@admin)
 
-    assert_equal({ "settings" => nil }, factory_prop)
+    assert_nil factory_prop["settings"]
   end
 
   test "a first save sends no connection" do
@@ -98,7 +98,7 @@ class FactorySectionTest < ActionDispatch::IntegrationTest
     stub_request(:put, settings_url).to_return(json(settings("bitbucket.org/example/shop")))
     sign_in_as(@admin)
 
-    assert_equal({ "settings" => nil }, factory_prop)
+    assert_nil factory_prop["settings"]
 
     patch factory_url, params: { factory: { repository: "bitbucket.org/example/shop" } }
     assert_requested(:put, settings_url) do |request|
@@ -195,7 +195,11 @@ class FactorySectionTest < ActionDispatch::IntegrationTest
       orphaned: false }
   end
 
+  # The Organization's settings; the section also reads the Project's
+  # schedules and, for an Admin, the connections (none here).
   def stub_list(*projects)
+    stub_request(:get, "#{DISPATCHER}/api/v1/schedules?project=#{@project.slug}").to_return(json({ schedules: [] }))
+    stub_request(:get, "#{DISPATCHER}/api/v1/connections").to_return(json({ connections: [] }))
     stub_request(:get, LIST_URL).to_return(json({ projects: projects }))
   end
 

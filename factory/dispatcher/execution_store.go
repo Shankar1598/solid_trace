@@ -21,10 +21,13 @@ type storedExecution struct {
 	state                                string
 }
 
-// queuedRuns are the ids of the queued Runs with no Execution that has
-// not ended, oldest first.
+// queuedRuns are the ids of the queued Runs that are not closed and
+// whose PR has no outcome, with no Execution that has not ended, oldest
+// first. A Closed Run cannot continue, and a Run whose PR has an outcome
+// is closed when its Execution ends.
 func (s *store) queuedRuns() ([]string, error) {
-	rows, err := s.db.Query(`SELECT r.id FROM runs r WHERE r.state = ? AND NOT EXISTS
+	rows, err := s.db.Query(`SELECT r.id FROM runs r WHERE r.state = ? AND r.closed_at IS NULL AND r.pr_outcome = ''
+		AND NOT EXISTS
 		(SELECT 1 FROM executions e WHERE e.run_id = r.id AND e.state != ?) ORDER BY r.created_at, r.id`,
 		dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded)
 	if err != nil {
@@ -51,9 +54,9 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	}
 	defer tx.Rollback()
 	var free bool
-	err = tx.QueryRow(`SELECT r.state = ? AND NOT EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
-		AND e.state != ?) FROM runs r WHERE r.id = ?`, dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded,
-		runID).Scan(&free)
+	err = tx.QueryRow(`SELECT r.state = ? AND r.closed_at IS NULL AND r.pr_outcome = '' AND NOT EXISTS
+		(SELECT 1 FROM executions e WHERE e.run_id = r.id AND e.state != ?) FROM runs r WHERE r.id = ?`,
+		dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded, runID).Scan(&free)
 	if err != nil || !free {
 		return false, ignoreNoRows(err)
 	}
@@ -76,6 +79,33 @@ func (s *store) setWorkload(id, workload string) error {
 	return err
 }
 
+// setFactoryFile keeps the factory file of a dispatched Execution.
+func (s *store) setFactoryFile(id, file string) error {
+	_, err := s.db.Exec(`UPDATE executions SET factory_file = ? WHERE id = ?`, file, id)
+	return err
+}
+
+// factoryFile is the factory file that the Execution's dispatch kept.
+func (s *store) factoryFile(id string) (factoryFile, error) {
+	var data string
+	if err := s.db.QueryRow(`SELECT factory_file FROM executions WHERE id = ?`, id).Scan(&data); err != nil {
+		return factoryFile{}, err
+	}
+	return decodeFactoryFile(data)
+}
+
+// checkoutOfRun is what the read of a Run's factory file needs.
+type checkoutOfRun struct {
+	organizationID, projectID, repository, folder string
+}
+
+func (s *store) runCheckout(runID string) (checkoutOfRun, error) {
+	var c checkoutOfRun
+	err := s.db.QueryRow(`SELECT organization_id, project_id, repository, folder FROM runs WHERE id = ?`, runID).
+		Scan(&c.organizationID, &c.projectID, &c.repository, &c.folder)
+	return c, err
+}
+
 // execution reads one Execution.
 func (s *store) execution(id string) (storedExecution, error) {
 	var e storedExecution
@@ -91,16 +121,24 @@ func (s *store) execution(id string) (storedExecution, error) {
 // startedRun is what the task call needs of the Run.
 type startedRun struct {
 	prompt, sessionID string
-	resume            bool
+	// project, repository, folder and baseBranch are the Run's, as its
+	// start kept them: a change of the Factory settings after the start
+	// does not change them.
+	project, repository, folder, baseBranch string
+	resume                                  bool
 	// startedAt is when the Execution started: its limits count from it.
 	startedAt time.Time
+	// limits are the Execution's limits: the total limit as it was kept
+	// at the first task call.
+	limits dispatcherapi.Limits
 }
 
 // startExecution marks a dispatched Execution running and its Run
-// running, and gives the Run's prompt and Agent session id (made at the
-// Run's first Execution). A second call on a running Execution changes
-// nothing. An ended Execution gives errEnded.
-func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
+// running, keeps its total limit from limits, and gives the Run's prompt
+// and Agent session id (made at the Run's first Execution). A second call
+// on a running Execution changes nothing. An ended Execution gives
+// errEnded.
+func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Limits) (startedRun, error) {
 	var run startedRun
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -115,8 +153,8 @@ func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
 	case dispatcherapi.ExecutionEnded:
 		return run, errEnded
 	case dispatcherapi.ExecutionDispatched:
-		if _, err := tx.Exec(`UPDATE executions SET state = ?, started_at = ? WHERE id = ?`,
-			dispatcherapi.ExecutionRunning, at.UnixMicro(), id); err != nil {
+		if _, err := tx.Exec(`UPDATE executions SET state = ?, started_at = ?, total_limit = ? WHERE id = ?`,
+			dispatcherapi.ExecutionRunning, at.UnixMicro(), int64(limits.Total()/time.Second), id); err != nil {
 			return run, err
 		}
 		if _, err := tx.Exec(`UPDATE runs SET state = ? WHERE id = ? AND state = ?`,
@@ -133,14 +171,15 @@ func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
 		}
 	}
 	var started int64
-	err = tx.QueryRow(`SELECT prompt, session_id, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
-		AND e.id != ? AND e.started_at IS NOT NULL), (SELECT started_at FROM executions WHERE id = ?)
-		FROM runs r WHERE id = ?`, id, id, runID).
-		Scan(&run.prompt, &run.sessionID, &run.resume, &started)
+	err = tx.QueryRow(`SELECT prompt, session_id, project, repository, folder, base_branch, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
+		AND e.id != ? AND e.started_at IS NOT NULL), (SELECT started_at FROM executions WHERE id = ?),
+		(SELECT total_limit FROM executions WHERE id = ?) FROM runs r WHERE id = ?`, id, id, id, runID).
+		Scan(&run.prompt, &run.sessionID, &run.project, &run.repository, &run.folder, &run.baseBranch, &run.resume, &started, &run.limits.TotalSeconds)
 	if err != nil {
 		return run, err
 	}
 	run.startedAt = time.UnixMicro(started).UTC()
+	run.limits.IdleSeconds = limits.IdleSeconds
 	if state == dispatcherapi.ExecutionDispatched {
 		if err := recordEvent(tx, at, runID, eventExecutionStarted, map[string]any{"execution.id": id}); err != nil {
 			return run, err
@@ -158,8 +197,17 @@ func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time)
 	}
 	defer tx.Rollback()
 	var runID string
-	err = tx.QueryRow(`UPDATE executions SET report_outcome = ?, report_summary = ?, report_question = ?
-		WHERE id = ? AND state = ? RETURNING run_id`, report.Outcome, report.Summary, report.Question, id,
+	checks, err := jsonList(report.Checks)
+	if err != nil {
+		return err
+	}
+	evidence, err := jsonList(report.Evidence)
+	if err != nil {
+		return err
+	}
+	err = tx.QueryRow(`UPDATE executions SET report_outcome = ?, report_summary = ?, report_question = ?,
+		report_checks = ?, report_evidence = ?, report_delivered = ? WHERE id = ? AND state = ? RETURNING run_id`,
+		report.Outcome, report.Summary, report.Question, checks, evidence, report.DeliveredMessages, id,
 		dispatcherapi.ExecutionRunning).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errEnded
@@ -168,7 +216,9 @@ func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time)
 		return err
 	}
 	err = recordEvent(tx, at, runID, eventReport, map[string]any{"execution.id": id,
-		"report.outcome": report.Outcome, "report.summary": report.Summary, "report.question": report.Question})
+		"report.outcome": report.Outcome, "report.summary": report.Summary, "report.question": report.Question,
+		"report.checks": nonNil(report.Checks), "report.evidence": nonNil(report.Evidence),
+		"report.delivered_messages": report.DeliveredMessages})
 	if err != nil {
 		return err
 	}
@@ -183,10 +233,12 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		return err
 	}
 	defer tx.Rollback()
-	var runID, state string
+	var runID, state, checks string
+	var prID int
 	var report dispatcherapi.Report
-	err = tx.QueryRow(`SELECT run_id, state, report_outcome, report_summary, report_question FROM executions
-		WHERE id = ?`, id).Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question)
+	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks, r.pr_id
+		FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
+		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &prID)
 	if err != nil {
 		return err
 	}
@@ -215,8 +267,17 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		endReason, exit, delivered, max(end.BackgroundTasksKilled, 0), id); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ? WHERE id = ? AND state = ?`,
-		runState, reason, question, summary, runID, dispatcherapi.StateRunning); err != nil {
+	var flags string
+	if runState == dispatcherapi.StateDone {
+		if err := unmarshalList(checks, &report.Checks); err != nil {
+			return err
+		}
+		if flags, err = jsonList(doneFlags(report.Checks, prID)); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ?, flags = ? WHERE id = ? AND state = ?`,
+		runState, reason, question, summary, flags, runID, dispatcherapi.StateRunning); err != nil {
 		return err
 	}
 	if end.Preemption != nil {
@@ -256,13 +317,6 @@ func preemptionDetails(execution string, p dispatcherapi.Preemption) map[string]
 		details["preemption.checkpoint_age_seconds"] = *p.CheckpointAgeSeconds
 	}
 	return details
-}
-
-func nonNil(list []string) []string {
-	if list == nil {
-		return []string{}
-	}
-	return list
 }
 
 // recordPreempting records the wrapper's preempting call on the running

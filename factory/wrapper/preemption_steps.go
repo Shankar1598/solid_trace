@@ -2,7 +2,6 @@ package wrapper
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -73,9 +72,9 @@ type preemption struct {
 func (e *execution) isMarked() bool { return e.markedFlag.Load() }
 
 // watch starts the preemption handler at the Machine notice, or at a
-// SIGTERM or a SIGINT. The wrapper has no stop command yet: the stop
-// commands (32) add the check that a signal after a stop command starts
-// no handler.
+// SIGTERM or a SIGINT. A signal after a stop command starts no handler:
+// it is the Runner's stop, not the machine's, and the stop command ends
+// the Execution.
 func (e *execution) watch(ctx context.Context, notice machineNotice, signals <-chan os.Signal) {
 	noticed := make(chan time.Time, 1)
 	go func() {
@@ -90,6 +89,10 @@ func (e *execution) watch(ctx context.Context, notice machineNotice, signals <-c
 		case at := <-noticed:
 			e.trigger(dispatcherapi.EndPreempted, at)
 		case sig := <-signals:
+			if e.stopping.Load() {
+				fmt.Fprintf(e.log, "wrapper: %s after a stop command: the stop command ends the Execution\n", sig)
+				continue
+			}
 			at := e.clock.Now()
 			go func() {
 				// The reason is preempted when the notice says so.
@@ -120,20 +123,39 @@ func (e *execution) trigger(reason string, at time.Time) {
 			mark:           e.setMarker,
 			tell:           e.tellPreempting,
 			halt:           func(ctx context.Context) { e.halt(ctx, reason) },
-			save:           e.saver.save,
+			save:           e.save,
 			lastUpload:     e.uploads.last,
 			lastCheckpoint: e.saver.lastCheckpoint,
 			end:            e.endPreempted,
 		})
+		// The workspace, the home and the secrets go in the time that
+		// is left. The machine goes in any case.
+		if left := at.Add(hardLimit).Sub(e.clock.Now()); left > 0 {
+			within(e.clock, left, func(context.Context) struct{} {
+				e.cleanUp()
+				return struct{}{}
+			})
+		}
 	}()
+}
+
+// save is step 3's save of the work: the work-in-progress save, then the
+// push of each commit of the Run's branch that is not on the remote (as
+// the usual end does).
+func (e *execution) save(ctx context.Context, reason string) (savedWork, error) {
+	saved, err := e.saver.save(ctx, reason)
+	if failed := e.push(e.environ); failed != "" {
+		err = errors.Join(err, errors.New(failed))
+	}
+	return saved, err
 }
 
 // setMarker is step 1's marker: no more messages on stdin, and the
 // agent's socket calls, the setup and the usual end's uploads stop.
+// It takes no lock, so that a write or a report that blocks does not
+// hold it.
 func (e *execution) setMarker(string) {
-	e.stdinMu.Lock()
 	e.markedFlag.Store(true)
-	e.stdinMu.Unlock()
 	e.mark()
 }
 
@@ -147,24 +169,19 @@ func (e *execution) tellPreempting(ctx context.Context, p dispatcherapi.Preempti
 	}
 }
 
-// interruptRequest is Claude Code's interrupt control request.
-func interruptRequest() []byte {
-	b, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": "preempt-" + newUUID(),
-		"request": map[string]any{"subtype": "interrupt"}})
-	return b
-}
-
 // halt is step 2: the interrupt request, interruptWait for the result,
 // then the end procedure with haltEndWait.
 func (e *execution) halt(ctx context.Context, reason string) {
-	e.harnessMu.Lock()
+	// The harness starts under mu, and does not start after the marker.
+	e.mu.Lock()
 	started := e.stdin != nil
-	e.harnessMu.Unlock()
+	e.mu.Unlock()
 	if started {
-		// The write can wait behind a message write that blocks; the close
-		// of stdin at the end procedure stops both.
+		// The interrupt waits at most writeWait (its write deadline),
+		// and the close of stdin stops it too. It does not hold the wait
+		// for the result.
 		go func() {
-			if err := e.writeStdin(interruptRequest(), nil); err != nil {
+			if err := e.interrupt(); err != nil {
 				fmt.Fprintln(e.log, "wrapper: the halt's interrupt request:", err)
 			}
 		}()
@@ -176,7 +193,7 @@ func (e *execution) halt(ctx context.Context, reason string) {
 		case <-ctx.Done():
 		}
 		stop()
-		e.startEndWithin(reason, "", haltEndWait)
+		e.beginEndWithin(reason, "", false, haltEndWait)
 		select {
 		case <-e.followed:
 		case <-ctx.Done():

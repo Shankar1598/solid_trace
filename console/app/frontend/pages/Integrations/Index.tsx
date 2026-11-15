@@ -14,16 +14,22 @@ import { toast } from 'sonner'
 
 interface IntegrationsIndexProps {
   integrations: Integration[]
+  /** Only an Admin deletes a Factory Integration. */
+  can_manage_factory: boolean
 }
 
-export default function IntegrationsIndex({ integrations }: IntegrationsIndexProps) {
+export default function IntegrationsIndex({ integrations, can_manage_factory }: IntegrationsIndexProps) {
   const { current_org } = usePage<SharedProps>().props
 
   if (!current_org) return null
 
-  const handleDelete = (id: number) => {
-    if (confirm('Are you sure you want to delete this integration?')) {
-      router.delete(`/${current_org.slug}/settings/integrations/${id}`, {
+  const handleDelete = (integration: Integration) => {
+    const question =
+      integration.provider === 'factory'
+        ? 'Delete this integration? Console also deletes its sender at the Dispatcher, and it starts no more Runs.'
+        : 'Are you sure you want to delete this integration?'
+    if (confirm(question)) {
+      router.delete(`/${current_org.slug}/settings/integrations/${integration.id}`, {
         onError: () => toast.error('Failed to delete integration')
       })
     }
@@ -89,15 +95,17 @@ export default function IntegrationsIndex({ integrations }: IntegrationsIndexPro
                         <Settings className="h-4 w-4" />
                         Configure
                       </Link>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Delete ${integration.name || providerName(integration.provider)}`}
-                        onClick={() => handleDelete(integration.id)}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {(integration.provider !== 'factory' || can_manage_factory) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Delete ${integration.name || providerName(integration.provider)}`}
+                          onClick={() => handleDelete(integration)}
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

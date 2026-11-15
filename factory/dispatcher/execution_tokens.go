@@ -16,13 +16,10 @@ import (
 	"github.com/solidtrace/cli/dispatcherapi"
 )
 
-// totalLimit is the Execution's total limit. Ticket 32 lets the factory
-// file change it; the Execution's child token expires at it plus
-// tokenMargin, so the expiry is the backstop of the revocation.
-const (
-	totalLimit  = 8 * time.Hour
-	tokenMargin = time.Hour
-)
+// tokenMargin: the Execution's child token expires at the Execution's
+// total limit plus tokenMargin, so the expiry is the backstop of the
+// revocation.
+const tokenMargin = time.Hour
 
 // maxRunSessions is the most Agent session ids that one Run can have. It
 // stops a wrapper that asks for each id that the run user writes.
@@ -126,7 +123,11 @@ func (d *Dispatcher) sessionToken(ctx context.Context, e storedExecution, starte
 	if err != nil {
 		return dispatcherapi.SessionToken{}, err
 	}
-	expires := started.Add(totalLimit + tokenMargin).UTC().Truncate(time.Second)
+	limit, err := d.store.totalLimit(e.id)
+	if err != nil {
+		return dispatcherapi.SessionToken{}, err
+	}
+	expires := started.Add(limit + tokenMargin).UTC().Truncate(time.Second)
 	id, secret, err := d.children.make(ctx, "Execution "+e.id+" of Run "+e.runID, ids, expires)
 	if err != nil {
 		return dispatcherapi.SessionToken{}, fmt.Errorf("make the Execution's token: %w", err)

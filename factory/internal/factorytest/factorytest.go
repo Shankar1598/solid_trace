@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,16 +25,33 @@ import (
 	"github.com/solidtrace/cli/credentials"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakeforge"
+	"github.com/solidtrace/factory/internal/fakelinear"
+	"github.com/solidtrace/factory/internal/fakenotion"
+	"github.com/solidtrace/factory/internal/fakesource"
+	"github.com/solidtrace/factory/internal/faketracker"
 	"github.com/solidtrace/factory/internal/recorder"
 )
 
 // DispatcherToken is the Dispatcher's own API token at the recorder.
 const DispatcherToken = "stk_dispatcher"
 
-// Clock is a clock that moves only when a test moves it.
+// Clock is a clock that moves only when a test moves it. It is the
+// Dispatcher's clock, the people's, and (with Executions) the clock of
+// the wrappers' limits on the agent machines.
 type Clock struct {
 	mu  sync.Mutex
 	now time.Time
+	// moving keeps one Advance at a time, so the machines see each time
+	// in order.
+	moving sync.Mutex
+	// machines is the file that the wrappers read their clock from (""
+	// with no Executions). held stops it at its time.
+	machines string
+	held     bool
+	// beforeMove runs at each Advance before the clock moves to the new
+	// time: the Runner renews the workload identities, as Nomad does
+	// before they expire.
+	beforeMove func(next time.Time)
 }
 
 // Now is the clock's time.
@@ -43,11 +61,33 @@ func (c *Clock) Now() time.Time {
 	return c.now
 }
 
-// Advance moves the clock by d.
+// Advance moves the clock by d, on the agent machines too.
 func (c *Clock) Advance(d time.Duration) {
+	c.moving.Lock()
+	defer c.moving.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
+	next, before := c.now.Add(d), c.beforeMove
+	c.mu.Unlock()
+	if before != nil {
+		before(next)
+	}
+	c.mu.Lock()
+	c.now = next
+	now, machines, held := c.now, c.machines, c.held
+	c.mu.Unlock()
+	if machines != "" && !held {
+		writeClock(machines, now)
+	}
+}
+
+// writeClock writes now to the machines' clock file in one step.
+func writeClock(path string, now time.Time) {
+	if err := os.WriteFile(path+".new", []byte(now.Format(time.RFC3339Nano)), 0o600); err != nil {
+		panic("factorytest: write the machines' clock: " + err.Error())
+	}
+	if err := os.Rename(path+".new", path); err != nil {
+		panic("factorytest: write the machines' clock: " + err.Error())
+	}
 }
 
 // Env is one Dispatcher and one SolidTrace.
@@ -69,16 +109,115 @@ type Env struct {
 	// Proxy is the agent machines' proxy, with the ThroughProxy option
 	// (else nil: the wrappers reach SolidTrace directly).
 	Proxy *Proxy
+	// Source is the fake webhook source: the API of each connection of
+	// kind fakesource.Kind or fakesource.OtherKind.
+	Source *fakesource.Source
+	// Tracker is the fake tracker: the API of each connection of kind
+	// faketracker.Kind.
+	Tracker *faketracker.Tracker
+	// Linear is the fake Linear of the Dispatcher's configuration.
+	Linear *fakelinear.Linear
+	// Notion is the fake Notion API of the Dispatcher's configuration:
+	// the API of each connection of kind notion. Its clock is Clock.
+	Notion *fakenotion.Notion
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
-	people  int
-	logs    lockedBuffer
+	// webhooks is the Dispatcher's webhook listener.
+	webhooks *httptest.Server
+	people   int
+	logs     lockedBuffer
 	// projects counts the Projects that Project made, for their ids.
 	projects int64
 	admin    *Person
+	// checked is the clock time of the schedule loop's last pass.
+	checked atomic.Pointer[time.Time]
+	// closeChecked is the clock time of the close loop's last pass.
+	closeChecked atomic.Pointer[time.Time]
+	// squid is the folder of the Squid allowlist and its reloads.
+	squid string
+}
+
+// MachineKinds are the operator's machine kinds in the environment's
+// configuration; the first is the default.
+var MachineKinds = []dispatcher.MachineKind{{Name: "standard", MemoryMB: 12288}, {Name: "large", MemoryMB: 28672}}
+
+// DefaultAllowlist is the operator's default allowlist in the
+// environment's configuration.
+const DefaultAllowlist = "# The default list.\napi.anthropic.com\n.bitbucket.org\n\nproxy.golang.org\n"
+
+// Allowlist is the Squid allowlist that the Dispatcher wrote ("" is
+// none), with no comment lines.
+func (e *Env) Allowlist() string {
+	data, _ := os.ReadFile(e.Config.SquidAllowlist)
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// SquidReloads counts the Dispatcher's runs of the reload command.
+func (e *Env) SquidReloads() int {
+	data, _ := os.ReadFile(filepath.Join(e.squid, "reloads"))
+	return strings.Count(string(data), "reload\n")
+}
+
+// scheduleEvery is the wait between two passes of the Dispatcher's
+// schedule loop in a test, so that a pass soon follows a move of the
+// clock.
+const scheduleEvery = 5 * time.Millisecond
+
+// CheckSchedules waits up to 10 s until the Dispatcher's schedule loop
+// did a pass at the clock's time now or later. So each fire time that is
+// due now has its Run, or its skip, after it.
+func (e *Env) CheckSchedules() {
+	e.t.Helper()
+	now := e.Clock.Now()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if at := e.checked.Load(); at != nil && !at.Before(now) {
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("the schedule loop did no pass at %s after 10 s\nDispatcher log:\n%s", now, e.Logs())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// CheckClosedRuns waits up to 10 s until the Dispatcher's close loop did
+// a pass at the clock's time now or later. So each Run that is due to
+// close now is closed after it, and when 5 minutes of the clock passed
+// since the last PR check, the PRs were checked.
+func (e *Env) CheckClosedRuns() {
+	e.t.Helper()
+	now := e.Clock.Now()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if at := e.closeChecked.Load(); at != nil && !at.Before(now) {
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("the close loop did no pass at %s after 10 s\nDispatcher log:\n%s", now, e.Logs())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// RestartAfter stops the Dispatcher, moves the clock by d while it is
+// down, and starts it again on the same database.
+func (e *Env) RestartAfter(d time.Duration) {
+	e.t.Helper()
+	if err := e.current.Load().Close(); err != nil {
+		e.t.Fatalf("stop the Dispatcher: %v", err)
+	}
+	e.Clock.Advance(d)
+	e.start()
 }
 
 // EncryptionKey is the Dispatcher's encryption key in each Env.
@@ -108,6 +247,11 @@ func (e *Env) Logs() string { return e.logs.String() }
 // eventRetry is the longest wait of the Dispatcher's event sender between
 // two tries, so a test sees the events soon after EventStore is back.
 const eventRetry = 50 * time.Millisecond
+
+// backstopEvery is how often the Dispatcher's backstop looks for
+// Executions past their total limit, so that a test sees its stop soon
+// after it moves the clock.
+const backstopEvery = 20 * time.Millisecond
 
 // RunEvents are the run events of the Run that SolidTrace has, by run.seq,
 // each run.seq one time (a reader drops repeats).
@@ -192,9 +336,7 @@ func (e *Env) WaitForWarning(text string) map[string]any {
 func (e *Env) Project(slug string) recorder.Project {
 	e.t.Helper()
 	project := e.SolidTraceProject(slug)
-	if e.admin == nil {
-		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
-	}
+	e.Admin()
 	settings := map[string]string{"repository": "bitbucket.org/example/" + slug}
 	if e.Runner != nil || e.runner != nil {
 		e.Forge.AddRepo("example/"+slug, nil)
@@ -210,6 +352,15 @@ func (e *Env) Project(slug string) recorder.Project {
 		e.t.Fatalf("save the Factory settings of %s: %d %s", slug, a.Status, a.Body)
 	}
 	return project
+}
+
+// Admin is the Admin of Organization that saves the Factory settings in
+// Project.
+func (e *Env) Admin() *Person {
+	if e.admin == nil {
+		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
+	}
+	return e.admin
 }
 
 // SolidTraceProject makes a Project with slug in Organization at
@@ -229,9 +380,14 @@ func New(t testing.TB, options ...Option) *Env {
 		t:          t,
 		SolidTrace: recorder.New(DispatcherToken),
 		Forge:      fakeforge.New(t),
+		Source:     fakesource.New(),
+		Tracker:    faketracker.New(),
+		Notion:     fakenotion.New(t),
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
+	e.Linear = fakelinear.New(t, e.Clock.Now)
 	t.Cleanup(e.SolidTrace.Close)
+	e.Notion.Now = e.Clock.Now
 	// The Dispatcher's own token: an Admin made it. Revoke it for an Admin
 	// who left the Organization.
 	e.SolidTrace.Token(DispatcherToken, recorder.Answer{
@@ -240,6 +396,11 @@ func New(t testing.TB, options ...Option) *Env {
 		Scope:         "run_events:write issues:comment tokens:create mcp:read",
 		Organizations: []recorder.Organization{{ID: Organization.ID, Slug: Organization.Slug, Name: Organization.Name, Role: "admin"}},
 	})
+	squid := t.TempDir()
+	if err := os.WriteFile(filepath.Join(squid, "default-allowlist.txt"), []byte(DefaultAllowlist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.squid = squid
 	e.Config = dispatcher.Config{
 		SolidTraceURL:   e.SolidTrace.URL(),
 		SolidTraceToken: DispatcherToken,
@@ -247,11 +408,23 @@ func New(t testing.TB, options ...Option) *Env {
 		EncryptionKey:   EncryptionKey,
 		BitbucketAPIURL: e.Forge.APIURL(),
 		BitbucketGitURL: e.Forge.GitURL(),
+		LinearAPIURL:    e.Linear.URL(),
+		NotionAPIURL:    e.Notion.URL(),
+		WebhookURL:      PublicWebhookURL,
+		MachineKinds:    MachineKinds,
+		// Squid's place: the reload command counts the reloads.
+		SquidAllowlist:   filepath.Join(squid, "allowlist.txt"),
+		DefaultAllowlist: filepath.Join(squid, "default-allowlist.txt"),
+		SquidReload:      "echo reload >> " + filepath.Join(squid, "reloads"),
 	}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.current.Load().Handler().ServeHTTP(w, r)
 	}))
 	t.Cleanup(e.server.Close)
+	e.webhooks = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.current.Load().WebhookHandler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(e.webhooks.Close)
 	for _, option := range options {
 		option(e)
 	}
@@ -263,7 +436,12 @@ func New(t testing.TB, options ...Option) *Env {
 func (e *Env) start() {
 	e.t.Helper()
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
-		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry}
+		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
+		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick,
+		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) },
+		BackstopEvery: backstopEvery,
+		CloseEvery:    scheduleEvery, CloseChecked: func(at time.Time) { e.closeChecked.Store(&at) },
+		Trackers: []dispatcher.Tracker{e.Tracker.Tracker()}}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner
@@ -279,6 +457,10 @@ func (e *Env) start() {
 
 // URL is the Dispatcher's private listener.
 func (e *Env) URL() string { return e.server.URL }
+
+// WebhookListenerURL is the Dispatcher's webhook listener (the address
+// that Caddy sends /webhooks/* to).
+func (e *Env) WebhookListenerURL() string { return e.webhooks.URL }
 
 // Restart stops the Dispatcher and starts it again on the same database.
 func (e *Env) Restart() {
@@ -358,8 +540,13 @@ func (p *Person) CLI(args ...string) Result {
 // RunCLI runs the solidtrace CLI in the directory dir ("" is the test's
 // own) with stdin as its input.
 func (p *Person) RunCLI(dir, stdin string, args ...string) Result {
+	return p.runCLI(dir, stdin, nil, args...)
+}
+
+// runCLI is RunCLI with change applied to the CLI's environment.
+func (p *Person) runCLI(dir, stdin string, change func(*command.Env), args ...string) Result {
 	var stdout, stderr bytes.Buffer
-	code := command.Run(context.Background(), args, command.Env{
+	env := command.Env{
 		Dir:       dir,
 		Stdin:     strings.NewReader(stdin),
 		Stdout:    &stdout,
@@ -369,7 +556,11 @@ func (p *Person) RunCLI(dir, stdin string, args ...string) Result {
 		Now:       p.env.Clock.Now,
 		Sleep:     func(context.Context, time.Duration) error { return nil },
 		Version:   p.Version,
-	})
+	}
+	if change != nil {
+		change(&env)
+	}
+	code := command.Run(context.Background(), args, env)
 	return Result{stdout.String(), stderr.String(), code}
 }
 

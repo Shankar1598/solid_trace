@@ -21,7 +21,7 @@ import (
 // them (the recorded stream interrupt).
 const (
 	awaitInterrupt = `{"fake":"await_interrupt","eof_code":1}`
-	interrupted    = `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]},"parent_tool_use_id":null,"session_id":"","uuid":""}`
+	interruptLine  = `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]},"parent_tool_use_id":null,"session_id":"","uuid":""}`
 	errorResult    = `{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":1,"session_id":"","uuid":""}`
 	// exitWhenStdinCloses waits for a message, and exits with code 1
 	// when stdin closes, as Claude Code does after an interrupt.
@@ -45,7 +45,7 @@ func ready(t *testing.T) (step string, wait func()) {
 // interruptedTurn is a turn that waits in a tool call until the interrupt
 // request comes.
 func interruptedTurn(t *testing.T, step string) []string {
-	return []string{takeTask, initLine(t), step, reply, awaitInterrupt, interrupted, errorResult, exitWhenStdinCloses}
+	return []string{takeTask, initLine(t), step, reply, awaitInterrupt, interruptLine, errorResult, exitWhenStdinCloses}
 }
 
 // eventOf is the run event of kind, or fails the test.
@@ -60,8 +60,8 @@ func eventOf(t *testing.T, events []map[string]any, kind string) map[string]any 
 	return nil
 }
 
-// waitForEvent waits until the Run has an event of kind.
-func waitForEvent(t *testing.T, env *factorytest.Env, run, kind string) map[string]any {
+// awaitEvent waits until the Run has an event of kind, and gives the first.
+func awaitEvent(t *testing.T, env *factorytest.Env, run, kind string) map[string]any {
 	t.Helper()
 	waitUntil(t, "a "+kind+" event", func() bool { return slices.Contains(kinds(env.RunEvents(run)), kind) })
 	return eventOf(t, env.RunEvents(run), kind)
@@ -201,7 +201,7 @@ func TestAReportAfterTheNoticeIsRefusedAndTheHaltStopsAnAgentThatIgnoresTheInter
 
 	began := time.Now()
 	env.Runner.Preempt(execution)
-	waitForEvent(t, env, id, "preempting")
+	awaitEvent(t, env, id, "preempting")
 	open()
 
 	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
@@ -300,7 +300,7 @@ func TestThePreemptionEventRecordsWhatWasSavedAndTheAgeOfTheLastCheckpoint(t *te
 		t.Fatalf("the end call: %d %s", got.Status, got.Body)
 	}
 
-	waitForEvent(t, env, id, "execution_ended")
+	awaitEvent(t, env, id, "execution_ended")
 	events := env.RunEvents(id)
 	order := kinds(events)
 	if i, j := slices.Index(order, "preemption"), slices.Index(order, "execution_ended"); i < 0 || j < i {

@@ -73,20 +73,36 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	if err != nil {
 		return fail(fmt.Errorf("listen on %s (%s): %w", config.Listen, dispatcher.EnvListen, err))
 	}
-	server := &http.Server{Handler: d.Handler(), ReadHeaderTimeout: 10 * time.Second}
-	served := make(chan error, 1)
-	go func() { served <- server.Serve(listener) }()
-	log.Info("the Dispatcher serves the private listener", "address", listener.Addr().String())
-
-	select {
-	case err := <-served:
-		return fail(err)
-	case <-ctx.Done():
+	servers := []*http.Server{}
+	if config.WebhookListen != "" {
+		webhooks, err := net.Listen("tcp", config.WebhookListen)
+		if err != nil {
+			listener.Close()
+			return fail(fmt.Errorf("listen on %s (%s): %w", config.WebhookListen, dispatcher.EnvWebhookListen, err))
+		}
+		// The webhook listener is the Dispatcher's one public path: short
+		// timeouts, so that slow senders cannot hold its connections.
+		server := &http.Server{Handler: d.WebhookHandler(), ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute,
+			MaxHeaderBytes: 64 << 10}
+		servers = append(servers, server)
+		go server.Serve(webhooks)
+		log.Info("the Dispatcher serves the webhook listener", "address", webhooks.Addr().String(),
+			"public_url", config.WebhookURL)
 	}
+	log.Info("the Dispatcher serves the private listener", "address", listener.Addr().String())
+	// Serve ends when ctx ends (after it drained the open commands calls)
+	// or when the private listener fails.
+	failed := d.Serve(ctx, listener)
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fail(err)
+	for _, server := range servers {
+		if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) && failed == nil {
+			failed = err
+		}
+	}
+	if failed != nil {
+		return fail(failed)
 	}
 	return 0
 }
