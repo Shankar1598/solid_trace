@@ -36,6 +36,18 @@ class FactoryIntegrationTest < ActionDispatch::IntegrationTest
     assert_not_includes new_page.dig("props", "providers").keys, "factory"
   end
 
+  test "a member's form offers no Factory provider, which only an Admin makes" do
+    sign_in_as(@member)
+
+    providers = new_page.dig("props", "providers").keys
+    assert_not_includes providers, "factory"
+    assert_includes providers, "slack"
+
+    sign_in_as(@admin)
+
+    assert_includes new_page.dig("props", "providers").keys, "factory"
+  end
+
   test "with no Dispatcher URL a Factory Integration is refused, with no call to a Dispatcher" do
     InstanceSetting.current.update!(dispatcher_url: nil)
     sign_in_as(@admin)
@@ -44,8 +56,25 @@ class FactoryIntegrationTest < ActionDispatch::IntegrationTest
       post integrations_url(org_slug: @organization.slug), params: { integration: { provider: "factory" } }
     end
 
-    assert_match(/Dispatcher URL/, inertia_errors["provider"].first)
-    assert_not_requested :any, /10\.100\.0\.3/
+    assert_equal [ "needs the Dispatcher URL, which an Instance admin sets in Settings → Instance" ],
+      inertia_errors["provider"]
+    assert_not_requested :any, //
+  end
+
+  test "when the record does not save after the sender is made, Console deletes that sender at the Dispatcher" do
+    stub_create_sender
+    delete_sender = stub_request(:delete, "#{SENDERS_URL}/snd_1").to_return(status: 204)
+    sign_in_as(@admin)
+
+    with_failed_save do
+      assert_no_difference -> { Integration.count } do
+        post integrations_url(org_slug: @organization.slug), params: { integration: { provider: "factory" } }
+      end
+    end
+
+    assert_requested(:post, SENDERS_URL, times: 1)
+    assert_requested delete_sender
+    assert_equal [ "the database refused it" ], inertia_errors["base"]
   end
 
   test "an Admin makes a Factory Integration: Console makes its sender as that Admin and keeps the secret encrypted" do
@@ -275,6 +304,21 @@ class FactoryIntegrationTest < ActionDispatch::IntegrationTest
       json({ id: "snd_1", name: name, projects: [], created_at: "2026-11-15T12:00:00Z",
              created_by: { id: @admin.id.to_s, name: @admin.name }, secret: SECRET }, status: 201)
     end
+  end
+
+  # Each Integration that Console builds in the block refuses its save, as a
+  # record that a validation refuses after the Dispatcher made its sender.
+  def with_failed_save(&block)
+    build = Integration.method(:new)
+    failing = lambda do |*args, **options, &init|
+      build.call(*args, **options, &init).tap do |integration|
+        integration.define_singleton_method(:save) do |*|
+          errors.add(:base, "the database refused it")
+          false
+        end
+      end
+    end
+    Integration.stub(:new, failing, &block)
   end
 
   def factory_integration
