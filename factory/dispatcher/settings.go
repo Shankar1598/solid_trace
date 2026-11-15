@@ -30,6 +30,10 @@ func (d *Dispatcher) listSettings(w http.ResponseWriter, r *http.Request, p pers
 		d.serverError(w, "list the Factory settings", err)
 		return
 	}
+	if _, err := d.markOrphans(p.organization, projects, all); err != nil {
+		d.serverError(w, "mark the Factory settings orphaned", err)
+		return
+	}
 	list := dispatcherapi.ProjectList{Projects: []dispatcherapi.FactorySettings{}}
 	for _, s := range all {
 		if slug, ok := slugOf(projects, s.projectID); ok && slug != s.Project {
@@ -138,20 +142,10 @@ func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, p p
 		d.serverError(w, "read the Factory settings", err)
 		return storedSettings{}, false
 	}
-	var gone []string
-	for _, s := range all {
-		if _, ok := slugOf(projects, s.projectID); !ok {
-			gone = append(gone, s.projectID)
-		}
-	}
-	marked, err := d.store.orphan(p.organization.id, gone, d.now().UTC())
+	marked, err := d.markOrphans(p.organization, projects, all)
 	if err != nil {
 		d.serverError(w, "mark the Factory settings orphaned", err)
 		return storedSettings{}, false
-	}
-	for _, m := range marked {
-		d.log.Warn("SolidTrace no longer has the Project: its Factory settings are marked orphaned",
-			"organization", p.organization.slug, "project", m)
 	}
 	i := slices.IndexFunc(projects, func(sp solidTraceProject) bool { return sp.slug == slug })
 	if i < 0 {
@@ -180,6 +174,28 @@ func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, p p
 	}
 	settings.Project = slug
 	return settings, true
+}
+
+// markOrphans marks the Factory settings of each Project that SolidTrace
+// no longer has as orphaned, with a warning Log, and sets Orphaned in all.
+// It returns the slugs that it marked now.
+func (d *Dispatcher) markOrphans(org organization, projects []solidTraceProject, all []storedSettings) ([]string, error) {
+	var gone []string
+	for i, s := range all {
+		if _, ok := slugOf(projects, s.projectID); !ok {
+			gone = append(gone, s.projectID)
+			all[i].Orphaned = true
+		}
+	}
+	marked, err := d.store.orphan(org.id, gone, d.now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range marked {
+		d.log.Warn("SolidTrace no longer has the Project: its Factory settings are marked orphaned",
+			"organization", org.slug, "project", m)
+	}
+	return marked, nil
 }
 
 func slugOf(projects []solidTraceProject, id string) (string, bool) {

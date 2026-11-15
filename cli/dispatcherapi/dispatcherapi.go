@@ -68,7 +68,7 @@ type FactorySettings struct {
 	// Connection is the name of the forge connection that the Project's
 	// Runs use ("" is none).
 	Connection string `json:"connection"`
-	// Orphaned is true when a trigger found that SolidTrace no longer has
+	// Orphaned is true when the Dispatcher found that SolidTrace no longer has
 	// the Project.
 	Orphaned  bool      `json:"orphaned"`
 	UpdatedAt time.Time `json:"updated_at"`

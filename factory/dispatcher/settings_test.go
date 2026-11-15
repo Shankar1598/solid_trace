@@ -445,3 +445,34 @@ func startIn(t *testing.T, p *factorytest.Person, dir string, args ...string) (s
 	}
 	return m[1], r
 }
+
+func TestTheListMarksTheSettingsOfADeletedProjectOrphanedAndStartSkipsThem(t *testing.T) {
+	env := factorytest.New(t)
+	checkoutProject := env.SolidTraceProject("checkout")
+	env.SolidTraceProject("payments")
+	dana := admin(t, env)
+	mustCLI(t, dana, "projects", "set", "checkout", "--repository", "bitbucket.org/example/shop")
+	env.SolidTrace.DeleteProject(factorytest.Organization.Slug, checkoutProject.ID)
+	mustCLI(t, dana, "projects", "set", "payments", "--repository", "bitbucket.org/example/shop")
+
+	var list dispatcherapi.ProjectList
+	dana.API("GET", "/api/v1/projects", nil).JSON(t, &list)
+	orphaned := map[string]bool{}
+	for _, p := range list.Projects {
+		orphaned[p.Project] = p.Orphaned
+	}
+	if len(orphaned) != 2 || !orphaned["checkout"] || orphaned["payments"] {
+		t.Errorf("the list is %+v, want checkout orphaned and payments not", list.Projects)
+	}
+	if logs := env.Logs(); !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "orphaned") {
+		t.Errorf("no warning that the settings are orphaned:\n%s", logs)
+	}
+
+	ana := member(t, env)
+	id, _ := startIn(t, ana, checkout(t, "git@bitbucket.org:example/shop.git"), "Fix it")
+	var run dispatcherapi.Run
+	ana.API("GET", "/api/v1/runs/"+id, nil).JSON(t, &run)
+	if run.Project != "payments" {
+		t.Errorf("the Run's Project is %q, want payments", run.Project)
+	}
+}
