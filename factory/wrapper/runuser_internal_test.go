@@ -21,6 +21,10 @@ func TestTheExecutionsDirectoryMustBeReachableAndNotChangeableByTheRunUser(t *te
 	self := os.Getegid()
 	member := stranger
 	member.credential = &syscall.Credential{Uid: uint32(other), Gid: uint32(other), Groups: []uint32{uint32(other), uint32(self)}}
+	// The run user owns each directory (the test's user owns them): with
+	// no write bit, only the owner check refuses it.
+	owner := stranger
+	owner.uid = os.Geteuid()
 	for _, c := range []struct {
 		name         string
 		user         runUser
@@ -35,13 +39,14 @@ func TestTheExecutionsDirectoryMustBeReachableAndNotChangeableByTheRunUser(t *te
 		{"others write a parent that is not sticky", stranger, 0o777, 0o711, "can change"},
 		{"the run user's group writes the directory", member, 0o711, 0o771, "can change"},
 		{"another group writes the directory", stranger, 0o711, 0o771, ""},
+		{"the run user owns the directory and its parent", owner, 0o511, 0o511, "can change"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			parent, err := os.MkdirTemp("", "checkdir-")
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { os.RemoveAll(parent) })
+			t.Cleanup(func() { os.Chmod(parent, 0o700); os.RemoveAll(parent) })
 			dir := filepath.Join(parent, "execution")
 			if err := os.Mkdir(dir, 0o700); err != nil {
 				t.Fatal(err)
@@ -63,8 +68,6 @@ func TestTheExecutionsDirectoryMustBeReachableAndNotChangeableByTheRunUser(t *te
 
 	// The run user owns the directory: it can change its mode.
 	dir := t.TempDir()
-	owner := stranger
-	owner.uid = os.Geteuid()
 	if err := owner.checkDir(dir); err == nil || !strings.Contains(err.Error(), "can change") {
 		t.Errorf("a directory of the run user's: %v", err)
 	}
