@@ -33,6 +33,13 @@ const (
 	StateStopped = "stopped"
 )
 
+// The outcomes of a Run's PR (Run.PROutcome). A PR that the forge closed
+// in place of another one (superseded) is declined.
+const (
+	PRMerged   = "merged"
+	PRDeclined = "declined"
+)
+
 // Person is who started a Run or saved a value: the SolidTrace user of
 // the token. A Run that a schedule, a sender or a tracker ticket started has it as its
 // starter, with Kind ActorSchedule, ActorSender or ActorTracker. A tracker
@@ -92,6 +99,12 @@ type Run struct {
 	// Flags are the flags of a done Run: FlagNoEvidence, FlagNoPR, in
 	// this order (none for another state).
 	Flags []string `json:"flags,omitempty"`
+	// PROutcome is PRMerged or PRDeclined when the Run's PR is closed (""
+	// while it is open, or when the Run has no PR).
+	PROutcome string `json:"pr_outcome,omitempty"`
+	// ClosedAt is when the Run was closed (nil while it is not closed). A
+	// Closed Run cannot continue, and keeps its last State.
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
 	// URL is the Run's page in Console.
 	URL string `json:"url"`
 }

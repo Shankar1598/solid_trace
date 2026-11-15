@@ -56,6 +56,11 @@ type Options struct {
 	// BackstopEvery is how often the backstop looks for Executions past
 	// their total limit plus 15 minutes (backstopEvery when 0).
 	BackstopEvery time.Duration
+	// CloseEvery is the wait between two passes of the close loop
+	// (closeEvery when 0). CloseChecked, when set, gets the clock time of
+	// each pass after the pass.
+	CloseEvery   time.Duration
+	CloseChecked func(at time.Time)
 }
 
 // Dispatcher is one open Dispatcher.
@@ -76,6 +81,8 @@ type Dispatcher struct {
 
 	scheduleEvery   time.Duration
 	scheduleChecked func(time.Time)
+	closeEvery      time.Duration
+	closeChecked    func(time.Time)
 
 	runner   Runner
 	identity *identityCheck
@@ -158,6 +165,8 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		reconciles:      newReconcileQueue(),
 		scheduleEvery:   cmp.Or(options.ScheduleEvery, scheduleEvery),
 		scheduleChecked: options.ScheduleChecked,
+		closeEvery:      cmp.Or(options.CloseEvery, closeEvery),
+		closeChecked:    options.CloseChecked,
 		closing:         make(chan struct{}),
 		backstopEvery:   cmp.Or(options.BackstopEvery, backstopEvery),
 	}
@@ -209,9 +218,10 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	d.refreshAllowlist()
 	ctx, stop := context.WithCancel(context.Background())
 	d.stop = stop
-	d.loops.Add(4)
+	d.loops.Add(5)
 	go func() { defer d.loops.Done(); d.sendLoop(ctx) }()
 	go func() { defer d.loops.Done(); d.scheduleLoop(ctx) }()
+	go func() { defer d.loops.Done(); d.closeLoop(ctx) }()
 	go func() { defer d.loops.Done(); d.reconcileLoop(ctx) }()
 	go func() {
 		defer d.loops.Done()
