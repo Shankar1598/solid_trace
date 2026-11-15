@@ -38,6 +38,8 @@ module McpServer
     McpTools::ListIssues,
     McpTools::GetIssue,
     McpTools::GetTrace,
+    McpTools::ListAgentSessions,
+    McpTools::GetAgentSession,
     McpTools::ListRuns,
     McpTools::GetRun,
     McpTools::UpdateIssue,
@@ -65,6 +67,7 @@ module McpServer
     query_logs runs a Query on a Project's Logs; list_fields lists the names a Query reads, and query_language_reference explains the language.
     list_transactions lists a Project's traced requests and jobs by the time they take, and get_transaction finds where one's time goes.
     get_issue's trace_logs finds an Event's Logs, and get_trace a trace's Spans, Issues and Logs across the Organization's Projects.
+    list_agent_sessions lists the recorded Agent sessions of coding agents, and get_agent_session reads one's timeline in pages, or searches it.
     list_runs lists the factory's Runs, and get_run reads one Run's Executions, report and events.
     An answer ends with a link to the Console page that shows it, for the user to open.
   TEXT

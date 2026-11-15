@@ -179,6 +179,13 @@ These read the Transactions a Project's Sentry SDKs trace ([turning tracing on](
 - `update_issue`: resolves or unresolves an Issue, or assigns it to a member by email.
 - `add_comment`: comments on an Issue as you.
 
+**Agent sessions**
+
+These read the [Agent sessions](agent-sessions.md) in the Organization's Agent Project, so they need Agent sessions turned on. Each member can read them. They only read, so a token with `mcp:read` can call them.
+
+- `list_agent_sessions`: an Organization's Agent sessions with activity in `range` (`7d` when left out) or `from` and `to`, as the Agent sessions page lists them: the latest activity first. Each row has the person (an engineer's own Agent session) or the Run, the repository, folder, parent Agent session, model, tokens by kind, the estimated cost at list prices, the counts of person messages, turns, tool calls and subagents, the flags, and a link to its Agent session page. The totals add up all the Agent sessions that the filters select. `person` (a member's email or user id), `repository`, `project` (the slug of a Project of Runs) and `run` (`run` or `none`) filter, as the page's filters do, and the answer links to the page with them.
+- `get_agent_session`: one Agent session, as its Agent session page shows it: the header, the subagents, and one page of the timeline of the main transcript, or of a subagent's transcript at `path`. `limit` is 50 steps when left out, and 200 at most; `cursor` reads the next page. `search` keeps only the steps whose text has it, with any case, from all the transcripts when no `path` is given. A step marked `cut` has a cut text; its page in Console shows it in full.
+
 **Runs**
 
 These read the run events in the Organization's Agent Project, so they need Agent sessions turned on. They only read: no MCP tool starts, messages or stops a Run.
