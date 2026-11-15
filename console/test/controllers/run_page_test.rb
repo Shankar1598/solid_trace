@@ -67,13 +67,13 @@ class RunPageTest < ActionDispatch::IntegrationTest
     ]
   end
 
-  def stub_run(list = events, pr_url: "https://bitbucket.org/acme/shop/pull-requests/12")
+  def stub_run(list = events, pr_url: "https://bitbucket.org/acme/shop/pull-requests/12", pr_outcome: "", closed: false)
     last = list.last[:attributes]
     run = { id: "run_1", seq: last["run.seq"], time: list.last[:time], kind: last["event.kind"], state: last["run.state"],
             reason: last["run.reason"], project: "shop", repository: "bitbucket.org/acme/shop", folder: "web",
             base_branch: "develop", trigger: "cli", title: "Fix the cart total", actor: { kind: "person", id: "7", name: "Ana" },
-            pr: { url: pr_url, outcome: "" }, executions: 1,
-            active: true, closed: false }
+            pr: { url: pr_url, outcome: pr_outcome }, executions: 1,
+            active: !closed, closed: closed }
     stub_request(:get, "#{EventStore.base_url}/api/#{@project.id}/runs/run_1")
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { run: run, events: list }.to_json)
   end
@@ -177,6 +177,27 @@ class RunPageTest < ActionDispatch::IntegrationTest
     sign_in_as(@member)
 
     assert_equal true, page.dig("report", "no_evidence")
+  end
+
+  test "a check with no exit status has not passed, so a done report with only that check shows 'no Evidence'" do
+    stub_run(events(report_checks: [ { name: "unit", command: "bun test", time: "2026-10-03T10:20:00Z", output_tail: "" } ]))
+    stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
+    sign_in_as(@member)
+
+    report = page["report"]
+
+    assert_equal [ nil, false ], report["checks"].sole.values_at("exit_status", "passed")
+    assert_equal true, report["no_evidence"]
+  end
+
+  test "the Run's Project is the Project of its own Organization with that slug, never another Organization's" do
+    stub_run
+    stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
+    @organization.projects.find_by!(slug: "shop").update!(slug: "store")
+    create(:project, organization: create(:organization, slug: "other"), name: "Other Shop", slug: "shop")
+    sign_in_as(@member)
+
+    assert_nil page["project"]
   end
 
   test "a report whose evidence/report.md is not uploaded yet says so, and the rest of the page shows" do
@@ -289,6 +310,15 @@ class RunPageTest < ActionDispatch::IntegrationTest
     stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
     sign_in_as(@member)
 
+    assert_equal false, page.dig("stop", "can")
+  end
+
+  test "a closed Run cannot stop, also when its last state is running" do
+    InstanceSetting.current.update!(dispatcher_url: DISPATCHER)
+    stub_run(events.first(4), pr_outcome: "declined", closed: true)
+    sign_in_as(@member)
+
+    assert_equal "running", page.dig("run", "state")
     assert_equal false, page.dig("stop", "can")
   end
 
