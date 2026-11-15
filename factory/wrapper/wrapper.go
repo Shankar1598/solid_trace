@@ -72,6 +72,9 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 	}
 	runUser, err := lookupRunUser(getenv(EnvRunUser))
 	if err == nil {
+		err = cfg.makeDir()
+	}
+	if err == nil {
 		err = runUser.checkDir(cfg.dir)
 	}
 	if err != nil {

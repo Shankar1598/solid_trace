@@ -27,7 +27,7 @@ job "run-user-tests" {
         # The skipped case is for a wrapper that is not root: it skips as root.
         args = [
           "-test.v", "-test.count=1", "-test.timeout=4m",
-          "-test.run", "RunUser|TheExecutionsDirectory",
+          "-test.run", "RunUser|TheExecutionsDirectory|TheWrappersGit|TheWrapperMakesItsDirectory",
           "-test.skip", "TestTheWrapperRefusesARunUserThatItCannotChangeTo",
         ]
       }

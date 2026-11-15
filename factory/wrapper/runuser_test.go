@@ -208,8 +208,9 @@ func TestTheWrapperRefusesARunUserThatItCannotChangeTo(t *testing.T) {
 }
 
 // runWrapper runs a wrapper for an Execution that the Dispatcher does not
-// have, in dir, and gives its exit code and stderr.
-func runWrapper(t *testing.T, env *factorytest.Env, dir, runUser string) (int, string) {
+// have, in dir, with extra in its environment, and gives its exit code and
+// stderr.
+func runWrapper(t *testing.T, env *factorytest.Env, dir, runUser string, extra ...string) (int, string) {
 	t.Helper()
 	identity := filepath.Join(t.TempDir(), "identity.jwt")
 	if err := os.WriteFile(identity, []byte(env.Runner.Identity(factorytest.Workload("ex_runuser"))), 0o600); err != nil {
@@ -220,10 +221,40 @@ func runWrapper(t *testing.T, env *factorytest.Env, dir, runUser string) (int, s
 	cmd.Env = []string{wrapper.EnvDispatcherURL + "=" + env.URL(), wrapper.EnvExecution + "=ex_runuser",
 		wrapper.EnvIdentityFile + "=" + identity, wrapper.EnvDocker + "=/no/docker", wrapper.EnvRunUser + "=" + runUser,
 		"PATH=" + os.Getenv("PATH")}
+	cmd.Env = append(cmd.Env, extra...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Run()
 	return cmd.ProcessState.ExitCode(), stderr.String()
+}
+
+// The Runner names a directory for the Execution that is not there (the
+// Nomad job: under the image recipe's directory of the Executions). The
+// wrapper makes it, which the run user reaches and cannot change, and goes
+// on to the task call.
+func TestTheWrapperMakesItsDirectoryWhenItIsNotThere(t *testing.T) {
+	env, _ := newEnv(t)
+	parent, err := os.MkdirTemp("", "executions-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(parent) })
+	if err := os.Chmod(parent, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(parent, "ex_runuser")
+	code, stderr := runWrapper(t, env, t.TempDir(), env.Runner.RunUser().Username, wrapper.EnvDir+"="+dir)
+	// The Dispatcher has no such Execution: the task call fails (1).
+	if code != 1 || !strings.Contains(stderr, "task") {
+		t.Errorf("exit %d, stderr %q; want 1 at the task call", code, stderr)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("the wrapper did not make its directory: %v", err)
+	}
+	if mode := info.Mode(); !mode.IsDir() || mode.Perm() != 0o711 {
+		t.Errorf("the wrapper's directory has the mode %v, want 0711", mode)
+	}
 }
 
 func TestALinkThatTheRunUserPutsInPlaceOfTheProjectDirectoryMovesNoUpload(t *testing.T) {
