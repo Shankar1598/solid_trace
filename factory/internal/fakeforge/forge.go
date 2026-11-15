@@ -13,6 +13,9 @@
 //	PUT  /repositories/{workspace}/{repo_slug}/pullrequests/{id}          {title, description}; absent fields stay
 //	GET  /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments
 //	POST /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments {content.raw, inline.path, inline.to}
+//	GET  /repositories/{workspace}/{repo_slug}                            mainbranch.name is the bare repository's HEAD
+//	GET  /repositories/{workspace}/{repo_slug}/refs/branches/{name}       target.hash
+//	GET  /repositories/{workspace}/{repo_slug}/src/{commit}/{path}        a file's raw content; 404 when absent
 //
 // Errors have Bitbucket's shape: {"type": "error", "error": {"message",
 // "fields"}}. A PR from an absent branch and a second open PR between the
@@ -122,6 +125,10 @@ func New(t testing.TB) *Forge {
 	mux.HandleFunc("PUT "+prs+"/{id}", f.api(f.updatePR))
 	mux.HandleFunc("GET "+prs+"/{id}/comments", f.api(f.listComments))
 	mux.HandleFunc("POST "+prs+"/{id}/comments", f.api(f.postComment))
+	const repository = "/2.0/repositories/{workspace}/{repo_slug}"
+	mux.HandleFunc("GET "+repository, f.api(f.getRepository))
+	mux.HandleFunc("GET "+repository+"/refs/branches/{name...}", f.api(f.getBranch))
+	mux.HandleFunc("GET "+repository+"/src/{commit}/{path...}", f.api(f.getSource))
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)
 	return f
