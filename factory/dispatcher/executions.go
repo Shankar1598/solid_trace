@@ -101,6 +101,17 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 			return
 		}
 	}
+	accountToken, err := d.store.accountToken(e.account)
+	if errors.Is(err, errNotFound) {
+		why := "the account " + e.account + " is no longer in the pool"
+		d.endByDispatcher(e.id, why)
+		writeProblem(w, http.StatusConflict, why)
+		return
+	}
+	if err != nil {
+		d.serverError(w, "open the account's token", err)
+		return
+	}
 	run, err := d.store.startExecution(e.id, d.now())
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, errEnded.Error())
@@ -119,6 +130,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		BaseBranch:    settings.BaseBranch,
 		ForgeUsername: forge.BitbucketTokenUser,
 		ForgeToken:    token,
+		AccountToken:  accountToken,
 		SessionID:     run.sessionID,
 		Resume:        run.resume,
 	})

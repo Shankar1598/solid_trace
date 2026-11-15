@@ -34,6 +34,9 @@ type Options struct {
 	// Runner starts the Executions of queued Runs. With none, a Run stays
 	// queued (a Dispatcher with no Runner configured).
 	Runner Runner
+	// DispatchEvery is how often the dispatch loop looks for queued Runs
+	// when nothing wakes it (dispatchEvery when 0).
+	DispatchEvery time.Duration
 }
 
 // Dispatcher is one open Dispatcher.
@@ -52,8 +55,10 @@ type Dispatcher struct {
 	// starting; it closes when the Runner gave the workload.
 	dispatching sync.Map
 	wake        chan struct{}
-	stop        context.CancelFunc
-	loops       sync.WaitGroup
+	// dispatchEvery is Options.DispatchEvery.
+	dispatchEvery time.Duration
+	stop          context.CancelFunc
+	loops         sync.WaitGroup
 }
 
 // Open checks config and opens the database (it makes it at first use).
@@ -69,6 +74,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	}
 	if options.Log == nil {
 		options.Log = slog.Default()
+	}
+	if options.DispatchEvery <= 0 {
+		options.DispatchEvery = dispatchEvery
 	}
 	if options.Version == "" {
 		options.Version = "dev"
@@ -91,6 +99,8 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 			now: options.Now, kept: map[[sha256.Size]byte]keptAnswer{}},
 		runner: options.Runner,
 		wake:   make(chan struct{}, 1),
+
+		dispatchEvery: options.DispatchEvery,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))

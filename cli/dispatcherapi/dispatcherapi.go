@@ -87,6 +87,9 @@ type Execution struct {
 	// ExitCode is the harness's exit code, when the harness ran. It never
 	// sets the outcome.
 	ExitCode *int `json:"exit_code,omitempty"`
+	// Account is the name of the subscription account that the Execution
+	// got.
+	Account string `json:"account,omitempty"`
 }
 
 // Report outcomes.
@@ -122,6 +125,10 @@ type Task struct {
 	// gives git ("" token: the Project names no connection).
 	ForgeUsername string `json:"forge_username"`
 	ForgeToken    string `json:"forge_token"`
+	// AccountToken is the token of the subscription account that the
+	// Execution got (from 'claude setup-token'). Only the harness gets it,
+	// as CLAUDE_CODE_OAUTH_TOKEN.
+	AccountToken string `json:"account_token"`
 	// SessionID is the Agent session id: --session-id for the first
 	// Execution, --resume when Resume is true.
 	SessionID string `json:"session_id"`

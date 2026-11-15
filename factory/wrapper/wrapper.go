@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -107,6 +108,9 @@ func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.Exe
 // setup writes the forge token and the credential helper outside the
 // checkout, and clones the base branch with them.
 func (e *execution) setup(ctx context.Context, environ []string) error {
+	if e.task.AccountToken == "" {
+		return errors.New("the task has no account token")
+	}
 	secrets := e.cfg.secrets()
 	if strings.ContainsAny(secrets, "'\n") {
 		return fmt.Errorf("the secrets directory %q has a quote or a new line", secrets)
@@ -173,12 +177,24 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// harnessEnv is environ with no WRAPPER_ name and no agent's socket, and
-// the agent's socket at socket ("" sets none).
+// EnvAccountToken is the name under which the harness (Claude Code) gets
+// the token of the Execution's subscription account.
+const EnvAccountToken = "CLAUDE_CODE_OAUTH_TOKEN"
+
+// credentialNames are the names of Claude credentials that no process of
+// the wrapper gets from the machine's environment. An API key would win
+// over the account's token in Claude Code, and a Run never uses API
+// pricing.
+var credentialNames = []string{EnvAccountToken, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+
+// harnessEnv is environ with no WRAPPER_ name, no agent's socket and no
+// Claude credential, and the agent's socket at socket ("" sets none).
+// runHarness adds the account's token for the harness only.
 func harnessEnv(environ []string, socket string) []string {
 	var env []string
 	for _, kv := range environ {
-		if strings.HasPrefix(kv, "WRAPPER_") || strings.HasPrefix(kv, agentsocket.Env+"=") {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "WRAPPER_") || name == agentsocket.Env || slices.Contains(credentialNames, name) {
 			continue
 		}
 		env = append(env, kv)
@@ -268,7 +284,9 @@ func (e *execution) headless() []string {
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.cfg.checkout()
-	cmd.Env = harnessEnv(environ, e.cfg.socket())
+	// The account's token is in the harness's environment only: not in a
+	// file, and not in git's environment.
+	cmd.Env = append(harnessEnv(environ, e.cfg.socket()), EnvAccountToken+"="+e.task.AccountToken)
 	cmd.Stderr = e.log
 	// A process group of its own, so that the end can kill what is left.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

@@ -178,8 +178,11 @@ func New(t testing.TB, options ...Option) *Env {
 
 func (e *Env) start() {
 	e.t.Helper()
+	// The dispatch loop looks at the queue often, so that a Run that
+	// waits for a free account starts soon after the clock passes a reset
+	// time or the operator adds an account.
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
-		Log: slog.New(slog.NewTextHandler(&e.logs, nil))}
+		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), DispatchEvery: 50 * time.Millisecond}
 	if e.Runner != nil {
 		options.Runner = e.Runner
 	}
@@ -192,6 +195,44 @@ func (e *Env) start() {
 
 // URL is the Dispatcher's private listener.
 func (e *Env) URL() string { return e.server.URL }
+
+// Operator runs the operator command 'dispatcher accounts args...' on the
+// Dispatcher's database, with stdin, as an operator does on the server VM.
+func (e *Env) Operator(stdin string, args ...string) Result {
+	var stdout, stderr bytes.Buffer
+	values := map[string]string{dispatcher.EnvDatabase: e.Config.Database,
+		dispatcher.EnvEncryptionKey: e.Config.EncryptionKey}
+	code := dispatcher.AccountsCommand(args, func(name string) string { return values[name] }, e.Clock.Now,
+		strings.NewReader(stdin), &stdout, &stderr)
+	return Result{Stdout: stdout.String(), Stderr: stderr.String(), Code: code}
+}
+
+// AddAccount adds a subscription account to the pool with the operator
+// command.
+func (e *Env) AddAccount(name, token string) {
+	e.t.Helper()
+	if got := e.Operator(token+"\n", "add", name); got.Code != 0 {
+		e.t.Fatalf("add the account %s: exit %d\n%s%s", name, got.Code, got.Stdout, got.Stderr)
+	}
+}
+
+// RemoveAccount takes an account out of the pool with the operator
+// command.
+func (e *Env) RemoveAccount(name string) {
+	e.t.Helper()
+	if got := e.Operator("", "remove", name); got.Code != 0 {
+		e.t.Fatalf("remove the account %s: exit %d\n%s%s", name, got.Code, got.Stdout, got.Stderr)
+	}
+}
+
+// MarkAtLimit marks an account at its usage limit until the reset time,
+// as the Credential source does when a result reports the usage limit.
+func (e *Env) MarkAtLimit(name string, until time.Time) {
+	e.t.Helper()
+	if err := e.current.Load().MarkAtLimit(name, until); err != nil {
+		e.t.Fatal(err)
+	}
+}
 
 // Restart stops the Dispatcher and starts it again on the same database.
 func (e *Env) Restart() {

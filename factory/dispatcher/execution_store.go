@@ -19,6 +19,8 @@ type storedExecution struct {
 	id, runID, organizationID, projectID string
 	workload                             string
 	state                                string
+	// account is the subscription account that the Execution got.
+	account string
 }
 
 // queuedRuns are the ids of the queued Runs with no Execution that has
@@ -43,7 +45,9 @@ func (s *store) queuedRuns() ([]string, error) {
 }
 
 // addExecution adds a dispatched Execution to a Run that is queued and has
-// no Execution that has not ended. It is false when the Run is not so.
+// no Execution that has not ended, on the account that pickAccount gives
+// at at. It is false when the Run is not so, or when no account is free:
+// then the Run stays queued, with the reason on its page.
 func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -57,8 +61,18 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	if err != nil || !free {
 		return false, ignoreNoRows(err)
 	}
-	if _, err := tx.Exec(`INSERT INTO executions (id, run_id, state, dispatched_at) VALUES (?, ?, ?, ?)`,
-		id, runID, dispatcherapi.ExecutionDispatched, at.UnixMicro()); err != nil {
+	account, reason, err := pickAccount(tx, at)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE runs SET reason = ? WHERE id = ? AND reason != ?`, reason, runID, reason); err != nil {
+		return false, err
+	}
+	if account == "" {
+		return false, tx.Commit()
+	}
+	if _, err := tx.Exec(`INSERT INTO executions (id, run_id, state, dispatched_at, account) VALUES (?, ?, ?, ?, ?)`,
+		id, runID, dispatcherapi.ExecutionDispatched, at.UnixMicro(), account); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
@@ -79,9 +93,9 @@ func (s *store) setWorkload(id, workload string) error {
 // execution reads one Execution.
 func (s *store) execution(id string) (storedExecution, error) {
 	var e storedExecution
-	err := s.db.QueryRow(`SELECT e.id, e.run_id, r.organization_id, r.project_id, e.workload, e.state
+	err := s.db.QueryRow(`SELECT e.id, e.run_id, r.organization_id, r.project_id, e.workload, e.state, e.account
 		FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
-		Scan(&e.id, &e.runID, &e.organizationID, &e.projectID, &e.workload, &e.state)
+		Scan(&e.id, &e.runID, &e.organizationID, &e.projectID, &e.workload, &e.state, &e.account)
 	if errors.Is(err, sql.ErrNoRows) {
 		return e, errNotFound
 	}
@@ -225,7 +239,7 @@ func (s *store) failExecution(id, reason string, at time.Time) (bool, error) {
 // executionsOf reads a Run's Executions, oldest first.
 func (s *store) executionsOf(runID string) ([]dispatcherapi.Execution, error) {
 	rows, err := s.db.Query(`SELECT id, state, dispatched_at, started_at, ended_at, task_delivered_at, end_reason,
-		exit_code FROM executions WHERE run_id = ? ORDER BY dispatched_at, id`, runID)
+		exit_code, account FROM executions WHERE run_id = ? ORDER BY dispatched_at, id`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +249,8 @@ func (s *store) executionsOf(runID string) ([]dispatcherapi.Execution, error) {
 		var e dispatcherapi.Execution
 		var dispatched int64
 		var started, ended, delivered, exit sql.NullInt64
-		if err := rows.Scan(&e.ID, &e.State, &dispatched, &started, &ended, &delivered, &e.EndReason, &exit); err != nil {
+		if err := rows.Scan(&e.ID, &e.State, &dispatched, &started, &ended, &delivered, &e.EndReason, &exit,
+			&e.Account); err != nil {
 			return nil, err
 		}
 		e.DispatchedAt = time.UnixMicro(dispatched).UTC()

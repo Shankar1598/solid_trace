@@ -70,7 +70,16 @@ func Executions(e *Env) {
 		e.t.Fatalf("start the fake Runner: %v", err)
 	}
 	e.Runner = r
+	e.AddAccount(DefaultAccount, DefaultAccountToken)
 }
+
+// DefaultAccount is the subscription account that the Executions option
+// adds to the pool, with the token DefaultAccountToken. A test that needs
+// other accounts adds them, or removes this one.
+const (
+	DefaultAccount      = "pool-1"
+	DefaultAccountToken = "sk-ant-oat01-factorytest-pool-1"
+)
 
 // Runner is the fake Runner as the Dispatcher sees it: it starts each
 // Execution's wrapper with the fakerunner, and signs each wrapper's
@@ -88,6 +97,16 @@ type Runner struct {
 	scripts    []string
 	executions []string
 	harness    string
+	pathFirst  string
+}
+
+// PathFirst puts dir first in the PATH of the next Executions' wrappers,
+// before the test binary's programs: a test puts a program there that
+// records how the wrapper runs it, such as git.
+func (r *Runner) PathFirst(dir string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pathFirst = dir
 }
 
 // Harness is the scripted harness program (Claude Code's place).
@@ -185,6 +204,10 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 	}
 	r.executions = append(r.executions, x.Execution)
 	program := r.harness
+	path := r.bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	if r.pathFirst != "" {
+		path = r.pathFirst + string(os.PathListSeparator) + path
+	}
 	r.mu.Unlock()
 	if program == "" {
 		program = r.Harness()
@@ -195,7 +218,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		wrapper.EnvIdentityFile + "=" + identity,
 		wrapper.EnvHarness + "=" + program,
 		harness,
-		"PATH=" + r.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH=" + path,
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
 	}
