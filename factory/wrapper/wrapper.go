@@ -91,13 +91,14 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 	work, cancelWork := context.WithCancel(ctx)
 	defer cancelWork()
 	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1),
-		uploads: newUploads(cfg, c, task, stderr), cancelWork: cancelWork}
+		uploads: newUploads(cfg, c, task, stderr), cancelWork: cancelWork, inbox: newInbox()}
 	// The commands and the limits count from the task, and stop at the
 	// end call.
 	watch, stopWatching := context.WithCancel(ctx)
 	defer stopWatching()
 	go e.pollCommands(watch)
 	go e.watchLimits(watch, cfg.clock())
+	go e.sendEvents(watch)
 	end := e.run(work, environ)
 	stopWatching()
 	if err := c.end(ctx, end); err != nil {
@@ -174,6 +175,8 @@ type execution struct {
 	running  map[checkKey]int
 
 	needsPerson chan struct{}
+	// inbox holds the messages of the Execution (messages.go).
+	inbox *inbox
 	uploads     *uploads
 	// stdin is the harness's stdin. writing holds each write to it, so
 	// that an interrupt never goes into the middle of a message. It is not
@@ -389,13 +392,15 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 	// wrapper's, and so are the checks, the Evidence paths and the
 	// delivered-message counter.
 	report = dispatcherapi.Report{Outcome: report.Outcome, Summary: report.Summary, Question: report.Question}
-	a, ok := e.sendReport(w, r, report)
+	a, ok := e.sendReport(w, r, &report)
 	if !ok {
 		return
 	}
 	// Before the answer, so that the agent's next stop finds the report;
 	// not under mu, so that a lock on the file does not hold the end.
-	e.setRunState(func(s *runState) { s.Reported = true })
+	// The count goes with the report: a message delivered after it makes
+	// the Stop hook refuse (check 1).
+	e.setRunState(func(s *runState) { s.Reported, s.ReportDelivered = true, report.DeliveredMessages })
 	if report.Outcome == dispatcherapi.OutcomeNeedsAPerson {
 		select {
 		case e.needsPerson <- struct{}{}:
@@ -408,14 +413,14 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 
 // sendReport sends the report to the Dispatcher under mu, and records
 // that the Dispatcher took it. When not ok, it wrote the problem to w.
-func (e *execution) sendReport(w http.ResponseWriter, r *http.Request, report dispatcherapi.Report) (answer, bool) {
+func (e *execution) sendReport(w http.ResponseWriter, r *http.Request, report *dispatcherapi.Report) (answer, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.ending {
 		writeProblem(w, http.StatusConflict, "the Execution is ending: a report now does not count")
 		return answer{}, false
 	}
-	commit := e.addEvidence(&report)
+	commit := e.addEvidence(report)
 	a, err := e.client.call(r.Context(), "report", report)
 	if err != nil {
 		commit(false)
@@ -554,14 +559,22 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	message, _ := json.Marshal(map[string]any{"type": "user", "uuid": taskUUID, "session_id": "",
 		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
 	// The write is not under mu: a harness that does not read its stdin
-	// blocks it, and a stop or a limit must still end the Execution.
+	// blocks it, and a stop or a limit must still end the Execution. An
+	// Execution that continues the Agent session for its messages has no
+	// prompt.
 	e.writing.Lock()
-	if _, ending := e.endedEarly(); !ending {
+	if _, ending := e.endedEarly(); !ending && (e.task.Prompt != "" || len(e.task.Messages) == 0) {
 		if _, err := e.stdin.Write(append(message, '\n')); err != nil {
 			fmt.Fprintln(e.log, "wrapper: write the task:", err)
 		}
 	}
 	e.writing.Unlock()
+	// The task's messages come after the prompt, then each message of the
+	// Dispatcher's commands, in order.
+	for _, m := range e.task.Messages {
+		e.takeMessage(m, 0)
+	}
+	e.openInbox()
 	events := make(chan map[string]any)
 	go func() {
 		defer close(events)
@@ -578,8 +591,62 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	}()
 	var delivered *time.Time
 	var stopReading *time.Timer
+	// The end at a result (R3, R4): pending is the end reason of the last
+	// result ("" is none: the agent works), giveBackAt the end of the wait
+	// for a new turn that delivers a written message, and comparing tells
+	// that a compare-and-end call is out.
+	var pending string
+	var giveBackAt time.Time
+	var comparing bool
+	compareDone := make(chan compared, 1)
+	tick := time.NewTicker(e.cfg.limitEvery)
+	defer tick.Stop()
+	tryEnd := func() {
+		if pending == "" || comparing {
+			return
+		}
+		n, seen := e.undelivered()
+		if n > 0 {
+			if giveBackAt.IsZero() {
+				giveBackAt = e.cfg.clock().Add(giveBackWait)
+			}
+			return
+		}
+		giveBackAt = time.Time{}
+		comparing = true
+		go e.compareEnd(context.Background(), seen, compareDone)
+	}
 	for open, exit := true, exited; open; {
 		select {
+		case <-tick.C:
+			if !giveBackAt.IsZero() && !e.cfg.clock().Before(giveBackAt) && pending != "" {
+				// No new turn delivered the written messages: the end call
+				// gives them back, and a new Execution gets them.
+				giveBackAt = time.Time{}
+				e.startEnd(pending, "")
+			}
+		case c := <-compareDone:
+			comparing = false
+			switch {
+			case c.err != nil:
+				fmt.Fprintln(e.log, "wrapper: the compare-and-end call failed, so the Execution ends:", c.err)
+				if pending != "" {
+					e.startEnd(pending, "")
+				}
+			case c.answer.Agreed:
+				// A turn that started since then ends with a result of its
+				// own, and the wrapper asks again.
+				if pending != "" {
+					e.startEnd(pending, "")
+				}
+			default:
+				for _, cmd := range c.answer.Commands {
+					if cmd.Message != nil {
+						e.takeMessage(*cmd.Message, cmd.Seq)
+					}
+				}
+				tryEnd()
+			}
 		case <-exit:
 			// Each process that is left in the cgroup goes too, and
 			// closes the output.
@@ -593,10 +660,20 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 			}
 			e.lastOutput.Store(e.cfg.clock().UnixNano())
 			switch {
-			case ev["type"] == "user" && ev["isReplay"] == true && ev["uuid"] == taskUUID && delivered == nil:
-				now := time.Now().UTC()
-				delivered = &now
-				e.delivered.Add(1)
+			case ev["type"] == "user" && ev["isSynthetic"] == true:
+				// Hook feedback is not a message of the wrapper.
+			case ev["type"] == "user" && ev["isReplay"] == true && ev["uuid"] == taskUUID:
+				if delivered == nil {
+					now := time.Now().UTC()
+					delivered = &now
+					e.countDelivered()
+				}
+			case ev["type"] == "user" && ev["isReplay"] == true:
+				id, _ := ev["uuid"].(string)
+				if e.echo(id) && pending != "" {
+					// A new turn started for the message.
+					pending, giveBackAt = "", time.Time{}
+				}
 			case ev["type"] == "system" && ev["subtype"] == "background_tasks_changed":
 				tasks, _ := ev["tasks"].([]any)
 				e.mu.Lock()
@@ -612,15 +689,19 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				e.mu.Lock()
 				reported := e.reported
 				e.mu.Unlock()
+				pending = dispatcherapi.EndNoReport
 				if reported {
-					e.startEnd(dispatcherapi.EndReported, "")
-				} else {
-					e.startEnd(dispatcherapi.EndNoReport, "")
+					pending = dispatcherapi.EndReported
 				}
+				tryEnd()
 			}
 		case <-e.needsPerson:
-			// Needs a person ends the Execution at once.
-			e.startEnd(dispatcherapi.EndReported, "")
+			// Needs a person ends the Execution at once, but not while a
+			// message that the wrapper took is not delivered: the turn's
+			// result then decides.
+			if n, _ := e.undelivered(); n == 0 {
+				e.startEnd(dispatcherapi.EndReported, "")
+			}
 		}
 	}
 	if stopReading != nil {
@@ -639,7 +720,8 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	reason, why := e.endReason, e.endError
 	e.mu.Unlock()
 	code := e.harness.ProcessState.ExitCode()
-	return dispatcherapi.ExecutionEnd{Reason: reason, Error: why, ExitCode: &code, TaskDeliveredAt: delivered}
+	return dispatcherapi.ExecutionEnd{Reason: reason, Error: why, ExitCode: &code, TaskDeliveredAt: delivered,
+		Messages: e.messageStates()}
 }
 
 // startEnd starts the end once: it closes stdin, and kills the

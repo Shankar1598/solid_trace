@@ -244,6 +244,7 @@ func (d *Dispatcher) endByDispatcher(id, reason string, exitCode *int) {
 	if ended {
 		d.warn("an Execution ended with no end call", "execution.id", id, "execution.reason", reason)
 		d.revokeTokens(id)
+		d.wakeDispatch()
 	}
 }
 

@@ -131,6 +131,9 @@ type startedRun struct {
 	// limits are the Execution's limits: the total limit as it was kept
 	// at the first task call.
 	limits dispatcherapi.Limits
+	// messages are the Run's kept messages that the Execution's task
+	// gives.
+	messages []dispatcherapi.Message
 }
 
 // startExecution marks a dispatched Execution running and its Run
@@ -180,6 +183,14 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	}
 	run.startedAt = time.UnixMicro(started).UTC()
 	run.limits.IdleSeconds = limits.IdleSeconds
+	if run.messages, err = takeKeptMessages(tx, runID, id, state == dispatcherapi.ExecutionDispatched); err != nil {
+		return run, err
+	}
+	// An Execution that continues the Agent session for its messages
+	// does not give the task again.
+	if run.resume && len(run.messages) > 0 {
+		run.prompt = ""
+	}
 	if state == dispatcherapi.ExecutionDispatched {
 		if err := recordEvent(tx, at, runID, eventExecutionStarted, map[string]any{"execution.id": id}); err != nil {
 			return run, err
@@ -250,6 +261,17 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		last = nil
 	}
 	runState, reason, question, summary := outcome(last, end)
+	returned, err := settleMessages(tx, runID, id, end.Messages, at)
+	if err != nil {
+		return err
+	}
+	again, err := continueForMessages(tx, runID, id, runState, returned, at)
+	if err != nil {
+		return err
+	}
+	if again {
+		runState, reason, question, summary = dispatcherapi.StateQueued, reasonSentAgain, "", ""
+	}
 	var delivered sql.NullInt64
 	if end.TaskDeliveredAt != nil {
 		delivered = sql.NullInt64{Int64: end.TaskDeliveredAt.UnixMicro(), Valid: true}
@@ -315,8 +337,22 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 	if err != nil {
 		return false, err
 	}
+	// With no end call, no message of the Execution is delivered but the
+	// ones that the wrapper's message calls named.
+	returned, err := settleMessages(tx, runID, id, nil, at)
+	if err != nil {
+		return false, err
+	}
+	again, err := continueForMessages(tx, runID, id, dispatcherapi.StateFailed, returned, at)
+	if err != nil {
+		return false, err
+	}
+	runState, runReason := dispatcherapi.StateFailed, reason
+	if again {
+		runState, runReason = dispatcherapi.StateQueued, reasonSentAgain
+	}
 	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
-		AND state IN (?, ?)`, dispatcherapi.StateFailed, reason, runID, dispatcherapi.StateQueued,
+		AND state IN (?, ?)`, runState, runReason, runID, dispatcherapi.StateQueued,
 		dispatcherapi.StateRunning); err != nil {
 		return false, err
 	}

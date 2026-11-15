@@ -59,6 +59,10 @@ func (e *execution) pollCommands(ctx context.Context) {
 			switch c.Kind {
 			case dispatcherapi.CommandStop:
 				e.beginEnd(dispatcherapi.EndStopped, "", true)
+			case dispatcherapi.CommandMessage:
+				if c.Message != nil {
+					e.takeMessage(*c.Message, c.Seq)
+				}
 			default:
 				fmt.Fprintf(e.log, "wrapper: the Dispatcher sent the command %q, which this wrapper does not know\n", c.Kind)
 			}
