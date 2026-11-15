@@ -137,6 +137,19 @@ class InstanceDispatcherSettingsTest < ActionDispatch::IntegrationTest
                    "token_error" => "SolidTrace refused the Dispatcher's token: the Admin left" }, dispatcher_prop)
   end
 
+  test "the Dispatcher's token shows active only when token_active is exactly true" do
+    InstanceSetting.current.update!(dispatcher_url: DISPATCHER)
+    sign_in_as(@instance_admin)
+    [ { token_active: "false" }, { token_active: "true" }, { token_active: 1 }, { token_active: "no" }, {} ].each do |solidtrace|
+      WebMock.reset!
+      stub_request(:get, %r{/config\z}).to_return(status: 503)
+      stub_request(:get, STATUS_URL).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+        body: { version: "v0.3.0", solidtrace: solidtrace }.to_json)
+
+      assert_equal({ "version" => "v0.3.0", "token_active" => false }, dispatcher_prop, solidtrace.inspect)
+    end
+  end
+
   test "a Dispatcher that does not answer gives a clear error on the page, not a 500" do
     InstanceSetting.current.update!(dispatcher_url: DISPATCHER)
     sign_in_as(@instance_admin)
