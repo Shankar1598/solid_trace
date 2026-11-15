@@ -80,10 +80,41 @@ func (a *audience) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// workload checks token and gives its subject: the workload that the
-// Runner said that it started for an Execution. Each failure is
-// errBadIdentity (with the reason, for the log).
-func (c *identityCheck) workload(ctx context.Context, token string) (string, error) {
+// Identity is a workload identity JWT that the Dispatcher checked: the
+// Runner signed it for the Dispatcher's audience, and it is valid now.
+// The Runner's Workload gives the workload that holds it.
+type Identity struct {
+	Subject string
+	// Claims are each claim of the JWT, as JSON.
+	Claims map[string]json.RawMessage
+}
+
+// StringClaim gives the claim name when it is a JSON string, else "".
+func (i Identity) StringClaim(name string) string {
+	var v string
+	if json.Unmarshal(i.Claims[name], &v) != nil {
+		return ""
+	}
+	return v
+}
+
+// check checks token and gives the identity that it holds. Each failure
+// is errBadIdentity (with the reason, for the log).
+func (c *identityCheck) check(ctx context.Context, token string) (Identity, error) {
+	sub, err := c.verify(ctx, token)
+	if err != nil {
+		return Identity{}, err
+	}
+	var claims map[string]json.RawMessage
+	if err := decodeSegment(strings.Split(token, ".")[1], &claims); err != nil {
+		return Identity{}, fmt.Errorf("%w: claims: %v", errBadIdentity, err)
+	}
+	return Identity{Subject: sub, Claims: claims}, nil
+}
+
+// verify checks the signature and the standard claims of token, and gives
+// its subject.
+func (c *identityCheck) verify(ctx context.Context, token string) (string, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return "", fmt.Errorf("%w: not a JWT", errBadIdentity)

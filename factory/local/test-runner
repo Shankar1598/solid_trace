@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Runs the Nomad Runner's tests (factory/nomadrunner, build tag factorystack) against the
+# Nomad of a local factory stack: it starts a stack with its own compose project, with
+# Nomad's HTTP API on 127.0.0.1 (compose.nomad-api.yml), runs the tests, and stops the
+# stack. The tests do not skip: with no stack, they fail.
+#
+#   factory/local/test-runner [go test arguments]     default: ./nomadrunner/
+#
+# FACTORY_STACK_PROJECT names the compose project (default factory-runner-test). An agent
+# runs this command through slot.sh exclusive, as each start of the stack.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export FACTORY_STACK_PROJECT="${FACTORY_STACK_PROJECT:-factory-runner-test}"
+export FACTORY_STACK_NOMAD_API=1
+
+trap '"$here/stack" down >/dev/null 2>&1 || true' EXIT
+"$here/stack" up
+while IFS='=' read -r name value; do
+  case "$name" in
+  NOMAD_ADDR | NOMAD_TOKEN | AGENT_MACHINE) export "$name=$value" ;;
+  esac
+done < <("$here/stack" nomad-env)
+
+cd "$here/.."
+[ $# -gt 0 ] || set -- ./nomadrunner/
+GOMAXPROCS="${GOMAXPROCS:-2}" go test -tags factorystack -count=1 -p 1 -timeout 10m "$@"
