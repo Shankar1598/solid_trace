@@ -1,0 +1,23 @@
+# An overlay of compose.yml for the Runner's tests (factory/local/test-runner). It
+# publishes Nomad's HTTP API on 127.0.0.1 of the host, on a free port, so that a test
+# on the host can be the Dispatcher. The Nomad server does not change: a forwarder on
+# the factory network and on a second network gives the published port. The factory
+# network stays internal, and the agent machine still cannot reach the HTTP API (its
+# firewall allows Nomad RPC only).
+#
+# Use it only through "FACTORY_STACK_NOMAD_API=1 factory/local/stack ...".
+services:
+  nomad-api:
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    # BusyBox nc: a new connection to nomad:4646 for each connection.
+    command: ["nc", "-lk", "-p", "4646", "-e", "nc", "nomad", "4646"]
+    networks: [factory, nomad-api]
+    ports:
+      - "127.0.0.1::4646"
+    depends_on:
+      nomad:
+        condition: service_healthy
+    mem_limit: 64m
+
+networks:
+  nomad-api: {}

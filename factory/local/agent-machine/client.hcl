@@ -20,6 +20,11 @@ client {
   gc_disk_usage_threshold  = 100
   gc_inode_usage_threshold = 100
 
+  # The Runner's job gives each task 120 seconds to stop (kill_timeout): the
+  # wrapper's end procedure and preemption handler need them. The client gives a
+  # task no more than this.
+  max_kill_timeout = "120s"
+
   meta {
     machine = "local"
   }
