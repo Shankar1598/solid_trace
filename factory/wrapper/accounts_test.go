@@ -311,3 +311,50 @@ func TestTheWrapperRefusesATaskWithNoAccountToken(t *testing.T) {
 		t.Errorf("the harness started with no account token")
 	}
 }
+
+// listRow gives the fields of the account's row in 'dispatcher accounts
+// list': name, added (date, time, UTC), live Executions, limit.
+func listRow(t *testing.T, env *factorytest.Env, name string) []string {
+	t.Helper()
+	got := env.Operator("", "list")
+	for _, line := range strings.Split(got.Stdout, "\n") {
+		if f := strings.Fields(line); len(f) > 0 && f[0] == name {
+			return f
+		}
+	}
+	t.Fatalf("the list has no row for %s: exit %d\n%s%s", name, got.Code, got.Stdout, got.Stderr)
+	return nil
+}
+
+func TestTheAccountsListCountsOnlyLiveExecutionsAndShowsOnlyALimitThatHasNotEnded(t *testing.T) {
+	env, ana := newEnv(t)
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), done("Fixed"), reply, result, waitForEnd)
+	for range 2 {
+		env.Runner.Agent(takeTask, initLine(t), wait, done("Fixed"), reply, result, waitForEnd)
+	}
+	// pool-1 is the only account: one ended Execution and two live ones.
+	waitFor(t, env, ana, start(t, env, ana, "Fix the cart"), dispatcherapi.StateDone)
+	live := []string{start(t, env, ana, "Fix the basket"), start(t, env, ana, "Fix the till")}
+	for _, id := range live {
+		waitFor(t, env, ana, id, dispatcherapi.StateRunning)
+	}
+	if row := listRow(t, env, factorytest.DefaultAccount); row[4] != "2" || row[5] != "-" {
+		t.Errorf("the row of %s is %q, want 2 live Executions and no limit", factorytest.DefaultAccount, row)
+	}
+
+	env.AddAccount("pool-2", secondToken)
+	env.AddAccount("pool-3", "sk-ant-oat01-factorytest-pool-3")
+	env.MarkAtLimit("pool-2", env.Clock.Now().Add(time.Hour))
+	env.MarkAtLimit("pool-3", env.Clock.Now().Add(-time.Minute))
+	if row := listRow(t, env, "pool-2"); strings.Join(row[5:], " ") != "2026-11-14 10:00 UTC" {
+		t.Errorf("the row of pool-2 is %q, want its reset time", row)
+	}
+	if row := listRow(t, env, "pool-3"); row[5] != "-" {
+		t.Errorf("the row of pool-3 is %q, want no limit: it ended before now", row)
+	}
+	open()
+	for _, id := range live {
+		waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	}
+}
