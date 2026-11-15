@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/solidtrace/factory/forge"
@@ -15,9 +17,8 @@ import (
 // from a file and from the environment. The file holds NAME=value lines
 // with the same names as the environment (blank lines and lines that start
 // with # are not read), and a name in the environment wins over the file.
-// Later tickets add the Nomad address and token, the machine kinds, the
-// default allowlist, the checkpoint interval, the public webhook URL and
-// the trigger word.
+// Later tickets add the default allowlist, the checkpoint interval, the
+// public webhook URL and the trigger word.
 type Config struct {
 	// SolidTraceURL is the Console URL: the OAuth issuer that checks
 	// tokens, and the base of each link to a Run's page.
@@ -42,7 +43,84 @@ type Config struct {
 	// (the default), or refs/heads/agent-wip for a forge that refuses refs
 	// outside refs/heads (the fallback of cluster check 12).
 	WIPRefs string
+
+	// NomadAddress is the Nomad server's HTTP API, such as
+	// http://127.0.0.1:4646. With none, the Dispatcher has no Runner, and
+	// each Run stays queued.
+	NomadAddress string
+	// NomadToken is the Nomad ACL token of the Dispatcher: it registers,
+	// dispatches, reads and stops the jobs of the namespace, and reads the
+	// nodes.
+	NomadToken string
+	// NomadNamespace is the Nomad namespace of the jobs ("" is "default").
+	NomadNamespace string
+	// MachineKinds are the kinds of agent machine, each a Nomad node pool
+	// of the same name. The first is the default, unless
+	// DefaultMachineKind names another.
+	MachineKinds       []MachineKind
+	DefaultMachineKind string
+	// WrapperURL is the private listener's URL as an agent machine
+	// reaches it, for each wrapper's calls.
+	WrapperURL string
+	// WrapperCommand is the path of the wrapper on an agent machine.
+	WrapperCommand string
+
+	// machineKindsProblem is why EnvMachineKinds could not be read.
+	machineKindsProblem string
 }
+
+// parseMachineKinds reads a list of name=memory (MB).
+func parseMachineKinds(list string) ([]MachineKind, string) {
+	var kinds []MachineKind
+	for _, item := range strings.Split(list, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		name, memory, _ := strings.Cut(item, "=")
+		mb, err := strconv.Atoi(strings.TrimSpace(memory))
+		name = strings.TrimSpace(name)
+		if name == "" || !nodePoolName.MatchString(name) || err != nil || mb <= 0 {
+			return nil, EnvMachineKinds + " must be a list of name=memory in MB, such as standard=12288, " +
+				"with each name a Nomad node pool; " + fmt.Sprintf("%q is not", item)
+		}
+		for _, k := range kinds {
+			if k.Name == name {
+				return nil, EnvMachineKinds + " names the kind " + fmt.Sprintf("%q", name) + " twice"
+			}
+		}
+		kinds = append(kinds, MachineKind{Name: name, MemoryMB: mb})
+	}
+	return kinds, ""
+}
+
+// nodePoolName is the form of a Nomad node pool's name.
+var nodePoolName = regexp.MustCompile(`^[a-zA-Z0-9-_]{1,128}$`)
+
+// MachineKind gives the kind with name; "" is the default kind.
+func (c Config) MachineKind(name string) (MachineKind, bool) {
+	if name == "" {
+		name = c.DefaultMachineKind
+	}
+	for _, k := range c.MachineKinds {
+		if name == "" || k.Name == name {
+			return k, true
+		}
+	}
+	return MachineKind{}, false
+}
+
+// MachineKind is a kind of agent machine: a Nomad node pool whose
+// clients each have MemoryMB of memory for the task. An Execution's job
+// reserves all of it, so that one Run works on each machine.
+type MachineKind struct {
+	Name     string
+	MemoryMB int
+}
+
+// DefaultWrapperCommand is the wrapper's path on an agent machine when
+// none is set.
+const DefaultWrapperCommand = "/usr/local/bin/factory-wrapper"
 
 // The names of the operator configuration.
 const (
@@ -55,6 +133,15 @@ const (
 	EnvBitbucketAPIURL = "DISPATCHER_BITBUCKET_API_URL"
 	EnvBitbucketGitURL = "DISPATCHER_BITBUCKET_GIT_URL"
 	EnvWIPRefs         = "DISPATCHER_WIP_REFS"
+	EnvNomadAddress    = "DISPATCHER_NOMAD_ADDR"
+	EnvNomadToken      = "DISPATCHER_NOMAD_TOKEN"
+	EnvNomadNamespace  = "DISPATCHER_NOMAD_NAMESPACE"
+	// EnvMachineKinds is a list of name=memory in MB, such as
+	// "standard=12288,large=28672".
+	EnvMachineKinds       = "DISPATCHER_MACHINE_KINDS"
+	EnvDefaultMachineKind = "DISPATCHER_DEFAULT_MACHINE_KIND"
+	EnvWrapperURL         = "DISPATCHER_WRAPPER_URL"
+	EnvWrapperCommand     = "DISPATCHER_WRAPPER_COMMAND"
 )
 
 // DefaultListen is the private listener's address when none is set.
@@ -87,6 +174,17 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		BitbucketAPIURL: strings.TrimRight(value(EnvBitbucketAPIURL), "/"),
 		BitbucketGitURL: strings.TrimRight(value(EnvBitbucketGitURL), "/"),
 		WIPRefs:         value(EnvWIPRefs),
+
+		NomadAddress:       strings.TrimRight(value(EnvNomadAddress), "/"),
+		NomadToken:         value(EnvNomadToken),
+		NomadNamespace:     value(EnvNomadNamespace),
+		DefaultMachineKind: value(EnvDefaultMachineKind),
+		WrapperURL:         strings.TrimRight(value(EnvWrapperURL), "/"),
+		WrapperCommand:     value(EnvWrapperCommand),
+	}
+	c.MachineKinds, c.machineKindsProblem = parseMachineKinds(value(EnvMachineKinds))
+	if c.WrapperCommand == "" {
+		c.WrapperCommand = DefaultWrapperCommand
 	}
 	if c.Listen == "" {
 		c.Listen = DefaultListen
@@ -132,11 +230,42 @@ func (c Config) Check() error {
 		problems = append(problems, EnvWIPRefs+" (the place of the work-in-progress refs) must be "+
 			forge.WIPOutsideBranches+" or "+forge.WIPInBranches+", not "+fmt.Sprintf("%q", c.WIPRefs))
 	}
+	problems = append(problems, c.nomadProblems()...)
 	if len(problems) > 0 {
 		return errors.New("the operator configuration is not complete: " + strings.Join(problems, "; ") +
 			". Set each in the configuration file or the environment")
 	}
 	return nil
+}
+
+// nomadProblems names each value of the Runner that is absent or wrong.
+// With no Nomad address there is no Runner, and none is necessary.
+func (c Config) nomadProblems() []string {
+	if c.machineKindsProblem != "" {
+		return []string{c.machineKindsProblem}
+	}
+	if c.NomadAddress == "" {
+		return nil
+	}
+	var problems []string
+	if u, err := url.Parse(c.NomadAddress); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		problems = append(problems, EnvNomadAddress+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", c.NomadAddress))
+	}
+	if len(c.MachineKinds) == 0 {
+		problems = append(problems, EnvMachineKinds+" (the kinds of agent machine, as name=memory in MB) is not set")
+	} else if _, ok := c.MachineKind(""); !ok {
+		problems = append(problems, EnvDefaultMachineKind+" names "+fmt.Sprintf("%q", c.DefaultMachineKind)+
+			", which is not in "+EnvMachineKinds)
+	}
+	if c.WrapperURL == "" {
+		problems = append(problems, EnvWrapperURL+" (the private listener's URL as an agent machine reaches it) is not set")
+	} else if u, err := url.Parse(c.WrapperURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		problems = append(problems, EnvWrapperURL+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", c.WrapperURL))
+	}
+	if !strings.HasPrefix(c.WrapperCommand, "/") {
+		problems = append(problems, EnvWrapperCommand+" must be an absolute path, not "+fmt.Sprintf("%q", c.WrapperCommand))
+	}
+	return problems
 }
 
 func readConfigFile(path string) (map[string]string, error) {
