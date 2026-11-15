@@ -10,7 +10,7 @@ We chose Console for the same reasons as [ADR 0006](0006-monitors-evaluated-by-c
 
 - **The MCP server in EventStore (Go):** it would sit beside the Logs, but EventStore knows only Project keys, not users or roles. It would need Console's users, memberships and policies, and its Dashboard, Monitor and Issue tables, in Go.
 - **A stdio program each developer installs:** a local process that calls Console. Every developer would install and update it, and it would still need a way to sign in to Console, so it adds a program without removing the token.
-- **OAuth sign-in in v1:** claude.ai's and ChatGPT's web connectors need it, and it saves copying a token. It is deferred. An OAuth access token also names a user, so adding it later changes only how the agent gets its token, not the tools or their permission checks.
+- **OAuth sign-in in v1:** claude.ai's and ChatGPT's web connectors need it, and it saves copying a token. It is deferred. An OAuth access token also names a user, so adding it later changes only how the agent gets its token, not the tools or their permission checks. (Later built: [ADR 0021](0021-mcp-clients-sign-in-with-oauth-in-console.md). An OAuth token also acts in only one Organization.)
 
 ## Consequences
 

@@ -19,7 +19,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import {
   createApiToken,
@@ -33,16 +32,12 @@ import {
   type OfferedScope,
   type TokenForm,
 } from '@/lib/apiTokens'
-
-// docs/mcp.md, where the README's repository keeps it.
-const MCP_DOCS = 'https://github.com/solidtrace/solid_trace/blob/main/docs/mcp.md'
+import { SnippetTabs } from './SnippetTabs'
 
 type ApiTokensProps = {
   api_tokens: ApiToken[]
-  /** Where a client adds the MCP server, as the page's request reached Console. */
+  /** Where a client adds the MCP server, at Console's URL. */
   mcp_url: string
-  /** Why MCP clients can't sign in through the browser on this install; null when they can. */
-  browser_sign_in_note: string | null
   /** The scopes you can put on your own token. */
   scopes: OfferedScope[]
   organizations: NamedRecord[]
@@ -58,13 +53,14 @@ const EACH = 'each'
 const NONE = 'none'
 
 /**
- * User settings' API tokens: make one with a name, scopes, an Organization,
- * limits and an expiry, and see its secret once, with the snippets that add
- * the MCP server to Claude Code or Cursor; list them; revoke one.
+ * User settings' API tokens, for scripts and clients that can't sign in
+ * through the browser: make one with a name, scopes, an Organization, limits
+ * and an expiry, and see its secret once, with the snippets that add the MCP
+ * server to Claude Code or Cursor; list them; revoke one.
  */
 export function ApiTokens() {
   const {
-    api_tokens: tokens, mcp_url: mcpUrl, browser_sign_in_note: browserSignInNote, scopes: offered, organizations, projects,
+    api_tokens: tokens, mcp_url: mcpUrl, scopes: offered, organizations, projects,
   } = usePage<ApiTokensProps>().props
   const [form, setForm] = useState<TokenForm>(EMPTY_FORM)
   const [making, setMaking] = useState(false)
@@ -109,13 +105,11 @@ export function ApiTokens() {
       <CardHeader>
         <CardTitle>API tokens</CardTitle>
         <CardDescription>
-          An API token lets Claude Code, Cursor or another MCP client act as you through SolidTrace's MCP server, with your role in each Organization.{' '}
-          <a href={MCP_DOCS} target="_blank" rel="noreferrer" className="underline underline-offset-2">How to connect, and what it can do</a>
+          For scripts, and for clients that can't sign in through the browser. An API token acts as you through SolidTrace's MCP server,
+          or does only what its scopes give, and works until it expires or you revoke it. Keep it as you keep a password.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6 pb-6">
-        {browserSignInNote && <p role="note" className="border p-3 text-sm text-muted-foreground">{browserSignInNote}</p>}
-
         <form onSubmit={make} className="flex flex-col gap-4">
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-2">
@@ -291,22 +285,7 @@ function MadeToken({ name, secret, mcpUrl, onDone }: { name: string; secret: str
         </Button>
       </div>
 
-      <Tabs defaultValue={shown[0].id} className="gap-0">
-        <TabsList variant="line">
-          {shown.map(s => <TabsTrigger key={s.id} value={s.id}>{s.label}</TabsTrigger>)}
-        </TabsList>
-        {shown.map(s => (
-          <TabsContent key={s.id} value={s.id} className="flex flex-col gap-2 border-t pt-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground">{s.note}</span>
-              <Button variant="outline" size="sm" onClick={() => copyText(s.code, 'Snippet')} aria-label={`Copy the ${s.label} snippet`}>
-                <Copy className="h-3.5 w-3.5" /> Copy
-              </Button>
-            </div>
-            <pre className="overflow-x-auto border bg-muted/40 p-3 font-mono text-xs leading-5">{s.code}</pre>
-          </TabsContent>
-        ))}
-      </Tabs>
+      <SnippetTabs snippets={shown} />
 
       <div>
         <Button variant="outline" size="sm" onClick={onDone}>Done</Button>
