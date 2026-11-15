@@ -11,12 +11,12 @@ require "json"
 #
 #   Dispatcher.new(user: current_user, organization: @current_org).request(:get, "/api/v1/projects")
 #
-# A Dispatcher that does not answer, or answers with what is not JSON,
-# raises Unavailable; an answer with an error status raises Refused. Each
-# message says what went wrong, for the page to show.
+# A Dispatcher that does not answer, or answers with what is not HTTP or
+# not JSON, raises Unavailable; an answer with an error status raises
+# Refused. Each message says what went wrong, for the page to show.
 class Dispatcher
   # The Dispatcher did not answer: no URL is set, the connection failed or
-  # timed out, or the answer was not JSON.
+  # timed out, or the answer was not HTTP or not JSON.
   class Unavailable < StandardError; end
 
   # The Dispatcher answered with an error status. message is its error text.
@@ -83,9 +83,12 @@ class Dispatcher
       http.request(request)
     end
     [ response.code.to_i, parse(response) ]
-  rescue Net::OpenTimeout, Net::ReadTimeout
+  rescue Timeout::Error # Net::OpenTimeout, Net::ReadTimeout and Net::WriteTimeout
     raise Unavailable, "The Dispatcher at #{@url} did not answer in time. Check that it runs and that Console " \
                        "can reach it at this URL."
+  rescue Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError, Net::ProtocolError, Zlib::Error
+    raise Unavailable, "The Dispatcher at #{@url} did not answer with HTTP. Check that the Dispatcher URL is the " \
+                       "Dispatcher's private API."
   rescue SocketError, SystemCallError, IOError, OpenSSL::SSL::SSLError, EOFError => e
     raise Unavailable, "Console could not connect to the Dispatcher at #{@url} (#{e.message}). Check that it " \
                        "runs and that Console can reach it at this URL."

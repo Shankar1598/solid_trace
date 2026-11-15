@@ -135,6 +135,14 @@ class InstanceDispatcherSettingsTest < ActionDispatch::IntegrationTest
       -> { stub_request(:get, STATUS_URL).to_raise(SocketError.new("getaddrinfo: Name or service not known")) } =>
         "Console could not connect to the Dispatcher at #{DISPATCHER}",
       -> { stub_request(:get, STATUS_URL).to_timeout } => "The Dispatcher at #{DISPATCHER} did not answer in time",
+      -> { stub_request(:get, STATUS_URL).to_raise(Net::WriteTimeout) } =>
+        "The Dispatcher at #{DISPATCHER} did not answer in time",
+      -> { stub_request(:get, STATUS_URL).to_raise(Net::HTTPBadResponse.new("wrong status line")) } =>
+        "The Dispatcher at #{DISPATCHER} did not answer with HTTP",
+      -> { stub_request(:get, STATUS_URL).to_raise(Net::HTTPHeaderSyntaxError.new("wrong header line")) } =>
+        "The Dispatcher at #{DISPATCHER} did not answer with HTTP",
+      -> { stub_request(:get, STATUS_URL).to_raise(Zlib::DataError.new("incorrect header check")) } =>
+        "The Dispatcher at #{DISPATCHER} did not answer with HTTP",
       -> { stub_request(:get, STATUS_URL).to_return(status: 502, body: "<html>Bad Gateway</html>") } =>
         "The Dispatcher at #{DISPATCHER} answered HTTP 502 with no JSON",
       -> { stub_request(:get, STATUS_URL).to_return(status: 200, body: "OK") } =>
