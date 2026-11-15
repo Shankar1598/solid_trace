@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -366,10 +367,20 @@ func (e *execution) gitEnv(environ []string, socket string) []string {
 		"XDG_CACHE_HOME="+e.cfg.cache)
 }
 
+// gitWait is how long a git command's output can stay open after ctx
+// ended and its process group was killed.
+const gitWait = 2 * time.Second
+
 // git runs git, and gives its output and exit code.
 func (e *execution) git(ctx context.Context, environ []string, dir string, args ...string) (string, int, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// When ctx ends (a stop or a limit), the command's process group is
+	// killed: git and its remote helper, which holds the output open.
+	// After gitWait the wait stops all the same.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = gitWait
 	cmd.Env = append(e.gitEnv(environ, ""), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

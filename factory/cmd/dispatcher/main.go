@@ -73,8 +73,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	if err != nil {
 		return fail(fmt.Errorf("listen on %s (%s): %w", config.Listen, dispatcher.EnvListen, err))
 	}
-	servers := []*http.Server{{Handler: d.Handler(), ReadHeaderTimeout: 10 * time.Second}}
-	listeners := []net.Listener{listener}
+	servers := []*http.Server{}
 	if config.WebhookListen != "" {
 		webhooks, err := net.Listen("tcp", config.WebhookListen)
 		if err != nil {
@@ -83,26 +82,18 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 		}
 		// The webhook listener is the Dispatcher's one public path: short
 		// timeouts, so that slow senders cannot hold its connections.
-		servers = append(servers, &http.Server{Handler: d.WebhookHandler(), ReadHeaderTimeout: 10 * time.Second,
+		server := &http.Server{Handler: d.WebhookHandler(), ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute,
-			MaxHeaderBytes: 64 << 10})
-		listeners = append(listeners, webhooks)
-	}
-	served := make(chan error, len(servers))
-	for i, server := range servers {
-		go func() { served <- server.Serve(listeners[i]) }()
-	}
-	log.Info("the Dispatcher serves the private listener", "address", listener.Addr().String())
-	if len(listeners) > 1 {
-		log.Info("the Dispatcher serves the webhook listener", "address", listeners[1].Addr().String(),
+			MaxHeaderBytes: 64 << 10}
+		servers = append(servers, server)
+		go server.Serve(webhooks)
+		log.Info("the Dispatcher serves the webhook listener", "address", webhooks.Addr().String(),
 			"public_url", config.WebhookURL)
 	}
-
-	var failed error
-	select {
-	case failed = <-served:
-	case <-ctx.Done():
-	}
+	log.Info("the Dispatcher serves the private listener", "address", listener.Addr().String())
+	// Serve ends when ctx ends (after it drained the open commands calls)
+	// or when the private listener fails.
+	failed := d.Serve(ctx, listener)
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for _, server := range servers {

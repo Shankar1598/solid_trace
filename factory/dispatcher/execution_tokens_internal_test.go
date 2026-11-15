@@ -52,7 +52,7 @@ func startedExecution(t *testing.T, w *adminWorld) (storedExecution, time.Time) 
 	if ok, err := d.store.addExecution(run.ID, "e-1", now); !ok || err != nil {
 		t.Fatalf("add the Execution: %v %v", ok, err)
 	}
-	started, err := d.store.startExecution("e-1", now)
+	started, err := d.store.startExecution("e-1", now, defaultLimits)
 	if err != nil {
 		t.Fatal(err)
 	}

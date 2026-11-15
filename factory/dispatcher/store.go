@@ -166,6 +166,17 @@ var migrations = []string{
 	ALTER TABLE runs ADD COLUMN scheduled_by_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE runs ADD COLUMN scheduled_by_name TEXT NOT NULL DEFAULT '';
 	CREATE UNIQUE INDEX runs_by_fire ON runs (schedule_id, fired_at) WHERE schedule_id != '';`,
+	// commands are what the Dispatcher tells the wrapper of an Execution,
+	// which takes them with its long poll. total_limit is the Execution's
+	// total limit in seconds, set at its task call; the backstop reads it.
+	`CREATE TABLE commands (
+		seq INTEGER PRIMARY KEY AUTOINCREMENT,
+		execution_id TEXT NOT NULL REFERENCES executions (id),
+		kind TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	);
+	CREATE INDEX commands_by_execution ON commands (execution_id, seq);
+	ALTER TABLE executions ADD COLUMN total_limit INTEGER NOT NULL DEFAULT 0;`,
 	// The Run's PR (ticket 35): its id on the forge (0 = none) and its
 	// link.
 	`ALTER TABLE runs ADD COLUMN pr_id INTEGER NOT NULL DEFAULT 0;

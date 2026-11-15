@@ -149,6 +149,14 @@ func TestAPersonOfAnotherOrganizationGetsNoRun(t *testing.T) {
 			t.Errorf("another Organization's GET %s: %d %s, want 403 with no Run", path, a.Status, a.Body)
 		}
 	}
+	if a := other.API("POST", "/api/v1/runs/"+id+"/stop", nil); a.Status != http.StatusForbidden {
+		t.Errorf("another Organization's stop: %d %s, want 403", a.Status, a.Body)
+	}
+	var run dispatcherapi.Run
+	ana.API("GET", "/api/v1/runs/"+id, nil).JSON(t, &run)
+	if run.State != dispatcherapi.StateQueued {
+		t.Errorf("after another Organization's stop the Run is %s (%s), want queued", run.State, run.Reason)
+	}
 }
 
 func TestTheAPIRefusesNoTokenAndATokenThatIsNotActive(t *testing.T) {
