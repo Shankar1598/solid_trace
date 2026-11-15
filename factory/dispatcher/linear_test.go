@@ -1,8 +1,11 @@
 package dispatcher_test
 
 import (
+	"bytes"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -464,6 +467,32 @@ func TestALinearConnectionIsOfOneTeamAndATicketOfAnotherTeamStartsNoRun(t *testi
 	for _, comment := range env.Linear.Comments() {
 		if comment.Issue == "issue-20" {
 			t.Errorf("the factory commented on the Design ticket: %+v", comment)
+		}
+	}
+}
+
+func TestACopyOfTheDatabaseFileShowsNoLinearSecretAfterARefresh(t *testing.T) {
+	env, path := linearEnv(t)
+	env.Clock.Advance(25 * time.Hour)
+	readyTicket(t, env, path, "issue-30")
+	waitForRuns(t, env, 1)
+	if n := env.Linear.Refreshes(); n != 1 {
+		t.Fatalf("Linear gave %d refreshes, want 1", n)
+	}
+
+	files, _ := filepath.Glob(env.Config.Database + "*")
+	if len(files) == 0 {
+		t.Fatal("no database file")
+	}
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, secret := range []string{fakelinear.ClientSecret, "app-access-", "app-refresh-"} {
+			if bytes.Contains(data, []byte(secret)) {
+				t.Errorf("%s holds %q", filepath.Base(file), secret)
+			}
 		}
 	}
 }
