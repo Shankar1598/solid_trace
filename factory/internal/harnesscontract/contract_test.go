@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -34,26 +35,31 @@ import (
 	"github.com/solidtrace/factory/internal/harnesscontract"
 )
 
-const maxCost = 0.20 // US dollars for one run of all the checks
+const maxCost = 0.05 // US dollars for one run of all the checks
 
 var (
 	costMu    sync.Mutex
 	totalCost float64
+	// severalLines is true when a check saw a reply of several lines: one
+	// message id on more than one assistant line of a .jsonl.
+	severalLines bool
 )
 
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if madeGlobal != "" {
-		os.Remove(madeGlobal)
-		matches, _ := filepath.Glob(madeGlobal + ".backup*")
-		for _, m := range matches {
-			os.Remove(m)
-		}
+		removeMadeGlobal()
 	}
 	if os.Getenv("FACTORY_HARNESS_CONTRACT") == "1" {
 		fmt.Printf("harness contract checks: the total cost is %.4f US dollars\n", totalCost)
 		if totalCost > maxCost {
 			fmt.Printf("FAIL: the cost is more than %.2f US dollars\n", maxCost)
+			code = 1
+		}
+		// The parse counts a reply of several lines one time. A run of all
+		// the checks must see one such reply, or that rule is not checked.
+		if f := flag.Lookup("test.run"); f != nil && f.Value.String() == "" && !severalLines {
+			fmt.Println("FAIL: no check saw a reply of several lines in a .jsonl")
 			code = 1
 		}
 	}
@@ -63,7 +69,33 @@ func TestMain(m *testing.M) {
 var (
 	globalOnce sync.Once
 	madeGlobal string // the global settings file that this run made, if any
+	// oldBackups holds the backups of the global settings file before the run.
+	oldBackups map[string]bool
 )
+
+// removeMadeGlobal removes the global settings file that this run made,
+// and the backups of it that Claude Code wrote (in <config>/backups). The
+// backups that were there before the run stay.
+func removeMadeGlobal() {
+	os.Remove(madeGlobal)
+	for _, b := range globalBackups(filepath.Dir(madeGlobal)) {
+		if !oldBackups[b] {
+			os.Remove(b)
+		}
+	}
+}
+
+func globalBackups(config string) []string {
+	var out []string
+	for _, pattern := range []string{
+		filepath.Join(config, ".claude.json.backup*"),
+		filepath.Join(config, "backups", ".claude.json.backup*"),
+	} {
+		matches, _ := filepath.Glob(pattern)
+		out = append(out, matches...)
+	}
+	return out
+}
 
 var versionOnce sync.Once
 var versionErr error
@@ -108,6 +140,10 @@ func contract(t *testing.T) *place {
 		file := filepath.Join(config, ".claude.json")
 		if _, err := os.Stat(file); err != nil {
 			madeGlobal = file
+			oldBackups = map[string]bool{}
+			for _, b := range globalBackups(config) {
+				oldBackups[b] = true
+			}
 		}
 	})
 	root := t.TempDir()
@@ -290,6 +326,9 @@ func (p *place) run(o opts) *proc {
 			c.cmd.Wait()
 		}
 	})
+	// The cost is added at the end of the test, also after a Fatal or a
+	// kill, from the last total_cost_usd that the process gave.
+	p.t.Cleanup(c.addCost)
 	go func() {
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 1<<20), 64<<20)
@@ -312,11 +351,18 @@ func (p *place) run(o opts) *proc {
 
 // childEnv is this process's environment with no variable of a Claude Code
 // session around it, so that the check runs as a fresh headless process.
-func childEnv() []string {
+// It keeps the login and the provider: CLAUDE_CODE_OAUTH_TOKEN (the
+// `claude setup-token` login that an Execution uses) and CLAUDE_CODE_USE_*.
+func childEnv() []string { return sessionFree(os.Environ()) }
+
+func sessionFree(environ []string) []string {
 	var env []string
-	for _, kv := range os.Environ() {
+	for _, kv := range environ {
 		k, _, _ := strings.Cut(kv, "=")
-		if k == "CLAUDECODE" || k == "CLAUDE_PID" || k == "CLAUDE_EFFORT" || strings.HasPrefix(k, "CLAUDE_CODE_") {
+		switch {
+		case k == "CLAUDE_CODE_OAUTH_TOKEN", strings.HasPrefix(k, "CLAUDE_CODE_USE_"):
+		case k == "CLAUDECODE", k == "CLAUDE_PID", k == "CLAUDE_EFFORT", k == "CLAUDE_CONFIG_DIR",
+			strings.HasPrefix(k, "CLAUDE_CODE_"):
 			continue
 		}
 		env = append(env, kv)
@@ -403,8 +449,21 @@ func (c *proc) end() int {
 	} else if err != nil {
 		c.t.Fatal(err)
 	}
-	c.addCost()
 	return c.exit
+}
+
+// processCost is the last total_cost_usd in the events: Claude Code gives
+// it for the whole process up to that result.
+func processCost(events []harnesscontract.Event) float64 {
+	var cost float64
+	for _, ev := range events {
+		if ev.Data["type"] == "result" {
+			if v, ok := ev.Data["total_cost_usd"].(float64); ok {
+				cost = v
+			}
+		}
+	}
+	return cost
 }
 
 func (c *proc) all() []harnesscontract.Event {
@@ -416,14 +475,7 @@ func (c *proc) all() []harnesscontract.Event {
 // addCost adds the cost of the process: the total_cost_usd of its last
 // result, which Claude Code gives for the whole process.
 func (c *proc) addCost() {
-	var cost float64
-	for _, ev := range c.all() {
-		if ev.Data["type"] == "result" {
-			if v, ok := ev.Data["total_cost_usd"].(float64); ok {
-				cost = v
-			}
-		}
-	}
+	cost := processCost(c.all())
 	c.t.Logf("this process cost %.4f US dollars", cost)
 	costMu.Lock()
 	totalCost += cost
@@ -563,7 +615,9 @@ func TestContractTurnWithToolCall(t *testing.T) {
 	c := p.run(opts{session: newUUID()})
 	c.save("turn-with-tool-call", "One message. The agent runs one Bash tool call (git status) and replies; one result. No Stop hook.")
 	first := newUUID()
-	c.message(first, "Use Bash to run `git status --short --branch` in this directory. Then reply in one sentence with the branch name.")
+	// The sentence before the tool call asks for a reply of several lines:
+	// a text block and a tool_use block with one message id.
+	c.message(first, "First write one short sentence that says what you will run. Then use Bash to run `git status --short --branch` in this directory. Then reply in one sentence with the branch name.")
 	init := c.until("the init event", is("system", "init"), 90*time.Second)
 	c.until("the echo of the first message", echoOf(first), 90*time.Second)
 	result := c.until("the result", is("result", ""), 120*time.Second)
@@ -599,15 +653,35 @@ func TestContractTurnWithToolCall(t *testing.T) {
 		t.Errorf("no user line with the wrapper's uuid %s in the .jsonl: %s", first, typesOfLines(lines))
 	}
 
-	// The lines of one reply: each assistant event and each assistant line
-	// has a message id, the stream and the .jsonl have the same ids, and
-	// the lines of one id have the same usage, so that a parse that counts
-	// each message id one time counts the reply one time.
+	c.checkReplies(lines)
+}
+
+// checkReplies checks the lines of each reply in the .jsonl: each assistant
+// event and each assistant line has a message id, the stream and the
+// .jsonl have the same ids, and the lines of one id have the same usage,
+// so that a parse that counts each message id one time (on its last line)
+// counts the reply one time.
+func (c *proc) checkReplies(lines []map[string]any) {
+	c.t.Helper()
+	problems, several := replyProblems(c.all(), lines)
+	for _, p := range problems {
+		c.t.Error(p)
+	}
+	if several {
+		costMu.Lock()
+		severalLines = true
+		costMu.Unlock()
+	}
+}
+
+// replyProblems gives what is wrong with the replies of a stream and its
+// .jsonl, and whether a reply has several lines in the .jsonl.
+func replyProblems(events []harnesscontract.Event, lines []map[string]any) (problems []string, several bool) {
 	streamIDs := map[string]int{}
-	for _, ev := range c.all() {
+	for _, ev := range events {
 		if ev.Data["type"] == "assistant" {
-			id := text(ev.Data["message"].(map[string]any)["id"])
-			streamIDs[id]++
+			msg, _ := ev.Data["message"].(map[string]any)
+			streamIDs[text(msg["id"])]++
 		}
 	}
 	fileIDs := map[string][]string{}
@@ -619,33 +693,25 @@ func TestContractTurnWithToolCall(t *testing.T) {
 		}
 	}
 	if len(streamIDs) == 0 || streamIDs["null"] > 0 || len(fileIDs["null"]) > 0 {
-		t.Errorf("an assistant event or line has no message id: stream %v, .jsonl %v", streamIDs, fileIDs)
+		problems = append(problems, fmt.Sprintf("an assistant event or line has no message id: stream %v, .jsonl %v", streamIDs, fileIDs))
 	}
 	for id := range streamIDs {
 		if _, ok := fileIDs[id]; !ok {
-			t.Errorf("the reply %s of the stream is not in the .jsonl", id)
+			problems = append(problems, fmt.Sprintf("the reply %s of the stream is not in the .jsonl", id))
 		}
 	}
-	several := false
 	for id, usages := range fileIDs {
 		if len(usages) > 1 {
 			several = true
 		}
 		for _, u := range usages[1:] {
 			if u != usages[0] {
-				t.Logf("the lines of the reply %s have different usage: %v", id, usages)
+				problems = append(problems, fmt.Sprintf("the lines of the reply %s have different usage, so the last line does not give the tokens of the reply: %v", id, usages))
+				break
 			}
 		}
 	}
-	t.Logf("assistant replies %d; lines of the .jsonl per reply: %v; a reply of several lines: %v", len(fileIDs), lineCounts(fileIDs), several)
-}
-
-func lineCounts(ids map[string][]string) []int {
-	var out []int
-	for _, v := range ids {
-		out = append(out, len(v))
-	}
-	return out
+	return problems, several
 }
 
 func typesOfLines(lines []map[string]any) string {
@@ -705,6 +771,7 @@ func TestContractStopHook(t *testing.T) {
 	}
 
 	lines := c.transcript()
+	c.checkReplies(lines)
 	var turnStart, meta int
 	for _, l := range lines {
 		if l["type"] == "user" && l["uuid"] == second {
@@ -755,13 +822,16 @@ func TestContractMessageDuringToolCall(t *testing.T) {
 	if n := count(events, is("result", "")); n != 1 {
 		t.Errorf("%d results; want one for the two messages", n)
 	}
-	final := events[index(events, is("result", ""))].Data
-	if !strings.Contains(text(final), "BANANA") && !strings.Contains(text(events), "BANANA") {
-		t.Errorf("the agent did not answer the second message")
+	// The echo of the second message holds the word BANANA. So look for it
+	// only in the replies after the echo and in the result.
+	if !answered(events, echoAt, "BANANA") {
+		t.Errorf("the agent did not answer the second message in the same turn")
 	}
 
+	lines := c.transcript()
+	c.checkReplies(lines)
 	var enqueue, attachment, remove, userLine bool
-	for _, l := range c.transcript() {
+	for _, l := range lines {
 		switch {
 		case l["type"] == "queue-operation" && l["operation"] == "enqueue":
 			enqueue = true
@@ -865,7 +935,41 @@ func TestContractBackgroundTask(t *testing.T) {
 	} else if n := count(events[ended:], is("result", "")); n != 1 {
 		t.Errorf("%d results after the task ended; want 1, from the turn that Claude Code starts by itself", n)
 	}
+	// The wrapper's Stop hook counts the running background tasks from the
+	// tasks list of background_tasks_changed.
+	if started >= 0 && ended >= 0 {
+		task, _ := events[started].Data["task_id"].(string)
+		if !runningTasks(events[:resultAt], task, 1) {
+			t.Errorf("no background_tasks_changed with the one running task %s before the result; events %v", task, events[:resultAt])
+		}
+		if !runningTasks(events[ended:], "", 0) {
+			t.Errorf("no background_tasks_changed with no running task after task_notification; events %v", events[ended:])
+		}
+	}
 	t.Logf("events: %v; exit %d", events, code)
+}
+
+// runningTasks is true when a background_tasks_changed event in the events
+// gives n running tasks, the task among them when n > 0.
+func runningTasks(events []harnesscontract.Event, task string, n int) bool {
+	for _, ev := range events {
+		if !is("system", "background_tasks_changed")(ev.Data) {
+			continue
+		}
+		tasks, ok := ev.Data["tasks"].([]any)
+		if !ok || len(tasks) != n {
+			continue
+		}
+		if n == 0 {
+			return true
+		}
+		for _, x := range tasks {
+			if x, _ := x.(map[string]any); x["task_id"] == task {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // A resume from a restored directory, and a resume with no tool-results.
@@ -919,7 +1023,9 @@ func TestContractResume(t *testing.T) {
 	if !strings.Contains(text(c2.all()), word) {
 		t.Errorf("Execution 2 does not know the code word %s from the restored directory: %s", word, text(r2.Data["result"]))
 	}
-	if !hasUserLine(c2.transcript(), m2) {
+	lines2 := c2.transcript()
+	c2.checkReplies(lines2)
+	if !hasUserLine(lines2, m2) {
 		t.Errorf("no user line with the uuid of the first message of Execution 2")
 	}
 	results, _ := os.ReadDir(filepath.Join(dir, "tool-results"))
@@ -938,9 +1044,33 @@ func TestContractResume(t *testing.T) {
 	if r3.Data["subtype"] != "success" || !strings.Contains(text(r3.Data["result"]), word) {
 		t.Errorf("Execution 3 result %s; want a success with the code word %s", text(r3.Data), word)
 	}
-	if !hasUserLine(c3.transcript(), m3) {
+	lines3 := c3.transcript()
+	c3.checkReplies(lines3)
+	if !hasUserLine(lines3, m3) {
 		t.Errorf("no user line with the uuid of the first message of Execution 3")
 	}
+}
+
+// answered is true when an assistant reply after the event at, or the
+// result after it, holds the word.
+func answered(events []harnesscontract.Event, at int, word string) bool {
+	if at < 0 {
+		return false
+	}
+	for _, ev := range events[at+1:] {
+		switch ev.Data["type"] {
+		case "assistant":
+			msg, _ := ev.Data["message"].(map[string]any)
+			if strings.Contains(text(msg["content"]), word) {
+				return true
+			}
+		case "result":
+			if strings.Contains(text(ev.Data["result"]), word) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasUserLine(lines []map[string]any, uuid string) bool {
