@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -145,15 +147,30 @@ func printRun(out io.Writer, r dispatcherapi.Run) {
 		fmt.Fprintf(tw, "Reason:\t%s\n", r.Reason)
 	}
 	fmt.Fprintf(tw, "Project:\t%s\n", r.Project)
-	if r.StartedBy.Kind == dispatcherapi.ActorSchedule && r.ScheduledBy != nil {
+	if r.Title != "" {
+		fmt.Fprintf(tw, "Title:\t%s\n", r.Title)
+	}
+	switch {
+	case r.StartedBy.Kind == dispatcherapi.ActorSchedule && r.ScheduledBy != nil:
 		fmt.Fprintf(tw, "Started:\t%s by the schedule %s (%s) of %s\n", r.CreatedAt.UTC().Format(timeFormat),
 			r.StartedBy.Name, r.StartedBy.ID, r.ScheduledBy.Name)
-	} else {
+	case r.StartedBy.Kind == dispatcherapi.ActorSender:
+		fmt.Fprintf(tw, "Started:\t%s by the sender %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
+	default:
 		fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
 	}
 	fmt.Fprintf(tw, "Executions:\t%d\n", len(r.Executions))
 	fmt.Fprintf(tw, "Link:\t%s\n", r.URL)
+	if r.Link != "" {
+		fmt.Fprintf(tw, "Trigger link:\t%s\n", r.Link)
+	}
 	tw.Flush()
+	if len(r.Attributes) > 0 {
+		fmt.Fprintln(out, "\nAttributes:")
+		for _, name := range slices.Sorted(maps.Keys(r.Attributes)) {
+			fmt.Fprintf(out, "  %s: %s\n", name, r.Attributes[name])
+		}
+	}
 	fmt.Fprintf(out, "\nPrompt:\n%s\n", r.Prompt)
 	if r.Question != "" {
 		fmt.Fprintf(out, "\nQuestion:\n%s\n", r.Question)

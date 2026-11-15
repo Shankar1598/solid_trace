@@ -142,6 +142,34 @@ solidtrace schedules delete ID
 - A fire time that the Dispatcher missed while it was down starts one Run when the Dispatcher starts, if it is less than 24 hours old. Older fire times start no Run.
 - The Run's starter is the schedule, with the member who made it. Each change to a schedule is a Log of the Dispatcher (`event.kind` `schedule_created`, `schedule_updated`, `schedule_paused`, `schedule_continued` or `schedule_deleted`) with the person who made it.
 
+## Start Runs from any tool: the generic webhook
+
+A **Webhook sender** is a tool that starts Runs with signed requests, such as a CI job or a script. An Admin makes one with `solidtrace senders create NAME [--project PROJECT]...`. The command prints the sender's id, its webhook URL (`/webhooks/generic/<sender id>` under `DISPATCHER_WEBHOOK_URL`; the private listener serves the same path) and its secret. The Dispatcher shows the secret this one time only, and keeps it encrypted. With `--project`, the sender can start Runs only in those Projects; with none, in each Project of the Organization. A sender belongs to the Organization of the Admin who made it. `solidtrace senders list` shows each sender, with no secret, and the time of its last delivery. `solidtrace senders delete SENDER_ID` (an Admin only) deletes one; its webhook URL then gets 404, and its Runs stay.
+
+A delivery is `POST` to the webhook URL, with a JSON body and three headers:
+
+- `SolidTrace-Timestamp`: the Unix time in seconds. A timestamp more than 5 minutes from the Dispatcher's clock gets 401.
+- `SolidTrace-Delivery`: a delivery id. A delivery id that the sender sent in the last 7 days gives the first delivery's Run and starts no Run.
+- `SolidTrace-Signature`: `sha256=` and the hex HMAC-SHA256, with the secret, of the timestamp, a `.` and the raw body. With no valid signature, the delivery gets 401.
+
+The body has `project` (necessary: the Project's slug), `prompt` (necessary, at most 64 KiB), and optional `branch` (the base branch; with none, the Project's default base branch), `title`, `link` (an `http` or `https` URL that the Run shows), `dedupe_key` and `attributes` (at most 20 strings, which the Run keeps). For example:
+
+```sh
+body='{"project":"shop","prompt":"Find why the cart test fails","dedupe_key":"ci-1234"}'
+ts=$(date +%s)
+sig=$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')
+curl -X POST "$WEBHOOK_URL" -H "SolidTrace-Timestamp: $ts" -H "SolidTrace-Delivery: ci-1234-1" \
+  -H "SolidTrace-Signature: sha256=$sig" -H 'Content-Type: application/json' -d "$body"
+```
+
+The delivery is the truth: the Dispatcher starts the Run at once, with the sender as its starter. The answers:
+
+- 202 with `run_id`, the Run's Console link in `url`, and `started` (false when the delivery gave an earlier Run).
+- 400 for a body that is not valid; 403 for a Project that is not in the sender's list; 422 for a Project that SolidTrace does not have in the sender's Organization, or a Project with no Factory settings. A 422 also writes a warning Log that names the Project.
+- 429 with `Retry-After` when the sender started 10 Runs in the last minute, or has 5 Runs with an Execution queued or live. The operator changes these limits with `DISPATCHER_SENDER_STARTS_PER_MINUTE` and `DISPATCHER_SENDER_ACTIVE_RUNS`.
+
+While an Active Run of the sender has the same `dedupe_key`, a delivery gives that Run and starts none. The Dispatcher also takes a delivery with the same signature as an earlier one as a repeat, because the delivery id is not signed: two deliveries with the same body in the same second give one Run. A refused delivery is not kept, so the sender can send it again.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.

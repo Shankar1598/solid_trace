@@ -136,21 +136,22 @@ func (d *Dispatcher) projectBySlug(w http.ResponseWriter, r *http.Request, p per
 
 // triggerSettings finds the Factory settings of the Project that a
 // trigger names. It refuses the trigger, with a warning, for a Project
-// that SolidTrace does not have or that has no Factory settings. The
-// settings of each Project that SolidTrace no longer has are marked
-// orphaned. It answers the request itself when it refuses.
-func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, p person, slug string) (storedSettings, bool) {
-	projects, err := d.listProjects(r.Context(), p.organization)
+// that SolidTrace does not have or that has no Factory settings, and with
+// 403 for a Project that is not in the starter's list. The settings of
+// each Project that SolidTrace no longer has are marked orphaned. It
+// answers the request itself when it refuses.
+func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, s starter, slug string) (storedSettings, bool) {
+	projects, err := d.listProjects(r.Context(), s.organization)
 	if err != nil {
-		d.solidTraceFailure(w, p.organization, err)
+		d.solidTraceFailure(w, s.organization, err)
 		return storedSettings{}, false
 	}
-	all, err := d.store.allSettings(p.organization.id)
+	all, err := d.store.allSettings(s.organization.id)
 	if err != nil {
 		d.serverError(w, "read the Factory settings", err)
 		return storedSettings{}, false
 	}
-	marked, err := d.markOrphans(p.organization, projects, all)
+	marked, err := d.markOrphans(s.organization, projects, all)
 	if err != nil {
 		d.serverError(w, "mark the Factory settings orphaned", err)
 		return storedSettings{}, false
@@ -158,18 +159,22 @@ func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, p p
 	i := slices.IndexFunc(projects, func(sp solidTraceProject) bool { return sp.slug == slug })
 	if i < 0 {
 		d.warn("a trigger names a Project that SolidTrace does not have: the Run is refused",
-			p.warnArgs(slug)...)
-		message := noProject(slug, p.organization.slug) + ": the Run is refused"
+			s.warnArgs(slug)...)
+		message := noProject(slug, s.organization.slug) + ": the Run is refused"
 		if slices.Contains(marked, slug) {
 			message += ", and its Factory settings are marked orphaned"
 		}
 		writeProblem(w, http.StatusUnprocessableEntity, message)
 		return storedSettings{}, false
 	}
-	settings, err := d.store.settings(p.organization.id, projects[i].id)
+	if s.projects != nil && !slices.Contains(s.projects, projects[i].id) {
+		writeProblem(w, http.StatusForbidden, "the "+s.kind+" "+s.name+" cannot start Runs in the Project "+slug)
+		return storedSettings{}, false
+	}
+	settings, err := d.store.settings(s.organization.id, projects[i].id)
 	if errors.Is(err, errNotFound) {
 		d.warn("a trigger names a Project that has no Factory settings: the Run is refused",
-			p.warnArgs(slug)...)
+			s.warnArgs(slug)...)
 		writeProblem(w, http.StatusUnprocessableEntity, noSettings(slug)+": the Run is refused")
 		return storedSettings{}, false
 	}

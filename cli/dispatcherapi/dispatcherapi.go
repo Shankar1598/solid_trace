@@ -34,10 +34,10 @@ const (
 )
 
 // Person is who started a Run or saved a value: the SolidTrace user of
-// the token. A Run that a schedule started has the schedule as its
-// starter, with Kind ActorSchedule.
+// the token. A Run that a schedule or a sender started has it as its
+// starter, with Kind ActorSchedule or ActorSender.
 type Person struct {
-	// Kind is "" for a person, or ActorSchedule.
+	// Kind is "" for a person, ActorSchedule or ActorSender.
 	Kind string `json:"kind,omitempty"`
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -46,6 +46,10 @@ type Person struct {
 // ActorSchedule is the kind of a Run's starter that is a schedule.
 const ActorSchedule = "schedule"
 
+// ActorSender is the kind of a Run's starter that is a sender of the
+// generic webhook.
+const ActorSender = "sender"
+
 // Run is one unit of work, from its trigger to its PR outcome.
 type Run struct {
 	ID    string `json:"id"`
@@ -53,6 +57,14 @@ type Run struct {
 	// Project is the Project whose Factory settings the Run uses.
 	Project string `json:"project"`
 	Prompt  string `json:"prompt"`
+	// Title is the Run's title: the title that its trigger gave, else the
+	// first line of its prompt.
+	Title string `json:"title"`
+	// Link is the link that the Run's trigger gave, such as the page of
+	// its ticket ("" is none).
+	Link string `json:"link,omitempty"`
+	// Attributes are the strings that the Run's trigger gave.
+	Attributes map[string]string `json:"attributes,omitempty"`
 	// Organization is the slug of the Run's Organization.
 	Organization string `json:"organization"`
 	StartedBy    Person `json:"started_by"`
@@ -383,6 +395,84 @@ type Connections struct {
 	Connections []Connection `json:"connections"`
 }
 
+// Sender is a sender of the generic webhook: a tool that starts Runs
+// with signed requests to its webhook URL. The Dispatcher never gives its
+// secret after the sender is made.
+type Sender struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Projects are the slugs of the Projects that the sender can start
+	// Runs in, as the Admin gave them (empty is each Project of the
+	// Organization).
+	Projects []string `json:"projects"`
+	// WebhookURL is the public URL that the sender posts to ("" when the
+	// operator configuration has no public webhook URL). The private
+	// listener serves the same path, /webhooks/generic/<id>.
+	WebhookURL string    `json:"webhook_url,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	CreatedBy  Person    `json:"created_by"`
+	// LastDeliveryAt is the time of the last delivery with a valid
+	// signature (nil is none).
+	LastDeliveryAt *time.Time `json:"last_delivery_at,omitempty"`
+}
+
+// SaveSender is the body of a new sender.
+type SaveSender struct {
+	Name string `json:"name"`
+	// Projects are the slugs of the Projects that the sender can start
+	// Runs in (empty is each Project).
+	Projects []string `json:"projects,omitempty"`
+}
+
+// NewSender is the answer when an Admin makes a sender: the sender, and
+// its secret, which the Dispatcher gives this one time only.
+type NewSender struct {
+	Sender
+	Secret string `json:"secret"`
+}
+
+// Senders is the answer of the list of the Organization's senders, by
+// name.
+type Senders struct {
+	Senders []Sender `json:"senders"`
+}
+
+// The headers of a delivery of the generic webhook. The signature is
+// "sha256=" and the hex HMAC-SHA256, with the sender's secret, of the
+// timestamp (Unix seconds), a "." and the raw body.
+const (
+	HeaderTimestamp = "SolidTrace-Timestamp"
+	HeaderDelivery  = "SolidTrace-Delivery"
+	HeaderSignature = "SolidTrace-Signature"
+)
+
+// GenericWebhook is the body of a delivery of the generic webhook.
+type GenericWebhook struct {
+	// Project is the slug of a Project in the sender's Organization.
+	Project string `json:"project"`
+	// Prompt is the task, at most 64 KiB.
+	Prompt string `json:"prompt"`
+	// Branch is the base branch ("" is the Project's default base
+	// branch, else the repository's default branch).
+	Branch string `json:"branch,omitempty"`
+	Title  string `json:"title,omitempty"`
+	// Link is shown on the Run, such as the page of the sender's ticket.
+	Link string `json:"link,omitempty"`
+	// DedupeKey: while an Active Run of the sender has the same key, a
+	// delivery gives that Run and starts none.
+	DedupeKey  string            `json:"dedupe_key,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+}
+
+// GenericWebhookAnswer is the 202 answer of the generic webhook: the Run
+// that the delivery started, or the Run that it gives because of its
+// delivery id or its dedupe_key (Started false).
+type GenericWebhookAnswer struct {
+	RunID   string `json:"run_id"`
+	URL     string `json:"url"`
+	Started bool   `json:"started"`
+}
+
 // Schedule is a Project's schedule: it starts a Run at each fire time of
 // its cron expression in its time zone.
 type Schedule struct {
@@ -637,6 +727,29 @@ func (c *Client) DeleteSchedule(ctx context.Context, id string) (Schedule, error
 	return schedule, err
 }
 
+// Senders reads the Organization's senders, with no secret.
+func (c *Client) Senders(ctx context.Context) ([]Sender, error) {
+	var list Senders
+	err := c.call(ctx, http.MethodGet, "/senders", nil, &list)
+	return list.Senders, err
+}
+
+// CreateSender makes a sender (an Admin only). The answer has its secret,
+// which no later answer gives.
+func (c *Client) CreateSender(ctx context.Context, save SaveSender) (NewSender, error) {
+	var sender NewSender
+	err := c.call(ctx, http.MethodPost, "/senders", save, &sender)
+	return sender, err
+}
+
+// DeleteSender deletes a sender (an Admin only). Its webhook URL then
+// gets 404.
+func (c *Client) DeleteSender(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodDelete, "/senders/"+url.PathEscape(id), nil, nil)
+}
+
+// call sends one request and decodes the answer into into (nil reads no
+// answer).
 func (c *Client) call(ctx context.Context, method, path string, body, into any) error {
 	var payload []byte
 	if body != nil {
@@ -671,6 +784,9 @@ func (c *Client) call(ctx context.Context, method, path string, body, into any) 
 		var problem Problem
 		_ = json.Unmarshal(answer, &problem)
 		return &Error{Status: resp.StatusCode, Message: problem.Error, MinimumVersion: problem.MinimumVersion}
+	}
+	if into == nil {
+		return nil
 	}
 	if err := json.Unmarshal(answer, into); err != nil {
 		return fmt.Errorf("read the Dispatcher's answer to %s %s: %w", method, path, err)

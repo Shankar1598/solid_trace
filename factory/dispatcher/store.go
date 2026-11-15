@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -177,6 +178,42 @@ var migrations = []string{
 	);
 	CREATE INDEX commands_by_execution ON commands (execution_id, seq);
 	ALTER TABLE executions ADD COLUMN total_limit INTEGER NOT NULL DEFAULT 0;`,
+	// senders start Runs with the generic webhook. A sender's secret is
+	// sealed (see sealer); projects is a JSON array of {id, slug}, the
+	// Projects that it can start Runs in ('' is each Project).
+	// sender_deliveries are the delivery ids and signatures of the last 7
+	// days, with the Run that each one gave. A Run that a sender started
+	// has started_by_kind sender and the sender as started_by_*; title,
+	// link, attributes (a JSON object or '') and dedupe_key are what its
+	// trigger gave.
+	`CREATE TABLE senders (
+		id TEXT PRIMARY KEY,
+		organization_id TEXT NOT NULL,
+		organization_slug TEXT NOT NULL,
+		name TEXT NOT NULL,
+		secret BLOB NOT NULL,
+		projects TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		created_by_id TEXT NOT NULL,
+		created_by_name TEXT NOT NULL,
+		last_delivery_at INTEGER
+	);
+	CREATE INDEX senders_by_organization ON senders (organization_id, name);
+	CREATE TABLE sender_deliveries (
+		sender_id TEXT NOT NULL REFERENCES senders (id) ON DELETE CASCADE,
+		delivery TEXT NOT NULL,
+		signature TEXT NOT NULL,
+		run_id TEXT NOT NULL REFERENCES runs (id),
+		received_at INTEGER NOT NULL,
+		PRIMARY KEY (sender_id, delivery)
+	);
+	CREATE INDEX sender_deliveries_by_signature ON sender_deliveries (sender_id, signature);
+	CREATE INDEX sender_deliveries_by_time ON sender_deliveries (received_at);
+	ALTER TABLE runs ADD COLUMN title TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN link TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN attributes TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN dedupe_key TEXT NOT NULL DEFAULT '';
+	CREATE INDEX runs_by_starter ON runs (started_by_kind, started_by_id, created_at) WHERE started_by_kind != '';`,
 	// factory_file is the factory file that the Dispatcher read from the
 	// default branch at the Execution's dispatch, as JSON ('' is the
 	// defaults). repository_hosts are the extra allowed hosts of the last
@@ -259,6 +296,8 @@ type storedRun struct {
 	// repository, folder and baseBranch are of the Factory settings when
 	// the Run started; trigger is the trigger kind.
 	repository, folder, baseBranch, trigger string
+	// dedupeKey is the dedupe_key of a sender's delivery ("" is none).
+	dedupeKey string
 	// scheduleID and firedAt are the schedule that started the Run and
 	// its fire time ("" and zero for another trigger).
 	scheduleID string
@@ -280,8 +319,9 @@ func (s *store) insertRun(r storedRun) error {
 }
 
 // insertRun adds a queued Run in tx, with its created and queued events.
-// It adds nothing and returns false when the Run's schedule has a Run for
-// the same fire time.
+// Its Title is the title that the trigger gave ("" is the first line of
+// the prompt). It adds nothing and returns false when the Run's schedule
+// has a Run for the same fire time.
 func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 	var firedAt *int64
 	if r.scheduleID != "" {
@@ -292,14 +332,21 @@ func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 	if r.ScheduledBy != nil {
 		scheduledBy = *r.ScheduledBy
 	}
+	var attributes []byte
+	if len(r.Attributes) > 0 {
+		var err error
+		if attributes, err = json.Marshal(r.Attributes); err != nil {
+			return false, err
+		}
+	}
 	result, err := tx.Exec(`INSERT INTO runs (id, organization_id, organization_slug, project, project_id, prompt, state,
 		started_by_kind, started_by_id, started_by_name, created_at, repository, folder, base_branch, trigger_kind,
-		schedule_id, fired_at, scheduled_by_id, scheduled_by_name)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		schedule_id, fired_at, scheduled_by_id, scheduled_by_name, title, link, attributes, dedupe_key)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (schedule_id, fired_at) WHERE schedule_id != '' DO NOTHING`,
 		r.ID, r.organizationID, r.Organization, r.Project, r.projectID, r.Prompt, r.State, r.StartedBy.Kind,
 		r.StartedBy.ID, r.StartedBy.Name, r.CreatedAt.UnixMicro(), r.repository, r.folder, r.baseBranch, r.trigger,
-		r.scheduleID, firedAt, scheduledBy.ID, scheduledBy.Name)
+		r.scheduleID, firedAt, scheduledBy.ID, scheduledBy.Name, r.Title, r.Link, string(attributes), r.dedupeKey)
 	if err != nil {
 		return false, err
 	}
@@ -315,17 +362,28 @@ func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 }
 
 const runColumns = `id, organization_slug, project, prompt, state, started_by_kind, started_by_id, started_by_name,
-	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name`
+	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes`
 
 func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var r dispatcherapi.Run
 	var created int64
 	var scheduledBy dispatcherapi.Person
+	var attributes string
 	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.Kind, &r.StartedBy.ID,
-		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name)
+		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name,
+		&r.Title, &r.Link, &attributes)
+	if err != nil {
+		return r, err
+	}
 	r.CreatedAt = time.UnixMicro(created).UTC()
 	if scheduledBy.ID != "" {
 		r.ScheduledBy = &scheduledBy
+	}
+	if r.Title == "" {
+		r.Title = title(r.Prompt)
+	}
+	if attributes != "" {
+		err = json.Unmarshal([]byte(attributes), &r.Attributes)
 	}
 	return r, err
 }

@@ -6,7 +6,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"errors"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -108,6 +107,10 @@ func (d *Dispatcher) webhook(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "no such path")
 		return
 	}
+	if parts[2] == genericKind {
+		d.genericWebhook(w, r, parts[3])
+		return
+	}
 	kind := d.kinds[parts[2]]
 	if kind == nil {
 		writeProblem(w, http.StatusNotFound, "no such path")
@@ -122,18 +125,8 @@ func (d *Dispatcher) webhook(w http.ResponseWriter, r *http.Request) {
 		d.serverError(w, "read the connection", err)
 		return
 	}
-	if r.ContentLength > MaxWebhookBody {
-		writeProblem(w, http.StatusRequestEntityTooLarge, "a webhook body is at most 1 MiB")
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxWebhookBody))
-	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
-		writeProblem(w, http.StatusRequestEntityTooLarge, "a webhook body is at most 1 MiB")
-		return
-	}
-	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "the Dispatcher could not read the body")
+	body, ok := readWebhookBody(w, r)
+	if !ok {
 		return
 	}
 	if !verified(kind, secret, r.Header, body) {
@@ -142,7 +135,7 @@ func (d *Dispatcher) webhook(w http.ResponseWriter, r *http.Request) {
 	}
 	now := d.now().UTC()
 	if wait, ok := d.webhookLimits.take(source.ID, now); !ok {
-		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Round(time.Second)/time.Second)))
+		w.Header().Set("Retry-After", retryAfter(wait))
 		writeProblem(w, http.StatusTooManyRequests, "this connection sent more than "+
 			strconv.Itoa(WebhookRateLimit)+" webhooks in a minute")
 		return

@@ -35,13 +35,17 @@ const (
 const (
 	triggerPerson   = "person"
 	triggerSchedule = "schedule"
+	// triggerWebhook is the generic signed webhook.
+	triggerWebhook = "webhook"
 )
 
 // Actor kinds (actor.kind). A schedule is the actor of the Runs that it
-// starts, with schedule.created_by.* the member who made it.
+// starts, with schedule.created_by.* the member who made it. A sender of
+// the generic webhook is the actor of the Runs that it starts.
 const (
 	actorPerson   = "person"
 	actorSchedule = dispatcherapi.ActorSchedule
+	actorSender   = dispatcherapi.ActorSender
 )
 
 // runEventsPath is SolidTrace's (EventStore's) route for run events. A
@@ -75,20 +79,23 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		return fmt.Errorf("count the run event: %w", err)
 	}
 	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorKind, actorID, actorName,
-		sessionID, scheduleID, scheduledByID, scheduledByName string
+		sessionID, runTitle, link, attributes, scheduleID, scheduledByID, scheduledByName string
 	var executions int64
 	var firedAt sql.NullInt64
 	err := tx.QueryRow(`SELECT state, reason, project, repository, folder, base_branch, trigger_kind, prompt,
-		started_by_kind, started_by_id, started_by_name, session_id, schedule_id, fired_at, scheduled_by_id,
-		scheduled_by_name, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
+		started_by_kind, started_by_id, started_by_name, session_id, title, link, attributes, schedule_id, fired_at,
+		scheduled_by_id, scheduled_by_name, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
 		FROM runs r WHERE id = ?`, runID).Scan(&state, &reason, &project, &repository, &folder, &baseBranch, &trigger,
-		&prompt, &actorKind, &actorID, &actorName, &sessionID, &scheduleID, &firedAt, &scheduledByID, &scheduledByName,
-		&executions)
+		&prompt, &actorKind, &actorID, &actorName, &sessionID, &runTitle, &link, &attributes, &scheduleID, &firedAt,
+		&scheduledByID, &scheduledByName, &executions)
 	if err != nil {
 		return fmt.Errorf("read the Run for its event: %w", err)
 	}
 	if actorKind == "" {
 		actorKind = actorPerson
+	}
+	if runTitle == "" {
+		runTitle = title(prompt)
 	}
 	event := map[string]any{
 		"time":            at.UTC().Format(time.RFC3339Nano),
@@ -101,7 +108,7 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		"run.state":       state,
 		"run.reason":      reason,
 		"run.trigger":     trigger,
-		"run.title":       title(prompt),
+		"run.title":       runTitle,
 		"run.executions":  executions,
 		"run.pr.url":      "",
 		"run.pr.outcome":  "",
@@ -112,6 +119,18 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		"actor.kind":      actorKind,
 		"actor.id":        actorID,
 		"actor.name":      actorName,
+	}
+	if link != "" {
+		event["run.link"] = link
+	}
+	if attributes != "" {
+		var values map[string]string
+		if err := json.Unmarshal([]byte(attributes), &values); err != nil {
+			return fmt.Errorf("read the Run's attributes: %w", err)
+		}
+		for k, v := range values {
+			event["run.attributes."+k] = v
+		}
 	}
 	if scheduleID != "" {
 		event["schedule.fire_time"] = time.UnixMicro(firedAt.Int64).UTC().Format(time.RFC3339)
@@ -195,11 +214,25 @@ func (d *Dispatcher) warn(message string, args ...string) {
 	}
 }
 
-// warnArgs are the Attributes of a warning about p's trigger for the
+// starter is who starts a Run: a person, or a sender of the generic
+// webhook.
+type starter struct {
+	organization   organization
+	kind, id, name string
+	// projects are the ids of the Projects that the starter can start
+	// Runs in (nil is each Project of the Organization).
+	projects []string
+}
+
+func (p person) starter() starter {
+	return starter{organization: p.organization, kind: actorPerson, id: p.id, name: p.name}
+}
+
+// warnArgs are the Attributes of a warning about s's trigger for the
 // Project slug.
-func (p person) warnArgs(slug string) []string {
-	return []string{"organization", p.organization.slug, "factory.project", slug,
-		"actor.kind", actorPerson, "actor.id", p.id, "actor.name", p.name}
+func (s starter) warnArgs(slug string) []string {
+	return []string{"organization", s.organization.slug, "factory.project", slug,
+		"actor.kind", s.kind, "actor.id", s.id, "actor.name", s.name}
 }
 
 // The outbox's batches: at most this many Logs and bytes in one request
