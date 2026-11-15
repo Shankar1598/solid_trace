@@ -404,4 +404,26 @@ func TestAGitErrorGivesAClearReason(t *testing.T) {
 		strings.Contains(err.Error(), "not-the-token") {
 		t.Errorf("the reason %q must name the ref and the repository, with no token", err)
 	}
+	if !strings.Contains(err.Error(), "solidtrace connections set") || strings.Contains(err.Error(), forge.WIPInBranches) {
+		t.Errorf("the reason %q must give the token hint, not the hint of the refs setting", err)
+	}
+	b.Token = "not-the-token"
+	err = b.DeleteWIP(context.Background(), repository, "r1")
+	if err == nil || !strings.Contains(err.Error(), "solidtrace connections set") {
+		t.Errorf("a delete with a wrong token must give the token hint, not %v", err)
+	}
+}
+
+// Only a refused ref gets the hint of the refs setting: a commit that is
+// not in the checkout gets none.
+func TestAPushOfAnUnknownCommitGetsNoHintOfTheRefsSetting(t *testing.T) {
+	f, b := newForge(t)
+	work := clone(t, f, b)
+	_, err := b.SaveWIP(context.Background(), work, repository, "r1", "0123456789abcdef0123456789abcdef01234567")
+	if err == nil {
+		t.Fatal("a save of an unknown commit worked")
+	}
+	if strings.Contains(err.Error(), forge.WIPInBranches) || strings.Contains(err.Error(), "solidtrace connections set") {
+		t.Errorf("the reason %q must give no hint of the refs setting or the token", err)
+	}
 }

@@ -311,8 +311,8 @@ func (b *Bitbucket) SaveWIP(ctx context.Context, dir, repository, runID, commit 
 	}
 	out, err := b.push(ctx, dir, repository, "--force", commit+":"+ref)
 	if err != nil {
-		hint := ""
-		if b.WIPRefs != WIPInBranches {
+		hint := gitHint(out)
+		if hint == "" && b.WIPRefs != WIPInBranches && strings.Contains(out, "[remote rejected]") {
 			hint = "If the forge permits only branches, the operator sets the work-in-progress refs to " + WIPInBranches
 		}
 		return "", b.gitError("save the work-in-progress ref "+ref, repository, out, err, hint)
@@ -340,9 +340,21 @@ func (b *Bitbucket) DeleteWIP(ctx context.Context, repository, runID string) err
 		if strings.Contains(out, "remote ref does not exist") {
 			return nil
 		}
-		return b.gitError("delete the work-in-progress ref "+ref, repository, out, err, "")
+		return b.gitError("delete the work-in-progress ref "+ref, repository, out, err, gitHint(out))
 	}
 	return nil
+}
+
+// gitHint gives the hint of the HTTP status that git's output tells, and
+// "" when the output tells none.
+func gitHint(out string) string {
+	switch {
+	case strings.Contains(out, "Authentication failed") || strings.Contains(out, "returned error: 401"):
+		return hint(http.StatusUnauthorized)
+	case strings.Contains(out, "returned error: 403"):
+		return hint(http.StatusForbidden)
+	}
+	return ""
 }
 
 // push runs git push to the repository's clone URL with the token in a
