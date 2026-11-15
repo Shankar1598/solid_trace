@@ -108,8 +108,8 @@ let stack: Stack
 let flowstack: ChildProcessWithoutNullStreams | undefined
 let flowstackLog = ''
 let dispatcherTokenId = 0
-let oldConsoleUrl = ''
-let oldDispatcherUrl = ''
+/** The dev box's settings before the flow changes them; unset until beforeAll reads them. */
+let oldSettings: { console_url: string; dispatcher_url: string } | undefined
 const admin = () => machine('admin')
 const member = () => machine('member')
 
@@ -125,6 +125,12 @@ test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(async ({ baseURL }) => {
   test.setTimeout(420_000)
+  // Read the dev box's settings first, before any step that can fail, so
+  // that afterAll always puts back the real values and never clears them.
+  oldSettings = JSON.parse(rails(`
+    settings = InstanceSetting.current
+    print({ console_url: settings.console_url.to_s, dispatcher_url: settings.dispatcher_url.to_s }.to_json)
+  `))
   rmSync(work, { recursive: true, force: true })
   mkdirSync(work, { recursive: true })
   execFileSync('mise', ['exec', '--', 'go', 'build', '-o', cli, './cmd/solidtrace'], {
@@ -138,9 +144,7 @@ test.beforeAll(async ({ baseURL }) => {
   // list), and the Dispatcher's own token, made by the Admin.
   const origin = new URL(baseURL!).origin
   const made = JSON.parse(rails(`
-    settings = InstanceSetting.current
-    old = { console_url: settings.console_url.to_s, dispatcher_url: settings.dispatcher_url.to_s }
-    settings.update!(console_url: ${JSON.stringify(origin)})
+    InstanceSetting.current.update!(console_url: ${JSON.stringify(origin)})
     org = Organization.find_by!(slug: ${JSON.stringify(ORG)})
     admin = User.find_by!(email: ${JSON.stringify(ADMIN.email)})
     project = org.agent_project
@@ -151,10 +155,8 @@ test.beforeAll(async ({ baseURL }) => {
     end
     raise result.errors.inspect unless result.done?
     token, secret = ApiToken.issue!(user: admin, name: "Flow Dispatcher ${RUN}", scopes: Oauth::Scopes::DISPATCHER, organization_id: org.id)
-    print old.merge(id: token.id, secret: secret).to_json
+    print({ id: token.id, secret: secret }.to_json)
   `))
-  oldConsoleUrl = made.console_url
-  oldDispatcherUrl = made.dispatcher_url
   dispatcherTokenId = made.id
 
   flowstack = spawn(flowstackBin, [], {
@@ -179,11 +181,14 @@ test.afterAll(async () => {
   }
   // The Dispatcher's log, to read after a failure.
   writeFileSync(join(consoleDir, 'tmp', 'e2e-runs-flowstack.log'), flowstackLog)
-  rails(`
-    InstanceSetting.current.update!(console_url: ${oldConsoleUrl ? JSON.stringify(oldConsoleUrl) : 'nil'},
-      dispatcher_url: ${oldDispatcherUrl ? JSON.stringify(oldDispatcherUrl) : 'nil'})
-    ApiToken.where(id: ${dispatcherTokenId}).destroy_all
-  `)
+  // Put back only what beforeAll read: a failed read changed nothing.
+  const restore: string[] = []
+  if (oldSettings) {
+    const value = (v: string) => (v ? JSON.stringify(v) : 'nil')
+    restore.push(`InstanceSetting.current.update!(console_url: ${value(oldSettings.console_url)}, dispatcher_url: ${value(oldSettings.dispatcher_url)})`)
+  }
+  if (dispatcherTokenId) restore.push(`ApiToken.where(id: ${dispatcherTokenId}).destroy_all`)
+  if (restore.length) rails(restore.join('\n'))
   rmSync(work, { recursive: true, force: true })
 })
 
