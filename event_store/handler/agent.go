@@ -56,6 +56,8 @@ type AgentConfig struct {
 	NotifyFiles func(projectID uint32)
 	// Downloads reads the stored bytes of Agent sessions from ClickHouse.
 	Downloads AgentDownloads
+	// RunEvents stores the Dispatcher's run events as Logs.
+	RunEvents RunEventsIngest
 	Clock     clock.Clock
 	// Version is the server's version, as SOLIDTRACE_VERSION gives it
 	// (v0.19.0). A version that is not a release, such as dev, accepts a
@@ -71,6 +73,7 @@ type AgentHandler struct {
 	files       AgentFiles
 	notifyFiles func(projectID uint32)
 	downloads   AgentDownloads
+	runEvents   RunEventsIngest
 	clock       clock.Clock
 	version     string
 	minimum     *clientVersion
@@ -87,6 +90,7 @@ func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 		files:       cfg.Files,
 		notifyFiles: cfg.NotifyFiles,
 		downloads:   cfg.Downloads,
+		runEvents:   cfg.RunEvents,
 		clock:       cfg.Clock,
 		version:     cfg.Version,
 		minimum:     minimumClientVersion(cfg.Version),
@@ -101,6 +105,7 @@ func RegisterAgentRoutes(app *fiber.App, h *AgentHandler) {
 	api.Get("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.AgentSessionFiles)
 	api.Post("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.UploadAgentFile)
 	api.Get("/agent-sessions/:session_id/download", h.requireScope(ScopeSessionsRead), h.DownloadAgentSession)
+	api.Post("/run-events", h.requireScope(ScopeRunEventsWrite), h.SendRunEvents)
 }
 
 func (h *AgentHandler) sendVersion(c *fiber.Ctx) error {

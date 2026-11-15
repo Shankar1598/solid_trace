@@ -192,7 +192,7 @@ func main() {
 	defer agentTokens.Close()
 	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(handler.AgentConfig{
 		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter, NotifyFiles: agentFileProcessor.Notify,
-		Downloads: clickHouse, Clock: clock.System{}, Version: serverVersion(),
+		Downloads: clickHouse, RunEvents: ingestService, Clock: clock.System{}, Version: serverVersion(),
 	}))
 
 	queryApp := fiber.New(fiber.Config{
@@ -202,6 +202,7 @@ func main() {
 	handler.RegisterPerformanceRoutes(queryApp, handler.NewPerformanceHandler(clickHouse))
 	handler.RegisterRedactionRoutes(queryApp)
 	handler.RegisterAgentQueryRoutes(queryApp, handler.NewAgentSessionsHandler(clickHouseLogs))
+	handler.RegisterRunsQueryRoutes(queryApp, handler.NewRunsHandler(clickHouseLogs, clock.System{}))
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort

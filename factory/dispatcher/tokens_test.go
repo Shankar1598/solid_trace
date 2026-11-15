@@ -81,6 +81,8 @@ func TestTheAPIRefusesATokenWithNoScopeOrWithoutTheFactoryScope(t *testing.T) {
 		"a scope that starts so":   {"factory:admin", "no factory scope"},
 		"a scope that ends so":     {"notfactory", "no factory scope"},
 		"the scope in other cases": {"Factory", "no factory scope"},
+		// The Dispatcher's own token sends run events; it starts no Run.
+		"the run events scope": {"run_events:write", "no factory scope"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
