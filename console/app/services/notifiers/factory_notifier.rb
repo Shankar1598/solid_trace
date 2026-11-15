@@ -18,7 +18,8 @@ module Notifiers
   # - the body: project (the slug of the Issue's or the Monitor's Project),
   #   prompt, title, link (the Issue's page, or the Logs explorer), dedupe_key
   #   (solid-trace-issue-<id> for an Issue, solid-trace-monitor-<id>[-<group>]
-  #   for a Monitor), and attributes: solidtrace.notification (the kind),
+  #   for a Monitor, with a digest of a group of more than
+  #   MAX_DEDUPE_KEY bytes), and attributes: solidtrace.notification (the kind),
   #   solidtrace.issue_number, or solidtrace.monitor_id and
   #   solidtrace.monitor_group
   #
@@ -34,6 +35,7 @@ module Notifiers
     MAX_TITLE = 200
     MAX_LINK = 2048
     MAX_ATTRIBUTE = 1024
+    MAX_DEDUPE_KEY = 256
 
     def initialize(integration, kind:, notification:, issues: [], message: nil, settings: InstanceSetting.current, **)
       @integration = integration
@@ -138,7 +140,7 @@ module Notifiers
         prompt: prompt,
         title: message.title,
         link: message.link,
-        dedupe_key: MonitorMessage.dedup_key(about["id"], notification.group_key),
+        dedupe_key: MonitorMessage.dedup_key(about["id"], notification.group_key, max_bytes: MAX_DEDUPE_KEY),
         attributes: { "solidtrace.notification" => kind, "solidtrace.monitor_id" => about["id"],
                       "solidtrace.monitor_group" => group.presence },
       }

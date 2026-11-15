@@ -237,6 +237,20 @@ class FactoryNotifierTest < ActiveSupport::TestCase
     assert Notification.sole.status_sent?
   end
 
+  test "a group key of more than the webhook's 256 bytes but fewer characters goes as its digest" do
+    stub_monitor_query_check(@project)
+    monitor = create(:monitor, project: @project, integrations: [ @factory ])
+    group_key = { "city" => "\u6771" * 100 }.to_json
+    change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: group_key)
+
+    IntegrationNotification.deliver_pending(@factory.id)
+
+    key = received.sole[:body]["dedupe_key"]
+    assert_equal "solid-trace-monitor-#{monitor.id}-#{Digest::SHA256.hexdigest(group_key)}", key
+    assert_operator key.bytesize, :<=, 256
+    assert Notification.sole.status_sent?
+  end
+
   test "the body's project is the Issue's Project, in the Integration's Organization" do
     other = create(:project, organization: @organization, name: "Billing")
     IntegrationNotification.issue_received_event(create(:issue, project: other), newly_created: true)
