@@ -120,7 +120,7 @@ A tracker or a forge tells the Dispatcher of a change with a webhook. The Dispat
 
 A webhook is only a hint. The Dispatcher checks its HMAC-SHA256 signature on the raw body before it reads the body, and answers 401 when it is not valid. It refuses a body over 1 MiB (413) and more than 120 webhooks a minute from one connection (429). A delivery id that it got in the last 7 days does nothing. A valid webhook gets 200 at once, and the Dispatcher then reads the change from the service's API. It also reads each connection when it starts, and again at each backstop interval (5 minutes for most kinds), so a change is found also when no webhook comes.
 
-`solidtrace connections list` shows the time of each connection's last webhook. When a backstop finds a change that no webhook announced, the Dispatcher writes a warning Log with the time of the last webhook, so that a Monitor can find a connection whose webhooks stopped.
+`solidtrace connections list` shows the time of each connection's last webhook. When a backstop finds a change that no webhook announced since the previous backstop, the Dispatcher writes a warning Log with the Organization, the connection and the time of the last webhook, so that a Monitor can find a connection whose webhooks stopped. A connection with no webhook secret gets no webhooks, so its backstop does not warn.
 
 ## Read the Runs
 
