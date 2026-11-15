@@ -359,15 +359,23 @@ printf x > "$SOLIDTRACE_EVIDENCE_DIR/$(printf 'bad\377')" && printf x > "$SOLIDT
 func TestARefusedReportLeavesEvidenceReportMdAsItWas(t *testing.T) {
 	env, ana := newEnv(t)
 	out := t.TempDir()
+	next := `"$SOLIDTRACE_EVIDENCE_DIR/../.report.md.next"`
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "GOODSUMMARY"),
+		recorded(out, "after-good", "test ! -e "+next),
 		recorded(out, "refused", "solidtrace report --outcome needs-a-person --summary BADSUMMARY"),
+		recorded(out, "after-refused", "test ! -e "+next),
 		reply, result, waitForEnd)
 	id := start(t, env, ana, "Fix the cart")
 	waitFor(t, env, ana, id, dispatcherapi.StateDone)
 
 	if got := readRecorded(t, out, "refused"); !strings.Contains(got, "question") {
 		t.Errorf("a needs a person with no question must be refused:\n%s", got)
+	}
+	for _, name := range []string{"after-good", "after-refused"} {
+		if got := readRecorded(t, out, name); !strings.Contains(got, "exit 0") {
+			t.Errorf("%s: .report.md.next stays in the project directory:\n%s", name, got)
+		}
 	}
 	session := firstToken(t, env).AgentSessionIDs[0]
 	report := string(env.SolidTrace.Stored(session, "evidence/report.md"))
