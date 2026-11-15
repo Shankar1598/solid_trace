@@ -151,7 +151,7 @@ func (d *Dispatcher) endByDispatcher(id, reason string) {
 		return
 	}
 	if ended {
-		d.log.Warn("an Execution ended with no end call", "execution", id, "reason", reason)
+		d.warn("an Execution ended with no end call", "execution.id", id, "execution.reason", reason)
 	}
 }
 

@@ -149,8 +149,8 @@ func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, p p
 	}
 	i := slices.IndexFunc(projects, func(sp solidTraceProject) bool { return sp.slug == slug })
 	if i < 0 {
-		d.log.Warn("a trigger names a Project that SolidTrace does not have: the Run is refused",
-			"organization", p.organization.slug, "project", slug, "actor", p.name)
+		d.warn("a trigger names a Project that SolidTrace does not have: the Run is refused",
+			p.warnArgs(slug)...)
 		message := noProject(slug, p.organization.slug) + ": the Run is refused"
 		if slices.Contains(marked, slug) {
 			message += ", and its Factory settings are marked orphaned"
@@ -160,8 +160,8 @@ func (d *Dispatcher) triggerSettings(w http.ResponseWriter, r *http.Request, p p
 	}
 	settings, err := d.store.settings(p.organization.id, projects[i].id)
 	if errors.Is(err, errNotFound) {
-		d.log.Warn("a trigger names a Project that has no Factory settings: the Run is refused",
-			"organization", p.organization.slug, "project", slug, "actor", p.name)
+		d.warn("a trigger names a Project that has no Factory settings: the Run is refused",
+			p.warnArgs(slug)...)
 		writeProblem(w, http.StatusUnprocessableEntity, noSettings(slug)+": the Run is refused")
 		return storedSettings{}, false
 	}
@@ -192,8 +192,8 @@ func (d *Dispatcher) markOrphans(org organization, projects []solidTraceProject,
 		return nil, err
 	}
 	for _, m := range marked {
-		d.log.Warn("SolidTrace no longer has the Project: its Factory settings are marked orphaned",
-			"organization", org.slug, "project", m)
+		d.warn("SolidTrace no longer has the Project: its Factory settings are marked orphaned",
+			"organization", org.slug, "factory.project", m)
 	}
 	return marked, nil
 }

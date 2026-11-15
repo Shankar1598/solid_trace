@@ -84,12 +84,26 @@ var migrations = []string{
 		report_question TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX executions_by_run ON executions (run_id, dispatched_at);`,
+	// seq is the count of the Run's run events (run.seq). repository,
+	// folder and base_branch are the Factory settings when the Run
+	// started; trigger_kind is what started it. outbox holds the run
+	// events and warning Logs that SolidTrace does not have yet, oldest
+	// first; each body is one Log as JSON.
+	`ALTER TABLE runs ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE runs ADD COLUMN repository TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN folder TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN base_branch TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN trigger_kind TEXT NOT NULL DEFAULT '';
+	CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);`,
 }
 
 // store is the Dispatcher's SQLite database.
 type store struct {
 	db     *sql.DB
 	sealer *sealer
+	// sendWake wakes the event sender after a commit that can hold run
+	// events.
+	sendWake chan struct{}
 }
 
 var errNotFound = errors.New("not found")
@@ -113,7 +127,7 @@ func openStore(path string, key []byte) (*store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &store{db: db, sealer: s}, nil
+	return &store{db: db, sealer: s, sendWake: make(chan struct{}, 1)}, nil
 }
 
 func migrate(db *sql.DB) error {
@@ -149,14 +163,33 @@ type storedRun struct {
 	// projectID is the SolidTrace Project id of the Run's Factory
 	// settings. The Run's Project is its slug when the Run started.
 	projectID string
+	// repository, folder and baseBranch are of the Factory settings when
+	// the Run started; trigger is the trigger kind.
+	repository, folder, baseBranch, trigger string
 }
 
+// insertRun adds a queued Run, with its created and queued events at its
+// CreatedAt.
 func (s *store) insertRun(r storedRun) error {
-	_, err := s.db.Exec(`INSERT INTO runs (id, organization_id, organization_slug, project, project_id, prompt, state,
-		started_by_id, started_by_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO runs (id, organization_id, organization_slug, project, project_id, prompt, state,
+		started_by_id, started_by_name, created_at, repository, folder, base_branch, trigger_kind)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.organizationID, r.Organization, r.Project, r.projectID, r.Prompt, r.State, r.StartedBy.ID, r.StartedBy.Name,
-		r.CreatedAt.UnixMicro())
-	return err
+		r.CreatedAt.UnixMicro(), r.repository, r.folder, r.baseBranch, r.trigger)
+	if err != nil {
+		return err
+	}
+	for _, kind := range []string{eventCreated, eventQueued} {
+		if err := recordEvent(tx, r.CreatedAt, r.ID, kind, nil); err != nil {
+			return err
+		}
+	}
+	return s.commit(tx)
 }
 
 const runColumns = `id, organization_slug, project, prompt, state, started_by_id, started_by_name, created_at,
