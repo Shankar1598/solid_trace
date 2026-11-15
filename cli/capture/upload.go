@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/solidtrace/cli/agentapi"
@@ -75,10 +76,11 @@ func (u *upload) run(ctx context.Context) error {
 			err = u.whole(ctx, path, previous, next)
 		}
 		var answer *agentapi.Error
-		if errors.As(err, &answer) && (answer.Status == http.StatusConflict || answer.Status == http.StatusBadRequest) {
+		if errors.Is(err, errNotRegular) ||
+			errors.As(err, &answer) && (answer.Status == http.StatusConflict || answer.Status == http.StatusBadRequest) {
 			// The server has other bytes than the offsets call said (the
-			// next call asks again), or refuses this path: the other paths
-			// still go.
+			// next call asks again), or refuses this path, or a Run's file
+			// is not a regular file now: the other paths still go.
 			u.c.Log("%s: %s: %v", u.in.SessionID, path, err)
 			u.pending = true
 			continue
@@ -175,7 +177,7 @@ func (u *upload) lines(ctx context.Context, path string) error {
 		}
 	}
 	for offset < size {
-		body, unitSize, err := nextLines(f, offset, size)
+		body, unitSize, err := nextLines(ctx, f, offset, size)
 		if err != nil || body == nil {
 			return err
 		}
@@ -190,8 +192,9 @@ func (u *upload) lines(ctx context.Context, path string) error {
 
 // nextLines reads the whole lines from offset, at most UnitLimit bytes.
 // A line longer than UnitLimit gives its first UnitLimit bytes and its
-// full size; else size is 0. A line with no newline yet gives nil.
-func nextLines(f *os.File, offset, end uint64) (body []byte, size uint64, err error) {
+// full size; else size is 0. A line with no newline yet gives nil. The
+// search for the end of a long line stops when ctx ends.
+func nextLines(ctx context.Context, f *os.File, offset, end uint64) (body []byte, size uint64, err error) {
 	buf := make([]byte, min(end-offset, UnitLimit))
 	if _, err := f.ReadAt(buf, int64(offset)); err != nil {
 		return nil, 0, err
@@ -205,6 +208,9 @@ func nextLines(f *os.File, offset, end uint64) (body []byte, size uint64, err er
 	// One line over UnitLimit: find its end.
 	chunk := make([]byte, 1<<20)
 	for at := offset + UnitLimit; at < end; {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
 		n, err := f.ReadAt(chunk[:min(uint64(len(chunk)), end-at)], int64(at))
 		if i := bytes.IndexByte(chunk[:n], '\n'); i >= 0 {
 			return buf, at + uint64(i) + 1 - offset, nil
@@ -239,7 +245,7 @@ func (u *upload) whole(ctx context.Context, path string, previous, next state) e
 	seen := seenFile{Size: info.Size(), ModTime: info.ModTime().UnixNano()}
 	if before, ok := previous.Seen[path]; ok && before.Size == seen.Size && before.ModTime == seen.ModTime {
 		seen.Hash = before.Hash
-	} else if seen.Hash, err = hashOf(f); err != nil {
+	} else if seen.Hash, err = hashOf(ctx, f); err != nil {
 		return err
 	}
 	next.Seen[path] = seen
@@ -268,27 +274,58 @@ func (u *upload) whole(ctx context.Context, path string, previous, next state) e
 	return err
 }
 
+// errNotRegular is a path of a Run's Agent session that is not a regular
+// file when it is open.
+var errNotRegular = errors.New("not a regular file")
+
 // open opens a path of the Agent session. A Run's upload opens it inside
-// the project directory only: the wrapper must not follow a symbolic link
-// that the agent made to a file outside it.
+// the project directory only, and only a regular file: the agent makes
+// these files, and can swap one for a symbolic link to a file outside the
+// directory, or for a FIFO, after the walk. O_NONBLOCK stops the open of
+// a FIFO with no writer from waiting.
 func (u *upload) open(path string) (*os.File, error) {
-	if u.forRun != nil {
-		root, err := os.OpenRoot(u.root)
-		if err != nil {
-			return nil, err
-		}
-		defer root.Close()
-		return root.Open(path)
+	if u.forRun == nil {
+		return os.Open(filepath.Join(u.root, filepath.FromSlash(path)))
 	}
-	return os.Open(filepath.Join(u.root, filepath.FromSlash(path)))
+	root, err := os.OpenRoot(u.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		f.Close()
+		if err == nil {
+			err = fmt.Errorf("%s: %w", path, errNotRegular)
+		}
+		return nil, err
+	}
+	return f, nil
 }
 
-func hashOf(f *os.File) (string, error) {
+// hashOf is the content hash of f. It stops when ctx ends.
+func hashOf(ctx context.Context, f *os.File) (string, error) {
 	h := sha256.New()
-	if _, err := io.Copy(h, io.NewSectionReader(f, 0, 1<<62)); err != nil {
+	if _, err := io.Copy(h, ctxReader{ctx, io.NewSectionReader(f, 0, 1<<62)}); err != nil {
 		return "", err
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ctxReader stops a read when its context ends.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r ctxReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 func (u *upload) readState() state {
