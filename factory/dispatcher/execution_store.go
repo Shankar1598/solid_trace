@@ -132,20 +132,38 @@ func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
 	if err != nil {
 		return run, err
 	}
-	return run, tx.Commit()
+	if state == dispatcherapi.ExecutionDispatched {
+		if err := recordEvent(tx, at, runID, eventExecutionStarted, map[string]any{"execution.id": id}); err != nil {
+			return run, err
+		}
+	}
+	return run, s.commit(tx)
 }
 
-// saveReport keeps report as the running Execution's last valid report.
-func (s *store) saveReport(id string, report dispatcherapi.Report) error {
-	res, err := s.db.Exec(`UPDATE executions SET report_outcome = ?, report_summary = ?, report_question = ?
-		WHERE id = ? AND state = ?`, report.Outcome, report.Summary, report.Question, id, dispatcherapi.ExecutionRunning)
+// saveReport keeps report as the running Execution's last valid report,
+// with a report event at at.
+func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time) error {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	defer tx.Rollback()
+	var runID string
+	err = tx.QueryRow(`UPDATE executions SET report_outcome = ?, report_summary = ?, report_question = ?
+		WHERE id = ? AND state = ? RETURNING run_id`, report.Outcome, report.Summary, report.Question, id,
+		dispatcherapi.ExecutionRunning).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return errEnded
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	err = recordEvent(tx, at, runID, eventReport, map[string]any{"execution.id": id,
+		"report.outcome": report.Outcome, "report.summary": report.Summary, "report.question": report.Question})
+	if err != nil {
+		return err
+	}
+	return s.commit(tx)
 }
 
 // endExecution ends a running Execution at the wrapper's end call, and
@@ -192,22 +210,34 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		runState, reason, question, summary, runID, dispatcherapi.StateRunning); err != nil {
 		return err
 	}
-	return tx.Commit()
+	details := map[string]any{"execution.id": id, "execution.reason": endReason}
+	if end.ExitCode != nil {
+		details["execution.exit_code"] = *end.ExitCode
+	}
+	if err := recordEvent(tx, at, runID, eventExecutionEnded, details); err != nil {
+		return err
+	}
+	return s.commit(tx)
 }
 
 // failExecution ends an Execution that has not ended, with reason, and
-// fails its Run if the Run is queued or running. It is false when the
-// Execution had ended (or is not known).
-func (s *store) failExecution(id, reason string, at time.Time) (bool, error) {
+// fails its Run if the Run is queued or running. exitCode is the
+// wrapper's exit code, or nil. It is false when the Execution had ended
+// (or is not known).
+func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
 	var runID string
-	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ? WHERE id = ? AND state != ?
-		RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, id, dispatcherapi.ExecutionEnded).
-		Scan(&runID)
+	var exit sql.NullInt64
+	if exitCode != nil {
+		exit = sql.NullInt64{Int64: int64(*exitCode), Valid: true}
+	}
+	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ?, exit_code = ? WHERE id = ?
+		AND state != ? RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, exit, id,
+		dispatcherapi.ExecutionEnded).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -219,7 +249,14 @@ func (s *store) failExecution(id, reason string, at time.Time) (bool, error) {
 		dispatcherapi.StateRunning); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	details := map[string]any{"execution.id": id, "execution.reason": reason}
+	if exitCode != nil {
+		details["execution.exit_code"] = *exitCode
+	}
+	if err := recordEvent(tx, at, runID, eventExecutionEnded, details); err != nil {
+		return false, err
+	}
+	return true, s.commit(tx)
 }
 
 // executionsOf reads a Run's Executions, oldest first.

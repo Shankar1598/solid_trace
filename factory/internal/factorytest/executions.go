@@ -88,6 +88,15 @@ type Runner struct {
 	scripts    []string
 	executions []string
 	harness    string
+	broken     bool
+}
+
+// BreakWrapper makes the next Execution's wrapper start with no Dispatcher
+// URL setting, so that it exits with code 2 before its end call.
+func (r *Runner) BreakWrapper() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.broken = true
 }
 
 // Harness is the scripted harness program (Claude Code's place).
@@ -185,6 +194,8 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 	}
 	r.executions = append(r.executions, x.Execution)
 	program := r.harness
+	broken := r.broken
+	r.broken = false
 	r.mu.Unlock()
 	if program == "" {
 		program = r.Harness()
@@ -198,6 +209,9 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		"PATH=" + r.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
+	}
+	if broken {
+		env = env[1:]
 	}
 	return workload, r.Fake.Dispatch(ctx, fakerunner.Execution{ID: x.Execution, Env: env})
 }

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -99,6 +100,84 @@ func (b *lockedBuffer) String() string {
 // them), one text line each.
 func (e *Env) Logs() string { return e.logs.String() }
 
+// eventRetry is the longest wait of the Dispatcher's event sender between
+// two tries, so a test sees the events soon after EventStore is back.
+const eventRetry = 50 * time.Millisecond
+
+// RunEvents are the run events of the Run that SolidTrace has, by run.seq,
+// each run.seq one time (a reader drops repeats).
+func (e *Env) RunEvents(runID string) []map[string]any {
+	bySeq := map[float64]map[string]any{}
+	var seqs []float64
+	for _, ev := range e.SolidTrace.RunEvents() {
+		seq, _ := ev["run.seq"].(float64)
+		if ev["run.id"] != runID || bySeq[seq] != nil {
+			continue
+		}
+		bySeq[seq] = ev
+		seqs = append(seqs, seq)
+	}
+	slices.Sort(seqs)
+	events := make([]map[string]any, len(seqs))
+	for i, seq := range seqs {
+		events[i] = bySeq[seq]
+	}
+	return events
+}
+
+// ArrivalSeqs are the run.seq values of the Run's events in the order
+// that they first arrived at SolidTrace. A repeat that arrives again later
+// is not in the list. A sender that sends in order gives 1, 2, ..., n.
+func (e *Env) ArrivalSeqs(runID string) []int {
+	seen := map[float64]bool{}
+	var seqs []int
+	for _, ev := range e.SolidTrace.RunEvents() {
+		seq, _ := ev["run.seq"].(float64)
+		if ev["run.id"] != runID || seen[seq] {
+			continue
+		}
+		seen[seq] = true
+		seqs = append(seqs, int(seq))
+	}
+	return seqs
+}
+
+// WaitForRunEvents waits up to 10 s until SolidTrace has at least n run
+// events of the Run, and gives them (see RunEvents).
+func (e *Env) WaitForRunEvents(runID string, n int) []map[string]any {
+	e.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		events := e.RunEvents(runID)
+		if len(events) >= n {
+			return events
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("SolidTrace has %d run events of %s, not %d, after 10 s: %v\nDispatcher log:\n%s",
+				len(events), runID, n, events, e.Logs())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// WaitForWarning waits up to 10 s for a warning Log of the Dispatcher (a
+// Log with no run.id) whose message has text, and gives it.
+func (e *Env) WaitForWarning(text string) map[string]any {
+	e.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		for _, ev := range e.SolidTrace.RunEvents() {
+			if message, _ := ev["message"].(string); ev["run.id"] == nil && strings.Contains(message, text) {
+				return ev
+			}
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("SolidTrace has no warning with %q after 10 s: %v", text, e.SolidTrace.RunEvents())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // Project makes a Project with slug in Organization at SolidTrace, and
 // saves its Factory settings as an Admin: repository
 // bitbucket.org/example/<slug> at the root. With Executions, the fake
@@ -179,7 +258,7 @@ func New(t testing.TB, options ...Option) *Env {
 func (e *Env) start() {
 	e.t.Helper()
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
-		Log: slog.New(slog.NewTextHandler(&e.logs, nil))}
+		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry}
 	if e.Runner != nil {
 		options.Runner = e.Runner
 	}

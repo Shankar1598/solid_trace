@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -34,6 +35,9 @@ type Options struct {
 	// Runner starts the Executions of queued Runs. With none, a Run stays
 	// queued (a Dispatcher with no Runner configured).
 	Runner Runner
+	// EventRetry is the longest wait of the event sender between two
+	// tries to send the outbox to SolidTrace (maxEventRetry when 0).
+	EventRetry time.Duration
 }
 
 // Dispatcher is one open Dispatcher.
@@ -45,6 +49,10 @@ type Dispatcher struct {
 	store   *store
 	tokens  *tokenCheck
 	handler http.Handler
+
+	// http and eventRetry are for the event sender.
+	http       *http.Client
+	eventRetry time.Duration
 
 	runner   Runner
 	identity *identityCheck
@@ -89,8 +97,10 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		store:   s,
 		tokens: &tokenCheck{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP,
 			now: options.Now, kept: map[[sha256.Size]byte]keptAnswer{}},
-		runner: options.Runner,
-		wake:   make(chan struct{}, 1),
+		http:       options.HTTP,
+		eventRetry: cmp.Or(options.EventRetry, maxEventRetry),
+		runner:     options.Runner,
+		wake:       make(chan struct{}, 1),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
@@ -114,6 +124,8 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	d.handler = d.refuseOldCLIs(mux)
 	ctx, stop := context.WithCancel(context.Background())
 	d.stop = stop
+	d.loops.Add(1)
+	go func() { defer d.loops.Done(); d.sendLoop(ctx) }()
 	if d.runner != nil {
 		d.loops.Add(2)
 		go func() { defer d.loops.Done(); d.dispatchLoop(ctx) }()
@@ -254,6 +266,10 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		},
 		organizationID: p.organization.id,
 		projectID:      settings.projectID,
+		repository:     settings.Repository,
+		folder:         settings.Folder,
+		baseBranch:     settings.BaseBranch,
+		trigger:        triggerPerson,
 	}
 	if err := d.store.insertRun(run); err != nil {
 		d.serverError(w, "start a Run", err)
