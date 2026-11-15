@@ -100,6 +100,24 @@ func TestAWebhookThatArrivesWhileTheBackstopRunsSuppressesItsWarning(t *testing.
 	}
 }
 
+// A connection with no webhook secret verifies no webhook (a poll-only
+// connection): its backstop finds each change, and that is no sign that
+// its webhooks stopped.
+func TestABackstopOfAConnectionWithNoWebhookSecretDoesNotWarn(t *testing.T) {
+	env := factorytest.New(t)
+	env.WebhookConnection("polled", "")
+	reconciledOf(t, env, "polled", "")
+	env.Source.Change("polled", "T-1")
+	env.Clock.Advance(fakesource.Backstop)
+	if _, ok := env.Source.WaitFor(func(r fakesource.Reconcile) bool { return r.Connection == "polled" && len(r.Acted) > 0 }); !ok {
+		t.Fatalf("the backstop did not act on the change: %+v", env.Source.Reconciles())
+	}
+	settle()
+	if warned(env) {
+		t.Errorf("the backstop of a connection with no webhook secret warned")
+	}
+}
+
 // A webhook announced the change, but its own step failed: the next
 // backstop acts on the change and does not warn, because the webhooks
 // work. A change after that with no webhook still warns.

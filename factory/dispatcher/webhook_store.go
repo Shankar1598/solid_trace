@@ -76,10 +76,11 @@ func (s *store) webhookSources() ([]WebhookSource, error) {
 
 // withToken reads the connection with id, and opens its token.
 func (s *store) withToken(id string) (WebhookSource, error) {
-	source, _, err := s.webhookSource(id)
+	source, secret, err := s.webhookSource(id)
 	if err != nil {
 		return source, err
 	}
+	source.hasSecret = len(secret) > 0
 	_, token, err := s.connection(source.organizationID, source.Name)
 	source.Token = token
 	return source, err

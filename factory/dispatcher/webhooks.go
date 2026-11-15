@@ -67,6 +67,9 @@ type WebhookSource struct {
 	// none).
 	LastWebhook    time.Time
 	organizationID string
+	// hasSecret is true when the connection has a webhook secret (in
+	// Reconcile only).
+	hasSecret bool
 }
 
 // ErrStaleDelivery is a delivery whose time is outside its kind's window.
@@ -361,7 +364,10 @@ func (d *Dispatcher) reconcile(ctx context.Context, job reconcileJob) {
 		return
 	}
 	missed := d.reconciles.reconciled(job, changed)
-	if job.backstop && len(missed) > 0 {
+	// Only a backstop warns, and only for a connection that can verify a
+	// webhook: one with no secret (polled only) gives no sign of
+	// webhooks that stopped.
+	if job.backstop && source.hasSecret && len(missed) > 0 {
 		last := "never"
 		if !source.LastWebhook.IsZero() {
 			last = source.LastWebhook.Format(time.RFC3339)
