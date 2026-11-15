@@ -155,6 +155,50 @@ func TestADeliveryForAProjectOfAnotherOrganizationOrNotInTheSendersListIsRefused
 	}
 }
 
+func TestASenderOfAnOrganizationThatTheDispatcherNoLongerServesGets403AndStartsNoRun(t *testing.T) {
+	env := factorytest.New(t)
+	env.Project("shop")
+	sender, path := env.Sender("Alerts")
+
+	// The operator gives the Dispatcher a token of another Organization,
+	// which also has a Project shop with Factory settings.
+	other := recorder.Organization{ID: 8, Slug: "other", Name: "Other"}
+	env.SolidTrace.SetProject(other.Slug, recorder.Project{ID: 900, Slug: "shop", Name: "shop"})
+	env.SolidTrace.Token(factorytest.DispatcherToken, recorder.Answer{
+		Sub: "1", Username: "dana@example.com", Scope: "run_events:write issues:comment tokens:create mcp:read",
+		Organizations: []recorder.Organization{{ID: other.ID, Slug: other.Slug, Name: other.Name, Role: "admin"}},
+	})
+	env.Restart()
+	otherAdmin := env.PersonIn("Olga", other, "admin")
+	if a := otherAdmin.API("PUT", "/api/v1/projects/shop/settings",
+		dispatcherapi.SaveFactorySettings{Repository: "bitbucket.org/other/shop"}); a.Status != http.StatusOK {
+		t.Fatalf("save the settings of the other Organization's shop: %d %s", a.Status, a.Body)
+	}
+
+	a := sendGeneric(t, env, path, sender.Secret, "d-1", shopDelivery())
+	if a.Status != http.StatusForbidden || !strings.Contains(string(a.Body), "no longer serves") {
+		t.Fatalf("a sender of the Organization that the Dispatcher no longer serves: %d %s, want 403", a.Status, a.Body)
+	}
+	var runs dispatcherapi.Runs
+	otherAdmin.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
+	if len(runs.Runs) != 0 {
+		t.Fatalf("the refused delivery started %d Runs in the other Organization", len(runs.Runs))
+	}
+
+	// The operator gives the first token back: the sender starts Runs again,
+	// and the refused delivery started none there.
+	env.SolidTrace.Token(factorytest.DispatcherToken, recorder.Answer{
+		Sub: "1", Username: "dana@example.com", Scope: "run_events:write issues:comment tokens:create mcp:read",
+		Organizations: []recorder.Organization{{ID: factorytest.Organization.ID, Slug: factorytest.Organization.Slug,
+			Name: factorytest.Organization.Name, Role: "admin"}},
+	})
+	env.Restart()
+	if n := runCount(t, env); n != 0 {
+		t.Fatalf("the refused delivery started %d Runs in the sender's Organization", n)
+	}
+	accepted(t, sendGeneric(t, env, path, sender.Secret, "d-2", shopDelivery()))
+}
+
 func TestASenderCannotListAProjectThatSolidTraceDoesNotHave(t *testing.T) {
 	env := factorytest.New(t)
 	dana := admin(t, env)
