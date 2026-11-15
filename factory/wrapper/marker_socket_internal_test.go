@@ -95,3 +95,75 @@ func TestAfterTheMarkerTheSocketRefusesANewCheckAndANewPRCall(t *testing.T) {
 		t.Errorf("the Dispatcher got %d pr calls after the marker", n)
 	}
 }
+
+// A pr call whose push hangs (the forge's side holds it) when the
+// preempting marker comes stops at once, with the forge's side of the
+// push, and frees the push before the end for the save of the work.
+func TestTheMarkerStopsAPRCallWhosePushHangs(t *testing.T) {
+	e, d := executionWithDispatcher(t, &fakeBoundary{emptyAfter: 1})
+	e.cfg.dir = t.TempDir()
+	root := t.TempDir()
+	forge := filepath.Join(root, "forge.git")
+	started := filepath.Join(root, "started")
+	e.checkout = filepath.Join(root, "checkout")
+	e.task.Branch, e.task.CloneURL = "agent/run-1", forge
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_AUTHOR_NAME=a", "GIT_AUTHOR_EMAIL=a@example.com", "GIT_COMMITTER_NAME=a", "GIT_COMMITTER_EMAIL=a@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git(root, "init", "--quiet", "--bare", forge)
+	hook := "#!/bin/sh\necho $$ > " + started + ".tmp && mv " + started + ".tmp " + started + "\nexec sleep 30\n"
+	if err := os.WriteFile(filepath.Join(forge, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(root, "init", "--quiet", "-b", e.task.Branch, e.checkout)
+	git(e.checkout, "commit", "--quiet", "--allow-empty", "-m", "Fix the cart")
+
+	w := httptest.NewRecorder()
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		e.pr(w, httptest.NewRequest(http.MethodPost, "/pr",
+			strings.NewReader(`{"title":"Fix","description":"Fixed"}`)), os.Environ())
+	}()
+	var pid int
+	for deadline := time.Now().Add(10 * time.Second); pid == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the push of the pr call did not reach the forge in 10 s")
+		}
+		if b, err := os.ReadFile(started); err == nil {
+			pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		}
+	}
+
+	marked := time.Now()
+	e.setMarker(dispatcherapi.EndPreempted)
+	select {
+	case <-returned:
+	case <-time.After(interruptWait):
+		t.Fatalf("the pr call had not stopped %s after the marker", interruptWait)
+	}
+	if took := time.Since(marked); took > time.Second {
+		t.Errorf("the pr call stopped %s after the marker, want at once", took)
+	}
+	if err := syscall.Kill(pid, 0); err == nil {
+		t.Errorf("the forge's side of the push (process %d) runs after the marker", pid)
+	}
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "the pr call stopped") {
+		t.Errorf("the pr call that the marker stopped: %d %s, want 409", w.Code, w.Body)
+	}
+	if !e.prMu.TryLock() {
+		t.Error("the pr call that the marker stopped holds the push before the end")
+	} else {
+		e.prMu.Unlock()
+	}
+	if n := len(d.got("pr")); n != 0 {
+		t.Errorf("the Dispatcher got %d pr calls after the marker", n)
+	}
+}
