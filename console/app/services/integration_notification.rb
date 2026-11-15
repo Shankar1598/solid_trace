@@ -18,8 +18,10 @@
 #
 # Every row ends in a recorded outcome: sent; failed with the provider's error
 # and retried by later ticks, up to Notification::MAX_ATTEMPTS for an Issue
-# row and for Notification::MONITOR_RETRY_FOR for a Monitor row; or skipped
-# with a reason when it can never be delivered.
+# row and for Notification::MONITOR_RETRY_FOR for a Monitor row; refused
+# with the receiver's reason, and not retried, when the receiver will never
+# take it (the Factory provider's 4xx other than 429); or skipped with a
+# reason when it can never be delivered.
 module IntegrationNotification
   ISSUE_CREATED = "issue_created"
   THRESHOLD_REACHED = "threshold_reached"
@@ -63,13 +65,15 @@ module IntegrationNotification
 
   # Kinds delivered together as one message per tick. Every other kind is
   # delivered as one message per row. Monitor kinds never are: each row is
-  # one step of its group's chain.
+  # one step of its group's chain. The Factory provider batches none: each
+  # Issue is its own delivery, which can start its own Run.
   BATCHED_KINDS = [ ISSUE_CREATED ].freeze
 
   ADAPTERS = {
     "slack" => "Notifiers::SlackNotifier",
     "pagerduty" => "Notifiers::PagerdutyNotifier",
     "email" => "Notifiers::EmailNotifier",
+    "factory" => "Notifiers::FactoryNotifier",
   }.freeze
 
   class << self
@@ -220,7 +224,7 @@ module IntegrationNotification
       Notification.mark_rows(rows.map(&:id), :processing)
 
       rows.group_by(&:kind).each do |kind, kind_rows|
-        if BATCHED_KINDS.include?(kind)
+        if BATCHED_KINDS.include?(kind) && !integration.factory?
           deliver_message(integration, kind, kind_rows, kind_rows.map(&:issue))
         else
           kind_rows.each { |row| deliver_message(integration, kind, [ row ], [ row.issue ], row.payload) }
@@ -251,11 +255,14 @@ module IntegrationNotification
     # Delivers one Monitor row; false when it failed and may be retried.
     def deliver_monitor_message(integration, row)
       message = Notifiers::MonitorMessage.build(row)
-      adapter_for(integration).new(integration, kind: row.kind, message: message).call
+      adapter_for(integration).new(integration, kind: row.kind, message: message, **row_of(integration, [ row ])).call
       Notification.mark_rows([ row.id ], :sent)
       true
-    rescue Notifiers::NotConfigured => e
+    rescue Notifiers::NotConfigured, Notifiers::Skipped => e
       Notification.mark_rows([ row.id ], :skipped, e.message)
+      true
+    rescue Notifiers::Refused => e
+      Notification.mark_rows([ row.id ], :refused, e.message)
       true
     rescue StandardError => e
       Rails.logger.warn("Integration notification to #{integration.provider} failed: #{e.message}")
@@ -266,10 +273,13 @@ module IntegrationNotification
     # Delivers one message and records its outcome on every row it carries.
     def deliver_message(integration, kind, rows, issues, payload = {})
       row_ids = rows.map(&:id)
-      adapter_for(integration).new(integration, kind: kind, issues: issues, **assignee_names(issues.first, payload)).call
+      adapter_for(integration).new(integration, kind: kind, issues: issues, **assignee_names(issues.first, payload),
+                                   **row_of(integration, rows)).call
       Notification.mark_rows(row_ids, :sent)
-    rescue Notifiers::NotConfigured => e
+    rescue Notifiers::NotConfigured, Notifiers::Skipped => e
       Notification.mark_rows(row_ids, :skipped, e.message)
+    rescue Notifiers::Refused => e
+      Notification.mark_rows(row_ids, :refused, e.message)
     rescue StandardError => e
       Rails.logger.warn("Integration notification to #{integration.provider} failed: #{e.message}")
       Notification.mark_rows(row_ids, :failed, e.message)
@@ -277,6 +287,11 @@ module IntegrationNotification
 
     def adapter_for(integration)
       ADAPTERS.fetch(integration.provider).constantize
+    end
+
+    # The Factory adapter gets its one row, whose id is the delivery id.
+    def row_of(integration, rows)
+      integration.factory? ? { notification: rows.sole } : {}
     end
 
     def assignee_names(issue, context)
