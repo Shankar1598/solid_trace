@@ -30,7 +30,10 @@ type Env struct {
 	// OpenBrowser opens a URL in the person's browser. Nil means that the
 	// machine has no browser, so `login` uses the device flow.
 	OpenBrowser func(url string) error
-	Now         func() time.Time
+	// LinearAuthorizeURL is Linear's approval page for `connections add
+	// linear` ("" is LinearAuthorizeURL; the tests set a fake).
+	LinearAuthorizeURL string
+	Now                func() time.Time
 	Sleep       func(ctx context.Context, d time.Duration) error
 	// Version is the CLI's version.
 	Version string
@@ -100,6 +103,15 @@ Usage:
   solidtrace connections set NAME [--kind bitbucket] [--dispatcher URL] < TOKEN
       Save a connection with the token on stdin, or replace its token
       (an Admin only). The Dispatcher keeps the token encrypted.
+  solidtrace connections add linear NAME --client-id ID [--port PORT]
+          [--dispatcher URL] < CLIENT_SECRET
+      Install the Linear OAuth app as the connection NAME (an Admin only),
+      with the app's client secret on stdin. It opens Linear's approval
+      page with actor=app, so the factory's status changes and comments
+      show as the app. The app's callback URL must be
+      http://localhost:PORT/callback (PORT 47615 by default). The
+      Dispatcher keeps the tokens encrypted and refreshes them. Run it
+      again to install the app again.
   solidtrace connections webhook-secret NAME [--dispatcher URL] < SECRET
       Save the secret that signs the connection's webhooks, with the
       secret on stdin (an Admin only). Paste its webhook URL into the

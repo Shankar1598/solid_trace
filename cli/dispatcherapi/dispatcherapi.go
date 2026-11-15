@@ -449,6 +449,21 @@ type SaveConnection struct {
 	Token string `json:"token"`
 }
 
+// TrackerLinear is the kind of a Linear connection.
+const TrackerLinear = "linear"
+
+// InstallLinear is the body of an install of a Linear connection: the
+// Linear OAuth app, and the code of an approval with actor=app that the
+// CLI got at its loopback callback URL. The Dispatcher exchanges the code
+// for the tokens, keeps them encrypted, and refreshes them.
+type InstallLinear struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	Code         string `json:"code"`
+	RedirectURI  string `json:"redirect_uri"`
+	CodeVerifier string `json:"code_verifier"`
+}
+
 // Connections is the answer of the list of the Organization's
 // connections, by name.
 type Connections struct {
@@ -720,6 +735,14 @@ func (c *Client) Connections(ctx context.Context) ([]Connection, error) {
 func (c *Client) SaveConnection(ctx context.Context, name string, save SaveConnection) (Connection, error) {
 	var connection Connection
 	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name), save, &connection)
+	return connection, err
+}
+
+// InstallLinear makes a Linear connection from an approval of the Linear
+// app, or replaces its tokens (an Admin only).
+func (c *Client) InstallLinear(ctx context.Context, name string, install InstallLinear) (Connection, error) {
+	var connection Connection
+	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name)+"/linear", install, &connection)
 	return connection, err
 }
 
