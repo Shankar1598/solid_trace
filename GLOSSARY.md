@@ -229,7 +229,7 @@ The Console endpoint where an AI agent reads and changes Projects, Logs, Dashboa
 _Avoid_: agent API, bot, integration
 
 **API token**:
-A secret a user makes in their settings that lets a client act as that user through the **MCP server**, the upload of **Agent sessions** and the **Dispatcher**, with the user's role checked on every call. A token with no **Scope** acts as its user over the MCP server. A token with **Scopes** can do only what they give, in its one **Organization**. It can be limited to a list of **Agent sessions** (`sessions:read` always has this list), and an `mcp:read` token to one **Project**. It can expire. Console keeps only its digest.
+A secret a user makes in their settings that lets a client act as that user through the **MCP server**, the upload of **Agent sessions** and the **Dispatcher**, with the user's role checked on every call. A token with no **Scope** acts as its user over the MCP server. A token with **Scopes** can do only what they give, in its one **Organization**. It can be limited to a list of **Agent sessions** (`sessions:read` always has this list), and an `mcp:read` token to one **Project**. It can expire. Console keeps only its digest. The Dispatcher's token is the one API token with `tokens:create`: an Admin makes it, and it acts as that Admin. It makes a child token for each **Execution**, with some of the Scopes it can give, limits as narrow or narrower, and an expiry no later than its own. A child token stops when its parent is revoked, or when the Admin leaves the **Organization**.
 _Avoid_: API key, project key, access token
 
 **OAuth client**:
