@@ -79,8 +79,8 @@ type Dispatcher struct {
 	// dispatching holds a channel for each Execution that the Runner is
 	// starting; it closes when the Runner gave the workload.
 	dispatching sync.Map
-	// prMu holds one pr call at a time.
-	prMu sync.Mutex
+	// prLocks holds one pr call of a Run at a time.
+	prLocks runLocks
 	wake chan struct{}
 
 	// kinds are the kinds of connection that send webhooks, by name.

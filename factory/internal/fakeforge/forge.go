@@ -89,6 +89,8 @@ type Forge struct {
 	// hanging are the repositories whose git requests get no answer, with
 	// the channel that the first request closes.
 	hanging map[string]*hang
+	// holdNext holds the next API call until its release.
+	holdNext *hang
 }
 
 type hang struct {

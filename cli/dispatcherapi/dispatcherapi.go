@@ -88,6 +88,11 @@ type PRText struct {
 	Description string `json:"description,omitempty"`
 }
 
+// PRBudget is the most time that the Dispatcher gives the forge for a
+// pr call (a forge call has 30 seconds). The wrapper waits longer than
+// this for the Dispatcher's answer.
+const PRBudget = 60 * time.Second
+
 // PR is the answer to a pr call: the Run's PR.
 type PR struct {
 	ID  int    `json:"id"`

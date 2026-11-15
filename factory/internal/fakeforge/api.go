@@ -58,6 +58,14 @@ func (f *Forge) api(h func(r *http.Request, repo string) (int, any, *apiError)) 
 			writeAnswer(w, http.StatusNotFound, (&apiError{message: "Repository " + repo + " not found"}).body())
 			return
 		}
+		f.mu.Lock()
+		held := f.holdNext
+		f.holdNext = nil
+		f.mu.Unlock()
+		if held != nil {
+			close(held.reached)
+			<-held.release
+		}
 		// The body holds the Forge's state, so encode it while f.mu is
 		// held: a test helper can change the same PR.
 		f.mu.Lock()
@@ -82,6 +90,20 @@ func (f *Forge) FailNext(status int, message string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failNext = &apiError{status: status, message: message}
+}
+
+// HoldNextAPI makes the next API call wait until release, as a slow
+// forge. The channel closes when the call arrives. After the release the
+// forge does the call, also when its client went: a slow forge can open
+// a PR that its client did not wait for. The end of the test releases it.
+func (f *Forge) HoldNextAPI() (reached <-chan struct{}, release func()) {
+	h := &hang{reached: make(chan struct{}), release: make(chan struct{})}
+	f.mu.Lock()
+	f.holdNext = h
+	f.mu.Unlock()
+	release = func() { h.once.Do(func() { close(h.release) }) }
+	f.t.Cleanup(release)
+	return h.reached, release
 }
 
 // account is Bitbucket's account object of an author.

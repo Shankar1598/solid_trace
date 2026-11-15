@@ -1,10 +1,12 @@
 package dispatcher
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -35,9 +37,13 @@ func (d *Dispatcher) pr(w http.ResponseWriter, r *http.Request, e storedExecutio
 		writeProblem(w, http.StatusConflict, "the Execution is not running: "+errEnded.Error()+" or has not started")
 		return
 	}
-	// One pr call at a time: two first calls must not open two PRs.
-	d.prMu.Lock()
-	defer d.prMu.Unlock()
+	// One pr call of a Run at a time: two first calls must not open two
+	// PRs. The pr calls of other Runs do not wait.
+	defer d.prLocks.lock(e.runID)()
+	// The forge call and its record do not stop when the wrapper goes:
+	// a PR that the forge opened is always recorded on the Run.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), dispatcherapi.PRBudget)
+	defer cancel()
 	target, err := d.store.prTarget(e.runID)
 	if err != nil {
 		d.serverError(w, "read the Run's PR", err)
@@ -61,7 +67,7 @@ func (d *Dispatcher) pr(w http.ResponseWriter, r *http.Request, e storedExecutio
 		return
 	}
 	if target.prID != 0 {
-		got, err := f.UpdatePR(r.Context(), target.repository, target.prID,
+		got, err := f.UpdatePR(ctx, target.repository, target.prID,
 			forge.PRText{Title: text.Title, Description: text.Description})
 		if err != nil {
 			writeProblem(w, http.StatusBadGateway, err.Error())
@@ -78,7 +84,7 @@ func (d *Dispatcher) pr(w http.ResponseWriter, r *http.Request, e storedExecutio
 		writeProblem(w, http.StatusBadRequest, "the Run has no PR yet: the first pr needs a title")
 		return
 	}
-	got, err := f.OpenPR(r.Context(), target.repository, forge.NewPR{Source: dispatcherapi.RunBranch(e.runID),
+	got, err := f.OpenPR(ctx, target.repository, forge.NewPR{Source: dispatcherapi.RunBranch(e.runID),
 		Destination: target.baseBranch, Title: text.Title, Description: text.Description})
 	if err != nil {
 		writeProblem(w, http.StatusBadGateway, err.Error())
@@ -89,6 +95,42 @@ func (d *Dispatcher) pr(w http.ResponseWriter, r *http.Request, e storedExecutio
 		return
 	}
 	writeJSON(w, http.StatusOK, dispatcherapi.PR{ID: got.ID, URL: got.Link, Opened: true})
+}
+
+// runLocks holds one lock for each Run that has a pr call, and forgets
+// it when the last call ends.
+type runLocks struct {
+	mu   sync.Mutex
+	runs map[string]*runLock
+}
+
+type runLock struct {
+	sync.Mutex
+	users int
+}
+
+// lock locks the Run and gives the unlock.
+func (l *runLocks) lock(runID string) (unlock func()) {
+	l.mu.Lock()
+	if l.runs == nil {
+		l.runs = map[string]*runLock{}
+	}
+	rl := l.runs[runID]
+	if rl == nil {
+		rl = &runLock{}
+		l.runs[runID] = rl
+	}
+	rl.users++
+	l.mu.Unlock()
+	rl.Lock()
+	return func() {
+		rl.Unlock()
+		l.mu.Lock()
+		if rl.users--; rl.users == 0 {
+			delete(l.runs, runID)
+		}
+		l.mu.Unlock()
+	}
 }
 
 func checkPRText(t dispatcherapi.PRText) string {
