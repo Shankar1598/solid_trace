@@ -390,7 +390,9 @@ func (s *store) compareEnd(executionID string, after int64) (dispatcherapi.Compa
 	if state != dispatcherapi.ExecutionRunning {
 		return answer, errEnded
 	}
-	later, err := commandsIn(tx, executionID, after, dispatcherapi.CommandMessage)
+	// An interrupt that came after the wrapper's last command also holds
+	// the end: the wrapper acts on it first.
+	later, err := commandsIn(tx, executionID, after, dispatcherapi.CommandMessage, dispatcherapi.CommandInterrupt)
 	if err != nil {
 		return answer, err
 	}
@@ -411,13 +413,12 @@ type querier interface {
 }
 
 // commandsIn gives the Execution's commands after seq after, oldest
-// first, with the message of each message command. A kind limits them to
-// that kind.
-func commandsIn(q querier, executionID string, after int64, kind string) ([]dispatcherapi.Command, error) {
+// first, with the message of each message command and of each interrupt
+// that has one. Kinds limit them to those kinds (none is each kind).
+func commandsIn(q querier, executionID string, after int64, kinds ...string) ([]dispatcherapi.Command, error) {
 	rows, err := q.Query(`SELECT c.seq, c.kind, COALESCE(m.id, ''), COALESCE(m.text, '') FROM commands c
 		LEFT JOIN messages m ON c.message_id != '' AND m.id = c.message_id
-		WHERE c.execution_id = ? AND c.seq > ? AND (? = '' OR c.kind = ?) ORDER BY c.seq`,
-		executionID, after, kind, kind)
+		WHERE c.execution_id = ? AND c.seq > ? ORDER BY c.seq`, executionID, after)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +430,10 @@ func commandsIn(q querier, executionID string, after int64, kind string) ([]disp
 		if err := rows.Scan(&c.Seq, &c.Kind, &m.ID, &m.Text); err != nil {
 			return nil, err
 		}
-		if c.Kind == dispatcherapi.CommandMessage {
+		if len(kinds) > 0 && !slices.Contains(kinds, c.Kind) {
+			continue
+		}
+		if c.Kind == dispatcherapi.CommandMessage || m.ID != "" {
 			c.Message = &m
 		}
 		list = append(list, c)

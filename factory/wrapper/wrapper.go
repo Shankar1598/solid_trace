@@ -92,7 +92,8 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 	work, cancelWork := context.WithCancel(ctx)
 	defer cancelWork()
 	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1),
-		uploads: newUploads(cfg, c, task, stderr), cancelWork: cancelWork, inbox: newInbox()}
+		interrupts: make(chan struct{}, 1), uploads: newUploads(cfg, c, task, stderr), cancelWork: cancelWork,
+		inbox: newInbox()}
 	// The commands and the limits count from the task, and stop at the
 	// end call.
 	watch, stopWatching := context.WithCancel(ctx)
@@ -176,6 +177,9 @@ type execution struct {
 	running  map[checkKey]int
 
 	needsPerson chan struct{}
+	// interrupts tells the follow loop that an interrupt command came
+	// (interrupt.go).
+	interrupts chan struct{}
 	// inbox holds the messages of the Execution (messages.go).
 	inbox   *inbox
 	uploads *uploads
@@ -620,6 +624,9 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	var giveBackAt time.Time
 	var comparing bool
 	compareDone := make(chan compared, 1)
+	// interruptBy is the end of the wait for the result of the wrapper's
+	// interrupt request (zero: no interrupt is out).
+	var interruptBy time.Time
 	tick := time.NewTicker(e.cfg.limitEvery)
 	defer tick.Stop()
 	tryEnd := func() {
@@ -637,9 +644,36 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 		comparing = true
 		go e.compareEnd(context.Background(), seen, compareDone)
 	}
+	// interruptDone is the end of an interrupt's wait (at its result, at
+	// once when no turn runs, or after interruptWait): the messages that
+	// waited are written, and the Execution goes on with them. With none,
+	// the Execution ends with the reason interrupted.
+	interruptDone := func(why string) {
+		interruptBy = time.Time{}
+		if e.releaseHeld() == 0 {
+			e.startEnd(dispatcherapi.EndInterrupted, why)
+			return
+		}
+		// A turn that does not start for the messages ends as at a
+		// result with a message that was not delivered.
+		tryEnd()
+	}
 	for open, exit := true, exited; open; {
 		select {
+		case <-e.interrupts:
+			switch {
+			case pending != "":
+				// The turn ended before the interrupt: no turn stops, and
+				// no result comes.
+				interruptDone("")
+			case interruptBy.IsZero():
+				interruptBy = e.cfg.clock().Add(interruptWait)
+				e.writeInterrupt()
+			}
 		case <-tick.C:
+			if !interruptBy.IsZero() && !e.cfg.clock().Before(interruptBy) {
+				interruptDone(fmt.Sprintf("the harness gave no result in %s after the interrupt", interruptWait))
+			}
 			if !giveBackAt.IsZero() && !e.cfg.clock().Before(giveBackAt) && pending != "" {
 				// No new turn delivered the written messages: the end call
 				// gives them back, and a new Execution gets them.
@@ -662,7 +696,10 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				}
 			default:
 				for _, cmd := range c.answer.Commands {
-					if cmd.Message != nil {
+					switch {
+					case cmd.Kind == dispatcherapi.CommandInterrupt:
+						e.takeInterrupt(cmd)
+					case cmd.Message != nil:
 						e.takeMessage(*cmd.Message, cmd.Seq)
 					}
 				}
@@ -713,6 +750,12 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				pending = dispatcherapi.EndNoReport
 				if reported {
 					pending = dispatcherapi.EndReported
+				}
+				if !interruptBy.IsZero() {
+					// The result of the wrapper's own interrupt
+					// (error_during_execution) is not a failure.
+					interruptDone("")
+					break
 				}
 				tryEnd()
 			}

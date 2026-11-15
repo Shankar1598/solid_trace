@@ -87,6 +87,11 @@ Usage:
       in a new turn; there is no interrupt. A queued Run's agent gets it
       after the prompt. A message that the agent did not get goes to a
       new Execution.
+  solidtrace interrupt [--dispatcher URL] RUN_ID [MESSAGE]
+      Interrupt the agent of a running Run at once: its current tool call
+      stops. With MESSAGE, the agent gets it in the same Execution when
+      its turn stops, and works on. With no MESSAGE, the Execution ends,
+      and the Run waits on a person; a message continues it.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID
@@ -203,6 +208,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return stop(ctx, args[1:], env)
 	case "message":
 		return message(ctx, args[1:], env)
+	case "interrupt":
+		return interrupt(ctx, args[1:], env)
 	case "projects":
 		return projects(ctx, args[1:], env)
 	case "connections":
