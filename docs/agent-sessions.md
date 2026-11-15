@@ -80,3 +80,22 @@ Each member opens **Agent sessions** in the Organization's navigation. The page 
 - Filter by time, person, repository, **Project (Runs)**, and Run or no Run. The Project filter selects the Agent sessions of Runs only, because an engineer's own Agent session has no Project. Use the repository filter to find those. The filters are in the page's URL, so you can share a filtered view.
 - The totals of tokens and estimated cost are for the Agent sessions that the filters select. The page shows the newest 500 of them; the totals include all of them.
 - The cost is an estimate at list prices, not an invoice. It is Claude Code's own estimate when the transcript has one after its last reply, and else the tokens at the list price of each model. An Agent session whose model has no list price has no cost, and the totals say how many Agent sessions they do not include.
+
+### Read one Agent session
+
+Click the person or the Run in the list to open the Agent session page.
+
+- The header shows the person or the Run, the repository, the folder, the parent Agent session (a link, for a fork or a `/clear`), the model, the first and last activity, the tokens by kind, the estimated cost and the flags.
+- The timeline shows the person messages, the agent replies and the tool calls in time order. Each tool call shows its input, with its output below it.
+- A message that a person sent while the agent worked shows at the time when the agent got it, not at the time when the person wrote it.
+- Hook feedback, subagent prompts and the notices of background tasks show as "Not from a person". In an engineer's own Agent session, each person message is from that engineer.
+- A subagent shows inside the tool call that started it. Click it to open its steps.
+- A long Agent session loads in pages: click **Load more steps** at the end of the timeline.
+- A **cut** or **partial** flag means that the record is not complete, so a resume of this Agent session can fail. The page says so above the header. A value marked **cut** was cut at the Log limits; the raw line has all of it.
+
+## Read the Runs
+
+Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.
+
+- Filter by **Project** and by **State**. **Waiting on a person** shows the Runs that wait for an answer, in one click; click it again to see all states. The filters are in the page's URL, so you can share a filtered view.
+- Each Run that is not closed has an event in the last 30 days, because a Run closes after 30 days with no activity. To see older Runs, set a longer range.

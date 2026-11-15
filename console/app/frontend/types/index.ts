@@ -109,6 +109,8 @@ export interface SharedProps {
   org_dashboards: { id: number; name: string }[] | null
   /** The Organization's Monitors, for the command palette. */
   org_monitors: { id: number; name: string }[] | null
+  /** Whether the Dispatcher URL is set: with none, no part of the Factory that needs the Dispatcher shows. */
+  factory_on?: boolean
   flash: {
     notice?: string
     alert?: string

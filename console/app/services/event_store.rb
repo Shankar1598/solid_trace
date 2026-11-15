@@ -16,6 +16,11 @@ class EventStore
     end
   end
 
+  # EventStore has no such thing: a 404, such as an Agent session that the
+  # Agent Project does not have. An Unavailable, so callers that do not ask
+  # for it treat it as any other failure.
+  class NotFound < Unavailable; end
+
   # EventStore refused a request it could read, such as a Query with
   # mistakes: a 400 whose JSON body says why.
   class Rejected < StandardError
@@ -159,6 +164,28 @@ class EventStore
     def agent_sessions!(project_id:, from:, to:, user_id: nil, repository: nil, project: nil, run: nil, limit: nil, read_timeout: 10)
       body = { from: utc(from), to: utc(to), user_id: user_id, repository: repository, project: project, run: run, limit: limit }.compact
       post!("#{base_url}/api/#{project_id}/agent-sessions", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # One Agent session of an Agent Project, as EventStore's POST
+    # /agent-sessions/:id answers it: {"agent_session" => its totals, as a
+    # row of agent_sessions!, "subagents", "steps" => one page of the
+    # timeline of the main transcript, or of the subagent transcript at
+    # path, after cursor, "next_cursor"}. Raises NotFound for an Agent
+    # session or a path that the Project does not have, else as
+    # transactions! does.
+    def agent_session!(project_id:, id:, path: nil, cursor: nil, limit: nil, read_timeout: 10)
+      body = { path: path, cursor: cursor, limit: limit }.compact
+      post!("#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(id)}", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # The Runs of an Agent Project from their run events, as EventStore's
+    # POST /runs answers them: {"runs" => [the last event of each Run with an
+    # event in [from, to], Active Runs first, at most limit], "more"}.
+    # project (a Project's slug) and state filter on the last event. Raises
+    # Unavailable as transactions! does.
+    def runs!(project_id:, from:, to:, project: nil, state: nil, limit: nil, read_timeout: 10)
+      body = { from: utc(from), to: utc(to), project: project, state: state, limit: limit }.compact
+      post!("#{base_url}/api/#{project_id}/runs", body, read_timeout: read_timeout, open_timeout: 3)
     end
 
     # One Transaction name's breakdown over [from, to), as EventStore's POST
@@ -427,6 +454,8 @@ class EventStore
       raise Unavailable, "EventStore error: 403 - #{e.response&.body}"
     rescue RestClient::GatewayTimeout => e
       raise TimedOut, parse_body(e.response&.body)
+    rescue RestClient::NotFound => e
+      raise NotFound.new("EventStore error: 404 - #{e.response&.body}", body: parse_body(e.response&.body))
     rescue RestClient::Exceptions::Timeout => e
       # Before ExceptionWithResponse, which a timeout is too, with no response.
       raise Unavailable, timed_out_message(e, request)

@@ -166,6 +166,20 @@ type AgentSessionTotals struct {
 	Subagents                        int
 	// Flags are cut, partial and trimmed, in that order, when set.
 	Flags []string
+	// FirstDay and LastDay are the first and the last day on which the
+	// server stored a unit of the Agent session: its derived Logs are on
+	// those days and the days between.
+	FirstDay, LastDay time.Time
+	// Files are the highest version of each path, in path order.
+	Files []AgentSessionFile
+}
+
+// AgentSessionFile is the highest version of one path of an Agent
+// session, with the times of its first and last lines.
+type AgentSessionFile struct {
+	Path        string
+	Version     uint32
+	First, Last time.Time
 }
 
 // agentFileTotals are the totals of one file of an Agent session.
@@ -182,6 +196,7 @@ type agentFileTotals struct {
 	stateCost                            float64
 	person, turns, toolCalls             uint64
 	hasStart                             bool
+	firstDay, lastDay                    time.Time
 }
 
 // AgentSessionTotals reads the totals of a Project's Agent sessions,
@@ -279,7 +294,7 @@ func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint3
 		sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens), sum(price_cost_usd), sum(replies),
 		sum(unpriced_replies), tupleElement(max(last_reply), 1), tupleElement(max(last_reply), 2),
 		tupleElement(max(last_cost_state), 1), tupleElement(max(last_cost_state), 2),
-		sum(person_messages), sum(turns), sum(tool_calls), max(has_start), groupBitOr(flags)
+		sum(person_messages), sum(turns), sum(tool_calls), max(has_start), groupBitOr(flags), min(day), max(day)
 		FROM agent_sessions WHERE project_id = ?` + condition + ` GROUP BY session_id, path, version ORDER BY session_id, path, version`
 	rows, err := s.conn.Query(ctx, query, append([]any{projectID}, conditionArgs...)...)
 	if err != nil {
@@ -302,7 +317,7 @@ func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint3
 		if err := rows.Scan(&t.SessionID, &f.path, &f.version, &f.first, &f.last, &userID, &t.Harness, &t.Repository,
 			&t.Folder, &t.RunID, &t.Project, &t.ParentSessionID, &f.input, &f.output, &f.cacheRead, &f.cacheWrite,
 			&f.priceCost, &f.replies, &f.unpriced, &f.replyEnd, &f.model, &f.costEnd, &f.stateCost,
-			&f.person, &f.turns, &f.toolCalls, &hasStart, &bits); err != nil {
+			&f.person, &f.turns, &f.toolCalls, &hasStart, &bits, &f.firstDay, &f.lastDay); err != nil {
 			return nil, fmt.Errorf("read agent sessions: %w", err)
 		}
 		t.UserID, f.hasStart = int64(userID), hasStart != 0
@@ -343,6 +358,12 @@ func sumAgentFiles(t *AgentSessionTotals, files []agentFileTotals, flags uint8) 
 		if f.last.After(t.Last) {
 			t.Last = f.last
 		}
+		if i == 0 || f.firstDay.Before(t.FirstDay) {
+			t.FirstDay = f.firstDay
+		}
+		if f.lastDay.After(t.LastDay) {
+			t.LastDay = f.lastDay
+		}
 		highest[f.path] = max(highest[f.path], f.version)
 		if strings.HasSuffix(f.path, ".jsonl") && IsSubagentFile(f.path) {
 			subagents[f.path] = true
@@ -359,6 +380,7 @@ func sumAgentFiles(t *AgentSessionTotals, files []agentFileTotals, flags uint8) 
 		if f.version != highest[f.path] {
 			continue
 		}
+		t.Files = append(t.Files, AgentSessionFile{Path: f.path, Version: f.version, First: f.first, Last: f.last})
 		t.Input, t.Output, t.CacheRead, t.CacheWrite = t.Input+f.input, t.Output+f.output, t.CacheRead+f.cacheRead, t.CacheWrite+f.cacheWrite
 		t.PersonMessages, t.Turns, t.ToolCalls = t.PersonMessages+f.person, t.Turns+f.turns, t.ToolCalls+f.toolCalls
 		priceCost, replies, unpriced = priceCost+f.priceCost, replies+f.replies, unpriced+f.unpriced

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -14,6 +15,9 @@ import (
 type AgentSessionReader interface {
 	AgentSessionList(ctx context.Context, projectID uint32, filter storage.AgentSessionFilter) ([]storage.AgentSessionTotals, error)
 	AgentSessionRepositories(ctx context.Context, projectID uint32, from time.Time) ([]string, error)
+	AgentSessionTotals(ctx context.Context, projectID uint32, sessionIDs ...uuid.UUID) ([]storage.AgentSessionTotals, error)
+	AgentSessionTimeline(ctx context.Context, projectID uint32, session storage.AgentSessionTotals, page storage.AgentTimelinePage) ([]storage.AgentTimelineStep, error)
+	AgentSubagentCalls(ctx context.Context, projectID uint32, session storage.AgentSessionTotals) (map[string]string, error)
 }
 
 // AgentSessionsHandler answers Console's read of the Agent sessions list.
@@ -32,6 +36,7 @@ func NewAgentSessionsHandler(sessions AgentSessionReader) *AgentSessionsHandler 
 // are.
 func RegisterAgentQueryRoutes(app *fiber.App, h *AgentSessionsHandler) {
 	app.Post("/api/:project_id/agent-sessions", h.List)
+	app.Post("/api/:project_id/agent-sessions/:session_id", h.Show)
 }
 
 const (

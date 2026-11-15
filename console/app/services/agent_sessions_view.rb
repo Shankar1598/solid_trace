@@ -72,7 +72,13 @@ class AgentSessionsView
   # A row for each Agent session, with its person, or its Run (id and
   # Project slug), and the numbers EventStore answers.
   def rows
-    sessions = Array(answer&.dig("agent_sessions"))
+    self.class.named_rows(Array(answer&.dig("agent_sessions")))
+  end
+
+  # EventStore's rows of Agent sessions, each with its person ({id,
+  # name}), or its Run ({id, project}), in place of user_id, run_id and
+  # project. The Agent session page names its header in the same way.
+  def self.named_rows(sessions)
     names = User.where(id: sessions.map { |s| s["user_id"] }.uniq).pluck(:id, :name, :email).to_h { |id, name, email| [ id, name.presence || email ] }
     sessions.map do |s|
       run = s["run_id"].presence && { id: s["run_id"], project: s["project"].presence }

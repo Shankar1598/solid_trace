@@ -17,6 +17,9 @@ module InertiaShare
         org_dashboards: @current_org&.dashboards&.order(:name)&.map { |d| { id: d.id, name: d.name } },
         # For the command palette.
         org_monitors: @current_org&.monitors&.order(:name)&.map { |m| { id: m.id, name: m.name } },
+        # Whether the Dispatcher URL is set: with none, Console shows no part
+        # of the Factory that needs the Dispatcher (Dispatcher.on?).
+        factory_on: current_user.present? && Dispatcher.on?,
         flash: {
           notice: flash[:notice],
           alert: flash[:alert],

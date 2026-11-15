@@ -31,6 +31,9 @@ type transcriptLine struct {
 	Attachment       json.RawMessage `json:"attachment"`
 	AiTitle          string          `json:"aiTitle"`
 	Origin           *lineOrigin     `json:"origin"`
+	// ToolUseResult is Claude Code's own record of a tool's result. For
+	// the Agent tool it names the subagent that the call started.
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
 	// A queue-operation line.
 	Operation   string `json:"operation"`
 	Reason      string `json:"reason"`
@@ -386,6 +389,7 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 					}
 					set("agent.tool_use_id", b.ToolUseID)
 					set("agent.tool_name", toolNames[b.ToolUseID])
+					set("agent.subagent_id", subagentOf(line.ToolUseResult))
 					if b.IsError {
 						level = "error"
 					}
@@ -455,6 +459,19 @@ func addSource(object map[string]json.RawMessage, unit storage.AgentFileUnit, of
 		object["repository"] = quote(unit.Session.Repository)
 		object["folder"] = quote(unit.Session.Folder)
 	}
+}
+
+// subagentOf is the agent id of the subagent that a tool's result names,
+// "" when it names none. The subagent's transcript is
+// subagents/agent-<id>.jsonl.
+func subagentOf(result json.RawMessage) string {
+	var r struct {
+		AgentID string `json:"agentId"`
+	}
+	if len(result) == 0 || result[0] != '{' || json.Unmarshal(result, &r) != nil {
+		return ""
+	}
+	return r.AgentID
 }
 
 // contentOf reads a content value: a string, or an array of blocks.
