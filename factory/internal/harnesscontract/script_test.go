@@ -213,3 +213,87 @@ func typesOf(events []map[string]any) []string {
 	}
 	return out
 }
+
+// steps gives the lines of a script as JSON objects.
+func steps(t *testing.T, script []byte) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(script)), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("script line %q: %v", line, err)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func TestScriptShortensTheGapAfterAResult(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		gapMS int
+		want  []float64 // the ms of each sleep step
+	}{
+		{"a gap of five seconds becomes the longest short wait", 5000, []float64{200}},
+		{"a gap of half a second becomes no wait", 500, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := func(ms int, raw string) harnesscontract.Event {
+				var e map[string]any
+				if err := json.Unmarshal([]byte(raw), &e); err != nil {
+					t.Fatal(err)
+				}
+				return harnesscontract.Event{At: time.Duration(ms) * time.Millisecond, Data: e}
+			}
+			rec := harnesscontract.Recording{
+				Name: "gap",
+				Events: []harnesscontract.Event{
+					ev(100, `{"type":"result","subtype":"success","result":"ok","session_id":"s","uuid":"r"}`),
+					ev(100+tc.gapMS, `{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed","session_id":"s","uuid":"n"}`),
+				},
+				StdinClosed: true,
+			}
+			script, err := harnesscontract.Script(rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []float64
+			for _, s := range steps(t, script) {
+				if s["fake"] == "sleep" {
+					got = append(got, s["ms"].(float64))
+				}
+			}
+			if len(got) != len(tc.want) || (len(got) > 0 && got[0] != tc.want[0]) {
+				t.Errorf("sleep steps %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestScriptReplacesEachPathWithTheLongestPathFirst(t *testing.T) {
+	var e map[string]any
+	raw := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1",` +
+		`"content":"/home/u/work/repo/a.go /home/u/work/repo/b.go /home/u/.bashrc"}]},"session_id":"s","uuid":"x"}`
+	if err := json.Unmarshal([]byte(raw), &e); err != nil {
+		t.Fatal(err)
+	}
+	rec := harnesscontract.Recording{
+		Name:        "paths",
+		Paths:       map[string]string{"/home/u": "~", "/home/u/work/repo": "/work"},
+		Events:      []harnesscontract.Event{{At: time.Second, Data: e}},
+		StdinClosed: true,
+	}
+	script, err := harnesscontract.Script(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	for _, s := range steps(t, script) {
+		if s["type"] == "user" {
+			got = s["message"].(map[string]any)["content"].([]any)[0].(map[string]any)["content"].(string)
+		}
+	}
+	if want := "/work/a.go /work/b.go ~/.bashrc"; got != want {
+		t.Errorf("tool output %q; want %q", got, want)
+	}
+}
