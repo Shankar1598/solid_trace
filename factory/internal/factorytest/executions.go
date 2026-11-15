@@ -204,6 +204,20 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 	return workload, r.Fake.Dispatch(ctx, fakerunner.Execution{ID: x.Execution, Env: env})
 }
 
+// RenewIdentity writes a new workload identity JWT for the Execution, at
+// the environment's clock, to the file that its wrapper reads, as the
+// Runner does before the old JWT expires.
+func (r *Runner) RenewIdentity(execution string) {
+	r.env.t.Helper()
+	path := filepath.Join(r.dir, "identity-"+execution+".jwt")
+	if err := os.WriteFile(path+".new", []byte(r.Identity(Workload(execution))), 0o600); err != nil {
+		r.env.t.Fatal(err)
+	}
+	if err := os.Rename(path+".new", path); err != nil {
+		r.env.t.Fatal(err)
+	}
+}
+
 // Events gives the fakerunner's events as the Dispatcher reads them.
 func (r *Runner) Events(ctx context.Context, from int) ([]dispatcher.RunnerEvent, error) {
 	evs, err := r.Fake.Events(ctx, from)

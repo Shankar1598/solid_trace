@@ -16,6 +16,9 @@ const (
 	// EnvExecution is the Execution's id, from the dispatch.
 	EnvExecution = "WRAPPER_EXECUTION_ID"
 	// EnvIdentityFile is the file that holds the workload identity JWT.
+	// The JWT has an exp, so the Runner must renew it in this file (Nomad:
+	// an identity with file = true and a ttl). The wrapper reads the file
+	// on each call.
 	EnvIdentityFile = "WRAPPER_IDENTITY_FILE"
 	// EnvDir is the Execution's directory: it holds checkout/, secrets/
 	// and the agent's socket (default: the working directory).

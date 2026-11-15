@@ -45,12 +45,7 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		fmt.Fprintln(stderr, "wrapper:", err)
 		return 2
 	}
-	identity, err := os.ReadFile(cfg.identityFile)
-	if err != nil {
-		fmt.Fprintln(stderr, "wrapper: read the workload identity:", err)
-		return 1
-	}
-	c := &client{url: cfg.dispatcherURL, execution: cfg.execution, identity: strings.TrimSpace(string(identity)),
+	c := &client{url: cfg.dispatcherURL, execution: cfg.execution, identityFile: cfg.identityFile,
 		http: &http.Client{Timeout: 30 * time.Second}}
 	task, err := c.task(ctx)
 	if err != nil {

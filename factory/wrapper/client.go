@@ -7,16 +7,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 )
 
 // client calls the Dispatcher for one Execution, with the wrapper's
-// workload identity JWT. Only the wrapper holds the JWT.
+// workload identity JWT. Only the wrapper holds the JWT. The Runner
+// renews the JWT in identityFile before it expires, so each call reads
+// the file again.
 type client struct {
-	url, execution, identity string
-	http                     *http.Client
+	url, execution, identityFile string
+	http                         *http.Client
 }
 
 // answer is one answer of the Dispatcher.
@@ -27,6 +31,10 @@ type answer struct {
 }
 
 func (c *client) call(ctx context.Context, verb string, body any) (answer, error) {
+	identity, err := os.ReadFile(c.identityFile)
+	if err != nil {
+		return answer{}, fmt.Errorf("read the workload identity: %w", err)
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return answer{}, err
@@ -36,7 +44,7 @@ func (c *client) call(ctx context.Context, verb string, body any) (answer, error
 	if err != nil {
 		return answer{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.identity)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(identity)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "solidtrace-wrapper")
 	resp, err := c.http.Do(req)

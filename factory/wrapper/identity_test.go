@@ -150,3 +150,23 @@ func TestCallsOnAnEndedExecutionAreRefused(t *testing.T) {
 		t.Errorf("the Run changed: %s %q", run.State, run.Summary)
 	}
 }
+
+func TestTheWrapperUsesTheRenewedWorkloadIdentity(t *testing.T) {
+	env, ana := newEnv(t)
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), wait, reportStep("--outcome", "done", "--summary", "Fixed"),
+		reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	execution := waitFor(t, env, ana, id, dispatcherapi.StateRunning).Executions[0].ID
+
+	// The Execution works longer than its first JWT is valid, and the
+	// Runner renews the JWT in the file.
+	env.Clock.Advance(2 * time.Hour)
+	env.Runner.RenewIdentity(execution)
+	open()
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if run.Summary != "Fixed" {
+		t.Errorf("summary %q", run.Summary)
+	}
+}
