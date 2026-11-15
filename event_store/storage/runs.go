@@ -46,6 +46,19 @@ import (
 //     report.delivered (the delivered-message counter), and
 //     agent.session_id (the Agent session that holds the Evidence files
 //     and evidence/report.md).
+//   - preempting (the machine of an Execution goes): execution.id,
+//     preemption.reason (preempted or machine stopped) and
+//     preemption.notice_at.
+//   - preemption (what the wrapper saved before the machine went, before
+//     the execution_ended event): execution.id, preemption.reason,
+//     preemption.notice_at, preemption.seconds_to_saved (from the notice
+//     to the saved state), preemption.seconds_to_end,
+//     preemption.wip_commit, preemption.skipped (a list of the files that
+//     the save left out), preemption.transcript_offset (the bytes of the
+//     transcript that SolidTrace has; absent when not known),
+//     preemption.checkpoint_age_seconds (absent with no checkpoint) and
+//     preemption.problems (a list of the steps that failed or passed their
+//     time limit).
 //   - interventions (message_accepted, interrupt, stop, take_over,
 //     account_switched, continue): actor.* is the actor who did it.
 //

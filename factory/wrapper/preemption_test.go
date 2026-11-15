@@ -2,6 +2,7 @@ package wrapper_test
 
 import (
 	"bytes"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -245,6 +246,43 @@ func TestALastUploadThatHangsStopsAtItsLimitAndTheExecutionStillEnds(t *testing.
 	problems, _ := preemption["preemption.problems"].([]any)
 	if !slices.ContainsFunc(problems, func(p any) bool { return strings.Contains(p.(string), "the last upload did not end") }) {
 		t.Errorf("the problems: %v", problems)
+	}
+}
+
+func TestTheDispatcherRefusesAPreemptionCallThatIsNotValid(t *testing.T) {
+	env, ana := newEnv(t)
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), wait, reportStep("--outcome", "done", "--summary", "Fixed"),
+		reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateRunning)
+	execution := run.Executions[0].ID
+	identity := env.Runner.Identity(factorytest.Workload(execution))
+	call := func(verb string, body any) factorytest.Answer {
+		return env.API(identity, "POST", dispatcherapi.Path+"/executions/"+execution+"/"+verb, body)
+	}
+
+	if got := call("preempting", dispatcherapi.Preempting{Reason: "the cloud said so"}); got.Status != http.StatusBadRequest {
+		t.Errorf("a preempting call with another reason: %d %s", got.Status, got.Body)
+	}
+	end := dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndPreempted,
+		Preemption: &dispatcherapi.Preemption{Reason: dispatcherapi.EndMachineStopped}}
+	if got := call("end", end); got.Status != http.StatusBadRequest {
+		t.Errorf("an end whose preemption has another reason: %d %s", got.Status, got.Body)
+	}
+	if got := env.API(env.Runner.Identity(factorytest.Workload("other")), "POST",
+		dispatcherapi.Path+"/executions/"+execution+"/preempting",
+		dispatcherapi.Preempting{Reason: dispatcherapi.EndPreempted}); got.Status != http.StatusUnauthorized {
+		t.Errorf("a preempting call with the JWT of another workload: %d %s", got.Status, got.Body)
+	}
+
+	open()
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if got := call("preempting", dispatcherapi.Preempting{Reason: dispatcherapi.EndPreempted}); got.Status != http.StatusConflict {
+		t.Errorf("a preempting call after the end: %d %s", got.Status, got.Body)
+	}
+	if slices.Contains(kinds(env.RunEvents(id)), "preempting") {
+		t.Errorf("a refused call made a preempting event: %v", kinds(env.RunEvents(id)))
 	}
 }
 

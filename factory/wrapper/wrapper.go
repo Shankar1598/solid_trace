@@ -5,7 +5,10 @@
 // serves the agent's socket, and ends the Execution. The outcome is the
 // agent's last valid report, never the harness's exit code. During the
 // Execution and before the end call, it uploads the Run's Agent sessions
-// with the Execution's child token (uploads.go).
+// with the Execution's child token (uploads.go). When the Machine notice
+// says that the machine will be taken back, or a SIGTERM or a SIGINT comes
+// with no stop command, the preemption handler saves what it can and ends
+// the Execution in at most 100 seconds (preemption.go).
 //
 // Later tickets add the fixed paths and the Run's branch (33), the run user (39), the restore of the Agent
 // session directory (59), the commands and the limits (32), and the Stop hook (38).
