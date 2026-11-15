@@ -12,7 +12,6 @@ require "webmock/minitest"
 class FactoryNotifierTest < ActiveSupport::TestCase
   include ActiveJob::TestHelper
   include ActiveSupport::Testing::TimeHelpers
-  include MonitorTestHelper
 
   DISPATCHER = "http://10.100.0.3:8080"
   SECRET = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
@@ -76,8 +75,7 @@ class FactoryNotifierTest < ActiveSupport::TestCase
   end
 
   test "a Monitor's change is one request with the Monitor and its group as the dedupe_key" do
-    stub_monitor_query_check(@project)
-    monitor = create(:monitor, project: @project, name: "Checkout errors", integrations: [ @factory ])
+    monitor = saved_monitor(name: "Checkout errors")
     change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: '{"service":"api"}')
     change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: "")
 
@@ -102,8 +100,7 @@ class FactoryNotifierTest < ActiveSupport::TestCase
   end
 
   test "a Monitor's resolve starts no Run, and its row is skipped with the reason" do
-    stub_monitor_query_check(@project)
-    monitor = create(:monitor, project: @project, integrations: [ @factory ])
+    monitor = saved_monitor
     change(monitor, IntegrationNotification::MONITOR_RESOLVED, group_key: "")
 
     IntegrationNotification.deliver_pending(@factory.id)
@@ -166,8 +163,7 @@ class FactoryNotifierTest < ActiveSupport::TestCase
   end
 
   test "a refused Monitor row does not hold back the rest of its group's chain" do
-    stub_monitor_query_check(@project)
-    monitor = create(:monitor, project: @project, integrations: [ @factory ])
+    monitor = saved_monitor
     change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: "")
     change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: "")
     stub_request(:post, WEBHOOK_URL).to_return(status: 422, body: { error: "no Factory settings" }.to_json)
@@ -224,9 +220,8 @@ class FactoryNotifierTest < ActiveSupport::TestCase
   end
 
   test "a Logs explorer link longer than the webhook takes is left out, and the delivery still goes" do
-    stub_monitor_query_check(@project)
     long = "['shop']\n| where message == '#{'a' * 2100}'\n| summarize count()"
-    monitor = create(:monitor, project: @project, query: long, integrations: [ @factory ])
+    monitor = saved_monitor(query: long)
     change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: "")
 
     IntegrationNotification.deliver_pending(@factory.id)
@@ -237,9 +232,37 @@ class FactoryNotifierTest < ActiveSupport::TestCase
     assert Notification.sole.status_sent?
   end
 
+  test "an Issue link longer than the webhook takes is left out, and the delivery still goes" do
+    organization = create(:organization, slug: "a" * 2100)
+    factory = organization.integrations.create!(provider: "factory", sender_id: "snd_2", sender_secret: SECRET)
+    stub_request(:post, "#{DISPATCHER}/webhooks/generic/snd_2").to_return(accepted)
+    IntegrationNotification.issue_received_event(create(:issue, project: create(:project, organization: organization)),
+      newly_created: true)
+
+    IntegrationNotification.deliver_pending(factory.id)
+
+    body = received.sole[:body]
+    assert_not body.key?("link")
+    assert_includes body["prompt"], "a" * 2100
+    assert Notification.sole.status_sent?
+  end
+
+  test "an attribute longer than the webhook's 1024 bytes is cut to 1024 bytes, and the delivery still goes" do
+    monitor = saved_monitor(name: "Checkout errors")
+    change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: { "city" => "\u6771" * 500 }.to_json)
+
+    IntegrationNotification.deliver_pending(@factory.id)
+
+    group = received.sole[:body]["attributes"]["solidtrace.monitor_group"]
+    assert_operator group.bytesize, :<=, 1024
+    assert_operator group.bytesize, :>, 1000
+    assert group.valid_encoding?
+    assert group.start_with?("city=\u6771")
+    assert Notification.sole.status_sent?
+  end
+
   test "a group key of more than the webhook's 256 bytes but fewer characters goes as its digest" do
-    stub_monitor_query_check(@project)
-    monitor = create(:monitor, project: @project, integrations: [ @factory ])
+    monitor = saved_monitor
     group_key = { "city" => "\u6771" * 100 }.to_json
     change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: group_key)
 
@@ -277,6 +300,12 @@ class FactoryNotifierTest < ActiveSupport::TestCase
       { delivery: signature.headers["Solidtrace-Delivery"], timestamp: signature.headers["Solidtrace-Timestamp"],
         body: JSON.parse(signature.body) }
     end
+  end
+
+  # A Monitor of @project that sends to @factory, saved without the Query
+  # check, which needs EventStore: MonitorQueryCheck's own tests cover it.
+  def saved_monitor(**attributes)
+    build(:monitor, project: @project, integrations: [ @factory ], **attributes).tap { |m| m.save!(validate: false) }
   end
 
   def change(monitor, kind, group_key:)
