@@ -74,6 +74,19 @@ module McpTools
       url("/#{organization.slug}/runs/#{ERB::Util.url_encode(run_id)}")
     end
 
+    # The Agent sessions page with a TimeRange and its filters (person,
+    # repository, project, run) in its query string, as the page reads its
+    # URL.
+    def agent_sessions(organization, range:, filters: {})
+      search = range.link_params.merge(filters.compact)
+      url(routes.agent_sessions_path(org_slug: organization.slug, **search))
+    end
+
+    # One Agent session's page.
+    def agent_session(organization, id)
+      url(routes.agent_session_path(org_slug: organization.slug, id: id))
+    end
+
     # A fresh Invite link for an Invited user to organization.
     def invite(user, organization)
       user.invite_url(organization, console_url: @console_url)

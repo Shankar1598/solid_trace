@@ -101,6 +101,10 @@ To find which Agent session did a thing, type in the search box at the top of th
 
 An agent can do the same over MCP: `query_logs` on the Agent Project runs a Query on the transcript Logs. `list_projects` names the Agent Project.
 
+### Over MCP
+
+An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.
