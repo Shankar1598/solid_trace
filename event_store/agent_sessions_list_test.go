@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -126,8 +127,12 @@ func newAgentSessionsFixture(t *testing.T, env *TestEnv) agentSessionsFixture {
 var octoberRange = map[string]any{"from": "2026-10-01T00:00:00Z", "to": "2026-10-04T00:00:00Z"}
 
 func withFilters(filters map[string]any) map[string]any {
+	return withRange(octoberRange, filters)
+}
+
+func withRange(timeRange, filters map[string]any) map[string]any {
 	body := map[string]any{}
-	for name, value := range octoberRange {
+	for name, value := range timeRange {
 		body[name] = value
 	}
 	for name, value := range filters {
@@ -237,6 +242,61 @@ func TestTheAgentSessionsFiltersSelectThePersonTheRepositoryTheProjectAndTheRun(
 			t.Errorf("Expected no Agent sessions, got %v", got)
 		}
 	})
+}
+
+// The 2-second rule (spec, Storage): if a sessions-page query takes more
+// than 2 seconds, an agent_messages table is necessary. The fixture is a
+// month of ten engineers, each with 12 Agent sessions a day of a main
+// transcript and two subagents. It is written as rows of agent_sessions,
+// as the parse writes them, so that it is fast to make.
+func TestTheAgentSessionsListOfAMonthOfTenEngineersAnswersInLessThanTwoSeconds(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	const (
+		engineers = 10
+		sessions  = engineers * 12 * 30
+		projectID = 123
+	)
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	err := env.ClickHouse.Conn().Exec(context.Background(), `INSERT INTO agent_sessions
+		SELECT ? AS project_id, toDate(at) AS day, reinterpretAsUUID(MD5(toString(s))) AS session_id,
+			if(n % 3 = 0, 'session.jsonl', concat('subagents/agent-', toString(n % 3), '.jsonl')) AS path, 1 AS version,
+			at AS first_time, at + toIntervalMinute(40) AS last_time, s % ? + 1 AS user_id, 'claude-code' AS harness,
+			concat('github.com/acme/repository-', toString(s % 5)) AS repository, '' AS folder,
+			if(s % 7 = 0, concat('run_', toString(s)), '') AS run_id, if(s % 7 = 0, 'shop', '') AS factory_project,
+			'' AS parent_session_id, 2000 AS input_tokens, 30000 AS output_tokens, 4000000 AS cache_read_tokens,
+			200000 AS cache_write_tokens, 3.5 AS price_cost_usd, 80 AS replies, 0 AS unpriced_replies,
+			tuple(toUInt64(900000), 'claude-opus-5-5') AS last_reply, tuple(toUInt64(0), toFloat64(0)) AS last_cost_state,
+			if(n % 3 = 0, 12, 0) AS person_messages, if(n % 3 = 0, 10, 0) AS turns, 150 AS tool_calls,
+			1 AS has_start, 0 AS flags
+		FROM (SELECT number AS n, intDiv(number, 3) AS s,
+			toDateTime64(?, 6, 'UTC') + toIntervalSecond(intDiv(intDiv(number, 3) * 2592000, ?)) AS at
+			FROM numbers(?))`, projectID, engineers, start, sessions, sessions*3)
+	if err != nil {
+		t.Fatalf("Insert the month of Agent sessions: %v", err)
+	}
+
+	month := map[string]any{"from": start.Format(time.RFC3339), "to": start.AddDate(0, 0, 30).Format(time.RFC3339)}
+	for _, c := range []struct {
+		name string
+		body map[string]any
+		want int
+	}{
+		{"the whole month", month, sessions},
+		{"one engineer", withRange(month, map[string]any{"user_id": 3}), sessions / engineers},
+		{"one repository of no Run", withRange(month, map[string]any{"repository": "github.com/acme/repository-2", "run": "none"}), 0},
+	} {
+		began := time.Now()
+		answer := listAgentSessions(t, env, projectID, c.body)
+		took := time.Since(began)
+		if c.want != 0 && answer.Totals.AgentSessions != c.want {
+			t.Errorf("%s: expected %d Agent sessions, got %d", c.name, c.want, answer.Totals.AgentSessions)
+		}
+		if took > 2*time.Second {
+			t.Errorf("%s: expected an answer in less than 2 seconds, it took %s", c.name, took)
+		}
+		t.Logf("%s: %d Agent sessions in %s", c.name, answer.Totals.AgentSessions, took)
+	}
 }
 
 func TestTheAgentSessionsListRefusesABadRequest(t *testing.T) {
