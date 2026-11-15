@@ -342,13 +342,19 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// EnvSubprocessScrub is Claude Code's subprocess environment scrub: with
-// it, Claude Code takes the credentials (by name or value) out of the
-// environments of the processes that it starts (Bash commands, hooks,
-// stdio MCP servers), and starts Bash commands in a PID namespace of their
-// own. It removes CLAUDE_CONFIG_DIR, and keeps the names of the agent's
-// socket and evidence/ folder. So a secret that a tool needs is in a file
-// of the secrets directory, never in an environment variable.
+// EnvSubprocessScrub is Claude Code's subprocess environment scrub. The
+// wrapper turns it off (0), last in the harness's environment, so that the
+// machine's environment cannot turn it on. In the pinned Claude Code
+// (2.1.325) the scrub is a hardening for untrusted users: it forces the
+// permission mode to default (so headless Bash calls are refused), it
+// needs bubblewrap with user namespaces, and its sandbox stops Bash from
+// writing package.json, the lock files and CLAUDE_CONFIG_DIR (evidence/
+// is there), and from reading the Docker socket. A Run must do each of
+// these. The Harness contract check TestContractSubprocessEnvScrub fails
+// when a new version changes this. So the boundary is: no secret of the
+// wrapper's in the harness's environment, a Run's own secrets in files of
+// the secrets directory, and the redaction patterns for the Claude token,
+// which the run user can read in the harness's environment.
 const EnvSubprocessScrub = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
 
 // harnessEnv is environ with no WRAPPER_ or NOMAD_ name and no agent's
@@ -451,9 +457,8 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.cfg.checkout()
 	cmd.Env = append(append(e.runUser.env(harnessEnv(environ, e.cfg.socket())), e.uploads.claudeEnv(e.cfg)...),
-		// Claude Code takes the credentials out of its tools' environments.
-		// Last, so that the machine's environment cannot turn it off.
-		EnvSubprocessScrub+"=1")
+		// Last, so that the machine's environment cannot turn it on.
+		EnvSubprocessScrub+"=0")
 	e.runUser.start(cmd)
 	cmd.Stderr = e.log
 	failed := func(err error) dispatcherapi.ExecutionEnd {

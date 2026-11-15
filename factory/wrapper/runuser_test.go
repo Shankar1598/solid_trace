@@ -140,8 +140,8 @@ mv "$SOLIDTRACE_EVIDENCE_DIR/probe.new" "$SOLIDTRACE_EVIDENCE_DIR/probe"`
 				t.Errorf("%s has %s", file, what)
 			}
 		}
-		if !strings.Contains("\n"+environ, "\n"+wrapper.EnvSubprocessScrub+"=1\n") {
-			t.Errorf("%s has no %s=1", file, wrapper.EnvSubprocessScrub)
+		if !strings.Contains("\n"+environ, "\n"+wrapper.EnvSubprocessScrub+"=0\n") {
+			t.Errorf("%s has no %s=0", file, wrapper.EnvSubprocessScrub)
 		}
 	}
 }

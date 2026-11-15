@@ -183,10 +183,10 @@ func TestTheAgentGetsItsOwnSocketAndNoneOfTheWrappersSettings(t *testing.T) {
 	// the agent must get the socket of its Execution.
 	t.Setenv(agentsocket.Env, "/inherited/agent.sock")
 	// Its Nomad gives it the Runner's names, and its environment can try to
-	// turn the subprocess environment scrub off.
+	// turn the subprocess environment scrub on (it stops each Bash call).
 	t.Setenv("NOMAD_TOKEN", "decoy-runner-token")
 	t.Setenv("NOMAD_SECRETS_DIR", "/decoy/secrets")
-	t.Setenv(wrapper.EnvSubprocessScrub, "0")
+	t.Setenv(wrapper.EnvSubprocessScrub, "1")
 	env, ana := newEnv(t)
 	seen := filepath.Join(t.TempDir(), "env")
 	wait, open := gate(t)
@@ -221,8 +221,8 @@ func TestTheAgentGetsItsOwnSocketAndNoneOfTheWrappersSettings(t *testing.T) {
 	if len(sockets) != 1 || sockets[0] != socket {
 		t.Errorf("the agent's socket is %q, want %q", sockets, socket)
 	}
-	if len(scrub) != 1 || scrub[0] != "1" {
-		t.Errorf("the subprocess environment scrub is %q, want on (1)", scrub)
+	if len(scrub) != 1 || scrub[0] != "0" {
+		t.Errorf("the subprocess environment scrub is %q, want off (0)", scrub)
 	}
 	// The wrapper's user and the run user's group send a report and read
 	// the forge token; nobody changes the secret files but the wrapper.
