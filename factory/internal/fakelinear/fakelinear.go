@@ -111,7 +111,9 @@ type Linear struct {
 	refreshes int
 	// refusedRefresh refuses each refresh (a revoked install).
 	refusedRefresh bool
-	actors         []string
+	// refusedAccess refuses each access token, also a new one.
+	refusedAccess bool
+	actors        []string
 
 	teams    []Team
 	issues   map[string]*issue
@@ -177,6 +179,14 @@ func (l *Linear) RevokeAccessTokens() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	clear(l.access)
+}
+
+// RefuseAccessTokens refuses each access token from now on (401), also
+// the new access token of a refresh; the refresh tokens still work.
+func (l *Linear) RefuseAccessTokens() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.refusedAccess = true
 }
 
 // Refreshes counts the refreshes that the token endpoint gave.
@@ -454,7 +464,7 @@ func (l *Linear) graphQL(w http.ResponseWriter, r *http.Request) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s, ok := l.access[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
-	if !ok || !l.now().Before(s.expires) {
+	if !ok || !l.now().Before(s.expires) || l.refusedAccess {
 		answer(w, http.StatusUnauthorized, map[string]any{"errors": []map[string]string{{"message": "Authentication required"}}})
 		return
 	}

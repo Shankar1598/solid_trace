@@ -240,6 +240,25 @@ func TestALinearAccessTokenThatLinearRefusesBeforeItsExpiryIsRefreshedOneTime(t 
 	}
 }
 
+func TestALinearCallThatGets401AfterARefreshStopsWithNoSecondRefresh(t *testing.T) {
+	env, _ := linearEnv(t)
+	env.Linear.RefuseAccessTokens()
+	// The backstop refreshes the expired token first; Linear refuses the
+	// new access token too.
+	env.Clock.Advance(25 * time.Hour)
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(env.Logs(), "a reconcile step failed") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	settle()
+	if logs := env.Logs(); !strings.Contains(logs, "a reconcile step failed") {
+		t.Fatalf("the reconcile step did not fail:\n%s", logs)
+	}
+	if n := env.Linear.Refreshes(); n != 1 {
+		t.Errorf("Linear gave %d refreshes, want 1: a second refresh uses one more rotating refresh token", n)
+	}
+}
+
 func TestALinearConnectionWhoseRefreshTokenLinearRefusesStartsNoRunAndLogsWhatToDo(t *testing.T) {
 	env, path := linearEnv(t)
 	env.Linear.RefuseRefresh()
