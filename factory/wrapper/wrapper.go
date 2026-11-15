@@ -389,26 +389,12 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 	// wrapper's, and so are the checks, the Evidence paths and the
 	// delivered-message counter.
 	report = dispatcherapi.Report{Outcome: report.Outcome, Summary: report.Summary, Question: report.Question}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.ending {
-		writeProblem(w, http.StatusConflict, "the Execution is ending: a report now does not count")
+	a, ok := e.sendReport(w, r, report)
+	if !ok {
 		return
 	}
-	commit := e.addEvidence(&report)
-	a, err := e.client.call(r.Context(), "report", report)
-	if err != nil {
-		commit(false)
-		writeProblem(w, http.StatusBadGateway, "the wrapper could not send the report: "+err.Error())
-		return
-	}
-	commit(a.status/100 == 2)
-	if a.status/100 != 2 {
-		writeProblem(w, a.status, a.message)
-		return
-	}
-	e.reported = true
-	// Before the answer: the agent's next stop finds the report.
+	// Before the answer, so that the agent's next stop finds the report;
+	// not under mu, so that a lock on the file does not hold the end.
 	e.setRunState(func(s *runState) { s.Reported = true })
 	if report.Outcome == dispatcherapi.OutcomeNeedsAPerson {
 		select {
@@ -418,6 +404,31 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(a.body)
+}
+
+// sendReport sends the report to the Dispatcher under mu, and records
+// that the Dispatcher took it. When not ok, it wrote the problem to w.
+func (e *execution) sendReport(w http.ResponseWriter, r *http.Request, report dispatcherapi.Report) (answer, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ending {
+		writeProblem(w, http.StatusConflict, "the Execution is ending: a report now does not count")
+		return answer{}, false
+	}
+	commit := e.addEvidence(&report)
+	a, err := e.client.call(r.Context(), "report", report)
+	if err != nil {
+		commit(false)
+		writeProblem(w, http.StatusBadGateway, "the wrapper could not send the report: "+err.Error())
+		return answer{}, false
+	}
+	commit(a.status/100 == 2)
+	if a.status/100 != 2 {
+		writeProblem(w, a.status, a.message)
+		return answer{}, false
+	}
+	e.reported = true
+	return a, true
 }
 
 // pr pushes the Run's branch, then sends the agent's pr call to the

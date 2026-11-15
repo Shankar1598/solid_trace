@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
@@ -255,5 +257,53 @@ func TestTheRunStateFileIsOutsideTheCheckout(t *testing.T) {
 		if dir != "" && (state == dir || strings.HasPrefix(state, dir+"/")) {
 			t.Errorf("the state file %s is in %s", state, dir)
 		}
+	}
+}
+
+// The agent can lock the run state file. A lock that it holds does not
+// hold the report's answer for long, and the Execution still ends at a
+// stop.
+func TestALockOnTheRunStateDoesNotHoldTheEndOfTheExecution(t *testing.T) {
+	env, ana := newEnv(t)
+	ben := env.Member("Ben")
+	dir := t.TempDir()
+	kept, locked := filepath.Join(dir, "state-path"), filepath.Join(dir, "locked")
+	env.Runner.Agent(takeTask, initLine(t),
+		shell(`printf '%s' "$SOLIDTRACE_RUN_STATE" > `+kept+`; while [ ! -e `+locked+` ]; do sleep 0.01; done`),
+		reportStep("--outcome", "done", "--summary", "Fixed"), inToolCall, interrupted, thenEOF)
+	id := start(t, env, ana, "Fix the cart")
+
+	// The test holds the lock (as the agent's own process could), until
+	// the test ends: the cgroup kill does not free it.
+	deadline := time.Now().Add(30 * time.Second)
+	var path []byte
+	for len(path) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the agent did not give the run state path in 30 s")
+		}
+		time.Sleep(10 * time.Millisecond)
+		path, _ = os.ReadFile(kept)
+	}
+	f, err := os.OpenFile(string(path), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(locked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForEvent(t, env, id, "report")
+	if got := ben.CLI("stop", "--dispatcher", env.URL(), id); got.Code != 0 {
+		t.Fatalf("solidtrace stop: exit %d: %s", got.Code, got.Stderr)
+	}
+	run := waitFor(t, env, ana, id, dispatcherapi.StateStopped)
+	if e := onlyExecution(t, run); e.EndReason != dispatcherapi.EndStopped || e.ExitCode == nil ||
+		*e.ExitCode != interruptedCode {
+		t.Errorf("the end reason is %q and the exit code %v; want %q and the interrupt's code %d", e.EndReason,
+			e.ExitCode, dispatcherapi.EndStopped, interruptedCode)
 	}
 }

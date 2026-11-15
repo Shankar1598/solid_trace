@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // The Stop hook. The wrapper installs it in the harness (a --settings
@@ -61,6 +62,27 @@ type runState struct {
 	NoReportRefusals  int `json:"no_report_refusals"`
 }
 
+// lockWait is the longest time that changeRunState waits for the lock.
+// The agent can lock the file too: a lock that it holds must not hold the
+// wrapper. A change that is not written only makes the hook allow a stop
+// that it could refuse, or refuse a stop that it could allow.
+const lockWait = 2 * time.Second
+
+// lockWithin takes an exclusive lock on f, and waits at most wait for it.
+func lockWithin(f *os.File, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("another process holds the lock after %s", wait)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // changeRunState applies change to the run state file under an exclusive
 // lock, and writes the file when the state changed. With create, an
 // absent file is a zero state; without it, an absent file is an error.
@@ -76,7 +98,7 @@ func changeRunState(path string, create bool, change func(*runState)) error {
 	defer f.Close()
 	// The lock goes with the close. The file is never replaced (a rename
 	// would make a second inode, with a lock of its own).
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockWithin(f, lockWait); err != nil {
 		return fmt.Errorf("lock %s: %w", path, err)
 	}
 	b, err := io.ReadAll(f)
