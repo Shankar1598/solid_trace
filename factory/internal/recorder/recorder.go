@@ -54,6 +54,11 @@ type Recorder struct {
 	answers  map[string]Answer
 	calls    []Call
 	projects map[string][]Project
+
+	refuseChildren int
+	children       []*ChildToken
+	uploads        []Upload
+	files          map[string]map[string]*storedFile
 }
 
 // Project is one Project in the answer of the MCP server's list_projects.
@@ -65,7 +70,8 @@ type Project struct {
 
 // New starts a recorder that accepts token checks from callerToken.
 func New(callerToken string) *Recorder {
-	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{}}
+	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{},
+		files: map[string]map[string]*storedFile{}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	return r
 }
@@ -135,7 +141,7 @@ func (r *Recorder) CallsTo(path string) []Call {
 }
 
 func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
-	body, _ := io.ReadAll(io.LimitReader(req.Body, 1<<20))
+	body, _ := io.ReadAll(io.LimitReader(req.Body, 10<<20))
 	call := Call{Method: req.Method, Path: req.URL.Path, Authorization: req.Header.Get("Authorization"), Body: body}
 	if form, err := url.ParseQuery(string(body)); err == nil {
 		call.Form = form
@@ -152,6 +158,14 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 		// the CLI's sign-in, as SolidTrace does for a revoked token.
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+		return
+	}
+	if req.URL.Path == ChildTokensPath || strings.HasPrefix(req.URL.Path, ChildTokensPath+"/") {
+		r.serveChildTokens(w, req, call)
+		return
+	}
+	if strings.HasPrefix(req.URL.Path, AgentSessionsPath) {
+		r.serveAgentSessions(w, req, call)
 		return
 	}
 	if req.Method == http.MethodPost && req.URL.Path == "/mcp" {

@@ -65,6 +65,9 @@ type Env struct {
 	Version string
 	// Runner is the fake Runner, with the Executions option (else nil).
 	Runner *Runner
+	// Proxy is the agent machines' proxy, with the ThroughProxy option
+	// (else nil: the wrappers reach SolidTrace directly).
+	Proxy *Proxy
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
