@@ -1,0 +1,150 @@
+package dispatcher
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/forge"
+)
+
+// Bitbucket Cloud's webhooks (W5). A forge connection is a webhook
+// source: its webhook URL goes into the repository's webhook, with the
+// "Pull request: Merged" and "Declined" events and the connection's
+// webhook secret. pullrequest:fulfilled and pullrequest:rejected queue a
+// reconcile of the PR, which reads the PR's state from Bitbucket, records
+// the outcome, and closes the Run. Each other event, such as a push to a
+// work-in-progress ref, does nothing. Bitbucket's webhooks have no time,
+// so the signature is the only check (W2), and the request UUID is the
+// delivery id. The close loop's PR check every 5 minutes is the backstop.
+
+// The headers of Bitbucket's webhooks.
+const (
+	bitbucketSignatureHeader = "X-Hub-Signature"
+	bitbucketEventHeader     = "X-Event-Key"
+	bitbucketDeliveryHeader  = "X-Request-UUID"
+)
+
+// The events that give a PR outcome.
+const (
+	bitbucketPRFulfilled = "pullrequest:fulfilled"
+	bitbucketPRRejected  = "pullrequest:rejected"
+)
+
+// bitbucketWebhooks is the WebhookKind of the Bitbucket forge
+// connections.
+type bitbucketWebhooks struct{ d *Dispatcher }
+
+func (bitbucketWebhooks) Kind() string { return dispatcherapi.ForgeBitbucket }
+
+// Signature is X-Hub-Signature, sha256=<hex>, on the raw body.
+func (bitbucketWebhooks) Signature(header http.Header, body []byte) ([]byte, []byte, error) {
+	value, ok := strings.CutPrefix(header.Get(bitbucketSignatureHeader), "sha256=")
+	if !ok {
+		return nil, nil, errors.New("the webhook has no " + bitbucketSignatureHeader + " of the form sha256=<hex>")
+	}
+	signature, err := hex.DecodeString(value)
+	return body, signature, err
+}
+
+// Delivery gives the PR of a PR outcome event as the entity
+// "<workspace>/<slug>#<id>". Each other event is ignored.
+func (bitbucketWebhooks) Delivery(header http.Header, body []byte, _ time.Time) (Delivery, error) {
+	delivery := Delivery{ID: header.Get(bitbucketDeliveryHeader)}
+	switch header.Get(bitbucketEventHeader) {
+	case bitbucketPRFulfilled, bitbucketPRRejected:
+	default:
+		delivery.Ignored = true
+		return delivery, nil
+	}
+	var event struct {
+		PullRequest struct {
+			ID int `json:"id"`
+		} `json:"pullrequest"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	}
+	if err := json.Unmarshal(body, &event); err != nil {
+		return Delivery{}, err
+	}
+	workspace, slug, ok := strings.Cut(event.Repository.FullName, "/")
+	if event.PullRequest.ID <= 0 || !ok || workspace == "" || slug == "" || strings.Contains(slug, "/") {
+		return Delivery{}, errors.New("the event has no pullrequest.id and repository.full_name")
+	}
+	delivery.Entity = prEntity(event.Repository.FullName, event.PullRequest.ID)
+	return delivery, nil
+}
+
+// prEntity is the entity of the PR with id in the repository
+// <workspace>/<slug>.
+func prEntity(fullName string, id int) string {
+	return strings.ToLower(fullName) + "#" + strconv.Itoa(id)
+}
+
+// Backstop: the whole connection's step does nothing (the close loop
+// checks the PRs every prCheckEvery), so its interval is that check's.
+func (bitbucketWebhooks) Backstop(WebhookSource) time.Duration { return prCheckEvery }
+
+// Reconcile reads the state of the PR from Bitbucket for each Run of the
+// connection's Organization whose PR it is and that has no PR outcome. It
+// records a merged or declined outcome, and closes the Run, unless it has
+// an Execution queued or live (the close loop closes it after its end).
+// The webhook's body is only a hint: the outcome is the state that
+// Bitbucket gives, with the Run's own connection.
+func (k bitbucketWebhooks) Reconcile(ctx context.Context, source WebhookSource, entity string) ([]string, error) {
+	if entity == "" {
+		return nil, nil
+	}
+	fullName, number, ok := strings.Cut(entity, "#")
+	id, err := strconv.Atoi(number)
+	if !ok || err != nil || id <= 0 {
+		return nil, fmt.Errorf("the entity %q is not a PR", entity)
+	}
+	d := k.d
+	runs, err := d.store.closingRuns(`organization_id = ? AND closed_at IS NULL AND pr_id = ? AND pr_outcome = ''`,
+		source.organizationID, id)
+	if err != nil {
+		return nil, err
+	}
+	var changed []string
+	var errs []error
+	for _, r := range runs {
+		f, repository, err := d.runForge(r)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("the Run %s: %w", r.id, err))
+			continue
+		}
+		if !strings.EqualFold(repository, forge.BitbucketHost+"/"+fullName) {
+			continue
+		}
+		outcome, err := prOutcomeOn(ctx, f, repository, id)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("the Run %s: %w", r.id, err))
+			continue
+		}
+		if outcome == "" {
+			continue
+		}
+		now := d.now()
+		if err := d.store.savePROutcome(r.id, outcome, now); err != nil {
+			errs = append(errs, fmt.Errorf("the Run %s: %w", r.id, err))
+			continue
+		}
+		d.log.Info("a Bitbucket webhook gave the outcome of a Run's PR", "run", r.id, "outcome", outcome)
+		reason := closePRDeclined
+		if outcome == dispatcherapi.PRMerged {
+			reason = closePRMerged
+		}
+		d.close(ctx, r, reason, now)
+		changed = append(changed, entity)
+	}
+	return changed, errors.Join(errs...)
+}
