@@ -22,8 +22,11 @@ From the repository root:
 ```sh
 factory/local/stack up      # build the images, start the stack, wait for the agent machine
 factory/local/stack down    # stop the stack, and delete its containers and volumes
+factory/local/stack clean   # the same, and delete its images (about 1 GB)
 factory/local/smoke         # start the stack, check it, and stop it again
 ```
+
+The images and Docker's build cache take about 1.5 GB of disk. When the disk is nearly full, use `stack clean` when you finish.
 
 The compose project is `factory-local`. It has its own containers, networks and volumes, and publishes no port on the host. It does not touch the dev SolidTrace's containers or data, or a flow stack.
 

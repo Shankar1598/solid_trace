@@ -3,6 +3,7 @@
 #
 #   factory/local/stack up            build the images, start the stack, wait until the agent machine is a ready Nomad client
 #   factory/local/stack down          stop the stack and delete its containers and volumes
+#   factory/local/stack clean         the same, and delete its images (about 1 GB)
 #   factory/local/stack nomad <args>  run the Nomad CLI on the server, with the management token
 #   factory/local/stack shell [user]  a shell on the agent machine (default user: root)
 #
@@ -53,6 +54,9 @@ up)
 down)
   compose down --volumes --remove-orphans --timeout 5
   ;;
+clean)
+  compose down --volumes --remove-orphans --timeout 5 --rmi all
+  ;;
 nomad)
   shift
   nomad "$@"
@@ -61,7 +65,7 @@ shell)
   docker exec -it -u "${2:-root}" -w / "$(compose ps -q agent-machine)" bash -l
   ;;
 *)
-  sed -n '2,10p' "$0" >&2
+  sed -n '2,11p' "$0" >&2
   exit 2
   ;;
 esac
