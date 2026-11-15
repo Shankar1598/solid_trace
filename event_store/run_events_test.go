@@ -90,6 +90,7 @@ type runRow struct {
 	Project    string    `json:"project"`
 	Repository string    `json:"repository"`
 	Folder     string    `json:"folder"`
+	BaseBranch string    `json:"base_branch"`
 	Trigger    string    `json:"trigger"`
 	Title      string    `json:"title"`
 	Actor      struct {

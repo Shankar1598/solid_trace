@@ -595,6 +595,7 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterRedactionRoutes(env.QueryApp)
 	handler.RegisterAgentQueryRoutes(env.QueryApp, handler.NewAgentSessionsHandler(env.ClickHouseLogs))
 	handler.RegisterRunsQueryRoutes(env.QueryApp, handler.NewRunsHandler(env.ClickHouseLogs, env.Clock))
+	handler.RegisterAgentEvidenceRoute(env.QueryApp, handler.NewAgentEvidenceHandler(clickHouse))
 
 	env.close = func() {
 		pebbleWriter.StopWrites()

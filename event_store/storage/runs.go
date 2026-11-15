@@ -22,8 +22,27 @@ import (
 //     run.reason
 //   - run.trigger, run.title, run.executions (the count of Executions)
 //   - run.pr.url, run.pr.outcome (merged or declined; empty while open)
-//   - execution.id, factory.project, repository, folder
+//   - execution.id, factory.project, repository, folder, run.base_branch
+//     (the branch that the Run starts from)
 //   - actor.kind, actor.id, actor.name
+//
+// An event also carries the details of its kind, which the Run page reads:
+//
+//   - execution_started and execution_ended: execution.account,
+//     execution.vm, and agent.session_id (the Execution's Agent session);
+//     execution_ended also execution.reason, execution.exit_code and
+//     execution.background_killed (the count of background tasks killed).
+//   - message_accepted: message.text.
+//   - report: report.outcome (done, needs_person or failed),
+//     report.summary, report.question, report.cause_report (an Issue or a
+//     Monitor Run's cause report), report.checks (a list of {name,
+//     command, exit_status, time, output_tail}), report.evidence (a list
+//     of paths under evidence/ in the Agent session directory),
+//     report.delivered (the delivered-message counter), and
+//     agent.session_id (the Agent session that holds the Evidence files
+//     and evidence/report.md).
+//   - interventions (message_accepted, interrupt, stop, take_over,
+//     account_switched, continue): the actor who did it.
 //
 // Readers order by run.seq and drop repeats of (run.id, run.seq): the
 // Dispatcher's sender delivers at least once.
@@ -63,6 +82,7 @@ type RunSummary struct {
 	Project    string    `json:"project"`
 	Repository string    `json:"repository"`
 	Folder     string    `json:"folder"`
+	BaseBranch string    `json:"base_branch"`
 	Trigger    string    `json:"trigger"`
 	Title      string    `json:"title"`
 	Actor      RunActor  `json:"actor"`
@@ -81,7 +101,7 @@ func RunSummaryOf(log models.Log) RunSummary {
 	r := RunSummary{
 		ID: s["run.id"], Seq: int64(log.Attributes.Number["run.seq"]), Time: log.Time, Kind: s["event.kind"],
 		State: s["run.state"], Reason: s["run.reason"], Project: s["factory.project"], Repository: s["repository"],
-		Folder: s["folder"], Trigger: s["run.trigger"], Title: s["run.title"],
+		Folder: s["folder"], BaseBranch: s["run.base_branch"], Trigger: s["run.trigger"], Title: s["run.title"],
 		Actor:      RunActor{Kind: s["actor.kind"], ID: s["actor.id"], Name: s["actor.name"]},
 		PR:         RunPR{URL: s["run.pr.url"], Outcome: s["run.pr.outcome"]},
 		Executions: int64(log.Attributes.Number["run.executions"]),
