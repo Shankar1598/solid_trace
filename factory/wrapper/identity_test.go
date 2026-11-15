@@ -166,7 +166,10 @@ func TestTheWrapperUsesTheRenewedWorkloadIdentity(t *testing.T) {
 	execution := waitFor(t, env, ana, id, dispatcherapi.StateRunning).Executions[0].ID
 
 	// The Execution works longer than its first JWT is valid, and the
-	// Runner renews the JWT in the file.
+	// Runner renews the JWT in the file. The agent's 2 hours with no
+	// output are not what this test checks: the wrapper's limits do not
+	// see them.
+	env.Runner.HoldClock()
 	env.Clock.Advance(2 * time.Hour)
 	env.Runner.RenewIdentity(execution)
 	open()
