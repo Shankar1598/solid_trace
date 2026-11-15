@@ -260,6 +260,12 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		"PATH=" + r.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
+		wrapper.EnvUploadEvery + "=" + UploadEvery.String(),
+		// The wrapper gives the harness its own Claude Code directories.
+		"CLAUDE_CONFIG_DIR=", "CLAUDE_CODE_PROJECT_DIR_NAME=",
+	}
+	if r.env.Proxy != nil {
+		env = append(env, "HTTP_PROXY="+r.env.Proxy.URL(), "NO_PROXY=", "no_proxy=")
 	}
 	if broken {
 		env = env[1:]
@@ -315,6 +321,9 @@ func (r *Runner) Home(execution string) string {
 
 // Cache is the caches folder of each Execution (WRAPPER_CACHE).
 func (r *Runner) Cache() string { return filepath.Join(r.dir, "cache") }
+
+// UploadEvery is how often each wrapper uploads during an Execution.
+const UploadEvery = 100 * time.Millisecond
 
 // Socket is the path of the agent's socket of an Execution.
 func (r *Runner) Socket(execution string) string {

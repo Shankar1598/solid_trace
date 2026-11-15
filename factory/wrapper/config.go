@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // The names of the wrapper's configuration in its environment. The Runner
@@ -20,8 +21,8 @@ const (
 	// an identity with file = true and a ttl). The wrapper reads the file
 	// on each call.
 	EnvIdentityFile = "WRAPPER_IDENTITY_FILE"
-	// EnvDir is the Execution's directory: it holds secrets/
-	// and the agent's socket (default: the working directory).
+	// EnvDir is the Execution's directory: it holds secrets/, the upload
+	// state and the agent's socket (default: the working directory).
 	EnvDir = "WRAPPER_DIR"
 	// EnvHarness is the harness program (default claude).
 	EnvHarness = "WRAPPER_HARNESS"
@@ -40,12 +41,22 @@ const (
 	// EnvCache is the caches folder (default /var/cache/factory), the
 	// harness's XDG_CACHE_HOME. It stays after the end.
 	EnvCache = "WRAPPER_CACHE"
+	// EnvUploadEvery is how often the wrapper uploads the Run's Agent
+	// sessions during the Execution, as a Go duration (default 5s).
+	EnvUploadEvery = "WRAPPER_UPLOAD_EVERY"
 )
 
 // config is the wrapper's configuration.
 type config struct {
 	dispatcherURL, execution, identityFile, dir, harness, docker string
 	workspace, home, cache                                       string
+	// claudeConfig and projectName are the harness's CLAUDE_CONFIG_DIR
+	// (default <home>/.claude) and CLAUDE_CODE_PROJECT_DIR_NAME (default
+	// projectDirName of the task's repository, which Main sets): the
+	// wrapper uploads the Agent sessions under
+	// <claudeConfig>/projects/<projectName>.
+	claudeConfig, projectName string
+	uploadEvery               time.Duration
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -59,6 +70,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 		workspace:     getenv(EnvWorkspace),
 		home:          getenv(EnvHome),
 		cache:         getenv(EnvCache),
+		claudeConfig:  getenv("CLAUDE_CONFIG_DIR"),
+		projectName:   getenv("CLAUDE_CODE_PROJECT_DIR_NAME"),
+		uploadEvery:   uploadEvery,
 	}
 	for _, d := range []struct {
 		value *string
@@ -91,6 +105,16 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if c.identityFile == "" {
 		problems = append(problems, EnvIdentityFile+" is not set")
 	}
+	if every := getenv(EnvUploadEvery); every != "" {
+		d, err := time.ParseDuration(every)
+		if err != nil || d <= 0 {
+			problems = append(problems, EnvUploadEvery+" must be a duration such as 5s, not "+every)
+		}
+		c.uploadEvery = d
+	}
+	if strings.ContainsAny(c.projectName, "/\x00") || c.projectName == "." || c.projectName == ".." {
+		problems = append(problems, "CLAUDE_CODE_PROJECT_DIR_NAME must be one directory name, not "+c.projectName)
+	}
 	if len(problems) > 0 {
 		return c, errors.New("the wrapper's configuration is not complete: " + strings.Join(problems, "; "))
 	}
@@ -107,14 +131,14 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if c.docker == "" {
 		c.docker = "docker"
 	}
+	if c.claudeConfig == "" {
+		c.claudeConfig = filepath.Join(c.home, ".claude")
+	}
 	return c, nil
 }
 
 // checkout is the fixed checkout path of a repository (host/workspace/name).
 func (c config) checkout(repository string) string { return filepath.Join(c.workspace, repository) }
-
-// claudeConfig is the harness's CLAUDE_CONFIG_DIR.
-func (c config) claudeConfig() string { return filepath.Join(c.home, ".claude") }
 
 // gitConfig is the run user's git configuration: the credential helper
 // and the ssh rewrite. It is outside the checkout.
@@ -122,3 +146,11 @@ func (c config) gitConfig() string { return filepath.Join(c.home, ".gitconfig") 
 
 func (c config) secrets() string { return filepath.Join(c.dir, "secrets") }
 func (c config) socket() string  { return filepath.Join(c.dir, "agent.sock") }
+
+// projectDir is the Claude Code project directory of the Run: its Agent
+// sessions and its evidence/.
+func (c config) projectDir() string { return filepath.Join(c.claudeConfig, "projects", c.projectName) }
+
+// uploadState holds what the uploads saw of each file. The agent never
+// writes it.
+func (c config) uploadState() string { return filepath.Join(c.dir, "uploads") }

@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 )
@@ -78,6 +79,22 @@ func TestAgentChildTokens(t *testing.T) {
 		o.rows.exec("UPDATE api_tokens SET expires_at = ? WHERE id = ?", railsTime(now), parent)
 
 		expectStatus(t, uploadUnit(t, env, secret, runSession, run), 401)
+	})
+
+	// The Dispatcher adds to a Run each Agent session id that the wrapper
+	// finds, and the agent can write any id there.
+	t.Run("a child token does not add to a person's own Agent session that its list names", func(t *testing.T) {
+		expectStatus(t, uploadUnit(t, env, o.secret, otherSession, unitUpload{path: "session.jsonl", body: lines("Mine")}), 200)
+		secret, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization,
+			scopes: []string{"sessions:write", "sessions:read"}, sessionIDs: []string{otherSession},
+			expiresAt: &childExpiry, parent: dispatcher()})
+
+		answer := uploadUnit(t, env, secret, otherSession, unitUpload{path: "session.jsonl", offset: len(lines("Mine")),
+			runID: "run-0193", project: "shop", body: lines("Not yours")})
+		expectStatus(t, answer, 403)
+		if msg, _ := answer.body["error"].(string); !strings.Contains(msg, "only to its Run's Agent sessions") {
+			t.Errorf("Expected a clear body, got %s", answer.raw)
+		}
 	})
 
 	t.Run("the Dispatcher's token's children stop when its Admin leaves the Organization", func(t *testing.T) {

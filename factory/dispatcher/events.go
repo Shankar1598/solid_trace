@@ -288,7 +288,7 @@ func (d *Dispatcher) sendOutbox(ctx context.Context) error {
 }
 
 func (d *Dispatcher) sendBatch(ctx context.Context, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.config.SolidTraceURL+runEventsPath,
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.config.ingestURL()+runEventsPath,
 		bytes.NewReader(body))
 	if err != nil {
 		return err

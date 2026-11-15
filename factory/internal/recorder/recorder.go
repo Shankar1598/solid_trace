@@ -58,6 +58,11 @@ type Recorder struct {
 	// order they came; eventStoreDown makes it refuse them.
 	runEvents      []map[string]any
 	eventStoreDown bool
+
+	refuseChildren int
+	children       []*ChildToken
+	uploads        []Upload
+	files          map[string]map[string]*storedFile
 }
 
 // RunEventsPath is EventStore's route for the Dispatcher's run events.
@@ -72,7 +77,8 @@ type Project struct {
 
 // New starts a recorder that accepts token checks from callerToken.
 func New(callerToken string) *Recorder {
-	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{}}
+	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{},
+		files: map[string]map[string]*storedFile{}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	return r
 }
@@ -181,6 +187,14 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.Method == http.MethodPost && req.URL.Path == RunEventsPath {
 		r.serveRunEvents(w, call)
+		return
+	}
+	if req.URL.Path == ChildTokensPath || strings.HasPrefix(req.URL.Path, ChildTokensPath+"/") {
+		r.serveChildTokens(w, req, call)
+		return
+	}
+	if strings.HasPrefix(req.URL.Path, AgentSessionsPath) {
+		r.serveAgentSessions(w, req, call)
 		return
 	}
 	if req.Method == http.MethodPost && req.URL.Path == "/mcp" {

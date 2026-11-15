@@ -127,8 +127,9 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 // sent as its first 32 MiB with size, its size on disk. The query also
 // names the harness, the repository (host/workspace/name) and the folder
 // inside it; a token limited to a Run's Agent sessions also names the Run
-// (run_id) and its Project (project). Any other token's repository must
-// match the captured repositories, else 403. A fork or a /clear sends
+// (run_id) and its Project (project), and adds only to an Agent session
+// of that Run, else 403. Any other token's repository must match the
+// captured repositories, else 403. A fork or a /clear sends
 // parent_session_id, the Agent session it came from, when the uploader
 // knows it.
 //
@@ -207,6 +208,10 @@ func (h *AgentHandler) UploadAgentFile(c *fiber.Ctx) error {
 		})
 	case errors.Is(err, storage.ErrAgentSessionOfAnotherPerson):
 		return anotherPersons(c, sessionID)
+	case errors.Is(err, storage.ErrAgentSessionOfAnotherRun):
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": fmt.Sprintf("Agent session %s is not an Agent session of Run %s. A Run's token adds only to its Run's Agent sessions.",
+				sessionID, unit.Session.RunID)})
 	case errors.Is(err, storage.ErrShuttingDown):
 		c.Set(fiber.HeaderRetryAfter, retryAfterSeconds)
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "The server is shutting down. Try again in a few seconds."})

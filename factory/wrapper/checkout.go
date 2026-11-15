@@ -187,15 +187,13 @@ func removeAll(dir string) error {
 }
 
 // gitEnv is the environment of git and of the harness: the run user's
-// home and git configuration, the caches folder, and the fixed Claude
-// Code paths.
+// home and git configuration, and the caches folder. The harness also
+// gets the fixed Claude Code paths (uploads.claudeEnv).
 func (e *execution) gitEnv(environ []string, socket string) []string {
 	return append(harnessEnv(environ, socket),
 		"HOME="+e.cfg.home,
 		"GIT_CONFIG_GLOBAL="+e.cfg.gitConfig(),
-		"XDG_CACHE_HOME="+e.cfg.cache,
-		"CLAUDE_CONFIG_DIR="+e.cfg.claudeConfig(),
-		"CLAUDE_CODE_PROJECT_DIR_NAME="+projectDirName(e.task.Repository))
+		"XDG_CACHE_HOME="+e.cfg.cache)
 }
 
 // git runs git, and gives its output and exit code.
