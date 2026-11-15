@@ -467,3 +467,27 @@ func TestAReasonNeverHoldsTheTokenThatAnAnswerEchoes(t *testing.T) {
 		check(t, f.Token, err)
 	})
 }
+
+// A credential helper of the machine for the forge's URL does not answer
+// in place of the connection's token.
+func TestTheCredentialHelperReplacesAHelperOfTheMachine(t *testing.T) {
+	f, b := newForge(t)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	machine := "[credential \"" + f.GitURL() + "\"]\n\thelper = \"!f() { echo username=x-token-auth; echo password=not-the-token; }; f\"\n"
+	if err := os.WriteFile(global, []byte(machine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	url, err := b.CloneURL(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := b.CredentialConfig(tokenFile(t, f.Token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", append(forge.GitArgs(settings), "clone", "-q", url, filepath.Join(t.TempDir(), "checkout"))...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+global, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the clone used the machine's helper: %v\n%s", err, out)
+	}
+}
