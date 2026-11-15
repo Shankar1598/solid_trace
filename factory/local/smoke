@@ -258,6 +258,9 @@ proxy_refuses_other_hosts_and_ports() {
   [ "$(as agent curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://example.com/)" = 403 ] || want "403 for plain HTTP to example.com"
   out="$(as agent curl -sS -o /dev/null --max-time 20 https://github.com:8443/ 2>&1)" && want "an allowed host on port 8443 refused"
   grep -q 403 <<<"$out" || want "Squid's 403 for CONNECT to port 8443, got: $out"
+  # An IP address whose PTR record is in an allowed domain (lb-140-82-112-3-iad.github.com).
+  out="$(as agent curl -sS -o /dev/null --max-time 20 https://140.82.112.3/ 2>&1)" && want "an IP address with an allowed PTR record refused"
+  grep -q 403 <<<"$out" || want "Squid's 403 for CONNECT to 140.82.112.3, got: $out"
 }
 
 direct_connections_fail_except_to_the_three_ports() {
@@ -314,7 +317,7 @@ squid_logs_each_host() {
 }
 
 check "through Squid, a request to an allowed host works" proxy_lets_an_allowed_host_through
-check "through Squid, a request to another host or port fails" proxy_refuses_other_hosts_and_ports
+check "through Squid, a request to another host, port or IP address fails" proxy_refuses_other_hosts_and_ports
 check "direct connections fail, except to Squid (3128) and Nomad RPC (4647)" direct_connections_fail_except_to_the_three_ports
 check "the firewall allows out only Squid, Nomad RPC and the Dispatcher's port" firewall_allows_only_the_three_ports
 check "Nomad's API refuses the run user with no token" nomad_api_refuses_a_request_with_no_token
