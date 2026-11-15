@@ -73,10 +73,16 @@ func TestASearchOfMoreThan1000CharactersIsRefused(t *testing.T) {
 	)}), 200)
 	env.ProcessAgentFiles(t)
 
-	status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/agent-sessions/%s", o.project, laptopSession),
-		map[string]any{"search": strings.Repeat("a", 1001)})
-	if status != 400 {
-		t.Errorf("Expected 400, got %d: %s", status, raw)
+	// "é" has 2 bytes: the limit counts characters, not bytes.
+	for _, tc := range []struct {
+		runes int
+		want  int
+	}{{1000, 200}, {1001, 400}} {
+		status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/agent-sessions/%s", o.project, laptopSession),
+			map[string]any{"search": strings.Repeat("é", tc.runes)})
+		if status != tc.want {
+			t.Errorf("A search of %d characters: expected %d, got %d: %s", tc.runes, tc.want, status, raw)
+		}
 	}
 }
 
