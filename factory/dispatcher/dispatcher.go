@@ -159,6 +159,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/connections", d.person(d.listConnections))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}", d.person(d.admin(d.saveConnection)))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}/webhook-secret", d.person(d.admin(d.saveWebhookSecret)))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/senders", d.person(d.listSenders))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/senders", d.person(d.admin(d.createSender)))
+	mux.HandleFunc("DELETE "+dispatcherapi.Path+"/senders/{id}", d.person(d.admin(d.deleteSender)))
 	mux.HandleFunc("POST /webhooks/", d.webhook)
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/schedules", d.person(d.listSchedules))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules", d.person(d.createSchedule))
@@ -346,7 +349,7 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		writeProblem(w, http.StatusBadRequest, "the branch must be a branch name, such as main or release/2.0, not "+quote(start.Branch))
 		return
 	}
-	settings, ok := d.triggerSettings(w, r, p, start.Project)
+	settings, ok := d.triggerSettings(w, r, p.starter(), start.Project)
 	if !ok {
 		return
 	}
