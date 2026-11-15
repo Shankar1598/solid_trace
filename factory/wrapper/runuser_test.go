@@ -2,6 +2,7 @@ package wrapper_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
@@ -275,5 +277,59 @@ func TestALinkThatTheRunUserPutsInPlaceOfTheProjectDirectoryMovesNoUpload(t *tes
 	}
 	if len(env.SolidTrace.Stored(session, session+".jsonl")) == 0 {
 		t.Error("no transcript")
+	}
+}
+
+// The wrapper's git runs as the run user in the Execution's kill
+// boundary: a hook from the run user's git configuration (a home that an
+// earlier Execution changed) starts in the child cgroup, so the end kills
+// each process that it leaves (the end's own cases check the kill). The
+// project directory is there before the
+// first process of the run user starts: root makes nothing after it.
+func TestTheWrappersGitRunsInTheKillBoundaryAfterTheProjectDirectoryIsMade(t *testing.T) {
+	out, err := os.MkdirTemp("", "git-hook-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(out) })
+	// The run user writes here and reads the hook (as root too).
+	if err := os.Chmod(out, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	hooks := filepath.Join(out, "hooks")
+	if err := os.Mkdir(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := "#!/bin/sh\nout='" + out + "'\n" +
+		`cat /proc/self/cgroup >"$out/cgroup"` + "\n" +
+		`ls -d "$PWD"/../claude/projects/*/evidence >"$out/project" 2>&1` + "\n"
+	if err := os.WriteFile(filepath.Join(hooks, "post-checkout"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(out, "gitconfig")
+	if err := os.WriteFile(config, []byte("[core]\n\thooksPath = "+hooks+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), reply, reportStep("--outcome", "done", "--summary", "Fixed"), result, waitForEnd)
+
+	id := start(t, env, ana, "Fix the cart")
+	execution := onlyExecution(t, waitFor(t, env, ana, id, dispatcherapi.StateDone)).ID
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := env.Runner.Fake.Wait(ctx, execution); err != nil {
+		t.Fatal(err)
+	}
+
+	cgroup, err := os.ReadFile(filepath.Join(out, "cgroup"))
+	if err != nil {
+		t.Fatalf("the clone ran no hook: %v", err)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(string(cgroup)), "/"+wrapper.CgroupName(execution)) {
+		t.Errorf("the hook of the wrapper's git ran in the cgroup %q, not in the Execution's child cgroup", strings.TrimSpace(string(cgroup)))
+	}
+	if project, _ := os.ReadFile(filepath.Join(out, "project")); !strings.HasSuffix(strings.TrimSpace(string(project)), "/evidence") {
+		t.Errorf("the project directory was not there when the run user's first process started: %q", project)
 	}
 }

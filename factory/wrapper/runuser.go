@@ -126,9 +126,10 @@ func (r runUser) share(path string, mode os.FileMode) error {
 
 // mkdirAll makes dir and each parent that is not there, and gives each
 // directory that it made to the run user. A directory that was there
-// stays as it is.
+// stays as it is. It follows no link: an entry that is not a directory
+// (a link too) stops it.
 func (r runUser) mkdirAll(dir string) error {
-	if info, err := os.Stat(dir); err == nil {
+	if info, err := os.Lstat(dir); err == nil {
 		if !info.IsDir() {
 			return fmt.Errorf("%s is not a directory", dir)
 		}
@@ -141,6 +142,10 @@ func (r runUser) mkdirAll(dir string) error {
 	}
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		if errors.Is(err, os.ErrExist) {
+			// Made between the Lstat and the Mkdir: check it again.
+			if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+				return fmt.Errorf("%s is not a directory", dir)
+			}
 			return nil
 		}
 		return err

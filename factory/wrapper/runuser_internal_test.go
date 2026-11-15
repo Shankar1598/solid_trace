@@ -73,3 +73,24 @@ func TestTheExecutionsDirectoryMustBeReachableAndNotChangeableByTheRunUser(t *te
 		t.Errorf("no change of user: %v", err)
 	}
 }
+
+// mkdirAll follows no link: a link in place of a directory, which the run
+// user can put there, stops it, so root makes and gives nothing in the
+// link's target.
+func TestMkdirAllRefusesALinkInPlaceOfADirectory(t *testing.T) {
+	dir, target := t.TempDir(), t.TempDir()
+	if err := os.Symlink(target, filepath.Join(dir, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	self := runUser{name: "me", uid: os.Geteuid()}
+	err := self.mkdirAll(filepath.Join(dir, "claude", "projects", "run", "evidence"))
+	if err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("mkdirAll through a link: %v; want an error", err)
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("mkdirAll made %v in the link's target", entries)
+	}
+	if err := self.mkdirAll(filepath.Join(dir, "real", "projects")); err != nil {
+		t.Errorf("mkdirAll with no link: %v", err)
+	}
+}

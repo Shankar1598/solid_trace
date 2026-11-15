@@ -243,16 +243,16 @@ func (e *execution) stopContainers() {
 
 // work sets up and runs the harness, and gives the end call's body.
 func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
+	// Before the run user's first process (the clone).
+	if err := e.uploads.prepare(e.runUser); err != nil {
+		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "make the project directory: " + err.Error()}
+	}
 	if err := e.setup(ctx, environ); err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
 	server, err := e.serveSocket()
 	if err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
-	}
-	if err := e.uploads.prepare(e.runUser); err != nil {
-		_ = server.Close()
-		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "make the project directory: " + err.Error()}
 	}
 	e.uploads.start()
 	end := e.runHarness(environ)
@@ -320,14 +320,27 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	return nil
 }
 
+// git runs git as the run user in the Execution's kill boundary, as each
+// process of the run user: a hook that git starts is in the child cgroup,
+// and the end kills what it leaves.
 func (e *execution) git(ctx context.Context, environ []string, dir string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(e.runUser.env(harnessEnv(environ, "")), "GIT_TERMINAL_PROMPT=0")
 	e.runUser.start(cmd)
-	out, err := cmd.CombinedOutput()
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	// A process that git starts and that holds the output open does not
+	// hold the setup.
+	cmd.WaitDelay = time.Second
+	err := e.boundary.Start(cmd)
+	if err == nil {
+		if err = cmd.Wait(); errors.Is(err, exec.ErrWaitDelay) {
+			err = nil
+		}
+	}
 	if err != nil {
-		return fmt.Errorf("git %s: %v: %s", args[len(args)-1], err, lastLines(string(out), 20))
+		return fmt.Errorf("git %s: %v: %s", args[len(args)-1], err, lastLines(out.String(), 20))
 	}
 	return nil
 }
