@@ -355,3 +355,37 @@ func TestTheRefusalOfAnOldCLIGivesTheMinimumVersionInItsBody(t *testing.T) {
 		t.Errorf("%d %s, want 426 with minimum_version 0.2.0", a.Status, a.Body)
 	}
 }
+
+func TestTheMinimumCLIAtTheEdgeOfTheMinorVersions(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	cases := []struct {
+		dispatcher, refused, accepted string
+	}{
+		{"v1.3.0", "0.9.0", "1.0.0"},
+		{"v1.3.7", "0.99.0", "1.0.0"},
+		{"v1.2.0", "", "0.0.1"},
+		{"v1.4.0", "1.0.9", "1.1.0"},
+		{"v0.3.0", "", "0.0.0"},
+		{"v0.4.0", "0.0.9", "0.1.0"},
+	}
+	for _, c := range cases {
+		env.Version = c.dispatcher
+		env.Restart()
+		if a := env.APIAs("solidtrace/"+c.accepted, ana.Token, "GET", "/api/v1/runs", nil); a.Status != http.StatusOK {
+			t.Errorf("solidtrace %s at a Dispatcher %s: %d %s, want 200", c.accepted, c.dispatcher, a.Status, a.Body)
+		}
+		if c.refused == "" {
+			continue
+		}
+		a := env.APIAs("solidtrace/"+c.refused, ana.Token, "GET", "/api/v1/runs", nil)
+		var body struct {
+			MinimumVersion string `json:"minimum_version"`
+		}
+		_ = json.Unmarshal(a.Body, &body)
+		if a.Status != http.StatusUpgradeRequired || body.MinimumVersion != c.accepted {
+			t.Errorf("solidtrace %s at a Dispatcher %s: %d %s, want 426 with minimum_version %s",
+				c.refused, c.dispatcher, a.Status, a.Body, c.accepted)
+		}
+	}
+}

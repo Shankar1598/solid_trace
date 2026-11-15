@@ -1,0 +1,3 @@
+# The take-over rule: the one sudoers rule of an agent machine. Members of the access
+# group run exactly "hc connect" as the run user, with no password, and nothing else.
+%factory-access ALL=(agent) NOPASSWD: /usr/local/bin/hc connect
