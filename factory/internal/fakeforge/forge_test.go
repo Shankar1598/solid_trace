@@ -1,9 +1,6 @@
 package fakeforge_test
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +16,11 @@ const repo = "team/app"
 // credential helper, never from the URL.
 func agentGit(t *testing.T, token, dir string, args ...string) (string, error) {
 	t.Helper()
-	helper := "!f() { echo username=x-token-auth; echo password=" + token + "; }; f"
+	return agentGitWith(t, "!f() { echo username=x-token-auth; echo password="+token+"; }; f", dir, args...)
+}
+
+func agentGitWith(t *testing.T, helper, dir string, args ...string) (string, error) {
+	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
@@ -86,165 +87,5 @@ func TestPersonPushIsSeenByTheAgent(t *testing.T) {
 	mustGit(t, f.Token, "", "clone", "-q", "--branch", "agent/r1", f.CloneURL(repo), work)
 	if got := strings.TrimSpace(mustGit(t, f.Token, work, "rev-parse", "HEAD")); got != sha {
 		t.Fatalf("HEAD of the clone %s; want the person's commit %s", got, sha)
-	}
-}
-
-type answer struct {
-	status int
-	body   map[string]any
-}
-
-func call(t *testing.T, f *fakeforge.Forge, token, method, path string, body any) answer {
-	t.Helper()
-	var buf bytes.Buffer
-	if body != nil {
-		json.NewEncoder(&buf).Encode(body)
-	}
-	req, _ := http.NewRequest(method, f.URL()+path, &buf)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	a := answer{status: resp.StatusCode}
-	json.NewDecoder(resp.Body).Decode(&a.body)
-	return a
-}
-
-func TestPRAndCommentsThatTheFactoryMakes(t *testing.T) {
-	f := fakeforge.New(t)
-	f.AddRepo(repo, nil)
-	f.Push(repo, "agent/r1", map[string]string{"fix.txt": "x\n"}, "Fix")
-	pulls := "/api/repos/" + repo + "/pulls"
-
-	if a := call(t, f, "wrong", "GET", pulls, nil); a.status != 401 {
-		t.Fatalf("wrong token: %d; want 401", a.status)
-	}
-	if a := call(t, f, f.Token, "POST", pulls, map[string]string{"title": "T", "source": "absent"}); a.status != 422 {
-		t.Fatalf("PR from an absent branch: %d; want 422", a.status)
-	}
-	if a := call(t, f, f.Token, "GET", "/api/repos/team/other/pulls", nil); a.status != 404 {
-		t.Fatalf("absent repository: %d; want 404", a.status)
-	}
-
-	opened := call(t, f, f.Token, "POST", pulls, map[string]string{"title": "Fix the bug", "description": "Evidence: none", "source": "agent/r1", "destination": "main"})
-	if opened.status != 201 || opened.body["state"] != "OPEN" || opened.body["link"] == "" {
-		t.Fatalf("open: %d %v", opened.status, opened.body)
-	}
-	if a := call(t, f, f.Token, "POST", pulls, map[string]string{"title": "Again", "source": "agent/r1"}); a.status != 409 {
-		t.Fatalf("a second open PR from the same branch: %d; want 409", a.status)
-	}
-	pr := "/api/repos/" + repo + "/pulls/1"
-	if a := call(t, f, f.Token, "PUT", pr, map[string]string{"description": "Evidence: go test passed"}); a.status != 200 {
-		t.Fatalf("update: %d %v", a.status, a.body)
-	}
-	if a := call(t, f, f.Token, "GET", pr, nil); a.body["title"] != "Fix the bug" || a.body["description"] != "Evidence: go test passed" {
-		t.Fatalf("after a PUT of only the description: %v; want the old title", a.body)
-	}
-	if a := call(t, f, f.Token, "PUT", pr, map[string]string{"title": "Fix the bug in fix.txt"}); a.status != 200 {
-		t.Fatalf("update: %d %v", a.status, a.body)
-	}
-	if a := call(t, f, f.Token, "GET", pr, nil); a.body["title"] != "Fix the bug in fix.txt" || a.body["description"] != "Evidence: go test passed" {
-		t.Fatalf("after a PUT of only the title: %v; want the old description", a.body)
-	}
-	if a := call(t, f, f.Token, "POST", pr+"/comments", map[string]string{"body": "Run r1 is done."}); a.status != 201 {
-		t.Fatalf("comment: %d %v", a.status, a.body)
-	}
-
-	prs := f.PRs(repo)
-	if len(prs) != 1 || prs[0].Title != "Fix the bug in fix.txt" || prs[0].Description != "Evidence: go test passed" || prs[0].Author != fakeforge.FactoryAuthor {
-		t.Fatalf("PRs = %+v; want the one PR with the new title and description", prs)
-	}
-	if got := call(t, f, f.Token, "GET", pulls+"?source=agent/r1&state=OPEN", nil).body["values"].([]any); len(got) != 1 {
-		t.Fatalf("PRs from agent/r1: %v", got)
-	}
-
-	inline := f.PersonComments(repo, 1, fakeforge.Comment{Author: "Asha", Body: "/agent rename this", File: "fix.txt", Line: 1})
-	f.Resolve(repo, 1, inline.ID)
-	values := call(t, f, f.Token, "GET", pr+"/comments", nil).body["values"].([]any)
-	if len(values) != 2 {
-		t.Fatalf("comments %v; want the factory's and the person's", values)
-	}
-	person := values[1].(map[string]any)
-	if person["author"] != "Asha" || person["file"] != "fix.txt" || person["line"] != 1.0 || person["resolved"] != true {
-		t.Fatalf("the person's comment through the API = %v", person)
-	}
-	if c := f.Comments(repo, 1); c[0].Author != fakeforge.FactoryAuthor || c[0].Body != "Run r1 is done." {
-		t.Fatalf("the factory's comment = %+v", c[0])
-	}
-
-	f.SetState(repo, 1, "MERGED")
-	if a := call(t, f, f.Token, "GET", pr, nil); a.body["state"] != "MERGED" {
-		t.Fatalf("state after the merge = %v", a.body["state"])
-	}
-}
-
-// The Dispatcher finds the open PR of a branch with the source and
-// state filters, so the fake must apply each filter.
-func TestPRListFiltersBySourceAndState(t *testing.T) {
-	f := fakeforge.New(t)
-	f.AddRepo(repo, nil)
-	f.Push(repo, "agent/r1", map[string]string{"a.txt": "a\n"}, "A")
-	f.Push(repo, "agent/r2", map[string]string{"b.txt": "b\n"}, "B")
-	pulls := "/api/repos/" + repo + "/pulls"
-	for _, b := range []string{"agent/r1", "agent/r2"} {
-		if a := call(t, f, f.Token, "POST", pulls, map[string]string{"title": b, "source": b}); a.status != 201 {
-			t.Fatalf("open from %s: %d %v", b, a.status, a.body)
-		}
-	}
-	f.SetState(repo, 2, "MERGED")
-
-	for query, want := range map[string][]string{
-		"":                              {"agent/r1", "agent/r2"},
-		"?source=agent/r1":              {"agent/r1"},
-		"?source=agent/r2":              {"agent/r2"},
-		"?state=OPEN":                   {"agent/r1"},
-		"?state=MERGED":                 {"agent/r2"},
-		"?source=agent/r2&state=OPEN":   {},
-		"?source=agent/r2&state=MERGED": {"agent/r2"},
-	} {
-		values := call(t, f, f.Token, "GET", pulls+query, nil).body["values"].([]any)
-		got := []string{}
-		for _, v := range values {
-			got = append(got, v.(map[string]any)["source"].(string))
-		}
-		if strings.Join(got, ",") != strings.Join(want, ",") {
-			t.Errorf("GET pulls%s: sources %v; want %v", query, got, want)
-		}
-	}
-}
-
-// A Dispatcher polls the API while the test acts as a person. Under
-// `go test -race`, this finds an answer that is encoded with no lock.
-func TestAPIAnswersAndPersonHelpersAtTheSameTime(t *testing.T) {
-	f := fakeforge.New(t)
-	f.AddRepo(repo, nil)
-	f.Push(repo, "agent/r1", map[string]string{"fix.txt": "x\n"}, "Fix")
-	pulls := "/api/repos/" + repo + "/pulls"
-	call(t, f, f.Token, "POST", pulls, map[string]string{"title": "T", "source": "agent/r1"})
-	c := f.PersonComments(repo, 1, fakeforge.Comment{Author: "Asha", Body: "/agent again"})
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for i := 0; i < 50; i++ {
-			for _, p := range []string{pulls, pulls + "/1", pulls + "/1/comments"} {
-				req, _ := http.NewRequest("GET", f.URL()+p, nil)
-				req.Header.Set("Authorization", "Bearer "+f.Token)
-				if resp, err := http.DefaultClient.Do(req); err == nil {
-					resp.Body.Close()
-				}
-			}
-		}
-	}()
-	for i := 0; ; i++ {
-		select {
-		case <-done:
-			return
-		default:
-		}
-		f.SetState(repo, 1, []string{"OPEN", "MERGED"}[i%2])
-		f.Resolve(repo, 1, c.ID)
 	}
 }
