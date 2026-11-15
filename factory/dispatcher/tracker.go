@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -115,21 +116,24 @@ func (d *Dispatcher) reconcileTickets(ctx context.Context, t Tracker, source Web
 	if err != nil {
 		return nil, err
 	}
+	// A ticket that fails does not stop the others: the step gives each
+	// ticket's error together, and the next backstop runs it again.
 	step := ticketStep{d: d, t: t, c: c}
 	var acted []string
+	var errs []error
 	for _, ticket := range tickets {
 		if ticket.Status != c.Settings.ReadyStatus {
 			continue
 		}
 		ok, err := step.ready(ctx, ticket)
 		if err != nil {
-			return acted, err
+			errs = append(errs, fmt.Errorf("ticket %s: %w", ticket.ID, err))
 		}
 		if ok {
 			acted = append(acted, ticket.ID)
 		}
 	}
-	return acted, nil
+	return acted, errors.Join(errs...)
 }
 
 // ticketStep is one reconcile step of a tracker connection.
@@ -242,7 +246,9 @@ func (s *ticketStep) orphaned(ticket Ticket, projectID string) (bool, error) {
 }
 
 // noRoute posts the comment on a ready ticket that no route matches, and
-// writes a warning Log, one time for each edit of the ticket.
+// writes a warning Log, one time for each edit of the ticket. When the
+// comment fails, it writes a warning that says so, and the next step
+// tries again.
 func (s *ticketStep) noRoute(ctx context.Context, ticket Ticket, value string) (bool, error) {
 	d, c := s.d, s.c
 	if noticed, err := d.store.ticketNoticed(c.ID, ticket); err != nil || noticed {
@@ -263,14 +269,18 @@ func (s *ticketStep) noRoute(ctx context.Context, ticket Ticket, value string) (
 		comment += "No route of the tracker connection " + c.Name + " matches its " + quote(c.Settings.RoutingField) +
 			" field: an Admin adds a route to a Project's Factory settings."
 	}
+	args := s.ticketArgs(ticket, "factory.routing_field", c.Settings.RoutingField, "factory.routing_value", value)
 	if err := s.t.Comment(ctx, c, ticket.ID, comment); err != nil {
+		// No notice: the next step tries the comment again, with a
+		// warning at each failure.
+		d.warn("a ready ticket matches no route, and the comment on it failed: no Run started",
+			append(args, "error", err.Error())...)
 		return false, err
 	}
 	if err := d.store.noticeTicket(c.ID, ticket, d.now().UTC()); err != nil {
 		return false, err
 	}
-	d.warn("a ready ticket matches no route: no Run started", s.ticketArgs(ticket,
-		"factory.routing_field", c.Settings.RoutingField, "factory.routing_value", value)...)
+	d.warn("a ready ticket matches no route: no Run started", args...)
 	return true, nil
 }
 

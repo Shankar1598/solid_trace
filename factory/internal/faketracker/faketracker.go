@@ -70,12 +70,15 @@ type Tracker struct {
 	mu       sync.Mutex
 	tickets  map[string]map[string]*ticket
 	comments map[string][]Comment
-	edits    int
+	// refused are the tickets (connection/id) whose comments fail.
+	refused map[string]bool
+	edits   int
 }
 
 // New is a tracker with no tickets.
 func New() *Tracker {
-	return &Tracker{tickets: map[string]map[string]*ticket{}, comments: map[string][]Comment{}}
+	return &Tracker{tickets: map[string]map[string]*ticket{}, comments: map[string][]Comment{},
+		refused: map[string]bool{}}
 }
 
 // Put makes or replaces a ticket of the connection, as the user. It is a
@@ -120,6 +123,14 @@ func (t *Tracker) Status(connection, id string) string {
 		return tk.Status
 	}
 	return ""
+}
+
+// RefuseComments makes each comment on the ticket fail, as a token
+// without the capability to comment does.
+func (t *Tracker) RefuseComments(connection, id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.refused[connection+"/"+id] = true
 }
 
 // Comments are the comments that the Dispatcher posted on the
@@ -223,6 +234,9 @@ func (k kind) Comment(_ context.Context, c dispatcher.TrackerConnection, id, bod
 	defer k.t.mu.Unlock()
 	if k.t.tickets[c.Name][id] == nil {
 		return dispatcher.ErrNoTicket
+	}
+	if k.t.refused[c.Name+"/"+id] {
+		return errors.New("faketracker: the token of " + c.Name + " cannot comment")
 	}
 	k.t.comments[c.Name] = append(k.t.comments[c.Name], Comment{Ticket: id, Body: body})
 	return nil

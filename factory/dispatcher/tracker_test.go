@@ -294,6 +294,29 @@ func TestARouteSavedAfterTheNoRouteCommentStartsTheRunOfTheSameEdit(t *testing.T
 	}
 }
 
+func TestATicketWhoseCommentFailsDoesNotStopTheOtherReadyTickets(t *testing.T) {
+	env := factorytest.New(t)
+	env.TrackerConnection("board", secret)
+	env.Project("shop")
+	mustSaveRoutes(t, env, "shop", route("board", "Shop"))
+	settle()
+
+	// A-1 comes first in the list, matches no route, and its comment fails.
+	env.Tracker.Put("board", faketracker.Ticket{ID: "A-1", Title: "Lost", Route: "Nope",
+		Status: faketracker.ReadyStatus}, rosa)
+	env.Tracker.RefuseComments("board", "A-1")
+	env.Tracker.Put("board", faketracker.Ticket{ID: "B-2", Title: "Fix it", Route: "Shop",
+		Status: faketracker.ReadyStatus}, rosa)
+	env.Clock.Advance(faketracker.Backstop + time.Second)
+	if run := waitForRuns(t, env, 1)[0]; run.Link != faketracker.TicketURL("board", "B-2") {
+		t.Errorf("the Run is of %s, want B-2", run.Link)
+	}
+	warning := env.WaitForWarning("comment on it failed")
+	if warning["factory.ticket"] != "A-1" || warning["error"] == nil {
+		t.Errorf("the warning is %v, want one about A-1 with the error", warning)
+	}
+}
+
 func TestATicketWithAnActiveRunStartsNoSecondRun(t *testing.T) {
 	env, path := trackerEnv(t)
 	env.Tracker.Put("board", faketracker.Ticket{ID: "T-1", Title: "Fix it", Status: faketracker.ReadyStatus}, rosa)
