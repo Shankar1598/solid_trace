@@ -1,6 +1,7 @@
 package dispatcher_test
 
 import (
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -313,4 +314,97 @@ func TestTheNoRouteCommentAndAStatusChangeShowAsTheAppOnLinear(t *testing.T) {
 		!strings.Contains(err.Error(), "no status") {
 		t.Errorf("a status that the team does not have: %v, want an error that says so", err)
 	}
+}
+
+// addLinear runs 'connections add linear issues' as p with the client
+// secret, on the callback port.
+func addLinear(env *factorytest.Env, p *factorytest.Person, clientSecret, port string) factorytest.Result {
+	return p.LinearCLI(clientSecret, "connections", "add", "linear", "issues", "--client-id", fakelinear.ClientID,
+		"--port", port, "--dispatcher", env.URL())
+}
+
+// noConnections checks that the Organization has no connection.
+func noConnections(t *testing.T, env *factorytest.Env) {
+	t.Helper()
+	var list dispatcherapi.Connections
+	env.Admin().API("GET", "/api/v1/connections", nil).JSON(t, &list)
+	if len(list.Connections) != 0 {
+		t.Errorf("the Organization has the connections %+v, want none", list.Connections)
+	}
+}
+
+func TestALinearInstallThatFailsSavesNoConnection(t *testing.T) {
+	t.Run("the approval is denied", func(t *testing.T) {
+		env := factorytest.New(t)
+		env.Linear.Deny()
+		r := addLinear(env, env.Admin(), fakelinear.ClientSecret, env.LinearCallbackPort())
+		if r.Code != 1 || !strings.Contains(r.Stderr, "denied") {
+			t.Errorf("exit %d, %q, want 1 and a message that the install was denied", r.Code, r.Stderr)
+		}
+		noConnections(t, env)
+	})
+	t.Run("Linear refuses the client secret", func(t *testing.T) {
+		env := factorytest.New(t)
+		r := addLinear(env, env.Admin(), "a-wrong-secret", env.LinearCallbackPort())
+		if r.Code != 1 || !strings.Contains(r.Stderr, "Linear refused the approval") {
+			t.Errorf("exit %d, %q, want 1 and Linear's refusal", r.Code, r.Stderr)
+		}
+		if strings.Contains(env.Logs(), "a-wrong-secret") {
+			t.Error("the log has the client secret")
+		}
+		noConnections(t, env)
+	})
+	t.Run("a member is not an Admin", func(t *testing.T) {
+		env := factorytest.New(t)
+		r := addLinear(env, env.Member("Bob"), fakelinear.ClientSecret, env.LinearCallbackPort())
+		if r.Code != 1 || !strings.Contains(r.Stderr, "only an Admin") {
+			t.Errorf("exit %d, %q, want 1 and only an Admin", r.Code, r.Stderr)
+		}
+		noConnections(t, env)
+	})
+	t.Run("no client secret on stdin", func(t *testing.T) {
+		env := factorytest.New(t)
+		r := addLinear(env, env.Admin(), "", env.LinearCallbackPort())
+		if r.Code != 2 || !strings.Contains(r.Stderr, "client secret") || len(env.Linear.Actors()) != 0 {
+			t.Errorf("exit %d, %q, %d approvals, want 2, a message that names the client secret, and no approval",
+				r.Code, r.Stderr, len(env.Linear.Actors()))
+		}
+	})
+	t.Run("the callback port is in use", func(t *testing.T) {
+		env := factorytest.New(t)
+		port := env.LinearCallbackPort()
+		busy, err := net.Listen("tcp4", "127.0.0.1:"+port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer busy.Close()
+		r := addLinear(env, env.Admin(), fakelinear.ClientSecret, port)
+		if r.Code != 1 || !strings.Contains(r.Stderr, "--port") {
+			t.Errorf("exit %d, %q, want 1 and a message that names --port", r.Code, r.Stderr)
+		}
+	})
+}
+
+func TestARedirectWithAWrongStateDoesNotEndTheLinearInstall(t *testing.T) {
+	env := factorytest.New(t)
+	env.Linear.Forged()
+	r := addLinear(env, env.Admin(), fakelinear.ClientSecret, env.LinearCallbackPort())
+	if r.Code != 0 {
+		t.Fatalf("exit %d: %s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if c, _ := connection(t, env, "issues"); c.Kind != "linear" {
+		t.Errorf("the connection is %+v, want a linear connection", c)
+	}
+}
+
+func TestAnInstallOfLinearAgainKeepsTheWebhookSecretAndUsesTheNewTokens(t *testing.T) {
+	env, path := linearEnv(t)
+	if r := addLinear(env, env.Admin(), fakelinear.ClientSecret, env.LinearCallbackPort()); r.Code != 0 {
+		t.Fatalf("install again: exit %d: %s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if c, _ := connection(t, env, "issues"); !c.WebhookSecret {
+		t.Error("the connection lost its webhook secret")
+	}
+	readyTicket(t, env, path, "issue-11")
+	waitForRuns(t, env, 1)
 }
