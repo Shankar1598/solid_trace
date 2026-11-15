@@ -160,6 +160,9 @@ Rails.application.routes.draw do
         end
       end
 
+      # The Factory section: the Project's Factory settings, at the Dispatcher.
+      resource :factory, only: [ :update ], controller: "factory_settings"
+
       resource :log_transform, only: [ :show, :update ] do
         post :check
         post :preview
