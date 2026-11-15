@@ -128,9 +128,16 @@ type Task struct {
 	Repository string `json:"repository"`
 	// CloneURL is the HTTPS URL that git clones from. It holds no token.
 	CloneURL string `json:"clone_url"`
-	// BaseBranch is the branch to clone ("" is the repository's default
-	// branch).
+	// BaseBranch is the branch that the Run's branch starts from ("" is
+	// the repository's default branch).
 	BaseBranch string `json:"base_branch"`
+	// Branch is the Run's branch, agent/<run id> (RunBranch). The first
+	// Execution makes it from BaseBranch; later Executions check it out.
+	Branch string `json:"branch"`
+	// GitURL is the base of the forge's HTTPS clone URLs. git over ssh to
+	// the repository's host (git@host: and ssh://git@host/) is rewritten
+	// to it, for submodules and private gems too.
+	GitURL string `json:"git_url"`
 	// ForgeUsername and ForgeToken are what the git credential helper
 	// gives git ("" token: the Project names no connection).
 	ForgeUsername string `json:"forge_username"`
@@ -149,6 +156,9 @@ type Task struct {
 	// Uploads is the Execution's child token. Only the wrapper keeps it.
 	Uploads SessionToken `json:"uploads"`
 }
+
+// RunBranch is the name of a Run's branch.
+func RunBranch(runID string) string { return "agent/" + runID }
 
 // SessionToken is a child token of one Execution: sessions:write and
 // sessions:read for the Run's Agent sessions, until the Execution's total
@@ -187,7 +197,8 @@ const (
 // ExecutionEnd is the body of the wrapper's end call.
 type ExecutionEnd struct {
 	Reason string `json:"reason"`
-	// Error says what failed, for EndSetupFailed.
+	// Error says what failed, for EndSetupFailed, and a failure of the
+	// push before the end, for each reason.
 	Error string `json:"error,omitempty"`
 	// ExitCode is the harness's exit code (nil: the harness did not run).
 	ExitCode        *int       `json:"exit_code,omitempty"`
@@ -201,6 +212,9 @@ type ExecutionEnd struct {
 type StartRun struct {
 	Project string `json:"project"`
 	Prompt  string `json:"prompt"`
+	// Branch is the Run's base branch ("" is the Project's default base
+	// branch, else the repository's default branch).
+	Branch string `json:"branch,omitempty"`
 }
 
 // FactorySettings are a Project's Factory settings, as the Dispatcher

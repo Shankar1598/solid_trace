@@ -21,30 +21,40 @@ const (
 	// an identity with file = true and a ttl). The wrapper reads the file
 	// on each call.
 	EnvIdentityFile = "WRAPPER_IDENTITY_FILE"
-	// EnvDir is the Execution's directory: it holds checkout/, secrets/
-	// and the agent's socket (default: the working directory).
+	// EnvDir is the Execution's directory: it holds secrets/, the upload
+	// state and the agent's socket (default: the working directory).
 	EnvDir = "WRAPPER_DIR"
 	// EnvHarness is the harness program (default claude).
 	EnvHarness = "WRAPPER_HARNESS"
 	// EnvDocker is the docker program of the end's container step
 	// (default docker). When it is not there, the step is skipped.
 	EnvDocker = "WRAPPER_DOCKER"
+	// EnvWorkspace is the folder of the checkouts (default /workspace). A
+	// repository's checkout is <workspace>/<host>/<workspace>/<name> on
+	// each machine, so that a resume finds the same path. The end deletes
+	// the folder.
+	EnvWorkspace = "WRAPPER_WORKSPACE"
+	// EnvHome is the run user's home (default /home/agent): HOME, the git
+	// configuration and CLAUDE_CONFIG_DIR (<home>/.claude). The end
+	// deletes it.
+	EnvHome = "WRAPPER_HOME"
+	// EnvCache is the caches folder (default /var/cache/factory), the
+	// harness's XDG_CACHE_HOME. It stays after the end.
+	EnvCache = "WRAPPER_CACHE"
 	// EnvUploadEvery is how often the wrapper uploads the Run's Agent
 	// sessions during the Execution, as a Go duration (default 5s).
 	EnvUploadEvery = "WRAPPER_UPLOAD_EVERY"
 )
 
-// projectName is the Claude Code project directory name of a Run when
-// CLAUDE_CODE_PROJECT_DIR_NAME does not give one. Ticket 33 fixes one for
-// each repository.
-const projectName = "run"
-
 // config is the wrapper's configuration.
 type config struct {
 	dispatcherURL, execution, identityFile, dir, harness, docker string
+	workspace, home, cache                                       string
 	// claudeConfig and projectName are the harness's CLAUDE_CONFIG_DIR
-	// and CLAUDE_CODE_PROJECT_DIR_NAME: the wrapper uploads the Agent
-	// sessions under <claudeConfig>/projects/<projectName>.
+	// (default <home>/.claude) and CLAUDE_CODE_PROJECT_DIR_NAME (default
+	// projectDirName of the task's repository, which Main sets): the
+	// wrapper uploads the Agent sessions under
+	// <claudeConfig>/projects/<projectName>.
 	claudeConfig, projectName string
 	uploadEvery               time.Duration
 }
@@ -57,11 +67,35 @@ func loadConfig(getenv func(string) string) (config, error) {
 		dir:           getenv(EnvDir),
 		harness:       getenv(EnvHarness),
 		docker:        getenv(EnvDocker),
+		workspace:     getenv(EnvWorkspace),
+		home:          getenv(EnvHome),
+		cache:         getenv(EnvCache),
 		claudeConfig:  getenv("CLAUDE_CONFIG_DIR"),
 		projectName:   getenv("CLAUDE_CODE_PROJECT_DIR_NAME"),
 		uploadEvery:   uploadEvery,
 	}
+	for _, d := range []struct {
+		value *string
+		def   string
+	}{{&c.workspace, "/workspace"}, {&c.home, "/home/agent"}, {&c.cache, "/var/cache/factory"}} {
+		if *d.value == "" {
+			*d.value = d.def
+		}
+		*d.value = filepath.Clean(*d.value)
+	}
 	var problems []string
+	// The end deletes the workspace and the home: each must be a folder of
+	// its own, never the root.
+	for _, d := range []struct{ value, name string }{{c.workspace, EnvWorkspace}, {c.home, EnvHome}, {c.cache, EnvCache}} {
+		if !filepath.IsAbs(d.value) || d.value == "/" {
+			problems = append(problems, d.name+" must be an absolute path that is not /, not "+d.value)
+		}
+	}
+	within := func(a, b string) bool { return a == b || strings.HasPrefix(a, b+"/") }
+	if within(c.workspace, c.home) || within(c.home, c.workspace) || within(c.cache, c.home) ||
+		within(c.cache, c.workspace) || within(c.home, c.cache) || within(c.workspace, c.cache) {
+		problems = append(problems, EnvWorkspace+", "+EnvHome+" and "+EnvCache+" must be separate folders, none in another")
+	}
 	if c.dispatcherURL == "" {
 		problems = append(problems, EnvDispatcherURL+" is not set")
 	}
@@ -98,17 +132,20 @@ func loadConfig(getenv func(string) string) (config, error) {
 		c.docker = "docker"
 	}
 	if c.claudeConfig == "" {
-		c.claudeConfig = filepath.Join(c.dir, "claude")
-	}
-	if c.projectName == "" {
-		c.projectName = projectName
+		c.claudeConfig = filepath.Join(c.home, ".claude")
 	}
 	return c, nil
 }
 
-func (c config) checkout() string { return filepath.Join(c.dir, "checkout") }
-func (c config) secrets() string  { return filepath.Join(c.dir, "secrets") }
-func (c config) socket() string   { return filepath.Join(c.dir, "agent.sock") }
+// checkout is the fixed checkout path of a repository (host/workspace/name).
+func (c config) checkout(repository string) string { return filepath.Join(c.workspace, repository) }
+
+// gitConfig is the run user's git configuration: the credential helper
+// and the ssh rewrite. It is outside the checkout.
+func (c config) gitConfig() string { return filepath.Join(c.home, ".gitconfig") }
+
+func (c config) secrets() string { return filepath.Join(c.dir, "secrets") }
+func (c config) socket() string  { return filepath.Join(c.dir, "agent.sock") }
 
 // projectDir is the Claude Code project directory of the Run: its Agent
 // sessions and its evidence/.

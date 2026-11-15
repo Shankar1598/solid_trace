@@ -7,8 +7,10 @@
 // Execution and before the end call, it uploads the Run's Agent sessions
 // with the Execution's child token (uploads.go).
 //
-// Later tickets add the fixed paths and the Run's branch (33), the run user (39), the restore of the Agent
-// session directory (59), the commands and the limits (32), and the Stop hook (38).
+// The checkout is at a fixed path for each repository, on the Run's branch
+// (checkout.go). Later tickets add the run user (39), the restore of the
+// Agent session directory (59), the commands and the limits (32), and the
+// Stop hook (38).
 package wrapper
 
 import (
@@ -17,14 +19,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +76,11 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		fmt.Fprintln(stderr, "wrapper:", err)
 		boundary.Remove(emptyWait)
 		return 1
+	}
+	if cfg.projectName == "" {
+		// One project directory name for each repository: a resume on
+		// another machine finds the Agent session at the same place.
+		cfg.projectName = projectDirName(task.Repository)
 	}
 	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1),
 		uploads: newUploads(cfg, c, task, stderr)}
@@ -138,6 +143,12 @@ type execution struct {
 	killOnce    sync.Once
 	// left is the error when the cgroup was not empty after the end.
 	left error
+	// checkout is the clone ("" before the clone), and workDir the
+	// agent's working directory in it: the Project's folder.
+	checkout, workDir string
+	// startTip is the commit of the Run's branch after the setup: a push
+	// is necessary only when the branch moved.
+	startTip string
 }
 
 // run sets up and runs the harness, then does the end procedure, and gives
@@ -145,6 +156,15 @@ type execution struct {
 func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
 	end := e.work(ctx, environ)
 	e.finish()
+	// Before the end: each commit that is not pushed. After the
+	// Execution: no workspace and no home of the run user.
+	if failed := e.push(environ); failed != "" {
+		if end.Error != "" {
+			end.Error += "; "
+		}
+		end.Error += failed
+	}
+	e.cleanUp()
 	// The output stream is read to its end now: the last
 	// background_tasks_changed event counts, also when the harness wrote
 	// it just before it exited.
@@ -255,65 +275,6 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 	return end
 }
 
-// setup writes the forge token and the credential helper outside the
-// checkout, and clones the base branch with them.
-func (e *execution) setup(ctx context.Context, environ []string) error {
-	secrets := e.cfg.secrets()
-	if strings.ContainsAny(secrets, "'\n") {
-		return fmt.Errorf("the secrets directory %q has a quote or a new line", secrets)
-	}
-	if err := os.MkdirAll(secrets, 0o700); err != nil {
-		return err
-	}
-	clone := []string{"clone", "--quiet"}
-	var helper string
-	if e.task.ForgeToken != "" {
-		helper = filepath.Join(secrets, "git-credential")
-		token := filepath.Join(secrets, "forge-token")
-		if err := os.WriteFile(token, []byte(e.task.ForgeToken), 0o600); err != nil {
-			return err
-		}
-		if strings.ContainsAny(e.task.ForgeUsername, "\n\x00") {
-			return errors.New("the forge user name has a new line")
-		}
-		script := "#!/bin/sh\n# The git credential helper of the Execution: the forge connection's token.\n" +
-			"test \"$1\" = get || exit 0\n" +
-			"printf 'username=%s\\n' " + shellQuote(e.task.ForgeUsername) + "\n" +
-			"printf 'password=%s\\n' \"$(cat '" + token + "')\"\n"
-		if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
-			return err
-		}
-		clone = append([]string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}, clone...)
-	}
-	if e.task.BaseBranch != "" {
-		clone = append(clone, "--branch", e.task.BaseBranch)
-	}
-	clone = append(clone, "--", e.task.CloneURL, e.cfg.checkout())
-	if err := e.git(ctx, environ, "", clone...); err != nil {
-		return fmt.Errorf("clone %s: %w", e.task.Repository, err)
-	}
-	if helper != "" {
-		// The agent's own git calls (push) use the same helper.
-		for _, value := range []string{"", helper} {
-			if err := e.git(ctx, environ, e.cfg.checkout(), "config", "--add", "credential.helper", value); err != nil {
-				return fmt.Errorf("set the credential helper: %w", err)
-			}
-		}
-	}
-	return nil
-}
-
-func (e *execution) git(ctx context.Context, environ []string, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(harnessEnv(environ, ""), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git %s: %v: %s", args[len(args)-1], err, lastLines(string(out), 20))
-	}
-	return nil
-}
-
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func lastLines(s string, n int) string {
@@ -419,8 +380,8 @@ func (e *execution) headless() []string {
 // output open.
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
-	cmd.Dir = e.cfg.checkout()
-	cmd.Env = append(harnessEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...)
+	cmd.Dir = e.workDir
+	cmd.Env = append(e.gitEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...)
 	cmd.Stderr = e.log
 	failed := func(err error) dispatcherapi.ExecutionEnd {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}

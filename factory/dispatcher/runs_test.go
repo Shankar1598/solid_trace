@@ -182,6 +182,17 @@ func TestStartRefusesARunWithNoProjectOrPrompt(t *testing.T) {
 	}
 }
 
+func TestStartRefusesABaseBranchThatIsNotABranchName(t *testing.T) {
+	env := newEnv(t)
+	ana := env.Member("Ana")
+	for _, branch := range []string{"../main", "-x", "main.lock", "a b"} {
+		a := ana.API("POST", "/api/v1/runs", dispatcherapi.StartRun{Project: "checkout", Prompt: "Fix it", Branch: branch})
+		if a.Status != http.StatusBadRequest || !strings.Contains(string(a.Body), "branch name") {
+			t.Errorf("branch %q: %d %s, want 400", branch, a.Status, a.Body)
+		}
+	}
+}
+
 func TestARunVerbWithNoDispatcherURLSaysHowToGiveIt(t *testing.T) {
 	env := newEnv(t)
 	r := env.Member("Ana").CLI("runs", "list")

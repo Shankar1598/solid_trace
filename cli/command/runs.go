@@ -24,6 +24,7 @@ func start(ctx context.Context, args []string, env Env) int {
 	flags := flag.NewFlagSet("start", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	project := flags.String("project", "", "the Project whose Factory settings the Run uses")
+	branch := flags.String("branch", "", "the base branch of the Run (default: the Project's default base branch, else the repository's default branch)")
 	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
 	prompt, ok := parseInterspersed(flags, args)
 	if !ok {
@@ -49,7 +50,7 @@ func start(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintf(env.Stdout, "Project %s, from its Factory settings for %s.\n", found.Project,
 			strings.TrimSuffix(found.Repository+"/"+found.Folder, "/"))
 	}
-	run, err := client.Start(ctx, dispatcherapi.StartRun{Project: *project, Prompt: text})
+	run, err := client.Start(ctx, dispatcherapi.StartRun{Project: *project, Prompt: text, Branch: *branch})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "solidtrace start: %v\n", err)
 		return 1
