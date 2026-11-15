@@ -43,6 +43,15 @@ module Oauth
     # The Scopes that the MCP server accepts.
     FOR_MCP = [ MCP, MCP_READ ].freeze
 
+    # The Scope that makes child tokens. Only the Dispatcher's token has it.
+    TOKENS_CREATE = "tokens:create"
+    # The Dispatcher's token has these Scopes, and no others.
+    DISPATCHER = [ "run_events:write", "issues:comment", TOKENS_CREATE ].freeze
+    # The Scopes that the Dispatcher's token gives only to its child tokens,
+    # each with its limit: sessions:* for a list of Agent session ids, and
+    # mcp:read for one Project.
+    FOR_CHILDREN = [ "sessions:write", "sessions:read", MCP_READ ].freeze
+
     ALL = [
       Scope.new(
         name: MCP,
@@ -90,7 +99,7 @@ module Oauth
         oauth: false, person: true,
       ),
       Scope.new(
-        name: "tokens:create",
+        name: TOKENS_CREATE,
         resource_path: FACTORY_PATH,
         text: "Make child tokens in %{organization} with some of this token's Scopes, limits that are as narrow " \
               "or narrower, and an expiry that is no later.",

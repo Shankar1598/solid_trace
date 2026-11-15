@@ -17,7 +17,8 @@
 # - issued_at: when the token was made;
 # - resource: the resource it is for: an OAuth token's one; for an API
 #   token, the resource of its Scopes, or a list when they have several;
-# - kind: :api_token or :access_token.
+# - kind: :api_token or :access_token;
+# - parent: for a child token, the Dispatcher's token that made it; else nil.
 class BearerToken
   Membership = Data.define(:organization, :role)
 
@@ -93,6 +94,16 @@ class BearerToken
   # mcp:read and not mcp, which holds mcp:read.
   def read_only?
     scopes.include?(Oauth::Scopes::MCP_READ) && !scopes.include?(Oauth::Scopes::MCP)
+  end
+
+  # The ApiToken; nil for an OAuth token.
+  def api_token
+    @record unless oauth?
+  end
+
+  # The token that made this child token; nil for every other token.
+  def parent
+    api_token&.parent
   end
 
   # The client_id of an OAuth token's client; nil for an API token.

@@ -25,7 +25,7 @@ class ApiTokensControllerTest < ActionDispatch::IntegrationTest
     listed = props["api_tokens"].first
     assert_equal({ "id" => mine.id, "name" => "Laptop", "created_at" => mine.created_at.iso8601,
                    "last_used_at" => mine.reload.last_used_at.iso8601,
-                   "scopes" => [], "organization" => nil, "limits" => {}, "expires_at" => nil }, listed)
+                   "scopes" => [], "organization" => nil, "limits" => {}, "expires_at" => nil, "dispatcher" => false }, listed)
   end
 
   test "the page gives the MCP URL at Console's URL: the setting, else as the request sees it" do
@@ -77,7 +77,7 @@ class ApiTokensControllerTest < ActionDispatch::IntegrationTest
     assert_match(/\Ast_/, secret)
     assert_equal token, ApiToken.find_by_secret(secret)
     assert_equal({ "id" => token.id, "name" => "Laptop", "created_at" => token.created_at.iso8601, "last_used_at" => nil,
-                   "scopes" => [], "organization" => nil, "limits" => {}, "expires_at" => nil },
+                   "scopes" => [], "organization" => nil, "limits" => {}, "expires_at" => nil, "dispatcher" => false },
       response.parsed_body["api_token"])
 
     get tokens_page_url, headers: inertia_headers
