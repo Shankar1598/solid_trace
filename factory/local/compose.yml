@@ -46,7 +46,7 @@ services:
     image: factory-local/agent-firewall:dev
     hostname: agent-machine-1
     environment:
-      DISPATCHER_PORT: ${DISPATCHER_PORT:-4700}
+      DISPATCHER_PORT: ${DISPATCHER_PORT:-7600}
     cap_add: [NET_ADMIN]
     networks: [factory]
     mem_limit: 32m

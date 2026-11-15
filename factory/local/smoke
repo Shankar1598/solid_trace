@@ -276,7 +276,7 @@ firewall_allows_only_the_three_ports() {
   rules="$(firewall iptables -S OUTPUT)"
   grep -q -- '^-P OUTPUT DROP' <<<"$rules" || want "OUTPUT policy DROP, got: $rules"
   ports="$(grep -- '-j ACCEPT' <<<"$rules" | grep -o -- '--dport [0-9]*' | awk '{ print $2 }' | sort -n | tr '\n' ' ')"
-  [ "$ports" = "3128 4647 ${DISPATCHER_PORT:-4700} " ] || want "ACCEPT for 3128, 4647 and ${DISPATCHER_PORT:-4700} only, got: $ports"
+  [ "$ports" = "3128 4647 ${DISPATCHER_PORT:-7600} " ] || want "ACCEPT for 3128, 4647 and ${DISPATCHER_PORT:-7600} only, got: $ports"
   [ "$(firewall iptables -S INPUT | head -1)" = "-P INPUT DROP" ] || want "INPUT policy DROP"
 }
 
