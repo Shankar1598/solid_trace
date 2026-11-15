@@ -196,6 +196,23 @@ func TestTheNotionKindReadsEachPageOfTheListAndTheContentOfATicket(t *testing.T)
 	}
 }
 
+// Notion's query can give a page in the trash for a short time after it
+// moves there. A page with either flag is no ready ticket.
+func TestReadyTicketsHasNoNotionPageInTheTrash(t *testing.T) {
+	env, db, _ := notionEnv(t, "")
+	kind, c := notionKind(env, db)
+	env.Notion.ListTrashed = true
+	live := readyPage(env, db, "Live")
+	archived := readyPage(env, db, "Archived")
+	env.Notion.Flag(archived, true, false)
+	inTrash := readyPage(env, db, "In the trash")
+	env.Notion.Flag(inTrash, false, true)
+	tickets, err := kind.ReadyTickets(context.Background(), c)
+	if err != nil || len(tickets) != 1 || tickets[0].ID != live {
+		t.Errorf("ReadyTickets gave %+v (%v), want only the live page %s", tickets, err, live)
+	}
+}
+
 // promptsByPage waits until there are n Runs, and gives the prompt of
 // each Run by its page.
 func promptsByPage(t *testing.T, env *factorytest.Env, n int) map[string]string {

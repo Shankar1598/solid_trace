@@ -77,8 +77,13 @@ type page struct {
 	database string
 	edited   time.Time
 	editedBy string
-	trashed  bool
+	// archived and inTrash are Notion's two flags of a page in the
+	// trash.
+	archived, inTrash bool
 }
+
+// gone is true for a page in the trash.
+func (p *page) gone() bool { return p.archived || p.inTrash }
 
 type database struct {
 	id string
@@ -96,6 +101,10 @@ type Notion struct {
 	Now func() time.Time
 	// PageSize is the most results that a list gives (100 when 0).
 	PageSize int
+	// ListTrashed is true when a database query also gives the pages in
+	// the trash, as Notion can do for a short time after a page moves
+	// there.
+	ListTrashed bool
 
 	mu        sync.Mutex
 	tokens    map[string]bool
@@ -195,7 +204,13 @@ func (n *Notion) SetSelect(id, property, value string, by User) {
 }
 
 // Trash moves a page to the trash.
-func (n *Notion) Trash(id string) { n.edit(id, "", func(p *page) { p.trashed = true }) }
+func (n *Notion) Trash(id string) { n.Flag(id, true, true) }
+
+// Flag sets the archived and the in_trash flags of a page one by one, as
+// an API version that has only one of the two gives them.
+func (n *Notion) Flag(id string, archived, inTrash bool) {
+	n.edit(id, "", func(p *page) { p.archived, p.inTrash = archived, inTrash })
+}
 
 func (n *Notion) edit(id, by string, f func(*page)) {
 	n.mu.Lock()
@@ -469,7 +484,7 @@ func (n *Notion) pageJSON(p *page) map[string]any {
 		"created_by":       map[string]string{"object": "user", "id": p.editedBy},
 		"last_edited_by":   map[string]string{"object": "user", "id": p.editedBy},
 		"parent":           map[string]string{"type": "database_id", "database_id": p.database},
-		"archived":         p.trashed, "in_trash": p.trashed,
+		"archived":         p.archived, "in_trash": p.inTrash,
 		"properties": properties, "url": PageURL(p.ID), "public_url": public,
 	}
 }
@@ -500,7 +515,7 @@ func (n *Notion) query(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	var ids []string
 	for _, p := range n.pages {
-		if p.database == d.id && !p.trashed && (q.Filter.Status == nil || p.Status == q.Filter.Status.Equals) {
+		if p.database == d.id && (n.ListTrashed || !p.gone()) && (q.Filter.Status == nil || p.Status == q.Filter.Status.Equals) {
 			ids = append(ids, p.ID)
 		}
 	}
@@ -542,7 +557,7 @@ func (n *Notion) getPage(w http.ResponseWriter, id string) {
 
 func (n *Notion) patchPage(w http.ResponseWriter, r *http.Request, id string) {
 	p := n.pageOf(id)
-	if p == nil || p.trashed {
+	if p == nil || p.gone() {
 		notFound(w, id)
 		return
 	}
@@ -637,7 +652,7 @@ func (n *Notion) comment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := n.pageOf(c.Parent.PageID)
-	if p == nil || p.trashed {
+	if p == nil || p.gone() {
 		notFound(w, c.Parent.PageID)
 		return
 	}
