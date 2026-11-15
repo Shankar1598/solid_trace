@@ -21,6 +21,11 @@ import (
 	"github.com/solidtrace/factory/dispatcher"
 )
 
+// Version is the release that this binary is, such as v0.19.0. A release
+// build sets it with -ldflags "-X main.Version=v0.19.0". A build from a
+// checkout is "dev", and accepts each solidtrace CLI.
+var Version = "dev"
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -47,7 +52,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	if err != nil {
 		return fail(err)
 	}
-	d, err := dispatcher.Open(config, dispatcher.Options{Log: log})
+	d, err := dispatcher.Open(config, dispatcher.Options{Log: log, Version: Version})
 	if err != nil {
 		return fail(err)
 	}

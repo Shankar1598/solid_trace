@@ -42,7 +42,8 @@ type Call struct {
 }
 
 // Recorder is the server. CallerToken is the Dispatcher's own API token:
-// a token check with another caller gets 401, as SolidTrace gives.
+// a token check with another caller, or with a caller that is not active
+// (see Token and Revoke), gets 401, as SolidTrace gives.
 type Recorder struct {
 	CallerToken string
 	server      *httptest.Server
@@ -106,6 +107,7 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	r.calls = append(r.calls, call)
 	answer, active := r.answers[call.Form.Get("token")]
+	_, callerActive := r.answers[r.CallerToken]
 	r.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -120,7 +122,7 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if call.Authorization != "Bearer "+r.CallerToken {
+	if call.Authorization != "Bearer "+r.CallerToken || !callerActive {
 		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_token"})
