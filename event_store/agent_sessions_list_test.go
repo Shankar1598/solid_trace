@@ -237,6 +237,17 @@ func TestTheAgentSessionsFiltersSelectThePersonTheRepositoryTheProjectAndTheRun(
 		}
 	})
 
+	t.Run("a limit of all the rows gives no more", func(t *testing.T) {
+		answer := listAgentSessions(t, env, f.project, withFilters(map[string]any{"limit": 3}))
+		if got := listedIDs(answer); len(got) != 3 || answer.More {
+			t.Errorf("Expected the three rows and no more, got %v %+v", got, answer)
+		}
+		answer = listAgentSessions(t, env, f.project, withFilters(map[string]any{"limit": 2}))
+		if got := listedIDs(answer); len(got) != 2 || !answer.More {
+			t.Errorf("Expected two rows and more, got %v %+v", got, answer)
+		}
+	})
+
 	t.Run("another Project has none of them", func(t *testing.T) {
 		if got := listedIDs(listAgentSessions(t, env, f.project+1000, octoberRange)); len(got) != 0 {
 			t.Errorf("Expected no Agent sessions, got %v", got)
@@ -308,9 +319,32 @@ func TestTheAgentSessionsListRefusesABadRequest(t *testing.T) {
 		{"from": "2026-10-04T00:00:00Z", "to": "2026-10-01T00:00:00Z"},
 		withFilters(map[string]any{"run": "maybe"}),
 		withFilters(map[string]any{"limit": -1}),
+		withFilters(map[string]any{"limit": 501}),
 	} {
 		if status, raw := postQueryApp(t, env, "/api/123/agent-sessions", body); status != 400 {
 			t.Errorf("Expected 400 for %v, got %d: %s", body, status, raw)
 		}
+	}
+}
+
+// A line's time can be up to one hour after the time when the server
+// stored it. An Agent session stored just before midnight, with its lines
+// just after midnight, has its row on the day before them: a range that
+// starts after midnight must still list it.
+func TestTheAgentSessionsListGivesAnAgentSessionStoredOnTheDayBeforeItsLines(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	env.Clock.Set(time.Date(2026, 10, 2, 23, 30, 0, 0, time.UTC))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(
+		personAt("u1", "2026-10-03T00:20:00Z", "Add a cart page"),
+		replyAt("a1", "2026-10-03T00:20:05Z", "msg_1", "claude-opus-5-5", `{"type":"text","text":"Done."}`),
+	)}), 200)
+	env.ProcessAgentFiles(t)
+
+	answer := listAgentSessions(t, env, o.project, map[string]any{"from": "2026-10-03T00:10:00Z", "to": "2026-10-03T01:00:00Z"})
+	if got := listedIDs(answer); !slices.Equal(got, []string{laptopSession}) {
+		t.Errorf("Expected the Agent session stored on the day before its lines, got %v", got)
 	}
 }
