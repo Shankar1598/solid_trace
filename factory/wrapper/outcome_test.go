@@ -78,20 +78,24 @@ func TestTheOutcomeNeverComesFromTheExitCode(t *testing.T) {
 		state  string
 		reason string
 		code   int
+		end    string
 	}{
 		{"exit 0 with no report", func(t *testing.T) []string {
 			return []string{takeTask, initLine(t), reply, `{"fake":"exit","code":0}`}
-		}, dispatcherapi.StateFailed, "the harness exited", 0},
+		}, dispatcherapi.StateFailed, "the harness exited", 0, dispatcherapi.EndHarnessExited},
 		{"exit 0 in the turn after a needs-a-person refusal", func(t *testing.T) []string {
 			return []string{takeTask, initLine(t), reportStep("--outcome", "needs-a-person"), `{"fake":"exit","code":0}`}
-		}, dispatcherapi.StateFailed, "the harness exited", 0},
+		}, dispatcherapi.StateFailed, "the harness exited", 0, dispatcherapi.EndHarnessExited},
 		{"exit 3 after a report of done", func(t *testing.T) []string {
 			return []string{takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"),
 				`{"fake":"exit","code":3}`}
-		}, dispatcherapi.StateDone, "", 3},
+		}, dispatcherapi.StateDone, "", 3, dispatcherapi.EndHarnessExited},
 		{"a turn that ends with no report", func(t *testing.T) []string {
 			return []string{takeTask, initLine(t), reply, result, waitForEnd}
-		}, dispatcherapi.StateFailed, "no report", 0},
+		}, dispatcherapi.StateFailed, "no report", 0, dispatcherapi.EndNoReport},
+		{"a turn that ends after a report that is not valid", func(t *testing.T) []string {
+			return []string{takeTask, initLine(t), reportStep("--outcome", "done"), reply, result, waitForEnd}
+		}, dispatcherapi.StateFailed, "no report", 0, dispatcherapi.EndNoReport},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -104,8 +108,12 @@ func TestTheOutcomeNeverComesFromTheExitCode(t *testing.T) {
 			if run.Reason != c.reason {
 				t.Errorf("reason %q, want %q", run.Reason, c.reason)
 			}
-			if e := onlyExecution(t, run); e.ExitCode == nil || *e.ExitCode != c.code {
+			e := onlyExecution(t, run)
+			if e.ExitCode == nil || *e.ExitCode != c.code {
 				t.Errorf("the end has exit code %v, want %d", e.ExitCode, c.code)
+			}
+			if e.EndReason != c.end {
+				t.Errorf("the end reason is %q, want %q", e.EndReason, c.end)
 			}
 		})
 	}
@@ -195,6 +203,9 @@ func TestAskUserQuestionIsNotAvailableToTheAgent(t *testing.T) {
 	if !strings.Contains(run.Reason, "AskUserQuestion") {
 		t.Errorf("reason %q", run.Reason)
 	}
+	if e := onlyExecution(t, run); !strings.HasPrefix(e.EndReason, dispatcherapi.EndSetupFailed+": ") {
+		t.Errorf("end reason %q", e.EndReason)
+	}
 }
 
 func TestACloneThatFailsFailsTheRunWithTheReason(t *testing.T) {
@@ -214,6 +225,9 @@ func TestACloneThatFailsFailsTheRunWithTheReason(t *testing.T) {
 	}
 	if strings.Contains(run.Reason, "a-token-that-the-forge-refuses") {
 		t.Errorf("the reason has the token: %q", run.Reason)
+	}
+	if e := onlyExecution(t, run); !strings.HasPrefix(e.EndReason, dispatcherapi.EndSetupFailed+": ") {
+		t.Errorf("end reason %q", e.EndReason)
 	}
 }
 
@@ -247,8 +261,9 @@ func TestAHarnessThatExitsEndsTheExecutionAlthoughAProcessHoldsItsOutput(t *test
 			if run.Reason != "the harness exited" {
 				t.Errorf("reason %q", run.Reason)
 			}
-			if e := onlyExecution(t, run); e.ExitCode == nil || *e.ExitCode != 1 {
-				t.Errorf("the end has exit code %v, want 1", e.ExitCode)
+			if e := onlyExecution(t, run); e.ExitCode == nil || *e.ExitCode != 1 || e.EndReason != dispatcherapi.EndHarnessExited {
+				t.Errorf("the end has exit code %v and reason %q, want 1 and %s", e.ExitCode, e.EndReason,
+					dispatcherapi.EndHarnessExited)
 			}
 			if took := time.Since(began); took > 20*time.Second {
 				t.Errorf("the end took %s", took)
