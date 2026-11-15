@@ -312,6 +312,31 @@ func TestTheAllowlistHoldsTheDefaultListAndTheExtraHostsOfEachRepositoryThatAPro
 	}
 }
 
+func TestOrphanedSettingsGiveNoHostsToTheAllowlist(t *testing.T) {
+	env := factorytest.New(t, factorytest.Executions)
+	shop := env.Project("shop")
+	ana := env.Member("Ana")
+	defaults := env.Allowlist()
+	env.Forge.Push("example/shop", "main", map[string]string{factoryFile(""): `allowed_hosts = ["api.stripe.com"]`},
+		"Extra hosts")
+	runDone(t, env, ana)
+	if !slices.Contains(strings.Split(env.Allowlist(), "\n"), "api.stripe.com") {
+		t.Fatalf("after a Run of shop, the allowlist has no api.stripe.com:\n%s", env.Allowlist())
+	}
+
+	// SolidTrace deletes the Project, and the next list of the settings
+	// marks them orphaned. No live Execution holds the host.
+	env.SolidTrace.DeleteProject(factorytest.Organization.Slug, shop.ID)
+	var list dispatcherapi.ProjectList
+	ana.API("GET", "/api/v1/projects", nil).JSON(t, &list)
+	if len(list.Projects) != 1 || !list.Projects[0].Orphaned {
+		t.Fatalf("the settings are %+v, want orphaned", list.Projects)
+	}
+	if got := env.Allowlist(); got != defaults {
+		t.Errorf("after the settings are orphaned, the allowlist is\n%s\nwant\n%s", got, defaults)
+	}
+}
+
 func TestTwoProjectsInOneRepositoryWithDifferentFoldersKeepTheHostsOfBoth(t *testing.T) {
 	env, ana := newEnv(t)
 	env.Project("admin")
