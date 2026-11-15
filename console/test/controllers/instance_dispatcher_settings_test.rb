@@ -64,6 +64,37 @@ class InstanceDispatcherSettingsTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "an Instance admin saves the Dispatcher's public webhook URL; a URL that is not http(s) is a form error" do
+    sign_in_as(@instance_admin)
+
+    patch instance_settings_url(org_slug: @organization.slug),
+      params: { instance_settings: { dispatcher_webhook_url: " https://factory.example.com/hooks/ " } }
+
+    assert_redirected_to instance_settings_url(org_slug: @organization.slug)
+    assert_equal "https://factory.example.com/hooks", settings_page.dig("props", "settings", "editable", "dispatcher_webhook_url")
+
+    [ "ftp://factory.example.com", "factory.example.com", "https://user:pw@factory.example.com", "https://a.example/?x=1" ].each do |bad|
+      patch instance_settings_url(org_slug: @organization.slug),
+        params: { instance_settings: { dispatcher_webhook_url: bad } }, headers: inertia
+      follow_redirect!(headers: inertia)
+      assert_match "must be http:// or https://", response.parsed_body.dig("props", "errors", "dispatcher_webhook_url").to_s, bad
+      assert_equal "https://factory.example.com/hooks", InstanceSetting.current.dispatcher_webhook_url, bad
+    end
+
+    patch instance_settings_url(org_slug: @organization.slug), params: { instance_settings: { dispatcher_webhook_url: "" } }
+    assert_nil InstanceSetting.current.dispatcher_webhook_url
+  end
+
+  test "an Organization admin who is not an Instance admin cannot set the public webhook URL" do
+    sign_in_as(@org_admin)
+
+    patch instance_settings_url(org_slug: @organization.slug),
+      params: { instance_settings: { dispatcher_webhook_url: "http://198.51.100.92:8080" } }
+
+    assert_response :forbidden
+    assert_nil InstanceSetting.current.dispatcher_webhook_url
+  end
+
   test "an Organization admin who is not an Instance admin gets 403 and changes nothing" do
     InstanceSetting.current.update!(dispatcher_url: DISPATCHER)
     sign_in_as(@org_admin)

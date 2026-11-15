@@ -267,6 +267,15 @@ var migrations = []string{
 	ALTER TABLE executions ADD COLUMN report_evidence TEXT NOT NULL DEFAULT '';
 	ALTER TABLE executions ADD COLUMN report_delivered INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE runs ADD COLUMN flags TEXT NOT NULL DEFAULT '';`,
+	// The close of a Run (ticket 45): closed_at (NULL while the Run is not
+	// closed), the outcome of its PR (merged or declined; '' while it is
+	// open or when there is none), and wip_delete_due (1 until the
+	// Dispatcher deleted the Run's work-in-progress ref, or gave up).
+	`ALTER TABLE runs ADD COLUMN closed_at INTEGER;
+	ALTER TABLE runs ADD COLUMN pr_outcome TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN wip_delete_due INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX runs_not_closed ON runs (state) WHERE closed_at IS NULL;
+	CREATE INDEX runs_wip_delete_due ON runs (closed_at) WHERE wip_delete_due = 1;`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -409,21 +418,27 @@ func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 }
 
 const runColumns = `id, organization_slug, project, prompt, state, started_by_kind, started_by_id, started_by_name,
-	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes, pr_url, flags`
+	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes, pr_url, flags,
+	pr_outcome, closed_at`
 
 func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var r dispatcherapi.Run
 	var created int64
 	var scheduledBy dispatcherapi.Person
 	var attributes, flags string
+	var closed sql.NullInt64
 	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.Kind, &r.StartedBy.ID,
 		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name,
-		&r.Title, &r.Link, &attributes, &r.PRURL, &flags)
+		&r.Title, &r.Link, &attributes, &r.PRURL, &flags, &r.PROutcome, &closed)
 	if err != nil {
 		return r, err
 	}
 	r.Flags = runFlags(r.State, flags)
 	r.CreatedAt = time.UnixMicro(created).UTC()
+	if closed.Valid {
+		at := time.UnixMicro(closed.Int64).UTC()
+		r.ClosedAt = &at
+	}
 	if scheduledBy.ID != "" {
 		r.ScheduledBy = &scheduledBy
 	}

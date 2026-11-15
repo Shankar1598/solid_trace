@@ -64,6 +64,11 @@ module McpTools
                    "Console calls it as the signed-in user, with a token that works for 5 minutes and has only " \
                    "the factory scope. The Factory's parts that need the Dispatcher show only while it is set. An " \
                    "empty string clears it." }
+    argument :dispatcher_webhook_url, { type: "string",
+      description: "The Dispatcher's public webhook URL (its DISPATCHER_WEBHOOK_URL), http(s)://host[:port][/path], " \
+                   "for an install where Console's server has no private path to the Dispatcher. Only the Factory " \
+                   "Integration provider uses it: it then sends to /webhooks/generic/<sender id> under this URL, " \
+                   "not under dispatcher_url. An empty string clears it." }
     argument :redaction_patterns, { type: "array", items: { type: "string" },
       description: "The whole list of extra Redaction patterns, Go regular expressions (RE2 syntax), after the " \
                    "defaults (editable.redaction_defaults). Before EventStore stores a transcript unit of an Agent " \

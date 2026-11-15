@@ -206,8 +206,8 @@ func (s *store) startForSender(r storedRun, delivery, signature string, at time.
 	var result senderStart
 	if r.dedupeKey != "" {
 		err := tx.QueryRow(`SELECT id FROM runs WHERE started_by_kind = ? AND started_by_id = ? AND dedupe_key = ?
-			AND state IN `+inList(len(activeStates))+` ORDER BY created_at DESC LIMIT 1`,
-			append([]any{actorSender, sender, r.dedupeKey}, anys(activeStates)...)...).Scan(&result.runID)
+			AND `+activeRunSQL()+` ORDER BY created_at DESC LIMIT 1`,
+			append([]any{actorSender, sender, r.dedupeKey}, activeRunArgs()...)...).Scan(&result.runID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return senderStart{}, err
 		}

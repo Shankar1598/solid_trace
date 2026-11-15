@@ -48,6 +48,9 @@ class InstanceSettingsAnswer
         # The Dispatcher's private API URL, nil when blank: then Console
         # shows no part of the Factory that needs the Dispatcher.
         dispatcher_url: @settings.dispatcher_url,
+        # The Dispatcher's public webhook URL, nil when blank: then the
+        # Factory provider sends to the Dispatcher URL.
+        dispatcher_webhook_url: @settings.dispatcher_webhook_url,
         # The extra Redaction patterns, and what the default ones remove.
         redaction_patterns: @settings.redaction_patterns,
         redaction_defaults: InstanceSetting::REDACTION_DEFAULTS,
