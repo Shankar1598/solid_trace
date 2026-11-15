@@ -188,6 +188,7 @@ class McpRunToolsTest < ActiveSupport::TestCase
     attributes = { "run.id" => "r1", "run.seq" => seq, "event.id" => "r1-#{seq}", "event.kind" => kind, "run.state" => "running",
                    "run.reason" => "", "factory.project" => "checkout", "repository" => "bitbucket.org/acme/shop", "folder" => "web",
                    "actor.kind" => "person", "actor.id" => "7", "actor.name" => "Ana", "run.base_branch" => "main",
+                   "run.started_by.kind" => "person", "run.started_by.id" => "7", "run.started_by.name" => "Ana",
                    "file" => "runs/r1" }
     { "id" => "0190f0c0-0000-7000-8000-00000000000#{seq}", "time" => time, "level" => "info", "message" => "Run r1: #{kind}",
       "service" => "bitbucket.org/acme/shop", "attributes" => attributes.merge(extra) }

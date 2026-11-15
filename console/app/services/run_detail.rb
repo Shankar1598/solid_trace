@@ -25,7 +25,7 @@ class RunDetail
   SNAPSHOT = %w[
     run.id run.seq event.id event.kind run.state run.reason run.trigger run.title run.executions
     run.pr.url run.pr.outcome run.base_branch execution.id factory.project repository folder
-    actor.kind actor.id actor.name file
+    run.started_by.kind run.started_by.id run.started_by.name actor.kind actor.id actor.name file
   ].freeze
 
   # answer is EventStore.run!'s answer.

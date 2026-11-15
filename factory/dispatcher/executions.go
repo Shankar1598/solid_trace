@@ -95,7 +95,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 	}
 	settings, err := d.store.settings(e.organizationID, e.projectID)
 	if errors.Is(err, errNotFound) {
-		d.endByDispatcher(e.id, "the Project has no Factory settings")
+		d.endByDispatcher(e.id, "the Project has no Factory settings", nil)
 		writeProblem(w, http.StatusConflict, "the Project has no Factory settings")
 		return
 	}
@@ -106,7 +106,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
 	cloneURL, err := (&forge.Bitbucket{GitURL: d.config.BitbucketGitURL}).CloneURL(settings.Repository)
 	if err != nil {
-		d.endByDispatcher(e.id, err.Error())
+		d.endByDispatcher(e.id, err.Error(), nil)
 		writeProblem(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -153,7 +153,7 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 		writeProblem(w, http.StatusBadRequest, problem)
 		return
 	}
-	err := d.store.saveReport(e.id, report)
+	err := d.store.saveReport(e.id, report, d.now())
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, "the Execution is not running: "+errEnded.Error()+" or has not started")
 		return

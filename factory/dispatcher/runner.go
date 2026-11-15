@@ -129,7 +129,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, runID string) {
 	}
 	if err != nil {
 		d.log.Error("the Runner could not start an Execution", "run", runID, "execution", id, "error", err)
-		d.endByDispatcher(id, "the Runner could not start the Execution: "+err.Error())
+		d.endByDispatcher(id, "the Runner could not start the Execution: "+err.Error(), nil)
 		return
 	}
 	if err := d.store.setWorkload(id, workload); err != nil {
@@ -161,25 +161,29 @@ func (d *Dispatcher) watchLoop(ctx context.Context) {
 				d.log.Info("an Execution changed state on the Runner", "execution", ev.Execution, "state", ev.State)
 				continue
 			}
-			reason := fmt.Sprintf("the wrapper exited with code %d before the end of the Execution", ev.ExitCode)
 			if ev.Lost {
-				reason = "the machine was lost"
+				d.endByDispatcher(ev.Execution, "the machine was lost", nil)
+				continue
 			}
-			d.endByDispatcher(ev.Execution, reason)
+			code := ev.ExitCode
+			d.endByDispatcher(ev.Execution,
+				fmt.Sprintf("the wrapper exited with code %d before the end of the Execution", code), &code)
 		}
 	}
 }
 
 // endByDispatcher ends an Execution that has not ended, and fails its
-// Run with reason. An Execution that ended already does not change.
-func (d *Dispatcher) endByDispatcher(id, reason string) {
-	ended, err := d.store.failExecution(id, reason, d.now())
+// Run with reason. exitCode is the wrapper's exit code, or nil when there
+// is none (a lost machine, or a wrapper that did not start). An Execution
+// that ended already does not change.
+func (d *Dispatcher) endByDispatcher(id, reason string, exitCode *int) {
+	ended, err := d.store.failExecution(id, reason, exitCode, d.now())
 	if err != nil {
 		d.log.Error("could not end an Execution", "execution", id, "error", err)
 		return
 	}
 	if ended {
-		d.log.Warn("an Execution ended with no end call", "execution", id, "reason", reason)
+		d.warn("an Execution ended with no end call", "execution.id", id, "execution.reason", reason)
 	}
 }
 
