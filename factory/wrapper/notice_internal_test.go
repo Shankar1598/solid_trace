@@ -103,6 +103,21 @@ func TestGCEsNoticeAsksAgainAfterATimeoutAndAfterAnError(t *testing.T) {
 	}
 }
 
+// Go never sends a request to loopback through a proxy, and reads the
+// proxy environment one time in a process, so a fake metadata server
+// cannot show a client that uses the proxy. On GCE the metadata server is
+// link-local, and the machine can have HTTP_PROXY set.
+func TestGCEsNoticeUsesNoProxy(t *testing.T) {
+	notice := newGCENotice(defaultMetadataURL, &bytes.Buffer{})
+	transport, ok := notice.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("the Machine notice client's transport is %T", notice.http.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Error("the Machine notice client can send its reads through the proxy of the wrapper's environment")
+	}
+}
+
 func TestNoNoticeWaitsUntilTheEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
