@@ -81,7 +81,7 @@ type Dispatcher struct {
 	dispatching sync.Map
 	// prLocks holds one pr call of a Run at a time.
 	prLocks runLocks
-	wake chan struct{}
+	wake    chan struct{}
 
 	// kinds are the kinds of connection that send webhooks, by name.
 	kinds         map[string]WebhookKind
