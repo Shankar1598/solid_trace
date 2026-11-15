@@ -54,6 +54,8 @@ The dev Console listens on 127.0.0.1 only, so the agent machine cannot reach it.
 
 Nomad's ACLs are on, so a process on the agent machine cannot use the local Nomad API with no token. `stack up` bootstraps the ACLs and keeps the management token in the server's volume.
 
+ACLs do not stop a Nomad client from registering, so client introduction is strict: a client registers only with an introduction token. `stack up` makes one for the agent machine's client and writes it to the client's state directory, which only root can read. A Nomad client that the run user starts cannot register, so Nomad never places a Run's task on it. The smoke check proves this.
+
 ## A take-over on the local stack
 
 The wrapper starts the `hc` core as the run user. Then a person attaches as a member of the access group, `factory-access`. On this stack that is the user `engineer`, which only the Dockerfile's `local` target has; the `agent-vm` target (the image recipe) has no member of the group:

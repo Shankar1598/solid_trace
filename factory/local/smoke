@@ -109,6 +109,47 @@ no_process_on_the_agent_machine_has_net_admin() {
   [ "$(as agent awk '/^CapEff/ { print $2 }' /proc/self/status)" = 0000000000000000 ] || want "no capability for the run user"
 }
 
+# Nomad's ACLs do not stop a node registration: client introduction does (nomad/server.hcl).
+run_user_cannot_register_a_nomad_client() {
+  as agent sh -c 'rm -rf /tmp/rogue && mkdir -p /tmp/rogue/data && cat >/tmp/rogue/client.hcl' <<'HCL'
+name      = "rogue"
+data_dir  = "/tmp/rogue/data"
+bind_addr = "127.0.0.1"
+advertise {
+  http = "127.0.0.1"
+  rpc  = "127.0.0.1"
+  serf = "127.0.0.1"
+}
+ports {
+  http = 5646
+}
+client {
+  enabled           = true
+  servers           = ["nomad:4647"]
+  network_interface = "lo"
+  meta {
+    machine = "local"
+  }
+}
+plugin "raw_exec" {
+  config {
+    enabled = true
+  }
+}
+disable_update_check = true
+HCL
+  local log nodes
+  as root test -s /var/lib/nomad/client/intro_token.jwt || want "the agent machine's introduction token"
+  ! as agent test -r /var/lib/nomad/client/intro_token.jwt || want "the introduction token not readable by the run user"
+  log="$(as agent timeout 20 /opt/nomad/bin/nomad agent -config=/tmp/rogue/client.hcl 2>&1)" || true
+  as agent rm -rf /tmp/rogue
+  ! grep -q 'node registration complete' <<<"$log" || want "the run user's client not registered, log: $(tail -n 5 <<<"$log")"
+  grep -q 'error registering: error="rpc error: Permission denied"' <<<"$log" ||
+    want "the server to refuse the run user's client (Node.Register: Permission denied), log: $(grep -i regist <<<"$log" | tail -n 5)"
+  nodes="$("$stack" nomad node status -json </dev/null | python3 -c 'import json,sys; print(" ".join(sorted(n["Name"] for n in json.load(sys.stdin))))')"
+  [ "$nodes" = agent-machine-1 ] || want "one Nomad node, agent-machine-1, got: $nodes"
+}
+
 nomad_image_is_only_in_this_compose_file() {
   local files
   # The tracked files and the new ones; the pattern is split so that this file does not match.
@@ -131,6 +172,7 @@ check "the stack has Nomad, Squid, the firewall and one agent machine, and no au
 check "the agent machine is a ready Nomad client with a healthy raw_exec" agent_machine_is_a_ready_client_with_raw_exec
 check "the agent machine has no Docker socket and is not privileged" agent_machine_has_no_docker_socket_and_is_not_privileged
 check "no process on the agent machine (root too) has NET_ADMIN, and the run user has no capability" no_process_on_the_agent_machine_has_net_admin
+check "the run user cannot register a Nomad client of its own" run_user_cannot_register_a_nomad_client
 check "Nomad's image is only in the local stack's compose file" nomad_image_is_only_in_this_compose_file
 check "the stack has its own containers and volumes, and publishes no port" stack_has_its_own_names_and_publishes_no_port
 

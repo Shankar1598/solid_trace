@@ -28,4 +28,14 @@ done
 
 nomad=/opt/nomad/bin/nomad
 [ -x "$nomad" ] || { echo "agent-machine: no Nomad binary at $nomad" >&2; exit 1; }
+
+# The Nomad server lets a client register only with an introduction token
+# (nomad/server.hcl). "stack up" writes it to this file in the client's state directory,
+# which only root can read. Nomad reads it there at the first registration.
+intro_token=/var/lib/nomad/client/intro_token.jwt
+for _ in $(seq 1 120); do
+  [ -s "$intro_token" ] && break
+  sleep 1
+done
+[ -s "$intro_token" ] || { echo "agent-machine: no Nomad introduction token at $intro_token in 120 seconds" >&2; exit 1; }
 exec "$nomad" agent -config=/etc/nomad.d/client.hcl

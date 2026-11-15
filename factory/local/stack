@@ -32,6 +32,16 @@ nomad() {
   compose exec -T -e NOMAD_TOKEN="$token" nomad nomad "$@"
 }
 
+# Makes a Nomad introduction token for the agent machine's client (nomad/server.hcl),
+# and puts it in the client's state directory, which only root can read.
+introduce_client() {
+  local jwt
+  jwt="$(nomad node intro create -node-name agent-machine-1 -ttl 10m -t '{{.JWT}}' </dev/null)"
+  [ -n "$jwt" ] || { echo "stack: no Nomad introduction token" >&2; return 1; }
+  compose exec -T agent-machine sh -c 'umask 077 && mkdir -p /var/lib/nomad/client &&
+    cat >/var/lib/nomad/client/intro_token.jwt.new && mv /var/lib/nomad/client/intro_token.jwt.new /var/lib/nomad/client/intro_token.jwt' <<<"$jwt"
+}
+
 wait_for_client() {
   for _ in $(seq 1 60); do
     if nomad node status 2>/dev/null | awk 'NR > 1 && $NF == "ready" { found = 1 } END { exit !found }'; then
@@ -49,6 +59,7 @@ up)
   compose build --quiet
   compose up --detach --wait --quiet-pull
   management_token >/dev/null
+  introduce_client
   wait_for_client
   echo "stack: up (compose project factory-local)"
   ;;
