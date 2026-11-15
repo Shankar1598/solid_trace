@@ -335,11 +335,11 @@ func (b *Bitbucket) DeleteWIP(ctx context.Context, repository, runID string) err
 	if out, err := runGit(ctx, dir, nil, "init", "-q", "--bare"); err != nil {
 		return b.gitError("delete the work-in-progress ref "+ref, repository, out, err, "")
 	}
+	// git sends the delete of a full ref name also when the ref is not
+	// there, and the server only warns: a Run with no saved work is not
+	// an error.
 	out, err := b.push(ctx, dir, repository, ":"+ref)
 	if err != nil {
-		if strings.Contains(out, "remote ref does not exist") {
-			return nil
-		}
 		return b.gitError("delete the work-in-progress ref "+ref, repository, out, err, gitHint(out))
 	}
 	return nil
