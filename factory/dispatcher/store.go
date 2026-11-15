@@ -60,8 +60,8 @@ var migrations = []string{
 	CREATE INDEX factory_settings_by_organization ON factory_settings (organization_id);
 	ALTER TABLE runs ADD COLUMN project_id TEXT NOT NULL DEFAULT '';`,
 	// session_id is the Run's Agent session id, set at its first
-	// Execution. An Execution's workload is the subject of its wrapper's
-	// workload identity JWT, from the Runner. report_* is the last valid
+	// Execution. An Execution's workload is the Runner's name of the
+	// workload that runs its wrapper (Runner.Dispatch). report_* is the last valid
 	// report of the Execution.
 	`ALTER TABLE runs ADD COLUMN reason TEXT NOT NULL DEFAULT '';
 	ALTER TABLE runs ADD COLUMN question TEXT NOT NULL DEFAULT '';
