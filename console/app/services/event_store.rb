@@ -161,6 +161,23 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/agent-sessions", body, read_timeout: read_timeout, open_timeout: 3)
     end
 
+    # The Runs of an Agent Project with a run event in [from, to], as
+    # EventStore's POST /runs answers them: {"runs" => [...], "more"}, each
+    # Run as its last event shows it, Active Runs first. project (a Project
+    # slug) and state select on that last event; nil selects all. Raises
+    # Unavailable as transactions! does.
+    def runs!(project_id:, from:, to:, project: nil, state: nil, limit: nil, read_timeout: 10)
+      body = { from: utc(from), to: utc(to), project: project, state: state, limit: limit }.compact
+      post!("#{base_url}/api/#{project_id}/runs", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # One Run of an Agent Project, as EventStore's GET /runs/:run_id answers
+    # it: {"run" => the Run as its last event shows it, "events" => its run
+    # events, Logs in run.seq order}, or nil when the Run has no event.
+    def run!(project_id:, run_id:)
+      request!("#{base_url}/api/#{project_id}/runs/#{ERB::Util.url_encode(run_id)}")
+    end
+
     # One Transaction name's breakdown over [from, to), as EventStore's POST
     # /transaction answers it: its numbers, "releases", "ops", "groups",
     # "repeats" and "slowest". Raises Unavailable as transactions! does.

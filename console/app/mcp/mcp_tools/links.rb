@@ -62,6 +62,18 @@ module McpTools
       url(routes.transaction_project_performance_path(project, org_slug: project.organization.slug, **search))
     end
 
+    # The Runs page with its filters (project, state) and a TimeRange in
+    # its query string, as the page reads its URL.
+    def runs(organization, range:, project: nil, state: nil)
+      search = range.link_params.merge(project: project.presence, state: state.presence).compact
+      url("/#{organization.slug}/runs?#{search.to_query}")
+    end
+
+    # One Run's page.
+    def run(organization, run_id)
+      url("/#{organization.slug}/runs/#{ERB::Util.url_encode(run_id)}")
+    end
+
     # A fresh Invite link for an Invited user to organization.
     def invite(user, organization)
       user.invite_url(organization, console_url: @console_url)

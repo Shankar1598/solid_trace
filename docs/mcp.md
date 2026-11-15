@@ -179,6 +179,13 @@ These read the Transactions a Project's Sentry SDKs trace ([turning tracing on](
 - `update_issue`: resolves or unresolves an Issue, or assigns it to a member by email.
 - `add_comment`: comments on an Issue as you.
 
+**Runs**
+
+These read the run events in the Organization's Agent Project, so they need Agent sessions turned on. They only read: no MCP tool starts, messages or stops a Run.
+
+- `list_runs`: an Organization's Runs with a run event in `range` (`30d` when left out) or `from` and `to`, as the Runs page lists them: Active Runs first, then the latest. Each Run has its state and reason, Project, repository, folder, trigger, title, actor, PR and outcome, its count of Executions, and a link to its Run page. `project` (a Project's slug) and `state` filter, as the page's filters do, and the answer links to the page with them. `limit` is 100 when left out, and 500 at most.
+- `get_run`: one Run, as its Run page shows it: its fields with the base branch, each Execution (start, end, duration, the reason it ended, exit code, account, VM), the last report with its checks (pass or fail, with the end of their output) and Evidence paths, and each run event with its actor and details.
+
 **Admin**
 
 - `create_project`: makes a Project with its first key, and optionally a description and how many days its Logs and its traces' Spans are kept.
