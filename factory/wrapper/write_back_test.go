@@ -190,10 +190,29 @@ func TestTheWriteBackStatusesAreSettingsOfTheConnection(t *testing.T) {
 		c.Tracker.ReadyStatus != faketracker.ReadyStatus {
 		t.Fatalf("the save of the statuses: %d %s", a.Status, a.Body)
 	}
+	refused := map[string]dispatcherapi.TrackerSettings{
+		"a working status that is the ready status": {WorkingStatus: faketracker.ReadyStatus},
+		"a review status that is the ready status":  {ReviewStatus: faketracker.ReadyStatus},
+		"a waiting status that is the ready status": {WaitingStatus: faketracker.ReadyStatus},
+		"a ready status that is the default working status": {ReadyStatus: "Agent working",
+			WaitingStatus: "Blocked"},
+		"a working status of 201 characters":        {WorkingStatus: strings.Repeat("a", 201)},
+		"a review status with a new line":           {ReviewStatus: "In\nreview"},
+		"a waiting status with a control character": {WaitingStatus: "Wait\x07ing"},
+	}
+	for name, settings := range refused {
+		if a := env.Admin().API("PUT", "/api/v1/connections/board/tracker", settings); a.Status != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", name, a.Status, a.Body)
+		}
+	}
+	if a := env.Admin().API("PUT", "/api/v1/connections/board/tracker", dispatcherapi.TrackerSettings{
+		WorkingStatus: strings.Repeat("a", 200), ReviewStatus: "Review", WaitingStatus: "Blocked"}); a.Status != http.StatusOK {
+		t.Errorf("a working status of 200 characters: %d %s, want 200", a.Status, a.Body)
+	}
 	a = env.Admin().API("PUT", "/api/v1/connections/board/tracker", dispatcherapi.TrackerSettings{
-		WaitingStatus: faketracker.ReadyStatus})
-	if a.Status != http.StatusBadRequest {
-		t.Errorf("a waiting status that is the ready status: %d %s, want 400", a.Status, a.Body)
+		WorkingStatus: "Doing", ReviewStatus: "Review", WaitingStatus: "Blocked"})
+	if a.Status != http.StatusOK {
+		t.Fatalf("save the statuses again: %d %s", a.Status, a.Body)
 	}
 
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Nothing to fix."),
