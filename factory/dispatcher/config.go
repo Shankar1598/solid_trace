@@ -174,10 +174,6 @@ const (
 	EnvListen          = "DISPATCHER_LISTEN"
 	EnvWebhookListen   = "DISPATCHER_WEBHOOK_LISTEN"
 	EnvWebhookURL      = "DISPATCHER_WEBHOOK_URL"
-	// EnvSenderStartsPerMinute and EnvSenderActiveRuns are the limits of
-	// each sender of the generic webhook.
-	EnvSenderStartsPerMinute = "DISPATCHER_SENDER_STARTS_PER_MINUTE"
-	EnvSenderActiveRuns      = "DISPATCHER_SENDER_ACTIVE_RUNS"
 	EnvBitbucketAPIURL = "DISPATCHER_BITBUCKET_API_URL"
 	EnvBitbucketGitURL = "DISPATCHER_BITBUCKET_GIT_URL"
 	EnvWIPRefs         = "DISPATCHER_WIP_REFS"
@@ -190,6 +186,13 @@ const (
 	EnvDefaultMachineKind = "DISPATCHER_DEFAULT_MACHINE_KIND"
 	EnvWrapperURL         = "DISPATCHER_WRAPPER_URL"
 	EnvWrapperCommand     = "DISPATCHER_WRAPPER_COMMAND"
+)
+
+// EnvSenderStartsPerMinute and EnvSenderActiveRuns are the limits of each
+// sender of the generic webhook.
+const (
+	EnvSenderStartsPerMinute = "DISPATCHER_SENDER_STARTS_PER_MINUTE"
+	EnvSenderActiveRuns      = "DISPATCHER_SENDER_ACTIVE_RUNS"
 )
 
 // DefaultListen is the private listener's address when none is set.
