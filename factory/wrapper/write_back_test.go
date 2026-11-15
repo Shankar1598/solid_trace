@@ -222,3 +222,54 @@ func TestACommentThatFailsIsSentAgainInOrder(t *testing.T) {
 	wantComment(t, comments[1], "The total was right.")
 	wantStatuses(t, env, "Agent working", "Waiting on you")
 }
+
+// prThen is an agent that opens a PR and then runs end: the steps after
+// the pr call.
+func prThen(t *testing.T, env *factorytest.Env, end ...string) {
+	t.Helper()
+	steps := append([]string{takeTask, initLine(t), commitStep, shell(`solidtrace pr --title "Fix the cart total"`)},
+		end...)
+	env.Runner.Agent(steps...)
+}
+
+func TestAPRThatNeedsAPersonGetsItsPROpenedComment(t *testing.T) {
+	env, ana := trackerEnv(t)
+	prThen(t, env, reportStep("--outcome", "needs-a-person", "--summary", "Two fixes.", "--question",
+		"Keep the old cart API?"), waitForEnd)
+	id := ticketRun(t, env, ana)
+	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+
+	comments := waitForWriteBack(t, env, 3, "Waiting on you")
+	wantStatuses(t, env, "Agent working", "In review", "Waiting on you")
+	wantComment(t, comments[1], "opened a PR", run.PRURL, runLink(env, id), "Two fixes.")
+	wantComment(t, comments[2], "Keep the old cart API?")
+}
+
+func TestAPRThatFailsGetsItsPROpenedCommentThenTheReason(t *testing.T) {
+	env, ana := trackerEnv(t)
+	prThen(t, env, reportStep("--outcome", "failed", "--summary", "The cart service does not build on main"),
+		reply, result, waitForEnd)
+	id := ticketRun(t, env, ana)
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+
+	comments := waitForWriteBack(t, env, 3, "Waiting on you")
+	wantStatuses(t, env, "Agent working", "In review", "Waiting on you")
+	wantComment(t, comments[1], "opened a PR", run.PRURL, runLink(env, id))
+	wantComment(t, comments[2], "failed", "The cart service does not build on main")
+}
+
+func TestAStopAfterThePRPostsThePROpenedCommentAndNoStatus(t *testing.T) {
+	env, ana := trackerEnv(t)
+	wait, _ := gate(t)
+	prThen(t, env, wait, reply, result, waitForEnd)
+	id := ticketRun(t, env, ana)
+	waitForWriteBack(t, env, 1, "In review")
+
+	if a := ana.API("POST", "/api/v1/runs/"+id+"/stop", nil); a.Status != http.StatusOK {
+		t.Fatalf("stop: %d %s", a.Status, a.Body)
+	}
+	run := waitFor(t, env, ana, id, dispatcherapi.StateStopped)
+	comments := waitForWriteBack(t, env, 2, "In review")
+	wantStatuses(t, env, "Agent working", "In review")
+	wantComment(t, comments[1], "opened a PR", run.PRURL, runLink(env, id))
+}

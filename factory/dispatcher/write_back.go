@@ -32,8 +32,12 @@ import (
 //     the waiting status and a comment with the question.
 //   - execution_ended of a failed Run: "failed", the waiting status and
 //     a comment with the reason.
+//   - stop: no step of its own, and no status.
 //
-// A stop, and each other event, writes nothing back.
+// Each PR gets its PR-opened comment: when a Run with a PR waits on a
+// person, fails or stops before a done, the Dispatcher first queues a
+// "pr_opened" step with the comment and no status. Each other event
+// writes nothing back.
 
 // Write-back steps (ticket_writes.step).
 const (
@@ -68,7 +72,7 @@ const (
 // queueWriteBack queues the write-back step of the run event kind, in tx,
 // when the Run has a tracker ticket.
 func queueWriteBack(tx *sql.Tx, at time.Time, runID, kind string, details map[string]any) error {
-	if kind != eventExecutionStarted && kind != eventPROpened && kind != eventExecutionEnded {
+	if kind != eventExecutionStarted && kind != eventPROpened && kind != eventExecutionEnded && kind != eventStop {
 		return nil
 	}
 	var connectionID, ticketID, state, reason, question, summary, prURL string
@@ -92,6 +96,9 @@ func queueWriteBack(tx *sql.Tx, at time.Time, runID, kind string, details map[st
 		step, status = stepStarted, statusWorking
 	case eventPROpened:
 		step, status, comment = stepInReview, statusReview, false
+	case eventStop:
+		// A stop changes no status; only a PR with no comment gets one.
+		return queuePROpenedComment(tx, at, runID, executionID, connectionID, ticketID, summary, prURL)
 	default:
 		switch state {
 		case dispatcherapi.StateDone:
@@ -113,6 +120,12 @@ func queueWriteBack(tx *sql.Tx, at time.Time, runID, kind string, details map[st
 		default:
 			return nil
 		}
+		if step != stepPROpened {
+			if err := queuePROpenedComment(tx, at, runID, executionID, connectionID, ticketID, summary,
+				prURL); err != nil {
+				return err
+			}
+		}
 	}
 	// A status that the ticket got from the Run's last status step is not
 	// set again.
@@ -131,6 +144,22 @@ func queueWriteBack(tx *sql.Tx, at time.Time, runID, kind string, details map[st
 	_, err = tx.Exec(`INSERT INTO ticket_writes (run_id, execution_id, connection_id, ticket_id, step, status,
 		comment, text, pr_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, runID, executionID, connectionID,
 		ticketID, step, status, comment, text, prURL, at.UnixMicro())
+	return err
+}
+
+// queuePROpenedComment queues the PR-opened comment, with no status, when
+// the Run has a PR that has no PR-opened comment.
+func queuePROpenedComment(tx *sql.Tx, at time.Time, runID, executionID, connectionID, ticketID, summary,
+	prURL string) error {
+	if prURL == "" {
+		return nil
+	}
+	if posted, err := hasStep(tx, runID, stepPROpened, prURL); err != nil || posted {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO ticket_writes (run_id, execution_id, connection_id, ticket_id, step, status,
+		comment, text, pr_url, created_at) VALUES (?, ?, ?, ?, ?, '', 1, ?, ?, ?)`, runID, executionID, connectionID,
+		ticketID, stepPROpened, summary, prURL, at.UnixMicro())
 	return err
 }
 
@@ -371,8 +400,11 @@ func (d *Dispatcher) writeBackComment(w ticketWrite) (string, error) {
 // no passed check has no Evidence.
 func prOpenedComment(prURL, run, summary string, checks []checkLine) string {
 	var b strings.Builder
-	b.WriteString("SolidTrace Factory opened a PR for this ticket.\nPR: " + prURL + "\n" + run + "\n\nSummary:\n" +
-		summary + "\n\nChecks:\n")
+	b.WriteString("SolidTrace Factory opened a PR for this ticket.\nPR: " + prURL + "\n" + run + "\n\n")
+	if summary != "" {
+		b.WriteString("Summary:\n" + summary + "\n\n")
+	}
+	b.WriteString("Checks:\n")
 	passed := false
 	for _, c := range checks {
 		result := "failed"
