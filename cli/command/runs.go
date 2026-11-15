@@ -116,6 +116,9 @@ func message(ctx context.Context, args []string, env Env) int {
 		return 1
 	}
 	fmt.Fprintf(env.Stdout, "Message %s is accepted for Run %s.\n", accepted.ID, accepted.RunID)
+	if accepted.Continued {
+		fmt.Fprintln(env.Stdout, "The Run is queued: a new Execution continues its Agent session with the message.")
+	}
 	return 0
 }
 

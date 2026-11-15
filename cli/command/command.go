@@ -82,11 +82,14 @@ Usage:
       is stopped at once; its agent is interrupted and its Execution
       ends. A message continues a stopped Run.
   solidtrace message [--dispatcher URL] RUN_ID MESSAGE
-      Send MESSAGE to a queued or running Run. The agent of a running
-      Run gets it when its current tool call ends, in the same turn, or
-      in a new turn; there is no interrupt. A queued Run's agent gets it
-      after the prompt. A message that the agent did not get goes to a
-      new Execution.
+      Send MESSAGE to a Run. The agent of a running Run gets it when its
+      current tool call ends, in the same turn, or in a new turn; there
+      is no interrupt. A queued Run's agent gets it after the prompt. A
+      Run that waits on a person, is done, failed or stopped is queued:
+      a new Execution continues its Agent session with the message. A
+      Run that waits on an account limit or is taken over keeps it until
+      the Run continues. A Closed Run refuses it. A message that the
+      agent did not get goes to a new Execution.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID

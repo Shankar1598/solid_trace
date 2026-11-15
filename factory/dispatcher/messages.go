@@ -39,15 +39,31 @@ const maxSends = 2
 // delivered queues again.
 const reasonSentAgain = "a message was not delivered: a new Execution gets it"
 
-// messageStates are the states of a Run that take a message now. Ticket
-// 59 adds the states that a message continues.
-var messageStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning}
+// A message, by the state of the Run (P4). A queued Run keeps it for the
+// task of its next Execution. The live Execution of a running Run gets it
+// as a message command. A Run that waits on a person, is done, failed or
+// stopped keeps it and is queued: a new Execution continues the Agent
+// session with it. A Run that waits on an account limit or is taken over
+// keeps it until the Run continues. A Closed Run, and a Run whose PR has
+// an outcome and that has no running Execution, refuse it.
+var (
+	// continuingStates are the states that a message queues.
+	continuingStates = []string{dispatcherapi.StateWaitingOnPerson, dispatcherapi.StateDone,
+		dispatcherapi.StateFailed, dispatcherapi.StateStopped}
+	// keepingStates are the states that keep a message on the Run and do
+	// not change.
+	keepingStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateWaitingOnAccountLimit,
+		dispatcherapi.StateTakenOver}
+)
+
+// reasonContinued is the reason of a Run that a message queued.
+const reasonContinued = "a message continues the Run: a new Execution resumes its Agent session"
 
 // continuedStates are the states that a kept message, which was not
 // delivered, changes to queued at the end of an Execution.
 var continuedStates = []string{dispatcherapi.StateDone, dispatcherapi.StateFailed, dispatcherapi.StateWaitingOnPerson}
 
-// notMessageable is the error of a message to a Run that takes none now.
+// notMessageable is the error of a message to a Run that takes none.
 type notMessageable struct {
 	state  string
 	closed bool
@@ -58,7 +74,7 @@ func (e *notMessageable) Error() string {
 		return "the Run is closed (its PR is merged or declined, or it had no activity for 30 days): " +
 			"a message cannot continue it; start a new Run"
 	}
-	return "the Run is " + e.state + ": only a queued or running Run takes a message now"
+	return "the Run is " + e.state + ": it takes no message"
 }
 
 // sendMessage is a person's message to a Run.
@@ -92,13 +108,18 @@ func (d *Dispatcher) sendMessage(w http.ResponseWriter, r *http.Request, p perso
 		return
 	}
 	d.commandsAdded.wake()
+	if accepted.Continued {
+		d.wakeDispatch()
+	}
 	writeJSON(w, http.StatusOK, accepted)
 }
 
 // acceptMessage keeps a message to a Run of the Organization, with its
-// accepted event, in one transaction. The live Execution of a running Run
-// gets it as a message command, unless its wrapper agreed to end; else
-// the Run keeps it for its next Execution.
+// accepted event, in one transaction, by the state of the Run (P4). The
+// live Execution of a running Run gets it as a message command, unless
+// its wrapper agreed to end; else the Run keeps it for its next
+// Execution. A Run that waits on a person, is done, failed or stopped is
+// queued.
 func (s *store) acceptMessage(organizationID, runID string, by actor, text string,
 	at time.Time) (dispatcherapi.MessageAccepted, error) {
 	accepted := dispatcherapi.MessageAccepted{ID: newSessionID(), RunID: runID, AcceptedAt: at.UTC()}
@@ -107,27 +128,41 @@ func (s *store) acceptMessage(organizationID, runID string, by actor, text strin
 		return accepted, err
 	}
 	defer tx.Rollback()
-	var state string
+	var state, prOutcome string
 	var closed bool
-	err = tx.QueryRow(`SELECT state, closed_at IS NOT NULL FROM runs WHERE id = ? AND organization_id = ?`, runID,
-		organizationID).Scan(&state, &closed)
+	err = tx.QueryRow(`SELECT state, closed_at IS NOT NULL, pr_outcome FROM runs WHERE id = ? AND organization_id = ?`,
+		runID, organizationID).Scan(&state, &closed, &prOutcome)
 	if errors.Is(err, sql.ErrNoRows) {
 		return accepted, errNotFound
 	}
 	if err != nil {
 		return accepted, err
 	}
-	if closed {
+	// A Run whose PR has an outcome is closed when no Execution runs:
+	// only its running Execution still takes a message.
+	if closed || (prOutcome != "" && state != dispatcherapi.StateRunning) {
 		return accepted, &notMessageable{state: state, closed: true}
 	}
-	if !slices.Contains(messageStates, state) {
-		return accepted, &notMessageable{state: state}
-	}
 	var live string
-	err = tx.QueryRow(`SELECT id FROM executions WHERE run_id = ? AND state = ? AND end_agreed = 0`, runID,
-		dispatcherapi.ExecutionRunning).Scan(&live)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return accepted, err
+	switch {
+	case state == dispatcherapi.StateRunning:
+		err = tx.QueryRow(`SELECT id FROM executions WHERE run_id = ? AND state = ? AND end_agreed = 0`, runID,
+			dispatcherapi.ExecutionRunning).Scan(&live)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return accepted, err
+		}
+	case slices.Contains(continuingStates, state):
+		// The Execution of a stopped Run can still be in its end: the
+		// queue waits for that end, and the end does not change the
+		// queued Run.
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '', flags = ''
+			WHERE id = ?`, dispatcherapi.StateQueued, reasonContinued, runID); err != nil {
+			return accepted, err
+		}
+		accepted.Continued = true
+	case slices.Contains(keepingStates, state):
+	default:
+		return accepted, &notMessageable{state: state}
 	}
 	sends := 0
 	if live != "" {
@@ -147,6 +182,9 @@ func (s *store) acceptMessage(organizationID, runID string, by actor, text strin
 			return accepted, err
 		}
 		details["execution.id"] = live
+	}
+	if accepted.Continued {
+		details["run.continued_from"] = state
 	}
 	if err := recordEvent(tx, at, runID, eventMessageAccepted, details); err != nil {
 		return accepted, err
