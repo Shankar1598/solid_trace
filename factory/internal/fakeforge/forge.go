@@ -13,6 +13,9 @@
 //	PUT  /repositories/{workspace}/{repo_slug}/pullrequests/{id}          {title, description}; absent fields stay
 //	GET  /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments
 //	POST /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments {content.raw, inline.path, inline.to}
+//	GET  /repositories/{workspace}/{repo_slug}                            mainbranch.name is the bare repository's HEAD
+//	GET  /repositories/{workspace}/{repo_slug}/refs/branches/{name}       target.hash
+//	GET  /repositories/{workspace}/{repo_slug}/src/{commit}/{path}        a file's raw content; 404 when absent
 //
 // Errors have Bitbucket's shape: {"type": "error", "error": {"message",
 // "fields"}}. A PR from an absent branch and a second open PR between the
@@ -89,6 +92,10 @@ type Forge struct {
 	// hanging are the repositories whose git requests get no answer, with
 	// the channel that the first request closes.
 	hanging map[string]*hang
+	// holdNext holds the next API call until its release.
+	holdNext *hang
+	// refusedGit are the repositories whose git requests get 401.
+	refusedGit map[string]bool
 }
 
 type hang struct {
@@ -122,6 +129,10 @@ func New(t testing.TB) *Forge {
 	mux.HandleFunc("PUT "+prs+"/{id}", f.api(f.updatePR))
 	mux.HandleFunc("GET "+prs+"/{id}/comments", f.api(f.listComments))
 	mux.HandleFunc("POST "+prs+"/{id}/comments", f.api(f.postComment))
+	const repository = "/2.0/repositories/{workspace}/{repo_slug}"
+	mux.HandleFunc("GET "+repository, f.api(f.getRepository))
+	mux.HandleFunc("GET "+repository+"/refs/branches/{name...}", f.api(f.getBranch))
+	mux.HandleFunc("GET "+repository+"/src/{commit}/{path...}", f.api(f.getSource))
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)
 	return f
@@ -354,6 +365,17 @@ func (f *Forge) Hang(repo string) <-chan struct{} {
 	return h.reached
 }
 
+// RefuseGit makes each git request of the repository get 401, as for a
+// token that lacks the access to clone. The API still answers.
+func (f *Forge) RefuseGit(repo string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.refusedGit == nil {
+		f.refusedGit = map[string]bool{}
+	}
+	f.refusedGit["/git/"+repo+".git/"] = true
+}
+
 func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	var hung *hang
@@ -371,7 +393,13 @@ func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if user, password, ok := r.BasicAuth(); !ok || user != TokenUser || password != f.Token {
+	f.mu.Lock()
+	refused := false
+	for prefix := range f.refusedGit {
+		refused = refused || strings.HasPrefix(r.URL.Path, prefix)
+	}
+	f.mu.Unlock()
+	if user, password, ok := r.BasicAuth(); !ok || user != TokenUser || password != f.Token || refused {
 		w.Header().Set("WWW-Authenticate", `Basic realm="fake forge"`)
 		http.Error(w, "the token is not valid", http.StatusUnauthorized)
 		return

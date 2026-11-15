@@ -86,8 +86,36 @@ type Run struct {
 	Summary string `json:"summary,omitempty"`
 	// Executions are the Run's Executions, oldest first.
 	Executions []Execution `json:"executions,omitempty"`
+	// PRURL is the link of the Run's PR, from the agent's first pr call
+	// ("" when the Run has no PR).
+	PRURL string `json:"pr_url,omitempty"`
 	// URL is the Run's page in Console.
 	URL string `json:"url"`
+}
+
+// PRText is the agent's 'solidtrace pr' call: the title and the
+// description of the Run's PR. The first call opens the PR from the
+// Run's branch to its base branch, and needs a title. A later call
+// updates the same PR; an empty field stays as it is. The agent sends it
+// to the wrapper on the agent's socket; the wrapper pushes the Run's
+// branch, then sends the call to the Dispatcher for its own Execution.
+type PRText struct {
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// PRBudget is the most time that the Dispatcher gives the forge for a
+// pr call (a forge call has 30 seconds). The wrapper waits longer than
+// this for the Dispatcher's answer.
+const PRBudget = 60 * time.Second
+
+// PR is the answer to a pr call: the Run's PR.
+type PR struct {
+	ID  int    `json:"id"`
+	URL string `json:"url"`
+	// Opened is true when this call opened the PR, and false when it
+	// updated it.
+	Opened bool `json:"opened"`
 }
 
 // Execution states.
@@ -174,8 +202,28 @@ type Task struct {
 	IngestURL string `json:"ingest_url"`
 	// Uploads is the Execution's child token. Only the wrapper keeps it.
 	Uploads SessionToken `json:"uploads"`
-	// Limits are the Execution's time limits.
+	// Limits are the Execution's time limits: the factory file's, or the
+	// defaults.
 	Limits Limits `json:"limits"`
+	// FactoryFile is the path of the factory file that the Dispatcher
+	// read from the default branch when it dispatched the Execution (""
+	// is none). Setup, Checks and SaveExclude come from it.
+	FactoryFile string `json:"factory_file,omitempty"`
+	// Setup is the setup command: the wrapper runs it with sh -c in the
+	// Project's folder, after the checkout and before the harness starts.
+	// A failure fails the Execution.
+	Setup string `json:"setup,omitempty"`
+	// Checks are the named check commands, in the file's order.
+	Checks []Check `json:"checks,omitempty"`
+	// SaveExclude are more patterns (gitignore syntax) that a
+	// work-in-progress save leaves out.
+	SaveExclude []string `json:"save_exclude,omitempty"`
+}
+
+// Check is one named check command of the factory file.
+type Check struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
 }
 
 // The default limits of an Execution. The factory file can change them.

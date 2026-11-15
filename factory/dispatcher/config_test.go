@@ -80,3 +80,24 @@ func TestTheConfigurationNamesTheOneWrongForgeSetting(t *testing.T) {
 		t.Errorf("the default Notion API is %q (%v), want %s", c.NotionAPIURL, err, dispatcher.NotionAPIURL)
 	}
 }
+
+func TestTheSquidAllowlistNeedsTheDefaultList(t *testing.T) {
+	env := map[string]string{
+		dispatcher.EnvSolidTraceURL:   "https://console.example.com",
+		dispatcher.EnvSolidTraceToken: "stk_x",
+		dispatcher.EnvDatabase:        "/var/lib/dispatcher/d.sqlite3",
+		dispatcher.EnvEncryptionKey:   "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+		dispatcher.EnvSquidAllowlist:  "/etc/squid/allowlist.txt",
+	}
+	getenv := func(k string) string { return env[k] }
+	if _, err := dispatcher.LoadConfig("", getenv); err == nil || !strings.Contains(err.Error(), dispatcher.EnvDefaultAllowlist) {
+		t.Errorf("with no default list: %v", err)
+	}
+	env[dispatcher.EnvDefaultAllowlist] = "/etc/factory/allowlist.txt"
+	env[dispatcher.EnvSquidReload] = "systemctl reload squid"
+	c, err := dispatcher.LoadConfig("", getenv)
+	if err != nil || c.SquidAllowlist != "/etc/squid/allowlist.txt" || c.DefaultAllowlist != "/etc/factory/allowlist.txt" ||
+		c.SquidReload != "systemctl reload squid" {
+		t.Errorf("%+v %v", c, err)
+	}
+}

@@ -242,6 +242,24 @@ var migrations = []string{
 		noticed_at INTEGER NOT NULL,
 		PRIMARY KEY (connection_id, ticket_id)
 	);`,
+	// The Run's PR (ticket 35): its id on the forge (0 = none) and its
+	// link.
+	`ALTER TABLE runs ADD COLUMN pr_id INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE runs ADD COLUMN pr_url TEXT NOT NULL DEFAULT '';`,
+	// factory_file is the factory file that the Dispatcher read from the
+	// default branch at the Execution's dispatch, as JSON ('' is the
+	// defaults). repository_hosts are the extra allowed hosts of the last
+	// factory file read for each repository and Project folder (a JSON
+	// list), for the Squid allowlist. Two Projects can name one repository
+	// with different folders, and the file of each folder can differ.
+	`ALTER TABLE executions ADD COLUMN factory_file TEXT NOT NULL DEFAULT '';
+	CREATE TABLE repository_hosts (
+		repository TEXT NOT NULL,
+		folder TEXT NOT NULL,
+		hosts TEXT NOT NULL,
+		read_at INTEGER NOT NULL,
+		PRIMARY KEY (repository, folder)
+	);`,
 	// A Notion connection's notion_database is the id of its database.
 	`ALTER TABLE connections ADD COLUMN notion_database TEXT NOT NULL DEFAULT '';`,
 }
@@ -386,7 +404,7 @@ func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 }
 
 const runColumns = `id, organization_slug, project, prompt, state, started_by_kind, started_by_id, started_by_name,
-	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes`
+	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes, pr_url`
 
 func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var r dispatcherapi.Run
@@ -395,7 +413,7 @@ func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var attributes string
 	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.Kind, &r.StartedBy.ID,
 		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name,
-		&r.Title, &r.Link, &attributes)
+		&r.Title, &r.Link, &attributes, &r.PRURL)
 	if err != nil {
 		return r, err
 	}
