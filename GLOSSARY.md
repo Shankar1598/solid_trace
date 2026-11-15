@@ -316,6 +316,10 @@ _Avoid_: scrub rule, secret filter
 A **Project**'s settings for the **Factory**: its repository and folder, the branch its Runs start from when none is given, and which tracker tickets go to it.
 _Avoid_: factory config, factory.yaml
 
+**Factory file**:
+The file `.solidtrace/factory.toml` in a repository that says how the **Factory** works on it: the machine kind, the setup command, the named check commands, the extra hosts that agents can reach, the time limits of an **Execution** and more patterns that a work-in-progress save leaves out. The **Dispatcher** reads it from the default branch only, from the **Project**'s folder first and then from the root, when it starts each Execution, so a change applies after a person merges it. A file with an error fails the **Run** with the reason.
+_Avoid_: factory config, factory.yaml, Factory settings (those are in the Dispatcher)
+
 **Evidence**:
 What a **Run** shows to prove its work: the checks that the factory's tool ran, with their results and the end of their output, and the files that the agent attached.
 _Avoid_: proof, test results (alone)
