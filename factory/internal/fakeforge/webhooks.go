@@ -79,7 +79,8 @@ func PushWebhook(repo, ref, commit string) []byte {
 	return body
 }
 
-// APICalls is the number of REST API calls that the forge answered.
+// APICalls is the number of REST API calls with the forge's token to a
+// repository that it has.
 func (f *Forge) APICalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
