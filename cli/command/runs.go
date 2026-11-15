@@ -30,14 +30,24 @@ func start(ctx context.Context, args []string, env Env) int {
 		return 2
 	}
 	text := strings.TrimSpace(strings.Join(prompt, " "))
-	if *project == "" || text == "" {
-		fmt.Fprintln(env.Stderr, "solidtrace start: give --project PROJECT and a prompt")
+	if text == "" {
+		fmt.Fprintln(env.Stderr, "solidtrace start: give a prompt, and --project PROJECT outside the Project's folder")
 		return 2
 	}
 	client, err := env.dispatcher(*dispatcherURL)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "solidtrace start: %v\n", err)
 		return 1
+	}
+	if *project == "" {
+		found, err := findProject(ctx, client, env.Dir)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "solidtrace start: %v\n", err)
+			return 1
+		}
+		*project = found.Project
+		fmt.Fprintf(env.Stdout, "Project %s, from its Factory settings for %s.\n", found.Project,
+			strings.TrimSuffix(found.Repository+"/"+found.Folder, "/"))
 	}
 	run, err := client.Start(ctx, dispatcherapi.StartRun{Project: *project, Prompt: text})
 	if err != nil {

@@ -59,7 +59,11 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	if options.Version == "" {
 		options.Version = "dev"
 	}
-	s, err := openStore(config.Database)
+	key, err := config.encryptionKey()
+	if err != nil {
+		return nil, err
+	}
+	s, err := openStore(config.Database, key)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +80,11 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs", d.person(d.listRuns))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs/{id}", d.person(d.getRun))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects", d.person(d.listSettings))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.getSettings))
+	mux.HandleFunc("PUT "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.admin(d.saveSettings)))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/connections", d.person(d.listConnections))
+	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}", d.person(d.admin(d.saveConnection)))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/status", d.status)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "no such path: "+r.Method+" "+r.URL.Path)
@@ -169,10 +178,7 @@ func (d *Dispatcher) status(w http.ResponseWriter, r *http.Request) {
 
 func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) {
 	var start dispatcherapi.StartRun
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&start); err != nil {
-		writeProblem(w, http.StatusBadRequest, "the body must be a JSON object with project and prompt")
+	if !decode(w, r, &start, "the body must be a JSON object with project and prompt") {
 		return
 	}
 	start.Project = strings.TrimSpace(start.Project)
@@ -180,17 +186,22 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		writeProblem(w, http.StatusBadRequest, "a Run needs a project and a prompt")
 		return
 	}
+	settings, ok := d.triggerSettings(w, r, p, start.Project)
+	if !ok {
+		return
+	}
 	run := storedRun{
 		Run: dispatcherapi.Run{
 			ID:           newRunID(),
 			State:        dispatcherapi.StateQueued,
-			Project:      start.Project,
+			Project:      settings.Project,
 			Prompt:       start.Prompt,
 			Organization: p.organization.slug,
 			StartedBy:    dispatcherapi.Person{ID: p.id, Name: p.name},
 			CreatedAt:    d.now().UTC().Truncate(time.Microsecond),
 		},
 		organizationID: p.organization.id,
+		projectID:      settings.projectID,
 	}
 	if err := d.store.insertRun(run); err != nil {
 		d.serverError(w, "start a Run", err)

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
+	"strings"
 	"sync"
 )
 
@@ -48,14 +50,22 @@ type Recorder struct {
 	CallerToken string
 	server      *httptest.Server
 
-	mu      sync.Mutex
-	answers map[string]Answer
-	calls   []Call
+	mu       sync.Mutex
+	answers  map[string]Answer
+	calls    []Call
+	projects map[string][]Project
+}
+
+// Project is one Project in the answer of the MCP server's list_projects.
+type Project struct {
+	ID   int64  `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
 }
 
 // New starts a recorder that accepts token checks from callerToken.
 func New(callerToken string) *Recorder {
-	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}}
+	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	return r
 }
@@ -78,6 +88,32 @@ func (r *Recorder) Revoke(token string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.answers, token)
+}
+
+// SetProject puts project in the Organization with slug organization, in
+// place of the Project with the same id (a change of slug) if there is one.
+func (r *Recorder) SetProject(organization string, project Project) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.removeProject(organization, project.ID)
+	r.projects[organization] = append(r.projects[organization], project)
+}
+
+// DeleteProject deletes the Project with id from the Organization.
+func (r *Recorder) DeleteProject(organization string, id int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.removeProject(organization, id)
+}
+
+func (r *Recorder) removeProject(organization string, id int64) {
+	kept := r.projects[organization][:0:0]
+	for _, p := range r.projects[organization] {
+		if p.ID != id {
+			kept = append(kept, p)
+		}
+	}
+	r.projects[organization] = kept
 }
 
 // Calls are the requests that the factory sent, oldest first.
@@ -118,6 +154,10 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
 		return
 	}
+	if req.Method == http.MethodPost && req.URL.Path == "/mcp" {
+		r.serveMCP(w, call)
+		return
+	}
 	if req.Method != http.MethodPost || req.URL.Path != "/oauth/introspect" {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -136,4 +176,52 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 		Active bool `json:"active"`
 		Answer
 	}{true, answer})
+}
+
+// serveMCP answers the MCP server's tools/call of list_projects with one
+// JSON answer, as SolidTrace's stateless MCP server does. Only an active
+// token with mcp or mcp:read gets an answer, and only for one of its
+// Organizations.
+func (r *Recorder) serveMCP(w http.ResponseWriter, call Call) {
+	token, _ := strings.CutPrefix(call.Authorization, "Bearer ")
+	r.mu.Lock()
+	answer, active := r.answers[token]
+	r.mu.Unlock()
+	if token == "" || !active {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Send an API token as Authorization: Bearer st_…."})
+		return
+	}
+	scopes := strings.Fields(answer.Scope)
+	if !slices.Contains(scopes, "mcp:read") && !slices.Contains(scopes, "mcp") {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "The MCP server needs the mcp or mcp:read scope."})
+		return
+	}
+	var request struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params struct {
+			Name      string            `json:"name"`
+			Arguments map[string]string `json:"arguments"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(call.Body, &request); err != nil || request.Method != "tools/call" ||
+		request.Params.Name != "list_projects" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID,
+			"error": map[string]any{"code": -32601, "message": "the recorder answers only tools/call list_projects"}})
+		return
+	}
+	slug := request.Params.Arguments["organization"]
+	known := slices.ContainsFunc(answer.Organizations, func(o Organization) bool { return o.Slug == slug })
+	text, isError := "No Organization "+slug+" for this token.", true
+	if known {
+		r.mu.Lock()
+		projects := append([]Project{}, r.projects[slug]...)
+		r.mu.Unlock()
+		body, _ := json.Marshal(map[string]any{"organization": slug, "projects": projects})
+		text, isError = string(body)+"\nConsole: "+r.URL()+"/"+slug+"/projects", false
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{
+		"content": []map[string]string{{"type": "text", "text": text}}, "isError": isError}})
 }

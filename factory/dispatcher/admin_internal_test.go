@@ -38,6 +38,7 @@ func newAdminWorld(t *testing.T) *adminWorld {
 		SolidTraceURL:   w.solidTrace.URL(),
 		SolidTraceToken: adminCallerToken,
 		Database:        filepath.Join(t.TempDir(), "dispatcher.sqlite3"),
+		EncryptionKey:   testEncryptionKey,
 	}, Options{Now: w.clock})
 	if err != nil {
 		t.Fatal(err)

@@ -28,25 +28,67 @@ var migrations = []string{
 		created_at INTEGER NOT NULL
 	);
 	CREATE INDEX runs_by_organization ON runs (organization_id, created_at);`,
+	// meta holds the key check. A connection's token is sealed (see
+	// sealer). factory_settings are keyed by the SolidTrace Project id;
+	// project_slug is the slug that SolidTrace last gave for it.
+	// orphaned_at is set when a trigger found no such Project.
+	`CREATE TABLE meta (name TEXT PRIMARY KEY, value BLOB NOT NULL);
+	CREATE TABLE connections (
+		id TEXT PRIMARY KEY,
+		organization_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		token BLOB NOT NULL,
+		updated_at INTEGER NOT NULL,
+		updated_by_id TEXT NOT NULL,
+		updated_by_name TEXT NOT NULL,
+		UNIQUE (organization_id, name)
+	);
+	CREATE TABLE factory_settings (
+		project_id TEXT PRIMARY KEY,
+		organization_id TEXT NOT NULL,
+		project_slug TEXT NOT NULL,
+		repository TEXT NOT NULL,
+		folder TEXT NOT NULL,
+		base_branch TEXT NOT NULL,
+		connection_id TEXT REFERENCES connections (id),
+		orphaned_at INTEGER,
+		updated_at INTEGER NOT NULL,
+		updated_by_id TEXT NOT NULL,
+		updated_by_name TEXT NOT NULL
+	);
+	CREATE INDEX factory_settings_by_organization ON factory_settings (organization_id);
+	ALTER TABLE runs ADD COLUMN project_id TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.
 type store struct {
-	db *sql.DB
+	db     *sql.DB
+	sealer *sealer
 }
 
 var errNotFound = errors.New("not found")
 
-func openStore(path string) (*store, error) {
+func openStore(path string, key []byte) (*store, error) {
 	db, err := sql.Open("sqlite3", "file:"+path+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}
-	if err := migrate(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("open the database %s: %w", path, err)
+	s, err := newSealer(key)
+	if err == nil {
+		err = migrate(db)
+		if err != nil {
+			err = fmt.Errorf("open the database %s: %w", path, err)
+		}
 	}
-	return &store{db: db}, nil
+	if err == nil {
+		err = checkKey(db, s)
+	}
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &store{db: db, sealer: s}, nil
 }
 
 func migrate(db *sql.DB) error {
@@ -79,12 +121,15 @@ func (s *store) close() error { return s.db.Close() }
 type storedRun struct {
 	dispatcherapi.Run
 	organizationID string
+	// projectID is the SolidTrace Project id of the Run's Factory
+	// settings. The Run's Project is its slug when the Run started.
+	projectID string
 }
 
 func (s *store) insertRun(r storedRun) error {
-	_, err := s.db.Exec(`INSERT INTO runs (id, organization_id, organization_slug, project, prompt, state,
-		started_by_id, started_by_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.organizationID, r.Organization, r.Project, r.Prompt, r.State, r.StartedBy.ID, r.StartedBy.Name,
+	_, err := s.db.Exec(`INSERT INTO runs (id, organization_id, organization_slug, project, project_id, prompt, state,
+		started_by_id, started_by_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.organizationID, r.Organization, r.Project, r.projectID, r.Prompt, r.State, r.StartedBy.ID, r.StartedBy.Name,
 		r.CreatedAt.UnixMicro())
 	return err
 }

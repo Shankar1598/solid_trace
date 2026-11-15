@@ -23,7 +23,7 @@ func eachPersonCall(env *factorytest.Env, token, runID string) map[string]factor
 }
 
 func TestATokenWithOnlyTheFactoryScopeCanStartGetAndListRuns(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	ana.Answer.Scope = "factory"
 	env.SolidTrace.Token(ana.Token, ana.Answer)
@@ -186,7 +186,7 @@ func TestATokenThatSolidTraceGivesAsExpiredIsRefused(t *testing.T) {
 }
 
 func TestAKeptAnswerIsOnlyForItsOwnToken(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	var run dispatcherapi.Run
 	ana.API("POST", "/api/v1/runs", dispatcherapi.StartRun{Project: "checkout", Prompt: "Fix it"}).JSON(t, &run)
@@ -199,9 +199,14 @@ func TestAKeptAnswerIsOnlyForItsOwnToken(t *testing.T) {
 				t.Errorf("another Organization's get: %d %s, want 404", a.Status, a.Body)
 			}
 		case "start":
+			// The Dispatcher's token lists the Projects of its own
+			// Organization only, so Bo's start is refused; it must never
+			// make a Run as Ana.
 			var started dispatcherapi.Run
-			a.JSON(t, &started)
-			if started.Organization != "other" {
+			if a.Status == http.StatusCreated {
+				a.JSON(t, &started)
+			}
+			if a.Status == http.StatusCreated && started.Organization != "other" {
 				t.Errorf("another Organization's start made a Run in %q, want other", started.Organization)
 			}
 		}
