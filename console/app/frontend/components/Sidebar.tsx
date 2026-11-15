@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
-import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Check, ChevronsUpDown, Timer } from 'lucide-react'
+import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, Check, ChevronsUpDown, Timer } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { navSection, orgSwitchUrl } from '@/lib/nav'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -39,6 +39,7 @@ export function Sidebar({ className }: SidebarProps) {
     { label: 'Performance', href: `/${current_org.slug}/performance`, icon: Timer, active: section === 'performance' },
     { label: 'Dashboards', href: `/${current_org.slug}/dashboards`, icon: LayoutDashboard, active: section === 'dashboards' },
     { label: 'Monitors', href: `/${current_org.slug}/monitors`, icon: BellRing, active: section === 'monitors' },
+    { label: 'Agent sessions', href: `/${current_org.slug}/agent_sessions`, icon: Bot, active: section === 'agent_sessions' },
     { label: 'Projects', href: `/${current_org.slug}/projects`, icon: GitMerge, active: section === 'projects' },
     { label: 'Settings', href: `/${current_org.slug}/settings/organization`, icon: Settings, active: section === 'settings' },
   ]
