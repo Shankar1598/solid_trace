@@ -55,12 +55,14 @@ class IntegrationsController < ApplicationController
     end
   end
 
-  # A Factory Integration's sender is deleted first. When the Dispatcher
-  # cannot delete it, Console still deletes its own record and warns that
-  # the sender stays in the CLI's list of senders.
+  # Console deletes its own record first, with the Integration's outbox
+  # rows, and then a Factory Integration's sender. Thus a local failure
+  # never leaves an Integration with no sender. When the Dispatcher cannot
+  # delete the sender, Console warns that it stays in the CLI's list of
+  # senders.
   def destroy
+    @integration.destroy!
     warning = delete_factory_sender if @integration.factory?
-    @integration.destroy
     redirect_to integrations_path(org_slug: @current_org.slug), notice: "Integration deleted.", alert: warning
   end
 

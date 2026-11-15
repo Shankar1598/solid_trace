@@ -148,6 +148,23 @@ class FactoryIntegrationTest < ActionDispatch::IntegrationTest
     assert_not Integration.exists?(integration.id)
   end
 
+  test "a Factory Integration with sent, pending and failed deliveries is deleted with its rows and its sender" do
+    integration = factory_integration
+    issue = create(:issue, project: create(:project, organization: @organization))
+    rows = 3.times.map { Notification.enqueue!(integration: integration, issue: issue, kind: IntegrationNotification::ISSUE_CREATED) }
+    Notification.mark_rows([ rows[0].id ], :sent)
+    Notification.mark_rows([ rows[2].id ], :failed, "HTTP 503")
+    delete_sender = stub_request(:delete, "#{SENDERS_URL}/snd_1").to_return(status: 204)
+    sign_in_as(@admin)
+
+    delete integration_url(integration, org_slug: @organization.slug)
+
+    assert_redirected_to integrations_url(org_slug: @organization.slug)
+    assert_requested delete_sender
+    assert_not Integration.exists?(integration.id)
+    assert_not Notification.exists?(integration_id: integration.id)
+  end
+
   test "a sender that the Dispatcher no longer has: Console deletes the Integration with no warning" do
     integration = factory_integration
     stub_request(:delete, "#{SENDERS_URL}/snd_1").to_return(json({ error: "no sender snd_1 in this Organization" }, status: 404))

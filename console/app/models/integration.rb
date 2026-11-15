@@ -18,6 +18,8 @@ class Integration < ApplicationRecord
 
   belongs_to :organization
   has_many :monitor_integrations, dependent: :delete_all
+  # The outbox rows go with the Integration: their foreign key has no ON DELETE.
+  has_many :notifications, dependent: :delete_all
 
   validates :provider, presence: true, inclusion: { in: PROVIDERS }
   validates :name, presence: true
