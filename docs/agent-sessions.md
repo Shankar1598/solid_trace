@@ -111,6 +111,17 @@ A Project's page has a **Factory** section when Settings → Instance has the Di
 
 When the Dispatcher does not answer, or SolidTrace no longer accepts the Dispatcher's own token (for example, the Admin who made it left the Organization), the section shows that error. **Open this Project's Runs** opens the Runs page with the Project filter set.
 
+## Connect a connection's webhooks
+
+A tracker or a forge tells the Dispatcher of a change with a webhook. The Dispatcher has two listeners: the private listener serves the API, and the webhook listener serves only `POST /webhooks/<kind>/<connection id>`. Each other path and method gets 404. Caddy on the server VM sends only `/webhooks/*` from a public name to the webhook listener (`factory/reference/caddy/Caddyfile`). The operator sets the listener's address in `DISPATCHER_WEBHOOK_LISTEN` and the public name in `DISPATCHER_WEBHOOK_URL`.
+
+1. `solidtrace connections list` shows the webhook URL of each connection whose kind sends webhooks. Paste it into the connection's service.
+2. Give the secret that signs the webhooks: `solidtrace connections webhook-secret NAME < secret-file` (an Admin only). The Dispatcher keeps it encrypted, and no answer gives it.
+
+A webhook is only a hint. The Dispatcher checks its HMAC-SHA256 signature on the raw body before it reads the body, and answers 401 when it is not valid. It refuses a body over 1 MiB (413) and more than 120 webhooks a minute from one connection (429). A delivery id that it got in the last 7 days does nothing. A valid webhook gets 200 at once, and the Dispatcher then reads the change from the service's API. It also reads each connection when it starts, and again at each backstop interval (5 minutes for most kinds), so a change is found also when no webhook comes.
+
+`solidtrace connections list` shows the time of each connection's last webhook. When a backstop finds a change that no webhook announced, the Dispatcher writes a warning Log with the time of the last webhook, so that a Monitor can find a connection whose webhooks stopped.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.
