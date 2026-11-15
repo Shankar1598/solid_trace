@@ -136,6 +136,13 @@ Usage:
       now. A Run that the schedule started continues.
   solidtrace schedules delete ID
       Delete the schedule. The Runs that it started continue.
+  solidtrace check [COMMAND...]
+      Inside a Run only: the factory's tool runs the checks and records
+      them as Evidence (the command, the exit status, the time and the
+      last 100 lines of output). With no COMMAND, it runs each check of
+      the factory file; with a COMMAND, it runs that command (sh -c).
+      The next report sends the records. A check that you run with a
+      tool of your own is not a check. Exit 1 when a check failed.
   solidtrace report --outcome done|needs-a-person|failed --summary TEXT
           [--question TEXT]
       Inside a Run only: report the outcome of your work to the wrapper.
@@ -182,6 +189,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return senders(ctx, args[1:], env)
 	case "schedules":
 		return schedules(ctx, args[1:], env)
+	case "check":
+		return check(ctx, args[1:], env)
 	case "report":
 		return report(ctx, args[1:], env)
 	case "pr":

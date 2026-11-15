@@ -109,6 +109,11 @@ An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agen
 
 A Project's page has a **Factory** section when Settings → Instance has the Dispatcher's URL. It shows the Project's **Factory settings**, which the Dispatcher keeps: the repository (host/workspace/name, or a clone URL), the folder in the repository (empty is the root), and the default base branch (empty is the repository's default branch). Each member reads them; only an Admin of the Organization saves them. A save keeps the forge connection that `solidtrace projects set` gave. Console reads and saves them at the Dispatcher as you, with a factory token that lasts 5 minutes.
 
+The section also shows the Project's tracker routes and schedules:
+
+- **Tracker routes:** each member sees them. An Admin adds a route (a tracker connection and a match value; an empty value is the connection's default) and removes one. The Project needs Factory settings first. When the Dispatcher refuses a route, for example because another Project has the same pair, the section shows the Dispatcher's error.
+- **Schedules:** each schedule with its cron expression and time zone, its next time (in the schedule's time zone), and its last Run with a link to the Run's page. Each member can **Pause** a schedule, which stops its next fire at once, and **Continue** a paused schedule. The section has no form to make a schedule: use `solidtrace schedules create`.
+
 When the Dispatcher does not answer, or SolidTrace no longer accepts the Dispatcher's own token (for example, the Admin who made it left the Organization), the section shows that error. **Open this Project's Runs** opens the Runs page with the Project filter set.
 
 ## Start Runs from tracker tickets

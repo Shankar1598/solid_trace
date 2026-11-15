@@ -161,6 +161,17 @@ type execution struct {
 	// lastOutput is when the last event of the harness's output came, on
 	// cfg.clock, in Unix nanoseconds (0: the harness has not started).
 	lastOutput atomic.Int64
+	// delivered counts the wrapper's messages whose replay echo came (the
+	// proof of delivery). A report sends the count.
+	delivered atomic.Int64
+	// checksMu holds checks: the record of each check that the wrapper
+	// ran in this Execution, the last result of each command, and
+	// running: the count of runs of each check that has no record yet.
+	// A running check holds its place, so that the records never go
+	// above MaxChecks.
+	checksMu sync.Mutex
+	checks   []dispatcherapi.CheckResult
+	running  map[checkKey]int
 
 	needsPerson chan struct{}
 	uploads     *uploads
@@ -358,6 +369,7 @@ func (e *execution) serveSocket(environ []string) (*http.Server, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+agentsocket.ReportPath, e.report)
+	mux.HandleFunc("POST "+agentsocket.CheckPath, func(w http.ResponseWriter, r *http.Request) { e.check(w, r, environ) })
 	mux.HandleFunc("POST "+agentsocket.PRPath, func(w http.ResponseWriter, r *http.Request) { e.pr(w, r, environ) })
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "the agent's socket has no "+r.Method+" "+r.URL.Path)
@@ -373,7 +385,9 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "the body must be a JSON object with outcome, summary and question")
 		return
 	}
-	// Only these fields go on: the Run and the Execution are the wrapper's.
+	// Only these fields go on: the Run and the Execution are the
+	// wrapper's, and so are the checks, the Evidence paths and the
+	// delivered-message counter.
 	report = dispatcherapi.Report{Outcome: report.Outcome, Summary: report.Summary, Question: report.Question}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -381,11 +395,14 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusConflict, "the Execution is ending: a report now does not count")
 		return
 	}
+	commit := e.addEvidence(&report)
 	a, err := e.client.call(r.Context(), "report", report)
 	if err != nil {
+		commit(false)
 		writeProblem(w, http.StatusBadGateway, "the wrapper could not send the report: "+err.Error())
 		return
 	}
+	commit(a.status/100 == 2)
 	if a.status/100 != 2 {
 		writeProblem(w, a.status, a.message)
 		return
@@ -561,6 +578,7 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 			case ev["type"] == "user" && ev["isReplay"] == true && ev["uuid"] == taskUUID && delivered == nil:
 				now := time.Now().UTC()
 				delivered = &now
+				e.delivered.Add(1)
 			case ev["type"] == "system" && ev["subtype"] == "background_tasks_changed":
 				tasks, _ := ev["tasks"].([]any)
 				e.mu.Lock()

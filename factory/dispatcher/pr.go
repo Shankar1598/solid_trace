@@ -66,9 +66,18 @@ func (d *Dispatcher) pr(w http.ResponseWriter, r *http.Request, e storedExecutio
 		writeProblem(w, http.StatusConflict, err.Error())
 		return
 	}
+	// The agent's description, then the Evidence block of the last
+	// report: a new description keeps the block.
+	description := ""
+	if text.Description != "" || target.prID == 0 {
+		if description, err = d.withBlock(e.runID, text.Description); err != nil {
+			d.serverError(w, "read the Run's last report", err)
+			return
+		}
+	}
 	if target.prID != 0 {
 		got, err := f.UpdatePR(ctx, target.repository, target.prID,
-			forge.PRText{Title: text.Title, Description: text.Description})
+			forge.PRText{Title: text.Title, Description: description})
 		if err != nil {
 			writeProblem(w, http.StatusBadGateway, err.Error())
 			return
@@ -85,7 +94,7 @@ func (d *Dispatcher) pr(w http.ResponseWriter, r *http.Request, e storedExecutio
 		return
 	}
 	got, err := f.OpenPR(ctx, target.repository, forge.NewPR{Source: dispatcherapi.RunBranch(e.runID),
-		Destination: target.baseBranch, Title: text.Title, Description: text.Description})
+		Destination: target.baseBranch, Title: text.Title, Description: description})
 	if err != nil {
 		writeProblem(w, http.StatusBadGateway, err.Error())
 		return

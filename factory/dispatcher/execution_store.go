@@ -21,10 +21,13 @@ type storedExecution struct {
 	state                                string
 }
 
-// queuedRuns are the ids of the queued Runs with no Execution that has
-// not ended, oldest first.
+// queuedRuns are the ids of the queued Runs that are not closed and
+// whose PR has no outcome, with no Execution that has not ended, oldest
+// first. A Closed Run cannot continue, and a Run whose PR has an outcome
+// is closed when its Execution ends.
 func (s *store) queuedRuns() ([]string, error) {
-	rows, err := s.db.Query(`SELECT r.id FROM runs r WHERE r.state = ? AND NOT EXISTS
+	rows, err := s.db.Query(`SELECT r.id FROM runs r WHERE r.state = ? AND r.closed_at IS NULL AND r.pr_outcome = ''
+		AND NOT EXISTS
 		(SELECT 1 FROM executions e WHERE e.run_id = r.id AND e.state != ?) ORDER BY r.created_at, r.id`,
 		dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded)
 	if err != nil {
@@ -51,9 +54,9 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	}
 	defer tx.Rollback()
 	var free bool
-	err = tx.QueryRow(`SELECT r.state = ? AND NOT EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
-		AND e.state != ?) FROM runs r WHERE r.id = ?`, dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded,
-		runID).Scan(&free)
+	err = tx.QueryRow(`SELECT r.state = ? AND r.closed_at IS NULL AND r.pr_outcome = '' AND NOT EXISTS
+		(SELECT 1 FROM executions e WHERE e.run_id = r.id AND e.state != ?) FROM runs r WHERE r.id = ?`,
+		dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded, runID).Scan(&free)
 	if err != nil || !free {
 		return false, ignoreNoRows(err)
 	}
@@ -194,8 +197,17 @@ func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time)
 	}
 	defer tx.Rollback()
 	var runID string
-	err = tx.QueryRow(`UPDATE executions SET report_outcome = ?, report_summary = ?, report_question = ?
-		WHERE id = ? AND state = ? RETURNING run_id`, report.Outcome, report.Summary, report.Question, id,
+	checks, err := jsonList(report.Checks)
+	if err != nil {
+		return err
+	}
+	evidence, err := jsonList(report.Evidence)
+	if err != nil {
+		return err
+	}
+	err = tx.QueryRow(`UPDATE executions SET report_outcome = ?, report_summary = ?, report_question = ?,
+		report_checks = ?, report_evidence = ?, report_delivered = ? WHERE id = ? AND state = ? RETURNING run_id`,
+		report.Outcome, report.Summary, report.Question, checks, evidence, report.DeliveredMessages, id,
 		dispatcherapi.ExecutionRunning).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errEnded
@@ -204,7 +216,9 @@ func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time)
 		return err
 	}
 	err = recordEvent(tx, at, runID, eventReport, map[string]any{"execution.id": id,
-		"report.outcome": report.Outcome, "report.summary": report.Summary, "report.question": report.Question})
+		"report.outcome": report.Outcome, "report.summary": report.Summary, "report.question": report.Question,
+		"report.checks": nonNil(report.Checks), "report.evidence": nonNil(report.Evidence),
+		"report.delivered_messages": report.DeliveredMessages})
 	if err != nil {
 		return err
 	}
@@ -219,10 +233,12 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		return err
 	}
 	defer tx.Rollback()
-	var runID, state string
+	var runID, state, checks string
+	var prID int
 	var report dispatcherapi.Report
-	err = tx.QueryRow(`SELECT run_id, state, report_outcome, report_summary, report_question FROM executions
-		WHERE id = ?`, id).Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question)
+	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks, r.pr_id
+		FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
+		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &prID)
 	if err != nil {
 		return err
 	}
@@ -251,8 +267,17 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		endReason, exit, delivered, max(end.BackgroundTasksKilled, 0), id); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ? WHERE id = ? AND state = ?`,
-		runState, reason, question, summary, runID, dispatcherapi.StateRunning); err != nil {
+	var flags string
+	if runState == dispatcherapi.StateDone {
+		if err := unmarshalList(checks, &report.Checks); err != nil {
+			return err
+		}
+		if flags, err = jsonList(doneFlags(report.Checks, prID)); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ?, flags = ? WHERE id = ? AND state = ?`,
+		runState, reason, question, summary, flags, runID, dispatcherapi.StateRunning); err != nil {
 		return err
 	}
 	details := map[string]any{"execution.id": id, "execution.reason": endReason}

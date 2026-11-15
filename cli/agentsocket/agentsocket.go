@@ -1,6 +1,6 @@
 // Package agentsocket is the agent's socket: the Unix socket on which the
-// wrapper of an Execution serves 'solidtrace report' and 'solidtrace pr'
-// (and later check). The agent holds no credential for the Dispatcher:
+// wrapper of an Execution serves 'solidtrace check', 'solidtrace report' and
+// 'solidtrace pr'. The agent holds no credential for the Dispatcher:
 // the wrapper adds its own Run and Execution, and sends the call with its
 // own identity. So the agent cannot report for another Run.
 //
@@ -36,6 +36,9 @@ const ReportPath = "/report"
 // PRPath is the path of a pr call on the socket.
 const PRPath = "/pr"
 
+// CheckPath is the path of a check call on the socket.
+const CheckPath = "/check"
+
 // prTimeout is the limit of a pr call: the wrapper pushes the Run's
 // branch (at most 2 minutes) before the forge opens the PR.
 const prTimeout = 4 * time.Minute
@@ -69,6 +72,17 @@ func PR(ctx context.Context, path string, text dispatcherapi.PRText) (dispatcher
 	var pr dispatcherapi.PR
 	err := call(ctx, client, path, PRPath, text, &pr)
 	return pr, err
+}
+
+// Check sends a check call to the wrapper on the socket at path, and
+// gives the checks that the wrapper ran. The wrapper runs the commands,
+// so the call has no time limit of its own: ctx ends it.
+func Check(ctx context.Context, path string, run dispatcherapi.CheckRun) ([]dispatcherapi.CheckResult, error) {
+	client := Client(path)
+	client.Timeout = 0
+	var answer dispatcherapi.CheckAnswer
+	err := call(ctx, client, path, CheckPath, run, &answer)
+	return answer.Checks, err
 }
 
 func call(ctx context.Context, client *http.Client, path, route string, body, into any) error {
