@@ -39,6 +39,14 @@ type Tracker interface {
 	Comment(ctx context.Context, c TrackerConnection, id, body string) error
 }
 
+// settingsCheck is a Tracker that checks the settings that an Admin saves.
+// It gives them in the form to keep, or an error that tells the Admin what
+// is wrong (400). The settings of a Tracker with no check have no
+// database.
+type settingsCheck interface {
+	checkSettings(dispatcherapi.TrackerSettings) (dispatcherapi.TrackerSettings, error)
+}
+
 // TrackerConnection is one connection of a Tracker, with its settings
 // (each empty value set to the kind's default).
 type TrackerConnection struct {
@@ -79,6 +87,7 @@ func trackerSettings(t Tracker, saved dispatcherapi.TrackerSettings) dispatchera
 	return dispatcherapi.TrackerSettings{
 		ReadyStatus:  cmp.Or(saved.ReadyStatus, defaults.ReadyStatus, defaultReadyStatus),
 		RoutingField: cmp.Or(saved.RoutingField, defaults.RoutingField),
+		Database:     saved.Database,
 	}
 }
 

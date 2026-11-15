@@ -356,6 +356,9 @@ type TrackerSettings struct {
 	// RoutingField is the ticket's field that the routes match, such as
 	// the Notion select property "Project".
 	RoutingField string `json:"routing_field"`
+	// Database is the Notion database of a Notion connection: its id, or
+	// a link to it ("" for a kind with no database).
+	Database string `json:"database,omitempty"`
 }
 
 // ProjectList is the answer of the list of the Factory settings of the

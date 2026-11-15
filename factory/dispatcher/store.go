@@ -242,6 +242,8 @@ var migrations = []string{
 		noticed_at INTEGER NOT NULL,
 		PRIMARY KEY (connection_id, ticket_id)
 	);`,
+	// A Notion connection's notion_database is the id of its database.
+	`ALTER TABLE connections ADD COLUMN notion_database TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.

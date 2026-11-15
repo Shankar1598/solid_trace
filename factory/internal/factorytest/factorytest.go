@@ -25,6 +25,7 @@ import (
 	"github.com/solidtrace/cli/credentials"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakeforge"
+	"github.com/solidtrace/factory/internal/fakenotion"
 	"github.com/solidtrace/factory/internal/fakesource"
 	"github.com/solidtrace/factory/internal/faketracker"
 	"github.com/solidtrace/factory/internal/recorder"
@@ -113,6 +114,9 @@ type Env struct {
 	// Tracker is the fake tracker: the API of each connection of kind
 	// faketracker.Kind.
 	Tracker *faketracker.Tracker
+	// Notion is the fake Notion API of the Dispatcher's configuration:
+	// the API of each connection of kind notion. Its clock is Clock.
+	Notion *fakenotion.Notion
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
 
@@ -325,9 +329,11 @@ func New(t testing.TB, options ...Option) *Env {
 		Forge:      fakeforge.New(t),
 		Source:     fakesource.New(),
 		Tracker:    faketracker.New(),
+		Notion:     fakenotion.New(t),
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
 	t.Cleanup(e.SolidTrace.Close)
+	e.Notion.Now = e.Clock.Now
 	// The Dispatcher's own token: an Admin made it. Revoke it for an Admin
 	// who left the Organization.
 	e.SolidTrace.Token(DispatcherToken, recorder.Answer{
@@ -343,6 +349,7 @@ func New(t testing.TB, options ...Option) *Env {
 		EncryptionKey:   EncryptionKey,
 		BitbucketAPIURL: e.Forge.APIURL(),
 		BitbucketGitURL: e.Forge.GitURL(),
+		NotionAPIURL:    e.Notion.URL(),
 		WebhookURL:      PublicWebhookURL,
 	}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
