@@ -58,6 +58,33 @@ func start(ctx context.Context, args []string, env Env) int {
 	return 0
 }
 
+// stop stops a Run.
+func stop(ctx context.Context, args []string, env Env) int {
+	flags := flag.NewFlagSet("stop", flag.ContinueOnError)
+	flags.SetOutput(env.Stderr)
+	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
+	positional, ok := parseInterspersed(flags, args)
+	if !ok {
+		return 2
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(env.Stderr, "solidtrace stop: give one RUN_ID")
+		return 2
+	}
+	client, err := env.dispatcher(*dispatcherURL)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace stop: %v\n", err)
+		return 1
+	}
+	run, err := client.Stop(ctx, positional[0])
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace stop: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(env.Stdout, "Run %s is stopped.\n%s\n", run.ID, run.URL)
+	return 0
+}
+
 // runs is 'runs list' and 'runs get <id>'.
 func runs(ctx context.Context, args []string, env Env) int {
 	if len(args) == 0 || (args[0] != "list" && args[0] != "get") {

@@ -117,6 +117,17 @@ var migrations = []string{
 		revoked_at INTEGER
 	);
 	CREATE INDEX execution_tokens_by_execution ON execution_tokens (execution_id);`,
+	// commands are what the Dispatcher tells the wrapper of an Execution,
+	// which takes them with its long poll. total_limit is the Execution's
+	// total limit in seconds, set at its task call; the backstop reads it.
+	`CREATE TABLE commands (
+		seq INTEGER PRIMARY KEY AUTOINCREMENT,
+		execution_id TEXT NOT NULL REFERENCES executions (id),
+		kind TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	);
+	CREATE INDEX commands_by_execution ON commands (execution_id, seq);
+	ALTER TABLE executions ADD COLUMN total_limit INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // store is the Dispatcher's SQLite database.

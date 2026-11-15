@@ -38,6 +38,9 @@ type Options struct {
 	// EventRetry is the longest wait of the event sender between two
 	// tries to send the outbox to SolidTrace (maxEventRetry when 0).
 	EventRetry time.Duration
+	// BackstopEvery is how often the backstop looks for Executions past
+	// their total limit plus 15 minutes (backstopEvery when 0).
+	BackstopEvery time.Duration
 }
 
 // Dispatcher is one open Dispatcher.
@@ -62,8 +65,13 @@ type Dispatcher struct {
 	// starting; it closes when the Runner gave the workload.
 	dispatching sync.Map
 	wake        chan struct{}
-	stop        context.CancelFunc
-	loops       sync.WaitGroup
+	// commandsAdded wakes the waiting commands calls.
+	commandsAdded signal
+	backstopEvery time.Duration
+	// closing closes when Close starts.
+	closing chan struct{}
+	stop    context.CancelFunc
+	loops   sync.WaitGroup
 }
 
 // Open checks config and opens the database (it makes it at first use).
@@ -104,11 +112,15 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		eventRetry: cmp.Or(options.EventRetry, maxEventRetry),
 		runner:     options.Runner,
 		wake:       make(chan struct{}, 1),
+		closing:    make(chan struct{}),
+
+		backstopEvery: cmp.Or(options.BackstopEvery, backstopEvery),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs", d.person(d.listRuns))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs/{id}", d.person(d.getRun))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/stop", d.person(d.stopRun))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects", d.person(d.listSettings))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.getSettings))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.admin(d.saveSettings)))
@@ -121,6 +133,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/report", d.wrapper(d.report))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/token", d.wrapper(d.token))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/commands", d.wrapper(d.commands))
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "no such path: "+r.Method+" "+r.URL.Path)
@@ -131,9 +144,10 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	d.loops.Add(1)
 	go func() { defer d.loops.Done(); d.sendLoop(ctx) }()
 	if d.runner != nil {
-		d.loops.Add(2)
+		d.loops.Add(3)
 		go func() { defer d.loops.Done(); d.dispatchLoop(ctx) }()
 		go func() { defer d.loops.Done(); d.watchLoop(ctx) }()
+		go func() { defer d.loops.Done(); d.backstopLoop(ctx) }()
 	}
 	return d, nil
 }
@@ -143,6 +157,7 @@ func (d *Dispatcher) Handler() http.Handler { return d.handler }
 
 // Close stops the loops and closes the database.
 func (d *Dispatcher) Close() error {
+	close(d.closing)
 	d.stop()
 	d.loops.Wait()
 	return d.store.close()

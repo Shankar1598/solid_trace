@@ -28,6 +28,9 @@ const (
 	StateWaitingOnPerson = "waiting_on_person"
 	StateDone            = "done"
 	StateFailed          = "failed"
+	// StateStopped is a Run that a person, or the Dispatcher's backstop,
+	// stopped. A message continues it.
+	StateStopped = "stopped"
 )
 
 // Person is who started a Run: the SolidTrace user of the token.
@@ -138,6 +141,67 @@ type Task struct {
 	IngestURL string `json:"ingest_url"`
 	// Uploads is the Execution's child token. Only the wrapper keeps it.
 	Uploads SessionToken `json:"uploads"`
+	// Limits are the Execution's time limits.
+	Limits Limits `json:"limits"`
+}
+
+// The default limits of an Execution. The factory file can change them.
+const (
+	DefaultIdleLimit  = 30 * time.Minute
+	DefaultTotalLimit = 8 * time.Hour
+)
+
+// Limits are the time limits of an Execution, in seconds. At a limit, the
+// wrapper interrupts the agent and ends the Execution with the reason
+// EndTimeout. 0 is the default limit.
+type Limits struct {
+	// IdleSeconds is the longest time with no event on the harness's
+	// output stream.
+	IdleSeconds int64 `json:"idle_seconds"`
+	// TotalSeconds is the longest time of the Execution, from its task
+	// call.
+	TotalSeconds int64 `json:"total_seconds"`
+}
+
+// Idle is the idle limit, or the default for 0.
+func (l Limits) Idle() time.Duration {
+	if l.IdleSeconds <= 0 {
+		return DefaultIdleLimit
+	}
+	return time.Duration(l.IdleSeconds) * time.Second
+}
+
+// Total is the total limit, or the default for 0.
+func (l Limits) Total() time.Duration {
+	if l.TotalSeconds <= 0 {
+		return DefaultTotalLimit
+	}
+	return time.Duration(l.TotalSeconds) * time.Second
+}
+
+// Command kinds that the Dispatcher gives a wrapper.
+const (
+	// CommandStop: end the Execution with the reason EndStopped.
+	CommandStop = "stop"
+)
+
+// Command is one command to the wrapper of an Execution.
+type Command struct {
+	// Seq orders the commands of an Execution.
+	Seq  int64  `json:"seq"`
+	Kind string `json:"kind"`
+}
+
+// CommandsRequest is the body of the wrapper's commands call, a long
+// poll: the Dispatcher answers when it has a command after After, or
+// after a wait with none.
+type CommandsRequest struct {
+	After int64 `json:"after"`
+}
+
+// Commands is the answer of the commands call, oldest first.
+type Commands struct {
+	Commands []Command `json:"commands"`
 }
 
 // SessionToken is a child token of one Execution: sessions:write and
@@ -172,12 +236,17 @@ const (
 	// EndSetupFailed: the wrapper could not start the harness; Error says
 	// why.
 	EndSetupFailed = "the setup failed"
+	// EndStopped: a stop command came. The Run is stopped already.
+	EndStopped = "stopped"
+	// EndTimeout: a limit passed; Error says which.
+	EndTimeout = "timeout"
 )
 
 // ExecutionEnd is the body of the wrapper's end call.
 type ExecutionEnd struct {
 	Reason string `json:"reason"`
-	// Error says what failed, for EndSetupFailed.
+	// Error says what failed, for EndSetupFailed, or which limit passed,
+	// for EndTimeout.
 	Error string `json:"error,omitempty"`
 	// ExitCode is the harness's exit code (nil: the harness did not run).
 	ExitCode        *int       `json:"exit_code,omitempty"`
@@ -341,6 +410,14 @@ func (c *Client) List(ctx context.Context) ([]Run, error) {
 	var runs Runs
 	err := c.call(ctx, http.MethodGet, "/runs", nil, &runs)
 	return runs.Runs, err
+}
+
+// Stop stops a Run. The Run is stopped at once, and its live Execution
+// ends with the reason EndStopped.
+func (c *Client) Stop(ctx context.Context, id string) (Run, error) {
+	var run Run
+	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/stop", nil, &run)
+	return run, err
 }
 
 // Projects reads the Factory settings of the Organization's Projects.

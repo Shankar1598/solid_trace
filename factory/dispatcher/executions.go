@@ -101,7 +101,8 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 			return
 		}
 	}
-	run, err := d.store.startExecution(e.id, d.now())
+	// Ticket 34 takes the limits from the factory file.
+	run, err := d.store.startExecution(e.id, d.now(), defaultLimits)
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, errEnded.Error())
 		return
@@ -135,6 +136,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		Project:       settings.Project,
 		Folder:        settings.Folder,
 		IngestURL:     d.config.ingestURL(),
+		Limits:        run.limits,
 		Uploads:       uploads,
 	})
 }
@@ -193,7 +195,7 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	}
 	switch end.Reason {
 	case dispatcherapi.EndReported, dispatcherapi.EndNoReport, dispatcherapi.EndHarnessExited,
-		dispatcherapi.EndSetupFailed:
+		dispatcherapi.EndSetupFailed, dispatcherapi.EndStopped, dispatcherapi.EndTimeout:
 	default:
 		writeProblem(w, http.StatusBadRequest, "no end reason "+quote(end.Reason))
 		return
