@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/solidtrace/cli/agentsocket"
@@ -333,9 +334,19 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	return nil
 }
 
+// gitWait is how long a git command's output can stay open after ctx
+// ended and its process group was killed.
+const gitWait = 2 * time.Second
+
+// git runs a git command of the setup. When ctx ends (a stop or a limit),
+// the command's process group is killed: git and its remote helper, which
+// holds the output open. After gitWait the wait stops all the same.
 func (e *execution) git(ctx context.Context, environ []string, dir string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = gitWait
 	cmd.Env = append(harnessEnv(environ, ""), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

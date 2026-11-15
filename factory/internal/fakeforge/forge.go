@@ -86,6 +86,15 @@ type Forge struct {
 	comments map[string]map[int][]*Comment
 	nextID   int
 	failNext *apiError
+	// hanging are the repositories whose git requests get no answer, with
+	// the channel that the first request closes.
+	hanging map[string]*hang
+}
+
+type hang struct {
+	reached chan struct{}
+	once    sync.Once
+	release chan struct{}
 }
 
 // New starts a fake Forge with no repositories. The test's cleanup stops it.
@@ -102,6 +111,7 @@ func New(t testing.TB) *Forge {
 		backend:  filepath.Join(strings.TrimSpace(string(execPath)), "git-http-backend"),
 		prs:      map[string][]*PR{},
 		comments: map[string]map[int][]*Comment{},
+		hanging:  map[string]*hang{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/git/", f.git)
@@ -311,7 +321,38 @@ func (f *Forge) git2(dir string, args ...string) (string, error) {
 }
 
 // git serves clone and push with git's own smart HTTP backend.
+// Hang makes each git request of the repository wait with no answer, as
+// a forge that accepts the connection and then does not answer. The
+// channel that it gives closes at the first such request. A request ends
+// when its client goes, or at the end of the test.
+func (f *Forge) Hang(repo string) <-chan struct{} {
+	h := &hang{reached: make(chan struct{}), release: make(chan struct{})}
+	f.mu.Lock()
+	f.hanging["/git/"+repo+".git/"] = h
+	f.mu.Unlock()
+	// This cleanup runs before the server's Close, which waits for each
+	// request.
+	f.t.Cleanup(func() { close(h.release) })
+	return h.reached
+}
+
 func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	var hung *hang
+	for prefix, x := range f.hanging {
+		if strings.HasPrefix(r.URL.Path, prefix) {
+			hung = x
+		}
+	}
+	f.mu.Unlock()
+	if hung != nil {
+		hung.once.Do(func() { close(hung.reached) })
+		select {
+		case <-r.Context().Done():
+		case <-hung.release:
+		}
+		return
+	}
 	if user, password, ok := r.BasicAuth(); !ok || user != TokenUser || password != f.Token {
 		w.Header().Set("WWW-Authenticate", `Basic realm="fake forge"`)
 		http.Error(w, "the token is not valid", http.StatusUnauthorized)

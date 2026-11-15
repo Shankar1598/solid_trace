@@ -3,6 +3,7 @@ package wrapper_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,5 +126,60 @@ func TestStopOnARunThatWaitsOnAPersonMakesItStopped(t *testing.T) {
 	}
 	if stop := waitForEvent(t, env, id, "stop"); stop["actor.name"] != "ana@example.com" {
 		t.Errorf("the stop's actor is %v", stop["actor.name"])
+	}
+}
+
+// hangingClone makes the clone of the Project shop hang, as a forge that
+// accepts the connection and does not answer, and queues an agent that
+// makes the file that it gives when the harness starts.
+func hangingClone(t *testing.T, env *factorytest.Env) (reached <-chan struct{}, harnessStarted string) {
+	harnessStarted = filepath.Join(t.TempDir(), "harness-started")
+	env.Runner.Agent(shell("touch "+harnessStarted), takeTask, waitForEnd)
+	return env.Forge.Hang("example/shop"), harnessStarted
+}
+
+func waitForClone(t *testing.T, reached <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-reached:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the wrapper did not start the clone in 30 s")
+	}
+	time.Sleep(settle)
+}
+
+func TestStopDuringTheCloneEndsTheExecutionWithTheReasonStoppedAndNoHarness(t *testing.T) {
+	env, ana := newEnv(t)
+	reached, harnessStarted := hangingClone(t, env)
+	id := start(t, env, ana, "Fix the cart")
+	waitForClone(t, reached)
+
+	if got := ana.CLI("stop", id); got.Code != 0 {
+		t.Fatalf("solidtrace stop: exit %d: %s", got.Code, got.Stderr)
+	}
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateStopped)
+	if e := onlyExecution(t, run); e.EndReason != dispatcherapi.EndStopped {
+		t.Errorf("the end reason is %q, want %q", e.EndReason, dispatcherapi.EndStopped)
+	}
+	if _, err := os.Stat(harnessStarted); err == nil {
+		t.Error("the harness started after the stop")
+	}
+}
+
+func TestTheTotalLimitDuringTheCloneFailsTheRunWithTheReasonTimeout(t *testing.T) {
+	env, ana := newEnv(t)
+	reached, harnessStarted := hangingClone(t, env)
+	id := start(t, env, ana, "Fix the cart")
+	waitForClone(t, reached)
+
+	env.Clock.Advance(8 * time.Hour)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if !strings.HasPrefix(run.Reason, dispatcherapi.EndTimeout+": ") || !strings.Contains(run.Reason, "total limit") {
+		t.Errorf("the reason is %q, want timeout with the total limit", run.Reason)
+	}
+	if _, err := os.Stat(harnessStarted); err == nil {
+		t.Error("the harness started after the limit")
 	}
 }
