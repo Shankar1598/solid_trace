@@ -2,9 +2,11 @@ package wrapper_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -169,5 +171,34 @@ func TestAnUnpushedCommitIsPushedWhenTheAgentAsksForAPerson(t *testing.T) {
 	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
 	if body, ok := env.Forge.File("example/shop", "refs/heads/"+dispatcherapi.RunBranch(id), "half.txt"); !ok || body != "half\n" {
 		t.Errorf("half.txt on the Run's branch: %q, %v", body, ok)
+	}
+}
+
+func TestTheForgeTokenGoesOnlyToTheForge(t *testing.T) {
+	env, ana := newEnv(t)
+	// Another git server that asks for credentials, as a private or
+	// missing repository on another host does.
+	var mu sync.Mutex
+	var auth []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if a := r.Header.Get("Authorization"); a != "" {
+			auth = append(auth, a)
+		}
+		mu.Unlock()
+		w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(other.Close)
+	gem := filepath.Join(t.TempDir(), "gem")
+	env.Runner.Agent(takeTask, shell(`git clone -q `+other.URL+`/someone/private-gem.git `+gem+`; `+
+		`solidtrace report --outcome done --summary "Tried"`), reply, result, waitForEnd)
+
+	id := start(t, env, ana, "Clone a gem")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(auth) != 0 {
+		t.Errorf("the other server got credentials: %q", auth)
 	}
 }

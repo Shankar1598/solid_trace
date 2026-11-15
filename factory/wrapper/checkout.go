@@ -99,7 +99,18 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 // commit identity. The checkout's own .git/config gets none of it.
 func (e *execution) writeGitConfig(secrets string) error {
 	var b strings.Builder
+	gitURL := strings.TrimRight(e.task.GitURL, "/")
+	if e.task.GitURL != "" {
+		base, err := url.Parse(e.task.GitURL)
+		if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" ||
+			strings.ContainsAny(e.task.GitURL, "\"\\\n") {
+			return fmt.Errorf("the forge's git URL %q is not an HTTPS URL", e.task.GitURL)
+		}
+	}
 	if e.task.ForgeToken != "" {
+		if gitURL == "" {
+			return errors.New("the task gives a forge token but no git URL of the forge")
+		}
 		helper := filepath.Join(secrets, "git-credential")
 		token := filepath.Join(secrets, "forge-token")
 		if err := os.WriteFile(token, []byte(e.task.ForgeToken), 0o600); err != nil {
@@ -115,17 +126,14 @@ func (e *execution) writeGitConfig(secrets string) error {
 		if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
 			return err
 		}
-		// The empty value first: no helper of the system's configuration.
-		b.WriteString("[credential]\n\thelper =\n\thelper = " + gitValue(helper) + "\n")
+		// Only for the forge's git URL: another host that asks for
+		// credentials gets none. The empty value first: no helper of the
+		// system's configuration.
+		b.WriteString("[credential \"" + gitURL + "/\"]\n\thelper =\n\thelper = " + gitValue(helper) + "\n")
 	}
-	if e.task.GitURL != "" {
+	if gitURL != "" {
 		host, _, _ := strings.Cut(e.task.Repository, "/")
-		base, err := url.Parse(e.task.GitURL)
-		if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" ||
-			strings.ContainsAny(e.task.GitURL, "\"\\\n") {
-			return fmt.Errorf("the forge's git URL %q is not an HTTPS URL", e.task.GitURL)
-		}
-		b.WriteString("[url \"" + strings.TrimRight(e.task.GitURL, "/") + "/\"]\n" +
+		b.WriteString("[url \"" + gitURL + "/\"]\n" +
 			"\tinsteadOf = " + gitValue("git@"+host+":") + "\n" +
 			"\tinsteadOf = " + gitValue("ssh://git@"+host+"/") + "\n")
 	}
