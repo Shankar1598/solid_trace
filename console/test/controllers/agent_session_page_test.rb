@@ -151,8 +151,8 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
                  body: status == 200 ? { line: '{"type":"user","message":"all of it"}', cut: false }.to_json : { error: "no such line" }.to_json)
   end
 
-  def line(org_slug: "acme")
-    get agent_session_line_path(org_slug: org_slug, id: CART, path: "session.jsonl", version: 1, offset: 120), as: :json
+  def line(org_slug: "acme", version: 1, offset: 120)
+    get agent_session_line_path(org_slug: org_slug, id: CART, path: "session.jsonl", version: version, offset: offset), as: :json
   end
 
   test "'Show full' gives the raw line of a step as JSON" do
@@ -177,6 +177,16 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     line(org_slug: "other")
     assert_response :not_found
     assert_not_requested :post, "#{EventStore.base_url}/api/#{other_project.id}/agent-sessions/#{CART}/line"
+  end
+
+  test "a raw line with a negative or non-numeric version or offset is 404 and does not go to EventStore" do
+    stub_line
+    sign_in_as(@member)
+    [ { version: -1 }, { offset: -1 }, { version: "abc" }, { offset: "1x" } ].each do |bad|
+      line(**bad)
+      assert_response :not_found, "for #{bad}"
+    end
+    assert_not_requested :post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}/line"
   end
 
   test "EventStore down gives 503 on 'Show full'" do
