@@ -91,6 +91,9 @@ func Executions(e *Env) {
 		e.t.Fatalf("start the fake Runner: %v", err)
 	}
 	e.Runner = r
+	// The operator command needs the database that the Dispatcher makes
+	// at its first start.
+	e.afterStart = append(e.afterStart, func() { e.AddAccount(DefaultAccount, DefaultAccountToken) })
 	// The wrappers' limits read the environment's clock.
 	e.Clock.mu.Lock()
 	e.Clock.machines, e.Clock.beforeMove = r.clockFile(), r.renewIdentities
@@ -103,8 +106,20 @@ func Executions(e *Env) {
 // Executions, Project gives each Project a repository on the fake Forge
 // and a connection.
 func WithRunner(runner dispatcher.Runner) Option {
-	return func(e *Env) { e.runner = runner }
+	return func(e *Env) {
+		e.runner = runner
+		// Each Execution needs a free account in the pool.
+		e.afterStart = append(e.afterStart, func() { e.AddAccount(DefaultAccount, DefaultAccountToken) })
+	}
 }
+
+// DefaultAccount is the subscription account that the Executions option
+// adds to the pool, with the token DefaultAccountToken. A test that needs
+// other accounts adds them, or removes this one.
+const (
+	DefaultAccount      = "pool-1"
+	DefaultAccountToken = "sk-ant-oat01-factorytest-pool-1"
+)
 
 // Runner is the fake Runner as the Dispatcher sees it: it starts each
 // Execution's wrapper with the fakerunner, and signs each wrapper's
@@ -125,10 +140,30 @@ type Runner struct {
 	executions []string
 	// kinds are the machine kinds that the Dispatcher asked for, by
 	// Execution.
-	kinds    map[string]string
-	harness  string
-	broken   bool
-	noDocker bool
+	kinds     map[string]string
+	harness   string
+	broken    bool
+	noDocker  bool
+	pathFirst string
+	before    func(execution string)
+}
+
+// BeforeDispatch makes the Runner call f with the id of the next
+// Execution that it starts, before it starts the Execution's wrapper: the
+// Execution is dispatched and has no task call yet.
+func (r *Runner) BeforeDispatch(f func(execution string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.before = f
+}
+
+// PathFirst puts dir first in the PATH of the next Executions' wrappers,
+// before the test binary's programs: a test puts a program there that
+// records how the wrapper runs it, such as git.
+func (r *Runner) PathFirst(dir string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pathFirst = dir
 }
 
 // BreakWrapper makes the next Execution's wrapper start with no Dispatcher
@@ -263,6 +298,13 @@ func Workload(execution string) string { return "fake-runner:" + execution }
 
 // Dispatch starts the Execution's wrapper with a workload identity JWT.
 func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (string, error) {
+	r.mu.Lock()
+	before := r.before
+	r.before = nil
+	r.mu.Unlock()
+	if before != nil {
+		before(x.Execution)
+	}
 	workload := Workload(x.Execution)
 	identity := filepath.Join(r.dir, "identity-"+x.Execution+".jwt")
 	if err := os.WriteFile(identity, []byte(r.Identity(workload)), 0o600); err != nil {
@@ -280,6 +322,10 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 	}
 	r.kinds[x.Execution] = x.MachineKind
 	program := r.harness
+	path := r.bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	if r.pathFirst != "" {
+		path = r.pathFirst + string(os.PathListSeparator) + path
+	}
 	broken := r.broken
 	r.broken = false
 	docker := filepath.Join(r.bin, dockerName)
@@ -305,7 +351,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		wrapper.EnvHome + "=" + r.Home(x.Execution),
 		wrapper.EnvCache + "=" + r.Cache(),
 		harness,
-		"PATH=" + r.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH=" + path,
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
 		wrapper.EnvUploadEvery + "=" + UploadEvery.String(),

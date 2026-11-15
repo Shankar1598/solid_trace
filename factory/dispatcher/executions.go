@@ -110,6 +110,24 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 			return
 		}
 	}
+	accountToken, err := d.store.accountToken(e.account)
+	if errors.Is(err, errNotFound) {
+		// An operator removed the account after the dispatch. The Run is
+		// not lost: it goes back in the queue, and its next Execution gets
+		// a free account.
+		why := "the account " + e.account + " is no longer in the pool"
+		if _, err := d.store.requeueExecution(e.id, why, d.now()); err != nil {
+			d.serverError(w, "put the Run back in the queue", err)
+			return
+		}
+		d.wakeDispatch()
+		writeProblem(w, http.StatusConflict, why)
+		return
+	}
+	if err != nil {
+		d.serverError(w, "open the account's token", err)
+		return
+	}
 	file, err := d.store.factoryFile(e.id)
 	if err != nil {
 		d.serverError(w, "read the Execution's factory file", err)
@@ -165,6 +183,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		Folder:        run.folder,
 		ForgeUsername: forge.BitbucketTokenUser,
 		ForgeToken:    token,
+		AccountToken:  accountToken,
 		SessionID:     run.sessionID,
 		Resume:        run.resume,
 		IngestURL:     d.config.ingestURL(),

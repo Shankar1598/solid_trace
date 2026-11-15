@@ -45,6 +45,7 @@ func newAdminWorld(t *testing.T) *adminWorld {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
+	addTestAccount(t, d.store)
 	w.d = d
 	w.handler = d.person(d.admin(func(rw http.ResponseWriter, _ *http.Request, p person) {
 		writeJSON(rw, http.StatusOK, map[string]string{"done_by": p.name})
