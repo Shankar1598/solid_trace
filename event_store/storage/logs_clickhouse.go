@@ -152,6 +152,9 @@ type LogInsert struct {
 	// token: "" for Log batches, "agent" for the Agent file batches that the
 	// parse makes into Logs.
 	Range string
+	// AgentSessions are what the range adds to agent_sessions: set by the
+	// parse alone, and inserted after the Logs with the same dedup token.
+	AgentSessions []AgentSessionDay
 }
 
 // token is the insert's dedup token, the same each time its range is
@@ -217,6 +220,11 @@ func (s *ClickHouseLogs) InsertLogBatches(projectID uint32, insert LogInsert) er
 	}
 	if err := s.insertSourceCounts(ctx, projectID, insert); err != nil {
 		return fmt.Errorf("insert Source counts: %w", err)
+	}
+	if len(insert.AgentSessions) > 0 {
+		if err := s.insertAgentSessions(ctx, projectID, insert.AgentSessions); err != nil {
+			return fmt.Errorf("insert agent sessions: %w", err)
+		}
 	}
 	return nil
 }

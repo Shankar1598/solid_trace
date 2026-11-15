@@ -37,6 +37,9 @@ type AgentSession struct {
 	// and its Project in the factory.
 	RunID   string `msgpack:"run_id"`
 	Project string `msgpack:"project"`
+	// ParentSessionID is the Agent session that this one was forked or
+	// cleared from, when the uploader recorded one; "" for none.
+	ParentSessionID string `msgpack:"parent_session_id,omitempty"`
 	// Flags are the AgentFlag bits of each unit stored of the Agent
 	// session: it has a cut unit, or a trimmed .jsonl file.
 	Flags uint8 `msgpack:"flags"`
@@ -346,7 +349,12 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 		session = unit.Session
 		session.Flags = 0
 	}
-	if flags := session.Flags | unit.Flags; !known || flags != session.Flags {
+	// An uploader can learn the parent after the first upload.
+	newParent := known && session.ParentSessionID == "" && unit.Session.ParentSessionID != ""
+	if newParent {
+		session.ParentSessionID = unit.Session.ParentSessionID
+	}
+	if flags := session.Flags | unit.Flags; !known || newParent || flags != session.Flags {
 		session.Flags = flags
 		encodedSession, err := msgpack.Marshal(session)
 		if err != nil {
