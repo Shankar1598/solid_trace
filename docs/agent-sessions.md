@@ -101,6 +101,132 @@ To find which Agent session did a thing, type in the search box at the top of th
 
 An agent can do the same over MCP: `query_logs` on the Agent Project runs a Query on the transcript Logs. `list_projects` names the Agent Project.
 
+### Over MCP
+
+An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both.
+
+## Set a Project's Factory settings
+
+A Project's page has a **Factory** section when Settings → Instance has the Dispatcher's URL. It shows the Project's **Factory settings**, which the Dispatcher keeps: the repository (host/workspace/name, or a clone URL), the folder in the repository (empty is the root), and the default base branch (empty is the repository's default branch). Each member reads them; only an Admin of the Organization saves them. A save keeps the forge connection that `solidtrace projects set` gave. Console reads and saves them at the Dispatcher as you, with a factory token that lasts 5 minutes.
+
+The section also shows the Project's tracker routes and schedules:
+
+- **Tracker routes:** each member sees them. An Admin adds a route (a tracker connection and a match value; an empty value is the connection's default) and removes one. The Project needs Factory settings first. When the Dispatcher refuses a route, for example because another Project has the same pair, the section shows the Dispatcher's error.
+- **Schedules:** each schedule with its cron expression and time zone, its next time (in the schedule's time zone), and its last Run with a link to the Run's page. Each member can **Pause** a schedule, which stops its next fire at once, and **Continue** a paused schedule. The section has no form to make a schedule: use `solidtrace schedules create`.
+
+When the Dispatcher does not answer, or SolidTrace no longer accepts the Dispatcher's own token (for example, the Admin who made it left the Organization), the section shows that error. **Open this Project's Runs** opens the Runs page with the Project filter set.
+
+## Start Runs from tracker tickets
+
+A ticket of a tracker connection (Notion, Linear) that a person sets to the ready status starts a Run. The Run's prompt is the ticket's title and body, its page links to the ticket, and its actor is the tracker user who set the status.
+
+- **The tracker settings** of a connection: the ready status (default `Ready for agent`) and the routing field (the kind's default, such as the Notion select property `Project`). An Admin saves them with `PUT /api/v1/connections/NAME/tracker` and `{"ready_status": "...", "routing_field": "..."}`; an empty value is the default. `GET /api/v1/connections` shows them.
+- **Routes** are part of a Project's Factory settings: each is a tracker connection and a match value. A ticket goes to the Project whose route has the value of the ticket's routing field. The route with an empty match value is the connection's default: it takes each ticket that no other route matches. Two Projects cannot have the same pair: the save answers 409 and names the Project that has it. An Admin saves them in `routes` of `PUT /api/v1/projects/SLUG/settings`; a save with no `routes` keeps them. Each member reads them.
+- **No route:** a ready ticket that no route matches starts no Run. It gets one comment that names the routing field and the values that the routes match, and the Dispatcher writes a warning Log. A new edit of the ticket gets the comment and the warning again; the same edit gets none.
+- A ready ticket starts at most one Run for each edit, and no Run while it has an Active Run.
+
+### Connect Linear
+
+A Linear connection is an install of a Linear OAuth app with `actor=app`, so the factory's status changes and comments show as the app, not as the Admin who installed it.
+
+1. In Linear's settings, make an OAuth app. Add the callback URL `http://localhost:47615/callback` (or another port that you give with `--port`). Turn on its webhook with the **Issue** and **Comment** events; you paste its URL in step 3.
+2. On a machine with a browser, as an Admin: `solidtrace connections add linear NAME --client-id ID --team KEY < client-secret-file`. `KEY` is the key of the connection's Linear team, such as `ENG`; you can leave out `--team` when the app can read only one team. The CLI opens Linear's approval page. After you approve, it gives the code to the Dispatcher, which gets the tokens from Linear and keeps them encrypted. The tokens never come to your machine. The access token lasts 24 hours; the Dispatcher refreshes it with the rotating refresh token, which lasts 30 days. Run the command again to install the app again, for example when the Dispatcher's log says that Linear refused the refresh token.
+3. The command prints the connection's webhook URL. Paste it into the app's webhook, then give the app's signing secret: `solidtrace connections webhook-secret NAME < secret-file`.
+
+- **One team:** a Linear connection is of one team. A ticket of another team starts no Run and gets no comment, though the app can read it. To connect another team, add another connection.
+- **The routing field** of a Linear connection is a label group, by default `Project`. A ticket's routing value is the name of its label in that group, such as the label `Admin app` in the group `Project`.
+- **Webhooks:** the Dispatcher checks `Linear-Signature` and refuses (401) a webhook whose `webhookTimestamp` is more than 60 seconds from its clock. It dedupes on `Linear-Delivery`. The backstop reads the ready tickets every 5 minutes.
+- **Requests:** all the Runs of an install share the app's 5,000 requests an hour. A backstop reads at most 500 ready tickets.
+- The operator can set `DISPATCHER_LINEAR_API_URL` (the base of Linear's API and token endpoint) for a test; the default is `https://api.linear.app`.
+
+### Connect a Notion database
+
+Each page of one Notion database is a ticket. Its title and its content (text blocks, also in columns, synced blocks and tables, at most 64 KiB) are the prompt. The Dispatcher reads the content when it starts the Run. When it cannot read all of the content, such as a block type that it does not know, the prompt ends with a note that the page has more content. Its status is the database's property of the type Status (the one named `Status` when there are several), and its routing field is a select property.
+
+1. In Notion, make an internal integration with the capabilities "Read content", "Update content", "Read comments" and "Insert comments". "Read user information without email addresses" is optional: with it, a Run shows the name of the Notion user who set the status; with none, it shows their Notion id. After an Admin adds the capability, the names show in at most 10 minutes. Share the database with the integration (the database's `...` menu → Connections).
+2. Save the integration's token: `solidtrace connections set NAME --kind notion < token-file`. The Dispatcher keeps it encrypted.
+3. Give the database: `PUT /api/v1/connections/NAME/tracker` with `{"database": "...", "ready_status": "...", "routing_field": "..."}`. The database is its id or the link to it. Each save gives all three values (an empty status or field is the default).
+
+The Dispatcher reads the database every 30 seconds while the connection has no verified webhook, so a Notion connection works with no public webhook route. After the first verified webhook, it reads it every 5 minutes, and each webhook makes it read the page at once.
+
+To add Notion's webhooks:
+
+1. In the integration's Webhooks tab, make a subscription with the connection's webhook URL (`solidtrace connections list`), for the page and comment events.
+2. Notion sends a verification token to the URL. The Dispatcher writes it in its own log (not in a SolidTrace Log), with the command to save it. Paste it into Notion to verify the subscription.
+3. Save the same token as the webhook secret: `solidtrace connections webhook-secret NAME < token-file`. Notion signs each event with it (`X-Notion-Signature`).
+
+Notion's `last_edited_time` has whole minutes. So a page that comes back to the same status and the same routing value in the same minute is the same edit, and starts no second Run.
+
+## Connect a connection's webhooks
+
+A tracker or a forge tells the Dispatcher of a change with a webhook. The Dispatcher has two listeners: the private listener serves the API, and the webhook listener serves only `POST /webhooks/<kind>/<connection id>`. Each other path and method gets 404. Caddy on the server VM sends only `/webhooks/*` from a public name to the webhook listener (`factory/reference/caddy/Caddyfile`). The operator sets the listener's address in `DISPATCHER_WEBHOOK_LISTEN` and the public name in `DISPATCHER_WEBHOOK_URL`.
+
+1. `solidtrace connections list` shows the webhook URL of each connection whose kind sends webhooks. Paste it into the connection's service.
+2. Give the secret that signs the webhooks: `solidtrace connections webhook-secret NAME < secret-file` (an Admin only). The Dispatcher keeps it encrypted, and no answer gives it.
+
+A webhook is only a hint. The Dispatcher checks its HMAC-SHA256 signature on the raw body before it reads the body, and answers 401 when it is not valid. It refuses a body over 1 MiB (413) and more than 120 webhooks a minute from one connection (429). A delivery id that it got in the last 7 days does nothing. A valid webhook gets 200 at once, and the Dispatcher then reads the change from the service's API. It also reads each connection when it starts, and again at each backstop interval (5 minutes for most kinds), so a change is found also when no webhook comes.
+
+`solidtrace connections list` shows the time of each connection's last webhook. When a backstop finds a change that no webhook announced since the previous backstop, the Dispatcher writes a warning Log with the Organization, the connection and the time of the last webhook, so that a Monitor can find a connection whose webhooks stopped. A connection with no webhook secret gets no webhooks, so its backstop does not warn.
+
+## Start Runs on a schedule
+
+A **Schedule** starts a Run of a Project at each fire time of a five-field cron expression (minute, hour, day of the month, month, day of the week) in an IANA time zone (UTC if you give none). Each member of the Organization makes and changes schedules with the CLI:
+
+```sh
+solidtrace schedules create checkout --name "Update dependencies" --cron "0 9 * * 1" \
+  --time-zone Europe/Berlin "Update the dependencies and run the tests"
+solidtrace schedules list [--project checkout]
+solidtrace schedules update ID --cron "0 7 * * 1"
+solidtrace schedules pause ID      # stops the next fire at once
+solidtrace schedules continue ID   # starts the fire times again, from now
+solidtrace schedules delete ID
+```
+
+- The Project needs Factory settings. A Run starts from the schedule's base branch (`--base-branch`), else the Project's default base branch.
+- The shortest interval between two fire times is 1 hour. The operator changes it with `DISPATCHER_SCHEDULE_MIN_INTERVAL` (a duration, such as `30m`).
+- A fire time while the schedule's last Run is active starts no Run; the Dispatcher writes the warning Log "skipped: last Run is active".
+- A fire time that the Dispatcher missed while it was down starts one Run when the Dispatcher starts, if it is less than 24 hours old. Older fire times start no Run.
+- The Run's starter is the schedule, with the member who made it. Each change to a schedule is a Log of the Dispatcher (`event.kind` `schedule_created`, `schedule_updated`, `schedule_paused`, `schedule_continued` or `schedule_deleted`) with the person who made it.
+
+## Start Runs from any tool: the generic webhook
+
+A **Webhook sender** is a tool that starts Runs with signed requests, such as a CI job or a script. An Admin makes one with `solidtrace senders create NAME [--project PROJECT]...`. The command prints the sender's id, its webhook URL (`/webhooks/generic/<sender id>` under `DISPATCHER_WEBHOOK_URL`; the private listener serves the same path) and its secret. The Dispatcher shows the secret this one time only, and keeps it encrypted. With `--project`, the sender can start Runs only in those Projects; with none, in each Project of the Organization. A sender belongs to the Organization of the Admin who made it. `solidtrace senders list` shows each sender, with no secret, and the time of its last delivery. `solidtrace senders delete SENDER_ID` (an Admin only) deletes one; its webhook URL then gets 404, and its Runs stay.
+
+A delivery is `POST` to the webhook URL, with a JSON body and three headers:
+
+- `SolidTrace-Timestamp`: the Unix time in seconds. A timestamp more than 5 minutes from the Dispatcher's clock gets 401.
+- `SolidTrace-Delivery`: a delivery id. A delivery id that the sender sent in the last 7 days gives the first delivery's Run and starts no Run.
+- `SolidTrace-Signature`: `sha256=` and the hex HMAC-SHA256, with the secret, of the timestamp, a `.` and the raw body. With no valid signature, the delivery gets 401.
+
+The body has `project` (necessary: the Project's slug), `prompt` (necessary, at most 64 KiB), and optional `branch` (the base branch; with none, the Project's default base branch), `title`, `link` (an `http` or `https` URL that the Run shows), `dedupe_key` and `attributes` (at most 20 strings, which the Run keeps). For example:
+
+```sh
+body='{"project":"shop","prompt":"Find why the cart test fails","dedupe_key":"ci-1234"}'
+ts=$(date +%s)
+sig=$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')
+curl -X POST "$WEBHOOK_URL" -H "SolidTrace-Timestamp: $ts" -H "SolidTrace-Delivery: ci-1234-1" \
+  -H "SolidTrace-Signature: sha256=$sig" -H 'Content-Type: application/json' -d "$body"
+```
+
+The delivery is the truth: the Dispatcher starts the Run at once, with the sender as its starter. The answers:
+
+- 202 with `run_id`, the Run's Console link in `url`, and `started` (false when the delivery gave an earlier Run).
+- 400 for a body that is not valid; 403 for a Project that is not in the sender's list; 422 for a Project that SolidTrace does not have in the sender's Organization, or a Project with no Factory settings. A 422 also writes a warning Log that names the Project.
+- 429 with `Retry-After` when the sender started 10 Runs in the last minute, or has 5 Runs with an Execution queued or live. The operator changes these limits with `DISPATCHER_SENDER_STARTS_PER_MINUTE` and `DISPATCHER_SENDER_ACTIVE_RUNS`.
+
+While an Active Run of the sender has the same `dedupe_key`, a delivery gives that Run and starts none. The Dispatcher also takes a delivery with the same signature as an earlier one as a repeat, because the delivery id is not signed: two deliveries with the same body in the same second give one Run. A refused delivery is not kept, so the sender can send it again.
+
+## Start Runs from Issues and Monitors: the Factory Integration
+
+The **Factory** Integration provider starts a Run for an Issue or a Monitor of SolidTrace. It shows under Settings → Integrations only when an Instance admin set the Dispatcher URL on Settings → Instance. Only an Admin of the Organization adds, changes or deletes a Factory Integration.
+
+- It has no URL field. When an Admin adds it, Console makes a Webhook sender at the Dispatcher as that Admin, with the Integration's name, and keeps the sender's secret encrypted. The sender has no list of Projects, so it starts Runs in each Project of the Organization, and in no other Organization. A Factory Integration has no list of Projects either: the Integration's rules, and the Monitors that name the Integration, decide what starts Runs.
+- Console sends each delivery to `/webhooks/generic/<sender id>` under the Dispatcher URL. Where Console's server has no private path to the Dispatcher, an Instance admin sets the Dispatcher's public webhook URL (its `DISPATCHER_WEBHOOK_URL`) on Settings → Instance; then Console sends under that URL.
+- Each Issue of a Notification is one delivery, with `dedupe_key` `solid-trace-issue-<Issue id>`. Each change of a Monitor's group is one delivery, with `dedupe_key` `solid-trace-monitor-<Monitor id>-<group>`, or `solid-trace-monitor-<Monitor id>` for a Monitor with no group. So one Issue or one group has at most one Active Run. A Monitor's resolve starts no Run. The delivery id is the Notification's id, so a retry gives the Run that an earlier attempt started.
+- The body's `project` is the Project of the Issue or the Monitor. The prompt describes the Issue or the Monitor, `link` opens the Issue page or the Logs explorer, and `attributes` has `solidtrace.notification` (the notification kind) and `solidtrace.issue_number`, or `solidtrace.monitor_id` and `solidtrace.monitor_group`.
+- A 429, another error status, or a Dispatcher that does not answer, is a failed delivery: Console tries it again as for Slack. Console does not try again a 4xx other than 429, such as the 422 for a Project with no Factory settings. The Integration's page shows its last failed delivery, with the reason.
+- When an Admin deletes the Integration, Console deletes its sender at the Dispatcher. When the Dispatcher does not answer, Console still deletes the Integration, and shows a warning with the sender's id: the sender stays in `solidtrace senders list`, and an Admin deletes it with `solidtrace senders delete SENDER_ID`.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.

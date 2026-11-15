@@ -18,6 +18,7 @@ module McpTools
                 "dropped or the error. When there are more, failures gives each error with how many Logs it failed. " \
                 "A draft that doesn't compile answers VRL's errors. Any member can. #{LogTransformTool::HOW_TO_WRITE}"
     read_only!
+    reads_one_project!
     takes_project
     argument :program, LogTransformTool::PROGRAM, required: true
     argument :logs, {

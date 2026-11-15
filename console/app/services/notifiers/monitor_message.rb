@@ -54,13 +54,15 @@ module Notifiers
       # The same for every message about one group of a Monitor, so a
       # resolve closes what its trigger opened: solid-trace-monitor-<id>,
       # then -<group> for a Monitor with groups, or a digest of the group
-      # when that would be too long.
-      def dedup_key(monitor_id, group_key)
+      # when that would be too long: more than MAX_DEDUP_KEY characters, or
+      # more than max_bytes when the receiver counts bytes.
+      def dedup_key(monitor_id, group_key, max_bytes: nil)
         base = "solid-trace-monitor-#{monitor_id}"
         return base if group_key.blank?
 
         key = "#{base}-#{group_key}"
-        key.length <= MAX_DEDUP_KEY ? key : "#{base}-#{Digest::SHA256.hexdigest(group_key)}"
+        fits = key.length <= MAX_DEDUP_KEY && (max_bytes.nil? || key.bytesize <= max_bytes)
+        fits ? key : "#{base}-#{Digest::SHA256.hexdigest(group_key)}"
       end
 
       # Repeated matches join one open incident, kept apart from the

@@ -13,6 +13,9 @@
 //	PUT  /repositories/{workspace}/{repo_slug}/pullrequests/{id}          {title, description}; absent fields stay
 //	GET  /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments
 //	POST /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments {content.raw, inline.path, inline.to}
+//	GET  /repositories/{workspace}/{repo_slug}                            mainbranch.name is the bare repository's HEAD
+//	GET  /repositories/{workspace}/{repo_slug}/refs/branches/{name}       target.hash
+//	GET  /repositories/{workspace}/{repo_slug}/src/{commit}/{path}        a file's raw content; 404 when absent
 //
 // Errors have Bitbucket's shape: {"type": "error", "error": {"message",
 // "fields"}}. A PR from an absent branch and a second open PR between the
@@ -86,6 +89,19 @@ type Forge struct {
 	comments map[string]map[int][]*Comment
 	nextID   int
 	failNext *apiError
+	// hanging are the repositories whose git requests get no answer, with
+	// the channel that the first request closes.
+	hanging map[string]*hang
+	// holdNext holds the next API call until its release.
+	holdNext *hang
+	// refusedGit are the repositories whose git requests get 401.
+	refusedGit map[string]bool
+}
+
+type hang struct {
+	reached chan struct{}
+	once    sync.Once
+	release chan struct{}
 }
 
 // New starts a fake Forge with no repositories. The test's cleanup stops it.
@@ -102,6 +118,7 @@ func New(t testing.TB) *Forge {
 		backend:  filepath.Join(strings.TrimSpace(string(execPath)), "git-http-backend"),
 		prs:      map[string][]*PR{},
 		comments: map[string]map[int][]*Comment{},
+		hanging:  map[string]*hang{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/git/", f.git)
@@ -112,6 +129,10 @@ func New(t testing.TB) *Forge {
 	mux.HandleFunc("PUT "+prs+"/{id}", f.api(f.updatePR))
 	mux.HandleFunc("GET "+prs+"/{id}/comments", f.api(f.listComments))
 	mux.HandleFunc("POST "+prs+"/{id}/comments", f.api(f.postComment))
+	const repository = "/2.0/repositories/{workspace}/{repo_slug}"
+	mux.HandleFunc("GET "+repository, f.api(f.getRepository))
+	mux.HandleFunc("GET "+repository+"/refs/branches/{name...}", f.api(f.getBranch))
+	mux.HandleFunc("GET "+repository+"/src/{commit}/{path...}", f.api(f.getSource))
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)
 	return f
@@ -166,6 +187,24 @@ func (f *Forge) Push(repo, branch string, files map[string]string, message strin
 	return strings.TrimSpace(f.run(work, "rev-parse", "HEAD"))
 }
 
+// AddSubmodule is a person's push of a commit on branch that adds the
+// submodule at path, with url in .gitmodules, at the tip of the main
+// branch of the Forge's repository sub.
+func (f *Forge) AddSubmodule(repo, branch, path, url, sub string) {
+	f.t.Helper()
+	commit := strings.TrimSpace(f.Git(sub, "rev-parse", "refs/heads/main"))
+	work := f.t.TempDir()
+	f.run("", "clone", "-q", "--branch", branch, f.bare(repo), work)
+	modules := "[submodule \"" + path + "\"]\n\tpath = " + path + "\n\turl = " + url + "\n"
+	if err := os.WriteFile(filepath.Join(work, ".gitmodules"), []byte(modules), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	f.run(work, "add", ".gitmodules")
+	f.run(work, "update-index", "--add", "--cacheinfo", "160000,"+commit+","+path)
+	f.run(work, "commit", "-q", "-m", "Add the submodule "+path)
+	f.run(work, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+}
+
 // RefuseRefsOutsideBranches makes the repository refuse a push to a ref
 // outside refs/heads and refs/tags, as a forge that permits only branches
 // and tags does (cluster check 12 finds if Bitbucket Cloud is one).
@@ -186,6 +225,15 @@ func (f *Forge) RefusePushes(repo, message string) {
 	hook := filepath.Join(f.bare(repo), "hooks", "pre-receive")
 	script := "#!/bin/sh\ncat >/dev/null\necho '" + strings.ReplaceAll(message, "'", "") + "' >&2\nexit 1\n"
 	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// AcceptPushes undoes RefusePushes and RefuseRefsOutsideBranches: the
+// repository accepts each push again.
+func (f *Forge) AcceptPushes(repo string) {
+	f.t.Helper()
+	if err := os.Remove(filepath.Join(f.bare(repo), "hooks", "pre-receive")); err != nil && !os.IsNotExist(err) {
 		f.t.Fatal(err)
 	}
 }
@@ -311,8 +359,56 @@ func (f *Forge) git2(dir string, args ...string) (string, error) {
 }
 
 // git serves clone and push with git's own smart HTTP backend.
+// Hang makes each git request of the repository wait with no answer, as
+// a forge that accepts the connection and then does not answer. The
+// channel that it gives closes at the first such request. A request ends
+// when its client goes, or at the end of the test.
+func (f *Forge) Hang(repo string) <-chan struct{} {
+	h := &hang{reached: make(chan struct{}), release: make(chan struct{})}
+	f.mu.Lock()
+	f.hanging["/git/"+repo+".git/"] = h
+	f.mu.Unlock()
+	// This cleanup runs before the server's Close, which waits for each
+	// request.
+	f.t.Cleanup(func() { close(h.release) })
+	return h.reached
+}
+
+// RefuseGit makes each git request of the repository get 401, as for a
+// token that lacks the access to clone. The API still answers.
+func (f *Forge) RefuseGit(repo string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.refusedGit == nil {
+		f.refusedGit = map[string]bool{}
+	}
+	f.refusedGit["/git/"+repo+".git/"] = true
+}
+
 func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
-	if user, password, ok := r.BasicAuth(); !ok || user != TokenUser || password != f.Token {
+	f.mu.Lock()
+	var hung *hang
+	for prefix, x := range f.hanging {
+		if strings.HasPrefix(r.URL.Path, prefix) {
+			hung = x
+		}
+	}
+	f.mu.Unlock()
+	if hung != nil {
+		hung.once.Do(func() { close(hung.reached) })
+		select {
+		case <-r.Context().Done():
+		case <-hung.release:
+		}
+		return
+	}
+	f.mu.Lock()
+	refused := false
+	for prefix := range f.refusedGit {
+		refused = refused || strings.HasPrefix(r.URL.Path, prefix)
+	}
+	f.mu.Unlock()
+	if user, password, ok := r.BasicAuth(); !ok || user != TokenUser || password != f.Token || refused {
 		w.Header().Set("WWW-Authenticate", `Basic realm="fake forge"`)
 		http.Error(w, "the token is not valid", http.StatusUnauthorized)
 		return

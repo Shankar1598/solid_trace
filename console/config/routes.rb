@@ -42,6 +42,9 @@ Rails.application.routes.draw do
   # (ChildTokensController).
   post "api/child_tokens", to: "child_tokens#create", as: :child_tokens, format: false
   delete "api/child_tokens/:id", to: "child_tokens#destroy", as: :child_token, format: false
+  # A comment on an Issue, from a token with issues:comment, such as the
+  # Dispatcher's cause report for an Issue Run (IssueCommentsController).
+  post "api/issue_comments", to: "issue_comments#create", as: :issue_comments_api, format: false
   # Revoking one of the user's Signed-in clients on Settings → User (SignedInClientsController).
   resources :signed_in_clients, only: [ :destroy ]
   # The MCP server (McpController).
@@ -154,6 +157,19 @@ Rails.application.routes.draw do
       resources :keys, only: [ :create, :destroy ], controller: "project_keys" do
         member do
           patch :rotate
+        end
+      end
+
+      # The Factory section: the Project's Factory settings, tracker routes
+      # and schedules, at the Dispatcher. Console has no form to make a
+      # schedule: the CLI makes them.
+      resource :factory, only: [ :update ], controller: "factory_settings" do
+        resource :routes, only: [ :create, :destroy ], controller: "factory_routes"
+        resources :schedules, only: [], controller: "factory_schedules", constraints: { id: /[A-Za-z0-9_-]{1,64}/ } do
+          member do
+            post :pause
+            post :continue
+          end
         end
       end
 

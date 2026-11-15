@@ -63,6 +63,8 @@ interface InstanceSettings {
     ingest_url_fallback: UrlFallback | null
     /** The Dispatcher's private API, null when blank: then no part of the Factory that needs it shows. */
     dispatcher_url: string | null
+    /** The Dispatcher's public webhook URL, null when blank: only the Factory Integration provider uses it. */
+    dispatcher_webhook_url: string | null
     /** The extra Redaction patterns, after the defaults that redaction_defaults names. */
     redaction_patterns: string[]
     redaction_defaults: string
@@ -95,6 +97,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     console_url: editable.console_url ?? '',
     ingest_url: editable.ingest_url ?? '',
     dispatcher_url: editable.dispatcher_url ?? '',
+    dispatcher_webhook_url: editable.dispatcher_webhook_url ?? '',
     redaction_patterns: editable.redaction_patterns.join('\n'),
   })
   // Each pattern EventStore refused, on its own line.
@@ -209,6 +212,25 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                   Factory that needs the Dispatcher.
                 </p>
                 {editable.dispatcher_url && <DispatcherStatusLine />}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="dispatcher_webhook_url">Dispatcher public webhook URL (optional)</Label>
+                <Input
+                  id="dispatcher_webhook_url"
+                  inputMode="url"
+                  placeholder="https://factory.example.com"
+                  value={data.dispatcher_webhook_url}
+                  onChange={(e) => setData('dispatcher_webhook_url', e.target.value)}
+                />
+                {errors.dispatcher_webhook_url && (
+                  <p className="text-sm font-medium text-destructive">{errors.dispatcher_webhook_url}</p>
+                )}
+                <p className="text-xs text-muted-foreground" data-testid="dispatcher-webhook-url-description">
+                  Only the Factory Integration provider uses it. Set it when Console&apos;s server has no private path
+                  to the Dispatcher: the provider then sends to /webhooks/generic/&lt;sender id&gt; under this URL, not
+                  under the Dispatcher URL. It is the Dispatcher&apos;s DISPATCHER_WEBHOOK_URL.
+                </p>
               </div>
 
               <div className="space-y-2">

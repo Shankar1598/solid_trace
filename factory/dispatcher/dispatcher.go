@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,12 +12,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/linear"
 )
 
 // Options are the parts of the machine that tests replace.
@@ -37,6 +40,31 @@ type Options struct {
 	// DispatchEvery is how often the dispatch loop looks for queued Runs
 	// when nothing wakes it (dispatchEvery when 0).
 	DispatchEvery time.Duration
+	// EventRetry is the longest wait of the event sender between two
+	// tries to send the outbox to SolidTrace (maxEventRetry when 0).
+	EventRetry time.Duration
+	// WebhookKinds are the kinds of connection that send webhooks, more
+	// than the Dispatcher's own (Seam 3 adds its fake source).
+	WebhookKinds []WebhookKind
+	// Trackers are the kinds of tracker connection, more than the
+	// Dispatcher's own (Seam 3 adds its fake tracker).
+	Trackers []Tracker
+	// ReconcileTick is how often the timer looks for a due backstop (1 s
+	// when 0).
+	ReconcileTick time.Duration
+	// ScheduleEvery is the wait between two passes of the schedule loop
+	// (scheduleEvery when 0). ScheduleChecked, when set, gets the clock
+	// time of each pass after the pass.
+	ScheduleEvery   time.Duration
+	ScheduleChecked func(at time.Time)
+	// BackstopEvery is how often the backstop looks for Executions past
+	// their total limit plus 15 minutes (backstopEvery when 0).
+	BackstopEvery time.Duration
+	// CloseEvery is the wait between two passes of the close loop
+	// (closeEvery when 0). CloseChecked, when set, gets the clock time of
+	// each pass after the pass.
+	CloseEvery   time.Duration
+	CloseChecked func(at time.Time)
 }
 
 // Dispatcher is one open Dispatcher.
@@ -48,13 +76,48 @@ type Dispatcher struct {
 	store   *store
 	tokens  *tokenCheck
 	handler http.Handler
+	// children makes and revokes the Executions' child tokens.
+	children *childTokens
+
+	// http and eventRetry are for the event sender.
+	http       *http.Client
+	eventRetry time.Duration
+
+	scheduleEvery   time.Duration
+	scheduleChecked func(time.Time)
+	closeEvery      time.Duration
+	closeChecked    func(time.Time)
 
 	runner   Runner
 	identity *identityCheck
+	// allowlist writes Squid's allowlist.
+	allowlist *allowlist
 	// dispatching holds a channel for each Execution that the Runner is
 	// starting; it closes when the Runner gave the workload.
 	dispatching sync.Map
-	wake        chan struct{}
+	// prLocks holds one pr call of a Run at a time.
+	prLocks runLocks
+	wake    chan struct{}
+
+	// kinds are the kinds of connection that send webhooks, by name.
+	kinds map[string]WebhookKind
+	// trackers are the kinds of tracker connection, by name. Each is in
+	// kinds too.
+	trackers      map[string]Tracker
+	webhookLimits *webhookLimits
+	// setupLimits counts the setup requests (Notion's verification
+	// request), which are not verified, apart from the verified webhooks.
+	setupLimits *webhookLimits
+	reconciles  *reconcileQueue
+	// commandsAdded wakes the waiting commands calls.
+	commandsAdded signal
+	backstopEvery time.Duration
+	// runnerStopped holds the Executions whose workload the backstop
+	// stopped through the Runner, until the Runner's end event.
+	runnerStopped sync.Map
+	// closing closes when Serve or Close starts to stop.
+	closing     chan struct{}
+	closingOnce sync.Once
 	// dispatchEvery is Options.DispatchEvery.
 	dispatchEvery time.Duration
 	stop          context.CancelFunc
@@ -85,6 +148,10 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	list, err := newAllowlist(config)
+	if err != nil {
+		return nil, err
+	}
 	s, err := openStore(config.Database, key)
 	if err != nil {
 		return nil, err
@@ -97,37 +164,92 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		store:   s,
 		tokens: &tokenCheck{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP,
 			now: options.Now, kept: map[[sha256.Size]byte]keptAnswer{}},
-		runner: options.Runner,
-		wake:   make(chan struct{}, 1),
+		children:   &childTokens{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP},
+		http:       options.HTTP,
+		eventRetry: cmp.Or(options.EventRetry, maxEventRetry),
+		runner:     options.Runner,
+		allowlist:  list,
+		wake:       make(chan struct{}, 1),
 
-		dispatchEvery: options.DispatchEvery,
+		kinds:           map[string]WebhookKind{},
+		trackers:        map[string]Tracker{},
+		webhookLimits:   &webhookLimits{windows: map[string]webhookWindow{}},
+		setupLimits:     &webhookLimits{windows: map[string]webhookWindow{}},
+		reconciles:      newReconcileQueue(),
+		scheduleEvery:   cmp.Or(options.ScheduleEvery, scheduleEvery),
+		scheduleChecked: options.ScheduleChecked,
+		closeEvery:      cmp.Or(options.CloseEvery, closeEvery),
+		closeChecked:    options.CloseChecked,
+		closing:         make(chan struct{}),
+		backstopEvery:   cmp.Or(options.BackstopEvery, backstopEvery),
+		dispatchEvery:   options.DispatchEvery,
+	}
+	for _, kind := range options.WebhookKinds {
+		d.kinds[kind.Kind()] = kind
+	}
+	// The Dispatcher's own trackers.
+	trackers := []Tracker{newLinearTracker(d, linear.API{URL: config.LinearAPIURL, HTTP: options.HTTP}), newNotion(config.NotionAPIURL, options.HTTP, options.Now)}
+	trackers = append(trackers, options.Trackers...)
+	for _, t := range trackers {
+		d.trackers[t.Kind()] = t
+		d.kinds[t.Kind()] = trackerKind{t, d}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs", d.person(d.listRuns))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs/{id}", d.person(d.getRun))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/stop", d.person(d.stopRun))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects", d.person(d.listSettings))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.getSettings))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.admin(d.saveSettings)))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/connections", d.person(d.listConnections))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}", d.person(d.admin(d.saveConnection)))
+	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}/webhook-secret", d.person(d.admin(d.saveWebhookSecret)))
+	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}/linear", d.person(d.admin(d.installLinear)))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/senders", d.person(d.listSenders))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/senders", d.person(d.admin(d.createSender)))
+	mux.HandleFunc("DELETE "+dispatcherapi.Path+"/senders/{id}", d.person(d.admin(d.deleteSender)))
+	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}/tracker", d.person(d.admin(d.saveTrackerSettings)))
+	mux.HandleFunc("POST /webhooks/", d.webhook)
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/schedules", d.person(d.listSchedules))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules", d.person(d.createSchedule))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/schedules/{id}", d.person(d.getSchedule))
+	mux.HandleFunc("PATCH "+dispatcherapi.Path+"/schedules/{id}", d.person(d.updateSchedule))
+	mux.HandleFunc("DELETE "+dispatcherapi.Path+"/schedules/{id}", d.person(d.deleteSchedule))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules/{id}/pause", d.person(d.pauseSchedule))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules/{id}/continue", d.person(d.continueSchedule))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/status", d.status)
 	if d.runner != nil {
 		d.identity = &identityCheck{jwksURL: d.runner.JWKSURL(), http: options.HTTP, now: options.Now}
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/task", d.wrapper(d.task))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/report", d.wrapper(d.report))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/pr", d.wrapper(d.pr))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/token", d.wrapper(d.token))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/commands", d.wrapper(d.commands))
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "no such path: "+r.Method+" "+r.URL.Path)
 	})
 	d.handler = d.refuseOldCLIs(mux)
+	// The default list or SolidTrace's hosts can have changed.
+	d.refreshAllowlist()
 	ctx, stop := context.WithCancel(context.Background())
 	d.stop = stop
+	d.loops.Add(5)
+	go func() { defer d.loops.Done(); d.sendLoop(ctx) }()
+	go func() { defer d.loops.Done(); d.scheduleLoop(ctx) }()
+	go func() { defer d.loops.Done(); d.closeLoop(ctx) }()
+	go func() { defer d.loops.Done(); d.reconcileLoop(ctx) }()
+	go func() {
+		defer d.loops.Done()
+		d.backstopLoop(ctx, cmp.Or(options.ReconcileTick, defaultReconcileTick))
+	}()
 	if d.runner != nil {
-		d.loops.Add(2)
+		d.loops.Add(3)
 		go func() { defer d.loops.Done(); d.dispatchLoop(ctx) }()
 		go func() { defer d.loops.Done(); d.watchLoop(ctx) }()
+		go func() { defer d.loops.Done(); d.executionBackstopLoop(ctx) }()
 	}
 	return d, nil
 }
@@ -135,8 +257,34 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 // Handler serves the private listener.
 func (d *Dispatcher) Handler() http.Handler { return d.handler }
 
+// shutdownWait is the longest time that Serve waits for the open calls
+// when it stops.
+const shutdownWait = 10 * time.Second
+
+// Serve serves the private listener until ctx ends, then stops. Each
+// commands call (a long poll) then gets 503 at once, and Serve waits up
+// to shutdownWait for the other calls.
+func (d *Dispatcher) Serve(ctx context.Context, listener net.Listener) error {
+	server := &http.Server{Handler: d.handler, ReadHeaderTimeout: 10 * time.Second}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+	}
+	d.drain()
+	shutdown, cancel := context.WithTimeout(context.Background(), shutdownWait)
+	defer cancel()
+	return server.Shutdown(shutdown)
+}
+
+// drain ends each waiting commands call, once.
+func (d *Dispatcher) drain() { d.closingOnce.Do(func() { close(d.closing) }) }
+
 // Close stops the loops and closes the database.
 func (d *Dispatcher) Close() error {
+	d.drain()
 	d.stop()
 	d.loops.Wait()
 	return d.store.close()
@@ -248,9 +396,17 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		writeProblem(w, http.StatusBadRequest, "a Run needs a project and a prompt")
 		return
 	}
-	settings, ok := d.triggerSettings(w, r, p, start.Project)
+	branch, ok := cleanBranch(start.Branch)
+	if !ok {
+		writeProblem(w, http.StatusBadRequest, "the branch must be a branch name, such as main or release/2.0, not "+quote(start.Branch))
+		return
+	}
+	settings, ok := d.triggerSettings(w, r, p.starter(), start.Project)
 	if !ok {
 		return
+	}
+	if branch == "" {
+		branch = settings.BaseBranch
 	}
 	run := storedRun{
 		Run: dispatcherapi.Run{
@@ -264,6 +420,10 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		},
 		organizationID: p.organization.id,
 		projectID:      settings.projectID,
+		repository:     settings.Repository,
+		folder:         settings.Folder,
+		baseBranch:     branch,
+		trigger:        triggerPerson,
 	}
 	if err := d.store.insertRun(run); err != nil {
 		d.serverError(w, "start a Run", err)

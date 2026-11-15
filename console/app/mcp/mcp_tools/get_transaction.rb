@@ -16,6 +16,7 @@ module McpTools
       list_transactions lists the names.
     TEXT
     read_only!
+    reads_one_project!
     takes_project
     argument :name, { type: "string", description: "The Transaction's name, as list_transactions gives it, such as OrdersController#show." }, required: true
     argument :range, ListTransactions::PERFORMANCE_RANGE

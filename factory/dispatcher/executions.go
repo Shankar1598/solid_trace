@@ -11,14 +11,14 @@ import (
 )
 
 // maxReportText is the longest summary or question that a report keeps.
-// The full text also goes to evidence/report.md (ticket 36).
+// The full text also goes to evidence/report.md (the wrapper writes it).
 const maxReportText = 64 << 10
 
 type executionHandler func(w http.ResponseWriter, r *http.Request, e storedExecution)
 
 // wrapper checks that the request comes from the wrapper of the
 // Execution in the path: its Bearer token must be a workload identity JWT
-// that the Runner signed, with the subject that the Runner gave for that
+// that the Runner signed, of the workload that the Runner gave for that
 // Execution. Each other token gets 401, with the same answer, so a caller
 // learns nothing of other Executions.
 func (d *Dispatcher) wrapper(next executionHandler) http.HandlerFunc {
@@ -33,7 +33,7 @@ func (d *Dispatcher) wrapper(next executionHandler) http.HandlerFunc {
 			refuse("no token")
 			return
 		}
-		workload, err := d.identity.workload(r.Context(), strings.TrimSpace(token))
+		identity, err := d.identity.check(r.Context(), strings.TrimSpace(token))
 		if errors.Is(err, errBadIdentity) {
 			refuse(err.Error())
 			return
@@ -62,7 +62,23 @@ func (d *Dispatcher) wrapper(next executionHandler) http.HandlerFunc {
 			d.serverError(w, "read the Execution", err)
 			return
 		}
-		if e.workload == "" || e.workload != workload {
+		if e.workload == "" {
+			refuse("the Execution has no workload")
+			return
+		}
+		// The subject is not enough: on Nomad, each dispatch of a job has
+		// the same subject. The Runner finds the JWT's own workload.
+		workload, err := d.runner.Workload(r.Context(), identity)
+		if errors.Is(err, ErrUnknownWorkload) {
+			refuse(err.Error())
+			return
+		}
+		if err != nil {
+			d.log.Error("could not find the workload of a workload identity", "error", err)
+			writeProblem(w, http.StatusBadGateway, "the Dispatcher could not reach the Runner")
+			return
+		}
+		if workload != e.workload {
 			refuse("the JWT is of another workload")
 			return
 		}
@@ -79,19 +95,12 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 	}
 	settings, err := d.store.settings(e.organizationID, e.projectID)
 	if errors.Is(err, errNotFound) {
-		d.endByDispatcher(e.id, "the Project has no Factory settings")
+		d.endByDispatcher(e.id, "the Project has no Factory settings", nil)
 		writeProblem(w, http.StatusConflict, "the Project has no Factory settings")
 		return
 	}
 	if err != nil {
 		d.serverError(w, "read the Factory settings", err)
-		return
-	}
-	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
-	cloneURL, err := (&forge.Bitbucket{GitURL: d.config.BitbucketGitURL}).CloneURL(settings.Repository)
-	if err != nil {
-		d.endByDispatcher(e.id, err.Error())
-		writeProblem(w, http.StatusConflict, err.Error())
 		return
 	}
 	var token string
@@ -119,7 +128,12 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		d.serverError(w, "open the account's token", err)
 		return
 	}
-	run, err := d.store.startExecution(e.id, d.now())
+	file, err := d.store.factoryFile(e.id)
+	if err != nil {
+		d.serverError(w, "read the Execution's factory file", err)
+		return
+	}
+	run, err := d.store.startExecution(e.id, d.now(), file.limits())
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, errEnded.Error())
 		return
@@ -128,18 +142,57 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		d.serverError(w, "start the Execution", err)
 		return
 	}
+	// Each part of the checkout is the Run's. A Run from before the
+	// Dispatcher kept the repository uses the settings' repository.
+	repository := run.repository
+	if repository == "" {
+		repository = settings.Repository
+	}
+	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
+	gitURL := strings.TrimRight(d.config.BitbucketGitURL, "/")
+	if gitURL == "" {
+		gitURL = forge.BitbucketGitURL
+	}
+	cloneURL, err := (&forge.Bitbucket{GitURL: gitURL}).CloneURL(repository)
+	if err != nil {
+		d.endByDispatcher(e.id, err.Error(), nil)
+		writeProblem(w, http.StatusConflict, err.Error())
+		return
+	}
+	uploads, err := d.sessionToken(r.Context(), e, run.startedAt)
+	if errors.Is(err, errEnded) {
+		writeProblem(w, http.StatusConflict, errEnded.Error())
+		return
+	}
+	if err != nil {
+		d.log.Error("could not make an Execution's token", "execution", e.id, "error", err)
+		d.endByDispatcher(e.id, "the Dispatcher could not make the Execution's token at SolidTrace", nil)
+		writeProblem(w, http.StatusBadGateway, "the Dispatcher could not make the Execution's token at SolidTrace")
+		return
+	}
 	writeJSON(w, http.StatusOK, dispatcherapi.Task{
 		RunID:         e.runID,
 		ExecutionID:   e.id,
 		Prompt:        run.prompt,
-		Repository:    settings.Repository,
+		Repository:    repository,
 		CloneURL:      cloneURL,
-		BaseBranch:    settings.BaseBranch,
+		BaseBranch:    run.baseBranch,
+		Branch:        dispatcherapi.RunBranch(e.runID),
+		GitURL:        gitURL,
+		Project:       run.project,
+		Folder:        run.folder,
 		ForgeUsername: forge.BitbucketTokenUser,
 		ForgeToken:    token,
 		AccountToken:  accountToken,
 		SessionID:     run.sessionID,
 		Resume:        run.resume,
+		IngestURL:     d.config.ingestURL(),
+		Limits:        run.limits,
+		Uploads:       uploads,
+		FactoryFile:   file.Path,
+		Setup:         file.Setup,
+		Checks:        file.Checks,
+		SaveExclude:   file.SaveExclude,
 	})
 }
 
@@ -152,11 +205,15 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 	}
 	report.Summary = strings.TrimSpace(report.Summary)
 	report.Question = strings.TrimSpace(report.Question)
-	if problem := checkReport(report); problem != "" {
+	problem := checkReport(report)
+	if problem == "" {
+		problem = checkEvidence(report)
+	}
+	if problem != "" {
 		writeProblem(w, http.StatusBadRequest, problem)
 		return
 	}
-	err := d.store.saveReport(e.id, report)
+	err := d.store.saveReport(e.id, report, d.now())
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, "the Execution is not running: "+errEnded.Error()+" or has not started")
 		return
@@ -165,6 +222,7 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 		d.serverError(w, "keep the report", err)
 		return
 	}
+	d.afterReport(e)
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -197,7 +255,7 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	}
 	switch end.Reason {
 	case dispatcherapi.EndReported, dispatcherapi.EndNoReport, dispatcherapi.EndHarnessExited,
-		dispatcherapi.EndSetupFailed:
+		dispatcherapi.EndSetupFailed, dispatcherapi.EndStopped, dispatcherapi.EndTimeout:
 	default:
 		writeProblem(w, http.StatusBadRequest, "no end reason "+quote(end.Reason))
 		return
@@ -214,5 +272,8 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 		d.serverError(w, "end the Execution", err)
 		return
 	}
+	// The end step: the wrapper uploaded the last bytes before its end
+	// call, so the Execution's tokens go now.
+	d.revokeTokens(e.id)
 	w.WriteHeader(http.StatusNoContent)
 }

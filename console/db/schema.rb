@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_15_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_15_170000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -81,8 +81,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_15_120000) do
   create_table "comments", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "issue_id", null: false
-    t.integer "organization_user_id", null: false
+    t.integer "organization_user_id"
     t.datetime "updated_at", null: false
+    t.string "run_id"
     t.index ["issue_id"], name: "index_comments_on_issue_id"
     t.index ["organization_user_id"], name: "index_comments_on_organization_user_id"
   end
@@ -143,6 +144,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_15_120000) do
     t.boolean "trace_console", default: true, null: false
     t.datetime "updated_at", null: false
     t.string "dispatcher_url"
+    t.string "dispatcher_webhook_url"
     t.index ["meta_organization_id"], name: "index_instance_settings_on_meta_organization_id"
   end
 
@@ -154,6 +156,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_15_120000) do
     t.string "provider", null: false
     t.json "settings", default: {}
     t.datetime "updated_at", null: false
+    t.string "sender_id"
+    t.text "sender_secret"
     t.index ["organization_id", "provider"], name: "index_integrations_on_organization_id_and_provider"
     t.index ["organization_id"], name: "index_integrations_on_organization_id"
   end

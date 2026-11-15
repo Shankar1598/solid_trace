@@ -60,7 +60,7 @@ module McpTools
         user = server_context[:user]
         CallTimings.mcp_tool(name_value, arguments, user) do
           new(user: user, request_url: server_context[:request_url], arguments: arguments,
-              signed_in_organization: server_context[:organization]).answer
+              signed_in_organization: server_context[:organization], limited_project: server_context[:project]).answer
         end
       end
 
@@ -132,6 +132,16 @@ module McpTools
         @instance_admin_only || false
       end
 
+      # A read tool that reads nothing outside the one Project it is given,
+      # or nothing at all. A token with a Project limit gets only these.
+      def reads_one_project!
+        @reads_one_project = true
+      end
+
+      def reads_one_project?
+        @reads_one_project || false
+      end
+
       # Whether the server lists the tool now.
       def listed?
         !needs_sql_queries? || InstanceSetting.current.sql_queries_enabled?
@@ -149,15 +159,17 @@ module McpTools
     end
 
     # request_url is the address the MCP request reached Console at.
-    # signed_in_organization is an OAuth token's one Organization, or nil
-    # for an API token.
-    attr_reader :user, :request_url, :arguments, :signed_in_organization
+    # signed_in_organization is the token's one Organization, or nil for an
+    # API token with none. limited_project is an API token's Project limit
+    # (mcp:read), or nil.
+    attr_reader :user, :request_url, :arguments, :signed_in_organization, :limited_project
 
-    def initialize(user:, request_url:, arguments: {}, signed_in_organization: nil)
+    def initialize(user:, request_url:, arguments: {}, signed_in_organization: nil, limited_project: nil)
       @user = user
       @request_url = request_url
       @arguments = arguments
       @signed_in_organization = signed_in_organization
+      @limited_project = limited_project
     end
 
     # Console's URL, which the answers' links start with (PublicUrls).
@@ -230,10 +242,17 @@ module McpTools
       end
     end
 
-    # The Project the project argument names, in #organization.
+    # The Project the project argument names, in #organization. A token
+    # with a Project limit reads only that Project.
     def project
-      @project ||= organization.projects.find_by(slug: arguments[:project].to_s) ||
-        raise(ToolError, "No Project #{arguments[:project]} in #{organization.slug}. list_projects lists them.")
+      @project ||= begin
+        found = organization.projects.find_by(slug: arguments[:project].to_s)
+        if limited_project && found != limited_project
+          raise ToolError, "This token reads only the Project #{limited_project.slug} in #{limited_project.organization.slug}."
+        end
+
+        found || raise(ToolError, "No Project #{arguments[:project]} in #{organization.slug}. list_projects lists them.")
+      end
     end
 
     # A Query's leading source, such as ['shop'], as the chart editor reads it.

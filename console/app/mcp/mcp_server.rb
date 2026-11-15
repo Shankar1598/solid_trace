@@ -38,6 +38,8 @@ module McpServer
     McpTools::ListIssues,
     McpTools::GetIssue,
     McpTools::GetTrace,
+    McpTools::ListAgentSessions,
+    McpTools::GetAgentSession,
     McpTools::ListRuns,
     McpTools::GetRun,
     McpTools::UpdateIssue,
@@ -65,6 +67,7 @@ module McpServer
     query_logs runs a Query on a Project's Logs; list_fields lists the names a Query reads, and query_language_reference explains the language.
     list_transactions lists a Project's traced requests and jobs by the time they take, and get_transaction finds where one's time goes.
     get_issue's trace_logs finds an Event's Logs, and get_trace a trace's Spans, Issues and Logs across the Organization's Projects.
+    list_agent_sessions lists the recorded Agent sessions of coding agents, and get_agent_session reads one's timeline in pages, or searches it.
     list_runs lists the factory's Runs, and get_run reads one Run's Executions, report and events.
     An answer ends with a link to the Console page that shows it, for the user to open.
   TEXT
@@ -79,16 +82,26 @@ module McpServer
   #
   # read_only is for a token with mcp:read and not mcp: the server then has
   # only the read tools, so no write tool can run.
-  def self.build(user:, request_url:, organization: nil, read_only: false)
+  #
+  # project is the Project limit of such a token, such as an Issue Run's
+  # token: the server then has only the read tools that read nothing
+  # outside one Project (McpTools::Base.reads_one_project!), in its
+  # Organization, and each refuses another Project. So the token reads no
+  # other Project, the Agent Project included.
+  def self.build(user:, request_url:, organization: nil, read_only: false, project: nil)
+    organization = project.organization if project
     tools = TOOLS.select(&:listed?)
     tools = tools.reject(&:instance_admin_only?) if organization
-    tools = tools.select(&:read_only?) if read_only
+    tools = tools.select(&:read_only?) if read_only || project
+    tools = tools.select(&:reads_one_project?) if project
+    instructions = INSTRUCTIONS
+    instructions += "This token reads only the Project #{project.slug} in #{organization.slug}.\n" if project
     MCP::Server.new(
       name: "solidtrace",
       title: "SolidTrace",
-      instructions: INSTRUCTIONS,
+      instructions: instructions,
       tools: tools,
-      server_context: { user: user, request_url: request_url, organization: organization },
+      server_context: { user: user, request_url: request_url, organization: organization, project: project },
     )
   end
 end

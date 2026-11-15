@@ -54,7 +54,19 @@ type Recorder struct {
 	answers  map[string]Answer
 	calls    []Call
 	projects map[string][]Project
+	// runEvents are the run events that the recorder accepted, in the
+	// order they came; eventStoreDown makes it refuse them.
+	runEvents      []map[string]any
+	eventStoreDown bool
+
+	refuseChildren int
+	children       []*ChildToken
+	uploads        []Upload
+	files          map[string]map[string]*storedFile
 }
+
+// RunEventsPath is EventStore's route for the Dispatcher's run events.
+const RunEventsPath = "/api/agent/v1/run-events"
 
 // Project is one Project in the answer of the MCP server's list_projects.
 type Project struct {
@@ -65,7 +77,8 @@ type Project struct {
 
 // New starts a recorder that accepts token checks from callerToken.
 func New(callerToken string) *Recorder {
-	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{}}
+	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{},
+		files: map[string]map[string]*storedFile{}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	return r
 }
@@ -116,6 +129,24 @@ func (r *Recorder) removeProject(organization string, id int64) {
 	r.projects[organization] = kept
 }
 
+// EventStoreDown makes the run events route answer 503 (down true), as
+// SolidTrace does while EventStore is down, or accept them again. Token
+// checks still work: Console is a separate process.
+func (r *Recorder) EventStoreDown(down bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.eventStoreDown = down
+}
+
+// RunEvents are the Logs that the run events route accepted, oldest
+// first: the Dispatcher's run events and its warnings. A repeat that the
+// Dispatcher sent again is there two times.
+func (r *Recorder) RunEvents() []map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]map[string]any(nil), r.runEvents...)
+}
+
 // Calls are the requests that the factory sent, oldest first.
 func (r *Recorder) Calls() []Call {
 	r.mu.Lock()
@@ -135,7 +166,7 @@ func (r *Recorder) CallsTo(path string) []Call {
 }
 
 func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
-	body, _ := io.ReadAll(io.LimitReader(req.Body, 1<<20))
+	body, _ := io.ReadAll(io.LimitReader(req.Body, 10<<20))
 	call := Call{Method: req.Method, Path: req.URL.Path, Authorization: req.Header.Get("Authorization"), Body: body}
 	if form, err := url.ParseQuery(string(body)); err == nil {
 		call.Form = form
@@ -152,6 +183,18 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 		// the CLI's sign-in, as SolidTrace does for a revoked token.
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+		return
+	}
+	if req.Method == http.MethodPost && req.URL.Path == RunEventsPath {
+		r.serveRunEvents(w, call)
+		return
+	}
+	if req.URL.Path == ChildTokensPath || strings.HasPrefix(req.URL.Path, ChildTokensPath+"/") {
+		r.serveChildTokens(w, req, call)
+		return
+	}
+	if strings.HasPrefix(req.URL.Path, AgentSessionsPath) {
+		r.serveAgentSessions(w, req, call)
 		return
 	}
 	if req.Method == http.MethodPost && req.URL.Path == "/mcp" {
@@ -224,4 +267,31 @@ func (r *Recorder) serveMCP(w http.ResponseWriter, call Call) {
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{
 		"content": []map[string]string{{"type": "text", "text": text}}, "isError": isError}})
+}
+
+// serveRunEvents takes a batch of run events (a JSON array of Logs) from
+// the Dispatcher's active token, and answers with EventStore's counts.
+func (r *Recorder) serveRunEvents(w http.ResponseWriter, call Call) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.eventStoreDown {
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "the recorder's EventStore is down"})
+		return
+	}
+	_, active := r.answers[r.CallerToken]
+	if call.Authorization != "Bearer "+r.CallerToken || !active {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_token"})
+		return
+	}
+	var logs []map[string]any
+	if err := json.Unmarshal(call.Body, &logs); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "the recorder takes a JSON array of Logs"})
+		return
+	}
+	r.runEvents = append(r.runEvents, logs...)
+	_ = json.NewEncoder(w).Encode(map[string]int{"accepted": len(logs), "dropped": 0, "truncated": 0})
 }

@@ -13,6 +13,7 @@ module McpTools
                 "The counts come from Logs as they arrive, and Attributes whose values are JSON, such as arrays, aren't " \
                 "listed. A Query still reads them."
     read_only!
+    reads_one_project!
     takes_project
     takes_range
     argument :range, RANGE.merge(description: RANGE[:description].sub("1h when", "#{DEFAULT_SPAN} when"))

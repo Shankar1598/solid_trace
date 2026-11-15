@@ -26,6 +26,8 @@ factory/local/stack clean   # the same, and delete its images (about 1 GB)
 factory/local/smoke         # start the stack, check it, and stop it again
 ```
 
+The smoke check also runs the cgroup cases of the wrapper's kill boundary (`factory/internal/killboundary`) as root in a raw_exec task, with the processes of each case as the run user (`checks/kill-boundary-tests.nomad.hcl`). It builds their test binary with Go and no cgo, and copies it to the agent machine. With no Go, that check skips. Only this check: `SMOKE_ONLY='kill boundary' factory/local/smoke`.
+
 The images and Docker's build cache take about 1.5 GB of disk. When the disk is nearly full, use `stack clean` when you finish.
 
 The compose project is `factory-local`. It has its own containers, networks and volumes, and publishes no port on the host. It does not touch the dev SolidTrace's containers or data, or a flow stack.
@@ -36,6 +38,21 @@ Other commands:
 factory/local/stack nomad job status    # the Nomad CLI on the server, with the management token
 factory/local/stack shell agent         # a shell on the agent machine as the run user
 ```
+
+`FACTORY_STACK_PROJECT=<name>` gives the stack another compose project, so that an agent in a worktree does not use the stack of another agent.
+
+## The Runner's tests
+
+The Nomad Runner's tests (`factory/nomadrunner`, build tag `factorystack`) run against this stack's Nomad. They do not skip: with no stack, they fail. One command starts a stack with the compose project `factory-runner-test`, runs them, and stops the stack:
+
+```sh
+factory/local/test-runner                  # all of them
+factory/local/test-runner -run Lost ./nomadrunner/
+```
+
+For these tests only, `FACTORY_STACK_NOMAD_API=1` adds [compose.nomad-api.yml](compose.nomad-api.yml): a forwarder that publishes Nomad's HTTP API on a free port of 127.0.0.1, because the host has no address on the internal factory network. Then `stack nomad-env` gives `NOMAD_ADDR`, `NOMAD_TOKEN` and `AGENT_MACHINE`. The test process is the Dispatcher. Each task prints what it got (such as its workload identity JWT) in place of the wrapper, and the test reads it through Nomad's API. The lost machine test pauses the agent machine's container (`docker pause`) until Nomad marks its node down, then continues it, and checks that the lost Execution's task stops and that Nomad does not place it again. These tests are also a step of the release suites ([docs/agents/testing.md](../../docs/agents/testing.md)).
+
+The agent machine's Nomad client has `max_kill_timeout = "120s"`, as the Runner's job needs ([agent-machine/client.hcl](agent-machine/client.hcl)).
 
 ## The network rules
 
@@ -82,3 +99,15 @@ The wrapper deletes the run user's home after each Execution, and it sets `CLAUD
 - `/etc/factory/claude.json`: the template of the run user's `.claude.json`, with the onboarding done. For each Execution, the wrapper copies it to `$CLAUDE_CONFIG_DIR/.claude.json` and adds `projects["<checkout>"].hasTrustDialogAccepted`. Claude Code trusts a checkout only at its exact path.
 
 The smoke check starts Claude Code in the same way: from a new, empty home and a new `CLAUDE_CONFIG_DIR`.
+
+## The wrapper's fixed paths
+
+The paths are the same on each agent machine, so that a resume works on any of them:
+
+| Path | Default (environment variable) | After the Execution |
+|---|---|---|
+| The checkout of a repository: `<workspace>/<host>/<workspace>/<name>`, on the Run's branch `agent/<run id>` | `/workspace` (`WRAPPER_WORKSPACE`) | Deleted |
+| The run user's home: `HOME`, `.gitconfig` (the credential helper, for the forge's git URL only, and git over ssh rewritten to HTTPS), and `CLAUDE_CONFIG_DIR` = `<home>/.claude` | `/home/agent` (`WRAPPER_HOME`) | Deleted |
+| The caches: `XDG_CACHE_HOME` | `/var/cache/factory` (`WRAPPER_CACHE`) | Kept |
+
+`CLAUDE_CODE_PROJECT_DIR_NAME` is the repository with each character that is not a letter or a digit changed to `-`, such as `bitbucket-org-team-shop`. In a monorepo, the agent's working directory is the Project's folder in the checkout. Before each end, the wrapper pushes each commit of the Run's branch that is not on the remote. This push reads no git configuration or hook that the agent can change. When it fails twice (for example, a person pushed to the branch), the commits go to `refs/agent-wip/<run id>`, and the Execution's end reason says so. The setup first deletes a workspace and a home that an earlier Execution left.

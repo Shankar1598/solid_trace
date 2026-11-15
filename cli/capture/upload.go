@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/solidtrace/cli/agentapi"
@@ -47,6 +48,8 @@ type upload struct {
 	settledBefore time.Time
 	// pending is true when a file is left for a later call.
 	pending bool
+	// forRun is set for a Run's upload (UploadRun).
+	forRun *RunUpload
 }
 
 func (u *upload) run(ctx context.Context) error {
@@ -73,10 +76,11 @@ func (u *upload) run(ctx context.Context) error {
 			err = u.whole(ctx, path, previous, next)
 		}
 		var answer *agentapi.Error
-		if errors.As(err, &answer) && (answer.Status == http.StatusConflict || answer.Status == http.StatusBadRequest) {
+		if errors.Is(err, errNotRegular) ||
+			errors.As(err, &answer) && (answer.Status == http.StatusConflict || answer.Status == http.StatusBadRequest) {
 			// The server has other bytes than the offsets call said (the
-			// next call asks again), or refuses this path: the other paths
-			// still go.
+			// next call asks again), or refuses this path, or a Run's file
+			// is not a regular file now: the other paths still go.
 			u.c.Log("%s: %s: %v", u.in.SessionID, path, err)
 			u.pending = true
 			continue
@@ -100,7 +104,23 @@ func (u *upload) paths() ([]string, error) {
 	if info, err := os.Lstat(filepath.Join(u.root, u.in.SessionID+".jsonl")); err == nil && info.Mode().IsRegular() {
 		paths = append(paths, u.in.SessionID+".jsonl")
 	}
-	dir := filepath.Join(u.root, u.in.SessionID)
+	dirs := []string{u.in.SessionID}
+	if u.forRun != nil {
+		dirs = append(dirs, u.forRun.Extra...)
+	}
+	for _, dir := range dirs {
+		var err error
+		if paths, err = u.walk(paths, filepath.Join(u.root, dir)); err != nil {
+			return nil, err
+		}
+	}
+	// WalkDir gives the files under each directory in lexical order.
+	return paths, nil
+}
+
+// walk adds each regular file under dir, relative to the project
+// directory. A dir that is not there adds nothing.
+func (u *upload) walk(paths []string, dir string) ([]string, error) {
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if p == dir && errors.Is(err, fs.ErrNotExist) {
@@ -120,7 +140,6 @@ func (u *upload) paths() ([]string, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("read the Agent session directory: %w", err)
 	}
-	// WalkDir gives the files under <id>/ in lexical order.
 	return paths, nil
 }
 
@@ -128,6 +147,9 @@ func (u *upload) send(ctx context.Context, unit agentapi.Unit) (agentapi.Uploade
 	unit.Harness = Harness
 	unit.Repository = u.repo.Name
 	unit.Folder = u.repo.Folder
+	if u.forRun != nil {
+		unit.RunID, unit.Project = u.forRun.RunID, u.forRun.Project
+	}
 	return u.c.API.Upload(ctx, u.in.SessionID, unit)
 }
 
@@ -135,7 +157,7 @@ func (u *upload) send(ctx context.Context, unit agentapi.Unit) (agentapi.Uploade
 // offset. A file shorter than that end was trimmed: it goes again from
 // offset 0 as a new version.
 func (u *upload) lines(ctx context.Context, path string) error {
-	f, err := os.Open(filepath.Join(u.root, filepath.FromSlash(path)))
+	f, err := u.open(path)
 	if err != nil {
 		return err
 	}
@@ -155,7 +177,7 @@ func (u *upload) lines(ctx context.Context, path string) error {
 		}
 	}
 	for offset < size {
-		body, unitSize, err := nextLines(f, offset, size)
+		body, unitSize, err := nextLines(ctx, f, offset, size)
 		if err != nil || body == nil {
 			return err
 		}
@@ -170,8 +192,9 @@ func (u *upload) lines(ctx context.Context, path string) error {
 
 // nextLines reads the whole lines from offset, at most UnitLimit bytes.
 // A line longer than UnitLimit gives its first UnitLimit bytes and its
-// full size; else size is 0. A line with no newline yet gives nil.
-func nextLines(f *os.File, offset, end uint64) (body []byte, size uint64, err error) {
+// full size; else size is 0. A line with no newline yet gives nil. The
+// search for the end of a long line stops when ctx ends.
+func nextLines(ctx context.Context, f *os.File, offset, end uint64) (body []byte, size uint64, err error) {
 	buf := make([]byte, min(end-offset, UnitLimit))
 	if _, err := f.ReadAt(buf, int64(offset)); err != nil {
 		return nil, 0, err
@@ -185,6 +208,9 @@ func nextLines(f *os.File, offset, end uint64) (body []byte, size uint64, err er
 	// One line over UnitLimit: find its end.
 	chunk := make([]byte, 1<<20)
 	for at := offset + UnitLimit; at < end; {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
 		n, err := f.ReadAt(chunk[:min(uint64(len(chunk)), end-at)], int64(at))
 		if i := bytes.IndexByte(chunk[:n], '\n'); i >= 0 {
 			return buf, at + uint64(i) + 1 - offset, nil
@@ -204,8 +230,7 @@ func nextLines(f *os.File, offset, end uint64) (body []byte, size uint64, err er
 // does not have that hash, and the file did not change since the last
 // attempt or the Agent session ends. A new hash is a new version.
 func (u *upload) whole(ctx context.Context, path string, previous, next state) error {
-	full := filepath.Join(u.root, filepath.FromSlash(path))
-	f, err := os.Open(full)
+	f, err := u.open(path)
 	if err != nil {
 		return err
 	}
@@ -220,7 +245,7 @@ func (u *upload) whole(ctx context.Context, path string, previous, next state) e
 	seen := seenFile{Size: info.Size(), ModTime: info.ModTime().UnixNano()}
 	if before, ok := previous.Seen[path]; ok && before.Size == seen.Size && before.ModTime == seen.ModTime {
 		seen.Hash = before.Hash
-	} else if seen.Hash, err = hashOf(f); err != nil {
+	} else if seen.Hash, err = hashOf(ctx, f); err != nil {
 		return err
 	}
 	next.Seen[path] = seen
@@ -249,12 +274,58 @@ func (u *upload) whole(ctx context.Context, path string, previous, next state) e
 	return err
 }
 
-func hashOf(f *os.File) (string, error) {
+// errNotRegular is a path of a Run's Agent session that is not a regular
+// file when it is open.
+var errNotRegular = errors.New("not a regular file")
+
+// open opens a path of the Agent session. A Run's upload opens it inside
+// the project directory only, and only a regular file: the agent makes
+// these files, and can swap one for a symbolic link to a file outside the
+// directory, or for a FIFO, after the walk. O_NONBLOCK stops the open of
+// a FIFO with no writer from waiting.
+func (u *upload) open(path string) (*os.File, error) {
+	if u.forRun == nil {
+		return os.Open(filepath.Join(u.root, filepath.FromSlash(path)))
+	}
+	root, err := os.OpenRoot(u.root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		f.Close()
+		if err == nil {
+			err = fmt.Errorf("%s: %w", path, errNotRegular)
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+// hashOf is the content hash of f. It stops when ctx ends.
+func hashOf(ctx context.Context, f *os.File) (string, error) {
 	h := sha256.New()
-	if _, err := io.Copy(h, io.NewSectionReader(f, 0, 1<<62)); err != nil {
+	if _, err := io.Copy(h, ctxReader{ctx, io.NewSectionReader(f, 0, 1<<62)}); err != nil {
 		return "", err
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ctxReader stops a read when its context ends.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r ctxReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 func (u *upload) readState() state {

@@ -25,6 +25,7 @@ module McpTools
       environments lists the range's environments. get_transaction breaks one name down.
     TEXT
     read_only!
+    reads_one_project!
     takes_project
     argument :range, PERFORMANCE_RANGE
     argument :from, FROM

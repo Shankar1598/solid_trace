@@ -37,7 +37,17 @@ func fieldError(field, message string) *apiError {
 	return &apiError{http.StatusBadRequest, field + ": " + message, map[string][]string{field: {message}}}
 }
 
+// rawFile is an answer that is a file's content, not JSON (the src
+// endpoint).
+type rawFile []byte
+
 func writeAnswer(w http.ResponseWriter, status int, body any) {
+	if raw, ok := body.(rawFile); ok {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(status)
+		w.Write(raw)
+		return
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		status, data = http.StatusInternalServerError, []byte(`{"type":"error","error":{"message":"the answer is not JSON"}}`)
@@ -57,6 +67,14 @@ func (f *Forge) api(h func(r *http.Request, repo string) (int, any, *apiError)) 
 		if _, err := os.Stat(f.bare(repo)); err != nil {
 			writeAnswer(w, http.StatusNotFound, (&apiError{message: "Repository " + repo + " not found"}).body())
 			return
+		}
+		f.mu.Lock()
+		held := f.holdNext
+		f.holdNext = nil
+		f.mu.Unlock()
+		if held != nil {
+			close(held.reached)
+			<-held.release
 		}
 		// The body holds the Forge's state, so encode it while f.mu is
 		// held: a test helper can change the same PR.
@@ -82,6 +100,20 @@ func (f *Forge) FailNext(status int, message string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failNext = &apiError{status: status, message: message}
+}
+
+// HoldNextAPI makes the next API call wait until release, as a slow
+// forge. The channel closes when the call arrives. After the release the
+// forge does the call, also when its client went: a slow forge can open
+// a PR that its client did not wait for. The end of the test releases it.
+func (f *Forge) HoldNextAPI() (reached <-chan struct{}, release func()) {
+	h := &hang{reached: make(chan struct{}), release: make(chan struct{})}
+	f.mu.Lock()
+	f.holdNext = h
+	f.mu.Unlock()
+	release = func() { h.once.Do(func() { close(h.release) }) }
+	f.t.Cleanup(release)
+	return h.reached, release
 }
 
 // account is Bitbucket's account object of an author.
@@ -297,6 +329,39 @@ func (f *Forge) postComment(r *http.Request, repo string) (int, any, *apiError) 
 		c.File, c.Line = in.Inline.Path, in.Inline.To
 	}
 	return http.StatusCreated, commentJSON(p.ID, f.addComment(repo, p.ID, c)), nil
+}
+
+// getRepository is GET /repositories/{workspace}/{repo_slug}: the
+// repository's main branch is the bare repository's HEAD.
+func (f *Forge) getRepository(r *http.Request, repo string) (int, any, *apiError) {
+	head, err := f.git2(f.bare(repo), "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return 0, nil, &apiError{status: http.StatusInternalServerError, message: head}
+	}
+	return http.StatusOK, map[string]any{"type": "repository", "full_name": repo,
+		"mainbranch": map[string]any{"type": "branch", "name": strings.TrimSpace(head)}}, nil
+}
+
+// getBranch is GET /repositories/{workspace}/{repo_slug}/refs/branches/{name}.
+func (f *Forge) getBranch(r *http.Request, repo string) (int, any, *apiError) {
+	name := r.PathValue("name")
+	hash, err := f.git2(f.bare(repo), "rev-parse", "--verify", "-q", "refs/heads/"+name+"^{commit}")
+	if err != nil {
+		return 0, nil, &apiError{status: http.StatusNotFound, message: "Branch \"" + name + "\" not found"}
+	}
+	return http.StatusOK, map[string]any{"type": "branch", "name": name,
+		"target": map[string]any{"type": "commit", "hash": strings.TrimSpace(hash)}}, nil
+}
+
+// getSource is GET /repositories/{workspace}/{repo_slug}/src/{commit}/{path}:
+// a file's raw content at the commit, and 404 when it is not there.
+func (f *Forge) getSource(r *http.Request, repo string) (int, any, *apiError) {
+	commit, path := r.PathValue("commit"), r.PathValue("path")
+	out, err := f.git2(f.bare(repo), "cat-file", "blob", commit+":"+path)
+	if err != nil {
+		return 0, nil, &apiError{status: http.StatusNotFound, message: "No such file or directory: " + path}
+	}
+	return http.StatusOK, rawFile(out), nil
 }
 
 // addComment keeps a comment. The caller holds f.mu.

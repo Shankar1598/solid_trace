@@ -1,0 +1,30 @@
+# The public route to the Dispatcher's webhook listener, for Caddy on the server VM.
+#
+# Caddy gets a TLS certificate for the public name and sends only /webhooks/* to the
+# webhook listener. Each other path gets 404 from Caddy, and the webhook listener
+# also answers 404 to each path other than POST /webhooks/<kind>/<id>. The
+# Dispatcher's API (the private listener) is never public.
+#
+# Set these in the Dispatcher's configuration:
+#   DISPATCHER_WEBHOOK_LISTEN=127.0.0.1:7601
+#   DISPATCHER_WEBHOOK_URL=https://factory.example.com
+# Then 'solidtrace connections list' shows each connection's webhook URL, such as
+# https://factory.example.com/webhooks/<kind>/<connection id>, to paste into its
+# service.
+#
+# An operator can use their own load balancer in place of Caddy, with the same rule:
+# only /webhooks/* from the public name, to DISPATCHER_WEBHOOK_LISTEN.
+
+factory.example.com {
+	handle /webhooks/* {
+		# The Dispatcher refuses a body over 1 MiB with 413; Caddy refuses
+		# a larger one before it reads it.
+		request_body {
+			max_size 2MB
+		}
+		reverse_proxy 127.0.0.1:7601
+	}
+	handle {
+		respond 404
+	}
+}

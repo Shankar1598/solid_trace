@@ -111,12 +111,19 @@ func orText(value, none string) string {
 	return value
 }
 
-// connections is 'connections list' and 'connections set NAME --kind
-// bitbucket', which reads the token from stdin, so that it is not in the
-// shell's history or in the list of processes.
+// connections is 'connections list', 'connections set NAME --kind
+// bitbucket', which reads the token from stdin, and 'connections
+// webhook-secret NAME', which reads the webhook secret from stdin, so that
+// neither is in the shell's history or in the list of processes.
+// 'connections add linear NAME' installs the Linear app (addLinear).
 func connections(ctx context.Context, args []string, env Env) int {
-	const use = "solidtrace connections: give list, or set NAME --kind bitbucket with the token on stdin"
-	if len(args) == 0 || (args[0] != "list" && args[0] != "set") {
+	const use = "solidtrace connections: give list, set NAME --kind bitbucket with the token on stdin, " +
+		"webhook-secret NAME with the webhook secret on stdin, " +
+		"or add linear NAME --client-id ID with the client secret on stdin"
+	if len(args) > 0 && args[0] == "add" {
+		return addLinear(ctx, args[1:], env)
+	}
+	if len(args) == 0 || (args[0] != "list" && args[0] != "set" && args[0] != "webhook-secret") {
 		fmt.Fprintln(env.Stderr, use)
 		return 2
 	}
@@ -155,6 +162,26 @@ func connections(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintf(env.Stdout, "The %s connection %s is saved. The Dispatcher keeps its token encrypted.\n", c.Kind, c.Name)
 		return 0
 	}
+	if verb == "webhook-secret" {
+		secret, err := readToken(env.Stdin)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "solidtrace connections webhook-secret: give the webhook secret on stdin, "+
+				"such as: solidtrace connections webhook-secret NAME < secret-file\n")
+			return 2
+		}
+		c, err := client.SaveWebhookSecret(ctx, positional[0], secret)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "solidtrace connections webhook-secret: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(env.Stdout, "The webhook secret of the connection %s is saved. The Dispatcher keeps it encrypted.\n", c.Name)
+		if c.WebhookURL != "" {
+			fmt.Fprintf(env.Stdout, "Its webhook URL: %s\n", c.WebhookURL)
+		} else {
+			fmt.Fprintln(env.Stdout, "It has no webhook URL: the Dispatcher's configuration has no public webhook URL.")
+		}
+		return 0
+	}
 	list, err := client.Connections(ctx)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "solidtrace connections list: %v\n", err)
@@ -165,9 +192,20 @@ func connections(ctx context.Context, args []string, env Env) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tKIND\tSAVED\tBY")
+	fmt.Fprintln(tw, "NAME\tKIND\tSAVED\tBY\tLAST WEBHOOK\tWEBHOOK URL")
 	for _, c := range list {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.Name, c.Kind, c.UpdatedAt.UTC().Format(timeFormat), c.UpdatedBy.Name)
+		last, url := "-", "-"
+		if c.WebhookURL != "" {
+			last, url = "never", c.WebhookURL
+			if !c.WebhookSecret {
+				url += " (no secret)"
+			}
+		}
+		if c.LastWebhookAt != nil {
+			last = c.LastWebhookAt.UTC().Format(timeFormat)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", c.Name, c.Kind, c.UpdatedAt.UTC().Format(timeFormat), c.UpdatedBy.Name,
+			last, url)
 	}
 	tw.Flush()
 	return 0

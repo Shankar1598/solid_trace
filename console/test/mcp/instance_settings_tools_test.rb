@@ -42,7 +42,7 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
       "logs_text_match_budget_mb" => 4096, "logs_read_threads" => 0, "local_cache_hours" => 24,
       "console_url" => nil, "console_url_fallback" => { "url" => "http://console.test", "source" => "request" },
       "ingest_url" => nil, "ingest_url_fallback" => { "url" => "http://console.test:4000", "source" => "console_url" },
-      "dispatcher_url" => nil, "redaction_patterns" => [], "redaction_defaults" => InstanceSetting::REDACTION_DEFAULTS },
+      "dispatcher_url" => nil, "dispatcher_webhook_url" => nil, "redaction_patterns" => [], "redaction_defaults" => InstanceSetting::REDACTION_DEFAULTS },
       answer.json["editable"])
     assert_equal({ "open" => false, "command" => "bin/rails instance_settings:set SIGN_UP_OPEN=true|false" },
       answer.json["sign_up"])
@@ -268,6 +268,23 @@ class McpInstanceSettingsToolsTest < ActiveSupport::TestCase
 
     answer = call_tool(:update_instance_settings, user: @instance_admin, dispatcher_url: "")
     assert_nil answer.json.dig("editable", "dispatcher_url")
+  end
+
+  test "update_instance_settings sets the Dispatcher's public webhook URL, and refuses one that is not http(s)" do
+    answer = call_tool(:update_instance_settings, user: @instance_admin, dispatcher_webhook_url: "https://factory.example.com/")
+    assert_not answer.error?, answer.text
+    assert_equal "https://factory.example.com", answer.json.dig("editable", "dispatcher_webhook_url")
+
+    answer = call_tool(:update_instance_settings, user: @instance_admin, dispatcher_webhook_url: "ftp://factory.example.com")
+    assert answer.error?
+    assert_match "must be http:// or https://", answer.text
+
+    answer = call_tool(:update_instance_settings, user: @org_admin, dispatcher_webhook_url: "http://198.51.100.92:8080")
+    assert answer.error?
+    assert_equal "https://factory.example.com", InstanceSetting.current.dispatcher_webhook_url
+
+    answer = call_tool(:update_instance_settings, user: @instance_admin, dispatcher_webhook_url: "")
+    assert_nil answer.json.dig("editable", "dispatcher_webhook_url")
   end
 
   test "an Organization admin who isn't an instance admin is refused by each tool, and changes nothing" do
