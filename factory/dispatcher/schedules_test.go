@@ -251,6 +251,54 @@ func TestAnIntervalShorterThanTheMinimumIsRefusedAtSaveAndTheOperatorCanChangeIt
 	}
 }
 
+func TestAClockTimeThatComesTwoTimesWhenTheClocksGoBackFiresOneTime(t *testing.T) {
+	env := newEnv(t)
+	// On Sunday 2027-11-07 the clocks of New York go back at 02:00 EDT:
+	// 01:30 comes at 05:30 UTC (EDT) and again at 06:30 UTC (EST).
+	env.Clock.Advance(time.Date(2027, 11, 6, 12, 0, 0, 0, time.UTC).Sub(env.Clock.Now()))
+	ana := env.Member("Ana")
+	s := makeSchedule(t, ana, dispatcherapi.SaveSchedule{Cron: "30 1 * * *", TimeZone: "America/New_York"})
+	first := time.Date(2027, 11, 7, 5, 30, 0, 0, time.UTC)
+	if s.NextAt == nil || !s.NextAt.Equal(first) {
+		t.Fatalf("the next time is %v, want %s", s.NextAt, first)
+	}
+	env.Clock.Advance(first.Sub(env.Clock.Now()))
+	env.CheckSchedules()
+	runs := scheduleRuns(t, ana, s.ID)
+	if len(runs) != 1 {
+		t.Fatalf("at 01:30 EDT the schedule has %d Runs, want 1", len(runs))
+	}
+	tomorrow := time.Date(2027, 11, 8, 6, 30, 0, 0, time.UTC)
+	if got := getSchedule(t, ana, s.ID); got.NextAt == nil || !got.NextAt.Equal(tomorrow) {
+		t.Errorf("after 01:30 EDT the next time is %v, want 01:30 EST of the next day (%s)", got.NextAt, tomorrow)
+	}
+	env.Clock.Advance(90 * time.Minute)
+	env.CheckSchedules()
+	if runs := scheduleRuns(t, ana, s.ID); len(runs) != 1 {
+		t.Errorf("at 01:30 EST of the same day the schedule has %d Runs, want 1", len(runs))
+	}
+	if strings.Contains(env.Logs(), "skipped: last Run is active") {
+		t.Errorf("the second 01:30 fired: it gave a skip warning, as the first Run is active")
+	}
+}
+
+func TestADailyScheduleInATimeZoneWithClockChangesPassesAMinimumOfTwoHours(t *testing.T) {
+	env := newEnv(t)
+	env.Config.ScheduleMinInterval = 2 * time.Hour
+	env.Restart()
+	ana := env.Member("Ana")
+	for _, zone := range []string{"America/New_York", "Europe/Berlin"} {
+		save := dispatcherapi.SaveSchedule{Project: "checkout", Name: "Daily", Cron: "30 1 * * *", TimeZone: zone, Prompt: "p"}
+		if zone == "Europe/Berlin" {
+			save.Cron = "30 2 * * *"
+		}
+		if a := ana.API("POST", "/api/v1/schedules", save); a.Status != http.StatusCreated {
+			t.Errorf("a daily schedule at %s in %s with a minimum of 2 hours: %d %s, want 201", save.Cron, zone,
+				a.Status, a.Body)
+		}
+	}
+}
+
 func TestASaveRefusesAWrongScheduleAndNamesTheValue(t *testing.T) {
 	env := newEnv(t)
 	env.SolidTraceProject("bare")

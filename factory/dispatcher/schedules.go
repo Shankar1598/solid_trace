@@ -186,12 +186,12 @@ func (d *Dispatcher) fire(id string, now time.Time) (bool, error) {
 func fireTimes(expr *cronexpr.Expression, loc *time.Location, nextAt, now time.Time) (time.Time, *time.Time) {
 	t := nextAt.In(loc)
 	if cutoff := now.Add(-missedLimit).In(loc); !t.After(cutoff) {
-		t = expr.Next(cutoff)
+		t = nextAfter(expr, loc, cutoff)
 	}
 	var fired time.Time
 	for !t.IsZero() && !t.After(now) {
 		fired = t
-		t = expr.Next(t)
+		t = nextAfter(expr, loc, t)
 	}
 	if t.IsZero() {
 		return fired.UTC(), nil
@@ -202,12 +202,39 @@ func fireTimes(expr *cronexpr.Expression, loc *time.Location, nextAt, now time.T
 
 // nextFire is the first fire time after now (nil for none).
 func nextFire(expr *cronexpr.Expression, loc *time.Location, now time.Time) *time.Time {
-	t := expr.Next(now.In(loc))
+	t := nextAfter(expr, loc, now)
 	if t.IsZero() {
 		return nil
 	}
 	t = t.UTC()
 	return &t
+}
+
+// nextAfter is the first fire time after t in loc (zero for none). A clock
+// time that comes two times, when the clocks go back, fires one time
+// only: at the first of the two, as cron does. cronexpr gives both.
+func nextAfter(expr *cronexpr.Expression, loc *time.Location, t time.Time) time.Time {
+	n := expr.Next(t.In(loc))
+	for !n.IsZero() && repeatedClockTime(n, loc) {
+		n = expr.Next(n)
+	}
+	return n
+}
+
+// repeatedClockTime is true when the clock time of t in loc came before,
+// in the hours before t, at an earlier instant: t is in the hour that
+// comes again when the clocks go back.
+func repeatedClockTime(t time.Time, loc *time.Location) bool {
+	t = t.In(loc)
+	_, offset := t.Zone()
+	_, before := t.Add(-6 * time.Hour).Zone()
+	if before <= offset {
+		return false
+	}
+	earlier := t.Add(-time.Duration(before-offset) * time.Second)
+	y1, m1, d1 := earlier.Date()
+	y2, m2, d2 := t.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2 && earlier.Hour() == t.Hour() && earlier.Minute() == t.Minute()
 }
 
 // parseSchedule reads a five-field cron expression and an IANA time zone.
@@ -233,14 +260,14 @@ func parseSchedule(cron, zone string) (*cronexpr.Expression, *time.Location, err
 // limit. It is 0 when there are fewer than two fire times.
 func shortestGap(expr *cronexpr.Expression, loc *time.Location, from time.Time, limit time.Duration) time.Duration {
 	const scanFires = 10000
-	t := expr.Next(from.In(loc))
+	t := nextAfter(expr, loc, from)
 	if t.IsZero() {
 		return 0
 	}
 	until := t.AddDate(1, 0, 1)
 	var shortest time.Duration
 	for range scanFires {
-		n := expr.Next(t)
+		n := nextAfter(expr, loc, t)
 		if n.IsZero() || n.After(until) {
 			break
 		}
