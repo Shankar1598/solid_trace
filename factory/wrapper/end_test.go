@@ -292,3 +292,50 @@ func TestTheWrapperRefusesToStartWhenItCannotMakeTheChildCgroup(t *testing.T) {
 		t.Errorf("the wrapper cloned with no kill boundary")
 	}
 }
+
+// A release run sets killboundary.EnvRequired: with no kill boundary, the
+// wrapper's tests then fail, and a skip cannot look like a pass.
+func TestWithNoKillBoundaryTheTestsFailWhenTheBoundaryIsRequired(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write to each cgroup")
+	}
+	if err := killboundary.Check(); err != nil {
+		t.Skipf("no kill boundary here to make a read-only cgroup in: %v", err)
+	}
+	// This test binary runs one wrapper test in a cgroup that it cannot
+	// write to.
+	b, err := killboundary.Open("required-" + strconv.Itoa(os.Getpid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.Chmod(b.Dir(), 0o755)
+		b.Kill()
+		b.Remove(2 * time.Second)
+	})
+	if err := os.Chmod(b.Dir(), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	inner := func(required bool) (int, string) {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestWithNoDockerTheContainerStepIsSkipped$", "-test.v")
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}
+		if required {
+			cmd.Env = append(cmd.Env, killboundary.EnvRequired+"=1")
+		}
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		if err := b.Start(cmd); err != nil {
+			t.Fatal(err)
+		}
+		cmd.Wait()
+		return cmd.ProcessState.ExitCode(), out.String()
+	}
+
+	if code, out := inner(false); code != 0 || !strings.Contains(out, "--- SKIP") {
+		t.Errorf("with no kill boundary and no %s: exit %d, want a skip:\n%s", killboundary.EnvRequired, code, out)
+	}
+	if code, out := inner(true); code == 0 || !strings.Contains(out, "--- FAIL") ||
+		!strings.Contains(out, "kill boundary is not available") {
+		t.Errorf("with no kill boundary and %s: exit %d, want a failure:\n%s", killboundary.EnvRequired, code, out)
+	}
+}

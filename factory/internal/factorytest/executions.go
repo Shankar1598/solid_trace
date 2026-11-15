@@ -72,10 +72,14 @@ type Option func(*Env)
 // The wrapper starts each harness in its kill boundary, a child cgroup.
 // So the tests need a cgroup v2 that they can write to: root, or a
 // delegated cgroup (such as a systemd-run --user --scope with
-// Delegate=yes). Where there is none, the test skips with the reason.
+// Delegate=yes). Where there is none, the test skips with the reason, or
+// fails when killboundary.EnvRequired is set.
 func Executions(e *Env) {
 	e.t.Helper()
 	if err := killboundary.Check(); err != nil {
+		if os.Getenv(killboundary.EnvRequired) != "" {
+			e.t.Fatalf("the wrapper's kill boundary is not available, and %s is set: %v", killboundary.EnvRequired, err)
+		}
 		e.t.Skipf("the wrapper's kill boundary is not available here, so this test skips (run it as root or in a delegated cgroup v2): %v", err)
 	}
 	r, err := newRunner(e)

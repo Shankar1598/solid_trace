@@ -26,6 +26,11 @@ import (
 // Root is where cgroup v2 is mounted.
 const Root = "/sys/fs/cgroup"
 
+// EnvRequired, when set, makes a test that needs the kill boundary fail
+// where there is none, in place of a skip. A release run of the tests sets
+// it, so that a skip cannot look like a pass.
+const EnvRequired = "KILLBOUNDARY_REQUIRED"
+
 // cgroup2Magic is the file system type of cgroup v2 (CGROUP2_SUPER_MAGIC).
 const cgroup2Magic = 0x63677270
 

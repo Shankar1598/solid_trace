@@ -16,10 +16,9 @@ import (
 
 // The cgroup cases need a cgroup v2 that this process can write to: root,
 // or a delegated cgroup. Where there is none, they skip with the reason.
-// EnvRequired makes a skip a failure: the run as root under Nomad's
-// raw_exec on the local factory stack's agent machine sets it.
+// killboundary.EnvRequired makes a skip a failure: the run as root under
+// Nomad's raw_exec on the local factory stack's agent machine sets it.
 const (
-	envRequired = "KILLBOUNDARY_REQUIRED"
 	// envRunUser names the run user: as root, the process tree then runs
 	// as that user, as the wrapper starts the harness (ticket 39).
 	envRunUser = "KILLBOUNDARY_RUN_USER"
@@ -28,7 +27,7 @@ const (
 func open(t *testing.T, name string) *killboundary.Boundary {
 	t.Helper()
 	if err := killboundary.Check(); err != nil {
-		if os.Getenv(envRequired) != "" {
+		if os.Getenv(killboundary.EnvRequired) != "" {
 			t.Fatalf("the kill boundary is not available: %v", err)
 		}
 		t.Skipf("no delegated cgroup v2 here, so the cgroup cases skip: %v", err)
