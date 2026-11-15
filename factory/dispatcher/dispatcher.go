@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/linear"
 )
 
 // Options are the parts of the machine that tests replace.
@@ -173,6 +174,11 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	for _, kind := range options.WebhookKinds {
 		d.kinds[kind.Kind()] = kind
 	}
+	// The Dispatcher's own trackers.
+	for _, t := range []Tracker{newLinearTracker(d, linear.API{URL: config.LinearAPIURL, HTTP: options.HTTP})} {
+		d.trackers[t.Kind()] = t
+		d.kinds[t.Kind()] = trackerKind{t, d}
+	}
 	for _, t := range options.Trackers {
 		d.trackers[t.Kind()] = t
 		d.kinds[t.Kind()] = trackerKind{t, d}
@@ -188,6 +194,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/connections", d.person(d.listConnections))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}", d.person(d.admin(d.saveConnection)))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}/webhook-secret", d.person(d.admin(d.saveWebhookSecret)))
+	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}/linear", d.person(d.admin(d.installLinear)))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/senders", d.person(d.listSenders))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/senders", d.person(d.admin(d.createSender)))
 	mux.HandleFunc("DELETE "+dispatcherapi.Path+"/senders/{id}", d.person(d.admin(d.deleteSender)))

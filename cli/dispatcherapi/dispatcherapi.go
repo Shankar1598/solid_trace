@@ -529,6 +529,9 @@ type Connection struct {
 	// Tracker is the settings of a tracker connection, with the kind's
 	// default for each empty value (nil for another kind).
 	Tracker *TrackerSettings `json:"tracker,omitempty"`
+	// Team is the key of a Linear connection's team, such as ENG ("" for
+	// another kind).
+	Team string `json:"team,omitempty"`
 }
 
 // SaveWebhookSecret is the body of a save of a connection's webhook
@@ -542,6 +545,24 @@ type SaveWebhookSecret struct {
 type SaveConnection struct {
 	Kind  string `json:"kind"`
 	Token string `json:"token"`
+}
+
+// TrackerLinear is the kind of a Linear connection.
+const TrackerLinear = "linear"
+
+// InstallLinear is the body of an install of a Linear connection: the
+// Linear OAuth app, and the code of an approval with actor=app that the
+// CLI got at its loopback callback URL. The Dispatcher exchanges the code
+// for the tokens, keeps them encrypted, and refreshes them.
+type InstallLinear struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	Code         string `json:"code"`
+	RedirectURI  string `json:"redirect_uri"`
+	CodeVerifier string `json:"code_verifier"`
+	// Team is the key of the connection's Linear team, such as ENG (""
+	// is the one team that the app can read).
+	Team string `json:"team,omitempty"`
 }
 
 // Connections is the answer of the list of the Organization's
@@ -815,6 +836,14 @@ func (c *Client) Connections(ctx context.Context) ([]Connection, error) {
 func (c *Client) SaveConnection(ctx context.Context, name string, save SaveConnection) (Connection, error) {
 	var connection Connection
 	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name), save, &connection)
+	return connection, err
+}
+
+// InstallLinear makes a Linear connection from an approval of the Linear
+// app, or replaces its tokens (an Admin only).
+func (c *Client) InstallLinear(ctx context.Context, name string, install InstallLinear) (Connection, error) {
+	var connection Connection
+	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name)+"/linear", install, &connection)
 	return connection, err
 }
 

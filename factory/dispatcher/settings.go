@@ -381,6 +381,10 @@ func (d *Dispatcher) saveConnection(w http.ResponseWriter, r *http.Request, p pe
 	}
 	save.Token = strings.TrimSpace(save.Token)
 	switch {
+	case save.Kind == dispatcherapi.TrackerLinear:
+		writeProblem(w, http.StatusBadRequest, "a Linear connection is an install of the Linear app, with no token "+
+			"to give: run 'solidtrace connections add linear "+name+" --client-id ID < client-secret-file'")
+		return
 	case save.Kind != dispatcherapi.ForgeBitbucket && d.kinds[save.Kind] == nil:
 		writeProblem(w, http.StatusBadRequest, "the kind of a connection must be "+
 			strings.Join(d.connectionKinds(), " or ")+", not "+quote(save.Kind))
@@ -422,6 +426,11 @@ func (d *Dispatcher) connections(organizationID string) ([]dispatcherapi.Connect
 		if t := d.trackers[c.Kind]; t != nil {
 			settings := trackerSettings(t, c.tracker)
 			c.Tracker = &settings
+		}
+		if c.Kind == dispatcherapi.TrackerLinear {
+			if credentials, err := d.store.linearCredentials(c.id); err == nil {
+				c.Team = credentials.Team.Key
+			}
 		}
 		connections = append(connections, c.Connection)
 	}

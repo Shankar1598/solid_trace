@@ -25,6 +25,7 @@ import (
 	"github.com/solidtrace/cli/credentials"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakeforge"
+	"github.com/solidtrace/factory/internal/fakelinear"
 	"github.com/solidtrace/factory/internal/fakesource"
 	"github.com/solidtrace/factory/internal/faketracker"
 	"github.com/solidtrace/factory/internal/recorder"
@@ -113,6 +114,8 @@ type Env struct {
 	// Tracker is the fake tracker: the API of each connection of kind
 	// faketracker.Kind.
 	Tracker *faketracker.Tracker
+	// Linear is the fake Linear of the Dispatcher's configuration.
+	Linear *fakelinear.Linear
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
 
@@ -377,6 +380,7 @@ func New(t testing.TB, options ...Option) *Env {
 		Tracker:    faketracker.New(),
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
+	e.Linear = fakelinear.New(t, e.Clock.Now)
 	t.Cleanup(e.SolidTrace.Close)
 	// The Dispatcher's own token: an Admin made it. Revoke it for an Admin
 	// who left the Organization.
@@ -398,6 +402,7 @@ func New(t testing.TB, options ...Option) *Env {
 		EncryptionKey:   EncryptionKey,
 		BitbucketAPIURL: e.Forge.APIURL(),
 		BitbucketGitURL: e.Forge.GitURL(),
+		LinearAPIURL:    e.Linear.URL(),
 		WebhookURL:      PublicWebhookURL,
 		MachineKinds:    MachineKinds,
 		// Squid's place: the reload command counts the reloads.
@@ -528,8 +533,13 @@ func (p *Person) CLI(args ...string) Result {
 // RunCLI runs the solidtrace CLI in the directory dir ("" is the test's
 // own) with stdin as its input.
 func (p *Person) RunCLI(dir, stdin string, args ...string) Result {
+	return p.runCLI(dir, stdin, nil, args...)
+}
+
+// runCLI is RunCLI with change applied to the CLI's environment.
+func (p *Person) runCLI(dir, stdin string, change func(*command.Env), args ...string) Result {
 	var stdout, stderr bytes.Buffer
-	code := command.Run(context.Background(), args, command.Env{
+	env := command.Env{
 		Dir:       dir,
 		Stdin:     strings.NewReader(stdin),
 		Stdout:    &stdout,
@@ -539,7 +549,11 @@ func (p *Person) RunCLI(dir, stdin string, args ...string) Result {
 		Now:       p.env.Clock.Now,
 		Sleep:     func(context.Context, time.Duration) error { return nil },
 		Version:   p.Version,
-	})
+	}
+	if change != nil {
+		change(&env)
+	}
+	code := command.Run(context.Background(), args, env)
 	return Result{stdout.String(), stderr.String(), code}
 }
 
