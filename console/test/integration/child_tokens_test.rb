@@ -62,6 +62,11 @@ class ChildTokensTest < ActionDispatch::IntegrationTest
       refused_on_page(organization_id: @acme.id, **fields)
       assert_match "tokens:create", errors.values.flatten.join, fields.inspect
     end
+
+    [ { project_id: @shop.id }, { agent_session_ids: [ SESSION_A ] } ].each do |limit|
+      refused_on_page(scopes: DISPATCHER_SCOPES, organization_id: @acme.id, **limit)
+      assert_match(/has no limit/, errors["limits"].join, limit.inspect)
+    end
   end
 
   test "the Dispatcher's token acts as its Admin, in its one Organization, within its scopes" do
@@ -217,6 +222,17 @@ class ChildTokensTest < ActionDispatch::IntegrationTest
       refused_child(secret, scopes: [ "run_events:write" ], expires_at: 1.hour.from_now.iso8601, status: :unauthorized)
       assert_match(/Bearer/, response.headers["WWW-Authenticate"])
     end
+  end
+
+  # The model never gives a child tokens:create. If a child had it, it still
+  # must not make children, or it could make one that outlives it.
+  test "a child token with tokens:create still makes no child token" do
+    _, dispatcher = dispatcher_token
+    child_id, child = child_token(dispatcher)
+    ApiToken.find(child_id).update_column(:scopes, DISPATCHER_SCOPES)
+
+    refused_child(child, scopes: [ "run_events:write" ], expires_at: 1.hour.from_now.iso8601, status: :forbidden)
+    assert_equal "insufficient_scope", response.parsed_body["error"]
   end
 
   test "the Dispatcher's token makes no child token while its Organization requires Two-factor that its Admin lacks" do
