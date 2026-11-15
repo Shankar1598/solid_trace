@@ -500,11 +500,12 @@ const maxTrackerSetting = 200
 func (d *Dispatcher) saveTrackerSettings(w http.ResponseWriter, r *http.Request, p person) {
 	name := r.PathValue("name")
 	var save dispatcherapi.TrackerSettings
-	if !decode(w, r, &save, "the body must be a JSON object with ready_status and routing_field") {
+	if !decode(w, r, &save, "the body must be a JSON object with ready_status, routing_field and database") {
 		return
 	}
 	save.ReadyStatus, save.RoutingField = strings.TrimSpace(save.ReadyStatus), strings.TrimSpace(save.RoutingField)
-	for _, v := range []string{save.ReadyStatus, save.RoutingField} {
+	save.Database = strings.TrimSpace(save.Database)
+	for _, v := range []string{save.ReadyStatus, save.RoutingField, save.Database} {
 		if utf8.RuneCountInString(v) > maxTrackerSetting || strings.ContainsFunc(v, unicode.IsControl) {
 			writeProblem(w, http.StatusBadRequest, "a tracker setting is one line of at most 200 characters, not "+quote(v))
 			return
@@ -521,6 +522,15 @@ func (d *Dispatcher) saveTrackerSettings(w http.ResponseWriter, r *http.Request,
 		return
 	case d.trackers[kind] == nil:
 		writeProblem(w, http.StatusUnprocessableEntity, "a "+kind+" connection is not a tracker connection")
+		return
+	}
+	if check, ok := d.trackers[kind].(settingsCheck); ok {
+		if save, err = check.checkSettings(save); err != nil {
+			writeProblem(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if save.Database != "" {
+		writeProblem(w, http.StatusBadRequest, "a "+kind+" connection has no database")
 		return
 	}
 	if err := d.store.saveTrackerSettings(p.organization.id, name, save); err != nil {

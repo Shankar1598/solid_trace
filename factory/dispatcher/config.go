@@ -63,6 +63,9 @@ type Config struct {
 	// LinearAPIURL is the base of Linear's API and token endpoint ("" is
 	// Linear's own). The tests set it to the fake Linear.
 	LinearAPIURL string
+	// NotionAPIURL is the base of Notion's API ("" is Notion's own). The
+	// tests set it to the fake Notion.
+	NotionAPIURL string
 	// WIPRefs is the place of the work-in-progress refs: refs/agent-wip
 	// (the default), or refs/heads/agent-wip for a forge that refuses refs
 	// outside refs/heads (the fallback of cluster check 12).
@@ -198,6 +201,7 @@ const (
 	EnvBitbucketAPIURL = "DISPATCHER_BITBUCKET_API_URL"
 	EnvBitbucketGitURL = "DISPATCHER_BITBUCKET_GIT_URL"
 	EnvLinearAPIURL    = "DISPATCHER_LINEAR_API_URL"
+	EnvNotionAPIURL    = "DISPATCHER_NOTION_API_URL"
 	EnvWIPRefs         = "DISPATCHER_WIP_REFS"
 	EnvNomadAddress    = "DISPATCHER_NOMAD_ADDR"
 	EnvNomadToken      = "DISPATCHER_NOMAD_TOKEN"
@@ -267,6 +271,7 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		BitbucketAPIURL:     strings.TrimRight(value(EnvBitbucketAPIURL), "/"),
 		BitbucketGitURL:     strings.TrimRight(value(EnvBitbucketGitURL), "/"),
 		LinearAPIURL:        strings.TrimRight(value(EnvLinearAPIURL), "/"),
+		NotionAPIURL:        strings.TrimRight(value(EnvNotionAPIURL), "/"),
 		WIPRefs:             value(EnvWIPRefs),
 
 		NomadAddress:       strings.TrimRight(value(EnvNomadAddress), "/"),
@@ -309,6 +314,9 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 	if c.BitbucketGitURL == "" {
 		c.BitbucketGitURL = forge.BitbucketGitURL
 	}
+	if c.NotionAPIURL == "" {
+		c.NotionAPIURL = NotionAPIURL
+	}
 	if c.WIPRefs == "" {
 		c.WIPRefs = forge.WIPOutsideBranches
 	}
@@ -336,7 +344,7 @@ func (c Config) Check() error {
 		problems = append(problems, err.Error())
 	}
 	for name, v := range map[string]string{EnvBitbucketAPIURL: c.BitbucketAPIURL, EnvBitbucketGitURL: c.BitbucketGitURL, EnvLinearAPIURL: c.LinearAPIURL,
-		EnvIngestURL: c.SolidTraceIngestURL, EnvWebhookURL: c.WebhookURL} {
+		EnvNotionAPIURL: c.NotionAPIURL, EnvIngestURL: c.SolidTraceIngestURL, EnvWebhookURL: c.WebhookURL} {
 		if u, err := url.Parse(v); v != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "") {
 			problems = append(problems, name+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", v))
 		}

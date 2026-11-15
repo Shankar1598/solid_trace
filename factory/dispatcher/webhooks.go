@@ -129,6 +129,12 @@ func (d *Dispatcher) webhook(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if setup, ok := setupOf(kind); ok {
+		if token, ok := setup.setupToken(r.Header, body); ok {
+			d.webhookSetup(w, source, token)
+			return
+		}
+	}
 	if !verified(kind, secret, r.Header, body) {
 		writeProblem(w, http.StatusUnauthorized, "the webhook has no valid signature")
 		return
@@ -158,6 +164,43 @@ func (d *Dispatcher) webhook(w http.ResponseWriter, r *http.Request) {
 		d.reconciles.add(reconcileJob{source: source.ID, entity: delivery.Entity, announced: true}, now)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"queued": fresh})
+}
+
+// webhookSetupKind is a kind whose service sends one unsigned request
+// when an Admin adds the webhook, with the secret that it signs the
+// webhooks with, for the Admin to confirm in the service (Notion's
+// verification request). setupToken is true, with the secret, for such a
+// request only.
+type webhookSetupKind interface {
+	setupToken(header http.Header, body []byte) (string, bool)
+}
+
+func setupOf(kind WebhookKind) (webhookSetupKind, bool) {
+	if t, ok := kind.(trackerKind); ok {
+		setup, ok := t.Tracker.(webhookSetupKind)
+		return setup, ok
+	}
+	setup, ok := kind.(webhookSetupKind)
+	return setup, ok
+}
+
+// webhookSetup answers a setup request. The Dispatcher trusts nothing in
+// it: it writes the secret in its own log for the operator, who pastes it
+// into the service and saves it as the connection's webhook secret. It
+// queues nothing. The setup requests have a rate limit of their own, so
+// that they cannot use the limit of the verified webhooks.
+func (d *Dispatcher) webhookSetup(w http.ResponseWriter, source WebhookSource, token string) {
+	if wait, ok := d.setupLimits.take(source.ID, d.now().UTC()); !ok {
+		w.Header().Set("Retry-After", retryAfter(wait))
+		writeProblem(w, http.StatusTooManyRequests, "this connection sent more than "+
+			strconv.Itoa(WebhookRateLimit)+" webhooks in a minute")
+		return
+	}
+	d.log.Info("the "+source.Kind+" connection "+source.Name+" got the verification token of a webhook "+
+		"subscription: paste it into "+source.Kind+" to verify the subscription, and save it with "+
+		"'solidtrace connections webhook-secret "+source.Name+"'",
+		"organization", source.organizationSlug, "connection", source.Name, "verification_token", token)
+	writeJSON(w, http.StatusOK, map[string]bool{"queued": false})
 }
 
 // verified checks the delivery's HMAC-SHA256 signature with the

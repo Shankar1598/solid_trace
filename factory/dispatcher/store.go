@@ -276,6 +276,8 @@ var migrations = []string{
 	ALTER TABLE runs ADD COLUMN wip_delete_due INTEGER NOT NULL DEFAULT 0;
 	CREATE INDEX runs_not_closed ON runs (state) WHERE closed_at IS NULL;
 	CREATE INDEX runs_wip_delete_due ON runs (closed_at) WHERE wip_delete_due = 1;`,
+	// A Notion connection's notion_database is the id of its database.
+	`ALTER TABLE connections ADD COLUMN notion_database TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.

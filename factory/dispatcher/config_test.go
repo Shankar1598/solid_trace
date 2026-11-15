@@ -45,6 +45,7 @@ func TestTheConfigurationNamesTheOneWrongForgeSetting(t *testing.T) {
 		{dispatcher.EnvWIPRefs, "refs/tags/wip"},
 		{dispatcher.EnvBitbucketAPIURL, "api.bitbucket.example"},
 		{dispatcher.EnvBitbucketGitURL, "ftp://bitbucket.example"},
+		{dispatcher.EnvNotionAPIURL, "api.notion.example"},
 		{dispatcher.EnvIngestURL, "ingest.example.com:4443"},
 	}
 	for _, c := range cases {
@@ -72,6 +73,11 @@ func TestTheConfigurationNamesTheOneWrongForgeSetting(t *testing.T) {
 		if _, err := dispatcher.LoadConfig("", func(k string) string { return env[k] }); err != nil {
 			t.Errorf("the place %q: %v", place, err)
 		}
+	}
+	// With no value, the Dispatcher calls Notion's own API.
+	if c, err := dispatcher.LoadConfig("", func(k string) string { return valid[k] }); err != nil ||
+		c.NotionAPIURL != dispatcher.NotionAPIURL {
+		t.Errorf("the default Notion API is %q (%v), want %s", c.NotionAPIURL, err, dispatcher.NotionAPIURL)
 	}
 }
 

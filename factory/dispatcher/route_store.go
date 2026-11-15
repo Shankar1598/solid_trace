@@ -120,8 +120,8 @@ func (s *store) matchValues(connectionID string) ([]string, error) {
 // trackerSettings reads the saved settings of the connection with id.
 func (s *store) trackerSettings(connectionID string) (dispatcherapi.TrackerSettings, error) {
 	var t dispatcherapi.TrackerSettings
-	err := s.db.QueryRow(`SELECT ready_status, routing_field FROM connections WHERE id = ?`, connectionID).
-		Scan(&t.ReadyStatus, &t.RoutingField)
+	err := s.db.QueryRow(`SELECT ready_status, routing_field, notion_database FROM connections WHERE id = ?`,
+		connectionID).Scan(&t.ReadyStatus, &t.RoutingField, &t.Database)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, errNotFound
 	}
@@ -131,8 +131,8 @@ func (s *store) trackerSettings(connectionID string) (dispatcherapi.TrackerSetti
 // saveTrackerSettings replaces the settings of the Organization's
 // connection with name.
 func (s *store) saveTrackerSettings(organizationID, name string, t dispatcherapi.TrackerSettings) error {
-	_, err := s.db.Exec(`UPDATE connections SET ready_status = ?, routing_field = ? WHERE organization_id = ? AND name = ?`,
-		t.ReadyStatus, t.RoutingField, organizationID, name)
+	_, err := s.db.Exec(`UPDATE connections SET ready_status = ?, routing_field = ?, notion_database = ?
+		WHERE organization_id = ? AND name = ?`, t.ReadyStatus, t.RoutingField, t.Database, organizationID, name)
 	return err
 }
 

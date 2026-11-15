@@ -102,7 +102,10 @@ type Dispatcher struct {
 	// kinds too.
 	trackers      map[string]Tracker
 	webhookLimits *webhookLimits
-	reconciles    *reconcileQueue
+	// setupLimits counts the setup requests (Notion's verification
+	// request), which are not verified, apart from the verified webhooks.
+	setupLimits *webhookLimits
+	reconciles  *reconcileQueue
 	// commandsAdded wakes the waiting commands calls.
 	commandsAdded signal
 	backstopEvery time.Duration
@@ -163,6 +166,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		kinds:           map[string]WebhookKind{},
 		trackers:        map[string]Tracker{},
 		webhookLimits:   &webhookLimits{windows: map[string]webhookWindow{}},
+		setupLimits:     &webhookLimits{windows: map[string]webhookWindow{}},
 		reconciles:      newReconcileQueue(),
 		scheduleEvery:   cmp.Or(options.ScheduleEvery, scheduleEvery),
 		scheduleChecked: options.ScheduleChecked,
@@ -175,11 +179,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		d.kinds[kind.Kind()] = kind
 	}
 	// The Dispatcher's own trackers.
-	for _, t := range []Tracker{newLinearTracker(d, linear.API{URL: config.LinearAPIURL, HTTP: options.HTTP})} {
-		d.trackers[t.Kind()] = t
-		d.kinds[t.Kind()] = trackerKind{t, d}
-	}
-	for _, t := range options.Trackers {
+	trackers := []Tracker{newLinearTracker(d, linear.API{URL: config.LinearAPIURL, HTTP: options.HTTP}), newNotion(config.NotionAPIURL, options.HTTP, options.Now)}
+	trackers = append(trackers, options.Trackers...)
+	for _, t := range trackers {
 		d.trackers[t.Kind()] = t
 		d.kinds[t.Kind()] = trackerKind{t, d}
 	}

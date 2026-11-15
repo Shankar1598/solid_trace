@@ -26,6 +26,7 @@ import (
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/fakelinear"
+	"github.com/solidtrace/factory/internal/fakenotion"
 	"github.com/solidtrace/factory/internal/fakesource"
 	"github.com/solidtrace/factory/internal/faketracker"
 	"github.com/solidtrace/factory/internal/recorder"
@@ -116,6 +117,9 @@ type Env struct {
 	Tracker *faketracker.Tracker
 	// Linear is the fake Linear of the Dispatcher's configuration.
 	Linear *fakelinear.Linear
+	// Notion is the fake Notion API of the Dispatcher's configuration:
+	// the API of each connection of kind notion. Its clock is Clock.
+	Notion *fakenotion.Notion
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
 
@@ -378,10 +382,12 @@ func New(t testing.TB, options ...Option) *Env {
 		Forge:      fakeforge.New(t),
 		Source:     fakesource.New(),
 		Tracker:    faketracker.New(),
+		Notion:     fakenotion.New(t),
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
 	e.Linear = fakelinear.New(t, e.Clock.Now)
 	t.Cleanup(e.SolidTrace.Close)
+	e.Notion.Now = e.Clock.Now
 	// The Dispatcher's own token: an Admin made it. Revoke it for an Admin
 	// who left the Organization.
 	e.SolidTrace.Token(DispatcherToken, recorder.Answer{
@@ -403,6 +409,7 @@ func New(t testing.TB, options ...Option) *Env {
 		BitbucketAPIURL: e.Forge.APIURL(),
 		BitbucketGitURL: e.Forge.GitURL(),
 		LinearAPIURL:    e.Linear.URL(),
+		NotionAPIURL:    e.Notion.URL(),
 		WebhookURL:      PublicWebhookURL,
 		MachineKinds:    MachineKinds,
 		// Squid's place: the reload command counts the reloads.
