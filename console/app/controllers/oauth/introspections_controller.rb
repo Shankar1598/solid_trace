@@ -4,10 +4,12 @@ module Oauth
   # Token introspection (RFC 7662): a service that holds an API token sends
   # a token that a user gave it, form-encoded as token=<secret>, and Console
   # answers who the token acts as. An OAuth access token and an API token
-  # answer in one shape (BearerToken); every other token answers only
-  # active: false. The caller authenticates with its own API token in
-  # Authorization: Bearer. An OAuth access token cannot be the caller: its
-  # audience is the MCP server. This endpoint answers also with OAuth off,
+  # answer in one shape (BearerToken), and so does Console's factory token
+  # (Oauth::ConsoleToken); every other token answers only active: false.
+  # The caller authenticates with its own API token in Authorization:
+  # Bearer. An OAuth access token cannot be the caller, as its audience is
+  # the MCP server, and Console's factory token cannot, as it is only for
+  # the Dispatcher. This endpoint answers also with OAuth off,
   # because it serves API tokens.
   class IntrospectionsController < ApiController
     CALLER = "Send your own API token as Authorization: Bearer st_…. Make one in Settings → API tokens & MCP. " \
@@ -45,7 +47,7 @@ module Oauth
 
     def authenticate_caller!
       @caller = BearerToken.authenticate(caller_secret, issuer: issuer)
-      @caller = nil if @caller&.oauth?
+      @caller = nil unless @caller&.api_token?
       if @caller
         @caller.record_use
       else
