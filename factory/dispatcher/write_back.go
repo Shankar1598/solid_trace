@@ -242,12 +242,12 @@ func (d *Dispatcher) writeBackLoop(ctx context.Context) {
 		}
 		if err != nil {
 			d.log.Error("could not read the write-back outbox", "error", err)
-			next = d.now().Add(minWriteBackRetry)
+			next = time.Now().Add(minWriteBackRetry)
 		}
 		var timer *time.Timer
 		var due <-chan time.Time
 		if !next.IsZero() {
-			timer = time.NewTimer(max(next.Sub(d.now()), 0))
+			timer = time.NewTimer(max(time.Until(next), 0))
 			due = timer.C
 		}
 		select {
@@ -262,7 +262,8 @@ func (d *Dispatcher) writeBackLoop(ctx context.Context) {
 }
 
 // writeBackRetry is the wait of a Run whose step failed: the loop tries
-// the step again at next.
+// the step again at next. The waits use the wall clock, not d.now: they
+// are real waits of the loop's timer.
 type writeBackRetry struct {
 	wait time.Duration
 	next time.Time
@@ -288,7 +289,7 @@ func (d *Dispatcher) sendWriteBacks(ctx context.Context, backoff map[string]*wri
 			continue
 		}
 		r := backoff[w.runID]
-		if r != nil && d.now().Before(r.next) {
+		if r != nil && time.Now().Before(r.next) {
 			held[w.runID] = true
 			continue
 		}
@@ -298,7 +299,7 @@ func (d *Dispatcher) sendWriteBacks(ctx context.Context, backoff map[string]*wri
 				backoff[w.runID] = r
 			}
 			r.wait = min(max(2*r.wait, minWriteBackRetry), maxWriteBackRetry)
-			r.next = d.now().Add(r.wait)
+			r.next = time.Now().Add(r.wait)
 			held[w.runID] = true
 			continue
 		}
