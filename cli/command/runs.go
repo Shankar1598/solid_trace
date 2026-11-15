@@ -163,6 +163,12 @@ func printRun(out io.Writer, r dispatcherapi.Run) {
 	if r.PRURL != "" {
 		fmt.Fprintf(tw, "PR:\t%s\n", r.PRURL)
 	}
+	if r.PROutcome != "" {
+		fmt.Fprintf(tw, "PR outcome:\t%s\n", r.PROutcome)
+	}
+	if r.ClosedAt != nil {
+		fmt.Fprintf(tw, "Closed:\t%s\n", r.ClosedAt.UTC().Format(timeFormat))
+	}
 	fmt.Fprintf(tw, "Link:\t%s\n", r.URL)
 	if r.Link != "" {
 		fmt.Fprintf(tw, "Trigger link:\t%s\n", r.Link)

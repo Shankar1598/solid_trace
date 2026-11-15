@@ -127,6 +127,8 @@ type Env struct {
 	admin    *Person
 	// checked is the clock time of the schedule loop's last pass.
 	checked atomic.Pointer[time.Time]
+	// closeChecked is the clock time of the close loop's last pass.
+	closeChecked atomic.Pointer[time.Time]
 }
 
 // scheduleEvery is the wait between two passes of the Dispatcher's
@@ -147,6 +149,25 @@ func (e *Env) CheckSchedules() {
 		}
 		if time.Now().After(deadline) {
 			e.t.Fatalf("the schedule loop did no pass at %s after 10 s\nDispatcher log:\n%s", now, e.Logs())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// CheckClosedRuns waits up to 10 s until the Dispatcher's close loop did
+// a pass at the clock's time now or later. So each Run that is due to
+// close now is closed after it, and when 5 minutes of the clock passed
+// since the last PR check, the PRs were checked.
+func (e *Env) CheckClosedRuns() {
+	e.t.Helper()
+	now := e.Clock.Now()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if at := e.closeChecked.Load(); at != nil && !at.Before(now) {
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("the close loop did no pass at %s after 10 s\nDispatcher log:\n%s", now, e.Logs())
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -368,7 +389,8 @@ func (e *Env) start() {
 		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick,
 		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) },
 		BackstopEvery: backstopEvery,
-		Trackers:      []dispatcher.Tracker{e.Tracker.Tracker()}}
+		CloseEvery:    scheduleEvery, CloseChecked: func(at time.Time) { e.closeChecked.Store(&at) },
+		Trackers: []dispatcher.Tracker{e.Tracker.Tracker()}}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner

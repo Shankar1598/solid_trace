@@ -21,10 +21,11 @@ type storedExecution struct {
 	state                                string
 }
 
-// queuedRuns are the ids of the queued Runs with no Execution that has
-// not ended, oldest first.
+// queuedRuns are the ids of the queued Runs that are not closed, with no
+// Execution that has not ended, oldest first. A Closed Run cannot
+// continue.
 func (s *store) queuedRuns() ([]string, error) {
-	rows, err := s.db.Query(`SELECT r.id FROM runs r WHERE r.state = ? AND NOT EXISTS
+	rows, err := s.db.Query(`SELECT r.id FROM runs r WHERE r.state = ? AND r.closed_at IS NULL AND NOT EXISTS
 		(SELECT 1 FROM executions e WHERE e.run_id = r.id AND e.state != ?) ORDER BY r.created_at, r.id`,
 		dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded)
 	if err != nil {
@@ -51,8 +52,8 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	}
 	defer tx.Rollback()
 	var free bool
-	err = tx.QueryRow(`SELECT r.state = ? AND NOT EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
-		AND e.state != ?) FROM runs r WHERE r.id = ?`, dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded,
+	err = tx.QueryRow(`SELECT r.state = ? AND r.closed_at IS NULL AND NOT EXISTS (SELECT 1 FROM executions e
+		WHERE e.run_id = r.id AND e.state != ?) FROM runs r WHERE r.id = ?`, dispatcherapi.StateQueued, dispatcherapi.ExecutionEnded,
 		runID).Scan(&free)
 	if err != nil || !free {
 		return false, ignoreNoRows(err)

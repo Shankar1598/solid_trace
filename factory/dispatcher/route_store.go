@@ -136,21 +136,22 @@ func (s *store) saveTrackerSettings(organizationID, name string, t dispatcherapi
 	return err
 }
 
-// ticketHasRun is true when a ticket has an Active Run or a Run of its
-// edit (ticketHasRunArgs gives its arguments).
-const ticketHasRun = `EXISTS (SELECT 1 FROM runs WHERE ticket_connection_id = ? AND ticket_id = ?
-	AND (ticket_edit = ? OR state IN (?, ?, ?)))`
+// ticketHasRun is the SQL test that a ticket has an Active Run or a Run of
+// its edit (ticketHasRunArgs gives its arguments).
+func ticketHasRun() string {
+	return `EXISTS (SELECT 1 FROM runs WHERE ticket_connection_id = ? AND ticket_id = ?
+		AND (ticket_edit = ? OR ` + activeRunSQL() + `))`
+}
 
 func ticketHasRunArgs(connectionID, ticketID, edit string) []any {
-	return []any{connectionID, ticketID, edit, dispatcherapi.StateQueued, dispatcherapi.StateRunning,
-		dispatcherapi.StateWaitingOnPerson}
+	return append([]any{connectionID, ticketID, edit}, activeRunArgs()...)
 }
 
 // ticketRun is true when the ticket of the connection has an Active Run
 // or a Run of its edit.
 func (s *store) ticketRun(connectionID string, t Ticket) (bool, error) {
 	var seen bool
-	err := s.db.QueryRow(`SELECT `+ticketHasRun, ticketHasRunArgs(connectionID, t.ID, t.Edit)...).Scan(&seen)
+	err := s.db.QueryRow(`SELECT `+ticketHasRun(), ticketHasRunArgs(connectionID, t.ID, t.Edit)...).Scan(&seen)
 	return seen, err
 }
 
@@ -182,7 +183,7 @@ func (s *store) insertTicketRun(r storedRun) (bool, error) {
 	}
 	defer tx.Rollback()
 	var seen bool
-	err = tx.QueryRow(`SELECT `+ticketHasRun, ticketHasRunArgs(r.ticketConnectionID, r.ticketID, r.ticketEdit)...).
+	err = tx.QueryRow(`SELECT `+ticketHasRun(), ticketHasRunArgs(r.ticketConnectionID, r.ticketID, r.ticketEdit)...).
 		Scan(&seen)
 	if err != nil || seen {
 		return false, err

@@ -66,9 +66,16 @@ func (a actor) details() map[string]any {
 
 // notStoppable is the error of a stop of a Run in a state that a stop
 // does not change.
-type notStoppable struct{ state string }
+type notStoppable struct {
+	state  string
+	closed bool
+}
 
 func (e *notStoppable) Error() string {
+	if e.closed {
+		return "the Run is closed (its PR is merged or declined, or it had no activity for 30 days): " +
+			"it keeps its state " + e.state + "; start a new Run"
+	}
 	return "the Run is " + e.state + ": only a queued, running or waiting Run can be stopped"
 }
 
@@ -138,7 +145,9 @@ func (s *store) stopRun(organizationID, runID string, by actor, reason string, a
 	}
 	defer tx.Rollback()
 	var state string
-	err = tx.QueryRow(`SELECT state FROM runs WHERE id = ? AND organization_id = ?`, runID, organizationID).Scan(&state)
+	var closed bool
+	err = tx.QueryRow(`SELECT state, closed_at IS NOT NULL FROM runs WHERE id = ? AND organization_id = ?`, runID,
+		organizationID).Scan(&state, &closed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errNotFound
 	}
@@ -146,7 +155,12 @@ func (s *store) stopRun(organizationID, runID string, by actor, reason string, a
 		return err
 	}
 	if !slices.Contains(stoppable, state) {
-		return &notStoppable{state}
+		return &notStoppable{state: state}
+	}
+	// A Closed Run keeps its last state. A stop still ends an Execution
+	// that is queued or live.
+	if closed && !slices.Contains(liveStates, state) {
+		return &notStoppable{state: state, closed: true}
 	}
 	if err := stopInTx(tx, runID, by, reason, true, at); err != nil {
 		return err

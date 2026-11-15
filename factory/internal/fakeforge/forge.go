@@ -220,6 +220,15 @@ func (f *Forge) RefusePushes(repo, message string) {
 	}
 }
 
+// AcceptPushes undoes RefusePushes and RefuseRefsOutsideBranches: the
+// repository accepts each push again.
+func (f *Forge) AcceptPushes(repo string) {
+	f.t.Helper()
+	if err := os.Remove(filepath.Join(f.bare(repo), "hooks", "pre-receive")); err != nil && !os.IsNotExist(err) {
+		f.t.Fatal(err)
+	}
+}
+
 // Ref gives the commit that a ref (for example refs/heads/main or
 // refs/agent-wip/<run id>) names, and false when there is no such ref.
 func (f *Forge) Ref(repo, ref string) (string, bool) {

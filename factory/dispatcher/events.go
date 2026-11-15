@@ -30,6 +30,8 @@ const (
 	eventExecutionEnded   = "execution_ended"
 	eventReport           = "report"
 	eventPROpened         = "pr_opened"
+	eventPROutcome        = "pr_outcome"
+	eventClosed           = "closed"
 )
 
 // Trigger kinds of a Run (run.trigger).
@@ -84,15 +86,15 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		return fmt.Errorf("count the run event: %w", err)
 	}
 	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorKind, actorID, actorName,
-		sessionID, runTitle, link, attributes, scheduleID, scheduledByID, scheduledByName, prURL string
+		sessionID, runTitle, link, attributes, scheduleID, scheduledByID, scheduledByName, prURL, prOutcome string
 	var executions int64
 	var firedAt sql.NullInt64
 	err := tx.QueryRow(`SELECT state, reason, project, repository, folder, base_branch, trigger_kind, prompt,
 		started_by_kind, started_by_id, started_by_name, session_id, title, link, attributes, schedule_id, fired_at,
-		scheduled_by_id, scheduled_by_name, pr_url, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
+		scheduled_by_id, scheduled_by_name, pr_url, pr_outcome, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
 		FROM runs r WHERE id = ?`, runID).Scan(&state, &reason, &project, &repository, &folder, &baseBranch, &trigger,
 		&prompt, &actorKind, &actorID, &actorName, &sessionID, &runTitle, &link, &attributes, &scheduleID, &firedAt,
-		&scheduledByID, &scheduledByName, &prURL, &executions)
+		&scheduledByID, &scheduledByName, &prURL, &prOutcome, &executions)
 	if err != nil {
 		return fmt.Errorf("read the Run for its event: %w", err)
 	}
@@ -116,7 +118,7 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		"run.title":       runTitle,
 		"run.executions":  executions,
 		"run.pr.url":      prURL,
-		"run.pr.outcome":  "",
+		"run.pr.outcome":  prOutcome,
 		"run.base_branch": baseBranch,
 		"factory.project": project,
 		"repository":      repository,

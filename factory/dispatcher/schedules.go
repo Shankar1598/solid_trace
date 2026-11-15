@@ -33,7 +33,9 @@ const scheduleEvery = 30 * time.Second
 const missedLimit = 24 * time.Hour
 
 // activeStates are the states of an Active Run that the Dispatcher has
-// now. Later states (waiting on an account limit, an open PR) join it.
+// now (a later state, waiting on an account limit, joins it). A Run that
+// is not closed and has an open PR is active in each state: see
+// activeRunSQL.
 var activeStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateWaitingOnPerson}
 
 // The limits of a schedule's values.
@@ -179,15 +181,11 @@ func (d *Dispatcher) fire(id string, now time.Time) (bool, error) {
 }
 
 // activeRunOf is the id of an Active Run that the schedule id started,
-// or sql.ErrNoRows when it has none. Each state of activeStates counts.
+// or sql.ErrNoRows when it has none (see activeRunSQL).
 func activeRunOf(tx *sql.Tx, scheduleID string) (string, error) {
-	args := []any{scheduleID}
-	for _, state := range activeStates {
-		args = append(args, state)
-	}
 	var id string
-	err := tx.QueryRow(`SELECT id FROM runs WHERE schedule_id = ? AND state IN (?`+
-		strings.Repeat(", ?", len(activeStates)-1)+`) LIMIT 1`, args...).Scan(&id)
+	err := tx.QueryRow(`SELECT id FROM runs WHERE schedule_id = ? AND `+activeRunSQL()+` LIMIT 1`,
+		append([]any{scheduleID}, activeRunArgs()...)...).Scan(&id)
 	return id, err
 }
 
