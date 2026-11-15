@@ -354,3 +354,34 @@ func TestWithoutAMainTranscriptTheMainTimelineIsEmpty(t *testing.T) {
 	sub := readTimeline(t, env, o.project, laptopSession, map[string]any{"path": "subagents/agent-zz.jsonl"})
 	expectTexts(t, "the subagent's timeline", stepTexts(sub.Steps), []string{"not from a person: S1"})
 }
+
+func TestAPageThatHoldsTheLastStepGivesNoCursor(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	env.Clock.Set(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	o := newAgentOrganization(t, env)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(
+		personAt("u1", "2026-10-02T11:00:00Z", "One"),
+		personAt("u2", "2026-10-02T11:00:01Z", "Two"),
+	)}), 200)
+	env.ProcessAgentFiles(t)
+
+	// Exactly as many steps as the limit: no next page.
+	answer := readTimeline(t, env, o.project, laptopSession, map[string]any{"limit": 2})
+	expectTexts(t, "a full page", stepTexts(answer.Steps), []string{"person: One", "person: Two"})
+	if answer.NextCursor != "" {
+		t.Errorf("Expected no next_cursor when the page holds the last step, got %q", answer.NextCursor)
+	}
+
+	// One step more than the limit: a next page.
+	answer = readTimeline(t, env, o.project, laptopSession, map[string]any{"limit": 1})
+	expectTexts(t, "the first page", stepTexts(answer.Steps), []string{"person: One"})
+	if answer.NextCursor == "" {
+		t.Fatal("Expected a next_cursor when more steps follow the page")
+	}
+	answer = readTimeline(t, env, o.project, laptopSession, map[string]any{"limit": 1, "cursor": answer.NextCursor})
+	expectTexts(t, "the last page", stepTexts(answer.Steps), []string{"person: Two"})
+	if answer.NextCursor != "" {
+		t.Errorf("Expected no next_cursor on the last page, got %q", answer.NextCursor)
+	}
+}
