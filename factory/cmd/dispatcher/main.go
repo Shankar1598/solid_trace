@@ -6,17 +6,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/nomadrunner"
@@ -73,19 +70,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	if err != nil {
 		return fail(fmt.Errorf("listen on %s (%s): %w", config.Listen, dispatcher.EnvListen, err))
 	}
-	server := &http.Server{Handler: d.Handler(), ReadHeaderTimeout: 10 * time.Second}
-	served := make(chan error, 1)
-	go func() { served <- server.Serve(listener) }()
 	log.Info("the Dispatcher serves the private listener", "address", listener.Addr().String())
-
-	select {
-	case err := <-served:
-		return fail(err)
-	case <-ctx.Done():
-	}
-	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := d.Serve(ctx, listener); err != nil {
 		return fail(err)
 	}
 	return 0

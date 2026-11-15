@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -68,10 +69,11 @@ type Dispatcher struct {
 	// commandsAdded wakes the waiting commands calls.
 	commandsAdded signal
 	backstopEvery time.Duration
-	// closing closes when Close starts.
-	closing chan struct{}
-	stop    context.CancelFunc
-	loops   sync.WaitGroup
+	// closing closes when Serve or Close starts to stop.
+	closing     chan struct{}
+	closingOnce sync.Once
+	stop        context.CancelFunc
+	loops       sync.WaitGroup
 }
 
 // Open checks config and opens the database (it makes it at first use).
@@ -155,9 +157,34 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 // Handler serves the private listener.
 func (d *Dispatcher) Handler() http.Handler { return d.handler }
 
+// shutdownWait is the longest time that Serve waits for the open calls
+// when it stops.
+const shutdownWait = 10 * time.Second
+
+// Serve serves the private listener until ctx ends, then stops. Each
+// commands call (a long poll) then gets 503 at once, and Serve waits up
+// to shutdownWait for the other calls.
+func (d *Dispatcher) Serve(ctx context.Context, listener net.Listener) error {
+	server := &http.Server{Handler: d.handler, ReadHeaderTimeout: 10 * time.Second}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+	}
+	d.drain()
+	shutdown, cancel := context.WithTimeout(context.Background(), shutdownWait)
+	defer cancel()
+	return server.Shutdown(shutdown)
+}
+
+// drain ends each waiting commands call, once.
+func (d *Dispatcher) drain() { d.closingOnce.Do(func() { close(d.closing) }) }
+
 // Close stops the loops and closes the database.
 func (d *Dispatcher) Close() error {
-	close(d.closing)
+	d.drain()
 	d.stop()
 	d.loops.Wait()
 	return d.store.close()
