@@ -149,7 +149,10 @@ func StopHook(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) str
 }
 
 // installStopHook writes the harness's settings with the Stop hook, and a
-// new run state file. Both are outside the checkout.
+// new run state file. Both are outside the checkout. The hook runs as the
+// harness's user: that user must read the settings and the wrapper's
+// program, and read and write the run state file (with the run user of
+// ticket 39, give both files to it).
 func (e *execution) installStopHook() error {
 	program, err := ownProgram()
 	if err != nil {
