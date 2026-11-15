@@ -73,8 +73,8 @@ type Dispatcher struct {
 	kinds         map[string]WebhookKind
 	webhookLimits *webhookLimits
 	reconciles    *reconcileQueue
-	stop        context.CancelFunc
-	loops       sync.WaitGroup
+	stop          context.CancelFunc
+	loops         sync.WaitGroup
 }
 
 // Open checks config and opens the database (it makes it at first use).

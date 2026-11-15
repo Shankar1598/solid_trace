@@ -59,7 +59,7 @@ func TestAValidWebhookAnswers200InLessThanASecondAndTheReconcileStepRunsAfterIt(
 	env := factorytest.New(t)
 	path := env.WebhookConnection("tickets", secret)
 	reconciledOf(t, env, "tickets", "") // the reconcile at start
-	env.Source.Change("T-1")
+	env.Source.Change("tickets", "T-1")
 	release := env.Source.Hold()
 	defer release()
 

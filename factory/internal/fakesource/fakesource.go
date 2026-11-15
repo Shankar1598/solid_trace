@@ -59,7 +59,7 @@ type Reconcile struct {
 // Source is the fake source's API, for all fake connections together.
 type Source struct {
 	mu         sync.Mutex
-	changes    []string
+	changes    []change
 	reconciles []Reconcile
 	held       chan struct{}
 	changed    chan struct{}
@@ -68,15 +68,18 @@ type Source struct {
 // New is a source with no changes.
 func New() *Source { return &Source{changed: make(chan struct{})} }
 
-// Change makes a change of entity at the source, which the next reconcile
-// step of entity (or of the whole source) finds.
-func (s *Source) Change(entity string) {
+// Change makes a change of entity at the connection's service, which the
+// next reconcile step of entity (or of the whole connection) finds.
+func (s *Source) Change(connection, entity string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !slices.Contains(s.changes, entity) {
-		s.changes = append(s.changes, entity)
+	c := change{connection, entity}
+	if !slices.Contains(s.changes, c) {
+		s.changes = append(s.changes, c)
 	}
 }
+
+type change struct{ connection, entity string }
 
 // Reconciles are the reconcile steps so far, oldest first.
 func (s *Source) Reconciles() []Reconcile {
@@ -91,14 +94,13 @@ func (s *Source) WaitFor(match func(Reconcile) bool) (Reconcile, bool) {
 	deadline := time.After(10 * time.Second)
 	for {
 		s.mu.Lock()
-		changed := s.changed
-		for _, r := range s.reconciles {
+		changed, reconciles := s.changed, slices.Clone(s.reconciles)
+		s.mu.Unlock()
+		for _, r := range reconciles {
 			if match(r) {
-				s.mu.Unlock()
 				return r, true
 			}
 		}
-		s.mu.Unlock()
 		select {
 		case <-changed:
 		case <-deadline:
@@ -176,10 +178,11 @@ func (k kind) Reconcile(ctx context.Context, source dispatcher.WebhookSource, en
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var acted, left []string
+	var acted []string
+	var left []change
 	for _, c := range s.changes {
-		if entity == "" || c == entity {
-			acted = append(acted, c)
+		if c.connection == source.Name && (entity == "" || c.entity == entity) {
+			acted = append(acted, c.entity)
 		} else {
 			left = append(left, c)
 		}

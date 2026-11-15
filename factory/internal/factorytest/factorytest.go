@@ -78,8 +78,8 @@ type Env struct {
 	server  *httptest.Server
 	// webhooks is the Dispatcher's webhook listener.
 	webhooks *httptest.Server
-	people  int
-	logs    lockedBuffer
+	people   int
+	logs     lockedBuffer
 	// projects counts the Projects that Project made, for their ids.
 	projects int64
 	admin    *Person
