@@ -168,7 +168,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	for _, kind := range options.WebhookKinds {
 		d.kinds[kind.Kind()] = kind
 	}
-	trackers := append([]Tracker{NewNotion(config.NotionAPIURL, options.HTTP)}, options.Trackers...)
+	trackers := append([]Tracker{newNotion(config.NotionAPIURL, options.HTTP, options.Now)}, options.Trackers...)
 	for _, t := range trackers {
 		d.trackers[t.Kind()] = t
 		d.kinds[t.Kind()] = trackerKind{t, d}

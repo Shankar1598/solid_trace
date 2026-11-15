@@ -381,3 +381,46 @@ func TestThePromptOfANotionPageHasTheTextInItsColumnsSyncedBlocksAndTables(t *te
 		t.Errorf("the prompt is\n%s\nwant\n%s", got, want)
 	}
 }
+
+// runOf is the Run of the page.
+func runOf(t *testing.T, list []dispatcherapi.Run, page string) dispatcherapi.Run {
+	t.Helper()
+	for _, run := range list {
+		if run.Link == fakenotion.PageURL(page) {
+			return run
+		}
+	}
+	t.Fatalf("no Run of the page %s", page)
+	return dispatcherapi.Run{}
+}
+
+func TestEachNotionConnectionReadsUserNamesWithItsOwnCapabilityAndAgainAfterAnAdminGivesIt(t *testing.T) {
+	env, db, _ := notionEnv(t, "")
+	other := fakenotion.NewID()
+	env.Notion.Database(other, statuses, "Project")
+	env.NotionConnection("board", "", other)
+	mustSaveRoutes(t, env, "shop", route("notion", "shop"), route("board", "shop"))
+	env.Notion.RefuseUsers(factorytest.NotionToken("board"))
+
+	refused := readyPage(env, other, "Fix the cart total")
+	env.Clock.Advance(dispatcher.NotionPoll)
+	if run := runOf(t, waitForRuns(t, env, 1), refused); run.StartedBy.Name != rosaN.ID {
+		t.Errorf("the Run of a connection that cannot read users was started by %+v, want Rosa's id as her name", run.StartedBy)
+	}
+	allowed := readyPage(env, db, "Fix the coupon")
+	env.Clock.Advance(dispatcher.NotionPoll)
+	if run := runOf(t, waitForRuns(t, env, 2), allowed); run.StartedBy.Name != "Rosa" {
+		t.Errorf("the Run of a connection that can read users was started by %+v, want Rosa", run.StartedBy)
+	}
+
+	// The Admin gives the integration the capability: after at most 10
+	// minutes, its Runs have the name.
+	env.Notion.AllowUsers()
+	env.Clock.Advance(10 * time.Minute)
+	settle()
+	again := readyPage(env, other, "Fix the gift card")
+	env.Clock.Advance(dispatcher.NotionPoll)
+	if run := runOf(t, waitForRuns(t, env, 3), again); run.StartedBy.Name != "Rosa" {
+		t.Errorf("the Run after the Admin gave the capability was started by %+v, want Rosa", run.StartedBy)
+	}
+}

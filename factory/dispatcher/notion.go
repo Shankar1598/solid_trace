@@ -70,19 +70,38 @@ const (
 // NewNotion is the Notion kind, which calls the API at apiURL ("" is
 // Notion's own) with client.
 func NewNotion(apiURL string, client *http.Client) Tracker {
+	return newNotion(apiURL, client, time.Now)
+}
+
+func newNotion(apiURL string, client *http.Client, now func() time.Time) *notion {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &notion{api: strings.TrimRight(cmp.Or(apiURL, NotionAPIURL), "/"), http: client, users: map[string]string{}}
+	return &notion{api: strings.TrimRight(cmp.Or(apiURL, NotionAPIURL), "/"), http: client, now: now,
+		users: map[[2]string]notionUser{}}
 }
 
 type notion struct {
 	api  string
 	http *http.Client
-	// users keeps the name of each Notion user that the kind read.
+	now  func() time.Time
+	// users keeps each Notion user that the kind read, by connection id
+	// and user id: each connection's integration has its own
+	// capabilities.
 	mu    sync.Mutex
-	users map[string]string
+	users map[[2]string]notionUser
 }
+
+// notionUser is a user's name, or the time when Notion refused to give it.
+type notionUser struct {
+	name    string
+	refused time.Time
+}
+
+// notionUserRetry is how long the kind keeps Notion's refusal to give a
+// user: an Admin can give the integration the capability to read user
+// information.
+const notionUserRetry = 10 * time.Minute
 
 func (*notion) Kind() string { return NotionKind }
 
@@ -503,11 +522,15 @@ func (n *notion) user(ctx context.Context, c TrackerConnection, id string) strin
 	if id == "" {
 		return ""
 	}
+	key := [2]string{c.ID, id}
 	n.mu.Lock()
-	name, ok := n.users[id]
+	kept, ok := n.users[key]
 	n.mu.Unlock()
-	if ok {
-		return name
+	switch {
+	case ok && kept.refused.IsZero():
+		return kept.name
+	case ok && n.now().Sub(kept.refused) < notionUserRetry:
+		return id
 	}
 	var u struct {
 		Name string `json:"name"`
@@ -517,11 +540,14 @@ func (n *notion) user(ctx context.Context, c TrackerConnection, id string) strin
 	if err != nil && !(errors.As(err, &e) && (e.status == http.StatusForbidden || e.status == http.StatusNotFound)) {
 		return id // try again at the next read
 	}
-	name = cmp.Or(u.Name, id)
+	kept = notionUser{name: cmp.Or(u.Name, id)}
+	if err != nil {
+		kept.refused = n.now()
+	}
 	n.mu.Lock()
-	n.users[id] = name
+	n.users[key] = kept
 	n.mu.Unlock()
-	return name
+	return kept.name
 }
 
 // notionBlock is a block of a page's content, with the text of a block

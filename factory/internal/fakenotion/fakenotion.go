@@ -105,14 +105,14 @@ type Notion struct {
 	comments  []Comment
 	refuse    map[string]int
 	calls     []string
-	usersOff  bool
+	usersOff  map[string]bool // by token; "" is each token
 	blockKids map[string][]Block
 }
 
 // New is a fake Notion with no databases, served until the test ends.
 func New(t testing.TB) *Notion {
 	n := &Notion{tokens: map[string]bool{}, databases: map[string]*database{}, pages: map[string]*page{},
-		users: map[string]User{}, refuse: map[string]int{}, blockKids: map[string][]Block{}}
+		users: map[string]User{}, usersOff: map[string]bool{}, refuse: map[string]int{}, blockKids: map[string][]Block{}}
 	n.server = httptest.NewServer(http.HandlerFunc(n.serve))
 	t.Cleanup(n.server.Close)
 	return n
@@ -148,12 +148,26 @@ func (n *Notion) AddUser(u User) {
 	n.users[u.ID] = u
 }
 
-// RefuseUsers makes GET /v1/users/{id} answer 403, as for an integration
-// with no capability to read user information.
-func (n *Notion) RefuseUsers() {
+// RefuseUsers makes GET /v1/users/{id} answer 403 to the tokens (each
+// token when none), as for an integration with no capability to read user
+// information.
+func (n *Notion) RefuseUsers(tokens ...string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.usersOff = true
+	if len(tokens) == 0 {
+		tokens = []string{""}
+	}
+	for _, token := range tokens {
+		n.usersOff[token] = true
+	}
+}
+
+// AllowUsers undoes RefuseUsers, as when an Admin gives the integration
+// the capability to read user information.
+func (n *Notion) AllowUsers() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	clear(n.usersOff)
 }
 
 // Put makes or replaces a page of the database, as the user. It is an
@@ -369,7 +383,7 @@ func (n *Notion) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "POST" && len(parts) == 1 && parts[0] == "comments":
 		n.comment(w, r)
 	case r.Method == "GET" && len(parts) == 2 && parts[0] == "users":
-		n.user(w, parts[1])
+		n.user(w, token, parts[1])
 	default:
 		fail(w, http.StatusBadRequest, "invalid_request_url", "Invalid request URL.")
 	}
@@ -647,8 +661,8 @@ func (n *Notion) comment(w http.ResponseWriter, r *http.Request) {
 		"created_by": map[string]string{"object": "user", "id": BotID}, "rich_text": []any{text(comment.Text)}})
 }
 
-func (n *Notion) user(w http.ResponseWriter, id string) {
-	if n.usersOff {
+func (n *Notion) user(w http.ResponseWriter, token, id string) {
+	if n.usersOff[""] || n.usersOff[token] {
 		fail(w, http.StatusForbidden, "restricted_resource", "Insufficient permissions for this endpoint.")
 		return
 	}
