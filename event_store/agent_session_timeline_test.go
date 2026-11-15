@@ -333,3 +333,24 @@ func TestAnAgentSessionUploadedLateOverTwoStoredDaysShowsInTheOrderOfItsLines(t 
 	}
 	expectTexts(t, "the pages together", got, want)
 }
+
+func TestWithoutAMainTranscriptTheMainTimelineIsEmpty(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	env.Clock.Set(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	o := newAgentOrganization(t, env)
+
+	// The unit of the main transcript did not come yet.
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "subagents/agent-zz.jsonl", body: jsonl(
+		`{"type":"user","uuid":"s1","isSidechain":true,"agentId":"zz","timestamp":"2026-10-02T11:00:02Z","message":{"role":"user","content":"S1"}}`,
+	)}), 200)
+	env.ProcessAgentFiles(t)
+
+	answer := readTimeline(t, env, o.project, laptopSession, map[string]any{})
+	expectTexts(t, "the main timeline", stepTexts(answer.Steps), []string{})
+	if len(answer.Subagents) != 1 || answer.Subagents[0].AgentID != "zz" {
+		t.Errorf("Expected one subagent, got %+v", answer.Subagents)
+	}
+	sub := readTimeline(t, env, o.project, laptopSession, map[string]any{"path": "subagents/agent-zz.jsonl"})
+	expectTexts(t, "the subagent's timeline", stepTexts(sub.Steps), []string{"not from a person: S1"})
+}

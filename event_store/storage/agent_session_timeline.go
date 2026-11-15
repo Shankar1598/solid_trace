@@ -59,7 +59,7 @@ func (s AgentTimelineStep) CursorOf() AgentTimelineCursor {
 // AgentTimelinePage asks for one page of an Agent session's timeline.
 type AgentTimelinePage struct {
 	// Paths are the files whose steps the page gives, each at its version
-	// in the Agent session's Files.
+	// in the Agent session's Files. No paths give no steps.
 	Paths []string
 	// After, if set, is the place of the last step of the page before.
 	After *AgentTimelineCursor
@@ -68,12 +68,12 @@ type AgentTimelinePage struct {
 
 // agentSessionLogs is the condition on the derived Logs of the Agent
 // session's files given, at their highest versions, in the days that
-// the server stored them.
+// the server stored them. No paths select no Logs.
 func agentSessionLogs(projectID uint32, session AgentSessionTotals, paths []string) string {
 	c := ClickHouseColumns{}
 	var files []string
 	for _, f := range session.Files {
-		if paths != nil && !slices.Contains(paths, f.Path) {
+		if !slices.Contains(paths, f.Path) {
 			continue
 		}
 		files = append(files, fmt.Sprintf("(file = %s AND %s = %d)", chsql.String(f.Path), c.Attribute(NumberAttribute, "agent.raw.version"), f.Version))
@@ -146,6 +146,15 @@ func (s *ClickHouseLogs) AgentSessionTimeline(ctx context.Context, projectID uin
 	return steps, rows.Err()
 }
 
+// Paths are the paths of all the Agent session's files.
+func (s AgentSessionTotals) Paths() []string {
+	paths := make([]string, 0, len(s.Files))
+	for _, f := range s.Files {
+		paths = append(paths, f.Path)
+	}
+	return paths
+}
+
 func uintOf(f *float64) uint64 {
 	if f == nil || *f < 0 {
 		return 0
@@ -160,7 +169,7 @@ func (s *ClickHouseLogs) AgentSubagentCalls(ctx context.Context, projectID uint3
 	c := ClickHouseColumns{}
 	subagent := c.Attribute(StringAttribute, "agent.subagent_id")
 	query := fmt.Sprintf("SELECT %s, any(ifNull(%s, '')) FROM logs WHERE %s AND isNotNull(%s) GROUP BY 1",
-		subagent, c.Attribute(StringAttribute, "agent.tool_use_id"), agentSessionLogs(projectID, session, nil), subagent)
+		subagent, c.Attribute(StringAttribute, "agent.tool_use_id"), agentSessionLogs(projectID, session, session.Paths()), subagent)
 	began := time.Now()
 	defer func() { recordStatement(ctx, query, began, err) }()
 	rows, err := s.conn.Query(ctx, query)
