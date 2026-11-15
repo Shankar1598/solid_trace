@@ -117,6 +117,21 @@ var migrations = []string{
 		revoked_at INTEGER
 	);
 	CREATE INDEX execution_tokens_by_execution ON execution_tokens (execution_id);`,
+	// A connection's webhook_secret is sealed (see sealer); last_webhook_at
+	// is the time of its last verified webhook. organization_slug is the
+	// slug when an Admin last saved the connection; it is data only, for
+	// the warnings. webhook_deliveries are the delivery ids of the last 7
+	// days, for the dedupe.
+	`ALTER TABLE connections ADD COLUMN webhook_secret BLOB;
+	ALTER TABLE connections ADD COLUMN last_webhook_at INTEGER;
+	ALTER TABLE connections ADD COLUMN organization_slug TEXT NOT NULL DEFAULT '';
+	CREATE TABLE webhook_deliveries (
+		connection_id TEXT NOT NULL REFERENCES connections (id),
+		delivery TEXT NOT NULL,
+		received_at INTEGER NOT NULL,
+		PRIMARY KEY (connection_id, delivery)
+	);
+	CREATE INDEX webhook_deliveries_by_time ON webhook_deliveries (received_at);`,
 }
 
 // store is the Dispatcher's SQLite database.
