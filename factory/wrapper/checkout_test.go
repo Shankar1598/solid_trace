@@ -123,10 +123,11 @@ func TestASubmoduleWithAnSSHURLClonesOverHTTPSWithTheCredentialHelper(t *testing
 	}
 }
 
-func TestTheEndDeletesTheWorkspaceAndTheRunUsersHomeAndKeepsTheCaches(t *testing.T) {
+func TestTheEndDeletesTheWorkspaceTheRunUsersHomeAndTheSecretsAndKeepsTheCaches(t *testing.T) {
 	env, ana := newEnv(t)
 	env.Runner.Agent(takeTask, shell(`mkdir -p "$XDG_CACHE_HOME/gems" && echo kept > "$XDG_CACHE_HOME/gems/rack" && `+
 		`echo gone > "$HOME/notes" && test "$CLAUDE_CONFIG_DIR" = "$HOME/.claude" && `+
+		`git config --global --get-regexp "^credential\\..*\\.helper$" | grep -q /secrets/git-credential && `+
 		`solidtrace report --outcome done --summary "Cached"`), reply, result, waitForEnd)
 
 	id := start(t, env, ana, "Fill the cache")
@@ -135,7 +136,10 @@ func TestTheEndDeletesTheWorkspaceAndTheRunUsersHomeAndKeepsTheCaches(t *testing
 		t.Fatalf("the Run: %+v", run)
 	}
 	execution := onlyExecution(t, run).ID
-	for _, dir := range []string{env.Runner.Workspace(execution), env.Runner.Home(execution)} {
+	// The secrets folder (WRAPPER_DIR/secrets, beside the agent's socket)
+	// holds the forge token and the credential helper.
+	secrets := filepath.Join(filepath.Dir(env.Runner.Socket(execution)), "secrets")
+	for _, dir := range []string{env.Runner.Workspace(execution), env.Runner.Home(execution), secrets} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
 			t.Errorf("%s is there after the end (%v)", dir, err)
 		}
