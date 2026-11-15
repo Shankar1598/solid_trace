@@ -52,12 +52,7 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		fmt.Fprintln(stderr, "wrapper:", err)
 		return 2
 	}
-	// The Dispatcher's private listener is reached directly, never
-	// through the proxy that the uploads use.
-	direct := http.DefaultTransport.(*http.Transport).Clone()
-	direct.Proxy = nil
-	c := &client{url: cfg.dispatcherURL, execution: cfg.execution, identityFile: cfg.identityFile,
-		http: &http.Client{Timeout: 30 * time.Second, Transport: direct}}
+	c := newClient(cfg)
 	task, err := c.task(ctx)
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
@@ -71,6 +66,16 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		return 1
 	}
 	return 0
+}
+
+// newClient is the client of the Dispatcher's API. The Dispatcher's
+// private listener is reached directly, never through the proxy of the
+// wrapper's environment, which the uploads use.
+func newClient(cfg config) *client {
+	direct := http.DefaultTransport.(*http.Transport).Clone()
+	direct.Proxy = nil
+	return &client{url: cfg.dispatcherURL, execution: cfg.execution, identityFile: cfg.identityFile,
+		http: &http.Client{Timeout: 30 * time.Second, Transport: direct}}
 }
 
 // execution is one Execution on this machine.
