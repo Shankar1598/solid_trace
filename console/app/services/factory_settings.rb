@@ -43,9 +43,13 @@ class FactorySettings
 
   # The Project's settings in the Dispatcher's list of the Organization's
   # settings, or nil. The list has only the Projects that have settings.
+  # Orphaned settings keep the slug of a deleted Project, which a new
+  # Project can have now, so they are never this Project's.
   def current
     list = @dispatcher.request(:get, "/api/v1/projects")
     projects = list.is_a?(Hash) && list["projects"].is_a?(Array) ? list["projects"] : []
-    projects.find { |settings| settings.is_a?(Hash) && settings["project"] == @project.slug }
+    projects.find do |settings|
+      settings.is_a?(Hash) && settings["project"] == @project.slug && !settings["orphaned"]
+    end
   end
 end

@@ -91,6 +91,28 @@ class FactorySectionTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "the orphaned settings of a deleted Project with the same slug are not this Project's" do
+    orphan = settings("bitbucket.org/example/old", folder: "apps/old", connection: "bitbucket-main")
+      .merge(orphaned: true)
+    stub_list(orphan)
+    stub_request(:put, settings_url).to_return(json(settings("bitbucket.org/example/shop")))
+    sign_in_as(@admin)
+
+    assert_equal({ "settings" => nil }, factory_prop)
+
+    patch factory_url, params: { factory: { repository: "bitbucket.org/example/shop" } }
+    assert_requested(:put, settings_url) do |request|
+      assert_equal "", JSON.parse(request.body)["connection"]
+    end
+  end
+
+  test "this Project's settings show when an orphan with the same slug comes first in the list" do
+    stub_list(settings("bitbucket.org/example/old").merge(orphaned: true), settings("bitbucket.org/example/shop"))
+    sign_in_as(@admin)
+
+    assert_equal "bitbucket.org/example/shop", factory_prop.dig("settings", "repository")
+  end
+
   test "a value that the Dispatcher refuses comes back as a form error" do
     stub_list
     stub_request(:put, settings_url).to_return(json({ error: "the repository must be host/workspace/name" }, status: 400))
