@@ -407,10 +407,11 @@ func (s *store) requeueExecution(id, reason string, at time.Time) (bool, error) 
 	return true, tx.Commit()
 }
 
-// executionsOf reads a Run's Executions, oldest first.
+// executionsOf reads a Run's Executions, oldest first. The fake clock can give two
+// Executions the same dispatch time: rowid keeps the order in which they were made.
 func (s *store) executionsOf(runID string) ([]dispatcherapi.Execution, error) {
 	rows, err := s.db.Query(`SELECT id, state, dispatched_at, started_at, ended_at, task_delivered_at, end_reason,
-		exit_code, background_tasks_killed, account FROM executions WHERE run_id = ? ORDER BY dispatched_at, id`, runID)
+		exit_code, background_tasks_killed, account FROM executions WHERE run_id = ? ORDER BY dispatched_at, rowid`, runID)
 	if err != nil {
 		return nil, err
 	}

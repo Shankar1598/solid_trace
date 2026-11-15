@@ -182,7 +182,7 @@ func stopInTx(tx *sql.Tx, runID string, by actor, reason string, run bool, at ti
 			return err
 		}
 	}
-	rows, err := tx.Query(`SELECT id, state FROM executions WHERE run_id = ? AND state != ? ORDER BY dispatched_at, id`,
+	rows, err := tx.Query(`SELECT id, state FROM executions WHERE run_id = ? AND state != ? ORDER BY dispatched_at, rowid`,
 		runID, dispatcherapi.ExecutionEnded)
 	if err != nil {
 		return err
