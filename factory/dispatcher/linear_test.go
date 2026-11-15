@@ -259,6 +259,25 @@ func TestALinearCallThatGets401AfterARefreshStopsWithNoSecondRefresh(t *testing.
 	}
 }
 
+func TestALinearAccessTokenIsRefreshedWhenItExpiresInLessThan5Minutes(t *testing.T) {
+	for _, c := range []struct {
+		left      time.Duration
+		refreshes int
+	}{{4 * time.Minute, 1}, {6 * time.Minute, 0}} {
+		t.Run(c.left.String(), func(t *testing.T) {
+			env, path := linearEnv(t)
+			// The Dispatcher's token expires fakelinear.TokenLife - 1 s
+			// after the install.
+			env.Clock.Advance(fakelinear.TokenLife - time.Second - c.left)
+			readyTicket(t, env, path, "issue-40")
+			waitForRuns(t, env, 1)
+			if n := env.Linear.Refreshes(); n != c.refreshes {
+				t.Errorf("a token that expires in %s: Linear gave %d refreshes, want %d", c.left, n, c.refreshes)
+			}
+		})
+	}
+}
+
 func TestALinearConnectionWhoseRefreshTokenLinearRefusesStartsNoRunAndLogsWhatToDo(t *testing.T) {
 	env, path := linearEnv(t)
 	env.Linear.RefuseRefresh()
