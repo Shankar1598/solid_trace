@@ -2,6 +2,7 @@ package fakeharness_test
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -370,6 +371,24 @@ func TestResumeContinuesTheSameTranscript(t *testing.T) {
 	r.end()
 	if got := len(r.transcript(sessionID)); got <= n {
 		t.Fatalf("transcript has %d lines after the resume, %d before; want more", got, n)
+	}
+}
+
+func TestStartWithASessionIDThatIsInUseFails(t *testing.T) {
+	config := t.TempDir()
+	s := start(t, "turn-with-tool-call", config, "--session-id", sessionID)
+	s.message(first, "One.")
+	s.until(is("result", ""))
+	s.end()
+	before, _ := os.ReadFile(filepath.Join(config, "projects", "-workspace-repo", sessionID+".jsonl"))
+
+	again := start(t, "turn-with-tool-call", config, "--session-id", sessionID)
+	if code := again.end(); code != 1 || !strings.Contains(again.stderr.String(), "Session ID "+sessionID+" is already in use.") {
+		t.Fatalf("exit %d, stderr %q; want 1 and session ID already in use", code, again.stderr.String())
+	}
+	after, _ := os.ReadFile(filepath.Join(config, "projects", "-workspace-repo", sessionID+".jsonl"))
+	if !bytes.Equal(before, after) {
+		t.Fatalf("the transcript changed:\n%s\nwant:\n%s", after, before)
 	}
 }
 
