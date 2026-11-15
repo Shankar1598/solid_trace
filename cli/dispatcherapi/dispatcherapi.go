@@ -30,11 +30,18 @@ const (
 	StateFailed          = "failed"
 )
 
-// Person is who started a Run: the SolidTrace user of the token.
+// Person is who started a Run or saved a value: the SolidTrace user of
+// the token. A Run that a schedule started has the schedule as its
+// starter, with Kind ActorSchedule.
 type Person struct {
+	// Kind is "" for a person, or ActorSchedule.
+	Kind string `json:"kind,omitempty"`
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
+
+// ActorSchedule is the kind of a Run's starter that is a schedule.
+const ActorSchedule = "schedule"
 
 // Run is one unit of work, from its trigger to its PR outcome.
 type Run struct {
@@ -44,9 +51,12 @@ type Run struct {
 	Project string `json:"project"`
 	Prompt  string `json:"prompt"`
 	// Organization is the slug of the Run's Organization.
-	Organization string    `json:"organization"`
-	StartedBy    Person    `json:"started_by"`
-	CreatedAt    time.Time `json:"created_at"`
+	Organization string `json:"organization"`
+	StartedBy    Person `json:"started_by"`
+	// ScheduledBy is the member who made the schedule that started the
+	// Run (nil for another trigger).
+	ScheduledBy *Person   `json:"scheduled_by,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 	// Reason says why the Run is in its state: for failed, the summary of
 	// the agent's report or the wrapper's reason, such as "the harness
 	// exited".
@@ -270,6 +280,65 @@ type Connections struct {
 	Connections []Connection `json:"connections"`
 }
 
+// Schedule is a Project's schedule: it starts a Run at each fire time of
+// its cron expression in its time zone.
+type Schedule struct {
+	ID string `json:"id"`
+	// Project is the Project's slug in SolidTrace.
+	Project string `json:"project"`
+	Name    string `json:"name"`
+	// Cron is a five-field cron expression: minute, hour, day of the
+	// month, month and day of the week.
+	Cron string `json:"cron"`
+	// TimeZone is an IANA time zone, such as Europe/Berlin.
+	TimeZone string `json:"time_zone"`
+	Prompt   string `json:"prompt"`
+	// BaseBranch is the branch that its Runs start from ("" is the
+	// Project's default base branch).
+	BaseBranch string `json:"base_branch"`
+	Paused     bool   `json:"paused"`
+	// NextAt is the next fire time (nil while the schedule is paused).
+	NextAt *time.Time `json:"next_at"`
+	// LastRun is the last Run that the schedule started (nil for none).
+	LastRun   *ScheduleRun `json:"last_run"`
+	CreatedAt time.Time    `json:"created_at"`
+	CreatedBy Person       `json:"created_by"`
+	UpdatedAt time.Time    `json:"updated_at"`
+	UpdatedBy Person       `json:"updated_by"`
+}
+
+// ScheduleRun is a Run that a schedule started for the fire time FiredAt.
+type ScheduleRun struct {
+	ID      string    `json:"id"`
+	State   string    `json:"state"`
+	FiredAt time.Time `json:"fired_at"`
+}
+
+// SaveSchedule is the body of a new schedule. An empty TimeZone is UTC.
+type SaveSchedule struct {
+	Project    string `json:"project"`
+	Name       string `json:"name"`
+	Cron       string `json:"cron"`
+	TimeZone   string `json:"time_zone"`
+	Prompt     string `json:"prompt"`
+	BaseBranch string `json:"base_branch"`
+}
+
+// UpdateSchedule is the body of a change to a schedule: each value that is
+// not nil replaces the schedule's value.
+type UpdateSchedule struct {
+	Name       *string `json:"name,omitempty"`
+	Cron       *string `json:"cron,omitempty"`
+	TimeZone   *string `json:"time_zone,omitempty"`
+	Prompt     *string `json:"prompt,omitempty"`
+	BaseBranch *string `json:"base_branch,omitempty"`
+}
+
+// Schedules is the answer of a list of schedules, by Project and name.
+type Schedules struct {
+	Schedules []Schedule `json:"schedules"`
+}
+
 // Runs is the answer of a list, newest first.
 type Runs struct {
 	Runs []Run `json:"runs"`
@@ -400,6 +469,61 @@ func (c *Client) SaveWebhookSecret(ctx context.Context, name, secret string) (Co
 	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name)+"/webhook-secret",
 		SaveWebhookSecret{Secret: secret}, &connection)
 	return connection, err
+}
+
+// Schedules reads the Organization's schedules, or the schedules of the
+// Project with the slug project ("" is each Project).
+func (c *Client) Schedules(ctx context.Context, project string) ([]Schedule, error) {
+	var list Schedules
+	path := "/schedules"
+	if project != "" {
+		path += "?project=" + url.QueryEscape(project)
+	}
+	err := c.call(ctx, http.MethodGet, path, nil, &list)
+	return list.Schedules, err
+}
+
+// Schedule reads one schedule.
+func (c *Client) Schedule(ctx context.Context, id string) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodGet, "/schedules/"+url.PathEscape(id), nil, &schedule)
+	return schedule, err
+}
+
+// CreateSchedule makes a schedule.
+func (c *Client) CreateSchedule(ctx context.Context, save SaveSchedule) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodPost, "/schedules", save, &schedule)
+	return schedule, err
+}
+
+// UpdateSchedule changes each value of a schedule that update gives.
+func (c *Client) UpdateSchedule(ctx context.Context, id string, update UpdateSchedule) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodPatch, "/schedules/"+url.PathEscape(id), update, &schedule)
+	return schedule, err
+}
+
+// PauseSchedule stops a schedule's fire times until ContinueSchedule.
+func (c *Client) PauseSchedule(ctx context.Context, id string) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodPost, "/schedules/"+url.PathEscape(id)+"/pause", nil, &schedule)
+	return schedule, err
+}
+
+// ContinueSchedule starts a paused schedule's fire times again, from now.
+func (c *Client) ContinueSchedule(ctx context.Context, id string) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodPost, "/schedules/"+url.PathEscape(id)+"/continue", nil, &schedule)
+	return schedule, err
+}
+
+// DeleteSchedule deletes a schedule and gives it as it was. Its Runs
+// continue.
+func (c *Client) DeleteSchedule(ctx context.Context, id string) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodDelete, "/schedules/"+url.PathEscape(id), nil, &schedule)
+	return schedule, err
 }
 
 func (c *Client) call(ctx context.Context, method, path string, body, into any) error {

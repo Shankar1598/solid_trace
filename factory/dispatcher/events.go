@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/solidtrace/cli/dispatcherapi"
 )
 
 // Run events are Logs in the Organization's Agent Project (see the
@@ -30,10 +32,17 @@ const (
 )
 
 // Trigger kinds of a Run (run.trigger).
-const triggerPerson = "person"
+const (
+	triggerPerson   = "person"
+	triggerSchedule = "schedule"
+)
 
-// Actor kinds (actor.kind).
-const actorPerson = "person"
+// Actor kinds (actor.kind). A schedule is the actor of the Runs that it
+// starts, with schedule.created_by.* the member who made it.
+const (
+	actorPerson   = "person"
+	actorSchedule = dispatcherapi.ActorSchedule
+)
 
 // runEventsPath is SolidTrace's (EventStore's) route for run events. A
 // token with run_events:write sends a JSON array of Logs.
@@ -65,14 +74,21 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	if err := tx.QueryRow(`UPDATE runs SET seq = seq + 1 WHERE id = ? RETURNING seq`, runID).Scan(&seq); err != nil {
 		return fmt.Errorf("count the run event: %w", err)
 	}
-	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorID, actorName, sessionID string
+	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorKind, actorID, actorName,
+		sessionID, scheduleID, scheduledByID, scheduledByName string
 	var executions int64
+	var firedAt sql.NullInt64
 	err := tx.QueryRow(`SELECT state, reason, project, repository, folder, base_branch, trigger_kind, prompt,
-		started_by_id, started_by_name, session_id, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
+		started_by_kind, started_by_id, started_by_name, session_id, schedule_id, fired_at, scheduled_by_id,
+		scheduled_by_name, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
 		FROM runs r WHERE id = ?`, runID).Scan(&state, &reason, &project, &repository, &folder, &baseBranch, &trigger,
-		&prompt, &actorID, &actorName, &sessionID, &executions)
+		&prompt, &actorKind, &actorID, &actorName, &sessionID, &scheduleID, &firedAt, &scheduledByID, &scheduledByName,
+		&executions)
 	if err != nil {
 		return fmt.Errorf("read the Run for its event: %w", err)
+	}
+	if actorKind == "" {
+		actorKind = actorPerson
 	}
 	event := map[string]any{
 		"time":            at.UTC().Format(time.RFC3339Nano),
@@ -93,9 +109,14 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		"factory.project": project,
 		"repository":      repository,
 		"folder":          folder,
-		"actor.kind":      actorPerson,
+		"actor.kind":      actorKind,
 		"actor.id":        actorID,
 		"actor.name":      actorName,
+	}
+	if scheduleID != "" {
+		event["schedule.fire_time"] = time.UnixMicro(firedAt.Int64).UTC().Format(time.RFC3339)
+		event["schedule.created_by.id"] = scheduledByID
+		event["schedule.created_by.name"] = scheduledByName
 	}
 	if _, ok := details["execution.id"]; ok && sessionID != "" {
 		event["agent.session_id"] = sessionID
@@ -103,7 +124,7 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	for k, v := range details {
 		event[k] = v
 	}
-	event["run.started_by.kind"] = actorPerson
+	event["run.started_by.kind"] = actorKind
 	event["run.started_by.id"] = actorID
 	event["run.started_by.name"] = actorName
 	return addToOutbox(tx, event)
@@ -137,19 +158,25 @@ func (s *store) wakeSender() {
 // addWarning adds one of the Dispatcher's warning Logs to the outbox. It
 // has no run.id, so EventStore stores it with file dispatcher.
 func (s *store) addWarning(at time.Time, message string, attrs map[string]any) error {
-	log := map[string]any{"time": at.UTC().Format(time.RFC3339Nano), "level": "warn", "message": message}
-	for k, v := range attrs {
-		log[k] = v
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := addToOutbox(tx, log); err != nil {
+	if err := addOwnLog(tx, at, "warn", message, attrs); err != nil {
 		return err
 	}
 	return s.commit(tx)
+}
+
+// addOwnLog adds one of the Dispatcher's own Logs (no run.id) at level to
+// the outbox, in tx: a warning, or a change to a schedule.
+func addOwnLog(tx *sql.Tx, at time.Time, level, message string, attrs map[string]any) error {
+	log := map[string]any{"time": at.UTC().Format(time.RFC3339Nano), "level": level, "message": message}
+	for k, v := range attrs {
+		log[k] = v
+	}
+	return addToOutbox(tx, log)
 }
 
 // warn writes a warning to the Dispatcher's log and sends it to the Agent

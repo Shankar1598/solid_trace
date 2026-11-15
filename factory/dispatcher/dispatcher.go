@@ -44,6 +44,11 @@ type Options struct {
 	// ReconcileTick is how often the timer looks for a due backstop (1 s
 	// when 0).
 	ReconcileTick time.Duration
+	// ScheduleEvery is the wait between two passes of the schedule loop
+	// (scheduleEvery when 0). ScheduleChecked, when set, gets the clock
+	// time of each pass after the pass.
+	ScheduleEvery   time.Duration
+	ScheduleChecked func(at time.Time)
 }
 
 // Dispatcher is one open Dispatcher.
@@ -61,6 +66,9 @@ type Dispatcher struct {
 	// http and eventRetry are for the event sender.
 	http       *http.Client
 	eventRetry time.Duration
+
+	scheduleEvery   time.Duration
+	scheduleChecked func(time.Time)
 
 	runner   Runner
 	identity *identityCheck
@@ -116,9 +124,11 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		runner:     options.Runner,
 		wake:       make(chan struct{}, 1),
 
-		kinds:         map[string]WebhookKind{},
-		webhookLimits: &webhookLimits{windows: map[string]webhookWindow{}},
-		reconciles:    newReconcileQueue(),
+		kinds:           map[string]WebhookKind{},
+		webhookLimits:   &webhookLimits{windows: map[string]webhookWindow{}},
+		reconciles:      newReconcileQueue(),
+		scheduleEvery:   cmp.Or(options.ScheduleEvery, scheduleEvery),
+		scheduleChecked: options.ScheduleChecked,
 	}
 	for _, kind := range options.WebhookKinds {
 		d.kinds[kind.Kind()] = kind
@@ -134,6 +144,13 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}", d.person(d.admin(d.saveConnection)))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}/webhook-secret", d.person(d.admin(d.saveWebhookSecret)))
 	mux.HandleFunc("POST /webhooks/", d.webhook)
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/schedules", d.person(d.listSchedules))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules", d.person(d.createSchedule))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/schedules/{id}", d.person(d.getSchedule))
+	mux.HandleFunc("PATCH "+dispatcherapi.Path+"/schedules/{id}", d.person(d.updateSchedule))
+	mux.HandleFunc("DELETE "+dispatcherapi.Path+"/schedules/{id}", d.person(d.deleteSchedule))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules/{id}/pause", d.person(d.pauseSchedule))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules/{id}/continue", d.person(d.continueSchedule))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/status", d.status)
 	if d.runner != nil {
 		d.identity = &identityCheck{jwksURL: d.runner.JWKSURL(), http: options.HTTP, now: options.Now}
@@ -148,9 +165,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	d.handler = d.refuseOldCLIs(mux)
 	ctx, stop := context.WithCancel(context.Background())
 	d.stop = stop
-	d.loops.Add(1)
+	d.loops.Add(4)
 	go func() { defer d.loops.Done(); d.sendLoop(ctx) }()
-	d.loops.Add(2)
+	go func() { defer d.loops.Done(); d.scheduleLoop(ctx) }()
 	go func() { defer d.loops.Done(); d.reconcileLoop(ctx) }()
 	go func() {
 		defer d.loops.Done()

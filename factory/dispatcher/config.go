@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/solidtrace/factory/forge"
 )
@@ -78,6 +79,13 @@ type Config struct {
 	// WrapperCommand is the path of the wrapper on an agent machine.
 	WrapperCommand string
 
+	// ScheduleMinInterval is the shortest time between two fire times of a
+	// schedule, checked at save (DefaultScheduleMinInterval when 0).
+	ScheduleMinInterval time.Duration
+
+	// scheduleMinIntervalProblem is why EnvScheduleMinInterval could not
+	// be read.
+	scheduleMinIntervalProblem string
 	// machineKindsProblem is why EnvMachineKinds could not be read.
 	machineKindsProblem string
 }
@@ -158,7 +166,21 @@ const (
 	EnvDefaultMachineKind = "DISPATCHER_DEFAULT_MACHINE_KIND"
 	EnvWrapperURL         = "DISPATCHER_WRAPPER_URL"
 	EnvWrapperCommand     = "DISPATCHER_WRAPPER_COMMAND"
+	// EnvScheduleMinInterval is a Go duration, such as 1h or 30m.
+	EnvScheduleMinInterval = "DISPATCHER_SCHEDULE_MIN_INTERVAL"
 )
+
+// DefaultScheduleMinInterval is the shortest time between two fire times
+// of a schedule when the operator sets none.
+const DefaultScheduleMinInterval = time.Hour
+
+// scheduleMinInterval is the minimum that a save checks.
+func (c Config) scheduleMinInterval() time.Duration {
+	if c.ScheduleMinInterval > 0 {
+		return c.ScheduleMinInterval
+	}
+	return DefaultScheduleMinInterval
+}
 
 // DefaultListen is the private listener's address when none is set.
 const DefaultListen = "127.0.0.1:7600"
@@ -202,6 +224,14 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		WrapperCommand:     value(EnvWrapperCommand),
 	}
 	c.MachineKinds, c.machineKindsProblem = parseMachineKinds(value(EnvMachineKinds))
+	if v := value(EnvScheduleMinInterval); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			c.scheduleMinIntervalProblem = EnvScheduleMinInterval + " (the shortest time between two fire times " +
+				"of a schedule) must be a duration such as 1h or 30m, not " + fmt.Sprintf("%q", v)
+		}
+		c.ScheduleMinInterval = d
+	}
 	if c.WrapperCommand == "" {
 		c.WrapperCommand = DefaultWrapperCommand
 	}
@@ -249,6 +279,9 @@ func (c Config) Check() error {
 	if c.WIPRefs != "" && c.WIPRefs != forge.WIPOutsideBranches && c.WIPRefs != forge.WIPInBranches {
 		problems = append(problems, EnvWIPRefs+" (the place of the work-in-progress refs) must be "+
 			forge.WIPOutsideBranches+" or "+forge.WIPInBranches+", not "+fmt.Sprintf("%q", c.WIPRefs))
+	}
+	if c.scheduleMinIntervalProblem != "" {
+		problems = append(problems, c.scheduleMinIntervalProblem)
 	}
 	problems = append(problems, c.nomadProblems()...)
 	if len(problems) > 0 {

@@ -85,6 +85,42 @@ type Env struct {
 	// projects counts the Projects that Project made, for their ids.
 	projects int64
 	admin    *Person
+	// checked is the clock time of the schedule loop's last pass.
+	checked atomic.Pointer[time.Time]
+}
+
+// scheduleEvery is the wait between two passes of the Dispatcher's
+// schedule loop in a test, so that a pass soon follows a move of the
+// clock.
+const scheduleEvery = 5 * time.Millisecond
+
+// CheckSchedules waits up to 10 s until the Dispatcher's schedule loop
+// did a pass at the clock's time now or later. So each fire time that is
+// due now has its Run, or its skip, after it.
+func (e *Env) CheckSchedules() {
+	e.t.Helper()
+	now := e.Clock.Now()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if at := e.checked.Load(); at != nil && !at.Before(now) {
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("the schedule loop did no pass at %s after 10 s\nDispatcher log:\n%s", now, e.Logs())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// RestartAfter stops the Dispatcher, moves the clock by d while it is
+// down, and starts it again on the same database.
+func (e *Env) RestartAfter(d time.Duration) {
+	e.t.Helper()
+	if err := e.current.Load().Close(); err != nil {
+		e.t.Fatalf("stop the Dispatcher: %v", err)
+	}
+	e.Clock.Advance(d)
+	e.start()
 }
 
 // EncryptionKey is the Dispatcher's encryption key in each Env.
@@ -276,7 +312,8 @@ func (e *Env) start() {
 	e.t.Helper()
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
 		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
-		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick}
+		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick,
+		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) }}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner

@@ -109,7 +109,12 @@ func (d *Dispatcher) saveSettings(w http.ResponseWriter, r *http.Request, p pers
 // project finds the Project of the request's {project} slug at
 // SolidTrace. It answers the request itself when it finds none.
 func (d *Dispatcher) project(w http.ResponseWriter, r *http.Request, p person) (solidTraceProject, bool) {
-	slug := r.PathValue("project")
+	return d.projectBySlug(w, r, p, r.PathValue("project"))
+}
+
+// projectBySlug finds the Project with slug at SolidTrace. It answers the
+// request itself when it finds none.
+func (d *Dispatcher) projectBySlug(w http.ResponseWriter, r *http.Request, p person, slug string) (solidTraceProject, bool) {
 	projects, err := d.listProjects(r.Context(), p.organization)
 	if err != nil {
 		d.solidTraceFailure(w, p.organization, err)
@@ -251,13 +256,18 @@ func cleanSettings(s *dispatcherapi.SaveFactorySettings) string {
 	s.Folder = folder
 
 	branch := strings.TrimSpace(s.BaseBranch)
-	if branch != "" && (!baseBranchPattern.MatchString(branch) || strings.Contains(branch, "..") ||
-		strings.Contains(branch, "//") || strings.HasSuffix(branch, "/") || strings.HasSuffix(branch, ".lock")) {
+	if branch != "" && !validBranch(branch) {
 		return "the base branch must be a branch name, such as main or release/2.0, not " + quote(s.BaseBranch)
 	}
 	s.BaseBranch = branch
 	s.Connection = strings.TrimSpace(s.Connection)
 	return ""
+}
+
+// validBranch is true for a branch name that a Run can start from.
+func validBranch(branch string) bool {
+	return baseBranchPattern.MatchString(branch) && !strings.Contains(branch, "..") &&
+		!strings.Contains(branch, "//") && !strings.HasSuffix(branch, "/") && !strings.HasSuffix(branch, ".lock")
 }
 
 func quote(s string) string {

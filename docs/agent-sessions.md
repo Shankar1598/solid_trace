@@ -122,6 +122,26 @@ A webhook is only a hint. The Dispatcher checks its HMAC-SHA256 signature on the
 
 `solidtrace connections list` shows the time of each connection's last webhook. When a backstop finds a change that no webhook announced since the previous backstop, the Dispatcher writes a warning Log with the Organization, the connection and the time of the last webhook, so that a Monitor can find a connection whose webhooks stopped. A connection with no webhook secret gets no webhooks, so its backstop does not warn.
 
+## Start Runs on a schedule
+
+A **Schedule** starts a Run of a Project at each fire time of a five-field cron expression (minute, hour, day of the month, month, day of the week) in an IANA time zone (UTC if you give none). Each member of the Organization makes and changes schedules with the CLI:
+
+```sh
+solidtrace schedules create checkout --name "Update dependencies" --cron "0 9 * * 1" \
+  --time-zone Europe/Berlin "Update the dependencies and run the tests"
+solidtrace schedules list [--project checkout]
+solidtrace schedules update ID --cron "0 7 * * 1"
+solidtrace schedules pause ID      # stops the next fire at once
+solidtrace schedules continue ID   # starts the fire times again, from now
+solidtrace schedules delete ID
+```
+
+- The Project needs Factory settings. A Run starts from the schedule's base branch (`--base-branch`), else the Project's default base branch.
+- The shortest interval between two fire times is 1 hour. The operator changes it with `DISPATCHER_SCHEDULE_MIN_INTERVAL` (a duration, such as `30m`).
+- A fire time while the schedule's last Run is active starts no Run; the Dispatcher writes the warning Log "skipped: last Run is active".
+- A fire time that the Dispatcher missed while it was down starts one Run when the Dispatcher starts, if it is less than 24 hours old. Older fire times start no Run.
+- The Run's starter is the schedule, with the member who made it. Each change to a schedule is a Log of the Dispatcher (`event.kind` `schedule_created`, `schedule_updated`, `schedule_paused`, `schedule_continued` or `schedule_deleted`) with the person who made it.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.
