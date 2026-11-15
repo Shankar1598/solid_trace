@@ -427,3 +427,43 @@ func TestAPushOfAnUnknownCommitGetsNoHintOfTheRefsSetting(t *testing.T) {
 		t.Errorf("the reason %q must give no hint of the refs setting or the token", err)
 	}
 }
+
+// errorTransport fails each request with the text of err.
+type errorTransport struct{ err error }
+
+func (e errorTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, e.err }
+
+// A reason never holds the token, also when Bitbucket's answer, the
+// network error or git's output holds it.
+func TestAReasonNeverHoldsTheTokenThatAnAnswerEchoes(t *testing.T) {
+	ctx := context.Background()
+	check := func(t *testing.T, token string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("no error")
+		}
+		if strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "[token]") {
+			t.Errorf("the reason %q must show [token] in place of the token", err)
+		}
+	}
+	t.Run("an API error body", func(t *testing.T) {
+		f, b := newForge(t)
+		f.FailNext(http.StatusBadRequest, "the token "+f.Token+" is not valid here")
+		_, err := b.PR(ctx, repository, 1)
+		check(t, f.Token, err)
+	})
+	t.Run("a network error", func(t *testing.T) {
+		f, b := newForge(t)
+		b.HTTP = &http.Client{Transport: errorTransport{errors.New("proxy refused Bearer " + f.Token)}}
+		_, err := b.PR(ctx, repository, 1)
+		check(t, f.Token, err)
+	})
+	t.Run("git's output", func(t *testing.T) {
+		f, b := newForge(t)
+		work := clone(t, f, b)
+		commit := commitWork(t, work)
+		f.RefusePushes(fakeRepo, "refused for the token "+f.Token)
+		_, err := b.SaveWIP(ctx, work, repository, "r1", commit)
+		check(t, f.Token, err)
+	})
+}

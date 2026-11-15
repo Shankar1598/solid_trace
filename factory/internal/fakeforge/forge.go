@@ -179,6 +179,17 @@ func (f *Forge) RefuseRefsOutsideBranches(repo string) {
 	}
 }
 
+// RefusePushes makes the repository refuse each push, with message in
+// git's output, as a forge hook that refuses a push does.
+func (f *Forge) RefusePushes(repo, message string) {
+	f.t.Helper()
+	hook := filepath.Join(f.bare(repo), "hooks", "pre-receive")
+	script := "#!/bin/sh\ncat >/dev/null\necho '" + strings.ReplaceAll(message, "'", "") + "' >&2\nexit 1\n"
+	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 // Ref gives the commit that a ref (for example refs/heads/main or
 // refs/agent-wip/<run id>) names, and false when there is no such ref.
 func (f *Forge) Ref(repo, ref string) (string, bool) {
