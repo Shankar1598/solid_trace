@@ -70,7 +70,9 @@ func Executions(e *Env) {
 		e.t.Fatalf("start the fake Runner: %v", err)
 	}
 	e.Runner = r
-	e.AddAccount(DefaultAccount, DefaultAccountToken)
+	// The operator command needs the database that the Dispatcher makes
+	// at its first start.
+	e.afterStart = append(e.afterStart, func() { e.AddAccount(DefaultAccount, DefaultAccountToken) })
 }
 
 // DefaultAccount is the subscription account that the Executions option
@@ -98,6 +100,16 @@ type Runner struct {
 	executions []string
 	harness    string
 	pathFirst  string
+	before     func(execution string)
+}
+
+// BeforeDispatch makes the Runner call f with the id of the next
+// Execution that it starts, before it starts the Execution's wrapper: the
+// Execution is dispatched and has no task call yet.
+func (r *Runner) BeforeDispatch(f func(execution string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.before = f
 }
 
 // PathFirst puts dir first in the PATH of the next Executions' wrappers,
@@ -191,6 +203,13 @@ func Workload(execution string) string { return "fake-runner:" + execution }
 
 // Dispatch starts the Execution's wrapper with a workload identity JWT.
 func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (string, error) {
+	r.mu.Lock()
+	before := r.before
+	r.before = nil
+	r.mu.Unlock()
+	if before != nil {
+		before(x.Execution)
+	}
 	workload := Workload(x.Execution)
 	identity := filepath.Join(r.dir, "identity-"+x.Execution+".jwt")
 	if err := os.WriteFile(identity, []byte(r.Identity(workload)), 0o600); err != nil {

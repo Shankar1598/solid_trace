@@ -73,6 +73,9 @@ type Env struct {
 	// projects counts the Projects that Project made, for their ids.
 	projects int64
 	admin    *Person
+	// afterStart are the steps of the options that need the started
+	// Dispatcher, such as its database.
+	afterStart []func()
 }
 
 // EncryptionKey is the Dispatcher's encryption key in each Env.
@@ -173,6 +176,9 @@ func New(t testing.TB, options ...Option) *Env {
 	}
 	e.start()
 	t.Cleanup(func() { e.current.Load().Close() })
+	for _, step := range e.afterStart {
+		step()
+	}
 	return e
 }
 

@@ -188,3 +188,61 @@ func TestTheAccountTokenReachesTheHarnessAndNoOtherProcess(t *testing.T) {
 		t.Errorf("the wrapper's output shows the account's token")
 	}
 }
+
+func TestARunWhoseAccountIsRemovedBeforeTheTaskCallGoesBackInTheQueueAndGetsAFreeAccount(t *testing.T) {
+	env, ana := newEnv(t)
+	env.AddAccount("pool-2", secondToken)
+	tokens := filepath.Join(t.TempDir(), "tokens")
+	// The first Execution's wrapper gets no task, so its script never
+	// plays; the second Execution plays the second script.
+	for range 2 {
+		env.Runner.Agent(takeTask, initLine(t), recordToken(tokens), done("Fixed"), reply, result, waitForEnd)
+	}
+	// The operator removes pool-1 after the dispatch on it, before the
+	// wrapper's task call.
+	env.Runner.BeforeDispatch(func(string) { env.RemoveAccount(factorytest.DefaultAccount) })
+
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 2 {
+		t.Fatalf("want two Executions, got %+v", run.Executions)
+	}
+	first, second := run.Executions[0], run.Executions[1]
+	if first.Account != factorytest.DefaultAccount || !strings.Contains(first.EndReason, "no longer in the pool") {
+		t.Errorf("the first Execution is on %q and ended with %q", first.Account, first.EndReason)
+	}
+	if second.Account != "pool-2" {
+		t.Errorf("the second Execution is on %q, want pool-2", second.Account)
+	}
+	if recorded, _ := os.ReadFile(tokens); !strings.Contains(string(recorded), second.ID) ||
+		!strings.Contains(string(recorded), secondToken) || strings.Contains(string(recorded), first.ID) {
+		t.Errorf("the harness tokens: %q", recorded)
+	}
+}
+
+func TestAnAddWithTheNameOfAnAccountReplacesItsTokenAndKeepsItsLimit(t *testing.T) {
+	env, ana := newEnv(t)
+	reset := env.Clock.Now().Add(time.Hour)
+	env.MarkAtLimit(factorytest.DefaultAccount, reset)
+	const newToken = "sk-ant-oat01-factorytest-pool-1-new"
+	got := env.Operator(newToken+"\n", "add", factorytest.DefaultAccount)
+	if got.Code != 0 || !strings.Contains(got.Stdout, "replaced") {
+		t.Fatalf("add again: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	if list := env.Operator("", "list"); !strings.Contains(list.Stdout, "2026-11-14 10:00 UTC") {
+		t.Errorf("the list does not show the limit after the replace:\n%s", list.Stdout)
+	}
+
+	tokens := filepath.Join(t.TempDir(), "tokens")
+	env.Runner.Agent(takeTask, initLine(t), recordToken(tokens), done("Fixed"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	time.Sleep(300 * time.Millisecond)
+	if run := getRun(t, ana, id); run.State != dispatcherapi.StateQueued {
+		t.Fatalf("the Run is %s, want queued: the account is at its limit", run.State)
+	}
+	env.Clock.Advance(time.Hour)
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if recorded, _ := os.ReadFile(tokens); !strings.HasSuffix(strings.TrimSpace(string(recorded)), " "+newToken) {
+		t.Errorf("the harness has %q, want the new token", recorded)
+	}
+}
