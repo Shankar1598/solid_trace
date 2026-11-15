@@ -31,3 +31,14 @@ func (d *Dispatcher) projectForge(organizationID, name string) (forge.Forge, err
 	return &forge.Bitbucket{APIURL: d.config.BitbucketAPIURL, GitURL: d.config.BitbucketGitURL,
 		Token: token, WIPRefs: d.config.WIPRefs}, nil
 }
+
+// repositoryForge is the Forge of the connection with name, or, for a
+// Project that names no connection, Bitbucket with no token (a public
+// repository).
+func (d *Dispatcher) repositoryForge(organizationID, name string) (forge.Forge, error) {
+	if name == "" {
+		return &forge.Bitbucket{APIURL: d.config.BitbucketAPIURL, GitURL: d.config.BitbucketGitURL,
+			WIPRefs: d.config.WIPRefs}, nil
+	}
+	return d.projectForge(organizationID, name)
+}

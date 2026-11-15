@@ -77,6 +77,33 @@ func (s *store) setWorkload(id, workload string) error {
 	return err
 }
 
+// setFactoryFile keeps the factory file of a dispatched Execution.
+func (s *store) setFactoryFile(id, file string) error {
+	_, err := s.db.Exec(`UPDATE executions SET factory_file = ? WHERE id = ?`, file, id)
+	return err
+}
+
+// factoryFile is the factory file that the Execution's dispatch kept.
+func (s *store) factoryFile(id string) (factoryFile, error) {
+	var data string
+	if err := s.db.QueryRow(`SELECT factory_file FROM executions WHERE id = ?`, id).Scan(&data); err != nil {
+		return factoryFile{}, err
+	}
+	return decodeFactoryFile(data)
+}
+
+// checkoutOfRun is what the read of a Run's factory file needs.
+type checkoutOfRun struct {
+	organizationID, projectID, repository, folder string
+}
+
+func (s *store) runCheckout(runID string) (checkoutOfRun, error) {
+	var c checkoutOfRun
+	err := s.db.QueryRow(`SELECT organization_id, project_id, repository, folder FROM runs WHERE id = ?`, runID).
+		Scan(&c.organizationID, &c.projectID, &c.repository, &c.folder)
+	return c, err
+}
+
 // execution reads one Execution.
 func (s *store) execution(id string) (storedExecution, error) {
 	var e storedExecution

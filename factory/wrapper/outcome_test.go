@@ -212,12 +212,10 @@ func TestAskUserQuestionIsNotAvailableToTheAgent(t *testing.T) {
 
 func TestACloneThatFailsFailsTheRunWithTheReason(t *testing.T) {
 	env, ana := newEnv(t)
-	// The connection's token is not the Forge's token.
-	admin := env.PersonIn("Dana", factorytest.Organization, "admin")
-	if a := admin.API("PUT", "/api/v1/connections/forge", map[string]string{"kind": "bitbucket",
-		"token": "a-token-that-the-forge-refuses"}); a.Status/100 != 2 {
-		t.Fatalf("save the connection: %d %s", a.Status, a.Body)
-	}
+	// The Forge refuses git, with the connection's token, for the
+	// repository. (The Dispatcher reads the factory file with the API
+	// first.)
+	env.Forge.RefuseGit("example/shop")
 
 	id := start(t, env, ana, "Fix the cart")
 	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
@@ -225,7 +223,7 @@ func TestACloneThatFailsFailsTheRunWithTheReason(t *testing.T) {
 	if !strings.HasPrefix(run.Reason, "the setup failed: clone bitbucket.org/example/shop") {
 		t.Errorf("reason %q", run.Reason)
 	}
-	if strings.Contains(run.Reason, "a-token-that-the-forge-refuses") {
+	if strings.Contains(run.Reason, env.Forge.Token) {
 		t.Errorf("the reason has the token: %q", run.Reason)
 	}
 	if e := onlyExecution(t, run); !strings.HasPrefix(e.EndReason, dispatcherapi.EndSetupFailed+": ") {

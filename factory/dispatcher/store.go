@@ -246,6 +246,20 @@ var migrations = []string{
 	// link.
 	`ALTER TABLE runs ADD COLUMN pr_id INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE runs ADD COLUMN pr_url TEXT NOT NULL DEFAULT '';`,
+	// factory_file is the factory file that the Dispatcher read from the
+	// default branch at the Execution's dispatch, as JSON ('' is the
+	// defaults). repository_hosts are the extra allowed hosts of the last
+	// factory file read for each repository and Project folder (a JSON
+	// list), for the Squid allowlist. Two Projects can name one repository
+	// with different folders, and the file of each folder can differ.
+	`ALTER TABLE executions ADD COLUMN factory_file TEXT NOT NULL DEFAULT '';
+	CREATE TABLE repository_hosts (
+		repository TEXT NOT NULL,
+		folder TEXT NOT NULL,
+		hosts TEXT NOT NULL,
+		read_at INTEGER NOT NULL,
+		PRIMARY KEY (repository, folder)
+	);`,
 	// The close of a Run (ticket 45): closed_at (NULL while the Run is not
 	// closed), the outcome of its PR (merged or declined; '' while it is
 	// open or when there is none), and wip_delete_due (1 until the

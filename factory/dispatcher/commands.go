@@ -16,8 +16,8 @@ import (
 // inbound path to an agent machine is needed. The stop verb and the
 // backstop add a stop command for the Run's live Execution.
 
-// defaultLimits are the limits of each Execution until the factory file
-// can change them (ticket 34).
+// defaultLimits are the limits of an Execution whose factory file sets
+// none.
 var defaultLimits = dispatcherapi.Limits{
 	IdleSeconds:  int64(dispatcherapi.DefaultIdleLimit / time.Second),
 	TotalSeconds: int64(dispatcherapi.DefaultTotalLimit / time.Second),
