@@ -44,13 +44,17 @@ RUN groupadd --system docker \
 COPY sudoers /etc/sudoers.d/factory-take-over
 RUN chmod 440 /etc/sudoers.d/factory-take-over && visudo -c
 
-# Claude Code's first-run dialogs, accepted for the run user: the onboarding and the
-# bypass-mode warning. The auto-updater is off, so that the pinned version stays. The
-# trust of a checkout is for its exact path (a trusted parent directory does not
-# count), so the wrapper adds projects["<checkout>"].hasTrustDialogAccepted for its
-# checkout before it starts Claude Code.
-COPY --chown=agent:agent claude.json /home/agent/.claude.json
-COPY --chown=agent:agent settings.json /home/agent/.claude/settings.json
+# Claude Code's first-run dialogs, accepted in files that root owns. The wrapper deletes
+# the run user's home after each Execution and sets CLAUDE_CONFIG_DIR, so files in the
+# home do not apply to a Run.
+# - Claude Code's managed settings, which the run user cannot change: no bypass-mode
+#   warning, and no auto-updater, so that the pinned version stays.
+# - The template of the run user's .claude.json, with the onboarding done. For each
+#   Execution the wrapper copies it to $CLAUDE_CONFIG_DIR/.claude.json and adds
+#   projects["<checkout>"].hasTrustDialogAccepted for its checkout: Claude Code trusts
+#   a checkout only at its exact path (a trusted parent directory does not count).
+COPY managed-settings.json /etc/claude-code/managed-settings.json
+COPY claude.json /etc/factory/claude.json
 
 # The proxy settings. Tools read HTTPS_PROXY; git over ssh is rewritten to HTTPS.
 ENV HTTPS_PROXY=http://squid:3128 \

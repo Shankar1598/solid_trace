@@ -204,6 +204,8 @@ pinned_versions_are_installed() {
 
 # As the wrapper will: root starts the hc core as the run user, with an environment of its own.
 start_hc_core_as_the_wrapper_does() {
+  # After each Execution the wrapper deletes the run user's home: start with a new, empty one.
+  as root sh -c 'rm -rf /home/agent && install -d -o agent -g agent -m 750 /home/agent'
   as root setpriv --reuid agent --regid agent --init-groups -- \
     env -i HOME=/home/agent USER=agent LOGNAME=agent SHELL=/bin/bash PATH=/usr/local/bin:/usr/bin:/bin \
     HTTPS_PROXY=http://squid:3128 HTTP_PROXY=http://squid:3128 NO_PROXY=localhost,127.0.0.1 \
@@ -226,9 +228,17 @@ take_over_connects_to_the_core_of_the_run_user() {
 claude_starts_in_an_hc_terminal_with_no_first_run_dialog() {
   # The checkout, and its trust entry, as the wrapper will make them.
   as agent bash -c 'mkdir -p /work/smoke && cd /work/smoke && git init -q'
-  as agent sed -i 's#"projects": {}#"projects": {"/work/smoke": {"hasTrustDialogAccepted": true}}#' /home/agent/.claude.json
+  # The wrapper's CLAUDE_CONFIG_DIR: a new directory with the image's template of
+  # .claude.json and the checkout's trust entry. The home has no Claude Code file.
+  as agent sh -c '! ls -d /home/agent/.claude.json /home/agent/.claude 2>/dev/null' || want "no Claude Code file in the run user's home"
+  as agent mkdir /work/claude-config
+  as agent sed 's#"projects": {}#"projects": {"/work/smoke": {"hasTrustDialogAccepted": true}}#' /etc/factory/claude.json |
+    as agent tee /work/claude-config/.claude.json >/dev/null
+  # The run user cannot change the managed settings or the template.
+  as agent sh -c '! test -w /etc/claude-code/managed-settings.json && ! test -w /etc/claude-code && ! test -w /etc/factory/claude.json' ||
+    want "the managed settings and the template owned by root"
   local terminal screen=""
-  terminal="$(docker exec -i -u agent -w /work/smoke "$machine" hc run --bg --json "claude --dangerously-skip-permissions" |
+  terminal="$(docker exec -i -u agent -w /work/smoke "$machine" hc run --bg --json "CLAUDE_CONFIG_DIR=/work/claude-config claude --dangerously-skip-permissions" |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
   for _ in $(seq 1 30); do
     screen="$(as agent hc read "$terminal" 2>&1)"
@@ -247,9 +257,9 @@ claude_starts_in_an_hc_terminal_with_no_first_run_dialog() {
 }
 
 check "Claude Code and hc are at the pinned versions" pinned_versions_are_installed
-check "the hc core starts as the run user from root, as the wrapper will start it" start_hc_core_as_the_wrapper_does
+check "the hc core starts as the run user from root in a new home, as the wrapper will start it" start_hc_core_as_the_wrapper_does
 check "a member of the access group reaches that core with 'sudo -u agent hc connect', and it has no SUDO_ variable" take_over_connects_to_the_core_of_the_run_user
-check "Claude Code starts in an hc terminal in bypass mode with no first-run dialog" claude_starts_in_an_hc_terminal_with_no_first_run_dialog
+check "Claude Code starts in an hc terminal in bypass mode with no first-run dialog, from a new home and a new CLAUDE_CONFIG_DIR" claude_starts_in_an_hc_terminal_with_no_first_run_dialog
 as agent hc server stop >/dev/null 2>&1
 
 # --- The network -----------------------------------------------------------------------
