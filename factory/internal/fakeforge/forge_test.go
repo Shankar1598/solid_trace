@@ -180,6 +180,41 @@ func TestPRAndCommentsThatTheFactoryMakes(t *testing.T) {
 	}
 }
 
+// The Dispatcher finds the open PR of a branch with the source and
+// state filters, so the fake must apply each filter.
+func TestPRListFiltersBySourceAndState(t *testing.T) {
+	f := fakeforge.New(t)
+	f.AddRepo(repo, nil)
+	f.Push(repo, "agent/r1", map[string]string{"a.txt": "a\n"}, "A")
+	f.Push(repo, "agent/r2", map[string]string{"b.txt": "b\n"}, "B")
+	pulls := "/api/repos/" + repo + "/pulls"
+	for _, b := range []string{"agent/r1", "agent/r2"} {
+		if a := call(t, f, f.Token, "POST", pulls, map[string]string{"title": b, "source": b}); a.status != 201 {
+			t.Fatalf("open from %s: %d %v", b, a.status, a.body)
+		}
+	}
+	f.SetState(repo, 2, "MERGED")
+
+	for query, want := range map[string][]string{
+		"":                              {"agent/r1", "agent/r2"},
+		"?source=agent/r1":              {"agent/r1"},
+		"?source=agent/r2":              {"agent/r2"},
+		"?state=OPEN":                   {"agent/r1"},
+		"?state=MERGED":                 {"agent/r2"},
+		"?source=agent/r2&state=OPEN":   {},
+		"?source=agent/r2&state=MERGED": {"agent/r2"},
+	} {
+		values := call(t, f, f.Token, "GET", pulls+query, nil).body["values"].([]any)
+		got := []string{}
+		for _, v := range values {
+			got = append(got, v.(map[string]any)["source"].(string))
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("GET pulls%s: sources %v; want %v", query, got, want)
+		}
+	}
+}
+
 // A Dispatcher polls the API while the test acts as a person. Under
 // `go test -race`, this finds an answer that is encoded with no lock.
 func TestAPIAnswersAndPersonHelpersAtTheSameTime(t *testing.T) {
